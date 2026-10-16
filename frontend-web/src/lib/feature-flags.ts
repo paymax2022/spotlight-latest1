@@ -54,6 +54,9 @@ export const featureFlags = {
   /** Micro-insurance / Protection module (MyCover + Octamile via gateway) */
   insurance: () => envFlag('FEATURE_INSURANCE_ENABLED'),
 
+  /** SP-2 Global Account onboarding (Verto sub-accounts) — mirrors Go FEATURE_SPOTLIGHT_GLOBAL */
+  spotlightGlobal: () => envFlag('FEATURE_SPOTLIGHT_GLOBAL'),
+
   /** Hotel Booking / Stays module (Property Suite, dual-rail supply gateway) */
   stays: () => envFlag('FEATURE_STAYS_ENABLED'),
 

@@ -36,6 +36,9 @@ var (
 	ErrWrongState = errors.New("onboarding: operation not valid in current account status")
 	// ErrDocumentsIncomplete: required documents are missing (see Deps.RequiredDocs).
 	ErrDocumentsIncomplete = errors.New("onboarding: required documents missing")
+	// ErrPayloadIncomplete: the stored KYC/profile/request data cannot form a
+	// valid provider payload (fail closed; nothing was sent to the provider).
+	ErrPayloadIncomplete = errors.New("onboarding: required data missing")
 	// ErrIncompleteAccount: a local account row exists without a provider company.
 	ErrIncompleteAccount = errors.New("onboarding: account has no provider company")
 )
@@ -61,6 +64,8 @@ type Store interface {
 	UpsertFundingDetail(ctx context.Context, f *FundingDetail) (*FundingDetail, error)
 	RecordSubmission(ctx context.Context, accountID string, version int, payloadRef string, documentsJSON []byte, result string) error
 	RecordConsent(ctx context.Context, c *Consent) error
+	ListWallets(ctx context.Context, accountID string) ([]ProviderWallet, error)
+	ListFundingDetails(ctx context.Context, walletID string) ([]FundingDetail, error)
 }
 
 var _ Store = (*Repository)(nil)
@@ -179,7 +184,7 @@ func (s *Service) Activate(ctx context.Context, userID string, in ActivateInput)
 	}
 	// Map first: a bad payload must not leave an orphan provider account.
 	if _, err := BuildOnboardingData(in.SubjectType, in.Profile, kyc, extras); err != nil {
-		return GlobalAccount{}, err
+		return GlobalAccount{}, fmt.Errorf("%w: %v", ErrPayloadIncomplete, err)
 	}
 	pa, err := s.d.Accounts.CreateSubAccount(ctx, subAccountInput(in, kyc, userID))
 	if err != nil {
@@ -261,7 +266,7 @@ func (s *Service) submit(ctx context.Context, acct *GlobalAccount, st SubjectTyp
 	}
 	payload, err := BuildOnboardingData(st, p, kyc, ex)
 	if err != nil {
-		return *acct, err
+		return *acct, fmt.Errorf("%w: %v", ErrPayloadIncomplete, err)
 	}
 	if err := s.d.Accounts.SubmitOnboarding(ctx, acct.ProviderCompanyID, payload); err != nil {
 		return *acct, fmt.Errorf("onboarding: submit: %w", err)
@@ -292,6 +297,7 @@ func (s *Service) SubmitDocuments(ctx context.Context, userID string, docs []Doc
 	if acct.Status != StatusNotStarted && acct.Status != StatusRejected {
 		return fmt.Errorf("%w: %s", ErrWrongState, acct.Status)
 	}
+	docs = withoutDeleted(docs)
 	if missing := s.missingDocs(acct.SubjectType, docs); len(missing) > 0 {
 		return fmt.Errorf("%w: %v", ErrDocumentsIncomplete, missing)
 	}
@@ -310,6 +316,18 @@ func (s *Service) SubmitDocuments(ctx context.Context, userID string, docs []Doc
 	}
 	_, err = s.submit(ctx, acct, acct.SubjectType, prof, ex, version)
 	return err
+}
+
+// withoutDeleted drops DELETE entries: the payload is rebuilt from the
+// remaining (ADD/UPDATE) documents only.
+func withoutDeleted(docs []DocumentRef) []DocumentRef {
+	out := make([]DocumentRef, 0, len(docs))
+	for _, d := range docs {
+		if d.Action != DocActionDelete {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // AcceptTnC records consent and moves AWAITING_TNC -> ACTIVE, then provisions
@@ -396,4 +414,83 @@ func (s *Service) ensureWallets(ctx context.Context, acct *GlobalAccount) error 
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ErrUnknownCurrency: the currency is not one of the account's wallets.
+var ErrUnknownCurrency = errors.New("onboarding: no wallet for that currency")
+
+// ErrUnknownDocumentKind: no provider document type is configured for the kind.
+var ErrUnknownDocumentKind = errors.New("onboarding: unknown document kind")
+
+// WalletView is a provisioned wallet (balances arrive in SP-3).
+type WalletView struct {
+	Currency string
+	Status   string
+}
+
+// ListWallets returns the CALLER's own provisioned wallets. The account is
+// resolved from userID, never from a client-supplied id (object-level authz).
+func (s *Service) ListWallets(ctx context.Context, userID string) ([]WalletView, error) {
+	acct, err := s.d.Store.GetAccountByUser(ctx, userID, ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	if acct == nil {
+		return nil, ErrNoAccount
+	}
+	ws, err := s.d.Store.ListWallets(ctx, acct.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WalletView, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, WalletView{Currency: w.Currency, Status: "active"})
+	}
+	return out, nil
+}
+
+// FundingDetails returns the funding instructions for one of the CALLER's own
+// wallets. Wallets are looked up under the caller's account only.
+func (s *Service) FundingDetails(ctx context.Context, userID, currency string) ([]FundingDetail, error) {
+	acct, err := s.d.Store.GetAccountByUser(ctx, userID, ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	if acct == nil {
+		return nil, ErrNoAccount
+	}
+	ws, err := s.d.Store.ListWallets(ctx, acct.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range ws {
+		if w.Currency == currency {
+			return s.d.Store.ListFundingDetails(ctx, w.ID)
+		}
+	}
+	return nil, ErrUnknownCurrency
+}
+
+// UploadLink issues a pre-signed document upload URL for the CALLER's own
+// provider company. Valid only while documents can still be supplied.
+func (s *Service) UploadLink(ctx context.Context, userID string, kind DocumentKind, fileName, contentType string) (UploadLink, error) {
+	acct, err := s.d.Store.GetAccountByUser(ctx, userID, ProviderName)
+	if err != nil {
+		return UploadLink{}, err
+	}
+	if acct == nil {
+		return UploadLink{}, ErrNoAccount
+	}
+	if acct.Status != StatusNotStarted && acct.Status != StatusRejected {
+		return UploadLink{}, fmt.Errorf("%w: %s", ErrWrongState, acct.Status)
+	}
+	if acct.ProviderCompanyID == "" {
+		return UploadLink{}, ErrIncompleteAccount
+	}
+	typeID := s.d.DocTypeID[kind]
+	if typeID == "" {
+		return UploadLink{}, ErrUnknownDocumentKind
+	}
+	return s.d.Accounts.GenerateUploadLink(ctx, acct.ProviderCompanyID,
+		UploadLinkInput{DocumentTypeID: typeID, FileName: fileName, ContentType: contentType})
 }

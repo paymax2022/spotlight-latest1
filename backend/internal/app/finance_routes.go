@@ -775,6 +775,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 	// Smart order routing across Eversend + Maplerad, spread engine, treasury,
 	// unified multi-currency ledger, quote->lock->execute with idempotency.
+	// SP-2 Global Account onboarding (Verto sub-accounts). Built BEFORE the FX
+	// orchestration block so its service can be handed to the Verto webhook
+	// path (account.* events). Entirely inert unless FEATURE_SPOTLIGHT_GLOBAL.
+	globalSvc, globalProfiles := buildGlobalOnboarding(&cfg, pool, tiersSvc)
+	if globalSvc != nil && !cfg.FeatureFXOrchestrationEnabled {
+		log.Println("[global] WARNING: FEATURE_FX_ORCHESTRATION_ENABLED is off, so the Verto webhook route is not mounted and account approvals will not be applied")
+	}
+	mountGlobalOnboarding(r, &cfg, globalSvc, globalProfiles, pinStepUp{svc: xferSvc}, mapsAuth())
+
 	if cfg.FeatureFXOrchestrationEnabled {
 		orchStore := orchestration.NewSQLStore(pool)
 
@@ -833,9 +842,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			orchestration.NewStoreUsage(orchStore, "USD"),
 		)
 
+		orchOpts := orchestrationOptions(cfg.FXDefaultProvider, globalSvc)
 		orchSvc := orchestration.NewService(providers, orchStore, orchestration.Options{
 			Spread: spreadEngine, Treasury: treasury, QuoteStore: quoteStore, Rates: rateFeed, Limits: limitsEngine, LockWindow: 90 * time.Second,
-		}, orchestration.WithDefaultProvider(cfg.FXDefaultProvider))
+		}, orchOpts...)
 		// Outbound webhooks (signed) to the caller endpoint, when configured.
 		orchSvc.SetEmitter(orchestration.NewWebhookEmitter(cfg.PaymaxWebhookOutURL, cfg.PaymaxWebhookSecret))
 		// Automated treasury rebalancing + balance.low alerts.

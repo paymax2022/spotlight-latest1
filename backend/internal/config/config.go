@@ -232,11 +232,20 @@ type Config struct {
 	FeatureFXOrchestrationEnabled         bool   // normalized /v1 FX orchestration API
 	FeatureVertoFXEnabled                 bool   // FEATURE_VERTOFX: register VertoFX in FX orchestration
 	FXDefaultProvider                     string // FX_DEFAULT_PROVIDER: "" = pure best-score; "vertofx" = Verto preferred
-	FeatureRealtimeEnabled                bool   // SSE server-push (marketplace chat etc.)
-	PaymaxWebhookOutURL                   string
-	PaymaxWebhookSecret                   string
-	FeatureGroupsEnabled                  bool
-	FeatureAssociationsEnabled            bool
+	// SP-2 Global Account onboarding (Verto sub-accounts). DEFAULT OFF.
+	FeatureSpotlightGlobalEnabled bool   // FEATURE_SPOTLIGHT_GLOBAL: mount /v1/global/* + apply account.* webhooks
+	GlobalTnCVersion              string // SPOTLIGHT_GLOBAL_TNC_VERSION (default "v1")
+	GlobalTnCURL                  string // SPOTLIGHT_GLOBAL_TNC_URL
+	// Verto document-type ids (provider config, never literals in code).
+	GlobalDocTypeIdentity       string // SPOTLIGHT_GLOBAL_DOCTYPE_IDENTITY
+	GlobalDocTypeAddressProof   string // SPOTLIGHT_GLOBAL_DOCTYPE_ADDRESS_PROOF
+	GlobalDocTypeIncorporation  string // SPOTLIGHT_GLOBAL_DOCTYPE_INCORPORATION
+	GlobalDocTypeOwnershipChart string // SPOTLIGHT_GLOBAL_DOCTYPE_OWNERSHIP_CHART
+	FeatureRealtimeEnabled      bool   // SSE server-push (marketplace chat etc.)
+	PaymaxWebhookOutURL         string
+	PaymaxWebhookSecret         string
+	FeatureGroupsEnabled        bool
+	FeatureAssociationsEnabled  bool
 	// AssocCardSigningSecret is the HMAC secret for digital membership cards.
 	// Empty outside development is a hard startup failure: the fallback is a
 	// constant compiled into this (public) repo, so anyone could forge a
@@ -952,6 +961,13 @@ func Load() Config {
 		FeatureFXOrchestrationEnabled:                getEnvBool("FEATURE_FX_ORCHESTRATION_ENABLED", false),
 		FeatureVertoFXEnabled:                        getEnvBool("FEATURE_VERTOFX", false),
 		FXDefaultProvider:                            getEnv("FX_DEFAULT_PROVIDER", ""),
+		FeatureSpotlightGlobalEnabled:                getEnvBool("FEATURE_SPOTLIGHT_GLOBAL", false),
+		GlobalTnCVersion:                             getEnv("SPOTLIGHT_GLOBAL_TNC_VERSION", "v1"),
+		GlobalTnCURL:                                 getEnv("SPOTLIGHT_GLOBAL_TNC_URL", ""),
+		GlobalDocTypeIdentity:                        getEnv("SPOTLIGHT_GLOBAL_DOCTYPE_IDENTITY", ""),
+		GlobalDocTypeAddressProof:                    getEnv("SPOTLIGHT_GLOBAL_DOCTYPE_ADDRESS_PROOF", ""),
+		GlobalDocTypeIncorporation:                   getEnv("SPOTLIGHT_GLOBAL_DOCTYPE_INCORPORATION", ""),
+		GlobalDocTypeOwnershipChart:                  getEnv("SPOTLIGHT_GLOBAL_DOCTYPE_OWNERSHIP_CHART", ""),
 		FeatureRealtimeEnabled:                       getEnvBool("FEATURE_REALTIME_ENABLED", false),
 		PaymaxWebhookOutURL:                          getEnv("PAYMAX_WEBHOOK_OUT_URL", ""),
 		PaymaxWebhookSecret:                          getEnv("PAYMAX_WEBHOOK_SECRET", ""),

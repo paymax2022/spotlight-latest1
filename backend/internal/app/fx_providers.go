@@ -43,11 +43,7 @@ func buildFXProviders(cfg *config.Config) []orchestration.Provider {
 		mplProvider,
 	}
 	if cfg.FeatureVertoFXEnabled {
-		vc := vertofx.New(cfg.VertoFXClientID, cfg.VertoFXAPIKey, cfg.VertoFXProd)
-		if cfg.VertoFXBaseURL != "" {
-			vc = vc.WithBaseURL(cfg.VertoFXBaseURL)
-		}
-		vc = vc.WithWebhookSecret(cfg.VertoFXWebhookSecret)
+		vc := newVertoClient(cfg)
 		providers = append(providers, adapters.NewVertoFXLive(vc, cfg.VertoFXWebhookSecret, cfg.VertoFXProd))
 		log.Println("[finance] FX orchestration: VertoFX adapter enabled")
 		if cfg.VertoFXClientID == "" || cfg.VertoFXAPIKey == "" {
@@ -55,4 +51,15 @@ func buildFXProviders(cfg *config.Config) []orchestration.Provider {
 		}
 	}
 	return providers
+}
+
+// newVertoClient builds the VertoFX client from config. It is shared by the FX
+// orchestration adapter and the SP-2 Global Account onboarding adapter so both
+// speak to Verto with identical credentials, base URL and webhook secret.
+func newVertoClient(cfg *config.Config) *vertofx.Client {
+	vc := vertofx.New(cfg.VertoFXClientID, cfg.VertoFXAPIKey, cfg.VertoFXProd)
+	if cfg.VertoFXBaseURL != "" {
+		vc = vc.WithBaseURL(cfg.VertoFXBaseURL)
+	}
+	return vc.WithWebhookSecret(cfg.VertoFXWebhookSecret)
 }

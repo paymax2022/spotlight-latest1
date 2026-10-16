@@ -145,6 +145,19 @@ func (m *memStore) RecordSubmission(context.Context, string, int, string, []byte
 	return nil
 }
 func (m *memStore) RecordConsent(context.Context, *Consent) error { m.consents++; return nil }
+func (m *memStore) ListWallets(context.Context, string) ([]ProviderWallet, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []ProviderWallet
+	for _, w := range m.wallets {
+		out = append(out, *w)
+	}
+	return out, nil
+}
+func (m *memStore) ListFundingDetails(_ context.Context, walletID string) ([]FundingDetail, error) {
+	cur := walletID[len("wid-"):]
+	return []FundingDetail{{WalletID: walletID, Currency: cur, AccountNumber: "123" + cur}}, nil
+}
 
 func indivIn() ActivateInput {
 	return ActivateInput{SubjectType: SubjectIndividual, Profile: Profile{Email: "a@b.co", Phone: "+2348000000000"}}

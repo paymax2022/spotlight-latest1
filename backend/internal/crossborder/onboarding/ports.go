@@ -161,10 +161,32 @@ const (
 	DocOwnershipChart DocumentKind = "OWNERSHIP_CHART"
 )
 
+// DocumentAction is how a document entry changes the submitted set on a
+// resubmission (spec §6). The zero value means ADD.
+type DocumentAction string
+
+const (
+	DocActionAdd    DocumentAction = "ADD"
+	DocActionUpdate DocumentAction = "UPDATE"
+	DocActionDelete DocumentAction = "DELETE"
+)
+
+// Valid reports whether a is a known action (empty counts as ADD).
+func (a DocumentAction) Valid() bool {
+	switch a {
+	case "", DocActionAdd, DocActionUpdate, DocActionDelete:
+		return true
+	}
+	return false
+}
+
 // DocumentRef is an already-uploaded document.
 type DocumentRef struct {
 	Kind       DocumentKind
 	DocumentID string
+	// Action is ADD (default), UPDATE or DELETE. DELETE entries are dropped
+	// from the rebuilt payload.
+	Action DocumentAction
 }
 
 // RiskAnswer answers a provider risk-assessment question; QuestionID is config.

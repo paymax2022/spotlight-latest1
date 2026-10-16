@@ -182,6 +182,26 @@ func (r *Repository) UpsertWallet(ctx context.Context, w *ProviderWallet) (*Prov
 	return &out, nil
 }
 
+// ListWallets returns the wallets of one provider account.
+func (r *Repository) ListWallets(ctx context.Context, accountID string) ([]ProviderWallet, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, provider_account_id, currency, provider_wallet_id, created_at
+		FROM provider_wallets WHERE provider_account_id = $1 ORDER BY currency`, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("onboarding repo: list wallets: %w", err)
+	}
+	defer rows.Close()
+	var out []ProviderWallet
+	for rows.Next() {
+		var w ProviderWallet
+		if err := rows.Scan(&w.ID, &w.AccountID, &w.Currency, &w.ProviderWalletID, &w.CreatedAt); err != nil {
+			return nil, fmt.Errorf("onboarding repo: scan wallet: %w", err)
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 // UpsertFundingDetail stores funding instructions for a wallet, encrypting the
 // account number (AAD = wallet id). Idempotent per (wallet, rail).
 func (r *Repository) UpsertFundingDetail(ctx context.Context, f *FundingDetail) (*FundingDetail, error) {

@@ -30,6 +30,17 @@ func TestLoad_VertoFXAndDefaultProvider(t *testing.T) {
 	})
 }
 
+func TestLoad_SpotlightGlobalFlagDefaultsOff(t *testing.T) {
+	t.Setenv("FEATURE_SPOTLIGHT_GLOBAL", "")
+	if Load().FeatureSpotlightGlobalEnabled {
+		t.Fatal("FEATURE_SPOTLIGHT_GLOBAL must default to off")
+	}
+	t.Setenv("FEATURE_SPOTLIGHT_GLOBAL", "true")
+	if !Load().FeatureSpotlightGlobalEnabled {
+		t.Fatal("FEATURE_SPOTLIGHT_GLOBAL=true must enable")
+	}
+}
+
 func TestValidate_VertoFXBaseURLForbiddenWhenProd(t *testing.T) {
 	c := base(true)
 	c.VertoFXProd = true
