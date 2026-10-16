@@ -86,8 +86,10 @@ func (s *Service) applyStatus(ctx context.Context, cur *GlobalAccount, target St
 	}
 
 	// Un-suspend: reinstate to where the account was, not to what the
-	// provider happens to call "active".
-	if cur.Status == StatusSuspended && target != StatusSuspended {
+	// provider happens to call "active". Only an ACTIVE confirmation is an
+	// un-suspension; any other confirmed status (REJECTED, PENDING) is applied
+	// as-is, subject to CanTransition, never overridden by PriorStatus.
+	if cur.Status == StatusSuspended && target == StatusActive {
 		if cur.PriorStatus != "" && CanTransition(StatusSuspended, cur.PriorStatus) {
 			target = cur.PriorStatus
 		}

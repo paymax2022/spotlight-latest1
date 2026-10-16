@@ -136,6 +136,34 @@ func TestHandleProviderStatus_SuspendAndReinstateToPrior(t *testing.T) {
 	}
 }
 
+// A provider-confirmed REJECTED for a SUSPENDED account must not be turned into
+// a reinstatement (and wallet provisioning) via PriorStatus.
+func TestHandleProviderStatus_SuspendedConfirmedRejectedNotReinstated(t *testing.T) {
+	s, fp, st := whSvc(StatusSuspended, "REJECTED")
+	st.acct.PriorStatus = StatusActive
+	if err := s.HandleProviderStatus(context.Background(), "co-1", NormalizedAccountEvent{Name: "account.rejected", Reason: "kyb failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if fp.walletNew != 0 || len(st.wallets) != 0 {
+		t.Fatalf("wallets provisioned (%d) for a confirmed rejection", fp.walletNew)
+	}
+	// CanTransition forbids SUSPENDED -> REJECTED, so the account stays held.
+	if st.acct.Status != StatusSuspended {
+		t.Fatalf("status %s", st.acct.Status)
+	}
+}
+
+func TestHandleProviderStatus_SuspendedConfirmedPendingGoesInReview(t *testing.T) {
+	s, fp, st := whSvc(StatusSuspended, "PENDING")
+	st.acct.PriorStatus = StatusActive
+	if err := s.HandleProviderStatus(context.Background(), "co-1", NormalizedAccountEvent{Name: "account.approved"}); err != nil {
+		t.Fatal(err)
+	}
+	if st.acct.Status != StatusInReview || fp.walletNew != 0 {
+		t.Fatalf("status %s wallets %d", st.acct.Status, fp.walletNew)
+	}
+}
+
 func TestHandleProviderStatus_SuspendedWhileNotStartedIsRefused(t *testing.T) {
 	s, _, st := whSvc(StatusNotStarted, "SUSPENDED")
 	if err := s.HandleProviderStatus(context.Background(), "co-1", NormalizedAccountEvent{Name: "account.suspended"}); err != nil {
