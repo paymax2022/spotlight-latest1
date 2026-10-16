@@ -101,7 +101,7 @@ func TestVertoFXLive_Quote_MinorMajorRoundTrip(t *testing.T) {
 	if q.Provider != "vertofx" || !q.Viable || q.Rate != 1.234567 {
 		t.Fatalf("unexpected quote %+v", q)
 	}
-	if q.ProviderFee.AmountMinor != 200 || q.ProviderFee.Currency != "USD" { // 20 bps of 100000, ceil
+	if q.ProviderFee.AmountMinor != 0 || q.ProviderFee.Currency != "USD" { // spread only via fxMarkup (D1)
 		t.Fatalf("fee = %+v", q.ProviderFee)
 	}
 }

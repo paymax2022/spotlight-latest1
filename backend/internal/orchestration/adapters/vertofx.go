@@ -15,8 +15,9 @@ import (
 	"spotlight/backend/internal/provider/vertofx"
 )
 
-// vertoFeeBPS is Spotlight's markup on Verto trades, in basis points. It is both
-// the provider fee shown on quotes and the fxMarkup.markupPerc sent on trades.
+// vertoFeeBPS is Spotlight's markup on Verto trades, in basis points. It is
+// ONLY the fxMarkup.markupPerc sent on trades (the single spread); it is no
+// longer surfaced as a quote ProviderFee (SP-3a D1).
 const vertoFeeBPS int64 = 20
 
 // vertoCurrencies is the Verto/Atlas set (spec §19.4): virtual-account
@@ -93,10 +94,6 @@ func convertCeilSource(dstMinor, ratePPM int64, srcExp, dstExp int) (int64, erro
 	return bigToInt64(q)
 }
 
-func feeCeil(amountMinor int64) int64 {
-	return (amountMinor*vertoFeeBPS + 9_999) / 10_000
-}
-
 // VertoFX is the deterministic Verto adapter (no credentials needed).
 type VertoFX struct {
 	prod        bool
@@ -143,11 +140,13 @@ func vertoBuildQuote(name string, reliability float64, source, dest string, amou
 	}
 	_, fracErr := vertoMinorToMajor(src, source)
 	return &orch.ProviderQuote{
-		Provider:    name,
-		Corridor:    orch.Corridor(source, dest),
-		Rail:        rail,
-		Rate:        float64(ppm) / 1_000_000.0, // display only
-		ProviderFee: orch.NewMoney(feeCeil(src), source),
+		Provider: name,
+		Corridor: orch.Corridor(source, dest),
+		Rail:     rail,
+		Rate:     float64(ppm) / 1_000_000.0, // display only
+		// SP-3a D1: the spread is expressed once, as fxMarkup on the trade
+		// (recognized via the paymax_spread book). No adapter ProviderFee.
+		ProviderFee: orch.NewMoney(0, source),
 		RailFee:     orch.NewMoney(0, source),
 		Reliability: reliability,
 		Viable:      supported && received > 0 && fracErr == nil,
