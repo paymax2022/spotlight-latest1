@@ -477,6 +477,8 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 					AdminUserNavigationHandler(navigation.NewRepository(sharedPool)))
 				navAdmin.GET("/analytics/navigation", middleware.RequirePermission(rbacService, "audit.logs.view"),
 					AdminNavigationAnalyticsHandler(navigation.NewRepository(sharedPool)))
+				navAdmin.POST("/analytics/navigation/funnel", middleware.RequirePermission(rbacService, "audit.logs.view"),
+					AdminNavigationFunnelHandler(navigation.NewRepository(sharedPool)))
 			}
 		}
 	} else if deployedTier {

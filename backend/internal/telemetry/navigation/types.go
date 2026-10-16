@@ -49,3 +49,11 @@ type NavAnalytics struct {
 	Timeseries   []DayBucket
 	SurfaceSplit SurfaceSplit
 }
+
+// StepEvent is one funnel-step candidate row: a user's visit to a route at a
+// time. It is used only for in-memory funnel computation and never serialized.
+type StepEvent struct {
+	UserID     string
+	Route      string
+	OccurredAt time.Time
+}

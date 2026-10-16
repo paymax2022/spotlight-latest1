@@ -79,3 +79,71 @@ func AdminNavigationAnalyticsHandler(repo navAggregator) gin.HandlerFunc {
 		})
 	}
 }
+
+type funnelRepo interface {
+	FunnelStepEvents(ctx context.Context, steps []string, f navigation.AnalyticsFilter) ([]navigation.StepEvent, error)
+}
+
+type funnelRequest struct {
+	Steps      []string `json:"steps"`
+	Range      string   `json:"range"`
+	Surface    string   `json:"surface"`
+	GapMinutes int      `json:"gapMinutes"`
+}
+
+// AdminNavigationFunnelHandler serves POST /api/admin/analytics/navigation/funnel.
+// steps must hold 2-10 non-empty routes (<=256 chars). Invalid range/surface
+// coerce to defaults; gapMinutes defaults to 30 and clamps to [1,1440]. The
+// payload is built explicitly and carries no user ids.
+func AdminNavigationFunnelHandler(repo funnelRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req funnelRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		if len(req.Steps) < 2 || len(req.Steps) > 10 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "steps must contain 2 to 10 routes"})
+			return
+		}
+		for _, s := range req.Steps {
+			if s == "" || len(s) > 256 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "each step must be a non-empty route up to 256 characters"})
+				return
+			}
+		}
+		rng := req.Range
+		if rng != "7d" && rng != "30d" && rng != "90d" {
+			rng = "30d"
+		}
+		surface := req.Surface
+		if surface != "all" && surface != "mobile" && surface != "web" {
+			surface = "all"
+		}
+		gapMin := req.GapMinutes
+		switch {
+		case gapMin == 0:
+			gapMin = 30
+		case gapMin < 1:
+			gapMin = 1
+		case gapMin > 1440:
+			gapMin = 1440
+		}
+		evs, err := repo.FunnelStepEvents(c.Request.Context(), req.Steps, navigation.AnalyticsFilter{Range: rng, Surface: surface})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+			return
+		}
+		counts := navigation.ComputeFunnel(evs, req.Steps, time.Duration(gapMin)*time.Minute)
+		steps := make([]gin.H, 0, len(req.Steps))
+		for i, route := range req.Steps {
+			steps = append(steps, gin.H{"route": route, "users": counts[i]})
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"range":      rng,
+			"surface":    surface,
+			"gapMinutes": gapMin,
+			"steps":      steps,
+		})
+	}
+}

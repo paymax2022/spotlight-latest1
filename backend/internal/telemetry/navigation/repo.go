@@ -227,3 +227,36 @@ func (r *Repository) AggregateNavigation(ctx context.Context, f AnalyticsFilter)
 	}
 	return out, nil
 }
+
+// FunnelStepEvents returns every event whose route is one of steps within the
+// filter window (optionally scoped to one surface), ordered by user then time
+// so ComputeFunnel can scan it in one pass. All values are bound parameters.
+// Search is unused. Results carry user ids and must never be serialized.
+func (r *Repository) FunnelStepEvents(ctx context.Context, steps []string, f AnalyticsFilter) ([]StepEvent, error) {
+	surface := ""
+	if f.Surface == "mobile" || f.Surface == "web" {
+		surface = f.Surface
+	}
+	const q = `SELECT user_id::text, route, occurred_at FROM navigation_events
+		WHERE route = ANY($1)
+		  AND occurred_at >= now() - $2::interval
+		  AND ($3 = '' OR surface = $3)
+		ORDER BY user_id, occurred_at, id`
+	rows, err := r.db.Query(ctx, q, steps, analyticsInterval(f.Range), surface)
+	if err != nil {
+		return nil, fmt.Errorf("navigation repo: funnel events: %w", err)
+	}
+	defer rows.Close()
+	out := []StepEvent{}
+	for rows.Next() {
+		var e StepEvent
+		if err := rows.Scan(&e.UserID, &e.Route, &e.OccurredAt); err != nil {
+			return nil, fmt.Errorf("navigation repo: scan funnel: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("navigation repo: funnel events: %w", err)
+	}
+	return out, nil
+}
