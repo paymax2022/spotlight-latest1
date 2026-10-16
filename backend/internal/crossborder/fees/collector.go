@@ -209,8 +209,8 @@ func verifyPosted(ctx context.Context, l Ledger, j ledger.JournalEntry) error {
 // (the ledger API posts one account pair per call; there is no atomic
 // three-account post):
 //
-//	1. DR user_wallet            / CR revenue:platform_fee:{svc}   (gated)
-//	2. DR provider_clearing      / CR fees_unswept:{co}:{ccy}      key = {key}:unswept
+//  1. DR user_wallet            / CR revenue:platform_fee:{svc}   (gated)
+//  2. DR provider_clearing      / CR fees_unswept:{co}:{ccy}      key = {key}:unswept
 //
 // Journal 2 raises the unswept balance (balance = credits - debits, so the
 // account balance equals the amount still awaiting sweep) against provider

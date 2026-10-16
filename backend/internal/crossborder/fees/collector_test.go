@@ -182,7 +182,7 @@ func TestLedgerCharge_RetryHealsAfterCrashBetweenLegs(t *testing.T) {
 	}
 	unT, _ := ledger.FeesUnsweptAccount(in.CompanyID, "NGN")
 	un, _ := f.GetOrCreateStandingAccount(context.Background(), unT)
-	if f.balances[un.ID] != 2500 ||f.balances[wallet.ID] != 7500 {
+	if f.balances[un.ID] != 2500 || f.balances[wallet.ID] != 7500 {
 		t.Fatalf("not healed: unswept=%d wallet=%d", f.balances[un.ID], f.balances[wallet.ID])
 	}
 }
