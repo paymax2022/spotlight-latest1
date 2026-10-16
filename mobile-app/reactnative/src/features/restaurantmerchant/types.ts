@@ -12,6 +12,8 @@ export interface MerchantStore {
   description?: string;
   address: string;
   logoUrl?: string | null;
+  /** Storefront banner. Like logoUrl, a viewable (signed, short-lived) URL — re-read the store to refresh. */
+  bannerUrl?: string | null;
   isOpen: boolean;
   createdAt?: string;
   /** Server-held pin, when one has been geocoded or confirmed — seeds the
@@ -74,7 +76,10 @@ export interface UpdateStoreInput {
   name?: string;
   description?: string;
   address?: string;
+  /** A logo `objectKey` from presignStoreImage, or an http(s) link. */
   logoUrl?: string;
+  /** A banner `objectKey` from presignStoreImage, or an http(s) link. */
+  bannerUrl?: string;
   /** Integer kobo per takeaway pack. 0 is a real value, so this is only omitted
    *  when the owner is not changing the price. */
   packagingFeeKobo?: Kobo;

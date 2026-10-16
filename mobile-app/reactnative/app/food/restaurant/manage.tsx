@@ -25,6 +25,7 @@ import {
 import { parsePackagingPrice, packagingPriceInput } from '@/features/restaurantmerchant/packagingPrice';
 import { formatNaira, parseNaira, ITEM_PRICE_BOUNDS } from '@/features/restaurantmerchant/money';
 import NairaField from '@/features/restaurantmerchant/NairaField';
+import StoreImagePicker from '@/features/restaurantmerchant/StoreImagePicker';
 import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet';
 
 // Every price on this screen is NGN: the naira sign, grouping, and kobo only when there are some.
@@ -376,6 +377,7 @@ function ManageStore({
         {/* Profile */}
         <Text style={styles.section}>Store details</Text>
         <Card>
+          <StoreImagePicker storeId={storeId} logoUrl={server.logoUrl} bannerUrl={server.bannerUrl} />
           <Field label="Restaurant name" value={nameVal} onChangeText={setName} placeholder="Blue Yam Kitchen" />
           <Field label="Description" value={descVal} onChangeText={setDescription} placeholder="What you're known for" multiline />
           <AddressField

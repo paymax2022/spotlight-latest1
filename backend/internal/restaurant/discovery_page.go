@@ -272,7 +272,16 @@ func (s *Service) queryRestaurants(ctx context.Context, where, orderBy string, w
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	ptrs := make([]*Restaurant, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	s.finishStoreImages(ctx, ptrs...)
+	return out, nil
 }
 
 // ListOpenRestaurantsPage returns one page of the discovery list plus the total
