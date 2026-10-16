@@ -166,3 +166,42 @@ func TestRepo_WalletFundingSubmissionConsent(t *testing.T) {
 		t.Fatal("consent update must be rejected (append-only)")
 	}
 }
+
+func TestRepo_PriorStatusSurvivesAndCompanyConflict(t *testing.T) {
+	repo, pool, userID := newRepoTest(t)
+	ctx := context.Background()
+	companyID := "co-" + uuid.NewString()
+	acct, err := repo.CreateAccount(ctx, &GlobalAccount{
+		UserID: userID, Provider: "vertofx", SubjectType: SubjectIndividual,
+		ProviderCompanyID: companyID, Status: StatusActive,
+	}, "idem-p-"+userID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateStatus(ctx, acct.ID, StatusActive, StatusSuspended, StatusUpdate{PriorStatus: StatusActive}); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+	// A later transition that does not pass PriorStatus must not erase it.
+	if err := repo.UpdateStatus(ctx, acct.ID, StatusSuspended, StatusActive, StatusUpdate{}); err != nil {
+		t.Fatalf("reinstate: %v", err)
+	}
+	got, _ := repo.GetAccountByUser(ctx, userID, "vertofx")
+	if got == nil || got.PriorStatus != StatusActive {
+		t.Fatalf("prior_status clobbered: %+v", got)
+	}
+
+	// Same company id under a different user -> explicit conflict, never (nil, nil).
+	other := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email, created_at) VALUES ($1,$2,NOW())`,
+		other, other+"@onboarding-repo.invalid"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, other) })
+	res, err := repo.CreateAccount(ctx, &GlobalAccount{
+		UserID: other, Provider: "vertofx", SubjectType: SubjectIndividual,
+		ProviderCompanyID: companyID, Status: StatusSubmitted,
+	}, "idem-o-"+other, 2)
+	if !errors.Is(err, ErrAccountConflict) || res != nil {
+		t.Fatalf("want ErrAccountConflict, got %+v %v", res, err)
+	}
+}

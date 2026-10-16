@@ -17,6 +17,11 @@ import (
 // stored status was no longer the expected `from` (concurrent/stale transition).
 var ErrStaleStatus = errors.New("onboarding: account status changed concurrently (stale from)")
 
+// ErrAccountConflict means the insert hit a uniqueness constraint (e.g. the
+// provider company id is already bound to another user) and no existing
+// account for this user could be returned.
+var ErrAccountConflict = errors.New("onboarding: account conflicts with an existing record")
+
 // ErrIllegalTransition is returned for a from→to pair the state machine forbids.
 var ErrIllegalTransition = errors.New("onboarding: illegal status transition")
 
@@ -86,7 +91,14 @@ func (r *Repository) CreateAccount(ctx context.Context, a *GlobalAccount, idempo
 	existing, err := scanAccount(r.db.QueryRow(ctx,
 		`SELECT `+accountCols+` FROM provider_accounts WHERE idempotency_key = $1`, idempotencyKey))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return r.GetAccountByUser(ctx, a.UserID, a.Provider)
+		live, lerr := r.GetAccountByUser(ctx, a.UserID, a.Provider)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if live == nil {
+			return nil, ErrAccountConflict
+		}
+		return live, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("onboarding repo: create account lookup: %w", err)
@@ -135,7 +147,7 @@ func (r *Repository) UpdateStatus(ctx context.Context, id string, from, to Statu
 	tag, err := r.db.Exec(ctx, `
 		UPDATE provider_accounts SET
 			status = $3,
-			prior_status = NULLIF($4,''),
+			prior_status = COALESCE(NULLIF($4,''), prior_status),
 			rejection_reason = CASE WHEN $5 <> '' THEN $5 ELSE rejection_reason END,
 			submitted_at = COALESCE($6, submitted_at),
 			approved_at = COALESCE($7, approved_at),
