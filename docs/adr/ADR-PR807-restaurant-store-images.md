@@ -1,4 +1,4 @@
-# ADR-PR805: Restaurant store logo and banner uploads
+# ADR-PR807: Restaurant store logo and banner uploads
 
 - Status: accepted
 - Date: 2026-10-16
