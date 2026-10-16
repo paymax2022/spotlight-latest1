@@ -75,7 +75,7 @@ describe('NavigationFunnelPage', () => {
   });
 
   it('403 -> permission placeholder', async () => {
-    svc.reject(new AdminUsersRequestError('nope', 403));
+    svc.reject(new AdminUsersRequestError(403, 'nope'));
     render(<NavigationFunnelPage />);
     fill('/a', '/b');
     fireEvent.click(run());
