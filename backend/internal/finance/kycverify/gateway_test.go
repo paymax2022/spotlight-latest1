@@ -145,9 +145,9 @@ func TestGateResult(t *testing.T) {
 	if got := gateResult(provider.KycIDFacial, provider.KycCheckResult{Match: true, Confidence: 90, Terminal: true}, 70); got != provider.KycPassed {
 		t.Errorf("facial pass = %q, want PASSED", got)
 	}
-	// Facial, low positive confidence → REVIEW (never silent fail).
-	if got := gateResult(provider.KycIDFacial, provider.KycCheckResult{Match: true, Confidence: 40, Terminal: true}, 70); got != provider.KycReview {
-		t.Errorf("facial low = %q, want REVIEW", got)
+	// ADR-PR808: no REVIEW middle ground — a low-positive facial is a hard FAIL.
+	if got := gateResult(provider.KycIDFacial, provider.KycCheckResult{Match: true, Confidence: 40, Terminal: true}, 70); got != provider.KycFailed {
+		t.Errorf("facial low = %q, want FAILED (user retries)", got)
 	}
 	// ID number data-match trusts the adapter status.
 	if got := gateResult(provider.KycIDNumber, provider.KycCheckResult{Status: provider.KycPassed, Terminal: true}, 70); got != provider.KycPassed {

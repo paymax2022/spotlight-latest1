@@ -41,13 +41,17 @@ func TestResolveSession_PendingWhenIncomplete(t *testing.T) {
 	}
 }
 
-func TestResolveSession_ReviewWins(t *testing.T) {
+func TestResolveSession_LegacyReviewFailsClosed(t *testing.T) {
+	// ADR-PR808: verification is fully automated with no admin review surface.
+	// A legacy REVIEW check from before the policy flip resolves as TIER_FAILED
+	// so the user retries fresh, not NEEDS_REVIEW (which would wait on a
+	// human who no longer exists).
 	st := map[provider.KycCheckType]provider.KycCheckStatus{
 		provider.KycIDNumber: provider.KycPassed,
 		provider.KycIDFacial: provider.KycReview,
 	}
-	if got := ResolveSessionStatus(2, st); got != SessNeedsReview {
-		t.Fatalf("a REVIEW must force NEEDS_REVIEW, got %s", got)
+	if got := ResolveSessionStatus(2, st); got != SessTierFailed {
+		t.Fatalf("legacy REVIEW must resolve as TIER_FAILED, got %s", got)
 	}
 }
 
@@ -74,11 +78,15 @@ func TestResolveSession_NeverElevatesWithoutIDNumber(t *testing.T) {
 }
 
 func TestGateFacial(t *testing.T) {
+	// ADR-PR808: automated-only policy — there is no REVIEW middle ground.
 	if GateFacial(true, 85, 70) != provider.KycPassed {
 		t.Fatal("high-confidence match must PASS")
 	}
-	if GateFacial(true, 55, 70) != provider.KycReview {
-		t.Fatal("below-threshold positive must go to REVIEW, not fail")
+	if GateFacial(true, 55, 70) != provider.KycFailed {
+		t.Fatal("below-threshold positive must FAIL (user retries)")
+	}
+	if GateFacial(false, 95, 70) != provider.KycFailed {
+		t.Fatal("explicit non-match must FAIL even at high confidence")
 	}
 	if GateFacial(false, 0, 70) != provider.KycFailed {
 		t.Fatal("no signal must FAIL")

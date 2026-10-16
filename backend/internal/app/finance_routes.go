@@ -1112,13 +1112,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// the caller; per-route RBAC fail-closed.
 		kvAdmin := r.Group("/api/finance/admin/kyc")
 		kvAdmin.Use(mapsAuth()) // RequireAuthContext + mirror user_id
-		kvAdmin.GET("/review-queue", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.ReviewQueue)
-		kvAdmin.GET("/cases/:id", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.GetCase)
-		kvAdmin.POST("/cases/:id/approve", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.ApproveCase)
-		kvAdmin.POST("/cases/:id/reject", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.RejectCase)
+		// Review-queue / case / approve / reject / events were removed when
+		// verification became fully automated (ADR-PR808). Only operational
+		// config and the per-user snapshot are exposed to admin now.
 		kvAdmin.GET("/routing-rules", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.ListRoutingRules)
 		kvAdmin.PUT("/routing-rules/:check_type", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.UpdateRoutingRule)
-		kvAdmin.GET("/events", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.Events)
 		// Per-user KYC snapshot for the admin profile page (see kyc_user_snapshot.go).
 		kvAdmin.GET("/users/:id", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycUserSnapshotHandler(
 			func(ctx context.Context, id string) (int, string, error) {
