@@ -765,6 +765,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// pays on FX has a wider blast radius than working a queue. Registered
 	// independently of FeatureFXEnabled so the rate stays readable and correctable
 	// even while the customer-facing FX surface is switched off.
+	// SP-3a 9a: cross-border pricing admin (rate card, fee schedule with
+	// maker-checker, simulator, settings) under the same /fx admin prefix.
+	// Flag-gated (FEATURE_SPOTLIGHT_GLOBAL); mounts nothing when off.
+	mountPricingAdmin(r, &cfg, pool, rbac, mapsAuth(), nil)
+
 	if fxMarkupHandler != nil {
 		fxAdmin := r.Group("/api/finance/admin/fx")
 		fxAdmin.Use(mapsAuth()) // RequireAuthContext + mirror user_id
