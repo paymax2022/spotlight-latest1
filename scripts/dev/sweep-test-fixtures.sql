@@ -42,13 +42,40 @@ BEGIN
 
     -- 1. Marketplace fixture categories. Swept here as well as in the package's
     --    own TestMain so a developer gets a clean marketplace from one command.
-    DELETE FROM public.mkt_listings
-     WHERE category_id IN (SELECT id FROM public.mkt_categories
-                            WHERE slug LIKE 'remod-%' OR slug LIKE 'schema-%'
-                               OR slug LIKE 'test-cat-%' OR slug LIKE 'mkt-scope-%');
-    DELETE FROM public.mkt_categories
-     WHERE slug LIKE 'remod-%' OR slug LIKE 'schema-%'
-        OR slug LIKE 'test-cat-%' OR slug LIKE 'mkt-scope-%';
+    -- The slug set tracks the mkt_categories.slug prefix every live-DB suite seeds under:
+    --   'remod-%' / 'schema-%' / 'test-cat-%' / 'mkt-scope-%' from the discovery / listings tests,
+    --   'boost-test-%' from service_boost_live_db_test.go (seedBoostCategory). The boost suite
+    --   seeds a listing in that category + a mkt_boosts row + sometimes a thread/outbox event,
+    --   and the test's own Cleanup only deletes the listing and the category. A cancelled or
+    --   crashed run skips Cleanup entirely, so 51 rows named "Boost Test Category" showed up on
+    --   the marketplace landing screen; before this, the category delete even on a clean run
+    --   was blocked by the mkt_boosts FK on mkt_listings. Delete bottom-up so each FK is clear.
+    CREATE TEMP TABLE _mkt_sweep_cats AS
+      SELECT id FROM public.mkt_categories
+       WHERE slug LIKE 'remod-%' OR slug LIKE 'schema-%'
+          OR slug LIKE 'test-cat-%' OR slug LIKE 'mkt-scope-%'
+          OR slug LIKE 'boost-test-%';
+    CREATE TEMP TABLE _mkt_sweep_listings AS
+      SELECT id FROM public.mkt_listings WHERE category_id IN (SELECT id FROM _mkt_sweep_cats);
+    CREATE TEMP TABLE _mkt_sweep_threads AS
+      SELECT id FROM public.mkt_threads WHERE listing_id IN (SELECT id FROM _mkt_sweep_listings);
+
+    DELETE FROM public.mkt_messages        WHERE thread_id  IN (SELECT id FROM _mkt_sweep_threads);
+    DELETE FROM public.mkt_deal_reviews    WHERE thread_id  IN (SELECT id FROM _mkt_sweep_threads);
+    DELETE FROM public.mkt_threads         WHERE id         IN (SELECT id FROM _mkt_sweep_threads);
+    DELETE FROM public.mkt_boosts          WHERE listing_id IN (SELECT id FROM _mkt_sweep_listings);
+    DELETE FROM public.mkt_listings_outbox WHERE listing_id IN (SELECT id FROM _mkt_sweep_listings);
+    DELETE FROM public.mkt_listing_media   WHERE listing_id IN (SELECT id FROM _mkt_sweep_listings);
+    DELETE FROM public.mkt_offers          WHERE listing_id IN (SELECT id FROM _mkt_sweep_listings);
+    DELETE FROM public.mkt_orders          WHERE listing_id IN (SELECT id FROM _mkt_sweep_listings);
+    DELETE FROM public.mkt_saved_items     WHERE listing_id IN (SELECT id FROM _mkt_sweep_listings);
+    DELETE FROM public.mkt_contact_reveals WHERE listing_id IN (SELECT id FROM _mkt_sweep_listings);
+    DELETE FROM public.mkt_listings        WHERE id         IN (SELECT id FROM _mkt_sweep_listings);
+    DELETE FROM public.mkt_categories      WHERE id         IN (SELECT id FROM _mkt_sweep_cats);
+
+    DROP TABLE _mkt_sweep_threads;
+    DROP TABLE _mkt_sweep_listings;
+    DROP TABLE _mkt_sweep_cats;
 
     -- 2. Unwind the non-cascading referrers of auth.users, scoped to seed users.
     --    Repeated because those tables also reference each other: deleting from
