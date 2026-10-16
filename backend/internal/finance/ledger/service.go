@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 
 	"spotlight/backend/go-common/ginutil"
@@ -451,7 +453,46 @@ const (
 	// migration 20271028000000. Auto-created on first GetOrCreateStandingAccount.
 	AccountCryptoClearing   AccountType = "crypto_clearing"
 	AccountTradingFeeIncome AccountType = "trading_fee_income"
+
+	// Spotlight Global (cross-border) revenue/pricing accounts — SP-3a, spec §6.
+	// Admitted by the ledger_accounts CHECK widened in migration
+	// 20271043000000. Standing accounts are unique on (type), so the two
+	// parameterised accounts carry their parameter inside the type string; the
+	// CHECK admits them only by strict regex, and only the builders below
+	// (PlatformFeeAccount, FeesUnsweptAccount) should mint them.
+	AccountRevenueFxMarkup          AccountType = "revenue:fx_markup"
+	AccountReceivableVertoMarkup    AccountType = "receivable:verto_markup"
+	AccountExpenseProviderFees      AccountType = "expense:provider_fees"
+	AccountTaxPayableVat            AccountType = "tax_payable:vat"
+	AccountSuspenseUnmatchedInbound AccountType = "suspense:unmatched_inbound"
 )
+
+var (
+	platformFeeServiceRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	feesUnsweptCcyRe     = regexp.MustCompile(`^[A-Z]{3}$`)
+)
+
+// PlatformFeeAccount returns the per-service platform-fee revenue account type
+// `revenue:platform_fee:{service}`. service must match ^[a-z][a-z0-9_]{0,31}$.
+func PlatformFeeAccount(service string) (AccountType, error) {
+	if !platformFeeServiceRe.MatchString(service) {
+		return "", fmt.Errorf("ledger: invalid platform-fee service %q", service)
+	}
+	return AccountType("revenue:platform_fee:" + service), nil
+}
+
+// FeesUnsweptAccount returns the per-company, per-currency account type
+// `fees_unswept:{companyID}:{ccy}` (fees accrued but not yet swept). companyID
+// must be a canonical lowercase UUID; ccy a 3-letter uppercase code.
+func FeesUnsweptAccount(companyID, ccy string) (AccountType, error) {
+	if u, err := uuid.Parse(companyID); err != nil || u.String() != companyID {
+		return "", fmt.Errorf("ledger: invalid fees_unswept company id %q", companyID)
+	}
+	if !feesUnsweptCcyRe.MatchString(ccy) {
+		return "", fmt.Errorf("ledger: invalid fees_unswept currency %q", ccy)
+	}
+	return AccountType("fees_unswept:" + companyID + ":" + ccy), nil
+}
 
 // Account is a logical wallet / standing account in the ledger.
 type Account struct {
