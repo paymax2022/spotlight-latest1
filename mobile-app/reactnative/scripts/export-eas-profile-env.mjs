@@ -42,6 +42,13 @@ for (const key of ['EXPO_PUBLIC_API_BASE_URL', 'EXPO_PUBLIC_SUPABASE_URL']) {
   }
 }
 
+// The runtime Server switch (EXPO_PUBLIC_LOCAL_*) holds localhost templates and
+// must never ship in a production bundle, which also ignores it at runtime.
+if (/^(production|prod)$/i.test(String(values.EXPO_PUBLIC_APP_ENV).trim())) {
+  const local = publicEnv.map(([key]) => key).filter((key) => key.startsWith('EXPO_PUBLIC_LOCAL_'));
+  if (local.length) fail(`production profile "${profile}" sets ${local.join(', ')}; the Local server switch is non-production only`);
+}
+
 for (const [key, value] of publicEnv) {
   if (/[\r\n]/.test(String(value))) fail(`${key} contains a newline`);
   console.log(`${key}=${value}`);

@@ -3,9 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { deleteSecureItem, getSecureItem, setSecureItem } from '@/lib/secureStorage';
 import { getDevUrl } from '@/lib/devUrl';
+import { getActiveServerOverride } from '@/lib/serverProfileStore';
 
-const supabaseUrl = getDevUrl(process.env.EXPO_PUBLIC_SUPABASE_URL || '');
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+// A Local server override swaps the URL AND the anon key together: local
+// Supabase mints its own tokens, so a local API must never meet the remote one.
+const serverOverride = getActiveServerOverride();
+const supabaseUrl = getDevUrl(serverOverride?.supabaseUrl ?? (process.env.EXPO_PUBLIC_SUPABASE_URL || ''));
+const supabaseAnonKey = serverOverride?.supabaseAnonKey ?? (process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '');
 
 let client: SupabaseClient | null = null;
 
