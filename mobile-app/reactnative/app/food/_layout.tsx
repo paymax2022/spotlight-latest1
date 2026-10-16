@@ -3,7 +3,7 @@ import { Stack } from 'expo-router';
 import { Colors } from '@/constants/tokens';
 import { useCartSync } from '@/features/food/useCartSync';
 import ModuleTabBar from '@/components/ModuleTabBar';
-import { FOOD_TABS } from '@/constants/moduleTabs';
+import { FOOD_TABS, RESTAURANT_TABS } from '@/constants/moduleTabs';
 
 export default function FoodLayout() {
   // Sync cart with server and localStorage on mount and on changes
@@ -34,10 +34,12 @@ export default function FoodLayout() {
         <Stack.Screen name="restaurant/index" />
         <Stack.Screen name="restaurant/order/[orderId]" options={{ gestureEnabled: false }} />
       </Stack>
-      {/* Customer discovery/orders only — draws nothing on the rider and
-          restaurant-owner consoles, which are different personas with their
-          own navigation, and nothing on pushed detail/flow screens. */}
+      {/* Two bars, one per persona. Each draws only on its own tabs' paths, which
+          never overlap, so at most one is ever visible: customer discovery/orders,
+          or the restaurant-owner console (Orders · Earnings · Manage). Neither
+          draws on the rider console or on pushed detail/flow screens. */}
       <ModuleTabBar tabs={FOOD_TABS} />
+      <ModuleTabBar tabs={RESTAURANT_TABS} />
     </View>
   );
 }
