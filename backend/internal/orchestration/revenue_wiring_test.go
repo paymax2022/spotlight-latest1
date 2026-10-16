@@ -91,11 +91,13 @@ func TestExecuteConversion_WithoutRecognizer_PostsNothingToCommission(t *testing
 	}
 }
 
-func TestExecuteConversion_RecognisesSpreadToCommissionOnce(t *testing.T) {
+func TestExecuteConversion_AccruesAtExecute_CommissionOnlyAtSettlement(t *testing.T) {
 	ctx := context.Background()
 	clock := time.Now()
 	com := &wiringCommission{}
-	svc, store := wiredService(&clock, revenue.NewRecognizer(newWiringLedger(), com, revenue.NewMemStore()))
+	wl := newWiringLedger()
+	rec := revenue.NewRecognizer(wl, com, revenue.NewMemStore())
+	svc, store := wiredService(&clock, rec)
 	_ = svc.SeedBalance(ctx, "c1", "USD", 1_000_00)
 	q, _ := svc.CreateQuote(ctx, "c1", "retail", QuoteRequest{Source: "USD", Destination: "NGN", Amount: 100_00, Intent: IntentConversion, Lock: true})
 	usdBefore, _ := store.Balance(ctx, "c1", "USD")
@@ -104,11 +106,24 @@ func TestExecuteConversion_RecognisesSpreadToCommissionOnce(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	// replay: same result, still ONE commission row
+	// replay: same result
 	if _, e := svc.ExecuteConversion(ctx, "c1", "i1", ConversionRequest{QuoteID: q.ID}); e != nil {
 		t.Fatal(e)
 	}
 	key := "cb:" + conv.Reference + ":fx_spread:convert"
+	// Execute only ACCRUES (receivable/revenue entries); commission is untouched.
+	if _, ok := wl.entries[key+":accrue:debit"]; !ok {
+		t.Fatal("spread accrual journal missing after execute")
+	}
+	if len(com.rows) != 0 {
+		t.Fatalf("commission must not be posted at execute, got %v", com.rows)
+	}
+	// Terminal success (Verto statement) rolls it up exactly once.
+	for i := 0; i < 2; i++ {
+		if err := rec.MarkSettled(ctx, conv.Reference, revenue.ComponentFXSpread, revenue.Settlement{Reference: "stmt"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	row := com.rows[key]
 	if row == nil || len(com.rows) != 1 {
 		t.Fatalf("want one commission row %s, got %v", key, com.rows)

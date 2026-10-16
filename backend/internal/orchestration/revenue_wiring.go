@@ -9,7 +9,8 @@ import (
 )
 
 // SpreadRecognizer recognises the FX spread of an executed trade (SP-3a Task 4):
-// native-currency line + receivable accrual + NGN roll-up to commission.
+// native-currency line + receivable accrual. The NGN commission roll-up happens
+// later, at settlement (revenue.Recognizer.MarkSettled), not at execute.
 // *revenue.Recognizer satisfies it. Optional: nil leaves the pre-Task-4
 // behaviour (the orch book posts `paymax_spread`, nothing reaches commission).
 type SpreadRecognizer interface {

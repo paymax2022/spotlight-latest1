@@ -41,6 +41,11 @@ func NewService(repo *Repository, ledgerSvc ledgerService) *Service {
 	return &Service{repo: repo, ledger: ledgerSvc}
 }
 
+// HasLedger reports whether this service posts commission revenue to the ledger.
+// Read-only; lets a caller that has ALREADY recognised the revenue elsewhere
+// (cross-border revenue) assert it was given the nil-ledger form.
+func (s *Service) HasLedger() bool { return s.ledger != nil }
+
 // SetReferralHook wires the referral purchase-commission-split engine in after
 // construction (main.go builds ledgerSvc/commissionSvc before the referral
 // engine exists — see SetResolvers on ledger.Service for the same reason).

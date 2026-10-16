@@ -100,6 +100,7 @@ type Record struct {
 	NativeMinor int64  // revenue in native minor units (spread + fixed)
 	Rate        Rate   // native -> NGN kobo used for the roll-up
 	NGNMinor    int64  // NGN-equivalent revenue (main ledger + commission)
+	GrossNGN    int64  // NGN-equivalent trade amount (commission gross)
 
 	AccrueKey     string // base ledger key of the accrual journal (spread)
 	CommissionKey string // cb:{transfer}:{component}:{service}
