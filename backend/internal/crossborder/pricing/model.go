@@ -199,6 +199,7 @@ var (
 	ErrInvalidSchedule = errors.New("pricing: invalid fee schedule")
 	ErrNoRule          = errors.New("pricing: no applicable fee rule")
 	ErrAmbiguousRule   = errors.New("pricing: ambiguous fee rules at equal precedence")
+	ErrAmbiguousCost   = errors.New("pricing: ambiguous L0 cost rows at equal precedence")
 	ErrNoCost          = errors.New("pricing: no L0 cost entry")
 	ErrBelowCostFloor  = errors.New("pricing: fee+spread below L0 cost plus floor margin")
 	ErrAboveHardCap    = errors.New("pricing: fee+spread above hard cap")

@@ -31,10 +31,11 @@ type RateCard struct {
 	Entries []CostEntry
 }
 
-// lookup picks the entry matching the most selector fields (ties: first wins,
-// since cost entries are config-reviewed; a missing entry is an error).
-func (rc RateCard) lookup(service, corridor, rail, currency string) (CostEntry, bool) {
-	best, bestScore, found := CostEntry{}, -1, false
+// lookup picks the entry matching the most selector fields. An equal-score tie
+// between differing rows is ambiguous and reported as such: silently choosing
+// one could pick the cheaper cost and weaken the below-cost floor guardrail.
+func (rc RateCard) lookup(service, corridor, rail, currency string) (best CostEntry, found, ambiguous bool) {
+	bestScore := -1
 	for _, e := range rc.Entries {
 		score, ok := 0, true
 		for _, p := range [][2]string{
@@ -49,11 +50,15 @@ func (rc RateCard) lookup(service, corridor, rail, currency string) (CostEntry, 
 			}
 			score++
 		}
-		if ok && score > bestScore {
-			best, bestScore, found = e, score, true
+		switch {
+		case !ok:
+		case score > bestScore:
+			best, bestScore, found, ambiguous = e, score, true, false
+		case score == bestScore && e != best:
+			ambiguous = true
 		}
 	}
-	return best, found
+	return best, found, ambiguous
 }
 
 func (e CostEntry) compute(amount int64) (int64, error) {
@@ -298,7 +303,10 @@ func (rs *Resolver) Resolve(ctx context.Context, in PricingInput) (Decision, err
 	if err != nil {
 		return Decision{}, err
 	}
-	cost, ok := rs.costs.lookup(in.Service, in.Corridor, in.Rail, in.Amount.Currency)
+	cost, ok, ambiguousCost := rs.costs.lookup(in.Service, in.Corridor, in.Rail, in.Amount.Currency)
+	if ambiguousCost {
+		return Decision{}, fmt.Errorf("%w: %s %s %s", ErrAmbiguousCost, in.Service, in.Corridor, in.Rail)
+	}
 	if !ok {
 		return Decision{}, fmt.Errorf("%w: %s %s %s", ErrNoCost, in.Service, in.Corridor, in.Rail)
 	}
