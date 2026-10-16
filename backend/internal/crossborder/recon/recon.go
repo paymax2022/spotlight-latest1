@@ -72,6 +72,14 @@ type SpreadLeg struct {
 	NoNGNLeg bool
 }
 
+// SETTLED-ONLY SYMMETRY CONTRACT (ReconCommissionVsLedger): commission rolls up
+// at settlement, so BOTH CommissionEntries and LedgerRevenue MUST return
+// settled-only rows. If either side includes accrued/in-flight transfers, every
+// in-flight transfer shows as a false high-severity missing-in-ledger /
+// missing-in-commission break. A partially-reversed settled revenue must be
+// reported net, matching the commission amount. Task 9's real readers must
+// honour this.
+//
 // Source reads both sides of every comparison. Provider-side methods are the
 // modeled Verto data. Every method is read-only.
 type Source interface {
@@ -81,10 +89,12 @@ type Source interface {
 	ProviderTransfers(ctx context.Context) ([]Item, error) // Verto trades/payouts
 	ExpectedMarkup(ctx context.Context) ([]Item, error)    // from fxMarkupPerc / PRPreFXMarkupRate / amounts
 	StatementMarkup(ctx context.Context) ([]Item, error)   // Verto-reported markup per statement
-	CommissionEntries(ctx context.Context) ([]Item, error) // NGN commission registry, keyed by transfer
-	// LedgerRevenue is the SETTLED revenue per transfer in the ledger revenue
-	// accounts (commission rolls up at settlement, so accrued-only revenue is
-	// not expected to have a commission row yet).
+	// CommissionEntries: NGN commission registry keyed by transfer. SETTLED-ONLY
+	// (see the symmetry contract above); must match LedgerRevenue's scope.
+	CommissionEntries(ctx context.Context) ([]Item, error)
+	// LedgerRevenue is the SETTLED-ONLY revenue per transfer in the ledger
+	// revenue accounts, net of partial reversals (commission rolls up at
+	// settlement, so accrued-only revenue has no commission row yet).
 	LedgerRevenue(ctx context.Context) ([]Item, error)
 	SpreadLegs(ctx context.Context) ([]SpreadLeg, error)
 }
@@ -183,7 +193,7 @@ func index(items []Item) (first map[string]Item, dups map[string]int) {
 // compare diffs A (ours) against B (other). Output is deterministic (sorted by
 // input order of A then B).
 func compare(check string, a, b []Item, l labels) []Break {
-	fa, da := index(a)
+	_, da := index(a)
 	fb, db := index(b)
 	var out []Break
 	add := func(t BreakType, ra, rb string, delta int64, detail string) {
@@ -203,8 +213,13 @@ func compare(check string, a, b []Item, l labels) []Break {
 			add(l.notInB, it.Ref, "", -it.Amount, fmt.Sprintf("%s (%d) has no counterpart", it.Ref, it.Amount))
 			continue
 		}
-		if o.Amount != it.Amount {
-			add(AmountMismatch, it.Ref, o.Ref, o.Amount-it.Amount, fmt.Sprintf("ours %d vs other %d", it.Amount, o.Amount))
+		curDiff := !strings.EqualFold(o.Currency, it.Currency)
+		if o.Amount != it.Amount || curDiff {
+			detail := fmt.Sprintf("ours %d vs other %d", it.Amount, o.Amount)
+			if curDiff {
+				detail += fmt.Sprintf("; currency ours %q vs other %q", it.Currency, o.Currency)
+			}
+			add(AmountMismatch, it.Ref, o.Ref, o.Amount-it.Amount, detail)
 		}
 		if !strings.EqualFold(o.Status, it.Status) {
 			add(StatusMismatch, it.Ref, o.Ref, 0, fmt.Sprintf("ours %q vs other %q", it.Status, o.Status))
@@ -220,7 +235,6 @@ func compare(check string, a, b []Item, l labels) []Break {
 		}
 		add(l.notInA, "", it.Ref, it.Amount, fmt.Sprintf("%s (%d) has no counterpart", it.Ref, it.Amount))
 	}
-	_ = fa
 	return out
 }
 

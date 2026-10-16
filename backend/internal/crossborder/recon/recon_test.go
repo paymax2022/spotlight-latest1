@@ -214,3 +214,15 @@ func TestRecognitionGapRedrive(t *testing.T) {
 		t.Fatalf("unverified redrive must break: %+v", rep3)
 	}
 }
+
+func TestCurrencyMismatchIsABreak(t *testing.T) {
+	f := &fakeSrc{
+		ourBal:  []Item{{Ref: "k1", Amount: 10, Currency: "USD"}, {Ref: "k2", Amount: 10, Currency: "NGN"}},
+		provBal: []Item{{Ref: "k1", Amount: 10, Currency: "EUR"}, {Ref: "k2", Amount: 10, Currency: "ngn"}},
+	}
+	r, _ := newJob(f)
+	rep, _ := r.ReconLedgerVsProvider(context.Background())
+	if len(rep.Breaks) != 1 || rep.Breaks[0].Type != AmountMismatch || rep.Breaks[0].RefA != "k1" {
+		t.Fatalf("got %+v", rep.Breaks)
+	}
+}
