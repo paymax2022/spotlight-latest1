@@ -21,6 +21,8 @@ import { useRideEstimate, useRideRequest, useRideSettings } from '@/features/mob
 import * as mobAPI from '@/features/mobility/api/mobility.api';
 import { useCurrentLocation } from '@/features/location/useCurrentLocation';
 import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
+import { isEmailRequiredError } from '@/features/payments/billingEmail';
+import { cardInitFailure } from '@/features/mobility/utils/cardInitError';
 import { SERVICE_TYPES, RIDE_NEGOTIATION_ENABLED } from '@/features/mobility/constants/mobility.constants';
 import { toMobilityError, isNoDriverError, isFareBoundError, fareBoundMessage, formatNairaWhole, newIdempotencyKey } from '@/features/mobility/utils/mobilityFormatters';
 import type { ServiceType, PricingMode, PaymentMethod, Place, RideEstimate, Trip } from '@/features/mobility/types/mobility.types';
@@ -260,23 +262,35 @@ export default function EstimateScreen() {
       ...(pricingMode === 'instant'
         ? {
             onCard: async () => {
+              // start() swallows an initialize failure (it records it on its own
+              // state and resolves), so the sheet would stay on "awaiting" and the
+              // button would spin forever. Capture it and rethrow so the sheet
+              // leaves that state and shows the error.
+              let initFailure: unknown;
               await paystackCheckout.start({
                 domain: 'ride',
                 initialize: async ({ email }) => {
-                  const r = await mobAPI.initiateRidePaystack({
-                    email, // typed at checkout after the server answered email_required; else the registered email is used
-                    pickup,
-                    dest,
-                    serviceType,
-                    idempotencyKey: newIdempotencyKey('ride-paystack'),
-                  });
-                  if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
-                  return { authorizationUrl: r.authorizationUrl, reference: r.reference };
+                  try {
+                    const r = await mobAPI.initiateRidePaystack({
+                      email, // typed at checkout after the server answered email_required; else the registered email is used
+                      pickup,
+                      dest,
+                      serviceType,
+                      idempotencyKey: newIdempotencyKey('ride-paystack'),
+                    });
+                    if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+                    return { authorizationUrl: r.authorizationUrl, reference: r.reference };
+                  } catch (e) {
+                    const friendly = cardInitFailure(e);
+                    if (!isEmailRequiredError(friendly)) initFailure = friendly;
+                    throw friendly;
+                  }
                 },
                 onResolved: (res) => {
                   router.replace(`/mobility/paystack/${encodeURIComponent(res.reference)}` as never);
                 },
               });
+              if (initFailure) throw initFailure;
             },
           }
         : {}),
