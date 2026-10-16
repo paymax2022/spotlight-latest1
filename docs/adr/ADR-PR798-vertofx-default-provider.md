@@ -1,4 +1,4 @@
-# ADR-PR<pr-number> — VertoFX is the default FX provider via preferred-with-score-fallback routing
+# ADR-PR798 — VertoFX is the default FX provider via preferred-with-score-fallback routing
 
 - **Status:** Proposed
 - **Date:** 2026-10-16
