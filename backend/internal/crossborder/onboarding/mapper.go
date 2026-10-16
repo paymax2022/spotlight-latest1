@@ -65,7 +65,14 @@ func BuildOnboardingData(subjectType SubjectType, profile Profile, kyc KYCView, 
 }
 
 func soleProp(profile Profile, kyc KYCView) (PayloadShareholder, PayloadCompany, error) {
-	name := strings.TrimSpace(kyc.FirstName + " " + kyc.LastName)
+	// Trim before validating so whitespace-only values fail closed.
+	kyc.FirstName = strings.TrimSpace(kyc.FirstName)
+	kyc.LastName = strings.TrimSpace(kyc.LastName)
+	kyc.DateOfBirth = strings.TrimSpace(kyc.DateOfBirth)
+	kyc.Nationality = strings.TrimSpace(kyc.Nationality)
+	profile.Email = strings.TrimSpace(profile.Email)
+	profile.Phone = strings.TrimSpace(profile.Phone)
+	name := kyc.FirstName + " " + kyc.LastName
 	switch {
 	case kyc.FirstName == "" || kyc.LastName == "":
 		return PayloadShareholder{}, PayloadCompany{}, errors.New("onboarding: KYC legal name is required")
@@ -102,10 +109,15 @@ func soleProp(profile Profile, kyc KYCView) (PayloadShareholder, PayloadCompany,
 }
 
 func business(profile Profile, extras ActivateExtras) (PayloadCompany, []PayloadShareholder, error) {
-	b := profile.Business
-	if b == nil {
+	if profile.Business == nil {
 		return PayloadCompany{}, nil, errors.New("onboarding: business details are required")
 	}
+	bc := *profile.Business
+	b := &bc
+	b.LegalName = strings.TrimSpace(b.LegalName)
+	b.RegistrationNumber = strings.TrimSpace(b.RegistrationNumber)
+	b.CompanyType = strings.TrimSpace(b.CompanyType)
+	b.Country = strings.TrimSpace(b.Country)
 	switch {
 	case b.LegalName == "" || b.RegistrationNumber == "" || b.CompanyType == "" || b.Country == "":
 		return PayloadCompany{}, nil, errors.New("onboarding: company name, registration number, type and country are required")
@@ -121,6 +133,14 @@ func business(profile Profile, extras ActivateExtras) (PayloadCompany, []Payload
 	officer := false
 	shs := make([]PayloadShareholder, 0, len(b.Shareholders))
 	for i, in := range b.Shareholders {
+		in.Name = strings.TrimSpace(in.Name)
+		in.Email = strings.TrimSpace(in.Email)
+		in.Phone = strings.TrimSpace(in.Phone)
+		in.DateOfBirth = strings.TrimSpace(in.DateOfBirth)
+		in.Nationality = strings.TrimSpace(in.Nationality)
+		in.RegistrationNo = strings.TrimSpace(in.RegistrationNo)
+		in.Country = strings.TrimSpace(in.Country)
+		in.Role = strings.TrimSpace(in.Role)
 		if in.OwnershipBps <= 0 || in.OwnershipBps > FullOwnershipBps {
 			return PayloadCompany{}, nil, fmt.Errorf("onboarding: shareholder %d ownership out of range", i)
 		}
@@ -139,6 +159,9 @@ func business(profile Profile, extras ActivateExtras) (PayloadCompany, []Payload
 				return PayloadCompany{}, nil, fmt.Errorf("onboarding: shareholder %d requires full identity data", i)
 			}
 			if in.ControllingOfficer {
+				if in.Role == "" {
+					return PayloadCompany{}, nil, fmt.Errorf("onboarding: shareholder %d: a controlling officer requires a role", i)
+				}
 				officer = true
 			}
 		case ShareholderCorporate:

@@ -2,6 +2,7 @@ package onboarding
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -89,7 +90,7 @@ type Address struct {
 }
 
 func (a Address) complete() bool {
-	return a.Line1 != "" && a.City != "" && a.Country != ""
+	return strings.TrimSpace(a.Line1) != "" && strings.TrimSpace(a.City) != "" && strings.TrimSpace(a.Country) != ""
 }
 
 // KYCView is the minimal read view of Spotlight KYC the mapper needs.

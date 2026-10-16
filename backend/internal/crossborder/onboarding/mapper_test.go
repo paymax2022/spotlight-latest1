@@ -148,3 +148,63 @@ func TestBuildOnboardingData_BusinessFailsClosed(t *testing.T) {
 		t.Fatal("expected error: unknown subject")
 	}
 }
+
+func TestBuildOnboardingData_WhitespaceOnlyRejected(t *testing.T) {
+	p := Profile{Email: "ada@example.com", Phone: "+234"}
+	k := testKYC()
+	k.FirstName = "   "
+	if _, err := BuildOnboardingData(SubjectIndividual, p, k, testExtras()); err == nil {
+		t.Fatal("expected error: whitespace-only first name")
+	}
+	p2 := Profile{Email: "  ", Phone: "+234"}
+	if _, err := BuildOnboardingData(SubjectIndividual, p2, testKYC(), testExtras()); err == nil {
+		t.Fatal("expected error: whitespace-only email")
+	}
+	reg := Address{Line1: "5 Broad St", City: "Lagos", Country: "NG"}
+	bp := Profile{Business: &BusinessProfile{
+		LegalName: "Acme", RegistrationNumber: "RC1", CompanyType: "LTD", Country: "NG",
+		RegisteredAddress: reg, OperatingAddress: reg,
+		Shareholders: []ShareholderInput{{Type: ShareholderIndividual, Name: "  ", Email: "b@x", Phone: "1",
+			DateOfBirth: "1980-01-01", Nationality: "NG", Address: reg, OwnershipBps: 10000, ControllingOfficer: true, Role: RoleDirector}},
+	}}
+	if _, err := BuildOnboardingData(SubjectBusiness, bp, KYCView{}, testExtras()); err == nil {
+		t.Fatal("expected error: whitespace-only shareholder name")
+	}
+}
+
+func TestBuildOnboardingData_BusinessShareholderRules(t *testing.T) {
+	reg := Address{Line1: "5 Broad St", City: "Lagos", Country: "NG"}
+	officer := ShareholderInput{Type: ShareholderIndividual, Name: "B", Email: "b@x", Phone: "1",
+		DateOfBirth: "1980-01-01", Nationality: "NG", Address: reg, OwnershipBps: 5000, ControllingOfficer: true, Role: RoleDirector}
+	mk := func(extra ...ShareholderInput) Profile {
+		return Profile{Business: &BusinessProfile{
+			LegalName: "Acme", RegistrationNumber: "RC1", CompanyType: "LTD", Country: "NG",
+			RegisteredAddress: reg, OperatingAddress: reg,
+			Shareholders: append([]ShareholderInput{officer}, extra...),
+		}}
+	}
+	run := func(p Profile) error {
+		_, err := BuildOnboardingData(SubjectBusiness, p, KYCView{}, testExtras())
+		return err
+	}
+	if err := run(mk(ShareholderInput{Type: ShareholderCorporate, Name: "H", RegistrationNo: "R", Country: "GB", OwnershipBps: 1000, ControllingOfficer: true})); err == nil {
+		t.Fatal("corporate controlling officer must be rejected")
+	}
+	if err := run(mk(
+		ShareholderInput{Type: ShareholderCorporate, Name: "H1", RegistrationNo: "R", Country: "GB", OwnershipBps: 3000},
+		ShareholderInput{Type: ShareholderCorporate, Name: "H2", RegistrationNo: "R2", Country: "GB", OwnershipBps: 2001},
+	)); err == nil {
+		t.Fatal("multi-holder total > 100% must be rejected")
+	}
+	if err := run(mk(ShareholderInput{Type: "TRUST", Name: "T", OwnershipBps: 1000})); err == nil {
+		t.Fatal("unknown shareholder type must be rejected")
+	}
+	noRole := mk()
+	noRole.Business.Shareholders[0].Role = "  "
+	if err := run(noRole); err == nil {
+		t.Fatal("controlling officer without role must be rejected")
+	}
+	if err := run(mk(ShareholderInput{Type: ShareholderIndividual, Name: "Minor Holder", OwnershipBps: 1000})); err != nil {
+		t.Fatalf("sub-25%% name-only non-officer should pass: %v", err)
+	}
+}
