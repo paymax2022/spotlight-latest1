@@ -33,6 +33,16 @@ export interface AdminTransactionRow {
   user_name: string | null;
   user_email: string | null;
   user_phone: string | null;
+  // Set only on a user's purchase (DEBIT) row in the list when it earned the payer's
+  // referrer a commission; null/absent otherwise.
+  referral_id?: string | null;
+  /** Net commission rewarded to the referrer, integer kobo (a reversed reward nets 0). */
+  referral_commission_kobo?: number | null;
+  referral_commission_status?: 'CREDITED' | 'PENDING' | 'REVERSED' | null;
+  referral_reward_count?: number | null;
+  referrer_id?: string | null;
+  referrer_name?: string | null;
+  referrer_code?: string | null;
 }
 
 export interface AdminTransactionDetail extends AdminTransactionRow {

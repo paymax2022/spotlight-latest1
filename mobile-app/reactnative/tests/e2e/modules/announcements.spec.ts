@@ -4,7 +4,7 @@ import { mockAmbientRequests } from '../helpers/common';
 
 /**
  * Announcements hub (estate notices). The feature ships an in-app mock layer
- * (EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK defaults true), so the feed renders with
+ * (EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK is pinned true in playwright.config.ts), so the feed renders with
  * no endpoint mocks — items come from the seeded list in
  * src/features/announcements/api.ts.
  */

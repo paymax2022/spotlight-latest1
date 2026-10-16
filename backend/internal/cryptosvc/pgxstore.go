@@ -109,6 +109,60 @@ func (s *PGStore) StaleSwaps(ctx context.Context, state cryptoprov.SwapState, ol
 	return out, rows.Err()
 }
 
+// ListByState backs the admin needs_review queue: all swaps in state, oldest parked
+// first (updated_at asc, id as a stable tiebreak), paginated. Read-only; no row locks.
+func (s *PGStore) ListByState(ctx context.Context, state cryptoprov.SwapState, limit, offset int) ([]SwapRecord, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+swapCols+` FROM public.crypto_swaps WHERE status = $1 ORDER BY updated_at, id LIMIT $2 OFFSET $3`,
+		string(state), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SwapRecord
+	for rows.Next() {
+		r, err := scanSwap(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// Backlog rolls the open swaps up by state in one read-only statement; no swap contents leave it.
+func (s *PGStore) Backlog(ctx context.Context) ([]BacklogState, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT status, count(*), COALESCE(sum(ngn_kobo + fee_kobo), 0)::bigint, min(updated_at)
+		  FROM public.crypto_swaps
+		 WHERE status IN ('quoted','confirming','processing','needs_review')
+		 GROUP BY status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BacklogState
+	for rows.Next() {
+		var b BacklogState
+		var st string
+		if err := rows.Scan(&st, &b.Count, &b.HeldKobo, &b.OldestUpdatedAt); err != nil {
+			return nil, err
+		}
+		b.State = cryptoprov.SwapState(st)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// SwapByIDAny reads a swap by id with no user scoping, for the admin resolution path.
+func (s *PGStore) SwapByIDAny(ctx context.Context, id string) (SwapRecord, bool, error) {
+	r, err := scanSwap(s.pool.QueryRow(ctx, `SELECT `+swapCols+` FROM public.crypto_swaps WHERE id = $1::uuid`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SwapRecord{}, false, nil
+	}
+	return r, err == nil, err
+}
+
 func (s *PGStore) TouchSwap(ctx context.Context, id string, state cryptoprov.SwapState) error {
 	_, err := s.pool.Exec(ctx, `UPDATE public.crypto_swaps SET updated_at = now() WHERE id = $1::uuid AND status = $2`, id, string(state))
 	return err

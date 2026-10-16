@@ -238,9 +238,85 @@ const REASSIGNMENTS: Reassignment[] = [
   },
 ];
 
-export async function getReferralDashboard(): Promise<ReferralDashboard> {
-  if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(DASHBOARD)); }
-  return getJson<ReferralDashboard>('/dashboard');
+// The Overview's figures, assembled from the endpoints that exist today. There is
+// no aggregate /dashboard route on the backend. A figure whose source is not
+// computed yet (GMV, fraud rate, activation, trend, activity) is simply absent
+// here, and the page says so. A source that fails to load is listed in
+// failedSources, so the page can say what is missing rather than go blank.
+export interface DashboardFigures {
+  kFactor: number | null;            // /analytics/k-factor (excludes house signups)
+  referrers: number | null;          // /analytics/k-factor
+  referredSignups: number | null;    // /analytics/k-factor (house excluded)
+  houseSignups: number | null;       // /analytics/k-factor
+  referralCacKobo: number | null;    // /analytics/cac
+  paidCacKobo: number | null;        // /analytics/cac — benchmark; 0 = none set
+  rewardSpentKobo: number | null;    // /finance/reward-to-ltv
+  rewardToLtv: number | null;        // /finance/reward-to-ltv, as a fraction
+  globalBudgetKobo: number | null;   // /finance/budgets — the active global budget
+  openAlerts: number | null;         // /risk/dashboard
+  activeBlocks: number | null;       // /risk/dashboard
+  failedSources: string[];
+}
+
+interface KFactorBody { k_factor?: { referrers: number; referred_signups: number; house_signups: number; k_factor: number } }
+interface CacBody { cac?: { referral_cac_kobo: number; paid_cac_kobo: number } }
+interface RewardToLtvBody { reward_to_ltv?: { reward_spent_kobo: number; ratio_bps: number } }
+interface BudgetsBody { budgets?: { scope: string; budget_kobo: number; spent_kobo: number; active: boolean }[] }
+interface RiskBody { dashboard?: { open_alerts: number; active_blocks: number } }
+
+export async function getReferralDashboardFigures(): Promise<DashboardFigures> {
+  if (USE_MOCK) {
+    await delay();
+    return {
+      kFactor: DASHBOARD.k_factor,
+      referrers: null,
+      referredSignups: DASHBOARD.referred_signups,
+      houseSignups: DASHBOARD.house_signups,
+      referralCacKobo: DASHBOARD.referral_cac_kobo,
+      paidCacKobo: DASHBOARD.paid_cac_kobo,
+      rewardSpentKobo: DASHBOARD.reward_burn_kobo,
+      rewardToLtv: DASHBOARD.reward_to_ltv_ratio,
+      globalBudgetKobo: DASHBOARD.reward_budget_kobo,
+      openAlerts: null,
+      activeBlocks: null,
+      failedSources: [],
+    };
+  }
+  const labels = ['K-factor', 'CAC', 'Reward spend', 'Budgets', 'Risk'];
+  const sources = await Promise.allSettled([
+    getJson<KFactorBody>('/analytics/k-factor'),
+    getJson<CacBody>('/analytics/cac'),
+    getJson<RewardToLtvBody>('/finance/reward-to-ltv'),
+    getJson<BudgetsBody>('/finance/budgets'),
+    getJson<RiskBody>('/risk/dashboard'),
+  ]);
+  const failedSources: string[] = [];
+  const body = <T,>(i: number): T | null => {
+    const r = sources[i];
+    if (r.status === 'fulfilled') return r.value as T;
+    failedSources.push(labels[i]);
+    return null;
+  };
+  const k = body<KFactorBody>(0)?.k_factor;
+  const cac = body<CacBody>(1)?.cac;
+  const ltv = body<RewardToLtvBody>(2)?.reward_to_ltv;
+  const budgets = body<BudgetsBody>(3)?.budgets;
+  const risk = body<RiskBody>(4)?.dashboard;
+  const global = budgets?.find((b) => b.scope === 'global' && b.active);
+  return {
+    kFactor: k?.k_factor ?? null,
+    referrers: k?.referrers ?? null,
+    referredSignups: k?.referred_signups ?? null,
+    houseSignups: k?.house_signups ?? null,
+    referralCacKobo: cac?.referral_cac_kobo ?? null,
+    paidCacKobo: cac?.paid_cac_kobo ?? null,
+    rewardSpentKobo: ltv?.reward_spent_kobo ?? null,
+    rewardToLtv: ltv ? ltv.ratio_bps / 10000 : null,
+    globalBudgetKobo: global?.budget_kobo ?? null,
+    openAlerts: risk?.open_alerts ?? null,
+    activeBlocks: risk?.active_blocks ?? null,
+    failedSources,
+  };
 }
 
 export async function getProgramConfig(): Promise<ProgramConfig> {

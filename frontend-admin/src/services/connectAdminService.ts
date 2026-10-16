@@ -71,7 +71,10 @@ export async function getAudit(): Promise<ConnectAuditEntry[]> {
 }
 
 /** Format kobo (minor units) → "₦1,234.56". Always money via this helper. */
-export function formatNaira(kobo: number): string {
+export function formatNaira(kobo: number | null | undefined): string {
+  // null/undefined means "not available" (the backend leaves a figure null when it has no
+  // agreed definition or the caller lacks the permission): show a dash, never a false ₦0.00.
+  if (kobo === null || kobo === undefined) return '—';
   const naira = kobo / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }

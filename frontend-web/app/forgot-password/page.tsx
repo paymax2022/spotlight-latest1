@@ -1,40 +1,40 @@
 'use client';
 
 /**
- * Forgot password — email → code → new password, all on one page.
+ * Forgot password — identifier → code → new password, all on one page.
  *
- * WHY ONE SUBMIT DOES BOTH "VERIFY CODE" AND "SET PASSWORD"
- * -----------------------------------------------------------
- * The code is single-use (backend/internal/otp/service.go): the Go endpoint that
- * checks it (POST /api/auth/reset-password) consumes it in the same call that
- * sets the password. There is no "verify, then separately set" pair — calling a
- * standalone verify first would burn the code, and the following "set password"
- * call would then fail as already-used.
+ * The reset is an emailed ONE-TIME CODE. There is no reset link.
  *
- * So the code step below does NOT call the backend. It only checks the code
- * looks plausible (digits, right length) and moves to the password step. The
- * code and the new password are sent together in ONE call when that step is
- * submitted. If the code turns out to be wrong or expired, the error surfaces
- * there and the user is sent back to the code step to fix or resend it — the
- * three-screen feel is UI only, not three round trips.
+ *   request   email OR phone number → a code is emailed to the account's address
+ *   code      the code is CHECKED HERE, against the server
+ *   password  only now: new password + confirm  (shown only after the code passed)
+ *   success   → /login
  *
- * WHY PHONE IS DISABLED
- * ----------------------
- * There is no SMS/WhatsApp OTP provider wired anywhere in this backend (only
- * Brevo email — see backend/internal/otp/service.go's EmailSender). The tab is
- * shown so the layout doesn't need reworking again once one exists, but it does
- * nothing yet.
+ * WHY THE CODE IS CHECKED BEFORE THE PASSWORD FORM
+ * -------------------------------------------------
+ * Checking the code only at the final submit meant a typo'd code was discovered
+ * after the user had typed a password, and the form was shown to people who had
+ * not proved anything. So the code step calls /api/auth/verify-password-reset-otp,
+ * which spends the code and returns a single-use `resetToken`. The password step
+ * sends that token — not the code — which is how a single-use code can be checked
+ * on one screen and used on the next. The token is held in memory only (never in
+ * the URL, storage, or a cookie), so a reload starts the reset over.
+ *
+ * WHY PHONE WORKS BUT NOTHING IS SENT BY SMS
+ * -------------------------------------------
+ * A phone number is only a way to FIND the account. The code always goes to the
+ * account's email (Brevo is the only provider wired). The page never shows or
+ * receives that address: the server resolves it, because a phone → email lookup
+ * the browser could read would let anyone harvest addresses.
  *
  * WHY THE REQUEST STEP RESPONSE STAYS GENERIC
  * ----------------------------------------------
- * /api/auth/forgot-password answers identically whether or not the address has
- * an account, to prevent enumeration. This page must not undermine that: every
- * non-network outcome advances to the code step the same way, regardless of
- * whether a real code was actually sent.
- *
- * The request step also sends Supabase's own recovery LINK in the same email
- * (unchanged, see app/auth/reset-password/page.tsx for that path) — this page
- * only adds the code path that page's own top comment used to say didn't exist.
+ * /api/auth/forgot-password answers identically whether or not an account matched,
+ * to prevent enumeration. This page must not undermine that: every non-network
+ * outcome advances to the code step the same way, regardless of whether a real
+ * code was actually sent. The only exceptions are "unavailable" (503, a property
+ * of the environment) and "too many attempts" (429, per IP) — neither says
+ * anything about a particular account.
  *
  * The code step uses the same per-digit segmented-box input as /verify-email
  * (app/verify-email/page.tsx, src/features/auth/otp.ts) rather than a single
@@ -47,9 +47,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { otpLength, distributeOtpInput, nextOtpFocus } from '@/src/features/auth/otp';
 
-// 'sent' is the terminal step when server-issued codes are off: the email
-// carries only the reset link, so there is nothing to type in (E2E-AUTH-010).
-type Step = 'request' | 'code' | 'sent' | 'password' | 'success';
+type Step = 'request' | 'code' | 'password' | 'success';
 
 const RESEND_COOLDOWN_S = 60;
 
@@ -67,8 +65,10 @@ export default function ForgotPasswordPage() {
   const CODE_LENGTH = otpLength();
 
   const [step, setStep] = useState<Step>('request');
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [code, setCode] = useState<string[]>(Array(CODE_LENGTH).fill(''));
+  // Proof that the code was correct. In memory only — see the header comment.
+  const [resetToken, setResetToken] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
@@ -83,18 +83,29 @@ export default function ForgotPasswordPage() {
     return () => clearTimeout(t);
   }, [cooldown]);
 
-  const [codeReset, setCodeReset] = useState(false);
+  const clearCode = () => setCode(Array(CODE_LENGTH).fill(''));
 
-  async function sendCode(targetEmail: string) {
+  async function sendCode(target: string) {
     const res = await fetch('/api/auth/forgot-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: targetEmail }),
+      body: JSON.stringify({ identifier: target }),
     });
-    // Every non-network outcome — 200, 429, or a proxy-level 4xx/5xx — is
-    // treated the same way by the caller. Branching UI on res.ok here would
-    // leak exactly the enumeration signal the API was built to avoid.
+    // 200 means "if an account matched, a code went out" — the same for every
+    // identifier. Branching UI on anything finer would leak the enumeration
+    // signal the API was built to avoid.
     return res;
+  }
+
+  /** Message for a request-step failure that is NOT about a specific account, or '' to proceed. */
+  async function requestFailure(res: Response): Promise<string> {
+    if (res.status === 503) return 'Password reset is unavailable right now. Please try again later.';
+    if (res.status === 429) return 'Too many attempts. Please try again later.';
+    if (res.status === 400) {
+      const body = await res.json().catch(() => ({}));
+      return typeof body?.error === 'string' ? body.error : 'Enter your email or phone number.';
+    }
+    return '';
   }
 
   async function handleRequestSubmit(e: React.FormEvent) {
@@ -103,15 +114,13 @@ export default function ForgotPasswordPage() {
     setBusy(true);
     setError('');
     try {
-      const res = await sendCode(email.trim().toLowerCase());
-      // The API reports whether this environment issues redeemable codes at
-      // all (FEATURE_OTP_EMAIL_ENABLED). When it does not, the email carries
-      // only the reset link — showing the code step anyway was an
-      // unsatisfiable dead end that could only ever 503 (E2E-AUTH-010).
-      const body = await res.json().catch(() => null);
-      const enabled = body?.codeReset === true;
-      setCodeReset(enabled);
-      setStep(enabled ? 'code' : 'sent');
+      const res = await sendCode(identifier.trim());
+      const failure = await requestFailure(res);
+      if (failure) {
+        setError(failure);
+        return;
+      }
+      setStep('code');
     } catch (err) {
       setError(readableError(err));
     } finally {
@@ -119,14 +128,51 @@ export default function ForgotPasswordPage() {
     }
   }
 
-  function handleCodeSubmit(e: React.FormEvent) {
+  async function handleCodeSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     if (code.join('').length < CODE_LENGTH) {
       setError(`Enter all ${CODE_LENGTH} digits.`);
       return;
     }
+    setBusy(true);
     setError('');
-    setStep('password');
+    try {
+      const res = await fetch('/api/auth/verify-password-reset-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: identifier.trim(), code: code.join('') }),
+      });
+      const body = await res.json().catch(() => ({}));
+
+      if (res.ok && typeof body?.resetToken === 'string' && body.resetToken) {
+        // The code passed. Only now does the new-password form appear.
+        setResetToken(body.resetToken);
+        setResendMessage('');
+        setStep('password');
+        return;
+      }
+      if (res.status === 503) {
+        setError('Password reset is unavailable right now. Please try again later.');
+        return;
+      }
+      if (res.status === 429) {
+        setError('Too many attempts. Request a new code and try again.');
+        clearCode();
+        return;
+      }
+      const message = typeof body?.error === 'string' ? body.error.toLowerCase() : '';
+      if (message.includes('expired')) {
+        setError('That code has expired. Request a new one.');
+      } else {
+        setError('That code is not correct. Check the email and try again.');
+      }
+      clearCode();
+    } catch (err) {
+      setError(readableError(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleResend() {
@@ -135,12 +181,14 @@ export default function ForgotPasswordPage() {
     setResendMessage('');
     setError('');
     try {
-      await sendCode(email.trim().toLowerCase());
-      setResendMessage(
-        codeReset
-          ? 'A new code is on its way if that address has an account.'
-          : 'A new reset link is on its way if that address has an account.',
-      );
+      const res = await sendCode(identifier.trim());
+      const failure = await requestFailure(res);
+      if (failure) {
+        setError(failure);
+        return;
+      }
+      clearCode();
+      setResendMessage('A new code is on its way if an account matches.');
       // The project allows very few of these per hour (see verify-email's same
       // constant) — make the wait explicit rather than letting people burn the
       // quota on retries.
@@ -171,36 +219,38 @@ export default function ForgotPasswordPage() {
       const res = await fetch('/api/auth/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.join(''), password }),
+        body: JSON.stringify({ identifier: identifier.trim(), resetToken, password }),
       });
       const body = await res.json().catch(() => ({}));
 
       if (res.ok) {
+        setResetToken('');
         setStep('success');
         setTimeout(() => router.replace('/login'), 2500);
         return;
       }
 
-      const message = typeof body?.error === 'string' ? body.error : '';
       if (res.status === 503) {
-        // Code-based reset is closed (feature off / Go unreachable). The link
-        // in the same email is the working mechanism in that state.
-        setError('Code-based reset is unavailable right now. Please use the link in the reset email instead.');
+        setError('Password reset is unavailable right now. Please try again later.');
         return;
       }
-      if (message.toLowerCase().includes('expired') || message.toLowerCase().includes('invalid code')) {
-        setError('That code is invalid or expired. Check the email, or request a new one.');
-        setCode(Array(CODE_LENGTH).fill(''));
-        setStep('code');
+      if (res.status === 403) {
+        setError('This account cannot be reset right now. Please contact support.');
         return;
       }
-      if (res.status === 429) {
-        setError('Too many attempts. Request a new code and try again.');
-        setCode(Array(CODE_LENGTH).fill(''));
-        setStep('code');
+      if (res.status === 400 || res.status === 429) {
+        // The token is single-use and short-lived, so a 400/429 here means it was
+        // spent or has lapsed. The user has to start over; sending them back to
+        // the code box would just fail again.
+        setError('Your verification has expired. Please request a new code.');
+        setResetToken('');
+        setPassword('');
+        setConfirm('');
+        clearCode();
+        setStep('request');
         return;
       }
-      setError(message || 'Failed to update password. Please try again.');
+      setError(typeof body?.error === 'string' && body.error ? body.error : 'Failed to update password. Please try again.');
     } catch (err) {
       setError(readableError(err));
     } finally {
@@ -210,7 +260,7 @@ export default function ForgotPasswordPage() {
 
   const subtitle =
     step === 'request' ? "We'll help you get back in"
-    : step === 'code' || step === 'sent' ? 'Check your inbox'
+    : step === 'code' ? 'Check your inbox'
     : step === 'password' ? 'Choose a new password'
     : 'All set';
 
@@ -253,38 +303,28 @@ export default function ForgotPasswordPage() {
         >
           {step === 'request' && (
             <RequestStep
-              email={email}
-              setEmail={setEmail}
+              identifier={identifier}
+              setIdentifier={setIdentifier}
               busy={busy}
               error={error}
               onSubmit={handleRequestSubmit}
             />
           )}
 
-          {step === 'sent' && (
-            <SentStep
-              email={email}
-              resendBusy={resendBusy}
-              resendMessage={resendMessage}
-              cooldown={cooldown}
-              onResend={handleResend}
-              onChangeEmail={() => { setStep('request'); setError(''); }}
-            />
-          )}
-
           {step === 'code' && (
             <CodeStep
-              email={email}
+              identifier={identifier}
               code={code}
               setCode={setCode}
               codeLength={CODE_LENGTH}
+              busy={busy}
               error={error}
               resendBusy={resendBusy}
               resendMessage={resendMessage}
               cooldown={cooldown}
               onSubmit={handleCodeSubmit}
               onResend={handleResend}
-              onChangeEmail={() => { setStep('request'); setError(''); setCode(Array(CODE_LENGTH).fill('')); }}
+              onChangeIdentifier={() => { setStep('request'); setError(''); clearCode(); }}
             />
           )}
 
@@ -297,7 +337,7 @@ export default function ForgotPasswordPage() {
               busy={busy}
               error={error}
               onSubmit={handlePasswordSubmit}
-              onBack={() => { setStep('code'); setError(''); }}
+              onBack={() => { setStep('request'); setError(''); setResetToken(''); setPassword(''); setConfirm(''); clearCode(); }}
             />
           )}
 
@@ -327,54 +367,6 @@ export default function ForgotPasswordPage() {
         </p>
       </div>
     </main>
-  );
-}
-
-function ChannelTabs() {
-  return (
-    <div
-      role="tablist"
-      aria-label="Reset method"
-      style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem' }}
-    >
-      <div
-        role="tab"
-        aria-selected="true"
-        style={{
-          flex: 1,
-          textAlign: 'center',
-          padding: '0.55rem',
-          borderRadius: '0.625rem',
-          background: 'rgba(245,158,11,0.15)',
-          border: '1px solid rgba(245,158,11,0.4)',
-          color: '#f59e0b',
-          fontSize: '0.82rem',
-          fontWeight: 700,
-        }}
-      >
-        Email
-      </div>
-      <div
-        role="tab"
-        aria-selected="false"
-        aria-disabled="true"
-        title="Phone reset is coming soon"
-        style={{
-          flex: 1,
-          textAlign: 'center',
-          padding: '0.55rem',
-          borderRadius: '0.625rem',
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          color: '#64748b',
-          fontSize: '0.82rem',
-          fontWeight: 700,
-          cursor: 'not-allowed',
-        }}
-      >
-        Phone · Coming soon
-      </div>
-    </div>
   );
 }
 
@@ -432,33 +424,35 @@ function primaryButtonStyle(disabled: boolean): React.CSSProperties {
 }
 
 function RequestStep({
-  email, setEmail, busy, error, onSubmit,
+  identifier, setIdentifier, busy, error, onSubmit,
 }: {
-  email: string;
-  setEmail: (v: string) => void;
+  identifier: string;
+  setIdentifier: (v: string) => void;
   busy: boolean;
   error: string;
   onSubmit: (e: React.FormEvent) => void;
 }) {
   return (
     <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      <ChannelTabs />
       <p style={{ color: '#cbd5e1', fontSize: '0.85rem', margin: 0, lineHeight: 1.5 }}>
-        Enter the email address on your account and we&apos;ll send you reset
-        instructions.
+        Enter the email address or phone number on your account. We&apos;ll email a
+        one-time code to the address we have on file.
       </p>
 
       <div>
-        <label htmlFor="forgot-password-email" style={fieldLabelStyle()}>
-          Email Address
+        <label htmlFor="forgot-password-identifier" style={fieldLabelStyle()}>
+          Email or Phone Number
         </label>
         <input
-          id="forgot-password-email"
-          type="email"
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoComplete="email"
+          id="forgot-password-identifier"
+          type="text"
+          placeholder="you@example.com or 0803 000 0000"
+          value={identifier}
+          onChange={(e) => setIdentifier(e.target.value)}
+          autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           autoFocus
           required
           style={inputStyle}
@@ -467,75 +461,28 @@ function RequestStep({
 
       <ErrorBanner message={error} />
 
-      <button type="submit" disabled={busy || !email.trim()} style={primaryButtonStyle(busy || !email.trim())}>
-        {busy ? 'Sending…' : 'Send Reset Instructions'}
+      <button type="submit" disabled={busy || !identifier.trim()} style={primaryButtonStyle(busy || !identifier.trim())}>
+        {busy ? 'Sending…' : 'Send Reset Code'}
       </button>
     </form>
   );
 }
 
-// The terminal step when server-issued codes are off (FEATURE_OTP_EMAIL_ENABLED
-// unset): the reset email carries only the Supabase link, so there is no code
-// to type — the user is told where to look instead of being shown a form that
-// can only ever fail (E2E-AUTH-010). Resend is still useful: it sends a fresh
-// link through the same endpoint.
-function SentStep({
-  email, resendBusy, resendMessage, cooldown, onResend, onChangeEmail,
-}: {
-  email: string;
-  resendBusy: boolean;
-  resendMessage: string;
-  cooldown: number;
-  onResend: () => void;
-  onChangeEmail: () => void;
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      <p style={{ color: '#cbd5e1', fontSize: '0.85rem', margin: 0, lineHeight: 1.5 }}>
-        If an account exists for <strong style={{ color: '#f1f5f9' }}>{email}</strong>, a
-        password reset link was sent to that address. Open it to choose a new password —
-        it can take a few minutes, and check spam if you don&apos;t see it.
-      </p>
-
-      {resendMessage && (
-        <p style={{ color: '#86efac', fontSize: '0.8rem', margin: 0 }}>{resendMessage}</p>
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
-        <button
-          type="button"
-          onClick={onChangeEmail}
-          style={secondaryLinkStyle}
-        >
-          Use a different email
-        </button>
-        <button
-          type="button"
-          onClick={onResend}
-          disabled={resendBusy || cooldown > 0}
-          style={{ ...secondaryLinkStyle, cursor: resendBusy || cooldown > 0 ? 'not-allowed' : 'pointer' }}
-        >
-          {cooldown > 0 ? `Resend in ${cooldown}s` : resendBusy ? 'Resending…' : 'Resend email'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function CodeStep({
-  email, code, setCode, codeLength, error, resendBusy, resendMessage, cooldown, onSubmit, onResend, onChangeEmail,
+  identifier, code, setCode, codeLength, busy, error, resendBusy, resendMessage, cooldown, onSubmit, onResend, onChangeIdentifier,
 }: {
-  email: string;
+  identifier: string;
   code: string[];
   setCode: (v: string[]) => void;
   codeLength: number;
+  busy: boolean;
   error: string;
   resendBusy: boolean;
   resendMessage: string;
   cooldown: number;
   onSubmit: (e: React.FormEvent) => void;
   onResend: () => void;
-  onChangeEmail: () => void;
+  onChangeIdentifier: () => void;
 }) {
   const inputs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -558,8 +505,8 @@ function CodeStep({
   return (
     <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <p style={{ color: '#cbd5e1', fontSize: '0.85rem', margin: 0, lineHeight: 1.5 }}>
-        If an account exists for <strong style={{ color: '#f1f5f9' }}>{email}</strong>, a{' '}
-        {codeLength}-digit code was sent to that address. Enter it below — it can take a few
+        If an account matches <strong style={{ color: '#f1f5f9' }}>{identifier}</strong>, a{' '}
+        {codeLength}-digit code was emailed to it. Enter the code below — it can take a few
         minutes, and check spam if you don&apos;t see it.
       </p>
 
@@ -589,17 +536,17 @@ function CodeStep({
         <p style={{ color: '#86efac', fontSize: '0.8rem', margin: 0 }}>{resendMessage}</p>
       )}
 
-      <button type="submit" disabled={!complete} style={primaryButtonStyle(!complete)}>
-        Continue
+      <button type="submit" disabled={!complete || busy} style={primaryButtonStyle(!complete || busy)}>
+        {busy ? 'Checking…' : 'Verify Code'}
       </button>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
         <button
           type="button"
-          onClick={onChangeEmail}
+          onClick={onChangeIdentifier}
           style={secondaryLinkStyle}
         >
-          Use a different email
+          Use a different email or phone
         </button>
         <button
           type="button"
@@ -677,8 +624,9 @@ function PasswordStep({
         {busy ? 'Updating…' : 'Update Password'}
       </button>
 
+      {/* The code was already spent to get here, so "back" restarts the reset. */}
       <button type="button" onClick={onBack} style={secondaryLinkStyle}>
-        Back
+        Start over
       </button>
     </form>
   );

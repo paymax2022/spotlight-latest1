@@ -67,7 +67,7 @@ export default function FinancePayoutsPage() {
     finally { setBusy(null); }
   }
 
-  const ltv = budget ? `${(budget.reward_to_ltv_ratio * 100).toFixed(1)}%` : '—';
+  const ltv = budget && budget.reward_to_ltv_ratio !== null ? `${(budget.reward_to_ltv_ratio * 100).toFixed(1)}%` : 'Not available';
 
   return (
     <Page>
@@ -79,9 +79,13 @@ export default function FinancePayoutsPage() {
 
       {budget && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px,1fr))', gap: 12, marginBottom: 20 }}>
-          <Kpi label="Reward budget" value={formatNaira(budget.program_budget_kobo)} />
-          <Kpi label="Spent / burn" value={formatNaira(budget.program_spent_kobo)} sub={`${Math.round((budget.program_spent_kobo / Math.max(budget.program_budget_kobo, 1)) * 100)}% of budget`} accent={budget.program_spent_kobo / budget.program_budget_kobo > 0.8 ? colors.warning : undefined} />
-          <Kpi label="Reward-to-LTV (A-FIN-04)" value={ltv} sub={`Cap ${budget.reward_to_ltv_cap_pct}%`} accent={budget.reward_to_ltv_ratio * 100 > budget.reward_to_ltv_cap_pct ? colors.danger : colors.success} />
+          <Kpi label="Reward budget" value={budget.program_budget_kobo === null ? 'Not set' : formatNaira(budget.program_budget_kobo)} />
+          <Kpi
+            label="Spent / burn"
+            value={budget.program_spent_kobo === null ? 'Not available' : formatNaira(budget.program_spent_kobo)}
+            sub={budget.program_spent_kobo !== null && budget.program_budget_kobo ? `${Math.round((budget.program_spent_kobo / budget.program_budget_kobo) * 100)}% of budget` : undefined}
+          />
+          <Kpi label="Reward-to-LTV (A-FIN-04)" value={ltv} sub={budget.reward_to_ltv_cap_pct === null ? 'Cap not set' : `Cap ${budget.reward_to_ltv_cap_pct}%`} />
         </div>
       )}
 

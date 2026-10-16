@@ -4382,19 +4382,20 @@ security:
 # ── KYC endpoints ─────────────────────────────────────────────────────────────
 
 paths:
-  /api/auth/reset-password:
+  # PASSWORD RESET is an emailed one-time code in three steps. There is NO reset link.
+  /api/auth/request-password-reset:
     post:
-      operationId: resetPasswordWithCode
-      summary: Complete a password reset with an emailed code
+      operationId: requestPasswordReset
+      summary: Step 1 - email a password-reset code
       description: >
-        Requires `email` + `code` + `newPassword`. The former `{token, newPassword}`
-        form is REFUSED with 400: it was answered with "Password reset successful"
-        for any non-empty token while changing nothing, which is the same defect
-        the audit removed as B4 on verify-email. No client used it — web and
-        mobile both complete resets through Supabase's own recovery session.
+        `identifier` is an email OR a phone number (`email` is accepted as an alias).
+        A phone number is resolved to its account server-side and the code is
+        emailed to that account's address; the address is never returned.
 
 
-        Answers identically whether or not an account exists for the address.
+        Answers 200 with the same body whether or not an account matched, and
+        whether or not delivery succeeded (otherwise this enumerates users). 429 is
+        the one exception: it is per client IP, not per account.
         Gated behind FEATURE_OTP_EMAIL_ENABLED; 503 when closed.
       tags: [OTP]
       requestBody:
@@ -4403,18 +4404,77 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email, code, newPassword]
+              required: [identifier]
               properties:
-                email: { type: string, format: email }
+                identifier: { type: string, example: "ada@example.com" }
+      responses:
+        '200': { description: "If an account matches, a reset code was sent to its email" }
+        '400': { description: Identifier missing }
+        '429': { description: Per-IP request budget exceeded }
+        '503': { description: Feature disabled or misconfigured }
+  /api/auth/verify-password-reset-otp:
+    post:
+      operationId: verifyPasswordResetOTP
+      summary: Step 2 - check the emailed code, receive a reset token
+      description: >
+        Spends the code and returns a single-use, 10-minute `resetToken` bound to the
+        identifier's account. It changes no password. The new-password form should be
+        shown only after this succeeds. A wrong code, an unknown identifier and a
+        mismatched purpose all return the same 400.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, code]
+              properties:
+                identifier: { type: string }
                 code: { type: string, example: "482913" }
+      responses:
+        '200':
+          description: Code accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  verified: { type: boolean, example: true }
+                  resetToken: { type: string, description: "Single-use; redeemed by /api/auth/reset-password" }
+        '400': { description: Invalid or expired code }
+        '429': { description: "Attempt ceiling reached, or per-IP verify budget exceeded" }
+        '503': { description: Feature disabled or misconfigured }
+  /api/auth/reset-password:
+    post:
+      operationId: resetPasswordWithToken
+      summary: Step 3 - set the new password
+      description: >
+        Requires `identifier` + `resetToken` (from step 2) + `newPassword`. The token
+        is single-use and bound to the account, so it cannot be replayed or used for
+        another identifier. The earlier `{email, code, newPassword}` and
+        `{token, newPassword}` forms are REFUSED with 400.
+        Gated behind FEATURE_OTP_EMAIL_ENABLED; 503 when closed.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, resetToken, newPassword]
+              properties:
+                identifier: { type: string }
+                resetToken: { type: string }
                 newPassword: { type: string, minLength: 8 }
       responses:
-        '200': { description: "Password reset (or the address has no account — indistinguishable by design)" }
-        '400': { description: "Invalid or expired code, or the removed token-only form" }
+        '200': { description: Password updated }
+        '400': { description: "Invalid, expired or already-used token, or password too short" }
         '403': { description: Account suspended or locked }
-        '429': { description: Attempt ceiling reached }
-        '500': { description: "The code was consumed but the password could not be set" }
-        '503': { description: Feature disabled }
+        '429': { description: Per-IP redemption budget exceeded }
+        '500': { description: "The token was consumed but the password could not be set" }
+        '503': { description: Feature disabled or misconfigured }
 
   # ╔══════════════════════════════════════════════════════════════════════╗
   # ║ SERVER-ISSUED EMAIL OTP (Brevo)                                        ║
@@ -4442,7 +4502,8 @@ paths:
   # ║ log in without a password. To resend, submit the password again.       ║
   # ║ ⚠️ Login MFA fails closed: an email outage is a total login outage.     ║
   # ║                                                                        ║
-  # ║ PASSWORD RESET is wired at /api/auth/reset-password (code form).       ║
+  # ║ PASSWORD RESET: request-password-reset -> verify-password-reset-otp -> ║
+  # ║ reset-password (code, then single-use token; never a link).           ║
   # ║                                                                        ║
   # ║ Both endpoints are unauthenticated and answer identically whether or   ║
   # ║ not an account exists — otherwise they enumerate users.                ║
@@ -4530,8 +4591,8 @@ paths:
           description: >
             The caller controls the mailbox. For verify_email the account is now
             confirmed. For login a SESSION is returned, in the same three shapes
-            POST /api/auth/login uses. For password_reset the code is simply
-            consumed — the new password is submitted to /api/auth/reset-password.
+            POST /api/auth/login uses. For password_reset prefer the dedicated
+            /api/auth/verify-password-reset-otp, which also returns the resetToken.
           content:
             application/json:
               schema:
@@ -4660,6 +4721,92 @@ paths:
   # ║ Every mutation is audited via audit_service. Composes (not duplicates) ║
   # ║ the #19 session surface for the read-only per-user session view.       ║
   # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/admin/users/{id}:
+    get:
+      operationId: getAdminUser
+      summary: Get one admin-user record (enriched)
+      description: >-
+        Requires `users.view`, and the target must be within the caller's scope.
+        Unlike the list/export endpoints, this response also carries best-effort
+        enrichment fields (photo, verification timestamps, last login, referral
+        code); each is omitted when unavailable.
+      tags: [AdminUsers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      firstName: { type: string }
+                      lastName: { type: string }
+                      email: { type: string }
+                      phone: { type: string }
+                      userType: { type: string }
+                      status: { type: string }
+                      profileCompleted: { type: boolean }
+                      state: { type: string }
+                      country: { type: string }
+                      programId: { type: string }
+                      contestId: { type: string }
+                      schoolId: { type: string }
+                      createdAt: { type: string }
+                      avatarUrl: { type: string, description: "user_profiles.avatar_url, else metadata.profilePhotoUrl" }
+                      lastLoginAt: { type: string, format: date-time }
+                      emailVerifiedAt: { type: string, format: date-time }
+                      phoneVerifiedAt: { type: string, format: date-time }
+                      referralCode: { type: string }
+                      referredBy: { type: string }
+        '403': { description: Target user is outside the caller's scope }
+        '404': { description: User not found }
+  /api/admin/users/{id}/modules:
+    get:
+      operationId: getAdminUserModules
+      summary: List every registry module with the user's membership status
+      description: |-
+        Read-only. Requires `users.view`, and the target must be within the
+        caller's scope. Gated by the FEATURE_ADMIN_USER_MODULES_ENABLED flag
+        (default OFF): the route answers 404 while the flag is off. A module
+        whose membership probe fails is reported with status `error` rather
+        than failing the whole response.
+      tags: [AdminUsers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Module membership for the user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  modules:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        label: { type: string }
+                        group: { type: string }
+                        href: { type: string }
+                        status: { type: string, enum: [member, none, error] }
+                        count: { type: integer, format: int64 }
+                        since: { type: string }
+        '400': { description: id is not a UUID }
+        '401': { description: Missing or invalid bearer token }
+        '403': { description: Caller lacks users.view or the target is outside the caller's scope }
+        '404': { description: "User not found, or the feature flag is off" }
   /api/admin/users/export:
     get:
       operationId: exportAdminUsers
@@ -4728,6 +4875,33 @@ paths:
                         error: { type: string, nullable: true }
         '400': { description: roleId and userIds are required }
         '403': { description: Missing users.roles.assign permission }
+  /api/admin/users/{id}/roles:
+    get:
+      operationId: getUserRoles
+      summary: List a user's active role slugs
+      description: >-
+        Read-only. Requires `users.view`, and the target user must be within the
+        caller's scope (same object-level check as GET /api/admin/users/{id}).
+        Returns an empty array when the user has no roles.
+      tags: [AdminUsers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Active role slugs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, roles]
+                properties:
+                  success: { type: boolean }
+                  roles: { type: array, items: { type: string } }
+        '400': { description: id is not a UUID }
+        '403': { description: "Missing users.view permission, or the target user is outside the caller's scope" }
+        '404': { description: User not found }
+        '500': { description: Failed to load roles }
   /api/admin/users/{id}/roles/bulk:
     post:
       operationId: bulkAssignRolesToUser
@@ -4756,6 +4930,56 @@ paths:
         '400': { description: roleIds is required }
         '403': { description: Missing users.roles.assign permission }
         '404': { description: Target user not found / out of scope }
+  /api/v1/webhooks/livekit:
+    post:
+      operationId: livekitWebhook
+      summary: LiveKit server event callback (signed)
+      description: >-
+        Called by the self-hosted LiveKit server, not by users. Authenticated only by the
+        Authorization header, a JWT signed with the LiveKit API secret that carries the SHA-256
+        of the body; anything unsigned or altered is 401. A 5xx makes LiveKit retry the delivery.
+        Only mounted when FEATURE_LIVEKIT_ENABLED is on and the configuration is valid.
+      tags: [Realtime]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/webhook+json:
+            schema:
+              type: object
+      responses:
+        '200': { description: Event accepted }
+        '401': { description: "Missing, forged or altered signature" }
+        '500': { description: Processing failed; LiveKit will retry }
+  /api/v1/admin/rtc/livekit:
+    get:
+      operationId: getLiveKitStatus
+      summary: LiveKit reachability and open-room count (admin, read-only)
+      description: >-
+        Authenticates to the LiveKit server with the configured credentials and counts open rooms,
+        so an operator can tell a configuration problem from a network problem. Requires
+        `audit.logs.view`. Never returns credentials; error text is scrubbed of them.
+      tags: [Realtime]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  provider: { type: string, example: livekit }
+                  status:
+                    type: object
+                    properties:
+                      host: { type: string }
+                      reachable: { type: boolean }
+                      rooms: { type: integer }
+                      error: { type: string }
+        '401': { description: Not authenticated }
+        '403': { description: Missing audit.logs.view }
   /api/admin/users/{id}/sessions:
     get:
       operationId: getAdminUserSessions
@@ -13086,11 +13310,65 @@ paths:
                         items: { type: string }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/finance/admin/kyc/users/{id}:
+    get:
+      operationId: admKycUserSnapshot
+      summary: Per-user KYC snapshot (tier, status, open review case)
+      description: Requires the finance.admin.kyc permission. `openCaseId` is null when the user has no open review case.
+      tags: [KYCAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: KYC snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tier, status, openCaseId]
+                properties:
+                  tier: { type: integer }
+                  status: { type: string }
+                  openCaseId: { type: string, format: uuid, nullable: true }
+        '400': { description: id is not a UUID }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { description: Failed to load KYC profile or review case }
+  /api/finance/admin/referrals/{user_id}/code:
+    get:
+      operationId: getAdminReferralCode
+      summary: Read a user's referral code (admin, read-only)
+      description: "Requires the referral.admin.case permission. Pure read: never mints or converges a code. The first-minted code wins when finance_referral_codes and referral_links diverge; falls back to platform_users.referral_code."
+      tags: [Referrals]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Referral code and the table it was read from
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, source]
+                properties:
+                  code: { type: string }
+                  source: { type: string, enum: [finance_referral_codes, referral_links, platform_users] }
+        '400': { description: "user_id is not a UUID" }
+        '401': { description: "Missing or invalid bearer token" }
+        '403': { description: "Missing referral.admin.case permission" }
+        '404': { description: "User has no referral code" }
+        '500': { description: "Failed to read the referral code" }
   /api/finance/admin/kyc/cases/{id}/approve:
     post:
       operationId: admKycApproveCase
       summary: Approve a case (manual override; audited)
-      description: Requires the finance.admin.kyc permission. Audited.
+      description: >-
+        Requires the finance.admin.kyc permission. A non-empty `reason` (max 500
+        characters) is mandatory and is recorded in the durable audit trail along with
+        the deciding admin. A reviewer cannot decide a case on their own verification
+        (403).
       tags: [KYCAdmin]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -13103,20 +13381,25 @@ paths:
               type: object
               required: [reason]
               properties:
-                reason: { type: string }
+                reason: { type: string, minLength: 1, maxLength: 500 }
       responses:
         '200':
           description: Case approved
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VerificationSession' }
+        '400': { description: "Missing, blank or over-long reason" }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/finance/admin/kyc/cases/{id}/reject:
     post:
       operationId: admKycRejectCase
       summary: Reject a case (manual override; audited)
-      description: Requires the finance.admin.kyc permission. Audited.
+      description: >-
+        Requires the finance.admin.kyc permission. A non-empty `reason` (max 500
+        characters) is mandatory and is recorded in the durable audit trail along with
+        the deciding admin. A reviewer cannot decide a case on their own verification
+        (403).
       tags: [KYCAdmin]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -13129,13 +13412,14 @@ paths:
               type: object
               required: [reason]
               properties:
-                reason: { type: string }
+                reason: { type: string, minLength: 1, maxLength: 500 }
       responses:
         '200':
           description: Case rejected
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VerificationSession' }
+        '400': { description: "Missing, blank or over-long reason" }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/finance/admin/kyc/routing-rules:
@@ -16676,6 +16960,46 @@ paths:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
         '400': { description: reason is required }
         '403': { description: Missing referral.admin.case (Support Lead) }
+  /api/v1/admin/referrals/{userId}/referred-by:
+    get:
+      operationId: getReferralReferredBy
+      summary: Who referred this user (admin user profile)
+      description: >
+        Served by the console at GET /api/finance/admin/referrals/{userId}/referred-by.
+        Every user is meant to have a referrer: the owner of the code they entered, or the
+        house (Admin) account when they entered none. A user with no attribution row returns
+        attributed=false (a background sweep then connects them to the house account); no
+        referrer is ever invented.
+      tags: [Referral Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Attribution
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, attributed, is_house]
+                properties:
+                  user_id: { type: string, format: uuid }
+                  attributed: { type: boolean }
+                  is_house: { type: boolean, description: 'True when the referrer is the house (Admin) account, not a person' }
+                  attribution_id: { type: string, format: uuid }
+                  attribution_type: { type: string, enum: [code, deeplink, context, regional_house, global_house] }
+                  status: { type: string, enum: [grace, locked] }
+                  code_used: { type: string }
+                  attributed_at: { type: string, format: date-time }
+                  referrer_id: { type: string, format: uuid }
+                  referrer_name: { type: string }
+                  referrer_email: { type: string }
+                  referrer_code: { type: string }
+                  house_account_id: { type: string, format: uuid }
+                  house_code: { type: string }
+                  house_owner_id: { type: string, format: uuid }
+                  house_owner_name: { type: string }
+        '403': { description: Missing referral.admin.case }
   /api/v1/admin/referrals/{referrerId}/code:
     put:
       operationId: setReferralReferrerCode

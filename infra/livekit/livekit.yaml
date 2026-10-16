@@ -1,0 +1,60 @@
+# Reference configuration for a self-hosted LiveKit SFU (docs/runbooks/livekit.md, ADR-PR789).
+#
+# NOT validated against a running server in the PR that added it: bring it up on a staging host
+# and run the verification checklist in the runbook before relying on it.
+#
+# The API key/secret are NOT in this file. Pass them to the container as LIVEKIT_KEYS
+# ("<key>: <secret>", see docker-compose.yml) so the secret never lands in git. The same pair
+# goes into the backend as LIVEKIT_API_KEY / LIVEKIT_API_SECRET.
+
+port: 7880            # HTTP + WebSocket signalling. Reached only through the TLS reverse proxy.
+bind_addresses:
+  - "127.0.0.1"      # reverse proxy on the same host. Use the private interface if it is elsewhere.
+log_level: info
+# Metrics. Firewall this port (host networking would otherwise publish it). Newer LiveKit releases
+# move this to a `prometheus:` block; check the docs for the release you pin.
+prometheus_port: 6789
+
+rtc:
+  tcp_port: 7881      # media over TCP when UDP is blocked (works through most firewalls)
+  udp_port: 7882      # media over UDP, single muxed port (preferred; open it in the firewall)
+  use_external_ip: true   # discover the public IP via STUN; set node_ip explicitly if that fails
+  # node_ip: 203.0.113.10
+
+redis:
+  address: 127.0.0.1:6379 # host networking: Docker DNS does not exist, so use the loopback address.
+                          # Required for more than one LiveKit node; harmless on one.
+  # password: set via LIVEKIT_REDIS_PASSWORD or a secrets manager, not here
+
+room:
+  # Rooms exist only because the backend created them (POST /twirp/.../CreateRoom). A participant
+  # token alone can never conjure a room, so a leaked or replayed token cannot spin up arbitrary rooms.
+  auto_create: false
+  empty_timeout: 300        # seconds an empty room is kept (the backend re-provisions on rejoin)
+  max_participants: 200     # ceiling; the backend sets the per-room value too
+  enabled_codecs:
+    - mime: audio/opus
+    - mime: video/vp8
+    - mime: video/h264
+
+# Signed event callbacks to the backend (verified there with the same API secret).
+webhook:
+  # The key NAME (not the secret) used to sign webhooks. LiveKit does not expand ${VARS} in this
+  # file, so edit it to match LIVEKIT_API_KEY. The secret is looked up from LIVEKIT_KEYS.
+  api_key: paymax-prod
+  urls:
+    - https://api.example.com/api/v1/webhooks/livekit
+
+# TURN relays media for clients behind networks that block UDP (corporate Wi-Fi, some carriers).
+# STRONGLY recommended before launch, but it needs a DNS name and a certificate, and the server
+# refuses to start with TURN-over-TLS and no certificate, so it ships DISABLED. To enable:
+# issue a certificate for the TURN domain, mount it at /certs, set the paths below (or
+# external_tls: true when a load balancer terminates TLS), open 3478/udp and 5349/tcp.
+turn:
+  enabled: false
+  # domain: turn.example.com
+  # tls_port: 5349
+  # udp_port: 3478
+  # cert_file: /certs/turn.example.com/fullchain.pem
+  # key_file:  /certs/turn.example.com/privkey.pem
+  # external_tls: true

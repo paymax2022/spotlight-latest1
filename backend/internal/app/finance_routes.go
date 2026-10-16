@@ -79,6 +79,7 @@ import (
 	"spotlight/backend/internal/provider/monnify"
 	"spotlight/backend/internal/provider/paystack"
 	"spotlight/backend/internal/realtor"
+	"spotlight/backend/internal/referral/commissionsplit"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/restaurant/paystackcheckout"
@@ -487,6 +488,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			middleware.PerUserRateLimit(redisClient, "referrals-attribute", cfg.ReferralAttributeRatePerMin))
 	}
 
+	// Referral commission-split catch-up: pays referrers for commission_earnings
+	// rows written outside commission.Service (frontend-web's utility path inserts
+	// them directly, so the ReferralHook never fires). Same flag as the hook;
+	// idempotent with it — see commissionsplit.Sweep.
+	if cfg.FeatureReferralCommissionSplitEnabled && pool != nil {
+		commissionsplit.NewService(pool, ledger.NewService(ledger.NewRepository(pool), nil), true).
+			StartSweeper(context.Background(), 5*time.Minute, commissionsplit.SweepOptions{
+				MinAge: 2 * time.Minute, Lookback: 7 * 24 * time.Hour, Limit: 200,
+			})
+	}
+
 	// Member routes under /api/finance/insurance/* (auth via finance group);
 	// admin under /api/insurance/admin/* (RBAC insurance.*); provider webhooks
 	// under /internal/webhooks/{mycover,octamile} (UNauthenticated — signature
@@ -717,7 +729,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// unbacked academy rails (BNPL/payout/disburse/billing). nil per-rail ⇒ that
 		// package keeps its in-process dev stub (academy_rails_external.go).
 		academyBNPL, academyDisburse, academyBilling, academyPayout := academyRails(cfg)
-		RegisterAcademy(r, finance, pool, rbac, mapsAuth(), ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler, cfg.FeatureInternalAcademyAPIEnabled, cfg.LedgerServiceToken)
+		// Self-hosted LiveKit (FEATURE_LIVEKIT_ENABLED) replaces the dev stub / VideoSDK for live
+		// classes when it is configured and valid; flag off leaves the previous provider in place.
+		// With the flag on but LiveKit unusable, live classes refuse (they do not fall back to the stub).
+		academyLive := academyLiveRoomsFor(cfg, registerLiveKit(r, cfg, rbac, mapsAuth()))
+		RegisterAcademy(r, finance, pool, rbac, mapsAuth(), ledgerSvc, academyRTC, academyLive, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler, cfg.FeatureInternalAcademyAPIEnabled, cfg.LedgerServiceToken)
 
 		// EdTech PLATFORM super-admin oversight (SU-01..SU-12): read-only cross-tenant
 		// console backend at /api/academy/admin/platform/*, gated purely by the seeded
@@ -1049,6 +1065,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Registry: kvReg,
 			Cipher:   kvCipher,
 			Elevator: kvElevator,
+			// Durable audit of admin approve/reject decisions (shared immutable sink).
+			AdminAuditor: auditSink,
 			Seed: kycverify.RoutingSeed{
 				IDNumber:  cfg.KYCRouteIDNumber,
 				IDFacial:  cfg.KYCRouteIDFacial,
@@ -1101,6 +1119,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		kvAdmin.GET("/routing-rules", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.ListRoutingRules)
 		kvAdmin.PUT("/routing-rules/:check_type", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.UpdateRoutingRule)
 		kvAdmin.GET("/events", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.Events)
+		// Per-user KYC snapshot for the admin profile page (see kyc_user_snapshot.go).
+		kvAdmin.GET("/users/:id", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycUserSnapshotHandler(
+			func(ctx context.Context, id string) (int, string, error) {
+				prof, err := kycSvc.GetProfile(ctx, id)
+				if err != nil {
+					return 0, "", err
+				}
+				return int(prof.Tier), string(prof.Status), nil
+			},
+			kvSvc.OpenReviewCaseID,
+		))
 
 		log.Println("[finance] KYC verification gateway routes + webhook registered")
 	}
@@ -1415,6 +1444,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Block 33: Facilities / Amenities
 		estGroup.GET("/:id/facilities", estateHandler.ListFacilities)
 		estGroup.POST("/:id/facilities", estateHandler.CreateFacility)
+		estGroup.PATCH("/:id/facilities/:facilityId", estateHandler.UpdateFacility)
 		estGroup.POST("/:id/facilities/:facilityId/book", estateHandler.BookFacility)
 		estGroup.GET("/:id/bookings", estateHandler.ListMyBookings)
 
@@ -1626,6 +1656,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			restaurantSvc = restaurantSvc.WithDisbursementProvider(paystackDisb)
 		}
 
+		// Backend-owned presigned R2 uploads for KYB documents, attached to the
+		// service so it both mints owner upload URLs and signs stored keys back into
+		// reviewer-viewable URLs (the bucket is private). Unconfigured or failing
+		// creds make the presign endpoint answer 503, which the app turns into the
+		// paste-a-link fallback rather than a retry loop.
+		kybPresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		kybPresigner.EnableHealthCheck(nil)
+		restaurantSvc = restaurantSvc.WithKYBStorage(kybPresigner)
+
 		// Commission recording for food-delivery profit at settleOrder. Ledger-less
 		// recorder — the escrow split already posts the platform cut, so RecordFor
 		// appends the earning ROW only; best-effort, never fails an order (see
@@ -1726,6 +1771,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// details, attach documents, then submit for admin review.
 		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
 		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
+		restGroup.POST("/:id/kyb/documents/presign", restaurantHandler.PresignKYBDocument)
 		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
 		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
 
@@ -2615,6 +2661,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		adminFinance.GET("/wallets/:user_id/balance", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminGetBalance)
 		adminFinance.GET("/wallets/:user_id/transactions", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminListTransactions)
 	}
+	// Read-only reads for the admin user profile; deliberately NOT wallet-flag gated.
+	// Raw numbers: Tier 0 limits 0/0 = wallet disabled, Tier 3 limits 0/0 = unlimited.
+	adminFinance.GET("/tiers/:user_id", middleware.RequirePermission(rbac, "finance.admin.transfers"), tiers.AdminGetTier(tiersSvc))
+	if rewardSvc != nil {
+		adminFinance.GET("/referrals/:user_id", middleware.RequirePermission(rbac, "referral.admin.case"), referrals.AdminGetCaseByUser(rewardSvc))
+		adminFinance.GET("/referrals/:user_id/referred-by", middleware.RequirePermission(rbac, "referral.admin.case"), referrals.AdminGetReferredBy(rewardSvc))
+	}
+	// Pure read of existing data (no rewards engine, no write path), so no new flag.
+	adminFinance.GET("/referrals/:user_id/code", middleware.RequirePermission(rbac, "referral.admin.case"), referrals.AdminGetCode(referralSvc))
 
 	// Capture the service so we can wire the optional CAC-business gate below once the
 	// business registry service exists (registered later in this function). nil when the
@@ -3282,8 +3337,20 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			} else {
 				swapMember := cryptoV1.Group("/crypto")
 				swapMember.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermTrade))
+				// Per-user budgets, quote looser than confirm (confirm spends a PIN attempt and holds
+				// funds). Separate Redis prefixes so the two never share a count. max(.., 1): the
+				// middleware turns <= 0 into 60/min, and non-dev validation does not run in dev.
+				wired.Deps.QuoteLimit = middleware.PerUserRateLimit(redisClient, "crypto-swap-quote", max(cfg.CryptoQuoteRatePerMin, 1))
+				wired.Deps.ConfirmLimit = middleware.PerUserRateLimit(redisClient, "crypto-swap-confirm", max(cfg.CryptoConfirmRatePerMin, 1))
 				cryptosvc.RegisterRoutes(swapMember, r.Group("/api/v1/webhooks"), wired.Deps)
-				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, reconciler running)")
+				// Read-only ops surface for swaps the pipeline parked in needs_review (NGN held).
+				// Its own admin group under the same /api/v1/admin/crypto prefix as the legacy
+				// crypto admin routes; GET /swaps/review is a static sibling of the legacy
+				// GET /swaps, so the two never collide. crypto.admin, like the legacy surface.
+				swapAdmin := cryptoV1.Group("/admin/crypto")
+				swapAdmin.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermAdmin))
+				cryptosvc.RegisterAdminRoutes(swapAdmin, wired.Deps)
+				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, reconciler running)")
 			}
 		}
 	} else {

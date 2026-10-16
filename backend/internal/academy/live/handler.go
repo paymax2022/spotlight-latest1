@@ -129,7 +129,17 @@ func (h *Handler) JoinSession(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"session": sess, "token": token}})
+	c.JSON(http.StatusOK, gin.H{"data": joinResponse(sess, token, h.svc.Connection())})
+}
+
+// joinResponse is the join payload. "rtc" (provider + URL to dial) is present only when the
+// provider reports one, so the stub and VideoSDK responses are exactly as they were.
+func joinResponse(sess *LiveSession, token string, conn *RoomConnection) gin.H {
+	out := gin.H{"session": sess, "token": token}
+	if conn != nil {
+		out["rtc"] = conn
+	}
+	return out
 }
 
 func (h *Handler) ListGroups(c *gin.Context) {

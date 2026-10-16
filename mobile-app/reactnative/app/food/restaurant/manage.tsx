@@ -129,7 +129,7 @@ function CreateStore({ onDone }: { onDone: () => void }) {
   };
   return (
     <Shell>
-      <ScrollView contentContainerStyle={styles.body}>
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         <Text style={styles.lead}>Set up your restaurant to start receiving orders.</Text>
         <Card>
           <Field label="Restaurant name" value={name} onChangeText={setName} placeholder="Blue Yam Kitchen" />
@@ -219,7 +219,7 @@ function ManageStore({
 
   return (
     <Shell>
-      <ScrollView contentContainerStyle={styles.body}>
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         {/* Outlet switcher — only when the owner runs more than one. Every section
             below (profile, packaging, menu) acts on the selected outlet, so this
             is the control that decides which shop gets edited. */}
@@ -757,6 +757,7 @@ function AddressField({
         surface="checkout"
         placeholder={placeholder}
         enableRecents={false}
+        inlineDropdown
       />
     </View>
   );

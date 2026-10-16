@@ -1291,31 +1291,68 @@ func (p *pinStore) Set(ctx context.Context, userID, pin string) error {
 }
 
 // Verify checks the PIN fail-closed: not set / locked / wrong all return a typed
-// error. A correct PIN resets failed_attempts; a wrong one increments it and
-// locks the account at the threshold.
+// error. A correct PIN resets failed_attempts; a wrong one counts toward the
+// lockout.
+//
+// It reserves an attempt BEFORE the (slow) bcrypt compare, in one atomic UPDATE
+// that also refuses a locked account and sets the lock when the reservation
+// reaches the threshold. Postgres serialises concurrent UPDATEs of the row, so
+// at most maxPinFailures guesses are ever evaluated no matter how many arrive in
+// parallel. The earlier read-compare-write version let a burst all read the same
+// count, all pass the lock check and all be evaluated, with the stored count
+// under-reporting them. A correct PIN gives the attempt back by resetting the
+// counter and lock.
 func (p *pinStore) Verify(ctx context.Context, userID, pin string) error {
-	row, err := p.get(ctx, userID)
+	hash, used, err := p.reserveAttempt(ctx, userID)
 	if err != nil {
-		return err // ErrPinNotSet or DB error (fail closed)
+		return err // ErrPinNotSet, ErrPinLocked, or a DB error (all fail closed)
 	}
-	if row.LockedUntil != nil && row.LockedUntil.After(time.Now()) {
-		return ErrPinLocked
-	}
-	if bcrypt.CompareHashAndPassword([]byte(row.Hash), []byte(pin)) == nil {
-		_, _ = p.db.Exec(ctx,
-			`UPDATE user_transaction_pin SET failed_attempts=0, locked_until=NULL, updated_at=now() WHERE user_id=$1`, userID)
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(pin)) == nil {
+		// The reservation counted this success too, so the reset must land or the
+		// user is left holding a spent attempt (and possibly a lock). Fail closed.
+		if _, err := p.db.Exec(ctx,
+			`UPDATE user_transaction_pin SET failed_attempts=0, locked_until=NULL, updated_at=now() WHERE user_id=$1`, userID); err != nil {
+			return fmt.Errorf("transfers: reset pin attempts: %w", err)
+		}
 		return nil
 	}
-	// Wrong PIN — record failure, lock at threshold.
-	if row.FailedAttempts+1 >= maxPinFailures {
-		_, _ = p.db.Exec(ctx,
-			`UPDATE user_transaction_pin SET failed_attempts=$2, locked_until=$3, updated_at=now() WHERE user_id=$1`,
-			userID, row.FailedAttempts+1, time.Now().Add(pinLockWindow))
+	// Wrong PIN: the reservation already counted it, and set the lock if it was the last.
+	if used >= maxPinFailures {
 		return ErrPinLocked
 	}
-	_, _ = p.db.Exec(ctx,
-		`UPDATE user_transaction_pin SET failed_attempts=$2, updated_at=now() WHERE user_id=$1`, userID, row.FailedAttempts+1)
-	return &PinAttemptError{Err: ErrPinInvalid, Remaining: maxPinFailures - (row.FailedAttempts + 1)}
+	return &PinAttemptError{Err: ErrPinInvalid, Remaining: maxPinFailures - used}
+}
+
+// reserveAttempt atomically takes one attempt for an unlocked account and
+// returns the stored hash and the attempts used including this one. The lock is
+// applied in the same statement when this attempt reaches the threshold.
+func (p *pinStore) reserveAttempt(ctx context.Context, userID string) (hash string, used int, err error) {
+	const q = `
+		UPDATE user_transaction_pin
+		   SET failed_attempts = failed_attempts + 1,
+		       locked_until    = CASE WHEN failed_attempts + 1 >= $2 THEN now() + ($3 * interval '1 second') ELSE locked_until END,
+		       updated_at      = now()
+		 WHERE user_id = $1 AND (locked_until IS NULL OR locked_until <= now())
+		RETURNING pin_hash, failed_attempts`
+	for attempt := 0; attempt < 2; attempt++ {
+		err = p.db.QueryRow(ctx, q, userID, maxPinFailures, int64(pinLockWindow/time.Second)).Scan(&hash, &used)
+		if err == nil {
+			return hash, used, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, err
+		}
+		// No row updated: the PIN is unset, or the account is locked. Re-read to tell which.
+		row, gerr := p.get(ctx, userID)
+		if gerr != nil {
+			return "", 0, gerr // ErrPinNotSet or DB error
+		}
+		if row.LockedUntil != nil && row.LockedUntil.After(time.Now()) {
+			return "", 0, ErrPinLocked
+		}
+		// The lock expired between the UPDATE and the read: take the reservation again.
+	}
+	return "", 0, ErrPinLocked
 }
 
 // WalletTransferStatus tracks the lifecycle of a wallet-to-wallet transfer.

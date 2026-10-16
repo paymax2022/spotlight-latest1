@@ -39,6 +39,17 @@ type HandlerDeps struct {
 	Service *Service
 	Ingest  *Ingest
 	StepUp  StepUp
+	// QuoteLimit / ConfirmLimit are per-user rate limiters placed in front of the quote and
+	// confirm handlers (so a throttled confirm never reaches the PIN check). Optional here so
+	// the handler stays testable; the app wiring always sets both. Reads and the webhook are
+	// deliberately not throttled by them.
+	QuoteLimit   gin.HandlerFunc
+	ConfirmLimit gin.HandlerFunc
+	// Recon is this replica's reconciler, read by the admin status view. Nil leaves that
+	// endpoint answering 503.
+	Recon *Reconciler
+	// FeeAdmin is the editable fee-schedule history behind the admin API; nil answers 503.
+	FeeAdmin FeeStore
 }
 
 const (
@@ -95,12 +106,20 @@ func fail(c *gin.Context, status int, code string) {
 // guarded by the caller) and the unauthenticated provider webhook on hooks.
 func RegisterRoutes(member *gin.RouterGroup, hooks *gin.RouterGroup, d HandlerDeps) {
 	h := &handler{d: d}
-	member.POST("/swaps/quote", h.quote)
-	member.POST("/swaps/:id/confirm", h.confirm)
+	member.POST("/swaps/quote", withLimit(d.QuoteLimit, h.quote)...)
+	member.POST("/swaps/:id/confirm", withLimit(d.ConfirmLimit, h.confirm)...)
 	member.GET("/swaps/:id", h.get)
 	if hooks != nil && d.Ingest != nil {
 		hooks.POST("/crypto/:provider", h.webhook)
 	}
+}
+
+// withLimit puts an optional limiter in front of a handler.
+func withLimit(limit gin.HandlerFunc, h gin.HandlerFunc) []gin.HandlerFunc {
+	if limit == nil {
+		return []gin.HandlerFunc{h}
+	}
+	return []gin.HandlerFunc{limit, h}
 }
 
 type handler struct{ d HandlerDeps }

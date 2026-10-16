@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"log"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -251,6 +253,7 @@ func RegisterReferralRewards(
 	// instance (external cron hitting recalc-tiers) to avoid duplicate sweeps; the
 	// milestone/tier writes are idempotent so a double-run is safe but wasteful.
 	startReferralRecalcScheduler(context.Background(), svc, 24*time.Hour)
+	startReferralHouseSweep(context.Background(), pool, svc, 5*time.Minute)
 
 	log.Println("[referral-rewards] engine routes registered — /v1/referrals + /v1/admin/referrals + /internal/referrals; nightly recalc ticker started")
 	return svc
@@ -311,6 +314,60 @@ func startReferralRecalcScheduler(ctx context.Context, svc *referrals.RewardServ
 				if err := svc.RecalculateTiers(ctx); err != nil {
 					log.Printf("[referral-rewards] nightly recalc error: %v", err)
 				}
+			}
+		}
+	}()
+}
+
+// startReferralHouseSweep connects every user who has no referral attribution to the
+// house (Admin) account, so every user has a referrer. Signup attributes the users it
+// sees (a real referrer when a code was entered, else the house); this covers users
+// created before that existed and signup paths that never ran attribution.
+//
+// It waits MinAge before touching a user so it can never beat signup's own attribution
+// (a row written first would make a typed referral code a no-op). Kill switch:
+// REFERRAL_HOUSE_SWEEP_ENABLED=false. Idempotent, and safe to run on several
+// instances (ON CONFLICT DO NOTHING).
+func startReferralHouseSweep(ctx context.Context, pool *pgxpool.Pool, svc *referrals.RewardService, every time.Duration) {
+	if strings.EqualFold(os.Getenv("REFERRAL_HOUSE_SWEEP_ENABLED"), "false") {
+		log.Println("[referral-rewards] house sweep disabled by REFERRAL_HOUSE_SWEEP_ENABLED=false")
+		return
+	}
+	houseSvc := referralhouse.NewService(pool)
+	cfgSvc := referralconfig.NewService(pool)
+	run := func() {
+		house, err := houseSvc.GetOrCreateGlobalHouse(ctx)
+		if err != nil {
+			log.Printf("[referral-rewards] house sweep: resolve house account: %v", err)
+			return
+		}
+		grace := 72 * time.Hour
+		if cfg, err := cfgSvc.Get(ctx); err == nil && cfg.GraceWindowHours > 0 {
+			grace = time.Duration(cfg.GraceWindowHours) * time.Hour
+		}
+		n, err := svc.AssignHouseToUnattributed(ctx, referrals.HouseSweepOpts{
+			HouseAccountID: house.ID,
+			MinAge:         15 * time.Minute,
+			GraceWindow:    grace,
+			Limit:          2000,
+		})
+		if err != nil {
+			log.Printf("[referral-rewards] house sweep error: %v", err)
+			return
+		}
+		if n > 0 {
+			log.Printf("[referral-rewards] house sweep connected %d unattributed users to the house account", n)
+		}
+	}
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				run()
 			}
 		}
 	}()

@@ -176,20 +176,70 @@ var ErrIdemConflict = errors.New("vet: idempotency key already used")
 // one to another owner's row would let a caller read a stranger's pet by
 // replaying their key (mirrors restaurant findOrderByIdempotencyKey).
 func (s *Service) petByIdem(ctx context.Context, ownerID, idemKey string) (*Pet, error) {
-	var p Pet
-	const q = `SELECT id, owner_user_id, name, species, breed, sex, birth_date::text, weight_kg, notes,
-	                  COALESCE(idempotency_key,''), created_at
-	           FROM pets WHERE owner_user_id=$1 AND idempotency_key=$2`
-	err := s.db.QueryRow(ctx, q, ownerID, idemKey).Scan(
-		&p.ID, &p.OwnerUserID, &p.Name, &p.Species, &p.Breed, &p.Sex,
-		&p.BirthDate, &p.WeightKg, &p.Notes, &p.IdempotencyKey, &p.CreatedAt)
+	p, err := scanPet(s.db.QueryRow(ctx, petSelect+` WHERE owner_user_id=$1 AND idempotency_key=$2`, ownerID, idemKey))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
-	if err != nil {
+	return p, err
+}
+
+// petSelect is the one column list every pet read uses. birth_date is cast to
+// text (see ListPets): pgx cannot scan a binary `date` into *string.
+const petSelect = `SELECT id, owner_user_id, name, species, breed, sex, birth_date::text, weight_kg, notes,
+	                  COALESCE(idempotency_key,''), created_at
+	           FROM pets`
+
+// ErrPetNotFound is the uniform answer for a missing pet AND one the caller does
+// not own, so a pet id is not an existence oracle.
+var ErrPetNotFound = errors.New("vet: pet not found")
+
+func scanPet(row pgx.Row) (*Pet, error) {
+	var p Pet
+	if err := row.Scan(&p.ID, &p.OwnerUserID, &p.Name, &p.Species, &p.Breed, &p.Sex,
+		&p.BirthDate, &p.WeightKg, &p.Notes, &p.IdempotencyKey, &p.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
+}
+
+// GetPet returns one of the caller's pets (object-level authZ; HL-8).
+func (s *Service) GetPet(ctx context.Context, ownerID, petID string) (*Pet, error) {
+	if ownerID == "" {
+		return nil, errors.New("vet: unauthenticated")
+	}
+	p, err := scanPet(s.db.QueryRow(ctx, petSelect+` WHERE id=$1::uuid AND owner_user_id=$2`, petID, ownerID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrPetNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("vet: get pet: %w", err)
+	}
+	return p, nil
+}
+
+// UpdatePet rewrites the caller's pet. Owner-scoped in the WHERE clause, so a
+// stranger's id matches no row and reads as ErrPetNotFound.
+func (s *Service) UpdatePet(ctx context.Context, ownerID, petID string, p Pet) (*Pet, error) {
+	if ownerID == "" {
+		return nil, errors.New("vet: unauthenticated")
+	}
+	if err := NormalizePetInput(&p, PetToday(time.Now())); err != nil {
+		return nil, err
+	}
+	const q = `UPDATE pets SET name=$3, species=$4, breed=$5, sex=$6, birth_date=$7::date,
+	                  weight_kg=$8, notes=$9, updated_at=now()
+	           WHERE id=$1::uuid AND owner_user_id=$2
+	           RETURNING id, owner_user_id, name, species, breed, sex, birth_date::text, weight_kg, notes,
+	                     COALESCE(idempotency_key,''), created_at`
+	out, err := scanPet(s.db.QueryRow(ctx, q, petID, ownerID, p.Name, p.Species, p.Breed, p.Sex, p.BirthDate, p.WeightKg, p.Notes))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrPetNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("vet: update pet: %w", err)
+	}
+	s.audited(ownerID, "", "health.vet.pet.update", petID, nil, map[string]any{"species": out.Species})
+	return out, nil
 }
 
 // CreatePet writes an owner-scoped pet profile. The owner is the data-subject
@@ -204,11 +254,8 @@ func (s *Service) CreatePet(ctx context.Context, ownerID string, p Pet) (*Pet, e
 	if strings.TrimSpace(p.IdempotencyKey) == "" {
 		return nil, ErrPetMissingIdem
 	}
-	if strings.TrimSpace(p.Name) == "" {
-		return nil, errors.New("vet: pet name required")
-	}
-	if strings.TrimSpace(p.Species) == "" {
-		return nil, errors.New("vet: pet species required")
+	if err := NormalizePetInput(&p, PetToday(time.Now())); err != nil {
+		return nil, err
 	}
 	// Replay: return the original pet for this (owner, key) — no second row and
 	// no second vault seed. Runs before the insert so a settled replay never
@@ -312,63 +359,6 @@ func (s *Service) petClinicalContext(ctx context.Context, petID string) clinical
 		}
 	}
 	return pc
-}
-
-// DiscoverVets returns APPROVED + discoverable VCN vets (HL-2). When lat/lng are
-// provided it ranks by PostGIS distance (ST_Distance over geography) within
-// radiusM; otherwise it returns a plain list. Parameterised throughout.
-func (s *Service) DiscoverVets(ctx context.Context, lat, lng *float64, radiusM float64) ([]VetResult, error) {
-	if lat != nil && lng != nil {
-		if radiusM <= 0 {
-			radiusM = 25000 // 25km default discovery radius
-		}
-		const gq = `
-			SELECT id, display_name, owner_user_id::text,
-			       ST_Y(geo::geometry) AS lat, ST_X(geo::geometry) AS lng,
-			       ST_Distance(geo, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography) AS dist
-			FROM health_providers
-			WHERE domain='VET' AND provider_type='vet' AND status='APPROVED'
-			  AND discoverable = true AND geo IS NOT NULL
-			  AND ST_DWithin(geo, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography, $3)
-			ORDER BY dist ASC
-			LIMIT 100`
-		rows, err := s.db.Query(ctx, gq, *lng, *lat, radiusM)
-		if err != nil {
-			return nil, fmt.Errorf("vet: discover (geo): %w", err)
-		}
-		defer rows.Close()
-		var out []VetResult
-		for rows.Next() {
-			var v VetResult
-			var vlat, vlng, dist float64
-			if err := rows.Scan(&v.ProviderID, &v.DisplayName, &v.OwnerUserID, &vlat, &vlng, &dist); err != nil {
-				return nil, err
-			}
-			v.Lat, v.Lng, v.DistanceM = &vlat, &vlng, &dist
-			out = append(out, v)
-		}
-		return out, nil
-	}
-	const lq = `
-		SELECT id, display_name, owner_user_id::text
-		FROM health_providers
-		WHERE domain='VET' AND provider_type='vet' AND status='APPROVED' AND discoverable = true
-		ORDER BY display_name ASC
-		LIMIT 100`
-	rows, err := s.db.Query(ctx, lq)
-	if err != nil {
-		return nil, fmt.Errorf("vet: discover (list): %w", err)
-	}
-	defer rows.Close()
-	var out []VetResult
-	for rows.Next() {
-		var v VetResult
-		if err := rows.Scan(&v.ProviderID, &v.DisplayName, &v.OwnerUserID); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, nil
 }
 
 // UpsertService writes a vet service+fee. HL-2: only the verified vet owner may
@@ -990,8 +980,8 @@ func (s *Service) ScheduleVaccination(ctx context.Context, ownerID, petID, vacci
 // SOSResult is the emergency routing response: the nearest in-person (HOME/CLINIC)
 // vet(s) plus a mandatory disclaimer. Tele is deliberately excluded from SOS.
 type SOSResult struct {
-	Disclaimer string      `json:"disclaimer"`
-	Vets       []VetResult `json:"vets"`
+	Disclaimer string       `json:"disclaimer"`
+	Vets       []VetListing `json:"vets"`
 }
 
 // EmergencySOS implements HL-11: tele-consult is NOT a substitute for emergency
@@ -1003,9 +993,15 @@ func (s *Service) EmergencySOS(ctx context.Context, ownerID string, lat, lng flo
 		return nil, errors.New("vet: unauthenticated")
 	}
 	// Route to nearest in-person vets only (tele excluded by design — HL-11).
-	vets, err := s.DiscoverVets(ctx, &lat, &lng, 50000) // wider 50km emergency radius
+	listed, err := s.ListVetListings(ctx, &lat, &lng, 50000, VetFilter{}) // wider 50km emergency radius
 	if err != nil {
 		return nil, err
+	}
+	var vets []VetListing
+	for _, v := range listed {
+		if contains(v.Types, "home") || contains(v.Types, "clinic") {
+			vets = append(vets, v)
+		}
 	}
 	s.audited(ownerID, "", "health.vet.sos", ownerID, nil, map[string]any{"results": len(vets)})
 	return &SOSResult{
@@ -1413,18 +1409,6 @@ type Pet struct {
 	// the response so a replayed create returns byte-identical output.
 	IdempotencyKey string    `json:"idempotency_key,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
-}
-
-// VetResult is a discoverable, verified (VCN) vet returned by map/list discovery.
-// Only APPROVED + discoverable health_providers in the VET domain surface (HL-2).
-// DistanceM is populated for geo (map) queries via PostGIS ST_Distance.
-type VetResult struct {
-	ProviderID  string   `json:"provider_id"`
-	DisplayName string   `json:"display_name"`
-	OwnerUserID string   `json:"owner_user_id"`
-	Lat         *float64 `json:"lat,omitempty"`
-	Lng         *float64 `json:"lng,omitempty"`
-	DistanceM   *float64 `json:"distance_m,omitempty"`
 }
 
 // VetService is a priced service a verified vet offers (e.g. tele-consult,

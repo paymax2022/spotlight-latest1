@@ -17,6 +17,7 @@ import (
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/disbursement"
 )
@@ -152,6 +153,11 @@ type Service struct {
 	// (recordOrderEvent). nil ⇒ transition events stay unwritten — the
 	// transition itself is unaffected either way.
 	audit OrderAuditor
+	// kybPresigner mints owner-side upload URLs for KYB documents and signs stored
+	// document keys back into short-lived viewable URLs for the reviewer console
+	// (the bucket is private). nil/unconfigured ⇒ uploads fail closed with
+	// ErrKYBUploadsUnavailable and the paste-a-link path keeps working.
+	kybPresigner *r2.Presigner
 }
 
 // OrderAuditor is the nil-safe seam into the shared durable audit sink
@@ -260,6 +266,13 @@ func (s *Service) WithModeration(enabled bool) *Service {
 // a thin adapter over the finance commission service).
 func (s *Service) WithCommission(c CommissionRecorder) *Service {
 	s.commission = c
+	return s
+}
+
+// WithKYBStorage attaches the R2 presigner used for KYB document uploads and for
+// resolving stored document keys into reviewer-viewable URLs. nil-safe.
+func (s *Service) WithKYBStorage(p *r2.Presigner) *Service {
+	s.kybPresigner = p
 	return s
 }
 

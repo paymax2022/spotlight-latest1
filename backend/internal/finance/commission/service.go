@@ -559,3 +559,13 @@ type ReportRow struct {
 	FixedFeeKobo         int64  `json:"fixedFeeKobo"`
 	SpotlightRevenueKobo int64  `json:"spotlightRevenueKobo"`
 }
+
+// ReferralSummary totals referral commission for the profit page.
+func (s *Service) ReferralSummary(ctx context.Context, from, to time.Time) (ReferralSummary, error) {
+	return s.repo.ReferralSummaryFor(ctx, from, to)
+}
+
+// ReferralRewards lists recent commission-split payouts for the profit page.
+func (s *Service) ReferralRewards(ctx context.Context, from, to time.Time, limit int) ([]ReferralReward, error) {
+	return s.repo.ListReferralRewards(ctx, from, to, limit)
+}

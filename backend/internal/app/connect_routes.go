@@ -10,6 +10,7 @@ import (
 	connectaml "spotlight/backend/internal/connect/aml"
 	connectchat "spotlight/backend/internal/connect/chat"
 	connectconfig "spotlight/backend/internal/connect/config"
+	connectconsole "spotlight/backend/internal/connect/console"
 	connectcreator "spotlight/backend/internal/connect/creator"
 	connectcredits "spotlight/backend/internal/connect/credits"
 	connectdatesafety "spotlight/backend/internal/connect/datesafety"
@@ -153,6 +154,40 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	adminCg.GET("/identity",
 		middleware.RequirePermission(rbac, "connect.verification.view"),
 		connectverification.NewReviewQueue(pool).Handler)
+
+	// Console views with no domain service of their own (read-only projections; see connectconsole).
+	consoleH := connectconsole.NewHandler(connectconsole.NewService(pool), rbac)
+	adminCg.GET("/users",
+		middleware.RequirePermission(rbac, "connect.users.view"),
+		consoleH.ListUsers)
+	adminCg.GET("/users/:id",
+		middleware.RequirePermission(rbac, "connect.users.view"),
+		consoleH.GetUser)
+	// The dashboard needs only case visibility; its money tiles are withheld unless the caller also
+	// holds connect.gifting.view (checked in the handler, fail closed).
+	adminCg.GET("/dashboard",
+		middleware.RequirePermission(rbac, "connect.cases.view"),
+		consoleH.Dashboard)
+	// Safety queues (read-only; masked). Underage has no .view permission: .review is the only one that exists.
+	adminCg.GET("/underage",
+		middleware.RequirePermission(rbac, "connect.underage.review"),
+		consoleH.Underage)
+	adminCg.GET("/media-review",
+		middleware.RequirePermission(rbac, "connect.moderation.view"),
+		consoleH.MediaReview)
+	// Contest tallies (read-only). Vote counts need only moderation visibility; the paid-volume and per-entrant
+	// money figures are withheld unless the caller also holds connect.gifting.view (checked in the handler).
+	adminCg.GET("/voting",
+		middleware.RequirePermission(rbac, "connect.moderation.view"),
+		consoleH.Contests)
+	adminCg.GET("/voting/:id",
+		middleware.RequirePermission(rbac, "connect.moderation.view"),
+		consoleH.Contest)
+	// Money summary: both money permissions are required.
+	adminCg.GET("/finance",
+		middleware.RequirePermission(rbac, "connect.gifting.view"),
+		middleware.RequirePermission(rbac, "connect.payouts.view"),
+		consoleH.Finance)
 
 	// member already has connectAuth() applied; adminCg too. Each register fn
 	// adds per-route RBAC on its admin endpoints.
@@ -334,6 +369,13 @@ func registerConnectSafetyRoutes(member *gin.RouterGroup, admin *gin.RouterGroup
 	// Guardrailed AI assistant (Phase 5).
 	member.POST("/ai/assist", trustHandler.AIGenerate)
 
+	// Console case views (read-only projection of flagged messages + decisions; never message content).
+	admin.GET("/moderation",
+		middleware.RequirePermission(rbac, "connect.moderation.view"),
+		modHandler.ListCases)
+	admin.GET("/moderation/:id",
+		middleware.RequirePermission(rbac, "connect.moderation.view"),
+		modHandler.GetCase)
 	admin.GET("/moderation/conversations",
 		middleware.RequirePermission(rbac, "connect.moderation.view"),
 		modHandler.ListFlaggedConversations)

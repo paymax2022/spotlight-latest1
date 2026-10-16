@@ -289,7 +289,7 @@ func (r *Repository) AdminDecideKYB(ctx context.Context, propertyID, legalName, 
 			 contact_email, contact_phone, kyc_status, business_doc_status, status,
 			 submitted_for_review_at, reviewed_at, reviewed_by, reviewer_note)
 		VALUES ($1, NULLIF($2,''), NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''),
-		        NULLIF($8,''), NULLIF($9,''), $10, now(), $11, NULLIF($12,''))
+		        NULLIF($8,''), NULLIF($9,''), $10, $10, $10, now(), now(), $11, NULLIF($12,''))
 		ON CONFLICT (property_id) DO UPDATE SET
 			legal_name = COALESCE(NULLIF($2,''), stays_hotelier_kyb.legal_name),
 			business_type = COALESCE(NULLIF($3,''), stays_hotelier_kyb.business_type),

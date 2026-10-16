@@ -298,6 +298,10 @@ var blockingStates = map[State]bool{
 // isBlockingState reports whether an appointment in `s` occupies its slot.
 func isBlockingState(s State) bool { return blockingStates[s] }
 
+// BlockingStateList returns the states that occupy a provider's slot, for SQL
+// IN (...) in other packages (vet availability must agree with booking).
+func BlockingStateList() []string { return blockingStateList() }
+
 // blockingStateList returns the blocking states as strings for SQL IN (...).
 func blockingStateList() []string {
 	return []string{string(StateRequested), string(StateAccepted), string(StateConfirmed), string(StateInProgress)}

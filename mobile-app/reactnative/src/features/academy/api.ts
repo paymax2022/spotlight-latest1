@@ -11,6 +11,8 @@ import { api } from '@/api/client';
 import { USE_MOCK, ACADEMY_API_BASE } from './constants';
 import { track } from './analytics';
 import { enqueue } from './offlineQueue';
+import { mapJoinResponse } from './live/joinResponse';
+import { buildReportBody } from './live/report';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -2101,8 +2103,10 @@ export async function joinLiveSession(id: string): Promise<LiveJoinToken> {
       moderated: true,
     };
   }
-  const { data } = await api.post<LiveJoinToken>(`${B}/live/sessions/${id}/join`, {});
-  return data;
+  // The Go handler replies {data:{session,token,rtc}} and this client does not unwrap the
+  // envelope, so map it (also fixes roomName/token, which this call never actually received).
+  const { data } = await api.post<unknown>(`${B}/live/sessions/${id}/join`, {});
+  return mapJoinResponse(data);
 }
 
 /** C4 — Study groups / cohorts. */
@@ -2178,8 +2182,9 @@ export async function reportContent(targetKind: ModerationReport['targetKind'], 
     }
     return { id: `rpt_${Date.now()}`, targetKind, targetId, reason, status: 'received', ts: new Date().toISOString() };
   }
-  const { data } = await api.post<ModerationReport>(`${B}/moderation/report`, { targetKind, targetId, reason });
-  return data;
+  // Field names the Go handler binds (entity_type/entity_id); the response is a stored report row.
+  const { data } = await api.post<{ data?: { id?: string } }>(`${B}/moderation/report`, buildReportBody(targetKind, targetId, reason));
+  return { id: data?.data?.id ?? `rpt_${Date.now()}`, targetKind, targetId, reason, status: 'received', ts: new Date().toISOString() };
 }
 
 /** C6 — Notifications center. */

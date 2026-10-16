@@ -19,7 +19,10 @@ export default function ConnectFinancePage() {
   }
   useEffect(() => { load(); }, []);
 
-  const balanced = data ? data.ledger_debits_kobo === data.ledger_credits_kobo : true;
+  // null = the backend has no Connect ledger totals yet: say so instead of claiming a balance.
+  const balanced: boolean | null = data
+    ? (data.ledger_debits_kobo === null || data.ledger_credits_kobo === null ? null : data.ledger_debits_kobo === data.ledger_credits_kobo)
+    : true;
 
   return (
     <Page>
@@ -48,7 +51,7 @@ export default function ConnectFinancePage() {
               <tbody>
                 <tr><td style={{ padding: '0.5rem 0', color: colors.muted }}>Total debits</td><td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 600 }}>{formatNaira(data.ledger_debits_kobo)}</td></tr>
                 <tr><td style={{ padding: '0.5rem 0', color: colors.muted, borderTop: `1px solid ${colors.border}` }}>Total credits</td><td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 600, borderTop: `1px solid ${colors.border}` }}>{formatNaira(data.ledger_credits_kobo)}</td></tr>
-                <tr><td style={{ padding: '0.5rem 0', color: colors.muted, borderTop: `1px solid ${colors.border}`, fontWeight: 700 }}>Balanced</td><td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 700, borderTop: `1px solid ${colors.border}`, color: balanced ? colors.success : colors.danger }}>{balanced ? 'Yes — debits = credits' : 'NO — out of balance'}</td></tr>
+                <tr><td style={{ padding: '0.5rem 0', color: colors.muted, borderTop: `1px solid ${colors.border}`, fontWeight: 700 }}>Balanced</td><td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 700, borderTop: `1px solid ${colors.border}`, color: balanced === null ? colors.muted : balanced ? colors.success : colors.danger }}>{balanced === null ? 'Not available yet' : balanced ? 'Yes — debits = credits' : 'NO — out of balance'}</td></tr>
               </tbody>
             </table>
           </Card>
@@ -58,7 +61,7 @@ export default function ConnectFinancePage() {
   );
 }
 
-function Money({ label, v, accent }: { label: string; v: number; accent?: string }) {
+function Money({ label, v, accent }: { label: string; v: number | null; accent?: string }) {
   return (
     <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem 1rem', background: colors.card }}>
       <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>{label}</div>

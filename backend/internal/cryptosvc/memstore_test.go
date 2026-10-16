@@ -80,6 +80,40 @@ func (s *memStore) staleLocked(state cryptoprov.SwapState, olderThan time.Time, 
 	return out
 }
 
+func (s *memStore) ListByState(_ context.Context, state cryptoprov.SwapState, limit, offset int) ([]SwapRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []SwapRecord
+	for _, r := range s.swaps {
+		if r.State == state {
+			out = append(out, *r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { // oldest parked first, id tiebreak — like the SQL
+		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].UpdatedAt.Before(out[j].UpdatedAt)
+	})
+	if offset >= len(out) {
+		return nil, nil
+	}
+	out = out[offset:]
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (s *memStore) SwapByIDAny(_ context.Context, id string) (SwapRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r := s.swaps[id]; r != nil {
+		return *r, true, nil
+	}
+	return SwapRecord{}, false, nil
+}
+
 // age pretends a swap's last write was d ago relative to now.
 func (s *memStore) age(id string, now time.Time, d time.Duration) {
 	s.mu.Lock()
@@ -219,4 +253,32 @@ func (s *memStore) TransitionSwap(_ context.Context, id string, from, to cryptop
 	}
 	s.transitions = append(s.transitions, string(from)+">"+string(to))
 	return true, nil
+}
+
+func (s *memStore) Backlog(_ context.Context) ([]BacklogState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	by := map[cryptoprov.SwapState]*BacklogState{}
+	for _, r := range s.swaps {
+		switch r.State {
+		case cryptoprov.SwapStateQuoted, cryptoprov.SwapStateConfirming, cryptoprov.SwapStateProcessing, cryptoprov.SwapStateNeedsReview:
+		default:
+			continue
+		}
+		b := by[r.State]
+		if b == nil {
+			b = &BacklogState{State: r.State, OldestUpdatedAt: r.UpdatedAt}
+			by[r.State] = b
+		}
+		b.Count++
+		b.HeldKobo += r.NGNKobo + r.FeeKobo
+		if r.UpdatedAt.Before(b.OldestUpdatedAt) {
+			b.OldestUpdatedAt = r.UpdatedAt
+		}
+	}
+	out := make([]BacklogState, 0, len(by))
+	for _, b := range by {
+		out = append(out, *b)
+	}
+	return out, nil
 }

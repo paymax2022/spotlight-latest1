@@ -118,6 +118,53 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   convert the writes. It is a money module (send/request, splits, pools, escrow, spray) — have
   `ledger-auditor` review.
 
+### Batch 5 (2026-10-12) — announcements; estate-family triage
+- **announcements** (`src/features/announcements/api.ts`) — frontend-web handlers
+  (`app/api/v1/estate/announcements/**`). Verified with `scripts/audit/verify_mobile_module.py`:
+  **4/4 client calls match** (list, create, get, mark-read), real DB access, tables
+  `estate_announcements`, `announcement_reads`, `estate_residents` and `user_profiles` exist; creating
+  requires `estate_admin`, everything is residency-scoped, ids are UUID-checked. No automated suite
+  for the handlers (code reading). 2 mutations converted (`markRead`, `createAnnouncement`); e2e pin
+  added.
+- **Tool:** `python3 scripts/audit/verify_mobile_module.py . <feature>` maps a module's client calls to
+  frontend-web route files and checks the tables against migrations. Calls that only match the
+  `app/api/v1/[...path]` catch-all are reported separately — a catch-all match is NOT proof a route
+  exists, so check the Go side (caveats in its docstring).
+- **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
+  - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3),
+    repairs (4), reports (2, read-only: flip the default only), tasks (3 — two handler files carry a
+    "stub" comment, read them first), vendors (6), facilities (4). Every call matches a handler, every
+    table exists, no read-side traps.
+  - **Blocked — path mismatch, do not flip:** `ainotes` (1 of 4 calls matches; `GET
+    /estate/ai-notes/:id`, `POST /estate/ai-notes/:id/approve`, `POST /estate/meetings/:id/ai-notes`
+    have no web handler — Go serves `/api/finance/estate/:id/ai-notes/...`), `estateadmin` (1 of 9;
+    the other 8 hit only the catch-all), `properties` (1 of 9; the web handler is only the list route),
+    `estatesettings` (2 of 3; `DELETE /estate/account` hits only the catch-all). Go's estate routes
+    live under `/api/finance/estate`, so these calls would 404 live. They need a client/proxy path
+    reconciliation before any default can flip.
+
+### Batch 6 (2026-10-15) — documents
+- **documents** (`src/features/documents/api.ts`) — frontend-web handler
+  (`app/api/v1/estate/documents`). `verify_mobile_module.py`: **2/2 client calls match** (list,
+  create), real DB access, tables `estate_documents`, `estate_residents`, `user_profiles` exist.
+  Server-side authz is correct: restricted documents are filtered out for non-admins on read, creating
+  requires `estate_admin`, the file URL must be `http(s)://`. No automated suite for the handler (code
+  reading). 1 mutation converted (`createDocument`); e2e pin added.
+
+### Batch 7 (2026-10-15) — dues (money path)
+- **dues** (`src/features/dues/api.ts`) — frontend-web handlers (`app/api/v1/estate/dues`).
+  `verify_mobile_module.py`: **2/2 client calls match** (list, pay); tables `estate_dues_invoices` and
+  `estate_payments` exist. Unlike the other estate modules this one **moves money, and it does it
+  properly**: `payInvoice` (`frontend-web/src/server/estate/dues.ts`) requires an `Idempotency-Key`,
+  checks residency + invoice ownership (404 for another estate's or another resident's invoice),
+  validates the kobo amount, then debits the wallet through the shared `debitWallet` primitive (atomic
+  RPC, fail-closed tier limits, balanced ledger posting, unique idempotency key) before recording the
+  `estate_payments` receipt and marking the invoice paid. Replays return the prior payment without a
+  second debit; a concurrent receipt insert (23505) is reconciled; failures after the debit surface as
+  explicit 500s instead of silent divergence. **Covered by `frontend-web/tests/unit/estate/dues.money-path.spec.ts`**
+  (idempotency, authz, kobo validation, status guards, happy path, replay, race, error surfacing).
+  1 mutation converted (`payInvoice`); e2e pin added. The dues e2e only opens the payment sheet.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -140,8 +187,8 @@ kycverify, property, restaurantmerchant, stayshotelier.
 
 ### Still pending — full list from a fresh scan of `main` (2026-10-11)
 `grep -rn "mockAllowed(" src` — everything still passing `true`, by feature folder:
-academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, announcements, arena, connect,
-creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, documents, dues, emergencies, estateadmin,
+academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, arena, connect,
+creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, emergencies, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
 one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,

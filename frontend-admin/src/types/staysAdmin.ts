@@ -39,6 +39,8 @@ export interface StaysDashboard {
   supplier_mix: SupplierMix[];
   gmv_trend: { date: string; gmv_kobo: number; net_kobo: number }[];
   activity: StaysDashboardActivity[];
+  /** Metrics the backend has no source for; their values are 0 and must not be shown as measured. */
+  unavailable_metrics?: string[];
 }
 
 export interface Supplier {

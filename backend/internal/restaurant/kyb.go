@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
@@ -225,21 +226,57 @@ func (s *Service) SaveKYB(ctx context.Context, restaurantID, userID string, in K
 }
 
 // AddKYBDocument records a reference to a document the owner has already uploaded to
-// storage (owner only). It stores the type + file URL, not the file. One document per
-// (restaurant, type) — re-adding a type replaces it.
+// storage (owner only). It stores the type + file reference, not the file. One
+// document per (restaurant, type) — re-adding a type replaces it.
+//
+// The reference is either an http(s) link or an object key minted for THIS
+// restaurant by PresignKYBDocument (see kyb_documents.go); anything else is
+// rejected, because the reviewer console renders it as a link. Documents are
+// locked once the KYB is submitted/under review/approved, same as the details —
+// otherwise the evidence a reviewer saw could be swapped after the fact.
 func (s *Service) AddKYBDocument(ctx context.Context, restaurantID, userID, docType, fileURL, fileName string) error {
 	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageBanking); err != nil {
 		return err
 	}
+	docType, fileURL = strings.TrimSpace(docType), strings.TrimSpace(fileURL)
 	if docType == "" || fileURL == "" {
 		return errors.New("restaurant: doc_type and file_url are required")
+	}
+	if !kybDocTypeRE.MatchString(docType) {
+		return errors.New("restaurant: invalid doc_type")
+	}
+	rid, err := canonicalRestaurantID(restaurantID)
+	if err != nil {
+		return err
+	}
+	if _, err := classifyKYBFileRef(rid, fileURL); err != nil {
+		return err
+	}
+	// Check the lock and write in ONE transaction, holding a share lock on the KYB row
+	// for its duration. SubmitKYB's UPDATE of that row has to wait for us, so a
+	// submit cannot land between "is it still editable?" and the write and leave a
+	// document replaced just after the lock.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	status := KYBDraft     // no row yet ⇒ a fresh draft, which is editable
+	if err := tx.QueryRow(ctx,
+		`SELECT status FROM restaurant_kyb WHERE restaurant_id=$1 FOR SHARE`, restaurantID).Scan(&status); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if !editableKYB(status) {
+		return fmt.Errorf("restaurant: KYB cannot be edited while %s", status)
 	}
 	const q = `
 		INSERT INTO restaurant_kyb_documents (id, restaurant_id, doc_type, file_url, file_name)
 		VALUES ($1,$2,$3,$4,$5)
 		ON CONFLICT (restaurant_id, doc_type) DO UPDATE SET file_url=$4, file_name=$5`
-	_, err := s.db.Exec(ctx, q, uuid.New().String(), restaurantID, docType, fileURL, nullIfEmpty(fileName))
-	return err
+	if _, err := tx.Exec(ctx, q, uuid.New().String(), restaurantID, docType, fileURL, nullIfEmpty(fileName)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // SubmitKYB validates the owner's KYB and moves it to `submitted` for review (owner
@@ -361,6 +398,8 @@ func kybErrCode(err error) int {
 	switch {
 	case errors.Is(err, ErrKYBIncomplete):
 		return http.StatusUnprocessableEntity
+	case errors.Is(err, ErrKYBUploadsUnavailable):
+		return http.StatusServiceUnavailable
 	case strings.Contains(err.Error(), "only the owner"), strings.Contains(err.Error(), "not found"):
 		return http.StatusForbidden
 	default:

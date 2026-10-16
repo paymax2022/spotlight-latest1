@@ -6,8 +6,11 @@
 
 import { api } from '@/api/client';
 import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
+import { generateIdempotencyKey } from '@/utils/idempotency';
 import { uploadProviderCredential, addProviderCredential } from '../api';
 import { Colors } from '@/constants/tokens';
+import { toWirePet } from './petForm';
+import { mapListedVet, type ListedVetWire } from './vetListing';
 import type {
   Pet,
   PetInput,
@@ -463,8 +466,8 @@ export async function getPet(id: string): Promise<Pet> {
     if (!p) throw new Error('Pet not found');
     return p;
   }
-  const { data } = await api.get<Pet>(`${VET_API}/pets/${id}`);
-  return data;
+  const { data } = await api.get<{ pet: unknown }>(`${VET_API}/pets/${id}`);
+  return mapPet(data.pet, 0);
 }
 
 function ageLabelFromDob(dob?: string): string {
@@ -488,8 +491,13 @@ export async function createPet(input: PetInput): Promise<Pet> {
     MOCK_PETS = [...MOCK_PETS, pet];
     return pet;
   }
-  const { data } = await api.post<Pet>(`${VET_API}/pets`, input);
-  return data;
+  // The server requires an Idempotency-Key on create: a retried submit must not
+  // write a second pet. The screen passes a key that survives retries.
+  const idem = input.idempotencyKey ?? generateIdempotencyKey();
+  const { data } = await api.post<{ pet: unknown }>(`${VET_API}/pets`, toWirePet(input), {
+    headers: { 'Idempotency-Key': idem },
+  });
+  return mapPet(data.pet, 0);
 }
 
 export async function updatePet(id: string, input: PetInput): Promise<Pet> {
@@ -504,8 +512,8 @@ export async function updatePet(id: string, input: PetInput): Promise<Pet> {
     if (!updated) throw new Error('Pet not found');
     return updated;
   }
-  const { data } = await api.put<Pet>(`${VET_API}/pets/${id}`, input);
-  return data;
+  const { data } = await api.put<{ pet: unknown }>(`${VET_API}/pets/${id}`, toWirePet(input));
+  return mapPet(data.pet, 0);
 }
 
 export async function getPetRecords(petId: string): Promise<PetRecordEntry[]> {
@@ -553,8 +561,8 @@ export async function getVets(query?: VetQuery): Promise<Vet[]> {
     }
     return rows;
   }
-  const { data } = await api.get<Vet[]>(`${VET_API}/vets`, { params: query });
-  return data;
+  const { data } = await api.get<{ vets?: ListedVetWire[] }>(`${VET_API}/vets`, { params: query });
+  return (data.vets ?? []).map(mapListedVet);
 }
 
 export async function getVet(id: string): Promise<Vet> {
@@ -564,8 +572,8 @@ export async function getVet(id: string): Promise<Vet> {
     if (!v) throw new Error('Vet not found');
     return v;
   }
-  const { data } = await api.get<Vet>(`${VET_API}/vets/${id}`);
-  return data;
+  const { data } = await api.get<{ vet: ListedVetWire }>(`${VET_API}/vets/${id}`);
+  return mapListedVet(data.vet);
 }
 
 export async function getAvailability(vetId: string): Promise<AvailabilityDay[]> {
@@ -573,8 +581,8 @@ export async function getAvailability(vetId: string): Promise<AvailabilityDay[]>
     await delay();
     return buildAvailability(vetId);
   }
-  const { data } = await api.get<AvailabilityDay[]>(`${VET_API}/vets/${vetId}/availability`);
-  return data;
+  const { data } = await api.get<{ days?: AvailabilityDay[] }>(`${VET_API}/vets/${vetId}/availability`);
+  return data.days ?? [];
 }
 
 export async function getReviews(vetId: string): Promise<VetReview[]> {
@@ -972,8 +980,8 @@ export async function getProviderAvailability(): Promise<ProviderAvailabilityBlo
     await delay();
     return MOCK_AVAIL_BLOCKS;
   }
-  const { data } = await api.get<ProviderAvailabilityBlock[]>(`${VET_API}/provider/availability`);
-  return data;
+  const { data } = await api.get<{ blocks?: ProviderAvailabilityBlock[] }>(`${VET_API}/provider/availability`);
+  return data.blocks ?? [];
 }
 
 export async function setProviderAvailability(blocks: ProviderAvailabilityBlock[]): Promise<ProviderAvailabilityBlock[]> {
@@ -982,8 +990,8 @@ export async function setProviderAvailability(blocks: ProviderAvailabilityBlock[
     MOCK_AVAIL_BLOCKS = blocks;
     return blocks;
   }
-  const { data } = await api.put<ProviderAvailabilityBlock[]>(`${VET_API}/provider/availability`, { blocks });
-  return data;
+  const { data } = await api.put<{ blocks?: ProviderAvailabilityBlock[] }>(`${VET_API}/provider/availability`, { blocks });
+  return data.blocks ?? [];
 }
 
 export async function getProviderAppointments(): Promise<ProviderAppointmentRow[]> {

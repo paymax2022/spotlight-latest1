@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Text, StyleSheet } from 'react-native';
 import { Lock } from 'lucide-react-native';
 import { useForm, Controller } from 'react-hook-form';
@@ -12,8 +12,13 @@ import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import * as authApi from '@/api/auth.api';
+import { getPendingReset, clearPendingReset } from '@/api/authOtp';
 import { getErrorMessage } from '@/utils/errorMapper';
 
+// Step 3 of the OTP reset. Reachable only with a verified code: the single-use
+// token from reset-code.tsx is read from memory. With none (app restarted, or a
+// deep link straight here) there is nothing to authorise the change, so the user
+// is sent back to the start rather than shown a form that cannot succeed.
 const schema = z
   .object({
     password:        z.string().min(8, 'Password must be at least 8 characters'),
@@ -31,14 +36,21 @@ export default function ResetPasswordScreen() {
   const [done, setDone]         = useState(false);
   const [apiError, setApiError] = useState('');
 
+  useEffect(() => {
+    if (!getPendingReset()) router.replace('/(auth)/forgot-password');
+  }, [router]);
+
   const { control, handleSubmit, formState: { errors, isSubmitting } } = useForm<Form>({
     resolver: zodResolver(schema),
   });
 
   const onSubmit = async (values: Form) => {
     setApiError('');
+    const pending = getPendingReset();
+    if (!pending) { router.replace('/(auth)/forgot-password'); return; }
     try {
-      await authApi.resetPassword({ password: values.password });
+      await authApi.resetPassword({ ...pending, password: values.password });
+      clearPendingReset();
       setDone(true);
     } catch (err) {
       setApiError(getErrorMessage(err));
@@ -54,7 +66,10 @@ export default function ResetPasswordScreen() {
   }
 
   return (
-    <AuthScreenWrapper title="Set new password" subtitle="Choose a password that's at least 8 characters.">
+    <AuthScreenWrapper
+      title="Set new password"
+      subtitle="Your code is verified. Choose a new password of at least 8 characters."
+    >
       <Controller
         name="password"
         control={control}

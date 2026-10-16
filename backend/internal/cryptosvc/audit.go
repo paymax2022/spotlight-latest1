@@ -17,7 +17,10 @@ type AuditEvent struct {
 	Action   string // crypto.swap.{quote,hold,executed,released,parked,failed,completed,pin_rejected}
 	EntityID string // the swap id
 	Reason   string
-	Detail   map[string]any
+	Detail   map[string]any // the new values
+	// EntityType defaults to crypto_swap; Old holds the previous values for a change record.
+	EntityType string
+	Old        map[string]any
 }
 
 // Auditor records audit events. Implementations must not fail the money path: a write error
@@ -36,17 +39,24 @@ func (a *PGAuditor) Audit(ctx context.Context, e AuditEvent) {
 	if a == nil || a.Pool == nil {
 		return
 	}
-	var detail []byte
+	var detail, old []byte
 	if e.Detail != nil {
 		detail, _ = json.Marshal(e.Detail)
+	}
+	if e.Old != nil {
+		old, _ = json.Marshal(e.Old)
+	}
+	entityType := e.EntityType
+	if entityType == "" {
+		entityType = "crypto_swap"
 	}
 	// Detached from request cancellation: a client that hangs up must not drop the record.
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	_, err := a.Pool.Exec(cctx,
-		`INSERT INTO public.crypto_audit_log (actor_id, action, entity_type, entity_id, new_value, reason)
-		 VALUES ($1, $2, 'crypto_swap', $3, $4::jsonb, NULLIF($5, ''))`,
-		e.Actor, e.Action, e.EntityID, nullJSON(detail), e.Reason)
+		`INSERT INTO public.crypto_audit_log (actor_id, action, entity_type, entity_id, old_value, new_value, reason)
+		 VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, NULLIF($7, ''))`,
+		e.Actor, e.Action, entityType, e.EntityID, nullJSON(old), nullJSON(detail), e.Reason)
 	if err != nil {
 		log.Printf("[crypto][ALERT] audit write failed action=%s swap=%s: %v", e.Action, e.EntityID, err)
 	}

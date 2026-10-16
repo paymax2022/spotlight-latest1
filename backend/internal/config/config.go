@@ -44,6 +44,9 @@ type Config struct {
 	// no-op (existing behaviour preserved). When ON, refresh rotation + reuse
 	// detection, revocation enforcement, and suspicious-login response are active.
 	FeatureSessionHardeningEnabled bool
+	// FeatureAdminUserModulesEnabled gates GET /api/admin/users/:id/modules (admin
+	// User 360 module membership). Default OFF: the route answers 404 when off.
+	FeatureAdminUserModulesEnabled bool
 	// Suspicious-login thresholds. Fail-closed defaults: any new device/IP is
 	// treated as suspicious, a small failed-login spike escalates, and travel
 	// faster than this km/h is "impossible".
@@ -138,6 +141,9 @@ type Config struct {
 	// All secrets server-side ONLY; the client never receives a provider secret
 	// (web/mobile SDK flows use a server-issued token). DEFAULT OFF.
 	FeatureKYCVerifyEnabled bool
+
+	// FeatureNavTelemetryEnabled mounts POST /api/v1/telemetry/navigation.
+	FeatureNavTelemetryEnabled bool
 
 	// Dojah — headers Authorization:<secret> + AppId:<app_id>; sandbox→live.
 	DojahAppID         string
@@ -444,6 +450,11 @@ type Config struct {
 	CryptoLockPoolConns int
 	// CryptoReconcileSeconds is the reconciler interval.
 	CryptoReconcileSeconds int
+	// CryptoQuoteRatePerMin / CryptoConfirmRatePerMin are the per-user budgets for
+	// POST /crypto/swaps/quote and /confirm. Confirm is the tighter one: it spends a
+	// PIN attempt and moves money. Validated 1..600 when the swap pipeline is on.
+	CryptoQuoteRatePerMin   int
+	CryptoConfirmRatePerMin int
 
 	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
 	// charged on top of a doctor's consultation fee (ADR-044). Default OFF: it is a
@@ -663,6 +674,14 @@ type Config struct {
 	VideoSDKAPIKey string
 	VideoSDKSecret string
 
+	// LiveKit (self-hosted SFU). FeatureLiveKitEnabled switches live rooms from the dev stub /
+	// VideoSDK to LiveKit. The API secret is server-side only and never returned or logged.
+	FeatureLiveKitEnabled  bool
+	LiveKitURL             string // wss://rtc.example.com (ws:// only in development)
+	LiveKitAPIKey          string
+	LiveKitAPISecret       string
+	LiveKitTokenTTLSeconds int // join-token lifetime; 1..21600
+
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
 	// Raw documents / biometric payloads are NEVER stored or logged — only the
 	// hash + a provider reference (mirrors the KYC bvn_hash/nin_hash pattern).
@@ -741,6 +760,9 @@ type Config struct {
 	BrevoSenderEmail          string
 	BrevoOTPTemplateID        int64
 	BrevoTimeoutSeconds       int
+	// BrevoEndpoint redirects OTP sends to a local fake (dev/test only). Ignored
+	// unless MocksAllowed(); see otp_routes.go for why it can never reach staging/prod.
+	BrevoEndpoint string
 
 	// OTPPepper is the server-side HMAC key for code and identifier hashing.
 	// REQUIRED whenever the feature is on: otp.NewService refuses to construct
@@ -823,6 +845,7 @@ func Load() Config {
 		AccountLockMinutes:          getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
 
 		FeatureSessionHardeningEnabled: getEnvBool("FEATURE_SESSION_HARDENING_ENABLED", false),
+		FeatureAdminUserModulesEnabled: getEnvBool("FEATURE_ADMIN_USER_MODULES_ENABLED", false),
 		SuspiciousFailedLoginSpike:     getEnvInt("AUTH_SUSPICIOUS_FAILED_LOGIN_SPIKE", 3),
 		SuspiciousImpossibleKmH:        getEnvInt("AUTH_SUSPICIOUS_IMPOSSIBLE_KMH", 800),
 		SuspiciousEscalationPolicy:     getEnv("AUTH_SUSPICIOUS_ESCALATION_POLICY", "notify"),
@@ -867,21 +890,22 @@ func Load() Config {
 		TransferFailoverEnabled: getEnvBool("TRANSFER_FAILOVER_ENABLED", true),
 
 		// ── Multi-provider KYC verification (ADR-013) ──
-		FeatureKYCVerifyEnabled: getEnvBool("FEATURE_KYC_VERIFY_ENABLED", false),
-		DojahAppID:              getEnv("DOJAH_APP_ID", ""),
-		DojahSecretKey:          getEnv("DOJAH_SECRET_KEY", ""),
-		DojahProd:               getEnvBool("DOJAH_PROD", false),
-		DojahWebhookSecret:      getEnv("DOJAH_WEBHOOK_SECRET", ""),
-		SmileIDPartnerID:        getEnv("SMILEID_PARTNER_ID", ""),
-		SmileIDAPIKey:           getEnv("SMILEID_API_KEY", ""),
-		SmileIDProd:             getEnvBool("SMILEID_PROD", false),
-		SmileIDCallbackURL:      getEnv("SMILEID_CALLBACK_URL", ""),
-		YouverifyToken:          getEnv("YOUVERIFY_TOKEN", ""),
-		YouverifyProd:           getEnvBool("YOUVERIFY_PROD", false),
-		YouverifyWebhookSecret:  getEnv("YOUVERIFY_WEBHOOK_SECRET", ""),
-		KYCPIIEncKey:            getEnv("KYC_PII_ENC_KEY", ""),
-		KYCFacialMatchThreshold: getEnvInt("KYC_FACIAL_MATCH_THRESHOLD", 70),
-		FeatureKYCOwnershipGate: getEnvBool("FEATURE_KYC_OWNERSHIP_GATE", false),
+		FeatureKYCVerifyEnabled:    getEnvBool("FEATURE_KYC_VERIFY_ENABLED", false),
+		FeatureNavTelemetryEnabled: getEnvBool("FEATURE_NAV_TELEMETRY_ENABLED", false),
+		DojahAppID:                 getEnv("DOJAH_APP_ID", ""),
+		DojahSecretKey:             getEnv("DOJAH_SECRET_KEY", ""),
+		DojahProd:                  getEnvBool("DOJAH_PROD", false),
+		DojahWebhookSecret:         getEnv("DOJAH_WEBHOOK_SECRET", ""),
+		SmileIDPartnerID:           getEnv("SMILEID_PARTNER_ID", ""),
+		SmileIDAPIKey:              getEnv("SMILEID_API_KEY", ""),
+		SmileIDProd:                getEnvBool("SMILEID_PROD", false),
+		SmileIDCallbackURL:         getEnv("SMILEID_CALLBACK_URL", ""),
+		YouverifyToken:             getEnv("YOUVERIFY_TOKEN", ""),
+		YouverifyProd:              getEnvBool("YOUVERIFY_PROD", false),
+		YouverifyWebhookSecret:     getEnv("YOUVERIFY_WEBHOOK_SECRET", ""),
+		KYCPIIEncKey:               getEnv("KYC_PII_ENC_KEY", ""),
+		KYCFacialMatchThreshold:    getEnvInt("KYC_FACIAL_MATCH_THRESHOLD", 70),
+		FeatureKYCOwnershipGate:    getEnvBool("FEATURE_KYC_OWNERSHIP_GATE", false),
 
 		// ── Arena competition engine (ADR-014) ──
 		FeatureArenaEnabled:       getEnvBool("FEATURE_ARENA_ENABLED", false),
@@ -988,6 +1012,8 @@ func Load() Config {
 		CryptoWebhookSecret:                          getEnv("QUIDAX_WEBHOOK_SECRET", ""),
 		CryptoLockPoolConns:                          getEnvInt("CRYPTO_LOCK_POOL_CONNS", 40),
 		CryptoReconcileSeconds:                       getEnvInt("CRYPTO_RECONCILE_SECONDS", 30),
+		CryptoQuoteRatePerMin:                        getEnvInt("CRYPTO_QUOTE_RATE_PER_MIN", 20),
+		CryptoConfirmRatePerMin:                      getEnvInt("CRYPTO_CONFIRM_RATE_PER_MIN", 5),
 		FeatureTelemedicinePlatformFeeEnabled:        getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
 		FeatureCheckoutTopupTier0:                    getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
 		FeatureBusinessRegistryEnabled:               getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
@@ -1066,6 +1092,12 @@ func Load() Config {
 		VideoSDKAPIKey: getEnv("VIDEOSDK_API_KEY", ""),
 		VideoSDKSecret: getEnv("VIDEOSDK_SECRET", ""),
 
+		FeatureLiveKitEnabled:  getEnvBool("FEATURE_LIVEKIT_ENABLED", false),
+		LiveKitURL:             strings.TrimSpace(getEnv("LIVEKIT_URL", "")),
+		LiveKitAPIKey:          strings.TrimSpace(getEnv("LIVEKIT_API_KEY", "")),
+		LiveKitAPISecret:       strings.TrimSpace(getEnv("LIVEKIT_API_SECRET", "")),
+		LiveKitTokenTTLSeconds: getEnvInt("LIVEKIT_TOKEN_TTL_SECONDS", 600),
+
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 
 		R2AccountEndpoint: getEnv("R2_ACCOUNT_ENDPOINT", ""),
@@ -1113,6 +1145,7 @@ func Load() Config {
 		BrevoSenderEmail:          getEnv("BREVO_SENDER_EMAIL", ""),
 		BrevoOTPTemplateID:        int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
 		BrevoTimeoutSeconds:       getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
+		BrevoEndpoint:             getEnv("BREVO_ENDPOINT", ""),
 
 		OTPPepper:                getEnv("OTP_PEPPER", ""),
 		OTPLength:                getEnvInt("OTP_LENGTH", 6),
@@ -1317,6 +1350,24 @@ func (c Config) Validate() error {
 				strict = append(strict, "CRYPTO_PROVIDER=quidax with that environment's Quidax key is required when FEATURE_CRYPTO_ENABLED=true (otherwise mock prices and withdrawals)")
 			}
 		}
+		if c.FeatureLiveKitEnabled {
+			// Light checks only: the full validation runs against the LiveKit client when the
+			// routes are mounted (internal/integrations/livekit), which fails closed.
+			if strings.TrimSpace(c.LiveKitURL) == "" {
+				strict = append(strict, "LIVEKIT_URL is required when FEATURE_LIVEKIT_ENABLED=true")
+			} else if !strings.HasPrefix(strings.ToLower(c.LiveKitURL), "wss://") && !strings.HasPrefix(strings.ToLower(c.LiveKitURL), "https://") {
+				strict = append(strict, "LIVEKIT_URL must use wss:// (or https://) outside development: media tokens must not travel in plaintext")
+			}
+			if strings.TrimSpace(c.LiveKitAPIKey) == "" || isPlaceholder(c.LiveKitAPIKey) {
+				strict = append(strict, "LIVEKIT_API_KEY is required when FEATURE_LIVEKIT_ENABLED=true")
+			}
+			if isPlaceholder(c.LiveKitAPISecret) || len(c.LiveKitAPISecret) < 32 {
+				strict = append(strict, "LIVEKIT_API_SECRET is required (at least 32 characters) when FEATURE_LIVEKIT_ENABLED=true")
+			}
+			if c.LiveKitTokenTTLSeconds < 1 || c.LiveKitTokenTTLSeconds > 6*3600 {
+				strict = append(strict, "LIVEKIT_TOKEN_TTL_SECONDS must be between 1 and 21600 when FEATURE_LIVEKIT_ENABLED=true")
+			}
+		}
 		if c.FeatureCryptoSwapsEnabled {
 			if !c.FeatureCryptoEnabled {
 				strict = append(strict, "FEATURE_CRYPTO_SWAPS_ENABLED=true requires FEATURE_CRYPTO_ENABLED=true")
@@ -1326,6 +1377,14 @@ func (c Config) Validate() error {
 			}
 			if c.CryptoLockPoolConns < 4 || c.CryptoLockPoolConns > 500 {
 				strict = append(strict, "CRYPTO_LOCK_POOL_CONNS must be between 4 and 500 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
+			}
+			// PerUserRateLimit treats <= 0 as 60/min, so an unset-looking 0 would loosen the
+			// budget rather than tighten it. Refuse instead of guessing.
+			if c.CryptoQuoteRatePerMin < 1 || c.CryptoQuoteRatePerMin > 600 {
+				strict = append(strict, "CRYPTO_QUOTE_RATE_PER_MIN must be between 1 and 600 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
+			}
+			if c.CryptoConfirmRatePerMin < 1 || c.CryptoConfirmRatePerMin > 600 {
+				strict = append(strict, "CRYPTO_CONFIRM_RATE_PER_MIN must be between 1 and 600 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
 			}
 		}
 		problems = append(problems, strict...)

@@ -235,3 +235,12 @@ func (q *ReviewQueue) Handler(c *gin.Context) {
 	out, hasMore := trimToLimit(out, limit)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": out, "has_more": hasMore})
 }
+
+// BadgeFor returns the console verification badge for a stored verification row: "unverified"
+// unless a check passed (l0_passed, l1_passed or approved), otherwise the badge the check earned.
+func BadgeFor(level string, docType *string, status string) string {
+	if mapReviewState(status) != "approved" {
+		return "unverified"
+	}
+	return badgeTarget(level, normalizeDocType(docType))
+}
