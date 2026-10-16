@@ -25,17 +25,24 @@ const ENV: LocalEnv = {
   EXPO_PUBLIC_LOCAL_SUPABASE_ANON_KEY: 'local-anon-key',
 };
 
-describe('isSwitchAvailable', () => {
-  test('available in development, staging and when unset', () => {
-    assert.equal(isSwitchAvailable('development'), true);
-    assert.equal(isSwitchAvailable('staging'), true);
-    assert.equal(isSwitchAvailable(undefined), true);
-    assert.equal(isSwitchAvailable(''), true);
+describe('isSwitchAvailable (allowlist, fail-closed)', () => {
+  test('available only for the explicit non-production environments', () => {
+    for (const env of ['development', 'dev', 'staging', 'test', 'local']) {
+      assert.equal(isSwitchAvailable(env), true, env);
+    }
   });
-  test('never available in production (any spelling)', () => {
-    assert.equal(isSwitchAvailable('production'), false);
-    assert.equal(isSwitchAvailable('PRODUCTION'), false);
-    assert.equal(isSwitchAvailable(' prod '), false);
+  test('surrounding whitespace is trimmed (documented: " staging " counts as staging)', () => {
+    assert.equal(isSwitchAvailable(' staging '), true);
+    assert.equal(isSwitchAvailable('\tdevelopment\n'), true);
+  });
+  test('unset, empty and unknown values are production => unavailable', () => {
+    for (const env of [undefined, '', '   ', 'production', 'prod', 'prd', 'live', 'release', 'Production', 'PRODUCTION', 'Staging', 'DEV', 'preview', 'stagingx', 'staging prod']) {
+      assert.equal(isSwitchAvailable(env), false, String(env));
+    }
+  });
+  test('a non-string value is unavailable', () => {
+    assert.equal(isSwitchAvailable(null as unknown as string), false);
+    assert.equal(isSwitchAvailable(1 as unknown as string), false);
   });
 });
 
@@ -108,6 +115,14 @@ describe('validateLocalHost: rejects', () => {
     ['public hostname with local inside', 'local.evil.com'],
     ['localhost as subdomain of public', 'localhost.evil.com'],
     ['.local lookalike', 'evil.local.com'],
+    ['v4-mapped v6', '::ffff:8.8.8.8'],
+    ['v4-mapped loopback', '::ffff:127.0.0.1'],
+    ['v6 zone id', 'fe80::1%en0'],
+    ['localhost.localdomain', 'localhost.localdomain'],
+    ['full-width digits', '\uff11\uff10.0.0.1'],
+    ['NEL (U+0085)', 'localhost\u0085'],
+    ['NEL mid', '192.168.1.5\u0085evil.com'],
+    ['line separator', 'localhost\u2028'],
     ['bare local', 'local'],
     ['dot local', '.local'],
     ['hex ip', '0x7f.0.0.1'],
@@ -156,6 +171,15 @@ describe('validateLocalHost: rejects', () => {
   });
 });
 
+describe('validateLocalHost: accepted by design', () => {
+  // A punycode / lookalike label is still a .local name, which resolves via
+  // mDNS on the local link only. The brief allows .local, so this is recorded as
+  // accepted rather than silently relied upon (residual risk goes in the ADR).
+  test('xn-- label ending in .local is accepted', () => {
+    assert.equal(validateLocalHost('xn--mac-abc.local').ok, true);
+  });
+});
+
 describe('applyHostToTemplate', () => {
   test('replaces hostname, keeps scheme and port', () => {
     assert.equal(applyHostToTemplate('http://localhost:3000', '192.168.1.5'), 'http://192.168.1.5:3000');
@@ -165,8 +189,19 @@ describe('applyHostToTemplate', () => {
   test('keeps a template without a port', () => {
     assert.equal(applyHostToTemplate('http://localhost', '192.168.1.5'), 'http://192.168.1.5');
   });
-  test('keeps a path and drops nothing else', () => {
-    assert.equal(applyHostToTemplate('http://localhost:3000/api', '10.0.2.2'), 'http://10.0.2.2:3000/api');
+  test('accepts one optional trailing slash and drops it', () => {
+    assert.equal(applyHostToTemplate('http://localhost:3000/', '10.0.2.2'), 'http://10.0.2.2:3000');
+  });
+  test('rejects templates with a path, query or fragment', () => {
+    for (const t of ['http://localhost:3000/api', 'http://localhost:3000/..', 'http://localhost:3000//', 'http://localhost:3000?x', 'http://localhost:3000/?x', 'http://localhost:3000#f', 'http://localhost:3000/#f']) {
+      assert.equal(applyHostToTemplate(t, '10.0.0.1'), null, t);
+    }
+  });
+  test('rejects a bad port in a template', () => {
+    for (const t of ['http://localhost:99999', 'http://localhost:65536', 'http://localhost:03000', 'http://localhost:0', 'http://localhost:', 'http://localhost:-1', 'http://localhost:30a0']) {
+      assert.equal(applyHostToTemplate(t, '10.0.0.1'), null, t);
+    }
+    assert.equal(applyHostToTemplate('http://localhost:65535', '10.0.0.1'), 'http://10.0.0.1:65535');
   });
   test('brackets an IPv6 host', () => {
     assert.equal(applyHostToTemplate('http://localhost:3000', '::1'), 'http://[::1]:3000');

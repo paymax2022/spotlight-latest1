@@ -9,6 +9,7 @@
       "distribution": "internal",
       "channel": "development",
       "env": {
+        "EXPO_PUBLIC_APP_ENV": "development",
         "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "development",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "paymax",
         "EXPO_PUBLIC_LOCAL_API_BASE_URL": "http://localhost:3000",

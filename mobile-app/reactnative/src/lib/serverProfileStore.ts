@@ -16,8 +16,12 @@ import {
   defaultLocalHost,
   isSwitchAvailable,
   resolveActiveProfile,
+  runApplySteps,
   serializeLocalChoice,
+  settleWithin,
+  supabaseAuthStorageKey,
   validateLocalHost,
+  type ApplyResult,
   type LocalEnv,
   type LocalProfile,
 } from '@/lib/serverProfile';
@@ -126,29 +130,42 @@ async function persistRaw(raw: string | null): Promise<void> {
   else await SecureStore.setItemAsync(STORAGE_KEY, raw);
 }
 
+const SIGN_OUT_TIMEOUT_MS = 5000;
+
 /**
  * Drops the CURRENT server's session (its tokens are worthless on the other
- * server and must not be sent there). Best effort: a failed network sign-out
- * must not strand the user, so the persisted auth key is removed regardless.
+ * server and must not be sent there). The network sign-out is best effort and
+ * bounded (an unreachable server must not trap the user), but removing the
+ * persisted tokens is what matters: a failure there PROPAGATES so Apply stops
+ * before saving the choice.
  */
 async function clearCurrentSession(): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createSupabaseClient, getSupabaseConfigStatus } = require('./supabase') as typeof import('@/lib/supabase');
+  const { createSupabaseClient, getSupabaseConfigStatus } = require('./supabase') as typeof import('./supabase');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { deleteSecureItem } = require('./secureStorage') as typeof import('@/lib/secureStorage');
+  const { deleteSecureItem } = require('./secureStorage') as typeof import('./secureStorage');
   const status = getSupabaseConfigStatus();
-  try {
-    if (status.hasConfig) await createSupabaseClient().auth.signOut({ scope: 'local' });
-  } catch {
-    // Fall through to removing the stored key directly.
+
+  if (status.hasConfig) {
+    try {
+      await settleWithin(createSupabaseClient().auth.signOut({ scope: 'local' }), SIGN_OUT_TIMEOUT_MS, null);
+    } catch {
+      // Network/server failure: the stored tokens are removed below regardless.
+    }
   }
-  try {
-    // supabase-js names its storage key `sb-<first hostname label>-auth-token`.
-    const label = new URL(status.url).hostname.split('.')[0];
-    if (label) await deleteSecureItem(`sb-${label}-auth-token`);
-  } catch {
-    // An unparsable URL means there is no session under a derivable key.
+
+  const keys = ['access_token', 'refresh_token']; // legacy keys restoreSessionFromStoredTokens still adopts
+  if (status.url) {
+    const authKey = supabaseAuthStorageKey(status.url);
+    if (!authKey) throw new Error('could not work out where the session is stored');
+    keys.push(authKey);
   }
+  for (const key of keys) await deleteSecureItem(key);
+
+  // Carts, drafts and recents of the old server must not leak into the new one.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { resetUserScopedState } = require('./resetUserScopedState') as typeof import('./resetUserScopedState');
+  await resetUserScopedState();
 }
 
 /** Reloads the JS bundle. Throws if the platform cannot, so the UI can say so. */
@@ -167,8 +184,6 @@ async function reloadApp(): Promise<void> {
   const Updates = require('expo-updates') as typeof import('expo-updates');
   await Updates.reloadAsync();
 }
-
-export type ApplyResult = { ok: true } | { ok: false; error: string };
 
 /**
  * validate -> clear the current session -> persist -> reload. Resolves with an
@@ -189,26 +204,11 @@ export async function applyServerProfile(
     raw = serializeLocalChoice(check.host);
   }
 
-  try {
-    await clearCurrentSession();
-  } catch (err) {
-    return { ok: false, error: `Could not sign out of the current server: ${errorText(err)}` };
-  }
-  try {
-    await persistRaw(raw);
-  } catch (err) {
-    return { ok: false, error: `Could not save the server choice: ${errorText(err)}` };
-  }
-  try {
-    await reloadApp();
-  } catch {
-    return { ok: false, error: 'Saved. Close and reopen the app to apply.' };
-  }
-  return { ok: true };
-}
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : 'unexpected error';
+  return runApplySteps({
+    clear: clearCurrentSession,
+    persist: () => persistRaw(raw),
+    reload: reloadApp,
+  });
 }
 
 export type ReachResult = { reachable: boolean; url: string; detail: string };

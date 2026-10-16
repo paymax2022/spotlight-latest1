@@ -4,6 +4,7 @@ import SegmentedControl from '@/components/SegmentedControl';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { Colors, Radius, Spacing, Typography } from '@/constants/tokens';
+import { getDevUrl } from '@/lib/devUrl';
 import { validateLocalHost } from '@/lib/serverProfile';
 import {
   applyServerProfile,
@@ -37,10 +38,14 @@ function ServerSwitchInner() {
   const localBlocked = state.localUnavailableReason;
   const title = state.active === 'local' ? `Server: Local (${state.activeHost})` : 'Server: Remote';
 
+  // Probe what the app will really call: consumers wrap their base in getDevUrl.
   const targetUrl = (): string | null => {
-    if (choice === 'remote') return getRemoteApiBase() || null;
+    if (choice === 'remote') {
+      const remote = getRemoteApiBase();
+      return remote ? getDevUrl(remote) : null;
+    }
     const p = previewLocalProfile(host);
-    return p.available ? p.apiBase : null;
+    return p.available ? getDevUrl(p.apiBase) : null;
   };
 
   const onTest = async () => {
@@ -60,6 +65,12 @@ function ServerSwitchInner() {
   };
 
   const onApply = async () => {
+    const unchanged =
+      choice === state.active && (choice === 'remote' || host === state.activeHost);
+    if (unchanged) {
+      setMessage({ text: 'Already using this server.', tone: 'ok' });
+      return;
+    }
     setBusy('apply');
     setMessage(null);
     const r = await applyServerProfile(choice === 'remote' ? { mode: 'remote' } : { mode: 'local', host });
@@ -70,7 +81,8 @@ function ServerSwitchInner() {
 
   return (
     <View style={styles.box}>
-      <Text style={styles.title}>{title}</Text>
+      <Text style={styles.title} accessibilityRole="header">{title}</Text>
+      <View style={styles.segmentWrap}>
       <SegmentedControl<Choice>
         options={[
           { value: 'remote', label: 'Remote' },
@@ -86,6 +98,7 @@ function ServerSwitchInner() {
           setChoice(v);
         }}
       />
+      </View>
       {localBlocked ? <Text style={styles.note}>{localBlocked}</Text> : null}
       {choice === 'local' ? (
         <TextInputField
@@ -127,6 +140,7 @@ function ServerSwitchInner() {
 
 const styles = StyleSheet.create({
   box:   { gap: Spacing.sm, padding: Spacing.md, marginTop: Spacing.lg, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.outlineVariant },
+  segmentWrap: { marginHorizontal: -Spacing.containerMargin }, // SegmentedControl adds its own inset
   title: { ...Typography.labelMd, color: Colors.onSurface },
   note:  { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   error: { color: Colors.error },

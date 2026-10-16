@@ -11,8 +11,9 @@
  * A Local server override (see serverProfile.ts, non-production builds only)
  * wins over everything here; with none stored behaviour is unchanged.
  *
- * Kept free of react-native/expo imports so `node --test` specs can load it
- * (serverProfileStore loads its native modules lazily).
+ * Imports serverProfileStore, which imports react-native for Platform only
+ * (tests/unit stubs it) and requires expo modules lazily, so `node --test`
+ * specs can still load this file.
  */
 import { getActiveServerOverride } from '@/lib/serverProfileStore';
 

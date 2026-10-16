@@ -47,10 +47,17 @@ export const DEFAULT_LOCAL_SUPABASE_URL = 'http://localhost:54321';
 /** An Android emulator reaches the host machine's loopback through this alias. */
 export const ANDROID_EMULATOR_HOST = '10.0.2.2';
 
-/** The switch exists in every build except production (`prod` counts too). */
+// Allowlist, fail-closed: an unset, empty or unrecognised EXPO_PUBLIC_APP_ENV
+// ('prd', 'live', 'release', 'Production', ...) is treated as production, so a
+// typo can only hide the switch, never expose it in a shipped build.
+const SWITCH_ENVIRONMENTS = new Set(['development', 'dev', 'staging', 'test', 'local']);
+
+/**
+ * The switch exists only in an explicitly non-production build. Matching is
+ * exact and case-sensitive after trimming whitespace (' staging ' counts).
+ */
 export function isSwitchAvailable(appEnv: string | undefined): boolean {
-  const env = String(appEnv ?? '').trim().toLowerCase();
-  return env !== 'production' && env !== 'prod';
+  return typeof appEnv === 'string' && SWITCH_ENVIRONMENTS.has(appEnv.trim());
 }
 
 const MAX_HOST_LENGTH = 253;
@@ -104,25 +111,32 @@ export function validateLocalHost(host: unknown): HostCheck {
   return { ok: false, reason: 'Only localhost, a private IP address or a .local name is allowed.' };
 }
 
-// scheme://host[:port][/path]   (no userinfo, no query/fragment in a template)
-const TEMPLATE = /^(https?):\/\/(\[[0-9a-fA-F:]+\]|[^\s/:@?#\[\]\\]+)(:\d{1,5})?(\/[^\s?#]*)?$/;
+// scheme://host[:port][/]   (no userinfo, path, query or fragment; port 1-65535, no leading zero)
+const TEMPLATE = /^(https?):\/\/(\[[0-9a-fA-F:]+\]|[^\s/:@?#\[\]\\]+)(:[1-9]\d{0,4})?\/?$/;
+
+function matchTemplate(template: unknown): RegExpExecArray | null {
+  const m = TEMPLATE.exec(typeof template === 'string' ? template : '');
+  if (!m) return null;
+  if (m[3] && Number(m[3].slice(1)) > 65535) return null;
+  return m;
+}
 
 /**
- * Replaces the hostname of a build-time template URL, keeping scheme, port and
- * path. Returns null when the host is not allowed or the template is not a
+ * Replaces the hostname of a build-time template URL, keeping scheme and port.
+ * Returns null when the host is not allowed or the template is not a
  * plain http(s) URL, so callers cannot accidentally build an unchecked URL.
  */
 export function applyHostToTemplate(template: string, host: string): string | null {
   const check = validateLocalHost(host);
   if (!check.ok) return null;
-  const m = TEMPLATE.exec(typeof template === 'string' ? template : '');
+  const m = matchTemplate(template);
   if (!m) return null;
   const hostPart = check.host.includes(':') ? `[${check.host}]` : check.host;
-  return `${m[1]}://${hostPart}${m[3] ?? ''}${m[4] ?? ''}`;
+  return `${m[1]}://${hostPart}${m[3] ?? ''}`;
 }
 
 function templateHost(template: string | undefined): string | null {
-  const m = TEMPLATE.exec(template ?? '');
+  const m = matchTemplate(template);
   if (!m) return null;
   return m[2].startsWith('[') ? m[2].slice(1, -1) : m[2];
 }
@@ -204,4 +218,59 @@ export function resolveActiveProfile(args: {
   if (!choice) return { mode: 'remote' };
   const profile = buildLocalProfile(args.env, choice.host);
   return profile.available ? { mode: 'local', profile } : { mode: 'remote' };
+}
+
+/**
+ * supabase-js stores the session under `sb-<first hostname label>-auth-token`.
+ * Null when the URL has no usable hostname.
+ */
+export function supabaseAuthStorageKey(url: string): string | null {
+  const m = /^https?:\/\/(\[[0-9a-fA-F:]+\]|[^\s/:@?#\[\]\\]+)/.exec(typeof url === 'string' ? url : '');
+  if (!m || m[1].startsWith('[')) return null;
+  const label = m[1].split('.')[0];
+  return label ? `sb-${label}-auth-token` : null;
+}
+
+export type ApplyResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * The apply ordering, kept pure so it is testable: clear the current session,
+ * then persist, then reload. A failed clear or persist stops the sequence (the
+ * choice must not be saved while the old server's tokens may remain); a failed
+ * reload still leaves the choice saved, so the user is told to restart.
+ */
+export async function runApplySteps(steps: {
+  clear: () => Promise<void>;
+  persist: () => Promise<void>;
+  reload: () => Promise<void>;
+}): Promise<ApplyResult> {
+  try {
+    await steps.clear();
+  } catch (err) {
+    return { ok: false, error: `Could not sign out of the current server: ${errorText(err)}` };
+  }
+  try {
+    await steps.persist();
+  } catch (err) {
+    return { ok: false, error: `Could not save the server choice: ${errorText(err)}` };
+  }
+  try {
+    await steps.reload();
+  } catch {
+    return { ok: false, error: 'Saved. Close and reopen the app to apply.' };
+  }
+  return { ok: true };
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : 'unexpected error';
+}
+
+/** Resolves with the promise, or with `onTimeout` after `ms` (never rejects on timeout). */
+export function settleWithin<T, U>(p: Promise<T>, ms: number, onTimeout: U): Promise<T | U> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<U>((resolve) => {
+    timer = setTimeout(() => resolve(onTimeout), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
