@@ -71,7 +71,7 @@ func TestHandleProviderStatus_ApprovalProvisionsOnce(t *testing.T) {
 
 // Pins current behaviour: approval drives IN_REVIEW -> ACTIVE and provisions
 // wallets but records NO consent. AcceptTnC is a separate path, not triggered
-// by approval. Pending the compliance decision (ADR-PR<pr-number> go-live gate).
+// by approval. Pending the compliance decision (ADR-PR800 go-live gate).
 func TestHandleProviderStatus_ApprovalRecordsNoConsent(t *testing.T) {
 	s, _, st := whSvc(StatusInReview, "APPROVED")
 	ev := NormalizedAccountEvent{Name: "account.approved", ProviderStatus: "APPROVED"}

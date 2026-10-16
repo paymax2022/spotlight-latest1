@@ -1,4 +1,4 @@
-# ADR-PR<pr-number>: Global Account onboarding models individuals as sole-trader entities
+# ADR-PR800: Global Account onboarding models individuals as sole-trader entities
 
 - **Status:** Proposed
 - **Date:** 2026-10-16
