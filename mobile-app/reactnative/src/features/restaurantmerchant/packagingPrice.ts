@@ -5,6 +5,7 @@
 // they get a clear message instead of a round-trip and a raw API error.
 
 import type { UpdateStoreInput } from './types';
+import { parseNaira, PACKAGING_BOUNDS } from './money';
 
 /** Server ceiling: ₦10,000 per pack, in kobo. Keep in step with maxPackagingFeePerPackKobo. */
 export const MAX_PACKAGING_KOBO = 1_000_000;
@@ -26,28 +27,12 @@ export type PackagingPriceParse =
  * Accepts "200", "200.50", " 1,500 " and "0".
  */
 export function parsePackagingPrice(input: string): PackagingPriceParse {
-  const raw = input.trim().replace(/,/g, '').replace(/^₦/, '').trim();
-  if (!raw) return { ok: false, error: 'Enter a price. Use 0 if you don’t charge for packaging.' };
-
-  if (!/^-?\d*(\.\d*)?$/.test(raw) || raw === '.' || raw === '-') {
-    return { ok: false, error: 'Enter a number, like 200 or 200.50.' };
+  // Blank is its own message: 0 is how an owner charges nothing, so "empty" must not read as "free".
+  if (!input.trim().replace(/^₦/, '').trim()) {
+    return { ok: false, error: 'Enter a price. Use 0 if you don’t charge for packaging.' };
   }
-  const naira = Number(raw);
-  if (!Number.isFinite(naira)) return { ok: false, error: 'Enter a number, like 200 or 200.50.' };
-  if (naira < 0) return { ok: false, error: 'A packaging price can’t be negative.' };
-
-  const decimals = raw.split('.')[1];
-  if (decimals && decimals.length > 2) {
-    return { ok: false, error: 'Use at most 2 decimal places (kobo).' };
-  }
-
-  // Round rather than truncate: in binary floating point 8.29 * 100 is
-  // 828.9999999999999, so truncating would charge a kobo less on every pack sold.
-  const kobo = Math.round(naira * 100);
-  if (kobo > MAX_PACKAGING_KOBO) {
-    return { ok: false, error: `That’s above the ₦${(MAX_PACKAGING_KOBO / 100).toLocaleString('en-NG')} limit per pack.` };
-  }
-  return { ok: true, kobo };
+  const r = parseNaira(input, PACKAGING_BOUNDS);
+  return r.ok ? { ok: true, kobo: r.kobo } : { ok: false, error: r.error.replace('The price', 'A packaging price') };
 }
 
 /** Kobo → the naira string to seed the input with (no trailing ".00" noise). */

@@ -23,9 +23,12 @@ import {
   subcategoriesFor, validateItemDraft, type ItemDraft, type ItemDraftErrors, type TaxonomyCategory,
 } from '@/features/restaurantmerchant/taxonomy';
 import { parsePackagingPrice, packagingPriceInput } from '@/features/restaurantmerchant/packagingPrice';
+import { formatNaira, parseNaira, ITEM_PRICE_BOUNDS } from '@/features/restaurantmerchant/money';
+import NairaField from '@/features/restaurantmerchant/NairaField';
 import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet';
 
-const naira = (kobo: number) => `₦${(kobo / 100).toLocaleString('en-NG')}`;
+// Every price on this screen is NGN: the naira sign, grouping, and kobo only when there are some.
+const naira = formatNaira;
 
 // Opening for orders requires an APPROVED business verification (KYB) — see
 // backend SetAvailability (ADR-033, fail-closed): closing is always allowed,
@@ -411,8 +414,16 @@ function PayoutReadinessBanner({ storeId }: { storeId: string }) {
   const mine = readiness.data?.find((o) => o.restaurantId === storeId);
   if (!mine || mine.payable) return null;
 
-  return (
-    <View style={styles.payoutWarn} accessibilityRole="alert">
+  // The hold is almost always "business verification isn't approved" — and the
+  // reason text says so in words the owner can't act on. When that's the cause the
+  // whole banner is the way to fix it: tapping goes to the verification screen,
+  // labelled for where they are (start it, check its status, answer a request for
+  // more information, reapply). A hold with any other cause stays a plain notice.
+  const kybAction = availabilityKybNotice(mine.kybStatus);
+  const goToVerification = () => router.push(`/food/restaurant/kyb?outlet=${storeId}`);
+
+  const body = (
+    <>
       <Text style={styles.payoutWarnTitle}>Payouts are on hold for this outlet</Text>
       <Text style={styles.muted}>{mine.reason}</Text>
       {mine.unpaidKobo > 0 && (
@@ -420,7 +431,25 @@ function PayoutReadinessBanner({ storeId }: { storeId: string }) {
           {naira(mine.unpaidKobo)} already earned is waiting to be paid out.
         </Text>
       )}
-    </View>
+      {kybAction ? (
+        <Text style={styles.kybLink}>{kybAction.actionLabel ?? 'Open verification'} →</Text>
+      ) : null}
+    </>
+  );
+
+  if (!kybAction) {
+    return <View style={styles.payoutWarn} accessibilityRole="alert">{body}</View>;
+  }
+  return (
+    <Pressable
+      onPress={goToVerification}
+      style={({ pressed }) => [styles.payoutWarn, pressed && { opacity: 0.85 }]}
+      accessibilityRole="button"
+      accessibilityLabel={`Payouts are on hold. ${kybAction.actionLabel ?? 'Open business verification'}`}
+      hitSlop={4}
+    >
+      {body}
+    </Pressable>
   );
 }
 
@@ -474,17 +503,15 @@ function PackagingPrice({ storeId, store }: { storeId: string; store: MerchantSt
         rider take no cut.
       </Text>
 
-      <Field
-        label="Price per pack (₦)"
+      <NairaField
+        label="Price per pack"
         value={value}
         onChangeText={(t) => { setDraft(t); if (error) setError(null); }}
         placeholder="200"
-        keyboardType="decimal-pad"
+        error={error ?? (dirty && !parsed.ok ? parsed.error : null)}
       />
 
-      {error ? (
-        <Text style={styles.errorText}>{error}</Text>
-      ) : perPack !== null ? (
+      {error ? null : perPack !== null ? (
         <Text style={styles.muted}>
           {perPack === 0
             ? 'Customers won’t be charged for packaging.'
@@ -653,10 +680,13 @@ function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCat
       <TextInput value={draft.name} onChangeText={(name) => setDraft((d) => ({ ...d, name }))} placeholder="Item name"
         placeholderTextColor={Colors.outline} style={styles.input} />
       {errors.name ? <Text style={styles.errorText}>{errors.name}</Text> : null}
-      <TextInput value={draft.priceNaira} onChangeText={(priceNaira) => setDraft((d) => ({ ...d, priceNaira }))}
-        placeholder="Price in naira, e.g. 2500" keyboardType="decimal-pad"
-        placeholderTextColor={Colors.outline} style={styles.input} />
-      {errors.price ? <Text style={styles.errorText}>{errors.price}</Text> : null}
+      <NairaField
+        label="Price"
+        value={draft.priceNaira}
+        onChangeText={(priceNaira) => setDraft((d) => ({ ...d, priceNaira }))}
+        placeholder="2500"
+        error={errors.price}
+      />
       <TextInput value={draft.prepMinutes ?? ''} onChangeText={(prepMinutes) => setDraft((d) => ({ ...d, prepMinutes }))}
         placeholder="Prep time in minutes (optional, 5 to 180)" keyboardType="number-pad"
         placeholderTextColor={Colors.outline} style={styles.input} />
@@ -670,24 +700,37 @@ function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCat
 function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string }) {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const createItem = useCreateItem(storeId);
   const add = () => {
-    const amount = Number(price);
-    if (!name.trim() || !Number.isFinite(amount) || amount <= 0) return;
+    if (!name.trim()) { setError('Enter the item name.'); return; }
+    // Text -> integer kobo through the shared rules (> 0, <= the server ceiling, 2 decimals),
+    // never `Math.round(Number(x) * 100)`.
+    const parsed = parseNaira(price, ITEM_PRICE_BOUNDS);
+    if (!parsed.ok) { setError(parsed.error); return; }
+    setError(null);
     createItem.mutate(
-      { categoryId, name: name.trim(), priceKobo: Math.round(amount * 100) },
+      { categoryId, name: name.trim(), priceKobo: parsed.kobo },
       { onSuccess: () => { setName(''); setPrice(''); } },
     );
   };
   return (
-    <View style={styles.inlineRow}>
-      <TextInput value={name} onChangeText={setName} placeholder="Item name"
-        placeholderTextColor={Colors.outline} style={[styles.input, { flex: 2 }]} />
-      <TextInput value={price} onChangeText={setPrice} placeholder="₦ price" keyboardType="numeric"
-        placeholderTextColor={Colors.outline} style={[styles.input, { flex: 1 }]} />
-      <Pressable onPress={add} style={styles.addBtn} disabled={createItem.isPending}>
-        {createItem.isPending ? <ActivityIndicator color="#fff" size="small" /> : <Plus size={18} color="#fff" />}
-      </Pressable>
+    <View style={{ gap: 6 }}>
+      <TextInput value={name} onChangeText={(t) => { setName(t); if (error) setError(null); }} placeholder="Item name"
+        placeholderTextColor={Colors.outline} style={styles.input} />
+      <View style={[styles.inlineRow, { alignItems: 'flex-start' }]}>
+        <NairaField
+          flex={1}
+          value={price}
+          onChangeText={(t) => { setPrice(t); if (error) setError(null); }}
+          placeholder="Price"
+          accessibilityLabel="Item price in naira"
+        />
+        <Pressable onPress={add} style={styles.addBtn} disabled={createItem.isPending} accessibilityLabel="Add item">
+          {createItem.isPending ? <ActivityIndicator color="#fff" size="small" /> : <Plus size={18} color="#fff" />}
+        </Pressable>
+      </View>
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
   );
 }

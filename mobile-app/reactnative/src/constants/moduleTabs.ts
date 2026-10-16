@@ -8,7 +8,7 @@ import {
   GraduationCap, BookOpen, ClipboardList, Wallet,
   Trophy, Vote, BarChart3,
   Smartphone, Wifi, Zap, Tv, FileText,
-  ReceiptText,
+  ReceiptText, TrendingUp, Settings,
 } from 'lucide-react-native';
 import type { ModuleTab } from '@/components/ModuleTabBar';
 
@@ -47,6 +47,25 @@ export const FILM_ACADEMY_TABS: readonly ModuleTab[] = [
 export const FOOD_TABS: readonly ModuleTab[] = [
   { href: '/food',        label: 'Discover', icon: Compass },
   { href: '/food/orders', label: 'Orders',   icon: ReceiptText },
+] as const;
+
+/**
+ * Food & delivery — the RESTAURANT OWNER console. Orders, Earnings and Manage are
+ * the three landing destinations; Staff is a sub-area of Manage, so it keeps that
+ * tab lit rather than dropping the bar. `kyb` (business verification) is a flow
+ * reached from Manage with its own submit step and Back, so it stays off the bar.
+ *
+ * The Orders screen used to draw this bar itself, inline, and nothing else did —
+ * so Earnings and Manage had no navigation at all. It now lives here, once, and
+ * the food layout renders it for every console screen.
+ */
+export const RESTAURANT_TABS: readonly ModuleTab[] = [
+  { href: '/food/restaurant',          label: 'Orders',   icon: ReceiptText },
+  { href: '/food/restaurant/earnings', label: 'Earnings', icon: TrendingUp },
+  {
+    href: '/food/restaurant/manage', label: 'Manage', icon: Settings,
+    matchPaths: ['/food/restaurant/staff'],
+  },
 ] as const;
 
 /**
