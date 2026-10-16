@@ -18,6 +18,7 @@
     "test:payment-routes": "node scripts/smoke-payment-routes.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "test:server-profile": "node --experimental-strip-types --test \"src/lib/__tests__/serverProfile.test.ts\"",
     "test:association-upload": "node --experimental-strip-types --test \"src/features/association/api/__tests__/*.test.ts\"",
     "test:property-roles": "node --experimental-strip-types --test \"src/features/property/roles/__tests__/*.test.ts\"",
     "test:restaurant-taxonomy": "node --experimental-strip-types --test \"src/features/restaurantmerchant/__tests__/*.test.ts\"",
