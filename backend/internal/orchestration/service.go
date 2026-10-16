@@ -33,6 +33,10 @@ type Service struct {
 	// accountEvents applies Verto account-lifecycle webhooks (SP-2). Optional:
 	// nil means such events are acknowledged and logged only.
 	accountEvents AccountLifecycleApplier
+
+	// spreadRecognizer recognises FX spread revenue after a trade is applied
+	// (SP-3a Task 4). Optional: nil = no recognition, behaviour unchanged.
+	spreadRecognizer SpreadRecognizer
 }
 
 // ServiceOption customises a Service at construction.
@@ -366,7 +370,8 @@ func (s *Service) ExecuteConversion(ctx context.Context, customerID, idemKey str
 		return nil, NewError(ErrInvalidRequest, "missing_idempotency_key", "Idempotency-Key header is required.")
 	}
 	if existing, ok, _ := s.store.ConversionByIdem(ctx, idemKey); ok {
-		return existing, nil // idempotent replay
+		s.recognizeSpread(ctx, "convert", existing.Reference, customerID, existing.Source, existing.Destination, existing.Fees)
+		return existing, nil // idempotent replay (spread recognition retried above)
 	}
 	q, apiErr := s.book.Consume(req.QuoteID, customerID, s.now())
 	if apiErr != nil {
@@ -402,6 +407,7 @@ func (s *Service) ExecuteConversion(ctx context.Context, customerID, idemKey str
 		return nil, asAPIError(err)
 	}
 	s.treasury.Reserve(prov, q.Destination.Currency, q.Destination.AmountMinor)
+	s.recognizeSpread(ctx, "convert", conv.Reference, customerID, conv.Source, conv.Destination, conv.Fees)
 	s.emit(ctx, "conversion.settled", conv)
 	return conv, nil
 }
@@ -413,6 +419,7 @@ func (s *Service) ExecuteTransfer(ctx context.Context, customerID, idemKey strin
 		return nil, NewError(ErrInvalidRequest, "missing_idempotency_key", "Idempotency-Key header is required.")
 	}
 	if existing, ok, _ := s.store.TransferByIdem(ctx, idemKey); ok {
+		s.recognizeSpread(ctx, "send", existing.Reference, customerID, existing.Source, existing.Destination, existing.Fees) // retry-safe
 		return existing, nil
 	}
 	if req.Destination == nil {
@@ -480,6 +487,7 @@ func (s *Service) ExecuteTransfer(ctx context.Context, customerID, idemKey strin
 		return nil, asAPIError(err)
 	}
 	s.treasury.Reserve(prov, q.Destination.Currency, q.Destination.AmountMinor)
+	s.recognizeSpread(ctx, "send", tr.Reference, customerID, tr.Source, tr.Destination, tr.Fees)
 	s.emit(ctx, "transfer."+string(status), tr)
 	return tr, nil
 }
