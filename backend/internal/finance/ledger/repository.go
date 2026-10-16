@@ -571,7 +571,7 @@ func (r *Repository) ListEntries(ctx context.Context, accountID string, limit, o
 		SELECT id, account_id, type, amount_kobo, reference, idempotency_key, created_at
 		FROM ledger_entries
 		WHERE account_id = $1
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 		LIMIT $2 OFFSET $3`
 	rows, err := r.db.Query(ctx, q, accountID, limit, offset)
 	if err != nil {
