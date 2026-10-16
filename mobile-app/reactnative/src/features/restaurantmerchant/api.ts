@@ -47,6 +47,7 @@ function mapStore(r: any): MerchantStore {
     description: r.description ?? '',
     address: r.address,
     logoUrl: r.logo_url ?? null,
+    bannerUrl: r.banner_url ?? null,
     isOpen: !!r.is_open,
     createdAt: r.created_at,
     geoLat: typeof r.geo_lat === 'number' ? r.geo_lat : null,
@@ -144,6 +145,7 @@ export async function updateStore(id: string, patch: UpdateStoreInput): Promise<
       description: patch.description ?? mockStore.description,
       address: patch.address ?? mockStore.address,
       logoUrl: patch.logoUrl ?? mockStore.logoUrl,
+      bannerUrl: patch.bannerUrl ?? mockStore.bannerUrl,
       packagingFeeKobo: patch.packagingFeeKobo ?? mockStore.packagingFeeKobo,
     };
     return mockStore;
@@ -398,6 +400,50 @@ export async function presignKYBDocument(
   } catch (err) {
     if ((err as { response?: { status?: number } })?.response?.status === 503) {
       throw new KYBUploadsUnavailableError();
+    }
+    throw err;
+  }
+}
+
+/** The server has no usable object storage, so a logo/banner can't be uploaded. Retrying can't help. */
+export class StoreImageUploadsUnavailableError extends Error {
+  constructor() {
+    super('Picture uploads are not available right now. Please try again later.');
+    this.name = 'StoreImageUploadsUnavailableError';
+  }
+}
+
+export interface StoreImagePresign {
+  uploadUrl: string;
+  objectKey: string;
+  contentType: string;
+  expiresIn: number;
+  method: string;
+}
+
+/**
+ * Ask the backend for a short-lived presigned PUT URL for the store's logo or banner. The
+ * backend chooses the object key and binds the Content-Type into the signature, so the
+ * exact `contentType` returned here must be sent on the PUT.
+ */
+export async function presignStoreImage(
+  id: string, kind: 'logo' | 'banner', fileName: string, contentType: string,
+): Promise<StoreImagePresign> {
+  try {
+    const raw = unwrap<any>(await api.post(
+      `${BASE}/${enc(id)}/images/presign`,
+      { kind, file_name: fileName, content_type: contentType },
+    ));
+    return {
+      uploadUrl: raw.upload_url,
+      objectKey: raw.object_key,
+      contentType: raw.content_type,
+      expiresIn: raw.expires_in ?? 0,
+      method: raw.method ?? 'PUT',
+    };
+  } catch (err) {
+    if ((err as { response?: { status?: number } })?.response?.status === 503) {
+      throw new StoreImageUploadsUnavailableError();
     }
     throw err;
   }
