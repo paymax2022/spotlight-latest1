@@ -125,6 +125,10 @@ func (s *Service) applyStatus(ctx context.Context, cur *GlobalAccount, target St
 			u.ApprovedAt = &now
 		}
 	}
+	// NOTE: consent is NOT recorded on the no-T&C approval path (approved ->
+	// ACTIVE). AcceptTnC/onboarding_consents are dormant in SP-2 — pending the
+	// compliance decision (see the ADR-PR<pr-number> go-live gate; pinned by
+	// TestHandleProviderStatus_ApprovalRecordsNoConsent).
 	if err := s.step(ctx, cur, target, u); err != nil {
 		return err
 	}
