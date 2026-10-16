@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
+
+	"spotlight/backend/internal/crossborder/onboarding"
 )
 
 // VertoFX webhook ingestion (SP-1 Task 6).
@@ -120,6 +122,33 @@ func vertoPayoutStatus(st string) string {
 	return ""
 }
 
+// AccountLifecycleApplier applies a normalized account-lifecycle event
+// (SP-2); satisfied by *onboarding.Service.
+type AccountLifecycleApplier interface {
+	HandleProviderStatus(ctx context.Context, companyID string, ev onboarding.NormalizedAccountEvent) error
+}
+
+// WithAccountLifecycle attaches the applier for account.* webhooks.
+func WithAccountLifecycle(a AccountLifecycleApplier) ServiceOption {
+	return func(s *Service) { s.accountEvents = a }
+}
+
+// handleVertoAccountEvent routes an account.* event to the onboarding service.
+// The event is only a trigger; the applier GET-confirms the status.
+func (s *Service) handleVertoAccountEvent(ctx context.Context, id, norm, status, companyID, reason string) error {
+	if strings.TrimSpace(companyID) == "" {
+		log.Printf("[fx] vertofx webhook: %s without a company id (id=%q) — logged, no state change", norm, id)
+		return nil
+	}
+	if s.accountEvents == nil {
+		log.Printf("[fx] vertofx webhook: %s (company=%q) recognised, no onboarding applier wired", norm, companyID)
+		return nil
+	}
+	return s.accountEvents.HandleProviderStatus(ctx, companyID, onboarding.NormalizedAccountEvent{
+		EventID: id, Name: norm, ProviderStatus: status, Reason: reason,
+	})
+}
+
 // transferRank orders transfer states so webhooks can only move forward.
 func transferRank(s TransferStatus) int {
 	switch s {
@@ -143,9 +172,13 @@ func (s *Service) handleVertoFXEvent(ctx context.Context, payload []byte) error 
 		Type      string `json:"type"`
 		PaymentID string `json:"paymentId"`
 		Status    string `json:"status"`
+		CompanyID string `json:"companyId"`
+		Reason    string `json:"reason"`
 		Data      struct {
 			PaymentID string `json:"paymentId"`
 			Status    string `json:"status"`
+			CompanyID string `json:"companyId"`
+			Reason    string `json:"reason"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(payload, &ev); err != nil {
@@ -167,6 +200,16 @@ func (s *Service) handleVertoFXEvent(ctx context.Context, payload []byte) error 
 	if norm == "" {
 		log.Printf("[fx] vertofx webhook: unknown event %q status %q (id=%q) — logged, no state change", name, status, ev.ID)
 		return nil
+	}
+	if strings.HasPrefix(norm, "account.") {
+		company, reason := ev.CompanyID, ev.Reason
+		if company == "" {
+			company = ev.Data.CompanyID
+		}
+		if reason == "" {
+			reason = ev.Data.Reason
+		}
+		return s.handleVertoAccountEvent(ctx, ev.ID, norm, status, company, reason)
 	}
 	if strings.TrimSpace(ref) == "" {
 		return nil // nothing actionable

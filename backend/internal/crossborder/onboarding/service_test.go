@@ -108,6 +108,9 @@ func (m *memStore) GetAccountByUser(context.Context, string, string) (*GlobalAcc
 	c := *m.acct
 	return &c, nil
 }
+func (m *memStore) GetAccountByCompanyID(ctx context.Context, _, _ string) (*GlobalAccount, error) {
+	return m.GetAccountByUser(ctx, "", "")
+}
 func (m *memStore) UpdateStatus(_ context.Context, _ string, from, to Status, _ StatusUpdate) error {
 	if !CanTransition(from, to) {
 		return ErrIllegalTransition

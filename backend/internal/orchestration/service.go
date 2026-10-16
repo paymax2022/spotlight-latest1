@@ -29,6 +29,10 @@ type Service struct {
 	// defaultProvider is the preferred provider name (config FX_DEFAULT_PROVIDER).
 	// Empty = pure best-score routing. See applyDefaultProvider.
 	defaultProvider string
+
+	// accountEvents applies Verto account-lifecycle webhooks (SP-2). Optional:
+	// nil means such events are acknowledged and logged only.
+	accountEvents AccountLifecycleApplier
 }
 
 // ServiceOption customises a Service at construction.

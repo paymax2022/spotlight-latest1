@@ -55,6 +55,7 @@ type ProfileReader interface {
 type Store interface {
 	CreateAccount(ctx context.Context, a *GlobalAccount, idempotencyKey string, tier int) (*GlobalAccount, error)
 	GetAccountByUser(ctx context.Context, userID, provider string) (*GlobalAccount, error)
+	GetAccountByCompanyID(ctx context.Context, provider, companyID string) (*GlobalAccount, error)
 	UpdateStatus(ctx context.Context, id string, from, to Status, u StatusUpdate) error
 	UpsertWallet(ctx context.Context, w *ProviderWallet) (*ProviderWallet, error)
 	UpsertFundingDetail(ctx context.Context, f *FundingDetail) (*FundingDetail, error)
