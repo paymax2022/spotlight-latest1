@@ -325,6 +325,11 @@ type Funding struct {
 	BankName      string `json:"bankName"`
 	BankCode      string `json:"bankCode"`
 	Reference     string `json:"reference"`
+	// Mode is "dedicated" or "pooled" (Verto "type"); set by GetFundingDetails.
+	Mode string `json:"type,omitempty"`
+	// Methods lists every funding method returned (GetFundingDetails only);
+	// the top-level fields mirror the preferred one (dedicated over pooled).
+	Methods []Funding `json:"-"`
 }
 
 // CreateFundingDetails fetches (auto-creating) funding methods for a currency
