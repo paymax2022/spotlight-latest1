@@ -101,6 +101,8 @@ export default function ForgotPasswordPage() {
   async function requestFailure(res: Response): Promise<string> {
     if (res.status === 503) return 'Password reset is unavailable right now. Please try again later.';
     if (res.status === 429) return 'Too many attempts. Please try again later.';
+    // ADR-PR800: the request step says so when nothing matches what was typed.
+    if (res.status === 404) return `No account found for ${identifier.trim()}.`;
     if (res.status === 400) {
       const body = await res.json().catch(() => ({}));
       return typeof body?.error === 'string' ? body.error : 'Enter your email or phone number.';
