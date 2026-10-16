@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react';
 import { getNavigationFunnel, type FunnelResult } from '@/services/analyticsService';
 import { AdminUsersRequestError } from '@/services/usersService';
+import { dropOff } from './funnelMath';
 import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
 
 const RANGES = ['7d', '30d', '90d'] as const;
@@ -18,12 +19,6 @@ type State =
   | { kind: 'disabled' }
   | { kind: 'forbidden' }
   | { kind: 'error'; message: string };
-
-/** Drop-off % from the previous step; 0 when the previous step had no users. */
-export function dropOff(prev: number, cur: number): number {
-  if (!prev) return 0;
-  return Math.round((1 - cur / prev) * 100);
-}
 
 export default function NavigationFunnelPage() {
   const nextId = useRef(3);
