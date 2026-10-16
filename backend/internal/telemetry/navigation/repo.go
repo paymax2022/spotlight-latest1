@@ -241,7 +241,7 @@ func (r *Repository) FunnelStepEvents(ctx context.Context, steps []string, f Ana
 		WHERE route = ANY($1)
 		  AND occurred_at >= now() - $2::interval
 		  AND ($3 = '' OR surface = $3)
-		ORDER BY user_id, occurred_at`
+		ORDER BY user_id, occurred_at, id`
 	rows, err := r.db.Query(ctx, q, steps, analyticsInterval(f.Range), surface)
 	if err != nil {
 		return nil, fmt.Errorf("navigation repo: funnel events: %w", err)
