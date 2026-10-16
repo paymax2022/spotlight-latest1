@@ -50,6 +50,9 @@ func buildFXProviders(cfg *config.Config) []orchestration.Provider {
 		vc = vc.WithWebhookSecret(cfg.VertoFXWebhookSecret)
 		providers = append(providers, adapters.NewVertoFXLive(vc, cfg.VertoFXWebhookSecret, cfg.VertoFXProd))
 		log.Println("[finance] FX orchestration: VertoFX adapter enabled")
+		if cfg.VertoFXClientID == "" || cfg.VertoFXAPIKey == "" {
+			log.Println("[finance] WARNING: FEATURE_VERTOFX is on but VertoFX credentials are empty; it will run in offline-mock mode and could win default routing in non-prod")
+		}
 	}
 	return providers
 }
