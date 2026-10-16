@@ -3,6 +3,7 @@ package onboarding
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -58,15 +59,24 @@ func (f *fakeProvider) GetSubAccount(context.Context, string) (ProviderAccount, 
 func (f *fakeProvider) GenerateUploadLink(context.Context, string, UploadLinkInput) (UploadLink, error) {
 	return UploadLink{}, nil
 }
+
+// EnsureWallet models the real check-then-create: NOT atomic, so concurrent
+// calls for the same (company,currency) create duplicates unless the caller
+// serialises them.
 func (f *fakeProvider) EnsureWallet(_ context.Context, co, cur string) (ProviderWalletRef, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.wallets == nil {
-		f.wallets = map[string]bool{}
-	}
-	if !f.wallets[co+cur] {
+	exists := f.wallets[co+cur]
+	f.mu.Unlock()
+	runtime.Gosched()
+	time.Sleep(time.Millisecond)
+	if !exists {
+		f.mu.Lock()
+		if f.wallets == nil {
+			f.wallets = map[string]bool{}
+		}
 		f.wallets[co+cur] = true
 		f.walletNew++
+		f.mu.Unlock()
 	}
 	return ProviderWalletRef{WalletID: "w-" + cur, Currency: cur}, nil
 }
@@ -250,7 +260,7 @@ func TestEnsureWallets_ProvisionsOncePerCurrency(t *testing.T) {
 		}
 	}
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() { defer wg.Done(); _ = svc.ensureWallets(context.Background(), acct) }()
 	}
@@ -289,5 +299,21 @@ func TestAcceptTnC_MovesAwaitingTnCToActive(t *testing.T) {
 	ms.acct.Status = StatusInReview
 	if err := svc.AcceptTnC(context.Background(), "u1", TnCAcceptance{}); !errors.Is(err, ErrWrongState) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+// Concurrent first-time provisioning for one company: the fake EnsureWallet is
+// check-then-create, so without the per-company lock this creates duplicates.
+func TestEnsureWallets_ConcurrentSerialised(t *testing.T) {
+	svc, fp, ms := newSvc(2, nil)
+	acct := &GlobalAccount{ID: "acct-1", ProviderCompanyID: "co-1"}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = svc.ensureWallets(context.Background(), acct) }()
+	}
+	wg.Wait()
+	if fp.walletNew != 4 || len(ms.wallets) != 4 {
+		t.Fatalf("expected each currency created once: created=%d stored=%d", fp.walletNew, len(ms.wallets))
 	}
 }

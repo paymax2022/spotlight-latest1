@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -191,6 +192,12 @@ func (s *Service) Activate(ctx context.Context, userID string, in ActivateInput)
 		Status:            StatusNotStarted,
 	}, "activate:"+ProviderName+":"+userID, int(tier))
 	if err != nil {
+		// Crash window: the provider sub-account exists but is not recorded
+		// locally. Provider-side dedupe on IdentificationNumber is unverified,
+		// so log the CompanyID for manual reconciliation (carried to sandbox
+		// verification / a later reconcile sweep).
+		log.Printf("ERROR onboarding: orphaned provider sub-account (company_id=%s user_id=%s): local persist failed: %v",
+			pa.CompanyID, userID, err)
 		if errors.Is(err, ErrAccountConflict) {
 			return GlobalAccount{}, ErrActivationConflict
 		}
