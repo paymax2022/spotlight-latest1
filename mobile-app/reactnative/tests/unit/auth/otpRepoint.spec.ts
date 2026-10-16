@@ -12,12 +12,15 @@ import assert from 'node:assert/strict';
 import {
   OTP_ROUTES,
   forgotPasswordBody,
-  isCodeReset,
+  getPendingReset,
+  setPendingReset,
+  clearPendingReset,
+  verifyResetCodeBody,
   isMfaChallenge,
   loginStepUpBody,
   readSession,
   resendBody,
-  resetWithCodeBody,
+  resetWithTokenBody,
   verificationSignedIn,
   verifyEmailBody,
 } from '@/api/authOtp';
@@ -27,6 +30,7 @@ test('every OTP call targets the backend, never supabase.auth', () => {
   assert.equal(OTP_ROUTES.verifyEmail, '/api/auth/verify-otp');
   assert.equal(OTP_ROUTES.resend, '/api/auth/resend-otp');
   assert.equal(OTP_ROUTES.forgotPassword, '/api/auth/forgot-password');
+  assert.equal(OTP_ROUTES.verifyResetCode, '/api/auth/verify-password-reset-otp');
   assert.equal(OTP_ROUTES.resetPassword, '/api/auth/reset-password');
   // The sign-in step-up is a SEPARATE route from sign-up verification: that one
   // returns a session, this one deliberately does not, so keeping them apart
@@ -41,19 +45,22 @@ test('addresses are normalised, and codes trimmed, before they are sent', () => 
   assert.deepEqual(verifyEmailBody('  Ada@Example.TEST ', ' 482913 '),
     { email: 'ada@example.test', otp: '482913' });
   assert.deepEqual(resendBody(' A@B.test '), { email: 'a@b.test' });
-  assert.deepEqual(forgotPasswordBody(' A@B.test '), { email: 'a@b.test' });
+  assert.deepEqual(forgotPasswordBody(' A@B.test '), { identifier: 'a@b.test' });
+  // A phone number is only trimmed — the server owns its normalisation.
+  assert.deepEqual(forgotPasswordBody(' 0803 000 0000 '), { identifier: '0803 000 0000' });
   assert.deepEqual(loginStepUpBody(' A@B.test ', ' 654321 '), { email: 'a@b.test', code: '654321' });
-  assert.deepEqual(resetWithCodeBody(' A@B.test ', ' 482913 ', 'pw'),
-    { email: 'a@b.test', code: '482913', password: 'pw' });
+  assert.deepEqual(verifyResetCodeBody(' A@B.test ', ' 482913 '), { identifier: 'a@b.test', code: '482913' });
+  assert.deepEqual(resetWithTokenBody(' A@B.test ', 'tok', 'pw'),
+    { identifier: 'a@b.test', resetToken: 'tok', password: 'pw' });
 });
 
-test('a reset with a code and a reset from a link are told apart', () => {
-  assert.equal(isCodeReset({ email: 'a@b.test', code: '482913' }), true);
-  // The link path holds a recovery session instead. Dropping it would break
-  // every reset link already sitting in someone's inbox.
-  assert.equal(isCodeReset({}), false);
-  assert.equal(isCodeReset({ email: 'a@b.test' }), false);
-  assert.equal(isCodeReset({ code: '482913' }), false);
+test('the reset token lives in memory and can be cleared', () => {
+  clearPendingReset();
+  assert.equal(getPendingReset(), null);
+  setPendingReset(' A@B.test ', 'tok');
+  assert.deepEqual(getPendingReset(), { identifier: 'a@b.test', resetToken: 'tok' });
+  clearPendingReset();
+  assert.equal(getPendingReset(), null);
 });
 
 test('verification reports a session ONLY when one really came back', () => {

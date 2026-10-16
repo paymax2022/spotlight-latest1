@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -44,6 +45,13 @@ type AuthHandler struct {
 	// ResetPassword refusing, which is what it should have been doing all along.
 	verifyOTP   OTPVerifier
 	setPassword services.PasswordSetter
+
+	// issueTicket/redeemTicket carry "the code was correct" from the verify step
+	// to the set-password step; resolveIdentifier maps email-or-phone to the
+	// account email. See the password-reset block below.
+	issueTicket       OTPTicketIssuer
+	redeemTicket      OTPTicketRedeemer
+	resolveIdentifier IdentifierResolver
 
 	// signupGate replaces GoTrue's sign_in_sign_ups limit, which the admin
 	// creation path does not enforce. Nil when registration still goes through
@@ -109,6 +117,33 @@ type OTPVerifier func(ctx context.Context, email, purpose, code, ip string) erro
 // WithOTPVerifier wires code redemption into the password-reset completion.
 func (h *AuthHandler) WithOTPVerifier(fn OTPVerifier) *AuthHandler {
 	h.verifyOTP = fn
+	return h
+}
+
+// OTPTicketIssuer mints the single-use proof that a reset code was correct.
+type OTPTicketIssuer func(ctx context.Context, email, purpose string) (string, error)
+
+// OTPTicketRedeemer spends that proof.
+type OTPTicketRedeemer func(ctx context.Context, email, purpose, ticket, ip string) error
+
+// IdentifierResolver turns what the user typed (an email, or a phone number in
+// any common Nigerian format) into the account email, or "" when there is none.
+// Phone lookups happen server-side and the email is never returned to the
+// caller: a public phone-to-email endpoint would let anyone harvest addresses.
+type IdentifierResolver func(ctx context.Context, identifier string) string
+
+// WithOTPTickets splits password reset into "check the code" and "set the
+// password". Without it ResetPassword refuses, because it has nothing to prove
+// the code was ever checked.
+func (h *AuthHandler) WithOTPTickets(issue OTPTicketIssuer, redeem OTPTicketRedeemer) *AuthHandler {
+	h.issueTicket = issue
+	h.redeemTicket = redeem
+	return h
+}
+
+// WithIdentifierResolver lets password reset accept a phone number.
+func (h *AuthHandler) WithIdentifierResolver(fn IdentifierResolver) *AuthHandler {
+	h.resolveIdentifier = fn
 	return h
 }
 
@@ -452,79 +487,179 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Logged out"})
 }
 
+// ── Password reset (emailed one-time code; no reset link) ─────────────────────
+//
+//  1. POST /request-password-reset       {identifier}                         -> code emailed
+//  2. POST /verify-password-reset-otp    {identifier, code}                   -> {resetToken}
+//  3. POST /reset-password               {identifier, resetToken, newPassword}
+//
+// The code is checked in step 2, before the new-password form is shown. Step 2
+// converts it into a single-use resetToken (see otp.IssueTicket) so that step 3
+// does not need the code again: the code stays single-use, and "verify" and
+// "set password" can be separate screens.
+//
+// Every step answers the same way whether or not an account exists. A phone
+// number that matches no account is handled with a placeholder address, so it
+// travels the same code path and costs the same as one that does.
+
+// noAccountAddress stands in for an identifier that resolved to no account. It is
+// not a deliverable address (the .invalid TLD is reserved by RFC 6761) and no code
+// or ticket is ever stored under it, so every check against it fails exactly as a
+// wrong code does.
+const noAccountAddress = "no-account@reset.invalid"
+
+// resolveResetEmail maps the identifier to an account email, or "" for none.
+func (h *AuthHandler) resolveResetEmail(ctx context.Context, identifier string) string {
+	id := strings.TrimSpace(identifier)
+	if id == "" {
+		return ""
+	}
+	if h.resolveIdentifier != nil {
+		return h.resolveIdentifier(ctx, id)
+	}
+	if services.LooksLikeEmail(id) {
+		return strings.ToLower(id)
+	}
+	return ""
+}
+
+// identifierOf reads the identifier from a request, accepting the older "email"
+// key so a client that has not been updated keeps working.
+func identifierOf(identifier, email string) string {
+	if strings.TrimSpace(identifier) != "" {
+		return identifier
+	}
+	return email
+}
+
+// resetUnavailable answers when server-issued codes are not wired. There is no
+// link to fall back on any more, so saying "sent" would strand the user.
+func resetUnavailable(c *gin.Context) {
+	c.JSON(http.StatusServiceUnavailable, gin.H{
+		"success": false, "error": "feature_disabled", "feature": "otp_email",
+	})
+}
+
 func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
+	if h.issueOTP == nil {
+		resetUnavailable(c)
+		return
+	}
 	var in struct {
-		Email string `json:"email" binding:"required,email"`
+		Identifier string `json:"identifier"`
+		Email      string `json:"email"`
 	}
 	if err := c.ShouldBindJSON(&in); err == nil {
-		if err := h.auth.RequestPasswordReset(c.Request.Context(), in.Email); err != nil {
-			// Log the address NEVER — only that the upstream failed. The response
-			// below is byte-identical either way, because varying it would reveal
-			// which addresses have accounts.
-			log.Printf("[auth] password reset upstream failed: %v", err)
-		}
-		// Our own code, ALONGSIDE Supabase's reset link rather than instead of it,
-		// so no existing client that completes a reset through the link breaks.
-		// ⚠️ The cost is that a user asking to reset gets TWO emails offering two
-		// different mechanisms. That is a deliberate, temporary state — see
-		// docs/runbooks/otp-email-brevo.md.
-		// Best-effort and silent: the response must not vary, and the link has
-		// already been sent, so a code failure still leaves the user a way in.
-		if h.issueOTP != nil {
-			if err := h.issueOTP(c.Request.Context(), in.Email, "", otp.PurposePasswordReset, c.ClientIP()); err != nil {
-				log.Printf("[auth] password reset: code could not be issued: %v", err)
-			}
+		email := h.resolveResetEmail(c.Request.Context(), identifierOf(in.Identifier, in.Email))
+		if email != "" {
+			// Sent in the background so the response takes the same time whether
+			// or not an account matched: a phone number that resolves would
+			// otherwise be visibly slower (a mail provider round trip) than one
+			// that does not, which is the enumeration oracle this endpoint avoids.
+			// The caller cannot act on a failure anyway — the answer below is the
+			// same either way — so it is logged, not returned.
+			ip := c.ClientIP()
+			parent := context.WithoutCancel(c.Request.Context())
+			go func() {
+				ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+				defer cancel()
+				if err := h.issueOTP(ctx, email, "", otp.PurposePasswordReset, ip); err != nil {
+					log.Printf("[auth] password reset: code could not be issued: %v", err)
+				}
+			}()
 		}
 	}
 	// Always the same answer, whether or not the account exists.
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "If your email exists, reset instructions were sent."})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "If an account matches, a reset code was sent to its email."})
 }
 
-// ResetPassword completes a reset with an emailed CODE.
-// The legacy {token, newPassword} form is REFUSED rather than answered with a
-// false success — no service method can honor a bare token here; web and mobile
-// complete resets through Supabase's own recovery session.
+// resetCodeError maps an OTP failure to a response. Shared by the verify and
+// reset steps so both speak the same vocabulary.
+func resetCodeError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, otp.ErrTooManyAttempts), errors.Is(err, otp.ErrRateLimited):
+		c.JSON(http.StatusTooManyRequests, gin.H{"success": false, "error": "too many attempts, request a new code"})
+	case errors.Is(err, otp.ErrExpired):
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "code expired, request a new code"})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid code"})
+	}
+}
+
+// VerifyPasswordResetOTP — POST /api/auth/verify-password-reset-otp.
+// Checks the emailed code and, only then, returns the resetToken that unlocks the
+// set-password step. It does not change any password.
+func (h *AuthHandler) VerifyPasswordResetOTP(c *gin.Context) {
+	if h.verifyOTP == nil || h.issueTicket == nil {
+		resetUnavailable(c)
+		return
+	}
+	var in struct {
+		Identifier string `json:"identifier"`
+		Email      string `json:"email"`
+		Code       string `json:"code"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil || strings.TrimSpace(in.Code) == "" ||
+		strings.TrimSpace(identifierOf(in.Identifier, in.Email)) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid request"})
+		return
+	}
+	email := h.resolveResetEmail(c.Request.Context(), identifierOf(in.Identifier, in.Email))
+	if email == "" {
+		email = noAccountAddress
+	}
+	if err := h.verifyOTP(c.Request.Context(), email, otp.PurposePasswordReset, strings.TrimSpace(in.Code), c.ClientIP()); err != nil {
+		resetCodeError(c, err)
+		return
+	}
+	// The code is consumed. If the ticket cannot be minted the user must start
+	// again, and is told so rather than shown a form that can never succeed.
+	ticket, err := h.issueTicket(c.Request.Context(), email, otp.PurposePasswordReset)
+	if err != nil {
+		log.Printf("[auth] password reset: could not issue reset ticket: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false, "error": "could not continue, please request a new code"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "verified": true, "resetToken": ticket})
+}
+
+// ResetPassword — POST /api/auth/reset-password.
+// Sets the new password. Requires the resetToken from VerifyPasswordResetOTP, so
+// it can only be reached after the emailed code was checked.
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var in struct {
+		Identifier  string `json:"identifier"`
 		Email       string `json:"email"`
-		Code        string `json:"code"`
-		Token       string `json:"token"`
+		ResetToken  string `json:"resetToken"`
 		NewPassword string `json:"newPassword" binding:"required,min=8"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid payload"})
 		return
 	}
-
-	email := strings.ToLower(strings.TrimSpace(in.Email))
-	code := strings.TrimSpace(in.Code)
-	if email == "" || code == "" {
+	if strings.TrimSpace(in.ResetToken) == "" || strings.TrimSpace(identifierOf(in.Identifier, in.Email)) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "A verification code is required. Request one at /api/auth/request-password-reset, or complete the reset through the emailed link.",
+			"error":   "Verify the code we emailed you first.",
 		})
 		return
 	}
-	if h.verifyOTP == nil || h.setPassword == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"success": false, "error": "feature_disabled", "feature": "otp_email",
-		})
+	if h.redeemTicket == nil || h.setPassword == nil {
+		resetUnavailable(c)
 		return
 	}
 
-	if err := h.verifyOTP(c.Request.Context(), email, otp.PurposePasswordReset, code, c.ClientIP()); err != nil {
-		switch {
-		case errors.Is(err, otp.ErrTooManyAttempts), errors.Is(err, otp.ErrRateLimited):
-			c.JSON(http.StatusTooManyRequests, gin.H{"success": false, "error": "too many attempts, request a new code"})
-		case errors.Is(err, otp.ErrExpired):
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "code expired, request a new code"})
-		default:
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid code"})
-		}
+	email := h.resolveResetEmail(c.Request.Context(), identifierOf(in.Identifier, in.Email))
+	if email == "" {
+		email = noAccountAddress
+	}
+	if err := h.redeemTicket(c.Request.Context(), email, otp.PurposePasswordReset, strings.TrimSpace(in.ResetToken), c.ClientIP()); err != nil {
+		resetCodeError(c, err)
 		return
 	}
 
-	// The code is consumed. From here the caller must be told the truth about
+	// The ticket is spent. From here the caller must be told the truth about
 	// whether their password actually changed.
 	changed, err := h.setPassword.SetPassword(c.Request.Context(), email, in.NewPassword)
 	if err != nil {

@@ -39,12 +39,6 @@ type Config struct {
 	MaxFailedLoginAttempts int
 	AccountLockMinutes     int
 
-	// FrontendSiteURL is where a Supabase recovery/confirmation email link
-	// lands (frontend-web's /auth/reset-password, which establishes the
-	// session from the URL and hands off from there). Without it, GoTrue's
-	// /auth/v1/recover call falls back to the project's dashboard-configured
-	// Site URL, which is not guaranteed to be this page.
-	FrontendSiteURL string
 	// Feature-flagged surface (default OFF). When OFF, the new self/admin session
 	// endpoints return 503 feature-disabled and the middleware session check is a
 	// no-op (existing behaviour preserved). When ON, refresh rotation + reuse
@@ -680,6 +674,14 @@ type Config struct {
 	VideoSDKAPIKey string
 	VideoSDKSecret string
 
+	// LiveKit (self-hosted SFU). FeatureLiveKitEnabled switches live rooms from the dev stub /
+	// VideoSDK to LiveKit. The API secret is server-side only and never returned or logged.
+	FeatureLiveKitEnabled  bool
+	LiveKitURL             string // wss://rtc.example.com (ws:// only in development)
+	LiveKitAPIKey          string
+	LiveKitAPISecret       string
+	LiveKitTokenTTLSeconds int // join-token lifetime; 1..21600
+
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
 	// Raw documents / biometric payloads are NEVER stored or logged — only the
 	// hash + a provider reference (mirrors the KYC bvn_hash/nin_hash pattern).
@@ -758,6 +760,9 @@ type Config struct {
 	BrevoSenderEmail          string
 	BrevoOTPTemplateID        int64
 	BrevoTimeoutSeconds       int
+	// BrevoEndpoint redirects OTP sends to a local fake (dev/test only). Ignored
+	// unless MocksAllowed(); see otp_routes.go for why it can never reach staging/prod.
+	BrevoEndpoint string
 
 	// OTPPepper is the server-side HMAC key for code and identifier hashing.
 	// REQUIRED whenever the feature is on: otp.NewService refuses to construct
@@ -829,7 +834,6 @@ func Load() Config {
 		AppEnv:                      getEnv("APP_ENV", "development"),
 		Port:                        getEnv("APP_PORT", "8080"),
 		SupabaseURL:                 getEnv("SUPABASE_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", "")),
-		FrontendSiteURL:             getEnv("FRONTEND_SITE_URL", getEnv("NEXT_PUBLIC_SITE_URL", "https://www.spotlightng.com")),
 		SupabaseServiceRoleKey:      getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
 		SupabaseJWTSecret:           getEnv("SUPABASE_JWT_SECRET", ""),
 		AuthJWTLocalVerify:          getEnvBool("AUTH_JWT_LOCAL_VERIFY", false),
@@ -1088,6 +1092,12 @@ func Load() Config {
 		VideoSDKAPIKey: getEnv("VIDEOSDK_API_KEY", ""),
 		VideoSDKSecret: getEnv("VIDEOSDK_SECRET", ""),
 
+		FeatureLiveKitEnabled:  getEnvBool("FEATURE_LIVEKIT_ENABLED", false),
+		LiveKitURL:             strings.TrimSpace(getEnv("LIVEKIT_URL", "")),
+		LiveKitAPIKey:          strings.TrimSpace(getEnv("LIVEKIT_API_KEY", "")),
+		LiveKitAPISecret:       strings.TrimSpace(getEnv("LIVEKIT_API_SECRET", "")),
+		LiveKitTokenTTLSeconds: getEnvInt("LIVEKIT_TOKEN_TTL_SECONDS", 600),
+
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 
 		R2AccountEndpoint: getEnv("R2_ACCOUNT_ENDPOINT", ""),
@@ -1135,6 +1145,7 @@ func Load() Config {
 		BrevoSenderEmail:          getEnv("BREVO_SENDER_EMAIL", ""),
 		BrevoOTPTemplateID:        int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
 		BrevoTimeoutSeconds:       getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
+		BrevoEndpoint:             getEnv("BREVO_ENDPOINT", ""),
 
 		OTPPepper:                getEnv("OTP_PEPPER", ""),
 		OTPLength:                getEnvInt("OTP_LENGTH", 6),
@@ -1337,6 +1348,24 @@ func (c Config) Validate() error {
 			}
 			if !strings.EqualFold(strings.TrimSpace(c.CryptoProvider), "quidax") || isPlaceholder(key) || strings.TrimSpace(base) == "" {
 				strict = append(strict, "CRYPTO_PROVIDER=quidax with that environment's Quidax key is required when FEATURE_CRYPTO_ENABLED=true (otherwise mock prices and withdrawals)")
+			}
+		}
+		if c.FeatureLiveKitEnabled {
+			// Light checks only: the full validation runs against the LiveKit client when the
+			// routes are mounted (internal/integrations/livekit), which fails closed.
+			if strings.TrimSpace(c.LiveKitURL) == "" {
+				strict = append(strict, "LIVEKIT_URL is required when FEATURE_LIVEKIT_ENABLED=true")
+			} else if !strings.HasPrefix(strings.ToLower(c.LiveKitURL), "wss://") && !strings.HasPrefix(strings.ToLower(c.LiveKitURL), "https://") {
+				strict = append(strict, "LIVEKIT_URL must use wss:// (or https://) outside development: media tokens must not travel in plaintext")
+			}
+			if strings.TrimSpace(c.LiveKitAPIKey) == "" || isPlaceholder(c.LiveKitAPIKey) {
+				strict = append(strict, "LIVEKIT_API_KEY is required when FEATURE_LIVEKIT_ENABLED=true")
+			}
+			if isPlaceholder(c.LiveKitAPISecret) || len(c.LiveKitAPISecret) < 32 {
+				strict = append(strict, "LIVEKIT_API_SECRET is required (at least 32 characters) when FEATURE_LIVEKIT_ENABLED=true")
+			}
+			if c.LiveKitTokenTTLSeconds < 1 || c.LiveKitTokenTTLSeconds > 6*3600 {
+				strict = append(strict, "LIVEKIT_TOKEN_TTL_SECONDS must be between 1 and 21600 when FEATURE_LIVEKIT_ENABLED=true")
 			}
 		}
 		if c.FeatureCryptoSwapsEnabled {

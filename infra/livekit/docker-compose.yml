@@ -1,0 +1,32 @@
+# Single-node reference deployment of LiveKit + Redis (docs/runbooks/livekit.md).
+#
+#   cp .env.example .env     # fill in; never commit .env
+#   docker compose up -d
+#
+# host networking is deliberate: a WebRTC SFU on a Docker bridge pays for NAT on every media
+# packet and cannot advertise the right candidates. Run it on a Linux VM with a public IP; it will
+# NOT work on platforms without UDP ingress (see the runbook: Railway cannot host the media path).
+
+services:
+  livekit:
+    # Pin an exact, tested release. Never "latest": an SFU upgrade changes wire behaviour.
+    image: livekit/livekit-server:${LIVEKIT_IMAGE_TAG:?set LIVEKIT_IMAGE_TAG to an exact release, e.g. the one you load-tested}
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      # "<key>: <secret>". Same pair as the backend's LIVEKIT_API_KEY / LIVEKIT_API_SECRET.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?}: ${LIVEKIT_API_SECRET:?}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+      - ./certs:/certs:ro
+    depends_on:
+      - redis
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    network_mode: host
+    command: ["redis-server", "--bind", "127.0.0.1", "--protected-mode", "yes", "--save", "", "--appendonly", "no"]

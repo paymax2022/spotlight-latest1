@@ -62,8 +62,7 @@ func (s *stubAuthService) LogoutUser(token string) error {
 	s.mu.Unlock()
 	return s.logoutErr
 }
-func (s *stubAuthService) RequestPasswordReset(context.Context, string) error { return nil }
-func (s *stubAuthService) ResetPassword(string, string) error                 { return nil }
+func (s *stubAuthService) ResetPassword(string, string) error { return nil }
 func (s *stubAuthService) ChangePassword(context.Context, string, string, string) error {
 	return nil
 }

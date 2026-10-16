@@ -8,6 +8,7 @@
 |---|---|
 | [`go-live.md`](go-live.md) | Taking a (money-path) change to production — the exact ordered checklist: secrets matrix, `supabase link` + `db push`, deploy, smoke, gated flag flip. |
 | [`feature-flag-disable.md`](feature-flag-disable.md) | Kill switch — disable a module instantly during an incident. Primary mitigation. |
+| [`livekit.md`](livekit.md) | Self-hosted LiveKit (live classes): ports, env, verification checklist, key rotation, troubleshooting, rollback. |
 | [`incident-rollback.md`](incident-rollback.md) | Something is on fire — triage, mitigate (flag first), code rollback, why there is no DB rollback. |
 
 Related ops docs:

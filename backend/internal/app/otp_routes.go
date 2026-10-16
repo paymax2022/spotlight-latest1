@@ -46,7 +46,7 @@ import (
 // service instance behind both surfaces: registration and POST /otp/request must
 // share a store and a send budget, or "resend" would hand out a second live code
 // and a second allowance.
-func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, supabase *integrations.SupabaseRestClient, auth services.AuthService, sessions services.SessionService) (handlers.OTPIssuer, handlers.OTPVerifier, services.PasswordSetter, handlers.SignupGate) {
+func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, supabase *integrations.SupabaseRestClient, auth services.AuthService, sessions services.SessionService) (handlers.OTPIssuer, handlers.OTPVerifier, services.PasswordSetter, handlers.SignupGate, otpResetWiring) {
 	group := r.Group("/api/auth/otp")
 
 	svc, reason := buildOTPService(cfg, pool)
@@ -82,7 +82,7 @@ func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, sup
 		log.Printf("[otp] routes registered DISABLED (%s) — POST /api/auth/otp/* will answer 503", reason)
 		// Registration keeps using /auth/v1/signup, which GoTrue gates itself, so
 		// no signup budget is returned either.
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, otpResetWiring{}
 	}
 	if bridge == nil {
 		log.Printf("[otp] ERROR: OTP is enabled but the auth bridge could not be built — login step-up and code-based password reset are unavailable")
@@ -128,7 +128,30 @@ func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, sup
 		return limiter.Allow(ctx, "signup:ip:"+otp.Hash(ip, pepper), budget, window)
 	}
 
-	return issue, verify, setter, gate
+	// Password reset: "check the code" and "set the password" are separate steps,
+	// joined by a single-use ticket (see otp.IssueTicket).
+	reset := otpResetWiring{
+		issueTicket: func(ctx context.Context, email, purpose string) (string, error) {
+			return svc.IssueTicket(ctx, email, purpose)
+		},
+		redeemTicket: func(ctx context.Context, email, purpose, ticket, ip string) error {
+			return svc.RedeemTicket(ctx, email, purpose, ticket, ip)
+		},
+	}
+	if bridge != nil {
+		reset.resolve = bridge.ResolveEmail
+	}
+
+	return issue, verify, setter, gate, reset
+}
+
+// otpResetWiring is the extra plumbing the OTP-only password reset needs.
+// resolve is nil when the auth bridge could not be built; the handler then
+// accepts email identifiers only.
+type otpResetWiring struct {
+	issueTicket  handlers.OTPTicketIssuer
+	redeemTicket handlers.OTPTicketRedeemer
+	resolve      handlers.IdentifierResolver
 }
 
 // buildOTPService returns (nil, reason) when the feature must stay closed.
@@ -170,6 +193,19 @@ func buildOTPService(cfg config.Config, pool *pgxpool.Pool) (*otp.Service, strin
 		cfg.BrevoOTPTemplateID,
 		time.Duration(cfg.BrevoTimeoutSeconds)*time.Second,
 	)
+	// BREVO_ENDPOINT lets a local stack route OTP emails to a fake that drops them
+	// into Mailpit (scripts/dev/fake-brevo.mjs), so the real send path can be
+	// exercised without Brevo credentials. Honoured ONLY where mocks are allowed:
+	// on staging/production it would silently divert every code to whoever runs
+	// the endpoint, so there it is ignored loudly.
+	if ep := strings.TrimSpace(cfg.BrevoEndpoint); ep != "" {
+		if cfg.MocksAllowed() {
+			log.Printf("[otp] WARNING: sending OTP email to %s instead of Brevo (BREVO_ENDPOINT, dev only)", ep)
+			sender = sender.WithEndpoint(ep)
+		} else {
+			log.Printf("[otp] ERROR: BREVO_ENDPOINT is set but APP_ENV=%q does not allow mocks — ignoring it", cfg.AppEnv)
+		}
+	}
 
 	svc, err := otp.NewService(
 		otp.NewPostgresStore(pool),

@@ -29,6 +29,14 @@
           "cameraPermission": "Spotlight needs camera access to scan visitor QR codes at the gate."
         }
       ],
+      "@livekit/react-native-expo-plugin",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Spotlight uses your camera to scan visitor QR codes at the gate and to show your video when you host a live class.",
+          "microphonePermission": "Spotlight uses your microphone so you can speak when you host a live class."
+        }
+      ],
       "expo-font",
       [
         "expo-notifications",

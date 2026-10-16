@@ -157,6 +157,13 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		apiAuth.POST("/register", loginLimiter.Middleware(), authHandler.Register)
 		apiAuth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
 		apiAuth.POST("/request-password-reset", resetLimiter.Middleware(), authHandler.RequestPasswordReset)
+		// Checking the emailed code gets a looser budget than asking for one: a user
+		// who mistypes twice must not be locked out of the step that follows. The
+		// code's own attempt ceiling and per-IP verify budget (internal/otp) are what
+		// actually bound guessing.
+		verifyResetLimiter := middleware.NewAuthRateLimiter(cfg.AuthResetRateLimitPerHour*4, time.Hour).
+			WithRedis(func() *platformRedis.Client { return sharedRedis }, "reset-verify")
+		apiAuth.POST("/verify-password-reset-otp", verifyResetLimiter.Middleware(), authHandler.VerifyPasswordResetOTP)
 		apiAuth.POST("/reset-password", resetLimiter.Middleware(), authHandler.ResetPassword)
 		// Email verification is OTP CODES, not links (decided 2026-08-25). The former
 		// GET /verify-email and POST /resend-verification-link were removed: both were
@@ -512,12 +519,14 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	// The returned issuer is what makes Register send a code. It is nil when the
 	// feature is closed, and WithOTPIssuer(nil) leaves Register exactly as it
 	// shipped — verification stays entirely with Supabase Auth.
-	if issuer, verifier, setter, signupGate := registerOTPRoutes(r, cfg, sharedPool, supabase, authService, sessionService); issuer != nil {
+	if issuer, verifier, setter, signupGate, resetWiring := registerOTPRoutes(r, cfg, sharedPool, supabase, authService, sessionService); issuer != nil {
 		authHandler.
 			WithOTPIssuer(issuer).
 			WithOTPVerifier(verifier).
 			WithPasswordSetter(setter).
 			WithSignupGate(signupGate).
+			WithOTPTickets(resetWiring.issueTicket, resetWiring.redeemTicket).
+			WithIdentifierResolver(resetWiring.resolve).
 			// Login step-up is its own flag: server-issued OTP must not silently
 			// become a second factor on every login.
 			WithLoginMFA(cfg.FeatureOTPLoginMFAEnabled)

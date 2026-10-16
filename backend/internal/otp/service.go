@@ -9,6 +9,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -249,8 +250,14 @@ func (s *Service) Verify(ctx context.Context, email, purpose, submitted, ip stri
 		}
 	}
 
-	k := s.key(purpose, email)
+	return s.consume(ctx, s.key(purpose, email), purpose, submitted)
+}
 
+// consume checks submitted against the live record at key k and removes it on a
+// match. It is the single place the attempt ceiling, expiry and single-use rules
+// live, shared by Verify (emailed codes) and RedeemTicket (post-verification
+// tickets) so the two cannot drift apart.
+func (s *Service) consume(ctx context.Context, k, purpose, submitted string) error {
 	rec, err := s.store.Get(ctx, k)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -296,6 +303,75 @@ func (s *Service) Verify(ctx context.Context, email, purpose, submitted, ip stri
 		return ErrTooManyAttempts
 	}
 	return ErrInvalidCode
+}
+
+// ticketPurposePrefix keeps ticket records out of the namespace of emailed codes:
+// a ticket is a different kind of secret and must never satisfy Verify, nor a
+// code satisfy RedeemTicket.
+const ticketPurposePrefix = "ticket:"
+
+// TicketTTL is how long a verified-code ticket stays redeemable. Short on
+// purpose: it only has to survive the user typing a new password.
+const TicketTTL = 10 * time.Minute
+
+func (s *Service) ticketKey(purpose, email string) string {
+	return s.key(ticketPurposePrefix+purpose, email)
+}
+
+// IssueTicket mints a single-use ticket for (purpose, email). Call it only
+// immediately after a successful Verify: the ticket is the proof, carried to the
+// next step, that the emailed code was correct — which lets "check the code" and
+// "set the new password" be separate screens without checking the code twice or
+// leaving a verified-but-unspent code lying around.
+//
+// The ticket is 256 bits of randomness, stored only as a peppered hash, so unlike
+// a 6-digit code it cannot be guessed. A second call for the same address
+// replaces the first.
+func (s *Service) IssueTicket(ctx context.Context, email, purpose string) (string, error) {
+	if !IsAllowedPurpose(purpose) {
+		return "", ErrUnknownPurpose
+	}
+	email = normalizeEmail(email)
+	if email == "" {
+		return "", ErrUnknownPurpose
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("otp: ticket: %w", err)
+	}
+	ticket := base64.RawURLEncoding.EncodeToString(raw)
+	now := time.Now().UTC()
+	rec := Record{
+		Hash:      Hash(ticket, s.cfg.Pepper),
+		Purpose:   ticketPurposePrefix + purpose,
+		CreatedAt: now,
+		ExpiresAt: now.Add(TicketTTL),
+	}
+	if err := s.store.Put(ctx, s.ticketKey(purpose, email), rec, TicketTTL); err != nil {
+		return "", fmt.Errorf("otp: store: %w", err)
+	}
+	return ticket, nil
+}
+
+// RedeemTicket consumes the ticket for (purpose, email). It returns nil exactly
+// once per issued ticket; every other outcome uses the same error vocabulary as
+// Verify (ErrInvalidCode, ErrExpired, ErrTooManyAttempts, ErrRateLimited).
+func (s *Service) RedeemTicket(ctx context.Context, email, purpose, ticket, ip string) error {
+	if !IsAllowedPurpose(purpose) {
+		return ErrInvalidCode
+	}
+	email = normalizeEmail(email)
+	ticket = strings.TrimSpace(ticket)
+	if ip != "" {
+		ok, err := s.limiter.Allow(ctx, s.ipKey("ticket", ip), s.cfg.MaxVerifyPerIP, time.Hour)
+		if err != nil {
+			return fmt.Errorf("otp: limiter: %w", err)
+		}
+		if !ok {
+			return ErrRateLimited
+		}
+	}
+	return s.consume(ctx, s.ticketKey(purpose, email), ticketPurposePrefix+purpose, ticket)
 }
 
 var (

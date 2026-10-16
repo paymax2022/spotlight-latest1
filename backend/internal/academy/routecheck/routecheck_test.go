@@ -70,7 +70,7 @@ func register(t *testing.T, exam, spine, edupay, credentials, live, schools, tut
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 
 	app.RegisterAcademy(r, finance, pool, nil, noopAuth, ledgerSvc,
-		nil /* rtcIssuer — nil → live stub */, nil /* bnplRail */, nil, /* disburseRail */
+		nil /* rtcIssuer — nil → live stub */, nil /* liveRoomOverride */, nil /* bnplRail */, nil, /* disburseRail */
 		nil /* billingRail */, nil /* payoutRail */, stubProvider{},
 		exam, spine, edupay, credentials, live, schools, tutor, fees, tuition,
 		nil /* webhookHandler */, true /* internalAcademyAPIEnabled */, "svc-token")
@@ -145,7 +145,7 @@ func TestRegisterAcademyMountsExpectedRoutes(t *testing.T) {
 	finance := r.Group("/api/finance", noopAuth)
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 	app.RegisterAcademy(r, finance, pool, nil, noopAuth, ledgerSvc,
-		nil, nil, nil, nil, nil, stubProvider{},
+		nil, nil, nil, nil, nil, nil, stubProvider{},
 		true, true, true, true, true, true, true, true, true,
 		nil, true, "svc-token")
 

@@ -5,12 +5,12 @@ import { getSecureItem } from '@/lib/secureStorage';
 import {
   OTP_ROUTES,
   forgotPasswordBody,
-  isCodeReset,
   isMfaChallenge,
   loginStepUpBody,
   readSession,
   resendBody,
-  resetWithCodeBody,
+  resetWithTokenBody,
+  verifyResetCodeBody,
   verificationSignedIn,
   verifyEmailBody,
 } from '@/api/authOtp';
@@ -294,35 +294,33 @@ export async function resendOtp(payload: { email: string }): Promise<void> {
   await api.post(OTP_ROUTES.resend, resendBody(payload.email), { skipAuthRedirect: true });
 }
 
-export async function forgotPassword(payload: { email: string }): Promise<void> {
-  // Through the backend, which sends BOTH the reset link and the code. Calling
-  // Supabase directly would send only the link, leaving the code form unusable.
-  await api.post(OTP_ROUTES.forgotPassword, forgotPasswordBody(payload.email), { skipAuthRedirect: true });
+/**
+ * Password reset is an emailed one-time code, in three calls. There is no link:
+ * the PASSWORD_RECOVERY deep-link path was removed with it.
+ *
+ *   forgotPassword      { identifier }                       → code emailed
+ *   verifyResetCode     { identifier, code }   → resetToken  (code checked HERE)
+ *   resetPassword       { identifier, resetToken, password } → password set
+ *
+ * `identifier` is an email or a phone number; the server resolves it.
+ */
+export async function forgotPassword(payload: { identifier: string }): Promise<void> {
+  await api.post(OTP_ROUTES.forgotPassword, forgotPasswordBody(payload.identifier), { skipAuthRedirect: true });
 }
 
-/**
- * Complete a password reset.
- *
- * Two shapes, because the reset email carries two mechanisms:
- *   - { email, code, password } — the emailed CODE.
- *   - { password } — the emailed LINK, whose recovery session the deep-link
- *     handler has already established. Unchanged from before.
- */
-export async function resetPassword(payload: {
-  password: string;
-  email?: string;
-  code?: string;
-}): Promise<void> {
-  if (isCodeReset(payload)) {
-    await api.post(OTP_ROUTES.resetPassword, resetWithCodeBody(payload.email!, payload.code!, payload.password), { skipAuthRedirect: true });
-    return;
-  }
+export async function verifyResetCode(payload: { identifier: string; code: string }): Promise<string> {
+  const res = await api.post(OTP_ROUTES.verifyResetCode, verifyResetCodeBody(payload.identifier, payload.code), { skipAuthRedirect: true });
+  const token = (res?.data as { resetToken?: unknown })?.resetToken;
+  if (typeof token !== 'string' || !token) throw new Error('Could not verify the code. Please try again.');
+  return token;
+}
 
-  const supabase = createSupabaseClient();
-  // Session is already established by the deep-link recovery handler before
-  // this function is called — just update the password in the active session.
-  const { error } = await supabase.auth.updateUser({ password: payload.password });
-  if (error) throw readableAuthError(error, 'Could not reset password. Please try again.');
+export async function resetPassword(payload: {
+  identifier: string;
+  resetToken: string;
+  password: string;
+}): Promise<void> {
+  await api.post(OTP_ROUTES.resetPassword, resetWithTokenBody(payload.identifier, payload.resetToken, payload.password), { skipAuthRedirect: true });
 }
 
 /**
