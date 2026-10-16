@@ -314,7 +314,24 @@ func (r *Recognizer) rebuildFee(ctx context.Context, tid, svc string) (Record, b
 		rec.UnsweptKey, rec.UnsweptAccountID = key+":unswept", un.AccountID
 		settle = rec.UnsweptKey + ":settle:debit"
 	}
-	if rec.State, err = r.derivedStateFee(ctx, settle, key+":reverse:rev_debit"); err != nil {
+	// A fee reversal is TWO journals (wallet reversal + fees_unswept release). It is
+	// REVERSED only when every journal it needs is present; a crash between them
+	// must rebuild as ACCRUED so a retried Reverse posts the missing release.
+	reversedKey := key + ":reverse:rev_debit"
+	if rec.UnsweptAccountID != "" {
+		walletRev, err := r.has(ctx, reversedKey)
+		if err != nil {
+			return Record{}, false, err
+		}
+		unsweptRel, err := r.has(ctx, rec.UnsweptKey+":reverse:debit")
+		if err != nil {
+			return Record{}, false, err
+		}
+		if walletRev && !unsweptRel {
+			reversedKey = "" // partial reversal: not REVERSED
+		}
+	}
+	if rec.State, err = r.derivedStateFee(ctx, settle, reversedKey); err != nil {
 		return Record{}, false, err
 	}
 	return rec, true, nil
@@ -325,8 +342,10 @@ func (r *Recognizer) derivedState(ctx context.Context, settledKey, reversedKey s
 }
 
 func (r *Recognizer) derivedStateFee(ctx context.Context, settledKey, reversedKey string) (State, error) {
-	if rev, err := r.has(ctx, reversedKey); err != nil || rev {
-		return StateReversed, err
+	if reversedKey != "" {
+		if rev, err := r.has(ctx, reversedKey); err != nil || rev {
+			return StateReversed, err
+		}
 	}
 	if settledKey != "" {
 		if set, err := r.has(ctx, settledKey); err != nil || set {
