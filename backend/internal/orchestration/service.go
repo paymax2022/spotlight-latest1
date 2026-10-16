@@ -548,7 +548,10 @@ func (s *Service) pickCollectionProvider(accountType, currency string) Provider 
 			if accountType == "iban" {
 				rail = RailIBAN
 			}
-			if p.Supports(currency, rail) {
+			// Supports takes a CORRIDOR ("A-B"), not a bare currency; a
+			// same-currency corridor asks "can you handle this currency".
+			cur := strings.ToUpper(currency)
+			if p.Supports(cur+"-"+cur, rail) {
 				return p
 			}
 		}

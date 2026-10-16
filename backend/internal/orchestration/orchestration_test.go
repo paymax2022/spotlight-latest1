@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -293,7 +294,10 @@ type defProv struct {
 	rateMul  float64
 }
 
-func (d defProv) Supports(string, Rail) bool { return d.supports }
+func (d defProv) Supports(corridor string, _ Rail) bool {
+	// Mirror real adapters: only an "A-B" corridor is understood.
+	return d.supports && strings.Contains(corridor, "-")
+}
 func (d defProv) Quote(ctx context.Context, src, dst string, amt int64, at AmountType, rail Rail) (*ProviderQuote, error) {
 	pq, _ := d.stubProvider.Quote(ctx, src, dst, amt, at, rail)
 	pq.Rate *= d.rateMul
@@ -326,6 +330,9 @@ func TestDefaultProvider_PreferredWinsWhenCovers(t *testing.T) {
 }
 
 func TestDefaultProvider_FallsBackWhenNoCoverage(t *testing.T) {
+	// Unsupported default is viable but scores WORSE: without the Supports gate
+	// it would be promoted; with it, best-score "other" must stand. (A better
+	// rate would win on score alone and prove nothing about the gate.)
 	v := defProv{stubProvider{name: "vertofx"}, false, 0.95}
 	o := defProv{stubProvider{name: "other"}, true, 1.0}
 	if got := defQuote(t, defSvc("vertofx", v, o)).Route.Provider; got != "other" {

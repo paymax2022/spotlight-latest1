@@ -317,3 +317,28 @@ func TestVertoFX_ProdFailsClosed(t *testing.T) {
 		t.Fatalf("non-prod deterministic: %+v %v", r, err)
 	}
 }
+
+// Uses the REAL adapters so a currency/corridor mismatch in the collection
+// default (bare "USD" vs "USD-USD") would route to maplerad and fail here.
+func TestCollectionDefault_RealVertoFX(t *testing.T) {
+	mk := func(def string) *orch.Service {
+		return orch.NewService([]orch.Provider{NewMapleradFX(false), NewEversend(false), NewVertoFX(false)},
+			orch.NewMemStore(), orch.Options{}, orch.WithDefaultProvider(def))
+	}
+	ctx := context.Background()
+	for _, tc := range []struct{ def, typ, cur, want string }{
+		{"vertofx", "virtual", "USD", "vertofx"},
+		{"vertofx", "iban", "EUR", "vertofx"},
+		{"vertofx", "virtual", "GBP", "vertofx"},
+		{"", "virtual", "USD", "maplerad"},
+		{"", "iban", "EUR", "eversend"},
+	} {
+		va, e := mk(tc.def).CreateCollection(ctx, "c1", orch.CollectionRequest{Currency: tc.cur, Type: tc.typ})
+		if e != nil {
+			t.Fatalf("%+v: %v", tc, e)
+		}
+		if va.Provider != tc.want {
+			t.Errorf("def=%q %s/%s: provider=%s want %s", tc.def, tc.typ, tc.cur, va.Provider, tc.want)
+		}
+	}
+}
