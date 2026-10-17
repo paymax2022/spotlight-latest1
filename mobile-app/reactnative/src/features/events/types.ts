@@ -50,6 +50,46 @@ export interface EventDetail {
   category:      EventCategory;
   created_at:    string;
   tiers:         TicketTier[];
+  // Social fields (events-social). The four nullable fields are sent as null,
+  // never omitted; a null coordinate pair means no map. `liked` is per-caller.
+  banner_url:     string | null;
+  venue_lat:      number | null;
+  venue_lng:      number | null;
+  venue_place_id: string | null;
+  like_count:     number;
+  liked:          boolean;
+}
+
+// POST/DELETE /events/:id/like.
+export interface LikeState {
+  liked:      boolean;
+  like_count: number;
+}
+
+// POST/DELETE /events/organisers/:id/follow.
+export interface FollowState {
+  following:      boolean;
+  follower_count: number;
+}
+
+// GET /events/organisers/:id — public organiser page. `events` is the
+// organiser's upcoming public events.
+export interface OrganiserProfile {
+  organiser_id:   string;
+  display_name:   string;
+  bio:            string;
+  banner_url:     string | null;
+  follower_count: number;
+  following:      boolean;
+  events:         EventSummary[];
+}
+
+// PUT /events/organisers/me — every field optional. Omitted = unchanged;
+// banner_url: null clears the banner.
+export interface OrganiserPatch {
+  display_name?: string;
+  bio?:          string;
+  banner_url?:   string | null;
 }
 
 // PATCH /api/finance/events/:id — every field optional; omitted = unchanged.
