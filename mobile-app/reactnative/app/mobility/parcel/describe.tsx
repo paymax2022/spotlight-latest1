@@ -323,7 +323,8 @@ export default function ParcelDescribeScreen() {
               />
             )}
 
-            {submitError && (
+            {/* An insurance refusal already shows in the cover card above. */}
+            {submitError && submitError !== insuranceIssue?.message && (
               <View style={styles.errRow}>
                 <AlertTriangle size={16} color={Colors.error} strokeWidth={2} />
                 <Text style={styles.errText}>{submitError}</Text>
