@@ -120,6 +120,18 @@ updates:
       # weekly bump.
       - dependency-name: "@maplibre/maplibre-react-native"
         update-types: ["version-update:semver-major"]
+      # babel-preset-expo is versioned per Expo SDK (58.x pairs with SDK 58); the
+      # app is on expo ~54. The visitor-election expo-export deploy gate skips on
+      # PR CI, so green checks cannot prove bundle safety — #634/#672 shipped
+      # broken bundles the same way. Closed infeasible: #656 (→57), #812 (→58).
+      # Moves with the Expo SDK migration.
+      - dependency-name: "babel-preset-expo"
+        update-types: ["version-update:semver-major"]
+      # @config-plugins/react-native-webrtc majors pin a peer expo range that
+      # cannot resolve against expo ~54 (#813: ERESOLVE in npm audit + mobile
+      # tsc). Same class as expo-* — moves with the Expo SDK migration.
+      - dependency-name: "@config-plugins/react-native-webrtc"
+        update-types: ["version-update:semver-major"]
       # zod v4 removes the invalid_type_error / required_error params used across
       # app/** (~11 files) — whole-app tsc fails on the bump (e.g.
       # app/services/airtime.tsx, app/services/electricity.tsx). Migrate via

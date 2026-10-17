@@ -131,9 +131,9 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   `app/api/v1/[...path]` catch-all are reported separately — a catch-all match is NOT proof a route
   exists, so check the Go side (caveats in its docstring).
 - **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
-  - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3),
-    repairs (4), reports (2, read-only: flip the default only), tasks (3 — two handler files carry a
-    "stub" comment, read them first), vendors (6), facilities (4). Every call matches a handler, every
+  - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3 — done in Batch 8),
+    repairs (4 — done in Batch 9), reports (2, read-only — done in Batch 10), tasks (3 — done in Batch 11; the
+    "stub" comment was a false positive), vendors (6), facilities (4 — done in Batch 13). Every call matches a handler, every
     table exists, no read-side traps.
   - **Blocked — path mismatch, do not flip:** `ainotes` (1 of 4 calls matches; `GET
     /estate/ai-notes/:id`, `POST /estate/ai-notes/:id/approve`, `POST /estate/meetings/:id/ai-notes`
@@ -165,6 +165,88 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   (idempotency, authz, kobo validation, status guards, happy path, replay, race, error surfacing).
   1 mutation converted (`payInvoice`); e2e pin added. The dues e2e only opens the payment sheet.
 
+### Batch 8 (2026-10-15) — emergencies (safety-critical; two findings)
+- **emergencies** (`src/features/emergencies/api.ts`) — frontend-web handlers
+  (`app/api/v1/estate/emergencies`). `verify_mobile_module.py`: **3/3 client calls match** (list,
+  report, resolve); table `estate_emergency_alerts` exists. No automated suite for the handlers (code
+  reading). 2 mutations converted (`createEmergency`, `resolveEmergency`); e2e pin added (the e2e only
+  opens the report screen). A faked "emergency sent" is the most dangerous thing a fixture can
+  simulate, which is why this one matters.
+  - **Finding 1 — the UI promises an alert that nothing sends.** `app/emergencies/report.tsx` says
+    *"This immediately alerts estate security and admin"* and the hub card says *"Alert estate
+    security & admin now"*. The live `POST /api/v1/estate/emergencies` only **inserts a row**
+    (`status: 'open'`). There is no DB trigger, realtime channel, push or notification on
+    `estate_emergency_alerts`, and the mobile screens neither subscribe nor poll — an alert is seen
+    only by a resident who opens the list. Either the copy must change or real notification must be
+    built; that is a product/safety decision, **still open**.
+  - **Finding 2 — any resident can resolve any alert.** `POST /emergencies/:id/resolve` checks only
+    that the caller is a resident of the same estate, so any resident can close another resident's
+    open panic alert. **Product decision (2026-10-15): only the estate manager/admin
+    (`estate_admin`) may resolve an alert.** **Fixed** in the follow-up PR (resolve restricted to estate admins).
+    The resolve handler now returns 403 for any caller whose `estate_residents.role` is not `estate_admin`
+    (before any write; same-estate and UUID checks kept; spec
+    `frontend-web/tests/unit/estate/emergency-resolve-authz.spec.ts`), and the app hides the Resolve
+    action unless the property context carries `estate_admin` on an estate
+    (`src/features/emergencies/permissions.ts`), showing the server message if it is still refused.
+
+### Batch 9 (2026-10-17) — repairs (one authorization finding)
+- **repairs** (`src/features/repairs/api.ts`) — frontend-web handlers (`app/api/v1/estate/repairs`).
+  `verify_mobile_module.py`: **4/4 client calls match** (list, create, detail, add-update); tables
+  `estate_repair_requests` and `repair_updates` exist; no stubs, no read-side traps. No automated
+  suite for the handlers (code reading). 2 mutations converted (`createRepair`, `addRepairUpdate`);
+  e2e pin added (the e2e only reads fixtures).
+  - **Finding — any resident can move any repair to any status.** `POST /repairs/:id/updates` checks
+    only that the caller is a resident of the same estate, then writes the update and sets the
+    request's `status` to whatever was sent (`reported`…`completed`, `reopened`, `cancelled`). The
+    mobile detail screen (`app/repairs/[id].tsx`) shows the "Mark as <next status>" button to every
+    resident. So a resident can mark a neighbour's open ticket `completed` or `cancelled`. Same class
+    as the emergencies resolve finding (Batch 8), where the product decision was estate-admin only;
+    **whether repair status changes should be estate-admin-only (reporter may reopen/cancel their
+    own?) is not decided — open question, not changed in this PR.** (`cost_estimate_kobo` is
+    display-only: no handler writes it.)
+
+### Batch 10 (2026-10-17) — reports (read-only; default flip only)
+- **reports** (`src/features/reports/api.ts`) — frontend-web handlers (`app/api/v1/estate/reports`,
+  `app/api/v1/estate/analytics/[type]`). `verify_mobile_module.py`: **2/2 client calls match**; tables
+  `estate_dues_invoices`, `estate_payments`, `estate_repair_requests`, `estate_meetings` exist; no
+  stubs, no read-side traps, **no mutations** (nothing to convert to `notInFixtureMode`). Both
+  handlers enforce `estate_admin` server-side (403 otherwise), and the server's analytics type list
+  matches the client's 9. Default flipped to live; e2e pin added (the e2e renders the seeded
+  sections). No handler tests (code reading).
+  - **UX note, not changed:** a non-admin resident who opens Reports gets the generic "Couldn't load
+    / Please try again" state with a Retry button — the server's 403 ("Only an estate admin can view
+    reports") is swallowed. Retrying can never succeed for them. `getAnalytics` has no caller in the
+    app today.
+
+### Batch 11 (2026-10-17) — tasks
+- **tasks** (`src/features/tasks/api.ts`) — frontend-web handlers (`app/api/v1/estate/tasks`).
+  `verify_mobile_module.py`: **3/3 client calls match**; table `estate_tasks` exists; no read-side
+  traps. The "stub indicator" the verifier flags on both handler files is a **false positive** — its
+  regex matches the task status literal `'todo'`, not an actual stub; both handlers do real
+  insert/update. 2 mutations converted (`createTask`, `updateTaskStatus`); `getTask` stays read-side
+  (there is no GET `/:id`; it derives the task from the list, a pre-existing documented workaround).
+  e2e pin added (the e2e only reads the board). No handler tests (code reading).
+  - **Note, not changed:** like repairs/emergencies, `POST /tasks/:id/status` has no role check — any
+    resident of the estate can move any task between todo/in_progress/done. Lower stakes than repairs
+    (no money, no safety), but the same open authorization question.
+
+### Batch 13 (2026-10-17) — facilities (fee is display-only)
+- **facilities** (`src/features/facilities/api.ts`) — frontend-web handlers
+  (`app/api/v1/estate/facilities`). `verify_mobile_module.py`: **4/4 client calls match**; tables
+  `estate_facilities`, `facility_bookings` exist; no read-side traps. 2 reads (amenities, my
+  bookings), 2 mutations converted (`createBooking`, `cancelBooking`). The POST requires an
+  Idempotency-Key. e2e pin added (the e2e only lists amenities and the bookings tab). No handler
+  tests (code reading).
+  - **Note — a paid booking is never actually charged.** The booking handler's own comment says it
+    records a *reservation* with the fee captured in kobo but posts **no double-entry ledger + audit**.
+    A `fee_kobo > 0` facility yields a `pending` booking with `amount_kobo` set, but there is no
+    wallet debit and no path from `pending` → `confirmed`; a free facility goes straight to
+    `confirmed`. `cancelBooking` just flips to `cancelled` (nothing was paid, so nothing is refunded,
+    though the client exposes a `refunded` status). So "book the ₦50,000 clubhouse" records an
+    uncollected reservation. Likely intentional (reservations the estate settles offline), but the
+    fee shown in the app is not money the system takes — flagging in case a wallet-charged booking
+    flow was intended. Not changed.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -188,11 +270,11 @@ kycverify, property, restaurantmerchant, stayshotelier.
 ### Still pending — full list from a fresh scan of `main` (2026-10-11)
 `grep -rn "mockAllowed(" src` — everything still passing `true`, by feature folder:
 academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, arena, connect,
-creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, emergencies, estateadmin,
+creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
-one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,
-social (see Batch 4 — blocked), spotlightwealth, stays, stocks, tasks, transfers, vendors, plus
+one module), notifications, nutrition, properties, realtor, referral (2 files),
+social (see Batch 4 — blocked), spotlightwealth, stays, stocks, transfers, vendors, plus
 `src/api/doctor.client.ts` and `src/api/telemedicine.api.ts`.
 (An earlier version of this list had ~26 names: it only scanned `constants/` and `api/`
 sub-folders and missed modules whose flag lives in `api.ts` at the feature root.)

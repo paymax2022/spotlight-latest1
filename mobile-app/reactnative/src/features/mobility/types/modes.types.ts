@@ -41,6 +41,7 @@ export interface ParcelEstimate {
   insuranceKobo: Kobo;       // based on declared value
   totalKobo: Kobo;
   currency: 'NGN';
+  routeToken?: string;       // server-signed route; send back as routeToken on the booking
 }
 
 export interface ParcelBookRequest {
@@ -56,6 +57,12 @@ export interface ParcelBookRequest {
   prohibitedAck: boolean;    // required true
   paymentMethod: 'wallet' | 'card';
   idempotencyKey: string;
+  // Fare (not total) the customer confirmed on the estimate. The server refuses
+  // a wallet booking with 409 FARE_CHANGED, before charging, if it moved.
+  expectedFareKobo?: Kobo;
+  // The estimate's routeToken: the server prices the booking from the route the
+  // customer saw, so traffic changes alone can't trigger FARE_CHANGED.
+  routeToken?: string;
 }
 
 export interface Courier {

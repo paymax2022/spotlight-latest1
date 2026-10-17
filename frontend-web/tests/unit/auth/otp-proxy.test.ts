@@ -218,6 +218,13 @@ describe('POST /api/auth/forgot-password', () => {
     expect(badBody).toEqual(okBody);
   });
 
+  it('says so when no account matches (ADR-PR801)', async () => {
+    mockGo(404, { success: false, error: 'account_not_found' });
+    const res = await post('@/app/api/auth/forgot-password/route', { identifier: 'nobody@b.test' });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('account_not_found');
+  });
+
   it('tells a throttled caller to wait — that limit is per IP, not per account', async () => {
     mockGo(429, { success: false, error: 'Too many attempts. Please try again later.' });
     const res = await post('@/app/api/auth/forgot-password/route', { identifier: 'a@b.test' });

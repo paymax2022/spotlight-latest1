@@ -3,8 +3,8 @@ import { loginAs } from '../helpers/auth';
 import { mockAmbientRequests } from '../helpers/common';
 
 /**
- * Estate Repairs / Maintenance hub. EXPO_PUBLIC_REPAIRS_USE_MOCK defaults true,
- * so the request list comes from repairs/api.ts fixtures (generator +
+ * Estate Repairs / Maintenance hub. EXPO_PUBLIC_REPAIRS_USE_MOCK is pinned true in
+ * playwright.config.ts, so the request list comes from repairs/api.ts fixtures (generator +
  * pothole tickets on est_amber_court).
  */
 test.describe('Repairs E2E - maintenance hub', () => {

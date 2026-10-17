@@ -12,12 +12,13 @@ import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import * as authApi from '@/api/auth.api';
-import { clearPendingReset } from '@/api/authOtp';
+import { accountNotFoundMessage, clearPendingReset } from '@/api/authOtp';
 import { getErrorMessage } from '@/utils/errorMapper';
 
 // Step 1 of the OTP reset: email OR phone number. The code is emailed to the
 // account's address either way; the server resolves a phone number and never
-// reveals the address, and answers identically whether or not an account matched.
+// reveals the address. When nothing matches it says so (404 account_not_found,
+// ADR-PR801) and the screen names what was typed.
 const schema = z.object({ identifier: z.string().trim().min(3, 'Enter your email or phone number') });
 type Form = z.infer<typeof schema>;
 
@@ -36,7 +37,7 @@ export default function ForgotPasswordScreen() {
       await authApi.forgotPassword({ identifier: values.identifier });
       router.push({ pathname: '/(auth)/reset-code', params: { identifier: values.identifier.trim() } });
     } catch (err) {
-      setApiError(getErrorMessage(err));
+      setApiError(accountNotFoundMessage(err, values.identifier) ?? getErrorMessage(err));
     }
   };
 

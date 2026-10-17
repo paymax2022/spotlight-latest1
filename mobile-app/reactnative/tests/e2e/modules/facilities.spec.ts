@@ -3,7 +3,8 @@ import { loginAs } from '../helpers/auth';
 import { mockAmbientRequests } from '../helpers/common';
 
 /**
- * Estate Facilities hub. EXPO_PUBLIC_FACILITIES_USE_MOCK defaults true, so
+ * Estate Facilities hub. EXPO_PUBLIC_FACILITIES_USE_MOCK is pinned true in
+ * playwright.config.ts, so
  * amenities (Amber Clubhouse, Estate Pool, …) and the seeded confirmed booking
  * come from facilities/api.ts fixtures.
  */

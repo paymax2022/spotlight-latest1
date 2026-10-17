@@ -14,6 +14,7 @@ import { Spacing } from '@/constants/tokens';
 import { useAuthStore } from '@/store/authStore';
 import { EmailNotConfirmedError, MfaRequiredError } from '@/api/auth.api';
 import { getErrorMessage } from '@/utils/errorMapper';
+import ServerSwitch from '@/components/dev/ServerSwitch';
 
 // Sign in with EITHER an email or a phone number. The field is validated loosely on
 // phone regex would reject valid formats users type (+234…, 0803…, spaces, dashes).
@@ -121,6 +122,8 @@ export default function LoginScreen() {
           Don't have an account? <Text style={styles.signupAction}>Create one</Text>
         </Text>
       </Pressable>
+
+      <ServerSwitch />
     </AuthScreenWrapper>
   );
 }

@@ -125,6 +125,13 @@ type Config struct {
 	EversendProd          bool
 	EversendWebhookSecret string
 
+	// VertoFX credentials (FX provider 3).
+	VertoFXClientID      string
+	VertoFXAPIKey        string
+	VertoFXProd          bool
+	VertoFXWebhookSecret string
+	VertoFXBaseURL       string
+
 	// Monnify credentials (bank-payout provider 2 / disbursement). Server-side only.
 	MonnifyAPIKey        string
 	MonnifySecretKey     string
@@ -222,8 +229,10 @@ type Config struct {
 	FeatureReferralCommissionSplitEnabled bool
 	FeatureTierLimitsEnabled              bool
 	FeatureFXEnabled                      bool
-	FeatureFXOrchestrationEnabled         bool // normalized /v1 FX orchestration API
-	FeatureRealtimeEnabled                bool // SSE server-push (marketplace chat etc.)
+	FeatureFXOrchestrationEnabled         bool   // normalized /v1 FX orchestration API
+	FeatureVertoFXEnabled                 bool   // FEATURE_VERTOFX: register VertoFX in FX orchestration
+	FXDefaultProvider                     string // FX_DEFAULT_PROVIDER: "" = pure best-score; "vertofx" = Verto preferred
+	FeatureRealtimeEnabled                bool   // SSE server-push (marketplace chat etc.)
 	PaymaxWebhookOutURL                   string
 	PaymaxWebhookSecret                   string
 	FeatureGroupsEnabled                  bool
@@ -235,6 +244,9 @@ type Config struct {
 	AssocCardSigningSecret     string
 	FeatureEventsEnabled       bool
 	FeatureEventsEditLifecycle bool // organiser edit/duplicate/pause/resume/cancel routes
+	// ParcelRouteTokenSecret (PARCEL_ROUTE_TOKEN_SECRET, >= 32 bytes) signs the parcel
+	// estimate's route so the wallet booking prices from it. Unset = off.
+	ParcelRouteTokenSecret string
 	// FeatureEventsTicketingDepth (FEATURE_EVENTS_TICKETING_DEPTH) exposes tier/promo edit routes.
 	FeatureEventsTicketingDepth bool
 	// FeatureEventsTeamRoles (FEATURE_EVENTS_TEAM_ROLES) exposes per-event team (MANAGER) grant routes.
@@ -886,6 +898,12 @@ func Load() Config {
 		EversendProd:          getEnvBool("EVERSEND_PROD", false),
 		EversendWebhookSecret: getEnv("EVERSEND_WEBHOOK_SECRET", ""),
 
+		VertoFXClientID:      getEnv("VERTOFX_CLIENT_ID", ""),
+		VertoFXAPIKey:        getEnv("VERTOFX_API_KEY", ""),
+		VertoFXProd:          getEnvBool("VERTOFX_PROD", false),
+		VertoFXWebhookSecret: getEnv("VERTOFX_WEBHOOK_SECRET", ""),
+		VertoFXBaseURL:       getEnv("VERTOFX_BASE_URL", ""),
+
 		MonnifyAPIKey:        getEnv("MONNIFY_API_KEY", ""),
 		MonnifySecretKey:     getEnv("MONNIFY_SECRET_KEY", ""),
 		MonnifyContractCode:  getEnv("MONNIFY_CONTRACT_CODE", ""),
@@ -941,6 +959,8 @@ func Load() Config {
 		FeatureTierLimitsEnabled:                     getEnvBool("FEATURE_TIER_LIMITS_ENABLED", true),
 		FeatureFXEnabled:                             getEnvBool("FEATURE_FX_ENABLED", false),
 		FeatureFXOrchestrationEnabled:                getEnvBool("FEATURE_FX_ORCHESTRATION_ENABLED", false),
+		FeatureVertoFXEnabled:                        getEnvBool("FEATURE_VERTOFX", false),
+		FXDefaultProvider:                            getEnv("FX_DEFAULT_PROVIDER", ""),
 		FeatureRealtimeEnabled:                       getEnvBool("FEATURE_REALTIME_ENABLED", false),
 		PaymaxWebhookOutURL:                          getEnv("PAYMAX_WEBHOOK_OUT_URL", ""),
 		PaymaxWebhookSecret:                          getEnv("PAYMAX_WEBHOOK_SECRET", ""),
@@ -978,6 +998,7 @@ func Load() Config {
 		TransportBusSettleGraceMinutes:               getEnvInt("TRANSPORT_BUS_SETTLE_GRACE_MINUTES", 30),
 		TransportBusCancelCutoffMinutes:              getEnvInt("TRANSPORT_BUS_CANCEL_CUTOFF_MINUTES", 120),
 		TransportBusMinBookingLeadMinutes:            getEnvInt("TRANSPORT_BUS_MIN_BOOKING_LEAD_MINUTES", 15),
+		ParcelRouteTokenSecret:                       getEnv("PARCEL_ROUTE_TOKEN_SECRET", ""),
 		FeatureAICareEnabled:                         getEnvBool("FEATURE_AICARE_ENABLED", false),
 		FeatureDisputesEnabled:                       getEnvBool("FEATURE_DISPUTES_ENABLED", false),
 		FeatureRatingsEnabled:                        getEnvBool("FEATURE_RATINGS_ENABLED", false),
@@ -1244,6 +1265,9 @@ func (c Config) Validate() error {
 
 	require(c.FeatureMapleradEnabled, "MAPLERAD_SECRET_KEY", c.MapleradSecretKey)
 	prefix(c.MapleradSecretKey, "mpr_", "MAPLERAD_SECRET_KEY")
+	if c.VertoFXProd && c.VertoFXBaseURL != "" {
+		problems = append(problems, "VERTOFX_BASE_URL must not be set when VERTOFX_PROD=true — it reroutes every VertoFX call away from the real provider")
+	}
 	if c.IsProd() && c.FeatureMapleradEnabled && c.MapleradProd && strings.Contains(c.MapleradSecretKey, "sandbox") {
 		problems = append(problems, "MAPLERAD_SECRET_KEY is a sandbox key but MAPLERAD_PROD=true")
 	}

@@ -89,7 +89,9 @@ export default function RemoteBanner({ slug, onPress, accessibilityLabel, priori
 
 const styles = StyleSheet.create({
   frame: {
-    width: '100%',
+    // Not `width: '100%'`: that is 100% of the parent and ignores this box's own side
+    // margins, so a caller passing marginHorizontal overflowed the right edge.
+    alignSelf: 'stretch',
     borderRadius: Radius.lg,
     overflow: 'hidden',
     backgroundColor: Colors.surfaceContainerLow,

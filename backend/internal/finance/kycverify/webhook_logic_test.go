@@ -28,21 +28,27 @@ func TestDecideDedupe_OnceThenNoOp(t *testing.T) {
 // DecideTerminal: only PASSED/FAILED/REVIEW are applied; PENDING/INITIATED/empty
 // are no-ops (the check stays PENDING until an authoritative terminal arrives).
 func TestDecideTerminal(t *testing.T) {
-	cases := map[provider.KycCheckStatus]bool{
-		provider.KycPassed:          true,
-		provider.KycFailed:          true,
-		provider.KycReview:          true,
-		provider.KycPending:         false,
-		provider.KycInitiated:       false,
-		provider.KycCheckStatus(""): false,
+	// Each case: (apply?, target when applied).
+	// ADR-PR808: a provider REVIEW webhook now resolves as FAILED so the user
+	// retries fresh — there is no admin review surface to resolve it.
+	cases := map[provider.KycCheckStatus]struct {
+		apply  bool
+		target provider.KycCheckStatus
+	}{
+		provider.KycPassed:          {true, provider.KycPassed},
+		provider.KycFailed:          {true, provider.KycFailed},
+		provider.KycReview:          {true, provider.KycFailed},
+		provider.KycPending:         {false, ""},
+		provider.KycInitiated:       {false, ""},
+		provider.KycCheckStatus(""): {false, ""},
 	}
-	for in, wantApply := range cases {
+	for in, want := range cases {
 		d := DecideTerminal(in)
-		if d.Apply != wantApply {
-			t.Errorf("DecideTerminal(%q).Apply=%v want %v", in, d.Apply, wantApply)
+		if d.Apply != want.apply {
+			t.Errorf("DecideTerminal(%q).Apply=%v want %v", in, d.Apply, want.apply)
 		}
-		if d.Apply && d.Target != in {
-			t.Errorf("DecideTerminal(%q).Target=%q want %q", in, d.Target, in)
+		if d.Apply && d.Target != want.target {
+			t.Errorf("DecideTerminal(%q).Target=%q want %q", in, d.Target, want.target)
 		}
 	}
 }

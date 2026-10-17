@@ -4452,9 +4452,12 @@ paths:
         emailed to that account's address; the address is never returned.
 
 
-        Answers 200 with the same body whether or not an account matched, and
-        whether or not delivery succeeded (otherwise this enumerates users). 429 is
-        the one exception: it is per client IP, not per account.
+        Answers 404 `account_not_found` when no account matches the identifier, so
+        a mistyped address is caught here (ADR-PR801). This discloses whether an
+        email or phone is registered; the per-IP limiter (429) is the brake. When
+        the account lookup itself fails the answer is the neutral 200 and a code
+        is sent. The verify and reset steps still answer identically for every
+        identifier.
         Gated behind FEATURE_OTP_EMAIL_ENABLED; 503 when closed.
       tags: [OTP]
       requestBody:
@@ -4467,8 +4470,9 @@ paths:
               properties:
                 identifier: { type: string, example: "ada@example.com" }
       responses:
-        '200': { description: "If an account matches, a reset code was sent to its email" }
+        '200': { description: "A reset code was sent to the account email" }
         '400': { description: Identifier missing }
+        '404': { description: "No account matches the identifier (error: account_not_found)" }
         '429': { description: Per-IP request budget exceeded }
         '503': { description: Feature disabled or misconfigured }
   /api/auth/verify-password-reset-otp:
