@@ -46,6 +46,9 @@ type Service struct {
 	// parcelRouteSecret signs parcel route tokens (WithParcelRouteTokenSecret);
 	// "" = tokens off, bookings route live. See parcel_route_token.go.
 	parcelRouteSecret string
+	// prepaidInsuranceOn: parcel insurance is opt-in and paid at booking
+	// (WithPrepaidInsurance). See parcel_insurance_prepaid.go.
+	prepaidInsuranceOn bool
 
 	db               *pgxpool.Pool
 	settlement       *settlement.Service
