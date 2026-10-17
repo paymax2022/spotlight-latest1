@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Camera, Check, ShieldAlert, AlertTriangle } from 'lucide-react-native';
+import { Camera, Check, ShieldAlert, ShieldCheck, AlertTriangle } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -32,6 +32,7 @@ import {
 import { formatNairaWhole, nairaToKobo, newIdempotencyKey } from '@/features/mobility/utils/mobilityFormatters';
 import type { ParcelCategory, ParcelSize, ParcelSpeed, ParcelEstimate, Place } from '@/features/mobility/types/modes.types';
 import { withPlusCode } from '@/lib/addressLookup';
+import { parcelOptionFare, parcelInsuranceLine } from '@/features/mobility/utils/parcelPricing';
 
 export default function ParcelDescribeScreen() {
   const params = useLocalSearchParams<{
@@ -68,7 +69,17 @@ export default function ParcelDescribeScreen() {
   const estimate = useParcelEstimate();
   const book = useBookParcel();
   const bookingKey = React.useRef<BookingKey | null>(null);
-  const est: ParcelEstimate | undefined = estimate.data;
+  // Keep the last estimate on screen while a re-estimate is in flight, so the
+  // option prices do not blank out on every tap. Booking still waits for the
+  // fresh one (canBook below).
+  const lastEst = useRef<ParcelEstimate | undefined>(undefined);
+  if (estimate.data) lastEst.current = estimate.data;
+  const est: ParcelEstimate | undefined = estimate.data ?? lastEst.current;
+  const optionPrice = (s: ParcelSize, sp: ParcelSpeed) => {
+    const k = parcelOptionFare(est, s, sp);
+    return k === undefined ? undefined : formatNairaWhole(k);
+  };
+  const insuranceLine = parcelInsuranceLine(est?.insurance);
   // Shared chooser: wallet OR card (Paystack top-up) → then the booking charge.
   const pay = usePurchasePayment<Awaited<ReturnType<typeof book.mutateAsync>>>();
   // Card runs through the genuinely separate, server-initiated Paystack rail
@@ -92,7 +103,8 @@ export default function ParcelDescribeScreen() {
   }, [category, size, speed, declaredValue]);
 
   const canBook =
-    !!est &&
+    !!estimate.data &&
+    !estimate.isPending &&
     receiverName.trim().length > 1 &&
     receiverPhone.trim().length >= 7 &&
     prohibitedAck &&
@@ -183,14 +195,14 @@ export default function ParcelDescribeScreen() {
             <Text style={styles.section}>Size</Text>
             <View style={styles.list}>
               {PARCEL_SIZES.map((s) => (
-                <SelectableCard key={s.value} title={s.label} subtitle={s.hint} selected={size === s.value} onPress={() => setSize(s.value)} />
+                <SelectableCard key={s.value} title={s.label} subtitle={s.hint} trailing={optionPrice(s.value, speed)} selected={size === s.value} onPress={() => setSize(s.value)} />
               ))}
             </View>
 
             <Text style={styles.section}>Delivery speed</Text>
             <View style={styles.list}>
               {PARCEL_SPEEDS.map((s) => (
-                <SelectableCard key={s.value} title={s.label} subtitle={s.hint} selected={speed === s.value} onPress={() => setSpeed(s.value)} />
+                <SelectableCard key={s.value} title={s.label} subtitle={s.hint} trailing={optionPrice(size, s.value)} selected={speed === s.value} onPress={() => setSpeed(s.value)} />
               ))}
             </View>
 
@@ -200,6 +212,19 @@ export default function ParcelDescribeScreen() {
 
             <Text style={styles.section}>Declared value (for insurance)</Text>
             <TextInputField value={declaredValue} onChangeText={(t) => setDeclaredValue(sanitizeMoneyInput(t))} placeholder="₦ value of contents" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} />
+            {insuranceLine && (
+              <View style={styles.coverCard}>
+                <ShieldCheck size={18} color={Colors.tertiaryContainer} strokeWidth={2.2} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.coverTitle}>{insuranceLine}</Text>
+                  <Text style={styles.coverNote}>
+                    {declaredValueKobo > 0
+                      ? `Estimated premium ${formatNairaWhole(est?.insuranceKobo ?? 0)}. The insurer confirms the final premium when a courier accepts your parcel.`
+                      : `Enter the value of the contents to insure them against loss, fire and theft in transit${est?.insurance?.minPremiumKobo ? ` (minimum premium ${formatNairaWhole(est.insurance.minPremiumKobo)})` : ''}. Leave it empty to send without cover.`}
+                  </Text>
+                </View>
+              </View>
+            )}
 
             <Pressable style={[styles.photoBtn, photoAttached && styles.photoBtnDone]} onPress={() => setPhotoAttached((p) => !p)}>
               <Camera size={18} color={photoAttached ? Colors.tertiaryContainer : Colors.onSurfaceVariant} strokeWidth={2} />
@@ -234,7 +259,7 @@ export default function ParcelDescribeScreen() {
                 durationS={est.durationS}
                 rows={[
                   { label: 'Delivery fee', valueKobo: est.fareKobo },
-                  { label: 'Insurance cover', valueKobo: est.insuranceKobo },
+                  { label: 'Insurance cover (estimate)', valueKobo: est.insuranceKobo },
                 ]}
                 showTrustNote
               />
@@ -273,6 +298,9 @@ const styles = StyleSheet.create({
   grid2: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   gridHalf: { width: '48.5%' },
   list: { gap: Spacing.sm },
+  coverCard: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.tertiaryFixed, marginTop: Spacing.sm },
+  coverTitle: { ...Typography.labelMd, color: Colors.onSurface },
+  coverNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2, lineHeight: 18 },
   photoBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLow, borderWidth: 1.5, borderColor: Colors.transparent, marginTop: Spacing.sm },
   photoBtnDone: { borderColor: Colors.tertiaryContainer, backgroundColor: Colors.tertiaryFixed },
   photoLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant, flex: 1 },

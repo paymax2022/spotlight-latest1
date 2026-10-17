@@ -601,6 +601,15 @@ func (a *insuranceBinderAdapter) IndicativeRateBps(ctx context.Context, productC
 	return prod.RateBps, nil
 }
 
+// DescribeProduct names a catalog product for display (transport.ParcelCoverDescriber).
+func (a *insuranceBinderAdapter) DescribeProduct(ctx context.Context, productCode string) (string, string, string, error) {
+	prod, err := a.catalog.Get(ctx, productCode)
+	if err != nil {
+		return "", "", "", err
+	}
+	return prod.DisplayName, prod.UnderwriterDisplay, prod.Provider, nil
+}
+
 func (a *insuranceBinderAdapter) GrantConsent(ctx context.Context, userID, productCode string) error {
 	_, err := a.consent.Grant(ctx, userID, productCode, "")
 	return err

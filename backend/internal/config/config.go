@@ -297,6 +297,13 @@ type Config struct {
 	FeatureVoteBridgeEnabled     bool
 	FeatureTransportEnabled      bool
 	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
+	// FeatureParcelRateCardEnabled prices parcels from transport_parcel_rate_card
+	// (size × speed multiplier + minimum fare per cell). Off = legacy multipliers.
+	FeatureParcelRateCardEnabled bool
+	// ParcelInsuranceMinPremiumKobo floors the indicative Goods-in-Transit
+	// premium on the parcel estimate (PARCEL_INSURANCE_MIN_PREMIUM_KOBO, default
+	// 200000 = ₦2,000, the minimum MyCover bound on a live quote). Display only.
+	ParcelInsuranceMinPremiumKobo int
 	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) ride-hailing checkout path
 	// (transport/paystackcheckout): a ride paid directly via Paystack, escrowed
@@ -984,6 +991,8 @@ func Load() Config {
 		FeatureVoteBridgeEnabled:                     getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
+		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
+		ParcelInsuranceMinPremiumKobo:                getEnvInt("PARCEL_INSURANCE_MIN_PREMIUM_KOBO", 200000),
 		FeatureTransportPaystackCheckoutEnabled:      getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureTransportPaystackParcelEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_PARCEL_ENABLED", false),
 		FeatureTransportPaystackTowingEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_TOWING_ENABLED", false),

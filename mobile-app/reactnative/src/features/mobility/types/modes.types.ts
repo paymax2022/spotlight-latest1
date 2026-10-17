@@ -34,14 +34,32 @@ export interface ParcelEstimateRequest {
   declaredValueKobo: Kobo;
 }
 
+export interface ParcelPriceOption {
+  size: ParcelSize;
+  speed: ParcelSpeed;
+  fareKobo: Kobo;
+}
+
+/** The Goods-in-Transit cover the declared value buys (server catalog). */
+export interface ParcelInsuranceInfo {
+  productCode: string;
+  productName: string;
+  underwriter: string;
+  provider: string;
+  minPremiumKobo: Kobo;
+  indicative: boolean;       // always true: the insurer confirms the premium when a courier accepts
+}
+
 export interface ParcelEstimate {
   distanceM: number;
   durationS: number;
   fareKobo: Kobo;            // distance × size × speed (server)
-  insuranceKobo: Kobo;       // based on declared value
+  insuranceKobo: Kobo;       // indicative premium on the declared value
   totalKobo: Kobo;
   currency: 'NGN';
   routeToken?: string;       // server-signed route; send back as routeToken on the booking
+  options?: ParcelPriceOption[];        // every size × speed on this route (server)
+  insurance?: ParcelInsuranceInfo | null;
 }
 
 export interface ParcelBookRequest {
