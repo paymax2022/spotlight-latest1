@@ -453,6 +453,14 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		// rate card can move between the estimate the customer confirmed and
 		// this call. Refuse BEFORE the tier gate and the escrow: nothing moves,
 		// and the app re-confirms the new price.
+		// Except a retry of a key that already booked (response lost, then the
+		// price moved): that booking was charged, so hand it back rather than a
+		// 409 the app reads as "nothing was charged".
+		if id, found, ferr := s.FindParcelByIdempotencyKey(ctx, senderID, idempotencyKey); ferr != nil {
+			return "", ferr
+		} else if found {
+			return id, nil
+		}
 		return "", err
 	} else if err := s.enforceTierLimit(ctx, senderID, fare); err != nil {
 		// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same

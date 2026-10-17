@@ -25,5 +25,5 @@ export function fareChangedFrom(err: unknown): { fareKobo: number; expectedFareK
 
 export function fareChangedMessage(newFareKobo: number): string {
   const naira = Math.round(newFareKobo / 100).toLocaleString('en-NG');
-  return `The delivery price changed to ₦${naira}. You were not charged — check the new price and tap Book again.`;
+  return `The delivery price changed to ₦${naira}. This booking was not charged — check the new price and tap Book again.`;
 }

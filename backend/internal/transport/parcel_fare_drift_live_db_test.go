@@ -76,3 +76,45 @@ func TestLiveDB_BookParcel_FareDrift_RefusedBeforeAnyMoneyMoves(t *testing.T) {
 		t.Fatalf("booking without expected_fare_kobo must still work: %v", err)
 	}
 }
+
+// A transport-level retry of a booking that already succeeded (same
+// Idempotency-Key, response lost) must get that booking back, not a 409 that
+// tells the customer "nothing was charged" while their first booking is
+// escrowed. And it must not charge again.
+func TestLiveDB_BookParcel_FareDrift_ReplayOfBookedKeyReturnsTheBooking(t *testing.T) {
+	pool := paystackRidePool(t)
+	ctx := context.Background()
+	svc, _, sender := paystackRideFixture(t, ctx, pool, 50_000_000)
+	testsupport.SetKycTier(t, ctx, pool, sender, testsupport.KycTierUnlimited)
+
+	fare, err := svc.QuoteParcelBooking(ctx, parcelReq())
+	if err != nil {
+		t.Fatalf("quote: %v", err)
+	}
+	key := "fare-replay-" + uuid.NewString()
+	req := parcelReq()
+	req.ExpectedFareKobo = &fare
+	first, err := svc.BookParcel(ctx, sender, req, key)
+	if err != nil {
+		t.Fatalf("first booking: %v", err)
+	}
+	afterFirst := riderWalletBalance(t, ctx, pool, sender)
+
+	// Same key, but the fare the retry carries no longer matches the live one
+	// (as if pricing moved after the first booking committed).
+	stale := fare + 10_000
+	req.ExpectedFareKobo = &stale
+	again, err := svc.BookParcel(ctx, sender, req, key)
+	if err != nil {
+		t.Fatalf("replay of a booked key must return the booking, got %v", err)
+	}
+	if again["id"] != first["id"] {
+		t.Fatalf("replay returned parcel %v, want the original %v", again["id"], first["id"])
+	}
+	if got := riderWalletBalance(t, ctx, pool, sender); got != afterFirst {
+		t.Fatalf("replay moved the wallet: %d → %d", afterFirst, got)
+	}
+	if n := countParcelsByKey(t, ctx, pool, key); n != 1 {
+		t.Fatalf("%d parcels under the key, want 1", n)
+	}
+}
