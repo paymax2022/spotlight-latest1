@@ -13,7 +13,9 @@ import TextInputField from '@/components/TextInputField';
 import SelectableCard from '@/features/mobility/components/SelectableCard';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import ScheduleDateTimeField from '@/features/mobility/components/ScheduleDateTimeField';
 import { errKind } from '@/features/mobility/utils/errKind';
+import { scheduleTimeError, defaultScheduleTime, localDate } from '@/features/mobility/utils/scheduleTime';
 import { useScheduledEstimate, useCreateScheduled } from '@/features/mobility/hooks/useScheduled';
 import { useBusSchedules } from '@/features/mobility/hooks/useModes';
 import { SCHEDULED_MODE_META, SCHEDULED_ENABLED, VEHICLE_CLASSES } from '@/features/mobility/constants/modes.constants';
@@ -36,13 +38,14 @@ function useDraftScope() {
   return useMemo(() => `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, []);
 }
 
-const DEFAULT_PICKUP: ScheduledPlace = { label: '14 Admiralty Way, Lekki Phase 1', lat: 6.4459, lng: 3.473 };
-const DEFAULT_DROPOFF: ScheduledPlace = { label: 'Ikeja City Mall, Alausa', lat: 6.6186, lng: 3.3585 };
-
-function defaultPickupAt(): string {
-  const d = new Date(Date.now() + 2 * 3_600_000);
-  d.setMinutes(0, 0, 0);
-  return d.toISOString();
+// The planner's places arrive as URL params, exactly as on the mobility home.
+// A missing or unparseable coordinate means no place was chosen: never a default.
+function placeFrom(label: string | undefined, lat: string | undefined, lng: string | undefined): ScheduledPlace | null {
+  if (!label) return null;
+  const la = Number(lat);
+  const ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return null;
+  return { label, lat: la, lng: ln };
 }
 
 export default function ScheduleNewTripScreen() {
@@ -54,7 +57,8 @@ export default function ScheduleNewTripScreen() {
   const draftScope = useDraftScope();
 
   const [mode, setMode] = useState<ScheduledMode>('ride_hail');
-  const [scheduledPickupAt, setScheduledPickupAt] = useState(defaultPickupAt());
+  const [scheduledPickupAt, setScheduledPickupAt] = useState<string>(() => defaultScheduleTime());
+  const [arrivalTime, setArrivalTime] = useState('');
   const [vehicleClass, setVehicleClass] = useState<VehicleClass>('economy');
 
   // Parcel fields (intra vs inter-state is chosen via the mode picker above,
@@ -64,7 +68,6 @@ export default function ScheduleNewTripScreen() {
 
   // Airport fields
   const [flightNumber, setFlightNumber] = useState('');
-  const [arrivalTime, setArrivalTime] = useState('');
   const [terminal, setTerminal] = useState('');
 
   // Bus fields
@@ -74,20 +77,23 @@ export default function ScheduleNewTripScreen() {
 
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Pickup/dropoff — reuse the shared address picker (via destination.tsx)
-  // exactly like the mobility home planner: values round-trip through URL params.
-  const pickup: ScheduledPlace = useMemo(
-    () => (params.pickupAddress
-      ? { label: String(params.pickupAddress), lat: Number(params.pickupLat) || DEFAULT_PICKUP.lat, lng: Number(params.pickupLng) || DEFAULT_PICKUP.lng }
-      : DEFAULT_PICKUP),
+  const pickup = useMemo(
+    () => placeFrom(params.pickupAddress, params.pickupLat, params.pickupLng),
     [params.pickupAddress, params.pickupLat, params.pickupLng],
   );
-  const dropoff: ScheduledPlace = useMemo(
-    () => (params.destAddress
-      ? { label: String(params.destAddress), lat: Number(params.lat) || DEFAULT_DROPOFF.lat, lng: Number(params.lng) || DEFAULT_DROPOFF.lng }
-      : DEFAULT_DROPOFF),
+  const dropoff = useMemo(
+    () => placeFrom(params.destAddress, params.lat, params.lng),
     [params.destAddress, params.lat, params.lng],
   );
+
+  const modeNeedsParcel = mode === 'parcel_intra' || mode === 'parcel_inter';
+  const modeNeedsAirport = mode === 'airport_pickup';
+  const modeNeedsBus = mode === 'bus';
+  const modeNeedsRide = mode === 'ride_hail' || mode === 'ride_share';
+
+  const timeError = scheduleTimeError(scheduledPickupAt);
+  // Bus journeys are booked by route and departure, not by an address drop-off.
+  const haveRoute = !!pickup && (modeNeedsBus || !!dropoff);
 
   const enc = encodeURIComponent;
   const pickerHref = (target: 'pickup' | 'destination') => {
@@ -97,7 +103,7 @@ export default function ScheduleNewTripScreen() {
     return `/mobility/destination${q}`;
   };
 
-  const busSchedules = useBusSchedules(busRouteId || undefined, new Date(scheduledPickupAt).toISOString().slice(0, 10));
+  const busSchedules = useBusSchedules(busRouteId || undefined, localDate(scheduledPickupAt));
 
   const modePayload: ScheduledModePayload = useMemo(() => {
     if (mode === 'ride_hail' || mode === 'ride_share') {
@@ -116,21 +122,28 @@ export default function ScheduleNewTripScreen() {
     return { scheduleId: busScheduleId, seatNumber: busSeat } as BusModePayload;
   }, [mode, vehicleClass, dimensions, weightKg, flightNumber, arrivalTime, terminal, busScheduleId, busSeat]);
 
-  // matching the backend rule, but stays adjustable here.
+  // The pickup follows the flight: arrival + 45 minutes, still adjustable above.
   useEffect(() => {
     if (mode === 'airport_pickup' && arrivalTime) {
       const derived = new Date(new Date(arrivalTime).getTime() + 45 * 60_000);
       if (!Number.isNaN(derived.getTime())) setScheduledPickupAt(derived.toISOString());
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [arrivalTime]);
+  }, [arrivalTime, mode]);
 
   const estimate = useScheduledEstimate();
   const create = useCreateScheduled(draftScope);
 
+  // Only ask for a fare once there is a complete, bookable route and time.
   useEffect(() => {
     setSubmitError(null);
-    estimate.mutate({ mode, scheduledPickupAt, pickup, dropoff, modePayload });
+    if (!pickup || !haveRoute || timeError) return;
+    estimate.mutate({
+      mode,
+      scheduledPickupAt,
+      pickup,
+      dropoff: dropoff ?? pickup,
+      modePayload,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, scheduledPickupAt, pickup, dropoff, modePayload]);
 
@@ -143,26 +156,25 @@ export default function ScheduleNewTripScreen() {
     );
   }
 
-  const modeNeedsParcel = mode === 'parcel_intra' || mode === 'parcel_inter';
-  const modeNeedsAirport = mode === 'airport_pickup';
-  const modeNeedsBus = mode === 'bus';
-  const modeNeedsRide = mode === 'ride_hail' || mode === 'ride_share';
-
+  const hasFare = !!estimate.data && !estimate.isPending && !estimate.isError;
   const canSubmit =
-    !!estimate.data &&
-    scheduledPickupAt.length > 0 &&
+    !!pickup &&
+    haveRoute &&
+    !timeError &&
+    hasFare &&
     (!modeNeedsBus || (busScheduleId.trim().length > 0 && busSeat.trim().length > 0)) &&
     (!modeNeedsParcel || (Number(weightKg) > 0 && dimensions.trim().length > 0)) &&
     !create.isPending;
 
   const onSubmit = async () => {
+    if (!canSubmit || !pickup) return;
     setSubmitError(null);
     try {
       const result = await create.mutateAsync({
         mode,
         scheduledPickupAt,
         pickup,
-        dropoff,
+        dropoff: dropoff ?? pickup,
         modePayload,
         paymentMethod: 'wallet',
       });
@@ -170,6 +182,11 @@ export default function ScheduleNewTripScreen() {
     } catch (e) {
       setSubmitError((e as Error).message ?? 'Could not schedule this trip. Please try again.');
     }
+  };
+
+  const retryEstimate = () => {
+    if (!pickup || !haveRoute || timeError) return;
+    estimate.mutate({ mode, scheduledPickupAt, pickup, dropoff: dropoff ?? pickup, modePayload });
   };
 
   return (
@@ -188,22 +205,25 @@ export default function ScheduleNewTripScreen() {
         <Text style={styles.section}>Pickup & drop-off</Text>
         <Pressable style={styles.placeRow} onPress={() => router.push(pickerHref('pickup'))} accessibilityLabel="Set pickup point">
           <MapPin size={18} color={Colors.secondary} strokeWidth={2} />
-          <Text style={styles.placeText} numberOfLines={1}>{pickup.label}</Text>
+          <Text style={[styles.placeText, !pickup && styles.placeholder]} numberOfLines={1}>
+            {pickup?.label ?? 'Set your pickup point'}
+          </Text>
         </Pressable>
         {!modeNeedsBus && (
           <Pressable style={styles.placeRow} onPress={() => router.push(pickerHref('destination'))} accessibilityLabel="Set destination">
             <LocateFixed size={18} color={Colors.primary} strokeWidth={2} />
-            <Text style={styles.placeText} numberOfLines={1}>{dropoff.label}</Text>
+            <Text style={[styles.placeText, !dropoff && styles.placeholder]} numberOfLines={1}>
+              {dropoff?.label ?? 'Where to?'}
+            </Text>
           </Pressable>
         )}
 
         <Text style={styles.section}>When</Text>
-        <TextInputField
-          label="Pickup date & time (ISO)"
+        <ScheduleDateTimeField
+          label="Pickup date & time"
           value={scheduledPickupAt}
-          onChangeText={setScheduledPickupAt}
-          placeholder="YYYY-MM-DDTHH:mm:00Z"
-          editable={!(mode === 'airport_pickup' && !!arrivalTime)}
+          onChange={setScheduledPickupAt}
+          error={timeError}
         />
 
         {modeNeedsRide && (
@@ -234,9 +254,9 @@ export default function ScheduleNewTripScreen() {
           <>
             <Text style={styles.section}>Flight details</Text>
             <TextInputField label="Flight number (optional)" value={flightNumber} onChangeText={setFlightNumber} placeholder="e.g. BA075" autoCapitalize="characters" />
-            <TextInputField label="Arrival time (optional, ISO)" value={arrivalTime} onChangeText={setArrivalTime} placeholder="YYYY-MM-DDTHH:mm:00Z" />
+            <ScheduleDateTimeField label="Arrival time (optional)" value={arrivalTime} onChange={setArrivalTime} />
             <TextInputField label="Terminal (optional)" value={terminal} onChangeText={setTerminal} placeholder="e.g. International" />
-            {arrivalTime ? <Text style={styles.hint}>Pickup time is derived from your arrival time (+45 min) — you can still adjust it above.</Text> : null}
+            {arrivalTime ? <Text style={styles.hint}>Pickup time follows your arrival (+45 min). You can still adjust it above.</Text> : null}
           </>
         )}
 
@@ -269,7 +289,9 @@ export default function ScheduleNewTripScreen() {
           </>
         )}
 
-        {estimate.isPending ? (
+        {!pickup || (!modeNeedsBus && !dropoff) ? (
+          <Text style={styles.hint}>Choose where you are and where you are going to see a fare.</Text>
+        ) : timeError ? null : estimate.isPending ? (
           <View style={styles.estimateLoading}><ActivityIndicator color={Colors.primary} /><Text style={styles.hint}>Getting a fare estimate…</Text></View>
         ) : estimate.data ? (
           <FareBreakdownCard
@@ -281,7 +303,7 @@ export default function ScheduleNewTripScreen() {
             showTrustNote
           />
         ) : estimate.isError ? (
-          <MobilityEdgeState kind={errKind(estimate.error)} compact actionLabel="Retry" onAction={() => estimate.mutate({ mode, scheduledPickupAt, pickup, dropoff, modePayload })} />
+          <MobilityEdgeState kind={errKind(estimate.error)} compact actionLabel="Retry" onAction={retryEstimate} />
         ) : null}
 
         <View style={styles.noteCard}>
@@ -297,7 +319,7 @@ export default function ScheduleNewTripScreen() {
       <View style={styles.footer}>
         <View style={styles.fareRow}>
           <Text style={styles.fareLabel}>Estimated fare</Text>
-          <Text style={styles.fareValue}>{formatNairaWhole(estimate.data?.estimatedFareKobo ?? 0)}</Text>
+          <Text style={styles.fareValue}>{hasFare ? formatNairaWhole(estimate.data!.estimatedFareKobo) : '—'}</Text>
         </View>
         <PrimaryButton label="Confirm schedule" onPress={onSubmit} loading={create.isPending} disabled={!canSubmit} />
       </View>
@@ -314,6 +336,7 @@ const styles = StyleSheet.create({
   list: { gap: Spacing.sm },
   placeRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.outlineVariant },
   placeText: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
+  placeholder: { color: Colors.onSurfaceVariant },
   toggleRow: { padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLow, borderWidth: 1.5, borderColor: Colors.outlineVariant },
   toggleRowOn: { borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
   toggleLabel: { ...Typography.labelMd, color: Colors.onSurface },
