@@ -61,6 +61,8 @@ func parcelSpeedMultiplier(speed string) float64 {
 	switch speed {
 	case "express":
 		return 1.5
+	case "same_day": // shown as "Priority" in the app: ASAP, dedicated courier
+		return 2.2
 	case "scheduled":
 		return 0.9
 	default: // standard
@@ -154,6 +156,12 @@ type ParcelEstimate struct {
 	// RouteToken signs this estimate's route for the wallet booking to price
 	// from (route_token). Empty when route tokens are off.
 	RouteToken string `json:"routeToken,omitempty"`
+	// Options prices every size × speed on this route, so each choice can show
+	// its own price.
+	Options []ParcelPriceOption `json:"options"`
+	// Insurance names the cover the declared value buys. Nil when insurance is
+	// not wired on this server.
+	Insurance *ParcelInsuranceInfo `json:"insurance,omitempty"`
 }
 
 // parcelFare computes the fare: (base + per_km*km) * size * speed, floored at min.
@@ -192,7 +200,15 @@ func (s *Service) EstimateParcel(ctx context.Context, req ParcelEstimateRequest)
 	if err != nil {
 		return nil, err
 	}
-	fare := parcelFare(route.DistanceM, route.DurationS, req.Size, req.Speed, cfg)
+	card, err := s.loadParcelRateCard(ctx, "default")
+	if err != nil {
+		return nil, err
+	}
+	size, speed, _, err := normalizeParcelOptions(req.Size, req.Speed, req.Category)
+	if err != nil {
+		return nil, err
+	}
+	fare, _ := parcelFareFor(route.DistanceM, route.DurationS, size, speed, cfg, card)
 	insurance := s.parcelIndicativeInsurance(ctx, req.DeclaredValueKobo, cfg)
 	return &ParcelEstimate{
 		DistanceM:       route.DistanceM,
@@ -200,8 +216,10 @@ func (s *Service) EstimateParcel(ctx context.Context, req ParcelEstimateRequest)
 		FareKobo:        fare,
 		InsuranceKobo:   insurance,
 		TotalKobo:       fare + insurance,
-		SizeMultiplier:  parcelSizeMultiplier(req.Size),
-		SpeedMultiplier: parcelSpeedMultiplier(req.Speed),
+		SizeMultiplier:  parcelSizeMultiplier(size),
+		SpeedMultiplier: parcelSpeedMultiplier(speed),
+		Options:         parcelPriceOptions(route.DistanceM, route.DurationS, cfg, card),
+		Insurance:       s.parcelInsuranceInfo(ctx),
 		RouteToken:      signParcelRoute(s.parcelRouteSecret, req.Pickup, req.Dropoff, route, time.Now()),
 	}, nil
 }
@@ -213,6 +231,7 @@ type parcelPricing struct {
 	fare, insurance int64
 	route           RouteResult
 	cfg             *PricingConfig
+	rate            *parcelRate // the rate-card cell priced from; nil = legacy multipliers
 	size, speed     string
 	category        string
 }
@@ -233,30 +252,27 @@ func (s *Service) priceParcel(ctx context.Context, req ParcelBookRequest) (*parc
 	if err != nil {
 		return nil, err
 	}
-	return s.priceParcelWith(ctx, req, cfg, route), nil
+	card, err := s.loadParcelRateCard(ctx, "default")
+	if err != nil {
+		return nil, err
+	}
+	return s.priceParcelWith(ctx, req, cfg, route, card)
 }
 
 // priceParcelWith is the pure pricing step shared by live and frozen pricing:
 // given a config and a route it applies size/speed defaults and computes the
 // fare (the ONLY charged amount) and the indicative insurance (display only).
-func (s *Service) priceParcelWith(ctx context.Context, req ParcelBookRequest, cfg *PricingConfig, route RouteResult) *parcelPricing {
-	size := req.Size
-	if size == "" {
-		size = "small"
+func (s *Service) priceParcelWith(ctx context.Context, req ParcelBookRequest, cfg *PricingConfig, route RouteResult, card parcelRateCard) (*parcelPricing, error) {
+	size, speed, category, err := normalizeParcelOptions(req.Size, req.Speed, req.Category)
+	if err != nil {
+		return nil, err
 	}
-	speed := req.Speed
-	if speed == "" {
-		speed = "standard"
-	}
-	category := req.Category
-	if category == "" {
-		category = "small"
-	}
+	fare, rate := parcelFareFor(route.DistanceM, route.DurationS, size, speed, cfg, card)
 	return &parcelPricing{
-		fare:      parcelFare(route.DistanceM, route.DurationS, size, speed, cfg),
+		fare:      fare,
 		insurance: s.parcelIndicativeInsurance(ctx, req.DeclaredValueKobo, cfg),
-		route:     route, cfg: cfg, size: size, speed: speed, category: category,
-	}
+		route:     route, cfg: cfg, rate: rate, size: size, speed: speed, category: category,
+	}, nil
 }
 
 // parcelFrozenPricing is the priced input set frozen at card-direct initiate
@@ -268,6 +284,9 @@ type parcelFrozenPricing struct {
 	DistanceM int           `json:"distanceM"`
 	DurationS int           `json:"durationS"`
 	Config    PricingConfig `json:"config"`
+	// Rate is the rate-card cell the quote used; nil means legacy multipliers
+	// (the card was off, had no such cell, or the intent predates the card).
+	Rate *parcelRate `json:"rate,omitempty"`
 }
 
 // priceParcelFrozen is priceParcel over frozen inputs; a nil frozen falls back
@@ -277,7 +296,16 @@ func (s *Service) priceParcelFrozen(ctx context.Context, req ParcelBookRequest, 
 		return s.priceParcel(ctx, req)
 	}
 	cfg := frozen.Config // copy: never alias the caller's snapshot
-	return s.priceParcelWith(ctx, req, &cfg, RouteResult{DistanceM: frozen.DistanceM, DurationS: frozen.DurationS}), nil
+	// Replay exactly the cell that was quoted; never re-read the live card.
+	var card parcelRateCard
+	if frozen.Rate != nil {
+		size, speed, _, err := normalizeParcelOptions(req.Size, req.Speed, req.Category)
+		if err != nil {
+			return nil, err
+		}
+		card = parcelRateCard{rateCardKey(size, speed): *frozen.Rate}
+	}
+	return s.priceParcelWith(ctx, req, &cfg, RouteResult{DistanceM: frozen.DistanceM, DurationS: frozen.DurationS}, card)
 }
 
 // BookParcel books + escrows a parcel from the sender's WALLET (KYC-tier
@@ -324,7 +352,7 @@ func (s *Service) QuoteParcelBookingFrozen(ctx context.Context, req ParcelBookRe
 	if err != nil {
 		return 0, nil, err
 	}
-	frozen, err := json.Marshal(parcelFrozenPricing{DistanceM: pr.route.DistanceM, DurationS: pr.route.DurationS, Config: *pr.cfg})
+	frozen, err := json.Marshal(parcelFrozenPricing{DistanceM: pr.route.DistanceM, DurationS: pr.route.DurationS, Config: *pr.cfg, Rate: pr.rate})
 	if err != nil {
 		return 0, nil, fmt.Errorf("transport: freeze parcel pricing: %w", err)
 	}
