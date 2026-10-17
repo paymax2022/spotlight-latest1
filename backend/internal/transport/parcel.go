@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -300,6 +301,7 @@ func (s *Service) BookParcel(ctx context.Context, senderID string, req ParcelBoo
 // by transport/paystackcheckout to decide what to ask Paystack for. Never
 // trusted as final: BookParcelPaystackFunded independently recomputes it.
 func (s *Service) QuoteParcelBooking(ctx context.Context, req ParcelBookRequest) (int64, error) {
+	req.RouteToken = "" // card-direct prices a live route; route tokens are wallet-only
 	if !req.ProhibitedAck {
 		return 0, codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
 	}
@@ -314,6 +316,7 @@ func (s *Service) QuoteParcelBooking(ctx context.Context, req ParcelBookRequest)
 // (JSON) the card-direct engine stores in the intent and hands back to
 // BookParcelPaystackFundedFrozen.
 func (s *Service) QuoteParcelBookingFrozen(ctx context.Context, req ParcelBookRequest) (int64, json.RawMessage, error) {
+	req.RouteToken = "" // card-direct prices a live route; route tokens are wallet-only
 	if !req.ProhibitedAck {
 		return 0, nil, codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
 	}
@@ -420,7 +423,11 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 	// no second row, no second tier check, and never a FARE_CHANGED for a
 	// booking that was already charged. The wallet path used to reach the
 	// INSERT and 500 on UNIQUE(idempotency_key).
-	if id, found, err := s.FindParcelByIdempotencyKey(ctx, senderID, idempotencyKey); err != nil {
+	if external {
+		// Card-direct is pinned by its own frozen quote; tokens are wallet-only.
+		req.RouteToken = ""
+	}
+	if id, found, err := s.findParcelReplay(ctx, senderID, idempotencyKey, req, !external); err != nil {
 		return "", err
 	} else if found {
 		return id, nil
@@ -542,7 +549,7 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 			if id != "" { // a concurrent confirm owns the escrow
 				return id, nil
 			}
-		} else if id, found, ferr := s.FindParcelByIdempotencyKey(ctx, senderID, idempotencyKey); ferr == nil && found {
+		} else if id, found, ferr := s.findParcelReplay(ctx, senderID, idempotencyKey, req, true); ferr == nil && found {
 			// A concurrent same-key wallet request won the INSERT. Its escrow is
 			// the only one (the escrow is idempotent on the key), so hand back its
 			// parcel rather than a 500.
@@ -1044,4 +1051,52 @@ func checkExpectedParcelFare(expectedKobo *int64, fareKobo int64) error {
 	ce := codedErr(http.StatusConflict, CodeFareChanged, "the delivery price changed since your estimate; please review the new price")
 	ce.Details = map[string]any{"fare_kobo": fareKobo, "expected_fare_kobo": *expectedKobo}
 	return ce
+}
+
+// findParcelReplay returns the parcel this sender already booked under key.
+// With checkBody (the wallet path) a reused key must carry the SAME booking —
+// route, receiver, size and speed — or it is a 409 IDEMPOTENCY_KEY_CONFLICT,
+// never a silent hand-back of a parcel the customer did not ask for. The
+// card-direct path skips the check: its body is pinned by the intent store.
+func (s *Service) findParcelReplay(ctx context.Context, senderID, key string, req ParcelBookRequest, checkBody bool) (string, bool, error) {
+	var (
+		id                         string
+		pLat, pLng, dLat, dLng     float64
+		receiverPhone, size, speed string
+	)
+	err := s.db.QueryRow(ctx, `
+		SELECT id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, receiver_phone, size, speed
+		FROM parcels WHERE idempotency_key=$1 AND sender_id=$2`, key, senderID).
+		Scan(&id, &pLat, &pLng, &dLat, &dLng, &receiverPhone, &size, &speed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if checkBody && (pLat != req.Pickup.Lat || pLng != req.Pickup.Lng || dLat != req.Dropoff.Lat || dLng != req.Dropoff.Lng ||
+		receiverPhone != req.ReceiverPhone || size != replaySize(req.Size) || speed != replaySpeed(req.Speed)) {
+		return "", false, codedErr(http.StatusConflict, CodeKeyConflict, "this idempotency key was already used for a different parcel booking; retry with a new key")
+	}
+	return id, true, nil
+}
+
+// replaySize / replaySpeed apply the defaults (and the app's "priority" alias)
+// a booking is stored with, so a retry of the same request compares equal.
+func replaySize(size string) string {
+	if size = strings.ToLower(strings.TrimSpace(size)); size == "" {
+		return "small"
+	}
+	return size
+}
+
+func replaySpeed(speed string) string {
+	switch sp := strings.ToLower(strings.TrimSpace(speed)); sp {
+	case "":
+		return "standard"
+	case "priority":
+		return "same_day"
+	default:
+		return sp
+	}
 }

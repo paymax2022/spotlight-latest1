@@ -19,6 +19,7 @@ import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState'
 import { errKind } from '@/features/mobility/utils/errKind';
 import { useParcelEstimate, useBookParcel } from '@/features/mobility/hooks/useModes';
 import { expectedFareFor, fareChangedFrom, fareChangedMessage } from '@/features/mobility/utils/parcelFareDrift';
+import { nextBookingKey, type BookingKey } from '@/features/mobility/utils/parcelBookingKey';
 import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
 import * as parcelAPI from '@/features/mobility/api/parcel.api';
 import { parcelCardDirectResolverRoute } from '@/features/mobility/utils/cardDirect';
@@ -66,6 +67,7 @@ export default function ParcelDescribeScreen() {
 
   const estimate = useParcelEstimate();
   const book = useBookParcel();
+  const bookingKey = React.useRef<BookingKey | null>(null);
   const est: ParcelEstimate | undefined = estimate.data;
   // Shared chooser: wallet OR card (Paystack top-up) → then the booking charge.
   const pay = usePurchasePayment<Awaited<ReturnType<typeof book.mutateAsync>>>();
@@ -109,14 +111,21 @@ export default function ParcelDescribeScreen() {
       // customer saw: if the server's live fare moved, it refuses with
       // FARE_CHANGED before charging, and we re-quote so the new price shows.
       charge: async () => {
+        const booking = {
+          pickup, dropoff, category, size, speed, declaredValueKobo,
+          receiverName: receiverName.trim(),
+          receiverPhone: receiverPhone.trim(),
+          photoUrl: photoAttached ? 'mock://parcel-photo' : undefined,
+          prohibitedAck,
+          paymentMethod: 'wallet' as const,
+        };
+        // Same booking → same key, so a retry after a lost response returns the
+        // first parcel instead of booking (and debiting) again.
+        bookingKey.current = nextBookingKey(bookingKey.current, booking, () => newIdempotencyKey('parcel'));
         try {
           return await book.mutateAsync({
-            pickup, dropoff, category, size, speed, declaredValueKobo,
-            receiverName: receiverName.trim(),
-            receiverPhone: receiverPhone.trim(),
-            photoUrl: photoAttached ? 'mock://parcel-photo' : undefined,
-            prohibitedAck,
-            paymentMethod: 'wallet',
+            ...booking,
+            idempotencyKey: bookingKey.current.key,
             expectedFareKobo: expectedFareFor(est),
             routeToken: est?.routeToken,
           });

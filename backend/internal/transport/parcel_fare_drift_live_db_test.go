@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -188,5 +189,65 @@ func TestLiveDB_BookParcel_RouteTokenAbsorbsRouteDrift(t *testing.T) {
 	}
 	if got := riderWalletBalance(t, ctx, pool, sender); got != before-est.FareKobo {
 		t.Fatalf("escrowed %d, want %d", before-got, est.FareKobo)
+	}
+}
+
+// A reused key with a DIFFERENT booking (other receiver, size, addresses) is
+// not a retry: refuse it with 409 IDEMPOTENCY_KEY_CONFLICT rather than hand
+// back a parcel the customer did not ask for. Nothing moves.
+func TestLiveDB_BookParcel_ReusedKeyDifferentBodyIsConflict(t *testing.T) {
+	pool := paystackRidePool(t)
+	ctx := context.Background()
+	svc, _, sender := paystackRideFixture(t, ctx, pool, 50_000_000)
+	testsupport.SetKycTier(t, ctx, pool, sender, testsupport.KycTierUnlimited)
+
+	key := "reuse-" + uuid.NewString()
+	if _, err := svc.BookParcel(ctx, sender, parcelReq(), key); err != nil {
+		t.Fatalf("first booking: %v", err)
+	}
+	afterFirst := riderWalletBalance(t, ctx, pool, sender)
+
+	otherReceiver := parcelReq()
+	otherReceiver.ReceiverPhone = "+2348111111111"
+	otherSize := parcelReq()
+	otherSize.Size = "large"
+	otherDrop := parcelReq()
+	otherDrop.Dropoff.Lat += 0.01
+	for name, req := range map[string]ParcelBookRequest{"receiver": otherReceiver, "size": otherSize, "dropoff": otherDrop} {
+		_, err := svc.BookParcel(ctx, sender, req, key)
+		var ce *CodedError
+		if !errors.As(err, &ce) || ce.Status != http.StatusConflict || ce.Code != CodeKeyConflict {
+			t.Fatalf("%s: want 409 %s, got %v", name, CodeKeyConflict, err)
+		}
+	}
+	if got := riderWalletBalance(t, ctx, pool, sender); got != afterFirst {
+		t.Fatalf("conflicting reuse moved the wallet: %d → %d", afterFirst, got)
+	}
+	if n := countParcelsByKey(t, ctx, pool, key); n != 1 {
+		t.Fatalf("%d parcels under the key, want 1", n)
+	}
+}
+
+// The route token is a wallet-booking feature. The card-direct quote prices
+// from a live route even when the request carries a valid token, so a card
+// payer cannot pick the cheapest of several estimates.
+func TestLiveDB_CardQuoteIgnoresRouteToken(t *testing.T) {
+	pool := paystackRidePool(t)
+	ctx := context.Background()
+	svc, _, _ := paystackRideFixture(t, ctx, pool, 0)
+	svc = svc.WithParcelRouteTokenSecret(testRouteSecret)
+
+	plain := parcelReq()
+	want, err := svc.QuoteParcelBooking(ctx, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cheap := parcelReq()
+	cheap.RouteToken = signParcelRoute(testRouteSecret, cheap.Pickup, cheap.Dropoff, RouteResult{DistanceM: 1, DurationS: 1}, time.Now())
+	if got, err := svc.QuoteParcelBooking(ctx, cheap); err != nil || got != want {
+		t.Fatalf("card quote with a token = %d (%v), want the live-route %d", got, err, want)
+	}
+	if got, _, err := svc.QuoteParcelBookingFrozen(ctx, cheap); err != nil || got != want {
+		t.Fatalf("frozen card quote with a token = %d (%v), want %d", got, err, want)
 	}
 }

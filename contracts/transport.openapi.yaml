@@ -665,9 +665,11 @@ paths:
         distance/duration for the same pickup/dropoff, valid 15 minutes. With a valid token the booking
         prices from that route and the LIVE pricing config, so a traffic-driven route change between
         estimate and booking cannot cause FARE_CHANGED; only a real price change can. An expired,
-        tampered or mismatched token is ignored and the route is fetched live. Any repeat of an
-        Idempotency-Key that already booked for this user returns that booking (no second charge, no
-        second tier check).
+        tampered or mismatched token is ignored and the route is fetched live. Wallet bookings only:
+        card-direct always prices a live route. A repeat of an Idempotency-Key that already booked for
+        this user with the SAME booking (pickup, dropoff, receiver phone, size, speed) returns that
+        booking (no second charge, no second tier check); the same key with a different booking is
+        409 IDEMPOTENCY_KEY_CONFLICT.
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -694,14 +696,16 @@ paths:
         '401': { description: Not authenticated }
         '402': { description: Insufficient balance }
         '409':
-          description: FARE_CHANGED (the price moved since the estimate; nothing was charged)
+          description: >-
+            FARE_CHANGED (the price moved since the estimate; nothing was charged), or
+            IDEMPOTENCY_KEY_CONFLICT (the key already booked a different parcel; nothing was charged)
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   error: { type: string }
-                  code: { type: string, enum: [FARE_CHANGED] }
+                  code: { type: string, enum: [FARE_CHANGED, IDEMPOTENCY_KEY_CONFLICT] }
                   fare_kobo: { type: integer, format: int64 }
                   expected_fare_kobo: { type: integer, format: int64 }
     get:
