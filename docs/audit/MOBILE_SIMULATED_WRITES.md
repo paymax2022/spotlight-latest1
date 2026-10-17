@@ -132,7 +132,7 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   exists, so check the Go side (caveats in its docstring).
 - **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
   - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3 — done in Batch 8),
-    repairs (4), reports (2, read-only: flip the default only), tasks (3 — two handler files carry a
+    repairs (4 — done in Batch 9), reports (2, read-only: flip the default only), tasks (3 — two handler files carry a
     "stub" comment, read them first), vendors (6), facilities (4). Every call matches a handler, every
     table exists, no read-side traps.
   - **Blocked — path mismatch, do not flip:** `ainotes` (1 of 4 calls matches; `GET
@@ -186,6 +186,22 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
     (server-side role check on the resolve handler, plus hiding the Resolve action in the app for
     everyone else).
 
+### Batch 9 (2026-10-17) — repairs (one authorization finding)
+- **repairs** (`src/features/repairs/api.ts`) — frontend-web handlers (`app/api/v1/estate/repairs`).
+  `verify_mobile_module.py`: **4/4 client calls match** (list, create, detail, add-update); tables
+  `estate_repair_requests` and `repair_updates` exist; no stubs, no read-side traps. No automated
+  suite for the handlers (code reading). 2 mutations converted (`createRepair`, `addRepairUpdate`);
+  e2e pin added (the e2e only reads fixtures).
+  - **Finding — any resident can move any repair to any status.** `POST /repairs/:id/updates` checks
+    only that the caller is a resident of the same estate, then writes the update and sets the
+    request's `status` to whatever was sent (`reported`…`completed`, `reopened`, `cancelled`). The
+    mobile detail screen (`app/repairs/[id].tsx`) shows the "Mark as <next status>" button to every
+    resident. So a resident can mark a neighbour's open ticket `completed` or `cancelled`. Same class
+    as the emergencies resolve finding (Batch 8), where the product decision was estate-admin only;
+    **whether repair status changes should be estate-admin-only (reporter may reopen/cancel their
+    own?) is not decided — open question, not changed in this PR.** (`cost_estimate_kobo` is
+    display-only: no handler writes it.)
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -212,7 +228,7 @@ academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, arena, connec
 creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
-one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,
+one module), notifications, nutrition, properties, realtor, referral (2 files), reports,
 social (see Batch 4 — blocked), spotlightwealth, stays, stocks, tasks, transfers, vendors, plus
 `src/api/doctor.client.ts` and `src/api/telemedicine.api.ts`.
 (An earlier version of this list had ~26 names: it only scanned `constants/` and `api/`
