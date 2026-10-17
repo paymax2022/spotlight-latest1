@@ -30,6 +30,7 @@ import (
 	"spotlight/backend/internal/provider/mycover"
 	"spotlight/backend/internal/provider/octamile"
 	"spotlight/backend/internal/services"
+	"spotlight/backend/internal/transport"
 	"strings"
 	"time"
 
@@ -633,6 +634,10 @@ func (a *insuranceBinderAdapter) BindFromQuote(ctx context.Context, userID, quot
 
 func (a *insuranceBinderAdapter) BindFromQuotePrepaid(ctx context.Context, userID, quoteID string, paidKobo int64, idempotencyKey string) (string, int64, error) {
 	p, err := a.policy.BindFromQuotePrepaid(ctx, userID, quoteID, paidKobo, idempotencyKey)
+	if errors.Is(err, policy.ErrBindPersistedPartially) {
+		// Cover may exist: transport must not refund on this.
+		return "", 0, fmt.Errorf("%w: %w", transport.ErrInsuranceBindUnconfirmed, err)
+	}
 	if err != nil {
 		return "", 0, err
 	}

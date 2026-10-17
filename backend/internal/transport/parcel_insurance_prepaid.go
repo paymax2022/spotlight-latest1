@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -22,32 +23,48 @@ import (
 // insurer's real quote needs the vehicle plate, which only exists then. The
 // customer pays exactly what was shown; the platform absorbs any difference to
 // the insurer's real premium. If cover cannot be bound, or the parcel is
-// cancelled before it is, the premium goes back to the wallet.
+// cancelled (before or after the bind), the premium goes back to the wallet.
 //
 // parcels.insurance_status tracks where the premium is:
-//   none → held (paid at booking) → binding → bound | refunded | refund_failed
-// Every money move is a balanced ledger journal, idempotent on its key; where
-// the money is after a failed bind is read from the LEDGER, never guessed from
-// an error.
+//   declined (not ticked) · none (legacy, booked before the flag)
+//   held (paid) → binding → bound | refunded | refund_failed
 //
-// Off: the tick is ignored and parcels keep the legacy flow (indicative
-// premium shown, cover bound and debited separately at courier accept).
+// Money keys are deterministic so every move is idempotent and findable:
+//   hold         <bookingKey>:insurance          wallet → hold   (ref parcel:insurance_hold:<bookingKey>)
+//   hold refund  <bookingKey>:insurance_refund   hold → wallet   (ONE key for every refund from the hold)
+//   bind         parcel:insurance:<id>:premium   hold → clearing (policy saga)
+//   saga refund  parcel:insurance:<id>:reversal  clearing → wallet
+//   cancel after bind  parcel:insurance:<id>:cancel_refund  clearing → wallet
+// Where the money is after a failed bind is read from the LEDGER, never
+// guessed from an error. ReconcileParcelInsurance resolves anything a crash
+// leaves in between.
+//
+// Off: the tick is ignored; bookings get status 'none' and the legacy flow
+// (indicative premium shown, cover bound and debited at courier accept).
 
 const (
 	CodeInsuranceProfileIncomplete     = "INSURANCE_PROFILE_INCOMPLETE"
 	CodeInsuranceDeclaredValueRequired = "INSURANCE_DECLARED_VALUE_REQUIRED"
 	CodeInsuranceUnavailable           = "INSURANCE_UNAVAILABLE"
 	CodeInsuranceCardNotSupported      = "INSURANCE_CARD_NOT_SUPPORTED"
+	CodeInsufficientFunds              = "INSUFFICIENT_FUNDS"
 )
 
 const (
 	insuranceStatusNone         = "none"
+	insuranceStatusDeclined     = "declined"
 	insuranceStatusHeld         = "held"
 	insuranceStatusBinding      = "binding"
 	insuranceStatusBound        = "bound"
 	insuranceStatusRefunded     = "refunded"
 	insuranceStatusRefundFailed = "refund_failed"
 )
+
+// ErrInsuranceBindUnconfirmed: the insurer bound the policy but it could not
+// be recorded locally. Cover may exist, so the premium is NOT refunded; the
+// parcel stays 'binding' for reconciliation. The app-wiring adapter maps the
+// insurance saga's equivalent error onto this one.
+var ErrInsuranceBindUnconfirmed = errors.New("transport: insurance bind outcome unconfirmed")
 
 // WithPrepaidInsurance turns on parcel insurance paid at booking.
 func (s *Service) WithPrepaidInsurance(on bool) *Service {
@@ -60,11 +77,24 @@ func (s *Service) prepaidInsurance(req ParcelBookRequest) bool {
 	return s.prepaidInsuranceOn && req.Insure
 }
 
+// bookingInsuranceStatus is the status a new booking is stored with.
+func (s *Service) bookingInsuranceStatus(insured bool, req ParcelBookRequest) string {
+	switch {
+	case insured:
+		return insuranceStatusHeld
+	case s.prepaidInsuranceOn && req.DeclaredValueKobo > 0:
+		return insuranceStatusDeclined // could have ticked, did not
+	default:
+		return insuranceStatusNone
+	}
+}
+
 // checkPrepaidInsurance refuses an insured booking that could never be
-// covered, BEFORE any money moves: no declared value, insurer or ledger not
-// wired, or a sender profile missing what the insurer's form requires (so they
-// are not charged for cover that would be refunded at courier accept).
-func (s *Service) checkPrepaidInsurance(ctx context.Context, senderID string, req ParcelBookRequest, premiumKobo int64) error {
+// covered or paid for, BEFORE any money moves: no declared value, insurer or
+// ledger not wired, a sender profile missing what the insurer's form requires,
+// or a wallet that cannot cover fare + premium (checked up front so a booking
+// is never left with the premium taken and the fare refused).
+func (s *Service) checkPrepaidInsurance(ctx context.Context, senderID, bookingKey string, req ParcelBookRequest, fareKobo, premiumKobo int64) error {
 	if req.DeclaredValueKobo <= 0 {
 		return codedErr(http.StatusUnprocessableEntity, CodeInsuranceDeclaredValueRequired, "enter the value of the item to insure it")
 	}
@@ -75,6 +105,19 @@ func (s *Service) checkPrepaidInsurance(ctx context.Context, senderID string, re
 		ce := codedErr(http.StatusUnprocessableEntity, CodeInsuranceProfileIncomplete, "complete your profile to insure this parcel")
 		ce.Details = map[string]any{"missing": missing}
 		return ce
+	}
+	balance, err := s.ledger.GetBalance(ctx, senderID)
+	if err != nil {
+		return err
+	}
+	need := fareKobo + premiumKobo
+	if held, hErr := s.entryPosted(ctx, bookingKey+":insurance:credit"); hErr != nil {
+		return hErr
+	} else if held {
+		need = fareKobo // a same-key retry: the premium is already in the hold
+	}
+	if balance < need {
+		return codedErr(http.StatusPaymentRequired, CodeInsufficientFunds, "your wallet balance does not cover the delivery fee and insurance")
 	}
 	return nil
 }
@@ -90,10 +133,29 @@ func checkExpectedParcelInsurance(expectedKobo *int64, premiumKobo int64) error 
 	return ce
 }
 
+func holdRefundKey(bookingKey string) string { return bookingKey + ":insurance_refund" }
+
+// entryPosted reports whether a ledger entry with this exact key exists (the
+// ledger of record, not the Redis fast path).
+func (s *Service) entryPosted(ctx context.Context, key string) (bool, error) {
+	_, found, err := s.ledger.EntryByKey(ctx, key)
+	return found, err
+}
+
 // holdParcelPremium moves the premium from the sender's wallet into the
-// insurance hold, under the same checkout tier guard as the fare escrow.
-// Idempotent on the booking key: a replay with identical legs is a no-op.
-func (s *Service) holdParcelPremium(ctx context.Context, senderID, parcelID, bookingKey string, premiumKobo int64) error {
+// insurance hold, under the same checkout tier guard as the fare escrow. Keyed
+// and referenced by the booking key, so a same-key retry (crash before the
+// parcel row was written) is a no-op that reuses the held premium. A key whose
+// premium was already refunded is refused: re-using it would book cover with
+// no money behind it.
+func (s *Service) holdParcelPremium(ctx context.Context, senderID, bookingKey string, premiumKobo int64) error {
+	refunded, err := s.entryPosted(ctx, holdRefundKey(bookingKey)+":rev_debit")
+	if err != nil {
+		return err
+	}
+	if refunded {
+		return codedErr(http.StatusConflict, CodeKeyConflict, "this booking attempt was not completed and its payment was returned; please book again")
+	}
 	wallet, err := s.ledger.GetOrCreateUserWallet(ctx, senderID)
 	if err != nil {
 		return err
@@ -103,7 +165,7 @@ func (s *Service) holdParcelPremium(ctx context.Context, senderID, parcelID, boo
 		return err
 	}
 	err = s.ledger.PostJournalWithGuard(ctx, ledger.JournalEntry{
-		Reference:       "parcel:insurance:" + parcelID,
+		Reference:       "parcel:insurance_hold:" + bookingKey,
 		IdempotencyKey:  bookingKey + ":insurance",
 		AmountKobo:      premiumKobo,
 		DebitAccountID:  wallet.ID,
@@ -117,23 +179,57 @@ func (s *Service) holdParcelPremium(ctx context.Context, senderID, parcelID, boo
 }
 
 // refundHeldPremium returns a premium still in the hold to the sender's
-// wallet. Idempotent on the parcel (a second call is a ledger no-op).
-func (s *Service) refundHeldPremium(ctx context.Context, senderID, parcelID string, premiumKobo int64) error {
+// wallet. Every refund from the hold — a failed booking, a failed bind, a
+// cancel, the reconciler — uses the ONE key holdRefundKey(bookingKey), so a
+// premium can never be refunded twice. Runs on a detached, bounded context
+// (the caller's may be the thing that failed) and verifies the refund is on
+// the ledger rather than trusting an ErrDuplicate from the Redis fast path.
+func (s *Service) refundHeldPremium(ctx context.Context, senderID, bookingKey string, premiumKobo int64) error {
 	if premiumKobo <= 0 {
 		return nil
 	}
-	wallet, err := s.ledger.GetOrCreateUserWallet(ctx, senderID)
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	wallet, err := s.ledger.GetOrCreateUserWallet(cctx, senderID)
 	if err != nil {
 		return err
 	}
-	hold, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountInsurancePremiumHold)
+	hold, err := s.ledger.GetOrCreateStandingAccount(cctx, ledger.AccountInsurancePremiumHold)
 	if err != nil {
 		return err
 	}
-	err = s.ledger.PostReversal(ctx, wallet.ID, hold.ID, premiumKobo,
-		"parcel:insurance_refund:"+parcelID, "parcel:insurance:"+parcelID+":hold_refund")
+	key := holdRefundKey(bookingKey)
+	err = s.ledger.PostReversal(cctx, wallet.ID, hold.ID, premiumKobo, "parcel:insurance_refund:"+bookingKey, key)
 	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return err
+	}
+	if ok, vErr := s.entryPosted(cctx, key+":rev_debit"); vErr != nil || !ok {
+		return fmt.Errorf("transport: premium refund %s not on the ledger (err=%v)", key, vErr)
+	}
+	return nil
+}
+
+// refundBoundPremium refunds a premium that already moved to provider
+// clearing (cover bound, then the parcel was cancelled). The platform absorbs
+// whatever the insurer does not return on the policy cancel.
+func (s *Service) refundBoundPremium(ctx context.Context, p *parcelRow) error {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	wallet, err := s.ledger.GetOrCreateUserWallet(cctx, p.SenderID)
+	if err != nil {
+		return err
+	}
+	clearing, err := s.ledger.GetOrCreateStandingAccount(cctx, ledger.AccountProviderClearing)
+	if err != nil {
+		return err
+	}
+	key := "parcel:insurance:" + p.ID + ":cancel_refund"
+	err = s.ledger.PostReversal(cctx, wallet.ID, clearing.ID, p.InsurancePaidKobo, "parcel:insurance_cancel_refund:"+p.ID, key)
+	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+		return err
+	}
+	if ok, vErr := s.entryPosted(cctx, key+":rev_debit"); vErr != nil || !ok {
+		return fmt.Errorf("transport: cancel refund %s not on the ledger (err=%v)", key, vErr)
 	}
 	return nil
 }
@@ -153,33 +249,99 @@ func (s *Service) setInsuranceStatus(ctx context.Context, parcelID, status strin
 	}
 }
 
-// settleParcelInsuranceAtAccept binds the prepaid cover once a courier and
-// vehicle are known, or refunds the premium when it cannot. Never blocks the
-// courier assignment it runs from.
+func (s *Service) notifyPremiumRefunded(ctx context.Context, p *parcelRow, why string) {
+	s.notifyUser(ctx, p.SenderID, "parcel.insurance_refunded", p.ID,
+		"Your parcel insurance payment has been refunded to your wallet: "+why)
+	s.recordModeEvent(ctx, p.SenderID, "parcel.insurance_refunded", "parcel", p.ID, "", "",
+		map[string]any{"paid_kobo": p.InsurancePaidKobo, "reason": why})
+}
+
+// insureParcelAtAccept handles cover once a courier is assigned: a premium
+// paid at booking is bound (or refunded); a parcel booked before prepaid
+// insurance existed ('none' with a declared value) keeps the legacy
+// bind-and-debit; a 'declined' parcel gets nothing.
+func (s *Service) insureParcelAtAccept(ctx context.Context, p *parcelRow, sender parcelSenderProfile, vehicle parcelDriverVehicle, driverUserID string) {
+	switch {
+	case p.InsuranceStatus == insuranceStatusHeld:
+		s.settleParcelInsuranceAtAccept(ctx, p, sender, vehicle)
+	case p.InsuranceStatus == insuranceStatusNone && p.DeclaredValueKobo > 0:
+		// Legacy: only now do we know the vehicle the insurer's form requires.
+		// Best-effort — a declined/failed bind just means this parcel ships uninsured.
+		if policyID, premiumKobo, ok := s.bindParcelInsurance(ctx, p, p.PickupAddress, p.DropoffAddress, p.Category, sender, vehicle); ok {
+			if _, err := s.db.Exec(ctx,
+				`UPDATE parcels SET insurance_policy_id=$1, insurance_kobo=$2, updated_at=NOW() WHERE id=$3`,
+				policyID, premiumKobo, p.ID,
+			); err != nil {
+				log.Printf("[transport] parcel %s: insurance bound (policy %s) but failed to persist the reference: %v", p.ID, policyID, err)
+			} else {
+				s.recordModeEvent(ctx, driverUserID, "parcel.insured", "parcel", p.ID, "courier_assigned", "courier_assigned",
+					map[string]any{"insurance_policy_id": policyID, "premium_kobo": premiumKobo})
+			}
+		}
+	}
+}
+
+// settleParcelInsuranceAtAccept binds the prepaid cover, or refunds the
+// premium when it cannot. Never blocks the courier assignment it runs from.
 func (s *Service) settleParcelInsuranceAtAccept(ctx context.Context, p *parcelRow, sender parcelSenderProfile, vehicle parcelDriverVehicle) {
 	if p.InsuranceStatus != insuranceStatusHeld || !s.claimInsuranceStatus(ctx, p.ID, insuranceStatusHeld, insuranceStatusBinding) {
 		return
 	}
 	bindKey := "parcel:insurance:" + p.ID
 	policyID, err := s.bindPrepaidParcelInsurance(ctx, p, sender, vehicle, bindKey)
-	if err == nil {
-		if _, uErr := s.db.Exec(ctx,
-			`UPDATE parcels SET insurance_status='bound', insurance_policy_id=$2, updated_at=NOW() WHERE id=$1`,
-			p.ID, policyID); uErr != nil {
-			log.Printf("[transport] parcel %s: insurance bound (policy %s) but the parcel was not updated: %v", p.ID, policyID, uErr)
-		}
-		s.recordModeEvent(ctx, p.SenderID, "parcel.insured", "parcel", p.ID, "", "",
-			map[string]any{"insurance_policy_id": policyID, "paid_kobo": p.InsurancePaidKobo})
-		return
+	switch {
+	case err == nil:
+		s.recordBoundCover(ctx, p, policyID)
+	case errors.Is(err, ErrInsuranceBindUnconfirmed):
+		// Cover may exist: never refund on a guess. Stays 'binding'.
+		log.Printf("[transport] parcel %s: CRITICAL insurance bind outcome unconfirmed, left for reconciliation: %v", p.ID, err)
+	default:
+		log.Printf("[transport] parcel %s: prepaid cover not bound, refunding the premium: %v", p.ID, err)
+		s.finishPrepaidRefund(ctx, p, bindKey)
 	}
-	log.Printf("[transport] parcel %s: prepaid cover not bound, refunding the premium: %v", p.ID, err)
-	s.finishPrepaidRefund(ctx, p, bindKey)
 }
 
-// finishPrepaidRefund puts the premium back in the wallet after a bind that
-// did not happen. Where the money is comes from the ledger: if the saga never
-// moved it out of the hold, refund from the hold here; if it did, the saga's
-// auto-reverse refunded it (or, if that failed, it needs reconciliation).
+// recordBoundCover marks the cover bound — unless the parcel was cancelled
+// while the bind was in flight, in which case the policy is cancelled and the
+// premium refunded (cancel before bind → refund, whatever the timing).
+func (s *Service) recordBoundCover(ctx context.Context, p *parcelRow, policyID string) {
+	if _, err := s.db.Exec(ctx,
+		`UPDATE parcels SET insurance_status='bound', insurance_policy_id=$2, updated_at=NOW() WHERE id=$1 AND insurance_status='binding'`,
+		p.ID, policyID); err != nil {
+		log.Printf("[transport] parcel %s: insurance bound (policy %s) but the parcel was not updated: %v", p.ID, policyID, err)
+		return
+	}
+	var parcelStatus string
+	if err := s.db.QueryRow(ctx, `SELECT status FROM parcels WHERE id=$1`, p.ID).Scan(&parcelStatus); err == nil && parcelStatus == "cancelled" {
+		p.InsurancePolicyID = &policyID
+		s.cancelBoundCover(ctx, p, "parcel cancelled while the cover was being arranged")
+		return
+	}
+	s.recordModeEvent(ctx, p.SenderID, "parcel.insured", "parcel", p.ID, "", "",
+		map[string]any{"insurance_policy_id": policyID, "paid_kobo": p.InsurancePaidKobo})
+}
+
+// cancelBoundCover cancels a bound policy and refunds the premium the sender
+// paid. Claimed bound → refunded atomically so it runs once.
+func (s *Service) cancelBoundCover(ctx context.Context, p *parcelRow, why string) {
+	if !s.claimInsuranceStatus(ctx, p.ID, insuranceStatusBound, insuranceStatusRefunded) {
+		return
+	}
+	if p.InsurancePolicyID != nil && *p.InsurancePolicyID != "" {
+		s.cancelParcelInsurance(ctx, p.SenderID, *p.InsurancePolicyID)
+	}
+	if err := s.refundBoundPremium(ctx, p); err != nil {
+		log.Printf("[transport] parcel %s: CRITICAL refund of a cancelled bound premium failed: %v", p.ID, err)
+		s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefundFailed)
+		return
+	}
+	s.notifyPremiumRefunded(ctx, p, why)
+}
+
+// finishPrepaidRefund puts the premium back after a bind that did not happen.
+// If the saga never moved it out of the hold, refund it from the hold here; if
+// it did, the saga's auto-reverse refunded it (and already notified the
+// sender), or — if that failed — it needs reconciliation.
 func (s *Service) finishPrepaidRefund(ctx context.Context, p *parcelRow, bindKey string) {
 	moved, err := s.ledger.Posted(ctx, bindKey+":premium")
 	if err != nil {
@@ -187,21 +349,22 @@ func (s *Service) finishPrepaidRefund(ctx context.Context, p *parcelRow, bindKey
 		s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefundFailed)
 		return
 	}
-	status := insuranceStatusRefunded
 	if !moved {
-		if rErr := s.refundHeldPremium(ctx, p.SenderID, p.ID, p.InsurancePaidKobo); rErr != nil {
+		if rErr := s.refundHeldPremium(ctx, p.SenderID, p.IdempotencyKey, p.InsurancePaidKobo); rErr != nil {
 			log.Printf("[transport] parcel %s: CRITICAL premium refund from hold failed: %v", p.ID, rErr)
-			status = insuranceStatusRefundFailed
+			s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefundFailed)
+			return
 		}
-	} else if _, reversed, rErr := s.ledger.EntryByKey(ctx, bindKey+":reversal:rev_debit"); rErr != nil || !reversed {
-		log.Printf("[transport] parcel %s: CRITICAL premium left the hold but no refund is on the ledger (err=%v)", p.ID, rErr)
-		status = insuranceStatusRefundFailed
+		s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefunded)
+		s.notifyPremiumRefunded(ctx, p, "we couldn't arrange cover for this delivery. Your delivery continues as normal.")
+		return
 	}
-	s.setInsuranceStatus(ctx, p.ID, status)
-	s.notifyUser(ctx, p.SenderID, "parcel.insurance_refunded", p.ID,
-		"We couldn't arrange insurance for your parcel, so your insurance payment has been refunded to your wallet. Your delivery continues as normal.")
-	s.recordModeEvent(ctx, p.SenderID, "parcel.insurance_refunded", "parcel", p.ID, "", "",
-		map[string]any{"paid_kobo": p.InsurancePaidKobo, "status": status})
+	if reversed, rErr := s.entryPosted(ctx, bindKey+":reversal:rev_debit"); rErr != nil || !reversed {
+		log.Printf("[transport] parcel %s: CRITICAL premium left the hold but no refund is on the ledger (err=%v)", p.ID, rErr)
+		s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefundFailed)
+		return
+	}
+	s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefunded) // the saga already notified the sender
 }
 
 // bindPrepaidParcelInsurance is bindParcelInsurance for a premium already
@@ -231,15 +394,167 @@ func (s *Service) bindPrepaidParcelInsurance(ctx context.Context, p *parcelRow, 
 	return policyID, nil
 }
 
-// refundPrepaidOnCancel returns a premium that is still held when the parcel
-// is cancelled before its cover was bound. Cover that is already bound is
-// cancelled with the insurer by the existing path (cancelParcelInsurance).
+// refundPrepaidOnCancel refunds the premium when a parcel is cancelled: from
+// the hold if cover was not bound yet, or by cancelling the bound policy. A
+// bind still in flight ('binding') finishes in recordBoundCover, which sees
+// the cancellation and refunds then.
 func (s *Service) refundPrepaidOnCancel(ctx context.Context, p *parcelRow) {
-	if p.InsuranceStatus != insuranceStatusHeld || !s.claimInsuranceStatus(ctx, p.ID, insuranceStatusHeld, insuranceStatusRefunded) {
-		return
+	switch p.InsuranceStatus {
+	case insuranceStatusHeld:
+		if !s.claimInsuranceStatus(ctx, p.ID, insuranceStatusHeld, insuranceStatusRefunded) {
+			return
+		}
+		if err := s.refundHeldPremium(ctx, p.SenderID, p.IdempotencyKey, p.InsurancePaidKobo); err != nil {
+			log.Printf("[transport] parcel %s: CRITICAL premium refund on cancel failed: %v", p.ID, err)
+			s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefundFailed)
+			return
+		}
+		s.notifyPremiumRefunded(ctx, p, "your delivery was cancelled.")
+	case insuranceStatusBound:
+		s.cancelBoundCover(ctx, p, "your delivery was cancelled.")
 	}
-	if err := s.refundHeldPremium(ctx, p.SenderID, p.ID, p.InsurancePaidKobo); err != nil {
-		log.Printf("[transport] parcel %s: CRITICAL premium refund on cancel failed: %v", p.ID, err)
-		s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefundFailed)
+}
+
+// ReconcileParcelInsurance resolves premiums a crash or a failure left in
+// between (run from the stuck-settlement reconciler). Only rows untouched for
+// grace are swept, so it never races a live booking, bind or cancel:
+//   - binding with the premium still in the hold → refund it
+//   - binding whose saga already refunded it → mark refunded
+//   - binding with the premium moved and NOT refunded → left alone (cover may
+//     exist: needs the insurer's word), logged
+//   - refund_failed → retry the refund from wherever the premium is
+//   - held past courier accept (the bind never ran) → refund
+//   - a held premium with no parcel row (crash before the INSERT) → refund
+func (s *Service) ReconcileParcelInsurance(ctx context.Context, grace time.Duration) (int, error) {
+	if s.ledger == nil || s.db == nil {
+		return 0, nil
 	}
+	resolved := 0
+	rows, err := s.db.Query(ctx, `
+		SELECT id FROM parcels
+		WHERE (insurance_status IN ('binding','refund_failed')
+		       OR (insurance_status='held' AND status NOT IN ('created','cancelled')))
+		  AND updated_at < NOW() - make_interval(secs => $1)
+		LIMIT 200`, grace.Seconds())
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		var p parcelRow
+		if err := s.loadParcel(ctx, id, &p); err != nil {
+			continue
+		}
+		if s.reconcileParcelPremium(ctx, &p) {
+			resolved++
+		}
+	}
+	n, err := s.reconcileOrphanPremiums(ctx, grace)
+	return resolved + n, err
+}
+
+func (s *Service) reconcileParcelPremium(ctx context.Context, p *parcelRow) bool {
+	bindKey := "parcel:insurance:" + p.ID
+	moved, err := s.ledger.Posted(ctx, bindKey+":premium")
+	if err != nil {
+		return false
+	}
+	switch {
+	case p.InsuranceStatus == insuranceStatusHeld:
+		if !s.claimInsuranceStatus(ctx, p.ID, insuranceStatusHeld, insuranceStatusBinding) {
+			return false
+		}
+		p.InsuranceStatus = insuranceStatusBinding
+		fallthrough
+	case !moved:
+		if err := s.refundHeldPremium(ctx, p.SenderID, p.IdempotencyKey, p.InsurancePaidKobo); err != nil {
+			log.Printf("[transport] reconcile parcel %s: premium refund from hold failed: %v", p.ID, err)
+			s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefundFailed)
+			return false
+		}
+		s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefunded)
+		s.notifyPremiumRefunded(ctx, p, "we couldn't arrange cover for this delivery.")
+		return true
+	}
+	reversed, err := s.entryPosted(ctx, bindKey+":reversal:rev_debit")
+	if err != nil {
+		return false
+	}
+	if reversed {
+		s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefunded)
+		return true
+	}
+	if p.InsuranceStatus == insuranceStatusBinding {
+		// Premium moved, no refund: the bind may have succeeded at the insurer.
+		log.Printf("[transport] reconcile parcel %s: CRITICAL premium with the insurer and no local outcome — needs the insurer's word", p.ID)
+		return false
+	}
+	// refund_failed after the saga took the premium and its auto-reverse failed:
+	// post that reversal under the saga's own key (so it can never double up).
+	wallet, wErr := s.ledger.GetOrCreateUserWallet(ctx, p.SenderID)
+	clearing, cErr := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if wErr != nil || cErr != nil {
+		return false
+	}
+	if err := s.ledger.PostReversal(ctx, wallet.ID, clearing.ID, p.InsurancePaidKobo, "parcel:insurance_refund:"+p.ID, bindKey+":reversal"); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+		log.Printf("[transport] reconcile parcel %s: premium refund from clearing failed: %v", p.ID, err)
+		return false
+	}
+	if ok, _ := s.entryPosted(ctx, bindKey+":reversal:rev_debit"); !ok {
+		return false
+	}
+	s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefunded)
+	s.notifyPremiumRefunded(ctx, p, "we couldn't arrange cover for this delivery.")
+	return true
+}
+
+// reconcileOrphanPremiums refunds premiums held for a booking that never wrote
+// its parcel row (crash between the hold and the INSERT, never retried).
+func (s *Service) reconcileOrphanPremiums(ctx context.Context, grace time.Duration) (int, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT d.idempotency_key, w.user_id::text, d.amount_kobo
+		FROM ledger_entries d
+		JOIN ledger_accounts w ON w.id = d.account_id
+		WHERE d.idempotency_key LIKE '%:insurance:debit'
+		  AND d.reference LIKE 'parcel:insurance_hold:%'
+		  AND d.created_at < NOW() - make_interval(secs => $1)
+		  AND NOT EXISTS (SELECT 1 FROM parcels p
+		                  WHERE p.idempotency_key = left(d.idempotency_key, length(d.idempotency_key) - length(':insurance:debit')))
+		  AND NOT EXISTS (SELECT 1 FROM ledger_entries r
+		                  WHERE r.idempotency_key = left(d.idempotency_key, length(d.idempotency_key) - length(':debit')) || '_refund:rev_debit')
+		LIMIT 200`, grace.Seconds())
+	if err != nil {
+		return 0, err
+	}
+	type orphan struct {
+		bookingKey, senderID string
+		amount               int64
+	}
+	var orphans []orphan
+	for rows.Next() {
+		var key, sender string
+		var amt int64
+		if err := rows.Scan(&key, &sender, &amt); err == nil {
+			orphans = append(orphans, orphan{strings.TrimSuffix(key, ":insurance:debit"), sender, amt})
+		}
+	}
+	rows.Close()
+	n := 0
+	for _, o := range orphans {
+		if err := s.refundHeldPremium(ctx, o.senderID, o.bookingKey, o.amount); err != nil {
+			log.Printf("[transport] reconcile orphan premium %s: refund failed: %v", o.bookingKey, err)
+			continue
+		}
+		s.notifyUser(ctx, o.senderID, "parcel.insurance_refunded", "",
+			"A parcel booking did not complete, so its insurance payment has been refunded to your wallet.")
+		n++
+	}
+	return n, nil
 }

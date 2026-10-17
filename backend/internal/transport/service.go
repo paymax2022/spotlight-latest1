@@ -771,10 +771,14 @@ func StartStuckSettlementReconciler(ctx context.Context, svc *Service, interval,
 		n, err := svc.ReconcileStuckSettlements(cctx, grace)
 		if err != nil {
 			log.Printf("[transport] stuck-settlement sweep error: %v", err)
-			return
-		}
-		if n > 0 {
+		} else if n > 0 {
 			log.Printf("[transport] stuck-settlement sweep: reconciled=%d", n)
+		}
+		// Parcel insurance premiums a crash or failure left in between.
+		if m, ierr := svc.ReconcileParcelInsurance(cctx, grace); ierr != nil {
+			log.Printf("[transport] parcel-insurance sweep error: %v", ierr)
+		} else if m > 0 {
+			log.Printf("[transport] parcel-insurance sweep: resolved=%d", m)
 		}
 	}
 	go func() {

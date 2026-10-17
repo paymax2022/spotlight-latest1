@@ -18,6 +18,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -83,6 +84,11 @@ type prepaidTestBinder struct {
 	cons    *consent.Service
 	uw      *prepaidUnderwriter
 	quoteFn func() error // optional: fail CreateQuote
+	// beforeBind runs just before the prepaid bind (to race a cancel against it);
+	// forceErr makes the bind fail with that error without calling the saga.
+	beforeBind func()
+	forceErr   error
+	cancelled  int
 }
 
 func (b *prepaidTestBinder) IndicativeRateBps(context.Context, string) (int64, error) {
@@ -114,13 +120,22 @@ func (b *prepaidTestBinder) BindFromQuote(ctx context.Context, userID, quoteID, 
 	return p.ID, p.PremiumKobo, nil
 }
 func (b *prepaidTestBinder) BindFromQuotePrepaid(ctx context.Context, userID, quoteID string, paid int64, key string) (string, int64, error) {
+	if b.beforeBind != nil {
+		b.beforeBind()
+	}
+	if b.forceErr != nil {
+		return "", 0, b.forceErr
+	}
 	p, err := b.pol.BindFromQuotePrepaid(ctx, userID, quoteID, paid, key)
 	if err != nil {
 		return "", 0, err
 	}
 	return p.ID, p.PremiumKobo, nil
 }
-func (b *prepaidTestBinder) CancelPolicy(context.Context, string, string, string) error { return nil }
+func (b *prepaidTestBinder) CancelPolicy(context.Context, string, string, string) error {
+	b.cancelled++
+	return nil
+}
 
 // ── fixture ─────────────────────────────────────────────────────────────────
 
@@ -252,7 +267,7 @@ func TestLiveDB_PrepaidInsurance_NotTickedChargesNoPremium(t *testing.T) {
 	if typ, _ := entryAccountType(t, f.pool, key+":insurance:credit"); typ != "" {
 		t.Fatal("no premium may be held when insurance is not ticked")
 	}
-	if p.InsuranceOpted || p.InsurancePaidKobo != 0 || p.InsuranceStatus != "none" || p.InsuranceKobo != 0 {
+	if p.InsuranceOpted || p.InsurancePaidKobo != 0 || p.InsuranceStatus != "declined" || p.InsuranceKobo != 0 {
 		t.Fatalf("unticked parcel insurance state %+v", p)
 	}
 }
@@ -374,3 +389,234 @@ func TestLiveDB_PrepaidInsurance_CancelBeforeBindRefundsPremiumAndFare(t *testin
 		t.Fatalf("insurance status after cancel = %s, want refunded", got.InsuranceStatus)
 	}
 }
+
+// ── ledger-review findings (H1/H2/M1-M3) and the user's two decisions ───────
+
+// H1 (common case): the wallet covers the premium but not fare + premium. The
+// booking is refused BEFORE anything moves, so a retry with the SAME key after
+// topping up books normally (the key is not poisoned).
+func TestLiveDB_PrepaidInsurance_InsufficientForFarePlusPremiumMovesNothing(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	fare, _ := f.svc.QuoteParcelBooking(ctx, parcelReq())
+	// Leave exactly fare + premium - 1 in the wallet.
+	drain := f.wallet(t) - (fare + 200_000 - 1)
+	rev, _ := f.led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err := f.led.Debit(ctx, f.sender, "drain", "drain-"+f.sender, rev.ID, drain); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	before := f.wallet(t)
+	key := "short-" + uuid.NewString()
+	_, err := f.svc.BookParcel(ctx, f.sender, insuredReq(), key)
+	var ce *CodedError
+	if !errors.As(err, &ce) || ce.Status != http.StatusPaymentRequired {
+		t.Fatalf("want 402, got %v", err)
+	}
+	if got := f.wallet(t); got != before {
+		t.Fatalf("a refused booking moved the wallet: %d → %d", before, got)
+	}
+	if err := f.led.Credit(ctx, f.sender, "topup", "topup-"+f.sender, rev.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.BookParcel(ctx, f.sender, insuredReq(), key); err != nil {
+		t.Fatalf("same-key retry after topping up must book: %v", err)
+	}
+	if got := f.wallet(t); got != 0 {
+		t.Fatalf("wallet after booking = %d, want 0 (fare + premium exactly)", got)
+	}
+}
+
+// H1 (crash between the premium hold and the parcel INSERT): a same-key retry
+// completes the booking using the premium already held — charged once.
+func TestLiveDB_PrepaidInsurance_RetryAfterCrashUsesTheHeldPremiumOnce(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	key := "crash-" + uuid.NewString()
+	if err := f.svc.holdParcelPremium(ctx, f.sender, key, 200_000); err != nil { // the crashed attempt
+		t.Fatal(err)
+	}
+	fare, _ := f.svc.QuoteParcelBooking(ctx, parcelReq())
+	afterCrash := f.wallet(t)
+	out, err := f.svc.BookParcel(ctx, f.sender, insuredReq(), key)
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if got := f.wallet(t); got != afterCrash-fare {
+		t.Fatalf("retry charged %d, want the fare %d only (premium already held)", afterCrash-got, fare)
+	}
+	if p := f.parcel(t, out["id"].(string)); p.InsuranceStatus != "held" || p.InsurancePaidKobo != 200_000 {
+		t.Fatalf("retry parcel %+v", p)
+	}
+}
+
+// H1 (crash, never retried): the reconciler finds the orphaned premium and
+// refunds it; a later same-key booking is a key conflict, never free cover.
+func TestLiveDB_PrepaidInsurance_ReconcilerRefundsOrphanedPremium(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	key := "orphan-" + uuid.NewString()
+	before := f.wallet(t)
+	if err := f.svc.holdParcelPremium(ctx, f.sender, key, 200_000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.ReconcileParcelInsurance(ctx, 0); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got := f.wallet(t); got != before {
+		t.Fatalf("orphan not refunded: wallet %d, want %d", got, before)
+	}
+	_, err := f.svc.BookParcel(ctx, f.sender, insuredReq(), key)
+	var ce *CodedError
+	if !errors.As(err, &ce) || ce.Code != CodeKeyConflict {
+		t.Fatalf("a refunded booking key must be a key conflict, got %v", err)
+	}
+}
+
+// H2: cancel lands while the bind is in flight. The bind completes, sees the
+// parcel cancelled, cancels the policy and refunds the premium.
+func TestLiveDB_PrepaidInsurance_CancelDuringBindRefundsAndCancelsPolicy(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	before := f.wallet(t)
+	p, _ := f.book(t, insuredReq())
+	f.binder.beforeBind = func() {
+		if _, err := f.svc.CancelParcelWithRefund(ctx, p.ID, f.sender, "changed my mind"); err != nil {
+			t.Errorf("cancel during bind: %v", err)
+		}
+	}
+	f.svc.settleParcelInsuranceAtAccept(ctx, &p, f.svc.loadParcelSenderProfile(ctx, f.sender), completeVehicle)
+	if got := f.parcel(t, p.ID); got.InsuranceStatus != "refunded" {
+		t.Fatalf("status %s, want refunded", got.InsuranceStatus)
+	}
+	if f.binder.cancelled != 1 {
+		t.Fatalf("policy cancels = %d, want 1", f.binder.cancelled)
+	}
+	if got := f.wallet(t); got != before {
+		t.Fatalf("wallet %d, want fully restored %d", got, before)
+	}
+}
+
+// User decision: cancelling a parcel whose cover is already BOUND refunds the
+// premium (the platform absorbs whatever the insurer does not return).
+func TestLiveDB_PrepaidInsurance_CancelAfterBindRefundsThePremium(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	before := f.wallet(t)
+	p, _ := f.book(t, insuredReq())
+	f.svc.settleParcelInsuranceAtAccept(ctx, &p, f.svc.loadParcelSenderProfile(ctx, f.sender), completeVehicle)
+	if got := f.parcel(t, p.ID); got.InsuranceStatus != "bound" {
+		t.Fatalf("precondition: status %s, want bound", got.InsuranceStatus)
+	}
+	if _, err := f.svc.CancelParcelWithRefund(ctx, p.ID, f.sender, "x"); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if got := f.parcel(t, p.ID); got.InsuranceStatus != "refunded" {
+		t.Fatalf("status %s, want refunded", got.InsuranceStatus)
+	}
+	if f.binder.cancelled != 1 {
+		t.Fatalf("policy cancels = %d, want 1", f.binder.cancelled)
+	}
+	if got := f.wallet(t); got != before {
+		t.Fatalf("wallet %d, want fully restored %d", got, before)
+	}
+}
+
+// M2: the insurer bound the policy but it could not be recorded locally. Cover
+// may exist, so this is NOT refunded: the parcel stays 'binding' for
+// reconciliation, and the reconciler leaves it alone too.
+func TestLiveDB_PrepaidInsurance_UnconfirmedBindIsNotRefunded(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	p, _ := f.book(t, insuredReq())
+	afterBooking := f.wallet(t)
+	// The saga took the premium (hold → clearing) and the insurer bound the
+	// policy, then recording it failed: that is the only way to get here.
+	hold, _ := f.led.GetOrCreateStandingAccount(ctx, ledger.AccountInsurancePremiumHold)
+	clearing, _ := f.led.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if err := f.led.PostJournal(ctx, ledger.JournalEntry{Reference: "test", IdempotencyKey: "parcel:insurance:" + p.ID + ":premium",
+		AmountKobo: 200_000, DebitAccountID: hold.ID, CreditAccountID: clearing.ID}); err != nil {
+		t.Fatal(err)
+	}
+	f.binder.forceErr = fmt.Errorf("persist failed: %w", ErrInsuranceBindUnconfirmed)
+	f.svc.settleParcelInsuranceAtAccept(ctx, &p, f.svc.loadParcelSenderProfile(ctx, f.sender), completeVehicle)
+	if got := f.parcel(t, p.ID); got.InsuranceStatus != "binding" {
+		t.Fatalf("status %s, want binding", got.InsuranceStatus)
+	}
+	if _, err := f.svc.ReconcileParcelInsurance(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.wallet(t); got != afterBooking {
+		t.Fatalf("an unconfirmed bind must not be refunded: %d → %d", afterBooking, got)
+	}
+}
+
+// M3: a parcel stuck in 'binding' (crash mid-bind) with the premium still in
+// the hold is refunded by the reconciler.
+func TestLiveDB_PrepaidInsurance_ReconcilerResolvesStuckBinding(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	p, _ := f.book(t, insuredReq())
+	afterBooking := f.wallet(t)
+	if !f.svc.claimInsuranceStatus(ctx, p.ID, "held", "binding") { // the crash
+		t.Fatal("claim")
+	}
+	if _, err := f.svc.ReconcileParcelInsurance(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.parcel(t, p.ID); got.InsuranceStatus != "refunded" {
+		t.Fatalf("status %s, want refunded", got.InsuranceStatus)
+	}
+	if got := f.wallet(t); got != afterBooking+200_000 {
+		t.Fatalf("wallet %d, want %d", got, afterBooking+200_000)
+	}
+}
+
+// User decision: parcels booked before the flag was switched on (declared
+// value, no tick, status 'none') keep the legacy bind-and-debit at accept;
+// a prepaid-era booking that did NOT tick ('declined') gets no cover.
+func TestLiveDB_PrepaidInsurance_LegacyParcelsKeepTheOldFlow(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	legacy := &countingBinder{}
+	f.svc = f.svc.WithInsurance(legacy)
+
+	unticked := insuredReq()
+	unticked.Insure = false
+	p, _ := f.book(t, unticked)
+	if p.InsuranceStatus != "declined" {
+		t.Fatalf("prepaid-era unticked booking status %s, want declined", p.InsuranceStatus)
+	}
+	profile := f.svc.loadParcelSenderProfile(ctx, f.sender)
+	f.svc.insureParcelAtAccept(ctx, &p, profile, completeVehicle, "driver-user")
+	if legacy.legacyBinds != 0 {
+		t.Fatal("a declined parcel must not be insured")
+	}
+
+	if _, err := f.pool.Exec(ctx, `UPDATE parcels SET insurance_status='none' WHERE id=$1`, p.ID); err != nil {
+		t.Fatal(err) // as if booked before the flag flip
+	}
+	p = f.parcel(t, p.ID)
+	f.svc.insureParcelAtAccept(ctx, &p, profile, completeVehicle, "driver-user")
+	if legacy.legacyBinds != 1 {
+		t.Fatalf("a pre-flip parcel must get the legacy bind, got %d", legacy.legacyBinds)
+	}
+}
+
+// countingBinder records legacy binds without touching money.
+type countingBinder struct{ legacyBinds int }
+
+func (c *countingBinder) IndicativeRateBps(context.Context, string) (int64, error) {
+	return prepaidRateBps, nil
+}
+func (c *countingBinder) GrantConsent(context.Context, string, string) error { return nil }
+func (c *countingBinder) CreateQuote(context.Context, string, string, int64, map[string]any) (string, int64, error) {
+	return "q", 1, nil
+}
+func (c *countingBinder) BindFromQuote(context.Context, string, string, string) (string, int64, error) {
+	c.legacyBinds++
+	return "", 0, errors.New("counted, not bound")
+}
+func (c *countingBinder) BindFromQuotePrepaid(context.Context, string, string, int64, string) (string, int64, error) {
+	return "", 0, errors.New("unused")
+}
+func (c *countingBinder) CancelPolicy(context.Context, string, string, string) error { return nil }
