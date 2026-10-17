@@ -269,6 +269,9 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 	if cfg.FeatureEventsComps {
 		handler.RegisterComps(member)
 	}
+	if cfg.FeatureEventsSocial {
+		handler.RegisterSocial(member)
+	}
 
 	// Money-path durability: sweep ticket checkouts left PENDING by a crash between
 	// reservation and payment, charging/ticketing buyers who can pay and expiring

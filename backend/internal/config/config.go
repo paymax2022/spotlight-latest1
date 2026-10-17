@@ -240,7 +240,9 @@ type Config struct {
 	// FeatureEventsTeamRoles (FEATURE_EVENTS_TEAM_ROLES) exposes per-event team (MANAGER) grant routes.
 	FeatureEventsTeamRoles bool
 	// FeatureEventsComps (FEATURE_EVENTS_COMPS) exposes comp tickets, attendee CSV export and organiser announcements.
-	FeatureEventsComps   bool
+	FeatureEventsComps bool
+	// FeatureEventsSocial (FEATURE_EVENTS_SOCIAL) exposes event likes and organiser follows.
+	FeatureEventsSocial  bool
 	FeatureEstateEnabled bool
 	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) estate dues path (estate/paystackcheckout): direct
@@ -950,6 +952,7 @@ func Load() Config {
 		FeatureEventsTicketingDepth:                  getEnvBool("FEATURE_EVENTS_TICKETING_DEPTH", false),
 		FeatureEventsTeamRoles:                       getEnvBool("FEATURE_EVENTS_TEAM_ROLES", false),
 		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
+		FeatureEventsSocial:                          getEnvBool("FEATURE_EVENTS_SOCIAL", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
