@@ -25,6 +25,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
+    // Product decision (2026-10-15): only the estate manager may close an alert.
+    if (ctx.role !== 'estate_admin') throw new ApiError('Only an estate admin can resolve an emergency alert', 403);
     // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
     if (!UUID_RE.test(params.id)) throw new ApiError('Invalid emergency ID', 400);
     const { data: existing, error: getErr } = await supabase.from('estate_emergency_alerts').select('id, estate_id').eq('id', params.id).maybeSingle();
