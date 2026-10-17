@@ -19,6 +19,7 @@ import (
 	"spotlight/backend/internal/notifications"
 	"spotlight/backend/internal/p2pmarket"
 	"spotlight/backend/internal/platform/queue"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/platform/realtime"
 	"spotlight/backend/internal/points"
 	"spotlight/backend/internal/savings"
@@ -270,6 +271,18 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 		handler.RegisterComps(member)
 	}
 	if cfg.FeatureEventsSocial {
+		// Organiser banner uploads: backend-owned presigned R2 PUTs, the same
+		// bucket config as the restaurant store images (R2_BUCKET, no default).
+		// Unconfigured or failing creds make the presign endpoint answer 503.
+		bannerPresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		bannerPresigner.EnableHealthCheck(nil)
+		svc.WithStorage(bannerPresigner)
 		handler.RegisterSocial(member)
 	}
 

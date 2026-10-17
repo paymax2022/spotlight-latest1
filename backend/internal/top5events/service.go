@@ -18,6 +18,7 @@ import (
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
+	"spotlight/backend/internal/platform/r2"
 )
 
 // Auditor mirrors services.AuditService (NL-12); nil-safe.
@@ -68,6 +69,7 @@ type Service struct {
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	rt         RealtimePublisher  // optional; nil ⇒ ScanTicket's live check-in push is a no-op
 	notifier   NotificationSender // optional; nil ⇒ Announce records the row but sends nothing
+	presigner  *r2.Presigner      // optional; nil ⇒ organiser banner uploads answer 503 and stored banner keys are hidden
 }
 
 func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, sett *settlement.Service, tiersSvc *tiers.Service, cred *credential.Service, tags *cashtag.Service, audit Auditor) *Service {

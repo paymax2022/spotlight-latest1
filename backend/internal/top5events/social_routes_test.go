@@ -65,3 +65,39 @@ func TestSocialRoutesAbsentWithoutRegisterSocial(t *testing.T) {
 		}
 	}
 }
+
+// TestOrganiserProfileAndFollowingRoutes asserts the Task 6 routes are mounted and
+// coexist with the param routes: /organisers/me is static beside GET
+// /organisers/:id (different method trees), and GET /following sits beside the
+// existing /:id routes. Registering the whole tree must not panic.
+func TestOrganiserProfileAndFollowingRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	e := gin.New()
+	h := NewHandler(nil)
+	member := e.Group("/api/finance/events")
+	admin := e.Group("/api/events/admin")
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("route registration panicked: %v", r)
+		}
+	}()
+	h.Register(member, admin, noopGuard)
+	h.RegisterLifecycle(member)
+	h.RegisterTicketing(member)
+	h.RegisterTeam(member)
+	h.RegisterComps(member)
+	h.RegisterSocial(member)
+
+	got := routeSet(e)
+	for _, want := range []string{
+		"GET /api/finance/events/following",
+		"PUT /api/finance/events/organisers/me",
+		"POST /api/finance/events/organisers/me/banner/presign",
+		"GET /api/finance/events/organisers/:id",
+	} {
+		if !got[want] {
+			t.Errorf("missing route %q", want)
+		}
+	}
+}
