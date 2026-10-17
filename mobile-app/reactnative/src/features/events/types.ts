@@ -36,8 +36,9 @@ export interface EventSummary {
   sold_out:       boolean;
 }
 
-// Full detail — GET /api/finance/events/:id.
-export interface EventDetail {
+// The backend Event object (top5events model.go Event): what the organiser
+// profile returns for each upcoming event. EventDetail adds the ticket tiers.
+export interface Event {
   id:            string;
   organiser_id:  string;
   title:         string;
@@ -49,7 +50,6 @@ export interface EventDetail {
   fee_bps:       number;
   category:      EventCategory;
   created_at:    string;
-  tiers:         TicketTier[];
   // Social fields (events-social). The four nullable fields are sent as null,
   // never omitted; a null coordinate pair means no map. `liked` is per-caller.
   banner_url:     string | null;
@@ -58,6 +58,11 @@ export interface EventDetail {
   venue_place_id: string | null;
   like_count:     number;
   liked:          boolean;
+}
+
+// Full detail — GET /api/finance/events/:id.
+export interface EventDetail extends Event {
+  tiers: TicketTier[];
 }
 
 // POST/DELETE /events/:id/like.
@@ -81,7 +86,7 @@ export interface OrganiserProfile {
   banner_url:     string | null;
   follower_count: number;
   following:      boolean;
-  events:         EventSummary[];
+  events:         Event[];
 }
 
 // PUT /events/organisers/me — every field optional. Omitted = unchanged;

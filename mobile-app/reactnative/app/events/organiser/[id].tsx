@@ -93,7 +93,9 @@ function OrganiserProfile() {
         {org.events.length === 0 ? (
           <Text style={styles.empty}>No upcoming events.</Text>
         ) : (
-          org.events.map((ev) => (
+          org.events.map((ev) => {
+            const thumb = ev.banner_url?.trim() ?? '';
+            return (
             <Pressable
               key={ev.id}
               style={styles.eventRow}
@@ -102,16 +104,22 @@ function OrganiserProfile() {
               accessibilityLabel={ev.title}
             >
               <View style={[styles.eventThumb, { backgroundColor: eventBannerColor(ev.id, ev.category) }]}>
-                <Text style={styles.eventEmoji}>{eventCoverEmoji(ev.category)}</Text>
+                {thumb ? (
+                  <Image source={{ uri: thumb }} style={styles.eventThumbImage} resizeMode="cover" accessibilityLabel={`${ev.title} banner`} />
+                ) : (
+                  <Text style={styles.eventEmoji}>{eventCoverEmoji(ev.category)}</Text>
+                )}
               </View>
               <View style={styles.eventBody}>
                 <Text style={styles.eventTitle} numberOfLines={1}>{ev.title}</Text>
                 <Text style={styles.eventMeta} numberOfLines={1}>{when(ev.starts_at)}</Text>
                 <Text style={styles.eventMeta} numberOfLines={1}>{ev.venue}</Text>
               </View>
+              <Text style={styles.eventLikes} accessibilityLabel={`${ev.like_count} likes`}>{ev.like_count}</Text>
               <ChevronRight size={18} color={EventColors.muted} />
             </Pressable>
-          ))
+            );
+          })
         )}
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
@@ -136,9 +144,11 @@ const styles = StyleSheet.create({
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.md },
   empty: { ...Typography.bodyMd, color: EventColors.muted },
   eventRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: EventColors.surface, borderRadius: Radius.lg, padding: Spacing.md, ...shadow1 },
-  eventThumb: { width: 56, height: 56, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
+  eventThumb: { width: 56, height: 56, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  eventThumbImage: { width: '100%', height: '100%' },
   eventEmoji: { fontSize: 28 },
   eventBody: { flex: 1, gap: 2 },
   eventTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  eventLikes: { ...Typography.caption, color: EventColors.muted },
   eventMeta: { ...Typography.caption, color: EventColors.muted },
 });

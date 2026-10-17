@@ -3,6 +3,7 @@ import { getErrorMessage } from '@/utils/errorMapper';
 import { USE_MOCK, API_BASE } from './constants/events.constants';
 import { checkFollowingPage } from './social';
 import type {
+  Event,
   EventSummary,
   EventDetail,
   TicketTier,
@@ -508,10 +509,14 @@ const MOCK_ORGANISERS = new Map<string, MockOrganiser>(
 );
 
 // Upcoming public events of one organiser, as on the real profile page.
-function upcomingEventsOf(organiserId: string): EventSummary[] {
+function upcomingEventsOf(organiserId: string): Event[] {
   return MOCK_EVENTS
     .filter((e) => e.organiser_id === organiserId && (e.state === 'LIVE' || e.state === 'APPROVED'))
-    .map(summaryOf);
+    .map(({ tiers: _tiers, ...ev }): Event => {
+      // Like state is the live mock state, so a like on the detail shows here.
+      const like = MOCK_LIKES.get(ev.id);
+      return like ? { ...ev, liked: like.liked, like_count: like.like_count } : ev;
+    });
 }
 
 function mockOrganiser(id: string): MockOrganiser {
