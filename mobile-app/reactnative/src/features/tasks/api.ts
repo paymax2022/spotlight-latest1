@@ -5,7 +5,10 @@ import { Colors } from '@/constants/tokens';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type { CreateTaskInput, EstateTask, TaskPriority, TaskStatus, UpdateTaskStatusInput } from './types';
 
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_TASKS_USE_MOCK, true);
+// The /api/v1/estate/tasks handlers are live and query real tables, so this defaults to live:
+// a forgotten flag fails visibly instead of inventing a task board. Set EXPO_PUBLIC_TASKS_USE_MOCK=true
+// to force fixtures locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_TASKS_USE_MOCK, false);
 
 // Tasks are served by the resident-scoped frontend-web handlers under
 // /api/v1/estate/tasks (GET list, POST create, GET /{id}, POST /{id}/status).
@@ -27,12 +30,18 @@ export const PRIORITY_META: Record<TaskPriority, { label: string; color: string;
 };
 
 const H = 3_600_000, D = 24 * H, iso = (o: number) => new Date(Date.now() + o).toISOString();
-let tasks: EstateTask[] = [
+const tasks: EstateTask[] = [
   { id: 't1', estateId: 'est_amber_court', title: 'Replace Gate B intercom', description: 'Intercom static since last week.', assigneeName: 'Facility Team', createdBy: 'res_2', dueDate: iso(2 * D), priority: 'high', status: 'in_progress', createdAt: iso(-2 * D) },
   { id: 't2', estateId: 'est_amber_court', title: 'Circulate Q3 meeting agenda', assigneeName: 'Ngozi Okeke', createdBy: 'res_2', dueDate: iso(D), priority: 'medium', status: 'todo', createdAt: iso(-1 * D) },
   { id: 't3', estateId: 'est_amber_court', title: 'Audit waste-disposal invoices', createdBy: 'res_3', dueDate: iso(-1 * D), priority: 'low', status: 'done', createdAt: iso(-5 * D) },
 ];
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+
+// createTask and updateTaskStatus have live route handlers, so fixture mode refuses loudly
+// instead of reporting a task created or a status moved that never reached the database.
+// Mirrors frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a task change it did not make. Set EXPO_PUBLIC_TASKS_USE_MOCK=false to do this against the live backend.`);
 const idem = (k?: string) => ({ headers: { 'Idempotency-Key': k ?? generateIdempotencyKey() } });
 
 export async function listTasks(): Promise<EstateTask[]> {
@@ -51,14 +60,10 @@ export async function getTask(id: string): Promise<EstateTask> {
   return t;
 }
 export async function createTask(input: CreateTaskInput): Promise<EstateTask> {
-  if (USE_MOCK) {
-    await latency(400);
-    const t: EstateTask = { id: `t_${Date.now()}`, estateId: 'est_amber_court', title: input.title.trim(), description: input.description?.trim() || undefined, assigneeName: null, createdBy: 'res_demo', dueDate: input.dueDate ?? null, priority: input.priority, status: 'todo', createdAt: new Date().toISOString() };
-    tasks = [t, ...tasks]; return { ...t };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating a task');
   const { data } = await api.post<EstateTask>(TASKS_API_BASE, input, idem(input.idempotencyKey)); return data;
 }
 export async function updateTaskStatus(input: UpdateTaskStatusInput): Promise<EstateTask> {
-  if (USE_MOCK) { await latency(250); const t = tasks.find((x) => x.id === input.taskId); if (!t) throw new Error('Task not found'); t.status = input.status; return { ...t }; }
+  if (USE_MOCK) throw notInFixtureMode('Updating a task status');
   const { data } = await api.post<EstateTask>(`${TASKS_API_BASE}/${input.taskId}/status`, { status: input.status }, idem(input.idempotencyKey)); return data;
 }
