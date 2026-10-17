@@ -652,8 +652,48 @@ paths:
         namespace owned by the card-direct / Paystack checkouts (`parcelorder-`, `rideorder-`,
         `foodorder-`, `duespay-`, `feespay-`, `towingorder-`, `moversorder-`, `carhireorder-`,
         `busorder:`, `eventorder:`; case-insensitive) are refused with 400 INVALID_IDEMPOTENCY_KEY.
+        Optional `expected_fare_kobo` (integer kobo) is the `fareKobo` the customer was shown on the
+        estimate (the fare only, NOT `totalKobo`, since the indicative insurance premium is never charged at
+        booking). When present and different from the fare the server prices now, the booking is refused
+        with 409 FARE_CHANGED (body carries `fare_kobo` = the live fare and `expected_fare_kobo`)
+        BEFORE the tier gate or any escrow, so no money moves and the client re-confirms the new
+        price. Omitted, the server books at its live fare as before (older app builds, scheduled
+        dispatch). The card-direct rail ignores it; it already freezes the quoted fare.
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
-      responses: { '200': { description: Parcel }, '400': { description: INVALID_IDEMPOTENCY_KEY (reserved key namespace) }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pickup, dropoff, receiver_name, receiver_phone, prohibited_ack]
+              properties:
+                pickup: { type: object, properties: { address: { type: string }, lat: { type: number }, lng: { type: number } } }
+                dropoff: { type: object, properties: { address: { type: string }, lat: { type: number }, lng: { type: number } } }
+                receiver_name: { type: string }
+                receiver_phone: { type: string }
+                category: { type: string }
+                size: { type: string }
+                speed: { type: string }
+                declared_value_kobo: { type: integer, format: int64 }
+                prohibited_ack: { type: boolean }
+                expected_fare_kobo: { type: integer, format: int64, description: 'Fare (kobo) the customer confirmed; mismatch → 409 FARE_CHANGED' }
+      responses:
+        '200': { description: Parcel }
+        '400': { description: INVALID_IDEMPOTENCY_KEY (reserved key namespace) }
+        '401': { description: Not authenticated }
+        '402': { description: Insufficient balance }
+        '409':
+          description: FARE_CHANGED (the price moved since the estimate; nothing was charged)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  code: { type: string, enum: [FARE_CHANGED] }
+                  fare_kobo: { type: integer, format: int64 }
+                  expected_fare_kobo: { type: integer, format: int64 }
     get:
       tags: [parcel]
       summary: List parcels
