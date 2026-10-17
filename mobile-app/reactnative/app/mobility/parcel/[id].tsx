@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Phone, ShieldCheck, CheckCircle2, X } from 'lucide-react-native';
+import { Phone, ShieldCheck, ShieldAlert, CheckCircle2, X } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -19,6 +19,7 @@ import { errKind } from '@/features/mobility/utils/errKind';
 import { useParcel, useCancelParcel } from '@/features/mobility/hooks/useModes';
 import { PARCEL_PHASE_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
+import { parcelInsuranceStatusView } from '@/features/mobility/utils/parcelInsurance';
 
 const ACTIVE_PHASES = ['created', 'courier_assigned', 'pickup_pin_verified', 'picked_up', 'in_transit'];
 
@@ -47,6 +48,9 @@ export default function ParcelTrackScreen() {
 
   const isActive = ACTIVE_PHASES.includes(p.phase);
   const paymentFailed = p.paymentStatus === 'failed';
+  // Prepaid cover (ADR-PR836). Customer notices are log-only server-side, so
+  // this card is how the sender learns their cover bound or was refunded.
+  const cover = parcelInsuranceStatusView(p);
 
   const onCancel = () => {
     if (!id) return;
@@ -69,6 +73,18 @@ export default function ParcelTrackScreen() {
         )}
 
         <TripRouteCard pickup={p.pickup} dest={p.dropoff} />
+
+        {cover && (
+          <View style={[styles.coverCard, cover.tone === 'success' ? styles.coverSuccess : cover.tone === 'warning' ? styles.coverWarning : styles.coverInfo]} accessibilityRole="summary">
+            {cover.tone === 'warning'
+              ? <ShieldAlert size={18} color={Colors.onWarning} strokeWidth={2.2} />
+              : <ShieldCheck size={18} color={cover.tone === 'success' ? Colors.tertiaryContainer : Colors.primary} strokeWidth={2.2} />}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.coverTitle}>{cover.title}</Text>
+              <Text style={styles.coverBody}>{cover.body}</Text>
+            </View>
+          </View>
+        )}
 
         {/* Courier */}
         {p.courier && (
@@ -153,6 +169,12 @@ const styles = StyleSheet.create({
   pinLabel: { ...Typography.caption, color: Colors.onSurfaceVariant, letterSpacing: 1 },
   pinValue: { ...Typography.headlineMd, color: Colors.primary, fontWeight: '800' as const },
   pinHint: { ...Typography.caption, color: Colors.onSurfaceVariant, textAlign: 'center' },
+  coverCard: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg },
+  coverSuccess: { backgroundColor: Colors.tertiaryFixed },
+  coverInfo: { backgroundColor: Colors.primaryFixed },
+  coverWarning: { backgroundColor: Colors.surfaceContainerLow, borderWidth: 1, borderColor: Colors.outlineVariant },
+  coverTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  coverBody: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2, lineHeight: 18 },
   deliveredCard: { alignItems: 'center', gap: 6, paddingVertical: Spacing.md },
   deliveredTitle: { ...Typography.headlineMd, color: Colors.onSurface, marginTop: Spacing.xs },
   deliveredSub: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center' },

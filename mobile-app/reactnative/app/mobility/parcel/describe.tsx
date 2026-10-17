@@ -18,7 +18,13 @@ import SelectableCard from '@/features/mobility/components/SelectableCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
 import { useParcelEstimate, useBookParcel } from '@/features/mobility/hooks/useModes';
-import { expectedFareFor, fareChangedFrom, fareChangedMessage } from '@/features/mobility/utils/parcelFareDrift';
+import { expectedFareFor } from '@/features/mobility/utils/parcelFareDrift';
+import {
+  bookingInsuranceFields,
+  parcelBookingErrorFrom,
+  parcelInsuranceSelection,
+  type ParcelBookingError,
+} from '@/features/mobility/utils/parcelInsurance';
 import { nextBookingKey, type BookingKey } from '@/features/mobility/utils/parcelBookingKey';
 import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
 import * as parcelAPI from '@/features/mobility/api/parcel.api';
@@ -65,6 +71,11 @@ export default function ParcelDescribeScreen() {
   const [photoAttached, setPhotoAttached] = useState(false);
   const [prohibitedAck, setProhibitedAck] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Opt-in cover, paid now with the fare (ADR-PR836). Unticked = fare only.
+  const [insure, setInsure] = useState(false);
+  // An insurance refusal the sender has to act on here (profile, item value,
+  // card rail…), shown in the cover card since the pay sheet can't link out.
+  const [insuranceIssue, setInsuranceIssue] = useState<ParcelBookingError | null>(null);
 
   const estimate = useParcelEstimate();
   const book = useBookParcel();
@@ -80,6 +91,7 @@ export default function ParcelDescribeScreen() {
     return k === undefined ? undefined : formatNairaWhole(k);
   };
   const insuranceLine = parcelInsuranceLine(est?.insurance);
+  const cover = parcelInsuranceSelection(est, insure);
   // Shared chooser: wallet OR card (Paystack top-up) → then the booking charge.
   const pay = usePurchasePayment<Awaited<ReturnType<typeof book.mutateAsync>>>();
   // Card runs through the genuinely separate, server-initiated Paystack rail
@@ -98,6 +110,7 @@ export default function ParcelDescribeScreen() {
   // Re-estimate when the priced inputs change. Fare always comes from the server.
   useEffect(() => {
     setSubmitError(null);
+    setInsuranceIssue(null);
     estimate.mutate({ pickup, dropoff, category, size, speed, declaredValueKobo });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, size, speed, declaredValue]);
@@ -108,19 +121,33 @@ export default function ParcelDescribeScreen() {
     receiverName.trim().length > 1 &&
     receiverPhone.trim().length >= 7 &&
     prohibitedAck &&
+    !cover.needsDeclaredValue &&
     !book.isPending;
+
+  // Shared by the wallet charge and the card checkout: explain the refusal,
+  // and undo whatever made it (a spent key, a stale price).
+  const bookingRefusal = (e: unknown): Error | null => {
+    const r = parcelBookingErrorFrom(e);
+    if (!r) return null;
+    if (r.kind === 'key_conflict') bookingKey.current = null;
+    if (r.kind === 'fare_changed') estimate.mutate({ pickup, dropoff, category, size, speed, declaredValueKobo });
+    if (r.kind === 'profile_incomplete' || r.kind === 'declared_value_required' || r.kind === 'card_not_supported' || r.kind === 'insurance_unavailable') {
+      setInsuranceIssue(r);
+    }
+    return new Error(r.message);
+  };
 
   const onBook = () => {
     if (!est) return;
     setSubmitError(null);
+    setInsuranceIssue(null);
     pay.start({
-      // What the wallet is actually debited: the delivery fare. The insurance
-      // premium shown on the estimate is indicative and is not charged at booking.
-      amountKobo: est.fareKobo,
+      // What the wallet is debited: the fare, plus the premium when insured.
+      amountKobo: cover.payableKobo,
       title: 'Pay for delivery',
       domain: 'parcel',
-      // Wallet booking charge (with its Idempotency-Key). It pins the fare the
-      // customer saw: if the server's live fare moved, it refuses with
+      // Wallet booking charge (with its Idempotency-Key). It pins the fare and
+      // premium the customer saw: if either moved, the server refuses with
       // FARE_CHANGED before charging, and we re-quote so the new price shows.
       charge: async () => {
         const booking = {
@@ -130,6 +157,7 @@ export default function ParcelDescribeScreen() {
           photoUrl: photoAttached ? 'mock://parcel-photo' : undefined,
           prohibitedAck,
           paymentMethod: 'wallet' as const,
+          ...bookingInsuranceFields(cover),
         };
         // Same booking → same key, so a retry after a lost response returns the
         // first parcel instead of booking (and debiting) again.
@@ -142,10 +170,7 @@ export default function ParcelDescribeScreen() {
             routeToken: est?.routeToken,
           });
         } catch (e) {
-          const changed = fareChangedFrom(e);
-          if (!changed) throw e;
-          estimate.mutate({ pickup, dropoff, category, size, speed, declaredValueKobo });
-          throw new Error(fareChangedMessage(changed.fareKobo));
+          throw bookingRefusal(e) ?? e;
         }
       },
       onPaid: (parcel) => router.replace(`/mobility/parcel/${parcel.id}`),
@@ -154,14 +179,21 @@ export default function ParcelDescribeScreen() {
         await paystackCheckout.start({
           domain: 'parcel',
           initialize: async ({ email }) => {
-            const r = await parcelAPI.initiateParcelPaystack({
-              email, // typed at checkout after the server answered email_required; else the registered email is used
-              pickup, dropoff, category, size, speed, declaredValueKobo,
-              receiverName: receiverName.trim(),
-              receiverPhone: receiverPhone.trim(),
-              prohibitedAck,
-              idempotencyKey: newIdempotencyKey('parcel-paystack'),
-            });
+            let r: Awaited<ReturnType<typeof parcelAPI.initiateParcelPaystack>>;
+            try {
+              r = await parcelAPI.initiateParcelPaystack({
+                email, // typed at checkout after the server answered email_required; else the registered email is used
+                pickup, dropoff, category, size, speed, declaredValueKobo,
+                receiverName: receiverName.trim(),
+                receiverPhone: receiverPhone.trim(),
+                prohibitedAck,
+                // Card can't carry the premium yet: the server refuses (422).
+                insure: cover.insured,
+                idempotencyKey: newIdempotencyKey('parcel-paystack'),
+              });
+            } catch (e) {
+              throw bookingRefusal(e) ?? e;
+            }
             if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
             return { authorizationUrl: r.authorizationUrl, reference: r.reference };
           },
@@ -218,10 +250,36 @@ export default function ParcelDescribeScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.coverTitle}>{insuranceLine}</Text>
                   <Text style={styles.coverNote}>
-                    {declaredValueKobo > 0
-                      ? `Estimated premium ${formatNairaWhole(est?.insuranceKobo ?? 0)}. The insurer confirms the final premium when a courier accepts your parcel.`
-                      : `Enter the value of the contents to insure them against loss, fire and theft in transit${est?.insurance?.minPremiumKobo ? ` (minimum premium ${formatNairaWhole(est.insurance.minPremiumKobo)})` : ''}. Leave it empty to send without cover.`}
+                    {(est?.insuranceKobo ?? 0) > 0
+                      ? 'Covers loss, fire and theft in transit. Paid now with the delivery fee; if cover can\'t be arranged, the premium goes back to your wallet.'
+                      : `Enter the value of the contents to insure them against loss, fire and theft in transit${est?.insurance?.minPremiumKobo ? ` (minimum premium ${formatNairaWhole(est.insurance.minPremiumKobo)})` : ''}.`}
                   </Text>
+                  <Pressable
+                    style={styles.ackRow}
+                    onPress={() => { setInsure((v) => !v); setInsuranceIssue(null); setSubmitError(null); }}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: insure }}
+                    accessibilityLabel="Insure this parcel"
+                  >
+                    <View style={[styles.checkbox, insure && styles.checkboxOn]}>
+                      {insure && <Check size={14} color={Colors.onPrimary} strokeWidth={3} />}
+                    </View>
+                    <Text style={styles.ackText}>Insure this parcel</Text>
+                    {(est?.insuranceKobo ?? 0) > 0 && <Text style={styles.coverPremium}>+{formatNairaWhole(est?.insuranceKobo ?? 0)}</Text>}
+                  </Pressable>
+                  {cover.needsDeclaredValue && (
+                    <Text style={styles.coverHint}>Enter the item's value above to insure it.</Text>
+                  )}
+                  {insuranceIssue && (
+                    <View style={styles.coverIssue}>
+                      <Text style={styles.coverIssueText}>{insuranceIssue.message}</Text>
+                      {insuranceIssue.kind === 'profile_incomplete' && (
+                        <Pressable onPress={() => router.push('/(tabs)/profile' as never)} accessibilityRole="link" hitSlop={8}>
+                          <Text style={styles.coverLink}>Complete your profile</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  )}
                 </View>
               </View>
             )}
@@ -254,18 +312,19 @@ export default function ParcelDescribeScreen() {
             {est && (
               <FareBreakdownCard
                 title="Estimated cost"
-                fareKobo={est.totalKobo}
+                fareKobo={cover.payableKobo}
                 distanceM={est.distanceM}
                 durationS={est.durationS}
                 rows={[
                   { label: 'Delivery fee', valueKobo: est.fareKobo },
-                  { label: 'Insurance cover (estimate)', valueKobo: est.insuranceKobo },
+                  ...(cover.insured ? [{ label: 'Insurance cover', valueKobo: cover.premiumKobo }] : []),
                 ]}
                 showTrustNote
               />
             )}
 
-            {submitError && (
+            {/* An insurance refusal already shows in the cover card above. */}
+            {submitError && submitError !== insuranceIssue?.message && (
               <View style={styles.errRow}>
                 <AlertTriangle size={16} color={Colors.error} strokeWidth={2} />
                 <Text style={styles.errText}>{submitError}</Text>
@@ -276,9 +335,10 @@ export default function ParcelDescribeScreen() {
           <View style={styles.footer}>
             <View style={styles.fareRow}>
               <Text style={styles.fareLabel}>Total</Text>
-              {estimate.isPending && !est ? <ActivityIndicator color={Colors.primary} /> : <Text style={styles.fareValue}>{formatNairaWhole(est?.totalKobo ?? 0)}</Text>}
+              {estimate.isPending && !est ? <ActivityIndicator color={Colors.primary} /> : <Text style={styles.fareValue}>{formatNairaWhole(cover.payableKobo)}</Text>}
             </View>
             {!prohibitedAck && <Text style={styles.ackHint}>Accept the prohibited-items policy to continue.</Text>}
+            {prohibitedAck && cover.needsDeclaredValue && <Text style={styles.ackHint}>Enter the item's value to insure it, or untick insurance.</Text>}
             <PrimaryButton label="Book courier" onPress={onBook} loading={book.isPending} disabled={!canBook} />
           </View>
         </>
@@ -301,6 +361,11 @@ const styles = StyleSheet.create({
   coverCard: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.tertiaryFixed, marginTop: Spacing.sm },
   coverTitle: { ...Typography.labelMd, color: Colors.onSurface },
   coverNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2, lineHeight: 18 },
+  coverPremium: { ...Typography.labelMd, color: Colors.onSurface },
+  coverHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
+  coverIssue: { marginTop: Spacing.sm, padding: Spacing.sm, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.errorContainer, gap: Spacing.xs },
+  coverIssueText: { ...Typography.labelSm, color: Colors.error, lineHeight: 18 },
+  coverLink: { ...Typography.labelMd, color: Colors.primary },
   photoBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLow, borderWidth: 1.5, borderColor: Colors.transparent, marginTop: Spacing.sm },
   photoBtnDone: { borderColor: Colors.tertiaryContainer, backgroundColor: Colors.tertiaryFixed },
   photoLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant, flex: 1 },

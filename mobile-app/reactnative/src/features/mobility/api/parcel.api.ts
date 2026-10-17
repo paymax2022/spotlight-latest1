@@ -29,6 +29,8 @@ import {
   MOCK_PARCEL_HISTORY,
   MOCK_COURIER,
   mockCourierRequests,
+  mockBookRefusal,
+  mockRefusal,
 } from './parcel.mock';
 
 const USE_MOCK =
@@ -59,7 +61,9 @@ export async function estimateParcel(req: ParcelEstimateRequest): Promise<Parcel
 export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
   if (USE_MOCK) {
     await delay(900);
+    mockBookRefusal(req);
     const est = mockParcelEstimate(req);
+    const premium = req.insure ? est.insuranceKobo : 0;
     const parcel = makeParcel({
       pickup: req.pickup,
       dropoff: req.dropoff,
@@ -67,11 +71,14 @@ export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
       size: req.size,
       speed: req.speed,
       declaredValueKobo: req.declaredValueKobo,
-      fareKobo: est.totalKobo,
+      fareKobo: est.fareKobo,
       receiverName: req.receiverName,
       receiverPhone: req.receiverPhone,
       photoUrl: req.photoUrl ?? null,
       phase: 'created',
+      insuranceOpted: !!req.insure,
+      insurancePaidKobo: premium,
+      insuranceStatus: req.insure ? 'held' : req.declaredValueKobo > 0 ? 'declined' : 'none',
     });
     parcelStore.active = parcel;
     return parcel;
@@ -93,6 +100,7 @@ export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
         payment_method: req.paymentMethod,
         ...(req.expectedFareKobo != null ? { expected_fare_kobo: req.expectedFareKobo } : {}),
         ...(req.routeToken ? { route_token: req.routeToken } : {}),
+        ...(req.insure ? { insure: true, expected_insurance_kobo: req.expectedInsuranceKobo } : {}),
       },
       idemHeader(req.idempotencyKey),
     ),
@@ -113,6 +121,7 @@ export async function initiateParcelPaystack(
 ): Promise<ParcelCardDirectIntent> {
   if (USE_MOCK) {
     await delay(600);
+    if (req.insure) mockRefusal(422, 'INSURANCE_CARD_NOT_SUPPORTED');
     return {
       reference: `parcelorder-${req.idempotencyKey}`,
       authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
