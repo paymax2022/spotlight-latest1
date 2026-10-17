@@ -45,6 +45,7 @@ export default defineConfig({
           EXPO_PUBLIC_DUES_USE_MOCK: 'true',
           EXPO_PUBLIC_EMERGENCIES_USE_MOCK: 'true',
           EXPO_PUBLIC_REPAIRS_USE_MOCK: 'true',
+          EXPO_PUBLIC_REPORTS_USE_MOCK: 'true',
         },
       },
   projects: [
