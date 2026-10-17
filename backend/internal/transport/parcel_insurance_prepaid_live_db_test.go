@@ -8,8 +8,8 @@ package transport
 //  1. Ticked: the wallet pays fare + premium; the premium goes to the insurance
 //     hold, NEVER into the fare escrow / courier settlement.
 //  2. Not ticked (or flag off): no premium, nothing held.
-//  3. Ineligible (profile incomplete, no declared value, insurer unwired, card
-//     rail) is refused BEFORE any money moves.
+//  3. Ineligible (profile incomplete, no declared value, insurer unwired) is
+//     refused BEFORE any money moves. (The card rail: parcel_insurance_card_live_db_test.go.)
 //  4. At courier accept: bound → hold drained to provider clearing, wallet
 //     untouched; provider refusal → the saga refunds what was paid; cannot
 //     start (no plate) → transport refunds it from the hold.
@@ -295,14 +295,6 @@ func TestLiveDB_PrepaidInsurance_IneligibleIsRefusedBeforeMoneyMoves(t *testing.
 	}
 	if got := f.wallet(t); got != before {
 		t.Fatalf("a refused insured booking moved the wallet: %d → %d", before, got)
-	}
-}
-
-func TestLiveDB_PrepaidInsurance_CardRailRefusesInsureForNow(t *testing.T) {
-	f := newPrepaidParcelFixture(t, true)
-	var ce *CodedError
-	if _, err := f.svc.QuoteParcelBooking(context.Background(), insuredReq()); !errors.As(err, &ce) || ce.Code != CodeInsuranceCardNotSupported {
-		t.Fatalf("card quote with insure: want %s, got %v", CodeInsuranceCardNotSupported, err)
 	}
 }
 

@@ -280,6 +280,32 @@ type CancelledRefundSweeper interface {
 	SweepCancelledRefunds(ctx context.Context, minAge time.Duration, limit int) (CancelSweepResult, error)
 }
 
+// LedgerUnwinder is OPTIONAL on a Domain whose Book posts ledger legs OUTSIDE
+// settlements (parcel: the insurance premium held from a card charge). Before
+// the engine refunds a charge that backs no booking (order_failed), it reverses
+// the settlements (LedgerReverser.RefundExternalByKeyPrefix) AND calls this, so
+// the whole-charge gateway refund leaves the books balanced. Must be idempotent
+// and a no-op when nothing was posted; an error blocks the refund (retried),
+// exactly like a failed settlement reversal.
+type LedgerUnwinder interface {
+	UnwindUnbooked(ctx context.Context, payerID, reference string) error
+}
+
+// unwindUnbooked reverses, ledger-side, everything Book may have posted for a
+// charge that backs no booking: its external settlements, then the domain's own
+// legs (LedgerUnwinder).
+func (e *Engine) unwindUnbooked(ctx context.Context, rec *Intent, reason string) error {
+	if err := e.settlement.RefundExternalByKeyPrefix(ctx, rec.Reference, reason); err != nil {
+		return err
+	}
+	if d, ok := e.domain(rec.Domain); ok {
+		if u, ok := d.(LedgerUnwinder); ok {
+			return u.UnwindUnbooked(ctx, rec.PayerID, rec.Reference)
+		}
+	}
+	return nil
+}
+
 // cancelledRefundSweepBooker is the optional slice of transport.Service the
 // per-service adapters use to implement CancelledRefundSweeper.
 type cancelledRefundSweepBooker interface {

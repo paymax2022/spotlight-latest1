@@ -413,6 +413,67 @@ func (e *Engine) failPiece(ctx context.Context, st PartialRefundStore, reference
 	return refundNotDone, "", cause
 }
 
+// LedgerlessPiecePrefix marks a piece of a charge that is NOT a settlement (the
+// parcel insurance premium, transport.ParcelInsurancePieceKey): refunded to the
+// card by the same fenced, lookup-first machinery, but its ledger leg belongs to
+// the domain, which posts it after the gateway refund. Stored with an empty
+// settlement_id; a settlement id (a UUID) can never carry this prefix.
+const LedgerlessPiecePrefix = "piece:"
+
+func isLedgerlessPiece(refundKey string) bool {
+	return strings.HasPrefix(refundKey, LedgerlessPiecePrefix) && len(refundKey) > len(LedgerlessPiecePrefix)
+}
+
+// RefundExternalPiece implements transport.ExternalPieceRefunder: it refunds
+// amountKobo of the card charge that booked entityID to the card, as the
+// ledgerless piece pieceKey. GATEWAY ONLY and idempotent on pieceKey (a piece
+// already refunded returns nil without a gateway call; the per-charge cap makes
+// "refunds <= collected" a database invariant). The caller posts its own ledger
+// leg after a nil return.
+func (r domainRefunder) RefundExternalPiece(ctx context.Context, entityID, pieceKey string, amountKobo int64) error {
+	e := r.e
+	if !isLedgerlessPiece(pieceKey) {
+		return fmt.Errorf("paystackcheckout: piece key %q must start with %q", pieceKey, LedgerlessPiecePrefix)
+	}
+	if amountKobo <= 0 {
+		return fmt.Errorf("paystackcheckout: piece %s amount must be positive, got %d", pieceKey, amountKobo)
+	}
+	gw, st, ok := e.partials()
+	if !ok {
+		return fmt.Errorf("%w (piece %s of %s %s)", ErrPartialRefundsUnsupported, pieceKey, r.domain, entityID)
+	}
+	rec, err := e.store.GetByEntity(ctx, r.domain, entityID)
+	if err != nil || rec == nil {
+		return fmt.Errorf("paystackcheckout: no %s intent found for entity %s: %w", r.domain, entityID, ErrUnknownReference)
+	}
+	if amountKobo > rec.AmountKobo {
+		return fmt.Errorf("%w: piece %s of %d kobo, charge %s collected %d", ErrPartialCapExceeded, pieceKey, amountKobo, rec.Reference, rec.AmountKobo)
+	}
+	win := newClaimWindow(ctx)
+	gctx, cancel := win.phase(staleClaimAfter / 2)
+	defer cancel()
+	begin, err := st.BeginPartialRefund(gctx, rec.Reference, pieceKey, "", amountKobo, staleClaimAfter)
+	if err != nil {
+		return fmt.Errorf("paystackcheckout: begin refund of %s (%s): %w", pieceKey, rec.Reference, err)
+	}
+	if begin.AlreadyDone {
+		return nil
+	}
+	out, _, derr := e.drivePartial(gctx, gw, st, rec.Reference, pieceKey, begin.Fence, amountKobo, begin.ExpectedRefundedKobo, begin.Row.PostAttemptedAt, begin.Now)
+	switch out {
+	case refundDone:
+		return nil
+	case refundLost:
+		cur, gerr := st.GetPartial(gctx, rec.Reference, pieceKey)
+		if gerr == nil && cur != nil && cur.Status == PartialRefunded {
+			return nil
+		}
+		return fmt.Errorf("paystackcheckout: refund of %s was taken over by another worker — retry shortly", pieceKey)
+	default:
+		return fmt.Errorf("paystackcheckout: gateway refund of %s (%s) not completed: %w", pieceKey, rec.Reference, derr)
+	}
+}
+
 // retryPiece re-drives one stranded 'refunding' piece (reconciler).
 func (e *Engine) retryPiece(ctx context.Context, row PartialRefund) refundOutcome {
 	gw, st, ok := e.partials()
@@ -422,6 +483,32 @@ func (e *Engine) retryPiece(ctx context.Context, row PartialRefund) refundOutcom
 	rec, err := e.store.Get(ctx, row.Reference)
 	if err != nil || rec == nil {
 		return refundBlocked
+	}
+	if isLedgerlessPiece(row.RefundKey) {
+		// No settlement to validate or reverse: resolve the gateway half only
+		// (it also frees the one-in-flight slot); the domain posts the ledger leg.
+		if row.AmountKobo <= 0 || row.AmountKobo > rec.AmountKobo {
+			log.Printf("[transport/paystackcheckout] reconcile piece %s/%s: amount %d outside the charge %d — manual", row.Reference, row.RefundKey, row.AmountKobo, rec.AmountKobo)
+			return refundBlocked
+		}
+		win := newClaimWindow(ctx)
+		bctx, cancel := win.phase(staleClaimAfter / 2)
+		defer cancel()
+		begin, err := st.BeginPartialRefund(bctx, row.Reference, row.RefundKey, row.SettlementID, row.AmountKobo, staleClaimAfter)
+		switch {
+		case errors.Is(err, ErrPartialInFlight):
+			return refundLost
+		case err != nil:
+			log.Printf("[transport/paystackcheckout] reconcile piece %s/%s begin: %v", row.Reference, row.RefundKey, err)
+			return refundBlocked
+		case begin.AlreadyDone:
+			return refundDone
+		}
+		out, _, derr := e.drivePartial(bctx, gw, st, row.Reference, row.RefundKey, begin.Fence, row.AmountKobo, begin.ExpectedRefundedKobo, begin.Row.PostAttemptedAt, begin.Now)
+		if derr != nil {
+			log.Printf("[transport/paystackcheckout] reconcile piece %s/%s: %v", row.Reference, row.RefundKey, derr)
+		}
+		return out
 	}
 	sett, err := e.settlement.GetByID(ctx, row.SettlementID)
 	if err != nil {
