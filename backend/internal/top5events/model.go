@@ -45,6 +45,17 @@ type Event struct {
 	EndsAt      time.Time  `json:"ends_at"`
 	FeeBps      int        `json:"fee_bps"` // platform fee in basis points on vendor settlement
 	CreatedAt   time.Time  `json:"created_at"`
+
+	// Social fields (events-social). The four venue/banner fields are nullable in
+	// the contract, so they are pointers WITHOUT omitempty: an unset value is sent as
+	// null and a client with no coordinates renders no map. LikeCount is the stored
+	// counter; Liked is per-caller and false for an anonymous read.
+	BannerURL    *string  `json:"banner_url"`
+	VenueLat     *float64 `json:"venue_lat"`
+	VenueLng     *float64 `json:"venue_lng"`
+	VenuePlaceID *string  `json:"venue_place_id"`
+	LikeCount    int      `json:"like_count"`
+	Liked        bool     `json:"liked"`
 }
 
 // EventListFilter narrows the discovery/list feed. Category and State are

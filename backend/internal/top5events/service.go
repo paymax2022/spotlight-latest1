@@ -211,23 +211,27 @@ func (s *Service) transition(ctx context.Context, eventID string, from, to Event
 	return nil
 }
 
-// GetEvent returns an event by id (public read).
+// GetEvent returns an event by id (public read). It carries no caller, so Liked is
+// always false; use GetEventForCaller for a per-caller read.
 func (s *Service) GetEvent(ctx context.Context, eventID string) (*Event, error) {
+	return s.GetEventForCaller(ctx, eventID, "")
+}
+
+// GetEventForCaller returns an event by id with the social fields; Liked reflects
+// callerID's like (false when callerID is empty, i.e. an anonymous read). The
+// select and scan live in social_store.go (eventSelectCols / scanEvent).
+func (s *Service) GetEventForCaller(ctx context.Context, eventID, callerID string) (*Event, error) {
 	// COALESCE(description,'') — the legacy 20260616240000 events shape leaves
 	// description NULL-able; AdminGetEvent already coalesces it the same way.
-	const q = `SELECT id, organiser_id, title, COALESCE(description,''), venue, state, COALESCE(category,''), starts_at, ends_at, fee_bps, created_at FROM events WHERE id=$1`
-	var e Event
-	var state string
-	if err := s.db.QueryRow(ctx, q, eventID).Scan(
-		&e.ID, &e.OrganiserID, &e.Title, &e.Description, &e.Venue, &state, &e.Category, &e.StartsAt, &e.EndsAt, &e.FeeBps, &e.CreatedAt,
-	); err != nil {
+	q := `SELECT ` + eventSelectCols + ` FROM events e ` + eventLikedJoin + ` WHERE e.id=$1`
+	e, err := scanEvent(s.db.QueryRow(ctx, q, eventID, likeCaller(callerID)))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	e.State = EventState(state)
-	return &e, nil
+	return e, nil
 }
 
 // publiclyVisibleStates are the states a non-owner/non-admin caller may browse

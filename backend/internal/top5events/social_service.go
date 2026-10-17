@@ -103,3 +103,13 @@ func (s *Service) checkFollowTarget(ctx context.Context, userID, organiserID str
 	}
 	return nil
 }
+
+// ListFollowingEvents is the Following feed: upcoming LIVE or APPROVED events of
+// the organisers userID follows, ordered by starts_at. A user who follows nobody
+// gets an empty (non-nil) list.
+func (s *Service) ListFollowingEvents(ctx context.Context, userID string) ([]Event, error) {
+	if _, err := uuid.Parse(userID); err != nil {
+		return nil, fmt.Errorf("%w: events: user required", ErrValidation)
+	}
+	return listFollowingEvents(ctx, s.db, userID)
+}

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -170,4 +171,74 @@ func mapSocialErr(op string, err error) error {
 		return ErrNotFound
 	}
 	return fmt.Errorf("events: %s: %w", op, err)
+}
+
+// eventSelectCols is the shared event select list. The first eleven columns and
+// their order are the original GetEvent select; the social columns are appended
+// at the END, and scanEvent mirrors this list exactly. Both reads (GetEvent and the
+// Following feed) use it, so a change here must change scanEvent in the same edit.
+const eventSelectCols = `e.id, e.organiser_id, e.title, COALESCE(e.description,''), e.venue, e.state, COALESCE(e.category,''), e.starts_at, e.ends_at, e.fee_bps, e.created_at,
+		e.banner_url, e.venue_lat, e.venue_lng, e.venue_place_id, e.like_count, COALESCE(l.user_id IS NOT NULL, false)`
+
+// eventLikedJoin attaches the caller's like (at most one row: event_likes is keyed
+// on (event_id, user_id)). The caller is parameter $2; a NULL caller matches no row.
+const eventLikedJoin = `LEFT JOIN event_likes l ON l.event_id = e.id AND l.user_id = $2::uuid`
+
+// rowScanner is satisfied by pgx.Row and pgx.Rows.
+type rowScanner interface{ Scan(dest ...any) error }
+
+// scanEvent scans one row selected with eventSelectCols, in that order. The
+// nullable banner and venue columns scan into pointers so NULL is not an error.
+func scanEvent(row rowScanner) (*Event, error) {
+	var e Event
+	var state string
+	if err := row.Scan(
+		&e.ID, &e.OrganiserID, &e.Title, &e.Description, &e.Venue, &state, &e.Category, &e.StartsAt, &e.EndsAt, &e.FeeBps, &e.CreatedAt,
+		&e.BannerURL, &e.VenueLat, &e.VenueLng, &e.VenuePlaceID, &e.LikeCount, &e.Liked,
+	); err != nil {
+		return nil, err
+	}
+	e.State = EventState(state)
+	return &e, nil
+}
+
+// likeCaller turns a caller id into the $2 argument of eventLikedJoin: nil (SQL
+// NULL, so Liked is false) for an anonymous caller or one whose id is not a uuid.
+func likeCaller(callerID string) any {
+	if _, err := uuid.Parse(callerID); err != nil {
+		return nil
+	}
+	return callerID
+}
+
+// followingFeedMax bounds the Following feed until the handler adds pagination.
+const followingFeedMax = 100
+
+// listFollowingEvents returns upcoming LIVE or APPROVED events of the organisers
+// userID follows, soonest first, with Liked set for userID. One query: the
+// follow row is joined to events on organiser_id.
+func listFollowingEvents(ctx context.Context, db *pgxpool.Pool, userID string) ([]Event, error) {
+	q := `SELECT ` + eventSelectCols + `
+		  FROM organiser_follows f
+		  JOIN events e ON e.organiser_id = f.organiser_id
+		  LEFT JOIN event_likes l ON l.event_id = e.id AND l.user_id = $1::uuid
+		 WHERE f.follower_id = $1::uuid
+		   AND e.state IN ('LIVE','APPROVED')
+		   AND e.starts_at >= now()
+		 ORDER BY e.starts_at ASC, e.id ASC
+		 LIMIT $2`
+	rows, err := db.Query(ctx, q, userID, followingFeedMax)
+	if err != nil {
+		return nil, fmt.Errorf("events: following: %w", err)
+	}
+	defer rows.Close()
+	out := []Event{}
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, fmt.Errorf("events: following scan: %w", err)
+		}
+		out = append(out, *e)
+	}
+	return out, rows.Err()
 }
