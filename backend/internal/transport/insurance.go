@@ -74,16 +74,69 @@ const parcelInsuranceProductCode = "mycover:sti-git-on-demand"
 // wrong trade for a screen the sender may never submit. The real premium is
 // always shown once bound (AcceptParcel/bindParcelInsurance) — this value is
 // explicitly an estimate, and should be labelled as such in the UI.
+//
+// That gap is narrowed by floor: s.parcelInsuranceMinKobo (configured to the
+// provider's observed minimum premium) is applied whenever cover is requested,
+// so a small declared value no longer shows ₦50 for a ₦2,000 bind.
 func (s *Service) parcelIndicativeInsurance(ctx context.Context, declaredValueKobo int64, cfg *PricingConfig) int64 {
 	if declaredValueKobo <= 0 {
 		return 0
 	}
+	premium := parcelInsurance(declaredValueKobo, cfg)
 	if s.insurance != nil {
 		if bps, err := s.insurance.IndicativeRateBps(ctx, parcelInsuranceProductCode); err == nil && bps > 0 {
-			return roundBps(declaredValueKobo, bps)
+			premium = roundBps(declaredValueKobo, bps)
 		}
 	}
-	return parcelInsurance(declaredValueKobo, cfg)
+	return max(premium, s.parcelInsuranceMinKobo)
+}
+
+// WithParcelInsuranceMinPremium sets the floor for the indicative premium.
+func (s *Service) WithParcelInsuranceMinPremium(kobo int64) *Service {
+	s.parcelInsuranceMinKobo = max(kobo, 0)
+	return s
+}
+
+// ParcelInsuranceInfo names the cover a parcel's declared value buys, for the
+// estimate screen. Display only, read from our own synced catalog.
+type ParcelInsuranceInfo struct {
+	ProductCode    string `json:"productCode"`
+	ProductName    string `json:"productName"`
+	Underwriter    string `json:"underwriter"`
+	Provider       string `json:"provider"`
+	MinPremiumKobo int64  `json:"minPremiumKobo"`
+	// Indicative is always true: the bound premium is confirmed by the insurer
+	// when a courier accepts the parcel.
+	Indicative bool `json:"indicative"`
+}
+
+// ParcelCoverDescriber is optionally implemented by the InsuranceBinder to
+// name the parcel cover. Kept separate so existing binders need no change.
+type ParcelCoverDescriber interface {
+	DescribeProduct(ctx context.Context, productCode string) (name, underwriter, provider string, err error)
+}
+
+// parcelInsuranceInfo describes the parcel cover, or nil when insurance is not
+// wired (parcels then book with no cover).
+func (s *Service) parcelInsuranceInfo(ctx context.Context) *ParcelInsuranceInfo {
+	if s.insurance == nil {
+		return nil
+	}
+	info := &ParcelInsuranceInfo{
+		ProductCode:    parcelInsuranceProductCode,
+		ProductName:    "Goods-in-Transit cover",
+		MinPremiumKobo: s.parcelInsuranceMinKobo,
+		Indicative:     true,
+	}
+	if d, ok := s.insurance.(ParcelCoverDescriber); ok {
+		if name, underwriter, provider, err := d.DescribeProduct(ctx, parcelInsuranceProductCode); err == nil {
+			if name != "" {
+				info.ProductName = name
+			}
+			info.Underwriter, info.Provider = underwriter, provider
+		}
+	}
+	return info
 }
 
 // parcelSenderProfile is the minimal identity data a real MyCover bind needs

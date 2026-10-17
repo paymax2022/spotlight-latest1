@@ -642,7 +642,63 @@ paths:
     post:
       tags: [parcel]
       summary: Estimate a parcel delivery (no money moves)
-      responses: { '200': { description: Estimate }, '401': { description: Not authenticated } }
+      description: >
+        Prices the requested size and speed, and every other offered size x speed on the same route
+        (`options`), so each choice can show its own price. With FEATURE_PARCEL_RATE_CARD_ENABLED the
+        price comes from the admin rate card (multiplier + minimum fare per size x speed); otherwise
+        from the legacy multipliers. `speed` accepts standard, express, same_day (shown as Priority;
+        `priority` is accepted as an alias) and scheduled. `insuranceKobo` is an indicative
+        Goods-in-Transit premium on `declared_value_kobo` (never charged at booking; floored at the
+        insurer's minimum); `insurance` names the cover.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pickup, dropoff]
+              properties:
+                pickup: { type: object, properties: { address: { type: string }, lat: { type: number }, lng: { type: number } } }
+                dropoff: { type: object, properties: { address: { type: string }, lat: { type: number }, lng: { type: number } } }
+                category: { type: string }
+                size: { type: string, enum: [small, medium, large] }
+                speed: { type: string, enum: [standard, express, same_day, priority, scheduled] }
+                declared_value_kobo: { type: integer, format: int64, minimum: 0 }
+      responses:
+        '200':
+          description: Estimate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  distanceM: { type: integer }
+                  durationS: { type: integer }
+                  fareKobo: { type: integer, format: int64, description: Fare for the requested size and speed - the amount a booking is charged }
+                  insuranceKobo: { type: integer, format: int64, description: Indicative premium; 0 when no declared value }
+                  totalKobo: { type: integer, format: int64 }
+                  sizeMultiplier: { type: number, description: Legacy multiplier (informational) }
+                  speedMultiplier: { type: number, description: Legacy multiplier (informational) }
+                  options:
+                    type: array
+                    description: Every offered size x speed (small, medium, large x standard, express, same_day), in that order
+                    items:
+                      type: object
+                      properties:
+                        size: { type: string }
+                        speed: { type: string }
+                        fareKobo: { type: integer, format: int64 }
+                  insurance:
+                    type: object
+                    description: Present when insurance is wired on the server
+                    properties:
+                      productCode: { type: string }
+                      productName: { type: string }
+                      underwriter: { type: string }
+                      provider: { type: string }
+                      minPremiumKobo: { type: integer, format: int64 }
+                      indicative: { type: boolean }
+        '401': { description: Not authenticated }
   /mobility/parcels:
     post:
       tags: [parcel]

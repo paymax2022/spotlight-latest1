@@ -43,8 +43,12 @@ export function mockParcelEstimate(req: ParcelEstimateRequest): ParcelEstimate {
   const perKm = 130_00;
   const km = distanceM / 1000;
   const raw = base + Math.round(perKm * km);
-  const fareKobo = Math.round(raw * SIZE_MULT[req.size] * SPEED_MULT[req.speed]);
-  const insuranceKobo = Math.round(req.declaredValueKobo * 0.015); // 1.5% cover
+  const fareFor = (size: ParcelSize, speed: ParcelSpeed) => Math.round(raw * SIZE_MULT[size] * SPEED_MULT[speed]);
+  const fareKobo = fareFor(req.size, req.speed);
+  const minPremiumKobo = 2000_00; // the insurer's minimum premium
+  const insuranceKobo = req.declaredValueKobo > 0 ? Math.max(Math.round(req.declaredValueKobo * 0.005), minPremiumKobo) : 0;
+  const sizes: ParcelSize[] = ['small', 'medium', 'large'];
+  const speeds: ParcelSpeed[] = ['standard', 'express', 'same_day'];
   return {
     distanceM,
     durationS,
@@ -52,6 +56,15 @@ export function mockParcelEstimate(req: ParcelEstimateRequest): ParcelEstimate {
     insuranceKobo,
     totalKobo: fareKobo + insuranceKobo,
     currency: 'NGN',
+    options: sizes.flatMap((size) => speeds.map((speed) => ({ size, speed, fareKobo: fareFor(size, speed) }))),
+    insurance: {
+      productCode: 'mycover:sti-git-on-demand',
+      productName: 'On Demand Goods In Transit',
+      underwriter: 'Sovereign Trust Insurance Plc',
+      provider: 'mycover',
+      minPremiumKobo,
+      indicative: true,
+    },
   };
 }
 

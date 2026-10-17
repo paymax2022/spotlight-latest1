@@ -60,6 +60,11 @@ type Service struct {
 	// Read-only afterwards, so no lock. See external_funding.go.
 	domainRefunders map[string]ExternalRefunder
 	bus             BusConfig // wallet bus path: deferred settlement / cancel cutoff / booking lead (WithBusConfig)
+	// parcelRateCardOn prices parcels from transport_parcel_rate_card (WithParcelRateCard).
+	parcelRateCardOn bool
+	// parcelInsuranceMinKobo floors the indicative Goods-in-Transit premium at the
+	// provider's minimum (WithParcelInsuranceMinPremium); 0 = no floor.
+	parcelInsuranceMinKobo int64
 }
 
 // ExternalRefunder is the nil-safe seam transport.Service uses to correctly
