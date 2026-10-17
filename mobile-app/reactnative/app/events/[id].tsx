@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Image, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Calendar, MapPin, Wallet } from 'lucide-react-native';
+import { Calendar, MapPin, Wallet, Heart } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -11,8 +11,13 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useEvent } from '@/features/events/hooks';
+import MapView from '@/features/mobility/components/MapView';
+import { useEvent, useLikeEvent } from '@/features/events/hooks';
+import { venueMapState } from '@/features/events/venue';
 import { EventColors, formatNaira, eventCoverEmoji, eventBannerColor } from '@/features/events/constants/events.constants';
+
+// events-social flag: exactly the string 'true' turns it on; default off.
+const EVENTS_SOCIAL = process.env.EXPO_PUBLIC_EVENTS_SOCIAL === 'true';
 
 function dt(iso: string): string {
   return new Date(iso).toLocaleString('en-NG', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
@@ -21,6 +26,9 @@ function dt(iso: string): string {
 export default function EventDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: e, isLoading, isError, refetch } = useEvent(id ?? '');
+  // Hooks run before the early returns below. Same query key as useEvent, so no
+  // second request; the like state is only read once the event has loaded.
+  const like = useLikeEvent(id ?? '');
 
   if (isLoading) return <Shell><StateView kind="loading" message="Loading event…" /></Shell>;
   if (isError || !e) return <Shell><StateView kind="error" title="Couldn't load event" message="Please try again." actionLabel="Retry" onAction={() => refetch()} /></Shell>;
@@ -28,6 +36,8 @@ export default function EventDetail() {
   const onSale = e.state === 'LIVE' || e.state === 'APPROVED';
   const activeTiers = e.tiers.filter((t) => t.active);
   const fromPriceKobo = activeTiers.length ? Math.min(...activeTiers.map((t) => t.price_kobo)) : 0;
+  const showBanner = EVENTS_SOCIAL && !!e.banner_url;
+  const showMap = EVENTS_SOCIAL && venueMapState(e) === 'pin';
   const cashlessEnabled = true; // every event supports the shared closed-loop wallet module
 
   return (
@@ -35,16 +45,54 @@ export default function EventDetail() {
       <ScreenHeader title="Event" />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={[styles.cover, { backgroundColor: eventBannerColor(e.id, e.category) }]}>
-          <Text style={styles.coverEmoji}>{eventCoverEmoji(e.category)}</Text>
+          {showBanner ? (
+            <Image source={{ uri: e.banner_url as string }} style={styles.coverImage} resizeMode="cover" accessibilityLabel={`${e.title} banner`} />
+          ) : (
+            <Text style={styles.coverEmoji}>{eventCoverEmoji(e.category)}</Text>
+          )}
         </View>
 
         <Text style={styles.title}>{e.title}</Text>
+
+        {EVENTS_SOCIAL ? (
+          <View style={styles.socialRow}>
+            <Pressable
+              onPress={like.toggle}
+              disabled={isLoading || like.isPending}
+              accessibilityRole="button"
+              accessibilityLabel={like.state.liked ? 'Unlike this event' : 'Like this event'}
+              accessibilityState={{ disabled: isLoading || like.isPending, selected: like.state.liked }}
+              style={[styles.likeBtn, (isLoading || like.isPending) && styles.likeBtnDisabled]}
+            >
+              <Heart size={20} color={like.state.liked ? EventColors.brand : EventColors.muted} fill={like.state.liked ? EventColors.brand : 'none'} strokeWidth={1.8} />
+              <Text style={styles.likeCount}>{like.state.count}</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push(`/events/organiser/${e.organiser_id}` as never)}
+              accessibilityRole="link"
+              accessibilityLabel="View organiser"
+              hitSlop={8}
+            >
+              <Text style={styles.organiserLink}>View organiser</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         <View style={styles.metaCard}>
           <Meta Icon={Calendar} text={dt(e.starts_at)} />
           <Meta Icon={MapPin} text={e.venue} />
           {cashlessEnabled ? <Meta Icon={Wallet} text="Cashless event wallet enabled" /> : null}
         </View>
+
+        {showMap ? (
+          <MapView
+            surface="events"
+            center={{ lat: e.venue_lat as number, lng: e.venue_lng as number }}
+            zoom={15}
+            markers={[{ id: e.id, lat: e.venue_lat as number, lng: e.venue_lng as number, title: e.venue }]}
+            style={styles.map}
+          />
+        ) : null}
 
         <Text style={styles.sectionTitle}>About</Text>
         <Text style={styles.body}>{e.description}</Text>
@@ -93,6 +141,13 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm },
   cover: { height: 180, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
   coverEmoji: { fontSize: 72 },
+  coverImage: { width: '100%', height: '100%', borderRadius: Radius.xl },
+  socialRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  likeBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, paddingVertical: Spacing.xs, paddingRight: Spacing.sm },
+  likeBtnDisabled: { opacity: 0.5 },
+  likeCount: { ...Typography.bodyMd, color: Colors.onSurface },
+  organiserLink: { ...Typography.bodyMd, color: EventColors.brand, textDecorationLine: 'underline' },
+  map: { height: 200, borderRadius: Radius.lg },
   title: { ...Typography.headlineMd, color: Colors.onSurface },
   organiser: { ...Typography.bodyMd, color: EventColors.muted },
   metaCard: { backgroundColor: EventColors.surface, borderRadius: Radius.lg, padding: Spacing.cardPadding, gap: Spacing.md, marginTop: Spacing.sm, ...shadow1 },
