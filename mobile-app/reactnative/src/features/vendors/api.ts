@@ -15,7 +15,10 @@ export interface VendorJob {
   repairRequestId?: string; status: JobStatus; amountKobo: number; createdAt: string;
 }
 
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VENDORS_USE_MOCK, true);
+// The /api/v1/estate/vendors handlers are live and query real tables, so this defaults to live:
+// a forgotten flag fails visibly instead of inventing a vendor directory. Set
+// EXPO_PUBLIC_VENDORS_USE_MOCK=true to force fixtures locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VENDORS_USE_MOCK, false);
 
 // Vendors/Artisans are served by the resident-scoped frontend-web handlers under
 // /api/v1/estate/vendors. The current resident's estate is derived SERVER-SIDE
@@ -71,11 +74,17 @@ const vendors: Vendor[] = [
   { id: 'v3', estateId: 'est_amber_court', name: 'GreenScape Landscaping', category: 'landscaping', phone: '+2348021112222', status: 'verified', rating: 4.3 },
   { id: 'v4', estateId: 'est_amber_court', name: 'PowerGen Services', category: 'generator', phone: '+2348025556666', status: 'pending', rating: 0 },
 ];
-let jobs: VendorJob[] = [
+const jobs: VendorJob[] = [
   { id: 'j1', estateId: 'est_amber_court', vendorId: 'v2', vendorName: 'BrightSpark Electricals', repairRequestId: 'r1', status: 'in_progress', amountKobo: 4_500_000, createdAt: iso(-20 * H) },
   { id: 'j2', estateId: 'est_amber_court', vendorId: 'v1', vendorName: 'Chukwu Plumbing Works', status: 'completed', amountKobo: 1_200_000, createdAt: iso(-96 * H) },
 ];
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+
+// updateJobStatus, onboardVendor and submitQuote have live route handlers, so fixture mode
+// refuses loudly instead of reporting a job transition, onboarding or quote that never reached
+// the database. Mirrors frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a vendor change it did not make. Set EXPO_PUBLIC_VENDORS_USE_MOCK=false to do this against the live backend.`);
 
 // jobFromApi maps a job payload to the client shape. The resident-scoped
 // is robust to either source.
@@ -108,7 +117,7 @@ export async function listJobs(): Promise<VendorJob[]> {
 // transition handler (POST /api/v1/estate/vendors/jobs/{id}/status, body
 // { status }). 'paid' is the payout money path and requires an Idempotency-Key.
 export async function updateJobStatus(id: string, status: JobStatus): Promise<VendorJob> {
-  if (USE_MOCK) { await latency(250); const j = jobs.find((x) => x.id === id); if (!j) throw new Error('Not found'); j.status = status; return { ...j }; }
+  if (USE_MOCK) throw notInFixtureMode('Updating a job status');
   const headers = status === 'paid' ? { 'Idempotency-Key': `payout:${id}` } : undefined;
   const { data } = await api.post(`${VENDORS_API_BASE}/jobs/${id}/status`, { status }, { headers });
   return jobFromApi(data);
@@ -117,7 +126,7 @@ export async function updateJobStatus(id: string, status: JobStatus): Promise<Ve
 export interface OnboardVendorInput { businessName: string; category?: string; phone?: string; specialties?: string[]; }
 
 export async function onboardVendor(input: OnboardVendorInput): Promise<Vendor> {
-  if (USE_MOCK) { await latency(400); const v: Vendor = { id: `v_${Date.now()}`, estateId: 'est_amber_court', name: input.businessName, category: input.category ?? 'general', phone: input.phone, status: 'pending', rating: 0 }; vendors.push(v); return { ...v }; }
+  if (USE_MOCK) throw notInFixtureMode('Onboarding a vendor');
   const { data } = await api.post(`${VENDOR_APP_BASE}/onboard`, {
     business_name: input.businessName, category: input.category, phone: input.phone, specialties: input.specialties ?? [],
   });
@@ -133,7 +142,7 @@ export async function getVendorEarnings(): Promise<VendorEarnings> {
 }
 
 export async function submitQuote(id: string, amountKobo: number): Promise<VendorJob> {
-  if (USE_MOCK) { await latency(); const j = jobs.find((x) => x.id === id); if (!j) throw new Error('Not found'); j.amountKobo = amountKobo; return { ...j }; }
+  if (USE_MOCK) throw notInFixtureMode('Submitting a quote');
   const { data } = await api.post(`${VENDOR_APP_BASE}/jobs/${id}/quote`, { amount_kobo: amountKobo });
   return jobFromApi(data);
 }
