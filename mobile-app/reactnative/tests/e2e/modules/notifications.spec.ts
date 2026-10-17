@@ -10,8 +10,8 @@ import { mockWallet } from '../helpers/wallet';
  *     so the URL lands on the seeded clinical notification centre
  *     (useNotificationFeed — doctor mock layer).
  *   • /estate-notifications — the estate notification centre; backed by
- *     src/features/notifications (EXPO_PUBLIC_NOTIFICATIONS_USE_MOCK defaults
- *     true) with seeded items (service charge, security alert, …).
+ *     src/features/notifications (EXPO_PUBLIC_NOTIFICATIONS_USE_MOCK is
+ *     pinned true in playwright.config.ts) with seeded items (service charge, security alert, …).
  * Neither route is registry-gated.
  */
 test.describe('Notifications E2E', () => {

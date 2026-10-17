@@ -9,7 +9,10 @@ export interface EstateNotification {
   title: string; body?: string; deepLink?: string; readAt?: string; createdAt: string;
 }
 
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_NOTIFICATIONS_USE_MOCK, true);
+// The /api/v1/estate/notifications handlers are live and query a real table (scoped by estate_id +
+// user_id), so this defaults to live: a forgotten flag fails visibly instead of inventing a feed.
+// Set EXPO_PUBLIC_NOTIFICATIONS_USE_MOCK=true to force fixtures locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_NOTIFICATIONS_USE_MOCK, false);
 
 // The in-app notification feed here is the Estate module's notification
 // center (Block 43), served by the resident-scoped frontend-web handlers under
@@ -32,7 +35,7 @@ export const CATEGORY_META: Record<NotificationCategory, { label: string; icon: 
 };
 
 const H = 3_600_000, iso = (o: number) => new Date(Date.now() + o).toISOString();
-let items: EstateNotification[] = [
+const items: EstateNotification[] = [
   { id: 'nt1', estateId: 'est_amber_court', category: 'payment', title: 'Service charge due in 7 days', body: '₦7,500 service charge is due. Pay from your wallet to avoid penalties.', deepLink: '/dues', createdAt: iso(-1 * H) },
   { id: 'nt2', estateId: 'est_amber_court', category: 'security', title: 'Security alert resolved', body: 'The reported loitering at Block A has been resolved by estate security.', deepLink: '/emergencies', readAt: iso(-3 * H), createdAt: iso(-4 * H) },
   { id: 'nt3', estateId: 'est_amber_court', category: 'meeting', title: 'Q3 General Meeting scheduled', body: 'Tap to RSVP for the upcoming general meeting.', deepLink: '/meetings', createdAt: iso(-26 * H) },
@@ -40,15 +43,21 @@ let items: EstateNotification[] = [
 ];
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+// markRead and markAllRead have live route handlers, so fixture mode refuses loudly instead of
+// reporting a read receipt that never reached the database. Mirrors frontend-admin's
+// crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a read receipt it did not record. Set EXPO_PUBLIC_NOTIFICATIONS_USE_MOCK=false to do this against the live backend.`);
+
 export async function listNotifications(): Promise<EstateNotification[]> {
   if (USE_MOCK) { await latency(); return items.slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)); }
   const { data } = await api.get<EstateNotification[]>(NOTIFICATIONS_API_BASE); return data;
 }
 export async function markRead(id: string): Promise<void> {
-  if (USE_MOCK) { await latency(120); const n = items.find((x) => x.id === id); if (n && !n.readAt) n.readAt = new Date().toISOString(); return; }
+  if (USE_MOCK) throw notInFixtureMode('Marking a notification read');
   await api.post(`${NOTIFICATIONS_API_BASE}/${id}/read`, {});
 }
 export async function markAllRead(): Promise<void> {
-  if (USE_MOCK) { await latency(200); const now = new Date().toISOString(); items = items.map((n) => (n.readAt ? n : { ...n, readAt: now })); return; }
+  if (USE_MOCK) throw notInFixtureMode('Marking all notifications read');
   await api.post(`${NOTIFICATIONS_API_BASE}/read-all`, {});
 }

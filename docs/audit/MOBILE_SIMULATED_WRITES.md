@@ -247,6 +247,18 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
     fee shown in the app is not money the system takes — flagging in case a wallet-charged booking
     flow was intended. Not changed.
 
+### Batch 14 (2026-10-17) — notifications (estate notification centre)
+- **notifications** (`src/features/notifications/api.ts`) — the estate notification centre, served by
+  frontend-web handlers (`app/api/v1/estate/notifications`). `verify_mobile_module.py`: **3/3 client
+  calls match**; table `estate_notifications` exists; no read-side traps. GET is scoped server-side by
+  both `estate_id` and `user_id`; both write handlers (`[id]/read`, `read-all`) enforce `user_id`
+  ownership. 2 mutations converted (`markRead`, `markAllRead`); e2e pin added (the estate e2e only
+  renders the seeded list and never taps "Mark all read"). No handler tests (code reading). Low
+  stakes (read receipts only), no findings.
+  - **Note:** `/notifications` resolves to the *doctor* clinical notification centre
+    (`(doctor)/notifications.tsx` wins over `(tabs)/notifications.tsx`); this estate centre is at
+    `/estate-notifications`. That routing collision is unrelated to this flip and untouched.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -273,7 +285,7 @@ academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, arena, connec
 creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
-one module), notifications, nutrition, properties, realtor, referral (2 files),
+one module), nutrition, properties, realtor, referral (2 files),
 social (see Batch 4 — blocked), spotlightwealth, stays, stocks, transfers, vendors, plus
 `src/api/doctor.client.ts` and `src/api/telemedicine.api.ts`.
 (An earlier version of this list had ~26 names: it only scanned `constants/` and `api/`
