@@ -304,6 +304,10 @@ type Config struct {
 	// premium on the parcel estimate (PARCEL_INSURANCE_MIN_PREMIUM_KOBO, default
 	// 200000 = ₦2,000, the minimum MyCover bound on a live quote). Display only.
 	ParcelInsuranceMinPremiumKobo int
+	// FeatureParcelPrepaidInsuranceEnabled (FEATURE_PARCEL_PREPAID_INSURANCE):
+	// parcel insurance is an opt-in tick paid at booking with the fare and held
+	// until the policy binds. Off = legacy (bound and debited at courier accept).
+	FeatureParcelPrepaidInsuranceEnabled bool
 	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) ride-hailing checkout path
 	// (transport/paystackcheckout): a ride paid directly via Paystack, escrowed
@@ -992,6 +996,7 @@ func Load() Config {
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
 		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
+		FeatureParcelPrepaidInsuranceEnabled:         getEnvBool("FEATURE_PARCEL_PREPAID_INSURANCE", false),
 		ParcelInsuranceMinPremiumKobo:                getEnvInt("PARCEL_INSURANCE_MIN_PREMIUM_KOBO", 200000),
 		FeatureTransportPaystackCheckoutEnabled:      getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureTransportPaystackParcelEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_PARCEL_ENABLED", false),

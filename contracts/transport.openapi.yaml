@@ -716,6 +716,18 @@ paths:
         price.
         Omitted, the server books at its live fare as before (older app builds, scheduled
         dispatch). The card-direct rail ignores it; it already freezes the quoted fare.
+        Insurance (FEATURE_PARCEL_PREPAID_INSURANCE) is opt-in with `insure: true`: the wallet pays the
+        fare AND the estimate's premium now, as two separate integer-kobo debits. The fare is escrowed for
+        the courier; the premium is held apart (it never reaches the courier settlement) until the policy
+        binds when a courier accepts. The customer pays exactly the premium shown; the platform absorbs any
+        difference to the insurer's final premium. If cover cannot be bound, or the parcel is cancelled
+        (before or after the cover binds), the premium is refunded to the wallet. The wallet must cover
+        fare + premium up front (else 402 INSUFFICIENT_FUNDS, nothing charged). The parcel's
+        `insuranceStatus` reports declined (not ticked) | held | binding | bound | refunded |
+        refund_failed, or none for parcels booked before this feature (they keep the legacy flow).
+        Without `insure` no premium is charged. With the flag off, `insure` is ignored (legacy: cover
+        bound and debited separately at courier accept). Re-using an Idempotency-Key whose premium was
+        already refunded is 409 IDEMPOTENCY_KEY_CONFLICT (book again with a new key).
         Optional `route_token` is the `routeToken` returned by POST /mobility/parcels/estimate (issued only
         when the server has PARCEL_ROUTE_TOKEN_SECRET): a server-signed snapshot of that estimate's route
         distance/duration for the same pickup/dropoff, valid 15 minutes. With a valid token the booking
@@ -746,11 +758,27 @@ paths:
                 prohibited_ack: { type: boolean }
                 expected_fare_kobo: { type: integer, format: int64, description: 'Fare (kobo) the customer confirmed; mismatch → 409 FARE_CHANGED' }
                 route_token: { type: string, description: 'routeToken from the estimate; prices from its signed route (15 min)' }
+                insure: { type: boolean, description: 'Buy Goods-in-Transit cover, paid now with the fare (FEATURE_PARCEL_PREPAID_INSURANCE). Needs declared_value_kobo > 0 and a complete sender profile.' }
+                expected_insurance_kobo: { type: integer, format: int64, description: 'Premium (kobo) the customer confirmed (the estimate insuranceKobo); mismatch → 409 FARE_CHANGED' }
       responses:
         '200': { description: Parcel }
         '400': { description: INVALID_IDEMPOTENCY_KEY (reserved key namespace) }
         '401': { description: Not authenticated }
-        '402': { description: Insufficient balance }
+        '402': { description: 'Insufficient balance (INSUFFICIENT_FUNDS: with insure, the wallet must cover fare + premium)' }
+        '422':
+          description: >-
+            Insurance refused before anything was charged: INSURANCE_DECLARED_VALUE_REQUIRED,
+            INSURANCE_UNAVAILABLE, INSURANCE_CARD_NOT_SUPPORTED (card-direct cannot include the premium
+            yet), or INSURANCE_PROFILE_INCOMPLETE (body `missing` lists the sender profile fields the
+            insurer needs: first_name, last_name, email, phone, gender, date_of_birth, address).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  code: { type: string, enum: [INSURANCE_DECLARED_VALUE_REQUIRED, INSURANCE_UNAVAILABLE, INSURANCE_CARD_NOT_SUPPORTED, INSURANCE_PROFILE_INCOMPLETE] }
+                  missing: { type: array, items: { type: string } }
         '409':
           description: >-
             FARE_CHANGED (the price moved since the estimate; nothing was charged), or
@@ -764,6 +792,8 @@ paths:
                   code: { type: string, enum: [FARE_CHANGED, IDEMPOTENCY_KEY_CONFLICT] }
                   fare_kobo: { type: integer, format: int64 }
                   expected_fare_kobo: { type: integer, format: int64 }
+                  insurance_kobo: { type: integer, format: int64, description: 'Live premium, when the insurance price changed' }
+                  expected_insurance_kobo: { type: integer, format: int64 }
     get:
       tags: [parcel]
       summary: List parcels

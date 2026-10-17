@@ -2152,7 +2152,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			WithBusConfig(transport.NewBusConfig(cfg.FeatureTransportBusDeferredSettlementEnabled,
 				cfg.TransportBusSettleGraceMinutes, cfg.TransportBusCancelCutoffMinutes, cfg.TransportBusMinBookingLeadMinutes))
 		transportSvc = transportSvc.WithParcelRateCard(cfg.FeatureParcelRateCardEnabled).
-			WithParcelInsuranceMinPremium(int64(cfg.ParcelInsuranceMinPremiumKobo))
+			WithParcelInsuranceMinPremium(int64(cfg.ParcelInsuranceMinPremiumKobo)).
+			WithPrepaidInsurance(cfg.FeatureParcelPrepaidInsuranceEnabled)
 		// Bridge transport dispatch/estimation onto the provider-agnostic
 		// MapService (OpenStack/OSRM by default) instead of the ad-hoc maps stub.
 		if mapSvc != nil {

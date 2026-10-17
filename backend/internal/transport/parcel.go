@@ -87,17 +87,24 @@ type parcelRow struct {
 	DropoffPin        *string
 	SettlementID      *string
 	DistanceM         *int
+	// Prepaid insurance (parcel_insurance_prepaid.go).
+	InsuranceOpted    bool
+	InsurancePaidKobo int64
+	InsuranceStatus   string
+	IdempotencyKey    string // the booking key; keys the premium hold and its refund
 }
 
 func (s *Service) loadParcel(ctx context.Context, id string, p *parcelRow) error {
 	const q = `SELECT id, sender_id, courier_id, status, fare_kobo, insurance_kobo, declared_value_kobo,
 	                  pickup_address, dropoff_address, category, insurance_policy_id,
-	                  pickup_pin, dropoff_pin, settlement_id, distance_m
+	                  pickup_pin, dropoff_pin, settlement_id, distance_m,
+	                  insurance_opted, insurance_paid_kobo, insurance_status, COALESCE(idempotency_key, '')
 	           FROM parcels WHERE id=$1`
 	return s.db.QueryRow(ctx, q, id).Scan(
 		&p.ID, &p.SenderID, &p.CourierID, &p.Status, &p.FareKobo, &p.InsuranceKobo, &p.DeclaredValueKobo,
 		&p.PickupAddress, &p.DropoffAddress, &p.Category, &p.InsurancePolicyID,
 		&p.PickupPin, &p.DropoffPin, &p.SettlementID, &p.DistanceM,
+		&p.InsuranceOpted, &p.InsurancePaidKobo, &p.InsuranceStatus, &p.IdempotencyKey,
 	)
 }
 
@@ -131,6 +138,11 @@ type ParcelBookRequest struct {
 	// RouteToken is the estimate's routeToken: wallet bookings price from its
 	// signed route (live config). Ignored unless it verifies. See parcel_route_token.go.
 	RouteToken string `json:"route_token,omitempty"`
+	// Insure buys Goods-in-Transit cover, paid now with the fare
+	// (FEATURE_PARCEL_PREPAID_INSURANCE). ExpectedInsuranceKobo is the premium
+	// the customer saw; a mismatch is FARE_CHANGED. See parcel_insurance_prepaid.go.
+	Insure                bool   `json:"insure,omitempty"`
+	ExpectedInsuranceKobo *int64 `json:"expected_insurance_kobo,omitempty"`
 }
 
 // ParcelPickedUpRequest carries the parcel photo confirmation.
@@ -330,6 +342,9 @@ func (s *Service) BookParcel(ctx context.Context, senderID string, req ParcelBoo
 // trusted as final: BookParcelPaystackFunded independently recomputes it.
 func (s *Service) QuoteParcelBooking(ctx context.Context, req ParcelBookRequest) (int64, error) {
 	req.RouteToken = "" // card-direct prices a live route; route tokens are wallet-only
+	if s.prepaidInsurance(req) {
+		return 0, codedErr(http.StatusUnprocessableEntity, CodeInsuranceCardNotSupported, "insurance can be added when paying from your wallet; card payment does not include it yet")
+	}
 	if !req.ProhibitedAck {
 		return 0, codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
 	}
@@ -345,6 +360,9 @@ func (s *Service) QuoteParcelBooking(ctx context.Context, req ParcelBookRequest)
 // BookParcelPaystackFundedFrozen.
 func (s *Service) QuoteParcelBookingFrozen(ctx context.Context, req ParcelBookRequest) (int64, json.RawMessage, error) {
 	req.RouteToken = "" // card-direct prices a live route; route tokens are wallet-only
+	if s.prepaidInsurance(req) {
+		return 0, nil, codedErr(http.StatusUnprocessableEntity, CodeInsuranceCardNotSupported, "insurance can be added when paying from your wallet; card payment does not include it yet")
+	}
 	if !req.ProhibitedAck {
 		return 0, nil, codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
 	}
@@ -477,6 +495,24 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		return "", err
 	}
 	fare, insurance, route := pr.fare, pr.insurance, pr.route
+	// Insurance paid at booking (parcel_insurance_prepaid.go): ticked, the
+	// estimate's premium is charged with the fare but held apart from it, so it
+	// never reaches the courier settlement. Refused up front when the parcel
+	// could never be covered.
+	insured := s.prepaidInsurance(req)
+	var premium int64
+	var expectedPremium *int64
+	if insured {
+		if external {
+			return "", codedErr(http.StatusUnprocessableEntity, CodeInsuranceCardNotSupported, "insurance can be added when paying from your wallet; card payment does not include it yet")
+		}
+		premium, expectedPremium = insurance, req.ExpectedInsuranceKobo
+		if err := s.checkPrepaidInsurance(ctx, senderID, idempotencyKey, req, fare, premium); err != nil {
+			return "", err
+		}
+	} else if s.prepaidInsuranceOn {
+		insurance = 0 // not ticked: no cover, nothing owed or shown for it
+	}
 	// Indicative only — DISPLAY, never charged here. Real cover (if any) is
 	// quoted and bound for its real premium once a courier + vehicle are known,
 	// see AcceptParcel/bindParcelInsurance. The escrow below is fare-only: the
@@ -497,7 +533,9 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		// and the app re-confirms the new price. (A key that already booked
 		// never gets here: the replay check above returned it.)
 		return "", err
-	} else if err := s.enforceTierLimit(ctx, senderID, fare); err != nil {
+	} else if err := checkExpectedParcelInsurance(expectedPremium, premium); err != nil {
+		return "", err
+	} else if err := s.enforceTierLimit(ctx, senderID, fare+premium); err != nil {
 		// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same
 		// contract as RequestRide): a Tier0/over-limit sender cannot move
 		// money. Skipped ONLY for card-direct: no wallet debit exists there.
@@ -511,6 +549,13 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		parcelID = externalParcelID(idempotencyKey)
 	}
 	ref := "parcel:" + parcelID
+	if insured {
+		// Premium first: if the fare escrow then fails, the premium is refunded
+		// below; nothing is left half-paid.
+		if err := s.holdParcelPremium(ctx, senderID, idempotencyKey, premium); err != nil {
+			return "", err
+		}
+	}
 	var sett *settlement.Settlement
 	if external {
 		sett, err = s.settlement.EscrowExternal(ctx, senderID, ref, idempotencyKey, "transport", fare)
@@ -518,6 +563,10 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		sett, err = s.escrowCheckout(ctx, senderID, ref, idempotencyKey, fare)
 	}
 	if err != nil {
+		// A held premium is NOT refunded here: a same-key retry reuses it, and if
+		// the booking is never retried the orphan sweep (ReconcileParcelInsurance)
+		// refunds it after a grace period. Refunding now would turn the retry
+		// into a key conflict.
 		return "", fmt.Errorf("transport: escrow parcel fare: %w", err)
 	}
 	if external {
@@ -553,13 +602,16 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		INSERT INTO parcels
 			(id, sender_id, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng,
 			 receiver_name, receiver_phone, category, size, declared_value_kobo, speed, prohibited_ack,
-			 fare_kobo, insurance_kobo, status, pickup_pin, dropoff_pin, distance_m, settlement_id, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'created',$18,$19,$20,$21,$22)`
+			 fare_kobo, insurance_kobo, status, pickup_pin, dropoff_pin, distance_m, settlement_id, idempotency_key,
+			 insurance_opted, insurance_paid_kobo, insurance_status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'created',$18,$19,$20,$21,$22,$23,$24,$25)`
+	insuranceStatus := s.bookingInsuranceStatus(insured, req)
 	if _, err := s.db.Exec(ctx, q,
 		parcelID, senderID, req.Pickup.Address, req.Pickup.Lat, req.Pickup.Lng,
 		req.Dropoff.Address, req.Dropoff.Lat, req.Dropoff.Lng,
 		req.ReceiverName, req.ReceiverPhone, pr.category, pr.size, req.DeclaredValueKobo, pr.speed, req.ProhibitedAck,
 		fare, insurance, pickupPin, dropoffPin, route.DistanceM, sett.ID, idempotencyKey,
+		insured, premium, insuranceStatus,
 	); err != nil {
 		if external {
 			// The booking ctx may be the very thing that failed (deadline /
@@ -583,9 +635,14 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 			// parcel rather than a 500.
 			return id, nil
 		}
+		// A held premium (and the fare escrow) stay for a same-key retry; the
+		// orphan sweep refunds the premium if none comes.
 		return "", fmt.Errorf("transport: insert parcel: %w", err)
 	}
-	meta := map[string]any{"fare_kobo": fare, "insurance_kobo": insurance, "settlement_id": sett.ID}
+	if insured {
+		s.markCoverIfPremiumRefunded(ctx, parcelID, idempotencyKey)
+	}
+	meta := map[string]any{"fare_kobo": fare, "insurance_kobo": insurance, "settlement_id": sett.ID, "insurance_paid_kobo": premium}
 	if external {
 		meta["funding"] = "external"
 		meta["verified_amount_kobo"] = verifiedAmountKobo
@@ -599,7 +656,8 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 	const q = `
 		SELECT id, sender_id, courier_id, pickup_address, dropoff_address, receiver_name, receiver_phone,
 		       category, size, speed, declared_value_kobo, fare_kobo, insurance_kobo, insurance_policy_id,
-		       status, pickup_pin, dropoff_pin, photo_url, proof_url, distance_m, created_at
+		       status, pickup_pin, dropoff_pin, photo_url, proof_url, distance_m, created_at,
+		       insurance_opted, insurance_paid_kobo, insurance_status
 		FROM parcels WHERE id=$1`
 	var (
 		pid, senderID, pickup, dropoff, receiver, rphone, category, size, speed, status string
@@ -607,11 +665,15 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		declared, fare, insurance                                                       int64
 		distM                                                                           *int
 		createdAt                                                                       time.Time
+		insuranceOpted                                                                  bool
+		insurancePaid                                                                   int64
+		insuranceStatus                                                                 string
 	)
 	if err := s.db.QueryRow(ctx, q, id).Scan(
 		&pid, &senderID, &courierID, &pickup, &dropoff, &receiver, &rphone,
 		&category, &size, &speed, &declared, &fare, &insurance, &insurancePolicyID,
 		&status, &pickupPin, &dropoffPin, &photoURL, &proofURL, &distM, &createdAt,
+		&insuranceOpted, &insurancePaid, &insuranceStatus,
 	); err != nil {
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "parcel not found")
 	}
@@ -636,6 +698,9 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		"insurancePolicyId": insurancePolicyID, // null until AcceptParcel successfully binds real cover
 		"totalKobo":         fare + insurance, "status": status,
 		"photoUrl": photoURL, "proofUrl": proofURL, "distanceM": distM, "createdAt": createdAt,
+		// Prepaid insurance: what the sender paid at booking and where it is
+		// (held → bound, or refunded). See parcel_insurance_prepaid.go.
+		"insuranceOpted": insuranceOpted, "insurancePaidKobo": insurancePaid, "insuranceStatus": insuranceStatus,
 	}
 	// Only the sender may read the PINs (courier verifies, never reads).
 	if isSender {
@@ -726,9 +791,24 @@ func (s *Service) CancelParcelWithRefund(ctx context.Context, id, senderID, reas
 	if p.CourierID != nil {
 		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *p.CourierID)
 	}
-	// Best-effort: if real cover was bound (AcceptParcel already ran), cancel it
-	// too. Never blocks the parcel cancellation — see cancelParcelInsurance.
-	if p.InsurancePolicyID != nil && *p.InsurancePolicyID != "" {
+	// A premium paid at booking is refunded (and bound cover cancelled). Re-read
+	// the insurance status AFTER the cancel flip: a bind finishing concurrently
+	// writes 'bound' before it reads the parcel status, and this side writes
+	// 'cancelled' before it reads the insurance status, so one of the two always
+	// sees the other (and the bound→refunded claim lets only one act).
+	// Detached: the parcel is already cancelled, so a dropped request here must
+	// not leave its premium held (the sweep also catches held + cancelled).
+	{
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		if err := s.db.QueryRow(dctx, `SELECT insurance_status, insurance_policy_id FROM parcels WHERE id=$1`, id).
+			Scan(&p.InsuranceStatus, &p.InsurancePolicyID); err == nil {
+			s.refundPrepaidOnCancel(dctx, &p)
+		}
+		cancel()
+	}
+	// Legacy cover (bound and debited at accept): best-effort cancel, never
+	// blocks the parcel cancellation — see cancelParcelInsurance.
+	if p.InsuranceStatus == insuranceStatusNone && p.InsurancePolicyID != nil && *p.InsurancePolicyID != "" {
 		s.cancelParcelInsurance(ctx, senderID, *p.InsurancePolicyID)
 	}
 	s.recordModeEvent(ctx, senderID, "parcel.cancelled", "parcel", id, p.Status, "cancelled", map[string]any{"reason": reason, "refund_status": res.RefundStatus})
@@ -807,24 +887,11 @@ func (s *Service) AcceptParcel(ctx context.Context, id, driverUserID string) (ma
 	s.recordModeEvent(ctx, driverUserID, "parcel.courier_assigned", "parcel", id, "created", "courier_assigned",
 		map[string]any{"courier_id": courierID})
 
-	// Real cover, if the sender declared a value: only now do we know the actual
-	// vehicle carrying the shipment, which the real insurer's form requires.
-	// Best-effort — bindParcelInsurance NEVER blocks courier assignment; a
-	// declined/failed bind just means this parcel ships uninsured.
-	if p.DeclaredValueKobo > 0 {
-		sender := s.loadParcelSenderProfile(ctx, p.SenderID)
-		vehicle := s.loadParcelDriverVehicle(ctx, courierID)
-		if policyID, premiumKobo, ok := s.bindParcelInsurance(ctx, &p, p.PickupAddress, p.DropoffAddress, p.Category, sender, vehicle); ok {
-			if _, err := s.db.Exec(ctx,
-				`UPDATE parcels SET insurance_policy_id=$1, insurance_kobo=$2, updated_at=NOW() WHERE id=$3`,
-				policyID, premiumKobo, id,
-			); err != nil {
-				log.Printf("[transport] parcel %s: insurance bound (policy %s) but failed to persist the reference: %v", id, policyID, err)
-			} else {
-				s.recordModeEvent(ctx, driverUserID, "parcel.insured", "parcel", id, "courier_assigned", "courier_assigned",
-					map[string]any{"insurance_policy_id": policyID, "premium_kobo": premiumKobo})
-			}
-		}
+	// Cover, if any: a premium paid at booking is bound now (or refunded); a
+	// parcel booked before prepaid insurance keeps the legacy bind-and-debit.
+	// Never blocks courier assignment. See parcel_insurance_prepaid.go.
+	if p.InsuranceStatus == insuranceStatusHeld || (p.InsuranceStatus == insuranceStatusNone && p.DeclaredValueKobo > 0) {
+		s.insureParcelAtAccept(ctx, &p, s.loadParcelSenderProfile(ctx, p.SenderID), s.loadParcelDriverVehicle(ctx, courierID), driverUserID)
 	}
 
 	return s.ParcelDetail(ctx, id, driverUserID)
@@ -1091,11 +1158,12 @@ func (s *Service) findParcelReplay(ctx context.Context, senderID, key string, re
 		id                         string
 		pLat, pLng, dLat, dLng     float64
 		receiverPhone, size, speed string
+		opted                      bool
 	)
 	err := s.db.QueryRow(ctx, `
-		SELECT id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, receiver_phone, size, speed
+		SELECT id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, receiver_phone, size, speed, insurance_opted
 		FROM parcels WHERE idempotency_key=$1 AND sender_id=$2`, key, senderID).
-		Scan(&id, &pLat, &pLng, &dLat, &dLng, &receiverPhone, &size, &speed)
+		Scan(&id, &pLat, &pLng, &dLat, &dLng, &receiverPhone, &size, &speed, &opted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}
@@ -1103,28 +1171,18 @@ func (s *Service) findParcelReplay(ctx context.Context, senderID, key string, re
 		return "", false, err
 	}
 	if checkBody && (pLat != req.Pickup.Lat || pLng != req.Pickup.Lng || dLat != req.Dropoff.Lat || dLng != req.Dropoff.Lng ||
-		receiverPhone != req.ReceiverPhone || size != replaySize(req.Size) || speed != replaySpeed(req.Speed)) {
+		receiverPhone != req.ReceiverPhone || size != replaySize(req.Size) || speed != normalizeParcelSpeed(req.Speed) ||
+		opted != s.prepaidInsurance(req)) {
 		return "", false, codedErr(http.StatusConflict, CodeKeyConflict, "this idempotency key was already used for a different parcel booking; retry with a new key")
 	}
 	return id, true, nil
 }
 
-// replaySize / replaySpeed apply the defaults (and the app's "priority" alias)
-// a booking is stored with, so a retry of the same request compares equal.
+// replaySize applies the default a booking's size is stored with (speed uses
+// normalizeParcelSpeed), so a retry of the same request compares equal.
 func replaySize(size string) string {
 	if size = strings.ToLower(strings.TrimSpace(size)); size == "" {
 		return "small"
 	}
 	return size
-}
-
-func replaySpeed(speed string) string {
-	switch sp := strings.ToLower(strings.TrimSpace(speed)); sp {
-	case "":
-		return "standard"
-	case "priority":
-		return "same_day"
-	default:
-		return sp
-	}
 }
