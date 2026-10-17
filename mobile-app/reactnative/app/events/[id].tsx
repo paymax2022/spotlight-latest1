@@ -68,7 +68,7 @@ export default function EventDetail() {
               <Text style={styles.likeCount}>{like.state.count}</Text>
             </Pressable>
             <Pressable
-              onPress={() => router.push(`/events/organiser/${e.organiser_id}` as never)}
+              onPress={() => router.push({ pathname: '/events/organiser/[id]', params: { id: e.organiser_id } })}
               accessibilityRole="link"
               accessibilityLabel="View organiser"
               hitSlop={8}
