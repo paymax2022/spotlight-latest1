@@ -707,6 +707,7 @@ func (s *Service) refundPrepaidOnCancel(ctx context.Context, p *parcelRow) {
 //   - a held premium with no parcel row (crash before the INSERT) → refund.
 //     Wallet holds only: a card hold with no parcel is unwound by the card
 //     engine before it refunds the whole charge (UnwindParcelPremiumHold).
+//
 // A card-paid premium is always refunded to the card (refundPremiumToCard).
 func (s *Service) ReconcileParcelInsurance(ctx context.Context, grace time.Duration) (int, error) {
 	if s.ledger == nil || s.db == nil {

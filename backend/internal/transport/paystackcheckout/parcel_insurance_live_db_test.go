@@ -32,7 +32,7 @@ const livePremium = 200_000 // 2% of ₦100,000
 type displayOnlyBinder struct{}
 
 func (displayOnlyBinder) IndicativeRateBps(context.Context, string) (int64, error) { return 200, nil }
-func (displayOnlyBinder) GrantConsent(context.Context, string, string) error         { return nil }
+func (displayOnlyBinder) GrantConsent(context.Context, string, string) error       { return nil }
 func (displayOnlyBinder) CreateQuote(context.Context, string, string, int64, map[string]any) (string, int64, error) {
 	return "", 0, errors.New("unused")
 }

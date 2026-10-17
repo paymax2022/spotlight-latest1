@@ -168,7 +168,9 @@ type rateOverrideBinder struct {
 	bps int64
 }
 
-func (b *rateOverrideBinder) IndicativeRateBps(context.Context, string) (int64, error) { return b.bps, nil }
+func (b *rateOverrideBinder) IndicativeRateBps(context.Context, string) (int64, error) {
+	return b.bps, nil
+}
 
 func TestLiveDB_CardInsurance_IneligibleIsRefusedAtQuote(t *testing.T) {
 	f := newPrepaidParcelFixture(t, false) // profile incomplete
