@@ -1103,28 +1103,17 @@ func (s *Service) findParcelReplay(ctx context.Context, senderID, key string, re
 		return "", false, err
 	}
 	if checkBody && (pLat != req.Pickup.Lat || pLng != req.Pickup.Lng || dLat != req.Dropoff.Lat || dLng != req.Dropoff.Lng ||
-		receiverPhone != req.ReceiverPhone || size != replaySize(req.Size) || speed != replaySpeed(req.Speed)) {
+		receiverPhone != req.ReceiverPhone || size != replaySize(req.Size) || speed != normalizeParcelSpeed(req.Speed)) {
 		return "", false, codedErr(http.StatusConflict, CodeKeyConflict, "this idempotency key was already used for a different parcel booking; retry with a new key")
 	}
 	return id, true, nil
 }
 
-// replaySize / replaySpeed apply the defaults (and the app's "priority" alias)
-// a booking is stored with, so a retry of the same request compares equal.
+// replaySize applies the default a booking's size is stored with (speed uses
+// normalizeParcelSpeed), so a retry of the same request compares equal.
 func replaySize(size string) string {
 	if size = strings.ToLower(strings.TrimSpace(size)); size == "" {
 		return "small"
 	}
 	return size
-}
-
-func replaySpeed(speed string) string {
-	switch sp := strings.ToLower(strings.TrimSpace(speed)); sp {
-	case "":
-		return "standard"
-	case "priority":
-		return "same_day"
-	default:
-		return sp
-	}
 }
