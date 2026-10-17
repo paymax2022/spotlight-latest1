@@ -273,7 +273,7 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 	if cfg.FeatureEventsSocial {
 		// Event reads and writes use the social columns (banner, venue
 		// coordinates, like_count, the caller's like) only with the flag on: they
-		// exist only after migration 20271044000000. Deploy gate: apply that
+		// exist only after migration 20271045000000. Deploy gate: apply that
 		// migration before turning FEATURE_EVENTS_SOCIAL on in any environment.
 		svc.EnableSocialReads()
 		// Organiser banner uploads: backend-owned presigned R2 PUTs, the same

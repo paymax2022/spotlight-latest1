@@ -1,6 +1,6 @@
 package top5events_test
 
-// Schema assertions for supabase/migrations/20271044000000_events_social.sql
+// Schema assertions for supabase/migrations/20271045000000_events_social.sql
 // (event_likes, organiser_follows, organiser_profiles and the new events
 // columns). Reads information_schema / pg_constraint / pg_policies only; it
 // writes nothing.
