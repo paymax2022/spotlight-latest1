@@ -796,9 +796,15 @@ func (s *Service) CancelParcelWithRefund(ctx context.Context, id, senderID, reas
 	// writes 'bound' before it reads the parcel status, and this side writes
 	// 'cancelled' before it reads the insurance status, so one of the two always
 	// sees the other (and the bound→refunded claim lets only one act).
-	if err := s.db.QueryRow(ctx, `SELECT insurance_status, insurance_policy_id FROM parcels WHERE id=$1`, id).
-		Scan(&p.InsuranceStatus, &p.InsurancePolicyID); err == nil {
-		s.refundPrepaidOnCancel(ctx, &p)
+	// Detached: the parcel is already cancelled, so a dropped request here must
+	// not leave its premium held (the sweep also catches held + cancelled).
+	{
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		if err := s.db.QueryRow(dctx, `SELECT insurance_status, insurance_policy_id FROM parcels WHERE id=$1`, id).
+			Scan(&p.InsuranceStatus, &p.InsurancePolicyID); err == nil {
+			s.refundPrepaidOnCancel(dctx, &p)
+		}
+		cancel()
 	}
 	// Legacy cover (bound and debited at accept): best-effort cancel, never
 	// blocks the parcel cancellation — see cancelParcelInsurance.

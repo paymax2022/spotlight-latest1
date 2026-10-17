@@ -546,16 +546,29 @@ func TestLiveDB_PrepaidInsurance_UnconfirmedBindIsNotRefunded(t *testing.T) {
 		AmountKobo: 200_000, DebitAccountID: hold.ID, CreditAccountID: clearing.ID}); err != nil {
 		t.Fatal(err)
 	}
+	// The saga claimed the purchase and the insurer bound it before the local
+	// record failed, so the bind registry says succeeded.
+	reg := policy.NewBindRegistry(f.pool)
+	policyID := uuid.NewString()
+	bindKey := "parcel:insurance:" + p.ID
+	if _, err := reg.Claim(ctx, bindKey, "prepaiduw", "git", policyID); err != nil {
+		t.Fatal(err)
+	}
+	reg.Succeeded(ctx, bindKey, "pol-ref-"+uuid.NewString(), 250_000)
 	f.binder.forceErr = fmt.Errorf("persist failed: %w", ErrInsuranceBindUnconfirmed)
 	f.svc.settleParcelInsuranceAtAccept(ctx, &p, f.svc.loadParcelSenderProfile(ctx, f.sender), completeVehicle)
 	if got := f.parcel(t, p.ID); got.InsuranceStatus != "binding" {
-		t.Fatalf("status %s, want binding", got.InsuranceStatus)
+		t.Fatalf("status %s, want binding (never refunded on a guess)", got.InsuranceStatus)
 	}
 	if _, err := f.svc.ReconcileParcelInsurance(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.wallet(t); got != afterBooking {
 		t.Fatalf("an unconfirmed bind must not be refunded: %d → %d", afterBooking, got)
+	}
+	// The reconciler reads the insurer's outcome and records the cover.
+	if got := f.parcel(t, p.ID); got.InsuranceStatus != "bound" || got.InsurancePolicyID == nil || *got.InsurancePolicyID != policyID {
+		t.Fatalf("after reconcile: %+v, want bound with policy %s", got, policyID)
 	}
 }
 
@@ -709,5 +722,53 @@ func TestLiveDB_PrepaidInsurance_ReconcilerUsesTheBindOutcome(t *testing.T) {
 				t.Fatalf("policy id %v, want %s", got.InsurancePolicyID, policyID)
 			}
 		})
+	}
+}
+
+// Round-3 medium: a cancel interrupted between the parcel flip and the premium
+// refund leaves a cancelled parcel with its premium 'held'; the sweep refunds it.
+func TestLiveDB_PrepaidInsurance_ReconcilerRefundsHeldOnCancelledParcel(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	p, _ := f.book(t, insuredReq())
+	afterBooking := f.wallet(t)
+	if _, err := f.pool.Exec(ctx, `UPDATE parcels SET status='cancelled' WHERE id=$1`, p.ID); err != nil {
+		t.Fatal(err) // the interrupted cancel
+	}
+	if _, err := f.svc.ReconcileParcelInsurance(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.parcel(t, p.ID); got.InsuranceStatus != "refunded" {
+		t.Fatalf("status %s, want refunded", got.InsuranceStatus)
+	}
+	if w := f.wallet(t); w != afterBooking+200_000 {
+		t.Fatalf("wallet %d, want %d", w, afterBooking+200_000)
+	}
+}
+
+// Round-3 low: the saga took the premium and died before recording its claim
+// (no bind-registry row = no purchase was ever sent). The sweep refunds it.
+func TestLiveDB_PrepaidInsurance_ReconcilerRefundsWhenNoPurchaseWasSent(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	p, _ := f.book(t, insuredReq())
+	afterBooking := f.wallet(t)
+	hold, _ := f.led.GetOrCreateStandingAccount(ctx, ledger.AccountInsurancePremiumHold)
+	clearing, _ := f.led.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if err := f.led.PostJournal(ctx, ledger.JournalEntry{Reference: "test", IdempotencyKey: "parcel:insurance:" + p.ID + ":premium",
+		AmountKobo: 200_000, DebitAccountID: hold.ID, CreditAccountID: clearing.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if !f.svc.claimInsuranceStatus(ctx, p.ID, "held", "binding") {
+		t.Fatal("claim")
+	}
+	if _, err := f.svc.ReconcileParcelInsurance(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.parcel(t, p.ID); got.InsuranceStatus != "refunded" {
+		t.Fatalf("status %s, want refunded", got.InsuranceStatus)
+	}
+	if w := f.wallet(t); w != afterBooking+200_000 {
+		t.Fatalf("wallet %d, want %d", w, afterBooking+200_000)
 	}
 }
