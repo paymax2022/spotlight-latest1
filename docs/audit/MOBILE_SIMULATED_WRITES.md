@@ -132,8 +132,8 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   exists, so check the Go side (caveats in its docstring).
 - **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
   - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3),
-    repairs (4), reports (2, read-only: flip the default only), tasks (3 — two handler files carry a
-    "stub" comment, read them first), vendors (6), facilities (4). Every call matches a handler, every
+    repairs (4), reports (2, read-only: flip the default only), tasks (3 — done in Batch 11; the
+    "stub" comment was a false positive), vendors (6), facilities (4). Every call matches a handler, every
     table exists, no read-side traps.
   - **Blocked — path mismatch, do not flip:** `ainotes` (1 of 4 calls matches; `GET
     /estate/ai-notes/:id`, `POST /estate/ai-notes/:id/approve`, `POST /estate/meetings/:id/ai-notes`
@@ -165,6 +165,18 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   (idempotency, authz, kobo validation, status guards, happy path, replay, race, error surfacing).
   1 mutation converted (`payInvoice`); e2e pin added. The dues e2e only opens the payment sheet.
 
+### Batch 11 (2026-10-17) — tasks
+- **tasks** (`src/features/tasks/api.ts`) — frontend-web handlers (`app/api/v1/estate/tasks`).
+  `verify_mobile_module.py`: **3/3 client calls match**; table `estate_tasks` exists; no read-side
+  traps. The "stub indicator" the verifier flags on both handler files is a **false positive** — its
+  regex matches the task status literal `'todo'`, not an actual stub; both handlers do real
+  insert/update. 2 mutations converted (`createTask`, `updateTaskStatus`); `getTask` stays read-side
+  (there is no GET `/:id`; it derives the task from the list, a pre-existing documented workaround).
+  e2e pin added (the e2e only reads the board). No handler tests (code reading).
+  - **Note, not changed:** like repairs/emergencies, `POST /tasks/:id/status` has no role check — any
+    resident of the estate can move any task between todo/in_progress/done. Lower stakes than repairs
+    (no money, no safety), but the same open authorization question.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -192,7 +204,7 @@ creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, emergencies,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
 one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,
-social (see Batch 4 — blocked), spotlightwealth, stays, stocks, tasks, transfers, vendors, plus
+social (see Batch 4 — blocked), spotlightwealth, stays, stocks, transfers, vendors, plus
 `src/api/doctor.client.ts` and `src/api/telemedicine.api.ts`.
 (An earlier version of this list had ~26 names: it only scanned `constants/` and `api/`
 sub-folders and missed modules whose flag lives in `api.ts` at the feature root.)
