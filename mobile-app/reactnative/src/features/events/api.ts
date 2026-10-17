@@ -508,15 +508,18 @@ const MOCK_ORGANISERS = new Map<string, MockOrganiser>(
   }]),
 );
 
+// A mock event without its tiers, as the profile and Following lists return it.
+// Like state is the live mock state, so a like on the detail shows there.
+function eventOf({ tiers: _tiers, ...ev }: EventDetail): Event {
+  const like = MOCK_LIKES.get(ev.id);
+  return like ? { ...ev, liked: like.liked, like_count: like.like_count } : ev;
+}
+
 // Upcoming public events of one organiser, as on the real profile page.
 function upcomingEventsOf(organiserId: string): Event[] {
   return MOCK_EVENTS
     .filter((e) => e.organiser_id === organiserId && (e.state === 'LIVE' || e.state === 'APPROVED'))
-    .map(({ tiers: _tiers, ...ev }): Event => {
-      // Like state is the live mock state, so a like on the detail shows here.
-      const like = MOCK_LIKES.get(ev.id);
-      return like ? { ...ev, liked: like.liked, like_count: like.like_count } : ev;
-    });
+    .map(eventOf);
 }
 
 function mockOrganiser(id: string): MockOrganiser {
@@ -601,16 +604,16 @@ export async function updateMyOrganiser(patch: OrganiserPatch): Promise<Organise
 // GET /following: upcoming events of the organisers the caller follows, paged.
 // Inputs are validated here the same way the server does (limit 1..100, offset
 // >= 0) so a bad value fails fast with a clear message instead of a 422.
-export async function listFollowingEvents(limit = 20, offset = 0): Promise<EventSummary[]> {
+export async function listFollowingEvents(limit = 20, offset = 0): Promise<Event[]> {
   checkFollowingPage(limit, offset);
   if (USE_MOCK) {
     await delay();
     return MOCK_EVENTS
       .filter((e) => MOCK_ORGANISERS.get(e.organiser_id)?.following && (e.state === 'LIVE' || e.state === 'APPROVED'))
-      .map(summaryOf)
+      .map(eventOf)
       .slice(offset, offset + limit);
   }
-  return pickList<EventSummary>(await api.get(`${API_BASE}/following`, { params: { limit, offset } }), 'events');
+  return pickList<Event>(await api.get(`${API_BASE}/following`, { params: { limit, offset } }), 'events');
 }
 
 // POST /organisers/me/banner/presign. The backend chooses the object key and
