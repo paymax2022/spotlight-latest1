@@ -81,10 +81,10 @@ type moduleSpec struct {
 // not submitted yet — counting those would show work nobody can do.
 var overviewSpecs = []moduleSpec{
 	// ------------------------------- Money --------------------------------
-	{Key: "kyc-verify", Label: "Identity verification", Group: "Money", Href: "/admin/finance/kyc-verify",
+	{Key: "kyc-verify", Label: "Identity verification", Group: "Money", Href: "/admin/finance",
 		Volume: "Sessions approved", VolSQL: `SELECT count(*) FROM public.verification_session WHERE status='APPROVED'`,
 		Attn: "Needs a human review", AttnSQL: `SELECT count(*) FROM public.verification_session WHERE status='NEEDS_REVIEW'`,
-		AttnHref: "/admin/finance/kyc-verify", Severity: "critical"},
+		AttnNote: "Verification is fully automated — no admin review surface (ADR-PR808)", Severity: "critical"},
 	{Key: "trading-kyc", Label: "Trading KYC", Group: "Money", Href: "/admin/trading/kyc",
 		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.trading_kyc WHERE status='APPROVED'`,
 		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.trading_kyc WHERE status IN ('SUBMITTED','UNDER_REVIEW')`,

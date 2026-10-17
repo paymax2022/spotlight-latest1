@@ -5,13 +5,6 @@ export const metadata = { title: 'Finance Admin — Spotlight' };
 
 const cards = [
   {
-    href: '/admin/finance/kyc-verify',
-    title: 'KYC Verification',
-    description: 'Review identity checks (Dojah/Smile ID/Youverify) and approve or reject cases.',
-    icon: '🪪',
-    accent: colors.warning,
-  },
-  {
     href: '/admin/finance/wallets',
     title: 'Wallet Lookup',
     description: "View any user's wallet balance and transaction history.",
