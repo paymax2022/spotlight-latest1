@@ -299,6 +299,10 @@ type parcelFrozenPricing struct {
 	// Rate is the rate-card cell the quote used; nil means legacy multipliers
 	// (the card was off, had no such cell, or the intent predates the card).
 	Rate *parcelRate `json:"rate,omitempty"`
+	// InsuranceKobo is the prepaid insurance premium the card was charged for
+	// (insure ticked); 0 = no premium. Frozen like the fare: the booking holds
+	// exactly this, never a premium re-priced from the live catalog rate.
+	InsuranceKobo int64 `json:"insuranceKobo,omitempty"`
 }
 
 // priceParcelFrozen is priceParcel over frozen inputs; a nil frozen falls back
@@ -337,32 +341,31 @@ func (s *Service) BookParcel(ctx context.Context, senderID string, req ParcelBoo
 }
 
 // QuoteParcelBooking returns the EXACT amount (kobo) a card-direct parcel
-// booking will be charged: the fare only — see bookParcel. Pure read; used
-// by transport/paystackcheckout to decide what to ask Paystack for. Never
-// trusted as final: BookParcelPaystackFunded independently recomputes it.
+// booking will be charged: the fare, plus the prepaid insurance premium when
+// insure is ticked — see bookParcel. Pure read. Never trusted as final:
+// BookParcelPaystackFunded independently recomputes it. No sender, so the
+// sender-profile check is left to the booking (QuoteParcelBookingFrozenFor
+// runs it at initiate).
 func (s *Service) QuoteParcelBooking(ctx context.Context, req ParcelBookRequest) (int64, error) {
-	req.RouteToken = "" // card-direct prices a live route; route tokens are wallet-only
-	if s.prepaidInsurance(req) {
-		return 0, codedErr(http.StatusUnprocessableEntity, CodeInsuranceCardNotSupported, "insurance can be added when paying from your wallet; card payment does not include it yet")
-	}
-	if !req.ProhibitedAck {
-		return 0, codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
-	}
-	p, err := s.priceParcel(ctx, req)
-	if err != nil {
-		return 0, err
-	}
-	return p.fare, nil
+	amount, _, err := s.QuoteParcelBookingFrozenFor(ctx, "", req)
+	return amount, err
 }
 
 // QuoteParcelBookingFrozen is QuoteParcelBooking plus the frozen priced inputs
 // (JSON) the card-direct engine stores in the intent and hands back to
 // BookParcelPaystackFundedFrozen.
 func (s *Service) QuoteParcelBookingFrozen(ctx context.Context, req ParcelBookRequest) (int64, json.RawMessage, error) {
+	return s.QuoteParcelBookingFrozenFor(ctx, "", req)
+}
+
+// QuoteParcelBookingFrozenFor is the card-direct initiate quote for senderID.
+// With insure ticked (FEATURE_PARCEL_PREPAID_INSURANCE) the amount is fare +
+// the estimate's premium and the premium is frozen next to the fare; a parcel
+// that could never be covered is refused here, before anything is charged
+// (the wallet-balance check does not apply: the card pays). senderID "" skips
+// the profile check only — the booking re-runs every eligibility check.
+func (s *Service) QuoteParcelBookingFrozenFor(ctx context.Context, senderID string, req ParcelBookRequest) (int64, json.RawMessage, error) {
 	req.RouteToken = "" // card-direct prices a live route; route tokens are wallet-only
-	if s.prepaidInsurance(req) {
-		return 0, nil, codedErr(http.StatusUnprocessableEntity, CodeInsuranceCardNotSupported, "insurance can be added when paying from your wallet; card payment does not include it yet")
-	}
 	if !req.ProhibitedAck {
 		return 0, nil, codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
 	}
@@ -370,11 +373,20 @@ func (s *Service) QuoteParcelBookingFrozen(ctx context.Context, req ParcelBookRe
 	if err != nil {
 		return 0, nil, err
 	}
-	frozen, err := json.Marshal(parcelFrozenPricing{DistanceM: pr.route.DistanceM, DurationS: pr.route.DurationS, Config: *pr.cfg, Rate: pr.rate})
+	fp := parcelFrozenPricing{DistanceM: pr.route.DistanceM, DurationS: pr.route.DurationS, Config: *pr.cfg, Rate: pr.rate}
+	amount := pr.fare
+	if s.prepaidInsurance(req) {
+		if err := s.checkPrepaidInsuranceEligible(ctx, senderID, req, pr.insurance); err != nil {
+			return 0, nil, err
+		}
+		fp.InsuranceKobo = pr.insurance
+		amount += pr.insurance
+	}
+	frozen, err := json.Marshal(fp)
 	if err != nil {
 		return 0, nil, fmt.Errorf("transport: freeze parcel pricing: %w", err)
 	}
-	return pr.fare, frozen, nil
+	return amount, frozen, nil
 }
 
 // FindParcelByIdempotencyKey returns the parcel already booked under
@@ -480,6 +492,7 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 	}
 	var pr *parcelPricing
 	var err error
+	var frozenPremium int64
 	if external && len(frozenPricing) > 0 {
 		// Price from the inputs frozen at quote time, NOT a fresh routing call:
 		// the customer was charged for exactly that number.
@@ -487,6 +500,7 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		if jerr := json.Unmarshal(frozenPricing, &frozen); jerr != nil {
 			return "", fmt.Errorf("transport: frozen parcel pricing unreadable: %w", jerr)
 		}
+		frozenPremium = frozen.InsuranceKobo
 		pr, err = s.priceParcelFrozen(ctx, req, &frozen)
 	} else {
 		pr, err = s.priceParcel(ctx, req)
@@ -502,10 +516,21 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 	insured := s.prepaidInsurance(req)
 	var premium int64
 	var expectedPremium *int64
-	if insured {
-		if external {
-			return "", codedErr(http.StatusUnprocessableEntity, CodeInsuranceCardNotSupported, "insurance can be added when paying from your wallet; card payment does not include it yet")
+	if insured && external {
+		// Card: the premium the card was charged for, frozen at initiate (a
+		// catalog rate change since must not turn the charge into a mismatch).
+		// Re-checked here because the money is already collected: a parcel that
+		// can no longer be covered is refused, and the engine refunds the charge.
+		if frozenPremium > 0 {
+			premium = frozenPremium
+		} else {
+			premium = insurance
 		}
+		insurance = premium
+		if err := s.checkPrepaidInsuranceEligible(ctx, senderID, req, premium); err != nil {
+			return "", err
+		}
+	} else if insured {
 		premium, expectedPremium = insurance, req.ExpectedInsuranceKobo
 		if err := s.checkPrepaidInsurance(ctx, senderID, idempotencyKey, req, fare, premium); err != nil {
 			return "", err
@@ -523,7 +548,8 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		// Cross-check BEFORE anything writes: pricing config can move between
 		// the quote that set the charge and this call; never trust the quote,
 		// only what was actually collected.
-		if fare != verifiedAmountKobo {
+		// The charge must be exactly fare + premium (premium 0 uninsured).
+		if fare+premium != verifiedAmountKobo {
 			return "", codedErr(http.StatusConflict, CodeAmountMismatch, "verified payment amount no longer matches the parcel fare")
 		}
 	} else if err := checkExpectedParcelFare(req.ExpectedFareKobo, fare); err != nil {
@@ -549,24 +575,35 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		parcelID = externalParcelID(idempotencyKey)
 	}
 	ref := "parcel:" + parcelID
+	// escrowKey: an insured CARD charge funds two things (fare + premium), so
+	// its fare is one PIECE of the charge ("<ref>:fare") and is refunded to the
+	// card for exactly its own amount — never the whole charge.
+	escrowKey := idempotencyKey
 	if insured {
-		// Premium first: if the fare escrow then fails, the premium is refunded
-		// below; nothing is left half-paid.
-		if err := s.holdParcelPremium(ctx, senderID, idempotencyKey, premium); err != nil {
+		// Premium first: if the fare escrow then fails, a same-key retry reuses
+		// it, or it is unwound/refunded (see the error branch below).
+		if external {
+			escrowKey = idempotencyKey + ":fare"
+			err = s.holdParcelPremiumCard(ctx, senderID, idempotencyKey, premium)
+		} else {
+			err = s.holdParcelPremium(ctx, senderID, idempotencyKey, premium)
+		}
+		if err != nil {
 			return "", err
 		}
 	}
 	var sett *settlement.Settlement
 	if external {
-		sett, err = s.settlement.EscrowExternal(ctx, senderID, ref, idempotencyKey, "transport", fare)
+		sett, err = s.settlement.EscrowExternal(ctx, senderID, ref, escrowKey, "transport", fare)
 	} else {
 		sett, err = s.escrowCheckout(ctx, senderID, ref, idempotencyKey, fare)
 	}
 	if err != nil {
 		// A held premium is NOT refunded here: a same-key retry reuses it, and if
 		// the booking is never retried the orphan sweep (ReconcileParcelInsurance)
-		// refunds it after a grace period. Refunding now would turn the retry
-		// into a key conflict.
+		// refunds it after a grace period — or, for a card charge, the engine
+		// unwinds it (UnwindParcelPremiumHold) before refunding the charge.
+		// Refunding now would turn the retry into a key conflict.
 		return "", fmt.Errorf("transport: escrow parcel fare: %w", err)
 	}
 	if external {
