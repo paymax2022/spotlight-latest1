@@ -6,6 +6,7 @@ package top5events
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/google/uuid"
 )
@@ -105,11 +106,36 @@ func (s *Service) checkFollowTarget(ctx context.Context, userID, organiserID str
 }
 
 // ListFollowingEvents is the Following feed: upcoming LIVE or APPROVED events of
-// the organisers userID follows, ordered by starts_at. A user who follows nobody
-// gets an empty (non-nil) list.
-func (s *Service) ListFollowingEvents(ctx context.Context, userID string) ([]Event, error) {
+// the organisers userID follows, ordered by starts_at. limit must be 1..100 and
+// offset >= 0, otherwise ErrValidation (422). A user who follows nobody gets an
+// empty (non-nil) list.
+func (s *Service) ListFollowingEvents(ctx context.Context, userID string, limit, offset int) ([]Event, error) {
 	if _, err := uuid.Parse(userID); err != nil {
 		return nil, fmt.Errorf("%w: events: user required", ErrValidation)
 	}
-	return listFollowingEvents(ctx, s.db, userID)
+	if limit < 1 || limit > followingFeedMax {
+		return nil, fmt.Errorf("%w: events: limit must be between 1 and %d", ErrValidation, followingFeedMax)
+	}
+	if offset < 0 {
+		return nil, fmt.Errorf("%w: events: offset must be 0 or more", ErrValidation)
+	}
+	return listFollowingEvents(ctx, s.db, userID, limit, offset)
+}
+
+// followingPage parses the limit and offset query values of the Following feed
+// (defaults 20 and 0). Anything non-numeric or out of range is ErrValidation. The
+// route handler calls it, then ListFollowingEvents.
+func followingPage(limitQ, offsetQ string) (limit, offset int, err error) {
+	limit, offset = 20, 0
+	if limitQ != "" {
+		if limit, err = strconv.Atoi(limitQ); err != nil || limit < 1 || limit > followingFeedMax {
+			return 0, 0, fmt.Errorf("%w: events: limit must be between 1 and %d", ErrValidation, followingFeedMax)
+		}
+	}
+	if offsetQ != "" {
+		if offset, err = strconv.Atoi(offsetQ); err != nil || offset < 0 {
+			return 0, 0, fmt.Errorf("%w: events: offset must be 0 or more", ErrValidation)
+		}
+	}
+	return limit, offset, nil
 }

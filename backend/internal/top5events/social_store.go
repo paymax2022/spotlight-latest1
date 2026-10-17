@@ -211,13 +211,17 @@ func likeCaller(callerID string) any {
 	return callerID
 }
 
-// followingFeedMax bounds the Following feed until the handler adds pagination.
+// followingFeedMax is the hard upper bound for the Following feed page size.
 const followingFeedMax = 100
 
 // listFollowingEvents returns upcoming LIVE or APPROVED events of the organisers
 // userID follows, soonest first, with Liked set for userID. One query: the
-// follow row is joined to events on organiser_id.
-func listFollowingEvents(ctx context.Context, db *pgxpool.Pool, userID string) ([]Event, error) {
+// follow row is joined to events on organiser_id. limit and offset are already
+// validated by the caller.
+//
+// The LEFT JOIN on event_likes below repeats the eventLikedJoin text on purpose:
+// here the caller is $1, not $2, so do not "deduplicate" it into the constant.
+func listFollowingEvents(ctx context.Context, db *pgxpool.Pool, userID string, limit, offset int) ([]Event, error) {
 	q := `SELECT ` + eventSelectCols + `
 		  FROM organiser_follows f
 		  JOIN events e ON e.organiser_id = f.organiser_id
@@ -226,8 +230,8 @@ func listFollowingEvents(ctx context.Context, db *pgxpool.Pool, userID string) (
 		   AND e.state IN ('LIVE','APPROVED')
 		   AND e.starts_at >= now()
 		 ORDER BY e.starts_at ASC, e.id ASC
-		 LIMIT $2`
-	rows, err := db.Query(ctx, q, userID, followingFeedMax)
+		 LIMIT $2 OFFSET $3`
+	rows, err := db.Query(ctx, q, userID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("events: following: %w", err)
 	}

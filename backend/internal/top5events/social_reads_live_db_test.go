@@ -81,7 +81,7 @@ func TestListFollowingEvents_OnlyFollowedOrganisers(t *testing.T) {
 		t.Fatalf("FollowOrganiser: %v", err)
 	}
 
-	feed, err := svc.ListFollowingEvents(ctx, user)
+	feed, err := svc.ListFollowingEvents(ctx, user, 100, 0)
 	if err != nil {
 		t.Fatalf("ListFollowingEvents: %v", err)
 	}
@@ -108,12 +108,55 @@ func TestListFollowingEvents_OnlyFollowedOrganisers(t *testing.T) {
 
 	// A user who follows nobody gets an empty, non-nil feed.
 	other := seedTicketTokenUser(t, ctx, pool)
-	empty, err := svc.ListFollowingEvents(ctx, other)
+	empty, err := svc.ListFollowingEvents(ctx, other, 100, 0)
 	if err != nil {
 		t.Fatalf("ListFollowingEvents (no follows): %v", err)
 	}
 	if empty == nil || len(empty) != 0 {
 		t.Fatalf("feed for a user with no follows = %v, want empty non-nil slice", empty)
+	}
+}
+
+func TestListFollowingEvents_Pagination(t *testing.T) {
+	pool := ticketTokenPool(t)
+	ctx := context.Background()
+	svc := ticketTokenService(pool)
+
+	org := seedTicketTokenUser(t, ctx, pool)
+	user := seedTicketTokenUser(t, ctx, pool)
+	first := seedSocialEvent(t, ctx, pool, org, "LIVE")
+	second := seedSocialEvent(t, ctx, pool, org, "LIVE")
+	// Fix the order: first starts before second.
+	if _, err := pool.Exec(ctx, `UPDATE events SET starts_at = now() + interval '1 day' WHERE id=$1`, first); err != nil {
+		t.Fatalf("set first start: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE events SET starts_at = now() + interval '2 days', ends_at = now() + interval '3 days' WHERE id=$1`, second); err != nil {
+		t.Fatalf("set second start: %v", err)
+	}
+	if _, err := svc.FollowOrganiser(ctx, user, org); err != nil {
+		t.Fatalf("FollowOrganiser: %v", err)
+	}
+
+	page1, err := svc.ListFollowingEvents(ctx, user, 1, 0)
+	if err != nil {
+		t.Fatalf("limit 1: %v", err)
+	}
+	if len(page1) != 1 || page1[0].ID != first {
+		t.Fatalf("limit 1 offset 0 = %v, want exactly the first event %s", page1, first)
+	}
+	page2, err := svc.ListFollowingEvents(ctx, user, 1, 1)
+	if err != nil {
+		t.Fatalf("limit 1 offset 1: %v", err)
+	}
+	if len(page2) != 1 || page2[0].ID != second {
+		t.Fatalf("limit 1 offset 1 = %v, want exactly the second event %s", page2, second)
+	}
+	page3, err := svc.ListFollowingEvents(ctx, user, 1, 2)
+	if err != nil {
+		t.Fatalf("limit 1 offset 2: %v", err)
+	}
+	if len(page3) != 0 {
+		t.Fatalf("offset past the end = %d rows, want 0", len(page3))
 	}
 }
 

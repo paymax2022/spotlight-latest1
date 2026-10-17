@@ -9531,7 +9531,7 @@ paths:
           schema: { type: integer, default: 0, minimum: 0 }
       responses:
         '200':
-          description: Event summaries, soonest first
+          description: Events, soonest first
           content:
             application/json:
               schema:
@@ -9540,7 +9540,7 @@ paths:
                   success: { type: boolean }
                   data:
                     type: array
-                    items: { $ref: '#/components/schemas/EventSummary' }
+                    items: { $ref: '#/components/schemas/Event' }
 
   # ── Events admin (RBAC events.*) — mounted at /api/events/admin/*, OUTSIDE the
   # /api/finance server base (see `servers:` above). Documented here as full
