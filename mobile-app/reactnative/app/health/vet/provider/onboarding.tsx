@@ -30,6 +30,7 @@ export default function ProviderOnboardingScreen() {
   const [uploadState, setUploadState] = useState<UploadFieldState>('empty');
   const [licenceFile, setLicenceFile] = useState<PickedUpload>();
   const [uploadErr, setUploadErr] = useState<string>();
+  const [submitErr, setSubmitErr] = useState<string>();
 
   const pickLicence = async () => {
     setUploadErr(undefined);
@@ -103,6 +104,7 @@ export default function ProviderOnboardingScreen() {
     setErrors(e);
     if (Object.keys(e).length) return;
     setUploadErr(undefined);
+    setSubmitErr(undefined);
     submit.mutate(
       {
         displayName: displayName.trim(),
@@ -112,7 +114,12 @@ export default function ProviderOnboardingScreen() {
       },
       {
         onSuccess: () => refetch(),
-        onError: () => setUploadErr('Could not submit your licence document. Please try again.'),
+        onError: (err) => {
+          const e = err as { response?: { data?: { message?: string; error?: string } }; message?: string };
+          setSubmitErr(
+            e?.response?.data?.message ?? e?.response?.data?.error ?? e?.message ?? 'Could not submit for verification. Please try again.',
+          );
+        },
       },
     );
   };
@@ -143,6 +150,7 @@ export default function ProviderOnboardingScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
+        {!!submitErr && <Text style={styles.submitErr}>{submitErr}</Text>}
         <PrimaryButton label="Submit for verification" onPress={onSubmit} loading={submit.isPending} />
       </View>
     </SafeAreaView>
@@ -158,5 +166,6 @@ const styles = StyleSheet.create({
   statusIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
   statusTitle: { ...Typography.headlineMd, fontSize: 20, color: Colors.onSurface },
   statusSub: { ...Typography.bodySm, color: Colors.onSurfaceVariant, textAlign: 'center', lineHeight: 19 },
+  submitErr: { ...Typography.bodySm, color: Colors.error, marginBottom: Spacing.sm, textAlign: 'center' },
   footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background },
 });

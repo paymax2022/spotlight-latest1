@@ -140,3 +140,16 @@ export const RX_FORM_OPTIONS = ['tablet', 'capsule', 'oral suspension', 'injecta
 export function newIdempotencyKey(prefix = 'vet'): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
+
+export const BREED_OTHER = 'Other (specify)';
+
+// Common breeds per species for the Add-a-pet dropdown. "Other (specify)" is
+// always last and reveals a free-text field, so no pet is blocked by the list.
+export const BREEDS_BY_SPECIES: Record<PetSpecies, string[]> = {
+  dog: ['Mixed breed', 'Boerboel', 'German Shepherd', 'Labrador Retriever', 'Golden Retriever', 'Rottweiler', 'Pit Bull', 'Bulldog', 'Poodle', 'Beagle', 'Husky', 'Great Dane', 'Mastiff', 'Chihuahua', 'Local / Native', BREED_OTHER],
+  cat: ['Domestic Shorthair', 'Domestic Longhair', 'Persian', 'Siamese', 'Maine Coon', 'British Shorthair', 'Bengal', 'Ragdoll', BREED_OTHER],
+  bird: ['Parrot', 'African Grey', 'Budgerigar', 'Cockatiel', 'Canary', 'Chicken', 'Pigeon', BREED_OTHER],
+  rabbit: ['Mixed breed', 'Dutch', 'Lop', 'Netherland Dwarf', 'New Zealand White', BREED_OTHER],
+  reptile: ['Tortoise', 'Turtle', 'Bearded Dragon', 'Ball Python', 'Iguana', 'Gecko', BREED_OTHER],
+  other: [BREED_OTHER],
+};
