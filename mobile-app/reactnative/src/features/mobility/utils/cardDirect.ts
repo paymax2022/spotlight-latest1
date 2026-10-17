@@ -91,6 +91,9 @@ export interface ParcelCardDirectInput {
   prohibitedAck: boolean;
   email?: string;
   callbackUrl?: string;
+  // Sent so the server refuses it (422 INSURANCE_CARD_NOT_SUPPORTED) rather
+  // than silently booking the parcel uninsured on the card rail.
+  insure?: boolean;
 }
 
 /**
@@ -113,6 +116,7 @@ export function buildParcelCardDirectBody(req: ParcelCardDirectInput): Record<st
   };
   if (req.email) body.email = req.email;
   if (req.callbackUrl) body.callback_url = req.callbackUrl;
+  if (req.insure) body.insure = true;
   return body;
 }
 

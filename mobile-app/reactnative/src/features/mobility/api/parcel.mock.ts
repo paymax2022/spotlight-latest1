@@ -2,6 +2,7 @@
 // only ever reads the values it returns, never recomputes fares.
 
 import type {
+  ParcelBookRequest,
   Parcel,
   ParcelEstimate,
   ParcelEstimateRequest,
@@ -124,6 +125,8 @@ export function advanceMockParcel(p: Parcel): Parcel {
   if (p.phase === 'created' && ageMs > 6_000) {
     p.phase = 'courier_assigned';
     p.courier = MOCK_COURIER;
+    // Courier accept is when the insurer binds the prepaid cover (ADR-PR836).
+    if (p.insuranceStatus === 'held') p.insuranceStatus = 'bound';
   }
   if (p.phase === 'courier_assigned' && ageMs > 14_000) p.phase = 'pickup_pin_verified';
   if (p.phase === 'pickup_pin_verified' && ageMs > 20_000) p.phase = 'picked_up';
@@ -156,4 +159,35 @@ export function mockCourierRequests(): CourierParcelRequest[] {
     mk('pcl_req_1', DEFAULT_PICKUP, DEFAULT_DROPOFF, 'documents', 'small', 'express'),
     mk('pcl_req_2', { address: 'The Palms, Lekki', lat: 6.4396, lng: 3.4509 }, { address: 'Yaba, Lagos', lat: 6.5095, lng: 3.3711 }, 'electronics', 'medium', 'standard'),
   ];
+}
+
+// ── Booking refusals (mock) ─────────────────────────────────────────────────
+// The server's insurance refusals in the axios error shape, so the screen's
+// handling can be exercised on the mock build. A QA knob picks one:
+//   globalThis.__PARCEL_MOCK_BOOK_ERROR__ = 'INSURANCE_PROFILE_INCOMPLETE'
+// (one-shot: it clears after firing). Mock builds only — the live path never reads it.
+
+export function mockRefusal(status: number, code: string, details: Record<string, unknown> = {}): never {
+  const err = new Error(code) as Error & { response: { status: number; data: Record<string, unknown> } };
+  err.response = { status, data: { code, error: code, ...details } };
+  throw err;
+}
+
+const MOCK_REFUSALS: Record<string, (req: ParcelBookRequest) => never> = {
+  INSURANCE_PROFILE_INCOMPLETE: () => mockRefusal(422, 'INSURANCE_PROFILE_INCOMPLETE', { missing: ['gender', 'date_of_birth', 'address'] }),
+  INSURANCE_DECLARED_VALUE_REQUIRED: () => mockRefusal(422, 'INSURANCE_DECLARED_VALUE_REQUIRED'),
+  INSUFFICIENT_FUNDS: () => mockRefusal(402, 'INSUFFICIENT_FUNDS'),
+  IDEMPOTENCY_KEY_CONFLICT: () => mockRefusal(409, 'IDEMPOTENCY_KEY_CONFLICT'),
+  FARE_CHANGED: (req) => mockRefusal(409, 'FARE_CHANGED', {
+    insurance_kobo: (req.expectedInsuranceKobo ?? 0) + 500_00,
+    expected_insurance_kobo: req.expectedInsuranceKobo ?? 0,
+  }),
+};
+
+export function mockBookRefusal(req: ParcelBookRequest): void {
+  const g = globalThis as { __PARCEL_MOCK_BOOK_ERROR__?: string };
+  const code = g.__PARCEL_MOCK_BOOK_ERROR__;
+  if (!code || !MOCK_REFUSALS[code]) return;
+  g.__PARCEL_MOCK_BOOK_ERROR__ = undefined;
+  MOCK_REFUSALS[code](req);
 }
