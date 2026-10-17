@@ -14,6 +14,7 @@ import type {
   Place,
 } from '../types/modes.types';
 import { haversineMeters } from '../utils/mobilityFormatters';
+import { advanceParcelPhase } from '../utils/parcelMockAdvance';
 
 const now = () => Date.now();
 const iso = (msAgo = 0) => new Date(now() - msAgo).toISOString();
@@ -118,28 +119,9 @@ export const MOCK_PARCEL_HISTORY: Parcel[] = [
   }),
 ];
 
-/** Advances the active parcel through its state machine over time. */
+/** Advances a parcel through its state machine over time (a new object when it moves). */
 export function advanceMockParcel(p: Parcel): Parcel {
-  if (['delivered', 'cancelled', 'failed'].includes(p.phase)) return p;
-  const ageMs = now() - new Date(p.createdAt).getTime();
-  if (p.phase === 'created' && ageMs > 6_000) {
-    p.phase = 'courier_assigned';
-    p.courier = MOCK_COURIER;
-    // Courier accept is when the insurer binds the prepaid cover (ADR-PR836).
-    if (p.insuranceStatus === 'held') p.insuranceStatus = 'bound';
-  }
-  if (p.phase === 'courier_assigned' && ageMs > 14_000) p.phase = 'pickup_pin_verified';
-  if (p.phase === 'pickup_pin_verified' && ageMs > 20_000) p.phase = 'picked_up';
-  if (p.phase === 'picked_up' && ageMs > 26_000) p.phase = 'in_transit';
-  if (p.phase === 'in_transit' && ageMs > 40_000) {
-    p.phase = 'delivered';
-    p.paymentStatus = 'settled';
-    p.proofUrl = 'mock://proof/live';
-    p.deliveredAt = iso();
-    p.pickupPin = null;
-    p.dropoffPin = null;
-  }
-  return p;
+  return advanceParcelPhase(p, now(), MOCK_COURIER);
 }
 
 export function mockCourierRequests(): CourierParcelRequest[] {
