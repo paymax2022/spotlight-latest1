@@ -76,6 +76,7 @@
 |---|---|---|---|---|
 | `VIDEOSDK_API_KEY` | backend | **SECRET** | doctor | RTC provider |
 | `VIDEOSDK_SECRET` | backend | **SECRET** | doctor | RTC provider |
+| `AUTH_SLOW_LOG_MS` | backend | config | all authenticated routes | log the per-step timings of any request whose authentication stage takes at least this many ms (default 750; 0 = off) |
 | `FEATURE_LIVEKIT_ENABLED` | backend | flag | academy live | switches live classes to self-hosted LiveKit; off by default (docs/runbooks/livekit.md) |
 | `LIVEKIT_URL` | backend | config | academy live | `wss://` URL of the LiveKit server (`ws://` only in development) |
 | `LIVEKIT_API_KEY` | backend | config | academy live | LiveKit key name; same as the server's |

@@ -39,6 +39,8 @@ type NavItem = {
 const navItemsBase: NavItem[] = [
   { label: 'Dashboard', href: '/admin', section: 'Overview' },
   { label: 'Analytics', href: '/admin/analytics', section: 'Overview' },
+  { label: 'Navigation Analytics', href: '/admin/analytics/navigation', section: 'Overview', permissions: ['audit.logs.view'] },
+  { label: 'Navigation Funnel', href: '/admin/analytics/navigation/funnel', section: 'Overview', permissions: ['audit.logs.view'] },
   // Centralized, read-only view of ALL ledger_entries across every module (no
   // per-module transactions table exists). Kept as its OWN top-level section
   // (not nested under 'Finance') so it is a first-class, always-visible entry
@@ -109,7 +111,6 @@ const navItemsBase: NavItem[] = [
   // ADR-005 maker-checker checker-side queue (WAL-004) — finance:adjust:approve
   // cannot approve their own proposal (enforced server-side).
   { label: 'Adjustment Approvals', href: '/admin/payments-finance/adjustments', section: 'Finance', permissions: ['finance:adjust:approve'] },
-  { label: 'KYC Verification', href: '/admin/finance/kyc-verify', section: 'Finance', permissions: ['finance.admin.kyc'] },
   { label: 'Wallet Lookup', href: '/admin/finance/wallets', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'Disputes', href: '/admin/finance/disputes', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'Transfers', href: '/admin/finance/transfers', section: 'Finance', permissions: ['finance.admin.transfers'] },

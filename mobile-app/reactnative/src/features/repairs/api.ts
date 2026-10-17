@@ -17,7 +17,10 @@ export interface RepairRequest {
 export interface CreateRepairInput { category: RepairCategory; description: string; urgency: RepairUrgency; idempotencyKey: string; }
 export interface AddRepairUpdateInput { status: RepairStatus; note?: string; idempotencyKey: string; }
 
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REPAIRS_USE_MOCK, true);
+// The /api/v1/estate/repairs handlers are live and query real tables, so this defaults to live:
+// a forgotten flag fails visibly instead of inventing tickets. Set EXPO_PUBLIC_REPAIRS_USE_MOCK=true
+// to force fixtures locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REPAIRS_USE_MOCK, false);
 
 // Repairs/maintenance are served by the resident-scoped frontend-web handlers
 // under /api/v1/estate/repairs (GET list, POST create, GET/POST /{id}/updates).
@@ -56,7 +59,7 @@ export const STATUS_META: Record<RepairStatus, { label: string; color: string; b
 export const STATUS_FLOW: RepairStatus[] = ['reported', 'inspection', 'assigned', 'in_progress', 'completed'];
 
 const H = 3_600_000, iso = (o: number) => new Date(Date.now() + o).toISOString();
-let repairs: RepairRequest[] = [
+const repairs: RepairRequest[] = [
   { id: 'r1', estateId: 'est_amber_court', reporterId: 'res_2', reporterName: 'Ngozi Okeke', category: 'generator', description: 'Estate generator tripping every evening at peak load.', urgency: 'high', status: 'in_progress', costEstimateKobo: 4_500_000, createdAt: iso(-48 * H), updates: [
     { id: 'u1', status: 'inspection', note: 'Technician inspected the AVR.', byName: 'Estate Admin', createdAt: iso(-40 * H) },
     { id: 'u2', status: 'in_progress', note: 'Awaiting replacement AVR part.', byName: 'Estate Admin', createdAt: iso(-20 * H) },
@@ -64,6 +67,12 @@ let repairs: RepairRequest[] = [
   { id: 'r2', estateId: 'est_amber_court', reporterId: 'res_4', reporterName: 'Tunde Bello', category: 'road', description: 'Pothole near Gate B is widening after the rains.', urgency: 'medium', status: 'reported', createdAt: iso(-6 * H), updates: [] },
 ];
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+
+// createRepair and addRepairUpdate have live route handlers, so fixture mode refuses loudly
+// instead of reporting a repair filed or a status moved that never reached the database.
+// Mirrors frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a repair change it did not make. Set EXPO_PUBLIC_REPAIRS_USE_MOCK=false to do this against the live backend.`);
 const idem = (k?: string) => ({ headers: { 'Idempotency-Key': k ?? generateIdempotencyKey() } });
 
 export async function listRepairs(): Promise<RepairRequest[]> {
@@ -82,18 +91,10 @@ export async function getRepair(id: string): Promise<RepairRequest> {
 }
 
 export async function createRepair(input: CreateRepairInput): Promise<RepairRequest> {
-  if (USE_MOCK) {
-    await latency(400);
-    const r: RepairRequest = { id: `r_${Date.now()}`, estateId: 'est_amber_court', reporterId: 'res_demo', reporterName: 'You', category: input.category, description: input.description.trim(), urgency: input.urgency, status: 'reported', createdAt: new Date().toISOString(), updates: [] };
-    repairs = [r, ...repairs]; return { ...r };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Reporting a repair');
   const { data } = await api.post<RepairRequest>(REPAIRS_API_BASE, input, idem(input.idempotencyKey)); return data;
 }
 export async function addRepairUpdate(id: string, input: AddRepairUpdateInput): Promise<RepairRequest> {
-  if (USE_MOCK) {
-    await latency(300); const r = repairs.find((x) => x.id === id); if (!r) throw new Error('Not found');
-    r.status = input.status; r.updates = [...(r.updates ?? []), { id: `u_${Date.now()}`, status: input.status, note: input.note?.trim() || undefined, byName: 'You', createdAt: new Date().toISOString() }];
-    return { ...r, updates: r.updates.slice() };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Updating a repair');
   const { data } = await api.post<RepairRequest>(`${REPAIRS_API_BASE}/${id}/updates`, input, idem(input.idempotencyKey)); return data;
 }

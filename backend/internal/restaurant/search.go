@@ -174,6 +174,9 @@ func (s *Service) UpdateRestaurantProfile(ctx context.Context, restaurantID, use
 			return err
 		}
 	}
+	if err := s.validateStoreImageRefs(restaurantID, req.LogoURL, nil); err != nil {
+		return err
+	}
 	if req.LogoURL != nil {
 		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET logo_url=$1, updated_at=NOW() WHERE id=$2`, nullIfEmpty(*req.LogoURL), restaurantID); err != nil {
 			return err
@@ -219,5 +222,14 @@ func (s *Service) SearchRestaurants(ctx context.Context, p SearchParams) ([]Rest
 		r.DistanceMeters = dist
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	ptrs := make([]*Restaurant, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	s.finishStoreImages(ctx, ptrs...)
+	return out, nil
 }

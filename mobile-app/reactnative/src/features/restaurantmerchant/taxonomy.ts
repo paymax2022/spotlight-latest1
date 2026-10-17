@@ -1,6 +1,8 @@
 // Owner add-item form logic for the admin-managed menu taxonomy. Pure: no React,
 // no network. The server re-checks everything; this only keeps the form honest.
 
+import { parseNaira, ITEM_PRICE_BOUNDS } from './money';
+
 export interface TaxonomyChild {
   id: string;
   name: string;
@@ -87,8 +89,10 @@ export function validateItemDraft(
   const name = d.name.trim();
   if (!name) errors.name = 'Enter the item name.';
   else if (name.length > 200) errors.name = 'Keep the name under 200 characters.';
-  const priceKobo = nairaToKobo(d.priceNaira);
-  if (priceKobo === null) errors.price = 'Enter a price in naira, more than zero (e.g. 2500 or 2500.50).';
+  // The shared money rules: integer kobo from text, > 0 and within the server's ceiling.
+  const priceParsed = parseNaira(d.priceNaira, ITEM_PRICE_BOUNDS);
+  const priceKobo = priceParsed.ok ? priceParsed.kobo : null;
+  if (!priceParsed.ok) errors.price = priceParsed.error;
   const prep = parsePrepMinutes(d.prepMinutes);
   if (prep === null) errors.prep = 'Prep time must be whole minutes from 5 to 180, or left empty.';
 

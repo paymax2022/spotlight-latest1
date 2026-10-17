@@ -91,6 +91,8 @@ export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
         photo_url: req.photoUrl,
         prohibited_ack: req.prohibitedAck,
         payment_method: req.paymentMethod,
+        ...(req.expectedFareKobo != null ? { expected_fare_kobo: req.expectedFareKobo } : {}),
+        ...(req.routeToken ? { route_token: req.routeToken } : {}),
       },
       idemHeader(req.idempotencyKey),
     ),

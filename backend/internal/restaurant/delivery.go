@@ -41,6 +41,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.HasPromo, &r.IsFeatured, &r.LikeCount); err != nil {
 		return nil, errors.New("restaurant: not found")
 	}
+	s.finishStoreImages(ctx, &r)
 
 	cats := map[string]*MenuCategory{}
 	var order []string
@@ -428,7 +429,16 @@ func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Rest
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	ptrs := make([]*Restaurant, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	s.finishStoreImages(ctx, ptrs...)
+	return out, nil
 }
 
 // getRestaurantCore returns the core restaurant row (no menu) — used by the
@@ -444,6 +454,7 @@ func (s *Service) getRestaurantCore(ctx context.Context, restaurantID string) (*
 		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.LikeCount); err != nil {
 		return nil, ErrRestaurantNotFound
 	}
+	s.finishStoreImages(ctx, &r)
 	return &r, nil
 }
 
@@ -454,6 +465,9 @@ type UpdateRestaurantRequest struct {
 	Description *string `json:"description,omitempty"`
 	Address     *string `json:"address,omitempty"`
 	LogoURL     *string `json:"logo_url,omitempty"`
+	// BannerURL is the storefront banner: an http(s) link, or the object key returned by
+	// POST /restaurant/:id/images/presign for kind=banner. Empty leaves it unchanged.
+	BannerURL *string `json:"banner_url,omitempty"`
 	// PackagingFeeKobo is the price of ONE takeaway pack. The platform seeds ₦200,
 	// but the price is the owner's to set — including 0, for a restaurant that does
 	// not charge for packaging. A POINTER so that 0 is a real choice and not
@@ -509,6 +523,12 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 	if !validGeoPointPair(req.GeoLat, req.GeoLng) {
 		return nil, errors.New("restaurant: invalid coordinates")
 	}
+	// An image reference must be a web link or a key minted for THIS restaurant and that
+	// kind: otherwise one outlet could point at another's object, a banner could be saved
+	// as a logo, and a device file:// URI (visible only on the owner's phone) could be stored.
+	if err := s.validateStoreImageRefs(restaurantID, req.LogoURL, req.BannerURL); err != nil {
+		return nil, err
+	}
 	const q = `UPDATE restaurants
 	              SET name               = COALESCE($2, name),
 	                  description        = COALESCE($3, description),
@@ -519,6 +539,11 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 	            WHERE id = $1`
 	if _, err := s.db.Exec(ctx, q, restaurantID, req.Name, req.Description, req.Address, req.LogoURL, req.PackagingFeeKobo); err != nil {
 		return nil, err
+	}
+	if req.BannerURL != nil && strings.TrimSpace(*req.BannerURL) != "" {
+		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET banner_url=$2, updated_at=NOW() WHERE id=$1`, restaurantID, strings.TrimSpace(*req.BannerURL)); err != nil {
+			return nil, err
+		}
 	}
 	// A pin the owner confirmed on the map wins over a re-geocode of the address
 	// text — it is the exact spot they picked, not a guess. Only fall back to

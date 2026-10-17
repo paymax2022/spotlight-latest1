@@ -37,8 +37,10 @@ export function useParcelEstimate() {
 export function useBookParcel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (req: Omit<ParcelBookRequest, 'idempotencyKey'>) =>
-      parcel.bookParcel({ ...req, idempotencyKey: newIdempotencyKey('parcel') }),
+    // Pass idempotencyKey to keep one key per booking (see parcelBookingKey.ts);
+    // omitted, each call mints its own.
+    mutationFn: (req: Omit<ParcelBookRequest, 'idempotencyKey'> & { idempotencyKey?: string }) =>
+      parcel.bookParcel({ ...req, idempotencyKey: req.idempotencyKey ?? newIdempotencyKey('parcel') }),
     onSuccess: () => qc.invalidateQueries({ queryKey: [PARCEL_KEY, 'list'] }),
   });
 }

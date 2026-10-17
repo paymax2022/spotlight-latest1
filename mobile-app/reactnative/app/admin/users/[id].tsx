@@ -85,15 +85,6 @@ export default function AdminUserDetailScreen() {
             </ListCard>
           ) : null}
 
-          <ListCard title="Related" flush>
-            <DataRow
-              label="KYC case"
-              sublabel="Review identity verification"
-              onPress={() => router.push(`/admin/kyc/${u.id}`)}
-              showChevron
-              last
-            />
-          </ListCard>
         </ScrollView>
       )}
     </SafeAreaView>

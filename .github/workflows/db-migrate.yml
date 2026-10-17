@@ -88,6 +88,54 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # STALE-REF GUARD. A dispatch, or a re-run of an old run, checks out the
+      # commit that run was CREATED from, not the branch tip. `supabase db push`
+      # then compares the remote against an out-of-date supabase/migrations and
+      # aborts with "remote migration versions not found in local migrations
+      # directory" (or, worse, applies against a tree that is missing newer
+      # files). So the checked-out commit must be the current tip of its branch.
+      #   - workflow_dispatch / re-run: FAIL, naming the tip to dispatch from.
+      #   - push: SKIP quietly. Runs queue (cancel-in-progress is false), so a
+      #     newer push has already superseded this one and its own run covers it.
+      # Applying (dry_run=false) is also limited to main/prod, so a feature
+      # branch can never push its migrations at a real database.
+      - name: Refuse a stale or unapproved ref
+        id: fresh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "stale=false" >> "$GITHUB_OUTPUT"
+          if [ "$REF_TYPE" != "branch" ]; then
+            echo "::error::Run ref '$REF_NAME' is a $REF_TYPE, not a branch - dispatch from a branch tip."
+            exit 1
+          fi
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$DRY_RUN" != "true" ]; then
+            case "$REF_NAME" in
+              main|prod) ;;
+              *) echo "::error::Applying migrations is only allowed from main or prod (got '$REF_NAME'). Use dry_run for other refs."; exit 1 ;;
+            esac
+          fi
+          TIP=$(git ls-remote origin "refs/heads/$REF_NAME" | cut -f1)
+          if [ -z "$TIP" ]; then
+            echo "::error::Could not read the tip of origin/$REF_NAME."
+            exit 1
+          fi
+          if [ "$TIP" != "$RUN_SHA" ]; then
+            if [ "$EVENT" = "push" ]; then
+              echo "::notice::Superseded: this push ($RUN_SHA) is no longer the tip of $REF_NAME ($TIP); the newer run covers it. Skipping."
+              echo "stale=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::Stale ref: this run checked out $RUN_SHA but origin/$REF_NAME is at $TIP. Re-dispatch (do not re-run) from the current tip; a stale tree makes db push fail with 'remote versions not found'."
+            exit 1
+          fi
+          echo "Ref is current: $REF_NAME @ $RUN_SHA"
+
       # PINNED ON PURPOSE — do not "modernise" this back to `latest`.
       # The step below runs `supabase db push --linked` against PRODUCTION. With
       # `latest` the CLI that touches the production database is whatever Supabase
@@ -99,24 +147,28 @@ jobs:
       # Bump deliberately: raise the version, let maps-ci's PostGIS job replay the
       # whole chain green, then merge.
       - uses: supabase/setup-cli@v3
+        if: ${{ steps.fresh.outputs.stale != 'true' }}
         with:
           version: 2.114.0
 
       - name: Check required secrets are present
+        if: ${{ steps.fresh.outputs.stale != 'true' }}
         run: |
           : "${SUPABASE_ACCESS_TOKEN:?missing secret SUPABASE_ACCESS_TOKEN}"
           : "${SUPABASE_PROJECT_ID:?missing secret SUPABASE_PROJECT_ID}"
           : "${SUPABASE_DB_PASSWORD:?missing secret SUPABASE_DB_PASSWORD}"
 
       - name: Link project
+        if: ${{ steps.fresh.outputs.stale != 'true' }}
         run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
 
       - name: Show pending migrations (informational)
+        if: ${{ steps.fresh.outputs.stale != 'true' }}
         run: supabase migration list --linked || true
 
       - name: Apply migrations (db push)
         # Skip the apply on a workflow_dispatch dry-run; always apply on push.
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        if: ${{ steps.fresh.outputs.stale != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         run: supabase db push --linked
 
       - name: Dry-run notice
@@ -140,20 +192,71 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # STALE-REF GUARD. A dispatch, or a re-run of an old run, checks out the
+      # commit that run was CREATED from, not the branch tip. `supabase db push`
+      # then compares the remote against an out-of-date supabase/migrations and
+      # aborts with "remote migration versions not found in local migrations
+      # directory" (or, worse, applies against a tree that is missing newer
+      # files). So the checked-out commit must be the current tip of its branch.
+      #   - workflow_dispatch / re-run: FAIL, naming the tip to dispatch from.
+      #   - push: SKIP quietly. Runs queue (cancel-in-progress is false), so a
+      #     newer push has already superseded this one and its own run covers it.
+      # Applying (dry_run=false) is also limited to main/prod, so a feature
+      # branch can never push its migrations at a real database.
+      - name: Refuse a stale or unapproved ref
+        id: fresh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "stale=false" >> "$GITHUB_OUTPUT"
+          if [ "$REF_TYPE" != "branch" ]; then
+            echo "::error::Run ref '$REF_NAME' is a $REF_TYPE, not a branch - dispatch from a branch tip."
+            exit 1
+          fi
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$DRY_RUN" != "true" ]; then
+            case "$REF_NAME" in
+              main|prod) ;;
+              *) echo "::error::Applying migrations is only allowed from main or prod (got '$REF_NAME'). Use dry_run for other refs."; exit 1 ;;
+            esac
+          fi
+          TIP=$(git ls-remote origin "refs/heads/$REF_NAME" | cut -f1)
+          if [ -z "$TIP" ]; then
+            echo "::error::Could not read the tip of origin/$REF_NAME."
+            exit 1
+          fi
+          if [ "$TIP" != "$RUN_SHA" ]; then
+            if [ "$EVENT" = "push" ]; then
+              echo "::notice::Superseded: this push ($RUN_SHA) is no longer the tip of $REF_NAME ($TIP); the newer run covers it. Skipping."
+              echo "stale=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::Stale ref: this run checked out $RUN_SHA but origin/$REF_NAME is at $TIP. Re-dispatch (do not re-run) from the current tip; a stale tree makes db push fail with 'remote versions not found'."
+            exit 1
+          fi
+          echo "Ref is current: $REF_NAME @ $RUN_SHA"
+
       # PINNED, and deliberately the SAME pin as the production job above: if the
       # two jobs could disagree about how a migration applies, a chain that went
       # green on staging would prove nothing about production. Bump both together.
       - uses: supabase/setup-cli@v3
+        if: ${{ steps.fresh.outputs.stale != 'true' }}
         with:
           version: 2.114.0
 
       - name: Check required secrets are present
+        if: ${{ steps.fresh.outputs.stale != 'true' }}
         run: |
           : "${SUPABASE_ACCESS_TOKEN:?missing secret SUPABASE_ACCESS_TOKEN}"
           : "${SUPABASE_PROJECT_ID:?missing secret SUPABASE_STAGING_PROJECT_ID}"
           : "${SUPABASE_DB_PASSWORD:?missing secret SUPABASE_STAGING_DB_PASSWORD}"
 
       - name: Refuse to run against a production project
+        if: ${{ steps.fresh.outputs.stale != 'true' }}
         # A copy-pasted secret is the realistic way staging ends up pointed at
         # production, and `db push` would then apply to it unnoticed. Fail loudly.
         env:
@@ -166,13 +269,15 @@ jobs:
           echo "Staging project ref is distinct from production."
 
       - name: Link project
+        if: ${{ steps.fresh.outputs.stale != 'true' }}
         run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
 
       - name: Show pending migrations (informational)
+        if: ${{ steps.fresh.outputs.stale != 'true' }}
         run: supabase migration list --linked || true
 
       - name: Apply migrations (db push)
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        if: ${{ steps.fresh.outputs.stale != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         # --include-all only on an explicit dispatch; push-triggered runs stay a plain db push.
         run: supabase db push --linked ${{ (github.event_name == 'workflow_dispatch' && inputs.include_all) && '--include-all' || '' }}
 

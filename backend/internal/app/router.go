@@ -35,6 +35,8 @@ func NewRouter(cfg config.Config) *gin.Engine {
 // cancelled. main() passes the signal context so SIGTERM shuts the poller down
 // gracefully alongside the HTTP server.
 func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
+	// Slow-authentication diagnostics (AUTH_SLOW_LOG_MS, default 750; 0 = off).
+	middleware.SetSlowAuthThreshold(time.Duration(cfg.AuthSlowLogMs) * time.Millisecond)
 	// gin.SetMode is a package-level global, so this must run before
 	// gin.Default() constructs the engine's default logger. In DEBUG mode Gin
 	// prints a route-registration line per route at boot — with the full module
@@ -477,6 +479,8 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 					AdminUserNavigationHandler(navigation.NewRepository(sharedPool)))
 				navAdmin.GET("/analytics/navigation", middleware.RequirePermission(rbacService, "audit.logs.view"),
 					AdminNavigationAnalyticsHandler(navigation.NewRepository(sharedPool)))
+				navAdmin.POST("/analytics/navigation/funnel", middleware.RequirePermission(rbacService, "audit.logs.view"),
+					AdminNavigationFunnelHandler(navigation.NewRepository(sharedPool)))
 			}
 		}
 	} else if deployedTier {

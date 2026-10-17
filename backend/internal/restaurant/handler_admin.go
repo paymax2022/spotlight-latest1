@@ -405,6 +405,12 @@ func (s *Service) AdminListRestaurants(ctx context.Context, params AdminRestaura
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	rows.Close()
+	ptrs := make([]*Restaurant, len(out))
+	for i := range out {
+		ptrs[i] = &out[i].Restaurant
+	}
+	s.finishStoreImages(ctx, ptrs...)
 	return &AdminRestaurantPage{
 		Restaurants: out,
 		Total:       total,

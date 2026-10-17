@@ -129,6 +129,12 @@ components:
         phone: { type: string }
         cuisine: { type: string }
         image_url: { type: string }
+        logo_url:
+          type: string
+          description: Store logo as a viewable URL (a stored upload is returned as a short-lived signed URL; re-read the store to refresh it).
+        banner_url:
+          type: string
+          description: Storefront banner, same shape as logo_url.
         is_open: { type: boolean }
         rating: { type: number, description: Average restaurant star rating }
         rating_count: { type: integer }
@@ -502,6 +508,14 @@ components:
         content_type: { type: string, description: The client MUST send exactly this Content-Type on the PUT }
         expires_in: { type: integer, description: Seconds }
         method: { type: string, enum: [PUT] }
+    StoreImagePresign:
+      type: object
+      properties:
+        upload_url: { type: string, description: Short-lived presigned PUT URL }
+        object_key: { type: string, description: 'Server-chosen key; send back as logo_url or banner_url when saving the store' }
+        content_type: { type: string, description: The client MUST send exactly this Content-Type on the PUT }
+        expires_in: { type: integer, description: Seconds }
+        method: { type: string, enum: [PUT] }
 
 paths:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -563,7 +577,12 @@ paths:
     patch:
       tags: [restaurant]
       summary: Update store profile (operator)
-      description: Owner-only partial update of name/description/address/logo_url (unset fields are left unchanged; changing the address re-geocodes the pin).
+      description: >
+        Owner-only partial update of name/description/address/logo_url/banner_url (unset fields are left
+        unchanged; changing the address re-geocodes the pin). `logo_url` and `banner_url` are each an http(s)
+        link or the `object_key` returned by POST /{id}/images/presign for THIS outlet and the SAME kind;
+        another outlet's key, a banner key used as a logo, other schemes (javascript:, data:, file:) and
+        path traversal are rejected with 400.
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       requestBody:
         content:
@@ -574,7 +593,8 @@ paths:
                 name: { type: string }
                 description: { type: string }
                 address: { type: string }
-                logo_url: { type: string }
+                logo_url: { type: string, description: 'http(s) link or a logo object_key from the presign endpoint' }
+                banner_url: { type: string, description: 'http(s) link or a banner object_key from the presign endpoint' }
       responses:
         '200': { description: Updated store, content: { application/json: { schema: { $ref: '#/components/schemas/Restaurant' } } } }
         '401': { description: Not authenticated }
@@ -670,6 +690,35 @@ paths:
         '401': { description: Not authenticated }
         '403': { description: Not permitted to manage banking for this outlet }
         '503': { description: Document uploads are not configured on this server }
+  /{id}/images/presign:
+    post:
+      tags: [restaurant]
+      summary: Get a presigned upload URL for the store logo or banner (store manager)
+      description: >
+        Step 1 of an image upload; same flow as the KYB document presign. The backend chooses the object
+        key (restaurant/<id>/store/<kind>/<random><ext>) and binds the Content-Type into the signature.
+        Step 2 is a direct PUT of the image to `upload_url` (no Authorization header); step 3 saves the
+        returned `object_key` as `logo_url` or `banner_url` through PATCH /{id}. Allowed: .png image/png,
+        .jpg/.jpeg image/jpeg, .webp image/webp (no SVG). The stored value is the key; reads return a
+        short-lived signed URL. 503 means the server has no usable object storage.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, file_name, content_type]
+              properties:
+                kind: { type: string, enum: [logo, banner] }
+                file_name: { type: string, description: 'Used only for its extension', example: banner.jpg }
+                content_type: { type: string, example: image/jpeg }
+      responses:
+        '200': { description: Upload URL, content: { application/json: { schema: { $ref: '#/components/schemas/StoreImagePresign' } } } }
+        '400': { description: "Bad kind, unsupported extension, or type/extension mismatch" }
+        '401': { description: Not authenticated }
+        '403': { description: Not permitted to manage this store }
+        '503': { description: Image uploads are not configured on this server }
   /{id}/kyb/documents:
     post:
       tags: [restaurant]
