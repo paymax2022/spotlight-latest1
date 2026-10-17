@@ -80,3 +80,47 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+-- Counter protection (ruling R14). follower_count and like_count are written only
+-- by the backend (service role / owner pool, one transaction per like or follow).
+-- A signed-in user must not set them through PostgREST.
+--
+-- organiser_profiles: the default Supabase grant gives `authenticated` TABLE-level
+-- INSERT/UPDATE, and a column-level REVOKE cannot subtract from a table-level
+-- grant (it is a silent no-op). So revoke the table-level privileges and grant back
+-- only the columns an organiser may write. follower_count is deliberately absent
+-- from both lists; the column-level REVOKE is kept as an explicit statement of intent.
+REVOKE INSERT, UPDATE ON public.organiser_profiles FROM authenticated;
+GRANT INSERT (organiser_id, display_name, bio, banner_url, updated_at)
+  ON public.organiser_profiles TO authenticated;
+GRANT UPDATE (display_name, bio, banner_url, updated_at)
+  ON public.organiser_profiles TO authenticated;
+REVOKE UPDATE (follower_count) ON public.organiser_profiles FROM authenticated;
+
+-- events: an organiser can already INSERT/UPDATE their own events rows through the
+-- legacy events_insert / events_update policies (20260616240000_events.sql, TO
+-- authenticated, organizer_id = auth.uid()), and `authenticated` holds table-level
+-- privileges, so a column REVOKE would not bite. Narrowing the table grant would
+-- need every other events column re-granted by name and could break existing
+-- PostgREST writers. Instead pin like_count with a trigger that only affects the
+-- PostgREST roles: it resets the value on INSERT and keeps the old value on UPDATE.
+-- Service role / owner connections (the Go backend) are not affected.
+CREATE OR REPLACE FUNCTION public.events_protect_like_count()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF current_user IN ('authenticated', 'anon') THEN
+    IF TG_OP = 'INSERT' THEN
+      NEW.like_count := 0;
+    ELSE
+      NEW.like_count := OLD.like_count;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE TRIGGER trg_events_protect_like_count
+  BEFORE INSERT OR UPDATE ON public.events
+  FOR EACH ROW EXECUTE FUNCTION public.events_protect_like_count();

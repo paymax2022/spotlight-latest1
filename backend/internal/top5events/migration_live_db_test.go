@@ -251,3 +251,203 @@ func TestMigrationEventsSocial_Indexes(t *testing.T) {
 		}
 	}
 }
+
+type policyInfo struct {
+	cmd       string
+	qual      string
+	withCheck string
+}
+
+func socialPolicies(t *testing.T, pool *pgxpool.Pool, table string) map[string]policyInfo {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT policyname, cmd, COALESCE(qual, ''), COALESCE(with_check, '')
+		  FROM pg_policies
+		 WHERE schemaname = 'public' AND tablename = $1`, table)
+	if err != nil {
+		t.Fatalf("policies(%s): %v", table, err)
+	}
+	defer rows.Close()
+	out := map[string]policyInfo{}
+	for rows.Next() {
+		var name string
+		var p policyInfo
+		if err := rows.Scan(&name, &p.cmd, &p.qual, &p.withCheck); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out[name] = p
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return out
+}
+
+func TestMigrationEventsSocial_RLSPolicies(t *testing.T) {
+	pool := socialMigrationPool(t)
+
+	// ownCol is the column the own-row predicate must reference; "" means a plain
+	// read policy that must be `true` (any signed-in user).
+	type want struct {
+		table, name, cmd, ownCol string
+	}
+	cases := []want{
+		{"event_likes", "event_likes_read", "SELECT", ""},
+		{"event_likes", "event_likes_insert_own", "INSERT", "user_id"},
+		{"event_likes", "event_likes_delete_own", "DELETE", "user_id"},
+		{"organiser_follows", "organiser_follows_read", "SELECT", ""},
+		{"organiser_follows", "organiser_follows_insert_own", "INSERT", "follower_id"},
+		{"organiser_follows", "organiser_follows_delete_own", "DELETE", "follower_id"},
+		{"organiser_profiles", "organiser_profiles_read", "SELECT", ""},
+		{"organiser_profiles", "organiser_profiles_insert_own", "INSERT", "organiser_id"},
+		{"organiser_profiles", "organiser_profiles_update_own", "UPDATE", "organiser_id"},
+	}
+	byTable := map[string]map[string]policyInfo{}
+	for _, c := range cases {
+		if byTable[c.table] == nil {
+			byTable[c.table] = socialPolicies(t, pool, c.table)
+		}
+		p, ok := byTable[c.table][c.name]
+		if !ok {
+			t.Errorf("%s: policy %s missing", c.table, c.name)
+			continue
+		}
+		if p.cmd != c.cmd {
+			t.Errorf("%s.%s cmd = %q, want %q", c.table, c.name, p.cmd, c.cmd)
+		}
+		// INSERT policies carry their predicate in WITH CHECK, DELETE in USING,
+		// UPDATE in both.
+		var preds []string
+		switch c.cmd {
+		case "INSERT":
+			preds = []string{p.withCheck}
+		case "DELETE", "SELECT":
+			preds = []string{p.qual}
+		case "UPDATE":
+			preds = []string{p.qual, p.withCheck}
+		}
+		for _, pred := range preds {
+			if c.ownCol == "" {
+				if strings.TrimSpace(strings.Trim(pred, "()")) != "true" {
+					t.Errorf("%s.%s predicate = %q, want true", c.table, c.name, pred)
+				}
+				continue
+			}
+			if !strings.Contains(pred, c.ownCol) || !strings.Contains(pred, "auth.uid()") {
+				t.Errorf("%s.%s predicate = %q, want %s = auth.uid()", c.table, c.name, pred, c.ownCol)
+			}
+		}
+	}
+	// No policy beyond the nine expected, so nothing grants wider writes.
+	total := 0
+	for _, m := range byTable {
+		total += len(m)
+	}
+	if total != len(cases) {
+		t.Errorf("found %d policies across the three tables, want %d", total, len(cases))
+	}
+}
+
+func TestMigrationEventsSocial_ForeignKeys(t *testing.T) {
+	pool := socialMigrationPool(t)
+	rows, err := pool.Query(context.Background(), `
+		SELECT cl.relname, a.attname, tn.nspname || '.' || tc.relname, c.confdeltype
+		  FROM pg_constraint c
+		  JOIN pg_class cl      ON cl.oid = c.conrelid
+		  JOIN pg_namespace n   ON n.oid = cl.relnamespace AND n.nspname = 'public'
+		  JOIN pg_attribute a   ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+		  JOIN pg_class tc      ON tc.oid = c.confrelid
+		  JOIN pg_namespace tn  ON tn.oid = tc.relnamespace
+		 WHERE c.contype = 'f'
+		   AND cl.relname IN ('event_likes', 'organiser_follows', 'organiser_profiles')`)
+	if err != nil {
+		t.Fatalf("fk query: %v", err)
+	}
+	defer rows.Close()
+	got := map[string]string{} // "table.column" -> "target|deltype"
+	for rows.Next() {
+		var table, col, target, del string
+		if err := rows.Scan(&table, &col, &target, &del); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got[table+"."+col] = target + "|" + del
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	want := map[string]string{
+		"event_likes.event_id":            "public.events|c",
+		"event_likes.user_id":             "auth.users|c",
+		"organiser_follows.organiser_id":  "auth.users|c",
+		"organiser_follows.follower_id":   "auth.users|c",
+		"organiser_profiles.organiser_id": "auth.users|c",
+	}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("FK %s = %q, want %q (target|ON DELETE; c = CASCADE)", k, got[k], w)
+		}
+	}
+	for k := range got {
+		if _, ok := want[k]; !ok {
+			t.Errorf("unexpected FK %s -> %s", k, got[k])
+		}
+	}
+}
+
+func TestMigrationEventsSocial_CounterColumnsNotWritableByClients(t *testing.T) {
+	pool := socialMigrationPool(t)
+	has := func(table, col, priv string) bool {
+		var ok bool
+		err := pool.QueryRow(context.Background(),
+			`SELECT has_column_privilege('authenticated', $1, $2, $3)`,
+			"public."+table, col, priv).Scan(&ok)
+		if err != nil {
+			t.Fatalf("has_column_privilege(%s.%s %s): %v", table, col, priv, err)
+		}
+		return ok
+	}
+
+	// organiser_profiles.follower_count: neither INSERT nor UPDATE for clients.
+	for _, priv := range []string{"UPDATE", "INSERT"} {
+		if has("organiser_profiles", "follower_count", priv) {
+			t.Errorf("authenticated can %s organiser_profiles.follower_count; must be backend-only", priv)
+		}
+	}
+	// The columns an organiser edits must stay writable.
+	for _, col := range []string{"display_name", "bio", "banner_url"} {
+		if !has("organiser_profiles", col, "UPDATE") {
+			t.Errorf("authenticated lost UPDATE on organiser_profiles.%s", col)
+		}
+	}
+
+	// events.like_count: pinned by a trigger (a column REVOKE cannot subtract from
+	// the table-level grant), so assert the trigger exists, is enabled, covers
+	// INSERT and UPDATE, and its function references like_count.
+	var def string
+	var enabled string
+	err := pool.QueryRow(context.Background(), `
+		SELECT pg_get_triggerdef(t.oid), t.tgenabled::text
+		  FROM pg_trigger t
+		 WHERE t.tgrelid = 'public.events'::regclass
+		   AND t.tgname = 'trg_events_protect_like_count'
+		   AND NOT t.tgisinternal`).Scan(&def, &enabled)
+	if err != nil {
+		t.Fatalf("trigger trg_events_protect_like_count missing: %v", err)
+	}
+	if enabled == "D" {
+		t.Error("trg_events_protect_like_count is disabled")
+	}
+	for _, frag := range []string{"BEFORE INSERT OR UPDATE", "FOR EACH ROW"} {
+		if !strings.Contains(def, frag) {
+			t.Errorf("trigger definition %q missing %q", def, frag)
+		}
+	}
+	var src string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT prosrc FROM pg_proc WHERE proname = 'events_protect_like_count' AND pronamespace = 'public'::regnamespace`).Scan(&src); err != nil {
+		t.Fatalf("function events_protect_like_count missing: %v", err)
+	}
+	if !strings.Contains(src, "like_count") || !strings.Contains(src, "authenticated") {
+		t.Errorf("events_protect_like_count does not pin like_count for authenticated: %q", src)
+	}
+}
