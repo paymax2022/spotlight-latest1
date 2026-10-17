@@ -18,6 +18,7 @@ import (
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
+	"spotlight/backend/internal/platform/r2"
 )
 
 // Auditor mirrors services.AuditService (NL-12); nil-safe.
@@ -68,6 +69,13 @@ type Service struct {
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	rt         RealtimePublisher  // optional; nil ⇒ ScanTicket's live check-in push is a no-op
 	notifier   NotificationSender // optional; nil ⇒ Announce records the row but sends nothing
+	presigner  *r2.Presigner      // optional; nil ⇒ organiser banner uploads answer 503 and stored banner keys are hidden
+
+	// socialReads turns on the events-social read and write columns (banner_url,
+	// venue_lat, venue_lng, venue_place_id, like_count and the event_likes join).
+	// Off by default; only the FEATURE_EVENTS_SOCIAL block in app wiring sets it,
+	// so a database without migration 20271045000000 keeps the original queries.
+	socialReads bool
 }
 
 func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, sett *settlement.Service, tiersSvc *tiers.Service, cred *credential.Service, tags *cashtag.Service, audit Auditor) *Service {
@@ -77,6 +85,14 @@ func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, sett
 // SetCommissionRecorder injects the central profit-recording seam (app-wiring,
 // post-construction). Nil is accepted and disables recording.
 func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// EnableSocialReads switches event reads and writes to the events-social column
+// set. Call it only when FEATURE_EVENTS_SOCIAL is on: the columns exist only once
+// migration 20271045000000 is applied. Returns s for chaining.
+func (s *Service) EnableSocialReads() *Service {
+	s.socialReads = true
+	return s
+}
 
 // SetRealtime injects the live-push seam (app-wiring, post-construction). Nil is
 // accepted and disables ScanTicket's check-in push.
@@ -102,9 +118,16 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // ---------- Event CMS + approval workflow ----------
 
 // CreateEvent drafts a new event owned by organiserID (organiser capability).
+// The response never echoes client-owned social fields: banner_url, like_count
+// and liked are reset (prepareNewEvent). Venue coordinates are written only when
+// the social flag is on; otherwise they are dropped, as before.
 func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) (*Event, error) {
 	if organiserID == "" {
 		return nil, errors.New("events: organiser required")
+	}
+	e, err := prepareNewEvent(e, s.socialReads)
+	if err != nil {
+		return nil, err
 	}
 	e.ID = uuid.New().String()
 	e.OrganiserID = organiserID
@@ -121,7 +144,18 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	const ins = `
 		INSERT INTO events (id, organizer_id, organiser_id, title, description, venue, state, category, starts_at, ends_at, fee_bps)
 		VALUES ($1,$2,$2,$3,$4,$5,'DRAFT',$6,$7,$8,$9)`
-	if _, err := s.db.Exec(ctx, ins, e.ID, e.OrganiserID, e.Title, e.Description, e.Venue, e.Category, e.StartsAt, e.EndsAt, e.FeeBps); err != nil {
+	// The social variant also writes the venue coordinates (migration 20271045000000).
+	const insSocial = `
+		INSERT INTO events (id, organizer_id, organiser_id, title, description, venue, state, category, starts_at, ends_at, fee_bps,
+		                    venue_lat, venue_lng, venue_place_id)
+		VALUES ($1,$2,$2,$3,$4,$5,'DRAFT',$6,$7,$8,$9,$10,$11,$12)`
+	if s.socialReads {
+		_, err = s.db.Exec(ctx, insSocial, e.ID, e.OrganiserID, e.Title, e.Description, e.Venue, e.Category, e.StartsAt, e.EndsAt, e.FeeBps,
+			e.VenueLat, e.VenueLng, e.VenuePlaceID)
+	} else {
+		_, err = s.db.Exec(ctx, ins, e.ID, e.OrganiserID, e.Title, e.Description, e.Venue, e.Category, e.StartsAt, e.EndsAt, e.FeeBps)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("events: insert: %w", err)
 	}
 	s.log(organiserID, "events.create", e.ID, map[string]any{"title": e.Title})
@@ -211,23 +245,50 @@ func (s *Service) transition(ctx context.Context, eventID string, from, to Event
 	return nil
 }
 
-// GetEvent returns an event by id (public read).
+// GetEvent returns an event by id (public read). It carries no caller, so Liked is
+// always false; use GetEventForCaller for a per-caller read.
 func (s *Service) GetEvent(ctx context.Context, eventID string) (*Event, error) {
-	// COALESCE(description,'') — the legacy 20260616240000 events shape leaves
-	// description NULL-able; AdminGetEvent already coalesces it the same way.
-	const q = `SELECT id, organiser_id, title, COALESCE(description,''), venue, state, COALESCE(category,''), starts_at, ends_at, fee_bps, created_at FROM events WHERE id=$1`
-	var e Event
-	var state string
-	if err := s.db.QueryRow(ctx, q, eventID).Scan(
-		&e.ID, &e.OrganiserID, &e.Title, &e.Description, &e.Venue, &state, &e.Category, &e.StartsAt, &e.EndsAt, &e.FeeBps, &e.CreatedAt,
-	); err != nil {
+	return s.GetEventForCaller(ctx, eventID, "")
+}
+
+// legacyEventByIDQuery is the GetEvent select from before events-social, byte for
+// byte. It is used whenever the social flag is off, so a database without
+// migration 20271045000000 keeps working for every caller of GetEvent.
+// The description is coalesced to an empty string: the legacy 20260616240000
+// events shape leaves it NULL-able; AdminGetEvent coalesces it the same way.
+const legacyEventByIDQuery = `SELECT id, organiser_id, title, COALESCE(description,''), venue, state, COALESCE(category,''), starts_at, ends_at, fee_bps, created_at FROM events WHERE id=$1`
+
+// eventByIDQuery is the by-id event select for the current flag state: the
+// original 11 columns when the social flag is off, the social column list and the
+// caller's like join (caller is $2) when it is on.
+func (s *Service) eventByIDQuery() string {
+	if !s.socialReads {
+		return legacyEventByIDQuery
+	}
+	return `SELECT ` + eventSelectCols + ` FROM events e ` + eventLikedJoin + ` WHERE e.id=$1`
+}
+
+// GetEventForCaller returns an event by id. With the social flag on it carries the
+// social fields and Liked reflects callerID's like (false when callerID is empty,
+// i.e. an anonymous read); the select and scan live in social_store.go. With the
+// flag off it runs the original select and the social fields stay zero.
+func (s *Service) GetEventForCaller(ctx context.Context, eventID, callerID string) (*Event, error) {
+	var (
+		e   *Event
+		err error
+	)
+	if s.socialReads {
+		e, err = scanEvent(s.db.QueryRow(ctx, s.eventByIDQuery(), eventID, likeCaller(callerID)))
+	} else {
+		e, err = scanLegacyEvent(s.db.QueryRow(ctx, s.eventByIDQuery(), eventID))
+	}
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	e.State = EventState(state)
-	return &e, nil
+	return e, nil
 }
 
 // publiclyVisibleStates are the states a non-owner/non-admin caller may browse
