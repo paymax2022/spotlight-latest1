@@ -1,6 +1,7 @@
 import { api } from '@/api/client';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { USE_MOCK, API_BASE } from './constants/events.constants';
+import { checkFollowingPage } from './social';
 import type {
   EventSummary,
   EventDetail,
@@ -35,6 +36,7 @@ import type {
   FollowState,
   OrganiserProfile,
   OrganiserPatch,
+  BannerPresign,
 } from './types';
 
 // Organiser lifecycle writes have a live endpoint and nothing a fixture could
@@ -591,15 +593,39 @@ export async function updateMyOrganiser(patch: OrganiserPatch): Promise<Organise
   return unwrap(await api.put(`${API_BASE}/organisers/me`, patch));
 }
 
-// GET /following: upcoming events of the organisers the caller follows.
-export async function listFollowingEvents(): Promise<EventSummary[]> {
+// GET /following: upcoming events of the organisers the caller follows, paged.
+// Inputs are validated here the same way the server does (limit 1..100, offset
+// >= 0) so a bad value fails fast with a clear message instead of a 422.
+export async function listFollowingEvents(limit = 20, offset = 0): Promise<EventSummary[]> {
+  checkFollowingPage(limit, offset);
   if (USE_MOCK) {
     await delay();
     return MOCK_EVENTS
       .filter((e) => MOCK_ORGANISERS.get(e.organiser_id)?.following && (e.state === 'LIVE' || e.state === 'APPROVED'))
-      .map(summaryOf);
+      .map(summaryOf)
+      .slice(offset, offset + limit);
   }
-  return pickList<EventSummary>(await api.get(`${API_BASE}/following`), 'events');
+  return pickList<EventSummary>(await api.get(`${API_BASE}/following`, { params: { limit, offset } }), 'events');
+}
+
+// POST /organisers/me/banner/presign. The backend chooses the object key and
+// binds content_type into the signature; the caller PUTs the bytes to
+// upload_url, then saves object_key via updateMyOrganiser({ banner_url }).
+// Fixture mode returns a fake upload_url that nothing accepts: fixture uploads
+// are NOT persisted, and the caller must skip the network PUT for fixture:// URLs.
+export async function presignOrganiserBanner(fileName: string, contentType: string): Promise<BannerPresign> {
+  if (USE_MOCK) {
+    await delay(120);
+    const ext = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')) : '';
+    return {
+      upload_url: 'fixture://banner-upload',
+      object_key: `organiser/${MOCK_ME}/banner/fixture-${Date.now()}${ext}`,
+      content_type: contentType,
+      expires_in: 600,
+      method: 'PUT',
+    };
+  }
+  return unwrap(await api.post(`${API_BASE}/organisers/me/banner/presign`, { file_name: fileName, content_type: contentType }));
 }
 
 // ── Team roles (FEATURE_EVENTS_TEAM_ROLES) — not money, so no Idempotency-Key ──

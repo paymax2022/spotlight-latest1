@@ -92,6 +92,17 @@ export interface OrganiserPatch {
   banner_url?:   string | null;
 }
 
+// POST /events/organisers/me/banner/presign — PUT the image bytes to upload_url
+// with this exact content_type header, then send object_key as banner_url in
+// PUT /events/organisers/me.
+export interface BannerPresign {
+  upload_url:   string;
+  object_key:   string;
+  content_type: string;
+  expires_in:   number;   // seconds
+  method:       'PUT';
+}
+
 // PATCH /api/finance/events/:id — every field optional; omitted = unchanged.
 export interface EventPatch {
   title?:       string;

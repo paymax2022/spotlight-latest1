@@ -24,3 +24,18 @@ export function applyLikeToggle(state: ToggleState, next: boolean): ToggleState 
 export function applyFollowToggle(state: ToggleState, next: boolean): ToggleState {
   return applyToggle(state, next);
 }
+
+// Following feed paging. Mirrors the server (followingPage in the Go handler):
+// limit is an integer 1..100, offset an integer >= 0, anything else is rejected
+// before a request is sent.
+export const FOLLOWING_LIMIT_MAX = 100;
+
+export function checkFollowingPage(limit: number, offset: number): { limit: number; offset: number } {
+  if (!Number.isInteger(limit) || limit < 1 || limit > FOLLOWING_LIMIT_MAX) {
+    throw new Error(`limit must be a whole number between 1 and ${FOLLOWING_LIMIT_MAX}`);
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('offset must be a whole number of 0 or more');
+  }
+  return { limit, offset };
+}
