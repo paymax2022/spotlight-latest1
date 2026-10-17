@@ -142,7 +142,7 @@ func (h *Handler) GetOrganiser(c *gin.Context) {
 }
 
 // UpdateMyOrganiser edits the caller's own organiser profile. A banner_url that is
-// neither an http(s) link nor a key under the caller's own prefix is 422; an
+// neither an http(s) link nor a key under the caller's own prefix is 400; an
 // explicit null or empty banner_url clears the banner.
 func (h *Handler) UpdateMyOrganiser(c *gin.Context) {
 	u, ok := uid(c)
@@ -156,6 +156,12 @@ func (h *Handler) UpdateMyOrganiser(c *gin.Context) {
 	}
 	out, err := h.svc.UpdateMyOrganiser(c.Request.Context(), u, in)
 	if err != nil {
+		// The contract documents 400 (not 422) for every rejected PUT body: a bad
+		// banner key or URL, an over-long field, a malformed body.
+		if errors.Is(err, ErrValidation) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+			return
+		}
 		socialFail(c, err)
 		return
 	}
@@ -163,7 +169,7 @@ func (h *Handler) UpdateMyOrganiser(c *gin.Context) {
 }
 
 // PresignOrganiserBanner mints the presigned PUT for the caller's banner. A bad
-// file type is 400 (the contract and the restaurant presign agree on that); no
+// file type is 400 (the contract's documented code, as in the restaurant presign); no
 // usable object storage is 503.
 func (h *Handler) PresignOrganiserBanner(c *gin.Context) {
 	u, ok := uid(c)

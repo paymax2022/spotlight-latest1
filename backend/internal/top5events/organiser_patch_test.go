@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -57,5 +58,49 @@ func TestListFollowing_BadPagingIs422BeforeService(t *testing.T) {
 		if w.Code != http.StatusUnprocessableEntity {
 			t.Errorf("%s: status %d, want 422 (%s)", q, w.Code, w.Body.String())
 		}
+	}
+}
+
+// TestOrganiserBannerRoutes_StatusCodesFollowContract pins the contract codes: a
+// foreign or malformed banner on PUT /organisers/me and a bad content type on
+// POST /organisers/me/banner/presign are both 400 (not the 422 other validation
+// paths use). Both are rejected before any storage or database access, so a Service
+// with no pool is enough.
+func TestOrganiserBannerRoutes_StatusCodesFollowContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const me = "11111111-2222-4333-8444-555555555555"
+	e := gin.New()
+	e.Use(func(c *gin.Context) { c.Set("user_id", me) })
+	NewHandler(&Service{}).RegisterSocial(e.Group("/events"))
+
+	do := func(method, path, body string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	for name, body := range map[string]string{
+		"foreign key":    `{"banner_url":"organiser/99999999-2222-4333-8444-555555555555/banner/a.png"}`,
+		"javascript url": `{"banner_url":"javascript:alert(1)"}`,
+		"long bio":       `{"bio":"` + strings.Repeat("x", 2001) + `"}`,
+		"malformed body": `{"banner_url":5}`,
+	} {
+		if got := do(http.MethodPut, "/events/organisers/me", body); got != http.StatusBadRequest {
+			t.Errorf("PUT %s: status %d, want 400", name, got)
+		}
+	}
+	for name, body := range map[string]string{
+		"pdf":      `{"file_name":"b.pdf","content_type":"application/pdf"}`,
+		"mismatch": `{"file_name":"b.png","content_type":"image/jpeg"}`,
+	} {
+		if got := do(http.MethodPost, "/events/organisers/me/banner/presign", body); got != http.StatusBadRequest {
+			t.Errorf("presign %s: status %d, want 400", name, got)
+		}
+	}
+	// No storage wired: a valid type is 503, not 400.
+	if got := do(http.MethodPost, "/events/organisers/me/banner/presign", `{"file_name":"b.png","content_type":"image/png"}`); got != http.StatusServiceUnavailable {
+		t.Errorf("presign without storage: status %d, want 503", got)
 	}
 }

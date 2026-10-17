@@ -44,9 +44,13 @@ const (
 	// bannerViewTTL bounds a signed view URL (restaurant storeImageViewTTL).
 	bannerViewTTL = 60 * time.Minute
 
+	// organiserDisplayNameMax and organiserBioMax cap profile text in runes (a
+	// product choice, not in the spec); longer input is ErrValidation. An empty
+	// display_name is stored as NULL so reads fall back to user_profiles.full_name.
 	organiserDisplayNameMax = 120
 	organiserBioMax         = 2000
-	// organiserUpcomingMax bounds the upcoming-events list on a profile.
+	// organiserUpcomingMax bounds the upcoming-events list on a profile (a product
+	// choice, not in the spec).
 	organiserUpcomingMax = 50
 )
 

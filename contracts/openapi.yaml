@@ -1842,7 +1842,7 @@ components:
         events:
           type: array
           description: The organiser's upcoming public events
-          items: { $ref: '#/components/schemas/EventSummary' }
+          items: { $ref: '#/components/schemas/Event' }
 
     OrganiserPatch:
       description: Partial edit of the caller's own organiser profile (PUT /events/organisers/me); every field optional, snake_case.
