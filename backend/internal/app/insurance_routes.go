@@ -631,6 +631,14 @@ func (a *insuranceBinderAdapter) BindFromQuote(ctx context.Context, userID, quot
 	return p.ID, p.PremiumKobo, nil
 }
 
+func (a *insuranceBinderAdapter) BindFromQuotePrepaid(ctx context.Context, userID, quoteID string, paidKobo int64, idempotencyKey string) (string, int64, error) {
+	p, err := a.policy.BindFromQuotePrepaid(ctx, userID, quoteID, paidKobo, idempotencyKey)
+	if err != nil {
+		return "", 0, err
+	}
+	return p.ID, p.PremiumKobo, nil
+}
+
 func (a *insuranceBinderAdapter) CancelPolicy(ctx context.Context, userID, policyID, reason string) error {
 	_, err := a.policy.Cancel(ctx, userID, policyID, reason)
 	return err

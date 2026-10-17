@@ -19,7 +19,7 @@
 --    insurance_paid_kobo      premium the sender paid at booking (integer kobo).
 --                             The platform absorbs any difference from the
 --                             insurer's real premium, so this never changes.
---    insurance_status         none | held | bound | refunded | refund_failed
+--    insurance_status         none | held | binding | bound | refunded | refund_failed
 --    Existing rows default to (false, 0, 'none'): legacy parcels are untouched.
 
 DO $$
@@ -47,15 +47,15 @@ DO $$ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'parcels_insurance_status_check') THEN
     ALTER TABLE public.parcels ADD CONSTRAINT parcels_insurance_status_check
-      CHECK (insurance_status IN ('none','held','bound','refunded','refund_failed'));
+      CHECK (insurance_status IN ('none','held','binding','bound','refunded','refund_failed'));
   END IF;
 END $$;
 
 COMMENT ON COLUMN public.parcels.insurance_paid_kobo IS
   'Goods-in-Transit premium the sender paid at booking (kobo). Held in the insurance_premium_hold ledger account until bind or refund.';
 COMMENT ON COLUMN public.parcels.insurance_status IS
-  'none | held (paid, awaiting bind) | bound (policy active) | refunded | refund_failed (needs reconciliation)';
+  'none | held (paid, awaiting bind) | binding (bind in progress) | bound (policy active) | refunded | refund_failed (needs reconciliation)';
 
 -- Reconciliation: premiums still held, or refunds that failed.
 CREATE INDEX IF NOT EXISTS idx_parcels_insurance_status_open
-  ON public.parcels (insurance_status) WHERE insurance_status IN ('held','refund_failed');
+  ON public.parcels (insurance_status) WHERE insurance_status IN ('held','binding','refund_failed');
