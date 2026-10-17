@@ -132,7 +132,7 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   exists, so check the Go side (caveats in its docstring).
 - **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
   - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3 — done in Batch 8),
-    repairs (4 — done in Batch 9), reports (2, read-only: flip the default only), tasks (3 — two handler files carry a
+    repairs (4 — done in Batch 9), reports (2, read-only — done in Batch 10), tasks (3 — two handler files carry a
     "stub" comment, read them first), vendors (6), facilities (4). Every call matches a handler, every
     table exists, no read-side traps.
   - **Blocked — path mismatch, do not flip:** `ainotes` (1 of 4 calls matches; `GET
@@ -205,6 +205,19 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
     own?) is not decided — open question, not changed in this PR.** (`cost_estimate_kobo` is
     display-only: no handler writes it.)
 
+### Batch 10 (2026-10-17) — reports (read-only; default flip only)
+- **reports** (`src/features/reports/api.ts`) — frontend-web handlers (`app/api/v1/estate/reports`,
+  `app/api/v1/estate/analytics/[type]`). `verify_mobile_module.py`: **2/2 client calls match**; tables
+  `estate_dues_invoices`, `estate_payments`, `estate_repair_requests`, `estate_meetings` exist; no
+  stubs, no read-side traps, **no mutations** (nothing to convert to `notInFixtureMode`). Both
+  handlers enforce `estate_admin` server-side (403 otherwise), and the server's analytics type list
+  matches the client's 9. Default flipped to live; e2e pin added (the e2e renders the seeded
+  sections). No handler tests (code reading).
+  - **UX note, not changed:** a non-admin resident who opens Reports gets the generic "Couldn't load
+    / Please try again" state with a Retry button — the server's 403 ("Only an estate admin can view
+    reports") is swallowed. Retrying can never succeed for them. `getAnalytics` has no caller in the
+    app today.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -231,7 +244,7 @@ academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, arena, connec
 creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
-one module), notifications, nutrition, properties, realtor, referral (2 files), reports,
+one module), notifications, nutrition, properties, realtor, referral (2 files),
 social (see Batch 4 — blocked), spotlightwealth, stays, stocks, tasks, transfers, vendors, plus
 `src/api/doctor.client.ts` and `src/api/telemedicine.api.ts`.
 (An earlier version of this list had ~26 names: it only scanned `constants/` and `api/`
