@@ -23,10 +23,32 @@ The card-direct rail already freezes its quote and checks the collected amount.
    Otherwise a retry after a lost response would be told "not charged" while it was charged.
 5. The card-direct rail ignores the field. It is already pinned by its frozen quote.
 
+6. **Route token.** The estimate returns `routeToken`: an HMAC-SHA256 signature over pickup, dropoff,
+   route distance, route duration and a 15-minute expiry, keyed by `PARCEL_ROUTE_TOKEN_SECRET` (at
+   least 32 bytes; unset turns tokens off). A booking that sends it back prices from **that route**
+   and the **live** pricing config. A traffic-driven duration change therefore cannot cause
+   `FARE_CHANGED`, while a real price change still does. A token that does not verify is ignored
+   and the route is fetched live; it is never trusted. The route is server-computed, so freezing it
+   gives the client no lever. This mirrors card-direct's frozen quote, except that the config is
+   *not* frozen: the wallet charge must reflect today's price. Tokens are honoured on the wallet
+   path only. Card-direct quotes strip them so a card payer cannot pick the cheapest of several
+   estimates.
+7. **Idempotency replay for every path.** A repeat of a key that already booked for this sender
+   returns that parcel before pricing, the tier gate and the escrow. Previously only card-direct did
+   this, and a wallet retry with an unchanged fare failed at the parcel INSERT. If a concurrent
+   same-key request loses the INSERT, it returns the winner's parcel; the escrow is idempotent on
+   the key. On the wallet path the reused key must carry the same booking (pickup, dropoff,
+   receiver phone, size, speed). A different booking gets 409 `IDEMPOTENCY_KEY_CONFLICT`. The app
+   keeps one key per booking (`parcelBookingKey.ts`) instead of one per tap, so a retry after a
+   lost response is a true replay rather than a second debit.
+8. **The payment sheet shows the real debit.** The app's sheet amount and spend-limit check use
+   `fareKobo`, not `totalKobo`. The indicative insurance premium is not charged at booking.
+
 ## Consequences
-- With a traffic-aware maps provider, the trip duration feeds the fare and routes are cached for
-  only 90s, so a 409 can occur without any pricing change. This fails closed: the app re-quotes and
-  the second tap succeeds. The proper fix is to freeze the estimate's route and config, as
-  card-direct does.
-- Pre-existing and unchanged: a same-key wallet retry with an unchanged fare still fails at the
-  parcel insert rather than returning the booking. No double charge occurs.
+- Production needs `PARCEL_ROUTE_TOKEN_SECRET` set (`openssl rand -hex 32`). Without it,
+  behaviour is the pre-token one: a traffic-aware provider can cause a false `FARE_CHANGED`. That
+  fails closed, and the second tap succeeds after the re-quote.
+- Rotating the secret invalidates outstanding tokens. Those bookings fall back to a live route, so a
+  rotation costs at most a few re-quotes.
+- `expected_fare_kobo` stays optional (older apps, scheduled dispatch). Making it required needs a
+  minimum-app-version gate.
