@@ -1,10 +1,16 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { View, Platform, StyleSheet } from 'react-native';
+import { View, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Compass, Radio, PlusCircle, MessageCircle, UserRound } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
+
+// Height of the bar's content (icon + label) above the safe-area inset. The OS
+// navigation area (gesture pill / 3-button bar) is added on top via insets.bottom
+// so the tabs are never covered on Android edge-to-edge or notched iOS.
+const BAR_CONTENT_HEIGHT = 60;
 
 // Connect 5-tab nav (PRD §5): Discover · Live · Create · Inbox · Me.
 // Me is fully built. This nested (tabs) group lives under the connect stack.
@@ -25,11 +31,19 @@ function TabIcon({
 }
 
 export default function ConnectTabsLayout() {
+  const insets = useSafeAreaInsets();
+  // Reserve the OS navigation area below the bar; keep a small floor so the bar
+  // still has breathing room on devices that report a zero bottom inset.
+  const bottomInset = Math.max(insets.bottom, 8);
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: [
+          styles.tabBar,
+          { height: BAR_CONTENT_HEIGHT + bottomInset, paddingBottom: bottomInset },
+        ],
         tabBarShowLabel: true,
         tabBarActiveTintColor: Colors.primary,
         tabBarInactiveTintColor: Colors.outline,
@@ -63,21 +77,16 @@ export default function ConnectTabsLayout() {
 const styles = StyleSheet.create({
   tabBar: {
     position: 'absolute',
-    height: Platform.OS === 'ios' ? 88 : 68,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 8,
+    // height + paddingBottom are set at runtime from the safe-area inset.
     paddingTop: 8,
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderTopWidth: 1,
     borderTopColor: Colors.surfaceContainerHigh,
-    ...Platform.select({
-      ios: {
-        shadowColor: Colors.primary,
-        shadowOffset: { width: 0, height: -4 },
-        shadowOpacity: 0.06,
-        shadowRadius: 12,
-      },
-      android: { elevation: 12 },
-    }),
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 12,
   },
   label: { ...Typography.labelSm, marginTop: -2 },
   iconWrap: { alignItems: 'center', justifyContent: 'center', paddingTop: 2 },
