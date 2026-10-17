@@ -705,12 +705,13 @@ export async function createOrder(input: CreateOrderInput): Promise<PharmacyOrde
   }
   // Additive: contract takes an optional top-level snake_case `search_event_id`.
   const { searchEventId, ...body } = input;
-  const { data } = await api.post<PharmacyOrder>(
+  const { data } = await api.post<{ order?: unknown }>(
     `${PHARMACY_API}/orders`,
     searchEventId ? { ...body, search_event_id: searchEventId } : body,
     { headers: { 'Idempotency-Key': input.idempotencyKey } },
   );
-  return data;
+  if (!data.order) throw new Error('Order not created');
+  return mapOrder(data.order);
 }
 
 export async function reorder(orderId: string): Promise<PharmacyOrder['lines']> {
