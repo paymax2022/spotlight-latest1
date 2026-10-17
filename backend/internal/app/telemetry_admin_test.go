@@ -144,3 +144,96 @@ func TestNavigationAnalytics_ErrorIsSanitized(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }
+
+type fakeFunnelRepo struct {
+	events []navigation.StepEvent
+	err    error
+	steps  []string
+	got    navigation.AnalyticsFilter
+	called bool
+}
+
+func (f *fakeFunnelRepo) FunnelStepEvents(_ context.Context, steps []string, af navigation.AnalyticsFilter) ([]navigation.StepEvent, error) {
+	f.called, f.steps, f.got = true, steps, af
+	return f.events, f.err
+}
+
+func serveFunnel(f *fakeFunnelRepo, body string) *httptest.ResponseRecorder {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/analytics/navigation/funnel", AdminNavigationFunnelHandler(f))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/analytics/navigation/funnel", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestNavigationFunnel_StepCountBounds(t *testing.T) {
+	f := &fakeFunnelRepo{}
+	if w := serveFunnel(f, `{"steps":["/a"]}`); w.Code != 400 {
+		t.Fatalf("1 step: %d", w.Code)
+	}
+	eleven := `{"steps":["/1","/2","/3","/4","/5","/6","/7","/8","/9","/10","/11"]}`
+	if w := serveFunnel(f, eleven); w.Code != 400 {
+		t.Fatalf("11 steps: %d", w.Code)
+	}
+	if w := serveFunnel(f, `{"steps":["/a",""]}`); w.Code != 400 {
+		t.Fatalf("empty step: %d", w.Code)
+	}
+	if w := serveFunnel(f, `{"steps":["/a","`+strings.Repeat("x", 257)+`"]}`); w.Code != 400 {
+		t.Fatalf("long step: %d", w.Code)
+	}
+	if w := serveFunnel(f, `not json`); w.Code != 400 {
+		t.Fatalf("bad json: %d", w.Code)
+	}
+	if f.called {
+		t.Fatal("repo called on invalid input")
+	}
+}
+
+func TestNavigationFunnel_ShapeAndNoUserID(t *testing.T) {
+	at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	f := &fakeFunnelRepo{events: []navigation.StepEvent{
+		{UserID: "u1", Route: "/a", OccurredAt: at},
+		{UserID: "u1", Route: "/b", OccurredAt: at.Add(time.Minute)},
+		{UserID: "u2", Route: "/a", OccurredAt: at},
+	}}
+	w := serveFunnel(f, `{"steps":["/a","/b"]}`)
+	if w.Code != 200 {
+		t.Fatalf("code %d %s", w.Code, w.Body.String())
+	}
+	want := `{"gapMinutes":30,"range":"30d","steps":[{"route":"/a","users":2},{"route":"/b","users":1}],"surface":"all"}`
+	if w.Body.String() != want {
+		t.Fatalf("body = %s", w.Body.String())
+	}
+	if strings.Contains(strings.ToLower(w.Body.String()), "user_id") {
+		t.Fatalf("leaks user_id: %s", w.Body.String())
+	}
+	if f.got.Range != "30d" || f.got.Surface != "all" || len(f.steps) != 2 {
+		t.Fatalf("filter = %+v steps=%v", f.got, f.steps)
+	}
+}
+
+func TestNavigationFunnel_CoercesAndClamps(t *testing.T) {
+	f := &fakeFunnelRepo{}
+	w := serveFunnel(f, `{"steps":["/a","/b"],"range":"bogus","surface":"bogus","gapMinutes":99999}`)
+	if w.Code != 200 || f.got.Range != "30d" || f.got.Surface != "all" || !strings.Contains(w.Body.String(), `"gapMinutes":1440`) {
+		t.Fatalf("%d %+v %s", w.Code, f.got, w.Body.String())
+	}
+	w = serveFunnel(f, `{"steps":["/a","/b"],"range":"7d","surface":"web","gapMinutes":-5}`)
+	if f.got.Range != "7d" || f.got.Surface != "web" || !strings.Contains(w.Body.String(), `"gapMinutes":1`) {
+		t.Fatalf("%+v %s", f.got, w.Body.String())
+	}
+	w = serveFunnel(f, `{"steps":["/a","/b"],"gapMinutes":0}`)
+	if !strings.Contains(w.Body.String(), `"gapMinutes":30`) {
+		t.Fatalf("zero gap should default: %s", w.Body.String())
+	}
+}
+
+func TestNavigationFunnel_ErrorIsSanitized(t *testing.T) {
+	w := serveFunnel(&fakeFunnelRepo{err: errors.New("pq: secret detail")}, `{"steps":["/a","/b"]}`)
+	if w.Code != 500 || strings.Contains(w.Body.String(), "secret detail") {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+}

@@ -46,3 +46,33 @@ export async function getNavigationAnalytics(args: {
   const payload = await readOrThrow(res, 'Loading navigation analytics');
   return { enabled: true, data: payload as unknown as NavAnalytics };
 }
+
+export type FunnelResult = {
+  range: string;
+  surface: string;
+  gapMinutes: number;
+  steps: { route: string; users: number }[];
+};
+
+/** Ordered navigation funnel. 404 = feature flag off (not an error). */
+export async function getNavigationFunnel(args: {
+  steps: string[];
+  range: string;
+  surface: string;
+  gapMinutes: number;
+}): Promise<{ enabled: boolean; data: FunnelResult | null }> {
+  const res = await fetch(`${adminApiBase()}/admin/analytics/navigation/funnel`, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      steps: args.steps,
+      range: args.range,
+      surface: args.surface,
+      gapMinutes: args.gapMinutes,
+    }),
+  });
+  if (res.status === 404) return { enabled: false, data: null };
+  const payload = await readOrThrow(res, 'Running navigation funnel');
+  return { enabled: true, data: payload as unknown as FunnelResult };
+}

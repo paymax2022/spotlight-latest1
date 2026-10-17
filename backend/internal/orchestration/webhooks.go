@@ -124,6 +124,10 @@ func canonConversionStatus(raw string) string {
 // ledger: it maps the provider status to canonical, updates the record, and
 // re-emits a normalized Paymax event to the caller (spec §5.7, §8). Idempotent.
 func (s *Service) HandleProviderEvent(ctx context.Context, providerName string, payload []byte) error {
+	if providerName == "vertofx" {
+		// Verto's flat envelope and three event vocabularies: see webhooks_vertofx.go.
+		return s.handleVertoFXEvent(ctx, payload)
+	}
 	var ev struct {
 		Event  string `json:"event"`
 		Type   string `json:"type"`

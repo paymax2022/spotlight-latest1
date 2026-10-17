@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -283,5 +284,103 @@ func TestMissingIdempotencyKey(t *testing.T) {
 	q, _ := svc.CreateQuote(ctx, "c", "retail", QuoteRequest{Source: "USD", Destination: "NGN", Amount: 100_00, Intent: IntentConversion, Lock: true})
 	if _, e := svc.ExecuteConversion(ctx, "c", "", ConversionRequest{QuoteID: q.ID}); e == nil || e.Type != ErrInvalidRequest {
 		t.Fatalf("expected invalid_request for missing idem key, got %v", e)
+	}
+}
+
+// defProv is a stub whose coverage, quote rate and failure are configurable.
+type defProv struct {
+	stubProvider
+	supports bool
+	rateMul  float64
+}
+
+func (d defProv) Supports(corridor string, _ Rail) bool {
+	// Mirror real adapters: only an "A-B" corridor is understood.
+	return d.supports && strings.Contains(corridor, "-")
+}
+func (d defProv) Quote(ctx context.Context, src, dst string, amt int64, at AmountType, rail Rail) (*ProviderQuote, error) {
+	pq, _ := d.stubProvider.Quote(ctx, src, dst, amt, at, rail)
+	pq.Rate *= d.rateMul
+	return pq, nil
+}
+
+func defSvc(def string, vertofx, other defProv) *Service {
+	now := time.Now()
+	return NewService([]Provider{vertofx, other}, NewMemStore(), Options{Now: func() time.Time { return now }}, WithDefaultProvider(def))
+}
+
+func defQuote(t *testing.T, svc *Service) *Quote {
+	t.Helper()
+	q, e := svc.CreateQuote(context.Background(), "c1", "retail", QuoteRequest{Source: "USD", Destination: "NGN", Amount: 100_00, Intent: IntentConversion})
+	if e != nil {
+		t.Fatalf("quote: %v", e)
+	}
+	return q
+}
+
+func TestDefaultProvider_PreferredWinsWhenCovers(t *testing.T) {
+	v := defProv{stubProvider{name: "vertofx"}, true, 0.95} // worse rate
+	o := defProv{stubProvider{name: "other"}, true, 1.0}
+	if got := defQuote(t, defSvc("vertofx", v, o)).Route.Provider; got != "vertofx" {
+		t.Fatalf("route = %s, want vertofx", got)
+	}
+	if got := defQuote(t, defSvc("", v, o)).Route.Provider; got != "other" {
+		t.Fatalf("sanity: best-score should pick other, got %s", got)
+	}
+}
+
+func TestDefaultProvider_FallsBackWhenNoCoverage(t *testing.T) {
+	// Unsupported default is viable but scores WORSE: without the Supports gate
+	// it would be promoted; with it, best-score "other" must stand. (A better
+	// rate would win on score alone and prove nothing about the gate.)
+	v := defProv{stubProvider{name: "vertofx"}, false, 0.95}
+	o := defProv{stubProvider{name: "other"}, true, 1.0}
+	if got := defQuote(t, defSvc("vertofx", v, o)).Route.Provider; got != "other" {
+		t.Fatalf("route = %s, want other", got)
+	}
+}
+
+func TestDefaultProvider_FallsBackWhenPreferredErrors(t *testing.T) {
+	v := defProv{stubProvider{name: "vertofx", fail: true}, true, 0.95}
+	o := defProv{stubProvider{name: "other"}, true, 1.0}
+	svc := defSvc("vertofx", v, o)
+	q := defQuote(t, svc)
+	if q.Route.Provider != "vertofx" {
+		t.Fatalf("preferred should be tried first, got %s", q.Route.Provider)
+	}
+	res, name, e := svc.executeWithFailover(context.Background(), q, nil, "idem")
+	if e != nil || res == nil || name != "other" {
+		t.Fatalf("failover: name=%s err=%v", name, e)
+	}
+}
+
+func TestDefaultProvider_EmptyKeepsBestScore(t *testing.T) {
+	v := defProv{stubProvider{name: "vertofx"}, true, 0.95}
+	o := defProv{stubProvider{name: "other"}, true, 1.0}
+	svc := defSvc("", v, o)
+	q := defQuote(t, svc)
+	if q.Route.Provider != "other" || len(q.Alternatives) != 1 || q.Alternatives[0].Provider != "vertofx" {
+		t.Fatalf("unexpected ranking: %+v %+v", q.Route, q.Alternatives)
+	}
+}
+
+func TestPickCollectionProvider_UsesDefault(t *testing.T) {
+	mk := func(def string, supports bool) *Service {
+		now := time.Now()
+		return NewService([]Provider{
+			defProv{stubProvider{name: "vertofx"}, supports, 1}, stubProvider{name: "maplerad"}, stubProvider{name: "eversend"},
+		}, NewMemStore(), Options{Now: func() time.Time { return now }}, WithDefaultProvider(def))
+	}
+	if p := mk("vertofx", true).pickCollectionProvider("virtual", "USD"); p.Name() != "vertofx" {
+		t.Fatalf("got %s want vertofx", p.Name())
+	}
+	if p := mk("vertofx", false).pickCollectionProvider("iban", "EUR"); p.Name() != "eversend" {
+		t.Fatalf("got %s want eversend", p.Name())
+	}
+	if p := mk("vertofx", false).pickCollectionProvider("virtual", "USD"); p.Name() != "maplerad" {
+		t.Fatalf("got %s want maplerad", p.Name())
+	}
+	if p := mk("", true).pickCollectionProvider("virtual", "USD"); p.Name() != "maplerad" {
+		t.Fatalf("empty default got %s want maplerad", p.Name())
 	}
 }

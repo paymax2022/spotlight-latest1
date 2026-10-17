@@ -551,6 +551,15 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&in); err == nil {
 		email := h.resolveResetEmail(c.Request.Context(), identifierOf(in.Identifier, in.Email))
+		// Product decision (ADR-PR801): THIS step tells the user when nothing matches,
+		// so a mistyped address is caught here rather than after a code that never
+		// comes. It deliberately discloses whether an email/phone is registered; the
+		// per-IP reset limiter on this route is the only brake on harvesting. The
+		// verify and reset steps still answer identically for every identifier.
+		if h.accountMissing(c.Request.Context(), email) {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "account_not_found"})
+			return
+		}
 		if email != "" {
 			// Sent in the background so the response takes the same time whether
 			// or not an account matched: a phone number that resolves would
@@ -571,6 +580,26 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 	}
 	// Always the same answer, whether or not the account exists.
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "If an account matches, a reset code was sent to its email."})
+}
+
+// accountMissing reports that the identifier resolved to nothing, or to an
+// address with no account. It is false whenever that cannot be established: no
+// checker wired, or the lookup failed. An outage must not tell a real user their
+// account does not exist, so it falls back to the neutral answer and sends.
+func (h *AuthHandler) accountMissing(ctx context.Context, email string) bool {
+	checker, ok := h.setPassword.(services.AccountChecker)
+	if !ok || checker == nil {
+		return false
+	}
+	if email == "" {
+		return true
+	}
+	exists, err := checker.AccountExists(ctx, email)
+	if err != nil {
+		log.Printf("[auth] password reset: account lookup failed: %v", err)
+		return false
+	}
+	return !exists
 }
 
 // resetCodeError maps an OTP failure to a response. Shared by the verify and

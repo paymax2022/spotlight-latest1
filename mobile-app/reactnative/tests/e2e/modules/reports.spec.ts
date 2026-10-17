@@ -4,7 +4,8 @@ import { mockAmbientRequests } from '../helpers/common';
 import { mockWallet } from '../helpers/wallet';
 
 /**
- * Estate Reports hub. EXPO_PUBLIC_REPORTS_USE_MOCK defaults true — the four
+ * Estate Reports hub. EXPO_PUBLIC_REPORTS_USE_MOCK is pinned true in
+ * playwright.config.ts — the four
  * sections (Dues collection, Payments by method, Maintenance, Meetings) and
  * their metrics come from the seeded ReportsResponse in api.ts, so no
  * endpoint mocks are needed beyond the ambient stubs.

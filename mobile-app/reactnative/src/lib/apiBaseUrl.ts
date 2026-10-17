@@ -8,9 +8,19 @@
  * per-module fallback for dev convenience but makes a missing variable loud
  * in non-dev builds instead of silently shipping a dead client.
  *
- * Kept free of react-native/expo imports so `node --test` specs can load it.
+ * A Local server override (see serverProfile.ts, non-production builds only)
+ * wins over everything here; with none stored behaviour is unchanged.
+ *
+ * Imports serverProfileStore, which imports react-native for Platform only
+ * (tests/unit stubs it) and requires expo modules lazily, so `node --test`
+ * specs can still load this file.
  */
+import { getActiveServerOverride } from '@/lib/serverProfileStore';
+
 export function resolveApiBaseUrl(fallback = 'http://localhost:3000'): string {
+  const override = getActiveServerOverride();
+  if (override) return override.apiBase;
+
   const configured = process.env.EXPO_PUBLIC_API_BASE_URL;
   if (configured) return configured;
 
@@ -24,4 +34,16 @@ export function resolveApiBaseUrl(fallback = 'http://localhost:3000'): string {
     );
   }
   return fallback;
+}
+
+/**
+ * Host of the Go backend that Connect talks to directly. A Local override beats
+ * EXPO_PUBLIC_CONNECT_API_HOST so the two backends never end up on different
+ * servers; otherwise: explicit env, then the main API base (see
+ * connect.constants.ts for the history).
+ */
+export function resolveConnectHost(fallback?: string): string {
+  const override = getActiveServerOverride();
+  if (override) return override.connectHost;
+  return process.env.EXPO_PUBLIC_CONNECT_API_HOST ?? resolveApiBaseUrl(fallback);
 }

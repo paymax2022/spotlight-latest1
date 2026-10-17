@@ -14,16 +14,26 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { KIND_META, STATUS_META } from '@/features/emergencies/api';
 import { useEmergencies, useResolveEmergency } from '@/features/emergencies/hooks';
+import { canResolveEmergency } from '@/features/emergencies/permissions';
+import { useContext as usePropertyContext } from '@/features/property/hooks';
+import { getErrorMessage } from '@/utils/errorMapper';
 import { relativeTime } from '@/features/visitor/utils/visitorFormatters';
 import type { EmergencyAlert } from '@/features/emergencies/api';
 
 export default function EmergenciesScreen() {
   const { data, isLoading, isError, refetch, isRefetching } = useEmergencies();
   const resolve = useResolveEmergency();
+  const { data: propertyContext } = usePropertyContext();
+  // Only the estate manager may resolve; everyone else just sees the alert.
+  const canResolve = canResolveEmergency(propertyContext);
+  const [resolveError, setResolveError] = React.useState('');
 
   const onResolve = async (a: EmergencyAlert) => {
     const ok = await confirmAsync({ title: 'Mark resolved?', message: `Close the ${KIND_META[a.kind].label.toLowerCase()} alert.`, confirmLabel: 'Resolve' });
-    if (ok) resolve.mutate(a.id);
+    if (!ok) return;
+    setResolveError('');
+    // The server re-checks the role, so surface its message (e.g. a 403) if it is still hit.
+    resolve.mutate(a.id, { onError: (e) => setResolveError(getErrorMessage(e)) });
   };
 
   const renderItem = ({ item }: { item: EmergencyAlert }) => {
@@ -40,7 +50,7 @@ export default function EmergenciesScreen() {
           {item.description ? <Text style={styles.desc} numberOfLines={2}>{item.description}</Text> : null}
           <Text style={styles.meta}>{item.reporterName ?? 'Resident'} · {relativeTime(item.createdAt)}</Text>
         </View>
-        {item.status !== 'resolved' ? (
+        {canResolve && item.status !== 'resolved' ? (
           <Pressable onPress={() => onResolve(item)} accessibilityRole="button" accessibilityLabel="Resolve" hitSlop={8} style={styles.resolveBtn}><CheckCircle2 size={18} color={Colors.teal} strokeWidth={1.8} /></Pressable>
         ) : null}
       </View>
@@ -54,6 +64,7 @@ export default function EmergenciesScreen() {
         <Siren size={24} color={Colors.onError} strokeWidth={2} />
         <View style={{ flex: 1 }}><Text style={styles.panicTitle}>Report an emergency</Text><Text style={styles.panicSub}>Alert estate security & admin now</Text></View>
       </Pressable>
+      {resolveError ? <Text style={styles.resolveError} accessibilityRole="alert">{resolveError}</Text> : null}
       {isLoading ? <StateView kind="loading" message="Loading alerts…" />
         : isError ? <StateView kind="error" title="Couldn't load" message="Please try again." actionLabel="Retry" onAction={() => refetch()} />
         : (
@@ -69,6 +80,7 @@ const styles = StyleSheet.create({
   panic: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.error, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md, ...shadow1 },
   panicTitle: { ...Typography.labelLg, color: Colors.onError },
   panicSub: { ...Typography.bodySm, color: Colors.errorContainer },
+  resolveError: { ...Typography.labelMd, color: Colors.error, marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.sm },
   list: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.xxl, flexGrow: 1 },
   card: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerLow, padding: Spacing.md, ...shadow1 },
   iconBox: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.errorContainer, alignItems: 'center', justifyContent: 'center' },

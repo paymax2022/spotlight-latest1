@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as admin from '../api/admin.api';
 import type {
   AssetControlPatch,
-  KycDecision,
   OrderFilter,
   WithdrawalDecision,
 } from '../types/admin.types';
@@ -27,23 +26,6 @@ export function useAdminUser(id?: string) {
     queryFn: () => admin.getUser(id as string),
     enabled: Boolean(id),
     staleTime: 30_000,
-  });
-}
-
-export function useKycQueue() {
-  return useQuery({ queryKey: [KEY, 'kyc'], queryFn: admin.getKycQueue, staleTime: 15_000 });
-}
-
-export function useReviewKyc() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, decision, reason }: { id: string; decision: KycDecision; reason: string }) =>
-      admin.reviewKyc(id, decision, reason),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [KEY, 'kyc'] });
-      qc.invalidateQueries({ queryKey: [KEY, 'dashboard'] });
-      qc.invalidateQueries({ queryKey: [KEY, 'audit'] });
-    },
   });
 }
 

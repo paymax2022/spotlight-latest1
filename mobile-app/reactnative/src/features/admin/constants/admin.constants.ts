@@ -151,7 +151,6 @@ export interface NavSection {
 
 export const NAV_SECTIONS: NavSection[] = [
   { id: 'users',          label: 'Users',          description: 'Accounts & profiles',     icon: 'Users',         route: '/admin/users',          permission: 'user.view' },
-  { id: 'kyc',            label: 'KYC Queue',       description: 'Identity review',         icon: 'ShieldCheck',   route: '/admin/kyc',            permission: 'kyc.review' },
   { id: 'assets',         label: 'Assets',          description: 'Trading controls',        icon: 'Coins',         route: '/admin/assets',         permission: 'asset.config' },
   { id: 'orders',         label: 'Orders',          description: 'Trade activity',          icon: 'ArrowLeftRight', route: '/admin/orders',        permission: 'order.view' },
   { id: 'withdrawals',    label: 'Withdrawals',     description: 'Approve & review',        icon: 'Banknote',      route: '/admin/withdrawals',    permission: 'withdrawal.approve' },

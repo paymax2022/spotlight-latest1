@@ -20,11 +20,13 @@ import { callGo, resetUnavailable } from '../_otp';
  * unavailable the caller is told so (503) — that is a property of the environment,
  * identical for every identifier, so it reveals nothing about accounts.
  *
- * Otherwise the answer is IDENTICAL whether or not an account matched, and
- * whether or not the upstream succeeded. Anything else turns the reset form into
- * an account-enumeration oracle, which is the same reason the Go endpoint swallows
- * its own failures. The one deliberate exception is 429: that limit is per client
- * IP, not per account, and a throttled user would otherwise wait for an email that
+ * Product decision (ADR-PR801): THIS step tells the user when no account matches
+ * (404 account_not_found), so a mistyped address is caught here instead of after
+ * a code that never comes. That discloses whether an email/phone is registered;
+ * the per-IP reset limiter is the brake. Other upstream failures are still
+ * swallowed into the neutral answer, and verify/reset still answer identically
+ * for every identifier. 429 is passed through for the same reason as before: it
+ * is per client IP, and a throttled user would otherwise wait for an email that
  * is never coming.
  */
 export async function POST(request: Request) {
@@ -48,6 +50,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Too many attempts. Please try again later.' },
         { status: 429 },
+      );
+    }
+    if (go.status === 404) {
+      return NextResponse.json(
+        { error: 'account_not_found', message: 'No account found for that email or phone number.' },
+        { status: 404 },
       );
     }
     if (go.status >= 400) {

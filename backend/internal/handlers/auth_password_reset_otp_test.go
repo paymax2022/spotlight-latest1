@@ -38,6 +38,11 @@ type resetFake struct {
 	setCalls     []struct{ email, password string }
 	setErr       error
 	ticketErr    error
+
+	// known lists the account emails AccountExists reports as present;
+	// existsErr forces the lookup itself to fail.
+	known     map[string]bool
+	existsErr error
 }
 
 func newResetFake() *resetFake {
@@ -47,7 +52,17 @@ func newResetFake() *resetFake {
 		goodCode:  "123456",
 		issued:    make(chan recordedIssue, 8),
 		tickets:   map[string]string{},
+		known:     map[string]bool{"ada@example.com": true},
 	}
+}
+
+func (f *resetFake) AccountExists(_ context.Context, email string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.existsErr != nil {
+		return false, f.existsErr
+	}
+	return f.known[strings.ToLower(email)], nil
 }
 
 func (f *resetFake) issue(_ context.Context, email, name, purpose, ip string) error {
@@ -186,22 +201,42 @@ func TestRequestAcceptsAPhoneNumberAndMailsTheAccountEmail(t *testing.T) {
 	}
 }
 
-func TestRequestAnswersIdenticallyWhetherOrNotAnAccountMatches(t *testing.T) {
+func TestRequestSaysSoWhenNoAccountMatchesAnEmail(t *testing.T) {
 	f := newResetFake()
-	r := newResetRouter(f, true)
-
-	c1, _, b1 := resetPost(t, r, "/request", map[string]string{"identifier": "08031234567"}) // matches
-	c2, _, b2 := resetPost(t, r, "/request", map[string]string{"identifier": "08099999999"}) // matches nothing
-	if c1 != c2 || b1 != b2 {
-		t.Fatalf("response differs: (%d %s) vs (%d %s)", c1, b1, c2, b2)
+	code, body, _ := resetPost(t, newResetRouter(f, true), "/request", map[string]string{"identifier": "Nobody@Example.com"})
+	if code != http.StatusNotFound || body["error"] != "account_not_found" || body["success"] != false {
+		t.Fatalf("got %d %v, want 404 account_not_found", code, body)
 	}
-	// The unmatched number must not cost a send.
-	waitIssued(t, f)
+	select {
+	case extra := <-f.issued:
+		t.Fatalf("a code was sent for an address with no account: %+v", extra)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func TestRequestSaysSoWhenNoAccountMatchesAPhoneNumber(t *testing.T) {
+	f := newResetFake()
+	code, body, _ := resetPost(t, newResetRouter(f, true), "/request", map[string]string{"identifier": "08099999999"})
+	if code != http.StatusNotFound || body["error"] != "account_not_found" {
+		t.Fatalf("got %d %v, want 404 account_not_found", code, body)
+	}
 	select {
 	case extra := <-f.issued:
 		t.Fatalf("a code was sent for a number with no account: %+v", extra)
 	case <-time.After(150 * time.Millisecond):
 	}
+}
+
+func TestRequestStillSendsWhenTheAccountLookupFails(t *testing.T) {
+	// A lookup failure is an outage, not evidence the account is missing: telling
+	// a real user "no account" because the database blinked would be wrong.
+	f := newResetFake()
+	f.existsErr = errors.New("db down")
+	code, _, _ := resetPost(t, newResetRouter(f, true), "/request", map[string]string{"identifier": "ada@example.com"})
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	waitIssued(t, f)
 }
 
 func TestRequestStillAcceptsTheOlderEmailKey(t *testing.T) {

@@ -50,6 +50,18 @@ export function forgotPasswordBody(identifier: string) {
   return { identifier: normaliseIdentifier(identifier) };
 }
 
+/**
+ * The reset request answers 404 `account_not_found` when nothing matches what
+ * the user typed (ADR-PR801). Returns the sentence to show, naming what they
+ * typed so a typo is obvious, or null for any other failure so the caller falls
+ * back to its generic error mapping.
+ */
+export function accountNotFoundMessage(err: unknown, identifier: string): string | null {
+  const res = (err as { response?: { status?: unknown; data?: { error?: unknown } } } | undefined)?.response;
+  if (res?.status !== 404 || res?.data?.error !== 'account_not_found') return null;
+  return `No account found for ${normaliseIdentifier(identifier)}.`;
+}
+
 export function verifyResetCodeBody(identifier: string, code: string) {
   return { identifier: normaliseIdentifier(identifier), code: code.trim() };
 }

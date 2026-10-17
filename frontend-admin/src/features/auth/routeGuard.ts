@@ -68,8 +68,6 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   // unreachable for them even though the server would have allowed them in.
   { prefix: '/admin/payments-finance', permissions: ['finance:view', 'finance:adjust:initiate', 'finance:adjust:approve'] },
   { prefix: '/admin/finance/transfers', permissions: ['finance.admin.transfers'] },
-  { prefix: '/admin/finance/kyc-verify', permissions: ['finance.admin.kyc'] },
-  { prefix: '/admin/finance/kyc', permissions: ['finance.admin.kyc'] },
   { prefix: '/admin/finance/disputes', permissions: ['finance.admin.disputes'] },
   { prefix: '/admin/finance/wallets', permissions: ['finance.admin.wallets'] },
   { prefix: '/admin/finance', permissions: ['finance.admin.view'] },

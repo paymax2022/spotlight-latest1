@@ -43,6 +43,10 @@ type tierLimiter interface {
 
 // Service manages driver registration, trip lifecycle, fare negotiation, and settlement.
 type Service struct {
+	// parcelRouteSecret signs parcel route tokens (WithParcelRouteTokenSecret);
+	// "" = tokens off, bookings route live. See parcel_route_token.go.
+	parcelRouteSecret string
+
 	db               *pgxpool.Pool
 	settlement       *settlement.Service
 	tiers            tierLimiter // fail-closed KYC-tier / daily-spend gate on rider money moves
