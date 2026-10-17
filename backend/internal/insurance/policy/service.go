@@ -252,6 +252,10 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey, 0)
 }
 
+// ErrBindPersistedPartially: the provider bound the policy (cover exists) but
+// recording it locally failed. Never refund on this — reconciliation resolves it.
+var ErrBindPersistedPartially = errors.New("policy: bind persisted partially")
+
 // BindFromQuotePrepaid binds a policy whose premium the customer ALREADY paid
 // into ledger.AccountInsurancePremiumHold (e.g. with a parcel fare at
 // booking). Instead of debiting the wallet, the saga moves paidKobo from the
@@ -580,7 +584,7 @@ func (s *Service) bindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 		// Persisting the bind result failed; the provider bind is idempotent so a
 		// reconciliation poller will pick it up. Do NOT auto-reverse — cover exists.
 		log.Printf("[insurance] WARN: bind succeeded but persist failed for policy %s: %v", p.ID, err)
-		return nil, fmt.Errorf("policy: bind persisted partially: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrBindPersistedPartially, err)
 	}
 
 	// Commission posting to the SEPARATE commission account (the only revenue).

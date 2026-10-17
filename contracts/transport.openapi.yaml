@@ -721,9 +721,13 @@ paths:
         the courier; the premium is held apart (it never reaches the courier settlement) until the policy
         binds when a courier accepts. The customer pays exactly the premium shown; the platform absorbs any
         difference to the insurer's final premium. If cover cannot be bound, or the parcel is cancelled
-        before it is, the premium is refunded to the wallet. The parcel's `insuranceStatus` reports
-        held | binding | bound | refunded | refund_failed. Without `insure` no premium is charged. With
-        the flag off, `insure` is ignored (legacy: cover bound and debited separately at courier accept).
+        (before or after the cover binds), the premium is refunded to the wallet. The wallet must cover
+        fare + premium up front (else 402 INSUFFICIENT_FUNDS, nothing charged). The parcel's
+        `insuranceStatus` reports declined (not ticked) | held | binding | bound | refunded |
+        refund_failed, or none for parcels booked before this feature (they keep the legacy flow).
+        Without `insure` no premium is charged. With the flag off, `insure` is ignored (legacy: cover
+        bound and debited separately at courier accept). Re-using an Idempotency-Key whose premium was
+        already refunded is 409 IDEMPOTENCY_KEY_CONFLICT (book again with a new key).
         Optional `route_token` is the `routeToken` returned by POST /mobility/parcels/estimate (issued only
         when the server has PARCEL_ROUTE_TOKEN_SECRET): a server-signed snapshot of that estimate's route
         distance/duration for the same pickup/dropoff, valid 15 minutes. With a valid token the booking
@@ -760,7 +764,7 @@ paths:
         '200': { description: Parcel }
         '400': { description: INVALID_IDEMPOTENCY_KEY (reserved key namespace) }
         '401': { description: Not authenticated }
-        '402': { description: Insufficient balance }
+        '402': { description: 'Insufficient balance (INSUFFICIENT_FUNDS: with insure, the wallet must cover fare + premium)' }
         '422':
           description: >-
             Insurance refused before anything was charged: INSURANCE_DECLARED_VALUE_REQUIRED,
