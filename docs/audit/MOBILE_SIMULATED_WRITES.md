@@ -133,7 +133,7 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
 - **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
   - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3 — done in Batch 8),
     repairs (4 — done in Batch 9), reports (2, read-only — done in Batch 10), tasks (3 — done in Batch 11; the
-    "stub" comment was a false positive), vendors (6), facilities (4). Every call matches a handler, every
+    "stub" comment was a false positive), vendors (6), facilities (4 — done in Batch 13). Every call matches a handler, every
     table exists, no read-side traps.
   - **Blocked — path mismatch, do not flip:** `ainotes` (1 of 4 calls matches; `GET
     /estate/ai-notes/:id`, `POST /estate/ai-notes/:id/approve`, `POST /estate/meetings/:id/ai-notes`
@@ -229,6 +229,23 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   - **Note, not changed:** like repairs/emergencies, `POST /tasks/:id/status` has no role check — any
     resident of the estate can move any task between todo/in_progress/done. Lower stakes than repairs
     (no money, no safety), but the same open authorization question.
+
+### Batch 13 (2026-10-17) — facilities (fee is display-only)
+- **facilities** (`src/features/facilities/api.ts`) — frontend-web handlers
+  (`app/api/v1/estate/facilities`). `verify_mobile_module.py`: **4/4 client calls match**; tables
+  `estate_facilities`, `facility_bookings` exist; no read-side traps. 2 reads (amenities, my
+  bookings), 2 mutations converted (`createBooking`, `cancelBooking`). The POST requires an
+  Idempotency-Key. e2e pin added (the e2e only lists amenities and the bookings tab). No handler
+  tests (code reading).
+  - **Note — a paid booking is never actually charged.** The booking handler's own comment says it
+    records a *reservation* with the fee captured in kobo but posts **no double-entry ledger + audit**.
+    A `fee_kobo > 0` facility yields a `pending` booking with `amount_kobo` set, but there is no
+    wallet debit and no path from `pending` → `confirmed`; a free facility goes straight to
+    `confirmed`. `cancelBooking` just flips to `cancelled` (nothing was paid, so nothing is refunded,
+    though the client exposes a `refunded` status). So "book the ₦50,000 clubhouse" records an
+    uncollected reservation. Likely intentional (reservations the estate settles offline), but the
+    fee shown in the app is not money the system takes — flagging in case a wallet-charged booking
+    flow was intended. Not changed.
 
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
