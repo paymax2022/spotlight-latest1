@@ -3,7 +3,8 @@ import { loginAs } from '../helpers/auth';
 import { mockAmbientRequests } from '../helpers/common';
 
 /**
- * Estate Tasks hub. EXPO_PUBLIC_TASKS_USE_MOCK defaults true — the seeded
+ * Estate Tasks hub. EXPO_PUBLIC_TASKS_USE_MOCK is pinned true in
+ * playwright.config.ts — the seeded
  * board lives in features/tasks/api.ts ('Circulate Q3 meeting agenda' todo,
  * 'Replace Gate B intercom' in progress, 'Audit waste-disposal invoices'
  * done), so no endpoint mocks are needed beyond the ambient stubs.
