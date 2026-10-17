@@ -4,7 +4,7 @@ import { mockAmbientRequests } from '../helpers/common';
 
 /**
  * Emergencies hub (estate panic/alerts). The feature ships an in-app mock
- * layer (EXPO_PUBLIC_EMERGENCIES_USE_MOCK defaults true), so the alert feed
+ * layer (EXPO_PUBLIC_EMERGENCIES_USE_MOCK is pinned true in playwright.config.ts), so the alert feed
  * renders with no endpoint mocks — alerts come from the seeded list in
  * src/features/emergencies/api.ts.
  */
