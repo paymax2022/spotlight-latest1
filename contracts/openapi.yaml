@@ -1781,6 +1781,12 @@ components:
         ends_at: { type: string, format: date-time }
         fee_bps: { type: integer, description: "Platform fee in basis points on vendor settlement (0-10000)" }
         created_at: { type: string, format: date-time }
+        banner_url: { type: string, nullable: true, description: "Event banner as a viewable URL; null when none is set (clients fall back to a colour block)" }
+        venue_lat: { type: number, format: double, nullable: true, description: "Venue latitude; null when the venue has no coordinates (clients render no map)" }
+        venue_lng: { type: number, format: double, nullable: true, description: "Venue longitude; null when the venue has no coordinates" }
+        venue_place_id: { type: string, nullable: true, description: "Geocoder place id for the venue, when known" }
+        like_count: { type: integer, description: "Stored counter of likes on this event (not counted on read)" }
+        liked: { type: boolean, description: "Whether the calling user has liked this event" }
 
     EventPatch:
       description: Partial organiser edit (PATCH /events/{id}); every field optional, snake_case.
@@ -1808,6 +1814,52 @@ components:
         ends_at: { type: string, format: date-time }
         min_price_kobo: { type: integer, format: int64, description: "MIN(price_kobo) across active tiers; 0 if free/no active tiers" }
         sold_out: { type: boolean }
+
+    # ── Events social (FEATURE_EVENTS_SOCIAL) — likes, organiser follows, organiser profiles ──
+    LikeState:
+      description: Result of a like or unlike. Both operations are idempotent and always return the current state.
+      type: object
+      properties:
+        liked: { type: boolean }
+        like_count: { type: integer }
+
+    FollowState:
+      description: Result of a follow or unfollow. Both operations are idempotent and always return the current state.
+      type: object
+      properties:
+        following: { type: boolean }
+        follower_count: { type: integer }
+
+    OrganiserProfile:
+      type: object
+      properties:
+        organiser_id: { type: string, format: uuid }
+        display_name: { type: string, description: "Falls back to the organiser's account full name when no profile row exists" }
+        bio: { type: string }
+        banner_url: { type: string, nullable: true }
+        follower_count: { type: integer }
+        following: { type: boolean, description: "Whether the calling user follows this organiser" }
+        events:
+          type: array
+          description: The organiser's upcoming public events
+          items: { $ref: '#/components/schemas/EventSummary' }
+
+    OrganiserPatch:
+      description: Partial edit of the caller's own organiser profile (PUT /events/organisers/me); every field optional, snake_case.
+      type: object
+      properties:
+        display_name: { type: string }
+        bio: { type: string }
+        banner_url: { type: string, description: "http(s) link or a banner object_key from the presign endpoint; a key outside the caller's prefix is rejected" }
+
+    OrganiserBannerPresign:
+      type: object
+      properties:
+        upload_url: { type: string, description: Short-lived presigned PUT URL }
+        object_key: { type: string, description: 'Server-chosen key under organiser/<id>/banner/; send back as banner_url when saving the profile' }
+        content_type: { type: string, description: The client MUST send exactly this Content-Type on the PUT }
+        expires_in: { type: integer, description: Seconds }
+        method: { type: string, enum: [PUT] }
 
     TicketTier:
       type: object
@@ -9303,6 +9355,192 @@ paths:
                   data: { $ref: '#/components/schemas/VendorCharge' }
         '400': { description: "Missing Idempotency-Key or invalid body" }
         '404': { description: Vendor or wallet not found }
+
+  # ── Events social (FEATURE_EVENTS_SOCIAL) — likes, organiser follows and profiles ──
+  # Moves no money: no ledger posting, no Idempotency-Key. Like/follow are idempotent
+  # by construction (primary keys); a repeat returns the current state, not an error.
+  # Routing: /events/organisers/... and /events/following MUST be registered before any
+  # /events/{id} param route (radix-router conflict, as with marketplace /listings/media).
+  /events/{id}/like:
+    post:
+      operationId: likeEvent
+      summary: Like an event (idempotent; a repeat returns the current state)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Current like state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/LikeState' }
+        '404': { description: Event not found }
+    delete:
+      operationId: unlikeEvent
+      summary: Remove the caller's like from an event (idempotent; a repeat returns the current state)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Current like state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/LikeState' }
+        '404': { description: Event not found }
+
+  /events/organisers/{id}/follow:
+    post:
+      operationId: followOrganiser
+      summary: Follow an organiser (idempotent; a repeat returns the current state)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: Organiser (user) id }
+      responses:
+        '200':
+          description: Current follow state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/FollowState' }
+        '404': { description: Organiser not found }
+    delete:
+      operationId: unfollowOrganiser
+      summary: Unfollow an organiser (idempotent; a repeat returns the current state)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: Organiser (user) id }
+      responses:
+        '200':
+          description: Current follow state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/FollowState' }
+        '404': { description: Organiser not found }
+
+  /events/organisers/me:
+    put:
+      operationId: updateMyOrganiser
+      summary: Edit the caller's own organiser profile (display name, bio, banner URL)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrganiserPatch' }
+      responses:
+        '200':
+          description: The updated organiser profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserProfile' }
+        '400': { description: "Invalid body, or banner_url is not an http(s) link or a key under the caller's own banner prefix" }
+
+  /events/organisers/me/banner/presign:
+    post:
+      operationId: presignOrganiserBanner
+      summary: Get a presigned upload URL for the caller's organiser banner
+      description: >
+        Step 1 of a banner upload, same flow as the restaurant store-image presign. The backend chooses
+        the object key (organiser/<id>/banner/<random><ext>) and binds the Content-Type into the signature.
+        Step 2 is a direct PUT of the image to `upload_url` (no Authorization header); step 3 saves the
+        returned `object_key` as `banner_url` through PUT /events/organisers/me. Allowed: .png image/png,
+        .jpg/.jpeg image/jpeg, .webp image/webp (no SVG). The bucket comes from R2_BUCKET with no default;
+        503 means the server has no usable object storage.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_name, content_type]
+              properties:
+                file_name: { type: string, description: Used only for its extension, example: banner.jpg }
+                content_type: { type: string, example: image/jpeg }
+      responses:
+        '200':
+          description: Upload URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserBannerPresign' }
+        '400': { description: "Unsupported extension, non-image content type, or type/extension mismatch" }
+        '503': { description: Image uploads are not configured on this server }
+
+  /events/organisers/{id}:
+    get:
+      operationId: getOrganiser
+      summary: Organiser profile - display name, bio, banner, follower count, the caller's follow state and upcoming events
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: Organiser (user) id }
+      responses:
+        '200':
+          description: Organiser profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserProfile' }
+        '404': { description: Organiser not found }
+
+  /events/following:
+    get:
+      operationId: listFollowingEvents
+      summary: Following tab feed - upcoming events from organisers the caller follows
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0, minimum: 0 }
+      responses:
+        '200':
+          description: Event summaries, soonest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/EventSummary' }
 
   # ── Events admin (RBAC events.*) — mounted at /api/events/admin/*, OUTSIDE the
   # /api/finance server base (see `servers:` above). Documented here as full
