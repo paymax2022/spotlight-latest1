@@ -244,6 +244,9 @@ type Config struct {
 	AssocCardSigningSecret     string
 	FeatureEventsEnabled       bool
 	FeatureEventsEditLifecycle bool // organiser edit/duplicate/pause/resume/cancel routes
+	// ParcelRouteTokenSecret (PARCEL_ROUTE_TOKEN_SECRET, >= 32 bytes) signs the parcel
+	// estimate's route so the wallet booking prices from it. Unset = off.
+	ParcelRouteTokenSecret string
 	// FeatureEventsTicketingDepth (FEATURE_EVENTS_TICKETING_DEPTH) exposes tier/promo edit routes.
 	FeatureEventsTicketingDepth bool
 	// FeatureEventsTeamRoles (FEATURE_EVENTS_TEAM_ROLES) exposes per-event team (MANAGER) grant routes.
@@ -992,6 +995,7 @@ func Load() Config {
 		TransportBusSettleGraceMinutes:               getEnvInt("TRANSPORT_BUS_SETTLE_GRACE_MINUTES", 30),
 		TransportBusCancelCutoffMinutes:              getEnvInt("TRANSPORT_BUS_CANCEL_CUTOFF_MINUTES", 120),
 		TransportBusMinBookingLeadMinutes:            getEnvInt("TRANSPORT_BUS_MIN_BOOKING_LEAD_MINUTES", 15),
+		ParcelRouteTokenSecret:                       getEnv("PARCEL_ROUTE_TOKEN_SECRET", ""),
 		FeatureAICareEnabled:                         getEnvBool("FEATURE_AICARE_ENABLED", false),
 		FeatureDisputesEnabled:                       getEnvBool("FEATURE_DISPUTES_ENABLED", false),
 		FeatureRatingsEnabled:                        getEnvBool("FEATURE_RATINGS_ENABLED", false),
