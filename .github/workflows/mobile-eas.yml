@@ -73,6 +73,12 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.ota_only }}
         run: eas update --branch ${{ inputs.profile }} --message "${{ github.sha }}" --non-interactive
 
+      # A production bundle must never carry the dev-only Local server switch
+      # templates (EXPO_PUBLIC_LOCAL_*); the OTA step above runs the same guard.
+      - name: Verify the production profile env
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.ota_only) && (github.event_name == 'push' || inputs.profile == 'production') }}
+        run: node scripts/export-eas-profile-env.mjs production >/dev/null
+
       - name: Build (+ submit on tag)
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.ota_only) }}
         run: |

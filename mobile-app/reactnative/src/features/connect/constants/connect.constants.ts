@@ -1,7 +1,7 @@
 import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/tokens';
 import { getDevUrl } from '@/lib/devUrl';
-import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
+import { resolveConnectHost } from '@/lib/apiBaseUrl';
 import type { TierBenefit } from '../types/connect.types';
 
 // Flip to false once the live Go-backend /connect endpoints are reachable from
@@ -23,9 +23,8 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CONNECT_USE_MOCK, tr
 // so release APKs resolved to `http://localhost:8091/api/v1/connect` — the
 // device's OWN loopback — and every Connect call failed as "no connection".
 // so the loopback host is never rewritten in a release build.
-const CONNECT_API_HOST =
-  process.env.EXPO_PUBLIC_CONNECT_API_HOST ??
-  resolveApiBaseUrl(__DEV__ ? 'http://localhost:8091' : undefined);
+// A Local server override (non-production builds) takes precedence over all three.
+const CONNECT_API_HOST = resolveConnectHost(__DEV__ ? 'http://localhost:8091' : undefined);
 export const CONNECT_API_BASE = getDevUrl(`${CONNECT_API_HOST}/api/v1/connect`);
 
 // Module-scoped colors built on the base design tokens (never hardcode hex).
