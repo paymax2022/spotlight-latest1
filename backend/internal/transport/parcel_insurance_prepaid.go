@@ -452,7 +452,8 @@ func (s *Service) refundPrepaidOnCancel(ctx context.Context, p *parcelRow) {
 //   - binding with the premium moved and NOT refunded → left alone (cover may
 //     exist: needs the insurer's word), logged
 //   - refund_failed → retry the refund from wherever the premium is
-//   - held past courier accept (the bind never ran) → refund
+//   - held past courier accept (the bind never ran), or on a cancelled parcel
+//     whose cancel was interrupted before refunding → refund
 //   - a held premium with no parcel row (crash before the INSERT) → refund
 func (s *Service) ReconcileParcelInsurance(ctx context.Context, grace time.Duration) (int, error) {
 	if s.ledger == nil || s.db == nil {
@@ -462,7 +463,7 @@ func (s *Service) ReconcileParcelInsurance(ctx context.Context, grace time.Durat
 	rows, err := s.db.Query(ctx, `
 		SELECT id FROM parcels
 		WHERE (insurance_status IN ('binding','refund_failed')
-		       OR (insurance_status='held' AND status NOT IN ('created','cancelled')))
+		       OR (insurance_status='held' AND status <> 'created'))
 		  AND updated_at < NOW() - make_interval(secs => $1)
 		LIMIT 200`, grace.Seconds())
 	if err != nil {
@@ -549,9 +550,12 @@ func (s *Service) reconcileParcelPremium(ctx context.Context, p *parcelRow) bool
 		p.InsuranceStatus = insuranceStatusBinding
 		s.recordBoundCover(ctx, p, policyID)
 		return true
-	case "failed":
-		// The insurer definitely refused; the saga's own refund did not land.
-		// Post it under the saga's key so it can never double up.
+	case "failed", "":
+		// The insurer definitely refused — or no purchase was ever sent ("": the
+		// saga records its claim BEFORE calling the insurer, so no record means
+		// it died between taking the premium and the claim). Either way there is
+		// no cover; the saga's own refund did not land. Post it under the saga's
+		// key so it can never double up.
 		wallet, wErr := s.ledger.GetOrCreateUserWallet(ctx, p.SenderID)
 		clearing, cErr := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 		if wErr != nil || cErr != nil {
@@ -607,6 +611,13 @@ func (s *Service) reconcileOrphanPremiums(ctx context.Context, grace time.Durati
 	rows.Close()
 	n := 0
 	for _, o := range orphans {
+		// Re-check right before refunding: a same-key retry may have written the
+		// parcel since the select (narrows, not closes, that window — the bind
+		// also refuses a premium whose hold refund exists).
+		var exists bool
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM parcels WHERE idempotency_key=$1)`, o.bookingKey).Scan(&exists); err != nil || exists {
+			continue
+		}
 		if err := s.refundHeldPremium(ctx, o.senderID, o.bookingKey, o.amount); err != nil {
 			log.Printf("[transport] reconcile orphan premium %s: refund failed: %v", o.bookingKey, err)
 			continue
