@@ -100,7 +100,9 @@ export default function ParcelDescribeScreen() {
     if (!est) return;
     setSubmitError(null);
     pay.start({
-      amountKobo: est.totalKobo,
+      // What the wallet is actually debited: the delivery fare. The insurance
+      // premium shown on the estimate is indicative and is not charged at booking.
+      amountKobo: est.fareKobo,
       title: 'Pay for delivery',
       domain: 'parcel',
       // Wallet booking charge (with its Idempotency-Key). It pins the fare the
@@ -116,6 +118,7 @@ export default function ParcelDescribeScreen() {
             prohibitedAck,
             paymentMethod: 'wallet',
             expectedFareKobo: expectedFareFor(est),
+            routeToken: est?.routeToken,
           });
         } catch (e) {
           const changed = fareChangedFrom(e);

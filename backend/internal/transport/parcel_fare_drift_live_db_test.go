@@ -118,3 +118,75 @@ func TestLiveDB_BookParcel_FareDrift_ReplayOfBookedKeyReturnsTheBooking(t *testi
 		t.Fatalf("%d parcels under the key, want 1", n)
 	}
 }
+
+// A same-key wallet retry with an UNCHANGED fare (response lost, price did
+// not move) used to 500 at the parcel INSERT (UNIQUE idempotency_key). It must
+// return the original booking, without re-running the tier gate or charging.
+func TestLiveDB_BookParcel_WalletReplaySameFareReturnsTheBooking(t *testing.T) {
+	pool := paystackRidePool(t)
+	ctx := context.Background()
+	svc, _, sender := paystackRideFixture(t, ctx, pool, 50_000_000)
+	testsupport.SetKycTier(t, ctx, pool, sender, testsupport.KycTierUnlimited)
+
+	key := "wallet-replay-" + uuid.NewString()
+	first, err := svc.BookParcel(ctx, sender, parcelReq(), key)
+	if err != nil {
+		t.Fatalf("first booking: %v", err)
+	}
+	afterFirst := riderWalletBalance(t, ctx, pool, sender)
+	again, err := svc.BookParcel(ctx, sender, parcelReq(), key)
+	if err != nil {
+		t.Fatalf("same-key retry must return the booking, got %v", err)
+	}
+	if again["id"] != first["id"] {
+		t.Fatalf("retry returned %v, want %v", again["id"], first["id"])
+	}
+	if got := riderWalletBalance(t, ctx, pool, sender); got != afterFirst {
+		t.Fatalf("retry moved the wallet: %d → %d", afterFirst, got)
+	}
+}
+
+// With a traffic-aware provider the duration moves between estimate and
+// booking. Priced from the estimate's signed route, the booking matches the
+// fare the customer saw; without the token it is (correctly) a FARE_CHANGED.
+func TestLiveDB_BookParcel_RouteTokenAbsorbsRouteDrift(t *testing.T) {
+	pool := paystackRidePool(t)
+	ctx := context.Background()
+	svc, _, sender := paystackRideFixture(t, ctx, pool, 50_000_000)
+	testsupport.SetKycTier(t, ctx, pool, sender, testsupport.KycTierUnlimited)
+	svc = svc.WithMaps(&driftMaps{}).WithParcelRouteTokenSecret(testRouteSecret)
+
+	r := parcelReq()
+	est, err := svc.EstimateParcel(ctx, ParcelEstimateRequest{Pickup: r.Pickup, Dropoff: r.Dropoff, Size: r.Size, Speed: r.Speed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if est.RouteToken == "" {
+		t.Fatal("estimate must carry a route token when a secret is configured")
+	}
+
+	// No token: the drifted live route prices differently → refused, nothing moves.
+	noTok := parcelReq()
+	noTok.ExpectedFareKobo = &est.FareKobo
+	_, err = svc.BookParcel(ctx, sender, noTok, "drift-notok-"+uuid.NewString())
+	var ce *CodedError
+	if !errors.As(err, &ce) || ce.Code != CodeFareChanged {
+		t.Fatalf("without the token a drifted route must be FARE_CHANGED, got %v", err)
+	}
+
+	// With the token: priced from the estimate's route → books at the shown fare.
+	withTok := parcelReq()
+	withTok.ExpectedFareKobo = &est.FareKobo
+	withTok.RouteToken = est.RouteToken
+	before := riderWalletBalance(t, ctx, pool, sender)
+	p, err := svc.BookParcel(ctx, sender, withTok, "drift-tok-"+uuid.NewString())
+	if err != nil {
+		t.Fatalf("token-priced booking must match the estimate: %v", err)
+	}
+	if got, _ := p["fareKobo"].(int64); got != est.FareKobo {
+		t.Fatalf("booked %d, want the estimated %d", got, est.FareKobo)
+	}
+	if got := riderWalletBalance(t, ctx, pool, sender); got != before-est.FareKobo {
+		t.Fatalf("escrowed %d, want %d", before-got, est.FareKobo)
+	}
+}

@@ -2203,6 +2203,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			transportSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: transportCommission})
 			log.Println("[transport] commission recording wired → Lifestyle/{Taxi - Ride Hailing, Delivery - Rider, Bus Booking, Car Hire} (earning-row only; no ledger re-post)")
 		}
+		// Parcel route tokens: the wallet booking prices from the estimate's signed
+		// route, so traffic drift can't raise FARE_CHANGED. Unset secret = off.
+		transportSvc = transportSvc.WithParcelRouteTokenSecret(cfg.ParcelRouteTokenSecret)
 		transportHandler := transport.NewHandler(transportSvc)
 		transportAdmin := transport.NewAdminHandler(transport.NewAdminService(transportSvc))
 

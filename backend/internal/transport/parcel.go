@@ -125,6 +125,9 @@ type ParcelBookRequest struct {
 	// is refused (409 FARE_CHANGED) before any money moves. Nil = legacy
 	// behaviour (older app builds, scheduled dispatch). See checkExpectedParcelFare.
 	ExpectedFareKobo *int64 `json:"expected_fare_kobo,omitempty"`
+	// RouteToken is the estimate's routeToken: wallet bookings price from its
+	// signed route (live config). Ignored unless it verifies. See parcel_route_token.go.
+	RouteToken string `json:"route_token,omitempty"`
 }
 
 // ParcelPickedUpRequest carries the parcel photo confirmation.
@@ -147,6 +150,9 @@ type ParcelEstimate struct {
 	TotalKobo       int64   `json:"totalKobo"`
 	SizeMultiplier  float64 `json:"sizeMultiplier"`
 	SpeedMultiplier float64 `json:"speedMultiplier"`
+	// RouteToken signs this estimate's route for the wallet booking to price
+	// from (route_token). Empty when route tokens are off.
+	RouteToken string `json:"routeToken,omitempty"`
 }
 
 // parcelFare computes the fare: (base + per_km*km) * size * speed, floored at min.
@@ -195,6 +201,7 @@ func (s *Service) EstimateParcel(ctx context.Context, req ParcelEstimateRequest)
 		TotalKobo:       fare + insurance,
 		SizeMultiplier:  parcelSizeMultiplier(req.Size),
 		SpeedMultiplier: parcelSpeedMultiplier(req.Speed),
+		RouteToken:      signParcelRoute(s.parcelRouteSecret, req.Pickup, req.Dropoff, route, time.Now()),
 	}, nil
 }
 
@@ -219,10 +226,9 @@ func (s *Service) priceParcel(ctx context.Context, req ParcelBookRequest) (*parc
 	if err != nil {
 		return nil, err
 	}
-	route, err := s.maps.Route(ctx,
-		LatLng{Lat: req.Pickup.Lat, Lng: req.Pickup.Lng},
-		LatLng{Lat: req.Dropoff.Lat, Lng: req.Dropoff.Lng},
-	)
+	// The estimate's signed route when the request carries a valid token
+	// (server-computed, so not client-controlled), else a live routing call.
+	route, err := s.parcelRouteForBooking(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -409,14 +415,15 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 	if !req.ProhibitedAck {
 		return "", codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
 	}
-	if external {
-		// Replay: a repeat of an already-booked card-funded parcel returns it
-		// untouched — no second escrow, no second row.
-		if id, found, err := s.FindParcelByIdempotencyKey(ctx, senderID, idempotencyKey); err != nil {
-			return "", err
-		} else if found {
-			return id, nil
-		}
+	// Replay: a repeat of an already-booked key (card-funded, or a wallet retry
+	// whose response was lost) returns that parcel untouched — no second escrow,
+	// no second row, no second tier check, and never a FARE_CHANGED for a
+	// booking that was already charged. The wallet path used to reach the
+	// INSERT and 500 on UNIQUE(idempotency_key).
+	if id, found, err := s.FindParcelByIdempotencyKey(ctx, senderID, idempotencyKey); err != nil {
+		return "", err
+	} else if found {
+		return id, nil
 	}
 	var pr *parcelPricing
 	var err error
@@ -452,15 +459,8 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		// The wallet path prices live at book time, so pricing config or the
 		// rate card can move between the estimate the customer confirmed and
 		// this call. Refuse BEFORE the tier gate and the escrow: nothing moves,
-		// and the app re-confirms the new price.
-		// Except a retry of a key that already booked (response lost, then the
-		// price moved): that booking was charged, so hand it back rather than a
-		// 409 the app reads as "nothing was charged".
-		if id, found, ferr := s.FindParcelByIdempotencyKey(ctx, senderID, idempotencyKey); ferr != nil {
-			return "", ferr
-		} else if found {
-			return id, nil
-		}
+		// and the app re-confirms the new price. (A key that already booked
+		// never gets here: the replay check above returned it.)
 		return "", err
 	} else if err := s.enforceTierLimit(ctx, senderID, fare); err != nil {
 		// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same
@@ -542,6 +542,11 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 			if id != "" { // a concurrent confirm owns the escrow
 				return id, nil
 			}
+		} else if id, found, ferr := s.FindParcelByIdempotencyKey(ctx, senderID, idempotencyKey); ferr == nil && found {
+			// A concurrent same-key wallet request won the INSERT. Its escrow is
+			// the only one (the escrow is idempotent on the key), so hand back its
+			// parcel rather than a 500.
+			return id, nil
 		}
 		return "", fmt.Errorf("transport: insert parcel: %w", err)
 	}
