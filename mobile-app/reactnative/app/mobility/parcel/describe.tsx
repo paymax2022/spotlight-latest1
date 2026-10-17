@@ -18,6 +18,7 @@ import SelectableCard from '@/features/mobility/components/SelectableCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
 import { useParcelEstimate, useBookParcel } from '@/features/mobility/hooks/useModes';
+import { expectedFareFor, fareChangedFrom, fareChangedMessage } from '@/features/mobility/utils/parcelFareDrift';
 import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
 import * as parcelAPI from '@/features/mobility/api/parcel.api';
 import { parcelCardDirectResolverRoute } from '@/features/mobility/utils/cardDirect';
@@ -102,16 +103,27 @@ export default function ParcelDescribeScreen() {
       amountKobo: est.totalKobo,
       title: 'Pay for delivery',
       domain: 'parcel',
-      // Existing wallet booking charge (with its Idempotency-Key) runs unchanged.
-      charge: () =>
-        book.mutateAsync({
-          pickup, dropoff, category, size, speed, declaredValueKobo,
-          receiverName: receiverName.trim(),
-          receiverPhone: receiverPhone.trim(),
-          photoUrl: photoAttached ? 'mock://parcel-photo' : undefined,
-          prohibitedAck,
-          paymentMethod: 'wallet',
-        }),
+      // Wallet booking charge (with its Idempotency-Key). It pins the fare the
+      // customer saw: if the server's live fare moved, it refuses with
+      // FARE_CHANGED before charging, and we re-quote so the new price shows.
+      charge: async () => {
+        try {
+          return await book.mutateAsync({
+            pickup, dropoff, category, size, speed, declaredValueKobo,
+            receiverName: receiverName.trim(),
+            receiverPhone: receiverPhone.trim(),
+            photoUrl: photoAttached ? 'mock://parcel-photo' : undefined,
+            prohibitedAck,
+            paymentMethod: 'wallet',
+            expectedFareKobo: expectedFareFor(est),
+          });
+        } catch (e) {
+          const changed = fareChangedFrom(e);
+          if (!changed) throw e;
+          estimate.mutate({ pickup, dropoff, category, size, speed, declaredValueKobo });
+          throw new Error(fareChangedMessage(changed.fareKobo));
+        }
+      },
       onPaid: (parcel) => router.replace(`/mobility/parcel/${parcel.id}`),
       // Card → server-initiated Paystack checkout (same shape as estimate.tsx).
       onCard: async () => {

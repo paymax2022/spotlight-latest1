@@ -120,6 +120,11 @@ type ParcelBookRequest struct {
 	DeclaredValueKobo int64  `json:"declared_value_kobo"`
 	ProhibitedAck     bool   `json:"prohibited_ack"`
 	IdempotencyKey    string `json:"idempotency_key"`
+	// ExpectedFareKobo is the fare the customer confirmed on the estimate
+	// (fareKobo, not totalKobo). Wallet path only: a mismatch with the live fare
+	// is refused (409 FARE_CHANGED) before any money moves. Nil = legacy
+	// behaviour (older app builds, scheduled dispatch). See checkExpectedParcelFare.
+	ExpectedFareKobo *int64 `json:"expected_fare_kobo,omitempty"`
 }
 
 // ParcelPickedUpRequest carries the parcel photo confirmation.
@@ -443,6 +448,12 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		if fare != verifiedAmountKobo {
 			return "", codedErr(http.StatusConflict, CodeAmountMismatch, "verified payment amount no longer matches the parcel fare")
 		}
+	} else if err := checkExpectedParcelFare(req.ExpectedFareKobo, fare); err != nil {
+		// The wallet path prices live at book time, so pricing config or the
+		// rate card can move between the estimate the customer confirmed and
+		// this call. Refuse BEFORE the tier gate and the escrow: nothing moves,
+		// and the app re-confirms the new price.
+		return "", err
 	} else if err := s.enforceTierLimit(ctx, senderID, fare); err != nil {
 		// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same
 		// contract as RequestRide): a Tier0/over-limit sender cannot move
@@ -1007,4 +1018,17 @@ func (h *Handler) ParcelVerifyDropoff(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "delivered"})
+}
+
+// checkExpectedParcelFare refuses a wallet booking whose live fare differs from
+// the fare the customer confirmed. Exact integer-kobo equality: a fare that
+// went DOWN is refused too, so the customer always sees the amount escrowed.
+// A nil expectation is the legacy path and always passes.
+func checkExpectedParcelFare(expectedKobo *int64, fareKobo int64) error {
+	if expectedKobo == nil || *expectedKobo == fareKobo {
+		return nil
+	}
+	ce := codedErr(http.StatusConflict, CodeFareChanged, "the delivery price changed since your estimate; please review the new price")
+	ce.Details = map[string]any{"fare_kobo": fareKobo, "expected_fare_kobo": *expectedKobo}
+	return ce
 }
