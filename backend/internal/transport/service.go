@@ -647,7 +647,13 @@ func nullPhase(p TripPhase) any {
 
 // writeAudit inserts a row into transport_audit_log. Every admin mutation must
 // call this. old/new are JSON-serialised; nil values are stored as SQL NULL.
-func writeAudit(ctx context.Context, db *pgxpool.Pool, adminID, action, entityType, entityID string, oldVal, newVal any, reason string) error {
+// auditExecer is satisfied by both *pgxpool.Pool and pgx.Tx, so a mutation can
+// write its audit row inside its own transaction (all-or-nothing).
+type auditExecer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func writeAudit(ctx context.Context, db auditExecer, adminID, action, entityType, entityID string, oldVal, newVal any, reason string) error {
 	var oldJSON, newJSON []byte
 	if oldVal != nil {
 		oldJSON = jsonx.Marshal(oldVal)
