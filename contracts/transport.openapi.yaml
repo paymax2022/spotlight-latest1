@@ -92,6 +92,37 @@ components:
       type: object
       properties:
         error: { type: string }
+    ParcelRateCell:
+      type: object
+      description: One size x speed cell. Integer basis points and kobo, never floats.
+      required: [zone, size, speed, multiplierBps, minFareKobo, active]
+      properties:
+        zone: { type: string }
+        size: { type: string, enum: [small, medium, large] }
+        speed: { type: string, enum: [standard, express, same_day, scheduled] }
+        multiplierBps: { type: integer, format: int64, minimum: 1000, maximum: 100000, description: '10000 = 1.0x' }
+        minFareKobo: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+        active: { type: boolean }
+        updatedBy: { type: string, format: uuid, nullable: true }
+        updatedAt: { type: string, format: date-time }
+    ParcelRateCard:
+      type: object
+      required: [zone, cells]
+      properties:
+        zone: { type: string }
+        cells:
+          type: array
+          items: { $ref: '#/components/schemas/ParcelRateCell' }
+    ParcelRateCellPatch:
+      type: object
+      description: At least one of multiplier_bps, min_fare_kobo, active must be present.
+      required: [reason]
+      properties:
+        zone: { type: string, default: default }
+        multiplier_bps: { type: integer, format: int64, minimum: 1000, maximum: 100000 }
+        min_fare_kobo: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+        active: { type: boolean }
+        reason: { type: string, minLength: 1, maxLength: 500 }
     BusTicket:
       type: object
       description: A wallet-booked bus ticket (camelCase keys). Money fields are integer kobo.
@@ -454,6 +485,55 @@ paths:
   /admin/transport/pricing:
     get: { tags: [mobility-admin], summary: Get pricing config, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
     patch: { tags: [mobility-admin], summary: Update pricing config, responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } } }
+  /admin/transport/parcel-rate-card:
+    get:
+      tags: [mobility-admin]
+      summary: Parcel rate card for a zone (size x speed multiplier and minimum fare)
+      description: >-
+        Every stored cell of transport_parcel_rate_card for the zone, inactive ones included, in display
+        order (size small/medium/large, then speed standard/express/same_day/scheduled). No fallback: a
+        zone with no rows returns an empty `cells` array (pricing itself falls back to 'default').
+        Cells price parcels only while FEATURE_PARCEL_RATE_CARD_ENABLED is on.
+      parameters:
+        - { name: zone, in: query, required: false, schema: { type: string, default: default } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParcelRateCard' }
+        '403': { description: Missing mobility.view }
+  /admin/transport/parcel-rate-card/{size}/{speed}:
+    patch:
+      tags: [mobility-admin]
+      summary: Update one parcel rate-card cell (audited)
+      description: >-
+        Updates multiplier_bps, min_fare_kobo and/or active on an EXISTING cell (no upsert) and writes a
+        transport_audit_log row (action parcel_rate_card.update, old + new cell, reason) in the same
+        transaction. Bounds are validated server-side: multiplier_bps 1000-100000 (0.1x-10x),
+        min_fare_kobo 0-100000000 (₦0-₦1,000,000). Integers only. A card-checkout quote freezes the cell it
+        priced from, so an edit never changes an in-flight checkout; it applies to the next estimate.
+      parameters:
+        - { name: size, in: path, required: true, schema: { type: string, enum: [small, medium, large] } }
+        - { name: speed, in: path, required: true, schema: { type: string, enum: [standard, express, same_day, scheduled] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ParcelRateCellPatch' }
+      responses:
+        '200':
+          description: The updated cell
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParcelRateCell' }
+        '400':
+          description: Invalid size/speed, out-of-bounds value, nothing to change, or missing reason
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { description: Missing mobility.manage }
+        '404': { description: No such cell for the zone }
   /admin/transport/commission:
     get: { tags: [mobility-admin], summary: List commission tiers, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/commission/{tier}:
