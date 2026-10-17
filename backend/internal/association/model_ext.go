@@ -234,9 +234,16 @@ type OrgDraftCategory struct {
 // OrgDraftStateLeader is a per-state chapter leader collected by the wizard's
 // structure step when structureType is STATEWIDE.
 type OrgDraftStateLeader struct {
-	State             string `json:"state"`
-	LeaderName        string `json:"leaderName"`
-	LeaderContact     string `json:"leaderContact"`
+	State         string `json:"state"`
+	LeaderName    string `json:"leaderName"`
+	LeaderContact string `json:"leaderContact"`
+	// LeaderEmail is distinct from LeaderContact (which may hold a phone
+	// number instead): it is the ONLY field PublishOrganisation uses to (a)
+	// resolve an existing platform_users account for this leader — auto-
+	// granting them CHAPTER_ADMIN scoped to their state's chapter — and (b)
+	// send their onboarding email. Optional: a founder who doesn't have it
+	// yet can add it later from the admin console's leader list.
+	LeaderEmail       string `json:"leaderEmail"`
 	CanApproveMembers bool   `json:"canApproveMembers"`
 }
 

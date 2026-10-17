@@ -24,7 +24,14 @@ export interface DraftStateLeader {
   id:                string;
   state:             string;   // one of the 36 states + FCT
   leaderName:        string;
-  leaderContact:     string;   // phone / email (optional)
+  leaderContact:     string;   // phone (optional)
+  /**
+   * Distinct from leaderContact: this is the ONLY field the backend uses to
+   * (a) auto-link this leader to an existing platform account — granting
+   * them CHAPTER_ADMIN scoped to this state — and (b) send their onboarding
+   * email. Optional: a founder who doesn't have it yet can add it later.
+   */
+  leaderEmail:       string;
   canApproveMembers: boolean;  // mandate to act & approve members in this state
 }
 

@@ -257,6 +257,14 @@ type AdminCapabilities struct {
 	// creating or destroying a committee is reserved to the organisation
 	// owner. Deleting one drops every assoc_committee_members row with it.
 	ManageCommittees bool `json:"manageCommittees"`
+	// ManageLeadership lets the holder assign/revoke roles for OTHER members —
+	// AssignRole's own doc comment. This bit alone does NOT mean unrestricted
+	// delegation: a CHAPTER_ADMIN holding it may only act on members who share
+	// their OWN membership's chapter (their state), and may only grant
+	// CHAPTER_ADMIN, SECRETARY, or NONE — never FINANCE_ADMIN,
+	// NATIONAL_ADMIN, or SUPER_ADMIN, which stay reserved to the
+	// unrestricted (ManageMembers && ManageFinance) branch. See AssignRole.
+	ManageLeadership bool `json:"manageLeadership"`
 }
 
 type AdminAccess struct {

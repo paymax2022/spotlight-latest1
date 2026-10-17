@@ -43,11 +43,21 @@ export default function SignupScreen() {
     setApiError('');
     try {
       const { referralCode, ...creds } = values;
-      const result = await register(creds);
-      // Attribute the referral code silently (PRD §5.2): fire-and-forget, never
-      // blocks or fails the signup, no reward shown to the referred user. The
-      // engine is idempotent per user and 400s on self/unknown codes — swallowed.
       const code = referralCode?.trim();
+      // The code MUST reach register() itself — the backend's own auto-attributor
+      // runs synchronously inside registration and resolves referrer/deeplink/
+      // context/house in that order. Omitting it here meant every mobile signup
+      // hit the backend with an EMPTY code, got auto-attributed to the house
+      // immediately, and the fallback call below then silently no-op'd (
+      // referral_attributions.referred_user_id is UNIQUE) — a real referral code
+      // typed at signup was lost to the house on every mobile signup until fixed
+      // 2026-09-18.
+      const result = await register({ ...creds, referralCode: code || undefined });
+      // Redundant-but-harmless fallback for any environment where the above
+      // didn't attribute (e.g. an older backend without the auto-attributor
+      // wired) — fire-and-forget, never blocks or fails the signup, no reward
+      // shown to the referred user. Idempotent per user and 400s on self/unknown
+      // codes — swallowed.
       if (code) { attributeReferral(code).catch(() => { /* attribution is invisible */ }); }
       if (result.needsOtp) {
         router.push({ pathname: '/(auth)/verify-otp', params: { email: result.email } });

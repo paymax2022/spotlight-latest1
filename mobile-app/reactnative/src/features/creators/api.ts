@@ -1,4 +1,5 @@
 import { api } from '@/api/client';
+import { isMocklessEnvironment } from '@/config/mockPolicy';
 import { USE_MOCK, API_BASE, creatorsIdempotencyKey } from './constants/creators.constants';
 import type {
   Creator,
@@ -75,6 +76,7 @@ const MOCK_EARNINGS: CreatorEarnings = {
 // Falls back to the mock directory so Discover/search still renders.
 export async function listCreators(query?: string): Promise<Creator[]> {
   await delay();
+  if (isMocklessEnvironment()) return [];
   const q = (query ?? '').trim().toLowerCase().replace(/^@/, '');
   if (!q) return MOCK_CREATORS;
   return MOCK_CREATORS.filter(
@@ -162,7 +164,7 @@ export async function listMyContent(): Promise<GatedContent[]> {
 // backend only exposes mutation endpoints — Subscribe/CancelSub — no read).
 export async function listSubscriptions(): Promise<Subscription[]> {
   await delay();
-  return MOCK_SUBSCRIPTIONS;
+  return isMocklessEnvironment() ? [] : MOCK_SUBSCRIPTIONS;
 }
 
 // Backend: GET /creators/earnings/balance → { success, balance_kobo }. Only

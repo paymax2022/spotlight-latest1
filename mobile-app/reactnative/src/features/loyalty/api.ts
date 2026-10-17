@@ -1,4 +1,5 @@
 import { api } from '@/api/client';
+import { isMocklessEnvironment } from '@/config/mockPolicy';
 import { USE_MOCK, API_BASE, POINTS_API_BASE, TIER_LADDER } from './constants/loyalty.constants';
 import type {
   LoyaltyAccount,
@@ -97,7 +98,7 @@ export async function getAccount(): Promise<LoyaltyAccount> {
 // to the mock ledger so the history screen still renders.
 export async function getLedger(): Promise<PointsEntry[]> {
   await delay();
-  return [...MOCK_LEDGER].reverse();
+  return isMocklessEnvironment() ? [] : [...MOCK_LEDGER].reverse();
 }
 
 // Backend: GET /api/finance/points/catalog → { success, items: CatalogItem[] }

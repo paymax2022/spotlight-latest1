@@ -11,7 +11,7 @@ interface AuthState {
   init: () => Promise<void>;
   /** identifier is an email OR a phone number — resolved server-side. */
   login: (identifier: string, password: string) => Promise<void>;
-  register: (payload: { fullName: string; email: string; phone: string; password: string }) => Promise<{ needsOtp: boolean; email: string }>;
+  register: (payload: { fullName: string; email: string; phone: string; password: string; referralCode?: string }) => Promise<{ needsOtp: boolean; email: string }>;
   logout: () => Promise<void>;
   setUser: (user: User | null) => void;
   setPendingVerifyEmail: (email: string | null) => void;

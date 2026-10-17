@@ -626,7 +626,7 @@ func TestDirectoryAndProfile_SurviveNullFullName(t *testing.T) {
 		t.Fatalf("seed null-name profile: %v", err)
 	}
 
-	rows, err := svc.GetDirectory(ctx, userID, association.MemberDirectoryQuery{})
+	rows, err := svc.GetDirectory(ctx, userID, association.MemberDirectoryQuery{}, 0, 0)
 	if err != nil {
 		t.Fatalf("GetDirectory crashed on a NULL full_name: %v", err)
 	}
