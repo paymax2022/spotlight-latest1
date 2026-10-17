@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyLikeToggle, applyFollowToggle } from '@/features/events/social';
+import { applyLikeToggle, applyFollowToggle, canFollowOrganiser, socialErrorMessage } from '@/features/events/social';
 
 const toggles = [
   ['applyLikeToggle', applyLikeToggle],
@@ -47,3 +47,19 @@ for (const [name, toggle] of toggles) {
     assert.deepEqual(toggle(optimisticOff, originalOn.liked), originalOn);
   });
 }
+
+test('canFollowOrganiser: hidden on your own profile, shown otherwise', () => {
+  assert.equal(canFollowOrganiser('u1', 'u1'), false);
+  assert.equal(canFollowOrganiser('U1', 'u1'), false);
+  assert.equal(canFollowOrganiser('u1', 'u2'), true);
+  // Unknown viewer (not signed in yet): show the button; the server decides.
+  assert.equal(canFollowOrganiser('u1', null), true);
+  assert.equal(canFollowOrganiser('', 'u2'), false);
+});
+
+test('socialErrorMessage: nothing when there is no error, a short message otherwise', () => {
+  assert.equal(socialErrorMessage(null, 'like'), null);
+  assert.equal(socialErrorMessage(undefined, 'follow'), null);
+  assert.equal(socialErrorMessage(new Error('boom'), 'like'), "Couldn't update your like. Please try again.");
+  assert.equal(socialErrorMessage(new Error('boom'), 'follow'), "Couldn't update your follow. Please try again.");
+});

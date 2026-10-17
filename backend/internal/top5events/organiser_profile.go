@@ -15,7 +15,9 @@ package top5events
 //     database access.
 //  3. GetOrganiser signs a stored key into a short-lived GET URL (viewBanner). The
 //     column keeps holding both shapes: a link is returned as stored, a key we
-//     minted is resolved.
+//     minted is resolved. viewBanner re-runs classifyBannerRef first and hides
+//     anything that fails it. The backend (service role) is the only writer of
+//     banner_url: the migration grants it to no client role (ruling R42).
 //
 // SVG is not allowed: it can carry script and the banner is rendered to other users.
 
@@ -180,7 +182,11 @@ func isOwnBannerKey(v string) bool {
 }
 
 // viewBanner turns a stored banner value into something a client can render.
-func (s *Service) viewBanner(ref *string) *string {
+// The stored value is re-validated with classifyBannerRef for organiserID first
+// (defence in depth: the column should only ever hold what UpdateMyOrganiser
+// accepted, but anything else, such as another organiser's key or a non-web
+// link, is hidden rather than returned).
+func (s *Service) viewBanner(organiserID string, ref *string) *string {
 	if ref == nil {
 		return nil
 	}
@@ -188,8 +194,11 @@ func (s *Service) viewBanner(ref *string) *string {
 	if v == "" {
 		return nil
 	}
+	if oid, err := canonicalUserID(organiserID); err != nil || classifyBannerRef(oid, v) != nil {
+		return nil
+	}
 	if !isOwnBannerKey(v) {
-		return ref
+		return &v
 	}
 	// A key we cannot sign is hidden rather than returned: the client would show a
 	// broken image and the raw key is an internal storage path.
@@ -243,14 +252,11 @@ func (s *Service) PresignOrganiserBanner(ctx context.Context, userID, fileName, 
 	}, nil
 }
 
-// GetOrganiser returns the organiser page as seen by viewerID. The display name
-// falls back to the account's full name when no profile row (or no display name)
-// exists. An unknown organiser, or one that is not a uuid, is ErrNotFound.
-func (s *Service) GetOrganiser(ctx context.Context, viewerID, organiserID string) (*OrganiserProfile, error) {
-	if _, err := uuid.Parse(organiserID); err != nil {
-		return nil, ErrNotFound
-	}
-	const q = `
+// organiserProfileQuery reads one organiser page. $1 is the organiser, $2 the
+// viewer (NULL for none). When $3 is true the account must own at least one event
+// (ruling R41: that is what makes it an organiser); UpdateMyOrganiser passes false
+// so a user can set up a profile before their first event.
+const organiserProfileQuery = `
 		SELECT COALESCE(NULLIF(op.display_name, ''), up.full_name, ''),
 		       COALESCE(op.bio, ''),
 		       op.banner_url,
@@ -259,17 +265,32 @@ func (s *Service) GetOrganiser(ctx context.Context, viewerID, organiserID string
 		  FROM auth.users u
 		  LEFT JOIN organiser_profiles op ON op.organiser_id = u.id
 		  LEFT JOIN user_profiles up ON up.id = u.id
-		 WHERE u.id = $1`
+		 WHERE u.id = $1
+		   AND (NOT $3::boolean OR EXISTS (SELECT 1 FROM events ev WHERE ev.organiser_id = u.id))`
+
+// GetOrganiser returns the organiser page as seen by viewerID. The display name
+// falls back to the account's full name when no profile row (or no display name)
+// exists. An unknown account, one that is not a uuid, or one with no event of
+// its own (not an organiser, ruling R41) is ErrNotFound, so the full name of an
+// arbitrary account is never exposed.
+func (s *Service) GetOrganiser(ctx context.Context, viewerID, organiserID string) (*OrganiserProfile, error) {
+	return s.getOrganiser(ctx, viewerID, organiserID, true)
+}
+
+func (s *Service) getOrganiser(ctx context.Context, viewerID, organiserID string, requireEvent bool) (*OrganiserProfile, error) {
+	if _, err := uuid.Parse(organiserID); err != nil {
+		return nil, ErrNotFound
+	}
 	p := OrganiserProfile{OrganiserID: organiserID, Events: []Event{}}
 	var banner *string
-	if err := s.db.QueryRow(ctx, q, organiserID, likeCaller(viewerID)).
+	if err := s.db.QueryRow(ctx, organiserProfileQuery, organiserID, likeCaller(viewerID), requireEvent).
 		Scan(&p.DisplayName, &p.Bio, &banner, &p.FollowerCount, &p.Following); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("events: organiser: %w", err)
 	}
-	p.BannerURL = s.viewBanner(banner)
+	p.BannerURL = s.viewBanner(organiserID, banner)
 
 	evs, err := s.listOrganiserUpcoming(ctx, viewerID, organiserID)
 	if err != nil {
@@ -362,5 +383,7 @@ func (s *Service) UpdateMyOrganiser(ctx context.Context, userID string, in Organ
 	s.log(oid, "events.organiser_update", oid, map[string]any{
 		"display_name": nameSet, "bio": bioSet, "banner": in.BannerSet,
 	})
-	return s.GetOrganiser(ctx, oid, oid)
+	// Not GetOrganiser: the caller may have no event yet (R41 gates the public
+	// read and follows, not the owner's own edit).
+	return s.getOrganiser(ctx, oid, oid, false)
 }

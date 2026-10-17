@@ -414,9 +414,16 @@ func TestMigrationEventsSocial_CounterColumnsNotWritableByClients(t *testing.T) 
 		}
 	}
 	// The columns an organiser edits must stay writable.
-	for _, col := range []string{"display_name", "bio", "banner_url"} {
+	for _, col := range []string{"display_name", "bio", "updated_at"} {
 		if !has("organiser_profiles", col, "UPDATE") {
 			t.Errorf("authenticated lost UPDATE on organiser_profiles.%s", col)
+		}
+	}
+	// banner_url is backend-only (R42): a PostgREST write would skip the
+	// classifyBannerRef ownership check that PUT /events/organisers/me applies.
+	for _, priv := range []string{"UPDATE", "INSERT"} {
+		if has("organiser_profiles", "banner_url", priv) {
+			t.Errorf("authenticated can %s organiser_profiles.banner_url; must be backend-only", priv)
 		}
 	}
 

@@ -39,3 +39,20 @@ export function checkFollowingPage(limit: number, offset: number): { limit: numb
   }
   return { limit, offset };
 }
+
+// The Follow button is hidden on your own organiser page (the server rejects a
+// self-follow anyway). An unknown viewer id (not loaded yet) shows the button
+// and leaves the decision to the server. Ids are compared case-insensitively,
+// since a uuid may arrive in either case.
+export function canFollowOrganiser(organiserId: string, currentUserId: string | null | undefined): boolean {
+  if (!organiserId) return false;
+  if (!currentUserId) return true;
+  return organiserId.toLowerCase() !== currentUserId.toLowerCase();
+}
+
+// The inline message shown under a like or follow button when the last attempt
+// failed (the optimistic change has already been rolled back). null = no error.
+export function socialErrorMessage(error: unknown, action: 'like' | 'follow'): string | null {
+  if (!error) return null;
+  return `Couldn't update your ${action}. Please try again.`;
+}

@@ -271,6 +271,11 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 		handler.RegisterComps(member)
 	}
 	if cfg.FeatureEventsSocial {
+		// Event reads and writes use the social columns (banner, venue
+		// coordinates, like_count, the caller's like) only with the flag on: they
+		// exist only after migration 20271044000000. Deploy gate: apply that
+		// migration before turning FEATURE_EVENTS_SOCIAL on in any environment.
+		svc.EnableSocialReads()
 		// Organiser banner uploads: backend-owned presigned R2 PUTs, the same
 		// bucket config as the restaurant store images (R2_BUCKET, no default).
 		// Unconfigured or failing creds make the presign endpoint answer 503.

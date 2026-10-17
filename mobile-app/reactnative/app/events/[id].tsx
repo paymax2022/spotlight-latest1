@@ -14,6 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import MapView from '@/features/mobility/components/MapView';
 import { useEvent, useLikeEvent } from '@/features/events/hooks';
 import { venueMapState } from '@/features/events/venue';
+import { socialErrorMessage } from '@/features/events/social';
 import { EventColors, formatNaira, eventCoverEmoji, eventBannerColor } from '@/features/events/constants/events.constants';
 
 // events-social flag: exactly the string 'true' turns it on; default off.
@@ -76,6 +77,9 @@ export default function EventDetail() {
               <Text style={styles.organiserLink}>View organiser</Text>
             </Pressable>
           </View>
+        ) : null}
+        {EVENTS_SOCIAL && socialErrorMessage(like.error, 'like') ? (
+          <Text style={styles.socialError} accessibilityRole="alert">{socialErrorMessage(like.error, 'like')}</Text>
         ) : null}
 
         <View style={styles.metaCard}>
@@ -146,6 +150,7 @@ const styles = StyleSheet.create({
   likeBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, paddingVertical: Spacing.xs, paddingRight: Spacing.sm },
   likeBtnDisabled: { opacity: 0.5 },
   likeCount: { ...Typography.bodyMd, color: Colors.onSurface },
+  socialError: { ...Typography.caption, color: EventColors.danger },
   organiserLink: { ...Typography.bodyMd, color: EventColors.brand, textDecorationLine: 'underline' },
   map: { height: 200, borderRadius: Radius.lg },
   title: { ...Typography.headlineMd, color: Colors.onSurface },

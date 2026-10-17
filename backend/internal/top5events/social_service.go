@@ -6,7 +6,9 @@ package top5events
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -65,7 +67,7 @@ func (s *Service) UnlikeEvent(ctx context.Context, userID, eventID string) (Like
 
 // FollowOrganiser records the caller's follow, creating the organiser's profile
 // row if needed. Self-follow is rejected (ErrValidation) before any write. An
-// unknown organiser returns ErrNotFound. Repeating it returns the current state.
+// unknown account, or one with no event (not an organiser), returns ErrNotFound. Repeating it returns the current state.
 func (s *Service) FollowOrganiser(ctx context.Context, userID, organiserID string) (FollowState, error) {
 	if err := s.checkFollowTarget(ctx, userID, organiserID); err != nil {
 		return FollowState{}, err
@@ -83,7 +85,8 @@ func (s *Service) UnfollowOrganiser(ctx context.Context, userID, organiserID str
 }
 
 // checkFollowTarget validates a follow/unfollow request without writing: a
-// self-follow is a validation error, and an unknown organiser is not found.
+// self-follow is a validation error, and an account that is not an organiser (no
+// event of its own, ruling R41) is not found.
 func (s *Service) checkFollowTarget(ctx context.Context, userID, organiserID string) error {
 	if userID == "" {
 		return fmt.Errorf("%w: events: user required", ErrValidation)
@@ -95,7 +98,9 @@ func (s *Service) checkFollowTarget(ctx context.Context, userID, organiserID str
 	if usrUUID, perr := uuid.Parse(userID); perr == nil && usrUUID == orgUUID {
 		return fmt.Errorf("%w: events: you cannot follow yourself", ErrValidation)
 	}
-	ok, err := organiserExists(ctx, s.db, organiserID)
+	// R41: only an account with at least one event can be followed. Checked
+	// before insertFollow, so a non-organiser never gets a profile row.
+	ok, err := isOrganiser(ctx, s.db, organiserID)
 	if err != nil {
 		return err
 	}
@@ -138,4 +143,47 @@ func followingPage(limitQ, offsetQ string) (limit, offset int, err error) {
 		}
 	}
 	return limit, offset, nil
+}
+
+// checkVenueCoords range-checks venue coordinates that are present: latitude in
+// [-90, 90] and longitude in [-180, 180]. A nil value (absent or null) passes.
+func checkVenueCoords(lat, lng *float64) error {
+	if lat != nil && (math.IsNaN(*lat) || *lat < -90 || *lat > 90) {
+		return fmt.Errorf("%w: events: venue_lat must be between -90 and 90", ErrValidation)
+	}
+	if lng != nil && (math.IsNaN(*lng) || *lng < -180 || *lng > 180) {
+		return fmt.Errorf("%w: events: venue_lng must be between -180 and 180", ErrValidation)
+	}
+	return nil
+}
+
+// normPlaceID trims a venue place id; blank becomes nil (stored as NULL).
+func normPlaceID(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	t := strings.TrimSpace(*v)
+	if t == "" {
+		return nil
+	}
+	return &t
+}
+
+// prepareNewEvent strips what a client must not set on create: banner_url (no
+// event banner writer exists yet, ruling R40), like_count and liked (server
+// counters). With the social flag off the venue coordinates are not stored, so
+// they are dropped too and never echoed. With it on they are range-checked.
+func prepareNewEvent(e Event, social bool) (Event, error) {
+	e.BannerURL = nil
+	e.LikeCount = 0
+	e.Liked = false
+	if !social {
+		e.VenueLat, e.VenueLng, e.VenuePlaceID = nil, nil, nil
+		return e, nil
+	}
+	if err := checkVenueCoords(e.VenueLat, e.VenueLng); err != nil {
+		return e, err
+	}
+	e.VenuePlaceID = normPlaceID(e.VenuePlaceID)
+	return e, nil
 }

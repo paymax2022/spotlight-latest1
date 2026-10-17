@@ -13,7 +13,7 @@ import (
 func TestGetEvent_LikedFlagIsPerCaller(t *testing.T) {
 	pool := ticketTokenPool(t)
 	ctx := context.Background()
-	svc := ticketTokenService(pool)
+	svc := socialService(pool)
 
 	organiser := seedTicketTokenUser(t, ctx, pool)
 	userA := seedTicketTokenUser(t, ctx, pool)
@@ -58,7 +58,7 @@ func TestGetEvent_LikedFlagIsPerCaller(t *testing.T) {
 func TestListFollowingEvents_OnlyFollowedOrganisers(t *testing.T) {
 	pool := ticketTokenPool(t)
 	ctx := context.Background()
-	svc := ticketTokenService(pool)
+	svc := socialService(pool)
 
 	orgX := seedTicketTokenUser(t, ctx, pool)
 	orgY := seedTicketTokenUser(t, ctx, pool)
@@ -120,7 +120,7 @@ func TestListFollowingEvents_OnlyFollowedOrganisers(t *testing.T) {
 func TestListFollowingEvents_Pagination(t *testing.T) {
 	pool := ticketTokenPool(t)
 	ctx := context.Background()
-	svc := ticketTokenService(pool)
+	svc := socialService(pool)
 
 	org := seedTicketTokenUser(t, ctx, pool)
 	user := seedTicketTokenUser(t, ctx, pool)
@@ -163,7 +163,7 @@ func TestListFollowingEvents_Pagination(t *testing.T) {
 func TestGetEvent_NoCoordinatesIsValid(t *testing.T) {
 	pool := ticketTokenPool(t)
 	ctx := context.Background()
-	svc := ticketTokenService(pool)
+	svc := socialService(pool)
 
 	organiser := seedTicketTokenUser(t, ctx, pool)
 	eventID := seedSocialEvent(t, ctx, pool, organiser, "LIVE")

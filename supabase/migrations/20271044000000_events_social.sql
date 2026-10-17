@@ -90,12 +90,18 @@ END $$;
 -- grant (it is a silent no-op). So revoke the table-level privileges and grant back
 -- only the columns an organiser may write. follower_count is deliberately absent
 -- from both lists; the column-level REVOKE is kept as an explicit statement of intent.
+--
+-- banner_url is absent too (ruling R42): the backend (service role) is its only
+-- writer, through PUT /events/organisers/me, which accepts only an http(s) link or
+-- a key under the caller's own banner prefix. A PostgREST write would skip that
+-- check. The column REVOKE below is a statement of intent, like follower_count.
 REVOKE INSERT, UPDATE ON public.organiser_profiles FROM authenticated;
-GRANT INSERT (organiser_id, display_name, bio, banner_url, updated_at)
+GRANT INSERT (organiser_id, display_name, bio, updated_at)
   ON public.organiser_profiles TO authenticated;
-GRANT UPDATE (display_name, bio, banner_url, updated_at)
+GRANT UPDATE (display_name, bio, updated_at)
   ON public.organiser_profiles TO authenticated;
 REVOKE UPDATE (follower_count) ON public.organiser_profiles FROM authenticated;
+REVOKE INSERT (banner_url), UPDATE (banner_url) ON public.organiser_profiles FROM authenticated;
 
 -- events: an organiser can already INSERT/UPDATE their own events rows through the
 -- legacy events_insert / events_update policies (20260616240000_events.sql, TO

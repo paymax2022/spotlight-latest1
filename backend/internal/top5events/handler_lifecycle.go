@@ -33,7 +33,7 @@ func lifecycleStatus(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrEditLocked), errors.Is(err, ErrNotPurchasable), errors.Is(err, ErrEventClosed):
 		return http.StatusConflict
-	case errors.Is(err, ErrInvalidTimes):
+	case errors.Is(err, ErrInvalidTimes), errors.Is(err, ErrValidation):
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError

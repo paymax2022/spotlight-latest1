@@ -1789,7 +1789,11 @@ components:
         liked: { type: boolean, description: "Whether the calling user has liked this event" }
 
     EventPatch:
-      description: Partial organiser edit (PATCH /events/{id}); every field optional, snake_case.
+      description: >-
+        Partial organiser edit (PATCH /events/{id}); every field optional, snake_case.
+        The venue coordinate fields are applied only when FEATURE_EVENTS_SOCIAL is on
+        (ignored otherwise). For each of them an absent key leaves the value
+        unchanged and an explicit null clears it.
       type: object
       properties:
         title: { type: string }
@@ -1798,6 +1802,9 @@ components:
         category: { type: string }
         starts_at: { type: string, format: date-time }
         ends_at: { type: string, format: date-time }
+        venue_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90, description: "Venue latitude; null clears it" }
+        venue_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180, description: "Venue longitude; null clears it" }
+        venue_place_id: { type: string, nullable: true, description: "Geocoder place id; null or an empty string clears it" }
 
     EventSummary:
       description: Lightweight discovery-feed projection returned by GET /events.
@@ -8565,9 +8572,14 @@ paths:
                 starts_at: { type: string, format: date-time }
                 ends_at: { type: string, format: date-time }
                 fee_bps: { type: integer, minimum: 0, maximum: 10000 }
+                venue_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90, description: "Stored only when FEATURE_EVENTS_SOCIAL is on" }
+                venue_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180, description: "Stored only when FEATURE_EVENTS_SOCIAL is on" }
+                venue_place_id: { type: string, nullable: true, description: "Stored only when FEATURE_EVENTS_SOCIAL is on" }
       responses:
         '200':
-          description: Event created (state DRAFT)
+          description: >-
+            Event created (state DRAFT). banner_url, like_count and liked in the request
+            are ignored: the response always has banner_url null, like_count 0 and liked false.
           content:
             application/json:
               schema:
@@ -8575,6 +8587,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/Event' }
+        '400': { description: "Invalid body, or venue_lat outside [-90, 90] / venue_lng outside [-180, 180]" }
 
   /events/{id}:
     get:
@@ -8618,7 +8631,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/Event' }
-        '400': { description: Invalid body or invalid times (ends_at must be after starts_at) }
+        '400': { description: "Invalid body, invalid times (ends_at must be after starts_at), or venue_lat outside [-90, 90] / venue_lng outside [-180, 180]" }
         '403': { description: Caller is not the organiser }
         '404': { description: Event not found }
         '409': { description: Event is edit-locked in its current state }

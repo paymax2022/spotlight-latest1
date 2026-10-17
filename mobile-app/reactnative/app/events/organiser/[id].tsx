@@ -7,6 +7,8 @@ import { Colors, Typography, Spacing, Radius, shadow1 } from '@/constants/tokens
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useOrganiser, useFollowOrganiser } from '@/features/events/hooks';
+import { canFollowOrganiser, socialErrorMessage } from '@/features/events/social';
+import { useAuthStore } from '@/store/authStore';
 import { EventColors, eventBannerColor, eventCoverEmoji } from '@/features/events/constants/events.constants';
 
 // events-social flag: exactly the string 'true' turns it on; default off.
@@ -36,6 +38,7 @@ function OrganiserProfile() {
   const organiserId = id ?? '';
   const { data: org, isLoading, isError, refetch } = useOrganiser(organiserId);
   const follow = useFollowOrganiser(organiserId);
+  const currentUserId = useAuthStore((s) => s.user?.id ?? null);
 
   if (isLoading) {
     return (
@@ -57,6 +60,9 @@ function OrganiserProfile() {
   const name = org.display_name?.trim() || 'Organiser';
   const bannerUrl = org.banner_url?.trim() ?? '';
   const busy = isLoading || follow.isPending;
+  // No Follow button on your own page; the server rejects a self-follow anyway.
+  const showFollow = canFollowOrganiser(organiserId, currentUserId);
+  const followError = socialErrorMessage(follow.error, 'follow');
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -75,19 +81,24 @@ function OrganiserProfile() {
           <Text style={styles.followers}>
             {follow.state.count} {follow.state.count === 1 ? 'follower' : 'followers'}
           </Text>
-          <Pressable
-            onPress={follow.toggle}
-            disabled={busy}
-            accessibilityRole="button"
-            accessibilityLabel={follow.state.liked ? 'Unfollow this organiser' : 'Follow this organiser'}
-            accessibilityState={{ disabled: busy, selected: follow.state.liked }}
-            style={[styles.followBtn, follow.state.liked && styles.followBtnOn, busy && styles.followBtnDisabled]}
-          >
-            <Text style={[styles.followText, follow.state.liked && styles.followTextOn]}>
-              {follow.state.liked ? 'Following' : 'Follow'}
-            </Text>
-          </Pressable>
+          {showFollow ? (
+            <Pressable
+              onPress={follow.toggle}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel={follow.state.liked ? 'Unfollow this organiser' : 'Follow this organiser'}
+              accessibilityState={{ disabled: busy, selected: follow.state.liked }}
+              style={[styles.followBtn, follow.state.liked && styles.followBtnOn, busy && styles.followBtnDisabled]}
+            >
+              <Text style={[styles.followText, follow.state.liked && styles.followTextOn]}>
+                {follow.state.liked ? 'Following' : 'Follow'}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
+        {showFollow && followError ? (
+          <Text style={styles.followError} accessibilityRole="alert">{followError}</Text>
+        ) : null}
 
         <Text style={styles.sectionTitle}>Upcoming events</Text>
         {org.events.length === 0 ? (
@@ -141,6 +152,7 @@ const styles = StyleSheet.create({
   followBtnDisabled: { opacity: 0.5 },
   followText: { ...Typography.labelMd, color: Colors.onPrimary },
   followTextOn: { color: EventColors.brand },
+  followError: { ...Typography.caption, color: EventColors.danger },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.md },
   empty: { ...Typography.bodyMd, color: EventColors.muted },
   eventRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: EventColors.surface, borderRadius: Radius.lg, padding: Spacing.md, ...shadow1 },

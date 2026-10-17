@@ -2,6 +2,7 @@ import { api } from '@/api/client';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { USE_MOCK, API_BASE } from './constants/events.constants';
 import { checkFollowingPage } from './social';
+import { createEventBody } from './createBody';
 import type {
   Event,
   EventSummary,
@@ -347,11 +348,10 @@ export async function createEvent(input: CreateEventInput): Promise<EventDetail>
       banner_url: null, venue_lat: null, venue_lng: null, venue_place_id: null, like_count: 0, liked: false,
     };
   }
-  const created: EventDetail = await unwrap(await api.post(`${API_BASE}`, {
-    title: input.title, description: input.description, venue: input.venue,
-    category: input.category, starts_at: input.starts_at, ends_at: input.ends_at,
-    fee_bps: input.fee_bps ?? 500,
-  }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
+  // createEventBody adds venue_lat / venue_lng / venue_place_id only when a place
+  // was picked (events-social); without them the body is as before.
+  const created: EventDetail = await unwrap(await api.post(`${API_BASE}`, createEventBody(input),
+    { headers: { 'Idempotency-Key': idempotencyKey() } }));
 
   // Backend has no bulk tier-create — add each tier sequentially, then submit
   // the event into the organiser approval pipeline.

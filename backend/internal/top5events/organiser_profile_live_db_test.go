@@ -143,9 +143,12 @@ func TestPresignOrganiserBanner_UnavailableWithoutStorage(t *testing.T) {
 func TestGetOrganiser_FallsBackToFullName(t *testing.T) {
 	pool := ticketTokenPool(t)
 	ctx := context.Background()
-	svc := ticketTokenService(pool)
+	svc := socialService(pool)
 
 	organiser := seedTicketTokenUser(t, ctx, pool)
+	// An organiser owns at least one event (R41). DRAFT is not listed on the page,
+	// so Events stays empty.
+	seedSocialEvent(t, ctx, pool, organiser, "DRAFT")
 	// handle_new_user may already have made the row; set the name either way.
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO user_profiles (id, email, full_name) VALUES ($1,$2,'Ada Organiser')
@@ -171,7 +174,7 @@ func TestGetOrganiser_FallsBackToFullName(t *testing.T) {
 
 func TestGetOrganiser_UnknownOrganiserIsNotFound(t *testing.T) {
 	pool := ticketTokenPool(t)
-	svc := ticketTokenService(pool)
+	svc := socialService(pool)
 	viewer := seedTicketTokenUser(t, context.Background(), pool)
 
 	if _, err := svc.GetOrganiser(context.Background(), viewer, uuid.New().String()); !errors.Is(err, top5events.ErrNotFound) {
@@ -182,10 +185,75 @@ func TestGetOrganiser_UnknownOrganiserIsNotFound(t *testing.T) {
 	}
 }
 
+// TestGetOrganiser_AccountWithoutEventsIsNotFound: a real account with no event
+// is not an organiser (R41), so its page is not found and its full name is not
+// exposed. Once it owns an event, the page reads.
+func TestGetOrganiser_AccountWithoutEventsIsNotFound(t *testing.T) {
+	pool := ticketTokenPool(t)
+	ctx := context.Background()
+	svc := socialService(pool)
+	viewer := seedTicketTokenUser(t, ctx, pool)
+	account := seedTicketTokenUser(t, ctx, pool)
+
+	if _, err := svc.GetOrganiser(ctx, viewer, account); !errors.Is(err, top5events.ErrNotFound) {
+		t.Fatalf("account with no events: err = %v, want ErrNotFound", err)
+	}
+	seedSocialEvent(t, ctx, pool, account, "DRAFT")
+	if _, err := svc.GetOrganiser(ctx, viewer, account); err != nil {
+		t.Fatalf("account with an event: %v", err)
+	}
+}
+
+// TestUpdateMyOrganiser_WorksBeforeFirstEvent: the owner may set up a profile
+// before creating any event; the edit returns the profile, ungated by R41.
+func TestUpdateMyOrganiser_WorksBeforeFirstEvent(t *testing.T) {
+	pool := ticketTokenPool(t)
+	ctx := context.Background()
+	svc := socialService(pool)
+	me := seedTicketTokenUser(t, ctx, pool)
+
+	got, err := svc.UpdateMyOrganiser(ctx, me, top5events.OrganiserPatch{DisplayName: strp("New Organiser")})
+	if err != nil {
+		t.Fatalf("UpdateMyOrganiser before any event: %v", err)
+	}
+	if got.DisplayName != "New Organiser" {
+		t.Fatalf("DisplayName = %q, want the saved value", got.DisplayName)
+	}
+}
+
+// TestGetOrganiser_HidesForeignStoredBanner: a banner value that fails
+// classifyBannerRef for this organiser (for example another organiser's key
+// written straight into the column) is not returned.
+func TestGetOrganiser_HidesForeignStoredBanner(t *testing.T) {
+	pool := ticketTokenPool(t)
+	ctx := context.Background()
+	svc := socialService(pool).WithStorage(testBannerPresigner())
+	organiser := seedTicketTokenUser(t, ctx, pool)
+	other := seedTicketTokenUser(t, ctx, pool)
+	seedSocialEvent(t, ctx, pool, organiser, "DRAFT")
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO organiser_profiles (organiser_id, banner_url) VALUES ($1, $2)
+		 ON CONFLICT (organiser_id) DO UPDATE SET banner_url = EXCLUDED.banner_url`,
+		organiser, "organiser/"+other+"/banner/x.png"); err != nil {
+		t.Fatalf("seed foreign banner: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM organiser_profiles WHERE organiser_id=$1`, organiser)
+	})
+	got, err := svc.GetOrganiser(ctx, other, organiser)
+	if err != nil {
+		t.Fatalf("GetOrganiser: %v", err)
+	}
+	if got.BannerURL != nil {
+		t.Fatalf("BannerURL = %q, want nil for another organiser's key", *got.BannerURL)
+	}
+}
+
 func TestGetOrganiser_ShowsFollowStateAndUpcomingPublicEvents(t *testing.T) {
 	pool := ticketTokenPool(t)
 	ctx := context.Background()
-	svc := ticketTokenService(pool)
+	svc := socialService(pool)
 
 	organiser := seedTicketTokenUser(t, ctx, pool)
 	viewer := seedTicketTokenUser(t, ctx, pool)
@@ -214,10 +282,11 @@ func TestGetOrganiser_ShowsFollowStateAndUpcomingPublicEvents(t *testing.T) {
 func TestUpdateMyOrganiser_PersistsAndKeepsFollowerCount(t *testing.T) {
 	pool := ticketTokenPool(t)
 	ctx := context.Background()
-	svc := ticketTokenService(pool)
+	svc := socialService(pool)
 
 	organiser := seedTicketTokenUser(t, ctx, pool)
 	fan := seedTicketTokenUser(t, ctx, pool)
+	seedSocialEvent(t, ctx, pool, organiser, "DRAFT") // followable only once they own an event (R41)
 	if _, err := svc.FollowOrganiser(ctx, fan, organiser); err != nil {
 		t.Fatalf("follow: %v", err)
 	}
@@ -253,7 +322,7 @@ func TestUpdateMyOrganiser_PersistsAndKeepsFollowerCount(t *testing.T) {
 func TestUpdateMyOrganiser_ClearBannerWithNullOrEmpty(t *testing.T) {
 	pool := ticketTokenPool(t)
 	ctx := context.Background()
-	svc := ticketTokenService(pool)
+	svc := socialService(pool)
 	organiser := seedTicketTokenUser(t, ctx, pool)
 
 	set := func() {
