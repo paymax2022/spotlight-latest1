@@ -131,7 +131,7 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   `app/api/v1/[...path]` catch-all are reported separately — a catch-all match is NOT proof a route
   exists, so check the Go side (caveats in its docstring).
 - **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
-  - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3),
+  - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3 — done in Batch 8),
     repairs (4), reports (2, read-only: flip the default only), tasks (3 — two handler files carry a
     "stub" comment, read them first), vendors (6), facilities (4). Every call matches a handler, every
     table exists, no read-side traps.
@@ -165,6 +165,27 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   (idempotency, authz, kobo validation, status guards, happy path, replay, race, error surfacing).
   1 mutation converted (`payInvoice`); e2e pin added. The dues e2e only opens the payment sheet.
 
+### Batch 8 (2026-10-15) — emergencies (safety-critical; two findings)
+- **emergencies** (`src/features/emergencies/api.ts`) — frontend-web handlers
+  (`app/api/v1/estate/emergencies`). `verify_mobile_module.py`: **3/3 client calls match** (list,
+  report, resolve); table `estate_emergency_alerts` exists. No automated suite for the handlers (code
+  reading). 2 mutations converted (`createEmergency`, `resolveEmergency`); e2e pin added (the e2e only
+  opens the report screen). A faked "emergency sent" is the most dangerous thing a fixture can
+  simulate, which is why this one matters.
+  - **Finding 1 — the UI promises an alert that nothing sends.** `app/emergencies/report.tsx` says
+    *"This immediately alerts estate security and admin"* and the hub card says *"Alert estate
+    security & admin now"*. The live `POST /api/v1/estate/emergencies` only **inserts a row**
+    (`status: 'open'`). There is no DB trigger, realtime channel, push or notification on
+    `estate_emergency_alerts`, and the mobile screens neither subscribe nor poll — an alert is seen
+    only by a resident who opens the list. Either the copy must change or real notification must be
+    built; that is a product/safety decision, **still open**.
+  - **Finding 2 — any resident can resolve any alert.** `POST /emergencies/:id/resolve` checks only
+    that the caller is a resident of the same estate, so any resident can close another resident's
+    open panic alert. **Product decision (2026-10-15): only the estate manager/admin
+    (`estate_admin`) may resolve an alert.** Not changed in this PR; tracked as a separate task
+    (server-side role check on the resolve handler, plus hiding the Resolve action in the app for
+    everyone else).
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -188,7 +209,7 @@ kycverify, property, restaurantmerchant, stayshotelier.
 ### Still pending — full list from a fresh scan of `main` (2026-10-11)
 `grep -rn "mockAllowed(" src` — everything still passing `true`, by feature folder:
 academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, arena, connect,
-creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, emergencies, estateadmin,
+creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
 one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,
