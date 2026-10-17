@@ -384,7 +384,17 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 }
 
 func (s *authService) RequestPasswordReset(email string) error {
-	payload := map[string]any{"email": strings.TrimSpace(strings.ToLower(email))}
+	// redirect_to must be set explicitly: omitted, GoTrue falls back to the
+	// project dashboard's Site URL, which is not guaranteed to be a page that
+	// can actually complete a reset (and historically wasn't here — the link
+	// landed nowhere useful even when the email arrived). frontend-web's own
+	// Supabase fallback path (createAnonClient().auth.resetPasswordForEmail)
+	// already sets the same target; this brings the primary Go path in line.
+	redirectTo := strings.TrimRight(s.cfg.FrontendSiteURL, "/") + "/auth/reset-password"
+	payload := map[string]any{
+		"email":       strings.TrimSpace(strings.ToLower(email)),
+		"redirect_to": redirectTo,
+	}
 	b, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/recover", bytes.NewReader(b))
 	if err != nil {
