@@ -182,9 +182,12 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   - **Finding 2 — any resident can resolve any alert.** `POST /emergencies/:id/resolve` checks only
     that the caller is a resident of the same estate, so any resident can close another resident's
     open panic alert. **Product decision (2026-10-15): only the estate manager/admin
-    (`estate_admin`) may resolve an alert.** Not changed in this PR; tracked as a separate task
-    (server-side role check on the resolve handler, plus hiding the Resolve action in the app for
-    everyone else).
+    (`estate_admin`) may resolve an alert.** **Fixed** in the follow-up PR (resolve restricted to estate admins).
+    The resolve handler now returns 403 for any caller whose `estate_residents.role` is not `estate_admin`
+    (before any write; same-estate and UUID checks kept; spec
+    `frontend-web/tests/unit/estate/emergency-resolve-authz.spec.ts`), and the app hides the Resolve
+    action unless the property context carries `estate_admin` on an estate
+    (`src/features/emergencies/permissions.ts`), showing the server message if it is still refused.
 
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
