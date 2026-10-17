@@ -113,6 +113,11 @@ export interface EventPatch {
   title?:       string;
   description?: string;
   venue?:       string;
+  // Set together with the venue when an address is picked (FEATURE_EVENTS_SOCIAL).
+  // null clears a stored pin; omit to leave it untouched.
+  venue_lat?:      number | null;
+  venue_lng?:      number | null;
+  venue_place_id?: string | null;
   category?:    EventCategory;
   starts_at?:   string;
   ends_at?:     string;
@@ -218,6 +223,9 @@ export interface CreateEventInput {
   title:        string;
   description:  string;
   venue:        string;
+  venue_lat?:      number | null;
+  venue_lng?:      number | null;
+  venue_place_id?: string | null;
   category:     EventCategory;
   starts_at:    string;
   ends_at:      string;
