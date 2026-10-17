@@ -563,11 +563,10 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		sett, err = s.escrowCheckout(ctx, senderID, ref, idempotencyKey, fare)
 	}
 	if err != nil {
-		if insured {
-			if rErr := s.refundHeldPremium(ctx, senderID, idempotencyKey, premium); rErr != nil {
-				log.Printf("[transport] CRITICAL booking %s: fare escrow failed and the held premium was not refunded (the reconciler retries): %v", idempotencyKey, rErr)
-			}
-		}
+		// A held premium is NOT refunded here: a same-key retry reuses it, and if
+		// the booking is never retried the orphan sweep (ReconcileParcelInsurance)
+		// refunds it after a grace period. Refunding now would turn the retry
+		// into a key conflict.
 		return "", fmt.Errorf("transport: escrow parcel fare: %w", err)
 	}
 	if external {
@@ -635,13 +634,13 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 			// the only one (the escrow is idempotent on the key), so hand back its
 			// parcel rather than a 500.
 			return id, nil
-		} else if insured {
-			// No parcel holds this premium: give it back.
-			if rErr := s.refundHeldPremium(ctx, senderID, idempotencyKey, premium); rErr != nil {
-				log.Printf("[transport] CRITICAL booking %s: insert failed and the held premium was not refunded (the reconciler retries): %v", idempotencyKey, rErr)
-			}
 		}
+		// A held premium (and the fare escrow) stay for a same-key retry; the
+		// orphan sweep refunds the premium if none comes.
 		return "", fmt.Errorf("transport: insert parcel: %w", err)
+	}
+	if insured {
+		s.markCoverIfPremiumRefunded(ctx, parcelID, idempotencyKey)
 	}
 	meta := map[string]any{"fare_kobo": fare, "insurance_kobo": insurance, "settlement_id": sett.ID, "insurance_paid_kobo": premium}
 	if external {
@@ -792,8 +791,15 @@ func (s *Service) CancelParcelWithRefund(ctx context.Context, id, senderID, reas
 	if p.CourierID != nil {
 		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *p.CourierID)
 	}
-	// A premium paid at booking is refunded (and bound cover cancelled).
-	s.refundPrepaidOnCancel(ctx, &p)
+	// A premium paid at booking is refunded (and bound cover cancelled). Re-read
+	// the insurance status AFTER the cancel flip: a bind finishing concurrently
+	// writes 'bound' before it reads the parcel status, and this side writes
+	// 'cancelled' before it reads the insurance status, so one of the two always
+	// sees the other (and the bound→refunded claim lets only one act).
+	if err := s.db.QueryRow(ctx, `SELECT insurance_status, insurance_policy_id FROM parcels WHERE id=$1`, id).
+		Scan(&p.InsuranceStatus, &p.InsurancePolicyID); err == nil {
+		s.refundPrepaidOnCancel(ctx, &p)
+	}
 	// Legacy cover (bound and debited at accept): best-effort cancel, never
 	// blocks the parcel cancellation — see cancelParcelInsurance.
 	if p.InsuranceStatus == insuranceStatusNone && p.InsurancePolicyID != nil && *p.InsurancePolicyID != "" {

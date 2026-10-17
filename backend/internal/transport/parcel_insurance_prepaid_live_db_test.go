@@ -132,6 +132,10 @@ func (b *prepaidTestBinder) BindFromQuotePrepaid(ctx context.Context, userID, qu
 	}
 	return p.ID, p.PremiumKobo, nil
 }
+func (b *prepaidTestBinder) BindOutcome(ctx context.Context, key string) (string, string, error) {
+	state, policyID, _, err := b.pol.BindOutcome(ctx, key)
+	return state, policyID, err
+}
 func (b *prepaidTestBinder) CancelPolicy(context.Context, string, string, string) error {
 	b.cancelled++
 	return nil
@@ -519,6 +523,11 @@ func TestLiveDB_PrepaidInsurance_CancelAfterBindRefundsThePremium(t *testing.T) 
 	if got := f.wallet(t); got != before {
 		t.Fatalf("wallet %d, want fully restored %d", got, before)
 	}
+	// The premium already went to the insurer side; the refund is the
+	// platform's cost, not taken out of what clearing owes the insurer.
+	if typ, amt := entryAccountType(t, f.pool, "parcel:insurance:"+p.ID+":cancel_refund:rev_credit"); typ != string(ledger.AccountPaymaxRevenue) || amt != 200_000 {
+		t.Fatalf("cancel refund drained %s %d, want paymax_revenue 200000", typ, amt)
+	}
 }
 
 // M2: the insurer bound the policy but it could not be recorded locally. Cover
@@ -620,3 +629,85 @@ func (c *countingBinder) BindFromQuotePrepaid(context.Context, string, string, i
 	return "", 0, errors.New("unused")
 }
 func (c *countingBinder) CancelPolicy(context.Context, string, string, string) error { return nil }
+func (c *countingBinder) BindOutcome(context.Context, string) (string, string, error) {
+	return "", "", nil
+}
+
+// Re-review M-2: the orphan sweep refunded the premium while a same-key retry
+// was completing the booking. The bind must refuse the no-longer-held premium,
+// and the customer is refunded exactly once.
+func TestLiveDB_PrepaidInsurance_BindRefusesARefundedPremium(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	ctx := context.Background()
+	p, key := f.book(t, insuredReq())
+	afterBooking := f.wallet(t)
+	if err := f.svc.refundHeldPremium(ctx, f.sender, key, 200_000); err != nil { // the racing sweep
+		t.Fatal(err)
+	}
+	f.svc.settleParcelInsuranceAtAccept(ctx, &p, f.svc.loadParcelSenderProfile(ctx, f.sender), completeVehicle)
+	got := f.parcel(t, p.ID)
+	if got.InsuranceStatus != "refunded" || got.InsurancePolicyID != nil {
+		t.Fatalf("after bind on a refunded premium: %+v", got)
+	}
+	if w := f.wallet(t); w != afterBooking+200_000 {
+		t.Fatalf("wallet %d, want refunded exactly once (%d)", w, afterBooking+200_000)
+	}
+}
+
+// Re-review M-3: a crash left the parcel 'binding' with the premium moved to
+// the insurer side and no refund. The reconciler settles it from the insurer's
+// recorded outcome: failed → refund; succeeded → record the cover.
+func TestLiveDB_PrepaidInsurance_ReconcilerUsesTheBindOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		state      string
+		wantStatus string
+		refunded   bool
+	}{
+		{"failed", "refunded", true},
+		{"succeeded", "bound", false},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			f := newPrepaidParcelFixture(t, true)
+			ctx := context.Background()
+			p, _ := f.book(t, insuredReq())
+			afterBooking := f.wallet(t)
+			bindKey := "parcel:insurance:" + p.ID
+			hold, _ := f.led.GetOrCreateStandingAccount(ctx, ledger.AccountInsurancePremiumHold)
+			clearing, _ := f.led.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+			if err := f.led.PostJournal(ctx, ledger.JournalEntry{Reference: "test", IdempotencyKey: bindKey + ":premium",
+				AmountKobo: 200_000, DebitAccountID: hold.ID, CreditAccountID: clearing.ID}); err != nil {
+				t.Fatal(err)
+			}
+			reg := policy.NewBindRegistry(f.pool)
+			policyID := uuid.NewString()
+			if _, err := reg.Claim(ctx, bindKey, "prepaiduw", "git", policyID); err != nil {
+				t.Fatal(err)
+			}
+			if tc.state == "failed" {
+				reg.Failed(ctx, bindKey, "provider rejected")
+			} else {
+				reg.Succeeded(ctx, bindKey, "pol-ref-"+uuid.NewString(), 250_000)
+			}
+			if !f.svc.claimInsuranceStatus(ctx, p.ID, "held", "binding") {
+				t.Fatal("claim")
+			}
+			if _, err := f.svc.ReconcileParcelInsurance(ctx, 0); err != nil {
+				t.Fatal(err)
+			}
+			got := f.parcel(t, p.ID)
+			if got.InsuranceStatus != tc.wantStatus {
+				t.Fatalf("status %s, want %s", got.InsuranceStatus, tc.wantStatus)
+			}
+			want := afterBooking
+			if tc.refunded {
+				want += 200_000
+			}
+			if w := f.wallet(t); w != want {
+				t.Fatalf("wallet %d, want %d", w, want)
+			}
+			if tc.state == "succeeded" && (got.InsurancePolicyID == nil || *got.InsurancePolicyID != policyID) {
+				t.Fatalf("policy id %v, want %s", got.InsurancePolicyID, policyID)
+			}
+		})
+	}
+}

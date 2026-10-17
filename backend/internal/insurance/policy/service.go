@@ -252,6 +252,12 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey, 0)
 }
 
+// BindOutcome reports what the provider did with the purchase sent under
+// idempotencyKey (see BindRegistry.Outcome).
+func (s *Service) BindOutcome(ctx context.Context, idempotencyKey string) (state, policyID string, found bool, err error) {
+	return s.binds.Outcome(ctx, idempotencyKey)
+}
+
 // ErrBindPersistedPartially: the provider bound the policy (cover exists) but
 // recording it locally failed. Never refund on this — reconciliation resolves it.
 var ErrBindPersistedPartially = errors.New("policy: bind persisted partially")

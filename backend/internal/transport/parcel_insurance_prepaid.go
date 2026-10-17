@@ -34,7 +34,7 @@ import (
 //   hold refund  <bookingKey>:insurance_refund   hold → wallet   (ONE key for every refund from the hold)
 //   bind         parcel:insurance:<id>:premium   hold → clearing (policy saga)
 //   saga refund  parcel:insurance:<id>:reversal  clearing → wallet
-//   cancel after bind  parcel:insurance:<id>:cancel_refund  clearing → wallet
+//   cancel after bind  parcel:insurance:<id>:cancel_refund  paymax_revenue → wallet (platform absorbs)
 // Where the money is after a failed bind is read from the LEDGER, never
 // guessed from an error. ReconcileParcelInsurance resolves anything a crash
 // leaves in between.
@@ -134,6 +134,23 @@ func checkExpectedParcelInsurance(expectedKobo *int64, premiumKobo int64) error 
 }
 
 func holdRefundKey(bookingKey string) string { return bookingKey + ":insurance_refund" }
+func cancelRefundKey(parcelID string) string {
+	return "parcel:insurance:" + parcelID + ":cancel_refund"
+}
+
+// markCoverIfPremiumRefunded runs after an insured parcel row is written: if
+// the orphan sweep refunded this booking's premium in the meantime (a retry
+// racing the grace boundary), the parcel has no paid cover — record that,
+// so the bind never runs on a premium that is no longer held.
+func (s *Service) markCoverIfPremiumRefunded(ctx context.Context, parcelID, bookingKey string) {
+	refunded, err := s.entryPosted(ctx, holdRefundKey(bookingKey)+":rev_debit")
+	if err != nil || !refunded {
+		return
+	}
+	if s.claimInsuranceStatus(ctx, parcelID, insuranceStatusHeld, insuranceStatusRefunded) {
+		log.Printf("[transport] parcel %s: premium was refunded before the booking completed — shipping without cover", parcelID)
+	}
+}
 
 // entryPosted reports whether a ledger entry with this exact key exists (the
 // ledger of record, not the Redis fast path).
@@ -209,9 +226,11 @@ func (s *Service) refundHeldPremium(ctx context.Context, senderID, bookingKey st
 	return nil
 }
 
-// refundBoundPremium refunds a premium that already moved to provider
-// clearing (cover bound, then the parcel was cancelled). The platform absorbs
-// whatever the insurer does not return on the policy cancel.
+// refundBoundPremium refunds a premium whose cover was already bound, after
+// the parcel was cancelled. The premium itself sits in provider_clearing, owed
+// to the insurer, so the refund is a platform cost (paymax_revenue → wallet);
+// whatever the insurer returns on the policy cancel comes back through
+// clearing in the normal remittance.
 func (s *Service) refundBoundPremium(ctx context.Context, p *parcelRow) error {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
@@ -219,12 +238,12 @@ func (s *Service) refundBoundPremium(ctx context.Context, p *parcelRow) error {
 	if err != nil {
 		return err
 	}
-	clearing, err := s.ledger.GetOrCreateStandingAccount(cctx, ledger.AccountProviderClearing)
+	revenue, err := s.ledger.GetOrCreateStandingAccount(cctx, ledger.AccountPaymaxRevenue)
 	if err != nil {
 		return err
 	}
-	key := "parcel:insurance:" + p.ID + ":cancel_refund"
-	err = s.ledger.PostReversal(cctx, wallet.ID, clearing.ID, p.InsurancePaidKobo, "parcel:insurance_cancel_refund:"+p.ID, key)
+	key := cancelRefundKey(p.ID)
+	err = s.ledger.PostReversal(cctx, wallet.ID, revenue.ID, p.InsurancePaidKobo, "parcel:insurance_cancel_refund:"+p.ID, key)
 	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return err
 	}
@@ -287,6 +306,10 @@ func (s *Service) settleParcelInsuranceAtAccept(ctx context.Context, p *parcelRo
 	if p.InsuranceStatus != insuranceStatusHeld || !s.claimInsuranceStatus(ctx, p.ID, insuranceStatusHeld, insuranceStatusBinding) {
 		return
 	}
+	// The courier's request may end mid-bind; the bind and whatever follows it
+	// (record, refund) must not die with it and strand the premium.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
 	bindKey := "parcel:insurance:" + p.ID
 	policyID, err := s.bindPrepaidParcelInsurance(ctx, p, sender, vehicle, bindKey)
 	switch {
@@ -305,10 +328,13 @@ func (s *Service) settleParcelInsuranceAtAccept(ctx context.Context, p *parcelRo
 // while the bind was in flight, in which case the policy is cancelled and the
 // premium refunded (cancel before bind → refund, whatever the timing).
 func (s *Service) recordBoundCover(ctx context.Context, p *parcelRow, policyID string) {
-	if _, err := s.db.Exec(ctx,
+	tag, err := s.db.Exec(ctx,
 		`UPDATE parcels SET insurance_status='bound', insurance_policy_id=$2, updated_at=NOW() WHERE id=$1 AND insurance_status='binding'`,
-		p.ID, policyID); err != nil {
-		log.Printf("[transport] parcel %s: insurance bound (policy %s) but the parcel was not updated: %v", p.ID, policyID, err)
+		p.ID, policyID)
+	if err != nil || tag.RowsAffected() != 1 {
+		// Left 'binding' (or moved by someone else): the reconciler settles it
+		// from the insurer's recorded outcome.
+		log.Printf("[transport] parcel %s: CRITICAL insurance bound (policy %s) but the parcel was not updated (err=%v)", p.ID, policyID, err)
 		return
 	}
 	var parcelStatus string
@@ -372,6 +398,9 @@ func (s *Service) finishPrepaidRefund(ctx context.Context, p *parcelRow, bindKey
 func (s *Service) bindPrepaidParcelInsurance(ctx context.Context, p *parcelRow, sender parcelSenderProfile, vehicle parcelDriverVehicle, bindKey string) (string, error) {
 	if s.insurance == nil {
 		return "", errors.New("insurance not wired")
+	}
+	if refunded, err := s.entryPosted(ctx, holdRefundKey(p.IdempotencyKey)+":rev_debit"); err != nil || refunded {
+		return "", fmt.Errorf("premium no longer held (refunded=%t err=%v)", refunded, err)
 	}
 	if missing := senderMissingProfileFields(sender); len(missing) > 0 {
 		return "", fmt.Errorf("sender profile missing %v", missing)
@@ -466,14 +495,24 @@ func (s *Service) reconcileParcelPremium(ctx context.Context, p *parcelRow) bool
 	if err != nil {
 		return false
 	}
-	switch {
-	case p.InsuranceStatus == insuranceStatusHeld:
+	// A refund posted under any of the three refund keys settles it.
+	for _, k := range []string{holdRefundKey(p.IdempotencyKey), bindKey + ":reversal", cancelRefundKey(p.ID)} {
+		if done, err := s.entryPosted(ctx, k+":rev_debit"); err != nil {
+			return false
+		} else if done {
+			s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefunded)
+			return true
+		}
+	}
+	if p.InsuranceStatus == insuranceStatusHeld {
+		// Past courier accept without a bind (the claim never happened).
 		if !s.claimInsuranceStatus(ctx, p.ID, insuranceStatusHeld, insuranceStatusBinding) {
 			return false
 		}
 		p.InsuranceStatus = insuranceStatusBinding
-		fallthrough
-	case !moved:
+	}
+	if !moved {
+		// The premium never left the hold: refund it from there.
 		if err := s.refundHeldPremium(ctx, p.SenderID, p.IdempotencyKey, p.InsurancePaidKobo); err != nil {
 			log.Printf("[transport] reconcile parcel %s: premium refund from hold failed: %v", p.ID, err)
 			s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefundFailed)
@@ -483,36 +522,56 @@ func (s *Service) reconcileParcelPremium(ctx context.Context, p *parcelRow) bool
 		s.notifyPremiumRefunded(ctx, p, "we couldn't arrange cover for this delivery.")
 		return true
 	}
-	reversed, err := s.entryPosted(ctx, bindKey+":reversal:rev_debit")
+	// The premium is with the insurer side (provider_clearing) and no refund is
+	// on the ledger. A cover that was bound and then cancelled retries its own
+	// refund; otherwise the insurer's recorded bind outcome decides.
+	if p.InsurancePolicyID != nil && *p.InsurancePolicyID != "" && p.InsuranceStatus == insuranceStatusRefundFailed {
+		if err := s.refundBoundPremium(ctx, p); err != nil {
+			return false
+		}
+		s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefunded)
+		s.notifyPremiumRefunded(ctx, p, "your delivery was cancelled.")
+		return true
+	}
+	if s.insurance == nil {
+		return false
+	}
+	state, policyID, err := s.insurance.BindOutcome(ctx, bindKey)
 	if err != nil {
 		return false
 	}
-	if reversed {
-		s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefunded)
+	switch state {
+	case "succeeded":
+		// Cover exists: record it (a cancelled parcel then gets it refunded).
+		if p.InsuranceStatus == insuranceStatusRefundFailed {
+			s.setInsuranceStatus(ctx, p.ID, insuranceStatusBinding)
+		}
+		p.InsuranceStatus = insuranceStatusBinding
+		s.recordBoundCover(ctx, p, policyID)
 		return true
-	}
-	if p.InsuranceStatus == insuranceStatusBinding {
-		// Premium moved, no refund: the bind may have succeeded at the insurer.
-		log.Printf("[transport] reconcile parcel %s: CRITICAL premium with the insurer and no local outcome — needs the insurer's word", p.ID)
+	case "failed":
+		// The insurer definitely refused; the saga's own refund did not land.
+		// Post it under the saga's key so it can never double up.
+		wallet, wErr := s.ledger.GetOrCreateUserWallet(ctx, p.SenderID)
+		clearing, cErr := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+		if wErr != nil || cErr != nil {
+			return false
+		}
+		if err := s.ledger.PostReversal(ctx, wallet.ID, clearing.ID, p.InsurancePaidKobo, "parcel:insurance_refund:"+p.ID, bindKey+":reversal"); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+			log.Printf("[transport] reconcile parcel %s: premium refund from clearing failed: %v", p.ID, err)
+			return false
+		}
+		if ok, _ := s.entryPosted(ctx, bindKey+":reversal:rev_debit"); !ok {
+			return false
+		}
+		s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefunded)
+		s.notifyPremiumRefunded(ctx, p, "we couldn't arrange cover for this delivery.")
+		return true
+	default:
+		// in_flight / unknown / none recorded: cover may exist. Never guess.
+		log.Printf("[transport] reconcile parcel %s: CRITICAL premium with the insurer, bind outcome %q — needs the insurer's word", p.ID, state)
 		return false
 	}
-	// refund_failed after the saga took the premium and its auto-reverse failed:
-	// post that reversal under the saga's own key (so it can never double up).
-	wallet, wErr := s.ledger.GetOrCreateUserWallet(ctx, p.SenderID)
-	clearing, cErr := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
-	if wErr != nil || cErr != nil {
-		return false
-	}
-	if err := s.ledger.PostReversal(ctx, wallet.ID, clearing.ID, p.InsurancePaidKobo, "parcel:insurance_refund:"+p.ID, bindKey+":reversal"); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-		log.Printf("[transport] reconcile parcel %s: premium refund from clearing failed: %v", p.ID, err)
-		return false
-	}
-	if ok, _ := s.entryPosted(ctx, bindKey+":reversal:rev_debit"); !ok {
-		return false
-	}
-	s.setInsuranceStatus(ctx, p.ID, insuranceStatusRefunded)
-	s.notifyPremiumRefunded(ctx, p, "we couldn't arrange cover for this delivery.")
-	return true
 }
 
 // reconcileOrphanPremiums refunds premiums held for a booking that never wrote
