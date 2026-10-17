@@ -136,7 +136,7 @@ type PartialGateway interface {
 
 // EnablePartialRefunds turns on piece refunds. Wiring-time only. Without it a
 // settlement that is a piece of a charge fails closed (ErrPartialRefundsUnsupported).
-// Parcel, towing and movers never need it.
+// Car hire and insured parcels need it; towing, movers and uninsured parcels never do.
 func (e *Engine) EnablePartialRefunds(gw PartialGateway, st PartialRefundStore) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

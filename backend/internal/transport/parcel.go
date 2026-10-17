@@ -514,6 +514,12 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 	// never reaches the courier settlement. Refused up front when the parcel
 	// could never be covered.
 	insured := s.prepaidInsurance(req)
+	if external && len(frozenPricing) > 0 {
+		// Card: insured-ness is what the card was CHARGED for (the frozen
+		// premium), not the live flag — a flag flip between initiate and confirm
+		// must not turn a correctly-charged order into a refund.
+		insured = req.Insure && frozenPremium > 0
+	}
 	var premium int64
 	var expectedPremium *int64
 	if insured && external {

@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -23,6 +24,8 @@ import (
 	"github.com/google/uuid"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/insurance/gateway"
+	"spotlight/backend/internal/insurance/policy"
 )
 
 const cardPremium = 200_000 // 2% of insuredReq's ₦100,000
@@ -83,6 +86,9 @@ func (b *prepaidTestBinder) BindFromQuotePrepaidToHold(ctx context.Context, user
 		return "", 0, b.forceErr
 	}
 	p, err := b.pol.BindFromQuotePrepaidToHold(ctx, userID, quoteID, paid, key)
+	if errors.Is(err, policy.ErrBindPersistedPartially) || errors.Is(err, policy.ErrBindOutcomeUnknown) || errors.Is(err, policy.ErrBindInFlight) {
+		return "", 0, fmt.Errorf("%w: %w", ErrInsuranceBindUnconfirmed, err) // as the app adapter maps it
+	}
 	if err != nil {
 		return "", 0, err
 	}
@@ -269,7 +275,7 @@ func TestLiveDB_CardInsurance_ReplayNeverDoubleHolds(t *testing.T) {
 
 func TestLiveDB_CardInsurance_BindRefusalRefundsThePremiumToTheCard(t *testing.T) {
 	f, card := newCardInsuranceFixture(t)
-	f.binder.uw.bindErr = errors.New("provider rejected")
+	f.binder.uw.bindErr = fmt.Errorf("%w: invalid plate", gateway.ErrProviderRejected) // a definite refusal
 	walletBefore := f.wallet(t)
 	p, ref, _ := f.bookCard(t, insuredReq())
 
@@ -282,6 +288,53 @@ func TestLiveDB_CardInsurance_BindRefusalRefundsThePremiumToTheCard(t *testing.T
 	// The saga returned the premium to the hold (never the wallet) …
 	if typ, amt := entryAccountType(t, f.pool, "parcel:insurance:"+p.ID+":reversal:rev_debit"); typ != string(ledger.AccountInsurancePremiumHold) || amt != cardPremium {
 		t.Fatalf("saga reversal credited %s %d, want the insurance hold %d", typ, amt, cardPremium)
+	}
+}
+
+// A bind the insurer never answered may have created cover (and taken our
+// float). A card refund cannot be clawed back, so nothing is refunded: the
+// premium stays with the insurer side and the parcel stays 'binding' for the
+// reconciler, which also leaves it alone until the insurer's outcome is known.
+func TestLiveDB_CardInsurance_UnknownBindOutcomeIsNeverRefundedOnAGuess(t *testing.T) {
+	f, card := newCardInsuranceFixture(t)
+	ctx := context.Background()
+	f.binder.uw.bindErr = errors.New("read tcp: i/o timeout") // no answer: outcome unknown
+	walletBefore := f.wallet(t)
+	p, _, _ := f.bookCard(t, insuredReq())
+	f.svc.settleParcelInsuranceAtAccept(ctx, &p, f.svc.loadParcelSenderProfile(ctx, f.sender), completeVehicle)
+	if got := f.parcel(t, p.ID); got.InsuranceStatus != "binding" {
+		t.Fatalf("status %s, want binding (left for reconciliation)", got.InsuranceStatus)
+	}
+	if n := f.entryCount(t, "parcel:insurance:"+p.ID+":reversal:rev_debit"); n != 0 {
+		t.Fatal("the saga reversed a card premium whose bind outcome is unknown")
+	}
+	if _, err := f.svc.ReconcileParcelInsurance(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(card.premiumRefunds()) != 0 || f.wallet(t) != walletBefore {
+		t.Fatalf("refunded on a guess: card %+v", card.premiumRefunds())
+	}
+	if got := f.parcel(t, p.ID); got.InsuranceStatus != "binding" {
+		t.Fatalf("after reconcile: %s, want binding until the insurer answers", got.InsuranceStatus)
+	}
+}
+
+// A flag flip between initiate and confirm must not refund a correctly-charged
+// order: the card path books what the card was charged for (the frozen premium).
+func TestLiveDB_CardInsurance_FlagFlipAfterInitiateStillBooksWhatWasCharged(t *testing.T) {
+	f, _ := newCardInsuranceFixture(t)
+	ctx := context.Background()
+	amount, frozen, err := f.svc.QuoteParcelBookingFrozenFor(ctx, f.sender, insuredReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.WithPrepaidInsurance(false)
+	id, err := f.svc.BookParcelPaystackFundedFrozen(ctx, f.sender, insuredReq(), "parcelorder-"+uuid.NewString(), amount, frozen)
+	if err != nil {
+		t.Fatalf("flag off at confirm: %v", err)
+	}
+	if p := f.parcel(t, id); p.InsuranceStatus != "held" || p.InsurancePaidKobo != cardPremium {
+		t.Fatalf("parcel %+v, want the charged premium held", p)
 	}
 }
 

@@ -291,12 +291,17 @@ func (s *Service) holdParcelPremiumCard(ctx context.Context, senderID, bookingKe
 	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return fmt.Errorf("transport: hold card parcel insurance premium: %w", err)
 	}
+	fresh := err == nil
 	e, found, err := s.ledger.EntryByKey(ctx, bookingKey+":insurance:credit")
 	if err != nil {
 		return err
 	}
 	if !found || e.AccountID != hold.ID || e.AmountKobo != premiumKobo || e.Reference != cardHoldReference(bookingKey) {
 		return fmt.Errorf("transport: card premium hold %s:insurance is not this charge's hold of %d (found=%t) — refusing to book", bookingKey, premiumKobo, found)
+	}
+	if fresh {
+		s.recordModeEvent(ctx, senderID, "parcel.insurance_held", "parcel", externalParcelID(bookingKey), "", insuranceStatusHeld,
+			map[string]any{"reference": bookingKey, "premium_kobo": premiumKobo, "funding": "external"})
 	}
 	return nil
 }
@@ -346,6 +351,8 @@ func (s *Service) UnwindParcelPremiumHold(ctx context.Context, payerID, bookingK
 	if ok, vErr := s.entryPosted(ctx, key+":rev_debit"); vErr != nil || !ok {
 		return fmt.Errorf("transport: premium unwind %s not on the ledger (err=%v)", key, vErr)
 	}
+	s.recordModeEvent(ctx, payerID, "parcel.insurance_unwound", "parcel", externalParcelID(bookingKey), insuranceStatusHeld, "",
+		map[string]any{"reference": bookingKey, "premium_kobo": e.AmountKobo, "reason": "charge_backs_no_parcel"})
 	return nil
 }
 
@@ -419,6 +426,8 @@ func (s *Service) refundPremiumToCard(ctx context.Context, p *parcelRow, source 
 	if ok, vErr := s.entryPosted(cctx, key+":rev_debit"); vErr != nil || !ok {
 		return fmt.Errorf("transport: card premium refund %s not on the ledger (err=%v)", key, vErr)
 	}
+	s.recordModeEvent(cctx, p.SenderID, "parcel.insurance_card_refunded", "parcel", p.ID, "", "",
+		map[string]any{"premium_kobo": p.InsurancePaidKobo, "ledger_key": key, "piece": ParcelInsurancePieceKey})
 	return nil
 }
 
@@ -716,6 +725,7 @@ func (s *Service) ReconcileParcelInsurance(ctx context.Context, grace time.Durat
 		           AND (EXISTS (SELECT 1 FROM settlements st WHERE st.id = p.settlement_id AND st.funding_source = 'external')
 		                OR NOT EXISTS (SELECT 1 FROM ledger_entries e WHERE e.idempotency_key = 'parcel:insurance:' || p.id || ':reversal:rev_debit'))))
 		  AND p.updated_at < NOW() - make_interval(secs => $1)
+		ORDER BY p.updated_at
 		LIMIT 200`, grace.Seconds())
 	if err != nil {
 		return 0, err
@@ -749,6 +759,7 @@ func (s *Service) reconcileParcelPremium(ctx context.Context, p *parcelRow) bool
 	}
 	card, err := s.premiumPaidByCard(ctx, p)
 	if err != nil {
+		log.Printf("[transport] reconcile parcel %s: cannot tell how the premium was paid, skipped: %v", p.ID, err)
 		return false
 	}
 	// A refund posted under any refund key settles it. For a card the saga's
@@ -802,6 +813,9 @@ func (s *Service) reconcileParcelPremium(ctx context.Context, p *parcelRow) bool
 	// on the ledger. A cover that was bound and then cancelled retries its own
 	// refund; otherwise the insurer's recorded bind outcome decides.
 	if p.InsurancePolicyID != nil && *p.InsurancePolicyID != "" && p.InsuranceStatus == insuranceStatusRefundFailed {
+		// A crash between cancelBoundCover's claim and its policy cancel leaves
+		// the cover live: cancel it (best-effort, idempotent at the insurer).
+		s.cancelParcelInsurance(ctx, p.SenderID, *p.InsurancePolicyID)
 		if err := s.refundBoundPremium(ctx, p); err != nil {
 			return false
 		}

@@ -3,6 +3,7 @@ package paystackcheckout
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -101,7 +102,9 @@ type parcelPremiumUnwinder interface {
 func (d ParcelDomain) UnwindUnbooked(ctx context.Context, payerID, reference string) error {
 	u, ok := d.parcels.(parcelPremiumUnwinder)
 	if !ok {
-		return nil
+		// Fail CLOSED: a booker that cannot unwind may have held a premium the
+		// whole-charge refund would leave stranded in the hold.
+		return fmt.Errorf("paystackcheckout: parcel booker cannot unwind a premium hold for %s — refund blocked", reference)
 	}
 	return u.UnwindParcelPremiumHold(ctx, payerID, reference)
 }

@@ -284,7 +284,11 @@ func (s *Service) BindFromQuotePrepaid(ctx context.Context, userID, quoteID stri
 // "<key>:reversal" key), never to the wallet — crediting a wallet with card
 // money would hand a Tier-0 customer spendable balance funded by an external
 // charge. The caller refunds the hold to the card itself, and tells the
-// customer; the saga sends no "refunded to your wallet" notice.
+// customer; the saga sends no "refunded to your wallet" notice. Only a provider
+// REFUSAL is reversed: an unknown outcome (no answer) returns
+// ErrBindOutcomeUnknown (or ErrBindInFlight for a retry racing an earlier
+// attempt) with the premium left in clearing, because a card
+// refund cannot be taken back if the cover turns out to exist.
 func (s *Service) BindFromQuotePrepaidToHold(ctx context.Context, userID, quoteID string, paidKobo int64, idempotencyKey string) (*Policy, error) {
 	if paidKobo <= 0 {
 		return nil, fmt.Errorf("policy: prepaid premium must be positive, got %d", paidKobo)
@@ -504,6 +508,11 @@ func (s *Service) bindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 	// not, so the saga will not call the provider without the guard in place.
 	claim, claimErr := s.binds.Claim(ctx, idempotencyKey, qr.Provider, qr.ProductCode, p.ID)
 	if claimErr != nil {
+		if refundToHold && (errors.Is(claimErr, ErrBindOutcomeUnknown) || errors.Is(claimErr, ErrBindInFlight)) {
+			// An earlier purchase under this key may have bound: a card refund
+			// could not be taken back. Leave the premium in clearing (see below).
+			return p, claimErr
+		}
 		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, taken, refundToHold, claimErr)
 	}
 	if !claim.Fresh {
@@ -575,6 +584,16 @@ func (s *Service) bindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 			s.auditSafe(ctx, userID, "insurance.provider_float_exhausted", map[string]any{
 				"policy_id": p.ID, "provider": qr.Provider,
 			})
+		}
+		if refundToHold && !providerAnswered(bindErr) {
+			// A card-paid premium goes back to a CARD once reversed, and a card
+			// refund cannot be clawed back. With the outcome unknown the cover may
+			// exist (insurer paid from our float), so never reverse on a guess:
+			// the premium stays in clearing and the caller reconciles it from the
+			// insurer's recorded bind outcome.
+			log.Printf("[insurance] bind outcome UNKNOWN for card-paid policy %s — premium left in clearing for reconciliation: %v", p.ID, bindErr)
+			s.auditSafe(ctx, userID, "insurance.bind_outcome_unknown", map[string]any{"policy_id": p.ID, "cause": bindErr.Error()})
+			return p, fmt.Errorf("%w: bind outcome unknown: %w", ErrBindOutcomeUnknown, bindErr)
 		}
 		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, taken, refundToHold, bindErr)
 	}

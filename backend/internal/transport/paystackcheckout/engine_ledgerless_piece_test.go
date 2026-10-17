@@ -188,3 +188,12 @@ func TestReconcile_StrandedLedgerlessPiece_ResolvedAtTheGatewayWithoutSettlement
 		t.Fatal("a ledgerless piece has no settlement: the sweep must not load or reverse one")
 	}
 }
+
+// A parcel booker that cannot unwind a premium hold must BLOCK the whole-charge
+// refund (it may have held a premium the refund would strand), never pass.
+func TestParcelDomain_UnwindFailsClosedWithoutAnUnwinder(t *testing.T) {
+	d := NewParcelDomain(&fakeParcels{})
+	if err := d.UnwindUnbooked(context.Background(), "u1", "parcelorder-k"); err == nil {
+		t.Fatal("want an error: the booker cannot unwind a premium hold")
+	}
+}

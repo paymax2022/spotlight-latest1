@@ -648,7 +648,7 @@ func (a *insuranceBinderAdapter) BindFromQuotePrepaid(ctx context.Context, userI
 // the hold (transport refunds the hold to the card), never to the wallet.
 func (a *insuranceBinderAdapter) BindFromQuotePrepaidToHold(ctx context.Context, userID, quoteID string, paidKobo int64, idempotencyKey string) (string, int64, error) {
 	p, err := a.policy.BindFromQuotePrepaidToHold(ctx, userID, quoteID, paidKobo, idempotencyKey)
-	if errors.Is(err, policy.ErrBindPersistedPartially) {
+	if errors.Is(err, policy.ErrBindPersistedPartially) || errors.Is(err, policy.ErrBindOutcomeUnknown) || errors.Is(err, policy.ErrBindInFlight) {
 		return "", 0, fmt.Errorf("%w: %w", transport.ErrInsuranceBindUnconfirmed, err)
 	}
 	if err != nil {
