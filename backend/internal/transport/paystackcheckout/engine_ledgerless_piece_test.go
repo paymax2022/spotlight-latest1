@@ -1,7 +1,7 @@
 package paystackcheckout
 
 // Ledgerless pieces and domain ledger unwinds — the two engine seams parcel
-// insurance paid by card needs (ADR-PR<n> parcel insurance on the card rail):
+// insurance paid by card needs (ADR-PR837):
 //   - a Domain may post ledger legs OUTSIDE settlements (the parcel premium hold);
 //     a failed Book must unwind them BEFORE the whole charge is refunded;
 //   - a piece of a charge that is not a settlement (the premium) is refunded to

@@ -36,7 +36,7 @@ import (
 //   saga refund  parcel:insurance:<id>:reversal  clearing → wallet
 //   cancel after bind  parcel:insurance:<id>:cancel_refund  paymax_revenue → wallet (platform absorbs)
 //
-// Paid by CARD (card-direct checkout; <bookingKey> is the Paystack reference
+// Paid by CARD (ADR-PR837; card-direct checkout, <bookingKey> is the Paystack reference
 // "parcelorder-…"): the charge is fare + premium; confirm escrows the fare as a
 // PIECE of the charge (settlement key "<bookingKey>:fare") and holds the premium
 // from provider_clearing, where the card money lands. Nothing ever touches the
