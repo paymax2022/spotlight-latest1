@@ -184,6 +184,29 @@ export interface CommissionConfig {
   updatedAt: string;
 }
 
+// ─── Parcel rate card ─────────────────────────────────────────────────────────
+export type ParcelSize = 'small' | 'medium' | 'large';
+// 'same_day' is shown to customers as "Priority".
+export type ParcelSpeed = 'standard' | 'express' | 'same_day' | 'scheduled';
+
+/** One size × speed cell. Integers only: 10000 bps = 1.0×; money in kobo. */
+export interface ParcelRateCell {
+  zone: string;
+  size: ParcelSize;
+  speed: ParcelSpeed;
+  multiplierBps: number;
+  minFareKobo: number;
+  active: boolean;
+  updatedBy: string | null;
+  updatedAt: string;
+}
+
+export interface ParcelRateCellPatch {
+  multiplierBps?: number;
+  minFareKobo?: number;
+  active?: boolean;
+}
+
 // ─── Safety ───────────────────────────────────────────────────────────────────
 export interface SafetyIncidentRow {
   id: string;

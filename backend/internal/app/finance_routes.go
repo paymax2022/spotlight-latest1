@@ -2332,6 +2332,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		adminTr.POST("/dispatch/:trip_id/assign", middleware.RequirePermission(rbac, mobilityRideManagePerm), transportAdmin.ManualAssign)
 		adminTr.GET("/pricing", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.GetPricing)
 		adminTr.PATCH("/pricing", middleware.RequirePermission(rbac, mobilityManagePerm), transportAdmin.PatchPricing)
+		// Parcel rate card (size × speed multiplier + minimum fare): same gates as
+		// /pricing. Edits are audited and only reach the next estimate — a frozen
+		// card-checkout quote keeps the cell it priced from.
+		adminTr.GET("/parcel-rate-card", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.GetParcelRateCard)
+		adminTr.PATCH("/parcel-rate-card/:size/:speed", middleware.RequirePermission(rbac, mobilityManagePerm), transportAdmin.PatchParcelRateCell)
 		adminTr.GET("/commission", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.ListCommission)
 		adminTr.PATCH("/commission/:tier", middleware.RequirePermission(rbac, mobilityManagePerm), transportAdmin.PatchCommission)
 		adminTr.GET("/safety/incidents", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.ListIncidents)
