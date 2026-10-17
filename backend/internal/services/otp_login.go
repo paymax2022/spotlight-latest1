@@ -34,6 +34,12 @@ type PasswordSetter interface {
 	SetPassword(ctx context.Context, email, newPassword string) (bool, error)
 }
 
+// AccountChecker is optionally implemented by a PasswordSetter. It lets the
+// reset request step tell the user when no account matches their address.
+type AccountChecker interface {
+	AccountExists(ctx context.Context, email string) (bool, error)
+}
+
 // otpAuthBridge implements both against the same authService, so the lockout
 // gate, the platform_users lookup and the Supabase client are the ones login
 // already uses rather than a second copy that can drift from them.
@@ -194,6 +200,15 @@ func (b *otpAuthBridge) SetPassword(ctx context.Context, email, newPassword stri
 		return false, err
 	}
 	return true, nil
+}
+
+// AccountExists reports whether a live account exists for email.
+func (b *otpAuthBridge) AccountExists(ctx context.Context, email string) (bool, error) {
+	id, _, err := authUserByEmail(ctx, b.db, email)
+	if err != nil {
+		return false, err
+	}
+	return id != "", nil
 }
 
 // SetOTPOperational tells the auth service that server-issued OTP is not merely

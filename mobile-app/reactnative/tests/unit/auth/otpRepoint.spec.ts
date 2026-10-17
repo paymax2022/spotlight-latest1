@@ -11,6 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   OTP_ROUTES,
+  accountNotFoundMessage,
   forgotPasswordBody,
   getPendingReset,
   setPendingReset,
@@ -95,4 +96,23 @@ test('a token pair is only accepted when both halves are present', () => {
   assert.equal(readSession({ refresh_token: 'r' }), null);
   assert.equal(readSession(undefined), null);
   assert.equal(readSession({ access_token: 123 as never, refresh_token: 'r' }), null);
+});
+
+// The reset request answers 404 account_not_found when nothing matches, and the
+// screen must say so using what the user typed rather than a generic failure.
+test('accountNotFoundMessage names the address the user typed', () => {
+  const err = { response: { status: 404, data: { error: 'account_not_found' } } };
+  assert.equal(accountNotFoundMessage(err, '  Ada@Example.com '), 'No account found for ada@example.com.');
+});
+
+test('accountNotFoundMessage handles a phone number as typed', () => {
+  const err = { response: { status: 404, data: { error: 'account_not_found' } } };
+  assert.equal(accountNotFoundMessage(err, '0803 000 0000'), 'No account found for 0803 000 0000.');
+});
+
+test('accountNotFoundMessage ignores every other failure', () => {
+  assert.equal(accountNotFoundMessage({ response: { status: 429, data: { error: 'Too many attempts.' } } }, 'a@b.co'), null);
+  assert.equal(accountNotFoundMessage({ response: { status: 404, data: { error: 'Not found' } } }, 'a@b.co'), null);
+  assert.equal(accountNotFoundMessage(new Error('Network Error'), 'a@b.co'), null);
+  assert.equal(accountNotFoundMessage(undefined, 'a@b.co'), null);
 });
