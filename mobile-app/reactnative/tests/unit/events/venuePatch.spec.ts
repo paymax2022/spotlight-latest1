@@ -6,11 +6,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { venuePatchFromSelection } from '@/features/events/venuePatch';
 
-test('venuePatchFromSelection: a full selection maps all four fields', () => {
-  assert.deepEqual(
-    venuePatchFromSelection({ label: 'Landmark Centre, Victoria Island, Lagos', lat: 6.4281, lng: 3.4219, placeId: '6FR9+3Q' }),
-    { venue: 'Landmark Centre, Victoria Island, Lagos', venue_lat: 6.4281, venue_lng: 3.4219, venue_place_id: '6FR9+3Q' },
-  );
+test('venuePatchFromSelection: a full selection maps all four fields, never a plus code as place id', () => {
+  // An autocomplete selection carries a plusCode; it is a different identifier
+  // from a provider place id and must not land in venue_place_id.
+  const sel = { label: 'Landmark Centre, Victoria Island, Lagos', lat: 6.4281, lng: 3.4219, plusCode: '6FR9+3Q' };
+  assert.deepEqual(venuePatchFromSelection(sel), {
+    venue: 'Landmark Centre, Victoria Island, Lagos', venue_lat: 6.4281, venue_lng: 3.4219, venue_place_id: null,
+  });
+});
+
+test('venuePatchFromSelection: an explicit placeId passes through (seam for a provider id)', () => {
+  const p = venuePatchFromSelection({ label: 'Eko Hotel', lat: 6.43, lng: 3.43, placeId: 'abc' });
+  assert.equal(p.venue_place_id, 'abc');
 });
 
 test('venuePatchFromSelection: a missing placeId becomes null', () => {

@@ -87,9 +87,10 @@ export default function CreateEvent() {
 
   // Typing invalidates a picked place, so the old pin is dropped with the text.
   const onVenueText = (v: string) => setForm((f) => ({ ...f, venue: v, venue_lat: null, venue_lng: null, venue_place_id: null }));
-  // placeId comes from the selection's plusCode: SelectedAddress carries no provider place id.
+  // venue_place_id stays null until the Maps proxy returns a real provider place
+  // id; the selection's plusCode is a different identifier and is not stored there.
   const onVenueSelect = (a: SelectedAddress) =>
-    setForm((f) => ({ ...f, ...venuePatchFromSelection({ label: a.label, lat: a.lat, lng: a.lng, placeId: a.plusCode ?? null }) }));
+    setForm((f) => ({ ...f, ...venuePatchFromSelection({ label: a.label, lat: a.lat, lng: a.lng, placeId: null }) }));
 
   const validateStep = (): boolean => {
     const errs: Record<string, string> = {};
