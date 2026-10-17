@@ -249,7 +249,7 @@ func (s *Service) GetQuote(ctx context.Context, userID, quoteID string) (*QuoteR
 // on a Dojah-verified NIN first — the exemption is deliberate and explicit,
 // not an oversight: those flows have no NIN in their request surface.
 func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotencyKey string) (*Policy, error) {
-	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey, 0)
+	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey, 0, false)
 }
 
 // BindOutcome reports what the provider did with the purchase sent under
@@ -276,7 +276,20 @@ func (s *Service) BindFromQuotePrepaid(ctx context.Context, userID, quoteID stri
 	if paidKobo <= 0 {
 		return nil, fmt.Errorf("policy: prepaid premium must be positive, got %d", paidKobo)
 	}
-	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey, paidKobo)
+	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey, paidKobo, false)
+}
+
+// BindFromQuotePrepaidToHold is BindFromQuotePrepaid for a premium the customer
+// paid by CARD: a failed bind returns paidKobo to the insurance hold (same
+// "<key>:reversal" key), never to the wallet — crediting a wallet with card
+// money would hand a Tier-0 customer spendable balance funded by an external
+// charge. The caller refunds the hold to the card itself, and tells the
+// customer; the saga sends no "refunded to your wallet" notice.
+func (s *Service) BindFromQuotePrepaidToHold(ctx context.Context, userID, quoteID string, paidKobo int64, idempotencyKey string) (*Policy, error) {
+	if paidKobo <= 0 {
+		return nil, fmt.Errorf("policy: prepaid premium must be positive, got %d", paidKobo)
+	}
+	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey, paidKobo, true)
 }
 
 // BindFromQuoteWithNIN is the member-facing purchase path
@@ -290,7 +303,7 @@ func (s *Service) BindFromQuoteWithNIN(ctx context.Context, userID, quoteID, nin
 	if err := s.verifyNIN(ctx, userID, nin); err != nil {
 		return nil, err
 	}
-	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey, 0)
+	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey, 0, false)
 }
 
 // verifyNIN is the purchase NIN gate. Fail-closed at every step:
@@ -378,8 +391,10 @@ func isNINShape(s string) bool {
 // whole saga is replay-safe.
 // bindFromQuote runs the purchase saga. prepaidKobo > 0 means the premium was
 // already paid into the insurance hold (see BindFromQuotePrepaid); 0 debits
-// the wallet for the quoted premium.
-func (s *Service) bindFromQuote(ctx context.Context, userID, quoteID, idempotencyKey string, prepaidKobo int64) (*Policy, error) {
+// the wallet for the quoted premium. refundToHold sends a failed bind's
+// premium back to the hold instead of the wallet (card-paid, see
+// BindFromQuotePrepaidToHold).
+func (s *Service) bindFromQuote(ctx context.Context, userID, quoteID, idempotencyKey string, prepaidKobo int64, refundToHold bool) (*Policy, error) {
 	if idempotencyKey == "" {
 		return nil, errors.New("policy: Idempotency-Key required for bind")
 	}
@@ -479,7 +494,7 @@ func (s *Service) bindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 	// (4) Bind at the provider (idempotent on idempotencyKey).
 	gw, providerProduct, err := s.router.Resolve(ctx, qr.ProductCode)
 	if err != nil {
-		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, taken, err)
+		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, taken, refundToHold, err)
 	}
 	// MyCover documents no idempotency mechanism on its purchase endpoint, so a
 	// retry would create a SECOND policy and debit our float twice. Claim the key
@@ -489,7 +504,7 @@ func (s *Service) bindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 	// not, so the saga will not call the provider without the guard in place.
 	claim, claimErr := s.binds.Claim(ctx, idempotencyKey, qr.Provider, qr.ProductCode, p.ID)
 	if claimErr != nil {
-		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, taken, claimErr)
+		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, taken, refundToHold, claimErr)
 	}
 	if !claim.Fresh {
 		// This exact purchase already went through. Return the ORIGINAL policy
@@ -561,7 +576,7 @@ func (s *Service) bindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 				"policy_id": p.ID, "provider": qr.Provider,
 			})
 		}
-		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, taken, bindErr)
+		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, taken, refundToHold, bindErr)
 	}
 	s.binds.Succeeded(ctx, idempotencyKey, bound.ProviderPolicyRef, bound.PremiumKobo)
 
@@ -640,15 +655,22 @@ func (s *Service) bindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 }
 
 // autoReverse executes the MANDATORY auto-reverse leg: BINDING → BIND_FAILED →
-// reversing CREDIT (premium back to the user wallet) → VOID. Returns the policy
-// and the original bind error wrapped.
-func (s *Service) autoReverse(ctx context.Context, p *Policy, idempotencyKey, premiumRef, clearingAccID string, refundKobo int64, cause error) (*Policy, error) {
+// reversing CREDIT (premium back to the user wallet — or, toHold, to the
+// insurance hold for a card-paid premium) → VOID. Returns the policy and the
+// original bind error wrapped.
+func (s *Service) autoReverse(ctx context.Context, p *Policy, idempotencyKey, premiumRef, clearingAccID string, refundKobo int64, toHold bool, cause error) (*Policy, error) {
 	_ = s.transition(ctx, p, StateBindFailed)
 
-	// Reverse: restore the user wallet, drain the provider-clearing hold.
-	userWallet, wErr := s.ledger.GetOrCreateUserWallet(ctx, p.PolicyholderID)
+	// Reverse: restore the user wallet (or the hold), drain provider clearing.
+	var restore *ledger.Account
+	var wErr error
+	if toHold {
+		restore, wErr = s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountInsurancePremiumHold)
+	} else {
+		restore, wErr = s.ledger.GetOrCreateUserWallet(ctx, p.PolicyholderID)
+	}
 	if wErr == nil {
-		revErr := s.ledger.PostReversal(ctx, userWallet.ID, clearingAccID, refundKobo,
+		revErr := s.ledger.PostReversal(ctx, restore.ID, clearingAccID, refundKobo,
 			"insurance:premium_reversal:"+p.ID, idempotencyKey+":reversal")
 		if revErr != nil && !errors.Is(revErr, ledger.ErrDuplicate) {
 			// Refund failed — this is the worst case. Leave the policy in BIND_FAILED
@@ -673,8 +695,10 @@ func (s *Service) autoReverse(ctx context.Context, p *Policy, idempotencyKey, pr
 	s.auditSafe(ctx, p.PolicyholderID, "insurance.bind_failed_reversed", map[string]any{
 		"policy_id": p.ID, "premium": p.PremiumKobo, "refunded": refundKobo, "cause": cause.Error(),
 	})
-	s.notifySafe(ctx, p.PolicyholderID, "insurance.refunded",
-		"We couldn't bind your cover. Your premium has been refunded to your wallet.")
+	if !toHold { // a card-paid premium is refunded (and announced) by the caller
+		s.notifySafe(ctx, p.PolicyholderID, "insurance.refunded",
+			"We couldn't bind your cover. Your premium has been refunded to your wallet.")
+	}
 	return p, fmt.Errorf("policy: bind failed, premium auto-reversed: %w", cause)
 }
 
