@@ -66,3 +66,23 @@ Legend: Exists / Partial / Missing / Broken / N/A.
    seat_layouts, seat_occupancy, holds, booking legs/passengers).
 3. Implement behind `FEATURE_BUS_TRANSPORT_V2` (or extend existing bus flag).
 EOF_MARKER
+
+## Audit round 2 (handler/service-level)
+
+- `bus_handler.go` (~28 handlers): customer (`BusSearch`, `BusRoutes`, `BusSchedules`,
+  `BusBook`, `BusTickets`, `BusTicketGet/Cancel`, `BusValidate` QR scan),
+  provider (`Register`, `Me`, `Update`, route/schedule create, `Bookings` manifest,
+  templates CRUD), admin (`AdminBus*`).
+- `bus_provider.go`: `bus_providers.verification_status` — `verified` required for
+  public search listing (`p.verification_status='verified'` in SearchBusTrips).
+  Routes: `from_state/to_state/from_city/to_city + base_fare_kobo + amenities` —
+  flat OD pair, single fare, NO intermediate stops, NO return pairing.
+  Schedules: `total_seats + fare_kobo + fare_approved + cancel_cutoff_minutes`.
+- Tickets already carry `passenger_name, passenger_phone, boarding_status, qr_code`
+  → booking-for-another partially exists (per-ticket passenger fields).
+- Web surfaces: `frontend-web/app/api/v1/transport` (BFF),
+  `frontend-admin/app/admin/mobility/bus` (admin pages exist).
+- CONFIRMED MISSING: vehicle/fleet entity, seat-layout model, seat holds,
+  segment-overlap occupancy, multi-stop itinerary, OD-pair fare matrix,
+  return-route relation, operator KYB/CAC workflow + review queue for bus,
+  settlement batches, geography reference tables.
