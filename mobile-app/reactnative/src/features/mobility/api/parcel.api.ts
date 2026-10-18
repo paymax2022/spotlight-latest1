@@ -153,7 +153,7 @@ export async function getParcelPaystackStatus(reference: string): Promise<Parcel
 export async function getParcel(id: string): Promise<Parcel> {
   if (USE_MOCK) {
     await delay(260);
-    if (parcelStore.active?.id === id) return advanceMockParcel(parcelStore.active);
+    if (parcelStore.active?.id === id) return (parcelStore.active = advanceMockParcel(parcelStore.active));
     const found = MOCK_PARCEL_HISTORY.find((p) => p.id === id);
     if (!found) throw new Error('Parcel not found');
     return found;
@@ -165,7 +165,7 @@ export async function getParcels(): Promise<Parcel[]> {
   if (USE_MOCK) {
     await delay();
     const list = [...MOCK_PARCEL_HISTORY];
-    if (parcelStore.active) list.unshift(advanceMockParcel(parcelStore.active));
+    if (parcelStore.active) list.unshift((parcelStore.active = advanceMockParcel(parcelStore.active)));
     return list.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
   return unwrap<Parcel[]>(await api.get(`${BASE}/mobility/parcels`));
