@@ -414,7 +414,7 @@ paths:
       tags: [mobility-driver]
       summary: Verify the rider's 4-digit trip PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Trip }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Trip }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/trips/{id}/start:
     post:
       tags: [mobility-driver]
@@ -550,6 +550,32 @@ paths:
       summary: Update a safety incident
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } }
+  /admin/transport/pin-attempts/reset:
+    post:
+      tags: [mobility-admin]
+      summary: Clear a hand-off's wrong-PIN record (lifts a cooldown or a hard lock; audited)
+      description: >-
+        Support action for a hand-off that is PIN_LOCKED (see the driver verify endpoints). Deletes the
+        transport_pin_attempts row for (entity_type, entity_id, purpose) and writes a transport_audit_log
+        row (action pin_attempts.reset, the cleared record as old value, reason) in the same transaction.
+        It does not reveal or change the PIN.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entity_type, entity_id, purpose, reason]
+              properties:
+                entity_type: { type: string, enum: [trip, parcel, business_delivery, towing_job] }
+                entity_id: { type: string }
+                purpose: { type: string, enum: [start, pickup, dropoff] }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { description: 'Cleared: { ok, cleared: { failedCount, hardLocked } }' }
+        '400': { description: Invalid entity_type / purpose, or missing reason }
+        '403': { description: Missing mobility.manage }
+        '404': { description: No wrong-PIN record for that hand-off }
   /admin/transport/reports/summary:
     get: { tags: [mobility-admin], summary: Reports summary, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/audit:
@@ -954,7 +980,7 @@ paths:
       tags: [parcel]
       summary: Courier — verify the sender's pickup PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/parcels/{id}/picked-up:
     post:
       tags: [parcel]
@@ -966,7 +992,7 @@ paths:
       tags: [parcel]
       summary: Courier — verify the receiver's dropoff PIN (settles on delivery)
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
 
   # ═══════════════════════════════════════════════════════════════════════════
   # BUS BOOKING   [FeatureTransportModesEnabled]
@@ -1241,7 +1267,7 @@ paths:
       tags: [towing]
       summary: Operator — verify the customer's PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Job }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Job }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/towing/{id}/start:
     post:
       tags: [towing]
@@ -1554,7 +1580,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '200': { description: Delivery }, '401': { description: Not authenticated } }
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/business/{id}/fail:
     post:
       tags: [business-logistics]

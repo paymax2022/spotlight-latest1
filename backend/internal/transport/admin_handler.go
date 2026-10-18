@@ -199,6 +199,20 @@ func (h *AdminHandler) PatchIncident(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// ResetPinAttempts clears a PIN_LOCKED hand-off's wrong-PIN record (audited).
+func (h *AdminHandler) ResetPinAttempts(c *gin.Context) {
+	var req PinAttemptsResetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if err := h.svc.ResetPinAttempts(c.Request.Context(), ginutil.UserID(c), req); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // ReportsSummary returns revenue/commission rollups.
 func (h *AdminHandler) ReportsSummary(c *gin.Context) {
 	r, err := h.svc.ReportsSummary(c.Request.Context())

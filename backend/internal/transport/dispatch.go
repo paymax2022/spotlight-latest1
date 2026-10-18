@@ -247,8 +247,8 @@ func (s *Service) VerifyPin(ctx context.Context, tripID, driverUserID, pin strin
 	if err != nil {
 		return err
 	}
-	if t.TripPin == nil || *t.TripPin != pin {
-		return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "trip PIN does not match")
+	if err := s.checkPin(ctx, "trip", tripID, "start", derefStr(t.TripPin), pin, driverUserID); err != nil {
+		return err
 	}
 	return s.driverTransition(ctx, tripID, driverUserID, PhaseDriverArriving, PhasePinVerified, "", "pin_verified")
 }

@@ -839,8 +839,8 @@ func (s *Service) VerifyParcelPickupPin(ctx context.Context, id, driverUserID, p
 	if p.Status != "courier_assigned" {
 		return codedErr(http.StatusConflict, CodeInvalidState, "parcel not awaiting pickup PIN")
 	}
-	if p.PickupPin == nil || *p.PickupPin != pin {
-		return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "pickup PIN does not match")
+	if err := s.checkPin(ctx, "parcel", id, "pickup", derefStr(p.PickupPin), pin, driverUserID); err != nil {
+		return err
 	}
 	if err := s.parcelSetStatus(ctx, id, "courier_assigned", "pickup_pin_verified"); err != nil {
 		return err
@@ -882,8 +882,8 @@ func (s *Service) VerifyParcelDropoff(ctx context.Context, id, driverUserID, pin
 	if p.Status != "in_transit" && p.Status != "picked_up" {
 		return codedErr(http.StatusConflict, CodeInvalidState, "parcel not in transit")
 	}
-	if p.DropoffPin == nil || *p.DropoffPin != pin {
-		return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "dropoff PIN does not match")
+	if err := s.checkPin(ctx, "parcel", id, "dropoff", derefStr(p.DropoffPin), pin, driverUserID); err != nil {
+		return err
 	}
 	if proofURL == "" {
 		return codedErr(http.StatusUnprocessableEntity, "PROOF_REQUIRED", "proof of delivery required")
