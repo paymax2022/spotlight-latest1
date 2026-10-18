@@ -152,8 +152,10 @@ type ParcelPickedUpRequest struct {
 
 // ParcelVerifyDropoffRequest is POST /driver/parcels/:id/verify-dropoff.
 type ParcelVerifyDropoffRequest struct {
-	Pin      string `json:"pin" binding:"required"`
-	ProofURL string `json:"proof_url" binding:"required"`
+	Pin string `json:"pin" binding:"required"`
+	// Not binding:"required": a missing proof is the service's 422 PROOF_REQUIRED,
+	// not a 400 carrying the validator's internal field path.
+	ProofURL string `json:"proof_url"`
 }
 
 // ParcelEstimate is the estimate response.
@@ -657,7 +659,10 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		SELECT id, sender_id, courier_id, pickup_address, dropoff_address, receiver_name, receiver_phone,
 		       category, size, speed, declared_value_kobo, fare_kobo, insurance_kobo, insurance_policy_id,
 		       status, pickup_pin, dropoff_pin, photo_url, proof_url, distance_m, created_at,
-		       insurance_opted, insurance_paid_kobo, insurance_status
+		       insurance_opted, insurance_paid_kobo, insurance_status,
+		       pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
+		       (SELECT st.status FROM settlements st WHERE st.id = parcels.settlement_id),
+		       EXISTS (SELECT 1 FROM mode_ratings r WHERE r.mode='parcel' AND r.job_id=parcels.id::text AND r.rater_id=parcels.sender_id)
 		FROM parcels WHERE id=$1`
 	var (
 		pid, senderID, pickup, dropoff, receiver, rphone, category, size, speed, status string
@@ -668,12 +673,16 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		insuranceOpted                                                                  bool
 		insurancePaid                                                                   int64
 		insuranceStatus                                                                 string
+		pickupLat, pickupLng, dropoffLat, dropoffLng                                    *float64
+		paymentStatus                                                                   *string
+		rated                                                                           bool
 	)
 	if err := s.db.QueryRow(ctx, q, id).Scan(
 		&pid, &senderID, &courierID, &pickup, &dropoff, &receiver, &rphone,
 		&category, &size, &speed, &declared, &fare, &insurance, &insurancePolicyID,
 		&status, &pickupPin, &dropoffPin, &photoURL, &proofURL, &distM, &createdAt,
 		&insuranceOpted, &insurancePaid, &insuranceStatus,
+		&pickupLat, &pickupLng, &dropoffLat, &dropoffLng, &paymentStatus, &rated,
 	); err != nil {
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "parcel not found")
 	}
@@ -701,9 +710,18 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		// Prepaid insurance: what the sender paid at booking and where it is
 		// (held → bound, or refunded). See parcel_insurance_prepaid.go.
 		"insuranceOpted": insuranceOpted, "insurancePaidKobo": insurancePaid, "insuranceStatus": insuranceStatus,
+		// What the apps render (contract ParcelDetail): places with coordinates,
+		// the courier as the sender sees them, and where the fare escrow is.
+		"pickup": parcelPlace(pickup, pickupLat, pickupLng), "dropoff": parcelPlace(dropoff, dropoffLat, dropoffLng),
+		"courier": s.parcelCourierView(ctx, courierID), "paymentStatus": paymentStatus, "rated": rated,
+		"deliveredAt": nil,
 	}
-	// Only the sender may read the PINs (courier verifies, never reads).
-	if isSender {
+	if status == "delivered" {
+		out["deliveredAt"] = s.parcelDeliveredAt(ctx, pid)
+	}
+	// Only the sender may read the PINs (courier verifies, never reads), and
+	// only while the parcel is live: a finished parcel has nothing to unlock.
+	if isSender && status != "delivered" && status != "cancelled" && status != "failed" {
 		out["pickupPin"] = pickupPin
 		out["dropoffPin"] = dropoffPin
 	}
@@ -720,7 +738,7 @@ func (s *Service) ListParcels(ctx context.Context, senderID string) ([]map[strin
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, pickup, dropoff, category, size, status string
 		var fare int64
@@ -832,33 +850,39 @@ func (s *Service) parcelSetStatus(ctx context.Context, id, from, to string) erro
 
 // OpenParcelRequests returns unassigned, created parcels for couriers.
 func (s *Service) OpenParcelRequests(ctx context.Context, driverUserID string) ([]map[string]any, error) {
-	if _, err := s.driverGate(ctx, driverUserID); err != nil {
+	courierID, err := s.driverGate(ctx, driverUserID)
+	if err != nil {
 		return nil, err
 	}
 	const q = `
-		SELECT id, pickup_address, dropoff_address, category, size, speed, fare_kobo, distance_m, created_at
+		SELECT id, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng,
+		       category, size, speed, fare_kobo, distance_m, created_at
 		FROM parcels WHERE courier_id IS NULL AND status='created' ORDER BY created_at DESC LIMIT 50`
 	rows, err := s.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, pickup, dropoff, category, size, speed string
+		var pLat, pLng, dLat, dLng *float64
 		var fare int64
 		var distM *int
 		var createdAt time.Time
-		if err := rows.Scan(&id, &pickup, &dropoff, &category, &size, &speed, &fare, &distM, &createdAt); err != nil {
+		if err := rows.Scan(&id, &pickup, &pLat, &pLng, &dropoff, &dLat, &dLng, &category, &size, &speed, &fare, &distM, &createdAt); err != nil {
 			return nil, err
 		}
+		// No receiver details before acceptance.
 		out = append(out, map[string]any{
 			"id": id, "pickupAddress": pickup, "dropoffAddress": dropoff,
+			"pickup": parcelPlace(pickup, pLat, pLng), "dropoff": parcelPlace(dropoff, dLat, dLng),
 			"category": category, "size": size, "speed": speed,
-			"fareKobo": fare, "distanceM": distM, "createdAt": createdAt,
+			"fareKobo": fare, "estCourierNetKobo": s.courierNetKobo(ctx, courierID, fare),
+			"distanceM": distM, "createdAt": createdAt,
 		})
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // AcceptParcel assigns an approved courier to a created parcel.

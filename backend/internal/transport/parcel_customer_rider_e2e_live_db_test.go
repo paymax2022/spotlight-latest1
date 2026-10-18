@@ -45,6 +45,7 @@ func newParcelE2ERouter(h *Handler) *gin.Engine {
 	mob.GET("/parcels", h.ParcelList)
 	mob.GET("/parcels/:id", h.ParcelGet)
 	drv := r.Group("/api/finance/driver")
+	drv.GET("/parcels", h.CourierParcels)
 	drv.GET("/parcels/requests", h.ParcelRequests)
 	drv.POST("/parcels/:id/accept", h.ParcelAccept)
 	drv.POST("/parcels/:id/verify-pickup-pin", h.ParcelVerifyPickupPin)
@@ -86,8 +87,8 @@ func seedParcelRider(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name
 	}
 	testsupport.CleanupUser(t, pool, userID)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO drivers (user_id, name, vehicle_reg, vehicle_type, status, verification_status, current_lat, current_lng)
-		VALUES ($1,$2,$3,'bike','online','approved',6.5,3.4)`, userID, name, "LND-"+userID[:6]); err != nil {
+		INSERT INTO drivers (user_id, name, phone, vehicle_reg, vehicle_type, status, verification_status, current_lat, current_lng)
+		VALUES ($1,$2,'+2348031234567',$3,'bike','online','approved',6.5,3.4)`, userID, name, "LND-"+userID[:6]); err != nil {
 		t.Fatalf("seed rider: %v", err)
 	}
 	return userID
@@ -147,14 +148,24 @@ func TestLiveDB_ParcelCustomerAndRiderEndToEnd(t *testing.T) {
 		t.Fatalf("requests: %d %v", code, reqs)
 	}
 	list, _ := reqs["requests"].([]any)
-	seen := false
+	var offer map[string]any
 	for _, r := range list {
 		if m, _ := r.(map[string]any); m["id"] == parcelID {
-			seen = true
+			offer = m
 		}
 	}
-	if !seen {
+	if offer == nil {
 		t.Fatalf("rider A must see the new parcel in open requests")
+	}
+	if pk, _ := offer["pickup"].(map[string]any); pk["lat"] != req.Pickup.Lat || pk["address"] != req.Pickup.Address {
+		t.Fatalf("a request must carry the pickup place with coordinates: %v", offer)
+	}
+	if _, leaks := offer["receiverPhone"]; leaks {
+		t.Fatalf("a request must not reveal the receiver before acceptance: %v", offer)
+	}
+	estNet := kobo(offer, "estCourierNetKobo")
+	if estNet <= 0 || estNet >= fare {
+		t.Fatalf("estCourierNetKobo must be the courier's share of the fare: %v", offer)
 	}
 
 	code, accepted := e.call("04-rider-accept", riderA, "POST", "/api/finance/driver/parcels/"+parcelID+"/accept", nil, "e2e-accept-"+uuid.NewString())
@@ -175,6 +186,19 @@ func TestLiveDB_ParcelCustomerAndRiderEndToEnd(t *testing.T) {
 	_, cust := e.call("07-customer-after-accept", f.sender, "GET", "/api/finance/mobility/parcels/"+parcelID, nil, "")
 	if cust["status"] != "courier_assigned" || cust["insuranceStatus"] != "bound" {
 		t.Fatalf("after accept the customer must see courier_assigned + bound cover: %v", cust)
+	}
+	courier, _ := cust["courier"].(map[string]any)
+	if courier["name"] != "Rider A" || courier["phoneMasked"] != "••••4567" || courier["vehicleType"] != "bike" {
+		t.Fatalf("the sender must see who is coming (masked phone only): %v", courier)
+	}
+	if _, raw := courier["phone"]; raw {
+		t.Fatalf("the courier's raw phone must never be returned: %v", courier)
+	}
+	if dp, _ := cust["dropoff"].(map[string]any); dp["lng"] != req.Dropoff.Lng {
+		t.Fatalf("detail must carry drop-off coordinates: %v", cust["dropoff"])
+	}
+	if cust["paymentStatus"] != "escrowed" || cust["rated"] != false || cust["deliveredAt"] != nil {
+		t.Fatalf("live parcel: want escrowed, unrated, not delivered: %v", cust)
 	}
 	pickupPin, _ := cust["pickupPin"].(string)
 	dropoffPin, _ := cust["dropoffPin"].(string)
@@ -202,7 +226,7 @@ func TestLiveDB_ParcelCustomerAndRiderEndToEnd(t *testing.T) {
 	}
 
 	// ── Rider: drop-off (no proof, then proof + PIN) ────────────────────────
-	if code, body := e.call("12-rider-dropoff-no-proof", riderA, "POST", "/api/finance/driver/parcels/"+parcelID+"/verify-dropoff", map[string]any{"pin": dropoffPin}, ""); code != http.StatusUnprocessableEntity && code != http.StatusBadRequest {
+	if code, body := e.call("12-rider-dropoff-no-proof", riderA, "POST", "/api/finance/driver/parcels/"+parcelID+"/verify-dropoff", map[string]any{"pin": dropoffPin}, ""); code != http.StatusUnprocessableEntity || body["code"] != "PROOF_REQUIRED" {
 		t.Fatalf("drop-off without proof must be refused: %d %v", code, body)
 	}
 	if code, body := e.call("13-rider-dropoff", riderA, "POST", "/api/finance/driver/parcels/"+parcelID+"/verify-dropoff", map[string]any{"pin": dropoffPin, "proof_url": "https://example.test/proof.jpg"}, ""); code != http.StatusOK {
@@ -213,6 +237,15 @@ func TestLiveDB_ParcelCustomerAndRiderEndToEnd(t *testing.T) {
 	_, cust = e.call("14-customer-delivered", f.sender, "GET", "/api/finance/mobility/parcels/"+parcelID, nil, "")
 	if cust["status"] != "delivered" || cust["insuranceStatus"] != "bound" {
 		t.Fatalf("customer must see delivered + bound cover: %v", cust)
+	}
+	if cust["paymentStatus"] != "settled" || cust["deliveredAt"] == nil {
+		t.Fatalf("delivered parcel: want settled + deliveredAt: %v", cust)
+	}
+	if _, has := cust["pickupPin"]; has {
+		t.Fatalf("PINs must not be returned once delivered: %v", cust)
+	}
+	if _, has := cust["dropoffPin"]; has {
+		t.Fatalf("PINs must not be returned once delivered: %v", cust)
 	}
 	if code, body := e.call("15-customer-list", f.sender, "GET", "/api/finance/mobility/parcels", nil, ""); code != http.StatusOK {
 		t.Fatalf("list: %d %v", code, body)
@@ -239,6 +272,34 @@ func TestLiveDB_ParcelCustomerAndRiderEndToEnd(t *testing.T) {
 	if typ, amt := entryAccountType(t, f.pool, "parcel:insurance:"+parcelID+":premium:debit"); typ != string(ledger.AccountInsurancePremiumHold) || amt != premium {
 		t.Fatalf("hold drain = %s %d, want %s %d", typ, amt, ledger.AccountInsurancePremiumHold, premium)
 	}
+	if estNet != riderPaid {
+		t.Fatalf("the request quoted the rider %d but delivery paid %d", estNet, riderPaid)
+	}
+
+	// ── Rider: own history shows what was actually paid ─────────────────────
+	code, hist := e.call("16-rider-history", riderA, "GET", "/api/finance/driver/parcels", nil, "")
+	if code != http.StatusOK {
+		t.Fatalf("history: %d %v", code, hist)
+	}
+	rows, _ := hist["parcels"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("rider A history must hold exactly this parcel: %v", hist)
+	}
+	row, _ := rows[0].(map[string]any)
+	if row["id"] != parcelID || row["status"] != "delivered" || kobo(row, "earnedKobo") != riderPaid || row["deliveredAt"] == nil {
+		t.Fatalf("history row: %v (rider paid %d)", row, riderPaid)
+	}
+	totals, _ := hist["totals"].(map[string]any)
+	if kobo(totals, "earnedKobo") != riderPaid || kobo(totals, "delivered") != 1 {
+		t.Fatalf("history totals: %v", totals)
+	}
+	if _, histB := e.call("17-rider-b-history", riderB, "GET", "/api/finance/driver/parcels", nil, ""); len(histB["parcels"].([]any)) != 0 {
+		t.Fatalf("rider B never delivered anything: %v", histB)
+	}
+	if code, body := e.call("18-customer-history-as-rider", f.sender, "GET", "/api/finance/driver/parcels", nil, ""); code != http.StatusForbidden {
+		t.Fatalf("a non-driver must be refused: %d %v", code, body)
+	}
+
 	var status string
 	_ = f.pool.QueryRow(ctx, `SELECT status FROM drivers WHERE id=$1`, courierID).Scan(&status)
 	if status != "online" {

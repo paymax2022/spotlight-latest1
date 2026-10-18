@@ -142,6 +142,94 @@ components:
       type: object
       description: Generic success envelope. Most handlers wrap the payload in a `data` key or a named key (trip/offers/schedules/…).
       additionalProperties: true
+    ParcelPlace:
+      type: object
+      properties:
+        address: { type: string }
+        lat: { type: number, nullable: true }
+        lng: { type: number, nullable: true }
+    ParcelCourier:
+      type: object
+      description: The assigned courier as the sender sees them. The phone is masked; contact goes through the app.
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        photoUrl: { type: string, nullable: true }
+        rating: { type: number }
+        vehicleType: { type: string, nullable: true }
+        plateNumber: { type: string, nullable: true }
+        vehicle: { type: string, description: 'Display line, e.g. "Bike • LND-238-KJA"' }
+        phoneMasked: { type: string, nullable: true }
+    ParcelDetail:
+      type: object
+      description: >
+        GET /mobility/parcels/{id} (sender or assigned courier) and POST /driver/parcels/{id}/accept.
+        The flat address keys are kept for older clients; `pickup`/`dropoff` carry the coordinates.
+        `pickupPin`/`dropoffPin` are returned to the sender only, and only while the parcel is live
+        (never once it is delivered or cancelled).
+      properties:
+        id: { type: string, format: uuid }
+        senderId: { type: string, format: uuid }
+        courierId: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [created, courier_assigned, pickup_pin_verified, picked_up, in_transit, dropoff_verified, delivered, cancelled, failed] }
+        pickupAddress: { type: string }
+        dropoffAddress: { type: string }
+        pickup: { $ref: '#/components/schemas/ParcelPlace' }
+        dropoff: { $ref: '#/components/schemas/ParcelPlace' }
+        receiverName: { type: string }
+        receiverPhone: { type: string }
+        category: { type: string }
+        size: { type: string }
+        speed: { type: string }
+        declaredValueKobo: { $ref: '#/components/schemas/Money' }
+        fareKobo: { $ref: '#/components/schemas/Money' }
+        insuranceKobo: { $ref: '#/components/schemas/Money' }
+        totalKobo: { $ref: '#/components/schemas/Money' }
+        insurancePolicyId: { type: string, nullable: true }
+        insuranceOpted: { type: boolean }
+        insurancePaidKobo: { $ref: '#/components/schemas/Money' }
+        insuranceStatus: { type: string, enum: [none, declined, held, binding, bound, refunded, refund_failed] }
+        courier: { allOf: [{ $ref: '#/components/schemas/ParcelCourier' }], nullable: true }
+        paymentStatus: { type: string, nullable: true, enum: [escrowed, settled, refunded, disputed], description: The fare escrow's settlement status; null when nothing was escrowed }
+        deliveredAt: { type: string, format: date-time, nullable: true }
+        rated: { type: boolean, description: The sender has rated this delivery }
+        photoUrl: { type: string, nullable: true }
+        proofUrl: { type: string, nullable: true }
+        distanceM: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+        pickupPin: { type: string, description: Sender only, while live }
+        dropoffPin: { type: string, description: Sender only, while live }
+    ParcelRequest:
+      type: object
+      description: An open parcel a courier can accept. No receiver details before acceptance.
+      properties:
+        id: { type: string, format: uuid }
+        pickupAddress: { type: string }
+        dropoffAddress: { type: string }
+        pickup: { $ref: '#/components/schemas/ParcelPlace' }
+        dropoff: { $ref: '#/components/schemas/ParcelPlace' }
+        category: { type: string }
+        size: { type: string }
+        speed: { type: string }
+        fareKobo: { $ref: '#/components/schemas/Money' }
+        estCourierNetKobo: { allOf: [{ $ref: '#/components/schemas/Money' }], description: "What this courier would be paid on delivery: the fare split by the courier's commission tier, computed by the same function that settles" }
+        distanceM: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CourierParcel:
+      type: object
+      description: A parcel in the courier's own history.
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string }
+        pickup: { $ref: '#/components/schemas/ParcelPlace' }
+        dropoff: { $ref: '#/components/schemas/ParcelPlace' }
+        category: { type: string }
+        size: { type: string }
+        speed: { type: string }
+        fareKobo: { $ref: '#/components/schemas/Money' }
+        earnedKobo: { allOf: [{ $ref: '#/components/schemas/Money' }], description: 'What the courier was actually paid (the settled provider leg); 0 until delivered' }
+        createdAt: { type: string, format: date-time }
+        deliveredAt: { type: string, format: date-time, nullable: true }
 
 paths:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -803,7 +891,7 @@ paths:
       tags: [parcel]
       summary: Get a parcel
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '404': { description: Not found } }
+      responses: { '200': { description: Parcel, content: { application/json: { schema: { $ref: '#/components/schemas/ParcelDetail' } } } }, '401': { description: Not authenticated }, '403': { description: Not the sender or the assigned courier }, '404': { description: Not found } }
   /mobility/parcels/{id}/cancel:
     post:
       tags: [parcel]
@@ -889,7 +977,30 @@ paths:
     get:
       tags: [parcel]
       summary: Courier — list parcel requests
-      responses: { '200': { description: Requests }, '401': { description: Not authenticated } }
+      responses: { '200': { description: Requests, content: { application/json: { schema: { type: object, properties: { requests: { type: array, items: { $ref: '#/components/schemas/ParcelRequest' } } } } } } }, '401': { description: Not authenticated }, '403': { description: Not an approved driver } }
+  /driver/parcels:
+    get:
+      tags: [parcel]
+      summary: Courier — my parcels (assigned and past) with what each paid me
+      description: >
+        Newest first, at most 100. `totals.earnedKobo` sums the settled provider legs of delivered
+        parcels, so it is what actually reached the courier's wallet.
+      responses:
+        '200':
+          description: History
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  parcels: { type: array, items: { $ref: '#/components/schemas/CourierParcel' } }
+                  totals:
+                    type: object
+                    properties:
+                      delivered: { type: integer }
+                      earnedKobo: { $ref: '#/components/schemas/Money' }
+        '401': { description: Not authenticated }
+        '403': { description: Not an approved driver }
   /driver/parcels/{id}/accept:
     post:
       tags: [parcel]
@@ -898,7 +1009,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated } }
+      responses: { '200': { description: 'Parcel (no PINs)', content: { application/json: { schema: { $ref: '#/components/schemas/ParcelDetail' } } } }, '401': { description: Not authenticated }, '409': { description: 'INVALID_STATE - already taken or not open' } }
   /driver/parcels/{id}/verify-pickup-pin:
     post:
       tags: [parcel]
@@ -916,7 +1027,17 @@ paths:
       tags: [parcel]
       summary: Courier — verify the receiver's dropoff PIN (settles on delivery)
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin: { type: string }
+                proof_url: { type: string, description: 'Proof-of-delivery photo URL. Missing or empty = 422 PROOF_REQUIRED' }
+      responses: { '200': { description: 'Delivered: { ok, status }' }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH (wrong PIN) or PROOF_REQUIRED (no proof_url)' } }
 
   # ═══════════════════════════════════════════════════════════════════════════
   # BUS BOOKING   [FeatureTransportModesEnabled]
