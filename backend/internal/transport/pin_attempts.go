@@ -31,11 +31,26 @@ const (
 // checkPin verifies given against expected for one hand-off. expected == ""
 // means no PIN is on file, which never matches (callers that treat a missing
 // PIN as "not required" skip the call). actorUserID is the caller (audit).
+//
+// Each check runs in its own transaction holding an advisory lock on the
+// (entity, purpose): concurrent guesses queue behind each other, so a parallel
+// burst cannot slip past the cooldown — the 6th guess always sees the lock the
+// 5th set. Every write is inside that transaction and fails closed.
 func (s *Service) checkPin(ctx context.Context, entityType, entityID, purpose, expected, given, actorUserID string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`,
+		"transport_pin:"+entityType+":"+entityID+":"+purpose); err != nil {
+		return err
+	}
+
 	var failed int
 	var lockedUntil *time.Time
 	var hard bool
-	err := s.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT failed_count, locked_until, hard_locked FROM public.transport_pin_attempts
 		WHERE entity_type=$1 AND entity_id=$2 AND purpose=$3`, entityType, entityID, purpose).
 		Scan(&failed, &lockedUntil, &hard)
@@ -53,34 +68,43 @@ func (s *Service) checkPin(ctx context.Context, entityType, entityID, purpose, e
 
 	if expected != "" && subtle.ConstantTimeCompare([]byte(expected), []byte(given)) == 1 {
 		if failed > 0 {
-			_, _ = s.db.Exec(ctx, `DELETE FROM public.transport_pin_attempts
-				WHERE entity_type=$1 AND entity_id=$2 AND purpose=$3`, entityType, entityID, purpose)
+			if _, err := tx.Exec(ctx, `DELETE FROM public.transport_pin_attempts
+				WHERE entity_type=$1 AND entity_id=$2 AND purpose=$3`, entityType, entityID, purpose); err != nil {
+				return err
+			}
 		}
-		return nil
+		return tx.Commit(ctx)
 	}
 
-	// Wrong PIN: count it atomically, then lock if this one crossed a line.
-	err = s.db.QueryRow(ctx, `
-		INSERT INTO public.transport_pin_attempts (entity_type, entity_id, purpose, failed_count, last_actor_id, updated_at)
-		VALUES ($1, $2, $3, 1, NULLIF($4,'')::uuid, now())
+	// Wrong PIN: count it, and lock if this one crossed a line — one statement,
+	// committed before the next queued guess reads the row.
+	failed++
+	var lockFor *float64
+	hardNow := failed >= pinHardLockAt
+	if !hardNow && failed%pinCooldownEvery == 0 {
+		secs := pinCooldown.Seconds()
+		lockFor = &secs
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO public.transport_pin_attempts
+			(entity_type, entity_id, purpose, failed_count, locked_until, hard_locked, last_actor_id, updated_at)
+		VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5), $6, NULLIF($7,'')::uuid, now())
 		ON CONFLICT (entity_type, entity_id, purpose) DO UPDATE
-		  SET failed_count = transport_pin_attempts.failed_count + 1,
-		      last_actor_id = EXCLUDED.last_actor_id, updated_at = now()
-		RETURNING failed_count`, entityType, entityID, purpose, actorUserID).Scan(&failed)
-	if err != nil {
+		  SET failed_count = EXCLUDED.failed_count, locked_until = EXCLUDED.locked_until,
+		      hard_locked = EXCLUDED.hard_locked, last_actor_id = EXCLUDED.last_actor_id, updated_at = now()`,
+		entityType, entityID, purpose, failed, lockFor, hardNow, actorUserID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	switch {
-	case failed >= pinHardLockAt:
-		_, _ = s.db.Exec(ctx, `UPDATE public.transport_pin_attempts SET hard_locked=true, updated_at=now()
-			WHERE entity_type=$1 AND entity_id=$2 AND purpose=$3`, entityType, entityID, purpose)
+	case hardNow:
 		log.Printf("[transport] SECURITY %s %s %s PIN hard-locked after %d wrong attempts (actor %s)", entityType, entityID, purpose, failed, actorUserID)
 		s.recordModeEvent(ctx, actorUserID, "pin.hard_locked", entityType, entityID, "", "",
 			map[string]any{"purpose": purpose, "failed_count": failed})
 		return codedErr(http.StatusLocked, CodePinLocked, "too many wrong PINs; contact support to continue")
-	case failed%pinCooldownEvery == 0:
-		_, _ = s.db.Exec(ctx, `UPDATE public.transport_pin_attempts SET locked_until=now() + make_interval(secs => $4), updated_at=now()
-			WHERE entity_type=$1 AND entity_id=$2 AND purpose=$3`, entityType, entityID, purpose, pinCooldown.Seconds())
+	case lockFor != nil:
 		s.recordModeEvent(ctx, actorUserID, "pin.cooldown", entityType, entityID, "", "",
 			map[string]any{"purpose": purpose, "failed_count": failed})
 		ce := codedErr(http.StatusTooManyRequests, CodePinLocked, "too many wrong PINs; try again later")

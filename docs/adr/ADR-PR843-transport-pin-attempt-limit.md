@@ -22,4 +22,5 @@ A single guard, `checkPin`, sits in front of all five checks. It counts wrong PI
 ## Consequences
 - A hard lock stops that hand-off until support acts. There is no admin unlock UI yet, so for now the fix is deleting the row. Adding the unlock action is a follow-up.
 - The counter only blocks this attack while the PIN stays secret. A party that holds the PIN, such as a colluding receiver, is out of scope.
-- Two parallel guesses can both pass the lock check before either increments the count, so a burst can slip a few extra guesses into one window. Each guess is still counted, so the cooldown and hard lock still trigger.
+- **Concurrent guesses are serialised.** Each check runs in a transaction holding a `pg_advisory_xact_lock` on (entity, purpose). A parallel burst therefore cannot slip past the cooldown: the 6th guess always sees the lock the 5th one set. The security review found this race in the first version, where a single burst of N parallel guesses was compared in full; a regression test now pins it.
+- Lock and counter writes happen inside that transaction, and the check fails closed if any of them fails.

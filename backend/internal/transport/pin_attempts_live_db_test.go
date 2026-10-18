@@ -7,6 +7,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -107,5 +108,36 @@ func TestLiveDB_PinGuard_NoPinOnFileNeverMatches(t *testing.T) {
 	svc, id := newPinSvc(t)
 	if st, _ := pinStatus(t, svc.checkPin(context.Background(), "towing_job", id, "start", "", "", "")); st != http.StatusUnprocessableEntity {
 		t.Fatalf("empty expected PIN must not match an empty guess, got %d", st)
+	}
+}
+
+// Review finding: parallel guesses must not slip past the lock. A burst of 40
+// concurrent wrong guesses records exactly pinCooldownEvery failures; every
+// other guess is refused by the cooldown without being compared.
+func TestLiveDB_PinGuard_ParallelBurstCannotOutrunTheLock(t *testing.T) {
+	svc, id := newPinSvc(t)
+	ctx := context.Background()
+	const burst = 40
+	errs := make(chan error, burst)
+	for i := 0; i < burst; i++ {
+		go func(i int) {
+			errs <- svc.checkPin(ctx, "parcel", id, "dropoff", "4821", fmt.Sprintf("%04d", i), "")
+		}(i)
+	}
+	mismatches := 0
+	for i := 0; i < burst; i++ {
+		if _, code := pinStatus(t, <-errs); code == CodePinMismatch {
+			mismatches++
+		}
+	}
+	var failed int
+	if err := svc.db.QueryRow(ctx, `SELECT failed_count FROM public.transport_pin_attempts WHERE entity_id=$1`, id).Scan(&failed); err != nil {
+		t.Fatal(err)
+	}
+	if failed != pinCooldownEvery {
+		t.Fatalf("a burst of %d recorded %d failures, want exactly %d (the rest refused by the cooldown)", burst, failed, pinCooldownEvery)
+	}
+	if mismatches > pinCooldownEvery-1 {
+		t.Fatalf("%d guesses were compared as plain mismatches, want at most %d", mismatches, pinCooldownEvery-1)
 	}
 }
