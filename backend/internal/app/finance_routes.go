@@ -2434,6 +2434,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			mob.POST("/car-hire/:id/cancel", transportHandler.CarHireCancel)
 
 			// Driver (courier/operator/provider) mode endpoints.
+			drv.GET("/parcels", transportHandler.CourierParcels)
 			drv.GET("/parcels/requests", transportHandler.ParcelRequests)
 			drv.POST("/parcels/:id/accept", transportHandler.ParcelAccept)
 			drv.POST("/parcels/:id/verify-pickup-pin", transportHandler.ParcelVerifyPickupPin)
