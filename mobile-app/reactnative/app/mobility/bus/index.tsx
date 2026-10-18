@@ -2,7 +2,10 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { BusFront, MapPin, Search as SearchIcon, Star, ShieldCheck, Ticket, ChevronRight, Store, ArrowRight } from 'lucide-react-native';
+import {
+  BusFront, MapPin, Search as SearchIcon, Star, ShieldCheck, Ticket,
+  ChevronRight, Store, ArrowRight, Minus, Plus,
+} from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -12,25 +15,32 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import SegmentedControl from '@/components/SegmentedControl';
+import DatePickerField from '@/components/DatePickerField';
 import StateView from '@/components/StateView';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
-import { STATE_NAMES, getLGAsForState } from '@/data/nigeria';
-import { BUS_ENABLED, BUS_PHASE_LABEL } from '@/features/mobility/constants/modes.constants';
-import { useBusSearch, useBusProviders, useProviderMe } from '@/features/mobility/hooks/useBusMarketplace';
-import { useBusTickets } from '@/features/mobility/hooks/useModes';
+import { BUS_ENABLED } from '@/features/mobility/constants/modes.constants';
+import { useBusProviders, useProviderMe } from '@/features/mobility/hooks/useBusMarketplace';
+import { useBusDraft, useBusGeoCities, useBusGeoStates, useBusV2Bookings } from '@/features/mobility/hooks/useBusV2';
+import { startBusDraft, clearBusDraft } from '@/features/mobility/utils/busCheckoutDraft';
+import { BUS_V2_BOOKING_STATUS_LABEL, busV2StatusTone } from '@/features/mobility/utils/busV2';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
-import { busPhaseTone } from '@/features/mobility/utils/busTicket';
-import type { BusTrip, BusProviderListItem, BusSearchParams, BusTripKind } from '@/features/mobility/types/busProvider.types';
+import type { BusProviderListItem } from '@/features/mobility/types/busProvider.types';
+import type { BusTripType } from '@/features/mobility/types/busV2.types';
 
 type Tab = 'book' | 'providers' | 'tickets';
 
-const time = (iso: string) => new Date(iso).toLocaleString('en-NG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+const MAX_PAX = 10;
+const dt = (iso: string) =>
+  !iso || Number.isNaN(Date.parse(iso))
+    ? '—'
+    : new Date(iso).toLocaleString('en-NG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+
 
 export default function BusMarketplaceScreen() {
   // Deep-link params from a provider route "Book" action preselect the Book tab.
-  const params = useLocalSearchParams<{ tab?: string; fromState?: string; toState?: string; providerId?: string }>();
+  const params = useLocalSearchParams<{ tab?: string }>();
   const initialTab: Tab = params.tab === 'providers' || params.tab === 'tickets' ? params.tab : 'book';
   const [tab, setTab] = useState<Tab>(initialTab);
   const providerMe = useProviderMe();
@@ -73,7 +83,7 @@ export default function BusMarketplaceScreen() {
         />
       </View>
 
-      {tab === 'book' && <BookTab presetFrom={params.fromState} presetTo={params.toState} presetProviderId={params.providerId} />}
+      {tab === 'book' && <BookTab />}
       {tab === 'providers' && <ProvidersTab />}
       {tab === 'tickets' && <TicketsTab />}
 
@@ -92,179 +102,225 @@ export default function BusMarketplaceScreen() {
   );
 }
 
-// BOOK — inter-state (state → state) OR intra-state (city → city within a state)
-function BookTab({ presetFrom, presetTo, presetProviderId }: { presetFrom?: string; presetTo?: string; presetProviderId?: string }) {
-  const validPreset = Boolean(presetFrom) && Boolean(presetTo) && presetFrom !== presetTo;
-  const [tripKind, setTripKind] = useState<BusTripKind>('inter');
+// BOOK — PRD v2: state/city pickers from backend geo reference data
+// (bus_geo_state / bus_geo_city — never a hard-coded list), one-way vs return,
+// travel date and passenger count. Search hands off to the results screen.
+function BookTab() {
+  const draft = useBusDraft();
+  const geoStates = useBusGeoStates();
 
-  // Inter-state selection
-  const [fromState, setFromState] = useState(validPreset ? String(presetFrom) : '');
-  const [toState, setToState] = useState(validPreset ? String(presetTo) : '');
-  const [providerId] = useState<string | undefined>(validPreset ? presetProviderId : undefined);
+  const [tripType, setTripType] = useState<BusTripType>(draft?.search.tripType ?? 'oneway');
+  const [fromStateId, setFromStateId] = useState(draft?.search.fromStateId ?? '');
+  const [toStateId, setToStateId] = useState(draft?.search.toStateId ?? '');
+  const [fromCityId, setFromCityId] = useState(draft?.search.fromCityId ?? '');
+  const [toCityId, setToCityId] = useState(draft?.search.toCityId ?? '');
+  const [date, setDate] = useState(draft?.search.date ?? '');
+  const [returnDate, setReturnDate] = useState(draft?.search.returnDate ?? '');
+  const [pax, setPax] = useState(draft?.search.pax ?? 1);
 
-  // Intra-state selection (one state, city → city)
-  const [state, setState] = useState('');
-  const [fromCity, setFromCity] = useState('');
-  const [toCity, setToCity] = useState('');
+  const fromCities = useBusGeoCities(fromStateId || undefined);
+  const toCities = useBusGeoCities(toStateId || undefined);
 
-  const [submitted, setSubmitted] = useState<BusSearchParams | null>(
-    validPreset ? { fromState: String(presetFrom), toState: String(presetTo), tripKind: 'inter', providerId } : null,
+  // SelectField is string-valued; keep id ⇄ name maps for the geo rows.
+  const stateNameById = useMemo(
+    () => new Map((geoStates.data ?? []).map((s) => [s.id, s.name])),
+    [geoStates.data],
+  );
+  const stateIdByName = useMemo(
+    () => new Map((geoStates.data ?? []).map((s) => [s.name, s.id])),
+    [geoStates.data],
+  );
+  const fromCityNameById = useMemo(
+    () => new Map((fromCities.data ?? []).map((c) => [c.id, c.name])),
+    [fromCities.data],
+  );
+  const fromCityIdByName = useMemo(
+    () => new Map((fromCities.data ?? []).map((c) => [c.name, c.id])),
+    [fromCities.data],
+  );
+  const toCityNameById = useMemo(
+    () => new Map((toCities.data ?? []).map((c) => [c.id, c.name])),
+    [toCities.data],
+  );
+  const toCityIdByName = useMemo(
+    () => new Map((toCities.data ?? []).map((c) => [c.name, c.id])),
+    [toCities.data],
   );
 
-  // Same-value constraints so origin/destination can never be identical.
-  const fromOptions = useMemo(() => STATE_NAMES.filter((s) => s !== toState), [toState]);
-  const toOptions = useMemo(() => STATE_NAMES.filter((s) => s !== fromState), [fromState]);
-  const cityOptions = useMemo(() => (state ? getLGAsForState(state) : []), [state]);
-  const fromCityOptions = useMemo(() => cityOptions.filter((c) => c !== toCity), [cityOptions, toCity]);
-  const toCityOptions = useMemo(() => cityOptions.filter((c) => c !== fromCity), [cityOptions, fromCity]);
+  // Origin and destination states/cities can never be identical.
+  const fromStateOptions = useMemo(
+    () => (geoStates.data ?? []).filter((s) => s.id !== toStateId).map((s) => s.name),
+    [geoStates.data, toStateId],
+  );
+  const toStateOptions = useMemo(
+    () => (geoStates.data ?? []).filter((s) => s.id !== fromStateId).map((s) => s.name),
+    [geoStates.data, fromStateId],
+  );
+  const fromCityOptions = useMemo(
+    () => (fromCities.data ?? []).filter((c) => c.id !== toCityId).map((c) => c.name),
+    [fromCities.data, toCityId],
+  );
+  const toCityOptions = useMemo(
+    () => (toCities.data ?? []).filter((c) => c.id !== fromCityId).map((c) => c.name),
+    [toCities.data, fromCityId],
+  );
 
-  const interReady = Boolean(fromState) && Boolean(toState) && fromState !== toState;
-  const intraReady = Boolean(state) && Boolean(fromCity) && Boolean(toCity) && fromCity !== toCity;
-  const canSearch = tripKind === 'inter' ? interReady : intraReady;
-
-  const search = useBusSearch(submitted ?? { fromState: '', toState: '' }, Boolean(submitted));
-
-  const switchKind = (k: BusTripKind) => { setTripKind(k); setSubmitted(null); };
+  const canSearch =
+    Boolean(fromStateId && toStateId && date) &&
+    fromStateId !== toStateId &&
+    fromCityId !== toCityId &&
+    (tripType === 'oneway' || Boolean(returnDate));
 
   const onSearch = () => {
     if (!canSearch) return;
-    if (tripKind === 'inter') {
-      setSubmitted({ fromState, toState, tripKind: 'inter', providerId });
-    } else {
-      // Intra-state: single state on both ends, filtered by city/terminal.
-      setSubmitted({ fromState: state, toState: state, tripKind: 'intra', fromCity, toCity });
-    }
+    startBusDraft({
+      fromStateId,
+      toStateId,
+      fromCityId: fromCityId || undefined,
+      toCityId: toCityId || undefined,
+      fromState: stateNameById.get(fromStateId),
+      toState: stateNameById.get(toStateId),
+      fromCity: fromCityNameById.get(fromCityId),
+      toCity: toCityNameById.get(toCityId),
+      date,
+      pax,
+      tripType,
+      returnDate: tripType === 'return' ? returnDate : undefined,
+    });
+    router.push('/mobility/bus/results');
   };
-
-  const summary = submitted
-    ? submitted.tripKind === 'intra'
-      ? `${submitted.fromCity} → ${submitted.toCity} · ${submitted.fromState}`
-      : `${submitted.fromState} → ${submitted.toState}`
-    : '';
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
       <View style={styles.tripKindWrap}>
-        <SegmentedControl<BusTripKind>
-          value={tripKind}
-          onChange={switchKind}
+        <SegmentedControl<BusTripType>
+          value={tripType}
+          onChange={(t) => { setTripType(t); if (t === 'oneway') setReturnDate(''); }}
           options={[
-            { value: 'inter', label: 'Inter-state' },
-            { value: 'intra', label: 'Intra-state' },
+            { value: 'oneway', label: 'One-way' },
+            { value: 'return', label: 'Return' },
           ]}
         />
       </View>
 
       <View style={[styles.hero, shadow1]}>
         <View style={styles.heroIcon}><BusFront size={22} color={Colors.primary} strokeWidth={2.2} /></View>
-        <Text style={styles.heroTitle}>{tripKind === 'inter' ? 'Travel between states' : 'Travel within your state'}</Text>
+        <Text style={styles.heroTitle}>{tripType === 'return' ? 'Book there and back' : 'Travel between cities'}</Text>
         <Text style={styles.heroSub}>
-          {tripKind === 'inter'
-            ? 'Compare verified operators across states, pick a departure, and travel with a QR boarding pass.'
-            : 'Book city-to-city shuttles inside one state — same verified operators and QR boarding pass.'}
+          {tripType === 'return'
+            ? 'Pick an outbound and a return departure — one booking covers both legs.'
+            : 'Compare verified operators, board at intermediate stops, and travel with a QR boarding pass.'}
         </Text>
       </View>
 
       <View style={styles.searchCard}>
-        {tripKind === 'inter' ? (
-          <>
-            <SelectField label="From (state)" placeholder="Departure state" value={fromState} options={fromOptions} onChange={setFromState} />
-            <SelectField label="To (state)" placeholder="Destination state" value={toState} options={toOptions} onChange={setToState} />
-          </>
+        {geoStates.isLoading ? (
+          <StateView kind="loading" compact message="Loading destinations…" />
+        ) : geoStates.isError ? (
+          <MobilityEdgeState kind={errKind(geoStates.error)} compact actionLabel="Retry" onAction={() => geoStates.refetch()} />
         ) : (
           <>
             <SelectField
-              label="State"
-              placeholder="Choose a state"
-              value={state}
-              options={STATE_NAMES}
-              onChange={(v) => { setState(v); setFromCity(''); setToCity(''); }}
+              label="From (state)"
+              placeholder="Departure state"
+              value={stateNameById.get(fromStateId) ?? ''}
+              options={fromStateOptions}
+              onChange={(name) => { setFromStateId(stateIdByName.get(name) ?? ''); setFromCityId(''); }}
             />
-            <SelectField label="From (city / terminal)" placeholder={state ? 'Departure city' : 'Choose a state first'} value={fromCity} options={fromCityOptions} onChange={setFromCity} />
-            <SelectField label="To (city / terminal)" placeholder={state ? 'Destination city' : 'Choose a state first'} value={toCity} options={toCityOptions} onChange={setToCity} />
+            {fromStateId ? (
+              <SelectField
+                label="From (city / terminal area)"
+                placeholder={fromCities.isLoading ? 'Loading cities…' : 'Any city (optional)'}
+                value={fromCityNameById.get(fromCityId) ?? ''}
+                options={fromCityOptions}
+                onChange={(name) => setFromCityId(fromCityIdByName.get(name) ?? '')}
+                disabled={fromCities.isLoading}
+              />
+            ) : null}
+            <SelectField
+              label="To (state)"
+              placeholder="Destination state"
+              value={stateNameById.get(toStateId) ?? ''}
+              options={toStateOptions}
+              onChange={(name) => { setToStateId(stateIdByName.get(name) ?? ''); setToCityId(''); }}
+            />
+            {toStateId ? (
+              <SelectField
+                label="To (city / terminal area)"
+                placeholder={toCities.isLoading ? 'Loading cities…' : 'Any city (optional)'}
+                value={toCityNameById.get(toCityId) ?? ''}
+                options={toCityOptions}
+                onChange={(name) => setToCityId(toCityIdByName.get(name) ?? '')}
+                disabled={toCities.isLoading}
+              />
+            ) : null}
+
+            <DatePickerField
+              label="Departure date"
+              value={date}
+              onChange={setDate}
+              minYear={new Date().getFullYear()}
+              maxYear={new Date().getFullYear() + 2}
+            />
+            {tripType === 'return' ? (
+              <DatePickerField
+                label="Return date"
+                value={returnDate}
+                onChange={setReturnDate}
+                minYear={new Date().getFullYear()}
+                maxYear={new Date().getFullYear() + 2}
+              />
+            ) : null}
+
+            <View style={styles.paxRow}>
+              <Text style={styles.paxLabel}>Passengers</Text>
+              <View style={styles.paxStepper}>
+                <Pressable
+                  style={[styles.paxBtn, pax <= 1 && styles.paxBtnDisabled]}
+                  onPress={() => setPax((p) => Math.max(1, p - 1))}
+                  disabled={pax <= 1}
+                  accessibilityLabel="Reduce passengers"
+                  accessibilityRole="button"
+                >
+                  <Minus size={16} color={pax <= 1 ? Colors.outline : Colors.primary} strokeWidth={2.4} />
+                </Pressable>
+                <Text style={styles.paxCount} accessibilityLabel={`${pax} passengers`}>{pax}</Text>
+                <Pressable
+                  style={[styles.paxBtn, pax >= MAX_PAX && styles.paxBtnDisabled]}
+                  onPress={() => setPax((p) => Math.min(MAX_PAX, p + 1))}
+                  disabled={pax >= MAX_PAX}
+                  accessibilityLabel="Add passenger"
+                  accessibilityRole="button"
+                >
+                  <Plus size={16} color={pax >= MAX_PAX ? Colors.outline : Colors.primary} strokeWidth={2.4} />
+                </Pressable>
+              </View>
+            </View>
+
+            {draft?.legs.length ? (
+              <Pressable onPress={clearBusDraft} accessibilityRole="button">
+                <Text style={styles.clearDraft}>Discard the in-progress booking ({draft.legs.length} leg{draft.legs.length === 1 ? '' : 's'} held)</Text>
+              </Pressable>
+            ) : null}
+
+            <PrimaryButton label={tripType === 'return' ? 'Search return trips' : 'Search buses'} onPress={onSearch} disabled={!canSearch} />
           </>
         )}
-        <PrimaryButton label={tripKind === 'inter' ? 'Search inter-state buses' : 'Search intra-state buses'} onPress={onSearch} disabled={!canSearch} />
       </View>
-
-      {submitted && (
-        <View style={styles.resultsWrap}>
-          {search.isLoading ? (
-            <StateView kind="loading" compact message="Finding buses…" />
-          ) : search.isError ? (
-            <MobilityEdgeState kind={errKind(search.error)} compact actionLabel="Retry" onAction={() => search.refetch()} />
-          ) : (search.data?.length ?? 0) === 0 ? (
-            <MobilityEdgeState
-              kind="empty"
-              compact
-              title="No buses found"
-              message={submitted.tripKind === 'intra' ? 'No operators run this city pair yet. Try other cities.' : 'No operators run this route yet. Try another state pair.'}
-            />
-          ) : (
-            <>
-              <Text style={styles.resultsHeading}>{search.data!.length} departure{search.data!.length === 1 ? '' : 's'} · {summary}</Text>
-              {search.data!.map((t) => <TripCard key={t.scheduleId} trip={t} />)}
-            </>
-          )}
-        </View>
-      )}
     </ScrollView>
   );
 }
 
-export function TripCard({ trip }: { trip: BusTrip }) {
-  const soldOut = trip.seatsAvailable <= 0;
-  return (
-    <Pressable
-      style={[styles.tripCard, shadow1, soldOut && styles.tripCardDisabled]}
-      disabled={soldOut}
-      onPress={() => router.push({ pathname: '/mobility/bus/seats', params: { scheduleId: trip.scheduleId } })}
-    >
-      <View style={styles.tripHead}>
-        <View style={styles.providerChip}>
-          <Text style={styles.providerName} numberOfLines={1}>{trip.provider.businessName}</Text>
-          {trip.provider.verified && (
-            <View style={styles.verifiedBadge}>
-              <ShieldCheck size={11} color={Colors.tertiaryContainer} strokeWidth={2.4} />
-              <Text style={styles.verifiedText}>Verified</Text>
-            </View>
-          )}
-        </View>
-        <View style={styles.ratingRow}>
-          <Star size={12} color={Colors.gold} fill={Colors.gold} strokeWidth={0} />
-          <Text style={styles.rating}>{trip.provider.ratingAvg.toFixed(1)}</Text>
-        </View>
-      </View>
-
-      <Text style={styles.routeLine}>{trip.fromState} → {trip.toState}</Text>
-      <Text style={styles.terminalLine} numberOfLines={1}>{trip.fromCity} → {trip.toCity} · {trip.busType}</Text>
-      <Text style={styles.departLine}>Departs {time(trip.departureTime)}</Text>
-
-      {trip.amenities.length > 0 && (
-        <View style={styles.amenityRow}>
-          {trip.amenities.slice(0, 4).map((a) => (
-            <View key={a} style={styles.amenityPill}><Text style={styles.amenityText}>{a}</Text></View>
-          ))}
-        </View>
-      )}
-
-      <View style={styles.tripFooter}>
-        {soldOut ? <StatusBadge label="Sold out" tone="danger" /> : <Text style={styles.seatsLeft}>{trip.seatsAvailable} seats left</Text>}
-        <View style={styles.fareCol}>
-          <Text style={styles.fromLabel}>fare</Text>
-          <Text style={styles.fare}>{formatNairaWhole(trip.fareKobo)}</Text>
-        </View>
-      </View>
-    </Pressable>
-  );
-}
-
-// PROVIDERS — browse operators
+// PROVIDERS — browse operators (v1 directory unchanged; state filter is geo-fed)
 function ProvidersTab() {
   const [q, setQ] = useState('');
   const [state, setState] = useState('');
   const providers = useBusProviders(state || undefined, q || undefined);
-  const stateOptions = useMemo(() => ['All states', ...STATE_NAMES], []);
+  const geoStates = useBusGeoStates();
+  const stateOptions = useMemo(
+    () => ['All states', ...(geoStates.data ?? []).map((s) => s.name)],
+    [geoStates.data],
+  );
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
@@ -332,13 +388,13 @@ function ProviderCard({ provider }: { provider: BusProviderListItem }) {
   );
 }
 
-// MY TICKETS
+// MY TICKETS — v2 bookings list (one row per booking, covers legs + passengers)
 function TicketsTab() {
-  const tickets = useBusTickets();
+  const bookings = useBusV2Bookings();
 
-  if (tickets.isLoading) return <StateView kind="loading" message="Loading tickets…" />;
-  if (tickets.isError) return <MobilityEdgeState kind={errKind(tickets.error)} actionLabel="Retry" onAction={() => tickets.refetch()} />;
-  if ((tickets.data?.length ?? 0) === 0) {
+  if (bookings.isLoading) return <StateView kind="loading" message="Loading tickets…" />;
+  if (bookings.isError) return <MobilityEdgeState kind={errKind(bookings.error)} actionLabel="Retry" onAction={() => bookings.refetch()} />;
+  if ((bookings.data?.length ?? 0) === 0) {
     return <MobilityEdgeState kind="empty" title="No tickets yet" message="Book a bus from the Book tab and your tickets will appear here." />;
   }
 
@@ -346,16 +402,18 @@ function TicketsTab() {
     <ScrollView
       showsVerticalScrollIndicator={false}
       contentContainerStyle={styles.scroll}
-      refreshControl={<RefreshControl refreshing={tickets.isRefetching} onRefresh={() => tickets.refetch()} tintColor={Colors.primary} />}
+      refreshControl={<RefreshControl refreshing={bookings.isRefetching} onRefresh={() => bookings.refetch()} tintColor={Colors.primary} />}
     >
-      {tickets.data!.map((t) => (
-        <Pressable key={t.id} style={styles.ticketRow} onPress={() => router.push(`/mobility/bus/ticket/${t.id}`)}>
+      {bookings.data!.map((b) => (
+        <Pressable key={b.bookingRef} style={styles.ticketRow} onPress={() => router.push(`/mobility/bus/ticket/${b.bookingRef}`)}>
           <View style={styles.ticketIcon}><Ticket size={20} color={Colors.primary} strokeWidth={2} /></View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.routeLine}>{t.routeLabel}</Text>
-            <Text style={styles.meta}>{time(t.departAt)} · Seat {t.seatNumber} · {formatNairaWhole(t.fareKobo)}</Text>
+            <Text style={styles.routeLine} numberOfLines={1}>{b.routeLabel}</Text>
+            <Text style={styles.meta}>
+              {dt(b.departureAt)} · {b.passengerCount} pax · {formatNairaWhole(b.totalKobo)}
+            </Text>
             <View style={styles.badgeRow}>
-              <StatusBadge label={BUS_PHASE_LABEL[t.phase]} tone={busPhaseTone(t.phase)} />
+              <StatusBadge label={BUS_V2_BOOKING_STATUS_LABEL[b.status]} tone={busV2StatusTone(b.status)} />
             </View>
           </View>
           <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
@@ -380,37 +438,27 @@ const styles = StyleSheet.create({
   searchInputRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.lg, paddingHorizontal: Spacing.md, height: 52, marginBottom: Spacing.md },
   bareInput: { flex: 1, ...Typography.bodyMd, color: Colors.onSurface, padding: 0 },
 
+  paxRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.md },
+  paxLabel: { ...Typography.labelMd, color: Colors.onSurface },
+  paxStepper: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  paxBtn: { width: 36, height: 36, borderRadius: Radius.full, borderWidth: 1.5, borderColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  paxBtnDisabled: { borderColor: Colors.outlineVariant },
+  paxCount: { ...Typography.titleMd, color: Colors.onSurface, minWidth: 24, textAlign: 'center' },
+  clearDraft: { ...Typography.labelSm, color: Colors.error, textAlign: 'center', marginBottom: Spacing.sm },
+
   resultsWrap: { gap: Spacing.md },
   resultsHeading: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
-
-  tripCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.outlineVariant, gap: 4 },
-  tripCardDisabled: { opacity: 0.6 },
-  tripHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm },
-  providerChip: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flex: 1 },
-  providerName: { ...Typography.labelLg, color: Colors.onSurface, flexShrink: 1 },
-  verifiedBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: Colors.iconBgTeal, borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3 },
-  verifiedText: { ...Typography.caption, color: Colors.tertiaryContainer, fontWeight: '700' as const },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  rating: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-  routeLine: { ...Typography.labelLg, color: Colors.onSurface, marginTop: 2 },
-  terminalLine: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-  departLine: { ...Typography.labelSm, color: Colors.secondary },
-  amenityRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
-  amenityPill: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3 },
-  amenityText: { ...Typography.caption, color: Colors.onSurfaceVariant },
-  tripFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, paddingTop: Spacing.sm },
-  seatsLeft: { ...Typography.labelSm, color: Colors.tertiaryContainer },
-  fareCol: { alignItems: 'flex-end' },
-  fromLabel: { ...Typography.caption, color: Colors.onSurfaceVariant },
-  fare: { ...Typography.titleMd, color: Colors.primary, fontWeight: '800' as const },
 
   providerCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.outlineVariant, marginBottom: Spacing.sm },
   providerCardIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.primaryFixed, alignItems: 'center', justifyContent: 'center' },
   providerCardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   providerCardName: { ...Typography.labelLg, color: Colors.onSurface, flexShrink: 1 },
   providerCardMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 },
+  verifiedBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: Colors.iconBgTeal, borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3 },
+  verifiedText: { ...Typography.caption, color: Colors.tertiaryContainer, fontWeight: '700' as const },
   meta: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   dot: { width: 3, height: 3, borderRadius: 2, backgroundColor: Colors.outline },
+  routeLine: { ...Typography.labelLg, color: Colors.onSurface, marginTop: 2 },
 
   ticketRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.outlineVariant },
   ticketIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.primaryFixed, alignItems: 'center', justifyContent: 'center' },

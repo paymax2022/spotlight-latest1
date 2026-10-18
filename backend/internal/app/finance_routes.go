@@ -86,6 +86,10 @@ import (
 	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
+	"spotlight/backend/internal/transport/buscatalog"
+	"spotlight/backend/internal/transport/busfleet"
+	"spotlight/backend/internal/transport/businventory"
+	"spotlight/backend/internal/transport/buskyb"
 	transportpaystackcheckout "spotlight/backend/internal/transport/paystackcheckout"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/webhooks"
@@ -2414,6 +2418,59 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			mob.GET("/bus/provider/templates", transportHandler.BusProviderTemplateList)
 			mob.PATCH("/bus/provider/templates/:id", transportHandler.BusProviderTemplateSetActive)
 			mob.DELETE("/bus/provider/templates/:id", transportHandler.BusProviderTemplateDelete)
+
+			// Bus v2 (PRD): multi-stop routes + OD fares + layouts + segment
+			// inventory + holds + booking legs + operator KYB gate. All behind
+			// FEATURE_BUS_TRANSPORT_V2 — v1 bus above is untouched.
+			if cfg.FeatureBusTransportV2Enabled && pool != nil {
+				catH := buscatalog.NewHandler(buscatalog.NewService(pool))
+				flH := busfleet.NewHandler(busfleet.NewService(pool))
+				invH := businventory.NewHandler(businventory.NewService(pool))
+				kybH := buskyb.NewHandler(buskyb.NewService(buskyb.Deps{
+					Pool:      pool,
+					Registry:  buskyb.NewCACRegistryAdapter(cac.New(cac.Config{BaseURL: cfg.CACVASBaseURL, APIKey: cfg.CACVASApiKey, ConsumerSecret: cfg.CACVASConsumerSecret, AllowSandbox: !cfg.IsProd()})),
+					TierSource: nil,
+				}))
+				bv := mob.Group("/bus/v2")
+				bv.GET("/geo/states", catH.ListGeoStates)
+				bv.GET("/geo/cities", catH.ListGeoCities)
+				bv.POST("/terminals", catH.CreateTerminal)
+				bv.GET("/terminals", catH.ListTerminals)
+				bv.GET("/terminals/:id", catH.GetTerminal)
+				bv.PATCH("/terminals/:id", catH.PatchTerminal)
+				bv.POST("/terminals/:id/status", catH.SetTerminalStatus)
+				bv.POST("/routes", catH.CreateRoute)
+				bv.GET("/routes", catH.ListRoutes)
+				bv.GET("/routes/:id", catH.GetRoute)
+				bv.POST("/routes/:id/revise", catH.ReviseRoute)
+				bv.POST("/routes/:id/active", catH.SetRouteActive)
+				bv.POST("/routes/:id/link-return", catH.LinkReturnRoute)
+				bv.POST("/routes/:id/fares", catH.UpsertFare)
+				bv.GET("/routes/:id/fares", catH.ListFares)
+				bv.GET("/routes/:id/quote", catH.QuoteFare)
+				bv.GET("/search", catH.SearchDepartures)
+				bv.POST("/layouts", flH.CreateLayout)
+				bv.GET("/layouts", flH.ListLayouts)
+				bv.GET("/layouts/:id", flH.GetLayout)
+				bv.POST("/layouts/:id/versions", flH.NewLayoutVersion)
+				bv.POST("/vehicles", flH.RegisterVehicle)
+				bv.GET("/vehicles", flH.ListVehicles)
+				bv.GET("/vehicles/:id", flH.GetVehicle)
+				bv.POST("/vehicles/:id/layout", flH.AssignVehicleLayout)
+				bv.POST("/vehicles/:id/status", flH.SetVehicleStatus)
+				bv.GET("/vehicles/:id/can-assign", flH.CanAssignVehicle)
+				bv.POST("/departures/generate", flH.GenerateDepartures)
+				bv.GET("/departures", flH.ListDepartures)
+				bv.GET("/departures/:id", flH.GetDeparture)
+				bv.POST("/departures/:id/transition", flH.TransitionDeparture)
+				bv.POST("/departures/:id/swap-vehicle", flH.SwapVehicle)
+				invH.RegisterRoutes(bv) // holds, availability, quote, bookings, tickets
+				bv.POST("/kyb/submit", kybH.SubmitKyb)
+				bv.GET("/kyb/status", kybH.KybStatus)
+				adminTr.GET("/bus/kyb/review-queue", kybH.ListPendingReview)
+				adminTr.POST("/bus/kyb/:id/review", kybH.ReviewKyb)
+				log.Println("[transport] bus v2 wired (FEATURE_BUS_TRANSPORT_V2)")
+			}
 
 			mob.POST("/towing/estimate", transportHandler.TowingEstimate)
 			mob.POST("/towing", transportHandler.TowingBook)

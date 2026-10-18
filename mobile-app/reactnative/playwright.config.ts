@@ -49,6 +49,9 @@ export default defineConfig({
           EXPO_PUBLIC_REPORTS_USE_MOCK: 'true',
           EXPO_PUBLIC_TASKS_USE_MOCK: 'true',
           EXPO_PUBLIC_VENDORS_USE_MOCK: 'true',
+          // Bus v2 (PRD) flow — pin fixture mode so the search/geo/seat-map
+          // specs run against busv2.mock.ts, not a backend that isn't live yet.
+          EXPO_PUBLIC_BUS_V2: 'true',
         },
       },
   projects: [
