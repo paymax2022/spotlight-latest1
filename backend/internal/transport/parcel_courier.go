@@ -1,6 +1,6 @@
 package transport
 
-// The parcel fields the apps need on top of the raw row: places with their
+// The parcel fields the apps need on top of the raw row (ADR-PR842): places with their
 // coordinates, the assigned courier as the sender sees them, the courier's
 // expected and actual pay, and the courier's own history. See
 // contracts/transport.openapi.yaml (ParcelDetail, ParcelRequest, CourierParcel).
