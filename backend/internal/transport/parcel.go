@@ -863,6 +863,7 @@ func (s *Service) OpenParcelRequests(ctx context.Context, driverUserID string) (
 		return nil, err
 	}
 	defer rows.Close()
+	netOf := s.courierNetFunc(ctx, courierID)
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, pickup, dropoff, category, size, speed string
@@ -878,7 +879,7 @@ func (s *Service) OpenParcelRequests(ctx context.Context, driverUserID string) (
 			"id": id, "pickupAddress": pickup, "dropoffAddress": dropoff,
 			"pickup": parcelPlace(pickup, pLat, pLng), "dropoff": parcelPlace(dropoff, dLat, dLng),
 			"category": category, "size": size, "speed": speed,
-			"fareKobo": fare, "estCourierNetKobo": s.courierNetKobo(ctx, courierID, fare),
+			"fareKobo": fare, "estCourierNetKobo": netOf(fare),
 			"distanceM": distM, "createdAt": createdAt,
 		})
 	}
@@ -973,11 +974,13 @@ func (s *Service) VerifyParcelDropoff(ctx context.Context, id, driverUserID, pin
 	if p.Status != "in_transit" && p.Status != "picked_up" {
 		return codedErr(http.StatusConflict, CodeInvalidState, "parcel not in transit")
 	}
-	if p.DropoffPin == nil || *p.DropoffPin != pin {
-		return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "dropoff PIN does not match")
-	}
+	// Proof first: a request that can never succeed must not double as a
+	// side-effect-free PIN oracle.
 	if proofURL == "" {
 		return codedErr(http.StatusUnprocessableEntity, "PROOF_REQUIRED", "proof of delivery required")
+	}
+	if p.DropoffPin == nil || *p.DropoffPin != pin {
+		return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "dropoff PIN does not match")
 	}
 	if err := s.parcelSetStatus(ctx, id, p.Status, "dropoff_verified"); err != nil {
 		return err

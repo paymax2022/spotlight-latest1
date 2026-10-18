@@ -81,21 +81,25 @@ func displayVehicleType(t string) string {
 	return strings.ToUpper(t[:1]) + t[1:]
 }
 
-// courierNetKobo is what this courier would be paid for a fare: the split the
-// settlement will actually use (their commission tier through ComputeLegs, the
-// same function that moves the money), not a hardcoded share.
-func (s *Service) courierNetKobo(ctx context.Context, courierID string, fareKobo int64) int64 {
+// courierNetFunc returns what this courier would be paid for a fare: the split
+// the settlement will actually use (their commission tier through ComputeLegs,
+// the same function that moves the money), not a hardcoded share. The tier is
+// read once; a missing tier falls back exactly as settleModeProvider does.
+func (s *Service) courierNetFunc(ctx context.Context, courierID string) func(fareKobo int64) int64 {
 	var tier string
-	_ = s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, courierID).Scan(&tier)
+	_ = s.db.QueryRow(ctx, `SELECT COALESCE(commission_tier,'') FROM drivers WHERE id=$1`, courierID).Scan(&tier)
 	comm, err := s.commissionForTier(ctx, tier)
 	if err != nil {
-		return 0
+		return func(int64) int64 { return 0 }
 	}
-	legs, err := settlement.ComputeLegs(fareKobo, settlementSplit("courier", comm, 0))
-	if err != nil {
-		return 0
+	split := settlementSplit("courier", comm, 0)
+	return func(fareKobo int64) int64 {
+		legs, err := settlement.ComputeLegs(fareKobo, split)
+		if err != nil {
+			return 0
+		}
+		return legs.ProviderKobo
 	}
-	return legs.ProviderKobo
 }
 
 // parcelDeliveredAt is when the parcel reached 'delivered' (its audit event).

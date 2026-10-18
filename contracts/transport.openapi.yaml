@@ -171,7 +171,7 @@ components:
         id: { type: string, format: uuid }
         senderId: { type: string, format: uuid }
         courierId: { type: string, format: uuid, nullable: true }
-        status: { type: string, enum: [created, courier_assigned, pickup_pin_verified, picked_up, in_transit, dropoff_verified, delivered, cancelled, failed] }
+        status: { type: string, enum: [created, courier_assigned, pickup_pin_verified, picked_up, in_transit, dropoff_verified, delivered, cancelled, failed, disputed] }
         pickupAddress: { type: string }
         dropoffAddress: { type: string }
         pickup: { $ref: '#/components/schemas/ParcelPlace' }
