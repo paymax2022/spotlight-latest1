@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as parcel from '../api/parcel.api';
+import { uploadDriverFile, type ParcelEvidenceType } from '../api/mobility.api';
 import * as bus from '../api/bus.api';
 import * as towing from '../api/towing.api';
 import * as movers from '../api/movers.api';
@@ -19,6 +20,8 @@ import { newIdempotencyKey, toMobilityError } from '../utils/mobilityFormatters'
 import type {
   ParcelEstimateRequest,
   ParcelBookRequest,
+  ParcelPhase,
+  Parcel,
   TowingEstimateRequest,
   TowingBookRequest,
   MoverQuoteRequest,
@@ -86,17 +89,46 @@ export function useCourierRequests(options?: { poll?: boolean }) {
 }
 
 export function useCourierActions() {
-  const accept = useMutation({ mutationFn: (id: string) => parcel.acceptCourierRequest(id, newIdempotencyKey('cou-accept')) });
+  const qc = useQueryClient();
+  // Rider actions answer { ok, status }: write the new phase into the cached
+  // detail so the screen moves on at once, then refetch the server's view.
+  const advance = (id: string, phase: ParcelPhase) => {
+    qc.setQueryData<Parcel>([PARCEL_KEY, 'detail', id], (old) => (old ? { ...old, phase } : old));
+    qc.invalidateQueries({ queryKey: [PARCEL_KEY, 'detail', id] });
+  };
+  const accept = useMutation({
+    mutationFn: (id: string) => parcel.acceptCourierRequest(id, newIdempotencyKey('cou-accept')),
+    onSuccess: (p, id) => {
+      qc.setQueryData([PARCEL_KEY, 'detail', id], p);
+      qc.invalidateQueries({ queryKey: [PARCEL_KEY, 'courier', 'requests'] });
+    },
+  });
   const verifyPickup = useMutation({
     mutationFn: ({ id, pin }: { id: string; pin: string }) => parcel.courierVerifyPickupPin(id, pin),
-    onError: (e) => { throw toMobilityError(e); },
+    onSuccess: (phase, { id }) => advance(id, phase),
   });
-  const pickedUp = useMutation({ mutationFn: ({ id, photoUrl }: { id: string; photoUrl: string }) => parcel.courierPickedUp(id, photoUrl) });
+  const pickedUp = useMutation({
+    mutationFn: ({ id, photoUrl }: { id: string; photoUrl: string }) => parcel.courierPickedUp(id, photoUrl),
+    onSuccess: (phase, { id }) => advance(id, phase),
+  });
   const verifyDropoff = useMutation({
     mutationFn: ({ id, pin, proofUrl }: { id: string; pin: string; proofUrl: string }) => parcel.courierVerifyDropoff(id, pin, proofUrl),
-    onError: (e) => { throw toMobilityError(e); },
+    onSuccess: (phase, { id }) => {
+      advance(id, phase);
+      qc.invalidateQueries({ queryKey: [PARCEL_KEY, 'courier', 'history'] });
+    },
   });
-  return { accept, verifyPickup, pickedUp, verifyDropoff };
+  // Pickup photo / proof of delivery: presign → PUT to R2 → the object key.
+  const uploadEvidence = useMutation({
+    mutationFn: ({ kind, file }: { kind: ParcelEvidenceType; file: { uri: string; name: string; mimeType: string } }) =>
+      uploadDriverFile(kind, file),
+  });
+  return { accept, verifyPickup, pickedUp, verifyDropoff, uploadEvidence };
+}
+
+/** The rider's own deliveries + server-computed nets; data is null when the server has no history endpoint. */
+export function useCourierHistory() {
+  return useQuery({ queryKey: [PARCEL_KEY, 'courier', 'history'], queryFn: parcel.getCourierHistory, staleTime: 20_000 });
 }
 
 // BUS
