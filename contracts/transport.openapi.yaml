@@ -383,7 +383,7 @@ paths:
       tags: [mobility-driver]
       summary: Verify the rider's 4-digit trip PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Trip }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Trip }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/trips/{id}/start:
     post:
       tags: [mobility-driver]
@@ -874,7 +874,7 @@ paths:
       tags: [parcel]
       summary: Courier — verify the sender's pickup PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/parcels/{id}/picked-up:
     post:
       tags: [parcel]
@@ -886,7 +886,7 @@ paths:
       tags: [parcel]
       summary: Courier — verify the receiver's dropoff PIN (settles on delivery)
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
 
   # ═══════════════════════════════════════════════════════════════════════════
   # BUS BOOKING   [FeatureTransportModesEnabled]
@@ -1161,7 +1161,7 @@ paths:
       tags: [towing]
       summary: Operator — verify the customer's PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Job }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Job }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/towing/{id}/start:
     post:
       tags: [towing]
@@ -1474,7 +1474,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '200': { description: Delivery }, '401': { description: Not authenticated } }
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/business/{id}/fail:
     post:
       tags: [business-logistics]
