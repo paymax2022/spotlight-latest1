@@ -809,7 +809,8 @@ paths:
         the courier; the premium is held apart (it never reaches the courier settlement) until the policy
         binds when a courier accepts. The customer pays exactly the premium shown; the platform absorbs any
         difference to the insurer's final premium. If cover cannot be bound, or the parcel is cancelled
-        (before or after the cover binds), the premium is refunded to the wallet. The wallet must cover
+        (before or after the cover binds), the premium is refunded to the wallet (to the card for a
+        card-direct booking, see POST /mobility/parcels/paystack/initiate). The wallet must cover
         fare + premium up front (else 402 INSUFFICIENT_FUNDS, nothing charged). The parcel's
         `insuranceStatus` reports declined (not ticked) | held | binding | bound | refunded |
         refund_failed, or none for parcels booked before this feature (they keep the legacy flow).
@@ -856,16 +857,16 @@ paths:
         '422':
           description: >-
             Insurance refused before anything was charged: INSURANCE_DECLARED_VALUE_REQUIRED,
-            INSURANCE_UNAVAILABLE, INSURANCE_CARD_NOT_SUPPORTED (card-direct cannot include the premium
-            yet), or INSURANCE_PROFILE_INCOMPLETE (body `missing` lists the sender profile fields the
-            insurer needs: first_name, last_name, email, phone, gender, date_of_birth, address).
+            INSURANCE_UNAVAILABLE, or INSURANCE_PROFILE_INCOMPLETE (body `missing` lists the sender
+            profile fields the insurer needs: first_name, last_name, email, phone, gender,
+            date_of_birth, address).
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   error: { type: string }
-                  code: { type: string, enum: [INSURANCE_DECLARED_VALUE_REQUIRED, INSURANCE_UNAVAILABLE, INSURANCE_CARD_NOT_SUPPORTED, INSURANCE_PROFILE_INCOMPLETE] }
+                  code: { type: string, enum: [INSURANCE_DECLARED_VALUE_REQUIRED, INSURANCE_UNAVAILABLE, INSURANCE_PROFILE_INCOMPLETE] }
                   missing: { type: array, items: { type: string } }
         '409':
           description: >-
@@ -907,10 +908,20 @@ paths:
       summary: Start a card-direct parcel checkout (server-quoted amount; no wallet debit) — money mutation
       description: >
         Body is the SAME as POST /mobility/parcels (pickup, dropoff, receiver_name, receiver_phone,
-        category, size, speed, declared_value_kobo, prohibited_ack) plus optional `email` and
+        category, size, speed, declared_value_kobo, prohibited_ack, insure) plus optional `email` and
         `callback_url` (gateway-only; stripped before the request is frozen). There is NO amount
-        field: the server prices the parcel (fare only; the indicative insurance premium is never
-        charged at booking), freezes the quote, and asks Paystack for exactly that amount.
+        field: the server prices the parcel, freezes the quote, and asks Paystack for exactly that
+        amount. Without `insure` (or with FEATURE_PARCEL_PREPAID_INSURANCE off) the amount is the fare
+        only. With `insure: true` the amount is fare + the estimate's premium (`insuranceKobo`), both
+        frozen at initiate, so a later rate change cannot alter what this checkout charges. The insured
+        checkout is refused BEFORE anything is quoted or stored when cover is impossible: 422
+        INSURANCE_DECLARED_VALUE_REQUIRED, INSURANCE_UNAVAILABLE or INSURANCE_PROFILE_INCOMPLETE (same
+        meaning as on POST /mobility/parcels). On confirmation the verified charge is split: the fare
+        is escrowed for the courier exactly as without insurance; the premium is held apart (never in
+        the courier settlement) until the cover binds at courier accept. If cover cannot be bound, or
+        the parcel is cancelled (before or after the bind), the premium is refunded TO THE CARD, never
+        to the wallet; a cancel refunds the fare to the card separately. Each card refund is for its
+        own exact amount, and the refunds of one charge never add up to more than was collected.
         Idempotency-Key is REQUIRED as a header (8-100 chars of A-Z a-z 0-9 . _ = -). Replaying a key
         with the same request returns the same reference (and the stored authorization URL while
         unpaid; the terminal status once processed); the same key with a different request or
@@ -932,13 +943,13 @@ paths:
                       reference: { type: string, description: 'parcelorder-<Idempotency-Key>' }
                       authorizationUrl: { type: string, description: Empty when status is not pending }
                       accessCode: { type: string }
-                      amountKobo: { type: integer, format: int64, description: Server-quoted amount in kobo }
+                      amountKobo: { type: integer, format: int64, description: 'Server-quoted amount in kobo: the fare, or fare + insurance premium when `insure` is true' }
                       status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
         '400': { description: 'invalid_input, idempotency_key_required or invalid_idempotency_key' }
         '401': { description: Not authenticated }
         '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
         '409': { description: 'idempotency_conflict, or authorization_unavailable (the checkout URL was never persisted and Paystack will not initialize the reference twice: start a new checkout; a payment already made still confirms automatically)' }
-        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored.; or Prohibited-items acknowledgement missing (PROHIBITED_ACK_REQUIRED)" }
+        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored.; or Prohibited-items acknowledgement missing (PROHIBITED_ACK_REQUIRED); or, with `insure: true`, INSURANCE_DECLARED_VALUE_REQUIRED / INSURANCE_UNAVAILABLE / INSURANCE_PROFILE_INCOMPLETE (body `missing` lists the profile fields). Nothing is quoted or stored." }
         '429': { description: Per-user rate limit on checkout creation (rate_limited) }
   /mobility/parcels/paystack/{reference}/status:
     get:
@@ -953,6 +964,11 @@ paths:
         accepted the refund, `refunding` means a refund is in flight (outcome being verified with the
         gateway), `amount_mismatch`/`order_failed` mean the gateway definitively did not refund yet
         and the reconciler is retrying. Always safe to poll; a `refunded` status never reverts.
+        With `insure`, confirmation books only when the verified amount equals the frozen fare +
+        premium; it escrows the fare and holds the premium as two separate ledger postings keyed off
+        this reference, so a replayed webhook or poll never holds the premium twice. A confirmed
+        insured parcel whose premium or fare is later refunded to the card stays `confirmed` here (each
+        refund is a separate piece of the charge); it becomes `refunded` once the whole charge is back.
       parameters:
         - { name: reference, in: path, required: true, schema: { type: string } }
       responses:
@@ -969,7 +985,7 @@ paths:
                     properties:
                       reference: { type: string }
                       status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
-                      amountKobo: { type: integer, format: int64 }
+                      amountKobo: { type: integer, format: int64, description: 'Amount collected: the fare, or fare + insurance premium' }
                       parcelId: { type: string, format: uuid, description: Present once confirmed }
         '401': { description: Not authenticated }
         '404': { description: 'unknown_reference (also returned for a reference that is not yours)' }

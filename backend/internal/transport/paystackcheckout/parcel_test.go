@@ -29,7 +29,7 @@ type fakeParcels struct {
 	wantSender string
 }
 
-func (f *fakeParcels) QuoteParcelBookingFrozen(_ context.Context, r transport.ParcelBookRequest) (int64, json.RawMessage, error) {
+func (f *fakeParcels) QuoteParcelBookingFrozenFor(_ context.Context, _ string, r transport.ParcelBookRequest) (int64, json.RawMessage, error) {
 	f.quoteReqs = append(f.quoteReqs, r)
 	return f.quote, f.quotePrice, f.quoteErr
 }
