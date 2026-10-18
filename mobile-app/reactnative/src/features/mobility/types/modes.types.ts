@@ -138,9 +138,9 @@ export interface CourierParcelRequest {
   speed: ParcelSpeed;
   distanceM: number;
   fareKobo: Kobo;
-  estCourierNetKobo: Kobo;
+  estCourierNetKobo: Kobo | null;   // server-computed rider net; null when the server doesn't send it
   currency: 'NGN';
-  expiresAt: string;
+  expiresAt: string | null;
 }
 
 // BUS BOOKING
