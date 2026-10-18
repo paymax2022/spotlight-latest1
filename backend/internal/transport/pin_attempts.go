@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -122,4 +123,54 @@ func derefStr(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+// PinAttemptsResetRequest is POST /admin/transport/pin-attempts/reset.
+type PinAttemptsResetRequest struct {
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id"`
+	Purpose    string `json:"purpose"`
+	Reason     string `json:"reason"`
+}
+
+var (
+	pinEntityTypes = map[string]bool{"trip": true, "parcel": true, "business_delivery": true, "towing_job": true}
+	pinPurposes    = map[string]bool{"start": true, "pickup": true, "dropoff": true}
+)
+
+// ResetPinAttempts is the support action for a PIN_LOCKED hand-off: it clears
+// the wrong-PIN record (a cooldown or a hard lock) and audits the cleared
+// record with the reason, in one transaction. It never reveals or changes the
+// PIN itself.
+func (a *AdminService) ResetPinAttempts(ctx context.Context, adminID string, req PinAttemptsResetRequest) error {
+	req.Reason = strings.TrimSpace(req.Reason)
+	switch {
+	case !pinEntityTypes[req.EntityType] || !pinPurposes[req.Purpose] || strings.TrimSpace(req.EntityID) == "":
+		return codedErr(http.StatusBadRequest, "INVALID_PIN_ATTEMPT_KEY", "entity_type, entity_id and purpose must name a hand-off")
+	case req.Reason == "" || len(req.Reason) > 500:
+		return codedErr(http.StatusBadRequest, "REASON_REQUIRED", "a reason (at most 500 characters) is required")
+	}
+	tx, err := a.svc.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var failed int
+	var hard bool
+	err = tx.QueryRow(ctx, `
+		DELETE FROM public.transport_pin_attempts
+		WHERE entity_type=$1 AND entity_id=$2 AND purpose=$3
+		RETURNING failed_count, hard_locked`, req.EntityType, req.EntityID, req.Purpose).Scan(&failed, &hard)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return codedErr(http.StatusNotFound, CodeNotFound, "no wrong-PIN record for that hand-off")
+	}
+	if err != nil {
+		return err
+	}
+	if err := writeAudit(ctx, tx, adminID, "pin_attempts.reset", "pin_attempts",
+		req.EntityType+":"+req.EntityID+":"+req.Purpose,
+		map[string]any{"failedCount": failed, "hardLocked": hard}, nil, req.Reason); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

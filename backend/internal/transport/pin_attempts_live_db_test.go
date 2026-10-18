@@ -141,3 +141,46 @@ func TestLiveDB_PinGuard_ParallelBurstCannotOutrunTheLock(t *testing.T) {
 		t.Fatalf("%d guesses were compared as plain mismatches, want at most %d", mismatches, pinCooldownEvery-1)
 	}
 }
+
+// Support can lift a hard lock (the courier may lock their own job on
+// purpose); the reset is audited with the cleared record and the reason.
+func TestLiveDB_PinGuard_AdminResetLiftsAHardLockAndIsAudited(t *testing.T) {
+	svc, id := newPinSvc(t)
+	ctx := context.Background()
+	admin := NewAdminService(svc)
+	adminID := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = svc.db.Exec(context.Background(), `DELETE FROM transport_audit_log WHERE entity_type='pin_attempts' AND entity_id LIKE $1`, "%"+id+"%")
+	})
+	for i := 0; i < pinHardLockAt; i++ {
+		_ = svc.checkPin(ctx, "parcel", id, "dropoff", "4821", "9999", "")
+		_, _ = svc.db.Exec(ctx, `UPDATE public.transport_pin_attempts SET locked_until=NULL WHERE entity_id=$1`, id)
+	}
+	if st, _ := pinStatus(t, svc.checkPin(ctx, "parcel", id, "dropoff", "4821", "4821", "")); st != http.StatusLocked {
+		t.Fatalf("precondition: want hard-locked (423), got %d", st)
+	}
+
+	req := PinAttemptsResetRequest{EntityType: "parcel", EntityID: id, Purpose: "dropoff"}
+	if st, _ := pinStatus(t, admin.ResetPinAttempts(ctx, adminID, req)); st != http.StatusBadRequest {
+		t.Fatalf("a reset without a reason must be 400, got %d", st)
+	}
+	req.Reason = "receiver confirmed by phone; courier mistyped"
+	if err := admin.ResetPinAttempts(ctx, adminID, req); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if err := svc.checkPin(ctx, "parcel", id, "dropoff", "4821", "4821", ""); err != nil {
+		t.Fatalf("after the reset the right PIN must pass: %v", err)
+	}
+	var reason string
+	var hadHard bool
+	if err := svc.db.QueryRow(ctx, `SELECT reason, (old_value->>'hardLocked')::boolean FROM transport_audit_log
+		WHERE action='pin_attempts.reset' AND entity_id=$1`, "parcel:"+id+":dropoff").Scan(&reason, &hadHard); err != nil {
+		t.Fatalf("audit row: %v", err)
+	}
+	if reason != req.Reason || !hadHard {
+		t.Fatalf("audit reason=%q hardLocked=%t", reason, hadHard)
+	}
+	if st, _ := pinStatus(t, admin.ResetPinAttempts(ctx, adminID, req)); st != http.StatusNotFound {
+		t.Fatalf("resetting a hand-off with no record must be 404, got %d", st)
+	}
+}

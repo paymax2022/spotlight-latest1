@@ -2336,6 +2336,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		adminTr.PATCH("/commission/:tier", middleware.RequirePermission(rbac, mobilityManagePerm), transportAdmin.PatchCommission)
 		adminTr.GET("/safety/incidents", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.ListIncidents)
 		adminTr.PATCH("/safety/incidents/:id", middleware.RequirePermission(rbac, mobilityManagePerm), transportAdmin.PatchIncident)
+		// Support unlock for a PIN_LOCKED hand-off (ADR-PR843); audited, reason required.
+		adminTr.POST("/pin-attempts/reset", middleware.RequirePermission(rbac, mobilityManagePerm), transportAdmin.ResetPinAttempts)
 		adminTr.GET("/reports/summary", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.ReportsSummary)
 		adminTr.GET("/audit", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AuditFeed)
 

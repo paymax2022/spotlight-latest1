@@ -470,6 +470,32 @@ paths:
       summary: Update a safety incident
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } }
+  /admin/transport/pin-attempts/reset:
+    post:
+      tags: [mobility-admin]
+      summary: Clear a hand-off's wrong-PIN record (lifts a cooldown or a hard lock; audited)
+      description: >-
+        Support action for a hand-off that is PIN_LOCKED (see the driver verify endpoints). Deletes the
+        transport_pin_attempts row for (entity_type, entity_id, purpose) and writes a transport_audit_log
+        row (action pin_attempts.reset, the cleared record as old value, reason) in the same transaction.
+        It does not reveal or change the PIN.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entity_type, entity_id, purpose, reason]
+              properties:
+                entity_type: { type: string, enum: [trip, parcel, business_delivery, towing_job] }
+                entity_id: { type: string }
+                purpose: { type: string, enum: [start, pickup, dropoff] }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { description: 'Cleared: { ok, cleared: { failedCount, hardLocked } }' }
+        '400': { description: Invalid entity_type / purpose, or missing reason }
+        '403': { description: Missing mobility.manage }
+        '404': { description: No wrong-PIN record for that hand-off }
   /admin/transport/reports/summary:
     get: { tags: [mobility-admin], summary: Reports summary, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/audit:
