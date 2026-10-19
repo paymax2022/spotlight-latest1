@@ -35,7 +35,7 @@
 | `SPOTLIGHT_ADMIN_API_KEY` | frontend-web | **SECRET (HIGH)** | admin | `openssl rand -hex 32` |
 | `ADMIN_API_KEY` | backend | **SECRET (HIGH)** | admin/finance | set strong in prod; empty = open (dev only) |
 | `NEXT_PUBLIC_ADMIN_API_BASE_URL` | frontend-admin | public | admin | |
-| `NEXT_PUBLIC_*_USE_MOCK` | frontend-admin | config | admin | set to live (`false`) at go-live |
+| `NEXT_PUBLIC_*_USE_MOCK` | frontend-admin | config | admin | set to live (`false`) at go-live. `resolveUseMock` resolves UNSET as MOCK in dev / LIVE in prod, so every console needs its own explicit `false` in `.env.local` or it renders fixtures silently |
 
 ## Payments / wallet / transfers / payouts / VA
 
