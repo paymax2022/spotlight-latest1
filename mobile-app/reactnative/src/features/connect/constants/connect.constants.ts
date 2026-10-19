@@ -18,14 +18,14 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CONNECT_USE_MOCK, tr
 //      runs somewhere other than the main one.
 //   2. EXPO_PUBLIC_API_BASE_URL — the main backend. Connect ships live in
 //      real backend by default.
-//   3. localhost:8091 — dev-only last resort (matches backend/.env APP_PORT).
+//   3. localhost:8190 — dev-only last resort (matches backend/.env APP_PORT).
 // Step 2 was missing until 2026-09-11: CONNECT_API_HOST is set in no env file,
 // so release APKs resolved to `http://localhost:8091/api/v1/connect` — the
 // device's OWN loopback — and every Connect call failed as "no connection".
 // so the loopback host is never rewritten in a release build.
 const CONNECT_API_HOST =
   process.env.EXPO_PUBLIC_CONNECT_API_HOST ??
-  resolveApiBaseUrl(__DEV__ ? 'http://localhost:8091' : undefined);
+  resolveApiBaseUrl(__DEV__ ? 'http://localhost:8190' : undefined);
 export const CONNECT_API_BASE = getDevUrl(`${CONNECT_API_HOST}/api/v1/connect`);
 
 // Module-scoped colors built on the base design tokens (never hardcode hex).
