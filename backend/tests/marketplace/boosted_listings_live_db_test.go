@@ -344,4 +344,13 @@ func TestLiveDB_BoostQuote_PricedByDayRate(t *testing.T) {
 	if _, err := svc.ComputeBoostQuote(ctx, 91, nil); !errors.As(err, &ce) || ce.Code != mkt.CodeInvalidBoostRange {
 		t.Errorf("duration_days=91 err = %v, want %s", err, mkt.CodeInvalidBoostRange)
 	}
+
+	// The rate prices every boost, so a 0 row would sell promotion for nothing —
+	// the setter must refuse it, and the live row must survive the attempt.
+	if _, err := svc.SetBoostDailyRate(ctx, uuid.NewString(), 0, "price_adjustment"); !errors.As(err, &ce) || ce.Code != mkt.CodeValidation {
+		t.Errorf("zero daily rate err = %v, want %s (a 0 rate makes every boost free)", err, mkt.CodeValidation)
+	}
+	if still, err := svc.BoostPricing(ctx); err != nil || still.DailyRateKobo != repriceKobo {
+		t.Errorf("rate after the refused zero write = %+v/%v, want %d", still, err, repriceKobo)
+	}
 }

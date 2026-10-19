@@ -158,7 +158,7 @@ function DailyRateCard({ rate, canEdit, busy, onSave }: { rate: MktBoostDailyRat
       <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div>
           <label style={lbl()}>₦ per day</label>
-          <input style={{ ...input(), width: 120 }} value={naira} onChange={(e) => setNaira(e.target.value)} placeholder="e.g. 100" />
+          <input style={{ ...input(), width: 120 }} type="number" min={1} step="any" value={naira} onChange={(e) => setNaira(e.target.value)} placeholder="e.g. 100" />
         </div>
         <div style={{ flex: 1, minWidth: 180 }}>
           <label style={lbl()}>reason_code</label>

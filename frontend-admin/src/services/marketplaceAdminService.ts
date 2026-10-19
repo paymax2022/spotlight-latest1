@@ -407,7 +407,11 @@ export async function upsertBoostPackage(data: any, reasonCode?: string): Promis
     method: 'PUT', headers: authHeaders(), body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Upsert boost package failed'));
-  return res.json();
+  // Go's respond() wraps every admin marketplace reply in {"data": …}; the
+  // fixtures branch above returns the bare object, so unwrapping only in live
+  // mode keeps both paths handing callers the same shape.
+  const json = await res.json();
+  return json?.data ?? json;
 }
 
 // The custom-range "N/day" rate (ADM-002/MO-002) — separate from the preset
@@ -418,7 +422,8 @@ export async function getBoostDailyRate(): Promise<MktBoostDailyRate> {
   if (USE_FIXTURES) return delay({ daily_rate_kobo: 10_000 }); // mirrors the backend's seeded default (₦100/day)
   const res = await fetch(`${marketplaceAdminBase()}/pricing/boosts/daily-rate`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boost daily rate fetch failed'));
-  return res.json();
+  const json = await res.json();
+  return json?.data ?? json;
 }
 
 export async function setBoostDailyRate(dailyRateKobo: number, reasonCode: string): Promise<MktBoostDailyRate> {
@@ -427,7 +432,8 @@ export async function setBoostDailyRate(dailyRateKobo: number, reasonCode: strin
     method: 'PUT', headers: authHeaders(), body: JSON.stringify({ daily_rate_kobo: dailyRateKobo, reason_code: reasonCode }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Set boost daily rate failed'));
-  return res.json();
+  const json = await res.json();
+  return json?.data ?? json;
 }
 
 export async function getCommissionConfig(): Promise<any> {

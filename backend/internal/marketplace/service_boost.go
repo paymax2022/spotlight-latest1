@@ -468,8 +468,11 @@ func (s *Service) SetBoostDailyRate(ctx context.Context, adminID string, dailyRa
 	if err := requireReason(reasonCode); err != nil {
 		return nil, err
 	}
-	if dailyRateKobo < 0 {
-		return nil, fieldErr(CodeValidation, "daily_rate_kobo must be >= 0", "daily_rate_kobo")
+	if dailyRateKobo <= 0 {
+		// Zero is rejected, not just negative: the rate prices EVERY boost, so a
+		// 0 row would sell unlimited promotion for nothing and post a 0-kobo
+		// charge to the ad-revenue ledger.
+		return nil, fieldErr(CodeValidation, "daily_rate_kobo must be greater than 0", "daily_rate_kobo")
 	}
 	before, err := s.repo.GetBoostDailyRate(ctx)
 	if err != nil {
