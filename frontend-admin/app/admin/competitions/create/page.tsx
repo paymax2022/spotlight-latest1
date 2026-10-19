@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 import {
   createFullContest, updateFullContest, deleteFullContest, getFullContest, setContestStatus,
-  listAdminContests, uploadContestBanner, uploadContestLogo,
+  listAdminContests, uploadContestBanner, uploadContestLogo, adminMediaUrl,
   listContestStages, createContestStage, deleteContestStage, advanceStageSurvivors,
   type FullContest, type ContestCategory, type ContestType, type RegionScope, type ContestPublishStatus,
   type AdminContest, type ContestStage, type AdvanceStageResult,
@@ -604,7 +604,7 @@ function CreateCompetitionContent() {
             <div style={{ marginTop: 8 }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={form.bannerImageUrl}
+                src={adminMediaUrl(form.bannerImageUrl)}
                 alt="Contest banner preview"
                 style={{ display: 'block', maxWidth: 320, height: 120, objectFit: 'cover', borderRadius: 8, border: `1px solid ${colors.border}` }}
               />
@@ -660,7 +660,7 @@ function CreateCompetitionContent() {
             <div style={{ marginTop: 8 }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={form.logoUrl}
+                src={adminMediaUrl(form.logoUrl)}
                 alt="Contest logo preview"
                 style={{ display: 'block', width: 96, height: 96, objectFit: 'contain', borderRadius: 8, border: `1px solid ${colors.border}` }}
               />

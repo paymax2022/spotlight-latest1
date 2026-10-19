@@ -5,7 +5,7 @@
 // not regress: the banner keeps its prefix and behaviour, and the PUBLIC GET
 // never becomes a reader for the private registration documents that share the
 // bucket (it only serves contests/banners/ and contests/logos/ keys).
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const assertAdminPermission = vi.hoisted(() => vi.fn());
 vi.mock('@/src/server/admin/auth', () => ({ assertAdminPermission }));
@@ -49,11 +49,7 @@ beforeEach(() => {
   saveLocalUpload.mockReset();
   saveLocalUpload.mockResolvedValue(undefined);
   readLocalUpload.mockReset();
-  vi.stubEnv('NEXT_PUBLIC_SITE_URL', ORIGIN);
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
-});
-afterEach(() => {
-  vi.unstubAllEnvs();
 });
 
 describe('POST /api/admin/contests/banner (upload)', () => {
@@ -61,15 +57,18 @@ describe('POST /api/admin/contests/banner (upload)', () => {
     const res = await POST(uploadRequest());
     expect(res.status).toBe(200);
     const body = await res.json();
+    expect(body.upload.url).toMatch(/^\/api\/admin\/contests\/banner\//);
     expect(keyFromUrl(body.upload.url)).toMatch(/^contests\/banners\/[0-9a-f-]+\.png$/);
     expect(saveLocalUpload.mock.calls[0][0]).toMatch(/^contests\/banners\//);
   });
 
-  it('stores a logo under contests/logos/ and returns an absolute URL for it', async () => {
+  it('stores a logo under contests/logos/ and returns a root-relative path for it', async () => {
     const res = await POST(uploadRequest({ kind: 'logo' }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.upload.url.startsWith(`${ORIGIN}/api/admin/contests/banner/`)).toBe(true);
+    // No origin: the row is read by the web app, the admin console and the Go
+    // API on three different hosts, so each attaches its own environment's.
+    expect(body.upload.url).toMatch(/^\/api\/admin\/contests\/banner\/[A-Za-z0-9_-]+$/);
     expect(keyFromUrl(body.upload.url)).toMatch(/^contests\/logos\/[0-9a-f-]+\.png$/);
     expect(saveLocalUpload.mock.calls[0][0]).toMatch(/^contests\/logos\//);
   });

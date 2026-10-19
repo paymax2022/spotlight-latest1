@@ -15,6 +15,7 @@
 | Var | Surface | Sensitivity | Module | Notes |
 |---|---|---|---|---|
 | `NEXT_PUBLIC_SITE_URL` | frontend-web | public | all | |
+| `WEB_APP_BASE_URL` | backend | config | connect/voting | Origin the Go API prefixes stored contest media paths with, so the mobile app gets a loadable absolute URL. Must equal frontend-web's real origin per environment (dev `http://localhost:3000`); default `https://www.spotlightng.com` |
 | `NEXT_PUBLIC_API_BASE_URL` | frontend-web | public | all | browser → Go API |
 | `GO_BACKEND_URL` / `GO_API_BASE_URL` | frontend-web | config | proxy | server-side only |
 | `NEXT_PUBLIC_SUPABASE_URL` | web/admin | public | auth/data | |

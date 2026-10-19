@@ -7,6 +7,7 @@ import { getActiveVotePackages } from '@/src/server/voting/paid-vote.service';
 import { getVoteTotals } from '@/src/server/voting/totals.service';
 import { getOrCreateShareLink } from '@/src/server/voting/share.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
+import { IN_APP_PHOTO_TTL_SECONDS, resolveContestantPhotoUrl } from '@/src/lib/storage/contestant-photo';
 
 function getIp(request: Request): string {
   return (
@@ -164,7 +165,7 @@ export async function GET(request: Request) {
         id: contestantId,
         name: enrollment.name ?? enrollment.stage_name ?? 'Contestant',
         stageName: enrollment.stage_name ?? null,
-        photoUrl: enrollment.photo_url ?? null,
+        photoUrl: await resolveContestantPhotoUrl(enrollment.photo_url, IN_APP_PHOTO_TTL_SECONDS),
         bio: enrollment.bio ?? null,
         category: enrollment.category ?? null,
         state: enrollment.state ?? null,

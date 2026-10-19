@@ -791,6 +791,13 @@ type Config struct {
 	// AdminAppBaseURL: origin of frontend-admin, used to build links inside
 	// transactional emails (e.g. the hotelier staff invite accept link).
 	AdminAppBaseURL string
+	// WebAppBaseURL: origin of frontend-web, which serves uploaded contest media
+	// (banners/logos) under /api/admin/contests/banner/. Contest rows store only
+	// the PATH, so this is what turns it back into a URL for clients that cannot
+	// resolve a relative one — the mobile app above all. Defaulted to the same
+	// production origin frontend-web defaults to, so an unconfigured deployment
+	// still emits working URLs.
+	WebAppBaseURL string
 	// Termii: SMS delivery. Key from termii.com dashboard.
 	TermiiAPIKey   string
 	TermiiSenderID string // approved sender ID
@@ -1162,6 +1169,7 @@ func Load() Config {
 		OTPMaxVerifyPerIPPerHour: getEnvInt("OTP_MAX_VERIFY_PER_IP_PER_HOUR", 20),
 		SignupRateLimitPer5Min:   getEnvInt("AUTH_SIGNUP_RATE_LIMIT_PER_5MIN", 30),
 		AdminAppBaseURL:          getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
+		WebAppBaseURL:            getEnv("WEB_APP_BASE_URL", "https://www.spotlightng.com"),
 		TermiiAPIKey:             getEnv("TERMII_API_KEY", getEnv("TERMIL_LIVE_API_KEY", "")), // TERMIL_LIVE_API_KEY: legacy misspelled var on Railway
 		TermiiSenderID:           getEnv("TERMII_SENDER_ID", "Paymax"),
 		ExpoPushToken:            getEnv("EXPO_PUSH_TOKEN", ""),

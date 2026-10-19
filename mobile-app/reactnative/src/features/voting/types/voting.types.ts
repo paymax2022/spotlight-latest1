@@ -108,6 +108,8 @@ export interface VoteTransaction {
   contestId: string;
   contestantId: string;
   contestantName?: string;
+  /** Signed by the server at read time; empty when the photo cannot be rendered. */
+  contestantPhoto?: string;
   contestTitle?: string;
   voteType: VoteType;
   votes: number;

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,6 +76,12 @@ type Service struct {
 	audit        Auditor
 	solicitation SolicitationFlagger
 	commission   CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	// mediaBase is the web app origin used to absolutise stored contest image
+	// paths. Empty ⇒ paths are handed out as stored.
+	mediaBase string
+	// photo signs stored contestant-photo object keys back into viewable URLs.
+	// nil ⇒ see SetPhotoSigner.
+	photo photoSigner
 }
 
 // NewService builds the voting service. solicitation may be nil.
@@ -85,6 +92,28 @@ func NewService(repo *Repository, wallet WalletDebiter, revenue RevenueAccountRe
 // SetCommissionRecorder injects the central profit-recording seam (app-wiring,
 // post-construction). Nil is accepted and disables recording.
 func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// SetMediaBaseURL tells the service which origin to hang stored contest image
+// paths under (app-wiring, post-construction). See resolveMediaURL.
+func (s *Service) SetMediaBaseURL(base string) { s.mediaBase = strings.TrimSpace(base) }
+
+// withMedia rewrites a contest row's image fields for the wire. The scan leaves
+// the stored value alone — this is the read boundary that decides the origin.
+func (s *Service) withMedia(c *Contest) *Contest {
+	if c == nil {
+		return nil
+	}
+	c.BannerImageURL = resolveMediaURL(c.BannerImageURL, s.mediaBase)
+	c.LogoURL = resolveMediaURL(c.LogoURL, s.mediaBase)
+	return c
+}
+
+func (s *Service) withMediaList(list []Contest) []Contest {
+	for i := range list {
+		s.withMedia(&list[i])
+	}
+	return list
+}
 
 // recordCommissionSafe records realized Spotlight profit for a settled paid vote.
 // It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
@@ -105,13 +134,15 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 
 // ListContests returns open/closed contests.
 func (s *Service) ListContests(ctx context.Context, limit int) ([]Contest, error) {
-	return s.repo.ListContests(ctx, limit)
+	list, err := s.repo.ListContests(ctx, limit)
+	return s.withMediaList(list), err
 }
 
 // ListContestsByStatus returns contests in the given stored statuses (open
 // and/or closed). statuses must come from contestStatusFilter.
 func (s *Service) ListContestsByStatus(ctx context.Context, limit int, statuses []string) ([]Contest, error) {
-	return s.repo.ListContestsByStatus(ctx, limit, statuses)
+	list, err := s.repo.ListContestsByStatus(ctx, limit, statuses)
+	return s.withMediaList(list), err
 }
 
 // GetContest returns one contest.
@@ -120,7 +151,7 @@ func (s *Service) GetContest(ctx context.Context, id string) (*Contest, error) {
 	if err != nil {
 		return nil, ErrNotFound
 	}
-	return c, nil
+	return s.withMedia(c), nil
 }
 
 // notFoundIfBadUUID refuses a malformed id before it reaches a Postgres uuid
@@ -381,7 +412,11 @@ func (s *Service) ListRoster(ctx context.Context, contestID string, includeInact
 	if _, err := s.repo.GetContest(ctx, contestID); err != nil {
 		return nil, ErrNotFound
 	}
-	return s.repo.ListRoster(ctx, contestID, includeInactive, viewerID)
+	list, err := s.repo.ListRoster(ctx, contestID, includeInactive, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	return s.withPhotoList(list), nil
 }
 
 // FreeVoteAllowance reports how many free votes a user has left in a contest.
@@ -423,7 +458,7 @@ func (s *Service) GetContestant(ctx context.Context, contestantID, viewerID stri
 	if e == nil {
 		return nil, ErrNotFound
 	}
-	return e, nil
+	return s.withPhoto(e), nil
 }
 
 // LikeContestant records the caller's like. Idempotent — liking twice is not
@@ -527,7 +562,7 @@ func (s *Service) ResolveShare(ctx context.Context, token string) (*RosterEntry,
 	if e == nil {
 		return nil, ErrShareNotFound
 	}
-	return e, nil
+	return s.withPhoto(e), nil
 }
 
 // ErrNotContestant is returned when a caller asks for a contestant's supporters
@@ -539,7 +574,11 @@ func (s *Service) MyVotes(ctx context.Context, voterID, contestID string, paidOn
 	if voterID == "" {
 		return nil, ErrNotContestant
 	}
-	return s.repo.MyVotes(ctx, voterID, contestID, paidOnly, freeOnly)
+	list, err := s.repo.MyVotes(ctx, voterID, contestID, paidOnly, freeOnly)
+	if err != nil {
+		return nil, err
+	}
+	return s.withVotePhotos(list), nil
 }
 
 // Supporters returns who voted for a contestant — to that contestant only.
@@ -580,7 +619,7 @@ func (s *Service) MyVote(ctx context.Context, voterID, voteID string) (*MyVote, 
 		}
 		return nil, err
 	}
-	return v, nil
+	return s.withVotePhoto(v), nil
 }
 
 // Notifications returns the caller's derived voting activity feed. See the
@@ -639,6 +678,10 @@ type Contest struct {
 	RulesText         string     `json:"rules_text,omitempty"`
 	BannerImageURL    string     `json:"banner_image_url,omitempty"`
 	LogoURL           string     `json:"logo_url,omitempty"`
+	// Slug is the public.contests record this voting contest was mirrored from,
+	// and the key the admin console's contest editor patches ('' when the row was
+	// created straight into connect_contests and has no such record).
+	Slug string `json:"slug,omitempty"`
 
 	// Roster/tally summary, populated by the list + detail queries so a client
 	// rendering a contest card does not have to fetch the whole roster to show

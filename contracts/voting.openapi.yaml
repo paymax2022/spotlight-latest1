@@ -61,10 +61,23 @@ components:
         rules_text: { type: string }
         banner_image_url:
           type: string
-          description: Admin-uploaded banner. Omitted when none is set.
+          description: >
+            Admin-uploaded banner, absolute on the web app's origin (WEB_APP_BASE_URL).
+            Persisted as a path under /api/admin/contests/banner/ and re-based per
+            response, so a contest created in one environment still shows its art in
+            another. Omitted when none is set.
         logo_url:
           type: string
-          description: Admin-uploaded contest logo. Omitted when none is set.
+          description: >
+            Admin-uploaded contest logo, absolute on the web app's origin. Stored and
+            re-based exactly like banner_image_url. Omitted when none is set.
+        slug:
+          type: string
+          description: >
+            The public.contests record this row was mirrored from, and the key the
+            admin console's contest editor patches. Omitted for a contest created
+            straight into connect_contests, which has no such record and so cannot be
+            edited from the console.
         contestant_count: { type: integer }
         total_votes: { type: integer, format: int64 }
     # ── /api/v2/votes/wallet ────────────────────────────────────────────────
@@ -223,7 +236,15 @@ components:
         category: { type: string }
         state: { type: string }
         bio: { type: string }
-        photo_url: { type: string }
+        photo_url:
+          type: string
+          description: >
+            Contestant photo, ready to render. Registration uploads store an R2
+            object key under a route only the uploader may read, so the key is
+            signed at read time into a short-lived (60 min) absolute URL here. A
+            photo pasted as an external URL is returned as stored, and a key that
+            cannot be signed comes back empty so the client shows its placeholder
+            instead of a broken image.
         media_url: { type: string }
         status: { type: string }
         is_active: { type: boolean }
