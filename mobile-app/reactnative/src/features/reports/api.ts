@@ -6,7 +6,10 @@ export interface ReportMetric { label: string; value: string }
 export interface ReportSection { id: string; title: string; metrics: ReportMetric[] }
 export interface ReportsResponse { sections: ReportSection[] }
 
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REPORTS_USE_MOCK, true);
+// Read-only: the /api/v1/estate/reports and /analytics/{type} handlers are live and query real
+// tables, so this defaults to live — a forgotten flag fails visibly instead of showing invented
+// collection figures. Set EXPO_PUBLIC_REPORTS_USE_MOCK=true to force fixtures locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REPORTS_USE_MOCK, false);
 
 // Reports/analytics are served by the resident-scoped frontend-web handlers
 // under /api/v1/estate/reports and /api/v1/estate/analytics/{type}. The current

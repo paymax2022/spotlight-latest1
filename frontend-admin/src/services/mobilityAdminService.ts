@@ -11,6 +11,7 @@ import type {
   VehicleComplianceRow, VehicleStatusPatch, VehicleStatus,
   TripRow, DispatchLive, TripPhase,
   PricingConfig, CommissionConfig,
+  ParcelRateCell, ParcelRateCellPatch, ParcelSize, ParcelSpeed,
   SafetyIncidentRow, SafetyIncidentPatch, IncidentStatus,
   ReportSummary, MobilityAuditEntry,
 } from '@/types/mobility';
@@ -534,6 +535,48 @@ export async function updateCommission(tier: CommissionConfig['tier'], driverPct
     provider_pct: driverPct / 100,
     platform_pct: (100 - driverPct) / 100,
     reason: `Driver split set to ${driverPct}% from admin console.`,
+  });
+}
+
+// ─── Parcel rate card ─────────────────────────────────────────────────────────
+
+const PARCEL_SIZES: ParcelSize[] = ['small', 'medium', 'large'];
+const PARCEL_SPEEDS: ParcelSpeed[] = ['standard', 'express', 'same_day', 'scheduled'];
+// Mirrors the 20271046000000_parcel_rate_card seed: [multiplier_bps, min_fare_kobo].
+const PARCEL_SEED: Record<string, [number, number]> = {
+  'small/standard': [10000, 100000], 'small/express': [15000, 180000], 'small/same_day': [22000, 300000], 'small/scheduled': [9000, 100000],
+  'medium/standard': [14000, 150000], 'medium/express': [21000, 250000], 'medium/same_day': [30000, 400000], 'medium/scheduled': [12600, 135000],
+  'large/standard': [20000, 250000], 'large/express': [30000, 400000], 'large/same_day': [42000, 600000], 'large/scheduled': [18000, 225000],
+};
+let PARCEL_RATE_CARD: ParcelRateCell[] = PARCEL_SIZES.flatMap((size) => PARCEL_SPEEDS.map((speed) => ({
+  zone: 'default', size, speed,
+  multiplierBps: PARCEL_SEED[`${size}/${speed}`][0], minFareKobo: PARCEL_SEED[`${size}/${speed}`][1],
+  active: true, updatedBy: null, updatedAt: '2026-10-17T00:00:00Z',
+})));
+
+export async function getParcelRateCard(zone = 'default'): Promise<ParcelRateCell[]> {
+  if (USE_MOCK) { await delay(); return PARCEL_RATE_CARD.filter((c) => c.zone === zone); }
+  const j = await getJson<{ cells?: ParcelRateCell[] }>(`/parcel-rate-card?zone=${encodeURIComponent(zone)}`);
+  return j.cells ?? [];
+}
+
+export async function updateParcelRateCell(
+  zone: string, size: ParcelSize, speed: ParcelSpeed, patch: ParcelRateCellPatch, reason: string,
+): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay(350);
+    PARCEL_RATE_CARD = PARCEL_RATE_CARD.map((c) => (c.zone === zone && c.size === size && c.speed === speed
+      ? { ...c, ...patch, updatedAt: new Date().toISOString() } : c));
+    pushAudit('parcel_rate_card.update', `${zone} / ${size} / ${speed}`, reason);
+    return { ok: true };
+  }
+  // Integer bps / kobo only; the server re-validates bounds and audits with the reason.
+  return sendJson(`/parcel-rate-card/${size}/${speed}`, 'PATCH', {
+    zone,
+    reason,
+    ...(patch.multiplierBps != null ? { multiplier_bps: patch.multiplierBps } : {}),
+    ...(patch.minFareKobo != null ? { min_fare_kobo: patch.minFareKobo } : {}),
+    ...(patch.active != null ? { active: patch.active } : {}),
   });
 }
 

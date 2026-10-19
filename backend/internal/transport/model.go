@@ -75,6 +75,9 @@ const (
 	// charge amount must equal the fare this service independently recomputes
 	// at booking time. See Service.requestRide's external-funding cross-check.
 	CodeAmountMismatch = "AMOUNT_MISMATCH"
+	// CodeFareChanged: the wallet parcel fare moved since the estimate the
+	// customer confirmed (expected_fare_kobo); nothing was charged.
+	CodeFareChanged = "FARE_CHANGED"
 )
 
 // CodedError carries an HTTP status + machine-readable code alongside a message.

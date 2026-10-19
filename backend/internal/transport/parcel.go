@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -60,6 +61,8 @@ func parcelSpeedMultiplier(speed string) float64 {
 	switch speed {
 	case "express":
 		return 1.5
+	case "same_day": // shown as "Priority" in the app: ASAP, dedicated courier
+		return 2.2
 	case "scheduled":
 		return 0.9
 	default: // standard
@@ -120,6 +123,14 @@ type ParcelBookRequest struct {
 	DeclaredValueKobo int64  `json:"declared_value_kobo"`
 	ProhibitedAck     bool   `json:"prohibited_ack"`
 	IdempotencyKey    string `json:"idempotency_key"`
+	// ExpectedFareKobo is the fare the customer confirmed on the estimate
+	// (fareKobo, not totalKobo). Wallet path only: a mismatch with the live fare
+	// is refused (409 FARE_CHANGED) before any money moves. Nil = legacy
+	// behaviour (older app builds, scheduled dispatch). See checkExpectedParcelFare.
+	ExpectedFareKobo *int64 `json:"expected_fare_kobo,omitempty"`
+	// RouteToken is the estimate's routeToken: wallet bookings price from its
+	// signed route (live config). Ignored unless it verifies. See parcel_route_token.go.
+	RouteToken string `json:"route_token,omitempty"`
 }
 
 // ParcelPickedUpRequest carries the parcel photo confirmation.
@@ -142,6 +153,15 @@ type ParcelEstimate struct {
 	TotalKobo       int64   `json:"totalKobo"`
 	SizeMultiplier  float64 `json:"sizeMultiplier"`
 	SpeedMultiplier float64 `json:"speedMultiplier"`
+	// RouteToken signs this estimate's route for the wallet booking to price
+	// from (route_token). Empty when route tokens are off.
+	RouteToken string `json:"routeToken,omitempty"`
+	// Options prices every size × speed on this route, so each choice can show
+	// its own price.
+	Options []ParcelPriceOption `json:"options"`
+	// Insurance names the cover the declared value buys. Nil when insurance is
+	// not wired on this server.
+	Insurance *ParcelInsuranceInfo `json:"insurance,omitempty"`
 }
 
 // parcelFare computes the fare: (base + per_km*km) * size * speed, floored at min.
@@ -180,7 +200,15 @@ func (s *Service) EstimateParcel(ctx context.Context, req ParcelEstimateRequest)
 	if err != nil {
 		return nil, err
 	}
-	fare := parcelFare(route.DistanceM, route.DurationS, req.Size, req.Speed, cfg)
+	card, err := s.loadParcelRateCard(ctx, "default")
+	if err != nil {
+		return nil, err
+	}
+	size, speed, _, err := normalizeParcelOptions(req.Size, req.Speed, req.Category)
+	if err != nil {
+		return nil, err
+	}
+	fare, _ := parcelFareFor(route.DistanceM, route.DurationS, size, speed, cfg, card)
 	insurance := s.parcelIndicativeInsurance(ctx, req.DeclaredValueKobo, cfg)
 	return &ParcelEstimate{
 		DistanceM:       route.DistanceM,
@@ -188,8 +216,11 @@ func (s *Service) EstimateParcel(ctx context.Context, req ParcelEstimateRequest)
 		FareKobo:        fare,
 		InsuranceKobo:   insurance,
 		TotalKobo:       fare + insurance,
-		SizeMultiplier:  parcelSizeMultiplier(req.Size),
-		SpeedMultiplier: parcelSpeedMultiplier(req.Speed),
+		SizeMultiplier:  parcelSizeMultiplier(size),
+		SpeedMultiplier: parcelSpeedMultiplier(speed),
+		Options:         parcelPriceOptions(route.DistanceM, route.DurationS, cfg, card),
+		Insurance:       s.parcelInsuranceInfo(ctx),
+		RouteToken:      signParcelRoute(s.parcelRouteSecret, req.Pickup, req.Dropoff, route, time.Now()),
 	}, nil
 }
 
@@ -200,6 +231,7 @@ type parcelPricing struct {
 	fare, insurance int64
 	route           RouteResult
 	cfg             *PricingConfig
+	rate            *parcelRate // the rate-card cell priced from; nil = legacy multipliers
 	size, speed     string
 	category        string
 }
@@ -214,37 +246,33 @@ func (s *Service) priceParcel(ctx context.Context, req ParcelBookRequest) (*parc
 	if err != nil {
 		return nil, err
 	}
-	route, err := s.maps.Route(ctx,
-		LatLng{Lat: req.Pickup.Lat, Lng: req.Pickup.Lng},
-		LatLng{Lat: req.Dropoff.Lat, Lng: req.Dropoff.Lng},
-	)
+	// The estimate's signed route when the request carries a valid token
+	// (server-computed, so not client-controlled), else a live routing call.
+	route, err := s.parcelRouteForBooking(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return s.priceParcelWith(ctx, req, cfg, route), nil
+	card, err := s.loadParcelRateCard(ctx, "default")
+	if err != nil {
+		return nil, err
+	}
+	return s.priceParcelWith(ctx, req, cfg, route, card)
 }
 
 // priceParcelWith is the pure pricing step shared by live and frozen pricing:
 // given a config and a route it applies size/speed defaults and computes the
 // fare (the ONLY charged amount) and the indicative insurance (display only).
-func (s *Service) priceParcelWith(ctx context.Context, req ParcelBookRequest, cfg *PricingConfig, route RouteResult) *parcelPricing {
-	size := req.Size
-	if size == "" {
-		size = "small"
+func (s *Service) priceParcelWith(ctx context.Context, req ParcelBookRequest, cfg *PricingConfig, route RouteResult, card parcelRateCard) (*parcelPricing, error) {
+	size, speed, category, err := normalizeParcelOptions(req.Size, req.Speed, req.Category)
+	if err != nil {
+		return nil, err
 	}
-	speed := req.Speed
-	if speed == "" {
-		speed = "standard"
-	}
-	category := req.Category
-	if category == "" {
-		category = "small"
-	}
+	fare, rate := parcelFareFor(route.DistanceM, route.DurationS, size, speed, cfg, card)
 	return &parcelPricing{
-		fare:      parcelFare(route.DistanceM, route.DurationS, size, speed, cfg),
+		fare:      fare,
 		insurance: s.parcelIndicativeInsurance(ctx, req.DeclaredValueKobo, cfg),
-		route:     route, cfg: cfg, size: size, speed: speed, category: category,
-	}
+		route:     route, cfg: cfg, rate: rate, size: size, speed: speed, category: category,
+	}, nil
 }
 
 // parcelFrozenPricing is the priced input set frozen at card-direct initiate
@@ -256,6 +284,9 @@ type parcelFrozenPricing struct {
 	DistanceM int           `json:"distanceM"`
 	DurationS int           `json:"durationS"`
 	Config    PricingConfig `json:"config"`
+	// Rate is the rate-card cell the quote used; nil means legacy multipliers
+	// (the card was off, had no such cell, or the intent predates the card).
+	Rate *parcelRate `json:"rate,omitempty"`
 }
 
 // priceParcelFrozen is priceParcel over frozen inputs; a nil frozen falls back
@@ -265,7 +296,16 @@ func (s *Service) priceParcelFrozen(ctx context.Context, req ParcelBookRequest, 
 		return s.priceParcel(ctx, req)
 	}
 	cfg := frozen.Config // copy: never alias the caller's snapshot
-	return s.priceParcelWith(ctx, req, &cfg, RouteResult{DistanceM: frozen.DistanceM, DurationS: frozen.DurationS}), nil
+	// Replay exactly the cell that was quoted; never re-read the live card.
+	var card parcelRateCard
+	if frozen.Rate != nil {
+		size, speed, _, err := normalizeParcelOptions(req.Size, req.Speed, req.Category)
+		if err != nil {
+			return nil, err
+		}
+		card = parcelRateCard{rateCardKey(size, speed): *frozen.Rate}
+	}
+	return s.priceParcelWith(ctx, req, &cfg, RouteResult{DistanceM: frozen.DistanceM, DurationS: frozen.DurationS}, card)
 }
 
 // BookParcel books + escrows a parcel from the sender's WALLET (KYC-tier
@@ -289,6 +329,7 @@ func (s *Service) BookParcel(ctx context.Context, senderID string, req ParcelBoo
 // by transport/paystackcheckout to decide what to ask Paystack for. Never
 // trusted as final: BookParcelPaystackFunded independently recomputes it.
 func (s *Service) QuoteParcelBooking(ctx context.Context, req ParcelBookRequest) (int64, error) {
+	req.RouteToken = "" // card-direct prices a live route; route tokens are wallet-only
 	if !req.ProhibitedAck {
 		return 0, codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
 	}
@@ -303,6 +344,7 @@ func (s *Service) QuoteParcelBooking(ctx context.Context, req ParcelBookRequest)
 // (JSON) the card-direct engine stores in the intent and hands back to
 // BookParcelPaystackFundedFrozen.
 func (s *Service) QuoteParcelBookingFrozen(ctx context.Context, req ParcelBookRequest) (int64, json.RawMessage, error) {
+	req.RouteToken = "" // card-direct prices a live route; route tokens are wallet-only
 	if !req.ProhibitedAck {
 		return 0, nil, codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
 	}
@@ -310,7 +352,7 @@ func (s *Service) QuoteParcelBookingFrozen(ctx context.Context, req ParcelBookRe
 	if err != nil {
 		return 0, nil, err
 	}
-	frozen, err := json.Marshal(parcelFrozenPricing{DistanceM: pr.route.DistanceM, DurationS: pr.route.DurationS, Config: *pr.cfg})
+	frozen, err := json.Marshal(parcelFrozenPricing{DistanceM: pr.route.DistanceM, DurationS: pr.route.DurationS, Config: *pr.cfg, Rate: pr.rate})
 	if err != nil {
 		return 0, nil, fmt.Errorf("transport: freeze parcel pricing: %w", err)
 	}
@@ -404,14 +446,19 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 	if !req.ProhibitedAck {
 		return "", codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
 	}
+	// Replay: a repeat of an already-booked key (card-funded, or a wallet retry
+	// whose response was lost) returns that parcel untouched — no second escrow,
+	// no second row, no second tier check, and never a FARE_CHANGED for a
+	// booking that was already charged. The wallet path used to reach the
+	// INSERT and 500 on UNIQUE(idempotency_key).
 	if external {
-		// Replay: a repeat of an already-booked card-funded parcel returns it
-		// untouched — no second escrow, no second row.
-		if id, found, err := s.FindParcelByIdempotencyKey(ctx, senderID, idempotencyKey); err != nil {
-			return "", err
-		} else if found {
-			return id, nil
-		}
+		// Card-direct is pinned by its own frozen quote; tokens are wallet-only.
+		req.RouteToken = ""
+	}
+	if id, found, err := s.findParcelReplay(ctx, senderID, idempotencyKey, req, !external); err != nil {
+		return "", err
+	} else if found {
+		return id, nil
 	}
 	var pr *parcelPricing
 	var err error
@@ -443,6 +490,13 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		if fare != verifiedAmountKobo {
 			return "", codedErr(http.StatusConflict, CodeAmountMismatch, "verified payment amount no longer matches the parcel fare")
 		}
+	} else if err := checkExpectedParcelFare(req.ExpectedFareKobo, fare); err != nil {
+		// The wallet path prices live at book time, so pricing config or the
+		// rate card can move between the estimate the customer confirmed and
+		// this call. Refuse BEFORE the tier gate and the escrow: nothing moves,
+		// and the app re-confirms the new price. (A key that already booked
+		// never gets here: the replay check above returned it.)
+		return "", err
 	} else if err := s.enforceTierLimit(ctx, senderID, fare); err != nil {
 		// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same
 		// contract as RequestRide): a Tier0/over-limit sender cannot move
@@ -523,6 +577,11 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 			if id != "" { // a concurrent confirm owns the escrow
 				return id, nil
 			}
+		} else if id, found, ferr := s.findParcelReplay(ctx, senderID, idempotencyKey, req, true); ferr == nil && found {
+			// A concurrent same-key wallet request won the INSERT. Its escrow is
+			// the only one (the escrow is idempotent on the key), so hand back its
+			// parcel rather than a 500.
+			return id, nil
 		}
 		return "", fmt.Errorf("transport: insert parcel: %w", err)
 	}
@@ -780,8 +839,8 @@ func (s *Service) VerifyParcelPickupPin(ctx context.Context, id, driverUserID, p
 	if p.Status != "courier_assigned" {
 		return codedErr(http.StatusConflict, CodeInvalidState, "parcel not awaiting pickup PIN")
 	}
-	if p.PickupPin == nil || *p.PickupPin != pin {
-		return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "pickup PIN does not match")
+	if err := s.checkPin(ctx, "parcel", id, "pickup", derefStr(p.PickupPin), pin, driverUserID); err != nil {
+		return err
 	}
 	if err := s.parcelSetStatus(ctx, id, "courier_assigned", "pickup_pin_verified"); err != nil {
 		return err
@@ -823,8 +882,8 @@ func (s *Service) VerifyParcelDropoff(ctx context.Context, id, driverUserID, pin
 	if p.Status != "in_transit" && p.Status != "picked_up" {
 		return codedErr(http.StatusConflict, CodeInvalidState, "parcel not in transit")
 	}
-	if p.DropoffPin == nil || *p.DropoffPin != pin {
-		return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "dropoff PIN does not match")
+	if err := s.checkPin(ctx, "parcel", id, "dropoff", derefStr(p.DropoffPin), pin, driverUserID); err != nil {
+		return err
 	}
 	if proofURL == "" {
 		return codedErr(http.StatusUnprocessableEntity, "PROOF_REQUIRED", "proof of delivery required")
@@ -1007,4 +1066,65 @@ func (h *Handler) ParcelVerifyDropoff(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "delivered"})
+}
+
+// checkExpectedParcelFare refuses a wallet booking whose live fare differs from
+// the fare the customer confirmed. Exact integer-kobo equality: a fare that
+// went DOWN is refused too, so the customer always sees the amount escrowed.
+// A nil expectation is the legacy path and always passes.
+func checkExpectedParcelFare(expectedKobo *int64, fareKobo int64) error {
+	if expectedKobo == nil || *expectedKobo == fareKobo {
+		return nil
+	}
+	ce := codedErr(http.StatusConflict, CodeFareChanged, "the delivery price changed since your estimate; please review the new price")
+	ce.Details = map[string]any{"fare_kobo": fareKobo, "expected_fare_kobo": *expectedKobo}
+	return ce
+}
+
+// findParcelReplay returns the parcel this sender already booked under key.
+// With checkBody (the wallet path) a reused key must carry the SAME booking —
+// route, receiver, size and speed — or it is a 409 IDEMPOTENCY_KEY_CONFLICT,
+// never a silent hand-back of a parcel the customer did not ask for. The
+// card-direct path skips the check: its body is pinned by the intent store.
+func (s *Service) findParcelReplay(ctx context.Context, senderID, key string, req ParcelBookRequest, checkBody bool) (string, bool, error) {
+	var (
+		id                         string
+		pLat, pLng, dLat, dLng     float64
+		receiverPhone, size, speed string
+	)
+	err := s.db.QueryRow(ctx, `
+		SELECT id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, receiver_phone, size, speed
+		FROM parcels WHERE idempotency_key=$1 AND sender_id=$2`, key, senderID).
+		Scan(&id, &pLat, &pLng, &dLat, &dLng, &receiverPhone, &size, &speed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if checkBody && (pLat != req.Pickup.Lat || pLng != req.Pickup.Lng || dLat != req.Dropoff.Lat || dLng != req.Dropoff.Lng ||
+		receiverPhone != req.ReceiverPhone || size != replaySize(req.Size) || speed != replaySpeed(req.Speed)) {
+		return "", false, codedErr(http.StatusConflict, CodeKeyConflict, "this idempotency key was already used for a different parcel booking; retry with a new key")
+	}
+	return id, true, nil
+}
+
+// replaySize / replaySpeed apply the defaults (and the app's "priority" alias)
+// a booking is stored with, so a retry of the same request compares equal.
+func replaySize(size string) string {
+	if size = strings.ToLower(strings.TrimSpace(size)); size == "" {
+		return "small"
+	}
+	return size
+}
+
+func replaySpeed(speed string) string {
+	switch sp := strings.ToLower(strings.TrimSpace(speed)); sp {
+	case "":
+		return "standard"
+	case "priority":
+		return "same_day"
+	default:
+		return sp
+	}
 }

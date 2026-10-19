@@ -43,6 +43,10 @@ type tierLimiter interface {
 
 // Service manages driver registration, trip lifecycle, fare negotiation, and settlement.
 type Service struct {
+	// parcelRouteSecret signs parcel route tokens (WithParcelRouteTokenSecret);
+	// "" = tokens off, bookings route live. See parcel_route_token.go.
+	parcelRouteSecret string
+
 	db               *pgxpool.Pool
 	settlement       *settlement.Service
 	tiers            tierLimiter // fail-closed KYC-tier / daily-spend gate on rider money moves
@@ -56,6 +60,11 @@ type Service struct {
 	// Read-only afterwards, so no lock. See external_funding.go.
 	domainRefunders map[string]ExternalRefunder
 	bus             BusConfig // wallet bus path: deferred settlement / cancel cutoff / booking lead (WithBusConfig)
+	// parcelRateCardOn prices parcels from transport_parcel_rate_card (WithParcelRateCard).
+	parcelRateCardOn bool
+	// parcelInsuranceMinKobo floors the indicative Goods-in-Transit premium at the
+	// provider's minimum (WithParcelInsuranceMinPremium); 0 = no floor.
+	parcelInsuranceMinKobo int64
 }
 
 // ExternalRefunder is the nil-safe seam transport.Service uses to correctly
@@ -638,7 +647,13 @@ func nullPhase(p TripPhase) any {
 
 // writeAudit inserts a row into transport_audit_log. Every admin mutation must
 // call this. old/new are JSON-serialised; nil values are stored as SQL NULL.
-func writeAudit(ctx context.Context, db *pgxpool.Pool, adminID, action, entityType, entityID string, oldVal, newVal any, reason string) error {
+// auditExecer is satisfied by both *pgxpool.Pool and pgx.Tx, so a mutation can
+// write its audit row inside its own transaction (all-or-nothing).
+type auditExecer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func writeAudit(ctx context.Context, db auditExecer, adminID, action, entityType, entityID string, oldVal, newVal any, reason string) error {
 	var oldJSON, newJSON []byte
 	if oldVal != nil {
 		oldJSON = jsonx.Marshal(oldVal)

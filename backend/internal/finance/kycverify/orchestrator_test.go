@@ -52,11 +52,13 @@ func TestElevation_OnlyOnFullPass(t *testing.T) {
 			resolved: SessTierPending,
 		},
 		{
-			name:     "tier2 facial in review → needs review, no elevate",
+			// ADR-PR808: verification is fully automated — a legacy REVIEW row
+			// now resolves as TIER_FAILED, so the user retries from scratch.
+			name:     "tier2 legacy facial REVIEW → tier failed, no elevate",
 			tier:     2,
 			byType:   map[provider.KycCheckType]provider.KycCheckStatus{provider.KycIDNumber: provider.KycPassed, provider.KycIDFacial: provider.KycReview},
 			elevate:  false,
-			resolved: SessNeedsReview,
+			resolved: SessTierFailed,
 		},
 		{
 			name:     "tier2 id failed → tier failed, no elevate",

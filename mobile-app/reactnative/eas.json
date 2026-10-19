@@ -9,8 +9,12 @@
       "distribution": "internal",
       "channel": "development",
       "env": {
+        "EXPO_PUBLIC_APP_ENV": "development",
         "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "development",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "paymax",
+        "EXPO_PUBLIC_LOCAL_API_BASE_URL": "http://localhost:3000",
+        "EXPO_PUBLIC_LOCAL_CONNECT_API_HOST": "http://localhost:8091",
+        "EXPO_PUBLIC_LOCAL_SUPABASE_URL": "http://localhost:54321",
         "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       }
     },
@@ -30,6 +34,9 @@
         "EXPO_PUBLIC_SUPABASE_URL": "https://wnicsubiznmishkmunsv.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InduaWNzdWJpem5taXNoa211bnN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTc1OTYsImV4cCI6MjA5MDU3MzU5Nn0.Mjyylv7IA_8PQ2gLo-hmxRNl2Csbm5wOmo5lStf1g5g",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "paymax",
+        "EXPO_PUBLIC_LOCAL_API_BASE_URL": "http://localhost:3000",
+        "EXPO_PUBLIC_LOCAL_CONNECT_API_HOST": "http://localhost:8091",
+        "EXPO_PUBLIC_LOCAL_SUPABASE_URL": "http://localhost:54321",
         "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       }
     },
@@ -61,6 +68,9 @@
         "EXPO_PUBLIC_SUPABASE_URL": "https://wnicsubiznmishkmunsv.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InduaWNzdWJpem5taXNoa211bnN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTc1OTYsImV4cCI6MjA5MDU3MzU5Nn0.Mjyylv7IA_8PQ2gLo-hmxRNl2Csbm5wOmo5lStf1g5g",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "paymax",
+        "EXPO_PUBLIC_LOCAL_API_BASE_URL": "http://localhost:3000",
+        "EXPO_PUBLIC_LOCAL_CONNECT_API_HOST": "http://localhost:8091",
+        "EXPO_PUBLIC_LOCAL_SUPABASE_URL": "http://localhost:54321",
         "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       }
     },
@@ -79,6 +89,9 @@
         "EXPO_PUBLIC_SUPABASE_URL": "https://wnicsubiznmishkmunsv.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InduaWNzdWJpem5taXNoa211bnN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTc1OTYsImV4cCI6MjA5MDU3MzU5Nn0.Mjyylv7IA_8PQ2gLo-hmxRNl2Csbm5wOmo5lStf1g5g",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "paymax",
+        "EXPO_PUBLIC_LOCAL_API_BASE_URL": "http://localhost:3000",
+        "EXPO_PUBLIC_LOCAL_CONNECT_API_HOST": "http://localhost:8091",
+        "EXPO_PUBLIC_LOCAL_SUPABASE_URL": "http://localhost:54321",
         "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       }
     }

@@ -40,7 +40,6 @@ export default function AdminDashboardScreen() {
   const kpis = d
     ? [
         { label: 'Total users', value: d.users.toLocaleString('en-NG'), icon: 'Users', iconColor: Colors.secondary, iconBg: Colors.iconBgBlue, route: '/admin/users' as const },
-        { label: 'Open KYC', value: String(d.openKyc), icon: 'ShieldCheck', iconColor: Colors.onWarning, iconBg: Colors.iconBgGold, route: '/admin/kyc' as const },
         { label: 'Pending withdrawals', value: String(d.pendingWithdrawals), icon: 'Banknote', iconColor: Colors.primary, iconBg: Colors.iconBgPurple, route: '/admin/withdrawals' as const },
         { label: 'Failed orders (24h)', value: String(d.failedOrders), icon: 'TriangleAlert', iconColor: Colors.error, iconBg: Colors.iconBgRed, route: '/admin/orders' as const },
         { label: 'Recon exceptions', value: String(d.reconExceptions), icon: 'Scale', iconColor: Colors.teal, iconBg: Colors.iconBgTeal, route: '/admin/reconciliation' as const },

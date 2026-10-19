@@ -128,27 +128,6 @@ export async function getUser(id: string): Promise<UserDetail> {
   return live<UserDetail>(() => api.get(`/api/v1/admin/users/${id}`, roleHeaders()));
 }
 
-export async function getKycQueue(): Promise<KycCase[]> {
-  if (USE_MOCK) {
-    await delay();
-    return [...MOCK_KYC].sort((a, b) => +new Date(a.submittedAt) - +new Date(b.submittedAt));
-  }
-  return live<KycCase[]>(() => api.get('/api/v1/admin/kyc', roleHeaders()));
-}
-
-export async function reviewKyc(id: string, decision: KycDecision, reason: string): Promise<KycCase> {
-  if (USE_MOCK) {
-    await delay(600);
-    const found = MOCK_KYC.find((k) => k.id === id);
-    if (!found) throw new Error('KYC case not found');
-    found.status = decision === 'approve' ? 'approved' : decision === 'reject' ? 'rejected' : 'escalated';
-    return found;
-  }
-  return live<KycCase>(() =>
-    api.post(`/api/v1/admin/kyc/${id}/review`, { decision, reason }, roleHeaders()),
-  );
-}
-
 export async function getAssetControls(): Promise<AssetControl[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_ASSET_CONTROLS]; }
   return live<AssetControl[]>(() => api.get('/api/v1/admin/assets', roleHeaders()));

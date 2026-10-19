@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -307,77 +306,6 @@ func webhookSignature(c *gin.Context, providerName string) string {
 	}
 }
 
-// ReviewQueue handles GET /api/finance/admin/kyc/review-queue
-func (h *Handler) ReviewQueue(c *gin.Context) {
-	cases, err := h.svc.ReviewQueue(c.Request.Context(), 100, 0)
-	if err != nil {
-		writeErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"cases": cases})
-}
-
-// GetCase handles GET /api/finance/admin/kyc/cases/:id
-func (h *Handler) GetCase(c *gin.Context) {
-	rc, err := h.svc.GetCase(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		writeErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, rc)
-}
-
-type decisionBody struct {
-	Reason string `json:"reason"`
-}
-
-// maxDecisionReasonLen bounds the free-text reason persisted to the audit trail.
-const maxDecisionReasonLen = 500
-
-// decisionReason parses and validates the mandatory decision reason. On failure
-// it has already written the 400 and the caller must return.
-func decisionReason(c *gin.Context) (string, bool) {
-	var body decisionBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "a JSON body with a reason is required"})
-		return "", false
-	}
-	reason := strings.TrimSpace(body.Reason)
-	if reason == "" || len(reason) > maxDecisionReasonLen {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "reason is required (1-500 characters)"})
-		return "", false
-	}
-	return reason, true
-}
-
-// ApproveCase handles POST /api/finance/admin/kyc/cases/:id/approve
-func (h *Handler) ApproveCase(c *gin.Context) {
-	reason, ok := decisionReason(c)
-	if !ok {
-		return
-	}
-	st, err := h.svc.ApproveCase(c.Request.Context(), c.Param("id"), ginutil.UserID(c), reason)
-	if err != nil {
-		writeErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": st})
-}
-
-// RejectCase handles POST /api/finance/admin/kyc/cases/:id/reject
-func (h *Handler) RejectCase(c *gin.Context) {
-	reason, ok := decisionReason(c)
-	if !ok {
-		return
-	}
-	st, err := h.svc.RejectCase(c.Request.Context(), c.Param("id"), ginutil.UserID(c), reason)
-	if err != nil {
-		writeErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": st})
-}
-
 // ListRoutingRules handles GET /api/finance/admin/kyc/routing-rules
 func (h *Handler) ListRoutingRules(c *gin.Context) {
 	rules, err := h.svc.ListRoutingRules(c.Request.Context())
@@ -417,17 +345,6 @@ func (h *Handler) UpdateRoutingRule(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, rule)
-}
-
-// Events handles GET /api/finance/admin/kyc/events — the review-queue plus any
-// sessions still pending, a lightweight admin activity view.
-func (h *Handler) Events(c *gin.Context) {
-	cases, err := h.svc.ReviewQueue(c.Request.Context(), 200, 0)
-	if err != nil {
-		writeErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"events": cases})
 }
 
 // validCheckType guards the routing-rule path param against the CHECK domain.

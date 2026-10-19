@@ -95,7 +95,10 @@ export default function SpotlightBanner({
 
 const styles = StyleSheet.create({
   image: {
-    width: '100%',
+    // Not `width: '100%'`: that is 100% of the parent and ignores this box's own side
+    // margins, so a caller passing marginHorizontal (home, crypto, association,
+    // realtor, crowdfunding, bills) overflowed the right edge. Stretch fits inside them.
+    alignSelf: 'stretch',
     borderRadius: Radius.lg,
     backgroundColor: Colors.surfaceContainerLow,
   },

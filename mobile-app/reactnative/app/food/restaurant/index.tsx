@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -9,7 +9,6 @@ import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
-import { shadow1 } from '@/constants/tokens';
 import { useOrders } from '@/features/food/hooks';
 import { useMyStores } from '@/features/restaurantmerchant/hooks';
 import { useRestaurantQueueRealtime } from '@/features/food/useRestaurantQueueRealtime';
@@ -127,39 +126,6 @@ export default function RestaurantQueueScreen() {
         </ScrollView>
       )}
 
-      {/* Bottom navigation.
-          These were local tab-state toggles, and selecting one rendered a text
-          link that had to be tapped AGAIN to reach the screen — when it rendered
-          at all. They are destinations, so they navigate. Orders is this screen,
-          hence the selected styling on it and no press handler. */}
-      <View style={[s.bottomMenu, shadow1]}>
-        <View style={[s.menuItem, s.menuItemActive]} accessibilityRole="tab" accessibilityState={{ selected: true }}>
-          <Icons.ReceiptText size={20} color={Colors.primary} strokeWidth={2} />
-          <Text style={[s.menuLabel, s.menuLabelActive]}>Orders</Text>
-        </View>
-
-        <Pressable
-          style={s.menuItem}
-          onPress={() => router.push('/food/restaurant/earnings')}
-          accessibilityRole="tab"
-          accessibilityLabel="Earnings"
-          accessibilityState={{ selected: false }}
-        >
-          <Icons.TrendingUp size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
-          <Text style={s.menuLabel}>Earnings</Text>
-        </Pressable>
-
-        <Pressable
-          style={s.menuItem}
-          onPress={() => router.push('/food/restaurant/manage')}
-          accessibilityRole="tab"
-          accessibilityLabel="Manage"
-          accessibilityState={{ selected: false }}
-        >
-          <Icons.Settings size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
-          <Text style={s.menuLabel}>Manage</Text>
-        </Pressable>
-      </View>
     </SafeAreaView>
   );
 }
@@ -182,32 +148,7 @@ const s = StyleSheet.create({
   livePill: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#16A34A' },
   liveLabel: { ...Typography.labelSm, color: '#16A34A' },
-  content: { padding: Spacing.containerMargin, paddingBottom: Platform.OS === 'ios' ? 100 : 80 },
+  content: { padding: Spacing.containerMargin, paddingBottom: Spacing.xl },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginBottom: Spacing.md, marginTop: Spacing.xs },
   empty: { ...Typography.bodySm, color: Colors.outline, marginBottom: Spacing.lg },
-  bottomMenu: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    backgroundColor: Colors.surfaceContainerLowest,
-    borderTopWidth: 1,
-    borderTopColor: Colors.surfaceContainerHigh,
-    paddingBottom: Platform.OS === 'ios' ? 20 : 12,
-    paddingTop: Spacing.sm,
-  },
-  menuItem: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.sm,
-    gap: 4,
-  },
-  menuItemActive: {
-    borderBottomWidth: 2,
-    borderBottomColor: Colors.primary,
-  },
-  menuLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-  menuLabelActive: { ...Typography.labelSm, color: Colors.primary, fontWeight: '600' as const },
 });

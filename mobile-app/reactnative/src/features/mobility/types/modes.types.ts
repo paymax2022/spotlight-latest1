@@ -34,13 +34,32 @@ export interface ParcelEstimateRequest {
   declaredValueKobo: Kobo;
 }
 
+export interface ParcelPriceOption {
+  size: ParcelSize;
+  speed: ParcelSpeed;
+  fareKobo: Kobo;
+}
+
+/** The Goods-in-Transit cover the declared value buys (server catalog). */
+export interface ParcelInsuranceInfo {
+  productCode: string;
+  productName: string;
+  underwriter: string;
+  provider: string;
+  minPremiumKobo: Kobo;
+  indicative: boolean;       // always true: the insurer confirms the premium when a courier accepts
+}
+
 export interface ParcelEstimate {
   distanceM: number;
   durationS: number;
   fareKobo: Kobo;            // distance × size × speed (server)
-  insuranceKobo: Kobo;       // based on declared value
+  insuranceKobo: Kobo;       // indicative premium on the declared value
   totalKobo: Kobo;
   currency: 'NGN';
+  routeToken?: string;       // server-signed route; send back as routeToken on the booking
+  options?: ParcelPriceOption[];        // every size × speed on this route (server)
+  insurance?: ParcelInsuranceInfo | null;
 }
 
 export interface ParcelBookRequest {
@@ -56,6 +75,12 @@ export interface ParcelBookRequest {
   prohibitedAck: boolean;    // required true
   paymentMethod: 'wallet' | 'card';
   idempotencyKey: string;
+  // Fare (not total) the customer confirmed on the estimate. The server refuses
+  // a wallet booking with 409 FARE_CHANGED, before charging, if it moved.
+  expectedFareKobo?: Kobo;
+  // The estimate's routeToken: the server prices the booking from the route the
+  // customer saw, so traffic changes alone can't trigger FARE_CHANGED.
+  routeToken?: string;
 }
 
 export interface Courier {

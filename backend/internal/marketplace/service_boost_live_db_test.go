@@ -96,7 +96,32 @@ func seedBoostCategory(t *testing.T, ctx context.Context, pool *pgxpool.Pool) st
 		id, "boost-test-"+id); err != nil {
 		t.Fatalf("seed category: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM mkt_categories WHERE id=$1`, id) })
+	// Clear every referrer before the category itself: even on a clean run the test seeds a
+	// listing + a mkt_boosts row (+ sometimes a thread/outbox event), each of which has an FK
+	// on mkt_listings. A plain `DELETE FROM mkt_categories` silently fails against those FKs,
+	// leaking the row — 51 of these were visible on the marketplace landing screen before this.
+	// scripts/dev/sweep-test-fixtures.sql is the backstop for a run that is killed outright.
+	t.Cleanup(func() {
+		ctx := context.WithoutCancel(ctx)
+		const listings = `SELECT id FROM public.mkt_listings WHERE category_id=$1`
+		const threads = `SELECT id FROM public.mkt_threads WHERE listing_id IN (` + listings + `)`
+		for _, q := range []string{
+			`DELETE FROM public.mkt_messages        WHERE thread_id  IN (` + threads + `)`,
+			`DELETE FROM public.mkt_deal_reviews    WHERE thread_id  IN (` + threads + `)`,
+			`DELETE FROM public.mkt_threads         WHERE listing_id IN (` + listings + `)`,
+			`DELETE FROM public.mkt_boosts          WHERE listing_id IN (` + listings + `)`,
+			`DELETE FROM public.mkt_listings_outbox WHERE listing_id IN (` + listings + `)`,
+			`DELETE FROM public.mkt_listing_media   WHERE listing_id IN (` + listings + `)`,
+			`DELETE FROM public.mkt_offers          WHERE listing_id IN (` + listings + `)`,
+			`DELETE FROM public.mkt_orders          WHERE listing_id IN (` + listings + `)`,
+			`DELETE FROM public.mkt_saved_items     WHERE listing_id IN (` + listings + `)`,
+			`DELETE FROM public.mkt_contact_reveals WHERE listing_id IN (` + listings + `)`,
+			`DELETE FROM public.mkt_listings        WHERE category_id=$1`,
+			`DELETE FROM public.mkt_categories      WHERE id=$1`,
+		} {
+			_, _ = pool.Exec(ctx, q, id)
+		}
+	})
 	return id
 }
 

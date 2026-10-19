@@ -12,7 +12,11 @@ export interface EmergencyAlert {
 }
 export interface CreateEmergencyInput { kind: EmergencyKind; description?: string; location?: string; idempotencyKey: string; }
 
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_EMERGENCIES_USE_MOCK, true);
+// The /api/v1/estate/emergencies handlers are live and query a real table, so this defaults
+// to live: a forgotten flag fails visibly instead of inventing alerts. Set
+// EXPO_PUBLIC_EMERGENCIES_USE_MOCK=true to force fixtures locally. NOTE: raising an alert only
+// records a row — nothing pushes it to security or admins (see docs/audit/MOBILE_SIMULATED_WRITES.md).
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_EMERGENCIES_USE_MOCK, false);
 
 // Emergencies/incidents are served by the resident-scoped frontend-web handlers
 // under /api/v1/estate/emergencies (GET list, POST create, POST /{id}/resolve).
@@ -38,11 +42,18 @@ export const STATUS_META: Record<EmergencyStatus, { label: string; color: string
 };
 
 const H = 3_600_000, iso = (o: number) => new Date(Date.now() + o).toISOString();
-let alerts: EmergencyAlert[] = [
+const alerts: EmergencyAlert[] = [
   { id: 'e1', estateId: 'est_amber_court', reporterId: 'res_3', reporterName: 'Emeka Eze', kind: 'security', description: 'Two unknown individuals loitering near Block A.', location: 'Block A', status: 'responding', createdAt: iso(-0.5 * H) },
   { id: 'e2', estateId: 'est_amber_court', reporterId: 'res_2', reporterName: 'Ngozi Okeke', kind: 'noise', description: 'Loud party past midnight.', location: 'Block C, Flat 9', status: 'resolved', createdAt: iso(-30 * H) },
 ];
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+
+// createEmergency and resolveEmergency have live route handlers, so fixture mode refuses
+// loudly instead of reporting an alert raised or resolved that never reached the database —
+// a faked "emergency sent" is the most dangerous thing to simulate. Mirrors frontend-admin's
+// crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report an alert it did not send. Set EXPO_PUBLIC_EMERGENCIES_USE_MOCK=false to send this against the live backend.`);
 const idem = (k?: string) => ({ headers: { 'Idempotency-Key': k ?? generateIdempotencyKey() } });
 
 export async function listEmergencies(): Promise<EmergencyAlert[]> {
@@ -50,17 +61,13 @@ export async function listEmergencies(): Promise<EmergencyAlert[]> {
   const { data } = await api.get<EmergencyAlert[]>(EMERGENCIES_API_BASE); return data;
 }
 export async function createEmergency(input: CreateEmergencyInput): Promise<EmergencyAlert> {
-  if (USE_MOCK) {
-    await latency(400);
-    const a: EmergencyAlert = { id: `e_${Date.now()}`, estateId: 'est_amber_court', reporterId: 'res_demo', reporterName: 'You', kind: input.kind, description: input.description?.trim() || undefined, location: input.location?.trim() || undefined, status: 'open', createdAt: new Date().toISOString() };
-    alerts = [a, ...alerts]; return { ...a };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Sending an emergency alert');
   const { data } = await api.post<EmergencyAlert>(EMERGENCIES_API_BASE, input, idem(input.idempotencyKey)); return data;
 }
 // The resident-scoped handler exposes POST /api/v1/estate/emergencies/{id}/resolve
 // (frontend-web/app/api/v1/estate/emergencies/[id]/resolve/route.ts), which sets
 // status='resolved' and returns the updated alert.
 export async function resolveEmergency(id: string): Promise<EmergencyAlert> {
-  if (USE_MOCK) { await latency(250); const a = alerts.find((x) => x.id === id); if (!a) throw new Error('Not found'); a.status = 'resolved'; return { ...a }; }
+  if (USE_MOCK) throw notInFixtureMode('Resolving an emergency alert');
   const { data } = await api.post<EmergencyAlert>(`${EMERGENCIES_API_BASE}/${id}/resolve`, {}, idem()); return data;
 }

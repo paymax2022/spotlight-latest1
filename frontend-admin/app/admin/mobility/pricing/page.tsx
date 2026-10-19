@@ -9,6 +9,7 @@ import {
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
 import { colors, thCell, tdCell } from '@/components/ui/vuexy';
+import ParcelRateCardEditor from './ParcelRateCardEditor';
 
 type Draft = Record<string, Partial<PricingConfig>>;
 
@@ -153,6 +154,8 @@ export default function MobilityPricingPage() {
             </Card>
           );
         })}
+
+      <ParcelRateCardEditor canManage={canManage} />
 
       <Card title="Commission tiers (driver / platform split)">
         {commission.length === 0 ? <StateNote kind="empty">No commission tiers.</StateNote> : (

@@ -332,89 +332,6 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 	return s.repo.GetCheck(ctx, stored.ID)
 }
 
-// ReviewQueue returns sessions awaiting human review with their checks.
-func (s *Service) ReviewQueue(ctx context.Context, limit, offset int) ([]ReviewCase, error) {
-	sessions, err := s.repo.ListReviewQueue(ctx, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]ReviewCase, 0, len(sessions))
-	for _, sess := range sessions {
-		checks, err := s.repo.ListChecksForSession(ctx, sess.ID)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, ReviewCase{Session: sess, Checks: checks})
-	}
-	return out, nil
-}
-
-// GetCase returns a single session + its checks for admin review (no owner check
-// — the caller is RBAC-gated).
-func (s *Service) GetCase(ctx context.Context, sessionID string) (*ReviewCase, error) {
-	sess, err := s.repo.GetSession(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	checks, err := s.repo.ListChecksForSession(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	return &ReviewCase{Session: *sess, Checks: checks}, nil
-}
-
-// ApproveCase resolves a review to approval (may elevate tier), audited by admin.
-func (s *Service) ApproveCase(ctx context.Context, sessionID, actorID, reason string) (SessionStatus, error) {
-	st, err := s.orch.ResolveReview(ctx, sessionID, true, actorID)
-	if err != nil {
-		return "", err
-	}
-	s.audit(ctx, "kycverify.admin.approved", actorID, sessionID, reason)
-	s.auditDecision(ctx, "kyc.review.approve", actorID, sessionID, st, reason)
-	return st, nil
-}
-
-// RejectCase resolves a review to rejection, audited by admin.
-func (s *Service) RejectCase(ctx context.Context, sessionID, actorID, reason string) (SessionStatus, error) {
-	st, err := s.orch.ResolveReview(ctx, sessionID, false, actorID)
-	if err != nil {
-		return "", err
-	}
-	s.audit(ctx, "kycverify.admin.rejected", actorID, sessionID, reason)
-	s.auditDecision(ctx, "kyc.review.reject", actorID, sessionID, st, reason)
-	return st, nil
-}
-
-// auditDecision writes the durable audit record for an admin review decision.
-// The decision has already been applied, so a failure to look up the target
-// user must not undo it; the record then carries an empty target and the log
-// line above still names the session.
-func (s *Service) auditDecision(ctx context.Context, action, actorID, sessionID string, outcome SessionStatus, reason string) {
-	if s.adminAuditor == nil {
-		return
-	}
-	target := ""
-	if sess, err := s.repo.GetSession(ctx, sessionID); err == nil && sess != nil {
-		target = sess.UserID
-	}
-	s.adminAuditor.LogAction(actorID, target, action, "kyc", "kyc_verification_session", sessionID,
-		nil, map[string]any{"outcome": string(outcome), "reason": reason}, "", "", "high")
-}
-
-// reviewActorGuard enforces separation of duties on KYC review decisions: the
-// deciding admin must be identified and must not be the account under review,
-// otherwise a reviewer could approve their own tier upgrade. Fail-closed.
-func reviewActorGuard(actorID, sessionOwnerID string) error {
-	a := strings.ToLower(strings.TrimSpace(actorID))
-	if a == "" {
-		return fmt.Errorf("%w: review decision has no actor", ErrForbidden)
-	}
-	if a == strings.ToLower(strings.TrimSpace(sessionOwnerID)) {
-		return fmt.Errorf("%w: reviewers cannot decide their own verification", ErrForbidden)
-	}
-	return nil
-}
-
 // ListRoutingRules returns the current routing rules for the admin console.
 func (s *Service) ListRoutingRules(ctx context.Context) ([]RoutingRule, error) {
 	return s.repo.ListRoutingRules(ctx)
@@ -577,12 +494,17 @@ type TerminalDecision struct {
 
 // DecideTerminal maps a normalized webhook status onto a terminal transition. A
 // still-pending status (PENDING/INITIATED/empty) is a no-op (Apply=false) — the
-// check stays PENDING until an authoritative terminal event arrives. PASSED,
-// FAILED and REVIEW are terminal-ish targets applied through the guard.
+// check stays PENDING until an authoritative terminal event arrives.
+//
+// Policy (ADR-PR808): verification is fully automated via Dojah/other providers;
+// there is no admin review surface. A webhook REVIEW signal is therefore treated
+// as a terminal FAILED, so the user can retry rather than wait on a human.
 func DecideTerminal(status provider.KycCheckStatus) TerminalDecision {
 	switch status {
-	case provider.KycPassed, provider.KycFailed, provider.KycReview:
+	case provider.KycPassed, provider.KycFailed:
 		return TerminalDecision{Apply: true, Target: status}
+	case provider.KycReview:
+		return TerminalDecision{Apply: true, Target: provider.KycFailed}
 	default:
 		return TerminalDecision{Apply: false}
 	}
@@ -746,40 +668,6 @@ func (o *Orchestrator) Recompute(ctx context.Context, sessionID string) (Session
 	return resolved, nil
 }
 
-// ResolveReview applies an admin review decision (APPROVED/REJECTED) to a session
-// under review, guarded, and elevates the tier when the decision approves the
-// full set. actorID is the admin id for the audit trail.
-func (o *Orchestrator) ResolveReview(ctx context.Context, sessionID string, approve bool, actorID string) (SessionStatus, error) {
-	sess, err := o.repo.GetSession(ctx, sessionID)
-	if err != nil {
-		return "", err
-	}
-	if err := reviewActorGuard(actorID, sess.UserID); err != nil {
-		return "", err
-	}
-	target := SessRejected
-	if approve {
-		// Approving a review is a manual override to TIER_VERIFIED (the state
-		// machine allows NEEDS_REVIEW→TIER_VERIFIED).
-		target = SessTierVerified
-	}
-	if !CanTransitionSession(sess.Status, target) {
-		return "", fmt.Errorf("%w: review %s→%s", ErrIllegalTransition, sess.Status, target)
-	}
-	if err := o.repo.UpdateSessionStatus(ctx, sessionID, target); err != nil {
-		return "", err
-	}
-	o.audit(ctx, "kycverify.review.resolved", sess.UserID, sessionID, string(target))
-
-	if target == SessTierVerified {
-		aid := actorID
-		if err := o.elevate(ctx, sess.UserID, sess.TargetTier, &aid); err != nil {
-			return target, fmt.Errorf("kycverify: review tier elevation user=%s: %w", sess.UserID, err)
-		}
-	}
-	return target, nil
-}
-
 // elevate raises the user's tier via the injected elevator, guarded by a nil
 // check. It is only ever called from a TIER_VERIFIED branch above.
 func (o *Orchestrator) elevate(ctx context.Context, userID string, tier int, actorID *string) error {
@@ -894,10 +782,13 @@ func ResolveSessionStatus(targetTier int, statusByType map[provider.KycCheckType
 		return SessUnverified
 	}
 
+	// Legacy rows may still carry REVIEW from before the automated policy
+	// landed (ADR-PR808). Treat them as failed so the user retries fresh
+	// instead of waiting for a human who no longer exists.
 	for _, g := range groups {
 		for _, ct := range g {
 			if statusByType[ct] == provider.KycReview {
-				return SessNeedsReview
+				return SessTierFailed
 			}
 		}
 	}
@@ -934,20 +825,22 @@ func ResolveSessionStatus(targetTier int, statusByType map[provider.KycCheckType
 }
 
 // GateFacial applies the confidence threshold to a facial/document result:
-// at/above threshold with a match → PASSED; a positive-but-low score → REVIEW
-// (never a silent fail); an explicit non-match → FAILED.
+// at/above threshold with a match → PASSED; anything else → FAILED (the user
+// can retry).
+//
+// Policy (ADR-PR808): verification is fully automated via Dojah; there is no
+// admin review surface, so a positive-but-low score is no longer parked in
+// REVIEW — it is a hard FAIL that the user retries from scratch.
 func GateFacial(match bool, confidence float64, threshold int) provider.KycCheckStatus {
 	if match && confidence >= float64(threshold) {
 		return provider.KycPassed
 	}
-	if confidence > 0 {
-		return provider.KycReview
-	}
 	return provider.KycFailed
 }
 
-// OpenReviewCaseID returns the id of the user's current open review case (their
-// latest NEEDS_REVIEW verification session), if any. Read-only.
-func (s *Service) OpenReviewCaseID(ctx context.Context, userID string) (string, bool, error) {
-	return s.repo.LatestReviewSessionID(ctx, userID)
+// OpenReviewCaseID is retained for the per-user admin snapshot API shape, but
+// always returns no case now that verification is fully automated and there
+// are no admin review cases to link to (ADR-PR808).
+func (s *Service) OpenReviewCaseID(_ context.Context, _ string) (string, bool, error) {
+	return "", false, nil
 }
