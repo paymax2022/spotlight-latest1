@@ -43,7 +43,24 @@ function delay<T>(value: T): Promise<T> {
 // Backend / feature flag (FEATURE_MARKETPLACE_ENABLED) may not be live yet —
 // default to deterministic fixtures unless explicitly disabled, so every screen
 // renders. Mirrors arenaAdminService / featuredPlacementAdminService.
-const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_MARKETPLACE_ADMIN_USE_MOCK);
+// resolveUseMock is dev-only about that default: unset means MOCK in development
+// and LIVE in production, so a console with no backend running silently shows
+// fixtures. Exported for FixtureBanner below the tab strip (see _ui.tsx) — the
+// moderation queue looked empty-but-working while a real pending_review listing
+// sat in the database.
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MARKETPLACE_ADMIN_USE_MOCK);
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_MARKETPLACE_ADMIN_USE_MOCK';
+const USE_FIXTURES = USE_MOCK;
+
+// Go registers NO admin route for pricing, vendors or communications (see the
+// `a := base.Group("/admin")` block in
+// backend/internal/app/marketplace_routes.go) — only moderation, flags, boosts,
+// audit-log, analytics, appeals, cms, taxonomy, users and fraud exist. These
+// calls therefore keep serving fixtures even when the console is live, so
+// flipping NEXT_PUBLIC_MARKETPLACE_ADMIN_USE_MOCK=false cannot turn the Pricing
+// tab into a wall of 404s. Delete this once the routes land.
+// Typed as boolean (not a literal) so the live branches stay reachable.
+const NO_BACKEND_YET: boolean = true;
 
 async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
@@ -414,14 +431,14 @@ export async function setBoostDailyRate(dailyRateKobo: number, reasonCode: strin
 }
 
 export async function getCommissionConfig(): Promise<any> {
-  if (USE_FIXTURES) return delay({ category_commissions: {} });
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay({ category_commissions: {} });
   const res = await fetch(`${marketplaceAdminBase()}/pricing/commission`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Commission config fetch failed'));
   return res.json();
 }
 
 export async function setCommissionConfig(data: any, reasonCode?: string): Promise<any> {
-  if (USE_FIXTURES) return delay(data);
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay(data);
   const body = reasonCode ? { ...data, reason_code: reasonCode } : data;
   const res = await fetch(`${marketplaceAdminBase()}/pricing/commission`, {
     method: 'PUT', headers: authHeaders(), body: JSON.stringify(body),
@@ -431,7 +448,7 @@ export async function setCommissionConfig(data: any, reasonCode?: string): Promi
 }
 
 export async function listDiscountCodes(): Promise<any[]> {
-  if (USE_FIXTURES) return delay([]);
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay([]);
   const res = await fetch(`${marketplaceAdminBase()}/pricing/discounts`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Discount codes fetch failed'));
   const data = await res.json();
@@ -439,7 +456,7 @@ export async function listDiscountCodes(): Promise<any[]> {
 }
 
 export async function createDiscountCode(data: any): Promise<any> {
-  if (USE_FIXTURES) return delay({ ...data, id: 'disc_new' });
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay({ ...data, id: 'disc_new' });
   const res = await fetch(`${marketplaceAdminBase()}/pricing/discounts`, {
     method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
   });
@@ -448,7 +465,7 @@ export async function createDiscountCode(data: any): Promise<any> {
 }
 
 export async function setDiscountCodeActive(id: string, active: boolean, reasonCode?: string): Promise<any> {
-  if (USE_FIXTURES) return delay({ id, active });
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay({ id, active });
   const res = await fetch(`${marketplaceAdminBase()}/pricing/discounts/${encodeURIComponent(id)}/active`, {
     method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ active, reason_code: reasonCode }),
   });
@@ -457,7 +474,7 @@ export async function setDiscountCodeActive(id: string, active: boolean, reasonC
 }
 
 export async function listFeaturedSlots(): Promise<any[]> {
-  if (USE_FIXTURES) return delay([]);
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay([]);
   const res = await fetch(`${marketplaceAdminBase()}/pricing/featured-slots`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Featured slots fetch failed'));
   const data = await res.json();
@@ -465,7 +482,7 @@ export async function listFeaturedSlots(): Promise<any[]> {
 }
 
 export async function setFeaturedSlotCap(surface: string, maxSlots: number, reasonCode?: string): Promise<any> {
-  if (USE_FIXTURES) return delay({ surface, max_slots: maxSlots });
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay({ surface, max_slots: maxSlots });
   const res = await fetch(`${marketplaceAdminBase()}/pricing/featured-slots/${encodeURIComponent(surface)}`, {
     method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ max_slots: maxSlots, reason_code: reasonCode }),
   });
@@ -605,7 +622,7 @@ export async function listFraudSignals(severity?: string): Promise<any[]> {
 }
 
 export async function listVendorMetrics(): Promise<any[]> {
-  if (USE_FIXTURES) return delay([]);
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay([]);
   const res = await fetch(`${marketplaceAdminBase()}/vendors/metrics`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Vendor metrics fetch failed'));
   const data = await res.json();
@@ -613,14 +630,14 @@ export async function listVendorMetrics(): Promise<any[]> {
 }
 
 export async function getVendorDetails(id: string): Promise<any> {
-  if (USE_FIXTURES) return delay({});
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay({});
   const res = await fetch(`${marketplaceAdminBase()}/vendors/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Vendor details fetch failed'));
   return res.json();
 }
 
 export async function deleteVendor(id: string): Promise<any> {
-  if (USE_FIXTURES) return delay({ id, deleted: true });
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay({ id, deleted: true });
   const res = await fetch(`${marketplaceAdminBase()}/vendors/${encodeURIComponent(id)}`, {
     method: 'DELETE', headers: authHeaders(),
   });
@@ -629,7 +646,7 @@ export async function deleteVendor(id: string): Promise<any> {
 }
 
 export async function listCommunications(): Promise<any[]> {
-  if (USE_FIXTURES) return delay([]);
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay([]);
   const res = await fetch(`${marketplaceAdminBase()}/communications`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Communications fetch failed'));
   const data = await res.json();
@@ -637,7 +654,7 @@ export async function listCommunications(): Promise<any[]> {
 }
 
 export async function createAnnouncement(data: any): Promise<any> {
-  if (USE_FIXTURES) return delay({ ...data, id: 'ann_new' });
+  if (USE_FIXTURES || NO_BACKEND_YET) return delay({ ...data, id: 'ann_new' });
   const res = await fetch(`${marketplaceAdminBase()}/communications/announcements`, {
     method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
   });
