@@ -1247,6 +1247,59 @@ func (r *Repository) ListBoosts(ctx context.Context, status string, limit, offse
 	return out, rows.Err()
 }
 
+// BoostedListings returns the buyer-facing promoted section: active listings in
+// this market that carry at least one live boost right now, the one with the
+// most UNSPENT boost value first.
+//
+// "Money left" is the same pro-rating CancelBoost refunds by — the fraction of
+// the price whose days have not been delivered yet — summed over a listing's
+// live boosts, floored to whole kobo (never rounded up in the payer's favour).
+// A seller who bought ₦1,000 of boost yesterday and a seller who bought
+// ₦1,000 five days ago therefore do not tie: the earlier one has spent more of
+// what it paid for, and the fresher money promotes.
+//
+// listingCols carries no geo, so this read cannot leak a seller's coordinates
+// any more than a search can; boostedness is the only thing added.
+func (r *Repository) BoostedListings(ctx context.Context, marketID string, limit int) ([]BoostedListing, error) {
+	limit = clampLimit(limit)
+	rows, err := r.db.Query(ctx, `
+		WITH live AS (
+			SELECT b.listing_id,
+			       SUM(GREATEST(0, LEAST(b.price_kobo,
+			           COALESCE(FLOOR(b.price_kobo::numeric *
+			               GREATEST(0, EXTRACT(EPOCH FROM (b.ends_at - now()))) /
+			               NULLIF(EXTRACT(EPOCH FROM (b.ends_at - b.starts_at)), 0)
+			           )::bigint, 0))))::bigint AS remaining_kobo,
+			       MAX(b.ends_at) AS ends_at
+			FROM public.mkt_boosts b
+			WHERE b.status = 'active'
+			  AND b.starts_at IS NOT NULL AND b.ends_at IS NOT NULL
+			  AND b.starts_at <= now() AND b.ends_at > now()
+			GROUP BY b.listing_id
+		)
+		SELECT `+prefixCols("l", listingCols)+`, live.remaining_kobo, live.ends_at
+		FROM live
+		JOIN public.mkt_listings l ON l.id = live.listing_id
+		WHERE l.status = 'active' AND l.market_id = $2
+		ORDER BY live.remaining_kobo DESC, live.ends_at ASC, l.created_at DESC
+		LIMIT $1`, limit, marketID)
+	if err != nil {
+		return nil, wrapInternal("boosted listings", err)
+	}
+	defer rows.Close()
+	out := make([]BoostedListing, 0, limit)
+	for rows.Next() {
+		s := &listingScan{}
+		var b BoostedListing
+		if err := rows.Scan(s.targets(&b.BoostRemainingKobo, &b.BoostEndsAt)...); err != nil {
+			return nil, wrapInternal("boosted listings scan", err)
+		}
+		b.Listing = *s.finish()
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // SetBoostStatus performs a guarded boost transition, optionally recording rejection
 // reason + refund ref.
 func (r *Repository) SetBoostStatus(ctx context.Context, id string, from, to BoostStatus, rejectionReason, refundRef *string) error {

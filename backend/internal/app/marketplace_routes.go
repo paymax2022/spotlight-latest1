@@ -299,7 +299,8 @@ func RegisterMarketplace(
 	base.GET("/sellers/:id/profile", h.SellerProfile)
 	base.GET("/sellers/:id/listings", h.SellerListings)
 	base.GET("/sellers/:id/reviews", h.SellerReviews)
-	base.GET("/boosts/tiers", h.BoostTiers)
+	base.GET("/boosted", h.BoostedListings)
+	base.GET("/boosts/pricing", h.BoostPricing)
 	base.GET("/boosts/quote", h.GetBoostQuote)
 
 	m := base.Group("")

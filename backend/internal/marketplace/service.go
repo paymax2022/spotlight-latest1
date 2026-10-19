@@ -392,6 +392,25 @@ func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	}, nil
 }
 
+// BoostedListings is the promoted section the buyer's home screen shows above
+// "Near you": active listings with a live boost, strongest-unspent-value first
+// (see Repository.BoostedListings for the money-left rule). Thumbnails are
+// attached exactly as a search attaches them, so a boosted card looks like
+// every other card, and the seller's coordinates stay unselected.
+func (s *Service) BoostedListings(ctx context.Context, limit int) ([]BoostedListing, error) {
+	rows, err := s.repo.BoostedListings(ctx, DefaultMarketID, limit)
+	if err != nil {
+		return nil, err
+	}
+	ptrs := make([]*Listing, len(rows))
+	for i := range rows {
+		rows[i].Boosted = true
+		ptrs[i] = &rows[i].Listing
+	}
+	s.attachThumbs(ctx, ptrs)
+	return rows, nil
+}
+
 // parseSearchFallback extracts the Postgres-fallback filter set from the handler's
 // provider-agnostic request map (values are the raw query-param strings).
 func parseSearchFallback(req any) SearchFallbackFilter {

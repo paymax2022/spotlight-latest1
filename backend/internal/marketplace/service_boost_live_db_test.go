@@ -201,11 +201,29 @@ func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ref
 	return n
 }
 
-// startTierPriceKobo is the "start" boost package's seeded price (50000 kobo,
-// 7 days) per 20270168000000_marketplace_boost_pricing_config.sql — well
-// within Tier1's ₦50k/day limit (5,000,000 kobo), so it never accidentally
-// trips the tier gate in the six cases that are not the tier-gate case itself.
-const startTierPriceKobo int64 = 50000
+// Boosts are priced by the admin's ₦/day rate, which the seeded config row sets
+// at 10,000 kobo (₦100/day) per
+// 20270168000000_marketplace_boost_pricing_config.sql. A boostDurationDays-long
+// purchase therefore costs boostPriceKobo — well within Tier1's ₦50k/day limit
+// (5,000,000 kobo), so it never accidentally trips the tier gate in the six
+// cases that are not the tier-gate case itself.
+const (
+	boostDurationDays        = 5
+	boostDailyRateKobo int64 = 10000
+	boostPriceKobo           = int64(boostDurationDays) * boostDailyRateKobo
+)
+
+// expectedBoostChargeRef rebuilds the deterministic ledger reference a day-rate
+// boost of `days` must carry — seller + listing + billed end DATE — so a test can
+// assert the charge is keyed on the BUY rather than on the boost id or a nonce.
+func expectedBoostChargeRef(t *testing.T, svc *Service, sellerID, listingID string, days int) string {
+	t.Helper()
+	q, err := svc.ComputeBoostQuote(context.Background(), days, nil)
+	if err != nil {
+		t.Fatalf("quote %d days: %v", days, err)
+	}
+	return boostChargeKey(sellerID, listingID, boostChargeTierKey(q))
+}
 
 // TestLiveDB_PurchaseBoost_DebitsWalletActivatesBoost_BalancedLedger covers
 // MKT-INT-001: boost purchase debits the seller wallet, activates the boost,
@@ -218,31 +236,34 @@ func TestLiveDB_PurchaseBoost_DebitsWalletActivatesBoost_BalancedLedger(t *testi
 	seller := seedBoostSeller(t, ctx, pool, 3)
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
-	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
+	fundBoostWallet(t, ctx, led, seller, boostPriceKobo*10)
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
 
-	boost, err := svc.PurchaseBoost(ctx, seller, "int001-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "start"})
+	boost, err := svc.PurchaseBoost(ctx, seller, "int001-"+listingID, CreateBoostInput{ListingID: listingID, DurationDays: boostDurationDays})
 	if err != nil {
 		t.Fatalf("PurchaseBoost: %v", err)
 	}
 	if boost.Status != BoostActive {
 		t.Errorf("boost.Status = %q, want %q", boost.Status, BoostActive)
 	}
-	if boost.PriceKobo != startTierPriceKobo {
-		t.Errorf("boost.PriceKobo = %d, want %d", boost.PriceKobo, startTierPriceKobo)
+	if boost.PriceKobo != boostPriceKobo {
+		t.Errorf("boost.PriceKobo = %d, want %d", boost.PriceKobo, boostPriceKobo)
 	}
-	wantRef := boostChargeKey(seller, listingID, "start")
+	// The charge key is the day-rate deterministic key derived from the boost's OWN
+	// stored end moment — not a fresh clock read — so there is no midnight-straddle
+	// flake. A regression to a per-call nonce or the boost id changes this ref.
+	wantRef := boostChargeKey(seller, listingID, boostChargeTierKey(&BoostQuote{EndsAt: *boost.EndsAt}))
 	if boost.LedgerChargeRef != wantRef {
 		t.Errorf("boost.LedgerChargeRef = %q, want %q", boost.LedgerChargeRef, wantRef)
 	}
 
 	sellerBalAfter := boostWalletBalance(t, ctx, pool, seller)
-	if sellerBalBefore-sellerBalAfter != startTierPriceKobo {
-		t.Errorf("seller debited %d, want %d", sellerBalBefore-sellerBalAfter, startTierPriceKobo)
+	if sellerBalBefore-sellerBalAfter != boostPriceKobo {
+		t.Errorf("seller debited %d, want %d", sellerBalBefore-sellerBalAfter, boostPriceKobo)
 	}
-	if got := boostChargeCommissionKobo(t, ctx, pool, led, wantRef); got != startTierPriceKobo {
-		t.Errorf("commission credited %d under this charge key, want %d (balanced double-entry)", got, startTierPriceKobo)
+	if got := boostChargeCommissionKobo(t, ctx, pool, led, wantRef); got != boostPriceKobo {
+		t.Errorf("commission credited %d under this charge key, want %d (balanced double-entry)", got, boostPriceKobo)
 	}
 	if n := boostRowCount(t, ctx, pool, listingID); n != 1 {
 		t.Errorf("mkt_boosts rows for listing = %d, want 1", n)
@@ -260,11 +281,11 @@ func TestLiveDB_PurchaseBoost_ReplaySameIdempotencyKey_SingleCharge(t *testing.T
 	seller := seedBoostSeller(t, ctx, pool, 3)
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
-	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
+	fundBoostWallet(t, ctx, led, seller, boostPriceKobo*10)
 
 	key := "inv001-" + listingID
 
-	first, err := svc.PurchaseBoost(ctx, seller, key, CreateBoostInput{ListingID: listingID, Tier: "start"})
+	first, err := svc.PurchaseBoost(ctx, seller, key, CreateBoostInput{ListingID: listingID, DurationDays: boostDurationDays})
 	if err != nil {
 		t.Fatalf("first PurchaseBoost: %v", err)
 	}
@@ -275,7 +296,7 @@ func TestLiveDB_PurchaseBoost_ReplaySameIdempotencyKey_SingleCharge(t *testing.T
 	// is the durable backstop this test asserts — a SECOND mkt_boosts row is the one
 	// thing that must never happen, and it would if postBoostCharge's ErrDuplicate
 	// tolerance regressed.
-	second, err := svc.PurchaseBoost(ctx, seller, key, CreateBoostInput{ListingID: listingID, Tier: "start"})
+	second, err := svc.PurchaseBoost(ctx, seller, key, CreateBoostInput{ListingID: listingID, DurationDays: boostDurationDays})
 	if err != nil {
 		t.Fatalf("replay PurchaseBoost: %v", err)
 	}
@@ -284,9 +305,9 @@ func TestLiveDB_PurchaseBoost_ReplaySameIdempotencyKey_SingleCharge(t *testing.T
 	}
 
 	commissionAfter := boostChargeCommissionKobo(t, ctx, pool, led,
-		boostChargeKey(seller, listingID, "start"))
-	if commissionAfter != startTierPriceKobo {
-		t.Errorf("commission credited %d under this charge key, want exactly %d once (no double charge)", commissionAfter, startTierPriceKobo)
+		boostChargeKey(seller, listingID, boostChargeTierKey(&BoostQuote{EndsAt: *first.EndsAt})))
+	if commissionAfter != boostPriceKobo {
+		t.Errorf("commission credited %d under this charge key, want exactly %d once (no double charge)", commissionAfter, boostPriceKobo)
 	}
 	if n := ledgerEntryCount(t, ctx, pool, first.LedgerChargeRef); n != 2 { // one DEBIT leg + one CREDIT leg = balanced pair, posted once
 		t.Errorf("ledger_entries for charge ref = %d, want exactly 2 (one balanced posting, not two)", n)
@@ -303,9 +324,9 @@ func TestLiveDB_PurchaseBoost_MissingIdempotencyKey(t *testing.T) {
 	seller := seedBoostSeller(t, ctx, pool, 3)
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
-	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
+	fundBoostWallet(t, ctx, led, seller, boostPriceKobo*10)
 
-	_, err := svc.PurchaseBoost(ctx, seller, "", CreateBoostInput{ListingID: listingID, Tier: "start"})
+	_, err := svc.PurchaseBoost(ctx, seller, "", CreateBoostInput{ListingID: listingID, DurationDays: boostDurationDays})
 	if !errors.Is(err, error(ErrIdemMissing)) {
 		var ce *CodedError
 		if !errors.As(err, &ce) || ce.Code != CodeIdempotencyMissing {
@@ -315,7 +336,7 @@ func TestLiveDB_PurchaseBoost_MissingIdempotencyKey(t *testing.T) {
 	if n := boostRowCount(t, ctx, pool, listingID); n != 0 {
 		t.Errorf("mkt_boosts rows = %d, want 0", n)
 	}
-	if got := boostChargeCommissionKobo(t, ctx, pool, led, boostChargeKey(seller, listingID, "start")); got != 0 {
+	if got := boostChargeCommissionKobo(t, ctx, pool, led, expectedBoostChargeRef(t, svc, seller, listingID, boostDurationDays)); got != 0 {
 		t.Errorf("commission moved by %d, want 0 (no ledger posting)", got)
 	}
 }
@@ -332,9 +353,9 @@ func TestLiveDB_RejectBoost_AutoRefundBalancedReversal(t *testing.T) {
 	admin := seedBoostSeller(t, ctx, pool, 3)
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
-	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
+	fundBoostWallet(t, ctx, led, seller, boostPriceKobo*10)
 
-	boost, err := svc.PurchaseBoost(ctx, seller, "inv003-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "start"})
+	boost, err := svc.PurchaseBoost(ctx, seller, "inv003-"+listingID, CreateBoostInput{ListingID: listingID, DurationDays: boostDurationDays})
 	if err != nil {
 		t.Fatalf("PurchaseBoost: %v", err)
 	}
@@ -351,16 +372,16 @@ func TestLiveDB_RejectBoost_AutoRefundBalancedReversal(t *testing.T) {
 	if rejected.RefundRef == nil || *rejected.RefundRef != boostRefundKey(boost.ID) {
 		t.Errorf("RefundRef = %v, want %q", rejected.RefundRef, boostRefundKey(boost.ID))
 	}
-	if rejected.RefundedKobo == nil || *rejected.RefundedKobo != startTierPriceKobo {
-		t.Errorf("RefundedKobo = %v, want %d", rejected.RefundedKobo, startTierPriceKobo)
+	if rejected.RefundedKobo == nil || *rejected.RefundedKobo != boostPriceKobo {
+		t.Errorf("RefundedKobo = %v, want %d", rejected.RefundedKobo, boostPriceKobo)
 	}
 
 	sellerBalAfter := boostWalletBalance(t, ctx, pool, seller)
-	if sellerBalAfter-sellerBalBefore != startTierPriceKobo {
-		t.Errorf("seller credited back %d, want %d", sellerBalAfter-sellerBalBefore, startTierPriceKobo)
+	if sellerBalAfter-sellerBalBefore != boostPriceKobo {
+		t.Errorf("seller credited back %d, want %d", sellerBalAfter-sellerBalBefore, boostPriceKobo)
 	}
-	if got := boostRefundCommissionKobo(t, ctx, pool, led, boostRefundKey(boost.ID)); got != startTierPriceKobo {
-		t.Errorf("commission drained %d by the reversal, want %d (balanced reversal)", got, startTierPriceKobo)
+	if got := boostRefundCommissionKobo(t, ctx, pool, led, boostRefundKey(boost.ID)); got != boostPriceKobo {
+		t.Errorf("commission drained %d by the reversal, want %d (balanced reversal)", got, boostPriceKobo)
 	}
 
 	var auditCount int
@@ -412,7 +433,7 @@ func TestLiveDB_RejectBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	const insBoost = `
 		INSERT INTO mkt_boosts (id, listing_id, seller_id, tier, duration_days, price_kobo, weight, status, ledger_charge_ref, starts_at, ends_at)
 		VALUES ($1,$2,$3,'start',7,$4,1.0,'active',$5,now(),now()+interval '7 days')`
-	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, fakeSeller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
+	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, fakeSeller, boostPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed boost: %v", err)
 	}
 	t.Cleanup(func() {
@@ -476,13 +497,13 @@ func TestLiveDB_RejectBoost_ResumesFromStrandedRejectedWithReasonRow(t *testing.
 	admin := seedBoostSeller(t, ctx, pool, 3)
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
-	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
+	fundBoostWallet(t, ctx, led, seller, boostPriceKobo*10)
 
 	boostID := uuid.New().String()
 	const insBoost = `
 		INSERT INTO mkt_boosts (id, listing_id, seller_id, tier, duration_days, price_kobo, weight, status, rejection_reason_code, ledger_charge_ref, starts_at, ends_at)
 		VALUES ($1,$2,$3,'start',7,$4,1.0,'rejected_with_reason','policy_violation',$5,now(),now()+interval '7 days')`
-	if _, err := pool.Exec(context.WithoutCancel(ctx), insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), insBoost, boostID, listingID, seller, boostPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed stranded boost: %v", err)
 	}
 	t.Cleanup(func() {
@@ -501,13 +522,13 @@ func TestLiveDB_RejectBoost_ResumesFromStrandedRejectedWithReasonRow(t *testing.
 	if rejected.RefundRef == nil {
 		t.Error("RefundRef is nil, want stamped")
 	}
-	if rejected.RefundedKobo == nil || *rejected.RefundedKobo != startTierPriceKobo {
-		t.Errorf("RefundedKobo = %v, want %d", rejected.RefundedKobo, startTierPriceKobo)
+	if rejected.RefundedKobo == nil || *rejected.RefundedKobo != boostPriceKobo {
+		t.Errorf("RefundedKobo = %v, want %d", rejected.RefundedKobo, boostPriceKobo)
 	}
 
 	sellerBalAfter := boostWalletBalance(t, ctx, pool, seller)
-	if sellerBalAfter-sellerBalBefore != startTierPriceKobo {
-		t.Errorf("seller credited %d, want %d — the missing refund leg must complete on resume", sellerBalAfter-sellerBalBefore, startTierPriceKobo)
+	if sellerBalAfter-sellerBalBefore != boostPriceKobo {
+		t.Errorf("seller credited %d, want %d — the missing refund leg must complete on resume", sellerBalAfter-sellerBalBefore, boostPriceKobo)
 	}
 }
 
@@ -525,9 +546,9 @@ func TestLiveDB_RejectBoost_AlreadyAutoRefunded_IsIdempotentNoOp(t *testing.T) {
 	admin := seedBoostSeller(t, ctx, pool, 3)
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
-	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
+	fundBoostWallet(t, ctx, led, seller, boostPriceKobo*10)
 
-	boost, err := svc.PurchaseBoost(ctx, seller, "fsm015-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "start"})
+	boost, err := svc.PurchaseBoost(ctx, seller, "fsm015-"+listingID, CreateBoostInput{ListingID: listingID, DurationDays: boostDurationDays})
 	if err != nil {
 		t.Fatalf("PurchaseBoost: %v", err)
 	}
@@ -556,8 +577,8 @@ func TestLiveDB_RejectBoost_AlreadyAutoRefunded_IsIdempotentNoOp(t *testing.T) {
 	// The refund key is deterministic, so a second refund attempt could only ever have
 	// re-posted under this same key — which the ledger's unique constraint refuses. One
 	// balanced pair under the key is the proof that no second refund was posted.
-	if got := boostRefundCommissionKobo(t, ctx, pool, led, boostRefundKey(boost.ID)); got != startTierPriceKobo {
-		t.Errorf("commission drained %d by the refund, want exactly %d once (no second refund)", got, startTierPriceKobo)
+	if got := boostRefundCommissionKobo(t, ctx, pool, led, boostRefundKey(boost.ID)); got != boostPriceKobo {
+		t.Errorf("commission drained %d by the refund, want exactly %d once (no second refund)", got, boostPriceKobo)
 	}
 	if n := ledgerEntryCount(t, ctx, pool, boostRefundKey(boost.ID)); n != 2 {
 		t.Errorf("ledger_entries for the refund ref = %d, want exactly 2 (one balanced reversal, not two)", n)
@@ -577,11 +598,13 @@ func TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed(t *testing.T) {
 	seller := seedBoostSeller(t, ctx, pool, 3)
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
-	// Fund LESS than the "enterprise" tier price (5,000,000 kobo) so the debit fails
-	// on ledger balance, not on the Tier3 daily limit (which is unlimited).
-	fundBoostWallet(t, ctx, led, seller, 4_000_000)
+	// The longest boost the API allows (maxBoostDays at the seeded ₦100/day rate)
+	// costs far more than this wallet holds, so the debit fails on ledger balance
+	// rather than on the Tier3 daily limit (which is unlimited).
+	const fundedKobo int64 = 100_000
+	fundBoostWallet(t, ctx, led, seller, fundedKobo)
 
-	_, err := svc.PurchaseBoost(ctx, seller, "inv004-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "enterprise"})
+	_, err := svc.PurchaseBoost(ctx, seller, "inv004-"+listingID, CreateBoostInput{ListingID: listingID, DurationDays: maxBoostDays})
 	var ce *CodedError
 	if !errors.As(err, &ce) || ce.Code != CodeInsufficientWallet {
 		t.Fatalf("err = %v, want INSUFFICIENT_WALLET_BALANCE", err)
@@ -592,8 +615,8 @@ func TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed(t *testing.T) {
 	if n := boostRowCount(t, ctx, pool, listingID); n != 0 {
 		t.Errorf("mkt_boosts rows = %d, want 0", n)
 	}
-	if got := boostChargeCommissionKobo(t, ctx, pool, led, boostChargeKey(seller, listingID, "enterprise")); got != 0 {
-		t.Errorf("commission moved by %d, want 0 (no partial ledger entry)", got)
+	if bal := boostWalletBalance(t, ctx, pool, seller); bal != fundedKobo {
+		t.Errorf("wallet = %d after the refused purchase, want the %d it was funded with (no partial ledger entry)", bal, fundedKobo)
 	}
 }
 
@@ -609,7 +632,7 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 	seller := seedBoostSeller(t, ctx, pool, 3)
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
-	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
+	fundBoostWallet(t, ctx, led, seller, boostPriceKobo*10)
 
 	const n = 2
 	var wg sync.WaitGroup
@@ -619,7 +642,7 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 	for i := range n {
 		go func(i int) {
 			defer wg.Done()
-			results[i], errs[i] = svc.PurchaseBoost(ctx, seller, uuid.New().String(), CreateBoostInput{ListingID: listingID, Tier: "start"})
+			results[i], errs[i] = svc.PurchaseBoost(ctx, seller, uuid.New().String(), CreateBoostInput{ListingID: listingID, DurationDays: boostDurationDays})
 		}(i)
 	}
 	wg.Wait()
@@ -636,12 +659,30 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 		t.Fatalf("both concurrent calls failed: %v, %v", errs[0], errs[1])
 	}
 
+	// Take the shared key off the WINNER's stored row rather than reconstructing it
+	// from a fresh clock read — the whole point is that both racers derived the SAME
+	// deterministic key, so the ledger's unique idempotency constraint collided the
+	// loser onto it instead of posting a second credit.
+	var winnerRef string
+	for i := range n {
+		if errs[i] == nil {
+			winnerRef = results[i].LedgerChargeRef
+			break
+		}
+	}
+	// Every successful racer must report the SAME charge key — proof the deterministic
+	// day-rate key is reproducible across the concurrent window (the money-safety basis).
+	for i := range n {
+		if errs[i] == nil && results[i].LedgerChargeRef != winnerRef {
+			t.Fatalf("goroutine %d derived charge key %q, winner has %q — concurrent same-purchase racers must collide on one deterministic key or the wallet is debited twice",
+				i, results[i].LedgerChargeRef, winnerRef)
+		}
+	}
+
 	// The money-safety invariant: exactly ONE charge posted, regardless of how many
-	// callers "succeeded" at the application layer. The charge key is deterministic, so
-	// a losing caller's replay collides on the ledger's unique constraint instead of
-	// posting a second credit.
-	if got := boostChargeCommissionKobo(t, ctx, pool, led, boostChargeKey(seller, listingID, "start")); got != startTierPriceKobo {
-		t.Fatalf("commission credited %d under this charge key, want exactly %d once", got, startTierPriceKobo)
+	// callers "succeeded" at the application layer.
+	if got := boostChargeCommissionKobo(t, ctx, pool, led, winnerRef); got != boostPriceKobo {
+		t.Fatalf("commission credited %d under the shared charge key, want exactly %d once", got, boostPriceKobo)
 	}
 	if n := boostRowCount(t, ctx, pool, listingID); n < 1 {
 		t.Fatalf("mkt_boosts rows = %d, want at least 1 (the winner's row)", n)
@@ -663,11 +704,11 @@ func TestLiveDB_PurchaseBoost_TierGateRefusesTier0Seller(t *testing.T) {
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
 	// Fund WAY more than the boost price — proves this is a TIER refusal, not an
 	// insufficient-balance refusal (that's MKT-INV-004, a different code path).
-	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*1000)
+	fundBoostWallet(t, ctx, led, seller, boostPriceKobo*1000)
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
 
-	_, err := svc.PurchaseBoost(ctx, seller, "tiergate-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "start"})
+	_, err := svc.PurchaseBoost(ctx, seller, "tiergate-"+listingID, CreateBoostInput{ListingID: listingID, DurationDays: boostDurationDays})
 	if err == nil {
 		t.Fatal("expected the tier gate to refuse a Tier0 seller's boost purchase")
 	}
@@ -687,7 +728,7 @@ func TestLiveDB_PurchaseBoost_TierGateRefusesTier0Seller(t *testing.T) {
 	if sellerBalAfter != sellerBalBefore {
 		t.Errorf("seller wallet moved by %d, want 0 (tier gate must run before any ledger posting)", sellerBalAfter-sellerBalBefore)
 	}
-	if got := boostChargeCommissionKobo(t, ctx, pool, led, boostChargeKey(seller, listingID, "start")); got != 0 {
+	if got := boostChargeCommissionKobo(t, ctx, pool, led, expectedBoostChargeRef(t, svc, seller, listingID, boostDurationDays)); got != 0 {
 		t.Errorf("commission moved by %d, want 0", got)
 	}
 	if n := boostRowCount(t, ctx, pool, listingID); n != 0 {
@@ -710,9 +751,9 @@ func TestLiveDB_PurchaseBoost_NilTierEnforcer_FailsClosed(t *testing.T) {
 	seller := seedBoostSeller(t, ctx, pool, 3)
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
-	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
+	fundBoostWallet(t, ctx, led, seller, boostPriceKobo*10)
 
-	_, err := svc.PurchaseBoost(ctx, seller, "niltier-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "start"})
+	_, err := svc.PurchaseBoost(ctx, seller, "niltier-"+listingID, CreateBoostInput{ListingID: listingID, DurationDays: boostDurationDays})
 	if !errors.Is(err, error(ErrTierGateUnwired)) {
 		var ce *CodedError
 		if !errors.As(err, &ce) || ce.Code != CodeTierGateUnwired {
@@ -753,7 +794,7 @@ func TestLiveDB_CancelBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	const insBoost = `
 		INSERT INTO mkt_boosts (id, listing_id, seller_id, tier, duration_days, price_kobo, weight, status, ledger_charge_ref, starts_at, ends_at)
 		VALUES ($1,$2,$3,'start',7,$4,1.0,'active',$5, now() - interval '1 day', now() + interval '6 days')`
-	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, fakeSeller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
+	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, fakeSeller, boostPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed boost: %v", err)
 	}
 	t.Cleanup(func() {
@@ -813,13 +854,13 @@ func TestLiveDB_CancelBoost_ResumesFromStrandedCancelledBySellerRow(t *testing.T
 	seller := seedBoostSeller(t, ctx, pool, 3)
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
-	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
+	fundBoostWallet(t, ctx, led, seller, boostPriceKobo*10)
 
 	boostID := uuid.New().String()
 	const insBoost = `
 		INSERT INTO mkt_boosts (id, listing_id, seller_id, tier, duration_days, price_kobo, weight, status, rejection_reason_code, ledger_charge_ref, starts_at, ends_at)
 		VALUES ($1,$2,$3,'start',7,$4,1.0,'cancelled_by_seller','seller_cancelled',$5, now() - interval '1 day', now() + interval '6 days')`
-	if _, err := pool.Exec(context.WithoutCancel(ctx), insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), insBoost, boostID, listingID, seller, boostPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed stranded boost: %v", err)
 	}
 	t.Cleanup(func() {

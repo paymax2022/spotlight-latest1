@@ -574,17 +574,33 @@ func (h *Handler) ListOffers(c *gin.Context) {
 // logistics/payments webhooks have been deleted. mkt_orders/mkt_disputes tables are
 // retained (additive-only) but unused.
 
-// BoostTiers GET /boosts/tiers
-func (h *Handler) BoostTiers(c *gin.Context) {
-	tiers, err := h.svc.ListBoostTiers(c.Request.Context())
+// BoostPricing GET /boosts/pricing — the live boost price catalog: the admin's
+// ₦/day rate, the durations the app offers, and the bounds a custom range must
+// respect. Public (no auth): pricing info alone, no listing/wallet access.
+func (h *Handler) BoostPricing(c *gin.Context) {
+	pricing, err := h.svc.BoostPricing(c.Request.Context())
 	if err != nil {
 		fail(c, err)
 		return
 	}
-	respond(c, http.StatusOK, tiers)
+	respond(c, http.StatusOK, pricing)
 }
 
-// GetBoostQuote GET /boosts/quote?tier=<pkg>  OR  ?ends_at=<RFC3339> — a
+// BoostedListings GET /marketplace/boosted?limit= — the promoted section:
+// listings with a live boost right now, the one still holding the most unspent
+// value first. Public; returns buyer-facing listing fields only, never the
+// seller's coordinates.
+func (h *Handler) BoostedListings(c *gin.Context) {
+	limit, _ := pageParams(c)
+	out, err := h.svc.BoostedListings(c.Request.Context(), limit)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, map[string]any{"results": out})
+}
+
+// GetBoostQuote GET /boosts/quote?duration_days=<n>  OR  ?ends_at=<RFC3339> — a
 // live, authoritative price preview so the client can show "5 days × ₦100 =
 // ₦500" before the user commits to POST /boosts. Public (no auth): pricing
 // info alone, no listing/wallet access.
@@ -598,7 +614,16 @@ func (h *Handler) GetBoostQuote(c *gin.Context) {
 		}
 		endsAt = &t
 	}
-	q, err := h.svc.ComputeBoostQuote(c.Request.Context(), c.Query("tier"), endsAt)
+	var days int
+	if raw := c.Query("duration_days"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			fail(c, fieldErr(CodeValidation, "duration_days must be a whole number of days", "duration_days"))
+			return
+		}
+		days = n
+	}
+	q, err := h.svc.ComputeBoostQuote(c.Request.Context(), days, endsAt)
 	if err != nil {
 		fail(c, err)
 		return
