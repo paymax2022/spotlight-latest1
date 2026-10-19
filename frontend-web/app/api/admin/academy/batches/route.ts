@@ -36,6 +36,12 @@ export async function POST(request: Request) {
     await assertAdminPermission(request, 'programs:manage');
     const body = (await request.json().catch(() => null)) as AcademyBatchMutationInput & Record<string, unknown>;
     if (!body) return errorResponse('Invalid JSON body', 400);
+    // A batch offers exactly its ticked trainings, so it cannot be created
+    // without at least one — the mobile accordions would have nothing to show.
+    const areaSlugs = body.interest_area_slugs;
+    if (!Array.isArray(areaSlugs) || areaSlugs.filter((s) => String(s ?? '').trim()).length === 0) {
+      return errorResponse('A batch must offer at least one training', 400);
+    }
     const supabase = createAdminClient();
     const batch = await saveAcademyBatch(supabase as any, body);
 

@@ -30,13 +30,22 @@ type AcademySettings = {
 };
 
 /**
- * Admin-managed area of interest, carrying its own NAIRA tuition fee — the SAME
- * shape the mobile app consumes from this endpoint. This is the single source of
- * truth for both clients; nothing here is hardcoded, because inventing a
- * client-side list is exactly how a client ends up offering an area the
- * database does not have (or missing one it does).
+ * Admin-managed area of interest. Tuition comes from the composite format
+ * structure (pricing_options — five formats per area); fee_ngn is the retired
+ * single fee, kept only so an older response still renders. The SAME shape the
+ * mobile app consumes from this endpoint; nothing is hardcoded, because
+ * inventing a client-side list is exactly how a client ends up offering an area
+ * the database does not have (or missing one it does).
  */
-type InterestArea = { slug: string; label: string; description: string | null; fee_ngn: number };
+type PricingOption = { key: string; label: string; note: string | null; price_ngn: number; sort_order: number };
+type PricingFormat = { key: string; label: string; note: string | null; sort_order: number };
+type InterestArea = {
+  slug: string;
+  label: string;
+  description: string | null;
+  fee_ngn: number;
+  pricing_options?: PricingOption[];
+};
 
 const inp: React.CSSProperties = {
   width: '100%', padding: '11px 14px', borderRadius: 10, boxSizing: 'border-box',
@@ -83,6 +92,17 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
   const [interestAreas, setInterestAreas] = useState<InterestArea[]>([]);
   const [batchAreas, setBatchAreas]       = useState<Record<string, string[]>>({});
   const [maxInterestAreas, setMaxInterestAreas] = useState(2);
+  // Composite tuition structure — formats, deliverables and fee exclusions all
+  // served by the API so this page never hardcodes commercial copy.
+  const [pricingStructure, setPricingStructure] = useState<PricingFormat[]>([]);
+  const [deliverables, setDeliverables] = useState<string[]>([]);
+  const [feeExclusions, setFeeExclusions] = useState<string[]>([]);
+  // Accordion state lives in form.areas_of_interest (the slugs) plus a map of
+  // each chosen area to the price line (format key) that was tapped. Presence
+  // in the map means selected; an empty key only appears on a legacy server
+  // without the format table, where the area row selects directly.
+  const [areaSelections, setAreaSelections] = useState<Record<string, string>>({});
+  const [openAreaSlug, setOpenAreaSlug] = useState<string | null>(null);
   const [loading, setLoading]   = useState(true);
   const [step, setStep]         = useState<'select' | 'form' | 'done'>(prefillBatch ? 'form' : 'select');
   const [submitting, setSubmitting] = useState(false);
@@ -125,6 +145,9 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
         setBatchAreas(json.batchAreas && typeof json.batchAreas === 'object' ? json.batchAreas : {});
         // Fall back to 2 only if an older server omits it — the server still enforces.
         setMaxInterestAreas(Number.isFinite(json.maxInterestAreas) ? json.maxInterestAreas : 2);
+        setPricingStructure(Array.isArray(json.pricingStructure) ? json.pricingStructure : []);
+        setDeliverables(Array.isArray(json.deliverables) ? json.deliverables : []);
+        setFeeExclusions(Array.isArray(json.feeExclusions) ? json.feeExclusions : []);
 
         if (json.applicant) {
           const known = json.applicant as Applicant;
@@ -168,29 +191,67 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
   const registrationFeeRequired = settings.registration_type === 'paid' && settings.application_fee > 0;
   const submitDisabled = submitting || selectedBatchApplied;
 
-  // Only the areas THIS batch offers. An empty/missing entry means the batch is
-  // unrestricted, so it falls back to the full active list rather than showing
-  // nothing — matches the mobile app exactly (see FilmAcademyApplyScreen).
-  const offeredSlugs = (form.batch_id && batchAreas[form.batch_id]) || [];
-  const availableAreas = offeredSlugs.length > 0
-    ? interestAreas.filter((a) => offeredSlugs.includes(a.slug))
-    : interestAreas;
+  // Only the areas THIS batch offers — exactly. An empty entry means the batch
+  // has no trainings set, so the form shows none rather than inventing the
+  // full catalogue; only a wholly absent entry (an older server) is treated as
+  // unrestricted. Matches the mobile app exactly (see FilmAcademyApplyScreen).
+  const offeredSlugs = form.batch_id ? batchAreas[form.batch_id] : undefined;
+  const availableAreas = offeredSlugs === undefined
+    ? interestAreas
+    : interestAreas.filter((a) => offeredSlugs.includes(a.slug));
   const atLimit = form.areas_of_interest.length >= maxInterestAreas;
 
-  // TUITION for the chosen areas — payable on ACCEPTANCE and refundable. Shown so
-  // this same total from the same admin-managed rows when the application is
-  // submitted, so this is a display convenience and cannot be used to pay less.
+  // TUITION for the chosen areas — each area is priced by ITS OWN tapped
+  // price line, payable on ACCEPTANCE and refundable. The server recomputes
+  // the same total from the same admin-managed rows when the application is
+  // submitted, so this is a display convenience and cannot be used to pay
+  // less. Without a format table (an older server) the retired per-area fee
+  // still drives the display, matching what that server charges.
+  const hasStructure = pricingStructure.length > 0
+    && availableAreas.some((a) => (a.pricing_options?.length ?? 0) > 0);
+  const priceOf = (a: InterestArea): number => hasStructure
+    ? (a.pricing_options ?? []).find((o) => o.key === areaSelections[a.slug])?.price_ngn ?? 0
+    : Number(a.fee_ngn ?? 0);
   const tuitionTotal = availableAreas
     .filter((a) => form.areas_of_interest.includes(a.slug))
-    .reduce((sum, a) => sum + Number(a.fee_ngn ?? 0), 0);
+    .reduce((sum, a) => sum + priceOf(a), 0);
 
+  // Tapping a sub (price line) selects that area in that format; tapping the
+  // selected line again deselects. At the cap a new area cannot be added.
+  function pickSub(slug: string, key: string) {
+    setForm((p) => {
+      const current = p.areas_of_interest;
+      if (current.includes(slug) && areaSelections[slug] === key) {
+        setAreaSelections((prev) => {
+          const next = { ...prev };
+          delete next[slug];
+          return next;
+        });
+        return { ...p, areas_of_interest: current.filter((a) => a !== slug) };
+      }
+      if (!current.includes(slug) && current.length >= maxInterestAreas) return p;
+      setAreaSelections((prev) => ({ ...prev, [slug]: key }));
+      return {
+        ...p,
+        areas_of_interest: current.includes(slug) ? current : [...current, slug],
+      };
+    });
+  }
+
+  // Legacy server without the format table: the area row itself selects.
   function toggleArea(slug: string) {
     setForm((p) => {
       const on = p.areas_of_interest.includes(slug);
-      if (on) return { ...p, areas_of_interest: p.areas_of_interest.filter((a) => a !== slug) };
-      // Silently ignoring the tap would look like a broken chip, so callers
-      // disable it instead — see `atLimit` below.
+      if (on) {
+        setAreaSelections((prev) => {
+          const next = { ...prev };
+          delete next[slug];
+          return next;
+        });
+        return { ...p, areas_of_interest: p.areas_of_interest.filter((a) => a !== slug) };
+      }
       if (p.areas_of_interest.length >= maxInterestAreas) return p;
+      setAreaSelections((prev) => ({ ...prev, [slug]: '' }));
       return { ...p, areas_of_interest: [...p.areas_of_interest, slug] };
     });
   }
@@ -214,9 +275,12 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
     if (!form.full_name.trim()) return 'Full name is required.';
     if (!form.email.trim() || !emailPattern.test(form.email.trim())) return 'A valid email address is required.';
     if (!form.phone.trim()) return 'Phone number is required.';
-    if (form.areas_of_interest.length === 0) return 'Choose at least one area of interest.';
+    if (form.areas_of_interest.length === 0) return 'Tap a training, then tap its price line to choose it.';
     if (form.areas_of_interest.length > maxInterestAreas) {
       return `Choose at most ${maxInterestAreas} areas of interest for this batch.`;
+    }
+    if (hasStructure && form.areas_of_interest.some((s) => !areaSelections[s])) {
+      return 'Choose a price line for each training you selected.';
     }
     if (!form.motivation.trim()) return 'Tell us why you want to join.';
 
@@ -230,6 +294,15 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
         headers: await authHeaders(true),
         body: JSON.stringify({
           ...form,
+          // The accordion choices: each area with the price line tapped. The
+          // server prices tuition from these pairs, area by area.
+          ...(hasStructure
+            ? {
+                area_selections: form.areas_of_interest.map((slug) => ({
+                  slug, key: areaSelections[slug],
+                })),
+              }
+            : {}),
           application_fee_reference: applicationFeeReference,
         }),
       });
@@ -496,7 +569,18 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
                   Change batch
                 </button>
               </div>
-              <select style={inp} required value={form.batch_id} onChange={(e) => setForm((p) => ({ ...p, batch_id: e.target.value, areas_of_interest: [] }))}>
+              <select
+                style={inp}
+                required
+                value={form.batch_id}
+                onChange={(e) => {
+                  // A different batch offers a different catalogue — selections
+                  // made against the old one must not survive the switch.
+                  setForm((p) => ({ ...p, batch_id: e.target.value, areas_of_interest: [] }));
+                  setAreaSelections({});
+                  setOpenAreaSlug(null);
+                }}
+              >
                 <option value="">Select a batch…</option>
                 {batches.map((b) => (
                   <option key={b.id} value={b.id} disabled={appliedBatchIds.includes(b.id)}>
@@ -561,12 +645,15 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
             </div>
 
             {/* Areas of interest — admin-managed catalogue, per-batch offered
-                subset, server-enforced cap. Same data and same rules the mobile
-                app renders from this same endpoint. */}
+                subset, server-enforced cap. Accordion UI: each training
+                collapses to its name; opening it reveals the five price lines,
+                and tapping a line selects that training IN that format. Same
+                data, rules and behaviour as the mobile apply form. */}
             <div>
               <label style={lbl}>Areas of Interest *</label>
               <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: -2, marginBottom: 8 }}>
-                Amounts shown are tuition, payable only if you are offered a place.
+                Tap a training to open it, then tap its price line to choose.
+                Tuition is payable only if you are offered a place.
               </p>
               <p style={{ fontSize: 12, color: atLimit ? '#f59e0b' : 'rgba(255,255,255,0.45)', marginBottom: 8 }}>
                 {atLimit
@@ -578,31 +665,88 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
                   No areas are available to choose right now. Please try again later.
                 </p>
               ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {availableAreas.map((area) => {
                     const active = form.areas_of_interest.includes(area.slug);
+                    const hasFormats = hasStructure && (area.pricing_options?.length ?? 0) > 0;
+                    const isOpen = openAreaSlug === area.slug;
+                    const chosenOpt = hasFormats
+                      ? (area.pricing_options ?? []).find((o) => o.key === areaSelections[area.slug])
+                      : undefined;
                     const fee = Number(area.fee_ngn ?? 0);
                     const blocked = !active && atLimit;
                     return (
-                      <button
+                      <div
                         key={area.slug}
-                        type="button"
-                        onClick={() => toggleArea(area.slug)}
-                        disabled={blocked}
                         style={{
-                          display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
-                          padding: '8px 14px', borderRadius: 12, fontSize: 12, fontWeight: 600,
-                          cursor: blocked ? 'not-allowed' : 'pointer', border: 'none', transition: 'all 0.15s',
-                          opacity: blocked ? 0.4 : 1,
-                          background: active ? '#f59e0b' : 'rgba(255,255,255,0.07)',
-                          color: active ? '#000' : 'rgba(255,255,255,0.7)',
+                          borderRadius: 12, overflow: 'hidden',
+                          border: `1px solid ${active ? '#f59e0b' : 'rgba(255,255,255,0.1)'}`,
+                          background: 'rgba(255,255,255,0.04)',
                         }}
                       >
-                        <span>{area.label}</span>
-                        <span style={{ fontSize: 11, fontWeight: 500, opacity: 0.75 }}>
-                          {fee > 0 ? fmt(fee) : 'No tuition'}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => (hasFormats
+                            ? setOpenAreaSlug(isOpen ? null : area.slug)
+                            : toggleArea(area.slug))}
+                          disabled={!hasFormats && blocked}
+                          aria-expanded={hasFormats ? isOpen : undefined}
+                          style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                            width: '100%', padding: '10px 14px', cursor: blocked && !hasFormats ? 'not-allowed' : 'pointer',
+                            border: 'none', textAlign: 'left', background: 'transparent',
+                            color: active ? '#f59e0b' : 'rgba(255,255,255,0.8)', opacity: blocked && !hasFormats ? 0.4 : 1,
+                          }}
+                        >
+                          <span>
+                            <span style={{ fontSize: 13, fontWeight: 700, display: 'block' }}>
+                              {active && !hasFormats ? '✓ ' : ''}{area.label}
+                            </span>
+                            {chosenOpt ? (
+                              <span style={{ fontSize: 11, opacity: 0.75 }}>
+                                {chosenOpt.label} — {fmt(Number(chosenOpt.price_ngn))}
+                              </span>
+                            ) : !hasFormats && fee > 0 ? (
+                              <span style={{ fontSize: 11, opacity: 0.6 }}>{fmt(fee)}</span>
+                            ) : null}
+                          </span>
+                          {hasFormats && (
+                            <span style={{ fontSize: 14, transform: isOpen ? 'rotate(180deg)' : 'none', display: 'inline-block' }}>⌄</span>
+                          )}
+                        </button>
+                        {isOpen && hasFormats && (
+                          <div style={{ display: 'flex', flexDirection: 'column', padding: '0 10px 10px', gap: 2 }}>
+                            {(area.pricing_options ?? []).map((o) => {
+                              const subOn = areaSelections[area.slug] === o.key && active;
+                              const subBlocked = !subOn && !active && atLimit;
+                              return (
+                                <button
+                                  key={o.key}
+                                  type="button"
+                                  onClick={() => pickSub(area.slug, o.key)}
+                                  disabled={subBlocked}
+                                  aria-pressed={subOn}
+                                  style={{
+                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                                    padding: '8px 12px', borderRadius: 8, border: 'none', textAlign: 'left',
+                                    cursor: subBlocked ? 'not-allowed' : 'pointer', opacity: subBlocked ? 0.4 : 1,
+                                    transition: 'all 0.15s',
+                                    background: subOn ? '#f59e0b' : 'rgba(255,255,255,0.05)',
+                                    color: subOn ? '#000' : 'rgba(255,255,255,0.7)',
+                                  }}
+                                >
+                                  <span style={{ fontSize: 12, fontWeight: subOn ? 700 : 500 }}>
+                                    {o.label}{o.note ? ` (${o.note})` : ''}
+                                  </span>
+                                  <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                                    = {fmt(Number(o.price_ngn))}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -624,23 +768,54 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
               {tuitionTotal > 0 && (
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                    <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>Tuition if accepted</span>
+                    <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>
+                      Tuition if accepted
+                    </span>
                     <span style={{ fontSize: 14, color: '#f1f5f9', fontWeight: 700 }}>{fmt(tuitionTotal)}</span>
                   </div>
                   {availableAreas
-                    .filter((a) => form.areas_of_interest.includes(a.slug) && Number(a.fee_ngn ?? 0) > 0)
+                    .filter((a) => form.areas_of_interest.includes(a.slug) && priceOf(a) > 0)
                     .map((a) => (
                       <div key={a.slug} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 10, marginTop: 4 }}>
                         <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{a.label}</span>
-                        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{fmt(Number(a.fee_ngn))}</span>
+                        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{fmt(priceOf(a))}</span>
                       </div>
                     ))}
                   <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 8, marginBottom: 0 }}>
-                    Payable only if you are offered a place, and refundable. Nothing for tuition is taken today.
+                    Payable only if you are offered a place, and refundable. Nothing for tuition is
+                    taken today. Tuition excludes feeding and project fees (script print-out,
+                    make-up, props &amp; set design, location — ₦20,000 per movie project).
                   </p>
                 </>
               )}
             </div>
+
+            {/* What the tuition buys, and what it does not — server-owned copy so
+                the phone and this page cannot drift apart on promises. */}
+            {(deliverables.length > 0 || feeExclusions.length > 0) && (
+              <div style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 12, padding: '14px 16px' }}>
+                {deliverables.length > 0 && (
+                  <>
+                    <p style={{ fontSize: 11, fontWeight: 800, color: 'rgba(245,158,11,0.85)', textTransform: 'uppercase', letterSpacing: '0.07em', margin: '0 0 6px' }}>Your tuition includes</p>
+                    <ul style={{ margin: '0 0 10px', paddingLeft: 18 }}>
+                      {deliverables.map((d) => (
+                        <li key={d} style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginBottom: 3 }}>{d}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {feeExclusions.length > 0 && (
+                  <>
+                    <p style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.07em', margin: '0 0 6px' }}>Fees exclude</p>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {feeExclusions.map((d) => (
+                        <li key={d} style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginBottom: 3 }}>{d}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            )}
 
             {/* Motivation */}
             <div>

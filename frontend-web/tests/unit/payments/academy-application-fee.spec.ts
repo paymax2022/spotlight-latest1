@@ -46,7 +46,8 @@ vi.mock('@/src/lib/payments', () => ({
 
 vi.mock('@/src/server/services/academy', () => ({
   getActiveAcademySettings: vi.fn(),
-  getBatchAreaSlugs: vi.fn(async () => []),
+  // A batch accepts EXACTLY its linked trainings — this spec submits 'acting'.
+  getBatchAreaSlugs: vi.fn(async () => ['acting']),
 }));
 
 vi.mock('@/src/server/voting-bridge/bridge', () => ({

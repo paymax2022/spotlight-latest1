@@ -29,7 +29,7 @@ export async function getActiveAcademySettings() {
     registration_type: (data?.registration_type ?? 'free') as 'free' | 'paid',
     application_fee: Number(data?.application_fee ?? 0),
     application_fee_refundable: data?.application_fee_refundable === true,
-    tuition_fee: Number(data?.tuition_fee ?? 0),
+    tuition_fee: 0,
   };
 }
 
@@ -214,7 +214,8 @@ type SupabaseLike = {
   from: (table: string) => any;
 };
 
-/** The slugs a batch offers. Empty array = unrestricted, NOT "offers nothing". */
+/** The slugs a batch offers. Empty array = offers NOTHING — the batch carries
+ *  exactly the trainings ticked for it in the admin console. */
 export async function getBatchAreaSlugs(
   supabase: SupabaseLike,
   batchId: string,
@@ -462,9 +463,7 @@ export async function autoCreateInstallmentPlan(
   // fallback for batches that predate per-area pricing, or that price the whole
   // programme as one number. Billing the batch fee to someone who selected areas would
   // charge them a figure they were never shown.
-  const areaTuition  = Number(app?.tuition_total_ngn ?? 0);
-  const batchTuition = Number(batch.training_fee_ngn ?? 0);
-  const tuitionFee   = areaTuition > 0 ? areaTuition : batchTuition;
+  const tuitionFee = Number(app?.tuition_total_ngn ?? 0);
   if (tuitionFee <= 0) {
     console.info('[academy/installments] no tuition owed — no plan created', { applicationId });
     return; // genuinely free batch
