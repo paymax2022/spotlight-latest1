@@ -1,6 +1,8 @@
 // Paymax Connect — Wallet / Gifting / Tier-KYC / Payout API (PRD §6.4, §7, §10.9).
 // Mock-first (USE_MOCK). Live path hits `${CONNECT_API_BASE}/wallet/...` on the
-// Go backend. EVERY money mutation attaches an `Idempotency-Key` header on the
+// Go backend, EXCEPT the two routes Go mounts on the v1 group instead of under
+// /connect — GET /api/v1/wallet/summary and GET /api/v1/me/tier — which use
+// API_V1_BASE. EVERY money mutation attaches an `Idempotency-Key` header on the
 // live path (generateIdempotencyKey). ALL amounts are kobo (BIGINT minor units).
 // The server is the source of truth for tier limits, KYC state and ledger
 // balances — these mocks only mirror backend-owned config for display.
@@ -8,7 +10,7 @@
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { toTier1Result, type Tier1ServerResponse } from './tier1Result';
-import { USE_MOCK, CONNECT_API_BASE, TIER_BENEFITS } from '../constants/connect.constants';
+import { USE_MOCK, API_V1_BASE, CONNECT_API_BASE, TIER_BENEFITS } from '../constants/connect.constants';
 import type { ConnectTier, TierStatus } from '../types/connect.types';
 import type {
   WalletSummary,
@@ -80,7 +82,7 @@ export async function getWalletSummary(): Promise<WalletSummary> {
     await delay(180);
     return { balanceKobo: mockState.balanceKobo, currency: 'NGN', tier: cloneTier() };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/wallet/summary`);
+  const res = await api.get(`${API_V1_BASE}/wallet/summary`);
   return unwrap<WalletSummary>(res);
 }
 
@@ -89,7 +91,7 @@ export async function getTierStatus(): Promise<TierStatus> {
     await delay(140);
     return cloneTier();
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me/tier`);
+  const res = await api.get(`${API_V1_BASE}/me/tier`);
   return unwrap<TierStatus>(res);
 }
 

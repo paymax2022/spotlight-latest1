@@ -26,7 +26,11 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CONNECT_USE_MOCK, tr
 const CONNECT_API_HOST =
   process.env.EXPO_PUBLIC_CONNECT_API_HOST ??
   resolveApiBaseUrl(__DEV__ ? 'http://localhost:8190' : undefined);
-export const CONNECT_API_BASE = getDevUrl(`${CONNECT_API_HOST}/api/v1/connect`);
+// Some Connect routes Go mounts on the v1 group rather than under /connect —
+// GET /api/v1/wallet/summary and GET /api/v1/me/tier (registerConnectWalletRoutes).
+// API_V1_BASE is their base; CONNECT_API_BASE stays the /connect prefix.
+export const API_V1_BASE = getDevUrl(`${CONNECT_API_HOST}/api/v1`);
+export const CONNECT_API_BASE = `${API_V1_BASE}/connect`;
 
 // Module-scoped colors built on the base design tokens (never hardcode hex).
 export const ConnectColors = {
