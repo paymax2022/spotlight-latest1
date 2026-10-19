@@ -52,6 +52,7 @@ export default function MarketplaceLayout() {
       {/* ── Discover sub-screens (not tabs; pushed from Discover) ── */}
       <Tabs.Screen name="search" options={{ href: null }} />
       <Tabs.Screen name="results" options={{ href: null }} />
+      <Tabs.Screen name="boosted" options={{ href: null }} />
       <Tabs.Screen name="map" options={{ href: null }} />
       <Tabs.Screen name="saved-items" options={{ href: null }} />
       <Tabs.Screen name="saved-searches" options={{ href: null }} />

@@ -14,9 +14,9 @@ import PromoBanner from '@/components/PromoBanner';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
 import { useDeviceCoords } from '@/features/location/useDeviceCoords';
-import { MarketColors } from '@/features/marketplace';
+import { MarketColors, discoveryApi } from '@/features/marketplace';
 import { DEFAULT_RADIUS_KM } from '@/features/marketplace/proximity';
-import type { Category, ListingSummary } from '@/features/marketplace';
+import type { BoostedListing, Category, ListingSummary } from '@/features/marketplace';
 import { useCategories, useHomeRails } from '@/features/marketplace/hooks';
 import { mainCategories, subcategoriesOf } from '@/features/marketplace/categoryTree';
 import { useMarketplaceMenu } from '@/features/marketplace/components/MarketplaceMenu';
@@ -25,6 +25,11 @@ import { HomeMenuButton } from '@/components/HomeMenu';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { CategoryGridSkeleton, RailSkeleton } from '@/features/marketplace/components/Skeletons';
 import CategoryIcon from '@/features/marketplace/components/CategoryIcon';
+
+// Six promoted cards on home, derived from the preview size getHomeRails() asks
+// for (one more than this) rather than being a second number to keep in sync: the
+// extra row is what tells a full-but-final page from a section with more behind it.
+const HOME_BOOSTED_CAP = discoveryApi.HOME_BOOSTED_PREVIEW - 1;
 
 function CategoryTile({ category, subCount }: { category: Category; subCount: number }) {
   // Icon + colour come from CategoryIcon: curated hues for the 12 mains, and the
@@ -75,6 +80,35 @@ function Rail({
       ) : (
         <StateView kind="empty" compact icon={empty!.icon} title={empty!.title} message={empty!.message} />
       )}
+    </View>
+  );
+}
+
+// The promoted section sits directly under the category grid and above "Near you"
+// — a seller paying for visibility is buying placement in the first thing a buyer
+// sees, not a rail they have to scroll past three others to reach.
+//
+// It is capped at 6 cards, and the door behind it appears only when the fetch came
+// back with a 7th (HOME_BOOSTED_PREVIEW): six cards with nothing behind them would
+// offer a "View More" that leads to the same six. With nothing promoted at all the
+// section is hidden rather than rendering a heading over an empty row.
+//
+// The order is the server's — most UNSPENT boost value first — and is never
+// re-sorted here.
+function BoostedRail({ data }: { data: BoostedListing[] }) {
+  if (data.length === 0) return null;
+  return (
+    <View style={styles.railWrap}>
+      <SectionHeader
+        title="Boosted"
+        actionLabel={data.length > HOME_BOOSTED_CAP ? 'View More' : undefined}
+        onAction={data.length > HOME_BOOSTED_CAP ? () => router.push('/marketplace/boosted' as never) : undefined}
+      />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
+        {data.slice(0, HOME_BOOSTED_CAP).map((l) => (
+          <ListingCard key={l.id} item={l} horizontal onPress={(id) => router.push(`/marketplace/listing/${id}?source=boosted` as never)} />
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -205,6 +239,7 @@ export default function MarketplaceHome() {
           />
         ) : (
           <>
+            <BoostedRail data={rails.data?.boosted ?? []} />
             <Rail
               title={loc.coords ? `Near you · within ${radiusKm} km` : 'Near you'}
               data={rails.data?.nearYou ?? []}

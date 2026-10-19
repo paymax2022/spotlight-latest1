@@ -7,6 +7,7 @@ import { MKT_USE_MOCK, MktApiError, mktGet, mktPost, mktDelete, mktPatch, arr } 
 import * as M from './discovery.mock';
 import { DEFAULT_RADIUS_KM } from '../proximity';
 import type {
+  BoostedListing,
   Category,
   Listing,
   ListingSummary,
@@ -61,9 +62,31 @@ export async function getListing(id: string): Promise<Listing> {
 // blanking the whole Home screen.
 
 export interface HomeRails {
+  boosted: BoostedListing[];
   nearYou: ListingSummary[];
   priceDrops: ListingSummary[];
   escrowEligible: ListingSummary[];
+}
+
+/** Home caps the promoted rail at 6 cards, so it asks for 7 — one more than it
+ *  shows is what tells "these are all the boosted listings" apart from "there are
+ *  more, here's a door". Without the extra row the View More link would either
+ *  appear on a full-but-final page or never appear at all. */
+export const HOME_BOOSTED_PREVIEW = 7;
+
+/**
+ * GET /boosted — the promoted section: listings with a live boost right now, the
+ * one whose seller still has the most UNSPENT boost value first (money left, not
+ * money paid, so a fresh ₦700 promotion outranks a ₦1,000 one that is nearly
+ * used up). Server-ordered; this client must not re-sort it.
+ *
+ * Independent of /search on purpose: search answers 501 until Elasticsearch is
+ * provisioned, while this is a plain Postgres read — so the promoted section can
+ * be live while the rails below it fall back to fixtures.
+ */
+export async function getBoostedListings(limit = 50): Promise<BoostedListing[]> {
+  if (MKT_USE_MOCK) return M.mockBoostedListings(limit);
+  return arr((await mktGet<{ results?: BoostedListing[] }>('/boosted', { limit }))?.results);
 }
 
 /** Home rails. `coords` is the buyer's own fix; without it there is no
@@ -79,13 +102,17 @@ export async function getHomeRails(coords?: { lat: number; lng: number } | null,
       return [];
     }
   };
-  const [nearYou, escrowEligible] = await Promise.all([
+  // A failed promoted read degrades to no section, not to a broken home screen —
+  // same per-rail guard the search rails get.
+  const boostedSafe: Promise<BoostedListing[]> = getBoostedListings(HOME_BOOSTED_PREVIEW).catch(() => []);
+  const [boosted, nearYou, escrowEligible] = await Promise.all([
+    boostedSafe,
     coords
       ? safe({ ...coords, radiusKm, sort: 'nearby', limit: 12 })
       : Promise.resolve<ListingSummary[]>([]),
     safe({ escrowEligibleOnly: true, sort: 'trusted_first', limit: 12 }),
   ]);
-  return { nearYou, priceDrops: [], escrowEligible };
+  return { boosted, nearYou, priceDrops: [], escrowEligible };
 }
 
 export async function getCategories(): Promise<Category[]> {

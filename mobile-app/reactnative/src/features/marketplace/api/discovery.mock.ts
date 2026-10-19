@@ -3,6 +3,7 @@
 // as the graceful fallback when GET /search returns 501 SEARCH_NOT_WIRED.
 
 import type {
+  BoostedListing,
   Category,
   Listing,
   ListingSummary,
@@ -278,10 +279,48 @@ export async function mockGetCategory(id: string): Promise<Category> {
   return c;
 }
 
-export async function mockHomeRails(): Promise<{ nearYou: ListingSummary[]; priceDrops: ListingSummary[]; escrowEligible: ListingSummary[] }> {
+// Mirrors GET /boosted offline. The server orders the section by the UNSPENT value
+// of each listing's live boosts (pro-rated for undelivered days), most first, so
+// the fixtures below carry that figure directly rather than a paid amount: a
+// nearly-used-up ₦1,000 promotion sits BELOW a fresh ₦700 one. Mock home has three
+// active listings, which is fewer than the 6 the rail caps at — so View More only
+// ever appears against live data, never as a door to an empty page.
+const MOCK_BOOSTS: Record<string, { remainingKobo: number; endsInDays: number }> = {
+  lst_iphone: { remainingKobo: 70_000, endsInDays: 7 },
+  lst_macbook: { remainingKobo: 240_000, endsInDays: 21 },
+  lst_ps5: { remainingKobo: 30_000, endsInDays: 3 },
+};
+
+export async function mockBoostedListings(limit = 50): Promise<BoostedListing[]> {
+  await mockDelay();
+  return MOCK_LISTINGS
+    .filter((l) => l.status === 'active' && MOCK_BOOSTS[l.id])
+    .sort((a, b) => MOCK_BOOSTS[b.id].remainingKobo - MOCK_BOOSTS[a.id].remainingKobo)
+    .slice(0, limit)
+    .map((l) => {
+      const b = MOCK_BOOSTS[l.id];
+      return {
+        ...toSummary(l, true),
+        boostRemainingKobo: b.remainingKobo,
+        boostEndsAt: new Date(Date.now() + b.endsInDays * 86_400_000).toISOString(),
+      };
+    });
+}
+
+// Home rails, mock side. Typed structurally rather than by importing HomeRails from
+// ./discovery — that module imports this one, and a type-only cycle would still be
+// a cycle for the bundler.
+export async function mockHomeRails(): Promise<{
+  boosted: BoostedListing[];
+  nearYou: ListingSummary[];
+  priceDrops: ListingSummary[];
+  escrowEligible: ListingSummary[];
+}> {
   await mockDelay();
   const active = MOCK_LISTINGS.filter((l) => l.status === 'active');
+  const boosted = await mockBoostedListings();
   return {
+    boosted,
     nearYou: active.map((l) => toSummary(l)),
     priceDrops: active.filter((l) => l.id === 'lst_ps5').map((l) => toSummary(l)),
     escrowEligible: active.filter((l) => l.escrowEligible).map((l) => toSummary(l, l.id === 'lst_macbook')),
