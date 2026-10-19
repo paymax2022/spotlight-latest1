@@ -115,28 +115,43 @@ const EvidenceWindow = 72 * time.Hour
 
 // Listing mirrors mkt_listings.
 type Listing struct {
-	ID                   string         `json:"id"`
-	MarketID             string         `json:"market_id"`
-	SellerID             string         `json:"seller_id"`
-	CategoryID           string         `json:"category_id"`
-	Title                string         `json:"title"`
-	Description          string         `json:"description"`
-	PriceKobo            int64          `json:"price_kobo"`
-	Currency             string         `json:"currency"`
-	Condition            string         `json:"condition"`
-	Attrs                map[string]any `json:"attrs"`
-	Status               ListingStatus  `json:"status"`
-	QualityScore         float64        `json:"quality_score"`
-	EscrowEligible       bool           `json:"escrow_eligible"`
-	State                string         `json:"state"`
-	LGA                  string         `json:"lga"`
-	ModerationReasonCode *string        `json:"moderation_reason_code,omitempty"`
-	ViewCount            int64          `json:"view_count"`
-	SaveCount            int64          `json:"save_count"`
-	CreatedAt            time.Time      `json:"created_at"`
-	UpdatedAt            time.Time      `json:"updated_at"`
-	ExpiresAt            time.Time      `json:"expires_at"`
-	SoldAt               *time.Time     `json:"sold_at,omitempty"`
+	ID             string         `json:"id"`
+	MarketID       string         `json:"market_id"`
+	SellerID       string         `json:"seller_id"`
+	CategoryID     string         `json:"category_id"`
+	Title          string         `json:"title"`
+	Description    string         `json:"description"`
+	PriceKobo      int64          `json:"price_kobo"`
+	Currency       string         `json:"currency"`
+	Condition      string         `json:"condition"`
+	Attrs          map[string]any `json:"attrs"`
+	Status         ListingStatus  `json:"status"`
+	QualityScore   float64        `json:"quality_score"`
+	EscrowEligible bool           `json:"escrow_eligible"`
+	State          string         `json:"state"`
+	LGA            string         `json:"lga"`
+	// Lat/Lng echo the mkt_listings.geo point (WGS84) the seller recorded, when
+	// they recorded one. Deliberately NOT part of what a buyer's search gets —
+	// see DistanceKm — these are filled on the create echo (the seller's own
+	// numbers) and on the admin moderation read, which is where a reviewer can
+	// see that a listing has no location at all. Other listing reads leave them
+	// nil because listingCols cannot carry them (it is prefixCols-fed and must
+	// stay bare column names).
+	Lat *float64 `json:"lat,omitempty"`
+	Lng *float64 `json:"lng,omitempty"`
+	// DistanceKm is what a buyer's search gets instead of the seller's position:
+	// the great-circle distance from the buyer, in kilometres, measured by the
+	// server (PostGIS in the fallback, a painless arcDistance script in
+	// Elasticsearch) whenever the request carried the buyer's own coordinates.
+	// Never a stored column.
+	DistanceKm           *float64   `json:"distance_km,omitempty"`
+	ModerationReasonCode *string    `json:"moderation_reason_code,omitempty"`
+	ViewCount            int64      `json:"view_count"`
+	SaveCount            int64      `json:"save_count"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	ExpiresAt            time.Time  `json:"expires_at"`
+	SoldAt               *time.Time `json:"sold_at,omitempty"`
 	// ThumbURL is a short-lived presigned GET for the listing's first photo, or
 	// "" when it has none. The mobile ListingCard reads `thumbUrl` and has always
 	// expected it; nothing ever populated it, which is why every card fell back to
@@ -460,6 +475,11 @@ type CreateListingInput struct {
 	State          string         `json:"state"`
 	LGA            string         `json:"lga"`
 	EscrowEligible *bool          `json:"escrow_eligible,omitempty"`
+	// Lat/Lng are the seller's chosen meetup position (device GPS, or a pin on
+	// the map). Optional: a listing without them is still sellable, it simply
+	// never appears in proximity results. Both must be present to be stored.
+	Lat *float64 `json:"lat,omitempty"`
+	Lng *float64 `json:"lng,omitempty"`
 }
 
 // UpdateListingInput is the mutable subset of a listing.

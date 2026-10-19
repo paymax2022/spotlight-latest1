@@ -113,6 +113,19 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	if in.EscrowEligible != nil {
 		escrowEligible = *in.EscrowEligible
 	}
+	// Location is optional — a seller who declines it simply never shows up in
+	// "Near you". But a value that is present must be usable: ST_MakePoint raises
+	// for a latitude outside +/-90 (a 500 for a typo), and half a pair would store
+	// a point at the equator. NaN and Inf both fail the range comparison too.
+	if (in.Lat == nil) != (in.Lng == nil) {
+		return nil, fieldErr(CodeValidation, "lat and lng must be provided together", "lng")
+	}
+	if in.Lat != nil && !(*in.Lat >= -90 && *in.Lat <= 90) {
+		return nil, fieldErr(CodeValidation, "lat must be between -90 and 90", "lat")
+	}
+	if in.Lng != nil && !(*in.Lng >= -180 && *in.Lng <= 180) {
+		return nil, fieldErr(CodeValidation, "lng must be between -180 and 180", "lng")
+	}
 
 	l := &Listing{
 		MarketID:       DefaultMarketID,
@@ -127,6 +140,8 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 		EscrowEligible: escrowEligible,
 		State:          in.State,
 		LGA:            in.LGA,
+		Lat:            in.Lat,
+		Lng:            in.Lng,
 	}
 	created, err := s.repo.InsertListing(ctx, l)
 	if err != nil {
@@ -876,7 +891,7 @@ func (s *Service) searchPayload(ctx context.Context, l *Listing) map[string]any 
 	if boosts, berr := s.repo.ActiveBoostsForListing(ctx, l.ID); berr == nil {
 		boostWeight = maxBoostWeight(boosts)
 	}
-	return map[string]any{
+	doc := map[string]any{
 		"listing_id":      l.ID,
 		"market_id":       l.MarketID,
 		"seller_id":       l.SellerID,
@@ -895,6 +910,17 @@ func (s *Service) searchPayload(ctx context.Context, l *Listing) map[string]any 
 		"created_at":      l.CreatedAt,
 		"freshness_ts":    l.UpdatedAt,
 	}
+	// ES proximity. The index template declares geo as a geo_point and the query
+	// builder runs a geo_distance filter and a 25 km decay off it, but no payload
+	// ever carried a geo key — so on the Elasticsearch path every proximity
+	// request matched nothing while still answering 200. The coordinates live in
+	// mkt_listings.geo, which listingCols cannot expose (prefixCols needs bare
+	// column names), hence the dedicated read. Absent location means no key at
+	// all: a missing point must never be indexed as 0,0 in the Gulf of Guinea.
+	if lat, lng, cerr := s.repo.ListingCoords(ctx, l.ID); cerr == nil && lat != nil && lng != nil {
+		doc["geo"] = map[string]any{"lat": *lat, "lng": *lng}
+	}
+	return doc
 }
 
 // maxBoostWeight returns the largest weight among the given (already active +
