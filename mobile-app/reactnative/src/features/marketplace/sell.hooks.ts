@@ -1,7 +1,7 @@
 // relevant queries. Layered on the Sell API (./api/sell.api) which itself talks
 // the shared client. Mirrors the Discover hooks conventions.
 // The boost purchase is the one money mutation here: it PERSISTS an
-// Idempotency-Key (SecureStore-backed, keyed by listingId+tier) so an app-kill
+// Idempotency-Key (SecureStore-backed, keyed by listingId+duration) so an app-kill
 // mid-charge + retry reuses the same key and the backend dedupes rather than
 // double-debiting the wallet.
 
@@ -36,9 +36,9 @@ export const SELL_KEYS = {
   category: (id: string) => ['mkt', 'sell', 'category', id] as const,
   myListings: ['mkt', 'sell', 'my-listings'] as const,
   listing: (id: string) => ['mkt', 'listing', id] as const,
-  boostTiers: ['mkt', 'sell', 'boost-tiers'] as const,
+  boostPricing: ['mkt', 'sell', 'boost-pricing'] as const,
   boost: (id: string) => ['mkt', 'sell', 'boost', id] as const,
-  boostQuote: (tier?: string, endsAt?: string) => ['mkt', 'sell', 'boost-quote', tier ?? '', endsAt ?? ''] as const,
+  boostQuote: (durationDays?: number, endsAt?: string) => ['mkt', 'sell', 'boost-quote', durationDays ?? '', endsAt ?? ''] as const,
   insights: (id: string) => ['mkt', 'sell', 'insights', id] as const,
 };
 
@@ -160,8 +160,11 @@ export function useMarkSold() {
   });
 }
 
-export const useBoostTiers = () =>
-  useQuery({ queryKey: SELL_KEYS.boostTiers, queryFn: sellApi.getBoostTiers, staleTime: 5 * 60_000 });
+// One number drives every boost price: the admin's live ₦/day rate (see
+// api/sell.api.getBoostPricing). Kept briefly stale rather than cached long — an
+// admin can reprice at any moment and the next load should reflect it.
+export const useBoostPricing = () =>
+  useQuery({ queryKey: SELL_KEYS.boostPricing, queryFn: sellApi.getBoostPricing, staleTime: 30_000 });
 
 // Seller performance for one listing. Short staleTime: a seller opening this
 // screen wants the current figures, not a cached snapshot from earlier today.
@@ -181,31 +184,31 @@ export const useBoost = (id: string | null) =>
   });
 
 // Live price preview for a would-be boost purchase — pass exactly one of
-// tier/endsAt. Disabled until one is actually chosen, so the screen doesn't
+// durationDays/endsAt. Disabled until one is actually chosen, so the screen doesn't
 // fire a request for an incomplete selection.
-export const useBoostQuote = (params: { tier?: string; endsAt?: string }) =>
+export const useBoostQuote = (params: { durationDays?: number; endsAt?: string }) =>
   useQuery({
-    queryKey: SELL_KEYS.boostQuote(params.tier, params.endsAt),
+    queryKey: SELL_KEYS.boostQuote(params.durationDays, params.endsAt),
     queryFn: () => sellApi.getBoostQuote(params),
-    enabled: !!(params.tier || params.endsAt),
+    enabled: params.durationDays != null || !!params.endsAt,
   });
 
 /**
- * Purchase a boost (money path). Pass either { tier } for a preset package or
- * { endsAt } for a custom date-range boost. The Idempotency-Key is persisted
- * per listingId+selection BEFORE the charge fires, so a retry after an
- * app-kill reuses it and the backend's dedupe window makes the retry a safe
- * replay (never a double-debit). Cleared on terminal success. On a 409
- * idempotency replay the echoed original Boost is returned.
+ * Purchase a boost (money path). Pass either { durationDays } for a whole-day
+ * boost starting now or { endsAt } for one ending at a chosen moment. The
+ * Idempotency-Key is persisted per listingId+selection BEFORE the charge fires, so
+ * a retry after an app-kill reuses it and the backend's dedupe window makes the
+ * retry a safe replay (never a double-debit). Cleared on terminal success. On a
+ * 409 idempotency replay the echoed original Boost is returned.
  */
 export function usePurchaseBoost(listingId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (selection: { tier?: string; endsAt?: string }): Promise<Boost> => {
-      const operationKey = `boost:${listingId}:${selection.tier ?? `custom:${selection.endsAt}`}`;
+    mutationFn: async (selection: { durationDays?: number; endsAt?: string }): Promise<Boost> => {
+      const operationKey = `boost:${listingId}:${selection.durationDays ?? `custom:${selection.endsAt}`}`;
       const idemKey = await getOrCreateIdemKey(operationKey);
       try {
-        const boost = await sellApi.createBoost({ listingId, tier: selection.tier, endsAt: selection.endsAt }, idemKey);
+        const boost = await sellApi.createBoost({ listingId, durationDays: selection.durationDays, endsAt: selection.endsAt }, idemKey);
         await clearIdemKey(operationKey);
         return boost;
       } catch (e) {

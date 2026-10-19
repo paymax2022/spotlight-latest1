@@ -179,6 +179,18 @@ export interface ListingSummary {
   createdAt: string;
 }
 
+/**
+ * One row of the promoted "Boosted" home section (GET /marketplace/boosted): a
+ * live listing card plus what its boost currently means. The section is ordered by
+ * boostRemainingKobo descending — the UNSPENT value of the seller's live boosts,
+ * pro-rated for undelivered days — so the listing whose promotion still has the
+ * most money left leads, not the one that once paid the most.
+ */
+export interface BoostedListing extends ListingSummary {
+  boostRemainingKobo: number;
+  boostEndsAt: string;
+}
+
 /** mkt_categories (Category in model.go). attributeSchema drives the schema-driven
  *  quick filters (Category Landing) and the Sell attribute form. */
 export interface Category {
@@ -380,13 +392,18 @@ export interface Dispute {
   executedAt?: string | null;
 }
 
-export interface BoostTier {
-  tier: string;
-  durationDays: number;
-  priceKobo: number;
-  weight: number;
-  label: string;
-  description: string;
+/**
+ * GET /boosts/pricing — the entire boost price catalog is ONE number: the admin's
+ * ₦/day rate (mkt_boost_daily_rate), which the admin console can change at any
+ * time. Every boost costs duration_days × this rate, so `presetDurationDays` are
+ * one-tap shortcuts rather than a second list of prices, and min/max bound a
+ * custom range. Read live per request, so repricing shows up on the next load.
+ */
+export interface BoostPricing {
+  dailyRateKobo: number;
+  presetDurationDays: number[];
+  minDurationDays: number;
+  maxDurationDays: number;
 }
 
 export interface Boost {
@@ -409,24 +426,25 @@ export interface Boost {
 }
 
 // BoostQuote is the server-authoritative price preview for GET /boosts/quote —
-// PurchaseBoost resolves the SAME quote server-side, so a price shown here
-// and what createBoost actually charges can never drift.
+// PurchaseBoost resolves the SAME quote server-side, so a price shown here and
+// what createBoost actually charges can never drift. priceKobo is always
+// durationDays × dailyRateKobo; the rate travels with the quote so the screen can
+// show the buyer the arithmetic, not just a total.
 export interface BoostQuote {
-  mode: 'package' | 'custom';
-  tier?: string;
   durationDays: number;
+  dailyRateKobo: number;
   priceKobo: number;
   weight: number;
   startsAt: string;
   endsAt: string;
 }
 
-// Exactly ONE of tier (a preset package) or endsAt (a custom date-range
-// boost — starts now, ends at this ISO timestamp, rounded up to whole days)
-// is expected.
+// Exactly ONE of durationDays (a whole-day boost starting now) or endsAt (a boost
+// ending at a chosen moment, billed in whole days rounded UP) is expected. There
+// is no price in the body — the server prices it from the admin's ₦/day rate.
 export interface CreateBoostInput {
   listingId: string;
-  tier?: string;
+  durationDays?: number;
   endsAt?: string;
 }
 

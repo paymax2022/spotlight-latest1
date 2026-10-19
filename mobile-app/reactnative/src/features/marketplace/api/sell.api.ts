@@ -15,15 +15,15 @@
 //   GET  /categories | /categories/:id (attribute schema)
 //   GET  /sellers/:id/listings     (my listings, current user id)
 //   POST /listings/media/presign   { uploadUrl, fileUrl }   (image upload)
-//   GET  /boosts/tiers             (public)
+//   GET  /boosts/pricing           (public — the ₦/day rate + duration options)
 //   GET  /boosts/:id
 
 import { MKT_USE_MOCK, mktGet, mktPost, mktPut, mktDelete, arr } from './client';
 import * as S from './sell.mock';
 import type {
   Boost,
+  BoostPricing,
   BoostQuote,
-  BoostTier,
   Category,
   CreateBoostInput,
   CreateListingInput,
@@ -179,23 +179,24 @@ export async function getMyListings(sellerId: string | null): Promise<Listing[]>
   return arr(await mktGet<Listing[]>('/my-listings'));
 }
 
-export async function getBoostTiers(): Promise<BoostTier[]> {
-  if (MKT_USE_MOCK) return S.mockBoostTiers();
-  return arr(await mktGet<BoostTier[]>('/boosts/tiers'));
+export async function getBoostPricing(): Promise<BoostPricing> {
+  if (MKT_USE_MOCK) return S.mockBoostPricing();
+  return mktGet<BoostPricing>('/boosts/pricing');
 }
 
-// getBoostQuote previews the SAME price createBoost will actually charge
-// (both resolve through the backend's ComputeBoostQuote) — pass exactly one
-// of tier (a preset package) or endsAt (a custom date-range boost, ISO
-// string with time-of-day) so the screen can show the fee live as the user
-// picks dates, before they commit to a purchase.
-export async function getBoostQuote(params: { tier?: string; endsAt?: string }): Promise<BoostQuote> {
+// getBoostQuote previews the SAME price createBoost will actually charge (both
+// resolve through the backend's ComputeBoostQuote) — pass exactly one of
+// durationDays (a whole-day boost starting now) or endsAt (a boost ending at a
+// chosen ISO timestamp, billed in whole days rounded up), so the screen can show
+// the fee live before the user commits. durationDays prices instantly; endsAt
+// needs this call only to learn the rounded-up day count.
+export async function getBoostQuote(params: { durationDays?: number; endsAt?: string }): Promise<BoostQuote> {
   if (MKT_USE_MOCK) return S.mockBoostQuote(params);
-  return mktGet<BoostQuote>('/boosts/quote', params.tier ? { tier: params.tier } : { ends_at: params.endsAt });
+  return mktGet<BoostQuote>('/boosts/quote', params.durationDays != null ? { duration_days: params.durationDays } : { ends_at: params.endsAt });
 }
 
 export async function createBoost(input: CreateBoostInput, idempotencyKey: string): Promise<Boost> {
-  if (MKT_USE_MOCK) return S.mockCreateBoost(input.listingId, input.tier, input.endsAt);
+  if (MKT_USE_MOCK) return S.mockCreateBoost(input.listingId, input.durationDays, input.endsAt);
   return mktPost<Boost>('/boosts', input, idempotencyKey);
 }
 
