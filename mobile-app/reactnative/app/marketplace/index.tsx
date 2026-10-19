@@ -10,6 +10,7 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import SearchBar from '@/components/SearchBar';
+import PromoBanner from '@/components/PromoBanner';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
 import { MarketColors } from '@/features/marketplace';
@@ -47,16 +48,30 @@ function CategoryTile({ category, subCount }: { category: Category; subCount: nu
   );
 }
 
-function Rail({ title, data }: { title: string; data: ListingSummary[] }) {
-  if (data.length === 0) return null;
+function Rail({
+  title,
+  data,
+  empty,
+}: {
+  title: string;
+  data: ListingSummary[];
+  /** Rendered in place of the cards when the rail has nothing. Omit it for a
+      rail that should simply not appear (e.g. Price drops, mock-only). */
+  empty?: { title: string; message: string; icon: string };
+}) {
+  if (data.length === 0 && !empty) return null;
   return (
     <View style={styles.railWrap}>
       <SectionHeader title={title} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
-        {data.map((l) => (
-          <ListingCard key={l.id} item={l} horizontal onPress={(id) => router.push(`/marketplace/listing/${id}?source=home` as never)} />
-        ))}
-      </ScrollView>
+      {data.length > 0 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
+          {data.map((l) => (
+            <ListingCard key={l.id} item={l} horizontal onPress={(id) => router.push(`/marketplace/listing/${id}?source=home` as never)} />
+          ))}
+        </ScrollView>
+      ) : (
+        <StateView kind="empty" compact icon={empty!.icon} title={empty!.title} message={empty!.message} />
+      )}
     </View>
   );
 }
@@ -85,11 +100,24 @@ export default function MarketplaceHome() {
         <HomeMenuButton />
       </View>
 
-      <Pressable onPress={() => router.push('/marketplace/search' as never)} accessibilityRole="button" accessibilityLabel="Search marketplace">
-        <View style={styles.searchWrap} pointerEvents="none">
-          <SearchBar editable={false} placeholder="Search phones, cars, furniture…" />
-        </View>
-      </Pressable>
+      {/* Hero above the search bar: the first thing on the tab says what the
+          Marketplace is for and hands the seller straight to the composer. */}
+      <PromoBanner
+        badge="MARKETPLACE"
+        title="Buy and sell near you"
+        subtitle="List an item in minutes, get paid with escrow protection"
+        cta="Start selling"
+        onPress={() => router.push('/marketplace/sell' as never)}
+      />
+
+      {/* SearchBar owns its own tap target — an outer Pressable never fires,
+          because the readonly TextInput claims the touch and only the bar's
+          own onPress reaches it. */}
+      <SearchBar
+        editable={false}
+        placeholder="Search phones, cars, furniture…"
+        onPress={() => router.push('/marketplace/search' as never)}
+      />
 
       {showCacheBanner ? (
         <View style={styles.cacheBanner}>
@@ -153,9 +181,25 @@ export default function MarketplaceHome() {
           />
         ) : (
           <>
-            <Rail title="Near you" data={rails.data?.nearYou ?? []} />
+            <Rail
+              title="Near you"
+              data={rails.data?.nearYou ?? []}
+              empty={{
+                title: 'Nothing listed near you yet',
+                message: 'New posts from sellers around you appear here.',
+                icon: 'MapPin',
+              }}
+            />
             <Rail title="Price drops" data={rails.data?.priceDrops ?? []} />
-            <Rail title="Escrow-eligible" data={rails.data?.escrowEligible ?? []} />
+            <Rail
+              title="Escrow-eligible"
+              data={rails.data?.escrowEligible ?? []}
+              empty={{
+                title: 'No escrow-eligible listings',
+                message: 'Sellers can protect a deal with escrow from their listing settings.',
+                icon: 'ShieldCheck',
+              }}
+            />
           </>
         )}
       </ScrollView>
@@ -168,7 +212,6 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.sm },
   menuBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: -6 },
   headerTitle: { ...Typography.headlineMd, color: Colors.onSurface },
-  searchWrap: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.sm },
   cacheBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: MarketColors.warnBg, marginHorizontal: Spacing.containerMargin, paddingHorizontal: Spacing.sm, paddingVertical: 6, borderRadius: Radius.md, marginBottom: Spacing.xs },
   cacheBannerText: { ...Typography.labelSm, color: MarketColors.warnText },
   scroll: { paddingBottom: Spacing.xxl },
