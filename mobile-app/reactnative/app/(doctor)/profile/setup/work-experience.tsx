@@ -8,10 +8,12 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
+import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, WizardProgress, EditableListCard, ToggleRow } from '@/features/doctor/components';
-import { useProfileDraft, useSaveProfileDraft } from '@/features/doctor/hooks';
+import { useProfileDraft, useSaveProfileDraft, useNigerianStates, useLgasForState } from '@/features/doctor/hooks';
+import { NIGERIAN_STATES, NIGERIAN_LGAS } from '@/features/doctor/constants';
 import type { WorkExperienceEntry } from '@/types/doctor.profile';
 
 const blank = (): WorkExperienceEntry => ({ id: `work-${Date.now()}`, organisation: '', role: '', location: '', startYear: new Date().getFullYear(), endYear: undefined, isCurrent: false, description: '' });
@@ -20,6 +22,7 @@ const toYear = (s: string): number => { const n = parseInt(s.replace(/[^0-9]/g, 
 export default function WorkExperienceScreen() {
   const { data: draft, isLoading, isError, refetch } = useProfileDraft();
   const save = useSaveProfileDraft();
+  const states = useNigerianStates();
 
   const [list, setList] = useState<WorkExperienceEntry[] | null>(null);
   const [editing, setEditing] = useState<WorkExperienceEntry | null>(null);
@@ -31,8 +34,25 @@ export default function WorkExperienceScreen() {
   const items = list ?? [];
   const set = (patch: Partial<WorkExperienceEntry>) => setEditing((e) => (e ? { ...e, ...patch } : e));
 
+  const parseLocation = (loc: string = '') => {
+    const [state, lga] = loc.split(',').map(s => s.trim());
+    return { state, lga };
+  };
+  const { state: currentState, lga: currentLga } = editing ? parseLocation(editing.location) : { state: undefined, lga: undefined };
+
+  // Dojah-backed LGAs for the chosen state; static map is the fallback when
+  // the proxy has no data (unconfigured/error).
+  const lgasQuery = useLgasForState(currentState);
+  const stateOptions = states.data && states.data.length > 0 ? states.data : NIGERIAN_STATES;
+  const lgaOptions = lgasQuery.data && lgasQuery.data.length > 0 ? lgasQuery.data : (NIGERIAN_LGAS[currentState || ''] ?? NIGERIAN_LGAS['default']);
+
+  const yearError =
+    !!editing && !editing.isCurrent && !!editing.endYear && editing.endYear < editing.startYear
+      ? 'The end year cannot be earlier than the start year.'
+      : undefined;
+
   const saveEntry = () => {
-    if (!editing || !editing.organisation.trim() || !editing.role.trim()) return;
+    if (!editing || !editing.organisation.trim() || !editing.role.trim() || yearError) return;
     setList((prev) => {
       const base = prev ?? [];
       return base.some((x) => x.id === editing.id) ? base.map((x) => (x.id === editing.id ? editing : x)) : [...base, editing];
@@ -71,7 +91,7 @@ export default function WorkExperienceScreen() {
       <TeleHeader title="Work experience" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <WizardProgress current={15} total={19} label="Work experience" />
+          <WizardProgress current={15} total={18} label="Work experience" />
 
           <SectionCard title="Employment history" style={styles.card}>
             <Text style={styles.hint}>Add your relevant clinical roles.</Text>
@@ -94,7 +114,14 @@ export default function WorkExperienceScreen() {
               <View style={styles.form}>
                 <TextInputField label="Organisation" placeholder="e.g. Lagoon Medical Centre" value={editing.organisation} onChangeText={(organisation) => set({ organisation })} />
                 <TextInputField label="Role" placeholder="e.g. Consultant Family Physician" value={editing.role} onChangeText={(role) => set({ role })} />
-                <TextInputField label="Location" placeholder="e.g. Lagos, NG" value={editing.location ?? ''} onChangeText={(location) => set({ location })} />
+                <View style={styles.locationGroup}>
+                  <SelectField label="State" placeholder="Select state" value={currentState} options={stateOptions} onChange={(state) => {
+                    set({ location: state });
+                  }} searchable={false} />
+                  <SelectField label="L.G.A." placeholder={currentState && lgasQuery.isFetching && !lgasQuery.data ? 'Loading…' : 'Select LGA'} value={currentLga || undefined} options={lgaOptions} onChange={(lga) => {
+                    set({ location: `${currentState || ''}, ${lga}` });
+                  }} searchable={false} />
+                </View>
                 <View style={styles.row}>
                   <View style={styles.half}>
                     <TextInputField label="Start year" placeholder="2018" value={editing.startYear ? String(editing.startYear) : ''} onChangeText={(v) => set({ startYear: toYear(v) })} keyboardType="number-pad" maxLength={4} />
@@ -103,11 +130,12 @@ export default function WorkExperienceScreen() {
                     <TextInputField label="End year" placeholder="2022" value={editing.endYear ? String(editing.endYear) : ''} onChangeText={(v) => set({ endYear: toYear(v) || undefined })} keyboardType="number-pad" maxLength={4} editable={!editing.isCurrent} />
                   </View>
                 </View>
+                {!!yearError && <Text style={styles.errorText}>{yearError}</Text>}
                 <ToggleRow label="I currently work here" value={editing.isCurrent} onValueChange={(isCurrent) => set({ isCurrent, endYear: isCurrent ? undefined : editing.endYear })} />
                 <TextInputField label="Description (optional)" placeholder="Key responsibilities" value={editing.description ?? ''} onChangeText={(description) => set({ description })} multiline style={styles.textArea} />
                 <View style={styles.formActions}>
                   <PrimaryButton label="Cancel" onPress={() => setEditing(null)} variant="secondary" style={styles.formBtn} />
-                  <PrimaryButton label="Save" onPress={saveEntry} disabled={!editing.organisation.trim() || !editing.role.trim()} style={styles.formBtn} />
+                  <PrimaryButton label="Save" onPress={saveEntry} disabled={!editing.organisation.trim() || !editing.role.trim() || !!yearError} style={styles.formBtn} />
                 </View>
               </View>
             ) : (
@@ -133,8 +161,10 @@ const styles = StyleSheet.create({
   hint:        { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginBottom: Spacing.md },
   empty:       { ...Typography.bodyMd, color: Colors.onSurfaceVariant, marginBottom: Spacing.md },
   form:        { marginTop: Spacing.xs, gap: Spacing.xs },
+  locationGroup:{ flexDirection: 'row', gap: Spacing.sm },
   row:         { flexDirection: 'row', gap: Spacing.sm },
   half:        { flex: 1 },
+  errorText:   { ...Typography.bodySm, color: Colors.error },
   textArea:    { minHeight: 80, textAlignVertical: 'top' },
   formActions: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm },
   formBtn:     { flex: 1 },

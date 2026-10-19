@@ -262,14 +262,11 @@ func (s *Service) VerifyBankAccount(ctx context.Context, userID string, req Bank
 		maskedAcct = "****" + accountNumber[len(accountNumber)-4:]
 	}
 
-	accountNameToReturn := &resolution.AccountName
-	if req.AccountName != nil {
-		accountNameToReturn = req.AccountName
-	}
-
+	// The NAME IS THE VERIFIED VALUE — always the provider's, never the
+	// client-supplied one: the app prints it and the user's Continue affirms it.
 	return map[string]any{
 		"is_verified":           true,
-		"account_name":          accountNameToReturn,
+		"account_name":          resolution.AccountName,
 		"bank_name":             req.BankName,
 		"bank_code":             bankCode,
 		"account_number_masked": maskedAcct,

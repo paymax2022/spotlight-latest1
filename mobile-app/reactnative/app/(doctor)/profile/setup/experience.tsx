@@ -54,7 +54,7 @@ export default function ExperienceScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Years of experience" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <WizardProgress current={6} total={19} label="Years of experience" />
+        <WizardProgress current={6} total={18} label="Years of experience" />
 
         <SectionCard title="How long have you practised?" style={styles.card}>
           <View style={styles.grid}>

@@ -10,10 +10,11 @@ import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, InfoRow } from '@/features/doctor/components';
-import { useProfileDraft, useSubmitProfileVerification } from '@/features/doctor/hooks';
+import { useProfileDraft, useSubmitProfileVerification, useDocumentSlots } from '@/features/doctor/hooks';
 
 export default function SubmitVerificationScreen() {
   const { data: draft, isLoading, isError, refetch } = useProfileDraft();
+  const { data: slots } = useDocumentSlots();
   const submit = useSubmitProfileVerification();
   const [error, setError] = useState<string>();
 
@@ -60,7 +61,7 @@ export default function SubmitVerificationScreen() {
 
         <SectionCard title="Submission summary" style={styles.card}>
           <InfoRow label="Licence" value={draft.licence.licenceNumber} />
-          <InfoRow label="Documents" value={`${draft.documents.filter((d) => d.file).length} uploaded`} />
+          <InfoRow label="Documents" value={`${slots?.filter((s) => s.file).length ?? 0} uploaded`} />
           <InfoRow label="Certificates" value={`${draft.certificates.length} uploaded`} />
           <InfoRow label="Completed steps" value={`${draft.completedSteps.length}`} />
         </SectionCard>

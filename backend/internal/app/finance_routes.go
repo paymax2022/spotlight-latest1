@@ -74,6 +74,7 @@ import (
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
+	"spotlight/backend/internal/provider/dojah"
 	"spotlight/backend/internal/provider/eversend"
 	"spotlight/backend/internal/provider/maplerad"
 	"spotlight/backend/internal/provider/monnify"
@@ -2752,9 +2753,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		doctorSvc := doctor.NewService(pool, ledgerSvc, tiersSvc, redisClient).WithRealtime(rtcIssuer, doctorHub)
 
-		// Wire the Paystack disbursement provider for real-time bank account
-		// verification on CreateBankAccount (soft-fail if provider unavailable).
-		if paystackDisb != nil {
+		// Wire the bank-account name resolver for real-time verification on
+		// CreateBankAccount/VerifyBankAccount (soft-fail if unavailable).
+		// Monnify's validate-account-number is the preferred rail; Paystack is
+		// the fallback when Monnify creds are absent.
+		if monnifyDisb != nil {
+			doctorSvc = doctorSvc.WithDisbursementProvider(monnifyDisb)
+		} else if paystackDisb != nil {
 			doctorSvc = doctorSvc.WithDisbursementProvider(paystackDisb)
 		}
 
@@ -3147,6 +3152,34 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		docGroup.POST("/profile/documents", doctorHandler.UploadProfileDocument)
 		docGroup.POST("/profile/photo", doctorHandler.SetProfilePhoto)
 		docGroup.PUT("/profile/tax-info", doctorHandler.UpdateTaxInfo)
+
+		// Nigerian geography for the doctor profile address pickers
+		// (affiliations state/city). Proxies Dojah's Wallet Utilities —
+		// GET /api/v1/general/states and /states/lgas. Read-only reference
+		// data; returns 503 when Dojah is unconfigured so the app can fall
+		// back to a static list.
+		dojahGeo := dojah.New(cfg.DojahAppID, cfg.DojahSecretKey, cfg.DojahProd)
+		docGroup.GET("/geo/states", func(c *gin.Context) {
+			states, err := dojahGeo.ListStates(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{keyError: err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"states": states})
+		})
+		docGroup.GET("/geo/lgas", func(c *gin.Context) {
+			state := c.Query("state")
+			if state == "" {
+				c.JSON(http.StatusBadRequest, gin.H{keyError: "state query param is required"})
+				return
+			}
+			lgas, err := dojahGeo.ListLgas(c.Request.Context(), state)
+			if err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{keyError: err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"lgas": lgas})
+		})
 
 		// Payouts reads + account + dispute (doctor_payouts / _bank_accounts / settlement_disputes).
 		// :id keeps a single gin wildcard tree position under /payouts.

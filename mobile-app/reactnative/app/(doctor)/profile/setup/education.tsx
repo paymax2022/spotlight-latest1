@@ -73,7 +73,7 @@ export default function EducationScreen() {
       <TeleHeader title="Education" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <WizardProgress current={14} total={19} label="Education history" />
+          <WizardProgress current={14} total={18} label="Education history" />
 
           <SectionCard title="Qualifications" style={styles.card}>
             <Text style={styles.hint}>Add your degrees and qualifications.</Text>

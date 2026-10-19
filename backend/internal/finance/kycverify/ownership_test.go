@@ -161,10 +161,10 @@ func TestOwnershipGate_BlockPathsRevealNoDigits(t *testing.T) {
 // 11-digit local number shows as 7 bullets + 4 digits.
 func TestMaskPhone(t *testing.T) {
 	cases := map[string]string{
-		"08159491618":   "•••••••1618",
+		"08159491618":    "•••••••1618",
 		"+2348159491618": "•••••••••1618",
-		"1234":          "1234", // too short to meaningfully mask
-		"":              "",
+		"1234":           "1234", // too short to meaningfully mask
+		"":               "",
 	}
 	for in, want := range cases {
 		if got := maskPhone(in); got != want {

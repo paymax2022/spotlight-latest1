@@ -22,8 +22,8 @@ import type {
   UploadResult,
   SaveBankAccountInput,
   SaveBankAccountResult,
-  SaveTaxInfoInput,
-  SaveTaxInfoResult,
+  VerifyBankAccountInput,
+  VerifyBankAccountResult,
   SubmitProfileVerificationInput,
   SubmitProfileVerificationResult,
   RenewLicenceInput,
@@ -35,6 +35,7 @@ import type {
 // Re-export the shared money formatter so Section B screens can import it here.
 export { formatKobo } from '@/api/doctor.api';
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost, doctorPut, doctorUploadFile } from '@/api/doctor.client';
+import { createSupabaseClient, getSupabaseConfigStatus } from '@/lib/supabase';
 
 // Simulate network latency so loading states are exercised in the UI.
 const wait = <T>(value: T, ms = 350): Promise<T> =>
@@ -107,14 +108,11 @@ export const DEMO_PROFILE_DRAFT: DoctorProfileDraft = {
     bankName: 'GTBank', bankCode: '058', accountNumber: '0123456789',
     accountName: 'AMAKA OBI', isVerified: true,
   },
-  taxInfo: {
-    hasTin: true, tin: '1234567-0001', vatRegistered: false, businessName: 'Dr. Amaka Obi Family Practice',
-  },
   completedSteps: [
     'personal_info', 'profile_photo', 'bio', 'specialty', 'sub_specialty',
     'experience', 'languages', 'licence_number', 'licence_upload', 'government_id',
     'affiliations', 'education', 'work_experience', 'pricing', 'free_follow_up',
-    'availability', 'bank_account', 'tax_info',
+    'availability', 'bank_account',
   ],
   status: 'unsubmitted',
   updatedAt: iso(0),
@@ -159,18 +157,18 @@ export const DEMO_VERIFICATION_DECISION: VerificationDecision = {
 // reached yet renders as empty rather than crashing the screen that reads it
 // (`draft.personalInfo` etc. would otherwise be `undefined`, which is exactly
 // true on the live path — the reported "We could not load your profile.").
-// NOT fixed here, and out of scope for that crash: because `profileDraft.draft`
-// is replaced wholesale on every save (jsonb `||` merges top-level keys only,
-// and every screen's patch is nested one level under the same `draft` key),
-// each step's save currently overwrites every OTHER step's already-saved data
-// — a real, separate data-loss defect in the write path, not a shape mismatch.
-// returning user will see only whichever screen they saved last).
+// The write path is fixed server-side: SaveProfileDraft (doctor repository)
+// now merges the nested `draft` object one level deep, so each step's patch
+// accumulates instead of replacing every other step's saved data.
 interface ProfileDraftWire {
   id:            string;
   userId:        string;
   verification:  VerificationStatus;
   isPublished:   boolean;
   updatedAt:     string;
+  avatarUrl?:    string | null;
+  email?:        string | null;
+  phone?:        string | null;
   profileDraft?: { draft?: Partial<DoctorProfileDraft> } | null;
 }
 
@@ -178,11 +176,26 @@ export async function getProfileDraft(draftId?: string): Promise<DoctorProfileDr
   if (DOCTOR_USE_MOCK) return wait(DEMO_PROFILE_DRAFT);
   const wire = await doctorGet<ProfileDraftWire>('/profile/draft', { draftId });
   const saved = wire.profileDraft?.draft ?? {};
+  // The builder renders email/phone read-only, so drafts made there store them
+  // empty forever. Backfill from the doctor_profiles columns, then the auth
+  // session, so the preview / published views show real contact info.
+  const personalInfo = { ...(saved.personalInfo ?? { firstName: '', lastName: '', title: '', email: '', phone: '' }) };
+  if (!personalInfo.email || !personalInfo.phone) {
+    if (getSupabaseConfigStatus().hasConfig) {
+      const { data: { session } } = await createSupabaseClient().auth.getSession();
+      personalInfo.email = personalInfo.email || wire.email || session?.user?.email || '';
+      personalInfo.phone = personalInfo.phone || wire.phone || session?.user?.phone || '';
+    }
+  }
   return {
     id: wire.id,
     doctorId: wire.userId,
-    personalInfo: saved.personalInfo ?? { firstName: '', lastName: '', title: '', email: '', phone: '' },
-    photo: saved.photo,
+    personalInfo,
+    // The photo step records the R2 key in avatar_url; drafts saved before the
+    // step persisted `photo` have no draft entry, so fall back to the column.
+    photo: saved.photo ?? (wire.avatarUrl
+      ? { id: wire.avatarUrl, uri: wire.avatarUrl, fileName: 'Profile photo', mimeType: 'image/jpeg', uploadedAt: wire.updatedAt }
+      : undefined),
     bio: saved.bio ?? '',
     specialtyId: saved.specialtyId ?? '',
     subSpecialtyIds: saved.subSpecialtyIds ?? [],
@@ -198,7 +211,6 @@ export async function getProfileDraft(draftId?: string): Promise<DoctorProfileDr
     pricing: saved.pricing ?? { videoFeeKobo: 0, audioFeeKobo: 0, chatFeeKobo: 0, currency: 'NGN', acceptsInstant: false },
     freeFollowUp: saved.freeFollowUp ?? { enabled: false, windowDays: 0, maxFreeVisits: 0 },
     bankAccount: saved.bankAccount,
-    taxInfo: saved.taxInfo,
     completedSteps: saved.completedSteps ?? [],
     status: wire.verification,
     updatedAt: wire.updatedAt,
@@ -206,9 +218,57 @@ export async function getProfileDraft(draftId?: string): Promise<DoctorProfileDr
   };
 }
 
+interface VerificationDocRow {
+  id:         string;
+  docType:    string;
+  label?:     string;
+  fileName?:  string;
+  fileUrl?:   string;
+  mimeType?:  string;
+  sizeBytes?: number;
+  required?:  boolean;
+  uploadedAt?: string;
+}
+
+function docRowToFile(r: VerificationDocRow): UploadedFile {
+  return {
+    id: r.id, uri: r.fileUrl ?? '', fileName: r.fileName ?? r.docType,
+    mimeType: r.mimeType, sizeBytes: r.sizeBytes, uploadedAt: r.uploadedAt ?? '',
+  };
+}
+
 export async function getDocumentSlots(): Promise<ProfileDocumentSlot[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_DOCUMENT_SLOTS);
-  return doctorGet<ProfileDocumentSlot[]>('/profile/documents');
+  // Live GET /profile/documents returns doctor_verification_documents rows
+  // ({docType, fileName, fileUrl, …}), not the slot registry shape — merge the
+  // uploaded rows into the known slot list so screens can find their slot/file.
+  const rows = await doctorGet<VerificationDocRow[]>('/profile/documents');
+  const byType = new Map<string, VerificationDocRow>();
+  for (const r of rows ?? []) byType.set(r.docType, r);
+  const slots: ProfileDocumentSlot[] = DEMO_DOCUMENT_SLOTS.map(({ file: _f, ...s }) => {
+    const row = byType.get(s.type);
+    byType.delete(s.type);
+    return { ...s, file: row ? docRowToFile(row) : undefined };
+  });
+  for (const row of byType.values()) {
+    slots.push({ type: row.docType as ProfileDocumentSlot['type'], label: row.label ?? row.docType, required: row.required ?? false, file: docRowToFile(row) });
+  }
+  return slots;
+}
+
+// Nigerian geography from the Dojah-backed proxy endpoints. State/LGA pickers
+// on the affiliations screen. On any error the caller falls back to the static
+// state list / free-text city.
+export async function getNigerianStates(): Promise<string[]> {
+  if (DOCTOR_USE_MOCK) return wait<string[]>([], 300);
+  const raw = await doctorGet<{ states?: string[] }>('/geo/states');
+  return raw?.states ?? [];
+}
+
+export async function getLgasByState(state: string): Promise<string[]> {
+  if (DOCTOR_USE_MOCK) return wait<string[]>([], 300);
+  const raw = await doctorGet<{ lgas?: string[] }>('/geo/lgas', { state });
+  return raw?.lgas ?? [];
 }
 
 export async function getLicenceExpiryWarning(): Promise<LicenceExpiryWarning | undefined> {
@@ -296,9 +356,20 @@ export async function saveBankAccount(input: SaveBankAccountInput): Promise<Save
   return doctorPost<SaveBankAccountResult>('/profile/bank-account', input, input.idempotencyKey);
 }
 
-export async function saveTaxInfo(input: SaveTaxInfoInput): Promise<SaveTaxInfoResult> {
-  if (DOCTOR_USE_MOCK) return wait({ taxInfo: input.taxInfo }, 500);
-  return doctorPut<SaveTaxInfoResult>('/profile/tax-info', input, input.idempotencyKey);
+/** POST /profile/bank-account/verify — name enquiry WITHOUT saving the account. */
+export async function verifyBankAccount(input: VerifyBankAccountInput): Promise<VerifyBankAccountResult> {
+  if (DOCTOR_USE_MOCK) {
+    const res = await wait<{ account_name: string; account_number_masked: string }>(
+      { account_name: 'AMAKA OBI', account_number_masked: `****${input.accountNumber.slice(-4)}` }, 600);
+    return { accountName: res.account_name, accountNumberMasked: res.account_number_masked };
+  }
+  // The Go handler returns snake_case keys (map[string]any projection).
+  const raw = await doctorPost<{ account_name?: string; account_number_masked?: string }>(
+    '/profile/bank-account/verify', input);
+  return {
+    accountName: raw?.account_name ?? '',
+    accountNumberMasked: raw?.account_number_masked ?? `****${input.accountNumber.slice(-4)}`,
+  };
 }
 
 export async function submitProfileVerification(

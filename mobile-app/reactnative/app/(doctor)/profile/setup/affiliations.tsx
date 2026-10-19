@@ -12,7 +12,7 @@ import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, WizardProgress, EditableListCard, ToggleRow } from '@/features/doctor/components';
-import { useProfileDraft, useSaveProfileDraft } from '@/features/doctor/hooks';
+import { useProfileDraft, useSaveProfileDraft, useNigerianStates, useLgasForState } from '@/features/doctor/hooks';
 import { NIGERIAN_STATES } from '@/features/doctor/constants';
 import type { ClinicAffiliation } from '@/types/doctor.profile';
 
@@ -31,6 +31,14 @@ export default function AffiliationsScreen() {
 
   const items = list ?? [];
   const set = (patch: Partial<ClinicAffiliation>) => setEditing((e) => (e ? { ...e, ...patch } : e));
+
+  // Dojah-backed geography for the state/city pickers. If the states fetch
+  // fails, fall back to the static list; if LGAs aren't available for a state,
+  // the city field stays free-text.
+  const states = useNigerianStates();
+  const lgas = useLgasForState(editing?.state);
+  const stateOptions = states.data && states.data.length > 0 ? states.data : NIGERIAN_STATES;
+  const cityOptions = lgas.data ?? [];
 
   const saveEntry = () => {
     if (!editing || !editing.name.trim()) return;
@@ -73,7 +81,7 @@ export default function AffiliationsScreen() {
       <TeleHeader title="Affiliations" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <WizardProgress current={13} total={19} label="Hospital/clinic affiliation" />
+          <WizardProgress current={13} total={18} label="Hospital/clinic affiliation" />
 
           <SectionCard title="Where you practise" style={styles.card}>
             <Text style={styles.hint}>Add the hospitals or clinics you are affiliated with.</Text>
@@ -96,8 +104,12 @@ export default function AffiliationsScreen() {
               <View style={styles.form}>
                 <TextInputField label="Clinic / hospital name" placeholder="e.g. Lagoon Medical Centre" value={editing.name} onChangeText={(name) => set({ name })} />
                 <TextInputField label="Your role" placeholder="e.g. Consultant" value={editing.role ?? ''} onChangeText={(role) => set({ role })} />
-                <SelectField label="State" placeholder="Select state" value={editing.state} options={NIGERIAN_STATES} onChange={(state) => set({ state })} />
-                <TextInputField label="City" placeholder="e.g. Lagos" value={editing.city ?? ''} onChangeText={(city) => set({ city })} />
+                <SelectField label="State" placeholder="Select state" value={editing.state} options={stateOptions} onChange={(state) => set({ state, city: '' })} />
+                {editing.state && cityOptions.length > 0 ? (
+                  <SelectField label="City / L.G.A." placeholder={lgas.isFetching ? 'Loading cities…' : 'Select city'} value={editing.city || undefined} options={cityOptions} onChange={(city) => set({ city })} searchable={false} />
+                ) : (
+                  <TextInputField label="City" placeholder="e.g. Lagos" value={editing.city ?? ''} onChangeText={(city) => set({ city })} />
+                )}
                 <ToggleRow label="Primary place of practice" value={editing.isPrimary} onValueChange={(isPrimary) => set({ isPrimary })} />
                 <View style={styles.formActions}>
                   <PrimaryButton label="Cancel" onPress={() => setEditing(null)} variant="secondary" style={styles.formBtn} />

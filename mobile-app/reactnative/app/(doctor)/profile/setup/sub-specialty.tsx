@@ -53,7 +53,7 @@ export default function SubSpecialtyScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Sub-specialty" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <WizardProgress current={5} total={19} label="Sub-specialty" />
+        <WizardProgress current={5} total={18} label="Sub-specialty" />
 
         <SectionCard title="Areas of focus" style={styles.card}>
           <Text style={styles.hint}>Select one or more sub-specialties you focus on.</Text>

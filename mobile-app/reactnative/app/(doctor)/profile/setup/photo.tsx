@@ -12,6 +12,7 @@ import type { UploadFieldState } from '@/features/doctor/components';
 import { useProfileDraft, useUploadProfilePhoto, useSaveProfileDraft } from '@/features/doctor/hooks';
 import { pickFileForField } from '@/features/registration/utils/filePicker';
 import type { PickedUpload } from '@/features/registration/types/registration.types';
+import type { UploadedFile } from '@/types/doctor.profile';
 
 export default function ProfilePhotoScreen() {
   const { data: draft, isLoading, isError, refetch } = useProfileDraft();
@@ -21,6 +22,7 @@ export default function ProfilePhotoScreen() {
   const [state, setState] = useState<UploadFieldState>('empty');
   const [fileName, setFileName] = useState<string | undefined>();
   const [picked, setPicked] = useState<PickedUpload>();
+  const [uploaded, setUploaded] = useState<UploadedFile>();
   const [error, setError] = useState<string>();
 
   const pick = async () => {
@@ -36,7 +38,8 @@ export default function ProfilePhotoScreen() {
     if (!picked) return;
     setState('uploading');
     try {
-      await upload.mutateAsync({ uri: picked.uri, fileName: picked.name, mimeType: picked.mimeType });
+      const res = await upload.mutateAsync({ uri: picked.uri, fileName: picked.name, mimeType: picked.mimeType });
+      setUploaded(res.file);
       setState('uploaded');
     } catch {
       setState('error');
@@ -50,7 +53,7 @@ export default function ProfilePhotoScreen() {
   const handleNext = async () => {
     if (draft) {
       try {
-        await save.mutateAsync({ draft: { completedSteps: [...new Set([...draft.completedSteps, 'profile_photo' as const])] } });
+        await save.mutateAsync({ draft: { ...(uploaded ? { photo: uploaded } : {}), completedSteps: [...new Set([...draft.completedSteps, 'profile_photo' as const])] } });
       } catch { /* non-blocking */ }
     }
     router.push('/(doctor)/profile/setup/bio');
@@ -78,7 +81,7 @@ export default function ProfilePhotoScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Profile photo" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <WizardProgress current={2} total={19} label="Profile photo" />
+        <WizardProgress current={2} total={18} label="Profile photo" />
 
         <SectionCard title="Upload a profile photo" style={styles.card}>
           <Text style={styles.hint}>Use a clear, front-facing photo. This is shown to patients on your profile.</Text>

@@ -42,6 +42,34 @@ function mockPassedCheck(type: CheckType, opts?: { name?: string; dob?: string }
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 
 /**
+ * Map the Go backend's snake_case Check to our camelCase VerificationCheck.
+ * The id-number data-match echoes the provider-verified name/DOB as
+ * matched_name/matched_dob so the UI can DISPLAY them and the user's Continue
+ * affirms the returned value.
+ */
+function toVerificationCheck(raw: any, fallbackType: CheckType): VerificationCheck {
+  // The backend enum is "ID_NUMBER"/"ID_FACIAL"/…; the mobile CheckType is
+  // route-slug style. Map, falling back to the caller's expectation.
+  const typeMap: Record<string, CheckType> = {
+    ID_NUMBER: 'id-number',
+    ID_FACIAL: 'facial',
+    LIVENESS: 'liveness',
+    DOCUMENT: 'document',
+    AML: 'aml',
+  };
+  return {
+    id: raw?.id ?? '',
+    type: typeMap[raw?.type] ?? fallbackType,
+    status: raw?.status as CheckStatus,
+    reason: raw?.reason ?? null,
+    matchedName: raw?.matched_name ?? null,
+    matchedDob: raw?.matched_dob ?? null,
+    provider: raw?.provider ?? null,
+    createdAt: raw?.created_at ?? null,
+  };
+}
+
+/**
  * Fresh Idempotency-Key per check attempt. Uses crypto.randomUUID where
  * available (RN 0.71+ / Hermes), falling back to a timestamp+random uuid-v4-ish
  * string so the header is always present even on older runtimes.
@@ -97,18 +125,21 @@ export type { IdNumberCheckInput };
 /**
  * POST /checks/id-number — data match against government records. The request
  * carries ONLY the session + ID number: the provider (Dojah) returns the
- * verified legal name + DOB, which the backend persists — the client never
- * collects or sends them.
+ * verified legal name + DOB, which the backend echoes back as matched_name/
+ * matched_dob for the user to AFFIRM, and persists server-side. The client
+ * never collects or sends the name/DOB itself.
  */
 export async function checkIdNumber(input: IdNumberCheckInput): Promise<VerificationCheck> {
   if (USE_MOCK) {
     await mockDelay();
-    // The real server withholds matched PII; the mock mirrors that by not
-    // echoing a name/DOB (the verifying screen shows "Details confirmed").
-    return mockPassedCheck('id-number');
+    // Mirror the real backend now that it echoes the matched identity: return a
+    // deterministic name/DOB so the verifying screen shows the value the user
+    // affirms by continuing.
+    return mockPassedCheck('id-number', { name: 'Amara Okonkwo', dob: '1992-07-14' });
   }
-  return unwrap<VerificationCheck>(
-    await api.post(`${BASE}/checks/id-number`, idNumberRequestBody(input), idem()),
+  return toVerificationCheck(
+    unwrap<any>(await api.post(`${BASE}/checks/id-number`, idNumberRequestBody(input), idem())),
+    'id-number',
   );
 }
 
@@ -123,17 +154,20 @@ export async function checkFacial(input: {
     await mockDelay();
     return mockPassedCheck('facial');
   }
-  return unwrap<VerificationCheck>(
-    await api.post(
-      `${BASE}/checks/facial`,
-      {
-        session_id: input.sessionId,
-        id_type: input.idType,
-        id_number: input.idNumber,
-        selfie_b64: input.selfieB64,
-      },
-      idem(),
+  return toVerificationCheck(
+    unwrap<any>(
+      await api.post(
+        `${BASE}/checks/facial`,
+        {
+          session_id: input.sessionId,
+          id_type: input.idType,
+          id_number: input.idNumber,
+          selfie_b64: input.selfieB64,
+        },
+        idem(),
+      ),
     ),
+    'facial',
   );
 }
 
@@ -146,12 +180,15 @@ export async function checkLiveness(input: {
     await mockDelay();
     return mockPassedCheck('liveness');
   }
-  return unwrap<VerificationCheck>(
-    await api.post(
-      `${BASE}/checks/liveness`,
-      { session_id: input.sessionId, selfie_b64: input.selfieB64 },
-      idem(),
+  return toVerificationCheck(
+    unwrap<any>(
+      await api.post(
+        `${BASE}/checks/liveness`,
+        { session_id: input.sessionId, selfie_b64: input.selfieB64 },
+        idem(),
+      ),
     ),
+    'liveness',
   );
 }
 
@@ -166,17 +203,20 @@ export async function checkDocument(input: {
     await mockDelay();
     return mockPassedCheck('document');
   }
-  return unwrap<VerificationCheck>(
-    await api.post(
-      `${BASE}/checks/document`,
-      {
-        session_id: input.sessionId,
-        doc_type: input.docType,
-        front_b64: input.frontB64,
-        back_b64: input.backB64,
-      },
-      idem(),
+  return toVerificationCheck(
+    unwrap<any>(
+      await api.post(
+        `${BASE}/checks/document`,
+        {
+          session_id: input.sessionId,
+          doc_type: input.docType,
+          front_b64: input.frontB64,
+          back_b64: input.backB64,
+        },
+        idem(),
+      ),
     ),
+    'document',
   );
 }
 
@@ -186,8 +226,9 @@ export async function checkAml(sessionId: string): Promise<VerificationCheck> {
     await mockDelay();
     return mockPassedCheck('aml');
   }
-  return unwrap<VerificationCheck>(
-    await api.post(`${BASE}/checks/aml`, { session_id: sessionId }, idem()),
+  return toVerificationCheck(
+    unwrap<any>(await api.post(`${BASE}/checks/aml`, { session_id: sessionId }, idem())),
+    'aml',
   );
 }
 

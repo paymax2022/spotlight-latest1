@@ -49,8 +49,6 @@ export const TITLE_OPTIONS: string[] = ['Dr.', 'Prof.', 'Mr.', 'Mrs.', 'Ms.', 'M
 export const GENDER_OPTIONS: { value: GenderOption; label: string }[] = [
   { value: 'male',              label: 'Male' },
   { value: 'female',            label: 'Female' },
-  { value: 'other',             label: 'Other' },
-  { value: 'prefer_not_to_say', label: 'Prefer not to say' },
 ];
 
 export const DEGREE_OPTIONS: string[] = [
@@ -109,7 +107,6 @@ export const PROFILE_BUILDER_STEPS: { step: ProfileBuilderStep; label: string; s
   { step: 'free_follow_up',  label: 'Free follow-up policy',        screen: 18 },
   { step: 'availability',    label: 'Availability',                 screen: 19 },
   { step: 'bank_account',    label: 'Bank account',                 screen: 20 },
-  { step: 'tax_info',        label: 'Tax / VAT information',        screen: 21 },
 ];
 
 // Section B doc-type labels. Phase 1 VERIFICATION_DOC_TYPES (from the barrel)
@@ -168,6 +165,24 @@ export const NIGERIAN_STATES: string[] = [
   'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo',
   'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara',
 ];
+
+export const NIGERIAN_CITIES: Record<string, string[]> = {
+  'Lagos': ['Ikeja', 'Lekki', 'Victoria Island', 'Surulere', 'Ikorodu', 'Badagry'],
+  'Abuja': ['Garki', 'Wuse', 'Maitama', 'Asokoro', 'Gwarinpa'],
+  'Rivers': ['Port Harcourt', 'Obio-Akpor', 'Eleme'],
+  'Kano': ['Kano Municipal', 'Fagge', 'Dala'],
+  'Oyo': ['Ibadan', 'Ogbomosho', 'Oyo'],
+  // Fallback for other states
+  'default': ['City center', 'Main town', 'Suburb'],
+};
+
+export const NIGERIAN_LGAS: Record<string, string[]> = {
+  'Lagos': ['Ikeja', 'Lagos Island', 'Apapa', 'Badagry', 'Ikorodu', 'Mushin'],
+  'Abuja': ['AMAC', 'Gwagwalada', 'Kuje', 'Bwari'],
+  'Rivers': ['PHALGA', 'Obio-Akpor', 'Eleme'],
+  // Fallback
+  'default': ['LGA 1', 'LGA 2', 'LGA 3'],
+};
 
 export const FREE_FOLLOW_UP_WINDOW_OPTIONS: number[] = [3, 5, 7, 14, 30]; // days
 

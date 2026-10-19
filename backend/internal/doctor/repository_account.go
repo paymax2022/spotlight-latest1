@@ -198,12 +198,23 @@ func (r *Repository) GetProfileDraft(ctx context.Context, userID string) (*Profi
 // That surfaced as a 404 from POST /onboarding/provider-type, which blocked the
 // onboarding flow at the provider-type step for everyone. Every other NOT NULL
 // column on the table carries a default, so user_id is all an insert needs.
+// The merge is TWO-level: every profile-builder screen sends its patch as
+// {"draft": {...fields...}}, so a plain top-level `||` replaces the whole
+// nested draft on each save and wipes every earlier step's data. We merge
+// top-level first (preserving keys like providerType), then re-merge the
+// `draft` sub-object one level deep so wizard steps accumulate.
 func (r *Repository) SaveProfileDraft(ctx context.Context, userID string, patch []byte) (*Profile, error) {
 	const q = `
 		INSERT INTO doctor_profiles (user_id, profile_draft)
 		VALUES ($1, $2::jsonb)
 		ON CONFLICT (user_id) DO UPDATE
-		SET profile_draft = doctor_profiles.profile_draft || EXCLUDED.profile_draft,
+		SET profile_draft = jsonb_set(
+			doctor_profiles.profile_draft || EXCLUDED.profile_draft,
+			'{draft}',
+			COALESCE(doctor_profiles.profile_draft -> 'draft', '{}'::jsonb)
+				|| COALESCE(EXCLUDED.profile_draft -> 'draft', '{}'::jsonb),
+			false
+		),
 		    updated_at    = now()`
 	if _, err := r.db.Exec(ctx, q, userID, jsonx.RawOrEmptyObject(patch)); err != nil {
 		return nil, err

@@ -200,8 +200,16 @@ func (h *Handler) runCheck(c *gin.Context, ct provider.KycCheckType) {
 		writeErr(c, err)
 		return
 	}
-	// extracted_fields carries provider-returned PII — withhold from members
-	// (kept in DB for admin review).
+	// extracted_fields carries the provider's full PII map — withhold it from
+	// members (kept in DB for admin review). For an ID-number data-match, echo
+	// back ONLY the verified legal name + DOB: the app displays them and the
+	// user's Continue affirms the returned value.
+	if ct == provider.KycIDNumber {
+		if vi, ok := ExtractVerifiedIdentity(ch.ExtractedFields); ok {
+			ch.MatchedName = vi.FullName
+			ch.MatchedDob = vi.DOB
+		}
+	}
 	ch.ExtractedFields = nil
 	c.JSON(http.StatusAccepted, ch) // 202: may still be PENDING (webhook terminal)
 }

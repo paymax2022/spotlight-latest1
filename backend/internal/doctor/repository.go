@@ -75,14 +75,46 @@ func (r *Repository) InsertVerification(ctx context.Context, userID string, req 
 	}
 	id := uuid.New().String()
 	now := time.Now()
+	// Mirror the vet-side submit: the profile's coarse verification must move
+	// to 'pending' too, or the doctor's own status views keep reading
+	// 'unsubmitted' after submitting (only the admin review endpoints update it).
+	// Also materialize the draft identity into the flat columns on first submit —
+	// the profile builder only ever writes the profile_draft jsonb, and the
+	// admin MDCN queue reads/joins these columns, so without this the review
+	// console lists submissions with blank doctor names and licence numbers.
+	const mirror = `
+		UPDATE doctor_profiles
+		SET verification = 'pending',
+		    title        = COALESCE(NULLIF(title, ''),
+		        NULLIF(profile_draft->'draft'->'personalInfo'->>'title', '')),
+		    name         = COALESCE(NULLIF(name, ''),
+		        NULLIF(TRIM(CONCAT_WS(' ',
+		            profile_draft->'draft'->'personalInfo'->>'firstName',
+		            profile_draft->'draft'->'personalInfo'->>'lastName')), '')),
+		    mdcn_number  = COALESCE(NULLIF(mdcn_number, ''),
+		        NULLIF(profile_draft->'draft'->'licence'->>'licenceNumber', '')),
+		    updated_at   = now()
+		WHERE user_id = $1`
+	if _, err := r.db.Exec(ctx, mirror, userID); err != nil {
+		return nil, err
+	}
+	// The doctor app submits without a body licence number; fall back to the
+	// (now backfilled) profile column so the verification row the reviewers
+	// queue shows carries the MDCN reg number too.
+	mdcnNumber := req.MDCNNumber
+	if mdcnNumber == nil || *mdcnNumber == "" {
+		if p, err := r.GetProfile(ctx, userID); err == nil {
+			mdcnNumber = p.MDCNNumber
+		}
+	}
 	const q = `
 		INSERT INTO doctor_verifications (id, user_id, status, kind, mdcn_number, notes, submitted_at)
 		VALUES ($1,$2,'pending',$3,$4,$5,$6)`
-	if _, err := r.db.Exec(ctx, q, id, userID, kind, req.MDCNNumber, req.Notes, now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, userID, kind, mdcnNumber, req.Notes, now); err != nil {
 		return nil, err
 	}
 	return &Verification{ID: id, UserID: userID, Status: "pending", Kind: kind,
-		MDCNNumber: req.MDCNNumber, SubmittedAt: &now, Notes: req.Notes,
+		MDCNNumber: mdcnNumber, SubmittedAt: &now, Notes: req.Notes,
 		CreatedAt: now, UpdatedAt: now}, nil
 }
 

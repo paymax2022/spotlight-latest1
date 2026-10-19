@@ -52,7 +52,13 @@ func (r *Repository) ListPendingMDCN(ctx context.Context, limit int) ([]MDCNQueu
 		limit = 100
 	}
 	const q = `
-		SELECT v.id, v.user_id, COALESCE(p.name,''), COALESCE(v.mdcn_number,''),
+		SELECT v.id, v.user_id,
+		       COALESCE(NULLIF(p.name,''),
+		           NULLIF(TRIM(CONCAT_WS(' ',
+		               p.profile_draft->'draft'->'personalInfo'->>'firstName',
+		               p.profile_draft->'draft'->'personalInfo'->>'lastName')), ''), ''),
+		       COALESCE(NULLIF(v.mdcn_number,''), NULLIF(p.mdcn_number,''),
+		           NULLIF(p.profile_draft->'draft'->'licence'->>'licenceNumber',''), ''),
 		       v.discipline, v.status, v.submitted_at, v.matched_fields
 		FROM doctor_verifications v
 		JOIN doctor_profiles p ON p.user_id = v.user_id
@@ -82,8 +88,15 @@ func (r *Repository) ListPendingMDCN(ctx context.Context, limit int) ([]MDCNQueu
 // GetMDCNVerification returns the full reviewer view + its documents.
 func (r *Repository) GetMDCNVerification(ctx context.Context, verificationID string) (*MDCNReviewRecord, error) {
 	const q = `
-		SELECT v.id, v.user_id, COALESCE(p.name,''), v.status, v.source, v.method, v.discipline,
-		       COALESCE(v.mdcn_number,''), v.matched_fields, v.licence_expiry, v.notes,
+		SELECT v.id, v.user_id,
+		       COALESCE(NULLIF(p.name,''),
+		           NULLIF(TRIM(CONCAT_WS(' ',
+		               p.profile_draft->'draft'->'personalInfo'->>'firstName',
+		               p.profile_draft->'draft'->'personalInfo'->>'lastName')), ''), ''),
+		       v.status, v.source, v.method, v.discipline,
+		       COALESCE(NULLIF(v.mdcn_number,''), NULLIF(p.mdcn_number,''),
+		           NULLIF(p.profile_draft->'draft'->'licence'->>'licenceNumber',''), ''),
+		       v.matched_fields, v.licence_expiry, v.notes,
 		       v.submitted_at, v.decided_at
 		FROM doctor_verifications v
 		JOIN doctor_profiles p ON p.user_id = v.user_id
