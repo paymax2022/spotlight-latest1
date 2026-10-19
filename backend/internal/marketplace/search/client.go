@@ -52,6 +52,22 @@ func (e *ErrSearchUnavailable) Error() string {
 
 func (e *ErrSearchUnavailable) Unwrap() error { return e.Err }
 
+// distanceFromFields reads the `distance_km` script_field ES returns for one
+// hit. A listing with no recorded position comes back as [null] — the script
+// guards doc['geo'].size() — which decodes to nil, so the card says nothing
+// about distance rather than guessing one.
+func distanceFromFields(fields map[string]json.RawMessage) *float64 {
+	raw, ok := fields["distance_km"]
+	if !ok {
+		return nil
+	}
+	var vals []*float64
+	if err := json.Unmarshal(raw, &vals); err != nil || len(vals) == 0 {
+		return nil
+	}
+	return vals[0]
+}
+
 // esAggBucket is one terms/range aggregation bucket. Named (not anonymous) so
 // it can be shared between esSearchResponse and bucketsToFacets without
 // relying on Go's anonymous-struct structural-identity rules.
@@ -73,6 +89,16 @@ type esSearchResponse struct {
 		Hits []struct {
 			Source json.RawMessage `json:"_source"`
 			Score  *float64        `json:"_score"`
+			// Sort carries the per-hit sort values; with the `_geo_distance`
+			// clause (sort=nearby) its first entry is the distance in the
+			// clause's unit, i.e. kilometres. Raw rather than []float64: a
+			// sort value can be a string for some fields, and that must not
+			// fail the decode of the whole page.
+			Sort []json.RawMessage `json:"sort"`
+			// Fields holds script_fields output; BuildQuery asks ES for
+			// `distance_km` whenever the buyer sent a position, so a row
+			// carries a distance under EVERY sort.
+			Fields map[string]json.RawMessage `json:"fields"`
 		} `json:"hits"`
 	} `json:"hits"`
 	Aggregations map[string]esAgg `json:"aggregations"`
@@ -179,6 +205,16 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (SearchResults, 
 		}
 		if h.Score != nil {
 			summary.Score = *h.Score
+		}
+		// Prefer the script field (present under every sort when the buyer sent a
+		// position); fall back to the leading _geo_distance sort value, which is
+		// the same distance in the clause's unit, km.
+		summary.DistanceKm = distanceFromFields(h.Fields)
+		if summary.DistanceKm == nil && req.Sort == "nearby" && len(h.Sort) > 0 {
+			var d *float64
+			if err := json.Unmarshal(h.Sort[0], &d); err == nil && d != nil {
+				summary.DistanceKm = d
+			}
 		}
 		results = append(results, summary)
 	}
