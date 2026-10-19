@@ -2,12 +2,14 @@
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { discoveryApi } from './index';
 import { saveListing, unsaveListing } from './api/account.api';
+import { DEFAULT_RADIUS_KM } from './proximity';
 import type { Listing, SearchParams } from './types';
 
 export const MKT_KEYS = {
   categories: ['mkt', 'categories'] as const,
   category: (id: string) => ['mkt', 'category', id] as const,
-  homeRails: (coords?: { lat: number; lng: number }) => ['mkt', 'home-rails', coords ?? null] as const,
+  homeRails: (coords?: { lat: number; lng: number } | null, radiusKm?: number) =>
+    ['mkt', 'home-rails', coords ?? null, radiusKm ?? null] as const,
   search: (params: SearchParams) => ['mkt', 'search', params] as const,
   suggest: (q: string) => ['mkt', 'suggest', q] as const,
   trending: ['mkt', 'trending'] as const,
@@ -25,8 +27,11 @@ export const useCategories = () =>
 export const useCategory = (id: string) =>
   useQuery({ queryKey: MKT_KEYS.category(id), queryFn: () => discoveryApi.getCategory(id), enabled: !!id, staleTime: 5 * 60_000 });
 
-export const useHomeRails = (coords?: { lat: number; lng: number }) =>
-  useQuery({ queryKey: MKT_KEYS.homeRails(coords), queryFn: () => discoveryApi.getHomeRails(coords) });
+export const useHomeRails = (coords?: { lat: number; lng: number } | null, radiusKm: number = DEFAULT_RADIUS_KM) =>
+  useQuery({
+    queryKey: MKT_KEYS.homeRails(coords, radiusKm),
+    queryFn: () => discoveryApi.getHomeRails(coords, radiusKm),
+  });
 
 export const useSearch = (params: SearchParams, enabled = true) =>
   useQuery({

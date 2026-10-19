@@ -86,7 +86,7 @@ export default function ModerationQueuePage() {
             <thead><tr>
               <th style={thCell}>Listing</th><th style={thCell}>Seller</th><th style={thCell}>Price</th>
               <th style={thCell}>Price band (p25/p50/p75)</th><th style={thCell}>Quality</th><th style={thCell}>Escrow</th>
-              <th style={thCell}>Submitted</th><th style={thCell}>Action</th>
+              <th style={thCell}>Location</th><th style={thCell}>Submitted</th><th style={thCell}>Action</th>
             </tr></thead>
             <tbody>
               {rows.map((l) => (
@@ -110,6 +110,7 @@ export default function ModerationQueuePage() {
                   </td>
                   <td style={tdCell}>{l.quality_score != null ? l.quality_score.toFixed(2) : '—'}</td>
                   <td style={tdCell}><StatusBadgeInline value={l.escrow_eligible} /></td>
+                  <td style={tdCell}><LocationInline l={l} /></td>
                   <td style={tdCell}>{timeAgo(l.created_at)}</td>
                   <td style={tdCell}>
                     {rejectingId === l.id ? (
@@ -150,4 +151,25 @@ export default function ModerationQueuePage() {
 
 function StatusBadgeInline({ value }: { value: boolean }) {
   return <span style={{ fontSize: '0.78rem', color: value ? colors.success : colors.muted }}>{value ? 'Eligible' : 'Not eligible'}</span>;
+}
+
+// A listing posted without a location can never appear in a buyer's distance sort
+// or "Near you" rail, and no later screen can add one — so this is the last point
+// where a reviewer can ask the seller to re-post with location attached.
+function LocationInline({ l }: { l: MktListing }) {
+  const has = l.lat != null && l.lng != null;
+  if (!has) {
+    return (
+      <span style={{ fontSize: '0.78rem', color: colors.warning }}>
+        No location
+        <div style={{ fontSize: '0.7rem', color: colors.muted }}>won&apos;t appear in &ldquo;Near you&rdquo;</div>
+      </span>
+    );
+  }
+  return (
+    <span style={{ fontSize: '0.78rem', color: colors.success }}>
+      Recorded
+      <div style={{ fontSize: '0.7rem', color: colors.muted }}>{l.lat!.toFixed(4)}, {l.lng!.toFixed(4)}</div>
+    </span>
+  );
 }

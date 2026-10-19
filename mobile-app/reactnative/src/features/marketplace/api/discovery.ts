@@ -5,6 +5,7 @@
 
 import { MKT_USE_MOCK, MktApiError, mktGet, mktPost, mktDelete, mktPatch, arr } from './client';
 import * as M from './discovery.mock';
+import { DEFAULT_RADIUS_KM } from '../proximity';
 import type {
   Category,
   Listing,
@@ -21,7 +22,8 @@ import type {
 export async function searchListings(params: SearchParams): Promise<SearchResponse> {
   if (MKT_USE_MOCK) return M.mockSearch(params);
   try {
-    return await mktGet<SearchResponse>('/search', params as Record<string, unknown>);
+    const res = await mktGet<SearchResponse>('/search', params as Record<string, unknown>);
+    return { ...res, results: arr(res?.results) };
   } catch (e) {
     // GET /search is 501 until ES is wired — degrade to the local set rather than error out.
     if (e instanceof MktApiError && e.isSearchNotWired) {
@@ -64,7 +66,11 @@ export interface HomeRails {
   escrowEligible: ListingSummary[];
 }
 
-export async function getHomeRails(coords?: { lat: number; lng: number }): Promise<HomeRails> {
+/** Home rails. `coords` is the buyer's own fix; without it there is no
+ *  proximity to search on, and "Near you" stays empty by design — a rail that
+ *  fills with the newest listings from anywhere in the country is a lie about
+ *  distance, which is the one thing this rail claims. */
+export async function getHomeRails(coords?: { lat: number; lng: number } | null, radiusKm = DEFAULT_RADIUS_KM): Promise<HomeRails> {
   if (MKT_USE_MOCK) return M.mockHomeRails();
   const safe = async (p: SearchParams): Promise<ListingSummary[]> => {
     try {
@@ -74,7 +80,9 @@ export async function getHomeRails(coords?: { lat: number; lng: number }): Promi
     }
   };
   const [nearYou, escrowEligible] = await Promise.all([
-    safe(coords ? { ...coords, radiusKm: 25, sort: 'trusted_first', limit: 12 } : { sort: 'trusted_first', limit: 12 }),
+    coords
+      ? safe({ ...coords, radiusKm, sort: 'nearby', limit: 12 })
+      : Promise.resolve<ListingSummary[]>([]),
     safe({ escrowEligibleOnly: true, sort: 'trusted_first', limit: 12 }),
   ]);
   return { nearYou, priceDrops: [], escrowEligible };

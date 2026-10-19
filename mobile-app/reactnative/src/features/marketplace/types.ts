@@ -169,8 +169,13 @@ export interface ListingSummary {
   escrowEligible: boolean;
   boosted: boolean;
   fairPriceBand?: FairPriceBand | null;
-  lat?: number;
-  lng?: number;
+  /** Great-circle distance from the buyer, in kilometres, measured by the server
+   *  against the seller's recorded position. Present only on a search that
+   *  carried the buyer's coordinates — and only for a listing whose seller
+   *  recorded one, which is why a no-location listing is never "Near you".
+   *  The seller's own coordinates are deliberately NOT part of a buyer's
+   *  result: a GPS point on a listing is, in practice, their home. */
+  distanceKm?: number;
   createdAt: string;
 }
 
@@ -203,7 +208,7 @@ export interface CategoryQuickFilter {
   options?: Array<{ value: string; label: string }>;
 }
 
-export type SearchSort = 'relevance' | 'price_asc' | 'price_desc' | 'newest' | 'trusted_first';
+export type SearchSort = 'relevance' | 'price_asc' | 'price_desc' | 'newest' | 'trusted_first' | 'nearby';
 
 export interface SearchParams {
   q?: string;
@@ -456,6 +461,10 @@ export interface CreateListingInput {
   state: string;
   lga?: string;
   escrowEligible?: boolean;
+  /** The seller's meetup position (device GPS). Optional, but both or neither:
+   *  half a pair is a 400, and a listing without one is never shown as nearby. */
+  lat?: number;
+  lng?: number;
 }
 
 export interface UpdateListingInput {

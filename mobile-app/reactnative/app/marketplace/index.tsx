@@ -1,6 +1,6 @@
 // rails (Near you / Price drops / Escrow-eligible). Skeletons (not spinners),
 // error we keep the last-known cache and show a subtle "saved results" banner.
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -13,11 +13,14 @@ import SearchBar from '@/components/SearchBar';
 import PromoBanner from '@/components/PromoBanner';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
+import { useDeviceCoords } from '@/features/location/useDeviceCoords';
 import { MarketColors } from '@/features/marketplace';
+import { DEFAULT_RADIUS_KM } from '@/features/marketplace/proximity';
 import type { Category, ListingSummary } from '@/features/marketplace';
 import { useCategories, useHomeRails } from '@/features/marketplace/hooks';
 import { mainCategories, subcategoriesOf } from '@/features/marketplace/categoryTree';
 import { useMarketplaceMenu } from '@/features/marketplace/components/MarketplaceMenu';
+import ProximityBar from '@/features/marketplace/components/ProximityBar';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { CategoryGridSkeleton, RailSkeleton } from '@/features/marketplace/components/Skeletons';
@@ -79,7 +82,12 @@ function Rail({
 export default function MarketplaceHome() {
   const menu = useMarketplaceMenu();
   const categories = useCategories();
-  const rails = useHomeRails();
+  // Proximity is opt-in and per-device: the bar below asks, and a denied answer
+  // becomes a visible state with a retry rather than a dialog repeated on every
+  // tab switch. Until it is granted, "Near you" stays empty on purpose.
+  const loc = useDeviceCoords();
+  const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
+  const rails = useHomeRails(loc.coords, radiusKm);
   const refreshing = categories.isFetching || rails.isFetching;
   // Offline-first: if a fetch failed but we still hold cached data, show it with a banner.
   const showCacheBanner = (categories.isError || rails.isError) && (!!categories.data || !!rails.data);
@@ -118,6 +126,22 @@ export default function MarketplaceHome() {
         placeholder="Search phones, cars, furniture…"
         onPress={() => router.push('/marketplace/search' as never)}
       />
+
+      <View style={styles.proximity}>
+        <ProximityBar
+          surface="home"
+          coords={loc.coords}
+          loading={loc.loading}
+          error={loc.error}
+          available={loc.available}
+          onAsk={() => void loc.request()}
+          onClear={loc.clear}
+          radiusKm={radiusKm}
+          // This rail IS a radius query, so clearing a chip resets to the default
+          // instead of asking for "everything within no distance".
+          onRadius={(km) => setRadiusKm(km ?? DEFAULT_RADIUS_KM)}
+        />
+      </View>
 
       {showCacheBanner ? (
         <View style={styles.cacheBanner}>
@@ -182,13 +206,21 @@ export default function MarketplaceHome() {
         ) : (
           <>
             <Rail
-              title="Near you"
+              title={loc.coords ? `Near you · within ${radiusKm} km` : 'Near you'}
               data={rails.data?.nearYou ?? []}
-              empty={{
-                title: 'Nothing listed near you yet',
-                message: 'New posts from sellers around you appear here.',
-                icon: 'MapPin',
-              }}
+              empty={
+                loc.coords
+                  ? {
+                      title: `Nothing listed within ${radiusKm} km`,
+                      message: 'Try a wider radius above — new posts from sellers around you appear here.',
+                      icon: 'MapPin',
+                    }
+                  : {
+                      title: 'Nothing near you yet',
+                      message: 'Turn on location above to measure how far each item actually is.',
+                      icon: 'MapPin',
+                    }
+              }
             />
             <Rail title="Price drops" data={rails.data?.priceDrops ?? []} />
             <Rail
@@ -213,6 +245,7 @@ const styles = StyleSheet.create({
   menuBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: -6 },
   headerTitle: { ...Typography.headlineMd, color: Colors.onSurface },
   cacheBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: MarketColors.warnBg, marginHorizontal: Spacing.containerMargin, paddingHorizontal: Spacing.sm, paddingVertical: 6, borderRadius: Radius.md, marginBottom: Spacing.xs },
+  proximity: { marginTop: -2, marginBottom: Spacing.sm },
   cacheBannerText: { ...Typography.labelSm, color: MarketColors.warnText },
   scroll: { paddingBottom: Spacing.xxl },
   catGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, marginBottom: Spacing.md },

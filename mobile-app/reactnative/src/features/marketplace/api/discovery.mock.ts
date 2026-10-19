@@ -189,8 +189,6 @@ export function toSummary(l: Listing, boosted = false): ListingSummary {
     escrowEligible: l.escrowEligible,
     boosted,
     fairPriceBand: l.fairPriceBand,
-    lat: undefined,
-    lng: undefined,
     createdAt: l.createdAt,
   };
 }
