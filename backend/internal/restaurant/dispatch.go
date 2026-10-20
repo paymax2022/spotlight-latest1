@@ -174,8 +174,9 @@ func (s *Service) ConfirmPickup(ctx context.Context, orderID, riderID, code stri
 	if dbCode == nil || *dbCode == "" {
 		return errors.New("restaurant: no pickup code on this order")
 	}
-	if code == "" || code != *dbCode {
-		return errors.New("restaurant: incorrect pickup code")
+	// FOOD-UAT-E-008: attempt-limited, constant-time verify (429 on lockout).
+	if err := s.VerifyOrderCode(ctx, orderID, CodeKindPickup, code, *dbCode); err != nil {
+		return err
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET picked_up_at=COALESCE(picked_up_at, now()) WHERE id=$1`, orderID); err != nil {
 		return err
@@ -207,8 +208,8 @@ func (s *Service) ConfirmHandoff(ctx context.Context, orderID, riderID, code str
 	if dbCode == nil || *dbCode == "" {
 		return errors.New("restaurant: no delivery code on this order")
 	}
-	if code == "" || code != *dbCode {
-		return errors.New("restaurant: incorrect delivery code")
+	if err := s.VerifyOrderCode(ctx, orderID, CodeKindDelivery, code, *dbCode); err != nil {
+		return err
 	}
 	if _, err := s.db.Exec(ctx,
 		`UPDATE orders SET delivered_at=COALESCE(delivered_at, now()), dispatch_status='delivered' WHERE id=$1`,

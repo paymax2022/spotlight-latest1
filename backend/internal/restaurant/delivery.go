@@ -143,7 +143,9 @@ func (s *Service) GetOrder(ctx context.Context, orderID, userID string) (*Order,
 	}
 	o.Items = items
 	maskPODCodes(&o, role)
-	return &o, nil
+	one := []Order{o}
+	s.hydrateOrderExtras(ctx, one, role) // FOOD-UAT-C-012/C-008/D-007; coords only for the assigned rider
+	return &one[0], nil
 }
 
 func (s *Service) loadOrderItems(ctx context.Context, orderID string) ([]OrderItem, error) {
@@ -252,7 +254,11 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 		maskPODCodes(&o, role)
 		out = append(out, o)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	s.hydrateOrderExtras(ctx, out, role) // kitchen/rider surfacing of notes + order type
+	return out, nil
 }
 
 // ctxKeyAdminOverride marks a call as made by a PLATFORM OPERATOR rather than the
@@ -678,6 +684,9 @@ func (s *Service) AssignRider(ctx context.Context, orderID, actorID, candidateID
 	return nil
 }
 
+// ErrRiderIneligible: the rider is offline or at the active-job cap (HTTP 409).
+var ErrRiderIneligible = errors.New("restaurant: rider is offline or at the active-delivery limit")
+
 // AcceptDelivery lets an offered rider claim an order, becoming its rider. With
 // auto-dispatch, an order is offered to several riders at once; the first to
 // accept wins. The row is locked (FOR UPDATE) so concurrent accepts can't
@@ -721,6 +730,20 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 	}
 	if !approved {
 		return errors.New("restaurant: only an approved rider may accept a delivery")
+	}
+	// FOOD-UAT-E-002: re-check eligibility at accept time — the offer may be stale
+	// (rider went offline, or took other jobs since). Same predicates as DispatchOrder.
+	var online bool
+	var activeLoad int
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM drivers WHERE user_id=$1 AND status='online'),
+		        (SELECT count(*) FROM orders o WHERE o.rider_id=$1
+		           AND o.status NOT IN ('delivered','cancelled','rejected','dispatch_failed','delivery_failed'))`,
+		riderID).Scan(&online, &activeLoad); err != nil {
+		return fmt.Errorf("restaurant: check rider eligibility: %w", err)
+	}
+	if !online || activeLoad >= baseMaxRiderLoad {
+		return ErrRiderIneligible
 	}
 
 	if _, err := tx.Exec(ctx, `UPDATE orders SET rider_id=$1, dispatch_status='assigned', assigned_at=COALESCE(assigned_at, now()) WHERE id=$2`, riderID, orderID); err != nil {
@@ -861,6 +884,7 @@ func (s *Service) RiderActive(ctx context.Context, riderID string) ([]Order, err
 	for i := range orders {
 		maskPODCodes(&orders[i], "rider")
 	}
+	s.hydrateOrderExtras(ctx, orders, "rider") // assigned rider: notes + delivery pin
 	return orders, nil
 }
 
@@ -1212,9 +1236,20 @@ func (s *Service) VerifyOrderCode(ctx context.Context, orderID, kind, supplied, 
 }
 
 // UnlockOrderCodes clears both code lockouts on an order (admin override;
-// route + restaurant.admin.unlock_order_code permission wiring is a follow-up).
+// route: POST /api/restaurant/admin/orders/:orderId/unlock-codes, permission
+// restaurant.admin.unlock_order_code).
 func (s *Service) UnlockOrderCodes(ctx context.Context, orderID string) error {
 	_, err := s.db.Exec(ctx, `UPDATE orders SET pickup_attempts=0, pickup_locked_until=NULL,
 		delivery_attempts=0, delivery_locked_until=NULL WHERE id=$1`, orderID)
 	return err
+}
+
+// AdminUnlockOrderCodes → POST /api/restaurant/admin/orders/:orderId/unlock-codes
+// (restaurant.admin.unlock_order_code). Clears pickup + delivery code lockouts.
+func (h *Handler) AdminUnlockOrderCodes(c *gin.Context) {
+	if err := h.svc.UnlockOrderCodes(c.Request.Context(), c.Param("orderId")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

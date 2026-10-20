@@ -3,11 +3,13 @@ package restaurant
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
@@ -124,7 +126,10 @@ func (s *Service) AdminSetReviewState(ctx context.Context, reviewID, adminID, ac
 	}
 	var restaurantID string
 	if err := s.db.QueryRow(ctx, q, args...).Scan(&restaurantID); err != nil {
-		return errors.New("restaurant: review not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("restaurant: review not found")
+		}
+		return fmt.Errorf("restaurant: moderate review: %w", err)
 	}
 	s.recomputeRestaurantRating(ctx, restaurantID)
 	return nil

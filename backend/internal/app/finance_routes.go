@@ -1723,6 +1723,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// intentionally not outlet-scoped: the token names the outlet, and the
 		// invitee is not yet staff there, so no per-outlet guard could pass.
 		restGroup.POST("/staff/accept", restaurantHandler.AcceptStaffInvite)
+		// FOOD-UAT-H-001: marketing/promo consent ledger (static siblings of :id).
+		restGroup.POST("/consents", restaurantHandler.RecordConsent)
+		restGroup.GET("/consents/:kind", restaurantHandler.GetConsent)
+		restGroup.DELETE("/consents/:kind", restaurantHandler.WithdrawConsent)
 		restGroup.GET("/lookup/user", restaurantHandler.LookupUser)
 		restGroup.GET("/:id/staff", restaurantHandler.ListStaff)
 		restGroup.POST("/:id/staff", restaurantHandler.InviteStaff)
@@ -1754,7 +1758,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Store management (owner only): edit profile + operational open/close.
 		restGroup.PATCH("/:id", restaurantHandler.UpdateRestaurant)
-		restGroup.PATCH("/:id/availability", restaurantHandler.SetAvailability)
+		restGroup.PATCH("/:id/availability", restaurantHandler.RequirePermitValidToOpen(), restaurantHandler.SetAvailability) // FOOD-UAT-H-002: permit gate
 
 		// Merchant KYB (Know-Your-Business) onboarding (owner only, PermManageBanking —
 		// enforced inside the service, matching every sibling owner route in this
@@ -1770,6 +1774,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/:id/images/presign", restaurantHandler.PresignStoreImage)
 		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
 		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
+		restGroup.POST("/:id/kyb/withdraw", restaurantHandler.WithdrawKYB) // FOOD-UAT-A-014
 
 		// Menu management (owner only).
 		if cfg.FeatureRestaurantAdminCategories {
@@ -1797,10 +1802,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Distance-based delivery-fee preview (before placing the order). Member auth
 		// via the finance group's requireUserID. Static "delivery-quote" segment under
 		// the ":id" param is fine in Gin v1.10.
-		restGroup.POST("/:id/delivery-quote", restaurantHandler.DeliveryQuote)
+		restGroup.POST("/:id/delivery-quote", restaurantHandler.RequireServiceable(), restaurantHandler.DeliveryQuote) // FOOD-UAT-C-003
 
 		// Order placement keeps the restaurant id in the path (existing money path).
-		restGroup.POST("/:id/orders", restaurantHandler.PlaceOrder)
+		restGroup.POST("/:id/orders", restaurantHandler.RequireServiceable(), restaurantHandler.PlaceOrder) // FOOD-UAT-C-003
+		// FOOD-UAT-C-011 / C-007: read-only checkout previews (static siblings of ":id").
+		restGroup.POST("/orders/preview-promo", restaurantHandler.PreviewPromo)
+		restGroup.POST("/orders/quote", restaurantHandler.Quote)
 		restGroup.PATCH("/:id/orders/:orderId/status", restaurantHandler.UpdateStatus)
 		restGroup.DELETE("/:id/orders/:orderId", restaurantHandler.CancelOrder)
 		// Owner declines a pending/confirmed order with a reason (refunds). Owner-only
@@ -1915,7 +1923,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restStore.GET("", restaurantHandler.AdminListRestaurants)
 		restStore.GET("/:id", restaurantHandler.AdminGetRestaurant)
 		restStore.PATCH("/:id", restaurantHandler.AdminUpdateRestaurant)
-		restStore.PATCH("/:id/availability", restaurantHandler.AdminSetAvailability)
+		restStore.PATCH("/:id/availability", restaurantHandler.RequirePermitValidToOpen(), restaurantHandler.AdminSetAvailability) // FOOD-UAT-H-002: permit gate
 		restStore.POST("/:id/menu/categories", restaurantHandler.AdminCreateCategory)
 		restStore.DELETE("/:id/menu/categories/:categoryId", restaurantHandler.AdminDeleteCategory)
 		restStore.POST("/:id/menu/items", restaurantHandler.AdminCreateItem)
@@ -1963,13 +1971,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.POST("/reviews/:id/hide", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminHideReview)
 		restAdmin.POST("/reviews/:id/restore", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminRestoreReview)
 		restAdmin.POST("/reviews/:id/flag", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminFlagReview)
+		restAdmin.POST("/orders/:orderId/unlock-codes", middleware.RequirePermission(rbac, "restaurant.admin.unlock_order_code"), restaurantHandler.AdminUnlockOrderCodes) // FOOD-UAT-E-008
 		// Single wildcard segment handles all three shapes the admin UI may post:
 		//   /onboarding/:id/decision  (body {decision, note})
 		//   /onboarding/:id/approve   (decision taken from the path)
 		//   /onboarding/:id/reject    (decision taken from the path)
 		// Registering both a static "decision" and a ":decision" param at the same
 		// position would panic in Gin, so the handler resolves the literal below.
-		restAdmin.POST("/onboarding/:id/:decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideApplication)
+		restAdmin.POST("/onboarding/:id/needs-changes", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminNeedsChanges) // FOOD-UAT-A-008
+		restAdmin.POST("/onboarding/:id/:decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideApplicationChecked) // FOOD-UAT-A-011: adds name_match_warning
 		// Real restaurant/rider payout-run DISBURSEMENT subsystem (money path). List
 		// + detail are reads; build aggregates unpaid settlements into a draft run;
 		// process posts ONE balanced ledger transfer (DR settlement acct → CR provider
@@ -1979,7 +1989,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.GET("/payouts", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminListPayoutRuns)
 		restAdmin.POST("/payouts/build", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminBuildPayoutRun)
 		restAdmin.GET("/payouts/:id", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminGetPayoutRun)
-		restAdmin.POST("/payouts/:id/process", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminProcessPayoutRun)
+		// FOOD-UAT-G-011: two-person approval. build = draft; request/endorse/approve are the
+		// maker-checker steps; process is refused until an 'approved' step from a user
+		// distinct from the requester/endorser exists.
+		restAdmin.POST("/payouts/:id/request", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminRequestPayoutRun)
+		restAdmin.POST("/payouts/:id/endorse", middleware.RequirePermission(rbac, "restaurant.admin.payout_approve"), restaurantHandler.AdminEndorsePayoutRun)
+		restAdmin.POST("/payouts/:id/approve", middleware.RequirePermission(rbac, "restaurant.admin.payout_approve"), restaurantHandler.AdminApprovePayoutRun)
+		restAdmin.GET("/payouts/:id/approvals", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminPayoutApprovals)
+		restAdmin.POST("/payouts/:id/process", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.RequirePayoutApproved(), restaurantHandler.AdminProcessPayoutRun)
+		// FOOD-UAT-H-002: permit renewal / compliance-hold lift. Under the static
+		// "restaurants" segment so it cannot collide with the sibling ":id" params.
+		restAdmin.PUT("/restaurants/:id/permit", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminSetPermit)
+		// FOOD-UAT-C-003: per-restaurant delivery zones.
+		restAdmin.GET("/:id/zones", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListZones)
+		restAdmin.POST("/:id/zones", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminCreateZone)
+		restAdmin.DELETE("/:id/zones/:zoneId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDeleteZone)
 
 		// FOOD-005: merchant/rider withdrawal ops queue (wallet → bank; distinct
 		// from the payout runs above, which pay a provider FROM the platform's
