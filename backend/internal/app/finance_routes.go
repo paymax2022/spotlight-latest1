@@ -1925,7 +1925,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Food-specific dispute queue (the generic
 		// /api/finance/{disputes,admin/disputes} rails do not cover it).
 		restAdmin.GET("/disputes", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListFoodDisputes)
-		restAdmin.POST("/disputes/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminResolveFoodDispute)
+		restAdmin.POST("/disputes/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.RefundApprovalGate(rbac), restaurantHandler.AdminResolveFoodDispute) // FOOD-UAT-F-002 two-tier refund
+		// FOOD-UAT-F-003: admin-editable commission split (global default + per-restaurant overrides).
+		restAdmin.GET("/commission", middleware.RequirePermission(rbac, "restaurant.admin.commission"), restaurantHandler.AdminListCommission)
+		restAdmin.PUT("/commission", middleware.RequirePermission(rbac, "restaurant.admin.commission"), restaurantHandler.AdminPutCommission)
+		restAdmin.DELETE("/commission/:restaurantId", middleware.RequirePermission(rbac, "restaurant.admin.commission"), restaurantHandler.AdminDeleteCommission)
 
 		// Releases scheduled orders whose window has arrived into the normal pipeline.
 		// Ops-triggered (a cron/worker can call it too); gated with the dispatch slug
@@ -2614,7 +2618,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// table currently has, and restaurant.admin.disputes already exists (seeded,
 		// granted to Super Admin/System Admin/Restaurant Ops) — reuse it rather than
 		// adding a new permission or a generic-but-unseeded slug.
-		adminFinanceDisputes.POST("/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), disputesHandler.AdminResolve)
+		if restaurantSvc != nil {
+			// FOOD-UAT-F-002: same two-tier refund gate as /api/restaurant/admin/disputes/:id/resolve.
+			adminFinanceDisputes.POST("/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurant.NewHandler(restaurantSvc).RefundApprovalGate(rbac), disputesHandler.AdminResolve)
+		} else {
+			adminFinanceDisputes.POST("/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), disputesHandler.AdminResolve)
+		}
 	}
 
 	if cfg.FeatureRatingsEnabled {

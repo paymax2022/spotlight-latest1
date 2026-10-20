@@ -1436,12 +1436,13 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	}
 	var ownerID string
 	_ = s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
+	cs := s.ResolveCommissionSplit(ctx, restaurantID) // FOOD-UAT-F-003: admin-editable split (default 80/10/10)
 	split := settlement.Split{
 		ProviderID:  ownerID,
-		ProviderPct: splitProviderPct,
-		PlatformPct: splitPlatformPct,
+		ProviderPct: cs.ProviderPct(),
+		PlatformPct: cs.PlatformPct(),
 		RiderID:     riderID,
-		RiderPct:    splitRiderPct,
+		RiderPct:    cs.RiderPct(),
 		// The tip was escrowed with the order total at placement; Settle pays it 100%
 		// to the rider on top of the percentage split (which prices total − tip, so
 		// neither the restaurant nor the platform takes a cut of it).
@@ -1466,7 +1467,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 		ServiceFeeKobo: serviceFeeKobo,
 	}
 	if riderID == nil {
-		split.ProviderPct = splitProviderPctNoRider
+		split.ProviderPct = cs.ProviderPctNoRider()
 		split.RiderPct = 0
 		// No rider ⇒ no payee for the tip (Split.Validate rejects a tip without a
 		// rider). Unreachable via the live flow — ConfirmHandoff is the only path to
