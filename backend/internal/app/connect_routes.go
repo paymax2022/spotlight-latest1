@@ -90,7 +90,13 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// 'complete'. Wire an SMS-delivering OTP service (Termii) so the
 	// phone/request + phone/verify endpoints can close the loop. Unconfigured
 	// (no OTP_PEPPER or TERMII_API_KEY) → handler answers 503.
-	if sender := integrations.NewTermiiClient(cfg.TermiiAPIKey, cfg.TermiiSenderID); sender != nil && cfg.OTPPepper != "" {
+	testOTP := otp.NewTestMode(cfg.FeatureTestOTPDeterministicEnabled, cfg.MocksAllowed(), cfg.AppEnv)
+	termii := integrations.NewTermiiClient(cfg.TermiiAPIKey, cfg.TermiiSenderID)
+	if (termii != nil || testOTP.Active()) && cfg.OTPPepper != "" {
+		var sender otp.EmailSender = otp.NoopSender() // test mode without Termii: no delivery
+		if termii != nil {
+			sender = termii
+		}
 		phoneOTP, err := otp.NewService(
 			otp.NewPostgresStore(pool),
 			sender,
@@ -100,7 +106,7 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if err != nil {
 			log.Printf("[connect] phone-verify OTP service failed to build: %v", err)
 		} else {
-			onboardingHandler.WithPhoneOTP(phoneOTP)
+			onboardingHandler.WithPhoneOTP(phoneOTP.WithTestMode(testOTP))
 		}
 	} else {
 		log.Println("[connect] phone verification unavailable — OTP_PEPPER or TERMII_API_KEY unset")
