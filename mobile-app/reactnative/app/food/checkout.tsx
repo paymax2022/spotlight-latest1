@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -29,6 +29,7 @@ import { initiateFoodOrderPaystack } from '@/features/food/api';
 import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import { api } from '@/api/client';
 
 function Line({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
@@ -210,8 +211,18 @@ export default function CheckoutScreen() {
     [restaurant, subtotal],
   );
 
+  // FOOD-UAT-H-001: marketing consent. Opt-in (off by default); recorded server-side
+  // as an append-only user_consents row only when the buyer ticks it and places an order.
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
+  const recordMarketingConsent = () => {
+    if (!marketingOptIn) return;
+    // Best-effort: consent capture must never block or fail a payment.
+    void api.post('/api/finance/restaurant/consents', { kind: 'marketing', source: 'food_checkout' }).catch(() => {});
+  };
+
   const onPlace = () => {
     if (!restaurantId || !address.trim() || belowMin || placeOrder.isPending || paid) return;
+    recordMarketingConsent();
     // not load it, the order cannot be placed and taking a payment first would
     // charge for something the server is about to refuse.
     if (restaurantUnavailable) return;
@@ -538,6 +549,15 @@ export default function CheckoutScreen() {
         <Text style={s.sectionLabel}>Nutrition & allergens</Text>
         <CartNutritionSummary ids={dishIds} />
 
+        <View style={s.consentRow}>
+          <Text style={s.consentText}>Send me offers and promotions (optional). You can opt out any time.</Text>
+          <Switch
+            value={marketingOptIn}
+            onValueChange={setMarketingOptIn}
+            accessibilityLabel="Receive marketing offers and promotions"
+          />
+        </View>
+
         {belowMin && restaurant ? (
           <Text style={s.warn}>Minimum order is {formatNaira(restaurant.minOrderKobo)}. Add {formatNaira(restaurant.minOrderKobo - subtotal)} more to continue.</Text>
         ) : null}
@@ -624,6 +644,8 @@ const s = StyleSheet.create({
   note: { ...Typography.caption, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   warn: { ...Typography.bodySm, color: Colors.error, marginTop: Spacing.md, textAlign: 'center' },
   footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLowest },
+  consentRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm, marginTop: Spacing.md },
+  consentText: { ...Typography.caption, color: Colors.onSurfaceVariant, flex: 1 },
   payHint: { ...Typography.caption, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: Spacing.sm },
   paidWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl, gap: Spacing.xs },
   paidIcon: { width: 96, height: 96, borderRadius: Radius.full, backgroundColor: Colors.iconBgTeal, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.md },

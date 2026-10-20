@@ -176,6 +176,10 @@ func RunUnacceptedAndDispatchSweeps(ctx context.Context, svc *Service, now time.
 	if reassigned, e = svc.SweepOfflineAssigned(ctx); e != nil {
 		errs = append(errs, fmt.Errorf("offline-assigned: %w", e))
 	}
+	// FOOD-UAT-H-002: close stores whose business permit lapsed (idempotent).
+	if _, e = svc.SweepPermitExpiry(ctx, now); e != nil {
+		errs = append(errs, fmt.Errorf("permit-expiry: %w", e))
+	}
 	return unaccepted, stalled, reassigned, errors.Join(errs...)
 }
 
