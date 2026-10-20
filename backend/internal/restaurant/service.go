@@ -158,6 +158,9 @@ type Service struct {
 	// (the bucket is private). nil/unconfigured ⇒ uploads fail closed with
 	// ErrKYBUploadsUnavailable and the paste-a-link path keeps working.
 	kybPresigner *r2.Presigner
+	// stepUp verifies the caller's transaction PIN before a payout bank account is
+	// saved (FOOD-UAT-B-002). nil ⇒ AddBankAccount fails closed (ErrStepUpUnavailable).
+	stepUp func(ctx context.Context, userID, pin string) error
 }
 
 // OrderAuditor is the nil-safe seam into the shared durable audit sink
@@ -633,7 +636,9 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// applyBp floors, so neither can round UP past its exact basis-point fraction.
 	surgeKobo := applyBp(subtotal, pricingCfg.SurgeBp)
 	itemsKobo := subtotal + surgeKobo
-	serviceFeeKobo := applyBp(itemsKobo, pricingCfg.ServiceFeeBp)
+	// C-010: per-restaurant floor / cap / whole-naira rounding on the bp fee (shared by the
+	// quote and placement paths, which both price through priceOrder).
+	serviceFeeKobo := s.serviceFeePolicyKobo(ctx, primaryRestaurantID, applyBp(itemsKobo, pricingCfg.ServiceFeeBp))
 
 	// Rider tip: escrowed WITH the order total and paid 100% to the rider at
 	// settlement (settlement.Split.TipKobo). This is the ONE client-supplied amount on

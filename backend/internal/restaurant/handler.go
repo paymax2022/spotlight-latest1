@@ -263,7 +263,7 @@ func statusCodeFor(err error) int {
 	if errors.Is(err, ErrCodeLocked) {
 		return http.StatusTooManyRequests
 	}
-	if errors.Is(err, ErrOrderTransitionConflict) ||
+	if errors.Is(err, ErrOrderTransitionConflict) || errors.Is(err, ErrRiderIneligible) ||
 		errors.Is(err, ErrPriceChanged) || errors.Is(err, ErrQuoteInvalid) {
 		return http.StatusConflict
 	}

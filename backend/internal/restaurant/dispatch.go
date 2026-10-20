@@ -178,13 +178,15 @@ func (s *Service) ConfirmPickup(ctx context.Context, orderID, riderID, code stri
 	if err := s.VerifyOrderCode(ctx, orderID, CodeKindPickup, code, *dbCode); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(ctx, `UPDATE orders SET picked_up_at=COALESCE(picked_up_at, now()) WHERE id=$1`, orderID); err != nil {
-		return err
-	}
 	// The pickup-code POD has been verified above, so advance via the internal
 	// transition — the public UpdateStatus forbids `picked_up` to close the
 	// same bypass `delivered` had (a bare status write skipping the code).
+	// FOOD-UAT-E-009: the FSM guard runs BEFORE any column write, so a refused
+	// transition (cancelled / wrong state / lost race) leaves picked_up_at untouched.
 	if err := s.transitionInternal(ctx, orderID, riderID, OrderPickedUp); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE orders SET picked_up_at=COALESCE(picked_up_at, now()) WHERE id=$1`, orderID); err != nil {
 		return err
 	}
 	return nil
@@ -211,15 +213,17 @@ func (s *Service) ConfirmHandoff(ctx context.Context, orderID, riderID, code str
 	if err := s.VerifyOrderCode(ctx, orderID, CodeKindDelivery, code, *dbCode); err != nil {
 		return err
 	}
+	// The delivery-code POD has been verified above, so advance to delivered via the
+	// internal transition (the public UpdateStatus forbids `delivered` to close the POD
+	// bypass). This runs the settlement split + notifies. FOOD-UAT-E-009: the FSM guard
+	// runs BEFORE the delivered_at / dispatch_status writes so a refused transition can't
+	// leave an undelivered order stamped delivered.
+	if err := s.transitionInternal(ctx, orderID, riderID, OrderDelivered); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(ctx,
 		`UPDATE orders SET delivered_at=COALESCE(delivered_at, now()), dispatch_status='delivered' WHERE id=$1`,
 		orderID); err != nil {
-		return err
-	}
-	// The delivery-code POD has been verified above, so advance to delivered via the
-	// internal transition (the public UpdateStatus forbids `delivered` to close the POD
-	// bypass). This runs the settlement split + notifies.
-	if err := s.transitionInternal(ctx, orderID, riderID, OrderDelivered); err != nil {
 		return err
 	}
 	customer, _, _, _ := s.orderParties(ctx, orderID) //nolint:dogsled // tuple unpack; unused positions

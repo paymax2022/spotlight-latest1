@@ -88,8 +88,8 @@ func seedMerchantBankAccount(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	id := uuid.New().String()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO restaurant_bank_accounts
-			(id, user_id, bank_name, bank_code, account_number, account_name, is_default)
-		VALUES ($1, $2, 'Guaranty Trust Bank', '058', '0123456789', 'TEST MERCHANT', true)`,
+			(id, user_id, bank_name, bank_code, account_number, account_name, is_default, is_verified)
+		VALUES ($1, $2, 'Guaranty Trust Bank', '058', '0123456789', 'TEST MERCHANT', true, true)`,
 		id, ownerID); err != nil {
 		t.Fatalf("seed bank account: %v", err)
 	}

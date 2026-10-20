@@ -159,6 +159,13 @@ export default function OrderTrackingScreen() {
                 </Text>
               ) : null}
 
+              {/* Server-computed ETA to drop-off (FOOD-UAT-E-014) */}
+              {isLiveTrackable(status) && realtime.etaMinutes ? (
+                <Text style={s.staleNote} accessibilityLiveRegion="polite">
+                  Arriving in about {realtime.etaMinutes} min
+                </Text>
+              ) : null}
+
               {/* Rider card */}
               {order.rider && !isTerminalStatus(status) ? (
                 <View style={s.block}>
@@ -198,6 +205,9 @@ export default function OrderTrackingScreen() {
               <View style={s.actions}>
                 {status === 'delivered' && !order.rated ? (
                   <PrimaryButton label="Rate your order" onPress={() => router.push(`/food/orders/${order.id}/rate`)} />
+                ) : null}
+                {status === 'delivered' ? (
+                  <PrimaryButton label="Report a problem" variant="secondary" onPress={() => router.push(`/food/orders/${order.id}/dispute`)} />
                 ) : null}
                 {canCancel ? (
                   <PrimaryButton label="Cancel order" variant="danger" loading={cancelOrder.isPending} onPress={onCancel} />

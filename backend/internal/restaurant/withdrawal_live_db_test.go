@@ -69,6 +69,7 @@ func withdrawalFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, fu
 	svc := NewService(pool, settlement.NewService(pool, led)).
 		WithLedger(led).
 		WithTiers(tiers.NewService(pool)).
+		WithStepUp(func(context.Context, string, string) error { return nil }).
 		WithWithdrawals(true)
 
 	merchant := uuid.New().String()
@@ -92,10 +93,16 @@ func withdrawalFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, fu
 	}
 
 	bank, err := svc.AddBankAccount(ctx, merchant, AddBankAccountRequest{
-		BankName: "Test Bank", BankCode: "999", AccountNumber: "0123456789", AccountName: "Merchant Test",
+		BankName: "Test Bank", BankCode: "999", AccountNumber: "0123456789", AccountName: "Merchant Test", PIN: "1234",
 	})
 	if err != nil {
 		t.Fatalf("add bank account: %v", err)
+	}
+	// FOOD-UAT-B-003: withdrawals require is_verified=true. No disbursement provider is
+	// wired in tests, so mark the fixture account verified the way a successful
+	// name-enquiry would.
+	if _, err := pool.Exec(ctx, `UPDATE restaurant_bank_accounts SET is_verified=true WHERE id=$1`, bank.ID); err != nil {
+		t.Fatalf("verify bank account: %v", err)
 	}
 	return svc, led, merchant, bank.ID
 }
@@ -421,4 +428,57 @@ func seedKYBRestaurant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ow
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM restaurants WHERE id=$1`, id)
 	})
 	return id
+}
+
+// FOOD-UAT-B-002/B-003: step-up on bank-account add, and is_verified enforced on withdrawal.
+func TestBankAccount_StepUpAndVerifiedGate_FoodUATB002B003(t *testing.T) {
+	pool := withdrawalPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	svc, _, merchant, verifiedID := withdrawalFixture(t, ctx, pool, 1_000_00)
+
+	// B-002: a missing PIN and a wrong PIN both refuse the add, writing nothing.
+	req := AddBankAccountRequest{BankName: "Other Bank", BankCode: "998", AccountNumber: "0987654321", AccountName: "Merchant Test"}
+	if _, err := svc.AddBankAccount(ctx, merchant, req); !errors.Is(err, ErrStepUpRequired) {
+		t.Fatalf("no PIN: err = %v, want ErrStepUpRequired", err)
+	}
+	req.PIN = "0000"
+	svc.WithStepUp(func(context.Context, string, string) error { return errors.New("wrong pin") })
+	if _, err := svc.AddBankAccount(ctx, merchant, req); !errors.Is(err, ErrStepUpFailed) {
+		t.Fatalf("wrong PIN: err = %v, want ErrStepUpFailed", err)
+	}
+	var n int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM restaurant_bank_accounts WHERE user_id=$1 AND bank_code='998'`, merchant).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d rows written despite failed step-up", n)
+	}
+	// fail-closed when nothing is wired
+	svc.WithStepUp(nil)
+	if _, err := svc.AddBankAccount(ctx, merchant, req); !errors.Is(err, ErrStepUpUnavailable) {
+		t.Fatalf("unwired: err = %v, want ErrStepUpUnavailable", err)
+	}
+
+	// B-003: a correctly step-upped add with no provider saves an UNVERIFIED account…
+	svc.WithStepUp(func(context.Context, string, string) error { return nil })
+	req.PIN = "1234"
+	unv, err := svc.AddBankAccount(ctx, merchant, req)
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if unv.IsVerified {
+		t.Fatal("account saved without a provider must be is_verified=false")
+	}
+	// …which cannot be withdrawn to (and no money moves),
+	idem := "wd-unverified-" + uuid.New().String()
+	if _, err := svc.RequestWithdrawal(ctx, merchant, RequestWithdrawalInput{AmountKobo: 10_000, BankAccountID: unv.ID, IdempotencyKey: idem}); !errors.Is(err, ErrBankAccountUnverified) {
+		t.Fatalf("unverified withdrawal: err = %v, want ErrBankAccountUnverified", err)
+	}
+	if got := reserveLegs(t, ctx, pool, idem); got != 0 {
+		t.Fatalf("%d ledger legs posted for a refused withdrawal", got)
+	}
+	// while the verified account still passes (KYB gate still enforced by the fixture).
+	if _, err := svc.RequestWithdrawal(ctx, merchant, RequestWithdrawalInput{AmountKobo: 10_000, BankAccountID: verifiedID, IdempotencyKey: "wd-verified-" + uuid.New().String()}); err != nil {
+		t.Fatalf("verified withdrawal: %v", err)
+	}
 }

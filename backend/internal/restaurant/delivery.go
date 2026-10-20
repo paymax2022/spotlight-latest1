@@ -412,6 +412,10 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 			prep, itemID, restaurantID); err != nil {
 			return nil, err
 		}
+		// D-008: customers with an order still in the kitchen learn the new prep ETA.
+		if prep != nil {
+			s.NotifyOpenOrdersPrepChanged(ctx, restaurantID, *prep)
+		}
 	}
 	if req.DietaryTags != nil {
 		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET dietary_tags=$1 WHERE id=$2 AND restaurant_id=$3`,
@@ -789,6 +793,23 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 	return nil
 }
 
+// ErrLocationNotTrackable: location posts are only accepted while the order is
+// picked_up / out_for_delivery (FOOD-UAT-E-013). HTTP 409.
+var ErrLocationNotTrackable = errors.New("restaurant: rider location is only accepted while the order is out for delivery")
+
+// riderLocationRetention is how long raw rider GPS breadcrumbs are kept (E-013).
+const riderLocationRetention = 30 * 24 * time.Hour
+
+// PurgeRiderLocations deletes breadcrumbs older than the retention window; run from
+// the sweeper tick. Idempotent.
+func (s *Service) PurgeRiderLocations(ctx context.Context, now time.Time) (int64, error) {
+	tag, err := s.db.Exec(ctx, `DELETE FROM restaurant_rider_locations WHERE created_at < $1`, now.Add(-riderLocationRetention))
+	if err != nil {
+		return 0, fmt.Errorf("restaurant: purge rider locations: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // PostLocation records the assigned rider's current position and fans it out to
 // the order's participants. Only the assigned rider may post.
 func (s *Service) PostLocation(ctx context.Context, orderID, riderID string, lat, lng float64) error {
@@ -799,13 +820,22 @@ func (s *Service) PostLocation(ctx context.Context, orderID, riderID string, lat
 	if rider == "" || rider != riderID {
 		return errors.New("restaurant: only the assigned rider may post location")
 	}
+	// FOOD-UAT-E-013: location is only recorded while the rider is actually carrying the
+	// order — never before pickup or after the drop-off (privacy + retention).
+	var status string
+	if err := s.db.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&status); err != nil {
+		return errors.New("restaurant: order not found")
+	}
+	if status != string(OrderPickedUp) && status != "out_for_delivery" {
+		return ErrLocationNotTrackable
+	}
 	if _, err := s.db.Exec(ctx,
 		`INSERT INTO restaurant_rider_locations (id, order_id, rider_id, lat, lng)
 		 VALUES ($1,$2,$3,$4,$5)`,
 		uuid.New().String(), orderID, riderID, lat, lng); err != nil {
 		return err
 	}
-	s.broadcastLocation(orderID, lat, lng) //nolint:contextcheck // WS publish outlives the request by design
+	s.broadcastLocation(orderID, lat, lng, s.TrackingETAMinutes(ctx, orderID, lat, lng)) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -875,7 +905,7 @@ func (s *Service) RiderOfferCards(ctx context.Context, orders []Order) ([]RiderO
 		if base < 0 {
 			base = 0
 		}
-		c.PayoutKobo = o.TipKobo + int64(float64(base)*splitRiderPct)
+		c.PayoutKobo = o.TipKobo + int64(float64(base)*s.ResolveCommissionSplit(ctx, o.RestaurantID).RiderPct())
 		cards = append(cards, c)
 	}
 	return cards, nil

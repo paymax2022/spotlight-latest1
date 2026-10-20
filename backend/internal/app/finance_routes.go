@@ -1617,6 +1617,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// Attach the shared audit sink so every order FSM transition lands in
 			// audit_logs; best-effort — it can never fail a transition (E2E-X-030).
 			WithAudit(auditSink).
+			// FOOD-UAT-B-002: payout bank-account add requires the transaction PIN.
+			WithStepUp(xferSvc.VerifyPin).
 			// The flag gates the MONEY MOVE only (RequestWithdrawal refuses with
 			// ErrWithdrawalsDisabled while off); the read/admin routes mount unconditionally
 			// below alongside the rest of the restaurant module (FOOD-005). Disburser is left at the
@@ -1849,7 +1851,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// or close a served dine-in table. Owner / ACTIVE staff only (enforced in the service).
 		restGroup.POST("/orders/:orderId/verify-customer-pickup", restaurantHandler.VerifyCustomerPickup)
 		restGroup.POST("/orders/:orderId/verify-table-close", restaurantHandler.VerifyTableClose)
-		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff)  // rider confirms drop-off (code)
+		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff) // rider confirms drop-off (code)
 		restGroup.POST("/orders/:orderId/location", restaurantHandler.PostLocation)
 		restGroup.POST("/orders/:orderId/mark-failed", restaurantHandler.MarkDeliveryFailed) // rider reports a failed drop-off
 		restGroup.GET("/rider/offers", restaurantHandler.RiderOffers)
@@ -1877,6 +1879,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// refundable ceiling from the escrowed total).
 		restGroup.POST("/orders/:orderId/dispute", restaurantHandler.RaiseFoodDispute)
 		restGroup.GET("/disputes/:id", restaurantHandler.GetFoodDispute)
+		restGroup.POST("/disputes/:id/evidence", restaurantHandler.AttachDisputeEvidence) // F-005b
+		restGroup.GET("/disputes/:id/evidence", restaurantHandler.ListDisputeEvidence)
+		restGroup.POST("/orders/:orderId/incident", restaurantHandler.ReportRiderIncident) // F-006
 
 		// A host opens a group order, contributors add items, the host finalizes it
 		// into a normal order (money path reuses PlaceOrder's escrow + idempotency).
@@ -1939,6 +1944,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Food-specific dispute queue (the generic
 		// /api/finance/{disputes,admin/disputes} rails do not cover it).
 		restAdmin.GET("/disputes", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListFoodDisputes)
+		restAdmin.GET("/rider-incidents", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListRiderIncidents) // F-006
+		// Wave 7 console pages: refund tiers (F-002), consent audit (H-001), permit list (H-002).
+		restAdmin.GET("/refund-tiers", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListRefundTiers)
+		restAdmin.PUT("/refund-tiers", middleware.RequirePermission(rbac, restaurant.PermRefundLarge), restaurantHandler.AdminSetRefundTier)
+		restAdmin.GET("/consents", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListConsents)
+		restAdmin.GET("/permits", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListPermits)
 		restAdmin.POST("/disputes/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.RefundApprovalGate(rbac), restaurantHandler.AdminResolveFoodDispute) // FOOD-UAT-F-002 two-tier refund
 		// FOOD-UAT-F-003: admin-editable commission split (global default + per-restaurant overrides).
 		restAdmin.GET("/commission", middleware.RequirePermission(rbac, "restaurant.admin.commission"), restaurantHandler.AdminListCommission)
@@ -1998,7 +2009,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		//   /onboarding/:id/reject    (decision taken from the path)
 		// Registering both a static "decision" and a ":decision" param at the same
 		// position would panic in Gin, so the handler resolves the literal below.
-		restAdmin.POST("/onboarding/:id/needs-changes", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminNeedsChanges) // FOOD-UAT-A-008
+		restAdmin.POST("/onboarding/:id/needs-changes", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminNeedsChanges)         // FOOD-UAT-A-008
 		restAdmin.POST("/onboarding/:id/:decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideApplicationChecked) // FOOD-UAT-A-011: adds name_match_warning
 		// Real restaurant/rider payout-run DISBURSEMENT subsystem (money path). List
 		// + detail are reads; build aggregates unpaid settlements into a draft run;
@@ -2020,6 +2031,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// FOOD-UAT-H-002: permit renewal / compliance-hold lift. Under the static
 		// "restaurants" segment so it cannot collide with the sibling ":id" params.
 		restAdmin.PUT("/restaurants/:id/permit", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminSetPermit)
+		// FOOD-UAT-H-002 rollout gap: one-shot stamp of a default permit expiry on
+		// currently-open restaurants whose permit_expires_at is still NULL (capped, audited per row).
+		restAdmin.POST("/permits/backfill-null", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminBackfillNullPermits)
 		// FOOD-UAT-C-003: per-restaurant delivery zones.
 		restAdmin.GET("/:id/zones", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListZones)
 		restAdmin.POST("/:id/zones", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminCreateZone)

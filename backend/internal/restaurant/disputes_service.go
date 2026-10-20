@@ -20,6 +20,9 @@ import (
 
 const keyError = "error"
 
+// EventDisputeResolved fans the outcome of a resolved dispute out to the merchant and rider (F-009).
+const EventDisputeResolved = "restaurant.dispute.resolved"
+
 // FoodDispute is a restaurant food-order dispute (a projection of the shared `disputes`
 // ticket + this module's resolution/refund record).
 type FoodDispute struct {
@@ -318,6 +321,19 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 	// instant. A tip still queued against the rider's next delivery is NOT announced as
 	// credited; the recovery sweep notifies separately when it lands.
 	credited := refundKobo + tipRefundedKobo
+	// F-009: the merchant and the rider are parties too — tell them the outcome (no amounts
+	// the other side shouldn't see; the rider hears of a tip recovery separately).
+	if _, ownerID, riderParty, perr := s.disputeOrderParties(ctx, orderID); perr == nil {
+		outcome := map[string]any{"order_id": orderID, "dispute_id": disputeID, "resolution": string(res)}
+		if ownerID != "" {
+			s.notify(ctx, Notification{UserID: ownerID, Event: EventDisputeResolved, Title: "Dispute resolved",
+				Body: "A dispute on one of your orders was resolved.", Data: outcome})
+		}
+		if riderParty != "" {
+			s.notify(ctx, Notification{UserID: riderParty, Event: EventDisputeResolved, Title: "Dispute resolved",
+				Body: "A dispute on a delivery you made was resolved.", Data: outcome})
+		}
+	}
 	if credited > 0 {
 		s.notify(ctx, Notification{UserID: customerID, Event: EventOrderCancelled, Title: "Dispute resolved — refund issued",
 			Body: "Your dispute was resolved and a refund was credited to your wallet.",

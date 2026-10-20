@@ -401,7 +401,8 @@ func (h *Handler) AssignRider(c *gin.Context) {
 func (h *Handler) AcceptDelivery(c *gin.Context) {
 	riderID := ginutil.UserID(c)
 	if err := h.svc.AcceptDelivery(c.Request.Context(), c.Param("orderId"), riderID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		st := statusCodeFor(err) // ErrRiderIneligible / ErrOrderTransitionConflict -> 409
+		c.JSON(st, gin.H{keyError: httperr.Msg(c, st, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -488,7 +489,11 @@ func (h *Handler) PostLocation(c *gin.Context) {
 		return
 	}
 	if err := h.svc.PostLocation(c.Request.Context(), c.Param("orderId"), riderID, body.Lat, body.Lng); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		st := http.StatusBadRequest
+		if errors.Is(err, ErrLocationNotTrackable) {
+			st = http.StatusConflict
+		}
+		c.JSON(st, gin.H{keyError: httperr.Msg(c, st, err)})
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"ok": true})

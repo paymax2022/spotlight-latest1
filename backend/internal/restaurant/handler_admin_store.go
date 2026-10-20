@@ -165,6 +165,7 @@ func (h *Handler) updateStore(c *gin.Context, ctx context.Context) {
 			c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 			return
 		}
+		h.svc.NotifyOpenOrdersPrepChanged(ctx, id, *body.DefaultPrepMinutes) // D-008
 		if r, err = h.svc.getRestaurantCore(ctx, id); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return

@@ -158,6 +158,11 @@ type appliedPromo struct {
 	PromoID      string
 	Funder       PromoFunder
 	DiscountKobo int64
+	// Split is the commission split in force for the restaurant when the promo was
+	// resolved (FOOD-UAT-F-003). assertDiscountFundable bounds the discount against it
+	// so a non-default split can't leave the cap misaligned with settleOrder. The zero
+	// value means "built-in 80/10/10".
+	Split CommissionSplit
 }
 
 // resolvePromo validates a promo code against this restaurant + subtotal + user at
@@ -196,7 +201,7 @@ func (s *Service) resolvePromo(ctx context.Context, restaurantID, userID, code s
 	if discount <= 0 {
 		return appliedPromo{}, fmt.Errorf("%w: no discount for this order", ErrPromoInvalid)
 	}
-	return appliedPromo{PromoID: p.ID, Funder: p.Funder, DiscountKobo: discount}, nil
+	return appliedPromo{PromoID: p.ID, Funder: p.Funder, DiscountKobo: discount, Split: s.ResolveCommissionSplit(ctx, restaurantID)}, nil
 }
 
 // reservePromoRedemption is the AUTHORITATIVE usage-limit check. It claims this order's
@@ -315,14 +320,23 @@ func releasePromoRedemption(ctx context.Context, tx pgx.Tx, orderID string) erro
 //     used because it is the tighter of the two and a rider can still be assigned after
 //     placement (rider-less settles 90/10, a strictly looser bound).
 func promoFunderCapKobo(funder PromoFunder, grossKobo int64) int64 {
+	return promoFunderCapKoboSplit(funder, grossKobo, DefaultCommissionSplit)
+}
+
+// promoFunderCapKoboSplit is promoFunderCapKobo against the restaurant's resolved
+// commission split (FOOD-UAT-F-003). A zero-valued split falls back to the default.
+func promoFunderCapKoboSplit(funder PromoFunder, grossKobo int64, cs CommissionSplit) int64 {
 	if grossKobo <= 0 {
 		return 0
 	}
-	platformLeg := int64(float64(grossKobo) * splitPlatformPct)
+	if cs.ProviderBps+cs.RiderBps+cs.PlatformBps == 0 {
+		cs = DefaultCommissionSplit
+	}
+	platformLeg := int64(float64(grossKobo) * cs.PlatformPct())
 	if funder == FunderPlatform {
 		return platformLeg
 	}
-	riderLeg := int64(float64(grossKobo) * splitRiderPct)
+	riderLeg := int64(float64(grossKobo) * cs.RiderPct())
 	return grossKobo - platformLeg - riderLeg
 }
 
@@ -331,7 +345,7 @@ func promoFunderCapKobo(funder PromoFunder, grossKobo int64) int64 {
 // the handler's 422 mapping) treats it as the client error it is: the code is real, it
 // simply cannot be applied to THIS order.
 func assertDiscountFundable(ap appliedPromo, grossKobo int64) error {
-	if maxKobo := promoFunderCapKobo(ap.Funder, grossKobo); ap.DiscountKobo > maxKobo {
+	if maxKobo := promoFunderCapKoboSplit(ap.Funder, grossKobo, ap.Split); ap.DiscountKobo > maxKobo {
 		return fmt.Errorf("%w: a %s-funded discount of %d kobo exceeds the %d kobo that funder's settlement share can bear on this order",
 			ErrPromoInvalid, ap.Funder, ap.DiscountKobo, maxKobo)
 	}

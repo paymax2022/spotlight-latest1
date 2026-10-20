@@ -37,7 +37,14 @@ func (h *Handler) AddBankAccount(c *gin.Context) {
 	}
 	b, err := h.svc.AddBankAccount(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		st := http.StatusBadRequest
+		switch {
+		case errors.Is(err, ErrStepUpFailed):
+			st = http.StatusForbidden
+		case errors.Is(err, ErrStepUpUnavailable):
+			st = http.StatusServiceUnavailable
+		}
+		c.JSON(st, gin.H{keyError: httperr.Msg(c, st, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, b)
@@ -90,7 +97,7 @@ func (h *Handler) VerifyBankAccount(c *gin.Context) {
 
 func withdrawalErrStatus(err error) int {
 	switch {
-	case errors.Is(err, ErrWithdrawMissingIdem), errors.Is(err, ErrWithdrawBadAmount):
+	case errors.Is(err, ErrWithdrawMissingIdem), errors.Is(err, ErrWithdrawBadAmount), errors.Is(err, ErrBankAccountUnverified):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrWithdrawNoBankAccount), errors.Is(err, ErrWithdrawNotFound):
 		return http.StatusNotFound
