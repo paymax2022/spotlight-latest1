@@ -13,6 +13,8 @@ import type {
   ChatMessage,
   RiderOffer,
   PlaceOrderRequest,
+  OrderQuote,
+  PromoPreview,
   RateOrderRequest,
   LatLng,
 } from './types';
@@ -256,6 +258,19 @@ export async function listOrders(role: OrderRole): Promise<Order[]> {
 }
 
 /** Place an order — money mutation → Idempotency-Key. Totals come from server. */
+/** Wire shape of one order line. `modifier_ids` only when modifiers were chosen. */
+const wireItem = (i: PlaceOrderRequest['items'][number]) => ({
+  item_id: i.itemId,
+  qty: i.qty,
+  restaurant_id: i.restaurantId, // multi-restaurant support
+  ...(i.modifierIds && i.modifierIds.length > 0 ? { modifier_ids: i.modifierIds } : {}),
+});
+const wirePackItem = (i: { itemId: string; qty: number; modifierIds?: string[] }) => ({
+  item_id: i.itemId,
+  qty: i.qty,
+  ...(i.modifierIds && i.modifierIds.length > 0 ? { modifier_ids: i.modifierIds } : {}),
+});
+
 export async function placeOrder(req: PlaceOrderRequest): Promise<Order> {
   if (USE_MOCK) {
     await delay(900);
@@ -284,16 +299,16 @@ export async function placeOrder(req: PlaceOrderRequest): Promise<Order> {
       await api.post(
         `${BASE}/${encodeURIComponent(req.restaurantId)}/orders`,
         {
-          items: req.items.map((i) => ({
-            item_id: i.itemId,
-            qty: i.qty,
-            restaurant_id: i.restaurantId, // multi-restaurant support
-          })),
+          items: req.items.map(wireItem),
           // Takeaway packaging is billed per physical package (the container).
           package_count: req.packageCount,
-          packages: req.packages?.map((p) => ({ items: p.items.map((i) => ({ item_id: i.itemId, qty: i.qty })) })),
+          packages: req.packages?.map((p) => ({ items: p.items.map(wirePackItem) })),
           delivery_address: req.deliveryAddress,
           delivery_location: req.deliveryLocation,
+          // FOOD-UAT-C-007 / C-011: the quote the pay-sheet total came from and the
+          // promo the buyer saw applied. Optional; the server re-prices.
+          quote_id: req.quoteId,
+          promo_code: req.promoCode,
           // FOOD-UAT-D-007: omitted for delivery so legacy requests are byte-identical.
           ...(req.orderType && req.orderType !== 'delivery' ? { order_type: req.orderType } : {}),
           ...(req.scheduledFor ? { scheduled_for: req.scheduledFor } : {}),
@@ -344,15 +359,13 @@ export async function initiateFoodOrderPaystack(
     await api.post(
       `${BASE}/${encodeURIComponent(req.restaurantId)}/orders/paystack/initiate`,
       {
-        items: req.items.map((i) => ({
-          item_id: i.itemId,
-          qty: i.qty,
-          restaurant_id: i.restaurantId, // multi-restaurant support
-        })),
+        items: req.items.map(wireItem),
         package_count: req.packageCount,
-        packages: req.packages?.map((p) => ({ items: p.items.map((i) => ({ item_id: i.itemId, qty: i.qty })) })),
+        packages: req.packages?.map((p) => ({ items: p.items.map(wirePackItem) })),
         delivery_address: req.deliveryAddress,
         delivery_location: req.deliveryLocation,
+        quote_id: req.quoteId,
+        promo_code: req.promoCode,
         email: req.email,
         callback_url: req.callbackUrl,
       },
@@ -727,3 +740,75 @@ export async function signalArrival(orderId: string): Promise<void> {
   }
   await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/arrived`, {});
 }
+
+// ---------------------------------------------------------------------------
+// FOOD-UAT-C-007 / C-011: server-authoritative price quote + promo preview.
+// Both take the cart shape PlaceOrder takes (snake_case wire) and are read-only
+// on money: nothing is charged or reserved.
+// ---------------------------------------------------------------------------
+
+export interface PricingCartInput {
+  restaurantId: string;
+  items: PlaceOrderRequest['items'];
+  packageCount?: number;
+  deliveryAddress?: string;
+  deliveryLocation?: LatLng | null;
+  promoCode?: string;
+}
+
+const pricingBody = (c: PricingCartInput) => ({
+  restaurant_id: c.restaurantId,
+  items: c.items.map(wireItem),
+  package_count: c.packageCount,
+  delivery_address: c.deliveryAddress ?? '',
+  delivery_lat: c.deliveryLocation?.lat,
+  delivery_lng: c.deliveryLocation?.lng,
+  promo_code: c.promoCode?.trim() || undefined,
+});
+
+const int = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : 0);
+
+/** POST `${BASE}/orders/quote` — exact breakdown PlaceOrder would charge + a 15-min quote_id. */
+export async function quoteOrder(c: PricingCartInput): Promise<OrderQuote> {
+  if (USE_MOCK) {
+    await delay(200);
+    return {
+      subtotalKobo: 0, serviceFeeKobo: 0, deliveryFeeKobo: 0, surgeBp: 0, surgeKobo: 0,
+      packagingKobo: 0, promoDiscountKobo: 0, tipKobo: 0, totalKobo: 0,
+      quoteId: `mock-quote-${Date.now()}`, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    };
+  }
+  const r = unwrap<Record<string, unknown>>(await api.post(`${BASE}/orders/quote`, pricingBody(c)));
+  return {
+    subtotalKobo: int(r.subtotal_kobo),
+    serviceFeeKobo: int(r.service_fee_kobo),
+    deliveryFeeKobo: int(r.delivery_fee_kobo),
+    surgeBp: int(r.surge_bp),
+    surgeKobo: int(r.surge_kobo),
+    packagingKobo: int(r.packaging_kobo),
+    promoDiscountKobo: int(r.promo_discount_kobo),
+    promoRejection: typeof r.promo_rejection === 'string' && r.promo_rejection ? r.promo_rejection : undefined,
+    tipKobo: int(r.tip_kobo),
+    totalKobo: int(r.total_kobo),
+    quoteId: String(r.quote_id ?? ''),
+    expiresAt: String(r.expires_at ?? ''),
+  };
+}
+
+/** POST `${BASE}/orders/preview-promo` — a rejected code is `valid:false`, not an error. */
+export async function previewPromo(c: PricingCartInput): Promise<PromoPreview> {
+  if (USE_MOCK) {
+    await delay(150);
+    return { valid: false, reason: 'invalid', discountKobo: 0, effectiveTotalKobo: 0 };
+  }
+  const r = unwrap<Record<string, unknown>>(await api.post(`${BASE}/orders/preview-promo`, pricingBody(c)));
+  return {
+    valid: r.valid === true,
+    reason: typeof r.reason === 'string' && r.reason ? r.reason : undefined,
+    discountKobo: int(r.discount_kobo),
+    effectiveTotalKobo: int(r.effective_total_kobo),
+  };
+}
+
+/** Quotes and promo previews need the live backend; the mock has no price catalogue. */
+export const FOOD_QUOTE_ENABLED = !USE_MOCK;

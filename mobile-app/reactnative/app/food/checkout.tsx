@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert, Switch } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert, Switch, TextInput, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -14,7 +14,11 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
-import { usePlaceOrder, useDeliveryQuote } from '@/features/food/hooks';
+import { usePlaceOrder, useDeliveryQuote, useOrderQuote, usePromoPreview } from '@/features/food/hooks';
+import { useDebouncedValue } from '@/features/food/useDebouncedValue';
+import { quoteRows, pricingSignature, isPriceChangedError, promoErrorMessage } from '@/features/food/quoteFlow';
+import { lineKeyOf } from '@/features/food/modifiers';
+import type { OrderQuote } from '@/features/food/types';
 import {
   useCartStore, cartSubtotalKobo, cartItemCount, cartPackageCount,
   aggregateCartLines, cartPackagesPayload, MAX_SAME_FOOD_PER_PACKAGE,
@@ -25,11 +29,12 @@ import { resolveDeliveryFee } from '@/features/food/deliveryFee';
 import { resolvePackagingFee } from '@/features/food/packagingFee';
 import { estimateTotalKobo } from '@/features/food/estimate';
 import { useRestaurant, useRestaurantNames, useCartRestaurantAvailability } from '@/features/food/hooks';
-import { initiateFoodOrderPaystack } from '@/features/food/api';
+import { initiateFoodOrderPaystack, quoteOrder, FOOD_QUOTE_ENABLED } from '@/features/food/api';
 import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { api } from '@/api/client';
+import { useQueryClient } from '@tanstack/react-query';
 
 function Line({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
@@ -190,16 +195,20 @@ export default function CheckoutScreen() {
   const count = cartItemCount(packages);
   // Aggregated lines (across packages) drive pricing + the nutrition summary.
   const aggregated = useMemo(() => aggregateCartLines(packages), [packages]);
-  const dishIds = useMemo(() => aggregated.map((l) => l.itemId), [aggregated]);
+  const dishIds = useMemo(() => [...new Set(aggregated.map((l) => l.itemId))], [aggregated]);
 
   // Increment a portion within a specific pack (protein is uncapped; a main caps at 2).
-  const onIncrement = (pkgId: string, line: { itemId: string; name: string; priceKobo: number; isProtein?: boolean }) => {
+  const onIncrement = (pkgId: string, line: { itemId: string; name: string; priceKobo: number; isProtein?: boolean; modifiers?: { id: string; name: string; priceDeltaKobo: number }[] }) => {
     if (!restaurant) return;
+    // The line price already includes modifier surcharges; addItem re-adds them,
+    // so hand it the BASE price.
+    const delta = (line.modifiers ?? []).reduce((n, m) => n + m.priceDeltaKobo, 0);
     const res = addItem(
       restaurant.id,
       restaurant.name,
-      { id: line.itemId, name: line.name, priceKobo: line.priceKobo, available: true, foodType: line.isProtein ? 'protein' : 'regular' },
+      { id: line.itemId, name: line.name, priceKobo: line.priceKobo - delta, available: true, foodType: line.isProtein ? 'protein' : 'regular' },
       pkgId,
+      line.modifiers && line.modifiers.length > 0 ? { modifiers: line.modifiers } : undefined,
     );
     if (!res.ok && res.reason === 'max_per_pack') {
       Alert.alert('Max 2 per pack', `At most ${MAX_SAME_FOOD_PER_PACKAGE} of "${line.name}" per takeaway pack. Add another pack to add more.`);
@@ -211,6 +220,48 @@ export default function CheckoutScreen() {
     [restaurant, subtotal],
   );
 
+  // ── FOOD-UAT-C-011: promo entry (debounced live preview) ───────────────────
+  const qc = useQueryClient();
+  const [promoInput, setPromoInput] = useState('');
+  const debouncedPromo = useDebouncedValue(promoInput.trim(), 500);
+  const pricingItems = useMemo(
+    () => aggregated.map((l) => ({ itemId: l.itemId, qty: l.qty, restaurantId: l.restaurantId, modifierIds: l.modifierIds })),
+    [aggregated],
+  );
+  const baseCart = useMemo(
+    () =>
+      restaurantId
+        ? { restaurantId, items: pricingItems, packageCount: packCount, deliveryAddress: address.trim(), deliveryLocation: addressLocation }
+        : null,
+    [restaurantId, pricingItems, packCount, address, addressLocation],
+  );
+  const baseSig = pricingSignature({
+    restaurantId: restaurantId ?? '', items: pricingItems, packageCount: packCount,
+    lat: addressLocation?.lat, lng: addressLocation?.lng,
+  });
+  const quoteEnabled = FOOD_QUOTE_ENABLED && Boolean(addressLocation) && count > 0 && !restaurantUnavailable;
+  const promoQ = usePromoPreview(baseCart, debouncedPromo, baseSig, quoteEnabled);
+  const promoSettling = promoInput.trim() !== debouncedPromo || (promoQ.isFetching && !promoQ.data);
+  const promoApplied = Boolean(debouncedPromo) && promoQ.data?.valid === true ? debouncedPromo : '';
+  const promoError =
+    !debouncedPromo || promoSettling ? null
+    : !addressLocation ? 'Add your delivery address to check this code.'
+    : promoQ.isError ? "Couldn't check this code. Try again."
+    : promoQ.data ? promoErrorMessage(promoQ.data)
+    : null;
+
+  // ── FOOD-UAT-C-007: server quote drives the displayed total + pay-sheet amount ──
+  const quoteCart = useMemo(() => (baseCart ? { ...baseCart, promoCode: promoApplied || undefined } : null), [baseCart, promoApplied]);
+  const quoteSig = pricingSignature({
+    restaurantId: restaurantId ?? '', items: pricingItems, packageCount: packCount,
+    lat: addressLocation?.lat, lng: addressLocation?.lng, promoCode: promoApplied,
+  });
+  const orderQuoteQ = useOrderQuote(quoteCart, quoteSig, quoteEnabled);
+  const serverQuote: OrderQuote | undefined = orderQuoteQ.data;
+  // "Price updated" modal: the total moved between what the buyer saw and what
+  // the server now says (either on a fresh pre-sheet quote or a price_changed refusal).
+  const [priceChange, setPriceChange] = useState<{ oldKobo: number; newKobo: number } | null>(null);
+
   // FOOD-UAT-H-001: marketing consent. Opt-in (off by default); recorded server-side
   // as an append-only user_consents row only when the buyer ticks it and places an order.
   const [marketingOptIn, setMarketingOptIn] = useState(false);
@@ -220,34 +271,56 @@ export default function CheckoutScreen() {
     void api.post('/api/finance/restaurant/consents', { kind: 'marketing', source: 'food_checkout' }).catch(() => {});
   };
 
-  const onPlace = () => {
-    if (!restaurantId || !address.trim() || belowMin || placeOrder.isPending || paid) return;
-    recordMarketingConsent();
-    // not load it, the order cannot be placed and taking a payment first would
-    // charge for something the server is about to refuse.
-    if (restaurantUnavailable) return;
-    setPaystackError('');
+  // Fetch a FRESH server quote (never a cached one) for the current cart.
+  const freshQuote = async (): Promise<OrderQuote | null> => {
+    if (!quoteCart) return null;
+    try {
+      const q = await quoteOrder(quoteCart);
+      qc.setQueryData(['food', 'order-quote', quoteSig], q);
+      return q;
+    } catch {
+      return null;
+    }
+  };
+
+  const openPaySheet = (amountKobo: number, quote: OrderQuote | null) => {
     // Open the two-option modal. Wallet pays from balance and PlaceOrder runs on
     // confirmation. Card/Transfer runs onCard below — a separate server-initiated
     // Paystack rail that places the order itself once payment is verified, so
     // there is no `charge` call to make for that rail.
     pay.start({
-      amountKobo: estTotal,
+      amountKobo,
       title: 'Pay & place order',
       domain: 'food_order',
-      charge: () =>
-        placeOrder.mutateAsync({
-          restaurantId: restaurantId || '', // primary restaurant (from route)
-          items: aggregated.map((l) => ({
-            itemId: l.itemId,
-            qty: l.qty,
-            restaurantId: l.restaurantId, // multi-restaurant: include per-item restaurant
-          })),
-          packageCount: packCount,
-          packages: cartPackagesPayload(packages),
-          deliveryAddress: withPlusCode(address.trim(), addressPlusCode),
-          deliveryLocation: addressLocation,
-        }),
+      charge: async () => {
+        try {
+          return await placeOrder.mutateAsync({
+            restaurantId: restaurantId || '', // primary restaurant (from route)
+            items: aggregated.map((l) => ({
+              itemId: l.itemId,
+              qty: l.qty,
+              restaurantId: l.restaurantId, // multi-restaurant: include per-item restaurant
+              modifierIds: l.modifierIds,
+            })),
+            packageCount: packCount,
+            packages: cartPackagesPayload(packages),
+            deliveryAddress: withPlusCode(address.trim(), addressPlusCode),
+            deliveryLocation: addressLocation,
+            quoteId: quote?.quoteId || undefined,
+            promoCode: promoApplied || undefined,
+          });
+        } catch (e) {
+          // The price moved since the quote. Re-quote and ask before charging more.
+          if (isPriceChangedError(e)) {
+            const q = await freshQuote();
+            pay.close();
+            if (q) setPriceChange({ oldKobo: amountKobo, newKobo: q.totalKobo });
+            else setPaystackError('The price changed and we could not refresh it. Please try again.');
+            throw new Error('Price updated. Please review the new total.');
+          }
+          throw e;
+        }
+      },
       onPaid: (order) => {
         // Server-authoritative amount charged.
         setPaid({ orderId: order.id, chargedKobo: order.totalKobo });
@@ -267,11 +340,14 @@ export default function CheckoutScreen() {
                 itemId: l.itemId,
                 qty: l.qty,
                 restaurantId: l.restaurantId,
+                modifierIds: l.modifierIds,
               })),
               packageCount: packCount,
               packages: cartPackagesPayload(packages),
               deliveryAddress: withPlusCode(address.trim(), addressPlusCode),
               deliveryLocation: addressLocation,
+              quoteId: quote?.quoteId || undefined,
+              promoCode: promoApplied || undefined,
               idempotencyKey: newIdempotencyKey('food-order-paystack'),
             });
             if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
@@ -287,6 +363,33 @@ export default function CheckoutScreen() {
         });
       },
     });
+  };
+
+  const onPlace = async (opts?: { confirmedPrice?: boolean }) => {
+    if (!restaurantId || !address.trim() || belowMin || placeOrder.isPending || paid) return;
+    recordMarketingConsent();
+    // not load it, the order cannot be placed and taking a payment first would
+    // charge for something the server is about to refuse.
+    if (restaurantUnavailable) return;
+    setPaystackError('');
+    // Mock mode / no resolved address: no server quote exists, so fall back to the
+    // client estimate (the server still re-prices on placement).
+    if (!quoteEnabled) {
+      openPaySheet(estTotal, null);
+      return;
+    }
+    // FOOD-UAT-C-007: the pay-sheet amount is the SERVER quote, fetched fresh.
+    const q = await freshQuote();
+    if (!q) {
+      setPaystackError("We couldn't confirm the price for this order. Check your connection and try again.");
+      return;
+    }
+    const shown = serverQuote?.totalKobo;
+    if (!opts?.confirmedPrice && shown != null && shown !== q.totalKobo) {
+      setPriceChange({ oldKobo: shown, newKobo: q.totalKobo });
+      return;
+    }
+    openPaySheet(q.totalKobo, q);
   };
 
   useEffect(() => {
@@ -405,13 +508,18 @@ export default function CheckoutScreen() {
                       {pkg.lines.map((l) => {
                         const atMax = !l.isProtein && l.qty >= MAX_SAME_FOOD_PER_PACKAGE;
                         return (
-                          <View key={l.itemId} style={s.itemRow}>
+                          <View key={lineKeyOf(l)} style={s.itemRow}>
                             <View style={s.itemNameWrap}>
-                              <Text style={s.itemName} numberOfLines={1}>{l.name}</Text>
+                              <View style={{ flexShrink: 1 }}>
+                                <Text style={s.itemName} numberOfLines={1}>{l.name}</Text>
+                                {l.modifiers && l.modifiers.length > 0 ? (
+                                  <Text style={s.itemMods} numberOfLines={2}>{l.modifiers.map((m) => m.name).join(', ')}</Text>
+                                ) : null}
+                              </View>
                               {l.isProtein ? <View style={s.proteinTag}><Text style={s.proteinTagText}>protein</Text></View> : null}
                             </View>
                             <View style={s.stepper}>
-                              <Pressable onPress={() => decrementItem(pkg.id, l.itemId)} style={s.stepBtn} accessibilityLabel="Remove one">
+                              <Pressable onPress={() => decrementItem(pkg.id, lineKeyOf(l))} style={s.stepBtn} accessibilityLabel="Remove one">
                                 <Icons.Minus size={14} color={Colors.primary} strokeWidth={2.4} />
                               </Pressable>
                               <Text style={s.qty}>{l.qty}</Text>
@@ -469,8 +577,46 @@ export default function CheckoutScreen() {
           placeholder="Search your delivery address…"
         />
 
+        {/* FOOD-UAT-C-011: promo code. Above the consent toggle, below the items. */}
+        <Text style={s.sectionLabel}>Promo code</Text>
+        <View style={[s.card, shadow1]}>
+          <TextInput
+            value={promoInput}
+            onChangeText={setPromoInput}
+            placeholder="Enter promo code"
+            autoCapitalize="characters"
+            autoCorrect={false}
+            style={s.promoInput}
+            accessibilityLabel="Promo code"
+            testID="promo-input"
+          />
+          {promoSettling && promoInput.trim() ? <Text style={s.promoNote}>Checking…</Text> : null}
+          {!promoSettling && promoApplied && promoQ.data ? (
+            <Text style={s.promoOk} testID="promo-ok">Promo applied — {formatNaira(promoQ.data.discountKobo)} off</Text>
+          ) : null}
+          {promoError ? <Text style={s.promoErr} testID="promo-error">{promoError}</Text> : null}
+        </View>
+
         {/* Price breakdown */}
         <Text style={s.sectionLabel}>Summary</Text>
+        {serverQuote ? (
+          <View style={[s.card, shadow1]} testID="quote-summary">
+            {quoteRows(serverQuote).map((r) => (
+              <React.Fragment key={r.key}>
+                {r.strong ? <View style={s.divider} /> : null}
+                <Line
+                  label={r.key === 'subtotal' ? `Subtotal (${count} item${count > 1 ? 's' : ''})` : r.label}
+                  value={`${r.kobo < 0 ? '−' : ''}${formatNaira(Math.abs(r.kobo))}`}
+                  strong={r.strong}
+                />
+              </React.Fragment>
+            ))}
+            {serverQuote.promoRejection && promoApplied ? (
+              <Text style={s.promoErr}>{promoErrorMessage({ valid: false, reason: serverQuote.promoRejection })}</Text>
+            ) : null}
+            <Text style={s.note}>Confirmed by the server. This is the amount you will pay.</Text>
+          </View>
+        ) : (
         <View style={[s.card, shadow1]}>
           <Line label={`Subtotal (${count} item${count > 1 ? 's' : ''})`} value={formatNaira(subtotal)} />
           <Line
@@ -544,6 +690,7 @@ export default function CheckoutScreen() {
             Takeaway packaging is required so the restaurant can pack your order. Final total is confirmed by the server when you place the order.
           </Text>
         </View>
+        )}
 
         {/* Estimated nutrition + allergens for the whole cart (honest range). */}
         <Text style={s.sectionLabel}>Nutrition & allergens</Text>
@@ -565,14 +712,42 @@ export default function CheckoutScreen() {
 
       <View style={s.footer}>
         <PrimaryButton
-          label={`Pay & place order · ${formatNaira(estTotal)}`}
-          onPress={onPlace}
+          label={`Pay & place order · ${formatNaira(serverQuote ? serverQuote.totalKobo : estTotal)}`}
+          onPress={() => void onPlace()}
           loading={placeOrder.isPending}
           disabled={!address.trim() || belowMin || restaurantUnavailable}
         />
         <Text style={s.payHint}>You'll be taken to the secure payment gateway (Paystack) to complete payment.</Text>
         {paystackError ? <Text style={s.warn}>{paystackError}</Text> : null}
       </View>
+
+      {/* FOOD-UAT-C-007: price moved since the buyer last saw it. */}
+      <Modal visible={priceChange != null} transparent animationType="fade" onRequestClose={() => setPriceChange(null)}>
+        <View style={s.modalBackdrop}>
+          <View style={s.modalCard} testID="price-changed-modal">
+            <Text style={s.modalTitle}>Price updated</Text>
+            <Text style={s.modalBody}>
+              New total {priceChange ? formatNaira(priceChange.newKobo) : ''} (was {priceChange ? formatNaira(priceChange.oldKobo) : ''}). Confirm?
+            </Text>
+            <View style={s.modalActions}>
+              <Pressable onPress={() => setPriceChange(null)} style={s.modalBtn} accessibilityRole="button" accessibilityLabel="Cancel">
+                <Text style={s.modalBtnText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setPriceChange(null);
+                  void onPlace({ confirmedPrice: true });
+                }}
+                style={[s.modalBtn, s.modalBtnPrimary]}
+                accessibilityRole="button"
+                accessibilityLabel="Keep"
+              >
+                <Text style={[s.modalBtnText, { color: Colors.white }]}>Keep</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Two-option payment modal (wallet / card-transfer via Paystack). */}
       <PaymentSheet controller={pay} />
@@ -644,6 +819,19 @@ const s = StyleSheet.create({
   note: { ...Typography.caption, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   warn: { ...Typography.bodySm, color: Colors.error, marginTop: Spacing.md, textAlign: 'center' },
   footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLowest },
+  itemMods: { ...Typography.caption, color: Colors.onSurfaceVariant },
+  promoInput: { borderWidth: 1, borderColor: Colors.outlineVariant, borderRadius: Radius.md, paddingHorizontal: Spacing.md, paddingVertical: 10, ...Typography.bodyMd, color: Colors.onSurface },
+  promoNote: { ...Typography.caption, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
+  promoOk: { ...Typography.labelMd, color: Colors.tertiaryContainer, marginTop: Spacing.xs },
+  promoErr: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', padding: Spacing.lg },
+  modalCard: { width: '100%', maxWidth: 380, backgroundColor: Colors.white, borderRadius: Radius.lg, padding: Spacing.lg, gap: Spacing.md },
+  modalTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  modalBody: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
+  modalActions: { flexDirection: 'row', gap: Spacing.sm, justifyContent: 'flex-end' },
+  modalBtn: { paddingHorizontal: Spacing.lg, paddingVertical: 10, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.outlineVariant },
+  modalBtnPrimary: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  modalBtnText: { ...Typography.labelMd, color: Colors.primary },
   consentRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm, marginTop: Spacing.md },
   consentText: { ...Typography.caption, color: Colors.onSurfaceVariant, flex: 1 },
   payHint: { ...Typography.caption, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: Spacing.sm },
