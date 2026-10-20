@@ -81,6 +81,9 @@ type MenuItem struct {
 	// Price is the price a customer sees, with the best live discount applied. Present
 	// only when restaurant discounts are on.
 	Price *ItemPrice `json:"price,omitempty"`
+	// ModifierGroups are the item's selectable option groups (FOOD-011 / C-005). Always
+	// serialized ([] when none) on the menu-detail response.
+	ModifierGroups []ModifierGroupWire `json:"modifier_groups"`
 }
 
 // OrderStatus tracks a delivery order through its lifecycle.

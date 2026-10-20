@@ -74,6 +74,9 @@ func withEmptyMenuShape(d *RestaurantDetail) *RestaurantDetail {
 	}
 	for i := range d.Categories {
 		for j := range d.Categories[i].Items {
+			if d.Categories[i].Items[j].ModifierGroups == nil {
+				d.Categories[i].Items[j].ModifierGroups = []ModifierGroupWire{}
+			}
 			if d.Categories[i].Items[j].DietaryTags == nil {
 				d.Categories[i].Items[j].DietaryTags = []string{}
 			}
@@ -286,4 +289,122 @@ func (s *Service) AddModifier(ctx context.Context, restaurantID, userID, groupID
 		return nil, err
 	}
 	return m, nil
+}
+
+// ModifierGroupWire is the client-facing shape of a modifier group (FOOD-011).
+// Kind is derived from required + max_select; Options mirrors the group's priced
+// menu_modifiers.
+type ModifierGroupWire struct {
+	ID        string               `json:"id"`
+	Name      string               `json:"name"`
+	Kind      string               `json:"kind"`
+	Required  bool                 `json:"required"`
+	MinSelect int                  `json:"min_select"`
+	MaxSelect int                  `json:"max_select"`
+	Options   []ModifierOptionWire `json:"options"`
+}
+
+// ModifierOptionWire is one option of a ModifierGroupWire.
+type ModifierOptionWire struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	PriceDeltaKobo int64  `json:"price_delta_kobo"`
+	Available      bool   `json:"available"`
+}
+
+// modifierKind classifies a group: required_single | optional_single |
+// required_multi | optional_multi.
+func modifierKind(required bool, maxSelect int) string {
+	k := "optional"
+	if required {
+		k = "required"
+	}
+	if maxSelect > 1 {
+		return k + "_multi"
+	}
+	return k + "_single"
+}
+
+func toModifierGroupWire(g ModifierGroup) ModifierGroupWire {
+	w := ModifierGroupWire{
+		ID: g.ID, Name: g.Name, Kind: modifierKind(g.Required, g.MaxSelect),
+		Required: g.Required, MinSelect: g.effectiveMin(), MaxSelect: g.MaxSelect,
+		Options: make([]ModifierOptionWire, 0, len(g.Modifiers)),
+	}
+	for _, m := range g.Modifiers {
+		w.Options = append(w.Options, ModifierOptionWire{ID: m.ID, Name: m.Name, PriceDeltaKobo: m.PriceDeltaKobo, Available: m.IsAvailable})
+	}
+	return w
+}
+
+// ListItemModifierGroupsWire is the public read behind
+// GET /restaurant/menu/items/:itemId/modifier-groups. ok=false when the item does not exist.
+func (s *Service) ListItemModifierGroupsWire(ctx context.Context, itemID string) (groups []ModifierGroupWire, ok bool, err error) {
+	if _, perr := uuid.Parse(itemID); perr != nil {
+		return nil, false, nil
+	}
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM menu_items WHERE id=$1)`, itemID).Scan(&ok); err != nil || !ok {
+		return nil, false, err
+	}
+	gs, err := s.loadItemModifierGroups(ctx, itemID)
+	if err != nil {
+		return nil, true, err
+	}
+	groups = make([]ModifierGroupWire, 0, len(gs))
+	for _, g := range gs {
+		groups = append(groups, toModifierGroupWire(g))
+	}
+	return groups, true, nil
+}
+
+// loadRestaurantModifierGroups batch-loads every item's modifier groups for a
+// restaurant's menu, keyed by menu item id (two queries regardless of menu size).
+func (s *Service) loadRestaurantModifierGroups(ctx context.Context, restaurantID string) (map[string][]ModifierGroupWire, error) {
+	out := map[string][]ModifierGroupWire{}
+	rows, err := s.db.Query(ctx, `SELECT g.menu_item_id, g.id, g.name, g.required, g.min_select, g.max_select
+	    FROM menu_modifier_groups g JOIN menu_items i ON i.id = g.menu_item_id
+	    WHERE i.restaurant_id=$1 ORDER BY g.sort_order, g.created_at`, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type ref struct {
+		item string
+		idx  int
+	}
+	refs := map[string]ref{}
+	var gids []string
+	for rows.Next() {
+		var itemID string
+		var g ModifierGroup
+		if err := rows.Scan(&itemID, &g.ID, &g.Name, &g.Required, &g.MinSelect, &g.MaxSelect); err != nil {
+			return nil, err
+		}
+		refs[g.ID] = ref{itemID, len(out[itemID])}
+		out[itemID] = append(out[itemID], toModifierGroupWire(g))
+		gids = append(gids, g.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(gids) == 0 {
+		return out, nil
+	}
+	mrows, err := s.db.Query(ctx, `SELECT id, group_id, name, price_delta_kobo, is_available
+	    FROM menu_modifiers WHERE group_id = ANY($1) ORDER BY sort_order, created_at`, gids)
+	if err != nil {
+		return nil, err
+	}
+	defer mrows.Close()
+	for mrows.Next() {
+		var m ModifierOptionWire
+		var gid string
+		if err := mrows.Scan(&m.ID, &gid, &m.Name, &m.PriceDeltaKobo, &m.Available); err != nil {
+			return nil, err
+		}
+		if r, ok := refs[gid]; ok {
+			out[r.item][r.idx].Options = append(out[r.item][r.idx].Options, m)
+		}
+	}
+	return out, mrows.Err()
 }

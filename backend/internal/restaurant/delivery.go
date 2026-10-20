@@ -109,6 +109,17 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 		return nil, err
 	}
 
+	// Attach modifier groups (one batched read for the whole menu).
+	mods, err := s.loadRestaurantModifierGroups(ctx, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range cats {
+		for j := range c.Items {
+			c.Items[j].ModifierGroups = mods[c.Items[j].ID]
+		}
+	}
+
 	detail := &RestaurantDetail{Restaurant: r}
 	for _, id := range order {
 		detail.Categories = append(detail.Categories, *cats[id])

@@ -1798,6 +1798,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 		restGroup.PATCH("/:id/menu/items/:itemId", restaurantHandler.UpdateItem)
 		restGroup.DELETE("/:id/menu/items/:itemId", restaurantHandler.DeleteItem)
+		// FOOD-011 / C-005: on-demand modifier-group re-fetch (static "menu" sibling of ":id").
+		restGroup.GET("/menu/items/:itemId/modifier-groups", restaurantHandler.ListModifierGroups)
 
 		// Distance-based delivery-fee preview (before placing the order). Member auth
 		// via the finance group's requireUserID. Static "delivery-quote" segment under
@@ -1962,6 +1964,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// rider and dispatch routes.
 		restAdmin.GET("/orders", middleware.RequirePermission(rbac, "restaurant.manage"), restaurantHandler.AdminListOrders)
 		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
+		// FOOD-011 / C-005: modifier-group + option CRUD (reuses restaurant.admin.onboarding).
+		restAdmin.GET("/menu-items/:itemId/modifier-groups", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListModifierGroups)
+		restAdmin.POST("/menu-items/:itemId/modifier-groups", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminCreateModifierGroup)
+		restAdmin.PATCH("/modifier-groups/:groupId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUpdateModifierGroup)
+		restAdmin.DELETE("/modifier-groups/:groupId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDeleteModifierGroup)
+		restAdmin.POST("/modifier-groups/:groupId/options", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminCreateModifierOption)
+		restAdmin.PATCH("/modifier-groups/:groupId/options/:optionId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUpdateModifierOption)
+		restAdmin.DELETE("/modifier-groups/:groupId/options/:optionId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDeleteModifierOption)
 		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)
 		// Operator re-dispatch. The member route at
