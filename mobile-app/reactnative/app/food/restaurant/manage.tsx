@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Switch, Pressable, ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, TextInput, Switch, Pressable, ActivityIndicator, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -14,7 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import {
-  useMyStores, useStoreDetail, useCreateStore, useUpdateStore, useSetAvailability,
+  useMyStores, useStoreDetail, useCreateStoreWithImages, useUpdateStore, useSetAvailability,
   useCreateCategory, useDeleteCategory, useCreateItem, useDeleteItem, usePayoutReadiness,
   useMenuTaxonomy, useCreateTaxonomyItem, useUpdateItem,
 } from '@/features/restaurantmerchant/hooks';
@@ -25,7 +25,11 @@ import {
 import { parsePackagingPrice, packagingPriceInput } from '@/features/restaurantmerchant/packagingPrice';
 import { formatNaira, parseNaira, ITEM_PRICE_BOUNDS } from '@/features/restaurantmerchant/money';
 import NairaField from '@/features/restaurantmerchant/NairaField';
-import StoreImagePicker from '@/features/restaurantmerchant/StoreImagePicker';
+import StoreImagePicker, {
+  StorefrontDraftPicker, emptyStorefrontDraft, type StorefrontDraft,
+} from '@/features/restaurantmerchant/StoreImagePicker';
+import DishPhotoField from '@/features/restaurantmerchant/DishPhotoField';
+import TradingHoursEditor from '@/features/restaurantmerchant/TradingHoursEditor';
 import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet';
 
 // Every price on this screen is NGN: the naira sign, grouping, and kobo only when there are some.
@@ -123,12 +127,16 @@ function CreateStore({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [geo, setGeo] = useState<StoreGeoPoint | null>(null);
-  const create = useCreateStore();
+  const [photos, setPhotos] = useState<StorefrontDraft>(emptyStorefrontDraft);
+  const create = useCreateStoreWithImages();
   const submit = () => {
     if (!name.trim() || !address.trim()) return;
     create.mutate(
-      { name: name.trim(), address: address.trim(), geo: geo ?? undefined },
-      { onSuccess: onDone },
+      { store: { name: name.trim(), address: address.trim(), geo: geo ?? undefined }, logo: photos.logo, banner: photos.banner },
+      {
+        onSuccess: ({ imageError }) => { reportImageError(imageError); onDone(); },
+        onError: (e) => alertAsync({ title: 'Could not create your store', message: (e as Error).message }),
+      },
     );
   };
   return (
@@ -145,12 +153,31 @@ function CreateStore({ onDone }: { onDone: () => void }) {
             onGeoChange={setGeo}
             placeholder="12 Marina, Lagos"
           />
+          <Text style={styles.label}>Storefront pictures (optional)</Text>
+          <StorefrontDraftPicker value={photos} onChange={setPhotos} />
+          <Text style={styles.muted}>
+            Customers see these first. You can change either one later from Store details.
+          </Text>
         </Card>
         <PrimaryButton label="Create store" onPress={submit}
           loading={create.isPending} disabled={!name.trim() || !address.trim()} />
       </ScrollView>
     </Shell>
   );
+}
+
+/**
+ * The pictures picked during set-up are uploaded AFTER the outlet is created, because the
+ * upload URL is minted under the outlet's id. So a failed upload does not mean set-up
+ * failed — the outlet exists and its menu, hours and orders are all reachable. Say that,
+ * and point at where to retry, instead of an error dialog that implies nothing was saved.
+ */
+function reportImageError(message: string | null) {
+  if (!message) return;
+  alertAsync({
+    title: 'Your outlet is ready',
+    message: `${message} You can add the picture again from Store details.`,
+  });
 }
 
 function ManageStore({
@@ -165,11 +192,12 @@ function ManageStore({
 }) {
   const detail = useStoreDetail(storeId);
   const update = useUpdateStore(storeId);
-  const createOutlet = useCreateStore();
+  const createOutlet = useCreateStoreWithImages();
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newAddress, setNewAddress] = useState('');
   const [newGeo, setNewGeo] = useState<StoreGeoPoint | null>(null);
+  const [newPhotos, setNewPhotos] = useState<StorefrontDraft>(emptyStorefrontDraft);
   const availability = useSetAvailability(storeId);
   const readiness = usePayoutReadiness();
   const kybStatus = readiness.data?.find((o) => o.restaurantId === storeId)?.kybStatus;
@@ -278,19 +306,27 @@ function ManageStore({
               onGeoChange={setNewGeo}
               placeholder="12 Admiralty Way, Lekki"
             />
+            <Text style={styles.label}>Storefront pictures (optional)</Text>
+            <StorefrontDraftPicker value={newPhotos} onChange={setNewPhotos} />
             <PrimaryButton
               label="Create outlet"
               onPress={() => {
                 if (!newName.trim() || !newAddress.trim()) return;
                 createOutlet.mutate(
-                  { name: newName.trim(), address: newAddress.trim(), geo: newGeo ?? undefined },
                   {
-                    onSuccess: (created) => {
-                      setAdding(false); setNewName(''); setNewAddress(''); setNewGeo(null);
+                    store: { name: newName.trim(), address: newAddress.trim(), geo: newGeo ?? undefined },
+                    logo: newPhotos.logo,
+                    banner: newPhotos.banner,
+                  },
+                  {
+                    onSuccess: (res) => {
+                      setAdding(false); setNewName(''); setNewAddress(''); setNewGeo(null); setNewPhotos(emptyStorefrontDraft());
+                      reportImageError(res.imageError);
                       // Switch straight to the new outlet: the owner created it to
                       // work on it, and leaving them on the old one reads as failure.
-                      if (created?.id) onSwitchOutlet(created.id);
+                      if (res.store?.id) onSwitchOutlet(res.store.id);
                     },
+                    onError: (e) => alertAsync({ title: 'Could not create the outlet', message: (e as Error).message }),
                   },
                 );
               }}
@@ -373,6 +409,12 @@ function ManageStore({
             </View>
           )}
         </Card>
+
+        {/* Trading hours: which days this outlet opens and when it shuts. Outside the
+            window the server refuses immediate orders and tells the customer when it
+            opens again; scheduled orders still come in. */}
+        <Text style={styles.section}>Opening hours</Text>
+        <TradingHoursEditor storeId={storeId} />
 
         {/* Profile */}
         <Text style={styles.section}>Store details</Text>
@@ -582,6 +624,17 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
 
           {cat.items.map((it) => (
             <View key={it.id} style={styles.itemRow}>
+              {/* The photo the owner added, so the list reads like the menu customers
+                  see. Rows without one stay as they were — a missing photo is not a
+                  fault to point at, and a lapsed signed URL shows nothing. */}
+              {it.imageUrl ? (
+                <Image
+                  source={{ uri: it.imageUrl }}
+                  style={styles.thumb}
+                  resizeMode="cover"
+                  accessibilityLabel={`${it.name} photo`}
+                />
+              ) : null}
               <View style={{ flex: 1 }}>
                 <Text style={styles.itemName}>{it.name}</Text>
                 <Text style={styles.muted}>{naira(it.priceKobo)}{it.isAvailable ? '' : ' · out of stock'}</Text>
@@ -624,7 +677,10 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
 }
 
 function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCategory[] }) {
-  const [draft, setDraft] = useState<ItemDraft>({ categoryId: null, subcategoryId: null, name: '', priceNaira: '', prepMinutes: '' });
+  const [draft, setDraft] = useState<ItemDraft>({ categoryId: null, subcategoryId: null, name: '', priceNaira: '', prepMinutes: '', imageUrl: '' });
+  // Local preview of the picked dish photo. The draft carries the object key the item is
+  // saved with; this is only what the box shows until the menu is re-read.
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [errors, setErrors] = useState<ItemDraftErrors>({});
   const createItem = useCreateTaxonomyItem(storeId);
   const subs = subcategoriesFor(tree, draft.categoryId);
@@ -637,7 +693,10 @@ function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCat
     }
     setErrors({});
     createItem.mutate(r.payload, {
-      onSuccess: () => setDraft((d) => ({ ...d, subcategoryId: null, name: '', priceNaira: '', prepMinutes: '' })),
+      onSuccess: () => {
+        setDraft((d) => ({ ...d, subcategoryId: null, name: '', priceNaira: '', prepMinutes: '', imageUrl: '' }));
+        setPhotoUri(null);
+      },
       onError: (e) => alertAsync({ title: 'Could not add the item', message: (e as Error).message }),
     });
   };
@@ -694,6 +753,13 @@ function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCat
         placeholderTextColor={Colors.outline} style={styles.input} />
       {errors.prep ? <Text style={styles.errorText}>{errors.prep}</Text> : null}
 
+      <DishPhotoField
+        storeId={storeId}
+        value={draft.imageUrl ?? ''}
+        uri={photoUri}
+        onChange={(key, uri) => { setDraft((d) => ({ ...d, imageUrl: key })); setPhotoUri(uri); }}
+      />
+
       <PrimaryButton label="Add item" onPress={submit} loading={createItem.isPending} />
     </View>
   );
@@ -702,6 +768,7 @@ function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCat
 function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string }) {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
+  const [photo, setPhoto] = useState<{ key: string; uri: string | null }>({ key: '', uri: null });
   const [error, setError] = useState<string | null>(null);
   const createItem = useCreateItem(storeId);
   const add = () => {
@@ -712,12 +779,18 @@ function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string 
     if (!parsed.ok) { setError(parsed.error); return; }
     setError(null);
     createItem.mutate(
-      { categoryId, name: name.trim(), priceKobo: parsed.kobo },
-      { onSuccess: () => { setName(''); setPrice(''); } },
+      { categoryId, name: name.trim(), priceKobo: parsed.kobo, imageUrl: photo.key || undefined },
+      { onSuccess: () => { setName(''); setPrice(''); setPhoto({ key: '', uri: null }); } },
     );
   };
   return (
     <View style={{ gap: 6 }}>
+      <DishPhotoField
+        storeId={storeId}
+        value={photo.key}
+        uri={photo.uri}
+        onChange={(key, uri) => setPhoto({ key, uri })}
+      />
       <TextInput value={name} onChangeText={(t) => { setName(t); if (error) setError(null); }} placeholder="Item name"
         placeholderTextColor={Colors.outline} style={styles.input} />
       <View style={[styles.inlineRow, { alignItems: 'flex-start' }]}>
@@ -803,6 +876,11 @@ function AddressField({
         placeholder={placeholder}
         enableRecents={false}
         inlineDropdown
+        // A shop's pin is a permanent, customer-facing fact — it decides who sees the
+        // outlet in "near me" and where a rider drives. An offline placeholder coordinate
+        // must never be written as that fact; the picker keeps the address as text instead
+        // and the server geocodes the words.
+        requireVerifiedPin
       />
     </View>
   );
@@ -850,6 +928,10 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.outlineVariant,
   },
   itemName: { color: Colors.onSurface, fontSize: 15, fontWeight: '600' },
+  // The dish photo in an item row: small, square, and never the row's focus.
+  thumb: {
+    width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerLow,
+  },
   addBtn: {
     backgroundColor: Colors.primary, borderRadius: Radius.md, height: 44, width: 44,
     alignItems: 'center', justifyContent: 'center',
