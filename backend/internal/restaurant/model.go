@@ -73,7 +73,7 @@ type MenuItem struct {
 	PriceKobo    int64    `json:"price_kobo"`
 	ImageURL     *string  `json:"image_url,omitempty"`
 	IsAvailable  bool     `json:"is_available"`
-	DietaryTags  []string `json:"dietary_tags,omitempty"`
+	DietaryTags  []string `json:"dietary_tags"`
 	// PrepMinutes is how long this item takes to make: its own override, or the
 	// restaurant's default when none is set. PrepTimeOverride is the override alone.
 	PrepMinutes      int  `json:"prep_minutes"`

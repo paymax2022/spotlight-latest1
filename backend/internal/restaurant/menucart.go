@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"unicode"
@@ -38,12 +39,47 @@ const (
 // no larger than maxItemPriceKobo.
 func validateItemPriceKobo(kobo int64) error {
 	if kobo < 0 {
-		return errors.New("restaurant: price_kobo must be >= 0")
+		return &invalidInputError{"restaurant: price_kobo must be >= 0"}
 	}
 	if kobo > maxItemPriceKobo {
-		return fmt.Errorf("restaurant: price_kobo must be <= %d (₦1,000,000)", maxItemPriceKobo)
+		return &invalidInputError{fmt.Sprintf("restaurant: price_kobo must be <= %d (₦1,000,000)", maxItemPriceKobo)}
 	}
 	return nil
+}
+
+// ErrInvalidInput marks a request the caller can fix (bad price, blank name):
+// handlers answer 400. It is distinct from a permission failure (403) — FOOD-UAT-B-005
+// reported an out-of-range price coming back as 403 because every service error from
+// the menu routes was folded into "forbidden".
+var ErrInvalidInput = errors.New("restaurant: invalid input")
+
+type invalidInputError struct{ msg string }
+
+func (e *invalidInputError) Error() string        { return e.msg }
+func (e *invalidInputError) Is(target error) bool { return target == ErrInvalidInput }
+
+// menuErrStatus maps a menu-item service error: validation 400, missing 404, else 403.
+func menuErrStatus(err error) int {
+	if errors.Is(err, ErrInvalidInput) {
+		return http.StatusBadRequest
+	}
+	return ownerErrStatus(err)
+}
+
+// withEmptyMenuShape makes an empty menu serialize as [] rather than null
+// (FOOD-UAT-B-010), including each category's item list.
+func withEmptyMenuShape(d *RestaurantDetail) *RestaurantDetail {
+	if d.Categories == nil {
+		d.Categories = []MenuCategory{}
+	}
+	for i := range d.Categories {
+		for j := range d.Categories[i].Items {
+			if d.Categories[i].Items[j].DietaryTags == nil {
+				d.Categories[i].Items[j].DietaryTags = []string{}
+			}
+		}
+	}
+	return d
 }
 
 // sanitizeInstructions cleans a customer's free-text order note (CT-009): strips control

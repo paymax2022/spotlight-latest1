@@ -699,10 +699,17 @@ function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCat
   );
 }
 
+// Dietary labels and allergen warnings, stored together as the item's dietary_tags
+// (the backend keeps one open-vocabulary tag set; customers see them on the menu).
+const DIETARY_TAG_OPTIONS = ['vegan', 'vegetarian', 'halal', 'gluten-free', 'spicy'];
+const ALLERGEN_TAG_OPTIONS = ['contains-nuts', 'contains-dairy', 'contains-eggs', 'contains-gluten', 'contains-shellfish', 'contains-soy', 'contains-fish'];
+
 function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string }) {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [tags, setTags] = useState<string[]>([]);
+  const toggleTag = (t: string) => setTags((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
   const createItem = useCreateItem(storeId);
   const add = () => {
     if (!name.trim()) { setError('Enter the item name.'); return; }
@@ -712,8 +719,8 @@ function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string 
     if (!parsed.ok) { setError(parsed.error); return; }
     setError(null);
     createItem.mutate(
-      { categoryId, name: name.trim(), priceKobo: parsed.kobo },
-      { onSuccess: () => { setName(''); setPrice(''); } },
+      { categoryId, name: name.trim(), priceKobo: parsed.kobo, dietaryTags: tags },
+      { onSuccess: () => { setName(''); setPrice(''); setTags([]); } },
     );
   };
   return (
@@ -731,6 +738,18 @@ function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string 
         <Pressable onPress={add} style={styles.addBtn} disabled={createItem.isPending} accessibilityLabel="Add item">
           {createItem.isPending ? <ActivityIndicator color="#fff" size="small" /> : <Plus size={18} color="#fff" />}
         </Pressable>
+      </View>
+      <Text style={styles.label}>Dietary and allergens (optional)</Text>
+      <View style={styles.chipWrap}>
+        {[...DIETARY_TAG_OPTIONS, ...ALLERGEN_TAG_OPTIONS].map((t) => {
+          const on = tags.includes(t);
+          return (
+            <Pressable key={t} accessibilityRole="button" accessibilityState={{ selected: on }}
+              onPress={() => toggleTag(t)} style={[styles.outletChip, on && styles.outletChipOn]}>
+              <Text style={[styles.outletChipText, on && styles.outletChipTextOn]}>{t}</Text>
+            </Pressable>
+          );
+        })}
       </View>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
