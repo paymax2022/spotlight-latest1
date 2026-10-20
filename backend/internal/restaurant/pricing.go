@@ -4,7 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 )
+
+// ValidateDeliveryCoords gates an order's delivery pin BEFORE pricing
+// (FOOD-UAT-C-013). Food has no pickup mode — every order is delivered — so a
+// missing pair is a malformed request (400), not a cue to silently bill the flat
+// fee; an out-of-range pair (|lat|>90, |lng|>180) or NaN/Inf is likewise refused.
+func ValidateDeliveryCoords(req PlaceOrderRequest) error {
+	lat, lng, ok := req.DeliveryCoords()
+	if !ok {
+		return &invalidInputError{"restaurant: delivery latitude and longitude are required"}
+	}
+	if math.IsNaN(lat) || math.IsNaN(lng) || math.IsInf(lat, 0) || math.IsInf(lng, 0) ||
+		!validGeoPointPair(&lat, &lng) {
+		return &invalidInputError{"restaurant: invalid delivery coordinates"}
+	}
+	return nil
+}
 
 // applyBp returns amountKobo × bp / 10000 in whole kobo (basis points; 1000 = 10%),
 // flooring so a derived fee/surge never rounds UP past the exact fraction. Pure —

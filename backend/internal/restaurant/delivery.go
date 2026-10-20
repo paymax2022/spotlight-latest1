@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
@@ -1139,4 +1140,81 @@ func (h *Handler) MarkDeliveryFailed(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "status": string(OrderDeliveryFailed)})
+}
+
+// Order-code brute-force protection (FOOD-UAT-E-008). The pickup and delivery
+// codes are 4 digits, so without a limit a rider could walk all 10,000 values
+// and settle an order they never delivered. 5 wrong tries lock that code for
+// 15 minutes; a correct try resets the counter.
+const (
+	codeMaxAttempts  = 5
+	codeLockMinutes  = 15
+	CodeKindPickup   = "pickup"
+	CodeKindDelivery = "delivery"
+)
+
+// ErrCodeLocked: too many wrong attempts; the code is locked for a while (HTTP 429).
+var ErrCodeLocked = errors.New("restaurant: too many incorrect code attempts — locked, try again later")
+
+// VerifyOrderCode compares supplied against expected for one code kind with
+// attempt tracking. nil = correct (counter reset). A wrong code increments and
+// persists the counter (the failure is committed even though an error is
+// returned); the fifth wrong attempt arms the lock. While locked, even the
+// CORRECT code is refused, so a brute-forcer cannot learn it from the lock edge.
+func (s *Service) VerifyOrderCode(ctx context.Context, orderID, kind, supplied, expected string) error {
+	var attemptsCol, lockCol string
+	switch kind {
+	case CodeKindPickup:
+		attemptsCol, lockCol = "pickup_attempts", "pickup_locked_until"
+	case CodeKindDelivery:
+		attemptsCol, lockCol = "delivery_attempts", "delivery_locked_until"
+	default:
+		return fmt.Errorf("restaurant: unknown code kind %q", kind)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var attempts int
+	var locked bool
+	if err := tx.QueryRow(ctx, fmt.Sprintf(
+		`SELECT %s, COALESCE(%s > now(), false) FROM orders WHERE id=$1 FOR UPDATE`, attemptsCol, lockCol),
+		orderID).Scan(&attempts, &locked); err != nil {
+		return errors.New("restaurant: order not found")
+	}
+	if locked {
+		return ErrCodeLocked
+	}
+	if supplied != "" && subtle.ConstantTimeCompare([]byte(supplied), []byte(expected)) == 1 {
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE orders SET %s=0, %s=NULL WHERE id=$1`, attemptsCol, lockCol), orderID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	attempts++
+	failure := fmt.Errorf("restaurant: incorrect %s code", kind)
+	if attempts >= codeMaxAttempts {
+		attempts = 0
+		if _, err := tx.Exec(ctx, fmt.Sprintf(
+			`UPDATE orders SET %s=0, %s=now() + make_interval(mins => $2) WHERE id=$1`, attemptsCol, lockCol),
+			orderID, codeLockMinutes); err != nil {
+			return err
+		}
+		failure = ErrCodeLocked
+	} else if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE orders SET %s=$2 WHERE id=$1`, attemptsCol), orderID, attempts); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return failure
+}
+
+// UnlockOrderCodes clears both code lockouts on an order (admin override;
+// route + restaurant.admin.unlock_order_code permission wiring is a follow-up).
+func (s *Service) UnlockOrderCodes(ctx context.Context, orderID string) error {
+	_, err := s.db.Exec(ctx, `UPDATE orders SET pickup_attempts=0, pickup_locked_until=NULL,
+		delivery_attempts=0, delivery_locked_until=NULL WHERE id=$1`, orderID)
+	return err
 }

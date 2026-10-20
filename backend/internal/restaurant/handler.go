@@ -72,6 +72,11 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 			return
 		}
 	}
+	// FOOD-UAT-C-013: validate the delivery pin before any pricing/escrow.
+	if cerr := ValidateDeliveryCoords(req); cerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, cerr)})
+		return
+	}
 	order, err := h.svc.PlaceOrder(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
 		// An unusable promo code is the CLIENT's input being wrong (unknown code, out
@@ -215,6 +220,16 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
+	// FOOD-UAT-D-006: kitchen/cashier/manager staff may progress an order within the
+	// authority their role carries; everything else stays owner/customer-only.
+	if handled, serr := h.svc.updateStatusAsStaff(c.Request.Context(), c.Param("orderId"), actorID, OrderStatus(body.Status)); handled {
+		if serr != nil {
+			c.JSON(statusCodeFor(serr), gin.H{keyError: httperr.Msg(c, statusCodeFor(serr), serr)})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+		return
+	}
 	if err := h.svc.UpdateStatus(c.Request.Context(), c.Param("orderId"), actorID, OrderStatus(body.Status)); err != nil {
 		c.JSON(statusCodeFor(err), gin.H{keyError: httperr.Msg(c, statusCodeFor(err), err)})
 		return
@@ -237,6 +252,9 @@ func (h *Handler) CancelOrder(c *gin.Context) {
 func statusCodeFor(err error) int {
 	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrDeliveredViaHandoff) || errors.Is(err, ErrPickedUpViaPickupCode) {
 		return http.StatusForbidden
+	}
+	if errors.Is(err, ErrCodeLocked) {
+		return http.StatusTooManyRequests
 	}
 	if errors.Is(err, ErrOrderTransitionConflict) {
 		return http.StatusConflict
