@@ -493,21 +493,25 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// "Open right now" therefore only gates IMMEDIATE orders. For a scheduled one, whether
 	// the kitchen is open when the slot arrives is settled by ActivateScheduledOrders,
 	// which releases it into the live queue or auto-cancels AND REFUNDS it (SG-002).
-	if !isOpen && scheduledFor == nil {
-		return nil, fmt.Errorf("%w (%s)", ErrRestaurantClosed, primaryRestaurantID)
-	}
-
-	// Verify secondary restaurants (if multi-restaurant) are also open — same rule.
-	for rid := range restaurantMap {
-		if rid == primaryRestaurantID {
-			continue
+	// The gate reads the owner's opening hours as well as the manual switch: a store that
+	// says it serves 10:00–22:00 must not take an order at 23:00 through a switch nobody
+	// flipped. Stores that never set windows are unaffected — the switch alone governs them.
+	if scheduledFor == nil {
+		if err := s.assertOpenForImmediateOrder(ctx, primaryRestaurantID, isOpen, time.Now()); err != nil {
+			return nil, err
 		}
-		var secondOpen bool
-		if err := s.db.QueryRow(ctx, `SELECT is_open FROM restaurants WHERE id=$1`, rid).Scan(&secondOpen); err != nil {
-			return nil, fmt.Errorf("%w (%s)", ErrRestaurantNotFound, rid)
-		}
-		if !secondOpen && scheduledFor == nil {
-			return nil, fmt.Errorf("%w (%s)", ErrRestaurantClosed, rid)
+		// Verify secondary restaurants (if multi-restaurant) are also open — same rule.
+		for rid := range restaurantMap {
+			if rid == primaryRestaurantID {
+				continue
+			}
+			var secondOpen bool
+			if err := s.db.QueryRow(ctx, `SELECT is_open FROM restaurants WHERE id=$1`, rid).Scan(&secondOpen); err != nil {
+				return nil, fmt.Errorf("%w (%s)", ErrRestaurantNotFound, rid)
+			}
+			if err := s.assertOpenForImmediateOrder(ctx, rid, secondOpen, time.Now()); err != nil {
+				return nil, err
+			}
 		}
 	}
 
