@@ -513,7 +513,14 @@ func (h *Handler) RiderOffers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"offers": offers})
+	cards, err := h.svc.RiderOfferCards(c.Request.Context(), offers)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	// "offers" keeps the raw Order list for existing consumers; "cards" is the
+	// enriched projection the rider offer screen renders.
+	c.JSON(http.StatusOK, gin.H{"offers": offers, "cards": cards})
 }
 
 // RiderActive → GET /restaurant/rider/active.

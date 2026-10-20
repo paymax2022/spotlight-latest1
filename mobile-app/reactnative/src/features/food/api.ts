@@ -488,24 +488,35 @@ export async function sendMessage(
 }
 
 // RIDER endpoints
+interface RiderOfferCardWire {
+  order_id: string;
+  restaurant_name: string;
+  restaurant_location?: LatLng | null;
+  delivery_address: string;
+  delivery_location?: LatLng | null;
+  payout_kobo: number;
+  distance_meters?: number;
+  item_count: number;
+}
+interface RiderOffersEnvelope {
+  offers: unknown[] | null;
+  cards: RiderOfferCardWire[] | null;
+}
+interface RiderActiveEnvelope {
+  deliveries: unknown[] | null;
+}
 export async function getRiderOffers(): Promise<RiderOffer[]> {
   if (USE_MOCK) {
     await delay(300);
     return mockRiderOffers();
   }
-  const raw = unwrap<
-    {
-      order_id: string;
-      restaurant_name: string;
-      restaurant_location?: LatLng | null;
-      delivery_address: string;
-      delivery_location?: LatLng | null;
-      payout_kobo: number;
-      distance_meters?: number;
-      item_count: number;
-    }[]
-  >(await api.get(`${BASE}/rider/offers`));
-  return raw.map((o) => ({
+  // Wire shape: { offers: Order[] | null, cards: RiderOfferCardWire[] | null }.
+  // `cards` carries restaurant name / payout / item count that Order lacks.
+  const env = unwrap<RiderOffersEnvelope | RiderOfferCardWire[] | null>(
+    await api.get(`${BASE}/rider/offers`),
+  );
+  const cards = Array.isArray(env) ? env : (env?.cards ?? []);
+  return cards.map((o) => ({
     orderId: o.order_id,
     restaurantName: o.restaurant_name,
     restaurantLocation: o.restaurant_location ?? null,
@@ -525,8 +536,9 @@ export async function getRiderActive(): Promise<Order | null> {
     );
     return active ? advanceMockOrder(active.id) : null;
   }
-  const data = unwrap<Order | null>(await api.get(`${BASE}/rider/active`));
-  return data ? mapOrder(data) : null;
+  const env = unwrap<RiderActiveEnvelope | null>(await api.get(`${BASE}/rider/active`));
+  const first = env?.deliveries?.[0] ?? null;
+  return first ? mapOrder(first) : null;
 }
 
 export async function assignRider(orderId: string, idempotencyKey: string): Promise<Order> {

@@ -800,6 +800,46 @@ func (s *Service) RiderOffers(ctx context.Context, riderID string) ([]Order, err
 	return orders, nil
 }
 
+// RiderOfferCard is the compact per-offer projection the rider offer screen renders.
+// Order carries none of restaurant name / rider payout / item count, so they are
+// attached here. PayoutKobo is an ESTIMATE: the 10% rider leg of the non-tip base
+// (see settleOrder) plus the 100%-rider tip.
+type RiderOfferCard struct {
+	OrderID            string   `json:"order_id"`
+	RestaurantName     string   `json:"restaurant_name"`
+	RestaurantLocation *LatLng  `json:"restaurant_location,omitempty"`
+	DeliveryAddress    string   `json:"delivery_address"`
+	PayoutKobo         int64    `json:"payout_kobo"`
+	DistanceMeters     *float64 `json:"distance_meters,omitempty"`
+	ItemCount          int      `json:"item_count"`
+}
+
+// RiderOfferCards builds the offer-card projection for already-masked offers.
+func (s *Service) RiderOfferCards(ctx context.Context, orders []Order) ([]RiderOfferCard, error) {
+	cards := make([]RiderOfferCard, 0, len(orders))
+	for _, o := range orders {
+		c := RiderOfferCard{OrderID: o.ID, DeliveryAddress: o.DeliveryAddress}
+		var lat, lng *float64
+		if err := s.db.QueryRow(ctx,
+			`SELECT r.name, r.geo_lat, r.geo_lng, o.distance_meters,
+			        COALESCE((SELECT SUM(quantity) FROM order_items WHERE order_id=o.id),0)
+			   FROM orders o JOIN restaurants r ON r.id=o.restaurant_id WHERE o.id=$1`, o.ID).
+			Scan(&c.RestaurantName, &lat, &lng, &c.DistanceMeters, &c.ItemCount); err != nil {
+			return nil, err
+		}
+		if lat != nil && lng != nil {
+			c.RestaurantLocation = &LatLng{Lat: *lat, Lng: *lng}
+		}
+		base := o.TotalKobo - o.TipKobo - o.ServiceFeeKobo - o.PackagingFeeKobo
+		if base < 0 {
+			base = 0
+		}
+		c.PayoutKobo = o.TipKobo + int64(float64(base)*splitRiderPct)
+		cards = append(cards, c)
+	}
+	return cards, nil
+}
+
 // RiderActive lists the rider's in-progress deliveries (accepted, not terminal).
 func (s *Service) RiderActive(ctx context.Context, riderID string) ([]Order, error) {
 	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, total_kobo,
