@@ -238,5 +238,26 @@ func statusCodeFor(err error) int {
 	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrDeliveredViaHandoff) || errors.Is(err, ErrPickedUpViaPickupCode) {
 		return http.StatusForbidden
 	}
+	if errors.Is(err, ErrOrderTransitionConflict) {
+		return http.StatusConflict
+	}
 	return http.StatusBadRequest
+}
+
+// RejectOrder → POST /orders/:orderId/reject  body {reason}. Owner-only (enforced in
+// the service); refunds the customer through refundAndClose (RST-UAT-0156).
+func (h *Handler) RejectOrder(c *gin.Context) {
+	actorID := ginutil.UserID(c)
+	var body struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if err := h.svc.RejectOrder(c.Request.Context(), c.Param("orderId"), actorID, body.Reason); err != nil {
+		c.JSON(statusCodeFor(err), gin.H{keyError: httperr.Msg(c, statusCodeFor(err), err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

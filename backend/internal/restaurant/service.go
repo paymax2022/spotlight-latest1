@@ -1231,8 +1231,20 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 	// (e.g. one created outside the escrow path) scans cleanly instead of erroring —
 	// which the previous `settlement_id` scan into a string masked as "order not
 	// found". Mirrors the COALESCE(settlement_id::text,'') pattern in delivery.go.
-	const q = `SELECT id, restaurant_id, status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1`
-	if err := s.db.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
+	//
+	// Compare-and-set (FOOD-UAT-D-001): the read takes a row lock (FOR UPDATE) inside a
+	// tx, canTransition is evaluated against the LOCKED state, and the UPDATE is further
+	// guarded with `AND status=$prior`. A concurrent cancelAndRefund / refundAndClose
+	// (which lock the same row) therefore either commits first — in which case we see its
+	// terminal status and refuse — or waits for us. Without this an accept racing a cancel
+	// left status='preparing' on an already-refunded escrow.
+	const q = `SELECT id, restaurant_id, status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1 FOR UPDATE`
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := tx.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
 		return errors.New("restaurant: order not found")
 	}
 
@@ -1240,7 +1252,14 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 		return fmt.Errorf("restaurant: cannot move order from %s to %s", order.Status, newStatus)
 	}
 
-	if _, err := s.db.Exec(ctx, `UPDATE orders SET status=$1 WHERE id=$2`, string(newStatus), orderID); err != nil {
+	tag, err := tx.Exec(ctx, `UPDATE orders SET status=$1 WHERE id=$2 AND status=$3`, string(newStatus), orderID, string(order.Status))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrOrderTransitionConflict
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 
@@ -1778,6 +1797,11 @@ var (
 	// ErrForbidden — the caller is not a party to this order (or not the party allowed
 	// to make this specific transition). Object-level authZ failure.
 	ErrForbidden = errors.New("restaurant: forbidden")
+
+	// ErrOrderTransitionConflict — the order's status changed under us (a concurrent
+	// cancel/refund/transition won the race), so the compare-and-set status UPDATE
+	// matched no row. Handlers map it to 409 Conflict; the caller should re-read.
+	ErrOrderTransitionConflict = errors.New("restaurant: order status changed concurrently")
 	// ErrDeliveredViaHandoff — `delivered` cannot be set through the generic status
 	// endpoint; the assigned rider must use ConfirmHandoff, which enforces the
 	// delivery-code proof-of-delivery. This closes the POD-bypass hole.
@@ -2043,8 +2067,12 @@ func (s *Service) MarkDeliveryFailed(ctx context.Context, orderID, riderID, reas
 	if !canTransition(OrderStatus(status), OrderDeliveryFailed) {
 		return fmt.Errorf("restaurant: cannot report failed delivery from %s", status)
 	}
-	if _, err := s.db.Exec(ctx, `UPDATE orders SET status='delivery_failed', status_reason=$2 WHERE id=$1`, orderID, reason); err != nil {
+	tag, err := s.db.Exec(ctx, `UPDATE orders SET status='delivery_failed', status_reason=$2 WHERE id=$1 AND status=$3`, orderID, reason, status)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrOrderTransitionConflict
 	}
 	s.recordOrderEvent(ctx, orderID, riderID, OrderStatus(status), OrderDeliveryFailed)
 	if customer != "" {
