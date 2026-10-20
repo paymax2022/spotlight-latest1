@@ -235,6 +235,11 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 		return fmt.Errorf("restaurant: a reviewer note is required to %s", decision)
 	}
 
+	var prevKYB string
+	var prevOpen bool
+	_ = s.db.QueryRow(ctx, `SELECT COALESCE(kyb_status,''), COALESCE(is_open,false) FROM restaurants WHERE id=$1`,
+		restaurantID).Scan(&prevKYB, &prevOpen)
+
 	// When a KYB record exists, the decision must be a legal KYB transition and is
 	// recorded on it (plus the restaurants.kyb_status snapshot payout gating reads).
 	k, hasKYB, err := s.loadKYB(ctx, restaurantID)
@@ -287,6 +292,20 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 			`UPDATE restaurants SET is_open=false, updated_at=now() WHERE id=$1`, restaurantID); err != nil {
 			return err
 		}
+	}
+	// Durable audit (audit_logs sink, same as order transitions). Best-effort.
+	if s.audit != nil {
+		newOpen := prevOpen
+		switch decision {
+		case "approve":
+			newOpen = true
+		case "reject":
+			newOpen = false
+		}
+		s.audit.LogAction(adminID, "", "restaurant.application."+decision, "restaurant", "restaurant", restaurantID,
+			map[string]any{"kyb_status": prevKYB, "is_open": prevOpen},
+			map[string]any{"kyb_status": string(target), "is_open": newOpen, "reason": note},
+			"", "", "warning")
 	}
 	// Best-effort audit via the shared notifier (owner is informed of the decision).
 	var owner string

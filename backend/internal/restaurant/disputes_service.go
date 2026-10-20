@@ -452,7 +452,7 @@ func (s *Service) AdminListFoodDisputes(ctx context.Context, status string, limi
 		SELECT d.id, d.user_id, d.reference, d.type, d.description, d.status, d.admin_note, d.created_at,
 		       r.resolution, COALESCE(r.refund_kobo,0)
 		FROM disputes d
-		LEFT JOIN restaurant_dispute_refunds r ON r.dispute_id = d.id
+		LEFT JOIN restaurant_dispute_refunds r ON r.dispute_id = d.id::text
 		WHERE d.module_type='food'`
 	args := []any{}
 	if status != "" {

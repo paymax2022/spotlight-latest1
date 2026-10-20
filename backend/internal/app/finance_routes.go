@@ -1788,6 +1788,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/:id/orders", restaurantHandler.PlaceOrder)
 		restGroup.PATCH("/:id/orders/:orderId/status", restaurantHandler.UpdateStatus)
 		restGroup.DELETE("/:id/orders/:orderId", restaurantHandler.CancelOrder)
+		// Owner declines a pending/confirmed order with a reason (refunds). Owner-only
+		// is enforced in the service, hence the member group, not restAdmin.
+		restGroup.POST("/orders/:orderId/reject", restaurantHandler.RejectOrder)
 
 		// Paystack-funded checkout (card / bank-transfer, no wallet, no KYC-tier
 		// gate — see paystackcheckout package doc comment for why this is a
@@ -1867,7 +1870,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				func(permission string) gin.HandlerFunc { return middleware.RequirePermission(rbac, permission) })
 		}
 		restAdmin.GET("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.GetDeliveryConfig)
-		restAdmin.PUT("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.PutDeliveryConfig)
+		restAdmin.PUT("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.PutDeliveryConfigValidated)
 
 		// Ops-console admin surfaces (dispatch board, onboarding/KYC review, payout
 		// reconciliation) consumed by frontend-admin/app/admin/restaurant/*. Each is
