@@ -420,10 +420,19 @@ func (c *Client) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {
 	var env struct {
 		Event string `json:"event"`
 		Data  struct {
-			Reference    string `json:"reference"`
-			TransferCode string `json:"transfer_code"`
-			Amount       int64  `json:"amount"`
-			Status       string `json:"status"`
+			ID           json.Number `json:"id"`
+			Reference    string      `json:"reference"`
+			TransferCode string      `json:"transfer_code"`
+			Amount       int64       `json:"amount"`
+			Status       string      `json:"status"`
+			// charge.dispute.*: the disputed charge is nested.
+			Transaction struct {
+				Reference string `json:"reference"`
+				Amount    int64  `json:"amount"`
+			} `json:"transaction"`
+			// refund.processed: flat reference of the refunded charge.
+			TransactionReference string `json:"transaction_reference"`
+			Resolution           string `json:"resolution"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(payload, &env); err != nil {
@@ -443,6 +452,18 @@ func (c *Client) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {
 		ev.Type, ev.Status = "transfer", "reversed"
 	case "charge.success":
 		ev.Type, ev.Status = "collection", "successful"
+	case "charge.dispute.create":
+		ev.Type, ev.Status = provider.EventTypeChargebackCreated, "created"
+		ev.ProviderRef, ev.Reference, ev.AmountKobo = env.Data.ID.String(), env.Data.Transaction.Reference, env.Data.Transaction.Amount
+		ev.EventID = "dispute:" + env.Data.ID.String()
+	case "charge.dispute.resolve":
+		ev.Type, ev.Status = provider.EventTypeChargebackResolved, "resolved"
+		ev.ProviderRef, ev.Reference, ev.AmountKobo = env.Data.ID.String(), env.Data.Transaction.Reference, env.Data.Transaction.Amount
+		ev.EventID = "dispute:" + env.Data.ID.String()
+	case "refund.processed":
+		ev.Type, ev.Status = provider.EventTypeRefundProcessed, "processed"
+		ev.ProviderRef, ev.Reference = env.Data.ID.String(), env.Data.TransactionReference
+		ev.EventID = "refund:" + env.Data.ID.String()
 	default:
 		ev.Type, ev.Status = "", "pending"
 	}

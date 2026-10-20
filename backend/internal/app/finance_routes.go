@@ -1800,6 +1800,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			paystackcheckout.RegisterRestaurantPaystackCheckout(restGroup, checkoutSvc)
 			if webhookHandler != nil {
 				webhookHandler.SetRestaurantOrderConfirmer(restaurantOrderConfirmer{svc: checkoutSvc})
+				webhookHandler.SetFoodChargebackHandler(foodChargebackAdapter{svc: restaurantSvc})
 			}
 			log.Println("[restaurant] Paystack-funded checkout wired (FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED)")
 		}
@@ -3533,6 +3534,17 @@ type restaurantOrderConfirmer struct{ svc *paystackcheckout.Service }
 
 func (c restaurantOrderConfirmer) OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error) {
 	return c.svc.OnChargeSuccess(ctx, reference, gatewayRef)
+}
+
+// foodChargebackAdapter adapts restaurant.Service.HandleChargeback to
+// webhooks.FoodChargebackHandler (FOOD-UAT-H-004).
+type foodChargebackAdapter struct{ svc *restaurant.Service }
+
+func (a foodChargebackAdapter) HandleFoodChargeback(ctx context.Context, ev webhooks.FoodChargebackEvent) error {
+	return a.svc.HandleChargeback(ctx, restaurant.ChargebackEvent{
+		Kind: ev.Kind, ProviderEventID: ev.ProviderEventID, Reference: ev.Reference,
+		AmountKobo: ev.AmountKobo, Resolved: ev.Resolved, Resolution: ev.Resolution,
+	})
 }
 
 // rideOrderConfirmer adapts *transport/paystackcheckout.Service to
