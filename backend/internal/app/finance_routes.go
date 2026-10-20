@@ -1669,20 +1669,35 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Real notifications via the asynq queue (push + in-app). Falls back to
 		// the module's LogNotifier when Redis/asynq is unavailable so the module
 		// never hard-fails on notification delivery.
-		if cfg.RedisURL != "" {
-			if aClient, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
-				notifSvcR := notifications.NewService(aClient)
-				restaurantSvc.SetNotifier(restaurant.NotifierFunc(func(ctx context.Context, n restaurant.Notification) error {
-					return notifSvcR.Send(ctx, notifications.Notification{
-						UserID:   n.UserID,
-						Event:    notifications.Event(n.Event),
-						Title:    n.Title,
-						Body:     n.Body,
-						Data:     n.Data,
-						Channels: []notifications.Channel{notifications.ChannelPush, notifications.ChannelInApp},
-					})
-				}))
+		{
+			var notifSvcR *notifications.Service
+			if cfg.RedisURL != "" {
+				if aClient, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
+					notifSvcR = notifications.NewService(aClient)
+				}
 			}
+			if notifSvcR == nil {
+				// FOOD-UAT-G-012: no queue ⇒ degrade to synchronous email instead of dropping.
+				notifSvcR = notifications.NewService(nil).WithSyncEmailFallback(
+					notifications.ProviderConfig{ResendAPIKey: cfg.ResendAPIKey, ResendFromEmail: cfg.ResendFromEmail},
+					func(ctx context.Context, userID string) (string, error) {
+						var email *string
+						if err := pool.QueryRow(ctx, `SELECT email FROM auth.users WHERE id=$1::uuid`, userID).Scan(&email); err != nil || email == nil {
+							return "", nil
+						}
+						return *email, nil
+					})
+			}
+			restaurantSvc.SetNotifier(restaurant.NotifierFunc(func(ctx context.Context, n restaurant.Notification) error {
+				return notifSvcR.Send(ctx, notifications.Notification{
+					UserID:   n.UserID,
+					Event:    notifications.Event(n.Event),
+					Title:    n.Title,
+					Body:     n.Body,
+					Data:     n.Data,
+					Channels: []notifications.Channel{notifications.ChannelPush, notifications.ChannelInApp},
+				})
+			}))
 		}
 
 		// Real-time per-order channel: status changes, rider location, and chat
@@ -1822,6 +1837,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/orders/:orderId/pickup", restaurantHandler.ConfirmPickup)    // rider confirms pickup
 		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff)  // rider confirms drop-off (code)
 		restGroup.POST("/orders/:orderId/location", restaurantHandler.PostLocation)
+		restGroup.POST("/orders/:orderId/mark-failed", restaurantHandler.MarkDeliveryFailed) // rider reports a failed drop-off
 		restGroup.GET("/rider/offers", restaurantHandler.RiderOffers)
 		restGroup.GET("/rider/active", restaurantHandler.RiderActive)
 
@@ -1857,7 +1873,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/group/:groupId/finalize", restaurantHandler.FinalizeGroupOrder)
 
 		// Ratings.
-		restGroup.POST("/orders/:orderId/rate", restaurantHandler.RateOrder)
+		restGroup.POST("/orders/:orderId/rate", restaurantHandler.RateOrderHonest)
 
 		// Admin delivery-fee pricing console (RBAC restaurant.admin.pricing). Mounted
 		// on the root engine with mapsAuth() so RequirePermission can read the
@@ -1938,6 +1954,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Same idempotent DispatchOrder underneath; RBAC is the boundary.
 		restAdmin.POST("/orders/:id/dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminRedispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
+		// Review moderation (FOOD-UAT-G-003).
+		restAdmin.GET("/reviews", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminListReviews)
+		restAdmin.POST("/reviews/:id/hide", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminHideReview)
+		restAdmin.POST("/reviews/:id/restore", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminRestoreReview)
+		restAdmin.POST("/reviews/:id/flag", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminFlagReview)
 		// Single wildcard segment handles all three shapes the admin UI may post:
 		//   /onboarding/:id/decision  (body {decision, note})
 		//   /onboarding/:id/approve   (decision taken from the path)
@@ -2191,7 +2212,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// route, so traffic drift can't raise FARE_CHANGED. Unset secret = off.
 		transportSvc = transportSvc.WithParcelRouteTokenSecret(cfg.ParcelRouteTokenSecret)
 		transportHandler := transport.NewHandler(transportSvc)
-		transportAdmin := transport.NewAdminHandler(transport.NewAdminService(transportSvc))
+		transportAdminSvc := transport.NewAdminService(transportSvc)
+		if restaurantSvc != nil {
+			// Suspending a rider re-sources the food orders they held (FOOD-UAT-A-001).
+			transportAdminSvc = transportAdminSvc.WithOrderRedispatcher(restaurantSvc.DispatchOrder)
+		}
+		transportAdmin := transport.NewAdminHandler(transportAdminSvc)
 
 		// Backend-owned presigned R2 uploads for driver documents (licence,
 		// insurance, roadworthiness); unconfigured creds → the presign endpoint
