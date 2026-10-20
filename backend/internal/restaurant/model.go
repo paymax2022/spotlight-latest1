@@ -98,6 +98,9 @@ const (
 	OrderRejected       OrderStatus = "rejected"        // restaurant declined (pre-prep) → refund
 	OrderDispatchFailed OrderStatus = "dispatch_failed" // no rider sourced → refund
 	OrderDeliveryFailed OrderStatus = "delivery_failed" // rider couldn't deliver → ops/dispute resolves
+	// Dine-in lifecycle (FOOD-UAT-D-007): preparing → served (settles) → closed.
+	OrderServed OrderStatus = "served"
+	OrderClosed OrderStatus = "closed"
 )
 
 // refundedCloseStates are the terminal states reached by refunding the escrow.
@@ -162,6 +165,17 @@ type Order struct {
 	EtaMinutes        *float64              `json:"eta_minutes,omitempty"`
 	DeliveryBreakdown *DeliveryFeeBreakdown `json:"delivery_breakdown,omitempty"`
 	CreatedAt         time.Time             `json:"created_at"`
+
+	// OrderType is the fulfilment mode; TableNumber is set for dine_in only.
+	OrderType   OrderType `json:"order_type"`
+	TableNumber *string   `json:"table_number,omitempty"`
+	// Delivery pin + recipient contact (FOOD-UAT-C-012). PII: populated only on the
+	// assigned rider's view (see hydrateOrderExtras) — never on the customer's or an
+	// offered rider's.
+	DeliveryLatitude       *float64 `json:"delivery_latitude,omitempty"`
+	DeliveryLongitude      *float64 `json:"delivery_longitude,omitempty"`
+	DeliveryLandmark       *string  `json:"delivery_landmark,omitempty"`
+	DeliveryRecipientPhone *string  `json:"delivery_recipient_phone,omitempty"`
 }
 
 // OrderItem is one line in an order.
@@ -233,6 +247,14 @@ type PlaceOrderRequest struct {
 	DeliveryLocation *LatLng  `json:"delivery_location,omitempty"`
 	// SpecialInstructions is a free-text order note; sanitized server-side (CT-009).
 	SpecialInstructions string `json:"special_instructions,omitempty"`
+	// OrderType selects the fulfilment mode (FOOD-UAT-D-007): delivery (default),
+	// pickup_now, pickup_scheduled or dine_in. TableNumber is required for dine_in.
+	OrderType   string `json:"order_type,omitempty"`
+	TableNumber string `json:"table_number,omitempty"`
+	// DeliveryLandmark / DeliveryRecipientPhone help the rider find and reach the
+	// recipient (FOOD-UAT-C-012). Persisted on the order; shown to the assigned rider only.
+	DeliveryLandmark       string `json:"delivery_landmark,omitempty"`
+	DeliveryRecipientPhone string `json:"delivery_recipient_phone,omitempty"`
 	// ScheduledFor, when set, places the order for a future slot (SG-001) — validated
 	// against the restaurant's hours + a lead/horizon window. Still escrowed now.
 	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`

@@ -410,6 +410,7 @@ type itemWithRest struct {
 type orderPricing struct {
 	primaryRestaurantID string
 	ownerID             string
+	orderType           OrderType
 	scheduledFor        *time.Time
 	itemsWithRest       []itemWithRest
 	subtotal            int64
@@ -442,6 +443,11 @@ type orderPricing struct {
 // here, because a caller that only wants a quote (QuoteOrder) must trigger
 // NONE of them.
 func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*orderPricing, error) {
+	// FOOD-UAT-D-007: per-type request shape, before anything is read or priced.
+	orderType, terr := validateOrderType(req, time.Now())
+	if terr != nil {
+		return nil, terr
+	}
 	// Collect unique restaurants from items (or use the route's restaurantID as fallback).
 	// This enables multi-restaurant orders while maintaining backward compatibility.
 	restaurantMap := make(map[string]bool)
@@ -600,7 +606,10 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	deliveryKobo := DeliveryFeeKobo
 	var breakdown *DeliveryFeeBreakdown
 	var distanceMeters, etaMinutes *float64
-	if dLat, dLng, ok := req.DeliveryCoords(); ok && rLat != nil && rLng != nil {
+	if !orderType.UsesRider() {
+		// Pickup / dine-in: nothing is delivered, so no delivery fee and no breakdown.
+		deliveryKobo = 0
+	} else if dLat, dLng, ok := req.DeliveryCoords(); ok && rLat != nil && rLng != nil {
 		cfg := s.feeRepo.LoadDeliveryConfig(ctx, restaurantID)
 		night := IsNightAt(time.Now().In(lagosTZ).Hour(), cfg)
 		b := s.computeDeliveryFee(ctx, *rLat, *rLng, dLat, dLng, night, false /* weather: no live feed in v1 */, cfg)
@@ -633,6 +642,9 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	//   - it may not exceed the order's own value, which rejects fat-finger/hostile
 	//     amounts up front and keeps `total` far from int64 overflow.
 	tipKobo := max(req.TipKobo, 0)
+	if !orderType.UsesRider() {
+		tipKobo = 0 // the tip is a 100% rider leg; a rider-less order has no payee for it
+	}
 	if tipKobo > itemsKobo+deliveryKobo {
 		return nil, fmt.Errorf("%w: tip of %d kobo exceeds the order value of %d kobo", ErrOrderInvalid, tipKobo, itemsKobo+deliveryKobo)
 	}
@@ -697,6 +709,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	return &orderPricing{
 		primaryRestaurantID: primaryRestaurantID,
 		ownerID:             ownerID,
+		orderType:           orderType,
 		scheduledFor:        scheduledFor,
 		itemsWithRest:       itemsWithRest,
 		subtotal:            subtotal,
@@ -928,6 +941,23 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// FOOD-UAT-C-012 / D-007: delivery-only fields. A pickup or dine-in order carries no
+	// address, pin or recipient contact; a delivery order stores the pin the customer
+	// dropped (validated by the handler) plus landmark / recipient phone.
+	var deliveryAddress string
+	var dLatPtr, dLngPtr *float64
+	var landmarkPtr, recipPhonePtr, tablePtr *string
+	if pricing.orderType.UsesRider() {
+		deliveryAddress = req.DeliveryAddress
+		if la, ln, ok := req.DeliveryCoords(); ok {
+			dLatPtr, dLngPtr = &la, &ln
+		}
+		landmarkPtr = nullIfEmptyPtr(cleanLandmark(req.DeliveryLandmark))
+		recipPhonePtr = nullIfEmptyPtr(cleanRecipientPhone(req.DeliveryRecipientPhone))
+	}
+	if pricing.orderType == OrderTypeDineIn {
+		tablePtr = nullIfEmptyPtr(cleanTableNumber(req.TableNumber))
+	}
 	order := &Order{
 		ID:               orderID,
 		CustomerID:       customerID,
@@ -951,7 +981,9 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		Status:              OrderPending,
 		IdempotencyKey:      req.IdempotencyKey,
 		SettlementID:        sett.ID,
-		DeliveryAddress:     req.DeliveryAddress,
+		DeliveryAddress:     deliveryAddress,
+		OrderType:           pricing.orderType,
+		TableNumber:         tablePtr,
 		DistanceMeters:      distanceMeters,
 		EtaMinutes:          etaMinutes,
 		DeliveryBreakdown:   breakdown,
@@ -968,8 +1000,9 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	}
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, promo_id, promo_funder, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, special_instructions, scheduled_for, packaging_fee_kobo, package_count)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, promo_id, promo_funder, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, special_instructions, scheduled_for, packaging_fee_kobo, package_count,
+		                    order_type, table_number, delivery_latitude, delivery_longitude, delivery_landmark, delivery_recipient_phone)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, primaryRestaurantID,
@@ -979,6 +1012,7 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
 		nullIfEmpty(order.SpecialInstructions), order.ScheduledFor,
 		order.PackagingFeeKobo, order.PackageCount,
+		string(pricing.orderType), tablePtr, dLatPtr, dLngPtr, landmarkPtr, recipPhonePtr,
 	)
 	if err != nil {
 		s.releasePromoReservationSafe(ctx, promoID, orderID)
@@ -1207,6 +1241,15 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 	if err != nil {
 		return err
 	}
+	// Pickup / dine-in: the restaurant itself records collection (picked_up), served and
+	// closed — there is no rider POD for it (FOOD-UAT-D-007). Owner-only.
+	if ot := s.orderTypeOf(ctx, orderID); !ot.UsesRider() &&
+		(newStatus == OrderPickedUp || newStatus == OrderServed || newStatus == OrderClosed) {
+		if classifyOrderActor(actorID, customer, owner, rider) != roleOwner {
+			return ErrForbidden
+		}
+		return s.transitionInternal(ctx, orderID, actorID, newStatus)
+	}
 	if aerr := authorizeStatusChange(actorID, customer, owner, rider, newStatus); aerr != nil {
 		return aerr
 	}
@@ -1238,17 +1281,19 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 	// (which lock the same row) therefore either commits first — in which case we see its
 	// terminal status and refuse — or waits for us. Without this an accept racing a cancel
 	// left status='preparing' on an already-refunded escrow.
-	const q = `SELECT id, restaurant_id, status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1 FOR UPDATE`
+	const q = `SELECT id, restaurant_id, status, COALESCE(settlement_id::text,''), COALESCE(order_type,'delivery') FROM orders WHERE id=$1 FOR UPDATE`
+	var orderType OrderType
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := tx.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
+	if err := tx.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID, &orderType); err != nil {
 		return errors.New("restaurant: order not found")
 	}
 
-	if !canTransition(order.Status, newStatus) {
+	// Order-type-aware guard (FOOD-UAT-D-007); delivery uses the original table.
+	if !canTransitionFor(orderType, order.Status, newStatus) {
 		return fmt.Errorf("restaurant: cannot move order from %s to %s", order.Status, newStatus)
 	}
 
@@ -1268,7 +1313,10 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 	s.recordOrderEvent(ctx, orderID, actorID, order.Status, newStatus)
 
 	// On delivery, settle: 80% restaurant owner, 10% rider (stubbed to owner if no rider), 10% platform.
-	if newStatus == OrderDelivered {
+	// Pickup settles on customer collection (picked_up), dine-in on served — no rider leg:
+	// settleOrder sees rider_id NULL and takes the rider-less split (ResolveCommissionSplit
+	// ProviderPctNoRider), so only the merchant and platform legs post.
+	if newStatus == OrderDelivered || (!orderType.UsesRider() && newStatus == settleStatusFor(orderType)) {
 		if err := s.settleOrder(ctx, orderID, order.RestaurantID, order.SettlementID); err != nil {
 			return fmt.Errorf("restaurant: settle order: %w", err)
 		}
@@ -1285,6 +1333,8 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 		// with this, so — like the dispatch call right below — a generation
 		// hiccup must not roll back the already-committed ready transition;
 		// DispatchOrder retries it (it's idempotent) on every dispatch/redispatch.
+		// Pickup: the code is what the customer shows at the counter. Dine-in never
+		// reaches ready.
 		if _, cerr := s.ensurePickupCode(ctx, orderID); cerr != nil {
 			s.notify(ctx, Notification{UserID: "", Event: EventPickupCodeErr,
 				Title: "Pickup code error", Body: cerr.Error(),
@@ -1292,7 +1342,7 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 		}
 		var assigned *string
 		_ = s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&assigned)
-		if assigned == nil {
+		if assigned == nil && orderType.UsesRider() { // pickup orders skip dispatch
 			if derr := s.DispatchOrder(ctx, orderID); derr != nil {
 				// A dispatch hiccup must not roll back the ready transition; the
 				// restaurant can re-trigger dispatch. Surface it to logs via notify.
@@ -1315,7 +1365,11 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 			s.notify(ctx, Notification{UserID: rider, Event: EventOrderReady, Title: "Order ready for pickup", Body: "The order is ready — head to the restaurant.", Data: map[string]any{"order_id": orderID}})
 		}
 	case OrderPickedUp:
-		s.notify(ctx, Notification{UserID: customer, Event: EventOrderPickedUp, Title: "Order picked up", Body: "Your order is on the way.", Data: map[string]any{"order_id": orderID}})
+		body := "Your order is on the way."
+		if !orderType.UsesRider() {
+			body = "Thanks for collecting your order. Enjoy!"
+		}
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderPickedUp, Title: "Order picked up", Body: body, Data: map[string]any{"order_id": orderID}})
 	case OrderDelivered:
 		s.notify(ctx, Notification{UserID: customer, Event: EventOrderDelivered, Title: "Order delivered", Body: "Enjoy your meal!", Data: map[string]any{"order_id": orderID}})
 	}
@@ -1552,7 +1606,8 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	if status == string(OrderCancelled) {
 		return tx.Commit(ctx) // already cancelled — idempotent no-op
 	}
-	if status == string(OrderPickedUp) || status == string(OrderDelivered) {
+	if status == string(OrderPickedUp) || status == string(OrderDelivered) ||
+		status == string(OrderServed) || status == string(OrderClosed) {
 		return errors.New("restaurant: cannot cancel an order that is already picked up or delivered")
 	}
 	// Give any promo redemption back: the order is refunded in full, so the code was

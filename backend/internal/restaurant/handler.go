@@ -73,9 +73,13 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 		}
 	}
 	// FOOD-UAT-C-013: validate the delivery pin before any pricing/escrow.
-	if cerr := ValidateDeliveryCoords(req); cerr != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, cerr)})
-		return
+	// Only delivery needs a pin — pickup / dine-in carry no address (FOOD-UAT-D-007).
+	// An unknown order_type skips this and is rejected (400) by the service before pricing.
+	if normalizeOrderType(req.OrderType) == OrderTypeDelivery {
+		if cerr := ValidateDeliveryCoords(req); cerr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, cerr)})
+			return
+		}
 	}
 	order, err := h.svc.PlaceOrder(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
