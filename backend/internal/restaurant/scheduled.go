@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -152,6 +153,69 @@ func StartScheduledOrderSweeper(ctx context.Context, svc *Service, interval time
 		}
 	}()
 	log.Printf("[restaurant] scheduled-order sweeper started (interval %s)", interval)
+}
+
+// RunUnacceptedAndDispatchSweeps is one tick of the unaccepted-order / dispatch
+// sweeper (FOOD-UAT-D-002, FOOD-UAT-E-003): it auto-cancels+refunds orders the
+// restaurant never accepted within its SLA, fails+refunds orders that searched for a
+// rider past dispatchStaleMinutes, and reassigns orders whose assigned rider went
+// offline. Each sweep is independent: an error in one is returned (joined) but never
+// stops the others. Every step is idempotent and multi-instance safe — each one
+// re-selects by status predicate and acts through a guarded transition
+// (cancelAndRefund / MarkDispatchFailed / ReassignOrder), so two instances racing the
+// same order produce one winner and one benign no-op.
+func RunUnacceptedAndDispatchSweeps(ctx context.Context, svc *Service, now time.Time) (unaccepted, stalled, reassigned int, err error) {
+	var errs []error
+	var e error
+	if unaccepted, e = svc.SweepUnacceptedOrders(ctx, now); e != nil {
+		errs = append(errs, fmt.Errorf("unaccepted: %w", e))
+	}
+	if stalled, e = svc.SweepStalledDispatch(ctx, now); e != nil {
+		errs = append(errs, fmt.Errorf("stalled-dispatch: %w", e))
+	}
+	if reassigned, e = svc.SweepOfflineAssigned(ctx); e != nil {
+		errs = append(errs, fmt.Errorf("offline-assigned: %w", e))
+	}
+	return unaccepted, stalled, reassigned, errors.Join(errs...)
+}
+
+// StartUnacceptedOrderSweeper runs RunUnacceptedAndDispatchSweeps on a ticker until
+// ctx is cancelled. Without it SweepUnacceptedOrders, SweepStalledDispatch and
+// SweepOfflineAssigned had only test callers: an order the restaurant ignored held the
+// customer's escrow forever, and a delivery nobody picked up never failed or refunded.
+// Wired from RegisterFinance under the food flag, next to StartScheduledOrderSweeper.
+func StartUnacceptedOrderSweeper(ctx context.Context, svc *Service, interval time.Duration) {
+	if svc == nil || svc.db == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	run := func() {
+		cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		u, st, r, err := RunUnacceptedAndDispatchSweeps(cctx, svc, time.Now())
+		if err != nil {
+			log.Printf("[restaurant] unaccepted/dispatch sweep error: %v", err)
+		}
+		if u > 0 || st > 0 || r > 0 {
+			log.Printf("[restaurant] unaccepted/dispatch sweep: unaccepted-cancelled=%d stalled-failed=%d offline-reassigned=%d", u, st, r)
+		}
+	}
+	go func() {
+		run()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				run()
+			}
+		}
+	}()
+	log.Printf("[restaurant] unaccepted-order/dispatch sweeper started (interval %s)", interval)
 }
 
 // isRestaurantOpenNow evaluates the manual switch + weekly hours + holiday override at t.

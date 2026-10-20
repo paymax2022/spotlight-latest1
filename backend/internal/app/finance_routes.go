@@ -2023,6 +2023,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			ctx, restaurantSvc,
 			time.Duration(envInt("FOOD_SCHEDULED_SWEEP_INTERVAL_MINUTES", 1))*time.Minute,
 		)
+
+		// Unaccepted-order + stalled-dispatch + offline-rider sweeps (FOOD-UAT-D-002 /
+		// E-003). Previously dead code: an order the restaurant never accepted kept
+		// the customer's escrow indefinitely, and offers never expired. One tick, three
+		// idempotent, multi-instance-safe sweeps.
+		restaurant.StartUnacceptedOrderSweeper(
+			ctx, restaurantSvc,
+			time.Duration(envInt("FOOD_ACCEPT_SWEEP_INTERVAL_MINUTES", 1))*time.Minute,
+		)
 	}
 
 	// Estimated nutrition + allergens for orderable dishes. NOT a money module

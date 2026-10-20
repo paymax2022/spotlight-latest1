@@ -79,6 +79,12 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 		       (SELECT max(o2.assigned_at) FROM orders o2 WHERE o2.rider_id = d.user_id) AS last_assigned
 		FROM drivers d
 		WHERE d.status = 'online' AND d.verification_status = 'approved'
+		  -- FOOD-UAT-E-004: never re-offer to a rider who already declined or let an
+		  -- offer expire for THIS order. Their stale rows would otherwise win the
+		  -- fan-out slots (ON CONFLICT DO NOTHING then drops them), starving fresh riders.
+		  AND NOT EXISTS (SELECT 1 FROM restaurant_delivery_offers pr
+		                   WHERE pr.order_id = $3 AND pr.rider_id = d.user_id
+		                     AND pr.status IN ('declined','expired'))
 		  -- FOOD-UAT-A-013: skip riders whose driving licence has expired (and no
 		  -- current licence is on file). No licence document = legacy row, still eligible.
 		  AND NOT (
@@ -87,7 +93,7 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 		    AND NOT EXISTS (SELECT 1 FROM driver_documents dd2 WHERE dd2.driver_id = d.id AND dd2.doc_type = 'drivers_licence'
 		              AND dd2.status NOT IN ('rejected','expired') AND (dd2.expiry_date IS NULL OR dd2.expiry_date >= CURRENT_DATE))
 		  )`
-	rows, err := s.db.Query(ctx, q, rlat, rlng)
+	rows, err := s.db.Query(ctx, q, rlat, rlng, orderID)
 	if err != nil {
 		return fmt.Errorf("restaurant: find riders: %w", err)
 	}
