@@ -78,7 +78,15 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 		            AND o.status NOT IN ('delivered','cancelled','rejected','dispatch_failed','delivery_failed')) AS active_load,
 		       (SELECT max(o2.assigned_at) FROM orders o2 WHERE o2.rider_id = d.user_id) AS last_assigned
 		FROM drivers d
-		WHERE d.status = 'online' AND d.verification_status = 'approved'`
+		WHERE d.status = 'online' AND d.verification_status = 'approved'
+		  -- FOOD-UAT-A-013: skip riders whose driving licence has expired (and no
+		  -- current licence is on file). No licence document = legacy row, still eligible.
+		  AND NOT (
+		    EXISTS (SELECT 1 FROM driver_documents dd WHERE dd.driver_id = d.id AND dd.doc_type = 'drivers_licence'
+		              AND dd.status <> 'rejected' AND (dd.status = 'expired' OR dd.expiry_date < CURRENT_DATE))
+		    AND NOT EXISTS (SELECT 1 FROM driver_documents dd2 WHERE dd2.driver_id = d.id AND dd2.doc_type = 'drivers_licence'
+		              AND dd2.status NOT IN ('rejected','expired') AND (dd2.expiry_date IS NULL OR dd2.expiry_date >= CURRENT_DATE))
+		  )`
 	rows, err := s.db.Query(ctx, q, rlat, rlng)
 	if err != nil {
 		return fmt.Errorf("restaurant: find riders: %w", err)

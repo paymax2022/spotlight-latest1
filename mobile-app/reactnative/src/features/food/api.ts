@@ -608,7 +608,7 @@ export async function confirmHandoff(orderId: string, code: string): Promise<Ord
   );
 }
 
-export async function postRiderLocation(orderId: string, loc: LatLng): Promise<void> {
+export async function postRiderLocation(orderId: string, loc: LatLng, lastPostedAt?: string): Promise<void> {
   if (USE_MOCK) {
     await delay(120);
     const o = mockStore.orders[orderId];
@@ -618,6 +618,8 @@ export async function postRiderLocation(orderId: string, loc: LatLng): Promise<v
   await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/location`, {
     lat: loc.lat,
     lng: loc.lng,
+    // ISO time of the device GPS fix; lets the server/customer see staleness.
+    last_posted_at: lastPostedAt ?? new Date().toISOString(),
   });
 }
 

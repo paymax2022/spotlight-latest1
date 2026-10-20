@@ -49,6 +49,8 @@ export interface OrderRealtimeState {
   status: OrderStatus | null;
   /** Latest live rider position, or null. */
   riderLocation: LatLng | null;
+  /** Server-stamped epoch ms of the latest rider fix (null until one arrives). */
+  riderLocationAt: number | null;
   /** Messages received over the socket since mount (screens merge with the REST list). */
   messages: ChatMessage[];
   /** True while the live socket is connected. */
@@ -83,6 +85,7 @@ export function useOrderRealtime(
 
   const [liveStatus, setLiveStatus] = useState<OrderStatus | null>(null);
   const [riderLocation, setRiderLocation] = useState<LatLng | null>(null);
+  const [riderLocationAt, setRiderLocationAt] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connected, setConnected] = useState(false);
 
@@ -107,8 +110,10 @@ export function useOrderRealtime(
           if (frame.payload.order_id === orderId) setLiveStatus(frame.payload.status);
           break;
         case 'order.location':
-          if (frame.payload.order_id === orderId)
+          if (frame.payload.order_id === orderId) {
             setRiderLocation({ lat: frame.payload.lat, lng: frame.payload.lng });
+            setRiderLocationAt(frame.payload.ts ?? Date.now());
+          }
           break;
         case 'order.message': {
           const p = frame.payload;
@@ -202,6 +207,7 @@ export function useOrderRealtime(
   return {
     status: liveStatus,
     riderLocation,
+    riderLocationAt,
     messages,
     live: realtimeEnabled && connected,
     realtimeEnabled,

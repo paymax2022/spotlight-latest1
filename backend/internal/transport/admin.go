@@ -3,13 +3,28 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // AdminService wraps the transport Service for admin operations. Every mutation
 // writes a transport_audit_log row (actor, action, entity, old/new, reason).
 type AdminService struct {
 	svc *Service
+	// redispatch re-sources riders for a food order whose rider was released by a
+	// suspension (wired to restaurant.Service.DispatchOrder). Optional: when nil
+	// the order is still returned to the 'searching' pool and the restaurant /
+	// stalled-dispatch sweep picks it up.
+	redispatch func(ctx context.Context, orderID string) error
+}
+
+// WithOrderRedispatcher wires the food re-dispatch hook used by SetVerification.
+func (a *AdminService) WithOrderRedispatcher(fn func(ctx context.Context, orderID string) error) *AdminService {
+	a.redispatch = fn
+	return a
 }
 
 func NewAdminService(svc *Service) *AdminService { return &AdminService{svc: svc} }
@@ -147,12 +162,32 @@ func (a *AdminService) SetVerification(ctx context.Context, adminID, driverID, n
 	if !allowed[oldStatus] && !terminalReentry[oldStatus] {
 		return codedErr(http.StatusConflict, CodeInvalidState, "cannot change verification from "+oldStatus)
 	}
-	if _, err := db.Exec(ctx, `UPDATE drivers SET verification_status=$1, updated_at=NOW() WHERE id=$2`, newStatus, driverID); err != nil {
-		return err
+	// FOOD-UAT-A-013: never approve a rider whose driving licence has expired.
+	if newStatus == "approved" {
+		expired, err := licenceExpired(ctx, db, driverID)
+		if err != nil {
+			return err
+		}
+		if expired {
+			return codedErr(http.StatusConflict, CodeInvalidState,
+				"cannot approve: the driver's licence has expired — a renewed licence document is required")
+		}
 	}
-	// A rejected/suspended driver is forced offline.
+	// FOOD-UAT-A-001: suspending/rejecting a rider releases their in-flight food
+	// deliveries back to dispatch in the same transaction as the status change, so
+	// a suspended rider can never keep an order (and pickup/handoff stay blocked).
 	if newStatus == "rejected" || newStatus == "suspended" {
-		_, _ = db.Exec(ctx, `UPDATE drivers SET status='offline' WHERE id=$1`, driverID)
+		released, err := a.suspendAndReleaseOrders(ctx, driverID, newStatus)
+		if err != nil {
+			return err
+		}
+		if a.redispatch != nil {
+			for _, oid := range released {
+				_ = a.redispatch(ctx, oid) // best-effort; order is already back in the pool
+			}
+		}
+	} else if _, err := db.Exec(ctx, `UPDATE drivers SET verification_status=$1, updated_at=NOW() WHERE id=$2`, newStatus, driverID); err != nil {
+		return err
 	}
 	return writeAudit(ctx, db, adminID, "driver.verification", "driver", driverID,
 		map[string]any{"verification_status": oldStatus}, map[string]any{"verification_status": newStatus}, reason)
@@ -455,4 +490,92 @@ func (a *AdminService) AuditFeed(ctx context.Context) ([]map[string]any, error) 
 		})
 	}
 	return out, nil
+}
+
+// foodTerminalStatuses are order states that no longer hold a rider.
+const foodTerminalStatuses = `('delivered','cancelled','refunded','rejected','dispatch_failed','delivery_failed')`
+
+// suspendAndReleaseOrders sets the driver's verification status, forces them
+// offline, and returns every non-terminal food order they held to the dispatch
+// pool (rider_id cleared, dispatch_status='searching', offers closed) — all in one
+// transaction. An order already picked up cannot be reassigned (the food is with
+// the rider), so the whole suspension is refused with an actionable error and
+// nothing changes: ops must resolve that delivery (delivery-failed / dispute) first.
+func (a *AdminService) suspendAndReleaseOrders(ctx context.Context, driverID, newStatus string) ([]string, error) {
+	tx, err := a.svc.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var userID string
+	if err := tx.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1 FOR UPDATE`, driverID).Scan(&userID); err != nil {
+		return nil, codedErr(http.StatusNotFound, CodeNotFound, "driver not found")
+	}
+	rows, err := tx.Query(ctx, `SELECT id, status FROM orders WHERE rider_id=$1 AND status NOT IN `+foodTerminalStatuses+` FOR UPDATE`, userID)
+	if err != nil {
+		return nil, err
+	}
+	var ids, pickedUp []string
+	for rows.Next() {
+		var id, st string
+		if err := rows.Scan(&id, &st); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if st == "picked_up" {
+			pickedUp = append(pickedUp, id)
+		} else {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(pickedUp) > 0 {
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf(
+			"cannot %s: rider is mid-delivery on picked-up order(s) %s — resolve them first (mark delivery failed / dispute), then retry",
+			newStatus, strings.Join(pickedUp, ", ")))
+	}
+	if _, err := tx.Exec(ctx, `UPDATE drivers SET verification_status=$1, status='offline', online_since=NULL, updated_at=NOW() WHERE id=$2`, newStatus, driverID); err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec(ctx, `UPDATE orders SET rider_id=NULL, dispatch_status='searching', assigned_at=NULL WHERE id=$1`, id); err != nil {
+			return nil, err
+		}
+	}
+	// Close every open/accepted offer this rider holds (including offers on orders
+	// they were only offered) and clear the legacy single-candidate pointer.
+	if _, err := tx.Exec(ctx, `UPDATE restaurant_delivery_offers SET status='expired', responded_at=now()
+		WHERE rider_id=$1 AND status IN ('offered','accepted')`, userID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE orders SET rider_candidate_id=NULL WHERE rider_candidate_id=$1`, userID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// licenceExpired reports whether the driver has a drivers_licence document on
+// file that is expired and no current (non-rejected, unexpired) licence. A driver
+// with no licence document at all is NOT treated as expired (legacy rows).
+func licenceExpired(ctx context.Context, db dbQuerier, driverID string) (bool, error) {
+	var expired bool
+	err := db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM driver_documents WHERE driver_id=$1 AND doc_type='drivers_licence'
+		                 AND status<>'rejected' AND (status='expired' OR expiry_date < CURRENT_DATE))
+		   AND NOT EXISTS (SELECT 1 FROM driver_documents WHERE driver_id=$1 AND doc_type='drivers_licence'
+		                 AND status NOT IN ('rejected','expired') AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE))`,
+		driverID).Scan(&expired)
+	return expired, err
+}
+
+// dbQuerier is the QueryRow subset shared by pool and tx.
+type dbQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }

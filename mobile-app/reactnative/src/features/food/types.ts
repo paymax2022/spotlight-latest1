@@ -262,7 +262,7 @@ export interface RateOrderRequest {
 
 export type OrderFrame =
   | { type: 'order.status'; payload: { order_id: string; status: OrderStatus } }
-  | { type: 'order.location'; payload: { order_id: string; lat: number; lng: number } }
+  | { type: 'order.location'; payload: { order_id: string; lat: number; lng: number; ts?: number } }
   | {
       type: 'order.message';
       payload: {

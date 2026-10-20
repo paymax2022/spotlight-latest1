@@ -414,8 +414,8 @@ export function useAssignRider() {
 
 export function usePostRiderLocation() {
   return useMutation({
-    mutationFn: ({ orderId, loc }: { orderId: string; loc: LatLng }) =>
-      food.postRiderLocation(orderId, loc),
+    mutationFn: ({ orderId, loc, lastPostedAt }: { orderId: string; loc: LatLng; lastPostedAt?: string }) =>
+      food.postRiderLocation(orderId, loc, lastPostedAt),
   });
 }
 

@@ -4,10 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // ListOpenRestaurants returns the WHOLE discovery list of open restaurants,
@@ -1091,4 +1097,46 @@ func (s *Service) SetDefaultAddress(ctx context.Context, userID, addressID strin
 func (s *Service) DeleteAddress(ctx context.Context, userID, addressID string) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM customer_addresses WHERE id=$1 AND user_id=$2`, addressID, userID)
 	return err
+}
+
+// MarkDeliveryFailed → POST /restaurant/orders/:orderId/mark-failed
+// {reason, evidence_url?} (FOOD-UAT-E-011). The assigned rider reports that the
+// drop-off could not be completed. The service moves picked_up → delivery_failed
+// and notifies the customer; per its documented design it does NOT auto-refund
+// (the food is with the rider), so resolution runs through the dispute flow.
+func (h *Handler) MarkDeliveryFailed(c *gin.Context) {
+	riderID := ginutil.UserID(c)
+	var body struct {
+		Reason      string `json:"reason" binding:"required"`
+		EvidenceURL string `json:"evidence_url"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if reason == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "a reason is required to report a failed delivery"})
+		return
+	}
+	if ev := strings.TrimSpace(body.EvidenceURL); ev != "" {
+		u, err := url.Parse(ev)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "evidence_url must be an http(s) URL"})
+			return
+		}
+		reason += " [evidence: " + ev + "]"
+	}
+	if err := h.svc.MarkDeliveryFailed(c.Request.Context(), c.Param("orderId"), riderID, reason); err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, ErrForbidden):
+			status = http.StatusForbidden
+		case errors.Is(err, ErrOrderTransitionConflict):
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": string(OrderDeliveryFailed)})
 }
