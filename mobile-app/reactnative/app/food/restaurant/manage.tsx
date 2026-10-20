@@ -303,6 +303,15 @@ function ManageStore({
           </Card>
         )}
 
+        {/* FOOD-UAT-A-010 (Option A): menu-building stays open before approval so
+            applicants can prepare; this says plainly they are not live yet. */}
+        {kybNotice && (kybStatus === 'submitted' || kybStatus === 'under_review' || kybStatus === 'needs_more_info') ? (
+          <Card>
+            <Text style={styles.payoutWarnTitle}>Pending approval — not yet accepting orders</Text>
+            <Text style={styles.muted}>You can keep building your menu while we review your business.</Text>
+          </Card>
+        ) : null}
+
         <PayoutReadinessBanner storeId={storeId} />
 
         {/* Quick links to orders + earnings. */}

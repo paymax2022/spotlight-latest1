@@ -5,7 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Admin (ops-console) READ models + service methods.
@@ -153,6 +160,8 @@ func kybStatusToApplicationStatus(kybStatus *string) string {
 		return "rejected"
 	case KYBUnderReview, KYBNeedsInfo:
 		return "in_review"
+	case KYBWithdrawn:
+		return "withdrawn" // FOOD-UAT-A-014: applicant pulled it; not reviewable
 	default: // KYBDraft, KYBSubmitted, or an unrecognized value
 		return "pending"
 	}
@@ -378,4 +387,121 @@ func (s *Service) AdminPayoutRuns(ctx context.Context) ([]AdminPayoutRun, error)
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// ── FOOD-UAT-A-008 / A-011: needs-changes + name-match (appended; the decide logic
+// above, including its FIX-2 audit, is untouched) ───────────────────────────────
+
+// nameStopwords are legal/generic words that say nothing about who owns a business.
+var nameStopwords = map[string]bool{
+	"ltd": true, "limited": true, "plc": true, "nig": true, "nigeria": true, "enterprises": true,
+	"enterprise": true, "ventures": true, "services": true, "global": true, "and": true, "the": true,
+	"restaurant": true, "restaurants": true, "kitchen": true, "foods": true, "food": true, "cafe": true,
+	"bar": true, "grill": true, "company": true, "co": true, "inc": true, "rc": true, "bn": true,
+}
+
+// nameTokens lower-cases a name and returns its distinctive tokens (>=3 letters,
+// not a generic/legal word).
+func nameTokens(n string) map[string]bool {
+	out := map[string]bool{}
+	for _, f := range strings.FieldsFunc(strings.ToLower(n), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	}) {
+		if len(f) >= 3 && !nameStopwords[f] {
+			out[f] = true
+		}
+	}
+	return out
+}
+
+func tokensIntersect(a, b map[string]bool) bool {
+	for t := range a {
+		if b[t] {
+			return true
+		}
+	}
+	return false
+}
+
+// namesRadicallyDiffer is the soft owner/business name-match control: true only when
+// the settlement account holder shares NO distinctive token with either the KYB legal
+// name or the storefront name. Empty inputs never warn (nothing to compare).
+func namesRadicallyDiffer(storefront, legal, accountName string) bool {
+	acc := nameTokens(accountName)
+	if len(acc) == 0 {
+		return false
+	}
+	base := nameTokens(legal)
+	for t := range nameTokens(storefront) {
+		base[t] = true
+	}
+	if len(base) == 0 {
+		return false
+	}
+	return !tokensIntersect(acc, base)
+}
+
+// AdminNameMatchWarning reports whether the application's names look unrelated
+// (FOOD-UAT-A-011). The schema has no owner_full_name / business_name columns, so the
+// comparison is storefront name + KYB legal_name vs the settlement account_name — the
+// pairing that matters for payouts. Advisory only: it never blocks a decision.
+func (s *Service) AdminNameMatchWarning(ctx context.Context, restaurantID string) bool {
+	var storefront, legal, acct string
+	err := s.db.QueryRow(ctx,
+		`SELECT COALESCE(r.name,''), COALESCE(k.legal_name,''), COALESCE(k.account_name,'')
+		   FROM restaurants r LEFT JOIN restaurant_kyb k ON k.restaurant_id = r.id WHERE r.id=$1`,
+		restaurantID).Scan(&storefront, &legal, &acct)
+	if err != nil {
+		return false
+	}
+	return namesRadicallyDiffer(storefront, legal, acct)
+}
+
+// AdminRequestChanges returns an application to the applicant for correction
+// (FOOD-UAT-A-008). It is the needs_more_info transition (editable by the owner, who
+// can then resubmit) driven through AdminDecideApplication so it carries the same
+// transition rules, owner notification and FIX-2 audit record.
+func (s *Service) AdminRequestChanges(ctx context.Context, restaurantID, adminID, reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		return errors.New("restaurant: a reason is required to request changes")
+	}
+	return s.AdminDecideApplication(ctx, restaurantID, adminID, "needs_info", strings.TrimSpace(reason))
+}
+
+// AdminNeedsChanges → POST /api/restaurant/admin/onboarding/:id/needs-changes {reason}.
+func (h *Handler) AdminNeedsChanges(c *gin.Context) {
+	var body struct {
+		Reason string `json:"reason"`
+		Note   string `json:"note"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	reason := body.Reason
+	if reason == "" {
+		reason = body.Note
+	}
+	if err := h.svc.AdminRequestChanges(c.Request.Context(), c.Param("id"), ginutil.UserID(c), reason); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": string(KYBNeedsInfo)})
+}
+
+// AdminDecideApplicationChecked wraps AdminDecideApplication to add the advisory
+// name_match_warning (FOOD-UAT-A-011) to the response. Same body/path contract.
+func (h *Handler) AdminDecideApplicationChecked(c *gin.Context) {
+	var body struct {
+		Decision string `json:"decision"`
+		Note     string `json:"note"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	decision := c.Param("decision")
+	if decision == "" || decision == "decision" {
+		decision = body.Decision
+	}
+	id := c.Param("id")
+	if err := h.svc.AdminDecideApplication(c.Request.Context(), id, ginutil.UserID(c), decision, body.Note); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "name_match_warning": h.svc.AdminNameMatchWarning(c.Request.Context(), id)})
 }
