@@ -9,7 +9,7 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
-import { getAppointment, submitReview, DEMO_APPOINTMENTS } from '@/api/telemedicine.api';
+import { getAppointment, submitReview, PLACEHOLDER_APPOINTMENTS } from '@/api/telemedicine.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { TeleHeader, DoctorAvatar, RatingStars } from '@/features/telemedicine/components';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -32,7 +32,7 @@ export default function ReviewScreen() {
   const { data: appt } = useQuery({
     queryKey: ['tele-appointment', id],
     queryFn:  () => getAppointment(String(id)),
-    placeholderData: DEMO_APPOINTMENTS.find((a) => a.id === id),
+    placeholderData: PLACEHOLDER_APPOINTMENTS?.find((a) => a.id === id),
   });
 
   const { mutate, isPending, error } = useMutation({

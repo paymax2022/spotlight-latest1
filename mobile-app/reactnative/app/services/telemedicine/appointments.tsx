@@ -9,7 +9,7 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
-import { getAppointments, DEMO_APPOINTMENTS } from '@/api/telemedicine.api';
+import { getAppointments, PLACEHOLDER_APPOINTMENTS } from '@/api/telemedicine.api';
 import { TeleHeader, DoctorAvatar, ConsultStatusBadge } from '@/features/telemedicine/components';
 import { IntakeStatusBadge } from '@/features/health/components';
 import { useApptIntake } from '@/features/health/hooks';
@@ -24,7 +24,7 @@ export default function AppointmentsScreen() {
   const { data: appointments = [], isLoading } = useQuery({
     queryKey: ['tele-appointments'],
     queryFn:  getAppointments,
-    placeholderData: DEMO_APPOINTMENTS,
+    placeholderData: PLACEHOLDER_APPOINTMENTS,
   });
 
   const filtered = appointments.filter((a) =>

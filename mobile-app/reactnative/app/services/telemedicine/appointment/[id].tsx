@@ -12,7 +12,7 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
-import { getAppointment, cancelAppointment, formatKobo, DEMO_APPOINTMENTS } from '@/api/telemedicine.api';
+import { getAppointment, cancelAppointment, formatKobo, PLACEHOLDER_APPOINTMENTS } from '@/api/telemedicine.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { TeleHeader, DoctorAvatar, ConsultStatusBadge } from '@/features/telemedicine/components';
 import { IntakeStatusBadge } from '@/features/health/components';
@@ -35,7 +35,7 @@ export default function AppointmentDetailScreen() {
   const { data: appt, isLoading } = useQuery({
     queryKey: ['tele-appointment', id],
     queryFn:  () => getAppointment(String(id)),
-    placeholderData: DEMO_APPOINTMENTS.find((a) => a.id === id),
+    placeholderData: PLACEHOLDER_APPOINTMENTS?.find((a) => a.id === id),
   });
 
   // Pre-Consult intake gate (M1 status card + consult guard).
