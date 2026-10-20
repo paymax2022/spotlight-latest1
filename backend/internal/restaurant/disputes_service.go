@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
@@ -333,11 +334,46 @@ func (s *Service) GetFoodDispute(ctx context.Context, disputeID, actorID string)
 	if err != nil {
 		return nil, err
 	}
-	customer, owner, rider, perr := s.orderParties(ctx, d.OrderID)
-	if perr == nil && classifyOrderActor(actorID, customer, owner, rider) == roleNone {
+	// Fail closed (FOOD-UAT-F-010): the party check must never be skipped. Only a
+	// genuinely missing order/restaurant is "not found"; any other lookup error
+	// propagates as an internal error rather than leaking the dispute.
+	customer, owner, rider, perr := s.disputeOrderParties(ctx, d.OrderID)
+	if perr != nil {
+		return nil, perr
+	}
+	if classifyOrderActor(actorID, customer, owner, rider) == roleNone {
 		return nil, fmt.Errorf("%w: not a party to this dispute", ErrForbidden)
 	}
 	return d, nil
+}
+
+// ErrDisputeLookup marks an infrastructure/data failure while resolving a
+// dispute's order parties (maps to HTTP 500, never to a successful read).
+var ErrDisputeLookup = errors.New("restaurant: dispute lookup failed")
+
+// disputeOrderParties is orderParties with error fidelity: pgx.ErrNoRows becomes
+// ErrDisputeInvalid (422, dispute has no resolvable order) and every other error is
+// wrapped in ErrDisputeLookup.
+func (s *Service) disputeOrderParties(ctx context.Context, orderID string) (customer, owner, rider string, err error) {
+	var restaurantID string
+	var riderPtr *string
+	if err = s.db.QueryRow(ctx, `SELECT customer_id, restaurant_id, rider_id FROM orders WHERE id=$1`, orderID).
+		Scan(&customer, &restaurantID, &riderPtr); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", "", fmt.Errorf("%w: order not found", ErrDisputeInvalid)
+		}
+		return "", "", "", fmt.Errorf("%w: order: %v", ErrDisputeLookup, err)
+	}
+	if err = s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&owner); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", "", fmt.Errorf("%w: restaurant not found", ErrDisputeInvalid)
+		}
+		return "", "", "", fmt.Errorf("%w: restaurant: %v", ErrDisputeLookup, err)
+	}
+	if riderPtr != nil {
+		rider = *riderPtr
+	}
+	return customer, owner, rider, nil
 }
 
 // loadFoodDispute reads the shared ticket + this module's resolution record.
@@ -690,6 +726,8 @@ func disputeErrCode(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrDisputeInvalid):
 		return http.StatusUnprocessableEntity
+	case errors.Is(err, ErrDisputeLookup):
+		return http.StatusInternalServerError
 	default:
 		return http.StatusBadRequest
 	}

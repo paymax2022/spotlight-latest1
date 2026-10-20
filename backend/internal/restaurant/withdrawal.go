@@ -191,6 +191,13 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 		return nil, fmt.Errorf("restaurant: withdrawal resolve bank account: %w", err)
 	}
 
+	// KYB gate (FOOD-UAT-F-004, fail-closed): a merchant whose business
+	// verification is not currently approved (never approved, or revoked later)
+	// cannot move wallet money out. Mirrors the store-open gate in SetAvailability.
+	if err := s.assertOwnerKYBApproved(ctx, s.db, ownerID); err != nil {
+		return nil, err
+	}
+
 	// Tier guard (fail-closed): Tier 0 wallet disabled → blocked; over daily cap → blocked.
 	if err := s.tiers.EnforceWalletDebitLimit(ctx, ownerID, in.AmountKobo); err != nil {
 		return nil, err
@@ -230,6 +237,12 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 		_ = tx.Rollback(ctx)
 		existing.AlreadyProcessed = true
 		return existing, nil
+	}
+
+	// KYB re-check INSIDE the tx (FOOD-UAT-F-004): closes the window in which an
+	// admin revokes KYB between the pooled gate above and the reserve posting.
+	if err := s.assertOwnerKYBApproved(ctx, tx, ownerID); err != nil {
+		return nil, err
 	}
 
 	// Daily-cap re-check INSIDE the tx, under the wallet lock (F7): the pooled
@@ -335,6 +348,26 @@ func (s *Service) disburse(ctx context.Context, req WithdrawalDisburseRequest) (
 	return d.Disburse(ctx, req)
 }
 
+// kybQuerier is satisfied by both the pool and a pgx.Tx.
+type kybQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// assertOwnerKYBApproved fails closed with ErrKYBNotApproved unless the owner has
+// at least one restaurant whose kyb_status is currently 'approved'.
+func (s *Service) assertOwnerKYBApproved(ctx context.Context, q kybQuerier, ownerID string) error {
+	var ok bool
+	if err := q.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM restaurants WHERE owner_id=$1 AND kyb_status=$2)`,
+		ownerID, string(KYBApproved)).Scan(&ok); err != nil {
+		return fmt.Errorf("restaurant: withdrawal kyb check: %w", err)
+	}
+	if !ok {
+		return ErrKYBNotApproved
+	}
+	return nil
+}
+
 // MarkWithdrawalPaid settles a reserved withdrawal after the provider confirms
 // the payout landed. It posts the balanced settle leg (DR suspense → CR
 // provider_clearing — the money has left the platform; the wallet is NOT touched
@@ -373,6 +406,13 @@ func (s *Service) MarkWithdrawalPaid(ctx context.Context, withdrawalID, provider
 	}
 	if w.Status != WithdrawalStatusProcessing && w.Status != WithdrawalStatusPending {
 		return nil, ErrWithdrawNotReady // e.g. already reversed — cannot pay
+	}
+	// KYB re-check at settlement (FOOD-UAT-F-004): KYB may have been revoked between
+	// request and processing. Refuse BEFORE any ledger post; the row stays
+	// processing with funds still parked in suspense, so ops can mark it failed
+	// (reversal back to the merchant wallet) or re-run once KYB is reinstated.
+	if err := s.assertOwnerKYBApproved(ctx, tx, w.UserID); err != nil {
+		return nil, err
 	}
 
 	// Balanced settle leg (DR suspense → CR provider_clearing). Posted under the row

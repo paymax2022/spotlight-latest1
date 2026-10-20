@@ -94,7 +94,7 @@ func withdrawalErrStatus(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, ErrWithdrawNoBankAccount), errors.Is(err, ErrWithdrawNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, ErrWithdrawalsDisabled),
+	case errors.Is(err, ErrWithdrawalsDisabled), errors.Is(err, ErrKYBNotApproved),
 		errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
 		return http.StatusForbidden
 	case errors.Is(err, ledger.ErrInsufficientFunds):

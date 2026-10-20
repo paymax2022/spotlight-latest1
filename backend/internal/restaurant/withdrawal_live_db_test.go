@@ -79,6 +79,7 @@ func withdrawalFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, fu
 	// Tier 3 is unlimited — these tests are about the withdrawal reserve/settle
 	// mechanics, not the tier cap (that is covered separately, e.g. tierlimit_live_db_test.go).
 	seedKYCTier(t, ctx, pool, merchant, 3)
+	seedKYBRestaurant(t, ctx, pool, merchant, "approved")
 
 	if fundKobo > 0 {
 		revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
@@ -404,4 +405,20 @@ func TestRequestWithdrawal_RefusedWhenFeatureFlagOff(t *testing.T) {
 	if !errors.Is(err, ErrWithdrawalsDisabled) {
 		t.Fatalf("err = %v, want ErrWithdrawalsDisabled", err)
 	}
+}
+
+// seedKYBRestaurant gives owner a restaurant with the given kyb_status (FOOD-UAT-F-004:
+// withdrawals now require an approved-KYB restaurant). Returns the restaurant id.
+func seedKYBRestaurant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, owner, kyb string) string {
+	t.Helper()
+	id := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO restaurants (id, owner_id, name, address, is_open, kyb_status) VALUES ($1,$2,'Withdraw Kitchen','1 St',FALSE,$3)`,
+		id, owner, kyb); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM restaurants WHERE id=$1`, id)
+	})
+	return id
 }
