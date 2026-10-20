@@ -1971,6 +1971,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.POST("/reviews/:id/hide", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminHideReview)
 		restAdmin.POST("/reviews/:id/restore", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminRestoreReview)
 		restAdmin.POST("/reviews/:id/flag", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminFlagReview)
+		// FOOD-UAT-G-006 / G-007: read-only order trace + GMV / net-revenue / cohort reports.
+		restAdmin.GET("/orders/:id/trace", middleware.RequirePermission(rbac, "restaurant.admin.trace"), restaurantHandler.AdminOrderTrace)
+		restAdmin.GET("/reports/gmv", middleware.RequirePermission(rbac, "restaurant.admin.reports"), restaurantHandler.AdminReportGMV)
+		restAdmin.GET("/reports/net-revenue", middleware.RequirePermission(rbac, "restaurant.admin.reports"), restaurantHandler.AdminReportNetRevenue)
+		restAdmin.GET("/reports/cohorts", middleware.RequirePermission(rbac, "restaurant.admin.reports"), restaurantHandler.AdminReportCohorts)
+		restAdmin.GET("/reports/export", middleware.RequirePermission(rbac, "restaurant.admin.reports"), restaurantHandler.AdminReportExport)
 		restAdmin.POST("/orders/:orderId/unlock-codes", middleware.RequirePermission(rbac, "restaurant.admin.unlock_order_code"), restaurantHandler.AdminUnlockOrderCodes) // FOOD-UAT-E-008
 		// Single wildcard segment handles all three shapes the admin UI may post:
 		//   /onboarding/:id/decision  (body {decision, note})
