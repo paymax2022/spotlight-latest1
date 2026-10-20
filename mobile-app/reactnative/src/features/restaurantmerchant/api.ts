@@ -5,6 +5,9 @@
 //   GET    /restaurant/:id                           → { restaurant, categories:[{items}] }
 //   PATCH  /restaurant/:id                           → update profile
 //   PATCH  /restaurant/:id/availability              → open/close
+//   GET    /restaurant/:id/hours                     → weekly windows + open_now
+//   PUT    /restaurant/:id/hours                     → replace the whole schedule
+//   POST   /restaurant/:id/images/presign            → short-lived PUT URL (logo|banner|menu)
 //   POST   /restaurant/:id/menu/categories           → add category
 //   DELETE /restaurant/:id/menu/categories/:categoryId
 //   POST   /restaurant/:id/menu/items                → add item
@@ -16,8 +19,10 @@
 
 import { mockAllowed } from '@/config/mockPolicy';
 import type { TaxonomyCategory, TaxonomyItemPayload } from './taxonomy';
+import type { StoreImageKind } from './storeImages';
 import { api } from '@/api/client';
 import { buildUpdateStoreBody } from './packagingPrice';
+import { formatMinute } from './hours';
 import type {
   MerchantStore,
   OutletPayoutReadiness,
@@ -30,6 +35,8 @@ import type {
   UpdateStoreInput,
   MerchantEarnings,
   RestaurantKYB,
+  StoreHours,
+  StoreHourWindow,
 } from './types';
 
 export const USE_MOCK =
@@ -261,25 +268,32 @@ export async function deleteCategory(id: string, categoryId: string): Promise<vo
 
 export async function createItem(
   id: string,
-  input: { categoryId: string; name: string; description?: string; priceKobo: number },
+  input: { categoryId: string; name: string; description?: string; priceKobo: number; imageUrl?: string },
 ): Promise<MerchantMenuItem> {
   if (USE_MOCK) {
     await delay();
     const it: MerchantMenuItem = {
       id: nextId('i'), categoryId: input.categoryId, name: input.name,
-      description: input.description ?? '', priceKobo: input.priceKobo, isAvailable: true,
+      description: input.description ?? '', priceKobo: input.priceKobo,
+      imageUrl: input.imageUrl ?? null, isAvailable: true,
     };
     mockCats = mockCats.map((c) => (c.id === input.categoryId ? { ...c, items: [...c.items, it] } : c));
     return it;
   }
-  const body = { category_id: input.categoryId, name: input.name, description: input.description, price_kobo: input.priceKobo };
+  const body = {
+    category_id: input.categoryId,
+    name: input.name,
+    description: input.description,
+    price_kobo: input.priceKobo,
+    ...(input.imageUrl ? { image_url: input.imageUrl } : {}),
+  };
   return mapItem(unwrap<any>(await api.post(`${BASE}/${enc(id)}/menu/items`, body)));
 }
 
 export async function updateItem(
   id: string,
   itemId: string,
-  patch: { priceKobo?: number; isAvailable?: boolean },
+  patch: { priceKobo?: number; isAvailable?: boolean; imageUrl?: string },
 ): Promise<MerchantMenuItem> {
   if (USE_MOCK) {
     await delay();
@@ -288,7 +302,12 @@ export async function updateItem(
       ...c,
       items: c.items.map((it) => {
         if (it.id !== itemId) return it;
-        updated = { ...it, priceKobo: patch.priceKobo ?? it.priceKobo, isAvailable: patch.isAvailable ?? it.isAvailable };
+        updated = {
+          ...it,
+          priceKobo: patch.priceKobo ?? it.priceKobo,
+          isAvailable: patch.isAvailable ?? it.isAvailable,
+          imageUrl: patch.imageUrl !== undefined ? (patch.imageUrl || null) : it.imageUrl,
+        };
         return updated;
       }),
     }));
@@ -297,6 +316,9 @@ export async function updateItem(
   const body: Record<string, unknown> = {};
   if (patch.priceKobo !== undefined) body.price_kobo = patch.priceKobo;
   if (patch.isAvailable !== undefined) body.is_available = patch.isAvailable;
+  // Only sent when the owner touched the photo. '' clears it — the backend maps an
+  // empty string to NULL, while omitting the field leaves the current picture alone.
+  if (patch.imageUrl !== undefined) body.image_url = patch.imageUrl;
   return mapItem(unwrap<any>(await api.patch(`${BASE}/${enc(id)}/menu/items/${enc(itemId)}`, body)));
 }
 
@@ -405,7 +427,7 @@ export async function presignKYBDocument(
   }
 }
 
-/** The server has no usable object storage, so a logo/banner can't be uploaded. Retrying can't help. */
+/** The server has no usable object storage, so a picture can't be uploaded. Retrying can't help. */
 export class StoreImageUploadsUnavailableError extends Error {
   constructor() {
     super('Picture uploads are not available right now. Please try again later.');
@@ -422,12 +444,14 @@ export interface StoreImagePresign {
 }
 
 /**
- * Ask the backend for a short-lived presigned PUT URL for the store's logo or banner. The
- * backend chooses the object key and binds the Content-Type into the signature, so the
- * exact `contentType` returned here must be sent on the PUT.
+ * Ask the backend for a short-lived presigned PUT URL for one store picture — the outlet's
+ * logo or banner, or a menu item's photo (`kind: 'menu'`, which the server gates on the
+ * menu permission instead of the store one). The backend chooses the object key and binds
+ * the Content-Type into the signature, so the exact `contentType` returned here must be
+ * sent on the PUT.
  */
 export async function presignStoreImage(
-  id: string, kind: 'logo' | 'banner', fileName: string, contentType: string,
+  id: string, kind: StoreImageKind, fileName: string, contentType: string,
 ): Promise<StoreImagePresign> {
   try {
     const raw = unwrap<any>(await api.post(
@@ -494,6 +518,46 @@ export async function createTaxonomyItem(id: string, input: TaxonomyItemPayload)
     name: input.name,
     price_kobo: input.priceKobo,
     ...(input.prepTimeMinutes !== undefined ? { prep_time_minutes: input.prepTimeMinutes } : {}),
+    ...(input.imageUrl ? { image_url: input.imageUrl } : {}),
   };
   return mapItem(unwrap<any>(await api.post(`${BASE}/${enc(id)}/menu/items`, body)));
+}
+
+/**
+ * The outlet's weekly trading hours plus whether it can take an order right now.
+ * `openNow` is the server's own answer — the manual switch, the schedule and any dated
+ * holiday override all feed it — so it is the same verdict the order path will reach.
+ * A store with no windows at all has no schedule: `windows` is empty and the switch alone
+ * decides, which is exactly how an outlet that never set hours behaves today.
+ */
+export async function getBusinessHours(id: string): Promise<StoreHours> {
+  if (USE_MOCK) { await delay(); return { openNow: mockStore.isOpen, windows: [] }; }
+  const raw = unwrap<any>(await api.get(`${BASE}/${enc(id)}/hours`));
+  return {
+    openNow: raw?.open_now === true,
+    windows: ((raw?.windows ?? []) as any[]).map((w) => ({
+      dayOfWeek: w.day_of_week,
+      open: w.open,
+      close: w.close,
+    })),
+  };
+}
+
+/**
+ * Replace the whole weekly schedule in one call — the PUT is a full replace, so the
+ * windows sent here are the entire week the editor shows and anything dropped is gone.
+ * An empty list clears the schedule and leaves the outlet governed by its switch alone.
+ */
+export async function setBusinessHours(id: string, windows: StoreHourWindow[]): Promise<StoreHourWindow[]> {
+  if (USE_MOCK) { await delay(); return windows; }
+  const raw = unwrap<any>(await api.put(`${BASE}/${enc(id)}/hours`, {
+    windows: windows.map((w) => ({ day_of_week: w.dayOfWeek, open: w.open, close: w.close })),
+  }));
+  return ((raw?.windows ?? []) as any[]).map((w) => ({
+    dayOfWeek: w.day_of_week,
+    // The server answers with minutes-of-day after normalising; render them back to the
+    // HH:MM the editor works in, so what the owner sees is what was stored.
+    open: formatMinute(w.open_minute),
+    close: formatMinute(w.close_minute),
+  }));
 }

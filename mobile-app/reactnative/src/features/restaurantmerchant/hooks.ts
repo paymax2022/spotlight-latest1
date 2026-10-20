@@ -4,8 +4,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as merchant from './api';
 import { uploadKYBDocument, type KYBPickedFile } from './kybUpload';
+import { uploadStoreImage, type PickedStoreImage } from './storeImageUpload';
 import type { StaffMember } from './types';
-import type { CreateStoreInput, UpdateStoreInput } from './types';
+import type { CreateStoreInput, UpdateStoreInput, StoreHourWindow } from './types';
 
 const KEY = 'restaurant-merchant';
 
@@ -26,11 +27,70 @@ export function useStoreDetail(id?: string) {
   });
 }
 
-export function useCreateStore() {
+/** Why the pictures didn't attach, in words the owner can act on. Both upload errors the
+ *  picker raises already carry owner-facing text. */
+function uploadFailureText(e: unknown): string {
+  return e instanceof Error ? e.message : 'The picture could not be uploaded.';
+}
+
+/**
+ * Create an outlet, then attach the logo and banner chosen for it.
+ *
+ * The presign needs a store id, so the pictures picked during set-up can only be sent
+ * once the outlet exists. A failed upload therefore does NOT undo the outlet — the
+ * screen is told about it separately, because "your outlet is created, but the banner
+ * didn't take" is the truth and the owner can retry from Store details.
+ */
+export function useCreateStoreWithImages() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: CreateStoreInput) => merchant.createStore(input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+    mutationFn: async (input: { store: CreateStoreInput; logo?: PickedStoreImage | null; banner?: PickedStoreImage | null }) => {
+      const created = await merchant.createStore(input.store);
+      const patch: UpdateStoreInput = {};
+      try {
+        if (input.logo) patch.logoUrl = await uploadStoreImage(created.id, 'logo', input.logo);
+        if (input.banner) patch.bannerUrl = await uploadStoreImage(created.id, 'banner', input.banner);
+        if (patch.logoUrl || patch.bannerUrl) await merchant.updateStore(created.id, patch);
+        qc.invalidateQueries({ queryKey: [KEY] });
+        return { store: created, imageError: null as string | null };
+      } catch (e) {
+        qc.invalidateQueries({ queryKey: [KEY] });
+        return { store: created, imageError: uploadFailureText(e) };
+      }
+    },
+  });
+}
+
+/** Send a picked dish photo to storage for this outlet; returns the key to save on the item. */
+export function useUploadItemImage(storeId: string) {
+  return useMutation({
+    mutationFn: (file: PickedStoreImage) => uploadStoreImage(storeId, 'menu', file),
+  });
+}
+
+/** The outlet's weekly trading hours, with the server's own open-now verdict. */
+export function useBusinessHours(id?: string) {
+  return useQuery({
+    queryKey: [KEY, 'hours', id],
+    queryFn: () => merchant.getBusinessHours(id as string),
+    enabled: Boolean(id),
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * Replace the whole week. The PUT is a full replace, so the windows sent are the entire
+ * schedule the editor shows; the detail query is invalidated too because the store card
+ * reads open-now style facts from the same screen.
+ */
+export function useSetBusinessHours(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (windows: StoreHourWindow[]) => merchant.setBusinessHours(id, windows),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'hours', id] });
+      qc.invalidateQueries({ queryKey: [KEY, 'detail', id] });
+    },
   });
 }
 
@@ -154,7 +214,7 @@ export function useDeleteCategory(id: string) {
 export function useCreateItem(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { categoryId: string; name: string; description?: string; priceKobo: number }) =>
+    mutationFn: (input: { categoryId: string; name: string; description?: string; priceKobo: number; imageUrl?: string }) =>
       merchant.createItem(id, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', id] }),
   });
@@ -163,7 +223,7 @@ export function useCreateItem(id: string) {
 export function useUpdateItem(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { itemId: string; patch: { priceKobo?: number; isAvailable?: boolean } }) =>
+    mutationFn: (args: { itemId: string; patch: { priceKobo?: number; isAvailable?: boolean; imageUrl?: string } }) =>
       merchant.updateItem(id, args.itemId, args.patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', id] }),
   });
