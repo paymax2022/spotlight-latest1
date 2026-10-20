@@ -294,6 +294,10 @@ export async function placeOrder(req: PlaceOrderRequest): Promise<Order> {
           packages: req.packages?.map((p) => ({ items: p.items.map((i) => ({ item_id: i.itemId, qty: i.qty })) })),
           delivery_address: req.deliveryAddress,
           delivery_location: req.deliveryLocation,
+          // FOOD-UAT-D-007: omitted for delivery so legacy requests are byte-identical.
+          ...(req.orderType && req.orderType !== 'delivery' ? { order_type: req.orderType } : {}),
+          ...(req.scheduledFor ? { scheduled_for: req.scheduledFor } : {}),
+          ...(req.tableNumber ? { table_number: req.tableNumber } : {}),
         },
         idemHeader(req.idempotencyKey),
       ),
@@ -657,4 +661,69 @@ export async function loadCartFromServer(): Promise<SavedCart | null> {
     console.warn('Failed to load cart from server:', err);
     return null; // fallback to local storage
   }
+}
+
+// ── FOOD-UAT-D-007: pickup / dine-in (merchant + customer helpers) ───────────
+// Appended only; the rider API above is untouched.
+
+/**
+ * Merchant verifies the customer's pickup code at the counter.
+ * POST `${BASE}/orders/:id/pickup` { code } — the same route the rider uses.
+ * BACKEND GAP: the Go ConfirmPickup (dispatch.go) still requires the caller to be
+ * the assigned rider, so for pickup_* orders this is refused until the service
+ * accepts the restaurant owner for non-delivery order types. Lockout (429) from
+ * VerifyOrderCode surfaces as a thrown error.
+ */
+export async function confirmPickupAsMerchant(orderId: string, code: string): Promise<Order> {
+  if (USE_MOCK) {
+    await delay(420);
+    return mockConfirmPickup(orderId, code);
+  }
+  return mapOrder(
+    unwrap<Order>(await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/pickup`, { code })),
+  );
+}
+
+/**
+ * Restaurant assigns/changes a dine-in table. PATCH `${BASE}/:rid/orders/:id/table`.
+ * BACKEND GAP: no such route in W6-B (table_number is set only at placement).
+ */
+export async function assignTable(restaurantId: string, orderId: string, tableNumber: string): Promise<Order> {
+  const table = tableNumber.trim();
+  if (!table) throw new Error('Enter a table number.');
+  if (USE_MOCK) {
+    await delay(300);
+    return { ...(await getOrder(orderId)), tableNumber: table };
+  }
+  return mapOrder(
+    unwrap<Order>(
+      await api.patch(
+        `${BASE}/${encodeURIComponent(restaurantId)}/orders/${encodeURIComponent(orderId)}/table`,
+        { table_number: table },
+      ),
+    ),
+  );
+}
+
+/** Dine-in: preparing -> served (existing status route; backend FSM allows it). */
+export function markServed(restaurantId: string, orderId: string): Promise<Order> {
+  return setOrderStatus(restaurantId, orderId, 'served');
+}
+
+/** Dine-in: served -> closed (existing status route; backend FSM allows it). */
+export function markClosed(restaurantId: string, orderId: string): Promise<Order> {
+  return setOrderStatus(restaurantId, orderId, 'closed');
+}
+
+/**
+ * Customer signals "I'm here" for a pickup order. POST `${BASE}/orders/:id/arrived`.
+ * BACKEND GAP: route not present in W6-B; the screen degrades to a local
+ * acknowledgement + chat nudge when this 404s (see pickup-code.tsx).
+ */
+export async function signalArrival(orderId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(300);
+    return;
+  }
+  await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/arrived`, {});
 }

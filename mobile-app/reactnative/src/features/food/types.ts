@@ -149,7 +149,10 @@ export type OrderStatus =
   | 'picked_up'
   | 'delivered'
   | 'cancelled'
-  | 'no_rider';
+  | 'no_rider'
+  // Dine-in lifecycle (FOOD-UAT-D-007): preparing -> served -> closed.
+  | 'served'
+  | 'closed';
 
 /**
  * Server-side dispatch lifecycle, independent of the order status. Marking an
@@ -208,12 +211,30 @@ export interface Order {
    * deliveryCode (rider → customer, at the other end of the trip).
    */
   pickupCode?: string | null;
+  /** Fulfilment mode (FOOD-UAT-D-007). Absent on legacy rows => delivery. */
+  orderType?: OrderType;
+  /** Dine-in table (customer preference at placement; restaurant may reassign). */
+  tableNumber?: string | null;
+  /** Booked pickup slot (ISO) for `pickup_scheduled`. */
+  scheduledFor?: string | null;
+  /** ISO timestamp the customer signalled "I'm here" (pickup). */
+  arrivedAt?: string | null;
   /** ISO timestamps. */
   createdAt: string;
   deliveredAt?: string | null;
   rated?: boolean;
   /** Customer-facing role label for the orders list. */
   role?: OrderRole;
+}
+
+/** Mirrors backend `restaurant.OrderType` (order_types.go). */
+export type OrderType = 'delivery' | 'pickup_now' | 'pickup_scheduled' | 'dine_in';
+
+export const ORDER_TYPES: readonly OrderType[] = ['delivery', 'pickup_now', 'pickup_scheduled', 'dine_in'];
+
+export interface DineInDetails {
+  partySize: number;
+  tablePreference?: string;
 }
 
 export type OrderRole = 'customer' | 'restaurant' | 'rider';
@@ -251,6 +272,12 @@ export interface PlaceOrderRequest {
   packages?: { items: { itemId: string; qty: number }[] }[];
   deliveryAddress: string;
   deliveryLocation?: LatLng | null;
+  /** FOOD-UAT-D-007. Defaults to delivery server-side when omitted. */
+  orderType?: OrderType;
+  /** ISO instant; required for pickup_scheduled, at most 24h ahead. */
+  scheduledFor?: string;
+  /** Required by the backend for dine_in. */
+  tableNumber?: string;
   idempotencyKey: string;
 }
 

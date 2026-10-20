@@ -200,6 +200,10 @@ export function mapOrder(input: unknown): Order {
   const deliveryCode = pick(raw, 'deliveryCode', 'delivery_code');
   const pickupCode = pick(raw, 'pickupCode', 'pickup_code');
   const riderId = pick(raw, 'riderId', 'rider_id');
+  const orderType = pick(raw, 'orderType', 'order_type');
+  const tableNumber = pick(raw, 'tableNumber', 'table_number');
+  const scheduledFor = pick(raw, 'scheduledFor', 'scheduled_for');
+  const arrivedAt = pick(raw, 'arrivedAt', 'arrived_at');
   // /api/finance/restaurant/orders/:id). Defaulting it to '' would be worse
   // than leaving it alone: app/food/orders/[orderId]/rate.tsx reads
   // `order?.restaurantName ?? 'the restaurant'`, and ?? does not catch an empty
@@ -223,6 +227,10 @@ export function mapOrder(input: unknown): Order {
     deliveryCode: (deliveryCode as string | null) ?? null,
     pickupCode: (pickupCode as string | null) ?? null,
     riderId: (riderId as string | null) ?? null,
+    orderType: (orderType as Order['orderType']) ?? 'delivery',
+    tableNumber: (tableNumber as string | null) ?? null,
+    scheduledFor: (scheduledFor as string | null) ?? null,
+    arrivedAt: (arrivedAt as string | null) ?? null,
   };
 }
 

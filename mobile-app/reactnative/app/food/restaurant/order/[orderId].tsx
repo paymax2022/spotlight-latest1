@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -12,7 +12,8 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
-import { useOrder, useSetOrderStatus, useAssignRider, useRedispatch, useCancelOrder } from '@/features/food/hooks';
+import { useOrder, useSetOrderStatus, useAssignRider, useRedispatch, useCancelOrder, useConfirmPickupAsMerchant, useAssignTable, useMarkServed, useMarkClosed } from '@/features/food/hooks';
+import { merchantActions, orderTypeOf, usesRider, ORDER_TYPE_LABEL } from '@/features/food/orderType';
 import { useOrderRealtime } from '@/features/food/useOrderRealtime';
 import { OrderChatThread, FoodStatusBadge, RiderInfoCard } from '@/features/food/components';
 import { formatNaira, STATUS_LABEL, DISPATCH_LABEL, normalizeStatus, toFoodError } from '@/features/food/utils';
@@ -31,9 +32,45 @@ export default function RestaurantOrderScreen() {
   const assignRider = useAssignRider();
   const redispatch = useRedispatch();
   const cancelOrder = useCancelOrder();
+  const verifyPickup = useConfirmPickupAsMerchant();
+  const assignTable = useAssignTable();
+  const markServed = useMarkServed();
+  const markClosed = useMarkClosed();
+  const [verifyCode, setVerifyCode] = useState('');
+  const [tableInput, setTableInput] = useState('');
 
   const status = realtime.status ?? order?.status;
   const dispatchStatus = order?.dispatchStatus;
+  const type = orderTypeOf(order);
+  const acts = order ? merchantActions({ orderType: type, status: status ?? order.status }) : null;
+
+  const onVerify = () => {
+    if (!order || !/^\d{4,8}$/.test(verifyCode.trim())) {
+      alertAsync({ title: 'Enter the code', message: 'Ask the customer for their numeric pickup code.' });
+      return;
+    }
+    verifyPickup.mutate(
+      { orderId: order.id, code: verifyCode.trim() },
+      {
+        onSuccess: () => setVerifyCode(''),
+        onError: (e) => alertAsync({ title: 'Code not accepted', message: toFoodError(e).message }),
+      },
+    );
+  };
+
+  const onAssignTable = () => {
+    if (!order || !tableInput.trim()) return;
+    assignTable.mutate(
+      { restaurantId: order.restaurantId, orderId: order.id, tableNumber: tableInput.trim() },
+      {
+        onSuccess: () => setTableInput(''),
+        onError: (e) => alertAsync({ title: 'Could not assign table', message: toFoodError(e).message }),
+      },
+    );
+  };
+
+  const onServed = () => order && markServed.mutate({ restaurantId: order.restaurantId, orderId: order.id }, { onError: (e) => alertAsync({ title: 'Could not update', message: toFoodError(e).message }) });
+  const onClosed = () => order && markClosed.mutate({ restaurantId: order.restaurantId, orderId: order.id }, { onError: (e) => alertAsync({ title: 'Could not update', message: toFoodError(e).message }) });
 
   const advance = (next: OrderStatus) => {
     if (!order) return;
@@ -96,9 +133,26 @@ export default function RestaurantOrderScreen() {
           ) : (
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
               <View style={[s.statusCard, shadow1]}>
-                <FoodStatusBadge status={status} />
+                <View style={s.badgeRow}>
+                  <FoodStatusBadge status={status} />
+                  {type !== 'delivery' ? (
+                    <View style={s.typeBadge} testID="order-type-badge">
+                      <Text style={s.typeBadgeText}>{ORDER_TYPE_LABEL[type]}</Text>
+                    </View>
+                  ) : null}
+                </View>
                 <Text style={s.headline}>{STATUS_LABEL[status]}</Text>
+                {type === 'pickup_scheduled' && order.scheduledFor ? (
+                  <Text style={s.addr}>Pickup slot: {new Date(order.scheduledFor).toLocaleString()}</Text>
+                ) : null}
               </View>
+
+              {type === 'dine_in' ? (
+                <View style={[s.codeCard, shadow1]} testID="table-card">
+                  <Text style={s.codeTitle}>Table</Text>
+                  <Text style={s.codeValue}>{order.tableNumber ?? 'Unassigned'}</Text>
+                </View>
+              ) : null}
 
               <View style={[s.card, shadow1]}>
                 <Text style={s.cardTitle}>Items</Text>
@@ -116,12 +170,12 @@ export default function RestaurantOrderScreen() {
                   <Text style={s.totalLabel}>Total</Text>
                   <Text style={s.totalValue}>{formatNaira(order.totalKobo)}</Text>
                 </View>
-                <Text style={s.addr}>Deliver to: {order.deliveryAddress}</Text>
+                {type === 'delivery' ? <Text style={s.addr}>Deliver to: {order.deliveryAddress}</Text> : null}
               </View>
 
               {/* Pickup code: hand this to the rider when they arrive — they must enter
                   it to confirm pickup. Distinct from the customer's delivery code. */}
-              {normalizeStatus(status) === 'ready' && order.pickupCode ? (
+              {usesRider(type) && normalizeStatus(status) === 'ready' && order.pickupCode ? (
                 <View style={[s.codeCard, shadow1]}>
                   <View style={s.codeHead}>
                     <Icons.KeyRound size={18} color={Colors.tertiaryContainer} strokeWidth={2} />
@@ -133,7 +187,7 @@ export default function RestaurantOrderScreen() {
               ) : null}
 
               {/* Dispatch state — after 'ready' the server auto-dispatches riders. */}
-              {normalizeStatus(status) === 'ready' && dispatchStatus && dispatchStatus !== 'none' ? (
+              {usesRider(type) && normalizeStatus(status) === 'ready' && dispatchStatus && dispatchStatus !== 'none' ? (
                 <View style={[s.dispatchCard, shadow1]}>
                   {dispatchStatus === 'searching' ? (
                     <Icons.Bike size={18} color={Colors.secondary} strokeWidth={2} />
@@ -144,9 +198,42 @@ export default function RestaurantOrderScreen() {
                 </View>
               ) : null}
 
-              {order.rider ? (
+              {usesRider(type) && order.rider ? (
                 <View style={s.block}>
                   <RiderInfoCard rider={order.rider} />
+                </View>
+              ) : null}
+
+              {acts?.canVerifyCode ? (
+                <View style={[s.card, shadow1]}>
+                  <Text style={s.cardTitle}>Verify customer code</Text>
+                  <TextInput
+                    value={verifyCode}
+                    onChangeText={(t) => setVerifyCode(t.replace(/\D/g, '').slice(0, 8))}
+                    keyboardType="number-pad"
+                    placeholder="Customer's pickup code"
+                    maxLength={8}
+                    style={s.input}
+                    testID="verify-code-input"
+                    placeholderTextColor={Colors.onSurfaceVariant}
+                  />
+                  <PrimaryButton label="Verify customer code" onPress={onVerify} loading={verifyPickup.isPending} />
+                </View>
+              ) : null}
+
+              {acts?.canAssignTable ? (
+                <View style={[s.card, shadow1]}>
+                  <Text style={s.cardTitle}>Assign table</Text>
+                  <TextInput
+                    value={tableInput}
+                    onChangeText={setTableInput}
+                    placeholder="Table number, e.g. 7"
+                    maxLength={20}
+                    style={s.input}
+                    testID="table-input"
+                    placeholderTextColor={Colors.onSurfaceVariant}
+                  />
+                  <PrimaryButton label="Assign table" variant="secondary" onPress={onAssignTable} loading={assignTable.isPending} disabled={!tableInput.trim()} />
                 </View>
               ) : null}
 
@@ -160,18 +247,20 @@ export default function RestaurantOrderScreen() {
                 {normalizeStatus(status) === 'accepted' ? (
                   <PrimaryButton label="Start preparing" onPress={() => advance('preparing')} loading={setStatus.isPending} />
                 ) : null}
-                {status === 'preparing' ? (
-                  <PrimaryButton label="Mark ready for pickup" onPress={() => advance('ready')} loading={setStatus.isPending} />
+                {status === 'preparing' && type !== 'dine_in' ? (
+                  <PrimaryButton label={usesRider(type) ? 'Mark ready for pickup' : 'Mark ready for customer'} onPress={() => advance('ready')} loading={setStatus.isPending} />
                 ) : null}
+                {acts?.canServe ? <PrimaryButton label="Mark served" onPress={onServed} loading={markServed.isPending} /> : null}
+                {acts?.canClose ? <PrimaryButton label="Close table" onPress={onClosed} loading={markClosed.isPending} /> : null}
                 {/* After ready: auto-dispatch handles riders. Offer re-dispatch while still searching. */}
-                {normalizeStatus(status) === 'ready' && !order.rider && dispatchStatus !== 'assigned' ? (
+                {usesRider(type) && normalizeStatus(status) === 'ready' && !order.rider && dispatchStatus !== 'assigned' ? (
                   <PrimaryButton label="Re-dispatch to riders" onPress={onRedispatch} loading={redispatch.isPending} />
                 ) : null}
                 {/* Secondary fallback: manually assign a rider only if still unassigned. */}
-                {normalizeStatus(status) === 'ready' && !order.rider ? (
+                {usesRider(type) && normalizeStatus(status) === 'ready' && !order.rider ? (
                   <PrimaryButton label="Assign a rider manually" variant="secondary" onPress={onAssign} loading={assignRider.isPending} />
                 ) : null}
-                <PrimaryButton label="Message customer & rider" variant="secondary" onPress={() => setTab('chat')} />
+                <PrimaryButton label={usesRider(type) ? 'Message customer & rider' : 'Message customer'} variant="secondary" onPress={() => setTab('chat')} />
               </View>
             </ScrollView>
           )}
@@ -223,5 +312,9 @@ const s = StyleSheet.create({
   codeHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   codeTitle: { ...Typography.labelLg, color: Colors.tertiaryContainer },
   codeValue: { ...Typography.headlineMd, color: Colors.tertiaryContainer, fontWeight: '800', letterSpacing: 6, marginVertical: 4 },
+  badgeRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  typeBadge: { backgroundColor: Colors.primary, borderRadius: Radius.full, paddingHorizontal: Spacing.sm, paddingVertical: 2 },
+  typeBadgeText: { ...Typography.labelSm, color: Colors.white, fontWeight: '700' },
+  input: { ...Typography.bodyMd, color: Colors.onSurface, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, borderRadius: Radius.lg, padding: Spacing.sm, marginBottom: Spacing.sm },
   codeHint: { ...Typography.bodySm, color: Colors.onSurface, textAlign: 'center' },
 });
