@@ -180,6 +180,10 @@ func RunUnacceptedAndDispatchSweeps(ctx context.Context, svc *Service, now time.
 	if _, e = svc.SweepPermitExpiry(ctx, now); e != nil {
 		errs = append(errs, fmt.Errorf("permit-expiry: %w", e))
 	}
+	// FOOD-UAT-E-013: purge rider GPS breadcrumbs past the 30-day retention (idempotent).
+	if _, e = svc.PurgeRiderLocations(ctx, now); e != nil {
+		errs = append(errs, fmt.Errorf("rider-location-purge: %w", e))
+	}
 	return unaccepted, stalled, reassigned, errors.Join(errs...)
 }
 
@@ -257,7 +261,13 @@ const stuckSettlementSelect = `
 	SELECT o.id, o.restaurant_id, o.settlement_id
 	FROM orders o
 	JOIN settlements s ON s.id = o.settlement_id
-	WHERE o.status = 'delivered'
+	WHERE (o.status = 'delivered'
+	       -- Rider-less order types settle on a different terminal status
+	       -- (settleStatusFor): pickup on customer collection, dine-in on served.
+	       -- Gated on order_type so a delivery order a rider is still carrying
+	       -- (picked_up) is never swept.
+	       OR (o.status = 'picked_up' AND o.order_type IN ('pickup_now','pickup_scheduled'))
+	       OR (o.status = 'served'    AND o.order_type = 'dine_in'))
 	  AND s.status = 'escrowed'
 	  AND s.module_type = 'food_delivery'
 	  AND s.escrowed_at < NOW() - $1::interval

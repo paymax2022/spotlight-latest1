@@ -1090,6 +1090,9 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 // client-controlled input — no HTTP request DTO has a field that can select
 // the external path below.
 func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*Order, error) {
+	if strings.TrimSpace(req.QuoteID) != "" {
+		return s.placeOrderWithQuote(ctx, restaurantID, customerID, req) // FOOD-UAT-C-007
+	}
 	return s.placeOrder(ctx, restaurantID, customerID, req, false, 0)
 }
 

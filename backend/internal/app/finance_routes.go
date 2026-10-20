@@ -1843,6 +1843,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/orders/:orderId/accept", restaurantHandler.AcceptDelivery)   // rider claims the delivery
 		restGroup.POST("/orders/:orderId/decline", restaurantHandler.DeclineDelivery) // rider declines; auto re-dispatched
 		restGroup.POST("/orders/:orderId/pickup", restaurantHandler.ConfirmPickup)    // rider confirms pickup
+		// FOOD-UAT-D-007: merchant/counter-staff verify the customer's pickup code (pickup orders)
+		// or close a served dine-in table. Owner / ACTIVE staff only (enforced in the service).
+		restGroup.POST("/orders/:orderId/verify-customer-pickup", restaurantHandler.VerifyCustomerPickup)
+		restGroup.POST("/orders/:orderId/verify-table-close", restaurantHandler.VerifyTableClose)
 		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff)  // rider confirms drop-off (code)
 		restGroup.POST("/orders/:orderId/location", restaurantHandler.PostLocation)
 		restGroup.POST("/orders/:orderId/mark-failed", restaurantHandler.MarkDeliveryFailed) // rider reports a failed drop-off

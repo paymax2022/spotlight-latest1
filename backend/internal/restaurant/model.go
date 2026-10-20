@@ -232,6 +232,11 @@ type PlaceOrderRequest struct {
 	// no longer 400s on bind.
 	IdempotencyKey string `json:"idempotency_key"`
 
+	// QuoteID, when set, is a signed quote from POST /orders/quote (FOOD-UAT-C-007).
+	// PlaceOrder then refuses (409 price_changed) if the freshly recomputed total
+	// differs from the quoted one, and consumes the quote so it cannot be replayed.
+	QuoteID string `json:"quote_id,omitempty"`
+
 	// TipKobo is an optional customer tip (whole kobo) paid 100% to the rider at
 	// settlement. It is escrowed with the order total. Negative values are clamped
 	// to 0 by PlaceOrder (never trusted from the client for money math).

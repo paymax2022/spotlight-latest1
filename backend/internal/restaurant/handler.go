@@ -83,6 +83,9 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 	}
 	order, err := h.svc.PlaceOrder(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
+		if writeQuoteError(c, err) { // FOOD-UAT-C-007: 409 price_changed / quote_invalid
+			return
+		}
 		// An unusable promo code is the CLIENT's input being wrong (unknown code, out
 		// of window, under the minimum, at its usage cap, or a discount the funder
 		// cannot bear) — not a server fault. 422 so the app can surface "that code
@@ -260,7 +263,8 @@ func statusCodeFor(err error) int {
 	if errors.Is(err, ErrCodeLocked) {
 		return http.StatusTooManyRequests
 	}
-	if errors.Is(err, ErrOrderTransitionConflict) {
+	if errors.Is(err, ErrOrderTransitionConflict) ||
+		errors.Is(err, ErrPriceChanged) || errors.Is(err, ErrQuoteInvalid) {
 		return http.StatusConflict
 	}
 	return http.StatusBadRequest
