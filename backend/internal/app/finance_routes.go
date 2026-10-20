@@ -1798,10 +1798,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			restGroup.PATCH("/:id/discounts/:discountId", restaurantHandler.SetDiscountActive)
 			restGroup.DELETE("/:id/discounts/:discountId", restaurantHandler.DeleteDiscount)
 		}
-		restGroup.PATCH("/:id/menu/items/:itemId", restaurantHandler.UpdateItem)
-		restGroup.DELETE("/:id/menu/items/:itemId", restaurantHandler.DeleteItem)
 		// FOOD-011 / C-005: on-demand modifier-group re-fetch (static "menu" sibling of ":id").
 		restGroup.GET("/menu/items/:itemId/modifier-groups", restaurantHandler.ListModifierGroups)
+		restGroup.PATCH("/:id/menu/items/:itemId", restaurantHandler.UpdateItem)
+		restGroup.DELETE("/:id/menu/items/:itemId", restaurantHandler.DeleteItem)
 
 		// Distance-based delivery-fee preview (before placing the order). Member auth
 		// via the finance group's requireUserID. Static "delivery-quote" segment under
@@ -1944,14 +1944,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Food-specific dispute queue (the generic
 		// /api/finance/{disputes,admin/disputes} rails do not cover it).
 		restAdmin.GET("/disputes", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListFoodDisputes)
-		restAdmin.GET("/rider-incidents", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListRiderIncidents) // F-006
+		restAdmin.GET("/rider-incidents", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListRiderIncidents)                                                   // F-006
+		restAdmin.POST("/disputes/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.RefundApprovalGate(rbac), restaurantHandler.AdminResolveFoodDispute) // FOOD-UAT-F-002 two-tier refund
+		// FOOD-UAT-F-003: admin-editable commission split (global default + per-restaurant overrides).
 		// Wave 7 console pages: refund tiers (F-002), consent audit (H-001), permit list (H-002).
 		restAdmin.GET("/refund-tiers", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListRefundTiers)
 		restAdmin.PUT("/refund-tiers", middleware.RequirePermission(rbac, restaurant.PermRefundLarge), restaurantHandler.AdminSetRefundTier)
 		restAdmin.GET("/consents", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListConsents)
 		restAdmin.GET("/permits", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListPermits)
-		restAdmin.POST("/disputes/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.RefundApprovalGate(rbac), restaurantHandler.AdminResolveFoodDispute) // FOOD-UAT-F-002 two-tier refund
-		// FOOD-UAT-F-003: admin-editable commission split (global default + per-restaurant overrides).
 		restAdmin.GET("/commission", middleware.RequirePermission(rbac, "restaurant.admin.commission"), restaurantHandler.AdminListCommission)
 		restAdmin.PUT("/commission", middleware.RequirePermission(rbac, "restaurant.admin.commission"), restaurantHandler.AdminPutCommission)
 		restAdmin.DELETE("/commission/:restaurantId", middleware.RequirePermission(rbac, "restaurant.admin.commission"), restaurantHandler.AdminDeleteCommission)
@@ -1964,6 +1964,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Listing moderation (foodhub A6). "listings/pending" is a static sibling of
 		// the ":id" params registered elsewhere in this group, which Gin allows.
 		restAdmin.GET("/listings/pending", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminModerationQueue)
+		// FOOD-011 / C-005: modifier-group + option CRUD (reuses restaurant.admin.onboarding).
+		restAdmin.GET("/menu-items/:itemId/modifier-groups", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListModifierGroups)
+		restAdmin.POST("/menu-items/:itemId/modifier-groups", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminCreateModifierGroup)
+		restAdmin.PATCH("/modifier-groups/:groupId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUpdateModifierGroup)
+		restAdmin.DELETE("/modifier-groups/:groupId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDeleteModifierGroup)
+		restAdmin.POST("/modifier-groups/:groupId/options", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminCreateModifierOption)
+		restAdmin.PATCH("/modifier-groups/:groupId/options/:optionId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUpdateModifierOption)
+		restAdmin.DELETE("/modifier-groups/:groupId/options/:optionId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDeleteModifierOption)
 		restAdmin.POST("/listings/:id/decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideListing)
 		// Shops with no identifiable merchant (foodhub §5.4).
 		restAdmin.GET("/restaurants/unclaimed", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUnclaimedRestaurants)
@@ -1975,14 +1983,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// rider and dispatch routes.
 		restAdmin.GET("/orders", middleware.RequirePermission(rbac, "restaurant.manage"), restaurantHandler.AdminListOrders)
 		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
-		// FOOD-011 / C-005: modifier-group + option CRUD (reuses restaurant.admin.onboarding).
-		restAdmin.GET("/menu-items/:itemId/modifier-groups", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListModifierGroups)
-		restAdmin.POST("/menu-items/:itemId/modifier-groups", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminCreateModifierGroup)
-		restAdmin.PATCH("/modifier-groups/:groupId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUpdateModifierGroup)
-		restAdmin.DELETE("/modifier-groups/:groupId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDeleteModifierGroup)
-		restAdmin.POST("/modifier-groups/:groupId/options", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminCreateModifierOption)
-		restAdmin.PATCH("/modifier-groups/:groupId/options/:optionId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUpdateModifierOption)
-		restAdmin.DELETE("/modifier-groups/:groupId/options/:optionId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDeleteModifierOption)
 		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)
 		// Operator re-dispatch. The member route at
