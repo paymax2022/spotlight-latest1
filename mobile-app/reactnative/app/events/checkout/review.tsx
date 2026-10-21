@@ -29,9 +29,11 @@ export default function CheckoutReview() {
   const tier = e.tiers.find((t) => t.id === tierId);
   if (!tier) return <Shell><StateView kind="error" title="Ticket unavailable" message="Please pick a ticket tier again." actionLabel="Back" onAction={() => goBack('/events')} /></Shell>;
 
+  // No client-invented fees: the server debits exactly price_kobo x quantity
+  // (net of promo), so the disclosed total IS the charged amount. A service
+  // fee shown here but never charged upstream misleads the buyer.
   const subtotalKobo = tier.price_kobo * quantity;
-  const feeKobo = tier.price_kobo === 0 ? 0 : Math.round(subtotalKobo * 0.015); // service fee
-  const totalKobo = subtotalKobo + feeKobo;
+  const totalKobo = subtotalKobo;
   const isFree = totalKobo === 0;
 
   const confirm = async () => {
@@ -61,7 +63,6 @@ export default function CheckoutReview() {
 
         <View style={styles.card}>
           <Row label={`${tier.name} × ${quantity}`} value={isFree ? 'Free' : formatNaira(subtotalKobo)} />
-          {feeKobo > 0 ? <Row label="Service fee (1.5%)" value={formatNaira(feeKobo)} /> : null}
           <View style={styles.divider} />
           <Row label="Total" value={isFree ? 'Free' : formatNaira(totalKobo)} bold />
         </View>

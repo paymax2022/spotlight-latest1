@@ -291,9 +291,25 @@ func (h *Handler) AddVendor(c *gin.Context) {
 
 // --- Ticketing ---
 
+// purchaseRequest accepts both spellings the shipped clients use: the original
+// {tier_id, promo} and the mobile checkout's {tier_id, quantity, promo_code}.
+// Before quantity/promo_code were bound here, ShouldBindJSON silently dropped
+// them — a buyer asking for 3 tickets with a code was charged and issued
+// exactly 1 ticket at full price while the app showed a 3x total.
 type purchaseRequest struct {
 	TierID string `json:"tier_id" binding:"required"`
-	Promo  string `json:"promo,omitempty"`
+	// Pointer: absent means "one ticket" (old clients); an explicit 0 must
+	// reach the service so the min/max check can reject it.
+	Quantity  *int   `json:"quantity,omitempty"`
+	Promo     string `json:"promo,omitempty"`
+	PromoCode string `json:"promo_code,omitempty"`
+}
+
+func (r purchaseRequest) promoValue() string {
+	if r.Promo != "" {
+		return r.Promo
+	}
+	return r.PromoCode
 }
 
 func (h *Handler) Purchase(c *gin.Context) {
@@ -311,12 +327,28 @@ func (h *Handler) Purchase(c *gin.Context) {
 		bindFail(c, err)
 		return
 	}
-	out, err := h.svc.Purchase(c.Request.Context(), u, c.Param("id"), req.TierID, req.Promo, key)
+	qty := 1
+	if req.Quantity != nil {
+		qty = *req.Quantity
+	}
+	out, err := h.svc.PurchaseTickets(c.Request.Context(), u, c.Param("id"), req.TierID, req.promoValue(), qty, key)
 	respond(c, out, err)
 }
 
+// giftRequest accepts the recipient under either field name: the original
+// "recipient" and the cashtag-addressed spelling the mobile client sends.
+// binding:"required" on Recipient used to hard-400 every mobile gift because
+// the client only ever sends cashtag.
 type giftRequest struct {
-	Recipient string `json:"recipient" binding:"required"` // cashtag handle
+	Recipient string `json:"recipient"`
+	Cashtag   string `json:"cashtag"`
+}
+
+func (r giftRequest) recipientValue() string {
+	if r.Recipient != "" {
+		return r.Recipient
+	}
+	return r.Cashtag
 }
 
 func (h *Handler) GiftTicket(c *gin.Context) {
@@ -329,7 +361,12 @@ func (h *Handler) GiftTicket(c *gin.Context) {
 		bindFail(c, err)
 		return
 	}
-	out, err := h.svc.GiftTicket(c.Request.Context(), u, c.Param("ticketId"), req.Recipient)
+	recipient := req.recipientValue()
+	if recipient == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	out, err := h.svc.GiftTicket(c.Request.Context(), u, c.Param("ticketId"), recipient)
 	respond(c, out, err)
 }
 

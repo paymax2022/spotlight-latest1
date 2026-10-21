@@ -46,9 +46,9 @@ type Event struct {
 	FeeBps      int        `json:"fee_bps"` // platform fee in basis points on vendor settlement
 	CreatedAt   time.Time  `json:"created_at"`
 
-	// Tiers is populated only by GetEvent (the buyer/organiser detail read
-	// needs the tier list — mobile renders e.tiers directly). Everywhere else
-	// it is omitted so list/transition payloads stay unchanged.
+	// Tiers is populated by GetEvent only (buyer-facing tier discovery — the
+	// mobile checkout renders it). Never set from a request body; AddTier is
+	// the only write path.
 	Tiers []TicketTier `json:"tiers,omitempty"`
 }
 

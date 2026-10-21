@@ -243,7 +243,11 @@ func (s *Service) transition(ctx context.Context, eventID string, from, to Event
 	return nil
 }
 
-// GetEvent returns an event by id (public read).
+// GetEvent returns one event by id, with its ticket tiers attached. The tiers
+// are not sensitive — buyers need them to choose what to purchase (the mobile
+// checkout renders event.tiers), and the purchase path itself still enforces
+// each tier's sales window / invite-only / sold-out guards server-side, so
+// exposing the config here cannot bypass it.
 func (s *Service) GetEvent(ctx context.Context, eventID string) (*Event, error) {
 	// COALESCE(description,'') — the legacy 20260616240000 events shape leaves
 	// description NULL-able; AdminGetEvent already coalesces it the same way.
@@ -259,12 +263,7 @@ func (s *Service) GetEvent(ctx context.Context, eventID string) (*Event, error) 
 		return nil, err
 	}
 	e.State = EventState(state)
-
-	// Buyer-facing detail includes the tier list — the mobile detail screen
-	// renders e.tiers (sold-out flags, per-tier price) straight off this
-	// payload; without it the live read could not satisfy the purchase
-	// disclosure the client is built around.
-	tiers, err := s.listTiers(ctx, eventID)
+	tiers, err := s.tiersForEvent(ctx, eventID)
 	if err != nil {
 		return nil, err
 	}
@@ -272,13 +271,12 @@ func (s *Service) GetEvent(ctx context.Context, eventID string) (*Event, error) 
 	return &e, nil
 }
 
-// listTiers returns every tier row for an event (any active flag — the buyer
-// disclosure needs paused tiers to render as unavailable, and organiser reads
-// need the full set).
-func (s *Service) listTiers(ctx context.Context, eventID string) ([]TicketTier, error) {
+// tiersForEvent lists a single event's ticket tiers, cheapest first. Always a
+// non-nil slice so JSON renders "tiers":[] rather than null.
+func (s *Service) tiersForEvent(ctx context.Context, eventID string) ([]TicketTier, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT id, event_id, name, price_kobo, capacity, sold, active, COALESCE(description,''), sales_start_at, sales_end_at, invite_only
-		 FROM event_ticket_tiers WHERE event_id=$1 ORDER BY price_kobo ASC`, eventID)
+		`SELECT id, event_id, name, price_kobo, capacity, sold, active, description, sales_start_at, sales_end_at, invite_only
+		 FROM event_ticket_tiers WHERE event_id=$1 ORDER BY price_kobo ASC, created_at ASC`, eventID)
 	if err != nil {
 		return nil, fmt.Errorf("events: list tiers: %w", err)
 	}
@@ -493,6 +491,75 @@ func validatePromoValue(percent int, amount *int64) error {
 }
 
 // ---------- Order + issuance via credential ----------
+
+// PurchaseResult is the batch checkout response the member API and the mobile
+// checkout share: the issued tickets, the sum actually debited, and how many
+// of the requested units were fulfilled.
+type PurchaseResult struct {
+	Tickets   []Ticket `json:"tickets"`
+	TotalKobo int64    `json:"total_kobo"`
+	Quantity  int      `json:"quantity"`         // requested units
+	Fulfilled int      `json:"fulfilled"`        // units actually issued
+	Partial   bool     `json:"partial"`          // true when fulfilled < quantity
+	Ticket    *Ticket  `json:"ticket,omitempty"` // first ticket, for single-unit consumers
+}
+
+// MaxTicketsPerOrder bounds one checkout. The mobile selector already caps at
+// 10; the server enforces the same ceiling so a crafted request cannot drain a
+// tier or run an unbounded debit in one call.
+const MaxTicketsPerOrder = 10
+
+// unitIdemKey derives the per-unit idempotency key for a batch checkout. A
+// single-unit purchase keeps the caller's key verbatim (backward compatible:
+// a retry of an already-placed single order still replays); unit i of a larger
+// batch keys on "<base>:<i>" so each unit is its own resumable order and a
+// replay of the batch never double-charges or double-issues any unit.
+func unitIdemKey(base string, i, n int) string {
+	if n == 1 {
+		return base
+	}
+	return fmt.Sprintf("%s:%d", base, i)
+}
+
+// PurchaseTickets buys quantity tickets of a tier for buyerID in one checkout,
+// optionally applying a promo code to every unit. Each unit runs the same
+// reserve-under-lock then debit-then-issue flow as a single Purchase, keyed by
+// its own derived idempotency key, so (a) concurrent buyers still serialize on
+// the tier row (no oversell), and (b) a replayed or crashed batch resumes each
+// unit idempotently. A batch that hits a hard stop (sold out mid-batch, promo
+// exhausted) returns the units already issued with Partial=true rather than
+// charging for tickets it could not deliver; only a zero-fulfilment batch
+// surfaces the error.
+func (s *Service) PurchaseTickets(ctx context.Context, buyerID, eventID, tierID, promo string, quantity int, idemKey string) (*PurchaseResult, error) {
+	if idemKey == "" {
+		return nil, errors.New("events: idempotency key required")
+	}
+	if quantity < 1 || quantity > MaxTicketsPerOrder {
+		return nil, fmt.Errorf("%w: events: quantity must be between 1 and %d", ErrValidation, MaxTicketsPerOrder)
+	}
+	res := &PurchaseResult{Tickets: []Ticket{}, Quantity: quantity}
+	var firstErr error
+	for i := range quantity {
+		t, err := s.Purchase(ctx, buyerID, eventID, tierID, promo, unitIdemKey(idemKey, i, quantity))
+		if err != nil {
+			firstErr = err
+			break
+		}
+		res.Tickets = append(res.Tickets, *t)
+	}
+	res.Fulfilled = len(res.Tickets)
+	res.Partial = res.Fulfilled < quantity
+	for _, t := range res.Tickets {
+		res.TotalKobo += t.PricePaidKobo
+	}
+	if res.Fulfilled > 0 {
+		res.Ticket = &res.Tickets[0]
+	}
+	if res.Fulfilled == 0 {
+		return nil, firstErr
+	}
+	return res, nil
+}
 
 // Purchase buys one ticket of a tier for buyerID, optionally applying a promo code.
 // Money path: wallet.Debit (tier-limit enforced fail-closed) into the platform
