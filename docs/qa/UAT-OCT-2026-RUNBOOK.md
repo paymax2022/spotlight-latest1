@@ -79,3 +79,35 @@ cluster model. Authoritative method: the universal UAT directive at
 - Code inspection yields `implementation` status and `result=BLOCKED`/`NEEDS_MANUAL`
   with the reason, or an execution row with `method=CODE_REVIEW`.
 - Never fabricate env access, credentials, or results.
+
+## Consolidation (2026-10-21)
+
+All 10 lanes squash-merged to `main`, one commit per lane:
+
+| Lane | Commit | | Lane | Commit |
+|---|---|---|---|---|
+| estate-a | `ff51e2a8d` | | events-b | `672ccc610` |
+| estate-b | `d51071c7d` | | events-c | `d979e0b5d` |
+| estate-c | `21934eafa` | | stays-a | `b80e23258` |
+| estate-d | `db97402fc` | | stays-b | `1c433106b` |
+| events-a | `68977ad98` | | platform | `2ab54fdb5` |
+
+Lane-branch SHAs cited in `defects-*.csv` `fix_commit` remain reachable on the `uat/<lane>` branches.
+
+**Cross-lane overlaps resolved at merge** (same feature built twice; one kept):
+- estate-c `pushAllowed` vs estate-d `notificationAllowed` → kept estate-d's (feed/push split, dedupe, live-DB tested).
+- events-a vs events-b tiers-on-`GetEvent` → kept events-b's `tiersForEvent` (deterministic ordering).
+- stays-a vs stays-b direct `book_token` v2 TTL → kept stays-b's (expiry embedded in token, clock-injectable `decodeBookTokenAt`, v1 refused); kept stays-a's `priceStay` rate-calendar/restriction evaluation and stays-b's refundable-flag policy snapshot alongside it.
+
+**Integration seams fixed after merge** (`3c009aed8`): estate-c specs mocked the pre-estate-a/b `getResidentContext` query (no `.is()`); the realtor money-path spec predated estate-b's ESTB-D005 atomic claim (added claim-lost 409 + claim-release tests); estate-c's `PATCH /estate/repairs/{id}` added to `contracts/estate.openapi.yaml`. 93 ledger rows with unquoted commas re-quoted (`b6edc793f`).
+
+**Verification on merged main**:
+- `backend`: `go build ./...`, `go vet ./...` clean; `go test ./...` all packages pass (live-DB suites skip without `TEST_DATABASE_URL`); lefthook golangci-lint clean on every lane commit.
+- `frontend-web`: `vitest run` 199 files / 1,839 tests pass; `test:regression` green; `tsc --noEmit` clean; `contract:check` in sync.
+- `mobile-app/reactnative` `typecheck`: only failures are unresolved `livekit-client` / `@livekit/react-native` modules in `src/features/academy/live/*` (not touched by this wave).
+- NOT run: `go test -race` against a clean DB, `make verify`, migration chain replay, mobile Playwright e2e.
+
+**Outstanding before any module sign-off**:
+1. Review and promote the 13 `*.pending.sql` drafts (listed in each pack's `SUMMARY.md`) into `supabase/migrations/`, then `supabase db reset` + `scripts/ci/check-migration-versions.sh`.
+2. Large `NOT_RUN`/`BLOCKED` blocks need a live environment: stays-a (146 not run), estate-a (93 blocked), events-b (51 blocked + 32 not run), estate-b (64 not run).
+3. Open S1s are product gaps, not regressions: see each pack's `SUMMARY.md`.
