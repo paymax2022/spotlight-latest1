@@ -41,6 +41,12 @@ func (r previewCartRequest) toPlaceOrder() (string, PlaceOrderRequest, string) {
 		Items: r.Items, DeliveryAddress: r.DeliveryAddress, TipKobo: r.TipKobo,
 		PromoCode: r.PromoCode, DeliveryLat: r.DeliveryLat, DeliveryLng: r.DeliveryLng,
 		DeliveryLocation: r.DeliveryLocation, ScheduledFor: r.ScheduledFor, PackageCount: r.PackageCount,
+		// FOOD-UAT-D-007: carry order_type through to the pricer so pickup / dine-in
+		// quotes don't trip the delivery-coords validator below. Without this the
+		// preview endpoints always price as delivery and reject pickup / dine-in
+		// quotes with "delivery latitude and longitude are required" (bug B2,
+		// surfaced by W10-VERIFY).
+		OrderType: r.OrderType,
 	}
 	if len(req.Items) == 0 {
 		return "", req, "items are required"
@@ -62,8 +68,13 @@ func (r previewCartRequest) toPlaceOrder() (string, PlaceOrderRequest, string) {
 	if rid == "" {
 		return "", req, "restaurant_id is required"
 	}
-	if cerr := ValidateDeliveryCoords(req); cerr != nil {
-		return "", req, cerr.Error()
+	// Only delivery orders need lat/lng. Pickup / dine-in quotes have no
+	// delivery leg and no coordinates to validate — same gate the PlaceOrder
+	// path applies (see service.go PlaceOrder).
+	if r.OrderType == "" || r.OrderType == "delivery" {
+		if cerr := ValidateDeliveryCoords(req); cerr != nil {
+			return "", req, cerr.Error()
+		}
 	}
 	return rid, req, ""
 }

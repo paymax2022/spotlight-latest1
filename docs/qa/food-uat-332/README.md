@@ -68,3 +68,7 @@ Each agent MUST:
 - No new backend/frontend features. If a capability is missing, it is an N/A with reason, logged as a feature-gap defect, and triaged separately.
 - No modification of `SPOTLIGHT_UAT_BUG_TRACKER.md` by the authoring swarm — the orchestrator rolls defects up at the end.
 - No modification of existing `docs/qa/food-restaurant-test-plan.md` (keep the prior 33-case history intact).
+
+## Final status (2026-10-21)
+
+Module 12 — Food — ✅ READY FOR PRODUCTION (6 accepted exceptions). See the "Wave 10 close-out" section of `SUMMARY.md`, `W10-VERIFICATION.md`, and the Module 12 sign-off in `SPOTLIGHT_UAT_BUG_TRACKER.md`.

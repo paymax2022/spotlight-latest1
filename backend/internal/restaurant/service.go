@@ -490,6 +490,14 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		Scan(&isOpen, &ownerID, &rLat, &rLng, &pricingCfg.ServiceFeeBp, &pricingCfg.SurgeBp, &packagingFeePerPackKobo); err != nil {
 		return nil, fmt.Errorf("%w (%s)", ErrRestaurantNotFound, primaryRestaurantID)
 	}
+	// FOOD-UAT-C-004: with listing moderation on, a store whose listing is not APPROVED is
+	// invisible in discovery and so must not be orderable by direct id either.
+	if s.moderationOn {
+		var listing string
+		if err := s.db.QueryRow(ctx, `SELECT COALESCE(listing_review_status,'DRAFT') FROM restaurants WHERE id=$1`, primaryRestaurantID).Scan(&listing); err != nil || listing != string(ListingApproved) {
+			return nil, fmt.Errorf("%w (%s)", ErrRestaurantNotFound, primaryRestaurantID)
+		}
+	}
 
 	// A scheduled order books a FUTURE slot, so it is gated on that slot falling inside
 	// the restaurant's weekly hours (SG-001/002) rather than on the restaurant being open
@@ -504,6 +512,18 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// which releases it into the live queue or auto-cancels AND REFUNDS it (SG-002).
 	if !isOpen && scheduledFor == nil {
 		return nil, fmt.Errorf("%w (%s)", ErrRestaurantClosed, primaryRestaurantID)
+	}
+	// FOOD-UAT-B-009: weekly hours, today's holiday closure and a timed pause also gate an
+	// IMMEDIATE order. A store with none of them is governed by is_open alone (unchanged).
+	// Fail closed: if the schedule cannot be read the order is refused, not waved through.
+	if scheduledFor == nil {
+		openNow, oerr := s.IsOpenNow(ctx, primaryRestaurantID, time.Now())
+		if oerr != nil {
+			return nil, oerr
+		}
+		if !openNow {
+			return nil, fmt.Errorf("%w (%s)", ErrRestaurantClosed, primaryRestaurantID)
+		}
 	}
 
 	// Verify secondary restaurants (if multi-restaurant) are also open — same rule.
@@ -527,10 +547,12 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		restID := input.RestaurantOf(restaurantID)
 		var mi MenuItem
 		const qMI = `SELECT id, restaurant_id, name, price_kobo, ` + availableNow + ` AS is_available,
-		             COALESCE(prep_time_minutes, (SELECT r.prep_time_minutes FROM restaurants r WHERE r.id = menu_items.restaurant_id)) AS prep_minutes
+		             COALESCE(prep_time_minutes, (SELECT r.prep_time_minutes FROM restaurants r WHERE r.id = menu_items.restaurant_id)) AS prep_minutes,
+		             max_qty_per_order
 		             FROM menu_items WHERE id=$1 AND restaurant_id=$2`
 		var prep int
-		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable, &prep); err != nil {
+		var itemMaxQty *int
+		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable, &prep, &itemMaxQty); err != nil {
 			return nil, fmt.Errorf("%w (%s in restaurant %s)", ErrMenuItemNotFound, input.MenuItemID, restID)
 		}
 		if !mi.IsAvailable {
@@ -545,6 +567,10 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		// only fires on the INSERT, long after the escrow debit is posted.
 		if input.Quantity > maxLineQuantity {
 			return nil, fmt.Errorf("%w: quantity %d for '%s' exceeds the per-line maximum of %d", ErrOrderInvalid, input.Quantity, mi.Name, maxLineQuantity)
+		}
+		// FOOD-UAT-B-008: the seller's own per-item cap, when set, is stricter than the global one.
+		if itemMaxQty != nil && *itemMaxQty >= 1 && input.Quantity > *itemMaxQty {
+			return nil, fmt.Errorf("%w: quantity %d for '%s' exceeds the per-order maximum of %d set by the seller", ErrOrderInvalid, input.Quantity, mi.Name, *itemMaxQty)
 		}
 
 		// Chosen modifiers price the line. resolveLineModifiers is fail-closed against

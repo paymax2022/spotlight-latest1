@@ -163,7 +163,7 @@ export function useCreateItem(id: string) {
 export function useUpdateItem(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { itemId: string; patch: { priceKobo?: number; isAvailable?: boolean } }) =>
+    mutationFn: (args: { itemId: string; patch: { priceKobo?: number; isAvailable?: boolean; maxQtyPerOrder?: number; expectedVersion?: number } }) =>
       merchant.updateItem(id, args.itemId, args.patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', id] }),
   });

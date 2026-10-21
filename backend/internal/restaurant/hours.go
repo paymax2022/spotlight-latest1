@@ -389,3 +389,110 @@ func (s *Service) SweepUnacceptedOrders(ctx context.Context, now time.Time) (int
 	}
 	return swept, nil
 }
+
+// ---------------------------------------------------------------------------
+// FOOD-UAT-B-009: reachable hours / closures / timed pause.
+
+// Bounds for a timed pause: at least a minute, at most a day (longer is a closure).
+const (
+	minPauseMinutes = 1
+	maxPauseMinutes = 24 * 60
+)
+
+// IsOpenNow is the full "can this store take an immediate order right now" decision:
+// the manual switch, weekly hours, today's holiday override and any timed pause. A store
+// with no hours, closures or pause is governed by is_open alone (unchanged back-compat).
+func (s *Service) IsOpenNow(ctx context.Context, restaurantID string, t time.Time) (bool, error) {
+	var pausedUntil *time.Time
+	if err := s.db.QueryRow(ctx, `SELECT paused_until FROM restaurants WHERE id=$1`, restaurantID).Scan(&pausedUntil); err != nil {
+		return false, ErrRestaurantNotFound
+	}
+	if pausedUntil != nil && pausedUntil.After(t) {
+		return false, nil
+	}
+	return s.isRestaurantOpenNow(ctx, restaurantID, t)
+}
+
+// HoursOverview is the owner/admin view: weekly windows, upcoming closures and pause.
+type HoursOverview struct {
+	OpenNow     bool               `json:"open_now"`
+	PausedUntil *time.Time         `json:"paused_until,omitempty"`
+	Windows     []BusinessHourView `json:"windows"`
+	Closures    []HolidayHour      `json:"closures"`
+}
+
+// GetHoursOverview returns the schedule, today-and-later closures and the pause state.
+func (s *Service) GetHoursOverview(ctx context.Context, restaurantID string) (*HoursOverview, error) {
+	st, err := s.GetBusinessHours(ctx, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	open, err := s.IsOpenNow(ctx, restaurantID, now)
+	if err != nil {
+		return nil, err
+	}
+	out := &HoursOverview{OpenNow: open, Windows: st.Windows, Closures: []HolidayHour{}}
+	var paused *time.Time
+	if err := s.db.QueryRow(ctx, `SELECT paused_until FROM restaurants WHERE id=$1`, restaurantID).Scan(&paused); err == nil && paused != nil && paused.After(now) {
+		out.PausedUntil = paused
+	}
+	rows, err := s.db.Query(ctx, `SELECT holiday_date::text, is_closed, COALESCE(open_minute,0), COALESCE(close_minute,0)
+	    FROM restaurant_holiday_hours WHERE restaurant_id=$1 AND holiday_date >= $2 ORDER BY holiday_date`,
+		restaurantID, now.In(lagosTZ).Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var h HolidayHour
+		if err := rows.Scan(&h.Date, &h.IsClosed, &h.OpenMinute, &h.CloseMinute); err != nil {
+			return nil, err
+		}
+		out.Closures = append(out.Closures, h)
+	}
+	return out, rows.Err()
+}
+
+// TimedPause stops new orders for `minutes` minutes, after which the store resumes on its
+// own (owner/manager or admin). Returns the instant the pause ends.
+func (s *Service) TimedPause(ctx context.Context, restaurantID, userID string, minutes int) (time.Time, error) {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
+		return time.Time{}, err
+	}
+	if minutes < minPauseMinutes || minutes > maxPauseMinutes {
+		return time.Time{}, &invalidInputError{fmt.Sprintf("restaurant: pause minutes must be between %d and %d", minPauseMinutes, maxPauseMinutes)}
+	}
+	var until time.Time
+	if err := s.db.QueryRow(ctx, `UPDATE restaurants SET paused_until = now() + make_interval(mins => $2), updated_at=now()
+	    WHERE id=$1 RETURNING paused_until`, restaurantID, minutes).Scan(&until); err != nil {
+		return time.Time{}, errors.New("restaurant: not found")
+	}
+	return until, nil
+}
+
+// ResumeFromPause ends a timed pause early.
+func (s *Service) ResumeFromPause(ctx context.Context, restaurantID, userID string) error {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
+		return err
+	}
+	ct, err := s.db.Exec(ctx, `UPDATE restaurants SET paused_until=NULL, updated_at=now() WHERE id=$1`, restaurantID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return errors.New("restaurant: not found")
+	}
+	return nil
+}
+
+// SweepTimedPauses clears pauses that have ended (idempotent, multi-instance safe). The
+// order gate already compares paused_until with the clock, so this is tidy-up that keeps
+// the pause state visible to clients honest; it never touches is_open.
+func (s *Service) SweepTimedPauses(ctx context.Context, now time.Time) (int, error) {
+	ct, err := s.db.Exec(ctx, `UPDATE restaurants SET paused_until=NULL WHERE paused_until IS NOT NULL AND paused_until <= $1`, now)
+	if err != nil {
+		return 0, fmt.Errorf("restaurant: timed-pause sweep: %w", err)
+	}
+	return int(ct.RowsAffected()), nil
+}

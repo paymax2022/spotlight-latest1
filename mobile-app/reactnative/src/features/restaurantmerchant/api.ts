@@ -67,6 +67,8 @@ function mapItem(i: any): MerchantMenuItem {
     priceKobo: i.price_kobo ?? 0,
     imageUrl: i.image_url ?? null,
     isAvailable: !!i.is_available,
+    version: typeof i.version === 'number' ? i.version : undefined,
+    maxQtyPerOrder: typeof i.max_qty_per_order === 'number' ? i.max_qty_per_order : undefined,
   };
 }
 function mapCategory(c: any): MerchantMenuCategory {
@@ -279,7 +281,7 @@ export async function createItem(
 export async function updateItem(
   id: string,
   itemId: string,
-  patch: { priceKobo?: number; isAvailable?: boolean },
+  patch: { priceKobo?: number; isAvailable?: boolean; maxQtyPerOrder?: number; expectedVersion?: number },
 ): Promise<MerchantMenuItem> {
   if (USE_MOCK) {
     await delay();
@@ -297,6 +299,9 @@ export async function updateItem(
   const body: Record<string, unknown> = {};
   if (patch.priceKobo !== undefined) body.price_kobo = patch.priceKobo;
   if (patch.isAvailable !== undefined) body.is_available = patch.isAvailable;
+  // FOOD-UAT-B-008: per-order cap (0 clears). FOOD-UAT-B-006: expected_version = compare-and-set.
+  if (patch.maxQtyPerOrder !== undefined) body.max_qty_per_order = patch.maxQtyPerOrder;
+  if (patch.expectedVersion !== undefined) body.expected_version = patch.expectedVersion;
   return mapItem(unwrap<any>(await api.patch(`${BASE}/${enc(id)}/menu/items/${enc(itemId)}`, body)));
 }
 
