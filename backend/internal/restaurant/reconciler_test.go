@@ -39,7 +39,9 @@ func TestFormatInterval(t *testing.T) {
 func TestStuckSettlementSelect_Predicate(t *testing.T) {
 	q := stuckSettlementSelect
 	for _, must := range []string{
-		"o.status = 'delivered'",             // only terminal (delivered) orders
+		"o.status = 'delivered'", // delivery terminal
+		"o.status = 'picked_up' AND o.order_type IN ('pickup_now','pickup_scheduled')", // pickup terminal, type-gated
+		"o.status = 'served'    AND o.order_type = 'dine_in'",                          // dine-in terminal, type-gated
 		"s.status = 'escrowed'",              // only still-held escrow (idempotent re-drive target)
 		"module_type = 'food_delivery'",      // scoped to this module's settlements
 		"escrowed_at < NOW() - $1::interval", // grace window

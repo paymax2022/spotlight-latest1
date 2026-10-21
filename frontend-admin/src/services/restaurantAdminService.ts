@@ -1028,3 +1028,71 @@ export async function reverseWithdrawal(id: string, reason: string): Promise<Wit
 export function nairaLabel(kobo: number): string {
   return `₦${(((kobo ?? 0) / 100)).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+// ── FOOD-UAT-G-006 / G-007: order trace + GMV / net-revenue / cohort reports ──
+// Read-only. /api/restaurant/admin/orders/:id/trace (restaurant.admin.trace) and
+// /api/restaurant/admin/reports/* (restaurant.admin.reports). Amounts are integer
+// kobo; cohort rates are integer basis points.
+
+export type TraceEventKind = 'order' | 'transition' | 'dispatch' | 'payment' | 'dispute' | 'payout' | 'code_lockout' | 'audit';
+export interface TraceEvent {
+  id: string;
+  kind: TraceEventKind | string;
+  actor_user_id: string | null;
+  at: string;
+  before: unknown;
+  after: unknown;
+  note: string;
+  correlation_id: string;
+}
+
+export async function getOrderTrace(orderId: string): Promise<{ events: TraceEvent[] }> {
+  if (USE_MOCK) throw new Error(`Order trace ${NOT_IN_FIXTURE_MODE}`);
+  const r = await reqAt<{ events?: TraceEvent[] }>(`${adminBase()}/orders/${encodeURIComponent(orderId)}/trace`);
+  return { events: r.events ?? [] };
+}
+
+export interface ReportQuery {
+  from?: string;
+  to?: string;
+  restaurant_id?: string;
+  zone?: string;
+  group_by?: 'day' | 'week' | 'month';
+}
+export interface GMVReport { from: string; to: string; group_by: string; orders: number; total_kobo: number; buckets: { bucket: string; orders: number; gmv_kobo: number }[] }
+export interface NetRevenueReport { from: string; to: string; group_by: string; orders: number; total_kobo: number; buckets: { bucket: string; orders: number; fee_kobo: number }[] }
+export interface CohortReport {
+  from: string; to: string;
+  cohorts: { cohort_month: string; customers: number; repeat_customers: number; repeat_rate_bps: number; retention: { month_offset: number; active_customers: number; rate_bps: number }[] }[];
+}
+
+function reportQs(q: ReportQuery & { kind?: string; format?: string }): string {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v) p.set(k, String(v));
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+
+export async function getGMVReport(q: ReportQuery): Promise<GMVReport> {
+  if (USE_MOCK) throw new Error(`Reports ${NOT_IN_FIXTURE_MODE}`);
+  return reqAt<GMVReport>(`${adminBase()}/reports/gmv${reportQs(q)}`);
+}
+export async function getNetRevenueReport(q: ReportQuery): Promise<NetRevenueReport> {
+  if (USE_MOCK) throw new Error(`Reports ${NOT_IN_FIXTURE_MODE}`);
+  return reqAt<NetRevenueReport>(`${adminBase()}/reports/net-revenue${reportQs(q)}`);
+}
+export async function getCohortReport(q: ReportQuery): Promise<CohortReport> {
+  if (USE_MOCK) throw new Error(`Reports ${NOT_IN_FIXTURE_MODE}`);
+  return reqAt<CohortReport>(`${adminBase()}/reports/cohorts${reportQs(q)}`);
+}
+
+/** Fetches the server-generated CSV and returns it as a Blob for download. */
+export async function exportReportCsv(kind: 'gmv' | 'net-revenue' | 'cohorts', q: ReportQuery): Promise<Blob> {
+  if (USE_MOCK) throw new Error(`Report export ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(`${adminBase()}/reports/export${reportQs({ ...q, kind, format: 'csv' })}`, { headers: authHeaders(), cache: 'no-store' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Export failed (${res.status})`);
+  }
+  return res.blob();
+}

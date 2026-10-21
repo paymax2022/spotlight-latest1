@@ -105,7 +105,7 @@ func (h *Handler) GetRestaurant(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
-	c.JSON(http.StatusOK, detail)
+	c.JSON(http.StatusOK, withEmptyMenuShape(detail))
 }
 
 // LikeRestaurant → POST /restaurant/:id/like. Idempotent (see
@@ -191,7 +191,7 @@ func (h *Handler) CreateItem(c *gin.Context) {
 	}
 	it, err := h.svc.CreateItem(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		c.JSON(menuErrStatus(err), gin.H{keyError: httperr.Msg(c, menuErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusCreated, it)
@@ -207,7 +207,7 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 	}
 	it, err := h.svc.UpdateItem(c.Request.Context(), c.Param("id"), userID, c.Param("itemId"), req)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		c.JSON(menuErrStatus(err), gin.H{keyError: httperr.Msg(c, menuErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, it)
@@ -339,18 +339,7 @@ func (h *Handler) MyRestaurants(c *gin.Context) {
 
 // UpdateRestaurant → PATCH /restaurant/:id (edit store profile).
 func (h *Handler) UpdateRestaurant(c *gin.Context) {
-	userID := ginutil.UserID(c)
-	var req UpdateRestaurantRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
-		return
-	}
-	r, err := h.svc.UpdateRestaurant(c.Request.Context(), c.Param("id"), userID, req)
-	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
-		return
-	}
-	c.JSON(http.StatusOK, r)
+	h.updateStore(c, c.Request.Context())
 }
 
 // SetAvailability → PATCH /restaurant/:id/availability (merchant open/close).
@@ -412,7 +401,8 @@ func (h *Handler) AssignRider(c *gin.Context) {
 func (h *Handler) AcceptDelivery(c *gin.Context) {
 	riderID := ginutil.UserID(c)
 	if err := h.svc.AcceptDelivery(c.Request.Context(), c.Param("orderId"), riderID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		st := statusCodeFor(err) // ErrRiderIneligible / ErrOrderTransitionConflict -> 409
+		c.JSON(st, gin.H{keyError: httperr.Msg(c, st, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -499,7 +489,11 @@ func (h *Handler) PostLocation(c *gin.Context) {
 		return
 	}
 	if err := h.svc.PostLocation(c.Request.Context(), c.Param("orderId"), riderID, body.Lat, body.Lng); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		st := http.StatusBadRequest
+		if errors.Is(err, ErrLocationNotTrackable) {
+			st = http.StatusConflict
+		}
+		c.JSON(st, gin.H{keyError: httperr.Msg(c, st, err)})
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"ok": true})
@@ -513,7 +507,14 @@ func (h *Handler) RiderOffers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"offers": offers})
+	cards, err := h.svc.RiderOfferCards(c.Request.Context(), offers)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	// "offers" keeps the raw Order list for existing consumers; "cards" is the
+	// enriched projection the rider offer screen renders.
+	c.JSON(http.StatusOK, gin.H{"offers": offers, "cards": cards})
 }
 
 // RiderActive → GET /restaurant/rider/active.

@@ -40,7 +40,8 @@ func TestLiveDB_KYBOnboarding(t *testing.T) {
 	pool := kybLivePool(t)
 	t.Cleanup(pool.Close)
 	ctx := context.Background()
-	svc := NewService(pool, nil)
+	stubKYBProbe(t, 1024, []byte("%PDF-1.7 test"))
+	svc := NewService(pool, nil).WithKYBStorage(testKYBPresigner())
 
 	owner := uuid.New().String()
 	stranger := uuid.New().String()
@@ -232,6 +233,7 @@ func TestLiveDB_KYBDocumentUploads(t *testing.T) {
 	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
+	stubKYBProbe(t, 1024, []byte("%PDF-1.7 test"))
 	// Fake-but-complete creds: Configured() is true and PresignPut/PresignGet are
 	// pure local HMAC, so no network is involved. Healthy() does no probe because
 	// EnableHealthCheck is deliberately not called.
@@ -263,11 +265,11 @@ func TestLiveDB_KYBDocumentUploads(t *testing.T) {
 	}
 
 	// Only someone who may manage banking for the outlet can mint an upload URL.
-	if _, err := svc.PresignKYBDocument(ctx, restID, stranger, "cac_certificate", "cac.pdf", "application/pdf"); err == nil {
+	if _, err := svc.PresignKYBDocument(ctx, restID, stranger, "cac_certificate", "cac.pdf", "application/pdf", 0); err == nil {
 		t.Fatal("stranger must not mint an upload URL for someone else's outlet")
 	}
 
-	p, err := svc.PresignKYBDocument(ctx, restID, owner, "cac_certificate", "My CAC.PDF", "application/pdf")
+	p, err := svc.PresignKYBDocument(ctx, restID, owner, "cac_certificate", "My CAC.PDF", "application/pdf", 0)
 	if err != nil {
 		t.Fatalf("presign: %v", err)
 	}
@@ -290,13 +292,13 @@ func TestLiveDB_KYBDocumentUploads(t *testing.T) {
 		"doc_type no uppercase": {"CAC", "cac.pdf", "application/pdf"},
 		"no extension at all":   {"cac_certificate", "cac", "application/pdf"},
 	} {
-		if _, err := svc.PresignKYBDocument(ctx, restID, owner, c[0], c[1], c[2]); err == nil {
+		if _, err := svc.PresignKYBDocument(ctx, restID, owner, c[0], c[1], c[2], 0); err == nil {
 			t.Errorf("%s: presign should be refused", name)
 		}
 	}
 
 	// R2 unset ⇒ fail closed with the sentinel the handler maps to 503.
-	if _, err := noStorage.PresignKYBDocument(ctx, restID, owner, "cac_certificate", "cac.pdf", "application/pdf"); !errors.Is(err, ErrKYBUploadsUnavailable) {
+	if _, err := noStorage.PresignKYBDocument(ctx, restID, owner, "cac_certificate", "cac.pdf", "application/pdf", 0); !errors.Is(err, ErrKYBUploadsUnavailable) {
 		t.Errorf("no presigner: err = %v, want ErrKYBUploadsUnavailable", err)
 	}
 
@@ -375,7 +377,7 @@ func TestLiveDB_KYBDocumentUploads(t *testing.T) {
 	if k, err := svc.SubmitKYB(ctx, restID, owner); err != nil || k.Status != KYBSubmitted {
 		t.Fatalf("submit: status=%v err=%v", statusOf(k), err)
 	}
-	if _, err := svc.PresignKYBDocument(ctx, restID, owner, "cac_certificate", "cac.pdf", "application/pdf"); err == nil {
+	if _, err := svc.PresignKYBDocument(ctx, restID, owner, "cac_certificate", "cac.pdf", "application/pdf", 0); err == nil {
 		t.Error("presign must be refused once the KYB is submitted")
 	}
 	if err := svc.AddKYBDocument(ctx, restID, owner, "cac_certificate", "https://example.com/swapped.pdf", ""); err == nil {

@@ -13,6 +13,26 @@ import { GO_BACKEND_URL } from '@/src/lib/go-backend';
 // that ownership is tracked separately under AUD-INFRA-010.
 const GO_OWNED_REF_PREFIXES = ['feespay-', 'foodorder-', 'rideorder-', 'duespay-'];
 
+// FOOD-UAT-H-004: dispute/chargeback/refund events for food orders are also
+// Go-owned (the reversing ledger pair lives in Go). Only "foodorder-" references
+// are relayed; other modules' dispute events keep their previous behaviour.
+export const GO_FOOD_CHARGEBACK_EVENTS = [
+  'charge.dispute.create',
+  'charge.dispute.resolve',
+  'refund.processed',
+] as const;
+
+export function isGoFoodChargebackEvent(event: unknown): boolean {
+  const e = event as {
+    event?: string;
+    data?: { transaction?: { reference?: string }; transaction_reference?: string };
+  } | null;
+  if (!e || typeof e !== 'object') return false;
+  if (!(GO_FOOD_CHARGEBACK_EVENTS as readonly string[]).includes(e.event ?? '')) return false;
+  const ref = e.data?.transaction?.reference ?? e.data?.transaction_reference ?? '';
+  return ref.startsWith('foodorder-');
+}
+
 export interface WebhookHandleResult {
   processed: boolean;
   duplicate: boolean;
@@ -39,8 +59,9 @@ export async function forwardGoOwnedPaystackEvent(
 
   const reference = event.data?.reference ?? '';
   const goOwned =
-    event.event === 'charge.success' &&
-    GO_OWNED_REF_PREFIXES.some((p) => reference.startsWith(p));
+    (event.event === 'charge.success' &&
+      GO_OWNED_REF_PREFIXES.some((p) => reference.startsWith(p))) ||
+    isGoFoodChargebackEvent(event);
   if (!goOwned) {
     return { processed: false, duplicate: false };
   }

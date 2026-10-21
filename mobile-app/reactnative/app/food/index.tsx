@@ -434,6 +434,23 @@ export default function FoodDiscoveryScreen() {
           <Icons.ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
         </Pressable>
 
+        {/* FOOD-UAT-A-012: riders are onboarded in Mobility; give Food users a door. */}
+        <Pressable
+          onPress={() => router.push('/mobility/driver/onboarding')}
+          style={({ pressed }) => [s.sellRow, pressed && { opacity: 0.9 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Deliver food — apply to ride"
+        >
+          <View style={s.sellIcon}>
+            <Icons.Bike size={20} color={Colors.primary} strokeWidth={2} />
+          </View>
+          <View style={s.sellText}>
+            <Text style={s.sellTitle}>Deliver food — apply to ride</Text>
+            <Text style={s.sellSub}>Become a Paymax rider and earn on every delivery.</Text>
+          </View>
+          <Icons.ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+        </Pressable>
+
         {showCuratedRows ? (
           <>
             <RestaurantRow

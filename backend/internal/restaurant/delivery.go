@@ -2,12 +2,19 @@ package restaurant
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // ListOpenRestaurants returns the WHOLE discovery list of open restaurants,
@@ -102,6 +109,17 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 		return nil, err
 	}
 
+	// Attach modifier groups (one batched read for the whole menu).
+	mods, err := s.loadRestaurantModifierGroups(ctx, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range cats {
+		for j := range c.Items {
+			c.Items[j].ModifierGroups = mods[c.Items[j].ID]
+		}
+	}
+
 	detail := &RestaurantDetail{Restaurant: r}
 	for _, id := range order {
 		detail.Categories = append(detail.Categories, *cats[id])
@@ -136,7 +154,9 @@ func (s *Service) GetOrder(ctx context.Context, orderID, userID string) (*Order,
 	}
 	o.Items = items
 	maskPODCodes(&o, role)
-	return &o, nil
+	one := []Order{o}
+	s.hydrateOrderExtras(ctx, one, role) // FOOD-UAT-C-012/C-008/D-007; coords only for the assigned rider
+	return &one[0], nil
 }
 
 func (s *Service) loadOrderItems(ctx context.Context, orderID string) ([]OrderItem, error) {
@@ -245,7 +265,11 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 		maskPODCodes(&o, role)
 		out = append(out, o)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	s.hydrateOrderExtras(ctx, out, role) // kitchen/rider surfacing of notes + order type
+	return out, nil
 }
 
 // ctxKeyAdminOverride marks a call as made by a PLATFORM OPERATOR rather than the
@@ -387,6 +411,10 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET prep_time_minutes=$1 WHERE id=$2 AND restaurant_id=$3`,
 			prep, itemID, restaurantID); err != nil {
 			return nil, err
+		}
+		// D-008: customers with an order still in the kitchen learn the new prep ETA.
+		if prep != nil {
+			s.NotifyOpenOrdersPrepChanged(ctx, restaurantID, *prep)
 		}
 	}
 	if req.DietaryTags != nil {
@@ -671,6 +699,9 @@ func (s *Service) AssignRider(ctx context.Context, orderID, actorID, candidateID
 	return nil
 }
 
+// ErrRiderIneligible: the rider is offline or at the active-job cap (HTTP 409).
+var ErrRiderIneligible = errors.New("restaurant: rider is offline or at the active-delivery limit")
+
 // AcceptDelivery lets an offered rider claim an order, becoming its rider. With
 // auto-dispatch, an order is offered to several riders at once; the first to
 // accept wins. The row is locked (FOR UPDATE) so concurrent accepts can't
@@ -715,6 +746,20 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 	if !approved {
 		return errors.New("restaurant: only an approved rider may accept a delivery")
 	}
+	// FOOD-UAT-E-002: re-check eligibility at accept time — the offer may be stale
+	// (rider went offline, or took other jobs since). Same predicates as DispatchOrder.
+	var online bool
+	var activeLoad int
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM drivers WHERE user_id=$1 AND status='online'),
+		        (SELECT count(*) FROM orders o WHERE o.rider_id=$1
+		           AND o.status NOT IN ('delivered','cancelled','rejected','dispatch_failed','delivery_failed'))`,
+		riderID).Scan(&online, &activeLoad); err != nil {
+		return fmt.Errorf("restaurant: check rider eligibility: %w", err)
+	}
+	if !online || activeLoad >= baseMaxRiderLoad {
+		return ErrRiderIneligible
+	}
 
 	if _, err := tx.Exec(ctx, `UPDATE orders SET rider_id=$1, dispatch_status='assigned', assigned_at=COALESCE(assigned_at, now()) WHERE id=$2`, riderID, orderID); err != nil {
 		return err
@@ -748,6 +793,23 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 	return nil
 }
 
+// ErrLocationNotTrackable: location posts are only accepted while the order is
+// picked_up / out_for_delivery (FOOD-UAT-E-013). HTTP 409.
+var ErrLocationNotTrackable = errors.New("restaurant: rider location is only accepted while the order is out for delivery")
+
+// riderLocationRetention is how long raw rider GPS breadcrumbs are kept (E-013).
+const riderLocationRetention = 30 * 24 * time.Hour
+
+// PurgeRiderLocations deletes breadcrumbs older than the retention window; run from
+// the sweeper tick. Idempotent.
+func (s *Service) PurgeRiderLocations(ctx context.Context, now time.Time) (int64, error) {
+	tag, err := s.db.Exec(ctx, `DELETE FROM restaurant_rider_locations WHERE created_at < $1`, now.Add(-riderLocationRetention))
+	if err != nil {
+		return 0, fmt.Errorf("restaurant: purge rider locations: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // PostLocation records the assigned rider's current position and fans it out to
 // the order's participants. Only the assigned rider may post.
 func (s *Service) PostLocation(ctx context.Context, orderID, riderID string, lat, lng float64) error {
@@ -758,13 +820,22 @@ func (s *Service) PostLocation(ctx context.Context, orderID, riderID string, lat
 	if rider == "" || rider != riderID {
 		return errors.New("restaurant: only the assigned rider may post location")
 	}
+	// FOOD-UAT-E-013: location is only recorded while the rider is actually carrying the
+	// order — never before pickup or after the drop-off (privacy + retention).
+	var status string
+	if err := s.db.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&status); err != nil {
+		return errors.New("restaurant: order not found")
+	}
+	if status != string(OrderPickedUp) && status != "out_for_delivery" {
+		return ErrLocationNotTrackable
+	}
 	if _, err := s.db.Exec(ctx,
 		`INSERT INTO restaurant_rider_locations (id, order_id, rider_id, lat, lng)
 		 VALUES ($1,$2,$3,$4,$5)`,
 		uuid.New().String(), orderID, riderID, lat, lng); err != nil {
 		return err
 	}
-	s.broadcastLocation(orderID, lat, lng) //nolint:contextcheck // WS publish outlives the request by design
+	s.broadcastLocation(orderID, lat, lng, s.TrackingETAMinutes(ctx, orderID, lat, lng)) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -800,6 +871,46 @@ func (s *Service) RiderOffers(ctx context.Context, riderID string) ([]Order, err
 	return orders, nil
 }
 
+// RiderOfferCard is the compact per-offer projection the rider offer screen renders.
+// Order carries none of restaurant name / rider payout / item count, so they are
+// attached here. PayoutKobo is an ESTIMATE: the 10% rider leg of the non-tip base
+// (see settleOrder) plus the 100%-rider tip.
+type RiderOfferCard struct {
+	OrderID            string   `json:"order_id"`
+	RestaurantName     string   `json:"restaurant_name"`
+	RestaurantLocation *LatLng  `json:"restaurant_location,omitempty"`
+	DeliveryAddress    string   `json:"delivery_address"`
+	PayoutKobo         int64    `json:"payout_kobo"`
+	DistanceMeters     *float64 `json:"distance_meters,omitempty"`
+	ItemCount          int      `json:"item_count"`
+}
+
+// RiderOfferCards builds the offer-card projection for already-masked offers.
+func (s *Service) RiderOfferCards(ctx context.Context, orders []Order) ([]RiderOfferCard, error) {
+	cards := make([]RiderOfferCard, 0, len(orders))
+	for _, o := range orders {
+		c := RiderOfferCard{OrderID: o.ID, DeliveryAddress: o.DeliveryAddress}
+		var lat, lng *float64
+		if err := s.db.QueryRow(ctx,
+			`SELECT r.name, r.geo_lat, r.geo_lng, o.distance_meters,
+			        COALESCE((SELECT SUM(quantity) FROM order_items WHERE order_id=o.id),0)
+			   FROM orders o JOIN restaurants r ON r.id=o.restaurant_id WHERE o.id=$1`, o.ID).
+			Scan(&c.RestaurantName, &lat, &lng, &c.DistanceMeters, &c.ItemCount); err != nil {
+			return nil, err
+		}
+		if lat != nil && lng != nil {
+			c.RestaurantLocation = &LatLng{Lat: *lat, Lng: *lng}
+		}
+		base := o.TotalKobo - o.TipKobo - o.ServiceFeeKobo - o.PackagingFeeKobo
+		if base < 0 {
+			base = 0
+		}
+		c.PayoutKobo = o.TipKobo + int64(float64(base)*s.ResolveCommissionSplit(ctx, o.RestaurantID).RiderPct())
+		cards = append(cards, c)
+	}
+	return cards, nil
+}
+
 // RiderActive lists the rider's in-progress deliveries (accepted, not terminal).
 func (s *Service) RiderActive(ctx context.Context, riderID string) ([]Order, error) {
 	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, total_kobo,
@@ -814,6 +925,7 @@ func (s *Service) RiderActive(ctx context.Context, riderID string) ([]Order, err
 	for i := range orders {
 		maskPODCodes(&orders[i], "rider")
 	}
+	s.hydrateOrderExtras(ctx, orders, "rider") // assigned rider: notes + delivery pin
 	return orders, nil
 }
 
@@ -1051,4 +1163,134 @@ func (s *Service) SetDefaultAddress(ctx context.Context, userID, addressID strin
 func (s *Service) DeleteAddress(ctx context.Context, userID, addressID string) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM customer_addresses WHERE id=$1 AND user_id=$2`, addressID, userID)
 	return err
+}
+
+// MarkDeliveryFailed → POST /restaurant/orders/:orderId/mark-failed
+// {reason, evidence_url?} (FOOD-UAT-E-011). The assigned rider reports that the
+// drop-off could not be completed. The service moves picked_up → delivery_failed
+// and notifies the customer; per its documented design it does NOT auto-refund
+// (the food is with the rider), so resolution runs through the dispute flow.
+func (h *Handler) MarkDeliveryFailed(c *gin.Context) {
+	riderID := ginutil.UserID(c)
+	var body struct {
+		Reason      string `json:"reason" binding:"required"`
+		EvidenceURL string `json:"evidence_url"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if reason == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "a reason is required to report a failed delivery"})
+		return
+	}
+	if ev := strings.TrimSpace(body.EvidenceURL); ev != "" {
+		u, err := url.Parse(ev)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "evidence_url must be an http(s) URL"})
+			return
+		}
+		reason += " [evidence: " + ev + "]"
+	}
+	if err := h.svc.MarkDeliveryFailed(c.Request.Context(), c.Param("orderId"), riderID, reason); err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, ErrForbidden):
+			status = http.StatusForbidden
+		case errors.Is(err, ErrOrderTransitionConflict):
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": string(OrderDeliveryFailed)})
+}
+
+// Order-code brute-force protection (FOOD-UAT-E-008). The pickup and delivery
+// codes are 4 digits, so without a limit a rider could walk all 10,000 values
+// and settle an order they never delivered. 5 wrong tries lock that code for
+// 15 minutes; a correct try resets the counter.
+const (
+	codeMaxAttempts  = 5
+	codeLockMinutes  = 15
+	CodeKindPickup   = "pickup"
+	CodeKindDelivery = "delivery"
+)
+
+// ErrCodeLocked: too many wrong attempts; the code is locked for a while (HTTP 429).
+var ErrCodeLocked = errors.New("restaurant: too many incorrect code attempts — locked, try again later")
+
+// VerifyOrderCode compares supplied against expected for one code kind with
+// attempt tracking. nil = correct (counter reset). A wrong code increments and
+// persists the counter (the failure is committed even though an error is
+// returned); the fifth wrong attempt arms the lock. While locked, even the
+// CORRECT code is refused, so a brute-forcer cannot learn it from the lock edge.
+func (s *Service) VerifyOrderCode(ctx context.Context, orderID, kind, supplied, expected string) error {
+	var attemptsCol, lockCol string
+	switch kind {
+	case CodeKindPickup:
+		attemptsCol, lockCol = "pickup_attempts", "pickup_locked_until"
+	case CodeKindDelivery:
+		attemptsCol, lockCol = "delivery_attempts", "delivery_locked_until"
+	default:
+		return fmt.Errorf("restaurant: unknown code kind %q", kind)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var attempts int
+	var locked bool
+	if err := tx.QueryRow(ctx, fmt.Sprintf(
+		`SELECT %s, COALESCE(%s > now(), false) FROM orders WHERE id=$1 FOR UPDATE`, attemptsCol, lockCol),
+		orderID).Scan(&attempts, &locked); err != nil {
+		return errors.New("restaurant: order not found")
+	}
+	if locked {
+		return ErrCodeLocked
+	}
+	if supplied != "" && subtle.ConstantTimeCompare([]byte(supplied), []byte(expected)) == 1 {
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE orders SET %s=0, %s=NULL WHERE id=$1`, attemptsCol, lockCol), orderID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	attempts++
+	failure := fmt.Errorf("restaurant: incorrect %s code", kind)
+	if attempts >= codeMaxAttempts {
+		attempts = 0
+		if _, err := tx.Exec(ctx, fmt.Sprintf(
+			`UPDATE orders SET %s=0, %s=now() + make_interval(mins => $2) WHERE id=$1`, attemptsCol, lockCol),
+			orderID, codeLockMinutes); err != nil {
+			return err
+		}
+		failure = ErrCodeLocked
+	} else if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE orders SET %s=$2 WHERE id=$1`, attemptsCol), orderID, attempts); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return failure
+}
+
+// UnlockOrderCodes clears both code lockouts on an order (admin override;
+// route: POST /api/restaurant/admin/orders/:orderId/unlock-codes, permission
+// restaurant.admin.unlock_order_code).
+func (s *Service) UnlockOrderCodes(ctx context.Context, orderID string) error {
+	_, err := s.db.Exec(ctx, `UPDATE orders SET pickup_attempts=0, pickup_locked_until=NULL,
+		delivery_attempts=0, delivery_locked_until=NULL WHERE id=$1`, orderID)
+	return err
+}
+
+// AdminUnlockOrderCodes → POST /api/restaurant/admin/orders/:orderId/unlock-codes
+// (restaurant.admin.unlock_order_code). Clears pickup + delivery code lockouts.
+func (h *Handler) AdminUnlockOrderCodes(c *gin.Context) {
+	if err := h.svc.UnlockOrderCodes(c.Request.Context(), c.Param("orderId")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

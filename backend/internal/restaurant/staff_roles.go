@@ -384,3 +384,42 @@ func (s *Service) LookupUser(ctx context.Context, query string) (*UserLookup, er
 	}
 	return &u, nil
 }
+
+// statusPermission maps a staff-driven order transition to the permission it
+// needs. Only accept/preparing/ready are staff-delegable: picked_up is the
+// rider's pickup-code route and cancelled moves money, so both stay owner-only.
+func statusPermission(to OrderStatus) (StaffPermission, bool) {
+	switch to {
+	case OrderConfirmed:
+		return PermAcceptOrders, true
+	case OrderPreparing, OrderReady:
+		return PermProgressOrder, true
+	}
+	return "", false
+}
+
+// updateStatusAsStaff handles PATCH .../orders/:orderId/status for a caller who
+// is not the restaurant owner (FOOD-UAT-D-006). handled=false means "not a staff
+// case" and the caller falls through to the owner/customer path in UpdateStatus.
+// handled=true returns the final result: a staff member holding the permission
+// transitions the order; a staff member lacking it (or asking for an owner-only
+// status) gets ErrForbidden. The owner always falls through unchanged.
+func (s *Service) updateStatusAsStaff(ctx context.Context, orderID, actorID string, to OrderStatus) (handled bool, err error) {
+	var restaurantID, customerID string
+	if qerr := s.db.QueryRow(ctx, `SELECT restaurant_id::text, customer_id::text FROM orders WHERE id=$1`, orderID).
+		Scan(&restaurantID, &customerID); qerr != nil {
+		return false, nil // unknown order: let UpdateStatus produce its usual error
+	}
+	if customerID == actorID {
+		return false, nil // customers keep their own (cancel) path
+	}
+	role, status, rerr := s.ResolveStaffRole(ctx, restaurantID, actorID)
+	if rerr != nil || role == "" || role == RoleOwner || !StatusGrantsAccess(status) {
+		return false, nil // owner / non-staff / rider: unchanged behaviour
+	}
+	perm, ok := statusPermission(to)
+	if !ok || !Can(role, status, perm) {
+		return true, ErrForbidden
+	}
+	return true, s.transitionInternal(ctx, orderID, actorID, to)
+}

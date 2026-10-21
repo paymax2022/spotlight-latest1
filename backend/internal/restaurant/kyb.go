@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -35,6 +36,7 @@ const (
 	KYBNeedsInfo   KYBStatus = "needs_more_info" // reviewer bounced it back for more info
 	KYBApproved    KYBStatus = "approved"        // verified — restaurant may go live
 	KYBRejected    KYBStatus = "rejected"        // declined (with a reason)
+	KYBWithdrawn   KYBStatus = "withdrawn"       // applicant pulled a pending application (FOOD-UAT-A-014)
 )
 
 // Allowed business types (mirrors the DB CHECK).
@@ -60,6 +62,10 @@ type KYB struct {
 	AccountName    string    `json:"account_name"`
 	Status         KYBStatus `json:"status"`
 	DecisionReason *string   `json:"decision_reason,omitempty"`
+	// FOOD-UAT-A-009: set on submit responses. Duplicate is true when the application
+	// was already in the review queue and this call changed nothing.
+	SubmissionID string `json:"submission_id,omitempty"`
+	Duplicate    bool   `json:"duplicate,omitempty"`
 }
 
 // kybTransitions is the KYB lifecycle's legal-move table. Owner-driven:
@@ -70,10 +76,12 @@ type KYB struct {
 // moves); same-state and unknown moves are denied by Table.Can.
 var kybTransitions = fsm.Table[KYBStatus]{
 	KYBDraft:       fsm.Set(KYBSubmitted),
-	KYBSubmitted:   fsm.Set(KYBUnderReview, KYBApproved, KYBRejected, KYBNeedsInfo),
-	KYBUnderReview: fsm.Set(KYBApproved, KYBRejected, KYBNeedsInfo),
-	KYBNeedsInfo:   fsm.Set(KYBSubmitted, KYBApproved, KYBRejected),
+	KYBSubmitted:   fsm.Set(KYBUnderReview, KYBApproved, KYBRejected, KYBNeedsInfo, KYBWithdrawn),
+	KYBUnderReview: fsm.Set(KYBApproved, KYBRejected, KYBNeedsInfo, KYBWithdrawn),
+	KYBNeedsInfo:   fsm.Set(KYBSubmitted, KYBApproved, KYBRejected, KYBWithdrawn),
 	KYBRejected:    fsm.Set(KYBSubmitted),
+	// Withdrawn is final for reviewers (no approve/reject); the owner may re-apply.
+	KYBWithdrawn: fsm.Set(KYBSubmitted),
 }
 
 func kybCanTransition(from, to KYBStatus) bool {
@@ -170,7 +178,7 @@ func (s *Service) loadKYB(ctx context.Context, restaurantID string) (KYB, bool, 
 
 // loadKYBDocTypes returns the set of document types uploaded for a restaurant.
 func (s *Service) loadKYBDocTypes(ctx context.Context, restaurantID string) (map[string]bool, error) {
-	rows, err := s.db.Query(ctx, `SELECT doc_type FROM restaurant_kyb_documents WHERE restaurant_id=$1`, restaurantID)
+	rows, err := s.db.Query(ctx, `SELECT doc_type FROM restaurant_kyb_documents WHERE restaurant_id=$1 AND superseded_at IS NULL`, restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +197,7 @@ func (s *Service) loadKYBDocTypes(ctx context.Context, restaurantID string) (map
 // editableKYB reports whether a KYB in the given status may be edited/submitted by the
 // owner (only before/after review, never mid-review or once approved).
 func editableKYB(st KYBStatus) bool {
-	return st == KYBDraft || st == KYBNeedsInfo || st == KYBRejected
+	return st == KYBDraft || st == KYBNeedsInfo || st == KYBRejected || st == KYBWithdrawn
 }
 
 // SaveKYB upserts the owner's KYB business details (owner only). Editing is blocked
@@ -227,7 +235,8 @@ func (s *Service) SaveKYB(ctx context.Context, restaurantID, userID string, in K
 
 // AddKYBDocument records a reference to a document the owner has already uploaded to
 // storage (owner only). It stores the type + file reference, not the file. One
-// document per (restaurant, type) — re-adding a type replaces it.
+// CURRENT document per (restaurant, type) — re-adding a type supersedes the prior
+// version, which is retained (FOOD-UAT-A-007).
 //
 // The reference is either an http(s) link or an object key minted for THIS
 // restaurant by PresignKYBDocument (see kyb_documents.go); anything else is
@@ -249,8 +258,16 @@ func (s *Service) AddKYBDocument(ctx context.Context, restaurantID, userID, docT
 	if err != nil {
 		return err
 	}
-	if _, err := classifyKYBFileRef(rid, fileURL); err != nil {
+	isKey, err := classifyKYBFileRef(rid, fileURL)
+	if err != nil {
 		return err
+	}
+	// FOOD-UAT-A-005: an uploaded object is checked for size and real content type
+	// before it becomes evidence (pasted links cannot be inspected).
+	if isKey {
+		if err := s.verifyKYBObject(ctx, fileURL); err != nil {
+			return err
+		}
 	}
 	// Check the lock and write in ONE transaction, holding a share lock on the KYB row
 	// for its duration. SubmitKYB's UPDATE of that row has to wait for us, so a
@@ -269,11 +286,30 @@ func (s *Service) AddKYBDocument(ctx context.Context, restaurantID, userID, docT
 	if !editableKYB(status) {
 		return fmt.Errorf("restaurant: KYB cannot be edited while %s", status)
 	}
-	const q = `
-		INSERT INTO restaurant_kyb_documents (id, restaurant_id, doc_type, file_url, file_name)
-		VALUES ($1,$2,$3,$4,$5)
-		ON CONFLICT (restaurant_id, doc_type) DO UPDATE SET file_url=$4, file_name=$5`
-	if _, err := tx.Exec(ctx, q, uuid.New().String(), restaurantID, docType, fileURL, nullIfEmpty(fileName)); err != nil {
+	// FOOD-UAT-A-007: a replacement never destroys the prior evidence. The current row
+	// (superseded_at IS NULL) is stamped superseded and a new version is inserted.
+	newID := uuid.New().String()
+	version := 1
+	var prevID string
+	var prevVersion int
+	switch qerr := tx.QueryRow(ctx,
+		`SELECT id::text, version FROM restaurant_kyb_documents
+		  WHERE restaurant_id=$1 AND doc_type=$2 AND superseded_at IS NULL FOR UPDATE`,
+		restaurantID, docType).Scan(&prevID, &prevVersion); {
+	case qerr == nil:
+		version = prevVersion + 1
+		if _, err := tx.Exec(ctx,
+			`UPDATE restaurant_kyb_documents SET superseded_at=now(), superseded_by=$2 WHERE id=$1`,
+			prevID, newID); err != nil {
+			return err
+		}
+	case !errors.Is(qerr, pgx.ErrNoRows):
+		return qerr
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO restaurant_kyb_documents (id, restaurant_id, doc_type, file_url, file_name, version)
+		 VALUES ($1,$2,$3,$4,$5,$6)`,
+		newID, restaurantID, docType, fileURL, nullIfEmpty(fileName), version); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -294,6 +330,14 @@ func (s *Service) SubmitKYB(ctx context.Context, restaurantID, userID string) (*
 	if !exists {
 		return nil, errors.New("restaurant: fill in your KYB details before submitting")
 	}
+	// FOOD-UAT-A-009: a repeat submit of an application that is already in the queue is
+	// a no-op that returns the same submission, not an error and not a second row.
+	if dup, derr := s.recentSubmission(ctx, restaurantID, k.Status); derr != nil {
+		return nil, derr
+	} else if dup {
+		k.SubmissionID, k.Duplicate = restaurantID, true
+		return &k, nil
+	}
 	if !kybCanTransition(k.Status, KYBSubmitted) {
 		return nil, fmt.Errorf("restaurant: KYB cannot be submitted from %s", k.Status)
 	}
@@ -304,14 +348,98 @@ func (s *Service) SubmitKYB(ctx context.Context, restaurantID, userID string) (*
 	if problems := validateKYBForSubmit(k, docTypes); len(problems) > 0 {
 		return nil, kybIncompleteErr(problems)
 	}
-	if _, err := s.db.Exec(ctx,
-		`UPDATE restaurant_kyb SET status='submitted', decision_reason=NULL, submitted_at=now(), updated_at=now() WHERE restaurant_id=$1`,
-		restaurantID); err != nil {
+	// Compare-and-set on the editable statuses: two concurrent submits cannot both win.
+	tag, err := s.db.Exec(ctx,
+		`UPDATE restaurant_kyb SET status='submitted', decision_reason=NULL, submitted_at=now(), updated_at=now()
+		  WHERE restaurant_id=$1 AND status IN ('draft','needs_more_info','rejected','withdrawn')`,
+		restaurantID)
+	if err != nil {
 		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		cur, _, lerr := s.loadKYB(ctx, restaurantID)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if dup, derr := s.recentSubmission(ctx, restaurantID, cur.Status); derr == nil && dup {
+			cur.SubmissionID, cur.Duplicate = restaurantID, true
+			return &cur, nil
+		}
+		return nil, fmt.Errorf("restaurant: KYB cannot be submitted from %s", cur.Status)
 	}
 	_, _ = s.db.Exec(ctx, `UPDATE restaurants SET kyb_status='submitted', updated_at=now() WHERE id=$1`, restaurantID)
 	k.Status = KYBSubmitted
+	k.SubmissionID = restaurantID
 	return &k, nil
+}
+
+// kybSubmitDedupeWindow bounds how long a repeat submit is treated as a duplicate.
+const kybSubmitDedupeWindow = 24 * time.Hour
+
+// recentSubmission reports whether the application is already submitted/under review
+// and was submitted within kybSubmitDedupeWindow.
+func (s *Service) recentSubmission(ctx context.Context, restaurantID string, st KYBStatus) (bool, error) {
+	if st != KYBSubmitted && st != KYBUnderReview {
+		return false, nil
+	}
+	var recent bool
+	err := s.db.QueryRow(ctx,
+		`SELECT COALESCE(submitted_at > now() - make_interval(secs => $2), false) FROM restaurant_kyb WHERE restaurant_id=$1`,
+		restaurantID, kybSubmitDedupeWindow.Seconds()).Scan(&recent)
+	if err != nil {
+		return false, err
+	}
+	return recent, nil
+}
+
+// WithdrawKYB lets the owner pull a pending application (FOOD-UAT-A-014). Only
+// submitted / under_review / needs_more_info can be withdrawn; approved and rejected
+// decisions are final here, and a draft has nothing to withdraw. Withdrawing an
+// already-withdrawn application is an idempotent success.
+func (s *Service) WithdrawKYB(ctx context.Context, restaurantID, userID string) (*KYB, error) {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageBanking); err != nil {
+		return nil, err
+	}
+	k, exists, err := s.loadKYB(ctx, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, errors.New("restaurant: no KYB application to withdraw")
+	}
+	if k.Status == KYBWithdrawn {
+		return &k, nil
+	}
+	if !kybCanTransition(k.Status, KYBWithdrawn) {
+		return nil, fmt.Errorf("restaurant: KYB cannot be withdrawn from %s", k.Status)
+	}
+	tag, err := s.db.Exec(ctx,
+		`UPDATE restaurant_kyb SET status='withdrawn', updated_at=now()
+		  WHERE restaurant_id=$1 AND status IN ('submitted','under_review','needs_more_info')`, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, errors.New("restaurant: KYB changed state; reload and try again")
+	}
+	_, _ = s.db.Exec(ctx, `UPDATE restaurants SET kyb_status='withdrawn', updated_at=now() WHERE id=$1`, restaurantID)
+	if s.audit != nil {
+		s.audit.LogAction(userID, "", "restaurant.application.withdraw", "restaurant", "restaurant", restaurantID,
+			map[string]any{"kyb_status": string(k.Status)}, map[string]any{"kyb_status": string(KYBWithdrawn)},
+			"", "", "info")
+	}
+	k.Status = KYBWithdrawn
+	return &k, nil
+}
+
+// WithdrawKYB → POST /restaurant/:id/kyb/withdraw (owner).
+func (h *Handler) WithdrawKYB(c *gin.Context) {
+	k, err := h.svc.WithdrawKYB(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
+	if err != nil {
+		c.JSON(kybErrCode(err), gin.H{keyError: httperr.Msg(c, kybErrCode(err), err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"kyb": k})
 }
 
 // GetKYB returns the owner's KYB record + uploaded document types (owner only).
@@ -398,6 +526,10 @@ func kybErrCode(err error) int {
 	switch {
 	case errors.Is(err, ErrKYBIncomplete):
 		return http.StatusUnprocessableEntity
+	case errors.Is(err, ErrKYBFileTooLarge):
+		return http.StatusRequestEntityTooLarge
+	case errors.Is(err, ErrKYBUnsupportedType):
+		return http.StatusUnsupportedMediaType
 	case errors.Is(err, ErrKYBUploadsUnavailable):
 		return http.StatusServiceUnavailable
 	case strings.Contains(err.Error(), "only the owner"), strings.Contains(err.Error(), "not found"):

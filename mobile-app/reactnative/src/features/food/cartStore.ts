@@ -8,7 +8,8 @@
 import { create } from 'zustand';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { CartLine, CartPackage, MenuItem } from './types';
+import type { CartLine, CartPackage, CartModifier, MenuItem } from './types';
+import { lineKeyOf, modifiersDeltaKobo } from './modifiers';
 import { pruneCart, type PruneResult } from './cartPrune';
 
 export const MAX_SAME_FOOD_PER_PACKAGE = 2;
@@ -35,9 +36,21 @@ export interface AddItemResult {
 
 /** Can this pack accept one more of a REGULAR item X? (proteins always can.) */
 function packAcceptsRegular(pkg: CartPackage, itemId: string): boolean {
-  const x = pkg.lines.find((l) => l.itemId === itemId);
-  if (x) return x.qty < MAX_SAME_FOOD_PER_PACKAGE; // room for the same main
+  // Portions of one dish count together across its modifier variants.
+  const same = pkg.lines.filter((l) => l.itemId === itemId);
+  if (same.length > 0) return same.reduce((n, l) => n + l.qty, 0) < MAX_SAME_FOOD_PER_PACKAGE; // room for the same main
   return !pkg.lines.some((l) => !l.isProtein); // no other main present → can be this pack's main
+}
+
+/**
+ * `key` is a line key (itemId#modifiers) or a bare itemId. A bare itemId that
+ * matches no line exactly resolves to that dish's LAST variant, so the menu
+ * stepper (which only knows the dish) removes the most recently added one.
+ */
+function resolveLineKey(pkg: CartPackage, key: string): string {
+  if (pkg.lines.some((l) => lineKeyOf(l) === key)) return key;
+  const variants = pkg.lines.filter((l) => l.itemId === key);
+  return variants.length > 0 ? lineKeyOf(variants[variants.length - 1]) : key;
 }
 
 interface CartState {
@@ -72,7 +85,7 @@ interface CartState {
     restaurantName: string,
     item: MenuItem,
     packageId?: string,
-    opts?: { autoOverflow?: boolean },
+    opts?: { autoOverflow?: boolean; modifiers?: CartModifier[] },
   ) => AddItemResult;
   decrementItem: (packageId: string, itemId: string) => void;
   removeItem: (packageId: string, itemId: string) => void;
@@ -124,7 +137,15 @@ export const useCartStore = create<CartState>((set) => ({
     // restaurantName is recorded per line, not just once on the store: the
     // top-level field keeps the FIRST restaurant only, so a multi-restaurant
     // cart could not name its other sections.
-    const newLine = (): CartLine => ({ itemId: item.id, name: item.name, priceKobo: item.priceKobo, qty: 1, isProtein, restaurantId, restaurantName });
+    const mods = opts?.modifiers && opts.modifiers.length > 0 ? opts.modifiers : undefined;
+    const modifierIds = mods?.map((m) => m.id);
+    // Unit price carries the modifier surcharge; the server re-prices anyway.
+    const unitKobo = item.priceKobo + modifiersDeltaKobo(mods);
+    const newLine = (): CartLine => ({
+      itemId: item.id, name: item.name, priceKobo: unitKobo, qty: 1, isProtein, restaurantId, restaurantName,
+      ...(mods ? { modifierIds, modifiers: mods } : {}),
+    });
+    const key = lineKeyOf({ itemId: item.id, modifierIds });
     let result: AddItemResult = { ok: true };
 
     set((st) => {
@@ -172,9 +193,9 @@ export const useCartStore = create<CartState>((set) => ({
       // Target accepts: add or increment in place.
       packages = packages.map((p) => {
         if (p.id !== targetId) return p;
-        const existing = p.lines.find((l) => l.itemId === item.id);
+        const existing = p.lines.find((l) => lineKeyOf(l) === key);
         return existing
-          ? { ...p, lines: p.lines.map((l) => (l.itemId === item.id ? { ...l, qty: l.qty + 1 } : l)) }
+          ? { ...p, lines: p.lines.map((l) => (lineKeyOf(l) === key ? { ...l, qty: l.qty + 1 } : l)) }
           : { ...p, lines: [...p.lines, newLine()] };
       });
       result = { ok: true, packageId: targetId!, packageIndex: idxOf(targetId!) };
@@ -191,14 +212,14 @@ export const useCartStore = create<CartState>((set) => ({
 
   decrementItem: (packageId, itemId) =>
     set((st) => {
-      const packages = st.packages.map((p) =>
-        p.id === packageId
-          ? {
-              ...p,
-              lines: p.lines.map((l) => (l.itemId === itemId ? { ...l, qty: l.qty - 1 } : l)).filter((l) => l.qty > 0),
-            }
-          : p,
-      );
+      const packages = st.packages.map((p) => {
+        if (p.id !== packageId) return p;
+        const target = resolveLineKey(p, itemId);
+        return {
+          ...p,
+          lines: p.lines.map((l) => (lineKeyOf(l) === target ? { ...l, qty: l.qty - 1 } : l)).filter((l) => l.qty > 0),
+        };
+      });
       if (packages.every((p) => p.lines.length === 0)) {
         return { restaurantId: null, restaurantName: null, packages: [], activePackageId: null };
       }
@@ -207,9 +228,11 @@ export const useCartStore = create<CartState>((set) => ({
 
   removeItem: (packageId, itemId) =>
     set((st) => {
-      const packages = st.packages.map((p) =>
-        p.id === packageId ? { ...p, lines: p.lines.filter((l) => l.itemId !== itemId) } : p,
-      );
+      const packages = st.packages.map((p) => {
+        if (p.id !== packageId) return p;
+        const target = resolveLineKey(p, itemId);
+        return { ...p, lines: p.lines.filter((l) => lineKeyOf(l) !== target) };
+      });
       if (packages.every((p) => p.lines.length === 0)) {
         return { restaurantId: null, restaurantName: null, packages: [], activePackageId: null };
       }
@@ -260,20 +283,28 @@ export function cartPackagingKobo(packages: CartPackage[], packFeeKobo: number):
 
 /** Aggregate every package's lines by itemId (pricing/charge payload + nutrition). */
 export function aggregateCartLines(packages: CartPackage[]): CartLine[] {
+  // Keyed by line key so one dish with different modifiers stays separate lines.
   const byId = new Map<string, CartLine>();
   for (const p of packages) {
     for (const l of p.lines) {
-      const cur = byId.get(l.itemId);
+      const k = lineKeyOf(l);
+      const cur = byId.get(k);
       if (cur) cur.qty += l.qty;
-      else byId.set(l.itemId, { ...l, restaurantId: l.restaurantId, restaurantName: l.restaurantName });
+      else byId.set(k, { ...l, restaurantId: l.restaurantId, restaurantName: l.restaurantName });
     }
   }
   return Array.from(byId.values());
 }
 
 /** Per-package payload (non-empty packages only) for the order request. */
-export function cartPackagesPayload(packages: CartPackage[]): { items: { itemId: string; qty: number }[] }[] {
+export function cartPackagesPayload(packages: CartPackage[]): { items: { itemId: string; qty: number; modifierIds?: string[] }[] }[] {
   return packages
     .filter((p) => p.lines.length > 0)
-    .map((p) => ({ items: p.lines.map((l) => ({ itemId: l.itemId, qty: l.qty })) }));
+    .map((p) => ({
+      items: p.lines.map((l) => ({
+        itemId: l.itemId,
+        qty: l.qty,
+        ...(l.modifierIds && l.modifierIds.length > 0 ? { modifierIds: l.modifierIds } : {}),
+      })),
+    }));
 }

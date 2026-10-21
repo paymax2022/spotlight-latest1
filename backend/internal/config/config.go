@@ -787,6 +787,11 @@ type Config struct {
 	// unless MocksAllowed(); see otp_routes.go for why it can never reach staging/prod.
 	BrevoEndpoint string
 
+	// FeatureTestOTPDeterministicEnabled turns on the dev-only deterministic OTP
+	// (code 123456 for +234999* phones, no SMS sent). Honoured ONLY where
+	// MocksAllowed(); otherwise refused. See internal/otp/test_mode.go.
+	FeatureTestOTPDeterministicEnabled bool
+
 	// OTPPepper is the server-side HMAC key for code and identifier hashing.
 	// REQUIRED whenever the feature is on: otp.NewService refuses to construct
 	// without it, and the routes then answer 503 misconfigured rather than
@@ -1173,14 +1178,15 @@ func Load() Config {
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
 		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
 
-		FeatureOTPEmailEnabled:    getEnvBool("FEATURE_OTP_EMAIL_ENABLED", false),
-		FeatureOTPLoginMFAEnabled: getEnvBool("FEATURE_OTP_LOGIN_MFA_ENABLED", false),
-		BrevoAPIKey:               getEnv("BREVO_API_KEY", ""),
-		BrevoSenderName:           getEnv("BREVO_SENDER_NAME", "Spotlight"),
-		BrevoSenderEmail:          getEnv("BREVO_SENDER_EMAIL", ""),
-		BrevoOTPTemplateID:        int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
-		BrevoTimeoutSeconds:       getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
-		BrevoEndpoint:             getEnv("BREVO_ENDPOINT", ""),
+		FeatureOTPEmailEnabled:             getEnvBool("FEATURE_OTP_EMAIL_ENABLED", false),
+		FeatureOTPLoginMFAEnabled:          getEnvBool("FEATURE_OTP_LOGIN_MFA_ENABLED", false),
+		BrevoAPIKey:                        getEnv("BREVO_API_KEY", ""),
+		BrevoSenderName:                    getEnv("BREVO_SENDER_NAME", "Spotlight"),
+		BrevoSenderEmail:                   getEnv("BREVO_SENDER_EMAIL", ""),
+		BrevoOTPTemplateID:                 int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
+		BrevoTimeoutSeconds:                getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
+		BrevoEndpoint:                      getEnv("BREVO_ENDPOINT", ""),
+		FeatureTestOTPDeterministicEnabled: getEnvBool("FEATURE_TEST_OTP_DETERMINISTIC_ENABLED", false),
 
 		OTPPepper:                getEnv("OTP_PEPPER", ""),
 		OTPLength:                getEnvInt("OTP_LENGTH", 6),

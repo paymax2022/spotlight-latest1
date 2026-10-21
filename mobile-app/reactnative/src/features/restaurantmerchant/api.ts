@@ -261,7 +261,7 @@ export async function deleteCategory(id: string, categoryId: string): Promise<vo
 
 export async function createItem(
   id: string,
-  input: { categoryId: string; name: string; description?: string; priceKobo: number },
+  input: { categoryId: string; name: string; description?: string; priceKobo: number; dietaryTags?: string[] },
 ): Promise<MerchantMenuItem> {
   if (USE_MOCK) {
     await delay();
@@ -272,7 +272,7 @@ export async function createItem(
     mockCats = mockCats.map((c) => (c.id === input.categoryId ? { ...c, items: [...c.items, it] } : c));
     return it;
   }
-  const body = { category_id: input.categoryId, name: input.name, description: input.description, price_kobo: input.priceKobo };
+  const body = { category_id: input.categoryId, name: input.name, description: input.description, price_kobo: input.priceKobo, dietary_tags: input.dietaryTags };
   return mapItem(unwrap<any>(await api.post(`${BASE}/${enc(id)}/menu/items`, body)));
 }
 

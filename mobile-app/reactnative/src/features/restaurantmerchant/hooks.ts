@@ -154,7 +154,7 @@ export function useDeleteCategory(id: string) {
 export function useCreateItem(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { categoryId: string; name: string; description?: string; priceKobo: number }) =>
+    mutationFn: (input: { categoryId: string; name: string; description?: string; priceKobo: number; dietaryTags?: string[] }) =>
       merchant.createItem(id, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', id] }),
   });
