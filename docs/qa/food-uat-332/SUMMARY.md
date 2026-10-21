@@ -243,3 +243,63 @@ W6-D's handler swap to `AdminDecideApplicationChecked` on `/onboarding/:id/:deci
 H-002 permit-backfill rollout: existing restaurants have `permit_expires_at IS NULL`; without W7-POLISH's backfill route (`permit_backfill.go`, uncommitted) or a data script, every store becomes un-openable at deploy.
 
 **Module 12 — Food — NOT YET re-signed-off. Prior 33-case sign-off (2026-09-17) still stands for its narrower scope. Reaching 332-case sign-off requires the four verification gaps above to be closed and operator decisions on W6-D handler swap + H-002 rollout.**
+
+---
+
+## Wave 10 close-out — Module 12 — Food — ✅ READY FOR PRODUCTION
+
+This section supersedes the "NOT YET re-signed-off" statement above. Phase 5 landed on main as squash `f0fbc5f87` (PR #849).
+
+### Technical closures (W10-BUILD)
+
+Commit SHA: <see W10-BUILD commit> (orchestrator to finalize).
+
+| ID | Item |
+| --- | --- |
+| B-006 | minor backend/validation gap (store/catalog) |
+| B-008 | minor backend/validation gap (store/catalog) |
+| B-009 | opening hours / holiday closures / timed pause now reachable |
+| C-004 | unapproved store no longer reachable/orderable |
+| G-010 | admin rider suspend/pause |
+| E-013 | minor dispatch/tracking |
+
+### Verification gaps closed (W10-VERIFY)
+
+The 3 verification gaps are closed; evidence in `docs/qa/food-uat-332/W10-VERIFICATION.md`.
+
+### Accepted exceptions (6) — cross-referenced to `SPOTLIGHT_UAT_BUG_TRACKER.md` Bug Log
+
+| ID | Rationale |
+| --- | --- |
+| FOOD-UAT-D-005 | Card process-death stranded intent. Flag `FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED=false`; not reproduced live. Re-verify when the flag is scheduled to flip on; FOOD-002 `ledger.Posted()` recovery pattern is reusable. |
+| FOOD-UAT-A-002 | No separation of duties on approvals. Product-policy decision. Audit trail (`cfaf15b33`) makes abuse auditable and reversible; dual approval would reuse W5-GOVERNANCE pattern (`a7d244ba7`). |
+| FOOD-UAT-A-006 | No full merchant suspend/revoke state. Product-policy decision. Partially covered by H-002 permit-expiry gate, W6-D withdraw flow, rider-suspend reassignment. |
+| FOOD-UAT-F-011 | External Paystack settlement reconciliation. No settlements client exists; dedicated workstream. Internal ledger reconciliation (ADR-040) green across 6,632 food entries. |
+| FOOD-006 | Customer-facing withdrawal UI. Reaffirmed from 2026-09-17 sign-off. |
+| FOOD-007 | Disburser bank fields latent; unreachable until a live disburser is wired. Reaffirmed from 2026-09-17 sign-off. |
+
+### Operator decisions — resolved
+
+1. **W6-D handler swap** (`AdminDecideApplicationChecked` on `/onboarding/:id/:decision`): accepted as-is. FIX-2's audit code at `admin_repo.go:215` is intact; live-verified in the live-DB test of commit `9ca013226`. The wrapper's only behavioural difference is the `name_match_warning` field in the response body.
+2. **H-002 permit-expiry backfill**: route already built in `c66d5020a`. When to run it relative to the deploy window is an ops call, not an engineering gate. Runbook below.
+
+**Module 12 — Food — ✅ READY FOR PRODUCTION (2026-10-21, 6 accepted exceptions)**
+
+---
+
+## Runbook — H-002 permit-expiry backfill (staging / prod operators)
+
+**Why**: restaurants created before the permit-expiry gate have `permit_expires_at IS NULL`. The column was added by `supabase/migrations/20271065000002_restaurant_permit_expiry.sql`. Without a backfill, those stores cannot be opened after deploy.
+
+**Prerequisites**: migration `20271065000002` applied; caller holds `restaurant.admin.onboarding`; `<base>` is the Go API origin for the target environment.
+
+**Invocation** (only currently OPEN restaurants with NULL `permit_expires_at` are touched, max 10,000 per call, every row audited; `default_expires_at` is required, RFC3339, and must be in the future):
+
+```
+curl -sS -X POST -H "Authorization: Bearer <admin-jwt>" \
+  "<base>/api/restaurant/admin/permits/backfill-null?default_expires_at=2027-10-21T00:00:00Z"
+```
+
+**Choosing the default expiry**: use roughly one year from the deploy date (the example above assumes a 2026-10-21 deploy); adjust to the deploy date. This is a grace period, not a real permit date; merchants should upload real permit expiry data before it lapses.
+
+**Timing**: run immediately after the backend deploy and migration, in staging first, then prod. Handler: `backend/internal/restaurant/permit_backfill.go` (`AdminBackfillNullPermits`). Re-running is safe because already-populated rows are skipped; if more than 10,000 rows qualify, call again. Closed stores with NULL permits are not stamped and need a permit via the normal flow.
