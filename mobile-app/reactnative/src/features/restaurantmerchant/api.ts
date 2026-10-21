@@ -475,12 +475,26 @@ export async function submitKYB(id: string): Promise<RestaurantKYB> {
   return mapKYB(raw?.kyb ?? raw);
 }
 
-// Admin-managed taxonomy (read-only for owners). Returns [] in mock mode, which keeps
-// the screen on the legacy per-category add. A server without the flag answers 404,
-// which surfaces as a thrown error and the same fallback.
+// Admin-managed taxonomy (read-only for owners). Returns [] in mock mode AND
+// when the backend FEATURE_RESTAURANT_ADMIN_CATEGORIES flag is off (route 404s).
+// The 404 is a documented default-off state, not a bug — the caller falls back
+// to the legacy per-category add — so swallow it quietly instead of letting
+// axios log a console-level HTTP error. Any OTHER status is still thrown so
+// genuine server errors stay visible.
 export async function getMenuTaxonomy(): Promise<TaxonomyCategory[]> {
   if (USE_MOCK) return [];
-  const raw = unwrap<any>(await api.get(`${BASE}/menu-taxonomy/categories`));
+  let raw: unknown;
+  try {
+    raw = unwrap<any>(await api.get(`${BASE}/menu-taxonomy/categories`, {
+      // skipAuthRedirect — a flag-off 404 must never trigger the 401-sign-out
+      // interceptor path (an unrelated token-expiry would also bounce to login,
+      // but this is a feature-flag read, not an auth-sensitive call).
+      skipAuthRedirect: true,
+    }));
+  } catch (e: any) {
+    if (e?.response?.status === 404) return [];
+    throw e;
+  }
   const list: any[] = Array.isArray(raw) ? raw : [];
   return list.map((c) => ({
     id: c.id,
