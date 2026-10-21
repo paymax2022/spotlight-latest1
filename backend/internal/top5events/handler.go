@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -157,6 +158,20 @@ func (h *Handler) ListEvents(c *gin.Context) {
 		State:    c.Query("state"),
 		Limit:    20,
 		Offset:   0,
+		Q:        c.Query("q"),
+		Sort:     c.Query("sort"),
+	}
+	// Date-window filters for discovery (EVT-048): RFC3339, silently ignored
+	// when unparseable so a bad value degrades to "no filter" rather than 500.
+	if v := c.Query("from"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			filter.From = &t
+		}
+	}
+	if v := c.Query("to"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			filter.To = &t
+		}
 	}
 	if v := c.Query("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

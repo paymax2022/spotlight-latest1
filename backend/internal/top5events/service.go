@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -106,6 +107,9 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	if organiserID == "" {
 		return nil, errors.New("events: organiser required")
 	}
+	if err := validateEventInput(e.Title, e.StartsAt, e.EndsAt); err != nil {
+		return nil, err
+	}
 	e.ID = uuid.New().String()
 	e.OrganiserID = organiserID
 	e.State = EventDraft
@@ -128,6 +132,25 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	return &e, nil
 }
 
+// validateEventInput enforces the field rules the discovery row used to get only
+// from DB CHECK constraints (which surfaced as an opaque 400) plus the one rule
+// no constraint can express: a brand-new public event may not start in the past.
+// A one-minute grace keeps "starts now" fixtures/drafts from tripping on clock
+// skew.
+func validateEventInput(title string, startsAt, endsAt time.Time) error {
+	n := len(strings.TrimSpace(title))
+	if n < 2 || n > 200 {
+		return fmt.Errorf("%w: events: title must be 2-200 characters", ErrValidation)
+	}
+	if !endsAt.After(startsAt) {
+		return fmt.Errorf("%w: events: ends_at must be after starts_at", ErrValidation)
+	}
+	if startsAt.Before(time.Now().Add(-time.Minute)) {
+		return fmt.Errorf("%w: events: starts_at must not be in the past", ErrValidation)
+	}
+	return nil
+}
+
 // Submit moves DRAFT -> SUBMITTED (organiser action; object-level authZ).
 func (s *Service) Submit(ctx context.Context, organiserID, eventID string) error {
 	return s.transition(ctx, eventID, EventDraft, EventSubmitted, &organiserID, "events.submit")
@@ -138,8 +161,17 @@ func (s *Service) Approve(ctx context.Context, adminID, eventID string) error {
 	return s.transition(ctx, eventID, EventSubmitted, EventApproved, nil, "events.approve")
 }
 
-// GoLive moves APPROVED -> LIVE (organiser; sales open).
+// GoLive moves APPROVED -> LIVE (organiser; sales open). Publishing an event
+// whose run has already ended is refused — there is nothing left to sell and no
+// backfill workflow exists to legitimise it.
 func (s *Service) GoLive(ctx context.Context, organiserID, eventID string) error {
+	ev, err := s.GetEvent(ctx, eventID)
+	if err != nil {
+		return err
+	}
+	if !ev.EndsAt.After(time.Now()) {
+		return fmt.Errorf("%w: events: cannot publish an event that has already ended", ErrValidation)
+	}
 	return s.transition(ctx, eventID, EventApproved, EventLive, &organiserID, "events.golive")
 }
 
@@ -227,7 +259,40 @@ func (s *Service) GetEvent(ctx context.Context, eventID string) (*Event, error) 
 		return nil, err
 	}
 	e.State = EventState(state)
+
+	// Buyer-facing detail includes the tier list — the mobile detail screen
+	// renders e.tiers (sold-out flags, per-tier price) straight off this
+	// payload; without it the live read could not satisfy the purchase
+	// disclosure the client is built around.
+	tiers, err := s.listTiers(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	e.Tiers = tiers
 	return &e, nil
+}
+
+// listTiers returns every tier row for an event (any active flag — the buyer
+// disclosure needs paused tiers to render as unavailable, and organiser reads
+// need the full set).
+func (s *Service) listTiers(ctx context.Context, eventID string) ([]TicketTier, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT id, event_id, name, price_kobo, capacity, sold, active, COALESCE(description,''), sales_start_at, sales_end_at, invite_only
+		 FROM event_ticket_tiers WHERE event_id=$1 ORDER BY price_kobo ASC`, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("events: list tiers: %w", err)
+	}
+	defer rows.Close()
+	out := []TicketTier{}
+	for rows.Next() {
+		var t TicketTier
+		if err := rows.Scan(&t.ID, &t.EventID, &t.Name, &t.PriceKobo, &t.Capacity, &t.Sold, &t.Active,
+			&t.Description, &t.SalesStartAt, &t.SalesEndAt, &t.InviteOnly); err != nil {
+			return nil, fmt.Errorf("events: tier scan: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // publiclyVisibleStates are the states a non-owner/non-admin caller may browse
@@ -288,9 +353,36 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 		}
 	}
 
+	if filter.Q != "" {
+		// Parameterised ILIKE — never interpolated, so regex/quotes/% arrive
+		// inert. Title and venue are the public search surface.
+		args = append(args, "%"+filter.Q+"%")
+		where += fmt.Sprintf(" AND (e.title ILIKE $%d OR e.venue ILIKE $%d)", len(args), len(args))
+	}
+	if filter.From != nil {
+		args = append(args, *filter.From)
+		where += fmt.Sprintf(" AND e.starts_at >= $%d", len(args))
+	}
+	if filter.To != nil {
+		args = append(args, *filter.To)
+		where += fmt.Sprintf(" AND e.starts_at <= $%d", len(args))
+	}
+
 	args = append(args, limit, offset)
 	limitPH := len(args) - 1
 	offsetPH := len(args)
+
+	// Sort whitelist — the ORDER BY is a fixed string chosen from this set;
+	// caller input never reaches the SQL text.
+	orderBy := "e.starts_at ASC"
+	switch filter.Sort {
+	case "date_desc":
+		orderBy = "e.starts_at DESC"
+	case "price_asc":
+		orderBy = "min_price_kobo ASC, e.starts_at ASC"
+	case "price_desc":
+		orderBy = "min_price_kobo DESC, e.starts_at ASC"
+	}
 
 	q := fmt.Sprintf(`
 		SELECT e.id, e.title, e.venue, e.state, COALESCE(e.category,''), e.starts_at, e.ends_at,
@@ -298,8 +390,8 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 		       COALESCE((SELECT bool_and(t.capacity > 0 AND t.sold >= t.capacity) FROM event_ticket_tiers t WHERE t.event_id = e.id AND t.active = true), false) AS sold_out
 		FROM events e
 		%s
-		ORDER BY e.starts_at ASC
-		LIMIT $%d OFFSET $%d`, where, limitPH, offsetPH)
+		ORDER BY %s
+		LIMIT $%d OFFSET $%d`, where, orderBy, limitPH, offsetPH)
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {

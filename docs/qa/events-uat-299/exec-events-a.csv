@@ -1,1 +1,36 @@
 execution_id,case_id,method,command_or_procedure,env,result,evidence_path,executed_at_utc
+EX-A-01,EVT-UAT-001..012,CODE_REVIEW,map auth/OTP/session surface,"backend auth_service.go, handlers/auth_handler.go, internal/otp, router.go sessions routes",DONE,registration/login/logout/reset/session routes all exist,2026-10-21T19:40Z
+EX-A-02,EVT-UAT-001,API_LIVE,POST :8463/api/auth/register evta-reg1@test.local,go run ./cmd/server @:8463 + local supabase,PASS,"200 needsVerification=true, no tokens issued pre-verify",2026-10-21T19:58Z
+EX-A-03,EVT-UAT-002,API_LIVE,re-POST register same email,same,PASS,400 generic 'couldn't create this account' (no enumeration),2026-10-21T19:58Z
+EX-A-04,EVT-UAT-005,API_LIVE,POST /api/auth/login admin@spotlight.internal (after ensure-dev-login.sh),same,PASS,200 + access_token accepted on /api/finance/events,2026-10-21T19:57Z
+EX-A-05,EVT-UAT-006,API_LIVE,3x wrong-password login + unknown-account login,same,PASS,identical 401 invalid credentials,2026-10-21T19:57Z
+EX-A-06,EVT-UAT-007,API_LIVE,POST /api/auth/request-password-reset known+unknown,same,BLOCKED,"503 feature_disabled otp_email both cases (uniform, enumeration-safe)",2026-10-21T19:58Z
+EX-A-07,EVT-UAT-008,API_LIVE,logout then reuse bearer on /api/finance/events,same,PASS,logout 200; reuse -> 401 invalid token,2026-10-21T19:57Z
+EX-A-08,EVT-UAT-012,CODE_REVIEW,GET/DELETE sessions routes mounted,server route table,DONE,sessions list/revoke/revoke-all mounted,2026-10-21T19:55Z
+EX-A-09,"EVT-UAT-013,EVT-UAT-023",API_LIVE,customer token POST /api/finance/events,same,FAIL,201 DRAFT created with no organiser status — EVTA-D001,2026-10-21T19:55Z
+EX-A-10,EVT-UAT-029,API_LIVE,unauth POST /api/finance/events,same,PASS,401 missing bearer token,2026-10-21T19:55Z
+EX-A-11,EVT-UAT-030,API_LIVE,customer token GET+POST /api/events/admin/*,same,PASS,403 forbidden both,2026-10-21T19:56Z
+EX-A-12,EVT-UAT-032,API_LIVE,user2 PATCH + POST submit on user1 event,same,PASS,403 forbidden twice,2026-10-21T19:55Z
+EX-A-13,"EVT-UAT-033,EVT-UAT-044",API_LIVE,foreign + owner GET /:id/attendees and ?format=csv,same,PASS,foreign 403 both formats; owner 200 JSON + CSV rows,2026-10-21T19:56Z
+EX-A-14,EVT-UAT-034,UNIT_TEST,go test -tags=integration ./internal/top5events (scan authz),TEST_DATABASE_URL=local supabase pg,PASS,ScanTicket_OrganiserCanScanOwnEvent/DesignatedStewardCanScan/RandomUserForbidden/StewardOfOtherEventForbidden/RemovedStewardForbidden all PASS,2026-10-21T19:47Z
+EX-A-15,EVT-UAT-035,API_LIVE,owner vs foreign GET /tickets/:id/token,live,PASS,owner 200 rotating token; foreign 403,2026-10-21T19:56Z
+EX-A-16,"EVT-UAT-036,EVT-UAT-037,EVT-UAT-038",API_LIVE,organiser token POST admin approve/suspend,live,PASS,403 both,2026-10-21T19:56Z
+EX-A-17,EVT-UAT-039,API_LIVE,admin POST suspend; then feed/detail check,live,PASS,state SUSPENDED; excluded from public feed,2026-10-21T19:56Z
+EX-A-18,"EVT-UAT-047,EVT-UAT-052",API_LIVE,GET /:id draft as non-owner; ?state=DRAFT; suspend visibility,live,PASS,404 own-draft to stranger; drafts excluded; suspended excluded,2026-10-21T19:55Z
+EX-A-19,"EVT-UAT-048,EVT-UAT-049,EVT-UAT-050",API_LIVE,GET /events?q=&category=&from=&to=&sort=price_asc,live (post-fix),PASS,q matches title+venue; window filter; price ordering verified,2026-10-21T19:56Z
+EX-A-20,EVT-UAT-051,API_LIVE,"purchase free tier (0 kobo, unfunded wallet) + paid tier (funded)",live,PASS,"free issued w/o debit; paid debited 500000->escrow, ISSUED+credential",2026-10-21T19:56Z
+EX-A-21,"EVT-UAT-053,EVT-UAT-054",API_LIVE,GET /events/:id after tiers fix; cap=1 second purchase,live,PASS,tiers[] returned; second purchase ->409 sold out,2026-10-21T19:56Z
+EX-A-22,EVT-UAT-060,API_LIVE,q=' OR 1=1-- ; q=%%% ; GET /events/not-a-uuid,live,PASS,inert results; 400 on non-uuid,2026-10-21T19:58Z
+EX-A-23,"EVT-UAT-070,EVT-UAT-073..075",API_LIVE,create valid + empty-title + end<start + past-start,live (post-fix),PASS,201 DRAFT; 400 field errors for each invalid,2026-10-21T19:55Z
+EX-A-24,"EVT-UAT-076,EVT-UAT-077",API_LIVE,draft persist + owner-only read,live,PASS,"draft persists, 404 to others, owner full read",2026-10-21T19:55Z
+EX-A-25,"EVT-UAT-078,EVT-UAT-080",API_LIVE,golive pre-approval; submit; admin approve; golive,live,PASS,400 illegal transition; then APPROVED then LIVE,2026-10-21T19:55Z
+EX-A-26,"EVT-UAT-081,EVT-UAT-082,EVT-UAT-098",API_LIVE,PATCH starts_at post-sale; POST cancel,live,PASS,409 edit locked; cancel 202 + refund sweep,2026-10-21T19:56Z
+EX-A-27,EVT-UAT-083,API_LIVE,suspend then re-read feed/detail,live,PASS,immediately reflected,2026-10-21T19:56Z
+EX-A-28,"EVT-UAT-087,EVT-UAT-088,EVT-UAT-091",API_LIVE,"cap=1 tier, two sequential purchases",live,PASS,exactly one success; but aggregate venue cap absent -> EVTA-D008,2026-10-21T19:56Z
+EX-A-29,EVT-UAT-045,API_LIVE,GET /organiser/mine as user1/user2,live,PASS,each sees only own events,2026-10-21T19:57Z
+EX-A-30,EVT-UAT-051..gift,API_LIVE,POST /tickets/:id/gift {recipient:evtaorg1},live,PASS,"ticket TRANSFERRED, owner_id swapped, new credential",2026-10-21T19:57Z
+EX-A-31,all,UNIT_TEST,go test -tags=integration ./internal/top5events -count=1,TEST_DATABASE_URL=postgres://localhost:54322,PASS,"231 tests PASS, 1 SKIP (tier-0 wallet-disabled leg)",2026-10-21T19:47Z
+EX-A-32,all,UNIT_TEST,go test ./internal/top5events (no db),default,PASS,ok 0.834s,2026-10-21T19:45Z
+EX-A-33,all,UNIT_TEST,npx vitest run tests/unit/events/route.spec.ts,frontend-web (main node_modules symlink),PASS,7/7 BFF route contract tests,2026-10-21T19:45Z
+EX-A-34,all,UNIT_TEST,tsc --noEmit mobile-app/reactnative,main node_modules symlink,PASS,no errors under src/features/events (pre-existing academy/livekit unresolved imports only),2026-10-21T19:52Z
+EX-A-35,"EVT-UAT-073..075,087",UNIT_TEST,new discovery_validation_live_db_test.go,live pg,PASS,"4 new tests PASS (validation, detail tiers, q/from/to/sort, golive-ended)",2026-10-21T19:59Z

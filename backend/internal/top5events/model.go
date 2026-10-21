@@ -45,6 +45,11 @@ type Event struct {
 	EndsAt      time.Time  `json:"ends_at"`
 	FeeBps      int        `json:"fee_bps"` // platform fee in basis points on vendor settlement
 	CreatedAt   time.Time  `json:"created_at"`
+
+	// Tiers is populated only by GetEvent (the buyer/organiser detail read
+	// needs the tier list — mobile renders e.tiers directly). Everywhere else
+	// it is omitted so list/transition payloads stay unchanged.
+	Tiers []TicketTier `json:"tiers,omitempty"`
 }
 
 // EventListFilter narrows the discovery/list feed. Category and State are
@@ -55,6 +60,13 @@ type EventListFilter struct {
 	State    string
 	Limit    int
 	Offset   int
+
+	// Discovery extensions (UAT EVT-048/049/050): free-text search over
+	// title+venue, a starts_at date window, and a deterministic sort order.
+	Q    string
+	From *time.Time
+	To   *time.Time
+	Sort string // date_asc (default) | date_desc | price_asc | price_desc
 }
 
 // EventSummary is the lightweight discovery-feed projection of an Event: no

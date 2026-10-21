@@ -314,13 +314,30 @@ export async function purchaseTickets(input: PurchaseTicketInput): Promise<Purch
     }));
     return { ok: true, tickets, total_kobo: (tier?.price_kobo ?? 0) * input.quantity };
   }
-  const body = { tier_id: input.tier_id, quantity: input.quantity, promo_code: input.promo_code };
-  return unwrap(await api.post(`${API_BASE}/${input.eventId}/purchase`, body, { headers: { 'Idempotency-Key': idempotencyKey() } }));
+  // The Go contract is one ticket per POST /purchase (tier_id + promo, each
+  // with its own Idempotency-Key). Previously this sent `quantity`/`promo_code`
+  // — both ignored server-side — and unwrapped a single Ticket into a
+  // PurchaseResult shape it does not have, so res.tickets.length crashed the
+  // success hand-off. Buy N tickets as N idempotent purchases and report the
+  // real result.
+  const count = Math.max(1, input.quantity || 1);
+  const tickets: Ticket[] = [];
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    const t = await unwrap<Ticket>(await api.post(`${API_BASE}/${input.eventId}/purchase`,
+      { tier_id: input.tier_id, promo: input.promo_code },
+      { headers: { 'Idempotency-Key': idempotencyKey() } }));
+    tickets.push(t);
+    total += t.price_paid_kobo ?? 0;
+  }
+  return { ok: true, tickets, total_kobo: total };
 }
 
 export async function giftTicket(input: GiftTicketInput): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  return unwrap(await api.post(`${API_BASE}/tickets/${input.ticketId}/gift`, { cashtag: input.cashtag }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
+  // Contract field is `recipient` (the cashtag handle) — sending `cashtag`
+  // failed the server's required-field binding and 400'd every gift.
+  return unwrap(await api.post(`${API_BASE}/tickets/${input.ticketId}/gift`, { recipient: input.cashtag }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
 }
 
 export async function createEvent(input: CreateEventInput): Promise<EventDetail> {
