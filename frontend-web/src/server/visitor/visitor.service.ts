@@ -3,6 +3,7 @@
 // raw shapes the app expects. Service-role client (createAdminClient) is used by
 // the route handlers, so estate scoping is enforced in code.
 
+import { randomInt } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type ResidentContext = { estateId: string; unit: string; role: string };
@@ -15,6 +16,8 @@ export async function getResidentContext(
     .from('estate_residents')
     .select('estate_id, unit, role')
     .eq('user_id', userId)
+    .is('deleted_at', null)
+    .is('banned_at', null)
     .limit(1)
     .maybeSingle();
   if (error || !data) return null;
@@ -101,9 +104,20 @@ export async function mapAccessCode(supabase: SupabaseClient, row: any): Promise
 }
 
 export function genNumericCode(): string {
+  // CSPRNG digits — Math.random is predictable and this value is a bearer
+  // credential at the gate.
   let s = '';
-  for (let i = 0; i < 6; i++) s += Math.floor(Math.random() * 10);
+  for (let i = 0; i < 6; i++) s += randomInt(0, 10);
   return s;
+}
+
+const PHONE_RE = /^\+?[0-9][0-9\s\-()]{4,19}$/;
+export function isValidVisitorPhone(phone: string): boolean {
+  return PHONE_RE.test(phone.trim());
+}
+
+export function isUniqueViolation(error: any): boolean {
+  return error?.code === '23505';
 }
 
 export const ACCESS_CODE_COLUMNS =

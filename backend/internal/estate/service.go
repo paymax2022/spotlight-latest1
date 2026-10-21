@@ -406,13 +406,27 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	_, err = tx.Exec(ctx,
+	// Atomic consumption claim (EST-UAT-0094): the UPDATE re-asserts every
+	// admission predicate in the same statement that increments used_count, so
+	// two guards scanning one code concurrently cannot both win — the loser's
+	// UPDATE matches zero rows. The earlier read-then-write admitted both.
+	ct, err := tx.Exec(ctx,
 		`UPDATE visitor_access_codes SET used_count=used_count+1,
 		status=CASE WHEN used_count+1 >= max_uses THEN 'used' ELSE status END
-		WHERE id=$1`, payload.Code.ID,
+		WHERE id=$1 AND status='active' AND blacklisted=FALSE
+		AND used_count < max_uses AND valid_from <= NOW() AND valid_until > NOW()`,
+		payload.Code.ID,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if ct.RowsAffected() == 0 {
+		// State moved under us — re-read for an accurate deny reason.
+		payload, lerr := s.lookupCode(ctx, estateID, req.NumericCode, req.QRCode)
+		if lerr != nil || payload == nil {
+			return nil, errors.New("entry denied: code no longer valid")
+		}
+		return payload, fmt.Errorf("entry denied: %s", denyReason(payload.Code))
 	}
 
 	checkinID := uuid.New().String()
@@ -1359,6 +1373,22 @@ func (s *Service) AddProperty(ctx context.Context, estateID, adminID string, req
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
+	// Unit keys must be unique within an estate (EST-UAT-0038). There is no DB
+	// unique constraint yet (pending migration — see
+	// docs/qa/estate-uat-443/migrations-estate-a/), so enforce in code.
+	var dupID string
+	err := s.db.QueryRow(ctx,
+		`SELECT id FROM estate_properties
+		 WHERE estate_id=$1 AND unit_label=$2 AND COALESCE(block,'')=COALESCE($3,'') AND archived=FALSE
+		 LIMIT 1`,
+		estateID, req.UnitLabel, req.Block,
+	).Scan(&dupID)
+	if err == nil {
+		return nil, fmt.Errorf("estate: unit %q already exists in this estate", req.UnitLabel)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("estate: check duplicate unit: %w", err)
+	}
 	p := &EstateProperty{
 		ID:              uuid.New().String(),
 		EstateID:        estateID,
@@ -1372,7 +1402,7 @@ func (s *Service) AddProperty(ctx context.Context, estateID, adminID string, req
 	const q = `
 		INSERT INTO estate_properties (id, estate_id, unit_label, property_type, floor, block, occupancy_status)
 		VALUES ($1,$2,$3,$4,$5,$6,'vacant')`
-	_, err := s.db.Exec(ctx, q, p.ID, p.EstateID, p.UnitLabel, p.PropertyType, p.Floor, p.Block)
+	_, err = s.db.Exec(ctx, q, p.ID, p.EstateID, p.UnitLabel, p.PropertyType, p.Floor, p.Block)
 	return p, err
 }
 

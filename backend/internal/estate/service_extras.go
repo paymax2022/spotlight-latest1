@@ -303,6 +303,19 @@ func (s *Service) SoftDeleteAccount(ctx context.Context, estateID, userID string
 	if err != nil {
 		return err
 	}
+	// Liability hold (EST-UAT-0016): an account with unpaid dues cannot be
+	// closed — the invoices must be settled or waived first so financial
+	// records are never orphaned.
+	var openInvoices int
+	if err := s.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM estate_dues_invoices WHERE estate_id=$1 AND resident_id=$2 AND status IN ('pending','overdue')`,
+		estateID, userID,
+	).Scan(&openInvoices); err != nil {
+		return fmt.Errorf("estate: check account liabilities: %w", err)
+	}
+	if openInvoices > 0 {
+		return fmt.Errorf("estate: cannot delete account with %d unpaid invoice(s) — settle or waive them first", openInvoices)
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
