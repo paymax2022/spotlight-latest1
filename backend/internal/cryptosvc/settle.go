@@ -407,8 +407,10 @@ func (s *Settler) failBuy(ctx context.Context, in SwapLedgerInput) error {
 }
 
 // CompleteSell pays the wallet the provider's received NGN minus the fee, drawn from
-// clearing, and recognises the fee. received is the NGN the provider reports; it must
-// be a whole number of kobo (a fraction is refused, never rounded).
+// clearing, and recognises the fee. received is the NGN the provider reports. A fraction
+// of a kobo is FLOORED, as the quote is: the provider has already executed (the user's
+// crypto is gone), so refusing would strand a sale no admin decision can pay out. The
+// sub-kobo dust stays with the provider and is never promised to the user.
 func (s *Settler) CompleteSell(ctx context.Context, in SwapLedgerInput, received decimal.Decimal) error {
 	if in.SwapID == "" || in.UserID == "" {
 		return errors.New("cryptosvc: swap id and user id are required")
@@ -416,11 +418,14 @@ func (s *Settler) CompleteSell(ctx context.Context, in SwapLedgerInput, received
 	if !received.IsPositive() {
 		return fmt.Errorf("%w: sell proceeds must be positive", ErrPermanent)
 	}
-	scaled := received.Mul(decimal.NewFromInt(100))
-	if !scaled.IsInteger() || scaled.GreaterThan(decimal.NewFromInt(1<<62)) {
-		return fmt.Errorf("%w: sell proceeds are not a whole number of kobo", ErrPermanent)
+	scaled := received.Mul(decimal.NewFromInt(100)).Truncate(0)
+	if scaled.GreaterThan(decimal.NewFromInt(1 << 62)) {
+		return fmt.Errorf("%w: sell proceeds are out of range", ErrPermanent)
 	}
 	gross := scaled.IntPart()
+	if gross <= 0 {
+		return fmt.Errorf("%w: sell proceeds are under one kobo", ErrPermanent)
+	}
 	if in.NGNKobo <= 0 {
 		return fmt.Errorf("%w: a sell needs its quoted NGN to bound the payout", ErrPermanent)
 	}
@@ -497,9 +502,23 @@ func (s *Settler) Fail(ctx context.Context, rec SwapRecord) error {
 	case SideBuy:
 		return s.FailBuy(ctx, inputOf(rec))
 	case SideSell:
-		return nil
+		return s.requireNoPayout(ctx, rec) // a sell holds nothing, but must not fail after paying
 	case SideSwap:
 		return s.requireNoHold(ctx, rec)
 	}
 	return fmt.Errorf("cryptosvc: swap %s has unknown side %q: refusing to skip its ledger legs", rec.ID, rec.Side)
+}
+
+// requireNoPayout refuses to fail a sell whose proceeds were already paid (for example a
+// completion whose state write was lost, then a provider "failed" report). Marking it failed
+// would leave the user with both the NGN and the returned crypto; a human decides instead.
+func (s *Settler) requireNoPayout(ctx context.Context, rec SwapRecord) error {
+	for _, leg := range []string{"payout", "fee"} {
+		if _, found, err := s.led.EntryByKey(ctx, swapKey(rec.ID, leg)+":debit"); err != nil {
+			return err
+		} else if found {
+			return fmt.Errorf("%w: sell %s already has its %s posted", ErrSettlementConflict, rec.ID, leg)
+		}
+	}
+	return nil
 }

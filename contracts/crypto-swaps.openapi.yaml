@@ -32,7 +32,12 @@ paths:
   /crypto/swaps/quote:
     post:
       tags: [Swaps]
-      summary: Price a buy and persist the quote
+      summary: Price a buy or a sell and persist the quote
+      description: >-
+        A buy names the NGN to spend (ngn_kobo; the fee is added on top). A sell names the
+        crypto to sell (amount, a decimal string); the NGN is the provider's price, floored to
+        whole kobo, and the wallet is credited ngn_kobo - fee_kobo only once the provider
+        confirms. A sell holds no NGN. Sending the other side's amount field is a 400.
       operationId: quoteCryptoSwap
       security: [{ bearerAuth: [] }]
       parameters:
@@ -43,11 +48,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [asset, ngn_kobo]
+              required: [asset]
               additionalProperties: false
               properties:
+                side: { type: string, enum: [buy, sell], default: buy }
                 asset: { type: string, example: USDT }
-                ngn_kobo: { type: integer, format: int64, minimum: 1, description: NGN to spend, in kobo (fee is added on top) }
+                ngn_kobo: { type: integer, format: int64, minimum: 1, description: 'Buy only (required): NGN to spend, in kobo (fee is added on top)' }
+                amount: { type: string, pattern: '^[0-9]{1,20}(\.[0-9]{1,18})?$', example: '10.5', description: 'Sell only (required): crypto units to sell, a plain positive decimal string' }
       responses:
         '201': { $ref: '#/components/responses/Swap' }
         '400': { $ref: '#/components/responses/Error' }
@@ -102,6 +109,64 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '500': { $ref: '#/components/responses/Error' }
+  /crypto/swaps/config:
+    get:
+      tags: [Swaps]
+      summary: Trading rail the app should use
+      description: >-
+        Exists only when the provider swap pipeline is mounted (FEATURE_CRYPTO_SWAPS_ENABLED and
+        fully wired). A 404 tells the app to stay on the legacy internal-ledger endpoints.
+      operationId: getCryptoSwapConfig
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Pipeline is live
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, config]
+                properties:
+                  success: { type: boolean }
+                  config:
+                    type: object
+                    required: [rail, sides, max_quote_kobo]
+                    properties:
+                      rail: { type: string, enum: [provider] }
+                      sides: { type: array, items: { type: string, enum: [buy, sell] } }
+                      max_quote_kobo: { type: integer, format: int64 }
+        '401': { $ref: '#/components/responses/Error' }
+  /crypto/swaps/balances:
+    get:
+      tags: [Swaps]
+      summary: Crypto held in the caller's provider sub-account
+      description: >-
+        Never provisions a provider account; none yet returns an empty list. NGN and empty
+        wallets are omitted. A provider failure is 502 (never an empty list).
+      operationId: listCryptoSwapBalances
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Holdings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, balances]
+                properties:
+                  success: { type: boolean }
+                  balances:
+                    type: array
+                    items:
+                      type: object
+                      required: [asset, available, locked, total]
+                      properties:
+                        asset: { type: string, example: USDT }
+                        available: { type: string, description: Spendable/sellable units (decimal string) }
+                        locked: { type: string, description: Reserved by the provider (decimal string) }
+                        total: { type: string, description: available + locked (decimal string) }
+        '401': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
   /crypto/swaps/{id}:
     get:
       tags: [Swaps]
@@ -468,7 +533,8 @@ components:
         asset: { type: string, description: Crypto bought (to-currency) }
         ngn_kobo: { type: integer, format: int64 }
         fee_kobo: { type: integer, format: int64 }
-        held_kobo: { type: integer, format: int64, description: ngn_kobo + fee_kobo, the NGN held from the wallet }
+        side: { type: string, enum: [buy, sell] }
+        held_kobo: { type: integer, format: int64, description: 'NGN held from the wallet: ngn_kobo + fee_kobo for a buy, 0 for a sell' }
         provider: { type: string }
         provider_swap_id: { type: string, description: Omitted when the provider never returned one }
         has_provider_id: { type: boolean, description: false ⇒ provider outcome unknown; only release is safe }
@@ -480,12 +546,13 @@ components:
       properties:
         id: { type: string, format: uuid }
         status: { type: string, enum: [quoted, confirming, processing, completed, failed, expired, needs_review] }
-        side: { type: string, enum: [buy] }
-        asset: { type: string }
+        side: { type: string, enum: [buy, sell] }
+        asset: { type: string, description: The crypto bought or sold }
+        amount: { type: string, description: 'Sell only: decimal string of crypto sold' }
         ngn_kobo: { type: integer, format: int64 }
         fee_kobo: { type: integer, format: int64 }
         fee_bps: { type: integer }
-        total_kobo: { type: integer, format: int64, description: ngn_kobo + fee_kobo, the amount held from the wallet }
+        total_kobo: { type: integer, format: int64, description: 'NGN through the wallet. Buy: ngn_kobo + fee_kobo, held then debited. Sell: ngn_kobo - fee_kobo, credited on completion' }
         quoted_amount: { type: string, description: Decimal string of crypto quoted }
         received_amount: { type: string, description: Decimal string, present once the provider confirms }
         price: { type: string, description: Decimal string }

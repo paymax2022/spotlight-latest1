@@ -151,10 +151,12 @@ func TestSellWithoutAQuotedAmountIsRefused(t *testing.T) {
 	}
 }
 
+// Out-of-range proceeds are a permanent error. (Sub-kobo fractions are floored, not
+// refused: see TestSellFloorsFractionalKoboNeverRoundsUp.)
 func TestUnrepresentableProceedsAreAPermanentError(t *testing.T) {
 	s, _ := newSettler(t)
 	in, _ := sell("0")
-	if err := s.CompleteSell(context.Background(), in, decimal.RequireFromString("10000.005")); !errors.Is(err, ErrPermanent) {
+	if err := s.CompleteSell(context.Background(), in, decimal.RequireFromString("1e30")); !errors.Is(err, ErrPermanent) {
 		t.Fatalf("err = %v", err)
 	}
 }

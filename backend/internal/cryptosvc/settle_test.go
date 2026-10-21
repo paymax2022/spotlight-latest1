@@ -277,14 +277,21 @@ func TestSellRecoversFromACrashBetweenItsTwoJournals(t *testing.T) {
 	}
 }
 
-func TestSellRejectsFractionalKoboInsteadOfRounding(t *testing.T) {
+// The provider has already executed a completed sell, so a sub-kobo amount is floored (as
+// the quote is), never refused: a refusal strands the sale with no admin path to pay it.
+func TestSellFloorsFractionalKoboNeverRoundsUp(t *testing.T) {
 	s, l := newSettler(t)
 	in, _ := sell("0")
-	if err := s.CompleteSell(context.Background(), in, decimal.RequireFromString("100.005")); err == nil {
-		t.Fatal("a half-kobo amount was silently rounded")
+	in.NGNKobo = 10_000
+	if err := s.CompleteSell(context.Background(), in, decimal.RequireFromString("100.009")); err != nil {
+		t.Fatalf("a completed sell with sub-kobo proceeds was refused: %v", err)
 	}
-	if len(l.posted) != 0 {
-		t.Fatal("legs posted for an unrepresentable amount")
+	fee, _ := FeeKobo(10_000, in.FeeBps)
+	if got := l.bal(clearK) + l.bal(revenueK) + l.bal(walletK); got != 0 || l.bal(walletK) != 10_000-fee {
+		t.Fatalf("wallet=%d (want %d from 10,000 floored kobo), sum=%d", l.bal(walletK), 10_000-fee, got)
+	}
+	if err := s.CompleteSell(context.Background(), in, decimal.RequireFromString("0.009")); err == nil {
+		t.Fatal("proceeds under one kobo must be refused")
 	}
 }
 
@@ -345,4 +352,23 @@ func TestInvalidInputsPostNothing(t *testing.T) {
 	if len(l.posted) != 0 {
 		t.Fatalf("invalid inputs posted: %v", l.posted)
 	}
+}
+
+// A sell whose proceeds were already paid must never be quietly marked failed: the user
+// would keep both the NGN and the crypto the provider returned.
+func TestFailingAPaidSellIsAConflict(t *testing.T) {
+	s, l := newSettler(t)
+	in, recv := sell("10000")
+	if err := s.CompleteSell(context.Background(), in, recv); err != nil {
+		t.Fatal(err)
+	}
+	rec := SwapRecord{ID: in.SwapID, UserID: user, Side: SideSell, NGNKobo: in.NGNKobo, FeeBps: in.FeeBps}
+	if err := s.Fail(context.Background(), rec); !errors.Is(err, ErrSettlementConflict) {
+		t.Fatalf("Fail on a paid sell = %v, want ErrSettlementConflict", err)
+	}
+	unpaid := SwapRecord{ID: "never-paid", UserID: user, Side: SideSell, NGNKobo: 1, FeeBps: 75}
+	if err := s.Fail(context.Background(), unpaid); err != nil {
+		t.Fatalf("Fail on an unpaid sell: %v", err)
+	}
+	_ = l
 }

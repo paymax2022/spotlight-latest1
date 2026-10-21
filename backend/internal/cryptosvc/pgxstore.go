@@ -133,7 +133,7 @@ func (s *PGStore) ListByState(ctx context.Context, state cryptoprov.SwapState, l
 // Backlog rolls the open swaps up by state in one read-only statement; no swap contents leave it.
 func (s *PGStore) Backlog(ctx context.Context) ([]BacklogState, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT status, count(*), COALESCE(sum(ngn_kobo + fee_kobo), 0)::bigint, min(updated_at)
+		SELECT status, count(*), COALESCE(sum(ngn_kobo + fee_kobo) FILTER (WHERE side = 'buy'), 0)::bigint, min(updated_at)
 		  FROM public.crypto_swaps
 		 WHERE status IN ('quoted','confirming','processing','needs_review')
 		 GROUP BY status`)

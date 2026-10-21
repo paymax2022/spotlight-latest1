@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/cryptoprov"
@@ -60,6 +61,10 @@ const (
 // idemKeyRe bounds the Idempotency-Key: it is stored and used as a lookup key.
 var idemKeyRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,255}$`)
 
+// unitsRe is a plain positive-or-zero decimal: no sign, no exponent, at most 18 places (the
+// finest crypto precision we carry). Crypto amounts travel as strings, never JSON numbers.
+var unitsRe = regexp.MustCompile(`^[0-9]{1,20}(\.[0-9]{1,18})?$`)
+
 // validSwapID reports whether id can be a swap id; anything else is a plain 404 (no database
 // round trip, no cast error, and above all no PIN spent against it).
 func validSwapID(id string) bool { _, err := uuid.Parse(id); return err == nil }
@@ -72,10 +77,11 @@ type SwapView struct {
 	Status         string  `json:"status"`
 	Side           string  `json:"side"`
 	Asset          string  `json:"asset"`
+	Amount         string  `json:"amount,omitempty"` // sell: crypto units sold
 	NGNKobo        int64   `json:"ngn_kobo"`
 	FeeKobo        int64   `json:"fee_kobo"`
 	FeeBps         int     `json:"fee_bps"`
-	TotalKobo      int64   `json:"total_kobo"`
+	TotalKobo      int64   `json:"total_kobo"` // NGN through the wallet: buy debits ngn+fee, sell credits ngn-fee
 	QuotedAmount   string  `json:"quoted_amount"`
 	ReceivedAmount *string `json:"received_amount,omitempty"`
 	Price          string  `json:"price"`
@@ -87,6 +93,9 @@ func viewOf(r SwapRecord) SwapView {
 		ID: r.ID, Status: string(r.State), Side: string(r.Side), Asset: r.ToCurrency,
 		NGNKobo: r.NGNKobo, FeeKobo: r.FeeKobo, FeeBps: r.FeeBps, TotalKobo: r.NGNKobo + r.FeeKobo,
 		QuotedAmount: r.QuotedToAmount.String(), Price: r.QuotedPrice.String(),
+	}
+	if r.Side == SideSell {
+		v.Asset, v.Amount, v.TotalKobo = r.FromCurrency, r.FromAmount.String(), r.NGNKobo-r.FeeKobo
 	}
 	if r.ReceivedAmount.IsPositive() {
 		s := r.ReceivedAmount.String()
@@ -108,6 +117,8 @@ func RegisterRoutes(member *gin.RouterGroup, hooks *gin.RouterGroup, d HandlerDe
 	h := &handler{d: d}
 	member.POST("/swaps/quote", withLimit(d.QuoteLimit, h.quote)...)
 	member.POST("/swaps/:id/confirm", withLimit(d.ConfirmLimit, h.confirm)...)
+	member.GET("/swaps/config", h.config)
+	member.GET("/swaps/balances", h.balances)
 	member.GET("/swaps/:id", h.get)
 	if hooks != nil && d.Ingest != nil {
 		hooks.POST("/crypto/:provider", h.webhook)
@@ -140,14 +151,39 @@ func (h *handler) quote(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONBytes)
 	var req struct {
-		Asset   string `json:"asset"`
-		NGNKobo int64  `json:"ngn_kobo"`
+		Side    string  `json:"side"`
+		Asset   string  `json:"asset"`
+		NGNKobo int64   `json:"ngn_kobo"`
+		Amount  *string `json:"amount"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Asset) == "" || req.NGNKobo <= 0 || req.NGNKobo > MaxQuoteKobo {
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Asset) == "" {
 		fail(c, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	sw, err := h.d.Service.Quote(c.Request.Context(), QuoteRequest{UserID: uid, IdempotencyKey: key, Asset: req.Asset, NGNKobo: req.NGNKobo})
+	qr := QuoteRequest{UserID: uid, IdempotencyKey: key, Asset: req.Asset}
+	switch Side(req.Side) {
+	case "", SideBuy: // a buy names the NGN to spend, never a crypto amount
+		if req.Amount != nil || req.NGNKobo <= 0 || req.NGNKobo > MaxQuoteKobo {
+			fail(c, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		qr.Side, qr.NGNKobo = SideBuy, req.NGNKobo
+	case SideSell: // a sell names the crypto to sell; the NGN is the provider's price
+		if req.Amount == nil || req.NGNKobo != 0 || !unitsRe.MatchString(*req.Amount) {
+			fail(c, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		amt, err := decimal.NewFromString(*req.Amount)
+		if err != nil || !amt.IsPositive() {
+			fail(c, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		qr.Side, qr.Amount = SideSell, amt
+	default:
+		fail(c, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	sw, err := h.d.Service.Quote(c.Request.Context(), qr)
 	if err != nil {
 		h.writeErr(c, err)
 		return
@@ -217,6 +253,47 @@ func (h *handler) confirm(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "swap": viewOf(sw)})
+}
+
+// config tells the app this pipeline is mounted: trades go to the provider and holdings live
+// in the provider sub-account (so the portfolio reads /swaps/balances). The route only exists
+// when the pipeline is wired, so its absence is the app's signal to stay on the legacy rail.
+func (h *handler) config(c *gin.Context) {
+	if ginutil.UserID(c) == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "config": gin.H{
+		"rail": "provider", "sides": []string{string(SideBuy), string(SideSell)}, "max_quote_kobo": MaxQuoteKobo,
+	}})
+}
+
+// BalanceView is one crypto holding. Amounts are decimal strings: available is spendable
+// (and sellable); locked is reserved by the provider (open withdrawals).
+type BalanceView struct {
+	Asset     string `json:"asset"`
+	Available string `json:"available"`
+	Locked    string `json:"locked"`
+	Total     string `json:"total"`
+}
+
+func (h *handler) balances(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	ws, err := h.d.Service.Balances(c.Request.Context(), uid)
+	if err != nil {
+		log.Printf("[crypto] balances for %s: %v", uid, err)
+		fail(c, http.StatusBadGateway, "provider_unavailable")
+		return
+	}
+	out := make([]BalanceView, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, BalanceView{Asset: w.Currency, Available: w.Balance.String(), Locked: w.Locked.String(), Total: w.Balance.Add(w.Locked).String()})
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "balances": out})
 }
 
 func (h *handler) get(c *gin.Context) {

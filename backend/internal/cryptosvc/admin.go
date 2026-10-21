@@ -29,6 +29,7 @@ type AdminReviewSwap struct {
 	ID             string `json:"id"`
 	UserID         string `json:"user_id"`
 	Status         string `json:"status"`
+	Side           string `json:"side"`
 	Asset          string `json:"asset"`
 	NGNKobo        int64  `json:"ngn_kobo"`
 	FeeKobo        int64  `json:"fee_kobo"`
@@ -42,10 +43,13 @@ type AdminReviewSwap struct {
 
 func adminViewOf(r SwapRecord, now time.Time) AdminReviewSwap {
 	v := AdminReviewSwap{
-		ID: r.ID, UserID: r.UserID, Status: string(r.State), Asset: r.ToCurrency,
-		NGNKobo: r.NGNKobo, FeeKobo: r.FeeKobo, HeldKobo: r.NGNKobo + r.FeeKobo,
+		ID: r.ID, UserID: r.UserID, Status: string(r.State), Side: string(r.Side), Asset: r.ToCurrency,
+		NGNKobo: r.NGNKobo, FeeKobo: r.FeeKobo, HeldKobo: heldKobo(r),
 		Provider: r.Provider, ProviderSwapID: r.ProviderSwapID,
 		HasProviderID: r.ProviderSwapID != "",
+	}
+	if r.Side == SideSell {
+		v.Asset = r.FromCurrency
 	}
 	if !r.UpdatedAt.IsZero() {
 		v.UpdatedAt = r.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z")

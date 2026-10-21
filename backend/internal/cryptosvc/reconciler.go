@@ -270,8 +270,6 @@ func (r *Reconciler) handle(ctx context.Context, queued SwapRecord, state crypto
 		if rec.State != state || !rec.UpdatedAt.Before(cutoff) {
 			return nil // moved on, or touched again since it was queued
 		}
-		in := SwapLedgerInput{SwapID: rec.ID, UserID: rec.UserID, Side: rec.Side, NGNKobo: rec.NGNKobo, FeeKobo: rec.FeeKobo, FeeBps: rec.FeeBps}
-
 		switch state {
 		case cryptoprov.SwapStateQuoted:
 			if svc.cfg.Now().Before(rec.ExpiresAt.Add(r.cfg.QuotedGrace)) {
@@ -301,11 +299,12 @@ func (r *Reconciler) handle(ctx context.Context, queued SwapRecord, state crypto
 					return err
 				}
 				res.Parked++
-				r.alert("swap_parked", fmt.Sprintf("swap %s parked in needs_review with %d kobo held and no provider swap id", rec.ID, rec.NGNKobo+rec.FeeKobo))
+				r.alert("swap_parked", fmt.Sprintf("swap %s parked in needs_review with %d kobo held and no provider swap id", rec.ID, heldKobo(rec)))
 				return nil
 			}
-			// Confirming, provider never called: nothing executed, so release any hold.
-			if err := svc.cfg.Settler.FailBuy(ctx, in); err != nil {
+			// Confirming, provider never called: nothing executed, so release any hold
+			// (side-aware: a sell holds nothing).
+			if err := svc.cfg.Settler.Fail(ctx, rec); err != nil {
 				return err
 			}
 			if err := svc.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "reconciler: confirm never reached the provider; hold released"); err != nil {
