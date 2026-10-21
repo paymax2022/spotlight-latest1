@@ -140,7 +140,11 @@ func buildDiscoveryWhere(p DiscoveryParams, moderationOn bool) (string, []any) {
 		like := ph("%" + p.Query + "%")
 		b.WriteString(" AND (r.name ILIKE " + like +
 			" OR COALESCE(r.description,'') ILIKE " + like +
-			" OR COALESCE(r.cuisine,'') ILIKE " + like + ")")
+			" OR COALESCE(r.cuisine,'') ILIKE " + like +
+			// FOOD-UAT-C-001: dish search. EXISTS (not JOIN) so a store with 3
+			// matching dishes is still ONE row and COUNT(*) stays correct.
+			" OR EXISTS (SELECT 1 FROM menu_items mi WHERE mi.restaurant_id = r.id AND mi.is_available" +
+			" AND (mi.name ILIKE " + like + " OR COALESCE(mi.description,'') ILIKE " + like + ")))")
 	}
 	if p.PromoOnly {
 		b.WriteString(" AND " + livePromoExists)

@@ -92,6 +92,37 @@ components:
       type: object
       properties:
         error: { type: string }
+    ParcelRateCell:
+      type: object
+      description: One size x speed cell. Integer basis points and kobo, never floats.
+      required: [zone, size, speed, multiplierBps, minFareKobo, active]
+      properties:
+        zone: { type: string }
+        size: { type: string, enum: [small, medium, large] }
+        speed: { type: string, enum: [standard, express, same_day, scheduled] }
+        multiplierBps: { type: integer, format: int64, minimum: 1000, maximum: 100000, description: '10000 = 1.0x' }
+        minFareKobo: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+        active: { type: boolean }
+        updatedBy: { type: string, format: uuid, nullable: true }
+        updatedAt: { type: string, format: date-time }
+    ParcelRateCard:
+      type: object
+      required: [zone, cells]
+      properties:
+        zone: { type: string }
+        cells:
+          type: array
+          items: { $ref: '#/components/schemas/ParcelRateCell' }
+    ParcelRateCellPatch:
+      type: object
+      description: At least one of multiplier_bps, min_fare_kobo, active must be present.
+      required: [reason]
+      properties:
+        zone: { type: string, default: default }
+        multiplier_bps: { type: integer, format: int64, minimum: 1000, maximum: 100000 }
+        min_fare_kobo: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+        active: { type: boolean }
+        reason: { type: string, minLength: 1, maxLength: 500 }
     BusTicket:
       type: object
       description: A wallet-booked bus ticket (camelCase keys). Money fields are integer kobo.
@@ -471,7 +502,7 @@ paths:
       tags: [mobility-driver]
       summary: Verify the rider's 4-digit trip PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Trip }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Trip }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/trips/{id}/start:
     post:
       tags: [mobility-driver]
@@ -542,6 +573,55 @@ paths:
   /admin/transport/pricing:
     get: { tags: [mobility-admin], summary: Get pricing config, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
     patch: { tags: [mobility-admin], summary: Update pricing config, responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } } }
+  /admin/transport/parcel-rate-card:
+    get:
+      tags: [mobility-admin]
+      summary: Parcel rate card for a zone (size x speed multiplier and minimum fare)
+      description: >-
+        Every stored cell of transport_parcel_rate_card for the zone, inactive ones included, in display
+        order (size small/medium/large, then speed standard/express/same_day/scheduled). No fallback: a
+        zone with no rows returns an empty `cells` array (pricing itself falls back to 'default').
+        Cells price parcels only while FEATURE_PARCEL_RATE_CARD_ENABLED is on.
+      parameters:
+        - { name: zone, in: query, required: false, schema: { type: string, default: default } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParcelRateCard' }
+        '403': { description: Missing mobility.view }
+  /admin/transport/parcel-rate-card/{size}/{speed}:
+    patch:
+      tags: [mobility-admin]
+      summary: Update one parcel rate-card cell (audited)
+      description: >-
+        Updates multiplier_bps, min_fare_kobo and/or active on an EXISTING cell (no upsert) and writes a
+        transport_audit_log row (action parcel_rate_card.update, old + new cell, reason) in the same
+        transaction. Bounds are validated server-side: multiplier_bps 1000-100000 (0.1x-10x),
+        min_fare_kobo 0-100000000 (₦0-₦1,000,000). Integers only. A card-checkout quote freezes the cell it
+        priced from, so an edit never changes an in-flight checkout; it applies to the next estimate.
+      parameters:
+        - { name: size, in: path, required: true, schema: { type: string, enum: [small, medium, large] } }
+        - { name: speed, in: path, required: true, schema: { type: string, enum: [standard, express, same_day, scheduled] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ParcelRateCellPatch' }
+      responses:
+        '200':
+          description: The updated cell
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParcelRateCell' }
+        '400':
+          description: Invalid size/speed, out-of-bounds value, nothing to change, or missing reason
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { description: Missing mobility.manage }
+        '404': { description: No such cell for the zone }
   /admin/transport/commission:
     get: { tags: [mobility-admin], summary: List commission tiers, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/commission/{tier}:
@@ -558,6 +638,32 @@ paths:
       summary: Update a safety incident
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } }
+  /admin/transport/pin-attempts/reset:
+    post:
+      tags: [mobility-admin]
+      summary: Clear a hand-off's wrong-PIN record (lifts a cooldown or a hard lock; audited)
+      description: >-
+        Support action for a hand-off that is PIN_LOCKED (see the driver verify endpoints). Deletes the
+        transport_pin_attempts row for (entity_type, entity_id, purpose) and writes a transport_audit_log
+        row (action pin_attempts.reset, the cleared record as old value, reason) in the same transaction.
+        It does not reveal or change the PIN.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entity_type, entity_id, purpose, reason]
+              properties:
+                entity_type: { type: string, enum: [trip, parcel, business_delivery, towing_job] }
+                entity_id: { type: string }
+                purpose: { type: string, enum: [start, pickup, dropoff] }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { description: 'Cleared: { ok, cleared: { failedCount, hardLocked } }' }
+        '400': { description: Invalid entity_type / purpose, or missing reason }
+        '403': { description: Missing mobility.manage }
+        '404': { description: No wrong-PIN record for that hand-off }
   /admin/transport/reports/summary:
     get: { tags: [mobility-admin], summary: Reports summary, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/audit:
@@ -1031,7 +1137,7 @@ paths:
       tags: [parcel]
       summary: Courier — verify the sender's pickup PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/parcels/{id}/picked-up:
     post:
       tags: [parcel]
@@ -1053,7 +1159,7 @@ paths:
               properties:
                 pin: { type: string }
                 proof_url: { type: string, description: 'Proof-of-delivery photo URL. Missing or empty = 422 PROOF_REQUIRED' }
-      responses: { '200': { description: 'Delivered: { ok, status }' }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH (wrong PIN) or PROOF_REQUIRED (no proof_url)' } }
+      responses: { '200': { description: 'Delivered: { ok, status }' }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH (wrong PIN; body attempts_before_cooldown) or PROOF_REQUIRED (no proof_url — checked first, and never counts as a PIN guess)' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
 
   # ═══════════════════════════════════════════════════════════════════════════
   # BUS BOOKING   [FeatureTransportModesEnabled]
@@ -1328,7 +1434,7 @@ paths:
       tags: [towing]
       summary: Operator — verify the customer's PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Job }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Job }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/towing/{id}/start:
     post:
       tags: [towing]
@@ -1641,7 +1747,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '200': { description: Delivery }, '401': { description: Not authenticated } }
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/business/{id}/fail:
     post:
       tags: [business-logistics]

@@ -676,8 +676,8 @@ func (s *Service) VerifyTowingPin(ctx context.Context, id, driverUserID, pin str
 	if t.Status != "operator_en_route" {
 		return codedErr(http.StatusConflict, CodeInvalidState, "job not awaiting PIN")
 	}
-	if t.Pin == nil || *t.Pin != pin {
-		return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "PIN does not match")
+	if err := s.checkPin(ctx, "towing_job", id, "start", derefStr(t.Pin), pin, driverUserID); err != nil {
+		return err
 	}
 	if err := s.towingSetStatus(ctx, id, "operator_en_route", "pin_verified"); err != nil {
 		return err

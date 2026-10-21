@@ -58,3 +58,24 @@ func TestWebhookSignatureRejectsWrongSecret(t *testing.T) {
 		t.Error("VerifyWebhookSignature must reject signatures produced by a different secret")
 	}
 }
+
+func TestParseWebhook_DisputeAndRefundEvents(t *testing.T) {
+	c := paystack.New("sk_test_dummy")
+	cases := []struct {
+		payload, typ, status, ref, pref string
+		amt                             int64
+	}{
+		{`{"event":"charge.dispute.create","data":{"id":987,"transaction":{"reference":"foodorder-a","amount":5000}}}`, "chargeback_created", "created", "foodorder-a", "987", 5000},
+		{`{"event":"charge.dispute.resolve","data":{"id":987,"resolution":"declined","transaction":{"reference":"foodorder-a","amount":5000}}}`, "chargeback_resolved", "resolved", "foodorder-a", "987", 5000},
+		{`{"event":"refund.processed","data":{"id":55,"transaction_reference":"foodorder-b"}}`, "refund_processed", "processed", "foodorder-b", "55", 0},
+	}
+	for _, tc := range cases {
+		ev, err := c.ParseWebhook([]byte(tc.payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Type != tc.typ || ev.Status != tc.status || ev.Reference != tc.ref || ev.ProviderRef != tc.pref || ev.AmountKobo != tc.amt {
+			t.Errorf("%s: got %+v", tc.typ, ev)
+		}
+	}
+}

@@ -19,6 +19,10 @@ const menuItemCols = `id, category_id, restaurant_id, name, COALESCE(description
 	prep_time_minutes,
 	COALESCE(prep_time_minutes, (SELECT r.prep_time_minutes FROM restaurants r WHERE r.id = menu_items.restaurant_id)) AS prep_minutes`
 
+// menuItemColsV adds the optimistic-concurrency version and the seller's per-order cap
+// (FOOD-UAT-B-006/008) for the reads that return them to clients.
+const menuItemColsV = menuItemCols + `, version, max_qty_per_order`
+
 // maxBulkAvailabilityIDs bounds one bulk toggle, so one request cannot touch an
 // unbounded number of rows.
 const maxBulkAvailabilityIDs = 200

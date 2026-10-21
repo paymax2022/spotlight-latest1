@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { listRiders, listDispatchQueue, assignRider, redispatchOrder, activateScheduledOrders } from '@/services/restaurantAdminService';
 import type { DispatchOrder, OrderDispatchStatus, Rider, RiderStatus } from '@/types/restaurantAdmin';
@@ -424,6 +425,7 @@ export default function RiderDispatchPage() {
                   <th style={thCell}>Today</th>
                   <th style={thCell}>Rating</th>
                   <th style={thCell}>Last seen</th>
+                  <th style={thCell}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -437,6 +439,14 @@ export default function RiderDispatchPage() {
                     <td style={tdCell}>{r.deliveries_today ?? 0}</td>
                     <td style={tdCell}>{r.rating?.toFixed(1) ?? '—'}</td>
                     <td style={tdCell}>{r.last_seen_at ? new Date(r.last_seen_at).toLocaleTimeString('en-NG') : '—'}</td>
+                    <td style={tdCell}>
+                      {/* FOOD-UAT-G-010: suspend/pause/resume lives on the rider page. */}
+                      <Link href={`/admin/restaurant/riders/${encodeURIComponent(r.id)}`}>
+                        <Button sm variant={r.status === 'suspended' ? 'outline' : 'danger'} disabled={!canDispatch}>
+                          {r.status === 'suspended' ? 'Resume' : 'Suspend'}
+                        </Button>
+                      </Link>
+                    </td>
                   </tr>
                 ))}
               </tbody>

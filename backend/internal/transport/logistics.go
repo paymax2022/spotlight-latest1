@@ -745,8 +745,8 @@ func (s *Service) DeliverDelivery(ctx context.Context, id, driverUserID, dropoff
 	}
 	// If the delivery carries a dropoff PIN it must be presented and match.
 	if d.DropoffPin != nil && *d.DropoffPin != "" {
-		if dropoffPin == "" || dropoffPin != *d.DropoffPin {
-			return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "dropoff PIN does not match")
+		if err := s.checkPin(ctx, "business_delivery", id, "dropoff", *d.DropoffPin, dropoffPin, driverUserID); err != nil {
+			return err
 		}
 	}
 	if err := s.deliverySetStatus(ctx, id, "picked_up", "delivered"); err != nil {

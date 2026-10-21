@@ -38,6 +38,50 @@ type DeliveryFeeConfig struct {
 	MaxFeeKobo        int64   `json:"max_fee_kobo"` // 0 = no cap
 }
 
+// ErrInvalidDeliveryConfig marks a client-side config error (maps to HTTP 400).
+var ErrInvalidDeliveryConfig = errors.New("restaurant: invalid delivery-fee config")
+
+// Validate mirrors the CHECK constraints on restaurant_delivery_config so a bad
+// value is rejected up front (400) instead of surfacing as a DB error (500).
+func (c DeliveryFeeConfig) Validate() error {
+	bad := func(field, rule string) error {
+		return fmt.Errorf("%w: %s %s", ErrInvalidDeliveryConfig, field, rule)
+	}
+	for _, f := range []struct {
+		name string
+		v    int64
+	}{
+		{"base_fee_kobo", c.BaseFeeKobo}, {"per_km_kobo", c.PerKmKobo},
+		{"per_minute_kobo", c.PerMinuteKobo}, {"night_fee_kobo", c.NightFeeKobo},
+		{"weather_fee_kobo", c.WeatherFeeKobo}, {"handling_fee_kobo", c.HandlingFeeKobo},
+		{"promo_discount_kobo", c.PromoDiscountKobo}, {"min_fee_kobo", c.MinFeeKobo},
+		{"max_fee_kobo", c.MaxFeeKobo},
+	} {
+		if f.v < 0 {
+			return bad(f.name, "must be >= 0")
+		}
+	}
+	if c.FreeDistanceKm < 0 {
+		return bad("free_distance_km", "must be >= 0")
+	}
+	if c.FreeMinutes < 0 {
+		return bad("free_minutes", "must be >= 0")
+	}
+	if c.DemandMultiplier <= 0 {
+		return bad("demand_multiplier", "must be > 0")
+	}
+	if c.AvgSpeedKmph <= 0 {
+		return bad("avg_speed_kmph", "must be > 0")
+	}
+	if c.RoadFactor < 1 {
+		return bad("road_factor", "must be >= 1")
+	}
+	if c.NightStartHour < 0 || c.NightStartHour > 23 || c.NightEndHour < 0 || c.NightEndHour > 23 {
+		return bad("night_start_hour/night_end_hour", "must be within 0..23")
+	}
+	return nil
+}
+
 // DefaultDeliveryFeeConfig matches the seeded global defaults (the §formula).
 func DefaultDeliveryFeeConfig() DeliveryFeeConfig {
 	return DeliveryFeeConfig{
@@ -315,6 +359,9 @@ func (r *DeliveryConfigRepo) GetDeliveryConfig(ctx context.Context, restaurantID
 // NULL) partial unique index); non-nil targets the per-restaurant row (conflicts
 // on the restaurant_id partial unique index). Returns the resulting row.
 func (r *DeliveryConfigRepo) UpsertDeliveryConfig(ctx context.Context, restaurantID *string, cfg DeliveryFeeConfig, active bool) (*DeliveryConfigRow, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	// The two partial unique indexes require two distinct ON CONFLICT targets.
 	conflict := "(restaurant_id) WHERE restaurant_id IS NOT NULL"
 	if restaurantID == nil || *restaurantID == "" {

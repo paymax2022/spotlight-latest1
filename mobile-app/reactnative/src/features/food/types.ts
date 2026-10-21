@@ -72,6 +72,32 @@ export interface MenuItem {
   foodType?: FoodType;
   /** How long this item takes to make: its own, or the restaurant's default. */
   prepMinutes?: number;
+  /** Modifier groups (size, extras…). Absent/empty for a plain item. */
+  modifierGroups?: ModifierGroup[];
+}
+
+export interface ModifierOption {
+  id: string;
+  name: string;
+  /** Per-unit surcharge in kobo (>= 0). */
+  priceDeltaKobo: Kobo;
+  available?: boolean;
+}
+
+export interface ModifierGroup {
+  id: string;
+  name: string;
+  required: boolean;
+  minSelect: number;
+  maxSelect: number;
+  options: ModifierOption[];
+}
+
+/** A chosen modifier snapshotted on a cart line. */
+export interface CartModifier {
+  id: string;
+  name: string;
+  priceDeltaKobo: Kobo;
 }
 
 export interface MenuCategory {
@@ -87,7 +113,12 @@ export interface RestaurantDetail extends Restaurant {
 export interface CartLine {
   itemId: string;
   name: string;
+  /** Per-unit price INCLUDING any modifier surcharges (base + sum of deltas). */
   priceKobo: Kobo;
+  /** Chosen modifier ids, sent as `modifier_ids` on the order line. */
+  modifierIds?: string[];
+  /** Chosen modifier snapshots, for display in cart/checkout. */
+  modifiers?: CartModifier[];
   qty: number;
   /** True for protein items (uncapped, may co-pack with the main). */
   isProtein?: boolean;
@@ -149,7 +180,10 @@ export type OrderStatus =
   | 'picked_up'
   | 'delivered'
   | 'cancelled'
-  | 'no_rider';
+  | 'no_rider'
+  // Dine-in lifecycle (FOOD-UAT-D-007): preparing -> served -> closed.
+  | 'served'
+  | 'closed';
 
 /**
  * Server-side dispatch lifecycle, independent of the order status. Marking an
@@ -208,12 +242,30 @@ export interface Order {
    * deliveryCode (rider → customer, at the other end of the trip).
    */
   pickupCode?: string | null;
+  /** Fulfilment mode (FOOD-UAT-D-007). Absent on legacy rows => delivery. */
+  orderType?: OrderType;
+  /** Dine-in table (customer preference at placement; restaurant may reassign). */
+  tableNumber?: string | null;
+  /** Booked pickup slot (ISO) for `pickup_scheduled`. */
+  scheduledFor?: string | null;
+  /** ISO timestamp the customer signalled "I'm here" (pickup). */
+  arrivedAt?: string | null;
   /** ISO timestamps. */
   createdAt: string;
   deliveredAt?: string | null;
   rated?: boolean;
   /** Customer-facing role label for the orders list. */
   role?: OrderRole;
+}
+
+/** Mirrors backend `restaurant.OrderType` (order_types.go). */
+export type OrderType = 'delivery' | 'pickup_now' | 'pickup_scheduled' | 'dine_in';
+
+export const ORDER_TYPES: readonly OrderType[] = ['delivery', 'pickup_now', 'pickup_scheduled', 'dine_in'];
+
+export interface DineInDetails {
+  partySize: number;
+  tablePreference?: string;
 }
 
 export type OrderRole = 'customer' | 'restaurant' | 'rider';
@@ -244,14 +296,48 @@ export interface RiderOffer {
 
 export interface PlaceOrderRequest {
   restaurantId: string;
-  items: { itemId: string; qty: number; restaurantId?: string }[];   // aggregated across packages (for pricing/charge)
+  items: { itemId: string; qty: number; restaurantId?: string; modifierIds?: string[] }[];   // aggregated across packages (for pricing/charge)
   /** Number of physical takeaway packages (drives the packaging fee). */
   packageCount?: number;
   /** Per-package breakdown so the restaurant knows how to pack the order. */
   packages?: { items: { itemId: string; qty: number }[] }[];
   deliveryAddress: string;
   deliveryLocation?: LatLng | null;
+  /** FOOD-UAT-C-007: server-signed quote the pay-sheet total came from. */
+  quoteId?: string;
+  /** FOOD-UAT-C-011: validated promo code. */
+  promoCode?: string;
+  /** FOOD-UAT-D-007. Defaults to delivery server-side when omitted. */
+  orderType?: OrderType;
+  /** ISO instant; required for pickup_scheduled, at most 24h ahead. */
+  scheduledFor?: string;
+  /** Required by the backend for dine_in. */
+  tableNumber?: string;
   idempotencyKey: string;
+}
+
+/** POST /orders/quote response (server-authoritative breakdown). All kobo. */
+export interface OrderQuote {
+  subtotalKobo: Kobo;
+  serviceFeeKobo: Kobo;
+  deliveryFeeKobo: Kobo;
+  surgeBp: number;
+  surgeKobo: Kobo;
+  packagingKobo: Kobo;
+  promoDiscountKobo: Kobo;
+  promoRejection?: string;
+  tipKobo: Kobo;
+  totalKobo: Kobo;
+  quoteId: string;
+  expiresAt: string;
+}
+
+/** POST /orders/preview-promo response. */
+export interface PromoPreview {
+  valid: boolean;
+  reason?: string;
+  discountKobo: Kobo;
+  effectiveTotalKobo: Kobo;
 }
 
 export interface RateOrderRequest {
@@ -262,7 +348,7 @@ export interface RateOrderRequest {
 
 export type OrderFrame =
   | { type: 'order.status'; payload: { order_id: string; status: OrderStatus } }
-  | { type: 'order.location'; payload: { order_id: string; lat: number; lng: number } }
+  | { type: 'order.location'; payload: { order_id: string; lat: number; lng: number; ts?: number } }
   | {
       type: 'order.message';
       payload: {

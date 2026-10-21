@@ -454,7 +454,7 @@ const (
 	// AccountInsurancePremiumHold holds a parcel's Goods-in-Transit premium from
 	// booking (paid with the fare) until the policy binds (→ provider_clearing)
 	// or is refunded (→ the payer's wallet). Never part of a courier settlement.
-	// Admitted by 20271048000000. Auto-created on first GetOrCreateStandingAccount.
+	// Admitted by 20271068000000. Auto-created on first GetOrCreateStandingAccount.
 	AccountInsurancePremiumHold AccountType = "insurance_premium_hold"
 )
 

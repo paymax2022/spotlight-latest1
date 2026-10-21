@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/fsm"
 )
@@ -171,6 +172,14 @@ type OrderRating struct {
 	Comment         string `json:"comment,omitempty"`
 }
 
+// DuplicateReviewError is returned by RateOrder when the caller already rated the
+// order. ExistingID is the id of the stored review.
+type DuplicateReviewError struct{ ExistingID string }
+
+func (e *DuplicateReviewError) Error() string {
+	return "restaurant: order already reviewed"
+}
+
 // RateOrder records the customer's rating of the restaurant and (optionally) the
 // rider for a delivered order, then recomputes the restaurant's average rating.
 // Only the order's customer may rate, and only once the order is delivered.
@@ -206,12 +215,26 @@ func (s *Service) RateOrder(ctx context.Context, orderID, raterID string, req Ra
 		r.RiderID = *riderPtr
 	}
 
+	// RETURNING makes the insert observable: a conflict yields no row, and we then
+	// report the stored row instead of echoing an id that was never persisted
+	// (FOOD-UAT-G-002 — duplicates used to come back 201 with a fabricated id).
 	const ins = `INSERT INTO restaurant_ratings
 	    (id, order_id, rater_id, restaurant_id, restaurant_stars, rider_id, rider_stars, comment, moderation_status)
 	    VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),$9)
-	    ON CONFLICT (order_id, rater_id) DO NOTHING`
-	if _, err := s.db.Exec(ctx, ins,
-		r.ID, orderID, raterID, restaurantID, req.RestaurantStars, riderPtr, req.RiderStars, comment, moderation); err != nil {
+	    ON CONFLICT (order_id, rater_id) DO NOTHING
+	    RETURNING id`
+	var storedID string
+	err := s.db.QueryRow(ctx, ins,
+		r.ID, orderID, raterID, restaurantID, req.RestaurantStars, riderPtr, req.RiderStars, comment, moderation).Scan(&storedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var existing string
+		if qerr := s.db.QueryRow(ctx,
+			`SELECT id FROM restaurant_ratings WHERE order_id=$1 AND rater_id=$2`, orderID, raterID).Scan(&existing); qerr != nil {
+			return nil, qerr
+		}
+		return nil, &DuplicateReviewError{ExistingID: existing}
+	}
+	if err != nil {
 		return nil, err
 	}
 

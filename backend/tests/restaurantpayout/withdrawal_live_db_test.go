@@ -75,11 +75,21 @@ func setUserTier(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID s
 // returns its id (the withdrawal destination).
 func seedMerchantBankAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerID string) string {
 	t.Helper()
+	// FOOD-UAT-F-004: withdrawals require an approved-KYB restaurant for the owner.
+	rid := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO restaurants (id, owner_id, name, address, is_open, kyb_status) VALUES ($1,$2,'Payout Kitchen','1 St',FALSE,'approved')`,
+		rid, ownerID); err != nil {
+		t.Fatalf("seed approved-KYB restaurant: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM restaurants WHERE id=$1`, rid)
+	})
 	id := uuid.New().String()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO restaurant_bank_accounts
-			(id, user_id, bank_name, bank_code, account_number, account_name, is_default)
-		VALUES ($1, $2, 'Guaranty Trust Bank', '058', '0123456789', 'TEST MERCHANT', true)`,
+			(id, user_id, bank_name, bank_code, account_number, account_name, is_default, is_verified)
+		VALUES ($1, $2, 'Guaranty Trust Bank', '058', '0123456789', 'TEST MERCHANT', true, true)`,
 		id, ownerID); err != nil {
 		t.Fatalf("seed bank account: %v", err)
 	}

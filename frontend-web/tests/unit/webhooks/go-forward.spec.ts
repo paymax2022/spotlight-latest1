@@ -57,6 +57,25 @@ describe('forwardGoOwnedPaystackEvent', () => {
     },
   );
 
+  it.each([
+    ['charge.dispute.create', { transaction: { reference: 'foodorder-abc' } }],
+    ['charge.dispute.resolve', { transaction: { reference: 'foodorder-abc' } }],
+    ['refund.processed', { transaction_reference: 'foodorder-abc' }],
+  ])('forwards %s for foodorder- references (FOOD-UAT-H-004)', async (event, data) => {
+    const raw = JSON.stringify({ event, data });
+    const res = await forwardGoOwnedPaystackEvent(raw, SIG);
+    expect(res).toEqual({ processed: true, duplicate: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].body).toBe(raw);
+  });
+
+  it('does not forward dispute events for non-food references', async () => {
+    const raw = JSON.stringify({ event: 'charge.dispute.create', data: { transaction: { reference: 'vote-1' } } });
+    const res = await forwardGoOwnedPaystackEvent(raw, SIG);
+    expect(res).toEqual({ processed: false, duplicate: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('throws on a non-2xx Go response so the dispatcher retries', async () => {
     fetchMock.mockResolvedValue(new Response('upstream down', { status: 502 }));
     await expect(

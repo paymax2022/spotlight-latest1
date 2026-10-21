@@ -974,8 +974,8 @@ func (s *Service) VerifyParcelPickupPin(ctx context.Context, id, driverUserID, p
 	if p.Status != "courier_assigned" {
 		return codedErr(http.StatusConflict, CodeInvalidState, "parcel not awaiting pickup PIN")
 	}
-	if p.PickupPin == nil || *p.PickupPin != pin {
-		return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "pickup PIN does not match")
+	if err := s.checkPin(ctx, "parcel", id, "pickup", derefStr(p.PickupPin), pin, driverUserID); err != nil {
+		return err
 	}
 	if err := s.parcelSetStatus(ctx, id, "courier_assigned", "pickup_pin_verified"); err != nil {
 		return err
@@ -1017,13 +1017,13 @@ func (s *Service) VerifyParcelDropoff(ctx context.Context, id, driverUserID, pin
 	if p.Status != "in_transit" && p.Status != "picked_up" {
 		return codedErr(http.StatusConflict, CodeInvalidState, "parcel not in transit")
 	}
-	// Proof first: a request that can never succeed must not double as a
-	// side-effect-free PIN oracle.
+	// Proof first: a request that can never succeed must not double as a PIN
+	// oracle, nor burn one of the limited PIN guesses (checkPin).
 	if proofURL == "" {
 		return codedErr(http.StatusUnprocessableEntity, "PROOF_REQUIRED", "proof of delivery required")
 	}
-	if p.DropoffPin == nil || *p.DropoffPin != pin {
-		return codedErr(http.StatusUnprocessableEntity, CodePinMismatch, "dropoff PIN does not match")
+	if err := s.checkPin(ctx, "parcel", id, "dropoff", derefStr(p.DropoffPin), pin, driverUserID); err != nil {
+		return err
 	}
 	if err := s.parcelSetStatus(ctx, id, p.Status, "dropoff_verified"); err != nil {
 		return err

@@ -195,6 +195,16 @@ func (s *Service) SetDriverOnline(ctx context.Context, userID string, req Driver
 		return codedErr(http.StatusForbidden, CodeNotApproved, "only approved drivers may go online")
 	}
 	if req.Status == "online" {
+		// FOOD-UAT-A-013: lazy expiry check — an expired licence cannot go online.
+		var driverID string
+		if err := s.db.QueryRow(ctx, `SELECT id FROM drivers WHERE user_id=$1`, userID).Scan(&driverID); err != nil {
+			return codedErr(http.StatusNotFound, CodeNotFound, "driver not found")
+		}
+		if expired, err := licenceExpired(ctx, s.db, driverID); err != nil {
+			return err
+		} else if expired {
+			return codedErr(http.StatusForbidden, CodeNotApproved, "your driving licence has expired — upload a renewed licence to go online")
+		}
 		_, err := s.db.Exec(ctx, `
 			UPDATE drivers SET status='online', current_lat=$1, current_lng=$2, online_since=NOW(), updated_at=NOW()
 			WHERE user_id=$3`, req.Lat, req.Lng, userID)

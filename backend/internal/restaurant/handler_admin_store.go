@@ -3,6 +3,7 @@ package restaurant
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -100,21 +101,75 @@ func (h *Handler) AdminGetRestaurant(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
-	c.JSON(http.StatusOK, detail)
+	c.JSON(http.StatusOK, withEmptyMenuShape(detail))
 }
 
 // AdminUpdateRestaurant → PATCH /api/restaurant/admin/restaurants/:id
 // (restaurant.manage). Partial edit of the store profile; nil fields unchanged.
 func (h *Handler) AdminUpdateRestaurant(c *gin.Context) {
-	var req UpdateRestaurantRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	h.updateStore(c, adminCtx(c))
+}
+
+// updateStoreBody is the store PATCH body: the service request plus the default
+// prep time, which lives on a different service method (UpdateRestaurantProfile).
+type updateStoreBody struct {
+	UpdateRestaurantRequest
+	// DefaultPrepMinutes is the store-wide kitchen prep time (5-180, steps of 5).
+	DefaultPrepMinutes *int `json:"default_prep_minutes,omitempty"`
+}
+
+// updateStore is the shared PATCH /restaurant/:id and admin equivalent.
+// FOOD-UAT-B-001: name and address are trimmed and a blank one is a 400 here, before
+// the service runs (the service only rejected an exactly-empty name, so "   " passed
+// and an empty address was silently ignored by COALESCE-less handling upstream).
+// FOOD-UAT-B-004: default_prep_minutes was accepted by the binder and dropped; it is
+// now validated and persisted.
+func (h *Handler) updateStore(c *gin.Context, ctx context.Context) {
+	var body updateStoreBody
+	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	r, err := h.svc.UpdateRestaurant(adminCtx(c), c.Param("id"), ginutil.UserID(c), req)
+	req := body.UpdateRestaurantRequest
+	if req.Name != nil {
+		t := strings.TrimSpace(*req.Name)
+		if t == "" {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "name cannot be blank"})
+			return
+		}
+		req.Name = &t
+	}
+	if req.Address != nil {
+		t := strings.TrimSpace(*req.Address)
+		if t == "" {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "address cannot be blank"})
+			return
+		}
+		req.Address = &t
+	}
+	if body.DefaultPrepMinutes != nil {
+		if err := validRestaurantPrepMinutes(*body.DefaultPrepMinutes); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+			return
+		}
+	}
+	userID := ginutil.UserID(c)
+	id := c.Param("id")
+	r, err := h.svc.UpdateRestaurant(ctx, id, userID, req)
 	if err != nil {
 		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
+	}
+	if body.DefaultPrepMinutes != nil {
+		if err := h.svc.UpdateRestaurantProfile(ctx, id, userID, UpdateProfileRequest{PrepTimeMinutes: body.DefaultPrepMinutes}); err != nil {
+			c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
+			return
+		}
+		h.svc.NotifyOpenOrdersPrepChanged(ctx, id, *body.DefaultPrepMinutes) // D-008
+		if r, err = h.svc.getRestaurantCore(ctx, id); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, r)
 }
@@ -231,7 +286,7 @@ func (h *Handler) AdminCreateItem(c *gin.Context) {
 	}
 	it, err := h.svc.CreateItem(adminCtx(c), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
+		c.JSON(menuErrStatus(err), gin.H{keyError: httperr.Msg(c, menuErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusCreated, it)
@@ -248,7 +303,7 @@ func (h *Handler) AdminUpdateItem(c *gin.Context) {
 	}
 	it, err := h.svc.UpdateItem(adminCtx(c), c.Param("id"), ginutil.UserID(c), c.Param("itemId"), req)
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
+		c.JSON(menuErrStatus(err), gin.H{keyError: httperr.Msg(c, menuErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, it)

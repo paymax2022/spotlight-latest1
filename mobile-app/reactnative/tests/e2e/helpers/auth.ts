@@ -129,6 +129,12 @@ export async function seedSession(page: Page, user: AnyTestUser = users.funded) 
       user: authUser,
     };
     const encoded = JSON.stringify(session);
+    // Supabase derives the storage key from the FIRST dot-piece of the configured
+    // URL's hostname: localhost → sb-localhost, 127.0.0.1 → sb-127,
+    // wnicsubiznmishkmunsv.supabase.co → sb-wnicsubiznmishkmunsv. Seed all three
+    // so the helper is correct whichever .env the live Metro bundled against
+    // (dev-local defaults to localhost, production profiles use the project slug).
+    window.localStorage.setItem('paymax_secure_sb-localhost-auth-token', encoded);
     window.localStorage.setItem('paymax_secure_sb-127-auth-token', encoded);
     window.localStorage.setItem('paymax_secure_sb-wnicsubiznmishkmunsv-auth-token', encoded);
   }, { seededUser: user });
@@ -152,5 +158,7 @@ export async function loginAs(
   // would intercept the page navigation itself and serve JSON as the document.
   await page.goto(withPin ? '/home' : '/services/bills', { waitUntil: 'domcontentloaded' });
   // Without a PIN the gate redirects to /security/set-pin, so home never renders.
-  if (withPin) await expect(page.getByText('Explore Services')).toBeVisible();
+  // Dev-mode Metro mounts the home grid in ~8–15s on first paint — the default
+  // 10s expect timeout isn't enough, so widen the home-anchor assertion.
+  if (withPin) await expect(page.getByText('Explore Services')).toBeVisible({ timeout: 30_000 });
 }

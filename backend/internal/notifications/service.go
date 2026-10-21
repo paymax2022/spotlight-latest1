@@ -68,6 +68,13 @@ type Notification struct {
 // Actual delivery workers (push, email, SMS) consume from the queue.
 type Service struct {
 	client *asynq.Client
+
+	// Degraded-mode email delivery when client is nil; see sync_fallback.go.
+	fallbackCfg  ProviderConfig
+	resolveEmail EmailResolver
+	fallbackHTTP *http.Client
+	// fallbackEndpoint overrides the Resend URL (tests only).
+	fallbackEndpoint string
 }
 
 func NewService(client *asynq.Client) *Service {
@@ -86,7 +93,13 @@ func (s *Service) Send(ctx context.Context, n Notification) error {
 		n.Channels = []Channel{ChannelPush, ChannelInApp}
 	}
 	if s.client == nil {
-		err := errors.New("notifications: asynq client not configured")
+		log.Printf("[notifications] WARN asynq client not configured (REDIS_URL unset?); attempting synchronous email fallback user=%s event=%s", n.UserID, n.Event)
+		if handled, ferr := s.sendSyncEmailFallback(ctx, n); handled {
+			return nil
+		} else if ferr != nil {
+			log.Printf("[notifications] sync email fallback failed user=%s event=%s err=%v", n.UserID, n.Event, ferr)
+		}
+		err := errNoFallback
 		for _, ch := range n.Channels {
 			if taskTypeForChannel(ch) == "" {
 				continue
