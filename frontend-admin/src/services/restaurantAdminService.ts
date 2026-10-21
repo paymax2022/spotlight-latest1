@@ -1096,3 +1096,52 @@ export async function exportReportCsv(kind: 'gmv' | 'net-revenue' | 'cohorts', q
   }
   return res.blob();
 }
+
+// ── Rider suspend / pause / resume (FOOD-UAT-G-010) ───────────────────────────
+// Drives the transport admin verification endpoint. The rider roster id is
+// drivers.user_id, while PATCH /drivers/:id/verification keys on drivers.id, so
+// the driver row is resolved through the transport driver list first.
+// Suspending (or rejecting) releases the rider's in-flight orders server-side
+// (FOOD-UAT-A-001); "pause" is under_review (no new offers, reversible) and
+// "resume" is approved.
+
+export type RiderVerificationAction = 'suspend' | 'pause' | 'resume';
+export interface RiderDriverRecord {
+  id: string;
+  user_id: string;
+  name: string;
+  vehicle_type?: string;
+  verification_status: string;
+}
+
+const RIDER_ACTION_STATUS: Record<RiderVerificationAction, string> = {
+  suspend: 'suspended',
+  pause: 'under_review',
+  resume: 'approved',
+};
+
+function transportAdminBase(): string {
+  return `${financeBase()}/admin/transport`;
+}
+
+export async function getRiderDriverRecord(riderUserId: string): Promise<RiderDriverRecord> {
+  if (USE_MOCK) throw new Error(`Rider suspension ${NOT_IN_FIXTURE_MODE}`);
+  const body = await reqAt<{ drivers?: RiderDriverRecord[] }>(`${transportAdminBase()}/drivers`);
+  const rec = (body?.drivers ?? []).find((d) => d.user_id === riderUserId);
+  if (!rec) throw new Error('Driver record not found for this rider');
+  return rec;
+}
+
+export async function setRiderVerification(
+  riderUserId: string,
+  action: RiderVerificationAction,
+  reason: string,
+): Promise<{ verification_status: string }> {
+  if (USE_MOCK) throw new Error(`Rider suspension ${NOT_IN_FIXTURE_MODE}`);
+  if (action !== 'resume' && !reason.trim()) throw new Error('A reason is required');
+  const rec = await getRiderDriverRecord(riderUserId);
+  return reqAt<{ verification_status: string }>(`${transportAdminBase()}/drivers/${encodeURIComponent(rec.id)}/verification`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: RIDER_ACTION_STATUS[action], reason: reason.trim() }),
+  });
+}

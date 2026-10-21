@@ -264,7 +264,7 @@ func statusCodeFor(err error) int {
 		return http.StatusTooManyRequests
 	}
 	if errors.Is(err, ErrOrderTransitionConflict) || errors.Is(err, ErrRiderIneligible) ||
-		errors.Is(err, ErrPriceChanged) || errors.Is(err, ErrQuoteInvalid) {
+		errors.Is(err, ErrPriceChanged) || errors.Is(err, ErrQuoteInvalid) || errors.Is(err, ErrMenuItemVersionConflict) {
 		return http.StatusConflict
 	}
 	return http.StatusBadRequest

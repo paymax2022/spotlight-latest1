@@ -1761,6 +1761,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Store management (owner only): edit profile + operational open/close.
 		restGroup.PATCH("/:id", restaurantHandler.UpdateRestaurant)
 		restGroup.PATCH("/:id/availability", restaurantHandler.RequirePermitValidToOpen(), restaurantHandler.SetAvailability) // FOOD-UAT-H-002: permit gate
+		// FOOD-UAT-B-009: owner/staff opening hours, closures, timed pause + effective is-open.
+		restaurantHandler.RegisterOwnerHoursRoutes(restGroup)
 
 		// Merchant KYB (Know-Your-Business) onboarding (owner only, PermManageBanking —
 		// enforced inside the service, matching every sibling owner route in this
@@ -2038,6 +2040,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.GET("/:id/zones", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListZones)
 		restAdmin.POST("/:id/zones", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminCreateZone)
 		restAdmin.DELETE("/:id/zones/:zoneId", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDeleteZone)
+		// FOOD-UAT-B-009: weekly hours / holiday closures / timed pause for any store.
+		restaurantHandler.RegisterAdminHoursRoutes(restAdmin, middleware.RequirePermission(rbac, "restaurant.admin.onboarding"))
 
 		// FOOD-005: merchant/rider withdrawal ops queue (wallet → bank; distinct
 		// from the payout runs above, which pay a provider FROM the platform's

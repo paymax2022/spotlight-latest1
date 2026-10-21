@@ -58,8 +58,15 @@ type invalidInputError struct{ msg string }
 func (e *invalidInputError) Error() string        { return e.msg }
 func (e *invalidInputError) Is(target error) bool { return target == ErrInvalidInput }
 
-// menuErrStatus maps a menu-item service error: validation 400, missing 404, else 403.
+// ErrMenuItemVersionConflict: the PATCH carried a stale expected_version — someone else
+// edited the item since the client read it (FOOD-UAT-B-006). Answered 409.
+var ErrMenuItemVersionConflict = errors.New("restaurant: menu item was changed by someone else; reload and retry")
+
+// menuErrStatus maps a menu-item service error: validation 400, stale version 409, missing 404, else 403.
 func menuErrStatus(err error) int {
+	if errors.Is(err, ErrMenuItemVersionConflict) {
+		return http.StatusConflict
+	}
 	if errors.Is(err, ErrInvalidInput) {
 		return http.StatusBadRequest
 	}

@@ -18,7 +18,7 @@ import {
   useCreateCategory, useDeleteCategory, useCreateItem, useDeleteItem, usePayoutReadiness,
   useMenuTaxonomy, useCreateTaxonomyItem, useUpdateItem,
 } from '@/features/restaurantmerchant/hooks';
-import type { MerchantMenuCategory, MerchantStore, StoreGeoPoint } from '@/features/restaurantmerchant/types';
+import type { MerchantMenuCategory, MerchantMenuItem, MerchantStore, StoreGeoPoint } from '@/features/restaurantmerchant/types';
 import {
   subcategoriesFor, validateItemDraft, type ItemDraft, type ItemDraftErrors, type TaxonomyCategory,
 } from '@/features/restaurantmerchant/taxonomy';
@@ -603,6 +603,7 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
                 />
                 <Text style={styles.muted}>{it.isAvailable ? 'In stock' : 'Out'}</Text>
               </View>
+              <MaxQtyField item={it} storeId={storeId} />
               <Pressable onPress={() => confirmDeleteItem(it.id, it.name)} hitSlop={8}>
                 <Trash2 size={16} color={Colors.outline} />
               </Pressable>
@@ -762,6 +763,32 @@ function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string 
       </View>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
+  );
+}
+
+/** Per-order quantity cap for one item (FOOD-UAT-B-008). Blank = platform default. */
+function MaxQtyField({ item, storeId }: { item: MerchantMenuItem; storeId: string }) {
+  const update = useUpdateItem(storeId);
+  const [val, setVal] = useState(item.maxQtyPerOrder ? String(item.maxQtyPerOrder) : '');
+  const commit = () => {
+    const trimmed = val.trim();
+    const n = trimmed === '' ? 0 : Number(trimmed);
+    if (!Number.isInteger(n) || n < 0 || n > 1000) {
+      alertAsync({ title: 'Max per order', message: 'Enter a whole number from 1 to 1000, or leave blank for no limit.' });
+      return;
+    }
+    if (n === (item.maxQtyPerOrder ?? 0)) return;
+    update.mutate({ itemId: item.id, patch: { maxQtyPerOrder: n, expectedVersion: item.version } }, {
+      onError: (e) => alertAsync({ title: `Could not update ${item.name}`, message: (e as Error).message }),
+    });
+  };
+  return (
+    <TextInput
+      value={val} onChangeText={setVal} onBlur={commit} onSubmitEditing={commit}
+      placeholder="Max/order" keyboardType="number-pad" placeholderTextColor={Colors.outline}
+      accessibilityLabel={`${item.name} maximum quantity per order`}
+      style={[styles.input, { width: 84, paddingVertical: 4 }]}
+    />
   );
 }
 

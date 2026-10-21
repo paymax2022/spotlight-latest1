@@ -78,6 +78,10 @@ type MenuItem struct {
 	// restaurant's default when none is set. PrepTimeOverride is the override alone.
 	PrepMinutes      int  `json:"prep_minutes"`
 	PrepTimeOverride *int `json:"prep_time_override,omitempty"`
+	// Version is the optimistic-concurrency token: send it back as expected_version on PATCH
+	// (FOOD-UAT-B-006). MaxQtyPerOrder is the seller's per-line cap, nil = global cap (B-008).
+	Version        int  `json:"version"`
+	MaxQtyPerOrder *int `json:"max_qty_per_order,omitempty"`
 	// Price is the price a customer sees, with the best live discount applied. Present
 	// only when restaurant discounts are on.
 	Price *ItemPrice `json:"price,omitempty"`

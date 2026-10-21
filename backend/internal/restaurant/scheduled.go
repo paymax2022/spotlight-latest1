@@ -180,6 +180,10 @@ func RunUnacceptedAndDispatchSweeps(ctx context.Context, svc *Service, now time.
 	if _, e = svc.SweepPermitExpiry(ctx, now); e != nil {
 		errs = append(errs, fmt.Errorf("permit-expiry: %w", e))
 	}
+	// FOOD-UAT-B-009: clear ended timed pauses (idempotent; never touches is_open).
+	if _, e = svc.SweepTimedPauses(ctx, now); e != nil {
+		errs = append(errs, fmt.Errorf("timed-pause: %w", e))
+	}
 	// FOOD-UAT-E-013: purge rider GPS breadcrumbs past the 30-day retention (idempotent).
 	if _, e = svc.PurgeRiderLocations(ctx, now); e != nil {
 		errs = append(errs, fmt.Errorf("rider-location-purge: %w", e))

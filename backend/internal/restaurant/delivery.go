@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,7 +73,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 		return nil, err
 	}
 
-	const qi = `SELECT ` + menuItemCols + ` FROM menu_items WHERE restaurant_id=$1 ORDER BY created_at`
+	const qi = `SELECT ` + menuItemColsV + ` FROM menu_items WHERE restaurant_id=$1 ORDER BY created_at`
 	var live []PriceDiscount
 	var taxonomy map[string][2]string
 	if s.discountsOn {
@@ -90,7 +92,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	for irows.Next() {
 		var it MenuItem
 		var catID *string
-		if err := irows.Scan(&it.ID, &catID, &it.RestaurantID, &it.Name, &it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags, &it.PrepTimeOverride, &it.PrepMinutes); err != nil {
+		if err := irows.Scan(&it.ID, &catID, &it.RestaurantID, &it.Name, &it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags, &it.PrepTimeOverride, &it.PrepMinutes, &it.Version, &it.MaxQtyPerOrder); err != nil {
 			return nil, err
 		}
 		if s.discountsOn {
@@ -371,63 +373,121 @@ type UpdateItemRequest struct {
 	// PrepTimeMinutes sets the item's own prep time (5 to 180); 0 clears it back to the
 	// restaurant default.
 	PrepTimeMinutes *int `json:"prep_time_minutes,omitempty"`
+	// MaxQtyPerOrder is the seller's per-line quantity cap (FOOD-UAT-B-008): 1..maxLineQuantity;
+	// 0 clears it back to the global cap.
+	MaxQtyPerOrder *int `json:"max_qty_per_order,omitempty"`
+	// ExpectedVersion is the menu_items.version the client last read (FOOD-UAT-B-006). When
+	// present the edit is a compare-and-set: a stale version is refused with
+	// ErrMenuItemVersionConflict (409) instead of silently overwriting a newer edit. Absent
+	// = legacy last-write-wins (the edit still bumps the version).
+	ExpectedVersion *int `json:"expected_version,omitempty"`
 }
 
-// UpdateItem updates an item's price/availability/dietary tags (owner only).
+// UpdateItem updates an item's price/availability/dietary tags (owner only). All field
+// writes and the version compare-and-set share one transaction, so a conflicting edit
+// changes nothing.
 func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID string, req UpdateItemRequest) (*MenuItem, error) {
 	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return nil, err
 	}
+	// Validate everything before touching the row.
 	if req.PriceKobo != nil {
 		if err := validateItemPriceKobo(*req.PriceKobo); err != nil {
 			return nil, err
 		}
-		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET price_kobo=$1 WHERE id=$2 AND restaurant_id=$3`,
+	}
+	var until *time.Time
+	if req.IsAvailable != nil {
+		u, err := restockAt(req.UnavailableUntil, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		if *req.IsAvailable {
+			u = nil
+		}
+		until = u
+	}
+	var prep *int
+	if req.PrepTimeMinutes != nil && *req.PrepTimeMinutes != 0 {
+		if err := validItemPrepMinutes(*req.PrepTimeMinutes); err != nil {
+			return nil, err
+		}
+		prep = req.PrepTimeMinutes
+	}
+	var maxQty *int
+	if req.MaxQtyPerOrder != nil && *req.MaxQtyPerOrder != 0 {
+		if *req.MaxQtyPerOrder < 1 || *req.MaxQtyPerOrder > maxLineQuantity {
+			return nil, &invalidInputError{fmt.Sprintf("restaurant: max_qty_per_order must be between 1 and %d (0 clears it)", maxLineQuantity)}
+		}
+		maxQty = req.MaxQtyPerOrder
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The CAS gate: bump the version only if it still matches. It also takes the row lock,
+	// so a concurrent PATCH on the same item waits and then fails the version predicate.
+	ct, err := tx.Exec(ctx, `UPDATE menu_items SET version = version + 1
+	    WHERE id=$1 AND restaurant_id=$2 AND ($3::int IS NULL OR version = $3::int)`,
+		itemID, restaurantID, req.ExpectedVersion)
+	if err != nil {
+		return nil, err
+	}
+	if ct.RowsAffected() == 0 {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM menu_items WHERE id=$1 AND restaurant_id=$2)`, itemID, restaurantID).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, errors.New("restaurant: menu item not found")
+		}
+		return nil, ErrMenuItemVersionConflict
+	}
+	if req.PriceKobo != nil {
+		if _, err := tx.Exec(ctx, `UPDATE menu_items SET price_kobo=$1 WHERE id=$2 AND restaurant_id=$3`,
 			*req.PriceKobo, itemID, restaurantID); err != nil {
 			return nil, err
 		}
 	}
 	if req.IsAvailable != nil {
-		until, err := restockAt(req.UnavailableUntil, time.Now())
-		if err != nil {
-			return nil, err
-		}
-		if *req.IsAvailable {
-			until = nil
-		}
-		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET is_available=$1, unavailable_until=$2 WHERE id=$3 AND restaurant_id=$4`,
+		if _, err := tx.Exec(ctx, `UPDATE menu_items SET is_available=$1, unavailable_until=$2 WHERE id=$3 AND restaurant_id=$4`,
 			*req.IsAvailable, until, itemID, restaurantID); err != nil {
 			return nil, err
 		}
 	}
 	if req.PrepTimeMinutes != nil {
-		var prep *int
-		if *req.PrepTimeMinutes != 0 {
-			if err := validItemPrepMinutes(*req.PrepTimeMinutes); err != nil {
-				return nil, err
-			}
-			prep = req.PrepTimeMinutes
-		}
-		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET prep_time_minutes=$1 WHERE id=$2 AND restaurant_id=$3`,
+		if _, err := tx.Exec(ctx, `UPDATE menu_items SET prep_time_minutes=$1 WHERE id=$2 AND restaurant_id=$3`,
 			prep, itemID, restaurantID); err != nil {
 			return nil, err
 		}
-		// D-008: customers with an order still in the kitchen learn the new prep ETA.
-		if prep != nil {
-			s.NotifyOpenOrdersPrepChanged(ctx, restaurantID, *prep)
+	}
+	if req.MaxQtyPerOrder != nil {
+		if _, err := tx.Exec(ctx, `UPDATE menu_items SET max_qty_per_order=$1 WHERE id=$2 AND restaurant_id=$3`,
+			maxQty, itemID, restaurantID); err != nil {
+			return nil, err
 		}
 	}
 	if req.DietaryTags != nil {
-		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET dietary_tags=$1 WHERE id=$2 AND restaurant_id=$3`,
+		if _, err := tx.Exec(ctx, `UPDATE menu_items SET dietary_tags=$1 WHERE id=$2 AND restaurant_id=$3`,
 			normalizeDietaryTags(*req.DietaryTags), itemID, restaurantID); err != nil {
 			return nil, err
 		}
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	// D-008: customers with an order still in the kitchen learn the new prep ETA.
+	if prep != nil {
+		s.NotifyOpenOrdersPrepChanged(ctx, restaurantID, *prep)
+	}
 	var it MenuItem
 	var catID *string
-	const q = `SELECT ` + menuItemCols + ` FROM menu_items WHERE id=$1 AND restaurant_id=$2`
+	const q = `SELECT ` + menuItemColsV + ` FROM menu_items WHERE id=$1 AND restaurant_id=$2`
 	if err := s.db.QueryRow(ctx, q, itemID, restaurantID).Scan(&it.ID, &catID, &it.RestaurantID, &it.Name,
-		&it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags, &it.PrepTimeOverride, &it.PrepMinutes); err != nil {
+		&it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags, &it.PrepTimeOverride, &it.PrepMinutes,
+		&it.Version, &it.MaxQtyPerOrder); err != nil {
 		return nil, errors.New("restaurant: menu item not found")
 	}
 	if catID != nil {
@@ -798,12 +858,21 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 var ErrLocationNotTrackable = errors.New("restaurant: rider location is only accepted while the order is out for delivery")
 
 // riderLocationRetention is how long raw rider GPS breadcrumbs are kept (E-013).
+// Default 30 days; FOOD_RIDER_LOCATION_RETENTION_DAYS overrides it (positive integer;
+// anything else falls back to the default).
 const riderLocationRetention = 30 * 24 * time.Hour
+
+func riderLocationRetentionWindow() time.Duration {
+	if d, err := strconv.Atoi(strings.TrimSpace(os.Getenv("FOOD_RIDER_LOCATION_RETENTION_DAYS"))); err == nil && d > 0 {
+		return time.Duration(d) * 24 * time.Hour
+	}
+	return riderLocationRetention
+}
 
 // PurgeRiderLocations deletes breadcrumbs older than the retention window; run from
 // the sweeper tick. Idempotent.
 func (s *Service) PurgeRiderLocations(ctx context.Context, now time.Time) (int64, error) {
-	tag, err := s.db.Exec(ctx, `DELETE FROM restaurant_rider_locations WHERE created_at < $1`, now.Add(-riderLocationRetention))
+	tag, err := s.db.Exec(ctx, `DELETE FROM restaurant_rider_locations WHERE created_at < $1`, now.Add(-riderLocationRetentionWindow()))
 	if err != nil {
 		return 0, fmt.Errorf("restaurant: purge rider locations: %w", err)
 	}
