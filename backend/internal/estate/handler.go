@@ -1160,8 +1160,19 @@ func (h *Handler) vendorJobAction(c *gin.Context, fn func(ctx context.Context, e
 	c.JSON(http.StatusOK, j)
 }
 
-func (h *Handler) AcceptVendorJob(c *gin.Context)   { h.vendorJobAction(c, h.svc.AcceptJob) }
-func (h *Handler) RejectVendorJob(c *gin.Context)   { h.vendorJobAction(c, h.svc.RejectJob) }
+func (h *Handler) AcceptVendorJob(c *gin.Context) { h.vendorJobAction(c, h.svc.AcceptJob) }
+func (h *Handler) RejectVendorJob(c *gin.Context) {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&body) // reason is optional; an empty body is a plain decline
+	j, err := h.svc.RejectJobWithReason(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("jid"), body.Reason)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, j)
+}
 func (h *Handler) CheckInVendorJob(c *gin.Context)  { h.vendorJobAction(c, h.svc.CheckInAtGate) }
 func (h *Handler) StartVendorJob(c *gin.Context)    { h.vendorJobAction(c, h.svc.StartJob) }
 func (h *Handler) CompleteVendorJob(c *gin.Context) { h.vendorJobAction(c, h.svc.MarkJobComplete) }

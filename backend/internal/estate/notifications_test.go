@@ -70,3 +70,24 @@ func TestNotifDeepLinkNonEmpty(t *testing.T) {
 		}
 	}
 }
+
+// TestOptOutColumnMap pins the EST-UAT-0304 policy: optional categories have a
+// member-settings toggle that silences their push, while life-safety
+// ("security") has no opt-out column at all — it can never be muted.
+func TestOptOutColumnMap(t *testing.T) {
+	if _, ok := notifOptOutColumn["security"]; ok {
+		t.Error("security notifications must not be opt-out-able (life-safety)")
+	}
+	want := map[string]string{
+		"payment":      "notify_payments",
+		"meeting":      "notify_meetings",
+		"election":     "notify_elections",
+		"maintenance":  "notify_maintenance",
+		"announcement": "notify_announcements",
+	}
+	for cat, col := range want {
+		if notifOptOutColumn[cat] != col {
+			t.Errorf("opt-out column for %q = %q, want %q", cat, notifOptOutColumn[cat], col)
+		}
+	}
+}

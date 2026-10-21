@@ -1,1 +1,17 @@
 execution_id,case_id,method,command_or_procedure,env,result,evidence_path,executed_at_utc
+EXEC-C001,EST-UAT-ALL-M12-M17,UNIT_TEST,cd backend && go test ./internal/estate/... -count=1,local go1.27 darwin/arm64,PASS,ok spotlight/backend/internal/estate + paystackcheckout; all unit tests green,2026-10-21T18:55:00Z
+EXEC-C002,EST-UAT-ALL,UNIT_TEST,cd backend && go vet ./internal/estate/... && go build ./internal/estate/...,local,PASS,clean,2026-10-21T18:55:00Z
+EXEC-C003,EST-UAT-0247;0248,UNIT_TEST,cd frontend-web && npx vitest run tests/unit/estate/facility-booking-conflict.spec.ts,local vitest 5.0.3,PASS,"7 tests pass: overlap 409, pending holds slot, cancelled frees, capacity bounds, idempotency-key required",2026-10-21T18:55:00Z
+EXEC-C004,EST-UAT-0237;0238;0280;0285,UNIT_TEST,npx vitest run tests/unit/estate/vendor-jobs-authz.spec.ts,local,PASS,"7 tests pass: resident 403, own-vendor scope, admin all, foreign vendor 403, paid status blocked",2026-10-21T18:55:00Z
+EXEC-C005,EST-UAT-0273;0274;0310;0327,UNIT_TEST,npx vitest run tests/unit/estate/estate-list-scoping.spec.ts,local,PASS,"7 tests pass: own-alerts scoping, admin/security full feed, verified-only vendors",2026-10-21T18:55:00Z
+EXEC-C006,EST-UAT-0243;0244,UNIT_TEST,npx vitest run tests/unit/estate/repair-signoff.spec.ts,local,PASS,"5 tests pass: reject reopens+audit, accept completes, 409 wrong state, 403 non-reporter",2026-10-21T18:55:00Z
+EXEC-C007,EST-UAT-0266;0267;0251;0287;0304;0340,UNIT_TEST,go test ./internal/estate -run 'DocDownload|Restriction|Payout|OptOut|ResolveRange|MaxConcurrent',local,PASS,"docDownloadAllowed matrix, restriction matrix, payout fail-closed guards, opt-out map, range bounds, capacity helper all pass",2026-10-21T18:55:00Z
+EXEC-C008,EST-UAT-ALL,UNIT_TEST,npm run test:regression (golden-path 10 specs),local,PASS,138/138 tests pass,2026-10-21T18:55:00Z
+EXEC-C009,EST-UAT-ALL,UNIT_TEST,cd frontend-web && npx tsc --noEmit,local,PASS,"exit 0, no errors",2026-10-21T18:55:00Z
+EXEC-C010,EST-UAT-ALL,API_LIVE,curl http://localhost:8080/readyz ; curl /healthz /api/finance/estate,local,BLOCKED,port 8080 served by unrelated OrbStack container (returns 401 Unauthorized for every path); local supabase not running (supabase status: no container); Go backend cannot be exercised live in this lane,2026-10-21T18:55:00Z
+EXEC-C011,M12,CODE_REVIEW,read service_modules.go model_modules.go vendor.go handler_modules.go presign.go service_dues.go + migrations 20260622010001 + BFF routes + mobile features/facilities,worktree,DONE,implementation map in rtm-estate-c.csv rows 0232-0256,2026-10-21T18:55:00Z
+EXEC-C012,M13,CODE_REVIEW,read presign.go DocumentDownloadURL/ResolveDocumentForDownload + BFF documents route + schema,worktree,DONE,rows 0257-0272,2026-10-21T18:55:00Z
+EXEC-C013,M14,CODE_REVIEW,read vendor.go full job pipeline + payout ledger path + BFF vendors routes + migrations,worktree,DONE,rows 0273-0292,2026-10-21T18:55:00Z
+EXEC-C014,M15,CODE_REVIEW,read CreateAnnouncement/ListAnnouncements/MarkAnnouncementRead + notify()/notifyMembers + member settings + BFF route,worktree,DONE,rows 0293-0307,2026-10-21T18:55:00Z
+EXEC-C015,M16,CODE_REVIEW,read RaiseEmergency/ListEmergencies/UpdateEmergencyStatus + SubmitIncidentReport/ListIncidents + offline sync + BFF emergencies routes,worktree,DONE,rows 0308-0327,2026-10-21T18:55:00Z
+EXEC-C016,M17,CODE_REVIEW,read analytics.go GetAnalytics/resolveRange + FinanceDashboard + Report + admin dashboard/audit + estate_admin_routes,worktree,DONE,rows 0328-0347,2026-10-21T18:55:00Z

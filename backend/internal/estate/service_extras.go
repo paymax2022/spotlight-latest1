@@ -145,7 +145,7 @@ func (s *Service) notify(ctx context.Context, estateID, userID, notifType, title
 		estateID, userID, notifCategory(notifType), title, body, deepLink); err != nil {
 		log.Printf("[estate] in-app notification persist failed user=%s type=%s err=%v", userID, notifType, err)
 	}
-	if s.notifier != nil {
+	if s.notifier != nil && s.pushAllowed(ctx, estateID, userID, notifType) {
 		if err := s.notifier.Notify(ctx, EstateNotification{
 			EstateID: estateID, UserID: userID, Type: notifType,
 			Title: title, Body: body, DeepLink: deepLink, Data: data,
@@ -153,6 +153,50 @@ func (s *Service) notify(ctx context.Context, estateID, userID, notifType, title
 			log.Printf("[estate] push notifier failed user=%s type=%s err=%v", userID, notifType, err)
 		}
 	}
+}
+
+// notifOptOutColumn maps a notification category to the member-settings toggle
+// that can silence its PUSH. Categories without a dedicated toggle are governed
+// by push_enabled alone. "security" is deliberately absent: EST-UAT-0304.
+// an opt-out may silence optional pushes, never a life-safety alert.
+var notifOptOutColumn = map[string]string{
+	"payment":      "notify_payments",
+	"meeting":      "notify_meetings",
+	"election":     "notify_elections",
+	"maintenance":  "notify_maintenance",
+	"announcement": "notify_announcements",
+}
+
+// pushAllowed reports whether push delivery to a member is permitted by their
+// notification preferences. The in-app feed row above is always written; the
+// preference silences the push, not the record. A missing settings row means
+// defaults (all on); a read error delivers, since opt-out is a preference, not
+// a security gate.
+func (s *Service) pushAllowed(ctx context.Context, estateID, userID, notifType string) bool {
+	cat := notifCategory(notifType)
+	if cat == "security" {
+		return true // life-safety alerts ignore opt-out (lawful policy)
+	}
+	col := notifOptOutColumn[cat]
+	q := `SELECT push_enabled`
+	args := []any{estateID, userID}
+	if col != "" {
+		q += `, ` + col
+	}
+	q += ` FROM estate_member_settings WHERE estate_id=$1 AND user_id=$2`
+	var pushOn bool
+	var catOn bool
+	var err error
+	if col != "" {
+		err = s.db.QueryRow(ctx, q, args...).Scan(&pushOn, &catOn)
+	} else {
+		err = s.db.QueryRow(ctx, q, args...).Scan(&pushOn)
+		catOn = true
+	}
+	if err != nil {
+		return true
+	}
+	return pushOn && catOn
 }
 
 // notifyMembers fans a notification out to estate members. When roles is empty

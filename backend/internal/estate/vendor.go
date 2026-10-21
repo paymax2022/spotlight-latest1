@@ -65,6 +65,8 @@ type AssignJobRequest struct {
 	AmountKobo int64  `json:"amount_kobo"`
 }
 
+const auditKeyReason = "reason"
+
 const vendorJobCols = `id, estate_id, vendor_id, repair_request_id, COALESCE(title,''), status, amount_kobo,
 	quote_kobo, COALESCE(invoice_url,''), COALESCE(completion_url,''), accepted_at, completed_at, paid_at, COALESCE(payout_ref,''), created_at`
 
@@ -218,7 +220,21 @@ func (s *Service) AcceptJob(ctx context.Context, estateID, userID, jobID string)
 	return s.jobTransition(ctx, estateID, userID, jobID, "accepted", []string{"available"}, "accepted_at")
 }
 func (s *Service) RejectJob(ctx context.Context, estateID, userID, jobID string) (*VendorJob, error) {
-	return s.jobTransition(ctx, estateID, userID, jobID, "rejected", []string{"available"}, "")
+	return s.RejectJobWithReason(ctx, estateID, userID, jobID, "")
+}
+
+// RejectJobWithReason declines an offered job. EST-UAT-0238: the decline reason
+// is captured on the audit trail so the facility officer can reassign with
+// context; it does not alter the transition itself.
+func (s *Service) RejectJobWithReason(ctx context.Context, estateID, userID, jobID, reason string) (*VendorJob, error) {
+	j, err := s.jobTransition(ctx, estateID, userID, jobID, "rejected", []string{"available"}, "")
+	if err != nil {
+		return nil, err
+	}
+	if reason != "" {
+		_ = s.audit(ctx, estateID, userID, "VENDOR_JOB_REJECT_REASON", "vendor_job", jobID, map[string]any{auditKeyReason: reason})
+	}
+	return j, nil
 }
 func (s *Service) CheckInAtGate(ctx context.Context, estateID, userID, jobID string) (*VendorJob, error) {
 	return s.jobTransition(ctx, estateID, userID, jobID, "en_route", []string{"accepted"}, "")

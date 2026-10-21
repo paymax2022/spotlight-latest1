@@ -145,9 +145,9 @@ func (s *Service) BanResident(ctx context.Context, estateID, adminID, targetUser
 	if ct.RowsAffected() == 0 {
 		return errors.New("estate: resident not found in this estate")
 	}
-	_ = s.audit(ctx, estateID, adminID, "RESIDENT_BAN", "resident", targetUserID, map[string]any{"reason": reason})
+	_ = s.audit(ctx, estateID, adminID, "RESIDENT_BAN", "resident", targetUserID, map[string]any{auditKeyReason: reason})
 	s.notify(ctx, estateID, targetUserID, NotifAdminApprovalRequired, "Account banned",
-		"Your access to this estate has been suspended by an administrator.", map[string]any{"reason": reason})
+		"Your access to this estate has been suspended by an administrator.", map[string]any{auditKeyReason: reason})
 	return nil
 }
 
