@@ -1,6 +1,8 @@
 package adapters
 
 import (
+	"errors"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -95,6 +97,38 @@ func TestBookTokenRoundTrip(t *testing.T) {
 	}
 	if _, _, _, _, err := decodeBookToken("bedbank:v1:x:2026-09-10:2026-09-11:1:nonce"); err == nil {
 		t.Fatal("expected error decoding foreign-prefix token")
+	}
+}
+
+// TestBookTokenTTL verifies v2 tokens carry the mint time and Book-side decode
+// rejects a token whose hold window has expired (RAT-015 invariant: the
+// advertised 10-minute hold must actually expire).
+func TestBookTokenTTL(t *testing.T) {
+	in := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
+	out := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+
+	// Fresh token decodes.
+	if _, _, _, _, err := decodeBookToken(encodeBookToken("rt", in, out, 1)); err != nil {
+		t.Fatalf("fresh token should decode: %v", err)
+	}
+
+	// A token minted beyond the TTL is rejected.
+	stale := "direct:v2:rt:2026-09-10:2026-09-13:1:" +
+		time.Unix(time.Now().Add(-bookTokenTTL-time.Minute).Unix(), 0).Format("20060102150405") + ":nonce"
+	if _, _, _, _, err := decodeBookToken(stale); !errors.Is(err, ErrHoldExpired) {
+		t.Fatalf("stale token: err = %v, want ErrHoldExpired", err)
+	}
+
+	// A future-dated issue time (clock skew / tamper) is also rejected.
+	future := "direct:v2:rt:2026-09-10:2026-09-13:1:" +
+		strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10) + ":nonce"
+	if _, _, _, _, err := decodeBookToken(future); !errors.Is(err, ErrHoldExpired) {
+		t.Fatalf("future token: err = %v, want ErrHoldExpired", err)
+	}
+
+	// Legacy v1 tokens (no timestamp) still decode — they predate TTL.
+	if _, _, _, _, err := decodeBookToken("direct:v1:rt:2026-09-10:2026-09-13:1:nonce"); err != nil {
+		t.Fatalf("legacy v1 token should decode: %v", err)
 	}
 }
 

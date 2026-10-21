@@ -70,13 +70,20 @@ var ErrOversellBlocked = errors.New("direct: OVERSELL_BLOCKED")
 // bookTokenPrefix and bookTokenVersion frame the availability context the direct
 // adapter encodes into the book_token at Prebook time (room_type_id, stay dates,
 // rooms) so Book — whose normalised BookRequest carries no dates/room ref — can
-// perform the row-locked decrement without any signature change. Format:
+// perform the row-locked decrement without any signature change. Formats:
 //
-//	direct:v1:<room_type_id>:<check_in>:<check_out>:<rooms>:<nonce>
+//	direct:v1:<room_type_id>:<check_in>:<check_out>:<rooms>:<nonce>          (legacy)
+//	direct:v2:<room_type_id>:<check_in>:<check_out>:<rooms>:<issued_unix>:<nonce>
+//
+// v2 carries the mint timestamp so Book can enforce the advertised hold TTL —
+// a prebook hold must expire rather than stay bookable forever.
 const (
 	bookTokenPrefix  = "direct"
-	bookTokenVersion = "v1"
+	bookTokenVersion = "v2"
 	dateLayout       = "2006-01-02"
+	// bookTokenTTL is how long a prebook hold stays bookable. Matches the
+	// ExpiresAt reported to the client in PrebookResult.
+	bookTokenTTL = 10 * time.Minute
 )
 
 // NewDirect constructs a Rail-B adapter over the financial DB pool.
@@ -88,13 +95,24 @@ func NewDirect(db *pgxpool.Pool) *DirectInventoryAdapter {
 func (a *DirectInventoryAdapter) Name() string { return "direct" }
 
 // Search reads ACTIVE direct properties (geo/city filtered) joined to their room
-// types + rate plans. The price is the hotel sell rate; SB1's per-date rate table
-// refines it. Until then this returns the rate-plan base sell rate.
+// types + rate plans. The price is the hotel sell rate; per-date rates refine the
+// quote at prebook (the search display rate is the rate-plan base sell rate).
+// When the request carries stay dates, offers are filtered to room types that can
+// actually be sold for EVERY night of the stay (allotment - sold >= rooms, not
+// stop-sell) and that fit the requested per-room adult count — an unavailable
+// listing must never be advertised as bookable.
 func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchRequest) ([]gateway.PropertyOffer, error) {
 	if a.db == nil {
 		return nil, errors.New("direct: nil pool")
 	}
+	rooms := req.Rooms
+	if rooms <= 0 {
+		rooms = 1
+	}
+	adults := req.Occupancy.Adults
 	// Parameterized query. City filter when provided; otherwise all ACTIVE.
+	// $4/$5 are stay dates (handler requires them); when unset the availability
+	// leg is skipped so undated callers (content probes) are unaffected.
 	const q = `
 		SELECT p.supplier_code, p.supplier_property_ref, p.name, p.city, p.address,
 		       COALESCE(ST_Y(p.geo::geometry),0), COALESCE(ST_X(p.geo::geometry),0),
@@ -107,9 +125,20 @@ func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchR
 		JOIN public.stays_rate_plan rp ON rp.room_type_id = rt.id
 		WHERE p.source_rail = 'DIRECT' AND p.status = 'ACTIVE'
 		  AND ($1 = '' OR p.city ILIKE $1)
+		  AND ($5 <= 0 OR rt.occupancy >= $5)
+		  AND ($3::date IS NULL OR NOT EXISTS (
+		    SELECT 1 FROM generate_series($3::date, ($4::date - 1), interval '1 day') AS n
+		    WHERE NOT EXISTS (
+		      SELECT 1 FROM public.stays_availability_day ad
+		      WHERE ad.room_type_id = rt.id AND ad.date = n
+		        AND ad.allotment - ad.sold >= $2 AND NOT ad.stop_sell)))
 		ORDER BY rp.base_sell_rate_kobo ASC
 		LIMIT 200`
-	rows, err := a.db.Query(ctx, q, req.City)
+	var ci, co any
+	if !req.CheckIn.IsZero() && !req.CheckOut.IsZero() {
+		ci, co = req.CheckIn.Format(dateLayout), req.CheckOut.Format(dateLayout)
+	}
+	rows, err := a.db.Query(ctx, q, req.City, rooms, ci, co, adults)
 	if err != nil {
 		return nil, fmt.Errorf("direct: search: %w", err)
 	}
@@ -225,21 +254,24 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 	if a.db == nil {
 		return gateway.PrebookResult{}, errors.New("direct: nil pool")
 	}
-	// Resolve the rate plan (price/policy) AND the owning room_type_id (the
-	// availability-calendar key) in one query.
+	// Resolve the rate plan (price/policy), the owning room_type_id (the
+	// availability-calendar key), its occupancy ceiling, and the internal
+	// rate_plan_id (the rate_day key) in one query.
 	const q = `
-		SELECT rp.base_sell_rate_kobo, rp.tax_kobo, rp.currency, rp.cancellation_policy, rt.id
+		SELECT rp.id, rp.base_sell_rate_kobo, rp.tax_kobo, rp.currency, rp.cancellation_policy,
+		       rt.id, rt.occupancy
 		FROM public.stays_rate_plan rp
 		JOIN public.stays_room_type rt ON rt.id = rp.room_type_id
 		JOIN public.stays_property p ON p.id = rt.property_id
 		WHERE p.supplier_property_ref = $1 AND rt.supplier_room_type_ref = $2
 		  AND rp.supplier_rate_plan_ref = $3 AND p.status = 'ACTIVE'`
+	var ratePlanID, roomTypeID string
 	var sellKobo, taxKobo int64
 	var currency string
 	var policy map[string]any
-	var roomTypeID string
+	var occupancy int
 	err := a.db.QueryRow(ctx, q, req.SupplierPropertyRef, req.SupplierRoomTypeRef, req.SupplierRatePlanRef).
-		Scan(&sellKobo, &taxKobo, &currency, &policy, &roomTypeID)
+		Scan(&ratePlanID, &sellKobo, &taxKobo, &currency, &policy, &roomTypeID, &occupancy)
 	if err != nil {
 		// Treat a missing/unavailable rate plan as sold out (PREBOOK_SOLD_OUT).
 		return gateway.PrebookResult{SoldOut: true}, nil
@@ -248,6 +280,14 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 	rooms := req.Rooms
 	if rooms <= 0 {
 		rooms = 1
+	}
+
+	// Occupancy guard: the requested party must fit the room-type ceiling.
+	// Guests-per-room semantics — adults (+ children, which count as guests)
+	// ride each room, so the party per room may not exceed occupancy.
+	party := req.Occupancy.Adults + req.Occupancy.Children
+	if occupancy > 0 && party > 0 && party > occupancy {
+		return gateway.PrebookResult{SoldOut: true}, nil
 	}
 
 	// Availability HOLD check: row-lock every stay night and confirm sellable
@@ -262,17 +302,86 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 		return gateway.PrebookResult{SoldOut: true}, nil
 	}
 
+	// Rate + restriction evaluation over the stay nights: the rate plan's
+	// per-date calendar (stays_rate_day) is authoritative where a cell exists —
+	// a missing cell falls back to the plan base rate with default (unrestricted)
+	// semantics. Restrictions: stop_sell on any occupied night, CTA at arrival,
+	// CTD at departure, and LOS bounds evaluated at arrival (hotel convention).
+	price, ok, priceErr := a.priceStay(ctx, ratePlanID, sellKobo, req.CheckIn, req.CheckOut)
+	if priceErr != nil {
+		return gateway.PrebookResult{}, priceErr
+	}
+	if !ok {
+		return gateway.PrebookResult{SoldOut: true}, nil
+	}
+
 	bookToken := encodeBookToken(roomTypeID, req.CheckIn, req.CheckOut, rooms)
 	return gateway.PrebookResult{
 		BookToken:          bookToken,
-		NetRateKobo:        sellKobo,
+		NetRateKobo:        price,
 		TaxKobo:            taxKobo,
 		Currency:           currency,
-		Changed:            false,
+		Changed:            price != sellKobo,
 		SoldOut:            false,
 		CancellationPolicy: policy,
-		ExpiresAt:          time.Now().Add(10 * time.Minute),
+		ExpiresAt:          time.Now().Add(bookTokenTTL),
 	}, nil
+}
+
+// priceStay sums the per-night sell rate over [checkIn, checkOut) and enforces
+// the rate calendar's restrictions. Per-night cells come from stays_rate_day;
+// a missing cell prices at the plan base rate with min_los=1 and no flags.
+// Returns ok=false when the stay is not bookable under the restrictions
+// (stop_sell / closed-to-arrival / closed-to-departure / LOS bounds).
+func (a *DirectInventoryAdapter) priceStay(ctx context.Context, ratePlanID string, baseKobo int64, checkIn, checkOut time.Time) (int64, bool, error) {
+	nights := nightsBetween(checkIn, checkOut)
+	if len(nights) == 0 {
+		return 0, false, nil
+	}
+	var total int64
+	for i, n := range nights {
+		var priceKobo, minLOS, maxLOS int64
+		var cta, ctd, stopSell bool
+		err := a.db.QueryRow(ctx, `
+			SELECT price_kobo, min_los, max_los, cta, ctd, stop_sell
+			FROM public.stays_rate_day
+			WHERE rate_plan_id = $1 AND date = $2::date`, ratePlanID, n).
+			Scan(&priceKobo, &minLOS, &maxLOS, &cta, &ctd, &stopSell)
+		if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return 0, false, fmt.Errorf("direct: rate day %s: %w", n, err)
+			}
+			priceKobo, minLOS, maxLOS = baseKobo, 1, 0
+		}
+		if stopSell {
+			return 0, false, nil
+		}
+		if i == 0 {
+			if cta {
+				return 0, false, nil // closed to arrival
+			}
+			if minLOS > 0 && int64(len(nights)) < minLOS {
+				return 0, false, nil // stay shorter than arrival-date minimum LOS
+			}
+			if maxLOS > 0 && int64(len(nights)) > maxLOS {
+				return 0, false, nil // stay longer than arrival-date maximum LOS
+			}
+		}
+		total += priceKobo
+	}
+	// Closed-to-departure is evaluated on the check-out DATE cell (the night
+	// grid ends at check_out-1).
+	var ctd bool
+	if err := a.db.QueryRow(ctx, `
+		SELECT ctd FROM public.stays_rate_day
+		WHERE rate_plan_id = $1 AND date = $2::date`, ratePlanID, checkOut.Format(dateLayout)).Scan(&ctd); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, fmt.Errorf("direct: rate day %s (ctd): %w", checkOut.Format(dateLayout), err)
+		}
+	} else if ctd {
+		return 0, false, nil
+	}
+	return total, true, nil
 }
 
 // Book confirms a direct reservation, decrementing allotment under a row lock. It
@@ -675,19 +784,45 @@ func (a *DirectInventoryAdapter) releaseDecrement(ctx context.Context, supplierR
 }
 
 // encodeBookToken packs the availability context into the opaque book_token so Book
-// (whose BookRequest carries no dates/room ref) can commit the decrement.
+// (whose BookRequest carries no dates/room ref) can commit the decrement. v2 embeds
+// the mint time so Book enforces the hold TTL.
 func encodeBookToken(roomTypeID string, checkIn, checkOut time.Time, rooms int) string {
 	return strings.Join([]string{
 		bookTokenPrefix, bookTokenVersion, roomTypeID,
 		checkIn.Format(dateLayout), checkOut.Format(dateLayout),
-		strconv.Itoa(rooms), uuid.NewString(),
+		strconv.Itoa(rooms), strconv.FormatInt(time.Now().Unix(), 10), uuid.NewString(),
 	}, ":")
 }
 
-// decodeBookToken parses a direct book_token minted by encodeBookToken.
+// ErrHoldExpired is returned when a book_token outlived its TTL. The saga maps a
+// Book failure to the auto-release leg (hold released, no debit).
+var ErrHoldExpired = errors.New("direct: prebook hold expired — re-quote")
+
+// decodeBookToken parses a direct book_token minted by encodeBookToken and
+// enforces the hold TTL on v2 tokens. Legacy v1 tokens (no mint timestamp) are
+// still accepted — they predate TTL enforcement and cannot be re-minted anyway.
 func decodeBookToken(token string) (roomTypeID string, checkIn, checkOut time.Time, rooms int, err error) {
 	parts := strings.Split(token, ":")
-	if len(parts) < 7 || parts[0] != bookTokenPrefix || parts[1] != bookTokenVersion {
+	if len(parts) < 7 || parts[0] != bookTokenPrefix {
+		return "", time.Time{}, time.Time{}, 0, errors.New("direct: malformed book_token")
+	}
+	var roomsIdx int
+	switch parts[1] {
+	case "v1":
+		roomsIdx = 5
+	case bookTokenVersion:
+		if len(parts) < 8 {
+			return "", time.Time{}, time.Time{}, 0, errors.New("direct: malformed book_token")
+		}
+		roomsIdx = 5
+		issued, ierr := strconv.ParseInt(parts[6], 10, 64)
+		if ierr != nil {
+			return "", time.Time{}, time.Time{}, 0, errors.New("direct: bad issue time in book_token")
+		}
+		if age := time.Since(time.Unix(issued, 0)); age < 0 || age > bookTokenTTL {
+			return "", time.Time{}, time.Time{}, 0, ErrHoldExpired
+		}
+	default:
 		return "", time.Time{}, time.Time{}, 0, errors.New("direct: malformed book_token")
 	}
 	roomTypeID = parts[2]
@@ -697,7 +832,7 @@ func decodeBookToken(token string) (roomTypeID string, checkIn, checkOut time.Ti
 	if checkOut, err = time.Parse(dateLayout, parts[4]); err != nil {
 		return "", time.Time{}, time.Time{}, 0, fmt.Errorf("direct: bad check_out in book_token: %w", err)
 	}
-	if rooms, err = strconv.Atoi(parts[5]); err != nil || rooms <= 0 {
+	if rooms, err = strconv.Atoi(parts[roomsIdx]); err != nil || rooms <= 0 {
 		return "", time.Time{}, time.Time{}, 0, errors.New("direct: bad rooms in book_token")
 	}
 	return roomTypeID, checkIn, checkOut, rooms, nil

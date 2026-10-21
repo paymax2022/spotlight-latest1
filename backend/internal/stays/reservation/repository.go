@@ -498,6 +498,36 @@ func (r *Repository) RecordCommissionDelta(ctx context.Context, reservationID, p
 	return err
 }
 
+// BestPromotionBps returns the highest applicable percentage discount
+// (basis points) from the property's own stays_promotion rules for the stay
+// range, or 0 when none applies. This is the ONLY source of booking discounts —
+// the client-supplied promo_bps is deliberately ignored (price integrity).
+// A promotion applies when it is active, its window covers the whole stay
+// [check_in, check_out), its min_los/lead_days gates are met, and it is either
+// property-wide (rate_plan_id NULL) or bound to the requested plan.
+func (r *Repository) BestPromotionBps(ctx context.Context, supplierPropertyRef, supplierRatePlanRef string, checkIn, checkOut time.Time) (int64, error) {
+	lastNight := checkOut.AddDate(0, 0, -1)
+	var bps int64
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(MAX(pr.discount_bps), 0)
+		FROM public.stays_promotion pr
+		JOIN public.stays_property p ON p.id = pr.property_id
+		LEFT JOIN public.stays_rate_plan want ON want.supplier_rate_plan_ref = $2
+		WHERE p.supplier_property_ref = $1
+		  AND pr.active
+		  AND pr.promo_type = 'PERCENT'
+		  AND pr.date_from <= $3::date AND pr.date_to >= $4::date
+		  AND pr.min_los <= ($4::date - $3::date + 1)
+		  AND ($3::date - CURRENT_DATE) >= pr.lead_days
+		  AND (pr.rate_plan_id IS NULL OR pr.rate_plan_id = want.id)`,
+		supplierPropertyRef, supplierRatePlanRef, checkIn.Format("2006-01-02"), lastNight.Format("2006-01-02")).
+		Scan(&bps)
+	if err != nil {
+		return 0, fmt.Errorf("reservation: promo lookup: %w", err)
+	}
+	return bps, nil
+}
+
 // UpsertGuest records the lead guest (PII) for a reservation. Shared with the
 // supplier only after NDPA consent (checked in the saga).
 func (r *Repository) UpsertGuest(ctx context.Context, reservationID, firstName, lastName, email, phone string, isLead bool) error {
