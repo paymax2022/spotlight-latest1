@@ -124,7 +124,7 @@ func (s *Service) SetOccupancyStatus(ctx context.Context, estateID, adminID, pro
 	if err != nil {
 		return nil, errors.New("estate: property not found in this estate")
 	}
-	_ = s.audit(ctx, estateID, adminID, "PROPERTY_OCCUPANCY", "property", propertyID, map[string]any{"status": status})
+	_ = s.audit(ctx, estateID, adminID, "PROPERTY_OCCUPANCY", "property", propertyID, map[string]any{keyStatus: status})
 	return p, nil
 }
 

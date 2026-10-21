@@ -194,7 +194,7 @@ func (h *Handler) DocumentDownloadURL(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{
 			"downloadUrl": fileURL,
 			"expiresIn":   0,
-			"method":      "GET",
+			keyMethod:     "GET",
 			"legacy":      true,
 		}})
 		return
@@ -219,7 +219,7 @@ func (h *Handler) DocumentDownloadURL(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"downloadUrl": url,
 		"expiresIn":   int(documentDownloadTTL.Seconds()),
-		"method":      "GET",
+		keyMethod:     "GET",
 	}})
 }
 

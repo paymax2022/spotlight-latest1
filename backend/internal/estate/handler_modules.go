@@ -27,7 +27,7 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 
 func (h *Handler) ListInvoices(c *gin.Context) {
 	userID := ginutil.UserID(c)
-	invs, err := h.svc.ListInvoices(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
+	invs, err := h.svc.ListInvoices(c.Request.Context(), c.Param("id"), userID, c.Query(keyStatus))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
@@ -103,7 +103,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 
 func (h *Handler) ListTasks(c *gin.Context) {
 	userID := ginutil.UserID(c)
-	tasks, err := h.svc.ListTasks(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
+	tasks, err := h.svc.ListTasks(c.Request.Context(), c.Param("id"), userID, c.Query(keyStatus))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
@@ -122,7 +122,7 @@ func (h *Handler) UpdateTaskStatus(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": req.Status})
+	c.JSON(http.StatusOK, gin.H{keyStatus: req.Status})
 }
 
 func (h *Handler) CreateRepair(c *gin.Context) {
@@ -142,7 +142,7 @@ func (h *Handler) CreateRepair(c *gin.Context) {
 
 func (h *Handler) ListRepairs(c *gin.Context) {
 	userID := ginutil.UserID(c)
-	repairs, err := h.svc.ListRepairs(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
+	repairs, err := h.svc.ListRepairs(c.Request.Context(), c.Param("id"), userID, c.Query(keyStatus))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
@@ -291,7 +291,7 @@ func (h *Handler) RaiseEmergency(c *gin.Context) {
 
 func (h *Handler) ListEmergencies(c *gin.Context) {
 	userID := ginutil.UserID(c)
-	as, err := h.svc.ListEmergencies(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
+	as, err := h.svc.ListEmergencies(c.Request.Context(), c.Param("id"), userID, c.Query(keyStatus))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
@@ -310,7 +310,7 @@ func (h *Handler) UpdateEmergencyStatus(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": req.Status})
+	c.JSON(http.StatusOK, gin.H{keyStatus: req.Status})
 }
 
 func (h *Handler) CreateDocument(c *gin.Context) {
@@ -355,7 +355,7 @@ func (h *Handler) CreateVendor(c *gin.Context) {
 
 func (h *Handler) ListVendors(c *gin.Context) {
 	userID := ginutil.UserID(c)
-	vs, err := h.svc.ListVendors(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
+	vs, err := h.svc.ListVendors(c.Request.Context(), c.Param("id"), userID, c.Query(keyStatus))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
@@ -376,7 +376,7 @@ func (h *Handler) VerifyVendor(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": body.Status})
+	c.JSON(http.StatusOK, gin.H{keyStatus: body.Status})
 }
 
 func (h *Handler) FinanceDashboard(c *gin.Context) {
@@ -407,4 +407,26 @@ func (h *Handler) Report(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, r)
+}
+
+// RemindMeeting notifies members who have not RSVP'd (EST-UAT-0351).
+func (h *Handler) RemindMeeting(c *gin.Context) {
+	adminID := ginutil.UserID(c)
+	n, err := h.svc.SendMeetingReminder(c.Request.Context(), c.Param("id"), adminID, c.Param("mid"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyReminded: n})
+}
+
+// RemindElection notifies residents who have not yet voted (EST-UAT-0352).
+func (h *Handler) RemindElection(c *gin.Context) {
+	adminID := ginutil.UserID(c)
+	n, err := h.svc.SendElectionReminders(c.Request.Context(), c.Param("id"), adminID, c.Param("electionId"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyReminded: n})
 }

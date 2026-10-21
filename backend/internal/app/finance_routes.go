@@ -1263,6 +1263,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.POST("/:id/passes/scan", estateHandler.ScanPass)
 		estGroup.POST("/:id/elections", estateHandler.CreateElection)
 		estGroup.POST("/:id/elections/:electionId/vote", estateHandler.CastVote)
+		estGroup.POST("/:id/elections/:electionId/remind", estateHandler.RemindElection)
 		estGroup.GET("/:id/elections/:electionId/results", estateHandler.GetResults)
 		// Block 31: per-election voter eligibility (KYC / payment / resident type)
 		estGroup.GET("/:id/elections/:electionId/eligibility", estateHandler.GetVoterEligibility)
@@ -1340,6 +1341,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.GET("/:id/meetings", estateHandler.ListMeetings)
 		estGroup.GET("/:id/meetings/:mid", estateHandler.GetMeeting)
 		estGroup.POST("/:id/meetings/:mid/rsvp", estateHandler.RSVPMeeting)
+		estGroup.POST("/:id/meetings/:mid/remind", estateHandler.RemindMeeting)
 		estGroup.POST("/:id/meetings/:mid/checkin", estateHandler.CheckInMeeting)
 		estGroup.POST("/:id/meetings/:mid/start", estateHandler.StartMeeting)
 		estGroup.POST("/:id/meetings/:mid/end", estateHandler.EndMeeting)
@@ -1433,7 +1435,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Block 35: Emergencies / Incidents
 		estGroup.GET("/:id/emergencies", estateHandler.ListEmergencies)
-		estGroup.POST("/:id/emergencies", estateHandler.RaiseEmergency)
+		// EST-UAT-0395: per-user SOS abuse guard. 12/min bounds scripted floods
+		// while staying far above any real emergency cadence — it meters a
+		// single resident hammering the endpoint, not the estate's right to
+		// raise an alert (the budget is per user, per minute, never shared).
+		estGroup.POST("/:id/emergencies",
+			middleware.PerUserRateLimit(redisClient, "estate-sos", 12), estateHandler.RaiseEmergency)
 		estGroup.PATCH("/:id/emergencies/:alertId/status", estateHandler.UpdateEmergencyStatus)
 
 		// Block 36/39: Documents (upload via presigned R2; type/size validated;

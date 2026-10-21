@@ -1,6 +1,9 @@
 package estate
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // TestEstateNotificationTaxonomy verifies the full Block 43 set of 18 types is
 // defined and unique.
@@ -71,23 +74,56 @@ func TestNotifDeepLinkNonEmpty(t *testing.T) {
 	}
 }
 
-// TestOptOutColumnMap pins the EST-UAT-0304 policy: optional categories have a
-// member-settings toggle that silences their push, while life-safety
-// ("security") has no opt-out column at all — it can never be muted.
-func TestOptOutColumnMap(t *testing.T) {
-	if _, ok := notifOptOutColumn["security"]; ok {
-		t.Error("security notifications must not be opt-out-able (life-safety)")
+// TestNotifPrefColumnMapping pins the preference-toggle mapping (EST-UAT-0357):
+// every mutable category resolves to a real estate_member_settings column, and
+// the safety/legal-exempt types resolve to "" (always delivered).
+func TestNotifPrefColumnMapping(t *testing.T) {
+	cases := map[string]string{
+		NotifPaymentDue:               "notify_payments",
+		NotifPaymentOverdue:           "notify_payments",
+		NotifRestrictionApplied:       "notify_payments",
+		NotifMeetingReminder:          "notify_meetings",
+		NotifElectionReminder:         "notify_elections",
+		NotifElectionResult:           "notify_elections",
+		NotifVisitorArrived:           "notify_security",
+		NotifVisitorDenied:            "notify_security",
+		NotifRepairUpdate:             "notify_maintenance",
+		NotifVendorAssigned:           "notify_maintenance",
+		NotifFacilityBookingConfirmed: "notify_maintenance",
+		NotifAnnouncement:             "notify_announcements",
+		// Safety/legal notices are never user-mutable.
+		NotifEmergencyAlert:        "",
+		NotifAdminApprovalRequired: "",
+		// Uncategorized types default to always-deliver.
+		NotifTaskAssigned: "",
+		"totally_unknown": "",
 	}
-	want := map[string]string{
-		"payment":      "notify_payments",
-		"meeting":      "notify_meetings",
-		"election":     "notify_elections",
-		"maintenance":  "notify_maintenance",
-		"announcement": "notify_announcements",
-	}
-	for cat, col := range want {
-		if notifOptOutColumn[cat] != col {
-			t.Errorf("opt-out column for %q = %q, want %q", cat, notifOptOutColumn[cat], col)
+	for ty, want := range cases {
+		if got := notifPrefColumn(ty); got != want {
+			t.Errorf("notifPrefColumn(%q) = %q, want %q", ty, got, want)
 		}
+	}
+	// Whatever the function returns must be a real settings column (the SQL is
+	// interpolated, so a wrong literal would 500 at runtime).
+	validCols := map[string]bool{
+		"notify_payments": true, "notify_meetings": true, "notify_elections": true,
+		"notify_security": true, "notify_maintenance": true, "notify_announcements": true,
+		"": true,
+	}
+	for _, ty := range EstateNotificationTypes {
+		if col := notifPrefColumn(ty); !validCols[col] {
+			t.Errorf("notifPrefColumn(%q) = %q — not an estate_member_settings column", ty, col)
+		}
+	}
+}
+
+// TestNotifDedupeWindowBound pins the replay-dedupe contract (EST-UAT-0355):
+// positive and short enough that legitimate periodic re-sends still deliver.
+func TestNotifDedupeWindowBound(t *testing.T) {
+	if notifDedupeWindow <= 0 {
+		t.Error("dedupe window must be positive")
+	}
+	if notifDedupeWindow > time.Hour {
+		t.Errorf("dedupe window %v too long — would collapse legitimate reminders", notifDedupeWindow)
 	}
 }

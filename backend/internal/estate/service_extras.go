@@ -129,23 +129,113 @@ func notifDeepLink(notifType string) string {
 	}
 }
 
+// notifPrefColumn maps a notification type to the estate_member_settings toggle
+// that governs it (Block 45 consent). "" means the type is not user-mutable:
+// safety/legal notices (emergency alerts, admin action items) and uncategorised
+// general types always deliver, matching the UAT rule that configured consent
+// is honoured EXCEPT required safety/legal notices (EST-UAT-0357).
+func notifPrefColumn(notifType string) string {
+	if notifType == NotifEmergencyAlert || notifType == NotifAdminApprovalRequired {
+		return ""
+	}
+	switch notifCategory(notifType) {
+	case "payment":
+		return "notify_payments"
+	case "meeting":
+		return "notify_meetings"
+	case "election":
+		return "notify_elections"
+	case "security":
+		return "notify_security"
+	case "maintenance", "facility":
+		return "notify_maintenance"
+	case "announcement":
+		return "notify_announcements"
+	default:
+		return ""
+	}
+}
+
+// notifDedupeWindow suppresses identical re-deliveries of a notification to the
+// same recipient, e.g. an at-least-once queue replaying the same event
+// (EST-UAT-0355). Dedupe keys on (estate, user, category, title, body): repeats
+// that carry a different body (new invoice amount, different meeting) are never
+// collapsed. Kept short so legitimate daily reminder re-sends still deliver.
+const notifDedupeWindow = 10 * time.Minute
+
+const (
+	keyStatus     = "status"
+	keyReminded   = "reminded"
+	keyMethod     = "method"
+	keyAmountKobo = "amount_kobo"
+)
+
+// notificationAllowed reads the recipient's member settings once and returns
+// (feedOK, pushOK): feedOK=false when the user muted this category; pushOK=false
+// when push is disabled. Missing settings rows default to allow-all. On a read
+// error we fail OPEN (deliver) — a notification must never be silently dropped
+// because the prefs lookup hiccuped.
+func (s *Service) notificationAllowed(ctx context.Context, estateID, userID, notifType string) (bool, bool) {
+	var pushOK bool
+	col := notifPrefColumn(notifType)
+	// col is a trusted literal from notifPrefColumn — never user input.
+	q := `SELECT COALESCE((SELECT push_enabled FROM estate_member_settings WHERE estate_id=$1 AND user_id=$2), TRUE)`
+	args := []any{estateID, userID}
+	if col != "" {
+		q = `SELECT COALESCE((SELECT ` + col + ` FROM estate_member_settings WHERE estate_id=$1 AND user_id=$2), TRUE),
+		            COALESCE((SELECT push_enabled FROM estate_member_settings WHERE estate_id=$1 AND user_id=$2), TRUE)`
+		var catOK bool
+		if err := s.db.QueryRow(ctx, q, args...).Scan(&catOK, &pushOK); err != nil {
+			log.Printf("[estate] notification prefs read failed user=%s type=%s err=%v", userID, notifType, err)
+			return true, true
+		}
+		return catOK, pushOK
+	}
+	if err := s.db.QueryRow(ctx, q, args...).Scan(&pushOK); err != nil {
+		log.Printf("[estate] notification prefs read failed user=%s type=%s err=%v", userID, notifType, err)
+		return true, true
+	}
+	return true, pushOK
+}
+
 // notify persists one in-app notification and enqueues a push to the recipient.
 // Fire-and-forget: errors never fail the calling operation, but they are no
 // longer swallowed silently (E2E-FR-051) — a failed push enqueue is logged with
 // user/type context (the enqueue layer additionally logs per-channel and
 // counts paymax.notification.enqueue).
+//
+// Delivery honours two recipient controls (EST-UAT-0357): a muted category
+// suppresses the notification entirely; push_enabled=false still writes the
+// in-app feed row but skips the push enqueue. Replays are deduplicated within
+// notifDedupeWindow (EST-UAT-0355).
 func (s *Service) notify(ctx context.Context, estateID, userID, notifType, title, body string, data map[string]any) {
 	if userID == "" {
 		return
 	}
+	feedOK, pushOK := s.notificationAllowed(ctx, estateID, userID, notifType)
+	if !feedOK {
+		return
+	}
+	category := notifCategory(notifType)
 	deepLink := notifDeepLink(notifType)
+	var dup bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM estate_notifications
+			WHERE estate_id=$1 AND user_id=$2 AND category=$3 AND title=$4
+			  AND COALESCE(body,'')=COALESCE($5,'') AND created_at > $6)`,
+		estateID, userID, category, title, body, time.Now().Add(-notifDedupeWindow)).Scan(&dup); err != nil {
+		log.Printf("[estate] notification dedupe check failed user=%s type=%s err=%v", userID, notifType, err)
+	}
+	if dup {
+		return
+	}
 	if _, err := s.db.Exec(ctx,
 		`INSERT INTO estate_notifications (id, estate_id, user_id, category, title, body, deep_link)
 		 VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6)`,
-		estateID, userID, notifCategory(notifType), title, body, deepLink); err != nil {
+		estateID, userID, category, title, body, deepLink); err != nil {
 		log.Printf("[estate] in-app notification persist failed user=%s type=%s err=%v", userID, notifType, err)
 	}
-	if s.notifier != nil && s.pushAllowed(ctx, estateID, userID, notifType) {
+	if s.notifier != nil && pushOK {
 		if err := s.notifier.Notify(ctx, EstateNotification{
 			EstateID: estateID, UserID: userID, Type: notifType,
 			Title: title, Body: body, DeepLink: deepLink, Data: data,
@@ -153,50 +243,6 @@ func (s *Service) notify(ctx context.Context, estateID, userID, notifType, title
 			log.Printf("[estate] push notifier failed user=%s type=%s err=%v", userID, notifType, err)
 		}
 	}
-}
-
-// notifOptOutColumn maps a notification category to the member-settings toggle
-// that can silence its PUSH. Categories without a dedicated toggle are governed
-// by push_enabled alone. "security" is deliberately absent: EST-UAT-0304.
-// an opt-out may silence optional pushes, never a life-safety alert.
-var notifOptOutColumn = map[string]string{
-	"payment":      "notify_payments",
-	"meeting":      "notify_meetings",
-	"election":     "notify_elections",
-	"maintenance":  "notify_maintenance",
-	"announcement": "notify_announcements",
-}
-
-// pushAllowed reports whether push delivery to a member is permitted by their
-// notification preferences. The in-app feed row above is always written; the
-// preference silences the push, not the record. A missing settings row means
-// defaults (all on); a read error delivers, since opt-out is a preference, not
-// a security gate.
-func (s *Service) pushAllowed(ctx context.Context, estateID, userID, notifType string) bool {
-	cat := notifCategory(notifType)
-	if cat == "security" {
-		return true // life-safety alerts ignore opt-out (lawful policy)
-	}
-	col := notifOptOutColumn[cat]
-	q := `SELECT push_enabled`
-	args := []any{estateID, userID}
-	if col != "" {
-		q += `, ` + col
-	}
-	q += ` FROM estate_member_settings WHERE estate_id=$1 AND user_id=$2`
-	var pushOn bool
-	var catOn bool
-	var err error
-	if col != "" {
-		err = s.db.QueryRow(ctx, q, args...).Scan(&pushOn, &catOn)
-	} else {
-		err = s.db.QueryRow(ctx, q, args...).Scan(&pushOn)
-		catOn = true
-	}
-	if err != nil {
-		return true
-	}
-	return pushOn && catOn
 }
 
 // notifyMembers fans a notification out to estate members. When roles is empty
@@ -400,20 +446,47 @@ func (s *Service) SoftDeleteAccount(ctx context.Context, estateID, userID string
 // RunEstateMaintenance runs all three for one estate (admin-triggered);
 // RunMaintenanceAllEstates runs them platform-wide (scheduler entry point).
 
-// MarkOverdueInvoices flips pending, past-due invoices to 'overdue'. Returns the
-// number updated. estateID == "" applies platform-wide.
-func (s *Service) MarkOverdueInvoices(ctx context.Context, estateID string) (int64, error) {
+// overdueFlip is one invoice that transitioned pending→overdue in a
+// maintenance run — the recipient identity for the arrears reminder.
+type overdueFlip struct {
+	EstateID   string
+	ResidentID string // estate_dues_invoices.resident_id stores the user id
+	AmountKobo int64
+	Category   string
+}
+
+// markOverdueInvoices flips pending, past-due invoices to 'overdue' and returns
+// the flipped rows so the caller can notify each payer exactly once per
+// transition. estateID == "" applies platform-wide.
+func (s *Service) markOverdueInvoices(ctx context.Context, estateID string) ([]overdueFlip, error) {
 	q := `UPDATE estate_dues_invoices SET status='overdue' WHERE status='pending' AND due_date < NOW()`
 	args := []any{}
 	if estateID != "" {
 		q += ` AND estate_id=$1`
 		args = append(args, estateID)
 	}
-	ct, err := s.db.Exec(ctx, q, args...)
+	q += ` RETURNING estate_id, resident_id, amount_kobo, category`
+	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
-		return 0, fmt.Errorf("estate: mark overdue: %w", err)
+		return nil, fmt.Errorf("estate: mark overdue: %w", err)
 	}
-	return ct.RowsAffected(), nil
+	defer rows.Close()
+	var out []overdueFlip
+	for rows.Next() {
+		var f overdueFlip
+		if err := rows.Scan(&f.EstateID, &f.ResidentID, &f.AmountKobo, &f.Category); err != nil {
+			return nil, fmt.Errorf("estate: mark overdue scan: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// MarkOverdueInvoices flips pending, past-due invoices to 'overdue'. Returns the
+// number updated. estateID == "" applies platform-wide.
+func (s *Service) MarkOverdueInvoices(ctx context.Context, estateID string) (int64, error) {
+	flips, err := s.markOverdueInvoices(ctx, estateID)
+	return int64(len(flips)), err
 }
 
 // AutoApplyOverdueRestrictions applies a soft dues restriction to every resident
@@ -456,12 +529,22 @@ func (s *Service) ExpireAccessCodes(ctx context.Context, estateID string) (int64
 // runMaintenance executes all jobs for the given scope ("" = platform-wide).
 func (s *Service) runMaintenance(ctx context.Context, estateID string) (map[string]int64, error) {
 	out := map[string]int64{}
-	n, err := s.MarkOverdueInvoices(ctx, estateID)
+	flips, err := s.markOverdueInvoices(ctx, estateID)
 	if err != nil {
 		return out, err
 	}
-	out["invoices_marked_overdue"] = n
-	n, err = s.AutoApplyOverdueRestrictions(ctx, estateID)
+	out["invoices_marked_overdue"] = int64(len(flips))
+	// Arrears reminder: each payer whose invoice just flipped past-due gets one
+	// payment_overdue notification (EST-UAT-0350). The notification layer's
+	// dedupe window and per-user category prefs apply, so a re-run inside the
+	// window cannot spam and muted payers stay muted (safety/legal exempt
+	// types excepted — overdue billing is a mutable 'payment' notice).
+	for _, f := range flips {
+		s.notify(ctx, f.EstateID, f.ResidentID, NotifPaymentOverdue, "Payment overdue",
+			fmt.Sprintf("Your %s invoice of ₦%.2f is now overdue.", f.Category, float64(f.AmountKobo)/100),
+			map[string]any{keyAmountKobo: f.AmountKobo, "category": f.Category})
+	}
+	n, err := s.AutoApplyOverdueRestrictions(ctx, estateID)
 	if err != nil {
 		return out, err
 	}

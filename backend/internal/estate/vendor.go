@@ -345,7 +345,7 @@ func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, id
 		// Lost a race; return the canonical row.
 		return s.getJob(ctx, estateID, jobID)
 	}
-	if err := s.auditTx(ctx, tx, estateID, userID, "VENDOR_PAYOUT", "vendor_job", jobID, map[string]any{"amount_kobo": amount, "reference": ref}); err != nil {
+	if err := s.auditTx(ctx, tx, estateID, userID, "VENDOR_PAYOUT", "vendor_job", jobID, map[string]any{keyAmountKobo: amount, "reference": ref}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -1,9 +1,11 @@
 package app
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -88,6 +90,11 @@ func RegisterEstateAdmin(
 	a.GET("/security/guard-shifts", guard("estate.admin.security"), h.ListGuardShifts)
 	a.GET("/security/visitor-logs", guard("estate.admin.security"), h.ListVisitorLogs)
 	a.GET("/security/emergencies", guard("estate.admin.security"), h.ListEmergencies)
+	// Global audit-trail search (EST-UAT-0427): estate_audit_log is append-only
+	// so this surface is read/search only — the estate.admin.security slug is
+	// reused because audit oversight is a security function and no separate
+	// estate.admin.audit slug is seeded.
+	a.GET("/audit", guard("estate.admin.security"), h.SearchAuditLog)
 
 	a.GET("/dues/reconciliation", guard("estate.admin.dues"), h.DuesReconciliation)
 	a.GET("/dues/invoices", guard("estate.admin.dues"), h.ListInvoices)
@@ -277,6 +284,57 @@ func (h *estateAdminHandler) ListEmergencies(c *gin.Context) {
 		return map[string]any{
 			"id": id, "estate_id": estateID, "reporter_id": reporterID, "kind": kind,
 			"description": description, "location": location, "status": status, "created_at": createdAt,
+		}, nil
+	})
+}
+
+// SearchAuditLog is the global audit-trail search (EST-UAT-0427). Filters:
+// ?estate_id= (via estateFilter), ?actor_id=, ?action= (prefix match so e.g.
+// action=PAYMENT catches PAYMENT_POSTED/PAYMENT_REVERSED), ?subject_type= and
+// ?from=/?to= RFC3339 bounds. estate_audit_log is append-only — there is no
+// mutation route on it anywhere — so search results are the immutable record.
+func (h *estateAdminHandler) SearchAuditLog(c *gin.Context) {
+	args := []any{}
+	clause, args := estateFilter(c, args, 1)
+	var b strings.Builder
+	b.WriteString(clause)
+	for _, col := range []string{"actor_id", "subject_type", "subject_id"} {
+		if v := c.Query(col); v != "" {
+			args = append(args, v)
+			b.WriteString(" AND " + col + "=$" + strconv.Itoa(len(args)))
+		}
+	}
+	if v := c.Query("action"); v != "" {
+		args = append(args, v+"%")
+		b.WriteString(" AND action LIKE $" + strconv.Itoa(len(args)))
+	}
+	for _, p := range []struct{ key, op string }{
+		{"from", ">="},
+		{"to", "<="},
+	} {
+		if v := c.Query(p.key); v != "" {
+			ts, err := time.Parse(time.RFC3339, v)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid " + p.key + " — expected RFC3339"})
+				return
+			}
+			args = append(args, ts)
+			b.WriteString(" AND created_at" + p.op + "$" + strconv.Itoa(len(args)))
+		}
+	}
+	sql := `SELECT id, estate_id, actor_id, action, subject_type, subject_id, metadata, created_at
+	        FROM estate_audit_log WHERE 1=1` + b.String() + ` ORDER BY created_at DESC LIMIT ` + strconv.Itoa(limitOf(c, 200))
+	h.jsonRows(c, sql, args, func(r pgxRows) (map[string]any, error) {
+		var id, action, subjectType, subjectID string
+		var estateID, actorID *string
+		var metadata json.RawMessage
+		var createdAt any
+		if err := r.Scan(&id, &estateID, &actorID, &action, &subjectType, &subjectID, &metadata, &createdAt); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"id": id, "estate_id": estateID, "actor_id": actorID, "action": action,
+			"subject_type": subjectType, "subject_id": subjectID, "metadata": metadata, "created_at": createdAt,
 		}, nil
 	})
 }

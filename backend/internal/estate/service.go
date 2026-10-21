@@ -138,6 +138,10 @@ func (s *Service) IssueVisitorPass(ctx context.Context, estateID, issuerID strin
 }
 
 // ScanVisitorPass marks a pass as used. Only estate security (admin) can scan.
+// On a successful scan the issuing resident is alerted (Block 43
+// visitor_arrived) so a gate check-in requiring live resident awareness reaches
+// them (EST-UAT-0348). Fire-and-forget: a notification failure never fails the
+// gate scan itself.
 func (s *Service) ScanVisitorPass(ctx context.Context, estateID, scannerID, qrCode string) (*VisitorPass, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, scannerID); err != nil {
 		return nil, err
@@ -154,6 +158,10 @@ func (s *Service) ScanVisitorPass(ctx context.Context, estateID, scannerID, qrCo
 	); err != nil {
 		return nil, errors.New("estate: pass not found, already used, or expired")
 	}
+	s.notify(ctx, estateID, p.IssuedBy, NotifVisitorArrived,
+		"Visitor arrived: "+p.VisitorName,
+		fmt.Sprintf("%s has been checked in at the gate (%s).", p.VisitorName, p.Purpose),
+		map[string]any{"pass_id": p.ID, "visitor_name": p.VisitorName})
 	return p, nil
 }
 
@@ -303,6 +311,50 @@ func (s *Service) GetResults(ctx context.Context, estateID, electionID, userID s
 	return out, rows.Err()
 }
 
+// SendElectionReminders notifies residents who have NOT yet voted in an open
+// election (EST-UAT-0352). Ballot privacy is preserved by construction: the
+// query selects only voter ids (never candidate_id / vote content), and the
+// notification body contains no ballot data. Estate admin only. Returns the
+// number of reminders delivered to the feed.
+func (s *Service) SendElectionReminders(ctx context.Context, estateID, adminID, electionID string) (int, error) {
+	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
+		return 0, err
+	}
+	var title, status string
+	var endsAt time.Time
+	if err := s.db.QueryRow(ctx,
+		`SELECT title, status, ends_at FROM elections WHERE id=$1 AND estate_id=$2`,
+		electionID, estateID).Scan(&title, &status, &endsAt); err != nil {
+		return 0, errors.New("estate: election not found")
+	}
+	if status != "open" {
+		return 0, fmt.Errorf("estate: cannot send reminders for a %s election", status)
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT r.user_id FROM estate_residents r
+		WHERE r.estate_id=$1 AND r.deleted_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM election_votes v WHERE v.election_id=$2 AND v.voter_id=r.user_id)`,
+		estateID, electionID)
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		s.notify(ctx, estateID, id, NotifElectionReminder, "Election open: "+title,
+			"Voting is open and you have not cast a ballot yet.",
+			map[string]any{"election_id": electionID, "ends_at": endsAt})
+	}
+	_ = s.audit(ctx, estateID, adminID, "ELECTION_REMIND", "election", electionID, map[string]any{keyReminded: len(ids)})
+	return len(ids), nil
+}
+
 // ListGates — Block 28: Security gate / guard app
 // ListGates returns all active gates for an estate.
 // ESTATE-AUTHZ: member-only — the gate layout is estate security posture.
@@ -449,6 +501,13 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+
+	// Alert the issuing resident that their visitor is at the gate
+	// (EST-UAT-0348). Fire-and-forget — never fails the check-in.
+	s.notify(ctx, estateID, payload.Code.IssuedBy, NotifVisitorArrived,
+		"Visitor arrived: "+payload.Code.VisitorName,
+		payload.Code.VisitorName+" has arrived at the gate.",
+		map[string]any{"code_id": payload.Code.ID, "checkin_id": checkinID, "gate_id": req.GateID})
 
 	payload.CheckinID = checkinID
 	return payload, nil

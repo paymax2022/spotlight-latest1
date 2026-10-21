@@ -173,9 +173,12 @@ func (s *Service) AddRepairUpdate(ctx context.Context, estateID, userID, repairI
 	if err := s.assertEstateAdmin(ctx, estateID, userID); err != nil {
 		return nil, err
 	}
-	// Verify the repair belongs to this estate (cross-estate isolation).
-	var cnt int
-	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM estate_repair_requests WHERE id=$1 AND estate_id=$2`, repairID, estateID).Scan(&cnt); err != nil || cnt == 0 {
+	// Verify the repair belongs to this estate (cross-estate isolation) and
+	// grab the reporter for the status-change alert (EST-UAT-0353).
+	var reporterID string
+	if err := s.db.QueryRow(ctx,
+		`SELECT reporter_id FROM estate_repair_requests WHERE id=$1 AND estate_id=$2`, repairID, estateID,
+	).Scan(&reporterID); err != nil {
 		return nil, errors.New("estate: repair not found in this estate")
 	}
 	tx, err := s.db.Begin(ctx)
@@ -194,7 +197,15 @@ func (s *Service) AddRepairUpdate(ctx context.Context, estateID, userID, repairI
 	if _, err := tx.Exec(ctx, `UPDATE estate_repair_requests SET status=$1 WHERE id=$2 AND estate_id=$3`, req.Status, repairID, estateID); err != nil {
 		return nil, fmt.Errorf("estate: update repair status: %w", err)
 	}
-	return u, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	// EST-UAT-0353: the requester gets a progress/status update for their own
+	// request only (fire-and-forget; prefs + dedupe apply inside notify).
+	s.notify(ctx, estateID, reporterID, NotifRepairUpdate, "Repair update",
+		fmt.Sprintf("Your repair request status changed to %s.", req.Status),
+		map[string]any{"repair_id": repairID, keyStatus: req.Status})
+	return u, nil
 }
 
 func (s *Service) ListRepairUpdates(ctx context.Context, estateID, userID, repairID string) ([]RepairUpdate, error) {
