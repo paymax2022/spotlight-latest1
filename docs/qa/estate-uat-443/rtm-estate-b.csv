@@ -72,12 +72,12 @@ EST-UAT-0185,M09,Accounting reversal audit,P0,APPLICABLE,PARTIAL,"ResolveEscrow 
 EST-UAT-0186,M10,Schedule residents meeting,P0,APPLICABLE,IMPLEMENTED,"meetings.go:CreateMeeting;bff meetings route",PASSED,E1,ESTB-D008,BFF allows any resident;Go admin-only(inconsistent)
 EST-UAT-0187,M10,Schedule committee only,P0,APPLICABLE,MISSING,estate_meetings(no audience),NOT_RUN,E3,,No audience/segment field
 EST-UAT-0188,M10,Invite participants,P0,APPLICABLE,PARTIAL,"CreateMeeting notifyMembers broadcast",NOT_RUN,E3,,All-members notify;no invitee list
-EST-UAT-0189,M10,Accept/decline RSVP,P0,APPLICABLE,IMPLEMENTED,"meeting_rsvps upsert+counts;BFF rsvp route",PASSED,E3,,Unique per (meeting,user);valid responses
+EST-UAT-0189,M10,Accept/decline RSVP,P0,APPLICABLE,IMPLEMENTED,meeting_rsvps upsert+counts;BFF rsvp route,PASSED,E3,,"Unique per (meeting,user);valid responses"
 EST-UAT-0190,M10,Change date,P0,APPLICABLE,IMPLEMENTED,RescheduleMeeting+notify,PASSED,E1,,Admin;audited;members notified
 EST-UAT-0191,M10,Cancel meeting,P0,APPLICABLE,IMPLEMENTED,CancelMeeting FSM,PASSED,E1,,scheduled|live→cancelled;notify
 EST-UAT-0192,M10,Meeting timezone,P1,APPLICABLE,PARTIAL,timestamptz canonical,NOT_RUN,E3,,UTC storage correct;no tz UI policy
 EST-UAT-0193,M10,Agenda attachments,P1,APPLICABLE,PARTIAL,"meeting_documents+presign;docs restricted flag",NOT_RUN,E3,,Attach exists;participant-scoped read partial
-EST-UAT-0194,M10,Meeting attendance check in,P0,APPLICABLE,IMPLEMENTED,CheckInAttendee ON CONFLICT unique,PASSED,E1,,Unique per (meeting,user);qr|manual
+EST-UAT-0194,M10,Meeting attendance check in,P0,APPLICABLE,IMPLEMENTED,CheckInAttendee ON CONFLICT unique,PASSED,E1,,"Unique per (meeting,user);qr|manual"
 EST-UAT-0195,M10,Meeting quorum,P0,APPLICABLE,MISSING,estate_meetings,NOT_RUN,E3,,No quorum config/gate
 EST-UAT-0196,M10,Minute creation and approval,P0,APPLICABLE,IMPLEMENTED,"UploadMinutes upsert;ApproveMinutes",PASSED,E3,,Re-upload resets approval;approver+timestamp recorded
 EST-UAT-0197,M10,Action items,P1,APPLICABLE,PARTIAL,meeting_minutes.action_items JSONB,NOT_RUN,E3,,Stored only;no task link/owner notify
@@ -88,7 +88,7 @@ EST-UAT-0201,M10,In-app/virtual link control,P0,APPLICABLE,IMPLEMENTED,"resident
 EST-UAT-0202,M11,Create draft election,P0,APPLICABLE,PARTIAL,"service.go:CreateElection(draft);BFF POST elections",NOT_RUN,E3,,Go drafts;BFF sets open immediately(no approval step)
 EST-UAT-0203,M11,Election rule approval,P0,APPLICABLE,PARTIAL,SetEligibilityRules(admin),NOT_RUN,E3,,Rules settable;no publish/lock approval workflow
 EST-UAT-0204,M11,Build electoral roll,P0,APPLICABLE,PARTIAL,"election_eligibility_rules;resident count",NOT_RUN,E3,,Rules-based gate;no roll entity/freeze/versioning
-EST-UAT-0205,M11,Multiple-unit owner eligibility,P0,APPLICABLE,MISSING,UNIQUE(election_id,voter_id),NOT_RUN,E3,,One-person-one-vote only;no per-unit weighting
+EST-UAT-0205,M11,Multiple-unit owner eligibility,P0,APPLICABLE,MISSING,"UNIQUE(election_id,voter_id)",NOT_RUN,E3,,One-person-one-vote only;no per-unit weighting
 EST-UAT-0206,M11,Tenant vs owner eligibility,P0,APPLICABLE,IMPLEMENTED,"checkVoteEligibility resident_types;Go evaluateEligibility",PASSED,"E4,E5",ESTB-D001,BFF bypass FIXED this lane
 EST-UAT-0207,M11,Past resident eligibility,P0,APPLICABLE,IMPLEMENTED,"getResidentContext banned/deleted filters",PASSED,E4,ESTB-D002,Banned/deleted members now fail closed on BFF
 EST-UAT-0208,M11,Electoral roll challenge,P1,APPLICABLE,MISSING,election tables,NOT_RUN,E3,,No challenge workflow
@@ -97,7 +97,7 @@ EST-UAT-0210,M11,Invalid nomination,P0,APPLICABLE,MISSING,election_candidates,NO
 EST-UAT-0211,M11,Candidate acceptance,P0,APPLICABLE,MISSING,election_candidates,NOT_RUN,E3,,No accept/vet lifecycle
 EST-UAT-0212,M11,Election timeline boundaries,P0,APPLICABLE,IMPLEMENTED,"vote route status+window;Go CastVote window",PASSED,E3,,Server-side window on both paths
 EST-UAT-0213,M11,Cast valid secret ballot,P0,APPLICABLE,PARTIAL,"vote route;election_votes schema",FAILED,E4,ESTB-D003,Counts once+sealed receipt;schema still links voter→choice
-EST-UAT-0214,M11,Duplicate vote attempt,P0,APPLICABLE,IMPLEMENTED,23505→409 both paths,PASSED,E4,,One vote per (election,voter)
+EST-UAT-0214,M11,Duplicate vote attempt,P0,APPLICABLE,IMPLEMENTED,23505→409 both paths,PASSED,E4,,"One vote per (election,voter)"
 EST-UAT-0215,M11,Concurrent double vote,P0,APPLICABLE,IMPLEMENTED,"UNIQUE constraint+Redlock(Go)",PASSED,E1,,Atomic uniqueness at DB
 EST-UAT-0216,M11,Voting receipt anonymity,P0,APPLICABLE,PARTIAL,"ballot route sealed;mobile receipt",FAILED,E4,ESTB-D003,API sealed now;schema link remains(pending migration)
 EST-UAT-0217,M11,Ballot modification,P0,APPLICABLE,IMPLEMENTED,no update path exists,PASSED,E3,,Immutable by absence of mutation API
