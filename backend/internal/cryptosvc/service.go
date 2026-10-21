@@ -110,7 +110,17 @@ type QuoteRequest struct {
 	UserID         string
 	IdempotencyKey string
 	Asset          string
-	NGNKobo        int64
+	// Side is SideBuy (default; spend NGNKobo) or SideSell (sell Amount of Asset for NGN).
+	Side    Side
+	NGNKobo int64           // buy: NGN to spend, in kobo (fee on top)
+	Amount  decimal.Decimal // sell: crypto units to sell
+}
+
+func quoteSide(req QuoteRequest) Side {
+	if req.Side == "" {
+		return SideBuy
+	}
+	return req.Side
 }
 
 func (s *Service) locked(ctx context.Context, key string, fn func(context.Context) error) error {
@@ -179,21 +189,30 @@ func (s *Service) ensureAccount(ctx context.Context, p cryptoprov.Provider, user
 }
 
 func sameQuote(r SwapRecord, req QuoteRequest, asset string) bool {
+	if quoteSide(req) == SideSell {
+		return r.Side == SideSell && r.FromAmount.Equal(req.Amount) && strings.EqualFold(r.FromCurrency, asset)
+	}
 	return r.Side == SideBuy && r.NGNKobo == req.NGNKobo && strings.EqualFold(r.ToCurrency, asset)
 }
 
-// Quote prices a buy and persists it. A repeat of the same Idempotency-Key returns the
-// same quote; the same key with a different body is ErrIdempotencyConflict.
+// Quote prices a buy (NGN -> crypto) or a sell (crypto -> NGN) and persists it. A repeat
+// of the same Idempotency-Key returns the same quote; the same key with a different body
+// (including the other side) is ErrIdempotencyConflict.
 func (s *Service) Quote(ctx context.Context, req QuoteRequest) (SwapRecord, error) {
 	asset := strings.ToUpper(strings.TrimSpace(req.Asset))
+	side := quoteSide(req)
 	switch {
 	case req.UserID == "" || req.IdempotencyKey == "":
 		return SwapRecord{}, errors.New("cryptosvc: user id and an Idempotency-Key are required")
 	case asset == "" || asset == "NGN":
 		return SwapRecord{}, errors.New("cryptosvc: a crypto asset is required")
-	case req.NGNKobo <= 0:
+	case side != SideBuy && side != SideSell:
+		return SwapRecord{}, fmt.Errorf("cryptosvc: unknown side %q", side)
+	case side == SideSell && !req.Amount.IsPositive():
+		return SwapRecord{}, errors.New("cryptosvc: sell amount must be positive")
+	case side == SideBuy && req.NGNKobo <= 0:
 		return SwapRecord{}, errors.New("cryptosvc: NGN amount must be positive kobo")
-	case req.NGNKobo > MaxQuoteKobo:
+	case side == SideBuy && req.NGNKobo > MaxQuoteKobo:
 		return SwapRecord{}, errors.New("cryptosvc: NGN amount is above the per-quote maximum")
 	}
 	if err := s.gate(ctx, req.UserID); err != nil {
@@ -214,6 +233,9 @@ func (s *Service) Quote(ctx context.Context, req QuoteRequest) (SwapRecord, erro
 	bps, err := fees.Bps(asset)
 	if err != nil {
 		return SwapRecord{}, err
+	}
+	if side == SideSell {
+		return s.quoteSell(ctx, req, asset, bps)
 	}
 	fee, err := FeeKobo(req.NGNKobo, bps)
 	if err != nil {
@@ -260,6 +282,76 @@ func (s *Service) Quote(ctx context.Context, req QuoteRequest) (SwapRecord, erro
 	}
 	if created {
 		s.audit(ctx, req.UserID, "crypto.swap.quote", rec.ID, "", map[string]any{"asset": asset, "ngn_kobo": rec.NGNKobo, "fee_kobo": rec.FeeKobo, "fee_bps": rec.FeeBps})
+	}
+	return rec, nil
+}
+
+// heldKobo is the NGN a swap holds between confirm and settlement: a buy's amount plus
+// fee; nothing for a sell (its crypto sits with the provider).
+func heldKobo(r SwapRecord) int64 {
+	if r.Side == SideSell {
+		return 0
+	}
+	return r.NGNKobo + r.FeeKobo
+}
+
+// quoteSell prices selling req.Amount of asset for NGN. Nothing is held: the crypto sits
+// in the user's provider sub-account and the provider refuses a sell it cannot cover.
+// The quoted NGN is FLOORED to whole kobo, so the platform never promises more than the
+// provider quoted; the payout itself is the provider's confirmed figure (CompleteSell,
+// bounded by the slippage band around this quote).
+func (s *Service) quoteSell(ctx context.Context, req QuoteRequest, asset string, bps int) (SwapRecord, error) {
+	p, err := s.provider()
+	if err != nil {
+		return SwapRecord{}, err
+	}
+	sp, err := cryptoprov.As[cryptoprov.SwapProvider](p)
+	if err != nil {
+		return SwapRecord{}, err
+	}
+	acct, err := s.ensureAccount(ctx, p, req.UserID)
+	if err != nil {
+		return SwapRecord{}, err
+	}
+	q, err := sp.QuoteSwap(ctx, cryptoprov.SwapQuoteRequest{AccountID: acct, From: asset, To: "NGN", FromAmount: req.Amount})
+	if err != nil {
+		return SwapRecord{}, fmt.Errorf("cryptosvc: provider quote: %w", err)
+	}
+	switch {
+	case q.QuoteID == "":
+		return SwapRecord{}, errors.New("cryptosvc: provider quote has no id")
+	case !q.FromAmt.Equal(req.Amount):
+		return SwapRecord{}, fmt.Errorf("cryptosvc: provider quoted %s %s for a %s %s request", q.FromAmt, asset, req.Amount, asset)
+	case !q.ToAmt.IsPositive() || !q.Price.IsPositive():
+		return SwapRecord{}, errors.New("cryptosvc: provider quote has a non-positive amount or price")
+	case q.ExpiresAt.Before(s.cfg.Now().Add(s.cfg.MinQuoteLife)):
+		return SwapRecord{}, errors.New("cryptosvc: provider quote is too close to expiry to offer")
+	}
+	ngnKobo := q.ToAmt.Mul(decimal.NewFromInt(100)).Truncate(0).IntPart()
+	switch {
+	case ngnKobo <= 0:
+		return SwapRecord{}, errors.New("cryptosvc: sell amount is worth less than one kobo")
+	case ngnKobo > MaxQuoteKobo:
+		return SwapRecord{}, errors.New("cryptosvc: sell amount is above the per-quote maximum")
+	}
+	fee, err := FeeKobo(ngnKobo, bps)
+	if err != nil {
+		return SwapRecord{}, err
+	}
+	rec, created, err := s.cfg.Store.InsertSwap(ctx, NewSwap{
+		UserID: req.UserID, Provider: s.cfg.Provider, ProviderAccountID: acct, ProviderQuoteID: q.QuoteID,
+		IdempotencyKey: req.IdempotencyKey, FromCurrency: asset, ToCurrency: "NGN", Side: SideSell,
+		FromAmount: req.Amount, QuotedToAmount: q.ToAmt, QuotedPrice: q.Price, NGNKobo: ngnKobo,
+		FeeBps: bps, FeeKobo: fee, ExpiresAt: q.ExpiresAt,
+	})
+	if err != nil {
+		return SwapRecord{}, err
+	}
+	if !created && !sameQuote(rec, req, asset) {
+		return SwapRecord{}, ErrIdempotencyConflict
+	}
+	if created {
+		s.audit(ctx, req.UserID, "crypto.swap.quote", rec.ID, "", map[string]any{"side": "sell", "asset": asset, "amount": req.Amount.String(), "ngn_kobo": rec.NGNKobo, "fee_kobo": rec.FeeKobo, "fee_bps": rec.FeeBps})
 	}
 	return rec, nil
 }
@@ -358,8 +450,7 @@ func (s *Service) Confirm(ctx context.Context, userID, swapID string) (SwapRecor
 			if gerr := s.gate(ctx, userID); gerr != nil {
 				// Nothing has reached the provider, so any hold already posted is safe to
 				// release; otherwise a user frozen mid-confirm would be stranded.
-				in := SwapLedgerInput{SwapID: rec.ID, UserID: rec.UserID, Side: SideBuy, NGNKobo: rec.NGNKobo, FeeKobo: rec.FeeKobo, FeeBps: rec.FeeBps}
-				if ferr := s.cfg.Settler.FailBuy(ctx, in); ferr != nil {
+				if ferr := s.cfg.Settler.Fail(ctx, rec); ferr != nil { // side-aware: a sell holds nothing
 					return errors.Join(gerr, ferr)
 				}
 				if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "trade gate refused before execution: "+gerr.Error()); terr != nil {
@@ -380,37 +471,53 @@ func (s *Service) Confirm(ctx context.Context, userID, swapID string) (SwapRecor
 	return out, nil
 }
 
-// execute runs the confirming step: hold, then provider execution.
+// execute runs the confirming step: hold (buy only), then provider execution. A sell
+// holds no NGN: the provider executes against the crypto in the user's sub-account.
 func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, error) {
-	in := SwapLedgerInput{SwapID: rec.ID, UserID: rec.UserID, Side: SideBuy, NGNKobo: rec.NGNKobo, FeeKobo: rec.FeeKobo, FeeBps: rec.FeeBps}
+	if rec.Side == SideBuy {
+		if out, err, stop := s.holdForBuy(ctx, rec); stop {
+			return out, err
+		}
+	}
+	return s.callProvider(ctx, rec)
+}
+
+// holdForBuy places the buy's NGN hold. stop reports that execute must return (out, err).
+func (s *Service) holdForBuy(ctx context.Context, rec SwapRecord) (SwapRecord, error, bool) {
+	in := inputOf(rec)
 
 	// A hold that was already released means the user was made whole (for example the
 	// provider refused and only the final state write was lost). Finish the failure; never
 	// resume into a provider call.
 	if released, err := s.cfg.Settler.IsReleased(ctx, in); err != nil {
-		return rec, err
+		return rec, err, true
 	} else if released {
 		if err := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "hold was already released"); err != nil {
-			return rec, err
+			return rec, err, true
 		}
-		return rec, fmt.Errorf("%w: swap was refused and refunded", ErrSettlementConflict)
+		return rec, fmt.Errorf("%w: swap was refused and refunded", ErrSettlementConflict), true
 	}
 
 	if err := s.cfg.Settler.HoldBuy(ctx, in); err != nil {
 		switch {
 		case isHoldRefusal(err):
 			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "hold refused: "+err.Error()); terr != nil { // nothing was taken
-				return rec, errors.Join(err, terr)
+				return rec, errors.Join(err, terr), true
 			}
 			s.audit(ctx, rec.UserID, "crypto.swap.failed", rec.ID, "hold refused", nil)
 		case errors.Is(err, ErrPermanent):
 			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "hold refused permanently: "+err.Error()); terr != nil {
-				return rec, errors.Join(err, terr)
+				return rec, errors.Join(err, terr), true
 			}
 		}
-		return rec, err // other errors are transient: stay confirming, the caller retries
+		return rec, err, true // other errors are transient: stay confirming, the caller retries
 	}
 	s.audit(ctx, rec.UserID, "crypto.swap.hold", rec.ID, "", map[string]any{"held_kobo": rec.NGNKobo + rec.FeeKobo})
+	return rec, nil, false
+}
+
+// callProvider asks the provider to execute the quoted swap (both sides).
+func (s *Service) callProvider(ctx context.Context, rec SwapRecord) (SwapRecord, error) {
 
 	if rec.ProviderSwapID == "" {
 		// Stamp the attempt BEFORE the call. If a previous attempt already did, its outcome is
@@ -424,7 +531,7 @@ func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, erro
 			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "a previous provider call has an unknown outcome"); terr != nil {
 				return rec, errors.Join(ErrOutcomeUnknown, terr)
 			}
-			s.audit(ctx, rec.UserID, "crypto.swap.parked", rec.ID, "previous provider call has an unknown outcome", map[string]any{"held_kobo": rec.NGNKobo + rec.FeeKobo})
+			s.audit(ctx, rec.UserID, "crypto.swap.parked", rec.ID, "previous provider call has an unknown outcome", map[string]any{"held_kobo": heldKobo(rec)})
 			return rec, ErrOutcomeUnknown
 		}
 
@@ -439,22 +546,23 @@ func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, erro
 		sw, cerr := sp.ConfirmSwap(ctx, rec.ProviderAccountID, rec.ProviderQuoteID)
 		if cerr != nil {
 			if isDefiniteRefusal(cerr) {
-				// The provider explicitly refused: nothing executed, so give the money back.
-				if ferr := s.cfg.Settler.FailBuy(ctx, in); ferr != nil {
+				// The provider explicitly refused: nothing executed, so give back any hold
+				// (a buy's NGN; a sell holds nothing).
+				if ferr := s.cfg.Settler.Fail(ctx, rec); ferr != nil {
 					_ = s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "provider refused but the hold release failed: "+ferr.Error())
 					return rec, errors.Join(cerr, ferr)
 				}
 				if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "provider refused: "+cerr.Error()); terr != nil {
 					return rec, errors.Join(cerr, terr)
 				}
-				s.audit(ctx, rec.UserID, "crypto.swap.released", rec.ID, "provider refused", map[string]any{"released_kobo": rec.NGNKobo + rec.FeeKobo})
+				s.audit(ctx, rec.UserID, "crypto.swap.released", rec.ID, "provider refused", map[string]any{"released_kobo": heldKobo(rec)})
 				return rec, cerr
 			}
 			// Unknown outcome: the swap may have executed. Keep the hold and park it.
 			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "provider outcome unknown: "+cerr.Error()); terr != nil {
 				return rec, errors.Join(cerr, terr)
 			}
-			s.audit(ctx, rec.UserID, "crypto.swap.parked", rec.ID, "provider outcome unknown", map[string]any{"held_kobo": rec.NGNKobo + rec.FeeKobo})
+			s.audit(ctx, rec.UserID, "crypto.swap.parked", rec.ID, "provider outcome unknown", map[string]any{"held_kobo": heldKobo(rec)})
 			return rec, cerr
 		}
 		if sw.ID == "" {
@@ -598,8 +706,7 @@ func (s *Service) AdminResolve(ctx context.Context, actor, idemKey, swapID strin
 			if rec.ProviderSwapID != "" {
 				return ErrReleaseUnsafe
 			}
-			in := SwapLedgerInput{SwapID: rec.ID, UserID: rec.UserID, Side: rec.Side, NGNKobo: rec.NGNKobo, FeeKobo: rec.FeeKobo, FeeBps: rec.FeeBps}
-			if err := s.cfg.Settler.FailBuy(ctx, in); err != nil {
+			if err := s.cfg.Settler.Fail(ctx, rec); err != nil { // side-aware: a sell holds nothing
 				return err
 			}
 			// Conditional transition: audit the release only when THIS call moved the swap, so a
@@ -609,7 +716,7 @@ func (s *Service) AdminResolve(ctx context.Context, actor, idemKey, swapID strin
 				return terr
 			}
 			if applied {
-				s.audit(ctx, actor, "crypto.swap.admin_release", rec.ID, note, map[string]any{"released_kobo": rec.NGNKobo + rec.FeeKobo, "idempotency_key": idemKey})
+				s.audit(ctx, actor, "crypto.swap.admin_release", rec.ID, note, map[string]any{"released_kobo": heldKobo(rec), "idempotency_key": idemKey})
 			}
 		default:
 			return ErrUnknownDecision

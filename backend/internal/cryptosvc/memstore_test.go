@@ -271,7 +271,7 @@ func (s *memStore) Backlog(_ context.Context) ([]BacklogState, error) {
 			by[r.State] = b
 		}
 		b.Count++
-		b.HeldKobo += r.NGNKobo + r.FeeKobo
+		b.HeldKobo += heldKobo(*r)
 		if r.UpdatedAt.Before(b.OldestUpdatedAt) {
 			b.OldestUpdatedAt = r.UpdatedAt
 		}
