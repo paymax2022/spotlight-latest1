@@ -55,6 +55,8 @@ function fakeSupabase(tables: Record<string, Row[]>) {
       update: () => q,
       eq: (c: string, v: any) => (filters.push([c, v]), q),
       in: (c: string, v: any[]) => (ins.push([c, v]), q),
+      // `.is(col, null)` matches rows where the column is null or absent.
+      is: (c: string, v: any) => (ins.push([c, v === null ? [null, undefined] : [v]]), q),
       lt: (c: string, v: any) => (lts.push([c, v]), q),
       gt: (c: string, v: any) => (gts.push([c, v]), q),
       order: () => q,

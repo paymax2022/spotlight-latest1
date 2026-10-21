@@ -696,6 +696,27 @@ paths:
       responses:
         '200': { description: Request, content: { application/json: { schema: { $ref: '#/components/schemas/RepairRequest' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: signOffRepair
+      summary: Reporter sign-off — accept the work (completed) or reject it (reopened for rework)
+      tags: [Maintenance]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [accept, reject] }
+                note: { type: string }
+      responses:
+        '200': { description: Signed off, content: { application/json: { schema: { $ref: '#/components/schemas/RepairRequest' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Caller is not the reporter of this request }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Request is not in a status that allows this action }
   /estate/repairs/{id}/updates:
     post:
       operationId: addRepairUpdate
