@@ -2004,7 +2004,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.GET("/reports/net-revenue", middleware.RequirePermission(rbac, "restaurant.admin.reports"), restaurantHandler.AdminReportNetRevenue)
 		restAdmin.GET("/reports/cohorts", middleware.RequirePermission(rbac, "restaurant.admin.reports"), restaurantHandler.AdminReportCohorts)
 		restAdmin.GET("/reports/export", middleware.RequirePermission(rbac, "restaurant.admin.reports"), restaurantHandler.AdminReportExport)
-		restAdmin.POST("/orders/:orderId/unlock-codes", middleware.RequirePermission(rbac, "restaurant.admin.unlock_order_code"), restaurantHandler.AdminUnlockOrderCodes) // FOOD-UAT-E-008
+		// FOOD-UAT-E-008: unlock pickup + delivery code lockouts. The path param MUST
+		// be ":id" to match the sibling /orders/:id/* registrations at lines 1989/1994/
+		// 2002 above — Gin panics at startup if the same position carries two different
+		// param names across sibling routes (reproduced live by Wave 10 verify, bug B1).
+		restAdmin.POST("/orders/:id/unlock-codes", middleware.RequirePermission(rbac, "restaurant.admin.unlock_order_code"), restaurantHandler.AdminUnlockOrderCodes)
 		// Single wildcard segment handles all three shapes the admin UI may post:
 		//   /onboarding/:id/decision  (body {decision, note})
 		//   /onboarding/:id/approve   (decision taken from the path)

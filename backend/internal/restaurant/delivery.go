@@ -1354,10 +1354,12 @@ func (s *Service) UnlockOrderCodes(ctx context.Context, orderID string) error {
 	return err
 }
 
-// AdminUnlockOrderCodes → POST /api/restaurant/admin/orders/:orderId/unlock-codes
+// AdminUnlockOrderCodes → POST /api/restaurant/admin/orders/:id/unlock-codes
 // (restaurant.admin.unlock_order_code). Clears pickup + delivery code lockouts.
+// Path param is ":id" (not ":orderId") to coexist with the other /orders/:id/*
+// routes in the same admin group — Gin panics on sibling-path param-name clash.
 func (h *Handler) AdminUnlockOrderCodes(c *gin.Context) {
-	if err := h.svc.UnlockOrderCodes(c.Request.Context(), c.Param("orderId")); err != nil {
+	if err := h.svc.UnlockOrderCodes(c.Request.Context(), c.Param("id")); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
