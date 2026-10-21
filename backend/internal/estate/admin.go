@@ -95,7 +95,7 @@ func (s *Service) ListResidents(ctx context.Context, estateID, adminID, role str
 			COALESCE(r.unit,''), r.role, COALESCE(pu.phone,''),
 			r.banned_at IS NOT NULL, r.deleted_at IS NOT NULL,
 			COALESCE((SELECT SUM(amount_kobo) FROM estate_dues_invoices di
-				WHERE di.resident_id=r.id AND di.status IN ('pending','overdue')), 0),
+				WHERE di.resident_id=r.user_id AND di.status IN ('pending','overdue')), 0),
 			r.created_at
 		FROM estate_residents r
 		LEFT JOIN public.platform_users pu ON pu.id = r.user_id

@@ -93,16 +93,76 @@ export async function payInvoice(input: PayInvoiceInput) {
     .eq('reference', idempotencyKey)
     .maybeSingle();
   if (priorPayment) {
+    // The key resolves to a receipt for a DIFFERENT invoice — a foreign-key
+    // replay, not a retry of this payment. Refusing avoids returning the
+    // other invoice's receipt while falsely reporting this one paid.
+    if ((priorPayment as any).invoice_id !== invoiceId) {
+      throw new ApiError('Idempotency-Key conflicts with a payment for a different invoice.', 409);
+    }
     return { alreadyProcessed: true, payment: mapPayment(priorPayment), invoice: { ...mapInvoice(invoice), status: 'paid' } };
   }
 
-  if ((invoice as any).status === 'paid') throw new ApiError('Invoice is already paid', 409);
   if ((invoice as any).status === 'waived') throw new ApiError('Invoice has been waived', 409);
+  if ((invoice as any).status === 'paid') {
+    // 'paid' is only truth-worthy once a successful receipt exists. A crash
+    // between the claim below and the wallet debit leaves a stale 'paid'
+    // claim with no receipt — heal it back to 'pending' so this call can
+    // complete the payment (the debit is idempotent on the same key).
+    const { data: receipt } = await supabase
+      .from('estate_payments')
+      .select('id')
+      .eq('invoice_id', invoiceId)
+      .eq('status', 'successful')
+      .maybeSingle();
+    if (receipt) throw new ApiError('Invoice is already paid', 409);
+    const { error: healErr } = await supabase
+      .from('estate_dues_invoices')
+      .update({ status: 'pending' })
+      .eq('id', invoiceId)
+      .eq('status', 'paid');
+    if (healErr) {
+      console.error('[estate/dues] stale paid-claim heal failed:', healErr);
+      throw new ApiError('Failed to load invoice', 500);
+    }
+  }
+
+  // Atomic claim, mirroring the Go payDues FOR UPDATE invoice lock: exactly
+  // one concurrent caller flips pending|overdue -> paid, so two requests with
+  // DIFFERENT Idempotency-Keys cannot both pass the unpaid check and
+  // double-debit the wallet (the status check above is only advisory).
+  const { data: claimed, error: claimErr } = await supabase
+    .from('estate_dues_invoices')
+    .update({ status: 'paid' })
+    .eq('id', invoiceId)
+    .in('status', ['pending', 'overdue'])
+    .select('id')
+    .maybeSingle();
+  if (claimErr) {
+    console.error('[estate/dues] invoice claim failed:', claimErr);
+    throw new ApiError('Failed to claim invoice', 500);
+  }
+  if (!claimed) {
+    // Lost the claim: if a receipt landed the invoice is genuinely settled —
+    // return it; otherwise another payment is still in flight.
+    const { data: receipt } = await supabase
+      .from('estate_payments')
+      .select('id, estate_id, invoice_id, payer_id, amount_kobo, method, status, reference, created_at')
+      .eq('invoice_id', invoiceId)
+      .eq('status', 'successful')
+      .maybeSingle();
+    if (receipt) {
+      return { alreadyProcessed: true, payment: mapPayment(receipt), invoice: { ...mapInvoice(invoice), status: 'paid' } };
+    }
+    throw new ApiError('Payment already in progress for this invoice. Please retry.', 409);
+  }
 
   // Money mutation: debit the resident's wallet via the shared ledger primitive.
   // This enforces tier limits fail-closed and posts an immutable ledger entry.
   // The ledger's own UNIQUE(idempotency_key) guarantees no double-debit on retry.
-  const result = await debitWallet(userId, {
+  // On failure the claim is reverted so the resident can retry.
+  let result: Awaited<ReturnType<typeof debitWallet>>;
+  try {
+    result = await debitWallet(userId, {
     amountKobo,
     reference: idempotencyKey,
     idempotencyKey,
@@ -115,6 +175,16 @@ export async function payInvoice(input: PayInvoiceInput) {
       payer_id: userId,
     },
   });
+  } catch (err) {
+    // No money moved (the atomic debit RPC rolls back on error) — release the
+    // claim so the resident can retry; a revert failure is loud, not silent.
+    const { error: revertErr } = await supabase
+      .from('estate_dues_invoices')
+      .update({ status: (invoice as any).status === 'paid' ? 'pending' : (invoice as any).status })
+      .eq('id', invoiceId);
+    if (revertErr) console.error('[estate/dues] invoice claim revert failed after debit error:', revertErr);
+    throw err;
+  }
 
   // If the wallet was already debited under this key on a prior attempt, the
   // payment row may already exist — return it instead of inserting a duplicate.

@@ -3,6 +3,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type ResidentContext = { estateId: string; unit: string; role: string };
 
+// Canonical membership resolution for every estate BFF route (dues, meetings,
+// elections, facilities, …). Banned and soft-deleted memberships fail closed —
+// the Go side enforces the same gate in assertRoles/roleIn (ESTATE-AUTHZ-003);
+// this copy previously skipped those columns, so a banned or deleted resident
+// kept full BFF access (could still vote, pay dues, RSVP).
 export async function getResidentContext(
   supabase: SupabaseClient,
   userId: string,
@@ -11,6 +16,8 @@ export async function getResidentContext(
     .from('estate_residents')
     .select('estate_id, unit, role')
     .eq('user_id', userId)
+    .is('banned_at', null)
+    .is('deleted_at', null)
     .limit(1)
     .maybeSingle();
   if (error || !data) return null;
