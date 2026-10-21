@@ -58,11 +58,12 @@ const unwrap = <T>(res: { data: unknown }): T => unwrapEnvelope<T>(res?.data);
  * 'quote_expired') on `cryptoType` so the special-case path still works.
  */
 function toCryptoError(err: unknown): Error {
-  const e = err as { response?: { data?: { type?: string; message?: string } }; message?: string };
+  const e = err as { response?: { data?: { type?: string; code?: string; message?: string } }; message?: string };
   const data = e?.response?.data;
   const msg = data?.message ?? e?.message ?? 'Something went wrong. Please try again.';
-  const out = new Error(msg) as Error & { cryptoType?: string };
+  const out = new Error(msg) as Error & { cryptoType?: string; cryptoCode?: string };
   if (data?.type) out.cryptoType = data.type;       // e.g. 'quote_expired'
+  if (data?.code) out.cryptoCode = data.code;       // e.g. 'pin_invalid' (withdraw step-up)
   return out;
 }
 

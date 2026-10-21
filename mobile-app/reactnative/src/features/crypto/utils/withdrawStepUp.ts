@@ -18,6 +18,9 @@ export function takeWithdrawalPin(): string | null {
 /** True when the server refused the PIN itself (wrong, locked or missing), so
  *  the right recovery is to enter it again. A missing PIN *setup* is not one. */
 export function isPinRefusal(err: unknown): boolean {
-  const code = (err as { response?: { data?: { code?: unknown } } })?.response?.data?.code;
+  // The crypto API wraps errors (toCryptoError) and keeps the server code on
+  // cryptoCode; a raw axios error carries it on response.data.code.
+  const e = err as { cryptoCode?: unknown; response?: { data?: { code?: unknown } } } | undefined;
+  const code = e?.cryptoCode ?? e?.response?.data?.code;
   return code === 'pin_invalid' || code === 'pin_required';
 }

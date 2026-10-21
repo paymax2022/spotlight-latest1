@@ -24,3 +24,10 @@ test('PIN refusals from the server are recognised so the user can re-enter it', 
   assert.equal(isPinRefusal({ response: { status: 403, data: { error: 'tier limit' } } }), false);
   assert.equal(isPinRefusal(new Error('Network Error')), false);
 });
+
+test('the wrapped error the crypto API actually throws is recognised too (review finding)', () => {
+  const wrapped = Object.assign(new Error('transaction PIN is incorrect or locked'), { cryptoCode: 'pin_invalid' });
+  assert.equal(isPinRefusal(wrapped), true);
+  const notSet = Object.assign(new Error('create a transaction PIN before withdrawing'), { cryptoCode: 'pin_not_set' });
+  assert.equal(isPinRefusal(notSet), false);
+});
