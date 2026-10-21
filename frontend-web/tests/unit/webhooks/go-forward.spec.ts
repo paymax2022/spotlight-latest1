@@ -79,7 +79,7 @@ describe('forwardGoOwnedPaystackEvent', () => {
   it('throws on a non-2xx Go response so the dispatcher retries', async () => {
     fetchMock.mockResolvedValue(new Response('upstream down', { status: 502 }));
     await expect(
-      forwardGoOwnedPaystackEvent(payload('charge.success', 'feespay:x'), SIG),
+      forwardGoOwnedPaystackEvent(payload('charge.success', 'feespay-x'), SIG),
     ).rejects.toThrow('go webhook forward failed: 502');
   });
 
@@ -88,14 +88,14 @@ describe('forwardGoOwnedPaystackEvent', () => {
       new Response(JSON.stringify({ ok: false, error: 'dispatch failed' }), { status: 200 }),
     );
     await expect(
-      forwardGoOwnedPaystackEvent(payload('charge.success', 'rideorder:y'), SIG),
+      forwardGoOwnedPaystackEvent(payload('charge.success', 'rideorder-y'), SIG),
     ).rejects.toThrow('ok:false');
   });
 
   it('propagates fetch failures (unreachable Go backend) as a retryable rejection', async () => {
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
     await expect(
-      forwardGoOwnedPaystackEvent(payload('charge.success', 'duespay:z'), SIG),
+      forwardGoOwnedPaystackEvent(payload('charge.success', 'duespay-z'), SIG),
     ).rejects.toThrow('ECONNREFUSED');
   });
 
