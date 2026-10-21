@@ -28,6 +28,7 @@ type Mock struct {
 	faults      map[string]error      // keyed by operation name, consumed once
 	accounts    map[string]AccountRef // keyed by UserRef.UserID
 	created     int
+	wallets     map[string][]Wallet // keyed by account id
 }
 
 // AccountsCreated counts provider accounts created, to prove a service never makes a second one.
@@ -69,6 +70,7 @@ func NewMock(name string, now func() time.Time) *Mock {
 		withdraws:   map[string]Withdrawal{},
 		faults:      map[string]error{},
 		accounts:    map[string]AccountRef{},
+		wallets:     map[string][]Wallet{},
 	}
 }
 
@@ -258,4 +260,31 @@ func (m *Mock) GetWithdrawal(_ context.Context, _, id string) (Withdrawal, error
 		}
 	}
 	return Withdrawal{}, ErrNotFound
+}
+
+// SetWallets sets the balances an account reports.
+func (m *Mock) SetWallets(accountID string, w ...Wallet) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.wallets[accountID] = append([]Wallet(nil), w...)
+}
+
+// Wallets implements WalletProvider.
+func (m *Mock) Wallets(_ context.Context, accountID string) ([]Wallet, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.take("wallets"); err != nil {
+		return nil, err
+	}
+	return append([]Wallet(nil), m.wallets[accountID]...), nil
+}
+
+// CreateDepositAddress implements WalletProvider with a deterministic address.
+func (m *Mock) CreateDepositAddress(_ context.Context, accountID, currency, network string) (DepositAddress, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.take("depositaddress"); err != nil {
+		return DepositAddress{}, err
+	}
+	return DepositAddress{Currency: currency, Network: network, Address: fmt.Sprintf("mock-%s-%s-%s", accountID, currency, network)}, nil
 }

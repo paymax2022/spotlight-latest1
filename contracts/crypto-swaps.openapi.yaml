@@ -109,6 +109,64 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '500': { $ref: '#/components/responses/Error' }
+  /crypto/swaps/config:
+    get:
+      tags: [Swaps]
+      summary: Trading rail the app should use
+      description: >-
+        Exists only when the provider swap pipeline is mounted (FEATURE_CRYPTO_SWAPS_ENABLED and
+        fully wired). A 404 tells the app to stay on the legacy internal-ledger endpoints.
+      operationId: getCryptoSwapConfig
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Pipeline is live
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, config]
+                properties:
+                  success: { type: boolean }
+                  config:
+                    type: object
+                    required: [rail, sides, max_quote_kobo]
+                    properties:
+                      rail: { type: string, enum: [provider] }
+                      sides: { type: array, items: { type: string, enum: [buy, sell] } }
+                      max_quote_kobo: { type: integer, format: int64 }
+        '401': { $ref: '#/components/responses/Error' }
+  /crypto/swaps/balances:
+    get:
+      tags: [Swaps]
+      summary: Crypto held in the caller's provider sub-account
+      description: >-
+        Never provisions a provider account; none yet returns an empty list. NGN and empty
+        wallets are omitted. A provider failure is 502 (never an empty list).
+      operationId: listCryptoSwapBalances
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Holdings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, balances]
+                properties:
+                  success: { type: boolean }
+                  balances:
+                    type: array
+                    items:
+                      type: object
+                      required: [asset, available, locked, total]
+                      properties:
+                        asset: { type: string, example: USDT }
+                        available: { type: string, description: Spendable/sellable units (decimal string) }
+                        locked: { type: string, description: Reserved by the provider (decimal string) }
+                        total: { type: string, description: available + locked (decimal string) }
+        '401': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
   /crypto/swaps/{id}:
     get:
       tags: [Swaps]

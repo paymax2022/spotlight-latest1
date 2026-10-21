@@ -173,3 +173,12 @@ func TestAdminReleaseOfAParkedSellMovesNoMoney(t *testing.T) {
 		t.Fatal("releasing a sell must not post NGN legs: a sell holds none")
 	}
 }
+
+func TestSellQuoteAboveTheMaximumIsRefusedWithoutWrapping(t *testing.T) {
+	r := newSvcRig(t)
+	r.prov.SetPrice("USDTNGN", decimal.RequireFromString("1e30")) // would wrap int64 kobo
+	_, err := r.svc.Quote(context.Background(), QuoteRequest{UserID: user, IdempotencyKey: "big", Asset: "USDT", Side: SideSell, Amount: decimal.NewFromInt(1)})
+	if err == nil {
+		t.Fatal("an out-of-range sell was quoted")
+	}
+}

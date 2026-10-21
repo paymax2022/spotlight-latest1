@@ -117,6 +117,8 @@ func RegisterRoutes(member *gin.RouterGroup, hooks *gin.RouterGroup, d HandlerDe
 	h := &handler{d: d}
 	member.POST("/swaps/quote", withLimit(d.QuoteLimit, h.quote)...)
 	member.POST("/swaps/:id/confirm", withLimit(d.ConfirmLimit, h.confirm)...)
+	member.GET("/swaps/config", h.config)
+	member.GET("/swaps/balances", h.balances)
 	member.GET("/swaps/:id", h.get)
 	if hooks != nil && d.Ingest != nil {
 		hooks.POST("/crypto/:provider", h.webhook)
@@ -251,6 +253,47 @@ func (h *handler) confirm(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "swap": viewOf(sw)})
+}
+
+// config tells the app this pipeline is mounted: trades go to the provider and holdings live
+// in the provider sub-account (so the portfolio reads /swaps/balances). The route only exists
+// when the pipeline is wired, so its absence is the app's signal to stay on the legacy rail.
+func (h *handler) config(c *gin.Context) {
+	if ginutil.UserID(c) == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "config": gin.H{
+		"rail": "provider", "sides": []string{string(SideBuy), string(SideSell)}, "max_quote_kobo": MaxQuoteKobo,
+	}})
+}
+
+// BalanceView is one crypto holding. Amounts are decimal strings: available is spendable
+// (and sellable); locked is reserved by the provider (open withdrawals).
+type BalanceView struct {
+	Asset     string `json:"asset"`
+	Available string `json:"available"`
+	Locked    string `json:"locked"`
+	Total     string `json:"total"`
+}
+
+func (h *handler) balances(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	ws, err := h.d.Service.Balances(c.Request.Context(), uid)
+	if err != nil {
+		log.Printf("[crypto] balances for %s: %v", uid, err)
+		fail(c, http.StatusBadGateway, "provider_unavailable")
+		return
+	}
+	out := make([]BalanceView, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, BalanceView{Asset: w.Currency, Available: w.Balance.String(), Locked: w.Locked.String(), Total: w.Balance.Add(w.Locked).String()})
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "balances": out})
 }
 
 func (h *handler) get(c *gin.Context) {

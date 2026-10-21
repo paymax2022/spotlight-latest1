@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -286,6 +287,44 @@ func (s *Service) Quote(ctx context.Context, req QuoteRequest) (SwapRecord, erro
 	return rec, nil
 }
 
+// Balances reads the crypto the user holds in their provider sub-account. It never creates
+// an account (a read must not provision one): no account yet means no holdings. NGN and
+// empty wallets are dropped; the NGN side of trading is the platform wallet. A provider
+// error is returned, never an empty list, so the app cannot show a false zero.
+func (s *Service) Balances(ctx context.Context, userID string) ([]cryptoprov.Wallet, error) {
+	if userID == "" {
+		return nil, errors.New("cryptosvc: user id is required")
+	}
+	acct, ok, err := s.cfg.Store.ProviderAccount(ctx, userID, s.cfg.Provider)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || acct == "" {
+		return []cryptoprov.Wallet{}, nil
+	}
+	p, err := s.provider()
+	if err != nil {
+		return nil, err
+	}
+	wp, err := cryptoprov.As[cryptoprov.WalletProvider](p)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := wp.Wallets(ctx, acct)
+	if err != nil {
+		return nil, fmt.Errorf("cryptosvc: provider wallets: %w", err)
+	}
+	out := make([]cryptoprov.Wallet, 0, len(ws))
+	for _, w := range ws {
+		if strings.EqualFold(w.Currency, "NGN") || (!w.Balance.IsPositive() && !w.Locked.IsPositive()) {
+			continue
+		}
+		out = append(out, w)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Currency < out[j].Currency })
+	return out, nil
+}
+
 // heldKobo is the NGN a swap holds between confirm and settlement: a buy's amount plus
 // fee; nothing for a sell (its crypto sits with the provider).
 func heldKobo(r SwapRecord) int64 {
@@ -326,6 +365,10 @@ func (s *Service) quoteSell(ctx context.Context, req QuoteRequest, asset string,
 		return SwapRecord{}, errors.New("cryptosvc: provider quote has a non-positive amount or price")
 	case q.ExpiresAt.Before(s.cfg.Now().Add(s.cfg.MinQuoteLife)):
 		return SwapRecord{}, errors.New("cryptosvc: provider quote is too close to expiry to offer")
+	}
+	// Bound the decimal BEFORE IntPart, which wraps silently outside int64.
+	if q.ToAmt.Mul(decimal.NewFromInt(100)).GreaterThan(decimal.NewFromInt(MaxQuoteKobo)) {
+		return SwapRecord{}, errors.New("cryptosvc: sell amount is above the per-quote maximum")
 	}
 	ngnKobo := q.ToAmt.Mul(decimal.NewFromInt(100)).Truncate(0).IntPart()
 	switch {
