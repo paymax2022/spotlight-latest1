@@ -578,7 +578,7 @@ export async function quoteWithdrawal(draft: WithdrawalDraft): Promise<Withdrawa
 export async function initiateWithdrawal(
   draft: WithdrawalDraft,
   quote: WithdrawalQuote,
-  otp: string,
+  pin: string,
   idempotencyKey: string,
 ): Promise<WithdrawalResult> {
   if (USE_MOCK) {
@@ -604,8 +604,8 @@ export async function initiateWithdrawal(
   // validates the address is a saved, active, whitelisted destination (allow-list),
   // debits+parks the holding units (no mint), charges the fiat fee to revenue, and
   // drives the state machine requested→pending→broadcast via the provider seam.
-  // Idempotency-Key makes the POST retry-safe. (otp is a client-side confirmation
-  void otp;
+  // Idempotency-Key makes the POST retry-safe. The transaction PIN is verified by
+  // the SERVER before anything moves (403 pin_invalid / pin_not_set).
   try {
     return unwrap<WithdrawalResult>(
       await api.post(
@@ -615,6 +615,7 @@ export async function initiateWithdrawal(
           address_id: draft.addressId,
           units: draft.amount,
           fee_kobo: quote.paymaxFee.amount,
+          pin,
         },
         { headers: { 'Idempotency-Key': idempotencyKey } },
       ),

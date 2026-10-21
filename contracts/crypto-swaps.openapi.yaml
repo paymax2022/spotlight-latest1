@@ -24,6 +24,7 @@ servers:
 
 tags:
   - name: Swaps
+  - name: Withdrawals
   - name: Webhooks
   - name: Admin
 
@@ -112,6 +113,37 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Swap' }
         '404': { $ref: '#/components/responses/Error' }
+  /crypto/withdrawals:
+    post:
+      tags: [Withdrawals]
+      summary: Withdraw crypto to an allow-listed address (transaction PIN required)
+      description: >-
+        Opens an on-chain withdrawal to one of the caller's own active, allow-listed addresses for
+        the asset and parks the units. Requires an Idempotency-Key header AND the user's transaction
+        PIN, verified on the server before anything moves (no units parked, no fee charged on a
+        refusal). A missing PIN is 400 and is never verified, so it does not count toward the PIN
+        lockout. Withdrawals are refused (503) when the server has no PIN verifier wired.
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address_id, units, pin]
+              properties:
+                asset_id: { type: string, description: 'Asset id, or use symbol' }
+                symbol: { type: string }
+                address_id: { type: string, description: "An id from GET /crypto/addresses (the caller's own allow-list)" }
+                units: { type: integer, format: int64, description: Integer asset minor units }
+                pin: { type: string, description: "The user's transaction PIN" }
+      responses:
+        '200': { description: Withdrawal opened (see its state; high-risk ones park at pending review) }
+        '400': { description: 'pin_required, or an invalid body / amount' }
+        '403': { description: 'pin_invalid (wrong or locked PIN), pin_not_set (create a PIN first), or a tier-limit refusal' }
+        '500': { description: The PIN could not be verified; nothing moved }
+        '503': { description: 'stepup_unavailable: no PIN verifier wired; withdrawals refused' }
   /admin/crypto/swaps/review:
     get:
       tags: [Admin]

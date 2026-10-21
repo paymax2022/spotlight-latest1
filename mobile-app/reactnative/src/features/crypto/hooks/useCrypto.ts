@@ -195,8 +195,8 @@ export function useQuoteWithdrawal() {
 export function useInitiateWithdrawal() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ draft, quote, otp }: { draft: WithdrawalDraft; quote: WithdrawalQuote; otp: string }) =>
-      crypto.initiateWithdrawal(draft, quote, otp, newIdempotencyKey('wd')),
+    mutationFn: ({ draft, quote, pin }: { draft: WithdrawalDraft; quote: WithdrawalQuote; pin: string }) =>
+      crypto.initiateWithdrawal(draft, quote, pin, newIdempotencyKey('wd')),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
       qc.invalidateQueries({ queryKey: [KEY, 'transactions'] });
