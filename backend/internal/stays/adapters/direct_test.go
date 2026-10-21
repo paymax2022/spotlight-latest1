@@ -2,7 +2,6 @@ package adapters
 
 import (
 	"errors"
-	"strconv"
 	"testing"
 	"time"
 )
@@ -76,7 +75,7 @@ func TestNightsBetween(t *testing.T) {
 func TestBookTokenRoundTrip(t *testing.T) {
 	in := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	out := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
-	tok := encodeBookToken("room-uuid-123", in, out, 2)
+	tok := encodeBookToken("room-uuid-123", in, out, 2, time.Now().Add(bookTokenTTL))
 
 	rt, ci, co, rooms, err := decodeBookToken(tok)
 	if err != nil {
@@ -100,35 +99,77 @@ func TestBookTokenRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBookTokenTTL verifies v2 tokens carry the mint time and Book-side decode
-// rejects a token whose hold window has expired (RAT-015 invariant: the
-// advertised 10-minute hold must actually expire).
-func TestBookTokenTTL(t *testing.T) {
+// TestBookTokenExpiryEnforced pins PAY-011: the advertised 10-minute hold expiry
+// is enforced at consume time — a stale token refuses rather than capturing at
+// the old price, and pre-v2 (timestamp-less) tokens are malformed.
+func TestBookTokenExpiryEnforced(t *testing.T) {
 	in := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	out := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	mint := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	tok := encodeBookToken("rt-1", in, out, 1, mint.Add(bookTokenTTL))
 
-	// Fresh token decodes.
-	if _, _, _, _, err := decodeBookToken(encodeBookToken("rt", in, out, 1)); err != nil {
-		t.Fatalf("fresh token should decode: %v", err)
+	if _, _, _, _, err := decodeBookTokenAt(tok, mint.Add(bookTokenTTL-time.Second)); err != nil {
+		t.Fatalf("token inside TTL refused: %v", err)
 	}
-
-	// A token minted beyond the TTL is rejected.
-	stale := "direct:v2:rt:2026-09-10:2026-09-13:1:" +
-		time.Unix(time.Now().Add(-bookTokenTTL-time.Minute).Unix(), 0).Format("20060102150405") + ":nonce"
-	if _, _, _, _, err := decodeBookToken(stale); !errors.Is(err, ErrHoldExpired) {
-		t.Fatalf("stale token: err = %v, want ErrHoldExpired", err)
+	if _, _, _, _, err := decodeBookTokenAt(tok, mint.Add(bookTokenTTL)); !errors.Is(err, ErrBookTokenExpired) {
+		t.Fatalf("expired token: err = %v, want ErrBookTokenExpired", err)
 	}
-
-	// A future-dated issue time (clock skew / tamper) is also rejected.
-	future := "direct:v2:rt:2026-09-10:2026-09-13:1:" +
-		strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10) + ":nonce"
-	if _, _, _, _, err := decodeBookToken(future); !errors.Is(err, ErrHoldExpired) {
-		t.Fatalf("future token: err = %v, want ErrHoldExpired", err)
+	if _, _, _, _, err := decodeBookTokenAt(tok, mint.Add(24*time.Hour)); !errors.Is(err, ErrBookTokenExpired) {
+		t.Fatalf("stale token: err = %v, want ErrBookTokenExpired", err)
 	}
+	// v1 (no expiry segment) is rejected as malformed — the TTL must be bound.
+	if _, _, _, _, err := decodeBookToken("direct:v1:rt-1:2026-09-10:2026-09-13:1:nonce"); err == nil {
+		t.Fatal("v1 book_token must be refused — it carries no enforceable expiry")
+	}
+	// Forged expiry strings are rejected, not silently zeroed.
+	if _, _, _, _, err := decodeBookToken("direct:v2:rt-1:2026-09-10:2026-09-13:1:notanumber:x"); err == nil {
+		t.Fatal("bad expiry must fail")
+	}
+}
 
-	// Legacy v1 tokens (no timestamp) still decode — they predate TTL.
-	if _, _, _, _, err := decodeBookToken("direct:v1:rt:2026-09-10:2026-09-13:1:nonce"); err != nil {
-		t.Fatalf("legacy v1 token should decode: %v", err)
+// TestComputePolicyRefundCutoff pins MOD-002: an explicit free-cancel deadline in
+// the policy snapshot splits inside-window (full refund) from past-cutoff
+// (penalty schedule); no declared deadline keeps the legacy always-penalty path.
+func TestComputePolicyRefundCutoff(t *testing.T) {
+	const gross = int64(50_000_00)
+	checkIn := time.Date(2026, 12, 10, 0, 0, 0, 0, time.UTC)
+	deadline := checkIn.Add(-48 * time.Hour) // 48h before check-in
+
+	cases := []struct {
+		name                    string
+		policy                  map[string]any
+		now                     time.Time
+		wantRefund, wantPenalty int64
+	}{
+		{"hours-window inside → full refund despite penalty keys",
+			map[string]any{"refundable": true, "free_cancel_hours_before_checkin": float64(48), "penalty_percent": float64(50)},
+			deadline.Add(-time.Minute), gross, 0},
+		{"hours-window past cutoff → penalty applies",
+			map[string]any{"refundable": true, "free_cancel_hours_before_checkin": float64(48), "penalty_percent": float64(50)},
+			deadline.Add(time.Minute), gross - gross/2, gross / 2},
+		{"absolute deadline inside → full refund",
+			map[string]any{"refundable": true, "free_cancel_deadline_at": deadline.Format(time.RFC3339), "penalty_kobo": float64(10_000_00)},
+			deadline.Add(-time.Hour), gross, 0},
+		{"absolute deadline past → penalty_kobo",
+			map[string]any{"refundable": true, "free_cancel_deadline_at": deadline.Format(time.RFC3339), "penalty_kobo": float64(10_000_00)},
+			deadline.Add(time.Hour), gross - 10_000_00, 10_000_00},
+		{"no deadline key → penalty always in effect (legacy)",
+			map[string]any{"refundable": true, "penalty_percent": float64(50)},
+			deadline.Add(-time.Hour), gross - gross/2, gross / 2},
+		{"malformed deadline → legacy penalty path",
+			map[string]any{"refundable": true, "free_cancel_deadline_at": "not-a-date", "penalty_percent": float64(50)},
+			deadline.Add(-time.Hour), gross - gross/2, gross / 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotR, gotP := computePolicyRefund(gross, true, c.policy, checkIn, c.now)
+			if gotR != c.wantRefund || gotP != c.wantPenalty {
+				t.Fatalf("= (%d,%d), want (%d,%d)", gotR, gotP, c.wantRefund, c.wantPenalty)
+			}
+			if gotR+gotP != gross {
+				t.Fatalf("refund+penalty %d+%d != gross %d", gotR, gotP, gross)
+			}
+		})
 	}
 }
 
@@ -175,7 +216,7 @@ func TestComputePolicyRefund(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gotR, gotP := computePolicyRefund(c.gross, c.refundable, c.policy)
+			gotR, gotP := computePolicyRefund(c.gross, c.refundable, c.policy, time.Time{}, time.Now())
 			if gotR != c.wantRefund || gotP != c.wantPenalty {
 				t.Fatalf("computePolicyRefund(%d, %v, %v) = (%d,%d), want (%d,%d)",
 					c.gross, c.refundable, c.policy, gotR, gotP, c.wantRefund, c.wantPenalty)

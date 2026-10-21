@@ -120,6 +120,9 @@ func kybDecisionStatus(decision string) (VerificationItemStatus, bool) {
 func (h *Handler) RegisterAdmin(g *gin.RouterGroup, guard func(permission string) gin.HandlerFunc) {
 	g.GET("/kyb", guard("stays.admin.hotelier"), h.AdminListKYB)
 	g.POST("/hoteliers/:propertyId/kyb/decision", guard("stays.admin.hotelier"), h.AdminDecideKYB)
+	// Admin force-cancel with guest protection (MOD-011/ADM-012): full refund
+	// through RefundOps, payouts killed, allotment re-opened. Reason required.
+	g.POST("/reservations/:id/cancel", guard("stays.admin.reservation"), h.AdminCancelReservation)
 }
 
 // GetVerificationStatus: GET /verification — the caller's go-live checklist.

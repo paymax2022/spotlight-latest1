@@ -410,12 +410,13 @@ func (r *Repository) MarkNoShow(ctx context.Context, reservationID, propertyID s
 	ct, err := tx.Exec(ctx, `
 		UPDATE public.stays_reservation
 		SET state = 'NO_SHOW', version = version + 1, updated_at = now()
-		WHERE id = $1 AND property_id = $2 AND state = 'CONFIRMED'`, reservationID, propertyID)
+		WHERE id = $1 AND property_id = $2 AND state = 'CONFIRMED'
+		  AND check_in <= CURRENT_DATE`, reservationID, propertyID)
 	if err != nil {
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return errors.New("extranet: reservation not CONFIRMED or not in property")
+		return errors.New("extranet: reservation not CONFIRMED, not in property, or check-in day not reached")
 	}
 	return tx.Commit(ctx)
 }
@@ -554,6 +555,19 @@ type Message struct {
 	Body          string     `json:"body"`
 	CreatedAt     time.Time  `json:"created_at"`
 	ReadAt        *time.Time `json:"read_at"`
+}
+
+// ReservationOwnedByGuest confirms a reservation belongs to the guest (member-side
+// object scope for the messaging thread — COM-003/004/005).
+func (r *Repository) ReservationOwnedByGuest(ctx context.Context, reservationID, userID string) (string, bool, error) {
+	var propertyID string
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(property_id::text,'') FROM public.stays_reservation
+		WHERE id = $1 AND guest_user_id = $2`, reservationID, userID).Scan(&propertyID)
+	if err != nil {
+		return "", false, err
+	}
+	return propertyID, true, nil
 }
 
 // InsertMessage persists one message on a reservation's thread and returns the row.

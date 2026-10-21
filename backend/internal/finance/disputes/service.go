@@ -32,6 +32,15 @@ type FoodDisputeResolver interface {
 	ResolveGenericDispute(ctx context.Context, disputeID, adminID, resolution string, refundKobo int64, note string) error
 }
 
+// StaysDisputeResolver is the module-specific delegate for module_type=="stays"
+// disputes — same shape as FoodDisputeResolver. Satisfied by
+// internal/stays/reservation's DisputeResolver, which posts REAL refund legs
+// through the stays refund machinery (resolution=refunded) instead of the bare
+// status flip (COM-016/ADM-011 — the FOOD-004 bug shape, closed for stays).
+type StaysDisputeResolver interface {
+	ResolveStaysDispute(ctx context.Context, disputeID, adminID, resolution string, refundKobo int64, note string) error
+}
+
 // ErrDisputeNotResolvable and ErrDisputeForbidden are translations of the delegated
 // resolver's own typed errors (e.g. internal/restaurant's ErrDisputeInvalid /
 // ErrForbidden), so this package's handler can map them to 422 / 403 instead of a
@@ -44,8 +53,9 @@ var (
 
 // Service manages dispute lifecycle.
 type Service struct {
-	db           *pgxpool.Pool
-	foodResolver FoodDisputeResolver
+	db            *pgxpool.Pool
+	foodResolver  FoodDisputeResolver
+	staysResolver StaysDisputeResolver
 }
 
 func NewService(db *pgxpool.Pool) *Service {
@@ -57,6 +67,13 @@ func NewService(db *pgxpool.Pool) *Service {
 // this codebase's WithX wiring convention.
 func (s *Service) WithFoodResolver(r FoodDisputeResolver) *Service {
 	s.foodResolver = r
+	return s
+}
+
+// WithStaysResolver wires the stays module's real dispute-resolution logic in for
+// module_type=="stays" disputes. Same pattern as WithFoodResolver.
+func (s *Service) WithStaysResolver(r StaysDisputeResolver) *Service {
+	s.staysResolver = r
 	return s
 }
 
@@ -130,6 +147,12 @@ func (s *Service) Resolve(ctx context.Context, disputeID string, resolution Reso
 			return fmt.Errorf("%w: food dispute resolution is not wired (no FoodDisputeResolver)", ErrDisputeNotResolvable)
 		}
 		return s.foodResolver.ResolveGenericDispute(ctx, disputeID, adminID, string(resolution), refundKobo, adminNote)
+	}
+	if moduleType == "stays" {
+		if s.staysResolver == nil {
+			return fmt.Errorf("%w: stays dispute resolution is not wired (no StaysDisputeResolver)", ErrDisputeNotResolvable)
+		}
+		return s.staysResolver.ResolveStaysDispute(ctx, disputeID, adminID, string(resolution), refundKobo, adminNote)
 	}
 	const update = `
 		UPDATE disputes

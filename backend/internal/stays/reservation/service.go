@@ -562,6 +562,16 @@ func (s *Service) Cancel(ctx context.Context, userID, reservationID, reason stri
 	if res, err = s.repo.Get(ctx, res.ID); err != nil {
 		return nil, err
 	}
+	// Unpaid pre-book states hold NO money and NO allotment — "cancel" is just the
+	// VOID edge (MOD-013). No supplier call, no refund legs, no cancellation row.
+	if res.State == StateSearching || res.State == StateOfferSelected ||
+		res.State == StatePrebookOK || res.State == StatePrebookFailed {
+		if err := s.transition(ctx, res, StateVoid); err != nil {
+			return nil, err
+		}
+		s.auditSafe(ctx, userID, "stays.prebook_abandoned", map[string]any{"reservation_id": res.ID})
+		return s.repo.Get(ctx, res.ID)
+	}
 	if !canTransition(res.State, StateCancelledByGuest) {
 		return nil, fmt.Errorf("%w: cannot cancel from %s", ErrBadState, res.State)
 	}

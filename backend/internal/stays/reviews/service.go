@@ -3,10 +3,18 @@ package reviews
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+)
+
+// PII patterns auto-flagged into moderation instead of publishing (COM-018).
+var (
+	piiEmailRe = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
+	piiPhoneRe = regexp.MustCompile(`(\+?\d[\d\s-]{7,}\d)`)
+	piiIDRe    = regexp.MustCompile(`\b\d{11}\b`)
 )
 
 // PropertyAuthorizer is the object-level hotelier authZ hook (does the user hold an
@@ -99,7 +107,22 @@ func (s *Service) Create(ctx context.Context, userID, reservationID string, over
 		}
 		return "", err
 	}
+	// PII guard (COM-018): a review carrying phone/email/ID-looking content must
+	// not render publicly — auto-flag it into the moderation queue rather than
+	// publish. Review content is user-supplied; redaction would rewrite intent.
+	if looksLikePII(title + " " + body) {
+		_ = s.repo.SetStatus(ctx, id, "FLAGGED", "auto-flag: possible personal data")
+	}
 	return id, nil
+}
+
+// looksLikePII reports whether free-text review content carries an email,
+// phone-length digit run, or 11-digit ID (BVN/NIN shape).
+func looksLikePII(s string) bool {
+	if piiEmailRe.MatchString(s) || piiPhoneRe.MatchString(s) || piiIDRe.MatchString(s) {
+		return true
+	}
+	return false
 }
 
 // ListByProperty returns PUBLISHED reviews for a property (public/member).

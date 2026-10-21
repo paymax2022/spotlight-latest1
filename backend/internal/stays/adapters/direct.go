@@ -69,14 +69,16 @@ var ErrOversellBlocked = errors.New("direct: OVERSELL_BLOCKED")
 
 // bookTokenPrefix and bookTokenVersion frame the availability context the direct
 // adapter encodes into the book_token at Prebook time (room_type_id, stay dates,
-// rooms) so Book — whose normalised BookRequest carries no dates/room ref — can
-// perform the row-locked decrement without any signature change. Formats:
+// rooms, minted expiry) so Book — whose normalised BookRequest carries no
+// dates/room ref — can perform the row-locked decrement without any signature
+// change. Format:
 //
-//	direct:v1:<room_type_id>:<check_in>:<check_out>:<rooms>:<nonce>          (legacy)
-//	direct:v2:<room_type_id>:<check_in>:<check_out>:<rooms>:<issued_unix>:<nonce>
+//	direct:v2:<room_type_id>:<check_in>:<check_out>:<rooms>:<expires_unix>:<nonce>
 //
-// v2 carries the mint timestamp so Book can enforce the advertised hold TTL —
-// a prebook hold must expire rather than stay bookable forever.
+// v2 binds the advertised ExpiresAt INTO the token: v1 minted no timestamp, so
+// the 10-minute TTL was display-only and a stale quote could be consumed days
+// later at the old price. decodeBookToken refuses expired or pre-v2 tokens —
+// the saga auto-releases the hold and VOIDs, never a stale-price capture.
 const (
 	bookTokenPrefix  = "direct"
 	bookTokenVersion = "v2"
@@ -315,7 +317,20 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 		return gateway.PrebookResult{SoldOut: true}, nil
 	}
 
-	bookToken := encodeBookToken(roomTypeID, req.CheckIn, req.CheckOut, rooms)
+	// Snapshot the refundable flag INTO the policy map the reservation persists —
+	// computePolicyRefund lets the snapshot override the live plan flag, so the
+	// booked terms must carry it explicitly or a later plan edit would silently
+	// rewrite an existing booking's refundability (MOD-020).
+	if policy == nil {
+		policy = map[string]any{}
+	}
+	if _, ok := policy["refundable"]; !ok {
+		rpRefundable, _ := a.ratePlanRefundable(ctx, req.SupplierRatePlanRef)
+		policy["refundable"] = rpRefundable
+	}
+
+	expiresAt := time.Now().Add(bookTokenTTL)
+	bookToken := encodeBookToken(roomTypeID, req.CheckIn, req.CheckOut, rooms, expiresAt)
 	return gateway.PrebookResult{
 		BookToken:          bookToken,
 		NetRateKobo:        price,
@@ -324,8 +339,19 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 		Changed:            price != sellKobo,
 		SoldOut:            false,
 		CancellationPolicy: policy,
-		ExpiresAt:          time.Now().Add(bookTokenTTL),
+		ExpiresAt:          expiresAt,
 	}, nil
+}
+
+// ratePlanRefundable reads the plan's refundable flag for the snapshot inject
+// above. A lookup miss fails closed to false (non-refundable) — the cancel path
+// then treats the booking conservatively rather than refunding on an unknown plan.
+func (a *DirectInventoryAdapter) ratePlanRefundable(ctx context.Context, supplierRatePlanRef string) (bool, error) {
+	var refundable bool
+	err := a.db.QueryRow(ctx, `
+		SELECT refundable FROM public.stays_rate_plan WHERE supplier_rate_plan_ref = $1`,
+		supplierRatePlanRef).Scan(&refundable)
+	return refundable, err
 }
 
 // priceStay sums the per-night sell rate over [checkIn, checkOut) and enforces
@@ -461,8 +487,9 @@ func (a *DirectInventoryAdapter) policyRefund(ctx context.Context, supplierRef s
 	var gross int64
 	var policy map[string]any
 	var refundable bool
+	var checkIn time.Time
 	err := a.db.QueryRow(ctx, `
-		SELECT r.gross_amount_kobo, r.cancellation_policy_snapshot, COALESCE(rp.refundable, false)
+		SELECT r.gross_amount_kobo, r.cancellation_policy_snapshot, COALESCE(rp.refundable, false), r.check_in
 		FROM public.stays_reservation r
 		LEFT JOIN public.stays_rate_plan rp
 		  ON rp.id::text = r.rate_plan_id::text
@@ -470,19 +497,31 @@ func (a *DirectInventoryAdapter) policyRefund(ctx context.Context, supplierRef s
 		WHERE r.source_rail = 'DIRECT' AND r.supplier_ref = $1
 		ORDER BY (rp.id::text = r.rate_plan_id::text) DESC NULLS LAST
 		LIMIT 1`, supplierRef).
-		Scan(&gross, &policy, &refundable)
+		Scan(&gross, &policy, &refundable, &checkIn)
 	if err != nil {
 		log.Printf("[stays:direct] cancel refund lookup for %s failed — refunding 0 (fail-closed): %v", supplierRef, err)
 		return 0, 0
 	}
-	return computePolicyRefund(gross, refundable, policy)
+	return computePolicyRefund(gross, refundable, policy, checkIn, time.Now())
 }
 
 // computePolicyRefund derives (refund, penalty) from the booking's policy
 // snapshot + the plan's refundable flag. Precedence: non-refundable → (0,
 // gross); explicit penalty_* keys (kobo > bps > percent) → gross − penalty
 // clamped to [0, gross]; otherwise → (gross, 0).
-func computePolicyRefund(grossKobo int64, refundable bool, policy map[string]any) (int64, int64) {
+//
+// Free-cancel cutoff (MOD-002): when the snapshot carries a deadline the
+// boundary is evaluated deterministically BEFORE the penalty math — inside the
+// window the refundable path runs unpenalised (no penalty keys read); past it,
+// the penalty_* schedule applies. Recognised keys, first match wins:
+//   - free_cancel_deadline_at: RFC3339 absolute deadline (property-authored).
+//   - free_cancel_hours_before_checkin: relative deadline — check_in 00:00 UTC
+//     minus N hours (property TZ is not modelled; UTC midnight is the floor).
+//
+// A snapshot without either key behaves exactly as before — the penalty_*
+// schedule is always in effect (backward compatible). Only a snapshot that
+// explicitly declares a window gets "inside = free" semantics.
+func computePolicyRefund(grossKobo int64, refundable bool, policy map[string]any, checkIn, now time.Time) (int64, int64) {
 	if grossKobo <= 0 {
 		return 0, 0
 	}
@@ -491,6 +530,9 @@ func computePolicyRefund(grossKobo int64, refundable bool, policy map[string]any
 	}
 	if !refundable {
 		return 0, grossKobo
+	}
+	if dl, hasDeadline := freeCancelDeadline(policy, checkIn); hasDeadline && !now.After(dl) {
+		return grossKobo, 0 // inside the declared free-cancel window
 	}
 	penalty := policyKobo(policy, "penalty_kobo")
 	if penalty == 0 {
@@ -510,6 +552,25 @@ func computePolicyRefund(grossKobo int64, refundable bool, policy map[string]any
 		penalty = grossKobo
 	}
 	return grossKobo - penalty, penalty
+}
+
+// freeCancelDeadline resolves the free-cancel cutoff the snapshot declares, if
+// any. Returns (deadline, true) when a key is present; malformed values count
+// as no deadline (fail-open to the pre-existing always-inside behaviour).
+func freeCancelDeadline(policy map[string]any, checkIn time.Time) (time.Time, bool) {
+	if policy == nil {
+		return time.Time{}, false
+	}
+	if v, ok := policy["free_cancel_deadline_at"].(string); ok && v != "" {
+		if dl, err := time.Parse(time.RFC3339, v); err == nil {
+			return dl, true
+		}
+	}
+	if h := policyKobo(policy, "free_cancel_hours_before_checkin"); h > 0 && !checkIn.IsZero() {
+		midnight := time.Date(checkIn.Year(), checkIn.Month(), checkIn.Day(), 0, 0, 0, 0, time.UTC)
+		return midnight.Add(-time.Duration(h) * time.Hour), true
+	}
+	return time.Time{}, false
 }
 
 // policyKobo reads a numeric policy key tolerating the JSON number shapes
@@ -784,56 +845,54 @@ func (a *DirectInventoryAdapter) releaseDecrement(ctx context.Context, supplierR
 }
 
 // encodeBookToken packs the availability context into the opaque book_token so Book
-// (whose BookRequest carries no dates/room ref) can commit the decrement. v2 embeds
-// the mint time so Book enforces the hold TTL.
-func encodeBookToken(roomTypeID string, checkIn, checkOut time.Time, rooms int) string {
+// (whose BookRequest carries no dates/room ref) can commit the decrement. The
+// minted expiry is embedded so the TTL is enforceable, not just advertised.
+func encodeBookToken(roomTypeID string, checkIn, checkOut time.Time, rooms int, expiresAt time.Time) string {
 	return strings.Join([]string{
 		bookTokenPrefix, bookTokenVersion, roomTypeID,
 		checkIn.Format(dateLayout), checkOut.Format(dateLayout),
-		strconv.Itoa(rooms), strconv.FormatInt(time.Now().Unix(), 10), uuid.NewString(),
+		strconv.Itoa(rooms), strconv.FormatInt(expiresAt.Unix(), 10), uuid.NewString(),
 	}, ":")
 }
 
-// ErrHoldExpired is returned when a book_token outlived its TTL. The saga maps a
-// Book failure to the auto-release leg (hold released, no debit).
-var ErrHoldExpired = errors.New("direct: prebook hold expired — re-quote")
+// ErrBookTokenExpired is returned by decodeBookToken for a well-formed token whose
+// embedded expiry has passed — the client must re-quote. Distinct from malformed
+// input so the saga/log can tell a stale offer from a corrupt one.
+var ErrBookTokenExpired = errors.New("direct: book_token expired — re-quote")
 
 // decodeBookToken parses a direct book_token minted by encodeBookToken and
-// enforces the hold TTL on v2 tokens. Legacy v1 tokens (no mint timestamp) are
-// still accepted — they predate TTL enforcement and cannot be re-minted anyway.
+// enforces its embedded TTL. Pre-v2 tokens carry no expiry and are refused as
+// malformed — they were only ever minted seconds before Book in the same flow.
 func decodeBookToken(token string) (roomTypeID string, checkIn, checkOut time.Time, rooms int, err error) {
+	return decodeBookTokenAt(token, time.Now())
+}
+
+func decodeBookTokenAt(token string, now time.Time) (string, time.Time, time.Time, int, error) {
+	var (
+		checkIn, checkOut time.Time
+		rooms             int
+		err               error
+	)
 	parts := strings.Split(token, ":")
-	if len(parts) < 7 || parts[0] != bookTokenPrefix {
+	if len(parts) < 8 || parts[0] != bookTokenPrefix || parts[1] != bookTokenVersion {
 		return "", time.Time{}, time.Time{}, 0, errors.New("direct: malformed book_token")
 	}
-	var roomsIdx int
-	switch parts[1] {
-	case "v1":
-		roomsIdx = 5
-	case bookTokenVersion:
-		if len(parts) < 8 {
-			return "", time.Time{}, time.Time{}, 0, errors.New("direct: malformed book_token")
-		}
-		roomsIdx = 5
-		issued, ierr := strconv.ParseInt(parts[6], 10, 64)
-		if ierr != nil {
-			return "", time.Time{}, time.Time{}, 0, errors.New("direct: bad issue time in book_token")
-		}
-		if age := time.Since(time.Unix(issued, 0)); age < 0 || age > bookTokenTTL {
-			return "", time.Time{}, time.Time{}, 0, ErrHoldExpired
-		}
-	default:
-		return "", time.Time{}, time.Time{}, 0, errors.New("direct: malformed book_token")
-	}
-	roomTypeID = parts[2]
+	roomTypeID := parts[2]
 	if checkIn, err = time.Parse(dateLayout, parts[3]); err != nil {
 		return "", time.Time{}, time.Time{}, 0, fmt.Errorf("direct: bad check_in in book_token: %w", err)
 	}
 	if checkOut, err = time.Parse(dateLayout, parts[4]); err != nil {
 		return "", time.Time{}, time.Time{}, 0, fmt.Errorf("direct: bad check_out in book_token: %w", err)
 	}
-	if rooms, err = strconv.Atoi(parts[roomsIdx]); err != nil || rooms <= 0 {
+	if rooms, err = strconv.Atoi(parts[5]); err != nil || rooms <= 0 {
 		return "", time.Time{}, time.Time{}, 0, errors.New("direct: bad rooms in book_token")
+	}
+	expUnix, pErr := strconv.ParseInt(parts[6], 10, 64)
+	if pErr != nil {
+		return "", time.Time{}, time.Time{}, 0, errors.New("direct: bad expiry in book_token")
+	}
+	if !now.Before(time.Unix(expUnix, 0)) {
+		return "", time.Time{}, time.Time{}, 0, ErrBookTokenExpired
 	}
 	return roomTypeID, checkIn, checkOut, rooms, nil
 }

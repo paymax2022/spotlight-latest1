@@ -83,6 +83,7 @@ import (
 	"spotlight/backend/internal/restaurant/paystackcheckout"
 	"spotlight/backend/internal/restaurant/taxonomy"
 	"spotlight/backend/internal/services"
+	staysreservation "spotlight/backend/internal/stays/reservation"
 	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
@@ -2672,6 +2673,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// fails closed with "not wired" rather than a fake 200.
 		if restaurantSvc != nil {
 			disputesSvc = disputesSvc.WithFoodResolver(foodDisputeResolverAdapter{svc: restaurantSvc})
+		}
+		// STAYS counterpart of the FOOD-004 fix: module_type=="stays" disputes
+		// resolve through the stays refund machinery (real refund legs on
+		// resolution=refunded, capped at the captured residual), not a bare
+		// status flip. Fails closed when the stays module is off.
+		if cfg.FeatureStaysEnabled {
+			disputesSvc = disputesSvc.WithStaysResolver(staysreservation.NewDisputeResolver(pool))
 		}
 		disputesHandler := disputes.NewHandler(disputesSvc)
 		dpGroup := finance.Group("/disputes")
