@@ -1,1 +1,41 @@
 execution_id,case_id,method,command_or_procedure,env,result,evidence_path,executed_at_utc
+EXC-001,ALL,UNIT_TEST,"cd backend && TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres go test ./internal/top5events -count=1",local supabase_db 616 migrations,PASSED,"177 tests PASS 0 FAIL incl. all TestLiveDB_* suites",2026-10-21T19:52Z
+EXC-002,ALL,UNIT_TEST,"cd frontend-web && ./node_modules/.bin/vitest run tests/unit/events/route.spec.ts",worktree+linked node_modules,PASSED,7/7 PASS (BFF route contract),2026-10-21T19:38Z
+EXC-003,ALL,UNIT_TEST,"cd backend && go vet ./internal/top5events",worktree,PASSED,clean,2026-10-21T19:52Z
+EXC-004,258,API_LIVE,"GET /api/finance/events, /:id/attendees, POST /purchase, GET /api/events/admin/dashboard — no Authorization header",backend :8091,PASSED,"all → 401",2026-10-21T19:49Z
+EXC-005,259,API_LIVE,"GET member+admin routes with stale/invalid bearer",:8091,PASSED,"401 {'error':'invalid token'}",2026-10-21T19:50Z
+EXC-006,208,API_LIVE,"GET /api/finance/events/organiser/mine (orga token)",:8091 seeded A1,FAILED→FIXED,"pre-fix gross=150000 sold=4 (refunded counted); post-fix gross=100000 sold=3 refunded=1 checked_in=1 net=90000",2026-10-21T19:47Z
+EXC-007,208,API_LIVE,"GET /api/events/admin/dashboard (admin token)",:8091,FAILED→FIXED,"pre-fix gmv=250000 sold=4 avg=62500; post-fix gmv=200000 sold=3 avg=66666 net_rev=20000",2026-10-21T19:53Z
+EXC-008,209,API_LIVE,"GET /api/finance/events/{A1}/attendees (orga; orgb)",:8091,PASSED,"orga: 3 rows w/ state+checked_in; orgb: 403",2026-10-21T19:49Z
+EXC-009,210,API_LIVE,"GET /:id/attendees?format=csv (orga)",:8091,PASSED,"CSV header + 3 rows; name/cashtag/tier/state/checkin only",2026-10-21T19:49Z
+EXC-010,211,API_LIVE,"CSV export with attendee name '=cmd|/c calc!A0 Buyer'",:8091,PASSED,"exported as ''=cmd…' (escaped)",2026-10-21T19:49Z
+EXC-011,212,API_LIVE,"GET /:id/attendees?format=csv (orgb, cross-event)",:8091,PASSED,403,2026-10-21T19:49Z
+EXC-012,213,API_LIVE,"GET /:id/orders, /:id/refunds, /:id/statement",:8091,FAILED,"all 404 — defect EVTC-D002",2026-10-21T19:51Z
+EXC-013,214,API_LIVE,"POST /:id/comps {tier,recipients:[uatcbuyer]} + replay same idemKey + stranger",:8091,PASSED,"201 COMP ticket; replay → same ticket (1); orgb → 403",2026-10-21T19:54Z
+EXC-014,217,API_LIVE,"POST /:id/close then GET /organiser/mine",:8091,PASSED,"CLOSED event retains sold=3 gross=100000 checked_in=1",2026-10-21T19:55Z
+EXC-015,235,API_LIVE,"POST create (orga) → submit → admin approve → approve replay",:8091,PASSED,"200 each step; replay → 400; no reject route exists (D004)",2026-10-21T19:50Z
+EXC-016,236,API_LIVE,"admin POST /:id/suspend then GET /events + POST purchase",:8091,PASSED,"suspended event absent from discovery; purchase → 400 'state SUSPENDED'; GET → 404 stranger",2026-10-21T19:50Z
+EXC-017,241,API_LIVE,"GET /api/events/admin/settlement, /events/:id, /tickets",:8091,PASSED,"vendor-settlement aggregate (empty); event detail gmv=100000 net=10000; tickets list ok; breaks/fraud fields 0",2026-10-21T19:53Z
+EXC-018,243,API_LIVE,"SELECT from audit_logs where module='events' after probes",supabase_db,PASSED,"rows for create/submit/approve/suspend/cancel/close/comp/announce/purchase w/ actor+entity+ts; denied attempts absent (D014)",2026-10-21T19:55Z
+EXC-019,249,API_LIVE,"POST /api/finance/disputes {module_type:events, reference:foreign order}",:8091,FAILED,"201 created — defect EVTC-D007",2026-10-21T19:50Z
+EXC-020,250,API_LIVE,"GET /api/finance/disputes (buyer)",:8091,PASSED,"own cases only (count=1)",2026-10-21T19:50Z
+EXC-021,251,API_LIVE,"POST /api/finance/admin/disputes/:id/resolve {resolution:refunded, refund_kobo:50000}",:8091,FAILED,"200 resolved; disputes row shows resolved/refunded but no ledger posting — defect EVTC-D006",2026-10-21T19:55Z
+EXC-022,265,API_LIVE,"12× POST /purchase same-second burst",:8091,FAILED,"all 400 (tier gate), zero 429 — no limiter on events group (D009)",2026-10-21T19:51Z
+EXC-023,271,API_LIVE,"POST /purchase {tier_id, price:1, total_kobo:1, discount:100}",:8091,PASSED,"order row total_kobo=50000 (server-computed), EXPIRED on tier-0 wallet gate",2026-10-21T19:50Z
+EXC-024,262,API_LIVE,"GET /events?category=x';DROP TABLE events;--&limit=abc",:8091,PASSED,"200 empty list; parameterised queries",2026-10-21T19:53Z
+EXC-025,258/258,API_LIVE,"POST /scan {}, POST /purchase without Idempotency-Key",:8091,PASSED,"scan → structured not_found result; purchase → 400 'Idempotency-Key header required'",2026-10-21T19:50Z
+EXC-026,278,API_LIVE,"GET /my/tickets (buyer with NULL-credential ticket)",:8091,FAILED→FIXED,"500 'cannot scan NULL into *string' → fixed COALESCE; now 200 with 3 tickets (D010)",2026-10-21T19:51Z
+EXC-027,235,API_LIVE,"organiser draft visibility: orgb GET orga's DRAFT event",:8091,PASSED,404 (existence not leaked),2026-10-21T19:50Z
+EXC-028,261,API_LIVE,"POST /events {title:'<script>…', description:'<img onerror>'}",:8091,PASSED,"stored+returned raw; clients escape (RN Text/React) — recorded D011",2026-10-21T19:50Z
+EXC-029,214b,API_LIVE,"POST /:id/announcements (orga)",:8091,PASSED,"202 {recipient_count:2}",2026-10-21T19:54Z
+EXC-030,270,API_LIVE,"GET /api/events/admin/events/:id (admin)",:8091,PASSED,"organiser_masked='UAT-C Org A•••'; masked display",2026-10-21T19:53Z
+EXC-031,222-233,CODE_REVIEW,"grep organiser payout/settle/statement routes in top5events + probes /organiser/{earnings,payouts,settlements}",:8091,FAILED,"all 404; no organiser payout rail exists — D003",2026-10-21T19:51Z
+EXC-032,245,CODE_REVIEW,"middleware.RequirePermission fresh RBAC per request; live revocation needs shared-fixture mutation",code,BLOCKED,not run (shared fixture),2026-10-21T19:56Z
+EXC-033,260,CODE_REVIEW,"bearer-token API = CSRF-immune; BFF cookie path not forged",code,NEEDS_MANUAL,platform-owned session,2026-10-21T19:56Z
+EXC-034,267-269,CODE_REVIEW,"KYC files/privacy rights/TLS are platform-owned surfaces",code,BLOCKED,shared_platform=yes,2026-10-21T19:56Z
+EXC-035,279-281,CODE_REVIEW,"push token/DLQ/backoff all platform asynq notifications",code,BLOCKED,shared_platform=yes,2026-10-21T19:56Z
+EXC-036,284,CODE_REVIEW,"no DR harness/RPO-RTO target in repo",code,BLOCKED,infra,2026-10-21T19:56Z
+EXC-037,285-299,CODE_REVIEW,"perf/device/a11y cases reviewed; StateView skeletons, accessibilityLabel on icon buttons, formatNaira en-NG",code,NEEDS_MANUAL,"device lab + load harness required; partial evidence only",2026-10-21T19:57Z
+EXC-038,221,API_LIVE,"organiser payout probes: GET /organiser/earnings|payouts|settlements",:8091,FAILED,all 404,2026-10-21T19:51Z
+EXC-039,237-239,CODE_REVIEW,"no unsuspend/reject/taxonomy routes in top5events handler",code,FAILED,"D004",2026-10-21T19:56Z
+EXC-040,255-257,CODE_REVIEW,"disputes table shape — no messages/attachments/SLA columns",code,FAILED,D008,2026-10-21T19:56Z

@@ -20,23 +20,38 @@ import (
 // ticket/revenue aggregates — replacing the mobile client's previous
 // derive-from-an-unscoped-listEvents() workaround.
 type OrganiserEventStats struct {
-	Event        EventSummary `json:"event"`
-	TicketsSold  int          `json:"tickets_sold"`
-	TicketsTotal *int         `json:"tickets_total"` // null when the event has no active tiers yet
-	GrossKobo    int64        `json:"gross_kobo"`
+	Event           EventSummary `json:"event"`
+	TicketsSold     int          `json:"tickets_sold"`      // issued entitlements not yet refunded
+	TicketsTotal    *int         `json:"tickets_total"`     // null when the event has no active tiers yet
+	GrossKobo       int64        `json:"gross_kobo"`        // SUM(event_orders.total_kobo WHERE status='PAID') — money actually collected, promo-net
+	PlatformFeeKobo int64        `json:"platform_fee_kobo"` // gross * fee_bps / 10000 (integer, truncates)
+	NetKobo         int64        `json:"net_kobo"`          // gross - platform_fee
+	RefundedCount   int          `json:"refunded_count"`
+	RefundsKobo     int64        `json:"refunds_kobo"`
+	CheckedIn       int          `json:"checked_in"`
 }
 
 // ListMyOrganiserEvents lists the caller's own events (any state) with sold/
-// capacity/gross aggregated from their ticket tiers. Object-level scope only —
-// no separate "organiser" identity, same as the rest of this module.
+// capacity/gross/refund/check-in aggregates. Money figures come from the order
+// rows (event_orders.total_kobo, promo-net), NOT tiers.sold*price — that older
+// derivation counted refunded tickets at full list price, treated comp issues
+// as revenue and ignored promo discounts (EVT-UAT-208). tickets_sold counts
+// issued entitlements that were never refunded (comps included — they consume
+// capacity), and the refunded/checked-in counts let the dashboard reconcile
+// instead of overstating. Object-level scope only — no separate "organiser"
+// identity, same as the rest of this module.
 func (s *Service) ListMyOrganiserEvents(ctx context.Context, organiserID string) ([]OrganiserEventStats, error) {
 	const q = `
 		SELECT e.id, e.title, e.venue, e.state, COALESCE(e.category,''), e.starts_at, e.ends_at,
 		       COALESCE((SELECT MIN(t.price_kobo) FROM event_ticket_tiers t WHERE t.event_id = e.id AND t.active = true), 0) AS min_price_kobo,
 		       COALESCE((SELECT bool_and(t.capacity > 0 AND t.sold >= t.capacity) FROM event_ticket_tiers t WHERE t.event_id = e.id AND t.active = true), false) AS sold_out,
-		       COALESCE((SELECT SUM(t.sold) FROM event_ticket_tiers t WHERE t.event_id = e.id), 0) AS tickets_sold,
+		       COALESCE((SELECT COUNT(*) FROM event_tickets tk WHERE tk.event_id = e.id AND tk.state <> 'REFUNDED'), 0) AS tickets_sold,
 		       (SELECT SUM(t.capacity) FROM event_ticket_tiers t WHERE t.event_id = e.id) AS tickets_total,
-		       COALESCE((SELECT SUM(t.sold * t.price_kobo) FROM event_ticket_tiers t WHERE t.event_id = e.id), 0) AS gross_kobo
+		       COALESCE((SELECT SUM(o.total_kobo) FROM event_orders o WHERE o.event_id = e.id AND o.status = 'PAID'), 0) AS gross_kobo,
+		       COALESCE((SELECT COUNT(*) FROM event_tickets tk WHERE tk.event_id = e.id AND tk.state = 'REFUNDED'), 0) AS tickets_refunded,
+		       COALESCE((SELECT SUM(o.total_kobo) FROM event_orders o WHERE o.event_id = e.id AND o.status = 'REFUNDED'), 0) AS refunds_kobo,
+		       COALESCE((SELECT COUNT(*) FROM event_tickets tk WHERE tk.event_id = e.id AND tk.checked_in_at IS NOT NULL), 0) AS checked_in,
+		       e.fee_bps
 		FROM events e
 		WHERE e.organiser_id = $1
 		ORDER BY e.starts_at DESC`
@@ -50,14 +65,18 @@ func (s *Service) ListMyOrganiserEvents(ctx context.Context, organiserID string)
 	for rows.Next() {
 		var st OrganiserEventStats
 		var state string
+		var feeBps int
 		if err := rows.Scan(
 			&st.Event.ID, &st.Event.Title, &st.Event.Venue, &state, &st.Event.Category,
 			&st.Event.StartsAt, &st.Event.EndsAt, &st.Event.MinPriceKobo, &st.Event.SoldOut,
 			&st.TicketsSold, &st.TicketsTotal, &st.GrossKobo,
+			&st.RefundedCount, &st.RefundsKobo, &st.CheckedIn, &feeBps,
 		); err != nil {
 			return nil, fmt.Errorf("events: list mine scan: %w", err)
 		}
 		st.Event.State = EventState(state)
+		st.PlatformFeeKobo = st.GrossKobo * int64(feeBps) / 10000
+		st.NetKobo = st.GrossKobo - st.PlatformFeeKobo
 		out = append(out, st)
 	}
 	return out, rows.Err()

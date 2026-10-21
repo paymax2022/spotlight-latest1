@@ -1068,7 +1068,7 @@ func (s *Service) ListStewards(ctx context.Context, organiserID, eventID string)
 
 // MyTickets lists the caller's tickets.
 func (s *Service) MyTickets(ctx context.Context, userID string) ([]Ticket, error) {
-	const q = `SELECT id, event_id, tier_id, order_id, owner_id, state, credential_id, price_paid_kobo, created_at FROM event_tickets WHERE owner_id=$1 ORDER BY created_at DESC`
+	const q = `SELECT id, event_id, tier_id, order_id, owner_id, state, COALESCE(credential_id::text,''), price_paid_kobo, created_at FROM event_tickets WHERE owner_id=$1 ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q, userID)
 	if err != nil {
 		return nil, err
@@ -1088,7 +1088,7 @@ func (s *Service) MyTickets(ctx context.Context, userID string) ([]Ticket, error
 }
 
 func (s *Service) getTicket(ctx context.Context, id string) (*Ticket, error) {
-	const q = `SELECT id, event_id, tier_id, order_id, owner_id, state, credential_id, price_paid_kobo, created_at FROM event_tickets WHERE id=$1`
+	const q = `SELECT id, event_id, tier_id, order_id, owner_id, state, COALESCE(credential_id::text,''), price_paid_kobo, created_at FROM event_tickets WHERE id=$1`
 	var t Ticket
 	var state string
 	if err := s.db.QueryRow(ctx, q, id).Scan(&t.ID, &t.EventID, &t.TierID, &t.OrderID, &t.OwnerID, &state, &t.CredentialID, &t.PricePaidKobo, &t.CreatedAt); err != nil {
