@@ -1,0 +1,1 @@
+defect_id,title,severity,case_ids,component,file_paths,expected,actual,root_cause,fix_status,fix_commit,shared_platform
