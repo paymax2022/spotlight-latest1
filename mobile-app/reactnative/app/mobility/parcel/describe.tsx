@@ -154,7 +154,9 @@ export default function ParcelDescribeScreen() {
           pickup, dropoff, category, size, speed, declaredValueKobo,
           receiverName: receiverName.trim(),
           receiverPhone: receiverPhone.trim(),
-          photoUrl: photoAttached ? 'mock://parcel-photo' : undefined,
+          // The toggle uploads nothing yet: only mock builds send a placeholder, so
+          // a live booking never stores a fake photo URL.
+          photoUrl: photoAttached && parcelAPI.USE_MOCK ? 'mock://parcel-photo' : undefined,
           prohibitedAck,
           paymentMethod: 'wallet' as const,
           ...bookingInsuranceFields(cover),
@@ -284,13 +286,17 @@ export default function ParcelDescribeScreen() {
               </View>
             )}
 
-            <Pressable style={[styles.photoBtn, photoAttached && styles.photoBtnDone]} onPress={() => setPhotoAttached((p) => !p)}>
-              <Camera size={18} color={photoAttached ? Colors.tertiaryContainer : Colors.onSurfaceVariant} strokeWidth={2} />
-              <Text style={[styles.photoLabel, photoAttached && styles.photoLabelDone]}>
-                {photoAttached ? 'Photo attached' : 'Add a photo (optional)'}
-              </Text>
-              {photoAttached && <Check size={16} color={Colors.tertiaryContainer} strokeWidth={2.5} />}
-            </Pressable>
+            {/* Upload isn't built yet: shown in mock builds only, so a live booking
+                never claims a photo was attached. */}
+            {parcelAPI.USE_MOCK && (
+              <Pressable style={[styles.photoBtn, photoAttached && styles.photoBtnDone]} onPress={() => setPhotoAttached((p) => !p)}>
+                <Camera size={18} color={photoAttached ? Colors.tertiaryContainer : Colors.onSurfaceVariant} strokeWidth={2} />
+                <Text style={[styles.photoLabel, photoAttached && styles.photoLabelDone]}>
+                  {photoAttached ? 'Photo attached' : 'Add a photo (optional)'}
+                </Text>
+                {photoAttached && <Check size={16} color={Colors.tertiaryContainer} strokeWidth={2.5} />}
+              </Pressable>
+            )}
 
             {/* Prohibited items acknowledgement (required) */}
             <View style={styles.prohibitedCard}>

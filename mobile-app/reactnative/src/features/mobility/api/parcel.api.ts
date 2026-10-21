@@ -301,7 +301,9 @@ export async function getCourierHistory(): Promise<CourierDelivery[] | null> {
     }));
   }
   try {
-    return toCourierHistory(unwrap<unknown>(await api.get(`${BASE}/driver/parcels/history`)));
+    // GET /driver/parcels (transport.CourierParcels): the courier's own jobs and
+    // what each paid them. There is no /history sub-route.
+    return toCourierHistory(unwrap<unknown>(await api.get(`${BASE}/driver/parcels`)));
   } catch (e) {
     if ((e as { response?: { status?: number } })?.response?.status === 404) return null;
     throw e;

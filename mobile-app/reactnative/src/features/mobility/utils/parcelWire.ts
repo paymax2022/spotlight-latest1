@@ -240,7 +240,9 @@ export function toCourierDelivery(raw: Raw): CourierDelivery {
     dropoff: placeFrom(raw, 'dropoff'),
     phase: parcelPhaseFrom(raw),
     fareKobo: kobo(raw.fareKobo) ?? 0,
-    netKobo: kobo(raw.courierNetKobo) ?? kobo(raw.netKobo) ?? kobo(raw.earningsKobo),
+    // earnedKobo is what the Go backend sends (transport.CourierParcels: the
+    // settled provider leg actually paid); the others are older/mock shapes.
+    netKobo: kobo(raw.earnedKobo) ?? kobo(raw.courierNetKobo) ?? kobo(raw.netKobo) ?? kobo(raw.earningsKobo),
     deliveredAt: str(raw.deliveredAt),
   };
 }

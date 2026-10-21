@@ -162,7 +162,7 @@ export default function CourierJobScreen() {
               <User size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
               <Text style={styles.receiverText}>
                 Receiver: <Text style={styles.receiverName}>{p.receiverName}</Text>
-                {p.receiverPhone ? ` · ${p.receiverPhone}` : ''}
+                {p.receiverPhone && step !== 'done' && step !== 'closed' ? ` · ${p.receiverPhone}` : ''}
               </Text>
             </View>
           )}
