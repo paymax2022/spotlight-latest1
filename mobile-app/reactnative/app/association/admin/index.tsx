@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import {
   ArrowLeft, UserCheck, Wallet, UploadCloud, Users, ChevronRight, ScrollText,
-  Megaphone, CalendarClock, FolderOpen, CalendarDays, ListChecks, Receipt,
+  Megaphone, CalendarClock, FolderOpen, CalendarDays, ListChecks, Receipt, Vote,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -104,6 +104,11 @@ export default function AdminDashboard() {
               icon={<Users size={20} color={Colors.primary} strokeWidth={2} />}
               label="Manage members"
               onPress={() => router.push('/association/admin/members')}
+            />
+            <AdminLink
+              icon={<Vote size={20} color={Colors.primary} strokeWidth={2} />}
+              label="Elections"
+              onPress={() => router.push('/association/admin/elections')}
             />
             <AdminLink
               icon={<ScrollText size={20} color={Colors.primary} strokeWidth={2} />}

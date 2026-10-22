@@ -1,7 +1,7 @@
 import { confirmImport, decideApplication, decideOfflinePayment, getAdminKpis, getApplication, getApprovalQueue, getAuditLog, getFinanceSummary, getImportPreview, getOfflinePayments } from '../api/admin.api';
 import { assignRole, getMyAdminAccess, restoreMember, suspendMember, transferMember } from '../api/adminMembers.api';
 import { approveAiNote, awaitProcessing, convertActionItem, createAiNote, getAiNote, getAiNotes, publishAiNote, regenerateSummary } from '../api/ainotes.api';
-import { castVote, getDashboard, getDirectory, getDues, getElection, getElections, getMember, getMembershipCard, getOrganisation, getOrganisations, getReceipt, payInvoice, submitApplication, verifyMembershipCard } from '../api/association.api';
+import { addElectionCandidate, castVote, closeElection, createElection, getDashboard, getDirectory, getDues, getElection, getElections, getMember, getMembershipCard, getOrganisation, getOrganisations, getReceipt, openElection, payInvoice, publishElectionResults, submitApplication, verifyMembershipCard, type AddElectionCandidateInput, type CreateElectionInput } from '../api/association.api';
 import { CommitteeInput, createCommittee, deleteCommittee, updateCommittee } from '../api/authoring.api';
 import { getThread, getThreads, muteThread, reactToMessage, sendMessage } from '../api/chat.api';
 import { getCommittee, getCommittees, getEvent, getEvents, registerEvent, requestJoinCommittee, rsvpEvent, submitEventFeedback } from '../api/community.api';
@@ -331,6 +331,48 @@ export function useCastVote(electionId?: string) {
       qc.invalidateQueries({ queryKey: [KEY, 'election', electionId] });
     },
   });
+}
+
+// ── Officer election administration ──────────────────────────────────────
+// Every write refreshes the election list and the one election it touched.
+
+function useElectionAdminInvalidate(electionId?: string) {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: [KEY, 'elections'] });
+    if (electionId) qc.invalidateQueries({ queryKey: [KEY, 'election', electionId] });
+  };
+}
+
+export function useCreateElection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateElectionInput) => createElection(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'elections'] }),
+  });
+}
+
+export function useAddElectionCandidate(electionId?: string) {
+  const invalidate = useElectionAdminInvalidate(electionId);
+  return useMutation({
+    mutationFn: (input: AddElectionCandidateInput) => addElectionCandidate(electionId as string, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useOpenElection(electionId?: string) {
+  const invalidate = useElectionAdminInvalidate(electionId);
+  return useMutation({ mutationFn: () => openElection(electionId as string), onSuccess: invalidate });
+}
+
+export function useCloseElection(electionId?: string) {
+  const invalidate = useElectionAdminInvalidate(electionId);
+  return useMutation({ mutationFn: () => closeElection(electionId as string), onSuccess: invalidate });
+}
+
+export function usePublishElectionResults(electionId?: string) {
+  const invalidate = useElectionAdminInvalidate(electionId);
+  return useMutation({ mutationFn: () => publishElectionResults(electionId as string), onSuccess: invalidate });
 }
 
 
