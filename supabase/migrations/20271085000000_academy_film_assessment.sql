@@ -122,8 +122,11 @@ COMMENT ON COLUMN academy_exams.draw_module_codes IS
 
 -- ─── 5. Attempt lifecycle, server timer, immutable draw snapshot ─────────────
 ALTER TABLE academy_exam_attempts
+    -- 'graded' is the state of every legacy (pre-film) attempt and the default the
+    -- legacy submit path relies on; it must be allowed or the ADD COLUMN aborts on
+    -- any DB with existing attempts and every legacy submit fails the CHECK.
     ADD COLUMN IF NOT EXISTS attempt_state   text NOT NULL DEFAULT 'graded'
-        CHECK (attempt_state IN ('in_progress','submitted','scored','expired')),
+        CHECK (attempt_state IN ('graded','in_progress','submitted','scored','expired')),
     ADD COLUMN IF NOT EXISTS server_deadline timestamptz,
     ADD COLUMN IF NOT EXISTS item_snapshot   jsonb NOT NULL DEFAULT '[]',
     ADD COLUMN IF NOT EXISTS idempotency_key text;
@@ -163,22 +166,24 @@ CREATE INDEX IF NOT EXISTS academy_exam_attempt_responses_attempt_idx
 -- The learner routes read/write these with the service-role client and do their
 -- own enrolment scoping (resolveLearner), so direct anon/auth access is denied and
 -- a crafted PostgREST query cannot read another learner's attempt or the review
--- ledger. Admin reads are gated by is_admin().
+-- ledger. There are no admin policies either: admin reads go through the server.
 ALTER TABLE academy_question_import_batches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE academy_question_reviews         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE academy_exam_attempt_responses   ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS admin_manage_academy_qimport_batches ON academy_question_import_batches;
-CREATE POLICY admin_manage_academy_qimport_batches
-    ON academy_question_import_batches TO authenticated
-    USING (is_admin()) WITH CHECK (is_admin());
-
-DROP POLICY IF EXISTS admin_manage_academy_qreviews ON academy_question_reviews;
-CREATE POLICY admin_manage_academy_qreviews
-    ON academy_question_reviews TO authenticated
-    USING (is_admin()) WITH CHECK (is_admin());
-
-DROP POLICY IF EXISTS admin_manage_academy_exam_attempt_responses ON academy_exam_attempt_responses;
-CREATE POLICY admin_manage_academy_exam_attempt_responses
-    ON academy_exam_attempt_responses TO authenticated
-    USING (is_admin()) WITH CHECK (is_admin());
+-- ─── PostgREST lockdown (ADR-PR858 pattern) ──────────────────────────────────
+-- Every reader and writer of these tables is server-side (the Next.js routes use
+-- the service-role admin client; the Go backend uses the pool), so the PostgREST
+-- roles get nothing:
+--  * academy_question_items carries the answer key (`answer`). Its pre-existing
+--    USING (true) read policy let anon read every key, including drafts.
+--  * the three new tables are admin/server data. No is_admin() policies: is_admin()
+--    reads user_profiles.role, which users can write themselves.
+REVOKE ALL ON TABLE academy_question_items          FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE academy_question_import_batches FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE academy_question_reviews        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE academy_exam_attempt_responses  FROM PUBLIC, anon, authenticated;
+GRANT  ALL ON TABLE academy_question_items          TO service_role;
+GRANT  ALL ON TABLE academy_question_import_batches TO service_role;
+GRANT  ALL ON TABLE academy_question_reviews        TO service_role;
+GRANT  ALL ON TABLE academy_exam_attempt_responses  TO service_role;
