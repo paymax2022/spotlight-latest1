@@ -308,6 +308,10 @@ type Config struct {
 	// parcel insurance is an opt-in tick paid at booking with the fare and held
 	// until the policy binds. Off = legacy (bound and debited at courier accept).
 	FeatureParcelPrepaidInsuranceEnabled bool
+	// FeatureParcelReceiverPinSMSEnabled (FEATURE_PARCEL_RECEIVER_PIN_SMS): once a
+	// parcel is picked up, text the receiver their drop-off PIN (Termii), at most
+	// once per parcel. Needs TERMII_API_KEY; off or unconfigured = no SMS.
+	FeatureParcelReceiverPinSMSEnabled bool
 	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) ride-hailing checkout path
 	// (transport/paystackcheckout): a ride paid directly via Paystack, escrowed
@@ -1002,6 +1006,7 @@ func Load() Config {
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
 		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
 		FeatureParcelPrepaidInsuranceEnabled:         getEnvBool("FEATURE_PARCEL_PREPAID_INSURANCE", false),
+		FeatureParcelReceiverPinSMSEnabled:           getEnvBool("FEATURE_PARCEL_RECEIVER_PIN_SMS", false),
 		ParcelInsuranceMinPremiumKobo:                getEnvInt("PARCEL_INSURANCE_MIN_PREMIUM_KOBO", 200000),
 		FeatureTransportPaystackCheckoutEnabled:      getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureTransportPaystackParcelEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_PARCEL_ENABLED", false),
