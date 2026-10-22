@@ -909,11 +909,13 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 	// Durable audit + owner confirmation (FOOD-UAT-B-002). Both are best-effort and
 	// never gate the add; the confirmation lets the owner spot an account they did not add.
 	if s.audit != nil {
+		after := map[string]any{"bank_code": b.BankCode, "account_number_masked": b.AccountNumberMasked, "is_verified": b.IsVerified, "is_default": b.IsDefault}
+		if s.nameMatchOn {
+			after["name_match_status"] = b.NameMatchStatus
+			after["name_match_score"] = nameScore
+		}
 		s.audit.LogAction(ownerID, "", "restaurant.bank_account.added", "restaurant", "restaurant_bank_account", b.ID,
-			nil,
-			map[string]any{"bank_code": b.BankCode, "account_number_masked": b.AccountNumberMasked, "is_verified": b.IsVerified, "is_default": b.IsDefault,
-				"name_match_status": b.NameMatchStatus, "name_match_score": nameScore},
-			"", "", "warning")
+			nil, after, "", "", "warning")
 	}
 	s.notify(ctx, Notification{
 		UserID: ownerID, Event: EventBankAccountAdded,

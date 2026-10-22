@@ -2009,8 +2009,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.POST("/orders/:id/dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminRedispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
 		// Payout accounts held because the holder name did not match (FEATURE_BANK_ACCOUNT_NAME_MATCH).
-		restAdmin.GET("/bank-accounts/held", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListHeldBankAccounts)
-		restAdmin.POST("/bank-accounts/:id/name-match", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideBankAccountName)
+		// Mounted only with the flag on: both read name_match_* columns, which a DB
+		// that has not had migration 20271088000000 yet does not have.
+		if cfg.FeatureBankAccountNameMatch {
+			restAdmin.GET("/bank-accounts/held", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListHeldBankAccounts)
+			restAdmin.POST("/bank-accounts/:id/name-match", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideBankAccountName)
+		}
 		// Review moderation (FOOD-UAT-G-003).
 		restAdmin.GET("/reviews", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminListReviews)
 		restAdmin.POST("/reviews/:id/hide", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminHideReview)
@@ -2877,14 +2881,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		doctorSvc := doctor.NewService(pool, ledgerSvc, tiersSvc, redisClient).WithRealtime(rtcIssuer, doctorHub)
 
-		// Real-time bank account verification on CreateBankAccount (soft-fail if
-		// no provider answers). Monnify-first resolution rides the same flag as
-		// restaurant name matching; off, it is Paystack alone, exactly as before.
-		if cfg.FeatureBankAccountNameMatch {
-			if nameEnquiry := newNameEnquiryResolver(monnifyDisb, paystackDisb); nameEnquiry != nil {
-				doctorSvc = doctorSvc.WithDisbursementProvider(nameEnquiry)
-			}
-		} else if paystackDisb != nil {
+		// Wire the Paystack disbursement provider for real-time bank account
+		// verification on CreateBankAccount (soft-fail if provider unavailable).
+		// Doctors get no name matching, so they stay on the provider that pays them.
+		if paystackDisb != nil {
 			doctorSvc = doctorSvc.WithDisbursementProvider(paystackDisb)
 		}
 
