@@ -40,6 +40,9 @@ export interface ParcelPriceOption {
   fareKobo: Kobo;
 }
 
+export type { ParcelInsuranceStatus } from '../utils/parcelInsurance';
+import type { ParcelInsuranceStatus } from '../utils/parcelInsurance';
+
 /** The Goods-in-Transit cover the declared value buys (server catalog). */
 export interface ParcelInsuranceInfo {
   productCode: string;
@@ -81,6 +84,11 @@ export interface ParcelBookRequest {
   // The estimate's routeToken: the server prices the booking from the route the
   // customer saw, so traffic changes alone can't trigger FARE_CHANGED.
   routeToken?: string;
+  // Opt-in Goods-in-Transit cover, paid now with the fare (ADR-PR836).
+  // expectedInsuranceKobo is the estimate's premium the customer saw; the
+  // server refuses with 409 FARE_CHANGED (insurance_kobo) if it moved.
+  insure?: boolean;
+  expectedInsuranceKobo?: Kobo;
 }
 
 export interface Courier {
@@ -114,6 +122,10 @@ export interface Parcel {
   createdAt: string;
   deliveredAt: string | null;
   rated: boolean;
+  // Prepaid insurance (ADR-PR836). Absent on older servers.
+  insuranceOpted?: boolean;
+  insurancePaidKobo?: Kobo;
+  insuranceStatus?: ParcelInsuranceStatus;
 }
 
 /** Courier-side dispatch candidate. */
@@ -126,9 +138,9 @@ export interface CourierParcelRequest {
   speed: ParcelSpeed;
   distanceM: number;
   fareKobo: Kobo;
-  estCourierNetKobo: Kobo;
+  estCourierNetKobo: Kobo | null;   // server-computed rider net; null when the server doesn't send it
   currency: 'NGN';
-  expiresAt: string;
+  expiresAt: string | null;
 }
 
 // BUS BOOKING

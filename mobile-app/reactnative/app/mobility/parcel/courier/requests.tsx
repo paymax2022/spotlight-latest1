@@ -27,7 +27,7 @@ export default function CourierRequestsScreen() {
   const { accept } = useCourierActions();
 
   const onAccept = (id: string) => {
-    accept.mutate(id, { onSuccess: (p) => router.push(`/mobility/parcel/courier/${p.id}`) });
+    accept.mutate(id, { onSuccess: () => router.push(`/mobility/parcel/courier/${id}`) });
   };
 
   return (
@@ -59,12 +59,22 @@ export default function CourierRequestsScreen() {
                 <Text style={styles.cardMeta}>{catLabel(r.category)} · {speedLabel(r.speed)} · {formatDistance(r.distanceM)}</Text>
               </View>
               <TripRouteCard pickup={r.pickup} dest={r.dropoff} />
+              {/* The rider's net is server-computed; without it, show the fare only (never fare × a guessed rate). */}
               <View style={styles.earnRow}>
-                <View>
-                  <Text style={styles.earnLabel}>You earn</Text>
-                  <Text style={styles.earnValue}>{formatNairaWhole(r.estCourierNetKobo)}</Text>
-                </View>
-                <Text style={styles.fareNote}>Customer pays {formatNairaWhole(r.fareKobo)}</Text>
+                {r.estCourierNetKobo != null ? (
+                  <>
+                    <View>
+                      <Text style={styles.earnLabel}>You earn</Text>
+                      <Text style={styles.earnValue}>{formatNairaWhole(r.estCourierNetKobo)}</Text>
+                    </View>
+                    <Text style={styles.fareNote}>Customer pays {formatNairaWhole(r.fareKobo)}</Text>
+                  </>
+                ) : (
+                  <View>
+                    <Text style={styles.earnLabel}>Delivery fare</Text>
+                    <Text style={styles.earnValue}>{formatNairaWhole(r.fareKobo)}</Text>
+                  </View>
+                )}
               </View>
               <PrimaryButton label="Accept delivery" onPress={() => onAccept(r.parcelId)} loading={accept.isPending} />
             </View>
