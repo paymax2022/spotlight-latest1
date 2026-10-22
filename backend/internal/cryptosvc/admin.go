@@ -80,6 +80,10 @@ func RegisterAdminRoutes(admin *gin.RouterGroup, d HandlerDeps) {
 	admin.GET("/reconciler", h.reconcilerStatus)
 	admin.GET("/fee-schedule", h.feeSchedule)
 	admin.PUT("/fee-schedule", h.updateFeeSchedule)
+	admin.GET("/provider-health", h.providerHealth)
+	admin.GET("/audit", h.auditSearch)
+	admin.POST("/reconciler/run", h.reconcileNow)
+	admin.GET("/deposits", h.depositsList)
 }
 
 // reconcilerStatus GET /admin/crypto/reconciler — what the reconciler has been doing and what

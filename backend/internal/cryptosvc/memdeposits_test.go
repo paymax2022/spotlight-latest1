@@ -92,3 +92,19 @@ func (m *memDeposits) ListDeposits(_ context.Context, userID string, limit int) 
 }
 
 func cutKey(k string) (user, provider string, ok bool) { return strings.Cut(k, "|") }
+
+func (m *memDeposits) AdminListDeposits(_ context.Context, status cryptoprov.DepositStatus, limit int) ([]DepositRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []DepositRecord{}
+	for _, d := range m.deps {
+		if status == "" || d.Status == status {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ProviderDepositID < out[j].ProviderDepositID })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}

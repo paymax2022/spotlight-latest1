@@ -398,6 +398,121 @@ paths:
                 $ref: '#/components/schemas/Error'
         '500': { $ref: '#/components/responses/Error' }
         '503': { $ref: '#/components/responses/Error' }
+  /crypto/status:
+    get:
+      tags: [Controls]
+      summary: Customer-facing operational state (pauses, disabled markets, limit, banner)
+      description: Unreadable controls are 503, never "all open".
+      operationId: getCryptoStatus
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, status]
+                properties:
+                  success: { type: boolean }
+                  status: { $ref: '#/components/schemas/CryptoControlsStatus' }
+        '401': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /admin/crypto/controls:
+    get:
+      tags: [Controls]
+      summary: Current controls and their history (crypto.admin)
+      operationId: getCryptoControls
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'current, ceiling_kobo, history[] (newest first)' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Controls]
+      summary: Replace the controls with a new audited version (crypto.admin)
+      description: >-
+        Needs an Idempotency-Key, the version the editor read (409 version_conflict if stale) and a
+        reason. Enforced fail-closed on both rails: quotes/confirms, legacy buy/sell/swap, withdrawals
+        and admin withdrawal approval (the kill switch stops dispatch; rejections stay allowed).
+      operationId: updateCryptoControls
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_version, reason]
+              additionalProperties: false
+              properties:
+                expected_version: { type: integer, format: int64, minimum: 0 }
+                trading_paused: { type: boolean }
+                withdrawals_paused: { type: boolean }
+                disabled_assets: { type: array, maxItems: 100, items: { type: string, pattern: '^[A-Za-z0-9]{2,12}$' } }
+                max_quote_kobo: { type: integer, format: int64, minimum: 0, description: '0 = the code ceiling' }
+                banner:
+                  type: object
+                  required: [message, severity]
+                  properties:
+                    message: { type: string, minLength: 1, maxLength: 280 }
+                    severity: { type: string, enum: [info, warning, critical] }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { description: 'created (false on replay), current' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /admin/crypto/provider-health:
+    get:
+      tags: [Controls]
+      summary: Measured provider telemetry (15-minute window) and webhook lag (crypto.admin)
+      operationId: getCryptoProviderHealth
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'health: status (idle|ok|degraded|down|unknown), calls, failures, throttled, failure_rate, p50_ms, p95_ms, last_success_at, last_failure_at, last_failure, webhook_last_received_at, webhook_lag_seconds' }
+        '503': { $ref: '#/components/responses/Error' }
+  /admin/crypto/audit:
+    get:
+      tags: [Controls]
+      summary: Search the append-only crypto audit log, newest first (crypto.admin)
+      operationId: searchCryptoAudit
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: action, in: query, schema: { type: string, maxLength: 100 }, description: Action prefix, e.g. crypto.controls }
+        - { name: actor, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: entity_id, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: before, in: query, schema: { type: string, format: date-time }, description: Cursor (next_before) }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500 } }
+      responses:
+        '200': { description: 'entries[], next_before when more may exist' }
+        '400': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /admin/crypto/reconciler/run:
+    post:
+      tags: [Controls]
+      summary: Run one reconcile pass now (manual sync; audited; cannot edit balances)
+      operationId: runCryptoReconciler
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'result: resolved, released, parked, expired, errors' }
+        '502': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /admin/crypto/deposits:
+    get:
+      tags: [Controls]
+      summary: All users' recorded deposits, newest first, max 200 (crypto.admin)
+      operationId: listCryptoDepositsAdmin
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, accepted, rejected] } }
+      responses:
+        '200': { description: 'deposits[]' }
+        '400': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /admin/crypto/swaps/{id}/resolve:
     post:
       tags: [Admin]
@@ -613,6 +728,20 @@ components:
         has_provider_id: { type: boolean, description: false ⇒ provider outcome unknown; only release is safe }
         updated_at: { type: string, format: date-time, description: When the swap was parked }
         age_seconds: { type: integer, format: int64, description: Seconds the swap has been parked }
+    CryptoControlsStatus:
+      type: object
+      required: [trading_paused, withdrawals_paused, disabled_assets, max_quote_kobo]
+      properties:
+        trading_paused: { type: boolean }
+        withdrawals_paused: { type: boolean }
+        disabled_assets: { type: array, items: { type: string } }
+        max_quote_kobo: { type: integer, format: int64 }
+        banner:
+          type: object
+          nullable: true
+          properties:
+            message: { type: string }
+            severity: { type: string, enum: [info, warning, critical] }
     Swap:
       type: object
       required: [id, status, side, asset, ngn_kobo, fee_kobo, fee_bps, total_kobo, quoted_amount, price]

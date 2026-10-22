@@ -28,6 +28,13 @@ type memStore struct {
 	transitions []string
 	// onTransition lets a test simulate a racing writer just before the update.
 	onTransition func(id string, from cryptoprov.SwapState)
+	lastWebhook  time.Time // what LastWebhookAt reports (zero = none)
+}
+
+func (s *memStore) LastWebhookAt(context.Context, string) (time.Time, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastWebhook, !s.lastWebhook.IsZero(), nil
 }
 
 // newUUID returns a deterministic, valid UUID per counter (the handlers reject non-UUID swap ids).

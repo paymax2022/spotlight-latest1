@@ -77,21 +77,37 @@ func (s *PGStore) UpsertDeposit(ctx context.Context, d DepositRecord) (bool, cry
 	return true, cryptoprov.DepositStatus(stored), nil
 }
 
+const depositCols = `provider, provider_deposit_id, user_id::text, currency, network, address, amount::text, fee::text,
+	txid, status, confirmations, required_confirmations, created_at, updated_at`
+
 // ListDeposits implements DepositStore.
 func (s *PGStore) ListDeposits(ctx context.Context, userID string, limit int) ([]DepositRecord, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT provider, provider_deposit_id, user_id::text, currency, network, address, amount::text, fee::text,
-		        txid, status, confirmations, required_confirmations, created_at, updated_at
-		   FROM public.crypto_deposits WHERE user_id = $1::uuid ORDER BY created_at DESC LIMIT $2`, userID, limit)
+		`SELECT `+depositCols+` FROM public.crypto_deposits WHERE user_id = $1::uuid ORDER BY created_at DESC LIMIT $2`, userID, limit)
 	if err != nil {
 		return nil, err
 	}
+	return scanDeposits(rows)
+}
+
+// AdminListDeposits implements DepositStore.
+func (s *PGStore) AdminListDeposits(ctx context.Context, status cryptoprov.DepositStatus, limit int) ([]DepositRecord, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+depositCols+` FROM public.crypto_deposits WHERE ($1 = '' OR status = $1) ORDER BY created_at DESC LIMIT $2`, string(status), limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanDeposits(rows)
+}
+
+func scanDeposits(rows pgx.Rows) ([]DepositRecord, error) {
 	defer rows.Close()
 	out := []DepositRecord{}
 	for rows.Next() {
 		var d DepositRecord
 		var amt, fee, st string
-		if err := rows.Scan(&d.Provider, &d.ProviderDepositID, &d.UserID, &d.Currency, &d.Network, &d.Address, &amt, &fee,
+		var err error
+		if err = rows.Scan(&d.Provider, &d.ProviderDepositID, &d.UserID, &d.Currency, &d.Network, &d.Address, &amt, &fee,
 			&d.TxID, &st, &d.Confirmations, &d.RequiredConfirmations, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}

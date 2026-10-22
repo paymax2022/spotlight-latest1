@@ -75,6 +75,7 @@ type Client struct {
 	sleep         func(ctx context.Context, d time.Duration) error
 	now           func() time.Time
 	budget        *budget
+	calls         cryptoprov.CallRecorder // health telemetry (admin provider-health page)
 }
 
 // New validates the configuration and builds a Client.
@@ -190,8 +191,10 @@ func (c *Client) do(ctx context.Context, method, path, query string, body any) (
 			req.Header.Set("Content-Type", "application/json")
 		}
 
+		started := time.Now()
 		resp, err := c.hc.Do(req)
 		if err != nil {
+			c.calls.Record(started, time.Since(started), 0, method+" "+path+" -> transport error")
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
@@ -206,6 +209,7 @@ func (c *Client) do(ctx context.Context, method, path, query string, body any) (
 		}
 		raw, rerr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		_ = resp.Body.Close()
+		c.calls.Record(started, time.Since(started), resp.StatusCode, fmt.Sprintf("%s %s -> %d", method, path, resp.StatusCode))
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if rerr != nil {
@@ -341,6 +345,9 @@ func (c *Client) CreateAccount(ctx context.Context, u cryptoprov.UserRef) (crypt
 	}
 	return cryptoprov.AccountRef{ID: d.ID}, nil
 }
+
+// Health implements cryptoprov.HealthReporter.
+func (c *Client) Health(now time.Time) cryptoprov.Health { return c.calls.Snapshot(now) }
 
 // Wallets implements cryptoprov.WalletProvider.
 func (c *Client) Wallets(ctx context.Context, accountID string) ([]cryptoprov.Wallet, error) {

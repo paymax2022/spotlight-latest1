@@ -130,7 +130,7 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 	go rec.Run(rctx, cfg.ReconcileInterval)
 
 	return &Wired{
-		Deps:  HandlerDeps{Service: svc, Ingest: ingest, StepUp: &TransfersStepUp{Svc: d.Transfers}, Recon: rec, FeeAdmin: fees},
+		Deps:  HandlerDeps{Service: svc, Ingest: ingest, StepUp: &TransfersStepUp{Svc: d.Transfers}, Recon: rec, FeeAdmin: fees, AuditLog: &PGAuditLog{Pool: d.Pool}},
 		Close: func() { cancel(); closeLeader(); closeLocks() },
 	}, nil
 }

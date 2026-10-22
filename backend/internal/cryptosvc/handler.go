@@ -52,6 +52,8 @@ type HandlerDeps struct {
 	Recon *Reconciler
 	// FeeAdmin is the editable fee-schedule history behind the admin API; nil answers 503.
 	FeeAdmin FeeStore
+	// AuditLog backs the admin audit search; nil answers 503.
+	AuditLog AuditSearcher
 }
 
 const (
