@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
+import { ProviderTradeProcessing, RailGate } from '@/features/crypto/components/ProviderTrade';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -11,7 +12,7 @@ import { useAsset, useExecuteBuy } from '@/features/crypto/hooks/useCrypto';
 import { buildQuote } from '@/features/crypto/utils/cryptoFormatters';
 import type { AmountBasis } from '@/features/crypto/types/crypto.types';
 
-export default function BuyProcessingScreen() {
+function LegacyBuyProcessingScreen() {
   const params = useLocalSearchParams<{ symbol: string; basis: string; amount: string; expiresAt: string }>();
   const asset = useAsset(params.symbol);
   const buy = useExecuteBuy();
@@ -74,6 +75,23 @@ export default function BuyProcessingScreen() {
         <Text style={styles.sub}>Filling at the locked price and posting to your ledger. This only takes a moment — please don't close the app.</Text>
       </View>
     </SafeAreaView>
+  );
+}
+
+
+export default function BuyProcessingScreen() {
+  const p = useLocalSearchParams<{ symbol: string; basis: string; amount: string; swapId?: string }>();
+  return (
+    <RailGate
+      title="Processing"
+      provider={() => (
+        p.swapId
+          ? <ProviderTradeProcessing side="buy" symbol={p.symbol} basis={(p.basis as AmountBasis) ?? 'fiat'} amount={p.amount} swapId={p.swapId} />
+          // Never fall back to a legacy order on the provider rail: re-quote instead.
+          : <Redirect href={{ pathname: '/crypto/buy/review', params: { symbol: p.symbol, basis: p.basis, amount: p.amount } }} />
+      )}
+      legacy={() => <LegacyBuyProcessingScreen />}
+    />
   );
 }
 

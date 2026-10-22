@@ -12,7 +12,7 @@ import { useAsset } from '@/features/crypto/hooks/useCrypto';
 import { formatCrypto, formatFiat } from '@/features/crypto/utils/cryptoFormatters';
 
 export default function BuySuccessScreen() {
-  const p = useLocalSearchParams<{ reference: string; symbol: string; crypto: string; fiat: string; txId: string }>();
+  const p = useLocalSearchParams<{ reference: string; symbol: string; crypto: string; fiat: string; txId: string; rail?: string }>();
   const asset = useAsset(p.symbol);
   const decimals = asset.data?.decimals ?? 8;
 
@@ -33,10 +33,12 @@ export default function BuySuccessScreen() {
       </View>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>
-        <Pressable style={styles.receiptBtn} onPress={() => router.replace(`/crypto/transactions/${p.txId}`)} accessibilityRole="button">
-          <Receipt size={18} color={Colors.secondary} strokeWidth={2} />
-          <Text style={styles.receiptText}>View receipt</Text>
-        </Pressable>
+        {p.txId ? (
+          <Pressable style={styles.receiptBtn} onPress={() => router.replace(`/crypto/transactions/${p.txId}`)} accessibilityRole="button">
+            <Receipt size={18} color={Colors.secondary} strokeWidth={2} />
+            <Text style={styles.receiptText}>View receipt</Text>
+          </Pressable>
+        ) : null}
         <PrimaryButton label="Done" onPress={() => router.dismissTo('/crypto')} />
       </SafeAreaView>
     </SafeAreaView>
