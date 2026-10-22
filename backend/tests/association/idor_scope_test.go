@@ -208,7 +208,7 @@ func TestLiveDB_IDOR_GetDirectory_ScopedToViewerOrg(t *testing.T) {
 	seedMemberProfile(t, ctx, pool, viewerMembershipA, "Viewer A")
 	seedMemberProfile(t, ctx, pool, foreignMembershipB, "Foreign B")
 
-	list, err := svc.GetDirectory(ctx, viewerA, association.MemberDirectoryQuery{})
+	list, err := svc.GetDirectory(ctx, viewerA, association.MemberDirectoryQuery{}, 0, 0)
 	if err != nil {
 		t.Fatalf("GetDirectory: %v", err)
 	}

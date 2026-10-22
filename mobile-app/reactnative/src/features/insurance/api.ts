@@ -5,6 +5,7 @@
 // IRON RULE: all monetary amounts are integers in minor units (kobo).
 
 import { api } from '@/api/client';
+import { isMocklessEnvironment } from '@/config/mockPolicy';
 import {
   INSURANCE_API_BASE,
   USE_MOCK,
@@ -71,15 +72,24 @@ export async function getProduct(code: string): Promise<InsuranceProduct> {
   return found;
 }
 
-// ── KYC profile (prefill) ─────────────────────────────────────────────────────
 // GAP: no GET /kyc-profile on the Go insurance surface (backend/internal/insurance
 // has no such handler; KYC lives in finance/kyc and isn't exposed to this module's
-// member group). Until a backend endpoint/proxy exists this stays mock-only in
-// live mode too (throwing would break the quote-prefill screen); report upstream.
+// member group). No live source exists yet, but this must NEVER hand a real user
+// someone else's fabricated name/DOB/BVN-linked status as if it were their own —
+// mockPolicy.ts's rule ("staging and production NEVER serve mock data") applies
+// here precisely because it's the case an unconditional mock return would violate
+// silently. Local dev keeps the mock prefill (still useful for screen work); a
+// mockless build gets a blank, unverified profile instead — the quote-prefill
+// screen already has to handle a user filling these in themselves, so an empty
+// starting point degrades gracefully rather than breaking.
+const BLANK_KYC_PROFILE: KycProfile = {
+  tier: 'TIER_0', fullName: '', dateOfBirth: '', phone: '', email: '', address: '',
+  bvnLinked: false, ninLinked: false,
+};
+
 export async function getKycProfile(): Promise<KycProfile> {
-  // Always mock — see GAP note above; no live source exists yet.
   await delay(180);
-  return MOCK_KYC;
+  return isMocklessEnvironment() ? BLANK_KYC_PROFILE : MOCK_KYC;
 }
 
 // ── Cover summary (Protection hub) ────────────────────────────────────────────

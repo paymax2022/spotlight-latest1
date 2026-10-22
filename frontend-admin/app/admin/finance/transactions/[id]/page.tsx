@@ -6,16 +6,18 @@
 // double-entry movement — so an operator sees the whole transaction, not one
 // isolated leg. RBAC: finance.admin.transactions.view (same as the list).
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   getAdminTransaction,
   formatKobo,
+  stakeholderLabel,
   type AdminTransactionDetail,
   type AdminTransactionRow,
 } from '@/services/transactionsAdminService';
 import { Page, PageHeader, Card, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { StatusBadge } from '@/components/ui/StatusBadge';
 
 function fmtDate(iso: string): string {
   try {
@@ -35,39 +37,8 @@ const fieldRow: CSSProperties = { display: 'flex', justifyContent: 'space-betwee
 const fieldLabel: CSSProperties = { fontSize: '0.78rem', color: colors.muted, minWidth: 160 };
 const fieldValue: CSSProperties = { fontSize: '0.85rem', color: colors.text, textAlign: 'right', wordBreak: 'break-all' };
 
-// Real per-module statuses use each module's own vocabulary (e.g. insurance's
-// ACTIVE/CANCELLED/PAYMENT_FAILED, an fx_conversions status, a boost_status,
-// a utility_transactions status) — never the generic ledger Posted/Reversed
-// styling. This is a best-effort semantic grouping across all of them so the
-// badge color is still meaningful without hard-coding every module's exact
-// value set.
-function statusBadgeColor(status: string): string {
-  const s = status.toUpperCase();
-  if (['ACTIVE', 'COMPLETED', 'SUCCESSFUL', 'POSTED', 'PURCHASED'].includes(s)) return colors.success;
-  if (['FAILED', 'CANCELLED', 'CANCELLED_BY_SELLER', 'REJECTED_WITH_REASON', 'VOID', 'BIND_FAILED', 'PAYMENT_FAILED', 'REVERSED', 'DISPUTED', 'EXPIRED'].includes(s)) return colors.danger;
-  if (['PENDING', 'PENDING_PAYMENT', 'BINDING', 'QUOTED', 'INITIATED', 'WALLET_DEBITED', 'PROVIDER_PENDING', 'RENEWAL_DUE', 'AUTO_REFUNDED'].includes(s)) return colors.warning;
-  return colors.muted;
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const color = statusBadgeColor(status);
-  return (
-    <span
-      style={{
-        display: 'inline-block',
-        padding: '2px 10px',
-        borderRadius: 999,
-        fontSize: '0.75rem',
-        fontWeight: 600,
-        color,
-        background: `${color}22`,
-        border: `1px solid ${color}55`,
-      }}
-    >
-      {status}
-    </span>
-  );
-}
+// StatusBadge is shared with the Transactions list — see
+// @/components/ui/StatusBadge.
 
 export default function AdminTransactionDetailPage() {
   const params = useParams<{ id: string }>();
@@ -75,6 +46,16 @@ export default function AdminTransactionDetailPage() {
   const [detail, setDetail] = useState<AdminTransactionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const distributionRef = useRef<HTMLDivElement>(null);
+
+  // The Transactions list links each row straight into this section via
+  // #distribution ("Money flow →"), so a click there lands on it directly
+  // instead of the top of a long detail page.
+  useEffect(() => {
+    if (!loading && detail && typeof window !== 'undefined' && window.location.hash === '#distribution') {
+      distributionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [loading, detail]);
 
   useEffect(() => {
     if (!id) return;
@@ -128,11 +109,13 @@ export default function AdminTransactionDetailPage() {
           <Card title="Service details" style={{ marginBottom: 16 }}>
             {detail.module_detail ? (
               <>
-                <div style={fieldRow}><span style={fieldLabel}>Service</span><span style={fieldValue}>{detail.module_detail.service_label}</span></div>
+                <div style={fieldRow}><span style={fieldLabel}>Service purchased</span><span style={fieldValue}>{detail.module_detail.service_purchased}</span></div>
+                <div style={fieldRow}><span style={fieldLabel}>Sub service</span><span style={fieldValue}>{detail.module_detail.sub_service}</span></div>
                 <div style={fieldRow}><span style={fieldLabel}>Category</span><span style={fieldValue}>{detail.module_detail.category || '—'}</span></div>
+                <div style={fieldRow}><span style={fieldLabel}>Sub category</span><span style={fieldValue}>{detail.module_detail.sub_category || '—'}</span></div>
                 <div style={fieldRow}><span style={fieldLabel}>Service bought</span><span style={fieldValue}>{detail.module_detail.service_bought}</span></div>
                 <div style={fieldRow}><span style={fieldLabel}>Payment method</span><span style={fieldValue}>{detail.module_detail.payment_method}</span></div>
-                <div style={fieldRow}><span style={fieldLabel}>Status</span><span style={fieldValue}><StatusBadge status={detail.module_detail.status} /></span></div>
+                <div style={fieldRow}><span style={fieldLabel}>Payment status</span><span style={fieldValue}><StatusBadge status={detail.module_detail.status} /></span></div>
                 <div style={fieldRow}><span style={fieldLabel}>Provider</span><span style={fieldValue}>{detail.module_detail.provider || '—'}</span></div>
                 {detail.module_detail.merchant && (
                   <div style={fieldRow}><span style={fieldLabel}>Merchant</span><span style={fieldValue}>{detail.module_detail.merchant}</span></div>
@@ -155,6 +138,67 @@ export default function AdminTransactionDetailPage() {
               </span>
             </div>
           </Card>
+
+          <div ref={distributionRef} id="distribution">
+            <Card
+              title="Money flow — where this transaction's funds went"
+              style={{ marginBottom: 16 }}
+            >
+              <p style={{ fontSize: '0.78rem', color: colors.muted, marginTop: 0 }}>
+                Every other ledger leg of this same transaction (see &ldquo;Related entries&rdquo; below), relabeled by
+                who the money actually went to. This is not a separate ledger — it&rsquo;s the same double-entry
+                legs, just read as a distribution instead of raw account types.
+              </p>
+              {detail.related_entries.length === 0 ? (
+                <p style={{ color: colors.muted }}>
+                  No other ledger leg shares this reference — nothing to distribute beyond this one entry.
+                </p>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+                    <thead>
+                      <tr>
+                        <th style={thCell}>Stakeholder</th>
+                        <th style={thCell}>Amount</th>
+                        <th style={thCell}>Type</th>
+                        <th style={thCell}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[detail, ...detail.related_entries].map((r) => {
+                        const stake = stakeholderLabel(r, detail.user_id);
+                        return (
+                          <tr key={r.id}>
+                            <td style={tdCell} title={stake.caveat}>
+                              {stake.label}
+                              {stake.caveat && <span style={{ color: colors.muted }}> *</span>}
+                            </td>
+                            <td style={tdCell}>{formatKobo(r.amount_kobo)}</td>
+                            <td style={tdCell}>{r.type}</td>
+                            <td style={tdCell}>
+                              {r.id === detail.id
+                                ? <span style={{ color: colors.muted }}>This entry</span>
+                                : <Link href={`/admin/finance/transactions/${r.id}`} style={{ color: colors.info }}>View →</Link>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {detail.related_entries_total > detail.related_entries.length && (
+                    <p style={{ fontSize: '0.75rem', color: colors.warning, marginTop: '0.5rem' }}>
+                      ⚠ Only {detail.related_entries.length} of {detail.related_entries_total} related legs are shown
+                      above — this distribution may be incomplete. See the caveat on &ldquo;Related entries&rdquo; below.
+                    </p>
+                  )}
+                  <p style={{ fontSize: '0.72rem', color: colors.muted, marginTop: '0.5rem' }}>
+                    * Best-effort label, not a guaranteed-accurate stakeholder classification — hover a marked row for
+                    detail.
+                  </p>
+                </div>
+              )}
+            </Card>
+          </div>
 
           <Card title="Related entries — the other leg(s) of this movement">
             {detail.related_entries_total > 4 && (

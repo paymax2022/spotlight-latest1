@@ -1,4 +1,5 @@
 import { api } from '@/api/client';
+import { isMocklessEnvironment } from '@/config/mockPolicy';
 import { USE_MOCK, API_BASE, AML_DAILY_LIMIT_KOBO, normalizeHandle } from './constants/social.constants';
 import type {
   Cashtag,
@@ -117,10 +118,13 @@ export async function getMyCashtag(): Promise<MyCashtag> {
 
 // MISSING BACKEND ENDPOINT: no GET /api/finance/social/activity feed exists.
 // Falls back to the mock feed so the Activity screen still renders something
-// rather than a hard error; flip once the backend adds an activity endpoint.
+// rather than a hard error in local dev; flip once the backend adds an
+// activity endpoint. A mockless build (staging/production) gets an empty
+// list instead — a real user with no activity must never see fabricated
+// payments to/from named people (mockPolicy.ts's rule this bypassed before).
 export async function getActivity(): Promise<ActivityItem[]> {
   await delay();
-  return MOCK_ACTIVITY;
+  return isMocklessEnvironment() ? [] : MOCK_ACTIVITY;
 }
 
 export async function resolveCashtag(handle: string): Promise<Cashtag | null> {
@@ -140,9 +144,12 @@ export async function resolveCashtag(handle: string): Promise<Cashtag | null> {
 }
 
 // MISSING BACKEND ENDPOINT: no cashtag directory search exists server-side.
-// Falls back to the mock directory (client-side filter) until one ships.
+// Falls back to the mock directory (client-side filter) until one ships. A
+// mockless build returns no results rather than inventing a directory of
+// people who don't exist for this account to "find" and pay.
 export async function searchCashtags(query: string): Promise<Cashtag[]> {
   await delay();
+  if (isMocklessEnvironment()) return [];
   const q = query.trim().toLowerCase().replace(/^@/, '');
   if (!q) return MOCK_DIRECTORY;
   return MOCK_DIRECTORY.filter((c) => c.handle.includes(q) || c.displayName.toLowerCase().includes(q));
@@ -151,13 +158,13 @@ export async function searchCashtags(query: string): Promise<Cashtag[]> {
 // MISSING BACKEND ENDPOINT: no /contacts directory endpoint exists.
 export async function getContacts(): Promise<Cashtag[]> {
   await delay();
-  return MOCK_DIRECTORY;
+  return isMocklessEnvironment() ? [] : MOCK_DIRECTORY;
 }
 
 // MISSING BACKEND ENDPOINT: no GET /splits (list) endpoint — only GET /splits/:id.
 export async function listSplits(): Promise<SplitBill[]> {
   await delay();
-  return MOCK_SPLITS;
+  return isMocklessEnvironment() ? [] : MOCK_SPLITS;
 }
 
 export async function getSplit(id: string): Promise<SplitBill> {
@@ -175,7 +182,7 @@ export async function getSplit(id: string): Promise<SplitBill> {
 // MISSING BACKEND ENDPOINT: no GET /pools (list) endpoint — only GET /pools/:id/balance.
 export async function listPools(): Promise<GroupPool[]> {
   await delay();
-  return MOCK_POOLS;
+  return isMocklessEnvironment() ? [] : MOCK_POOLS;
 }
 
 // Backend only exposes GET /pools/:id/balance (not a full pool read). We

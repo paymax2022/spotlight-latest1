@@ -63,7 +63,7 @@ export default function WizardStructure() {
       removeStateLeader(id);
       removeChapter(id);
     } else {
-      addStateLeader({ id, state, leaderName: '', leaderContact: '', canApproveMembers: true });
+      addStateLeader({ id, state, leaderName: '', leaderContact: '', leaderEmail: '', canApproveMembers: true });
       addChapter({ id, name: state, level: 'STATE' });
     }
   };
@@ -159,7 +159,11 @@ export default function WizardStructure() {
                         </Pressable>
                       </View>
                       <TextInputField placeholder="State leader name" value={l.leaderName} onChangeText={(v) => updateStateLeader(l.id, { leaderName: v })} />
-                      <TextInputField placeholder="Leader phone or email (optional)" value={l.leaderContact} onChangeText={(v) => updateStateLeader(l.id, { leaderContact: v })} autoCapitalize="none" />
+                      <TextInputField placeholder="Leader phone (optional)" value={l.leaderContact} onChangeText={(v) => updateStateLeader(l.id, { leaderContact: v })} autoCapitalize="none" keyboardType="phone-pad" />
+                      <TextInputField placeholder="Leader email (optional)" value={l.leaderEmail} onChangeText={(v) => updateStateLeader(l.id, { leaderEmail: v })} autoCapitalize="none" keyboardType="email-address" />
+                      <Text style={styles.mandateHelp}>
+                        If this leader already has an account under this email, they&apos;ll be made an admin for {l.state} and emailed their onboarding steps.
+                      </Text>
                       <View style={styles.mandateRow}>
                         <ShieldCheck size={16} color={Colors.secondary} strokeWidth={2} />
                         <View style={{ flex: 1 }}>

@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Service methods for the remaining endpoint groups (settings, support, chat,
@@ -543,6 +544,20 @@ func (s *Service) CreateAiNote(ctx context.Context, userID string, in CreateAiNo
 	return id, "PROCESSING", nil
 }
 
+// aiNoteRequiredFromStatus says which single status a target status may
+// transition from. Enforced with a conditional UPDATE (the same
+// read-nothing-if-stale pattern as DecideMeeting's `WHERE approval_status=
+// 'PENDING'`), not a separate SELECT-then-UPDATE, so two concurrent
+// requests can't both read the pre-transition status and both "succeed".
+//
+// Found with no guard at all before this: a note could be published while
+// still PROCESSING (skipping review), or published twice/out of order —
+// each call independently overwrote status and wrote its own audit row.
+var aiNoteRequiredFromStatus = map[string]string{
+	"APPROVED":  "READY",
+	"PUBLISHED": "APPROVED",
+}
+
 func (s *Service) SetAiNoteStatus(ctx context.Context, adminID, noteID, status, action string) error {
 	// Authorization: approving/publishing meeting minutes is an admin-style
 	// mutation reserved for an admin OF THE NOTE'S organisation (any admin role,
@@ -562,8 +577,18 @@ func (s *Service) SetAiNoteStatus(ctx context.Context, adminID, noteID, status, 
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `UPDATE assoc_ai_notes SET status=$2 WHERE id=$1`, noteID, status); err != nil {
+	requiredFrom, gated := aiNoteRequiredFromStatus[status]
+	var tag pgconn.CommandTag
+	if gated {
+		tag, err = tx.Exec(ctx, `UPDATE assoc_ai_notes SET status=$2 WHERE id=$1 AND status=$3`, noteID, status, requiredFrom)
+	} else {
+		tag, err = tx.Exec(ctx, `UPDATE assoc_ai_notes SET status=$2 WHERE id=$1`, noteID, status)
+	}
+	if err != nil {
 		return fmt.Errorf("association: ai note status: %w", err)
+	}
+	if gated && tag.RowsAffected() == 0 {
+		return fmt.Errorf("association: note is not in %s status: %w", requiredFrom, ErrNoteState)
 	}
 	if err := s.audit(ctx, tx, noteOrg, adminID, action, "ai_note", noteID, nil); err != nil {
 		return err
@@ -1087,6 +1112,16 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	// State leaders. chapter_id is best-effort: the wizard collects leaders by
 	// state name, which may or may not match a chapter the user also created,
 	// so the state name is always retained independently.
+	//
+	// leadersToNotify is collected here and emailed AFTER tx.Commit succeeds —
+	// never inside the transaction, so a slow or failing Brevo call can never
+	// hold the publish tx open or roll back the organisation itself (mirrors
+	// s.notify's post-commit placement elsewhere in this file).
+	type pendingLeaderEmail struct {
+		email, name, state string
+		canApprove         bool
+	}
+	var leadersToNotify []pendingLeaderEmail
 	for _, sl := range d.StateLeaders {
 		if strings.TrimSpace(sl.State) == "" {
 			continue
@@ -1095,11 +1130,48 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 		if id, ok := chapterByName[strings.ToLower(strings.TrimSpace(sl.State))]; ok {
 			chapterID = &id
 		}
+		email := strings.TrimSpace(sl.LeaderEmail)
+
+		// Auto-link + grant: only possible when the leader supplied an email
+		// AND their state resolved to a real chapter (a role needs a chapter
+		// to be scoped to — see assignRoleChapterScoped / AssignRole). A
+		// leader who supplied no email, or whose email matches no existing
+		// platform_users account yet, is still recorded (state_name/leader_name
+		// persist either way) but gets no role and no email — the founder can
+		// complete the link later once the leader has an account.
+		var userID *string
+		if email != "" && chapterID != nil {
+			var uid string
+			if err := tx.QueryRow(ctx, `SELECT id FROM public.platform_users WHERE email=$1 LIMIT 1`, email).Scan(&uid); err == nil {
+				userID = &uid
+				membershipID, merr := s.ensureMembership(ctx, tx, orgID, uid, "ACTIVE", "PAID", "STL", nil, chapterID)
+				if merr != nil {
+					return nil, merr
+				}
+				if _, merr := tx.Exec(ctx,
+					`INSERT INTO assoc_member_roles (id, membership_id, role, jurisdiction, granted_by) VALUES ($1,$2,'CHAPTER_ADMIN','STATE',$3)
+					 ON CONFLICT (membership_id, role) DO UPDATE SET granted_by=EXCLUDED.granted_by, granted_at=now()`,
+					uuid.New().String(), membershipID, userID); merr != nil {
+					return nil, fmt.Errorf("association: insert state leader role: %w", merr)
+				}
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("association: resolve state leader by email: %w", err)
+			}
+		}
+
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO assoc_chapter_leaders (id, organisation_id, chapter_id, state_name, leader_name, leader_contact, can_approve_members)
-			 VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),$7)`,
-			uuid.New().String(), orgID, chapterID, sl.State, sl.LeaderName, sl.LeaderContact, sl.CanApproveMembers); err != nil {
+			`INSERT INTO assoc_chapter_leaders (id, organisation_id, chapter_id, state_name, leader_name, leader_contact, leader_email, user_id, can_approve_members)
+			 VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),$8,$9)`,
+			uuid.New().String(), orgID, chapterID, sl.State, sl.LeaderName, sl.LeaderContact, email, userID, sl.CanApproveMembers); err != nil {
 			return nil, fmt.Errorf("association: insert chapter leader: %w", err)
+		}
+
+		// Only a linked leader (a real account we can address) gets emailed —
+		// there is no inbox to send an onboarding email to otherwise.
+		if userID != nil {
+			leadersToNotify = append(leadersToNotify, pendingLeaderEmail{
+				email: email, name: sl.LeaderName, state: sl.State, canApprove: sl.CanApproveMembers,
+			})
 		}
 	}
 	for _, cm := range d.Committees {
@@ -1143,6 +1215,13 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+	// Onboarding emails, AFTER commit succeeds — see leadersToNotify's own
+	// comment for why this must never run inside the tx. Best-effort:
+	// leaderNotifySafe swallows and logs, so a Brevo outage can never make an
+	// already-published organisation look like it failed to the founder.
+	for _, ln := range leadersToNotify {
+		s.leaderNotifySafe(ctx, ln.email, ln.name, d.Name, ln.state, ln.canApprove)
 	}
 	return &PublishResult{OrganisationID: orgID, Name: d.Name}, nil
 }

@@ -38,6 +38,13 @@ var ErrNoMembership = errors.New("association: no membership")
 // user's typo looked like a server fault.
 var ErrInvalidInput = errors.New("association: invalid input")
 
+// ErrNoteState is returned when an AI note's approve/publish transition is
+// attempted from the wrong status — e.g. publishing a note that was never
+// approved, or approving/publishing twice. Mirrors ErrElectionState's shape
+// and its 409 mapping in statusFor: the request was well-formed and the
+// caller was authorized, but the resource's current state doesn't allow it.
+var ErrNoteState = errors.New("association: ai note is not in the required status for this transition")
+
 // Service manages association dues payments, receipts, and admin approvals.
 type Service struct {
 	db         *pgxpool.Pool
@@ -47,10 +54,43 @@ type Service struct {
 	// presigner resolves stored logo object keys to signed GET URLs on read;
 	// nil means stored values are passed through unchanged (see presign.go).
 	presigner *r2.Presigner
+	// leaderNotifier sends a newly-appointed chapter/state leader their
+	// onboarding email. Optional; nil ⇒ leaderNotifySafe is a silent no-op
+	// (mirrors commission's nil-safe seam).
+	leaderNotifier LeaderNotifier
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 	return &Service{db: db, ledger: ledger}
+}
+
+// LeaderNotifier is the nil-safe seam association.Service uses to email a
+// newly-appointed chapter/state leader their onboarding steps. Modeled as a
+// local interface (mirrors CommissionRecorder) so association never imports
+// the email package concretely — app-wiring injects a thin adapter over
+// *email.BrevoClient. Sending is best-effort: see leaderNotifySafe.
+type LeaderNotifier interface {
+	// NotifyStateLeader emails a leader who was just linked to a platform
+	// account. orgName/stateName/canApprove feed the template's merge tags —
+	// see the "Association — State Leader Welcome" Brevo template.
+	NotifyStateLeader(ctx context.Context, toEmail, leaderName, orgName, stateName string, canApproveMembers bool) error
+}
+
+// SetLeaderNotifier injects the leader-onboarding email seam (app-wiring,
+// post-construction). Nil is accepted and disables sending.
+func (s *Service) SetLeaderNotifier(n LeaderNotifier) { s.leaderNotifier = n }
+
+// leaderNotifySafe sends a leader's onboarding email and MUST NEVER affect the
+// caller's outcome — a nil notifier is a no-op, and any error is logged and
+// swallowed so a Brevo outage can never fail (or roll back) publishing the
+// organisation itself. Mirrors recordCommissionSafe's posture exactly.
+func (s *Service) leaderNotifySafe(ctx context.Context, toEmail, leaderName, orgName, stateName string, canApproveMembers bool) {
+	if s.leaderNotifier == nil || strings.TrimSpace(toEmail) == "" {
+		return
+	}
+	if err := s.leaderNotifier.NotifyStateLeader(ctx, toEmail, leaderName, orgName, stateName, canApproveMembers); err != nil {
+		log.Printf("[association] state-leader welcome email failed (to=%s org=%s state=%s): %v", toEmail, orgName, stateName, err)
+	}
 }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
@@ -808,15 +848,20 @@ func capabilitiesFor(role string) AdminCapabilities {
 	case "SUPER_ADMIN", "NATIONAL_ADMIN":
 		return AdminCapabilities{
 			ApproveMembers: true, ManageMembers: true, ManageFinance: true,
-			ImportMembers: true, ManageCommittees: true,
+			ImportMembers: true, ManageCommittees: true, ManageLeadership: true,
 		}
 	case "FINANCE_ADMIN":
 		return AdminCapabilities{ManageFinance: true}
 	// Runs members day-to-day, including committee rosters — but may NOT
-	// create or delete a committee. That is the owner's call.
+	// create or delete a committee. That is the owner's call. ManageLeadership
+	// lets a state leader appoint/replace OTHER leaders within their OWN
+	// state — AssignRole enforces the chapter-scoping and the safe-role
+	// allow-list; this bit only says the role is eligible for the capability
+	// at all, same as every other bit here.
 	case "CHAPTER_ADMIN":
 		return AdminCapabilities{
 			ApproveMembers: true, ManageMembers: true, ImportMembers: true,
+			ManageLeadership: true,
 		}
 	case "SECRETARY":
 		return AdminCapabilities{}
@@ -891,7 +936,20 @@ func (s *Service) membershipOrg(ctx context.Context, membershipID string) (strin
 // ── Directory ─────────────────────────────────────────────────────────────────
 
 // GetDirectory returns the member directory, optionally filtered.
-func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirectoryQuery) ([]MemberProfileSummary, error) {
+//
+// limit/offset: this query had a hardcoded `LIMIT 200` with no offset param
+// at all — every org over 200 (ACTIVE, non-restricted) members silently
+// truncated the same way for everyone, alphabetically, with no indication
+// the list was incomplete. Same clamp/default shape as GetOrganisations
+// (0/negative limit -> the default; capped so a client can't force an
+// unbounded scan).
+func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirectoryQuery, limit, offset int) ([]MemberProfileSummary, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	// full_name is nullable and FullName is not a pointer, so an incomplete
 	// profile crashed the whole listing with "cannot scan NULL into *string".
 	// Falls back to the member code so a nameless member is still identifiable.
@@ -910,8 +968,18 @@ func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirec
 	// page carrying the Restore button is the member detail page reached from
 	// this list, RestoreMember was unreachable. An explicit ?status= still
 	// filters; an admin browsing a specific org (org_id set, authorized below)
-	// sees every status. A plain member still only ever sees ACTIVE members.
-	if q.Status == "" && q.OrgID == "" {
+	// sees every status.
+	//
+	// The condition used to be `q.Status == "" && q.OrgID == ""`, which forced
+	// ACTIVE-only only when BOTH were empty — so a PLAIN member (no org_id;
+	// they can't pass requireCapInOrg below) could still set their own
+	// ?status=SUSPENDED and skip the ACTIVE-only clause entirely, since the
+	// later `if q.Status != ""` block applies their override with no
+	// authorization check of its own. The comment already claimed "a plain
+	// member still only ever sees ACTIVE members" — the code didn't actually
+	// enforce it. Gating on q.OrgID alone: only the authorized org_id-override
+	// path may ever see a non-ACTIVE status.
+	if q.OrgID == "" {
 		query += ` AND m.status='ACTIVE'`
 	}
 	if q.Search != "" {
@@ -948,7 +1016,8 @@ func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirec
 	// Respect the viewer's privacy: don't expose contact-restricted profiles to non-self.
 	args = append(args, userID)
 	query += fmt.Sprintf(` AND (mp.contact_restricted=false OR m.user_id=$%d)`, len(args))
-	query += ` ORDER BY mp.full_name LIMIT 200`
+	args = append(args, limit, offset)
+	query += fmt.Sprintf(` ORDER BY mp.full_name LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {

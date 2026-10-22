@@ -92,16 +92,29 @@ func (c *BrevoClient) SendOTP(ctx context.Context, to, name, code string, ttl ti
 	if minutes < 1 {
 		minutes = 1
 	}
+	return c.SendTemplate(ctx, to, name, c.templateID, map[string]string{
+		"OTP":            code,
+		"NAME":           name,
+		"EXPIRY_MINUTES": strconv.Itoa(minutes),
+	}, []string{"otp"})
+}
+
+// SendTemplate sends ANY Brevo-dashboard template by id — the general form
+// SendOTP itself now calls. A caller for a NEW kind of transactional email
+// (e.g. a state-leader onboarding notice) needs its OWN Brevo template id
+// (a template's merge tags are fixed at creation in the Brevo dashboard, so
+// one id cannot serve two unrelated emails) — configure it as its own env
+// var alongside BREVO_OTP_TEMPLATE_ID, reusing this SAME client (one set of
+// API credentials, many template ids) rather than constructing a second
+// BrevoClient. params values must never contain secrets that shouldn't be
+// logged: like SendOTP, an error returned here is safe to log verbatim.
+func (c *BrevoClient) SendTemplate(ctx context.Context, to, name string, templateID int64, params map[string]string, tags []string) error {
 	payload := brevoRequest{
 		Sender:     brevoAddress{Name: c.senderName, Email: c.senderEmail},
 		To:         []brevoAddress{{Email: to, Name: name}},
-		TemplateID: c.templateID,
-		Params: map[string]string{
-			"OTP":            code,
-			"NAME":           name,
-			"EXPIRY_MINUTES": strconv.Itoa(minutes),
-		},
-		Tags: []string{"otp"},
+		TemplateID: templateID,
+		Params:     params,
+		Tags:       tags,
 	}
 
 	body, err := json.Marshal(payload)

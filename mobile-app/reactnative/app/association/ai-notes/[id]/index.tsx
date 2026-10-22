@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
@@ -18,6 +18,7 @@ import { useAiNote, useApproveAiNote, usePublishAiNote, useConvertActionItem, us
 import { formatNaira } from '@/features/association/utils/associationFormatters';
 import { AI_REVIEW_SEGMENTS, AI_STATUS_STYLE } from '@/features/association/constants/ainotes.constants';
 import type { AiNoteStatus } from '@/features/association/types/ainotes.types';
+import { alertAsync } from '@/lib/confirm';
 
 export default function AiNoteReview() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -62,13 +63,20 @@ export default function AiNoteReview() {
   const canApprove = liveStatus === 'READY';
   const canPublish = liveStatus === 'APPROVED';
 
+  // Regenerating a PUBLISHED note's summary is rejected server-side
+  // (ErrNoteState) — published minutes are the sealed, official record,
+  // the same finality PublishResults already enforces for elections. Hiding
+  // the control once published (rather than only relying on the server
+  // rejection) means there's nothing to tap that would just fail.
+  const canEditSummary = liveStatus !== 'PUBLISHED';
+
   const onConvert = (actionItemId: string, title: string) => {
     convert.mutate(actionItemId, {
       onSuccess: () => {
         setConverted((c) => ({ ...c, [actionItemId]: true }));
-        Alert.alert('Task created', `“${title}” was added to Tasks.`);
+        void alertAsync({ title: 'Task created', message: `“${title}” was added to Tasks.` });
       },
-      onError: () => Alert.alert('Could not convert', 'Please try again.'),
+      onError: () => void alertAsync({ title: 'Could not convert', message: 'Please try again.' }),
     });
   };
 
@@ -79,10 +87,10 @@ export default function AiNoteReview() {
         subtitle={n.meetingTitle}
         rightSlot={
           <View style={styles.headerActions}>
-            <Pressable onPress={() => Alert.alert('Export PDF', 'PDF export is not available in this preview build.')} hitSlop={8} accessibilityLabel="Export PDF">
+            <Pressable onPress={() => void alertAsync({ title: 'Export PDF', message: 'PDF export is not available in this preview build.' })} hitSlop={8} accessibilityLabel="Export PDF">
               <FileDown size={20} color={Colors.onSurface} strokeWidth={2} />
             </Pressable>
-            <Pressable onPress={() => Alert.alert('Share minutes', 'Sharing is not available in this preview build.')} hitSlop={8} accessibilityLabel="Share minutes">
+            <Pressable onPress={() => void alertAsync({ title: 'Share minutes', message: 'Sharing is not available in this preview build.' })} hitSlop={8} accessibilityLabel="Share minutes">
               <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
             </Pressable>
           </View>
@@ -110,19 +118,30 @@ export default function AiNoteReview() {
             <View style={styles.cardHead}>
               <Sparkles size={15} color={Colors.primary} strokeWidth={2} />
               <Text style={styles.cardTitle}>Executive summary</Text>
-              <Pressable
-                onPress={() => regen.mutate(n.id, { onSuccess: () => { setSummaryDraft(null); setEditing(false); } })}
-                hitSlop={8}
-                disabled={regen.isPending}
-                accessibilityLabel="Regenerate summary"
-                style={styles.headRegen}
-              >
-                <RefreshCw size={15} color={Colors.primary} strokeWidth={2} />
-                <Text style={styles.headRegenText}>{regen.isPending ? 'Regenerating…' : 'Regenerate'}</Text>
-              </Pressable>
-              <Pressable onPress={() => setEditing((e) => !e)} hitSlop={8} accessibilityLabel="Edit summary">
-                <Pencil size={15} color={Colors.secondary} strokeWidth={2} />
-              </Pressable>
+              {canEditSummary ? (
+                <>
+                  <Pressable
+                    onPress={() => regen.mutate(n.id, {
+                      onSuccess: () => { setSummaryDraft(null); setEditing(false); },
+                      // Hiding this button once PUBLISHED closes the common
+                      // path, but a concurrent publish landing between render
+                      // and tap still hits the server's own guard — surface
+                      // that instead of failing silently.
+                      onError: () => void alertAsync({ title: 'Could not regenerate', message: 'These minutes have already been published and can no longer be regenerated.' }),
+                    })}
+                    hitSlop={8}
+                    disabled={regen.isPending}
+                    accessibilityLabel="Regenerate summary"
+                    style={styles.headRegen}
+                  >
+                    <RefreshCw size={15} color={Colors.primary} strokeWidth={2} />
+                    <Text style={styles.headRegenText}>{regen.isPending ? 'Regenerating…' : 'Regenerate'}</Text>
+                  </Pressable>
+                  <Pressable onPress={() => setEditing((e) => !e)} hitSlop={8} accessibilityLabel="Edit summary">
+                    <Pencil size={15} color={Colors.secondary} strokeWidth={2} />
+                  </Pressable>
+                </>
+              ) : null}
             </View>
             {editing ? (
               <TextInput

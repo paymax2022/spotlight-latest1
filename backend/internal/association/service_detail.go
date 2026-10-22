@@ -332,11 +332,26 @@ func (s *Service) RegenerateAiNoteSummary(ctx context.Context, adminID, noteID s
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `UPDATE assoc_ai_notes SET status='PROCESSING' WHERE id=$1`, noteID)
+	// PUBLISHED minutes are the official, sealed record — the same finality
+	// PublishResults already enforces for elections in this codebase.
+	// Regenerating used to accept any status unconditionally, so it could
+	// silently revert an already-published meeting's minutes back to
+	// PROCESSING (wiping the published summary/decisions/action items out
+	// from under anyone who'd already read them) with no error to the caller
+	// and no visible sign anything had changed. Excluded from the UPDATE's
+	// own WHERE — not just checked beforehand — so a concurrent publish
+	// can't race this into reverting a note that became PUBLISHED a moment
+	// ago (same read-nothing-if-stale shape as SetAiNoteStatus above).
+	tag, err := tx.Exec(ctx, `UPDATE assoc_ai_notes SET status='PROCESSING' WHERE id=$1 AND status <> 'PUBLISHED'`, noteID)
 	if err != nil {
 		return fmt.Errorf("association: regenerate ai note: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
+		var exists bool
+		_ = tx.QueryRow(ctx, `SELECT true FROM assoc_ai_notes WHERE id=$1`, noteID).Scan(&exists)
+		if exists {
+			return fmt.Errorf("association: cannot regenerate published minutes: %w", ErrNoteState)
+		}
 		return fmt.Errorf("association: ai note not found")
 	}
 	if err := s.audit(ctx, tx, noteOrg, adminID, "MINUTES_REGENERATE", "ai_note", noteID, nil); err != nil {

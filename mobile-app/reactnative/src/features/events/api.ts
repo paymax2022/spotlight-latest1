@@ -1,4 +1,5 @@
 import { api } from '@/api/client';
+import { isMocklessEnvironment } from '@/config/mockPolicy';
 import { USE_MOCK, API_BASE } from './constants/events.constants';
 import type {
   EventSummary,
@@ -235,7 +236,12 @@ export async function openEventWallet(eventId: string): Promise<EventWallet> {
 // charge anyone. See listOrganiserVendors for the real, identity-only read.
 export async function listVendors(_eventId: string): Promise<EventVendorDisplay[]> {
   await delay();
-  return MOCK_VENDORS;
+  // Worse than the other mock-only reads in this file: these fake prices are
+  // what picked-quantity × priceKobo actually charges the customer's event
+  // wallet (see the comment above). A mockless build must show no vendors at
+  // all rather than let a real tap-to-pay charge go through against an
+  // invented price for an invented item.
+  return isMocklessEnvironment() ? [] : MOCK_VENDORS;
 }
 
 // Real, identity-only vendor list ({id, name, active}) — for organiser-facing
@@ -253,7 +259,7 @@ export async function listOrganiserVendors(eventId: string): Promise<{ id: strin
 // Kept mock-only; flagged in the report.
 export async function getVenueMap(_eventId: string): Promise<VenueZone[]> {
   await delay();
-  return MOCK_VENUE;
+  return isMocklessEnvironment() ? [] : MOCK_VENUE;
 }
 
 // GET /organiser/mine — server-scoped + aggregated (real tickets_sold/gross_kobo

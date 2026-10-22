@@ -203,7 +203,8 @@ func (h *Handler) ListMembers(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	members, err := h.svc.GetDirectory(c.Request.Context(), c.GetString("user_id"), q)
+	limit, offset := pageParams(c)
+	members, err := h.svc.GetDirectory(c.Request.Context(), c.GetString("user_id"), q, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -383,7 +384,7 @@ func statusFor(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, ErrForbidden), errors.Is(err, ErrIneligible), errors.Is(err, ErrVotingClosed):
 		return http.StatusForbidden
-	case errors.Is(err, ErrElectionState):
+	case errors.Is(err, ErrElectionState), errors.Is(err, ErrNoteState):
 		return http.StatusConflict
 	case errors.Is(err, ErrNoMembership), errors.Is(err, pgx.ErrNoRows):
 		return http.StatusNotFound

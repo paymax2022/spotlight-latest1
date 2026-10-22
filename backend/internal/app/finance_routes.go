@@ -26,6 +26,7 @@ import (
 	cfwallet "spotlight/backend/internal/crowdfunding/wallet"
 	"spotlight/backend/internal/crypto"
 	"spotlight/backend/internal/doctor"
+	"spotlight/backend/internal/email"
 	"spotlight/backend/internal/estate"
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/disputes"
@@ -62,8 +63,8 @@ import (
 	"spotlight/backend/internal/platform/realtime"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	platformWS "spotlight/backend/internal/platform/ws"
-	"spotlight/backend/internal/property"
 	"spotlight/backend/internal/promotions"
+	"spotlight/backend/internal/property"
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
@@ -408,6 +409,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	ledgerAdmin := r.Group("/api/finance/admin/transactions")
 	ledgerAdmin.Use(mapsAuth()) // RequireAuthContext + mirror user_id
 	ledgerAdmin.GET("", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.ListTransactions)
+	// Registered before /:id so these static paths are never swallowed by the param route.
+	ledgerAdmin.GET("/modules", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.ListModules)
+	ledgerAdmin.GET("/summary", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.GetSummary)
 	ledgerAdmin.GET("/:id", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.GetTransaction)
 
 	// --- KYC routes ---
@@ -1145,6 +1149,22 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Region:          cfg.R2Region,
 		})
 		assocSvc.WithPresigner(assocPresigner)
+		// State-leader onboarding email (Brevo). Independent of the OTP feature
+		// flag — association can be live without OTP email being on — so this
+		// is its own credential check, reusing the SAME Brevo API key/sender as
+		// OTP (just a different template id; see BrevoStateLeaderTemplateID).
+		// Missing config is a silent no-op, not a boot failure: a state leader
+		// still gets their role either way, they just aren't emailed.
+		if cfg.BrevoAPIKey != "" && cfg.BrevoSenderEmail != "" && cfg.BrevoStateLeaderTemplateID > 0 {
+			brevoLeaders := email.NewBrevoClient(
+				cfg.BrevoAPIKey, cfg.BrevoSenderName, cfg.BrevoSenderEmail,
+				cfg.BrevoStateLeaderTemplateID, time.Duration(cfg.BrevoTimeoutSeconds)*time.Second,
+			)
+			assocSvc.SetLeaderNotifier(stateLeaderNotifier{brevo: brevoLeaders, templateID: cfg.BrevoStateLeaderTemplateID})
+			log.Println("[association] state-leader onboarding email wired (Brevo)")
+		} else {
+			log.Println("[association] state-leader onboarding email NOT wired — BREVO_API_KEY/BREVO_SENDER_EMAIL/BREVO_STATE_LEADER_TEMPLATE_ID unset")
+		}
 		assocHandler := association.NewHandler(assocSvc).
 			WithPresigner(assocPresigner, cfg.R2Bucket)
 		association.RegisterRoutes(finance.Group("/associations"), assocHandler)
@@ -3317,6 +3337,38 @@ func (e kycTierElevator) ElevateTier(ctx context.Context, userID string, newTier
 	}
 	_, err := e.svc.Approve(ctx, userID, newTier, actorID)
 	return err
+}
+
+// stateLeaderNotifier adapts *email.BrevoClient to association.LeaderNotifier.
+// templateID is carried here (not read off the client) because BrevoClient's
+// own templateID field is SendOTP's — SendTemplate always takes an explicit
+// id so one client (one set of API credentials) can serve many templates.
+//
+// Merge tags are named to match the "Association — State Leader Welcome"
+// Brevo template: LEADER_NAME, ORG_NAME, STATE_NAME, CAN_APPROVE_MEMBERS
+// ("yes"/"no" — Brevo templates have no native boolean, and a string a
+// template author can drop straight into a conditional block is more useful
+// than one they'd have to re-parse).
+type stateLeaderNotifier struct {
+	brevo      *email.BrevoClient
+	templateID int64
+}
+
+func (n stateLeaderNotifier) NotifyStateLeader(ctx context.Context, toEmail, leaderName, orgName, stateName string, canApproveMembers bool) error {
+	canApprove := "no"
+	if canApproveMembers {
+		canApprove = "yes"
+	}
+	name := leaderName
+	if strings.TrimSpace(name) == "" {
+		name = "there" // Brevo templates greet by NAME; an unnamed leader still gets a legible email.
+	}
+	return n.brevo.SendTemplate(ctx, toEmail, name, n.templateID, map[string]string{
+		"LEADER_NAME":         name,
+		"ORG_NAME":            orgName,
+		"STATE_NAME":          stateName,
+		"CAN_APPROVE_MEMBERS": canApprove,
+	}, []string{"association", "state_leader_welcome"})
 }
 
 // requireUserID is a middleware that rejects requests without a user_id in context.

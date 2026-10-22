@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Image, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { CheckSquare, Square, Pencil } from 'lucide-react-native';
@@ -16,21 +16,48 @@ import { useCreateOrganisation } from '@/features/association/hooks/useCreateOrg
 import { initials, formatNaira } from '@/features/association/utils/associationFormatters';
 import { CADENCE_LABEL } from '@/features/association/constants/association.constants';
 import { GROUP_TYPE_OPTIONS, APPROVAL_RULE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
+import { alertAsync } from '@/lib/confirm';
 
 export default function WizardPreview() {
-  const { draft, patch, reset } = useOrgDraft();
+  const { draft, patch, reset, hasHydrated } = useOrgDraft();
   const create = useCreateOrganisation();
   const [touched, setTouched] = useState(false);
 
   const groupTypeLabel = GROUP_TYPE_OPTIONS.find((o) => o.value === draft.groupType)?.label ?? '—';
   const approvalLabel = APPROVAL_RULE_OPTIONS.find((o) => o.value === draft.approvalRule)?.label ?? '—';
 
+  // The draft store used to be in-memory only, so a web reload (or landing on
+  // this route directly) wiped it while this screen still rendered — name/
+  // category/groupType/logo/foundedYear came back blank and the server
+  // rejected the POST with a bare 400 the UI never surfaced (Alert.alert is a
+  // silent no-op on react-native-web — see this project's own CLAUDE.md).
+  // Now the draft persists, but check anyway: an OLDER stored draft, or one
+  // from before this fix shipped, can still be missing these. Report nothing
+  // until hydration finishes, and keep publish disabled meanwhile — otherwise
+  // a fast tap would submit the still-empty default and hit the same bug.
+  const missing: string[] = [];
+  if (hasHydrated) {
+    if (!draft.name.trim()) missing.push('organisation name');
+    if (!draft.category) missing.push('category');
+    if (!draft.groupType) missing.push('group type');
+    if (!draft.logoUri) missing.push('logo');
+    if (!draft.foundedYear.trim()) missing.push('founded year');
+  }
+
   const onPublish = () => {
     setTouched(true);
-    if (!draft.acceptedTerms) return;
+    if (!hasHydrated || !draft.acceptedTerms) return;
+    if (missing.length > 0) {
+      void alertAsync({
+        title: 'Organisation is incomplete',
+        message: `Still needed: ${missing.join(', ')}. Pick up from step 1 — the rest of your draft is kept.`,
+        buttonLabel: 'Back to start',
+      }).then(() => router.replace('/association/create/basics'));
+      return;
+    }
     create.mutate(draft, {
       onSuccess: (res) => { reset(); router.replace(`/association/create/success?name=${encodeURIComponent(res.name)}&id=${res.organisationId}`); },
-      onError: () => Alert.alert('Could not publish', 'Please try again.'),
+      onError: () => void alertAsync({ title: 'Could not publish', message: 'Please try again.' }),
     });
   };
 
@@ -113,7 +140,8 @@ export default function WizardPreview() {
         {touched && !draft.acceptedTerms ? <Text style={styles.error}>You must accept the terms to publish.</Text> : null}
       </ScrollView>
       <View style={styles.footer}>
-        <PrimaryButton label="Publish organisation" onPress={onPublish} loading={create.isPending} disabled={touched && !draft.acceptedTerms} />
+        <PrimaryButton label="Publish organisation" onPress={onPublish} loading={create.isPending} disabled={!hasHydrated || (touched && !draft.acceptedTerms)} />
+        {hasHydrated && touched && missing.length > 0 ? <Text style={styles.error}>Missing: {missing.join(', ')}</Text> : null}
       </View>
     </SafeAreaView>
   );

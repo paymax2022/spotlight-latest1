@@ -212,7 +212,16 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Registration failed. Please check your details and try again."})
+		// Same status/body for EVERY other cause (duplicate email, a password
+		// GoTrue rejects, a malformed field) — deliberately, so the response never
+		// confirms which one applies. The wording still has to point at the two
+		// causes that actually happen in practice (an existing account, or a
+		// field that failed validation) without picking between them.
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"code":    "registration_failed",
+			"error":   "We couldn't create this account. If you already have one, sign in instead — otherwise check your details and try again.",
+		})
 		return
 	}
 

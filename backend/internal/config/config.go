@@ -536,7 +536,14 @@ type Config struct {
 	BrevoSenderName           string
 	BrevoSenderEmail          string
 	BrevoOTPTemplateID        int64
-	BrevoTimeoutSeconds       int
+	// BrevoStateLeaderTemplateID is the Brevo dashboard template for a newly
+	// appointed association state leader's onboarding email (see
+	// association.LeaderNotifier). Uses the SAME Brevo credentials as OTP
+	// (BrevoAPIKey/SenderName/SenderEmail) — only the template id differs, so
+	// no separate client is constructed. <= 0 (unset) disables sending: a
+	// state leader is still granted their role, they simply are not emailed.
+	BrevoStateLeaderTemplateID int64
+	BrevoTimeoutSeconds        int
 
 	// OTPPepper is the server-side HMAC key for code and identifier hashing.
 	// REQUIRED whenever the feature is on: otp.NewService refuses to construct
@@ -846,13 +853,14 @@ func Load() Config {
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
 		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
 
-		FeatureOTPEmailEnabled:    getEnvBool("FEATURE_OTP_EMAIL_ENABLED", false),
-		FeatureOTPLoginMFAEnabled: getEnvBool("FEATURE_OTP_LOGIN_MFA_ENABLED", false),
-		BrevoAPIKey:               getEnv("BREVO_API_KEY", ""),
-		BrevoSenderName:           getEnv("BREVO_SENDER_NAME", "Spotlight"),
-		BrevoSenderEmail:          getEnv("BREVO_SENDER_EMAIL", ""),
-		BrevoOTPTemplateID:        int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
-		BrevoTimeoutSeconds:       getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
+		FeatureOTPEmailEnabled:     getEnvBool("FEATURE_OTP_EMAIL_ENABLED", false),
+		FeatureOTPLoginMFAEnabled:  getEnvBool("FEATURE_OTP_LOGIN_MFA_ENABLED", false),
+		BrevoAPIKey:                getEnv("BREVO_API_KEY", ""),
+		BrevoSenderName:            getEnv("BREVO_SENDER_NAME", "Spotlight"),
+		BrevoSenderEmail:           getEnv("BREVO_SENDER_EMAIL", ""),
+		BrevoOTPTemplateID:         int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
+		BrevoStateLeaderTemplateID: int64(getEnvInt("BREVO_STATE_LEADER_TEMPLATE_ID", 0)),
+		BrevoTimeoutSeconds:        getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
 
 		OTPPepper:                getEnv("OTP_PEPPER", ""),
 		OTPLength:                getEnvInt("OTP_LENGTH", 6),

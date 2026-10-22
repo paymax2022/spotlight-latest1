@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -119,10 +120,39 @@ func (s *Service) RsvpMeeting(ctx context.Context, userID, meetingID, status str
 }
 
 // CheckInMeeting is idempotent: a repeated call keeps the first check-in time.
+//
+// Windowed against starts_at/ends_at (assoc_meetings.state is never
+// transitioned by any code path — checked directly — so it can't be used
+// here; the mobile UI's own "isPast" already derives from these same
+// columns, not from state). Before this: check-in had no time bound at all,
+// so a member could "check in" to a meeting from months ago or one that
+// hasn't started yet, which is exactly the false-attendance record this
+// feature exists to prevent — attendance feeds meeting minutes and any
+// quorum/standing requirement built on it elsewhere. A generous grace
+// window on both sides (early arrivals; meetings that run long) rather than
+// an exact starts_at/ends_at match, since legitimate check-ins are not
+// always punctual.
 func (s *Service) CheckInMeeting(ctx context.Context, userID, meetingID string) error {
 	mid, _, err := s.membershipForObject(ctx, userID, "assoc_meetings", meetingID)
 	if err != nil {
 		return err
+	}
+	var startsAt time.Time
+	var endsAt *time.Time
+	if err := s.db.QueryRow(ctx, `SELECT starts_at, ends_at FROM assoc_meetings WHERE id=$1`, meetingID).Scan(&startsAt, &endsAt); err != nil {
+		return fmt.Errorf("association: meeting not found: %w", err)
+	}
+	windowOpen := startsAt.Add(-15 * time.Minute)
+	windowClose := startsAt.Add(4 * time.Hour)
+	if endsAt != nil {
+		windowClose = endsAt.Add(4 * time.Hour)
+	}
+	now := time.Now()
+	if now.Before(windowOpen) {
+		return fmt.Errorf("%w: association: this meeting has not started yet", ErrInvalidInput)
+	}
+	if now.After(windowClose) {
+		return fmt.Errorf("%w: association: this meeting's check-in window has closed", ErrInvalidInput)
 	}
 	const q = `
 		INSERT INTO assoc_meeting_attendance (meeting_id, membership_id, checked_in_at)
@@ -137,7 +167,30 @@ func (s *Service) CheckInMeeting(ctx context.Context, userID, meetingID string) 
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
 
+// assigneeTaskStatuses is the bounded self-service subset of validTaskStatuses
+// (service_content.go) that the ASSIGNEE may set on their own task — mirrors
+// exactly what the mobile UI's own NEXT_STATUS map offers
+// (ASSIGNED/ACCEPTED/OVERDUE→IN_PROGRESS→AWAITING_REVIEW; BLOCKED→IN_PROGRESS).
+// Deliberately excludes:
+//   - COMPLETED/REJECTED/CANCELLED — a review/approval decision, not
+//     something the person being reviewed should be able to grant themselves.
+//   - OVERDUE — GetTasks derives this from due_date and never stores it
+//     (see TestGetTasks_OverdueIsDerivedNotStored); an assignee writing it
+//     directly would fight that invariant on every subsequent read.
+//   - DRAFT/REOPENED — admin/system lifecycle states set via UpdateTask.
+//
+// Found with no restriction at all before this: UpdateTaskStatus accepted
+// any of the 11 DB-constraint-valid statuses from the assignee, so a task
+// could self-jump straight to COMPLETED skipping AWAITING_REVIEW, or an
+// assignee could set OVERDUE and have it stick until the next admin edit.
+var assigneeTaskStatuses = map[string]bool{
+	"ACCEPTED": true, "IN_PROGRESS": true, "BLOCKED": true, "AWAITING_REVIEW": true,
+}
+
 func (s *Service) UpdateTaskStatus(ctx context.Context, userID, taskID, status string) error {
+	if !assigneeTaskStatuses[status] {
+		return fmt.Errorf("%w: association: assignees may only set status to one of ACCEPTED, IN_PROGRESS, BLOCKED, AWAITING_REVIEW", ErrInvalidInput)
+	}
 	const q = `
 		UPDATE assoc_tasks SET status = $3
 		WHERE id = $1 AND assignee_id IN (SELECT id FROM assoc_memberships WHERE user_id = $2)`
@@ -525,22 +578,102 @@ func (s *Service) TransferMember(ctx context.Context, adminID, memberID, chapter
 	return tx.Commit(ctx)
 }
 
-// AssignRole requires SUPER_ADMIN or NATIONAL_ADMIN (both ManageMembers and
-// ManageFinance capabilities) — CHAPTER_ADMIN and FINANCE_ADMIN may not
-// self-escalate or delegate.
+// chapterDelegableRoles is the allow-list a CHAPTER_ADMIN with ManageLeadership
+// (a state leader) may grant to someone else — see assignRoleChapterScoped.
+// Deliberately excludes FINANCE_ADMIN, NATIONAL_ADMIN and SUPER_ADMIN (org-wide
+// privilege stays reserved to the unrestricted branch) and NONE (revocation
+// semantics for that value are pre-existing and ambiguous — see AssignRole's
+// own history; this delegation path does not touch them).
+var chapterDelegableRoles = map[string]bool{"CHAPTER_ADMIN": true, "SECRETARY": true}
+
+// AssignRole grants role to memberID's membership. Two callers, two scopes:
+//
+//   - SUPER_ADMIN / NATIONAL_ADMIN (ManageMembers && ManageFinance) — unrestricted:
+//     any role, any member, anywhere in their organisation. This is the
+//     org-owner path and has not changed.
+//   - CHAPTER_ADMIN with ManageLeadership (a state leader) — SCOPED: may only
+//     grant a role in chapterDelegableRoles, and only to a member whose OWN
+//     membership shares the ADMIN's chapter (their state) — see
+//     assignRoleChapterScoped. This is what lets a state leader "manage state
+//     organisation leadership" without being able to touch another state or
+//     escalate to a national/finance role.
+//
+// Both paths are org-scoped against memberID's organisation (cross-org IDOR
+// fix, unchanged from before): an admin of another org, or a state leader of
+// a different state, cannot reach a member here at all.
 func (s *Service) AssignRole(ctx context.Context, adminID, memberID, role string) error {
-	// Org-scoped: role grants require SUPER_ADMIN/NATIONAL_ADMIN (ManageMembers &&
-	// ManageFinance) IN THE TARGET member's organisation — an admin of another org
-	// cannot assign roles here (cross-org IDOR fix), and lower roles cannot escalate.
 	memOrg, err := s.membershipOrg(ctx, memberID)
 	if err != nil {
 		return err
 	}
-	if err := s.requireCapInOrg(ctx, adminID, memOrg, func(c AdminCapabilities) bool {
-		return c.ManageMembers && c.ManageFinance // only SUPER_ADMIN / NATIONAL_ADMIN
-	}); err != nil {
-		return err
+	if s.isPlatformSuperAdmin(ctx, adminID) {
+		return s.doAssignRole(ctx, adminID, memberID, memOrg, role)
 	}
+	adminChapterID, adminRole, err := s.adminMembershipInOrg(ctx, adminID, memOrg)
+	if err != nil {
+		return ErrForbidden
+	}
+	caps := capabilitiesFor(adminRole)
+	switch {
+	case caps.ManageMembers && caps.ManageFinance:
+		return s.doAssignRole(ctx, adminID, memberID, memOrg, role)
+	case caps.ManageLeadership:
+		return s.assignRoleChapterScoped(ctx, adminID, memberID, memOrg, adminChapterID, role)
+	default:
+		return ErrForbidden
+	}
+}
+
+// adminMembershipInOrg resolves the caller's OWN membership chapter + role in
+// orgID — the scope a chapter-scoped delegation (assignRoleChapterScoped) is
+// checked against. Returns ErrForbidden (via the caller) when the admin has
+// no membership in this org at all.
+func (s *Service) adminMembershipInOrg(ctx context.Context, userID, orgID string) (chapterID *string, role string, err error) {
+	const q = `
+		SELECT m.chapter_id, r.role FROM assoc_member_roles r
+		JOIN assoc_memberships m ON m.id = r.membership_id
+		WHERE m.user_id = $1 AND m.organisation_id = $2 AND r.role != 'NONE'
+		ORDER BY CASE r.role
+			WHEN 'SUPER_ADMIN'    THEN 1
+			WHEN 'NATIONAL_ADMIN' THEN 2
+			WHEN 'FINANCE_ADMIN'  THEN 3
+			WHEN 'CHAPTER_ADMIN'  THEN 4
+			WHEN 'SECRETARY'      THEN 5
+			ELSE 6 END
+		LIMIT 1`
+	if err := s.db.QueryRow(ctx, q, userID, orgID).Scan(&chapterID, &role); err != nil {
+		return nil, "", ErrForbidden
+	}
+	return chapterID, role, nil
+}
+
+// assignRoleChapterScoped is the state-leader delegation path: the admin may
+// only grant a chapterDelegableRoles entry, and only to a member whose own
+// membership.chapter_id matches the admin's own — i.e. someone in the SAME
+// state. A state leader with no chapter of their own (adminChapterID == nil)
+// has no state to delegate within and is refused outright, same as a target
+// with no chapter or a DIFFERENT one.
+func (s *Service) assignRoleChapterScoped(ctx context.Context, adminID, memberID, orgID string, adminChapterID *string, role string) error {
+	if !chapterDelegableRoles[role] {
+		return ErrForbidden
+	}
+	if adminChapterID == nil {
+		return ErrForbidden
+	}
+	var targetChapterID *string
+	if err := s.db.QueryRow(ctx, `SELECT chapter_id FROM assoc_memberships WHERE id=$1`, memberID).Scan(&targetChapterID); err != nil {
+		return ErrForbidden
+	}
+	if targetChapterID == nil || *targetChapterID != *adminChapterID {
+		return ErrForbidden
+	}
+	return s.doAssignRole(ctx, adminID, memberID, orgID, role)
+}
+
+// doAssignRole is the shared write: both AssignRole branches converge here so
+// the insert + audit trail is identical regardless of which scope authorized
+// the call.
+func (s *Service) doAssignRole(ctx context.Context, adminID, memberID, orgID, role string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
@@ -551,7 +684,7 @@ func (s *Service) AssignRole(ctx context.Context, adminID, memberID, role string
 	if _, err := tx.Exec(ctx, q, uuid.New().String(), memberID, role, adminID); err != nil {
 		return fmt.Errorf("association: assign role: %w", err)
 	}
-	if err := s.audit(ctx, tx, memOrg, adminID, "ROLE_ASSIGN", "member", memberID, map[string]any{"role": role}); err != nil {
+	if err := s.audit(ctx, tx, orgID, adminID, "ROLE_ASSIGN", "member", memberID, map[string]any{"role": role}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

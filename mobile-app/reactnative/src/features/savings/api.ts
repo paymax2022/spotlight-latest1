@@ -321,10 +321,21 @@ export async function createVault(input: CreateVaultInput): Promise<Vault> {
   }
   const raw = envelope.entity(await api.post(
     `${API_BASE}/vaults`,
-    { name: input.name, kind: input.lock, target_kobo: input.targetKobo, matures_at: input.maturesAtISO ?? null, initial_kobo: input.initialKobo },
+    { name: input.name, kind: input.lock, target_kobo: input.targetKobo, matures_at: input.maturesAtISO ?? null },
     { headers: { 'Idempotency-Key': idempotencyKey() } },
   ), 'vault');
-  return vaultFromBackend(raw);
+  const vault = vaultFromBackend(raw);
+  // The Go handler's CreateVaultRequest has no initial-deposit field at all
+  // (confirmed against backend/internal/savings/handler.go) — it silently
+  // dropped `initial_kobo` above, every vault created here landed at ₦0
+  // regardless of what the founder typed, and nothing told them. Fund it for
+  // real through the deposit endpoint the "Add money" button already uses,
+  // rather than teaching CreateVault a second money-movement path.
+  if (input.initialKobo && input.initialKobo > 0) {
+    const funded = await fundVault(vault.id, input.initialKobo);
+    return { ...vault, balanceKobo: funded.newBalanceKobo };
+  }
+  return vault;
 }
 
 export async function fundVault(id: string, amountKobo: number): Promise<ContributionResult> {
