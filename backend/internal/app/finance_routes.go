@@ -3357,13 +3357,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			if cfg.IsProd() {
 				quidaxKey, quidaxBase = cfg.CryptoQuidaxLiveKey, cfg.CryptoQuidaxLiveBaseURL
 			}
+			// Money-IN settler, built before Wire so the deposit reconciler starts over the
+			// SAME once-only settler the webhook uses. It re-queries the provider and credits
+			// the resolved owner's holdings exactly once, confirmation-gated; the recipient
+			// comes from crypto_accounts, never the payload.
+			depositSettler := newCryptoDepositSettler(pool, cfg.CryptoDepositConfirmations)
 			wired, werr := cryptosvc.Wire(ctx, cryptosvc.WireConfig{
 				Provider: cfg.CryptoProvider, QuidaxKey: quidaxKey, QuidaxBaseURL: quidaxBase,
 				WebhookSecret: cfg.CryptoWebhookSecret, DatabaseURL: cfg.DatabaseURL,
-				LockPoolConns:     cfg.CryptoLockPoolConns,
-				ReconcileInterval: time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
-				Fees:              cryptosvc.DefaultFeeSchedule(),
-			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc})
+				LockPoolConns:            cfg.CryptoLockPoolConns,
+				ReconcileInterval:        time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
+				DepositReconcileInterval: time.Duration(cfg.CryptoDepositReconcileSeconds) * time.Second,
+				Fees:                     cryptosvc.DefaultFeeSchedule(),
+			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc, DepositSettler: depositSettler})
 			if werr != nil {
 				log.Printf("[crypto] swap pipeline NOT mounted: %v", werr)
 			} else {
@@ -3382,7 +3388,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				swapAdmin := cryptoV1.Group("/admin/crypto")
 				swapAdmin.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermAdmin))
 				cryptosvc.RegisterAdminRoutes(swapAdmin, wired.Deps)
-				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, reconciler running)")
+				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, swap + deposit reconcilers running)")
 			}
 		}
 	} else {

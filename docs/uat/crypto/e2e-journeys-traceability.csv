@@ -1,0 +1,41 @@
+id,name,scope,modules,automated_status,manual_status,evidence_and_blocker
+E2E-01,New customer to first trade,Core,"AUTH,KYC,SUB,ORD,FILL,LED",Not Run,Blocked,SUB/ORD/LED/KYC invariants unit+live-covered; full journey needs signup→KYC→live subaccount→funded wallet→market buy on a connected system
+E2E-02,Limit order→partial fills→cancel,Core,"ORD,FILL,FEE,LED",Not Run,Not Run,Limit-order PARTIAL-FILL + cancel-residual-release not implemented (GAP-FILL-01); needs build + test before run
+E2E-03,Market buy with price movement,Core,"MKT,ORD,FEE",Not Run,Not Run,Pre-trade guardrail/slippage needs live book; fee+quote logic covered by FEE suite
+E2E-04,Market sell to local cash,Core,"ORD,FILL,LED,REP",Partial,Not Run,Sell-pays-net + conservation proven live (TestLive_SellPaysNetAndConserves); transaction-history/statement layer (REP) incomplete
+E2E-05,Crypto deposit to available balance,Core,"WAL,DEP,WEB,LED",Partial,Blocked,GAP-DEP-01 slice1+2: settlement core + webhook→provider-requery→settle wired & tested (mock + live-DB: 0.005 BTC credits 500000 units once, replay duplicate, dust/pending/orphan credit nobody; payload never sets value). Still Blocked — not run against a live Quidax webhook (event name/confirmations unverified); deposit reconciler + admin/mobile pending→credited (slice3) not built
+E2E-06,Crypto withdrawal to chain,Core,"WDR,WEB,LED,RISK",Partial,Blocked,FSM/eligibility/step-up validated; irreversible live send Blocked (BR-18 no real transfer)
+E2E-07,Failed payout refund,Core,"WDR,WEB,LED",Not Run,Not Run,Refund reverses-hold logic exists for swaps; withdrawal-failure refund path not exercised on connected system
+E2E-08,Exchange outage after order accept,Core,"QDX,ORD,WEB,REC",Partial,Not Run,Reconciler resumes-after-crash + exactly-one-order proven; end-to-end outage→requery on live provider Blocked
+E2E-09,Order cancel vs final-fill race,Core,"FILL,LED,ABU",Partial,Not Run,Concurrent confirm/fail races pass live; limit-order cancel-vs-partial residual not implemented
+E2E-10,Signed webhook duplicate storm,Core,"WEB,DEP,FILL,LED",Partial,Not Run,Swap duplicate→200 + dedupe proven; DEPOSIT duplicate storm not applicable (no deposit path)
+E2E-11,Unsigned spoofing attempt,Core,"WEB,VAPI",Pass,Not Run,Bad-signature→401-stores-nothing green (TestWebhookBadSignatureIs401AndStoresNothing)
+E2E-12,Cross-customer isolation (BOLA),Core,"RBAC,VAPI",Pass,Not Run,Another-user's swap→404 on every route green (member + admin)
+E2E-13,KYC hold and release,Core,"KYC,RISK,ADM",Partial,Not Run,Tier gate green; sanctions-flag→human-decision workflow not evidenced
+E2E-14,Full end-of-day reconciliation,Core,"REC,LED,REP",Partial,Not Run,Per-asset/journal rollup green; REP (statement/cutoff report) layer incomplete
+E2E-15,Provider wallet balance mismatch,Core,"REC,RISK,ADM",Not Run,Not Run,Custody on-chain balance ingest exists; alert→freeze-on-mismatch orchestration not built
+E2E-16,Emergency trading halt (kill switch),Core,"ADM,RES,ORD,WDR",Not Run,Not Run,Market-disable/global-withdraw-pause controls not evidenced as a single switch
+E2E-17,Broker outage and durable replay,Core,"RES,WEB,LED",Not Run,Blocked,Needs a durable queue/replica to fail+restore; chaos lab absent
+E2E-18,DB failover with live hold,Core,"RES,LED,WDR",Not Run,Blocked,Advisory-lock atomic hold green in single node; failover scenario needs infra
+E2E-19,Legacy account migration,Core,"REG,SUB,FILL",Not Run,Not Run,Migration mapping/regression not run
+E2E-20,Complete transaction statement,Core,"REP,LED,REC",Not Run,Not Run,Statement export not built (GAP-REP-01)
+E2E-21,Unauthorized support balance action,Core,"SUP,RBAC,ADM",Partial,Not Run,PermAdmin gate denies non-admins; dedicated support-role surface absent
+E2E-22,Mobile UX with interrupted network,Core,"UIX,QDX,ORD",Not Run,Blocked,Needs device/browser lab; idempotency-key retries make confirm safe by design
+E2E-23,Orderbook & chart UI,Core,"MKT,UIX,ORD",Not Run,Not Run,Chart wired; orderbook endpoint missing (GAP-MKT-01)
+E2E-24,Full security release gate,Core,"VAPI,VMOB,VINF,OPS",Not Run,Blocked,Needs authorized VAPT; BR-18/BR-20 gate
+E2E-25,Rollover closeout & reports,Core,"REC,REP,FEE",Partial,Not Run,Reconciler+fee green; midnight-UTC/local cutoff reporting not run
+E2E-26,Queued withdrawal during freeze,Core,"AUTH,KYC,WDR,RISK",Not Run,Not Run,Freeze-honours-hold-before-send orchestration not evidenced
+E2E-27,Source-of-funds investigation,Core,"DEP,KYC,RISK",Not Implemented,Blocked,Depends on deposit path (GAP-DEP-01) + case tooling
+E2E-28,Multiple open-order overspend,Core,"ORD,LED,WDR,ABU",Pass,Not Run,Available/held gating + concurrent-holds-once-only proven live (no negative available)
+E2E-29,App update with pending deposit,Core,"REG,DEP,UIX",Not Implemented,Blocked,Depends on deposit path
+E2E-30,New device / account recovery,Core,"AUTH,WDR,VMOB",Not Run,Blocked,Step-up/hold-before-payout green at API; device-recovery E2E needs mobile lab
+E2E-31,Provider API throttling at peak,Core,"QDX,PERF,RES",Partial,Blocked,Rate-budget/backoff unit-tested; peak-load contract budget needs live tenant
+E2E-32,Public API abuse control,Core,"RBAC,VAPI,ABU",Partial,Blocked,IDOR/idempotency-key bounds + rate limit green; authorized abuse harness not run
+E2E-33,Instant buy/sell roundtrip,Cond,"SWAP,LED,WEB",Not Applicable,Not Applicable,Conditional product; machinery green but not enabled
+E2E-34,Instant quote expiry & reprice,Cond,"SWAP,UIX",Not Applicable,Not Applicable,Conditional; expiry logic unit-tested
+E2E-35,NGN on-ramp buy,Cond,"RAMP,LED,WEB",Not Applicable,Not Applicable,Conditional product (RAMP not built)
+E2E-36,NGN off-ramp cashout,Cond,"RAMP,LED,REC",Not Applicable,Not Applicable,Conditional product
+E2E-37,Internal crypto transfer,Cond,"XFER,LED,RBAC",Not Applicable,Not Applicable,Conditional product
+E2E-38,Corporate onboarding,Cond,"KYC,PRV,RBAC",Not Applicable,Not Applicable,Conditional product
+E2E-39,Customer P&L statement,Cond,"REP,FEE,LED",Not Applicable,Not Applicable,Conditional; needs REP build
+E2E-40,Fiat refund fraud case,Cond,"RAMP,RISK,REC",Not Applicable,Not Applicable,Conditional product

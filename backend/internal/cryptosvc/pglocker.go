@@ -66,11 +66,25 @@ func (l *PGSwapLocker) WithSwapLock(ctx context.Context, swapID string, fn func(
 }
 
 // PGLeader elects one reconciler across replicas with a non-blocking Postgres session
-// advisory lock held on a dedicated connection until released.
-type PGLeader struct{ pool *pgxpool.Pool }
+// advisory lock held on a dedicated connection until released. The key lets more than one
+// reconciler (the swap sweep and the deposit sweep) share a lock pool without contending:
+// each holds its own advisory lock, so leading one never blocks the other.
+type PGLeader struct {
+	pool *pgxpool.Pool
+	key  string
+}
 
-// NewPGLeader wraps a lock pool (the same dedicated pool the swap locker uses is fine).
-func NewPGLeader(pool *pgxpool.Pool) *PGLeader { return &PGLeader{pool: pool} }
+// DefaultSwapLeaderKey is the advisory-lock name the swap reconciler elects on.
+const DefaultSwapLeaderKey = "cryptoswap:reconciler"
+
+// NewPGLeader wraps a lock pool, electing on the swap reconciler's key.
+func NewPGLeader(pool *pgxpool.Pool) *PGLeader {
+	return &PGLeader{pool: pool, key: DefaultSwapLeaderKey}
+}
+
+// NewPGLeaderKey wraps a lock pool, electing on a caller-chosen key so an independent
+// reconciler gets its own leader.
+func NewPGLeaderKey(pool *pgxpool.Pool, key string) *PGLeader { return &PGLeader{pool: pool, key: key} }
 
 var _ LeaderLock = (*PGLeader)(nil)
 
@@ -81,7 +95,7 @@ func (l *PGLeader) TryLead(ctx context.Context) (func(), bool, error) {
 		return nil, false, fmt.Errorf("cryptosvc: acquire leader connection: %w", err)
 	}
 	var got bool
-	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext('cryptoswap:reconciler'))`).Scan(&got); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, l.key).Scan(&got); err != nil {
 		conn.Release()
 		return nil, false, fmt.Errorf("cryptosvc: leader lock: %w", err)
 	}
@@ -92,7 +106,7 @@ func (l *PGLeader) TryLead(ctx context.Context) (func(), bool, error) {
 	return func() {
 		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		if _, uerr := conn.Exec(uctx, `SELECT pg_advisory_unlock(hashtext('cryptoswap:reconciler'))`); uerr != nil {
+		if _, uerr := conn.Exec(uctx, `SELECT pg_advisory_unlock(hashtext($1))`, l.key); uerr != nil {
 			conn.Conn().Close(uctx) // dropping the session releases its locks
 		}
 		conn.Release()

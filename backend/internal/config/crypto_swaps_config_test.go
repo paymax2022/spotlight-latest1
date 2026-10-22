@@ -34,17 +34,20 @@ func TestValidate_SwapsNeedTheirOwnSecretsOutsideDev(t *testing.T) {
 		c.CryptoQuidaxTestKey, c.CryptoQuidaxTestBaseURL = "qk_real", "https://openapi.quidax.io/exchange-open-api/api/v1"
 		c.FeatureCryptoSwapsEnabled, c.CryptoWebhookSecret, c.CryptoLockPoolConns = true, "whsec_real", 40
 		c.CryptoQuoteRatePerMin, c.CryptoConfirmRatePerMin = 20, 5
+		c.CryptoDepositConfirmations = 3
 		return c
 	}
 	if err := good().Validate(); err != nil {
 		t.Fatalf("a fully configured staging must pass: %v", err)
 	}
 	for name, mutate := range map[string]func(*Config){
-		"no webhook secret": func(c *Config) { c.CryptoWebhookSecret = "" },
-		"placeholder":       func(c *Config) { c.CryptoWebhookSecret = "CHANGE_ME" },
-		"tiny lock pool":    func(c *Config) { c.CryptoLockPoolConns = 2 },
-		"huge lock pool":    func(c *Config) { c.CryptoLockPoolConns = 5_000_000_000 },
-		"crypto off":        func(c *Config) { c.FeatureCryptoEnabled = false },
+		"no webhook secret":   func(c *Config) { c.CryptoWebhookSecret = "" },
+		"placeholder":         func(c *Config) { c.CryptoWebhookSecret = "CHANGE_ME" },
+		"tiny lock pool":      func(c *Config) { c.CryptoLockPoolConns = 2 },
+		"huge lock pool":      func(c *Config) { c.CryptoLockPoolConns = 5_000_000_000 },
+		"crypto off":          func(c *Config) { c.FeatureCryptoEnabled = false },
+		"no deposit gate":     func(c *Config) { c.CryptoDepositConfirmations = 0 },
+		"absurd deposit gate": func(c *Config) { c.CryptoDepositConfirmations = 145 },
 	} {
 		c := good()
 		mutate(&c)

@@ -336,3 +336,80 @@ func (h *Handler) AdminReconciliation(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "rows": sum.Rows, "breaks": sum.Breaks, "as_of": sum.AsOf})
 }
+
+// --- Money-IN deposits (GAP-DEP-01 Slice 3) ---------------------------------------------
+//
+// Read-only surfaces over the settled crypto_deposits journal. They expose money that has
+// ALREADY been credited; the exception queue for transfers still awaiting confirmations or
+// unmapped is a separate, undecided design and is NOT served here. The member path is owner-
+// scoped (a customer sees their own credits — this is what the mobile pending→credited screen
+// polls); the admin path is unscoped and gated by RBAC crypto.admin upstream.
+
+// AdminListDeposits returns settled credits across all users, newest credited first.
+func (s *Service) AdminListDeposits(ctx context.Context, symbol string, limit, offset int) ([]CryptoDeposit, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return s.repo.ListDeposits(ctx, "", symbol, limit, offset)
+}
+
+// Deposits returns a customer's own settled credits, newest first.
+func (s *Service) Deposits(ctx context.Context, userID, symbol string, limit, offset int) ([]CryptoDeposit, error) {
+	if userID == "" {
+		return nil, ErrNotFound
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return s.repo.ListDeposits(ctx, userID, symbol, limit, offset)
+}
+
+// Deposit returns one of a customer's credits by id, or ErrNotFound if it belongs to someone
+// else (the owner filter is in the query, so a foreign id never leaks as anything but missing).
+func (s *Service) Deposit(ctx context.Context, userID, id string) (CryptoDeposit, error) {
+	if userID == "" {
+		return CryptoDeposit{}, ErrNotFound
+	}
+	return s.repo.GetDeposit(ctx, userID, id)
+}
+
+// AdminListDeposits GET /admin/crypto/deposits?symbol=&limit=&offset=.
+func (h *Handler) AdminListDeposits(c *gin.Context) {
+	symbol := strings.TrimSpace(c.Query("symbol"))
+	limit, offset := ginutil.LimitOffset(c)
+	ds, err := h.svc.AdminListDeposits(c.Request.Context(), symbol, limit, offset)
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "deposits": ds, "count": len(ds)})
+}
+
+// Deposits GET /crypto/deposits — the customer's own settled credits. Single-payload key
+// (no count) so the mobile client's success-envelope unwrap returns the array directly.
+func (h *Handler) Deposits(c *gin.Context) {
+	symbol := strings.TrimSpace(c.Query("symbol"))
+	limit, offset := ginutil.LimitOffset(c)
+	ds, err := h.svc.Deposits(c.Request.Context(), ginutil.UserID(c), symbol, limit, offset)
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "deposits": ds})
+}
+
+// Deposit GET /crypto/deposits/:id — one of the customer's credits (the mobile receipt).
+func (h *Handler) Deposit(c *gin.Context) {
+	d, err := h.svc.Deposit(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "deposit": d})
+}
