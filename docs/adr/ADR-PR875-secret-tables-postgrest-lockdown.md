@@ -1,4 +1,4 @@
-# ADR-PRXXX: Lock eight more secret-bearing or forgeable tables out of PostgREST
+# ADR-PR875: Lock eight more secret-bearing or forgeable tables out of PostgREST
 
 **Status:** Accepted · **Date:** 2026-10-22 · **Area:** platform security (food, health, academy, transport)
 

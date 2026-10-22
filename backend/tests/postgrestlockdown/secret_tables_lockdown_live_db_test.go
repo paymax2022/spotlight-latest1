@@ -1,7 +1,7 @@
 package postgrestlockdown_test
 
-// LIVE-DB grant test for the second PostgREST lockdown wave (ADR-PRXXX, see
-// docs/adr/ADR-PRXXX-secret-tables-postgrest-lockdown.md; first wave ADR-PR858). Supabase's
+// LIVE-DB grant test for the second PostgREST lockdown wave (ADR-PR875, see
+// docs/adr/ADR-PR875-secret-tables-postgrest-lockdown.md; first wave ADR-PR858). Supabase's
 // default grants gave anon and authenticated every privilege on these tables,
 // and RLS limits rows, not columns. Over /rest/v1 with an ordinary user JWT:
 //   - orders: the rider (orders_select includes rider_id = auth.uid()) read

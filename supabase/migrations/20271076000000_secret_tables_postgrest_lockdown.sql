@@ -1,4 +1,4 @@
--- ADR-PRXXX: second PostgREST lockdown wave (first wave: ADR-PR858).
+-- ADR-PR875: second PostgREST lockdown wave (first wave: ADR-PR858).
 --
 -- Supabase's default grants gave anon and authenticated every table privilege
 -- on these tables, and RLS limits rows, not columns. Over /rest/v1 with an
