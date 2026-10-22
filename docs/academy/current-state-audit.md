@@ -133,7 +133,7 @@ and the score are computed server-side; the attempt row stores an immutable
 
 ## 4. Persistence and migration compatibility matrix
 
-New migration: `supabase/migrations/20271070000000_academy_film_assessment.sql`
+New migration: `supabase/migrations/20271085000000_academy_film_assessment.sql`
 (additive-only; verified against the migration-guard rules).
 
 | Object | Created by | This slice | K-12 engine impact | Notes |

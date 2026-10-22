@@ -52,7 +52,7 @@ func estateDelegationPool(t *testing.T) *pgxpool.Pool {
 			t.Fatalf("check table %s: %v", tbl, err)
 		}
 		if !exists {
-			t.Skipf("migration 20271072000000_estate_delegation.sql not applied to the test DB — skipping (no false pass)")
+			t.Skipf("migration 20271087000000_estate_delegation.sql not applied to the test DB — skipping (no false pass)")
 		}
 	}
 	return pool

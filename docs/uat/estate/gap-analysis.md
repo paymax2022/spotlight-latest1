@@ -102,7 +102,7 @@ code; nothing removed or renamed.
 
 **Built (code, compiles clean — `go build ./...`, `go vet ./internal/estate/...` pass):**
 
-- Migration `20271072000000_estate_delegation.sql` — `estate_staff_grants` (7
+- Migration `20271087000000_estate_delegation.sql` — `estate_staff_grants` (7
   scoped officer roles, expiring/revocable, `estate_admin` deliberately excluded),
   `visitor_access_codes.{require_host_approval,gate_id}`, `visitor_arrival_requests`,
   and the `estate_management` onboarding seed the creation gate checks against.
@@ -128,7 +128,7 @@ code; nothing removed or renamed.
   expiry-deny, guard-authz-on-checkin, arrival gating approve/decline, arrival
   decision authz, full E2E journey). **PASS** against the local Supabase stack
   (`postgresql://…@127.0.0.1:54322/postgres`) with migration
-  `20271072000000_estate_delegation.sql` applied; ledger row repaired as applied.
+  `20271087000000_estate_delegation.sql` applied; ledger row repaired as applied.
   - The live run surfaced and fixed two bugs the DB-free pass could not:
     (a) `RequestArrival` INSERT bound `gate_id` as text → Postgres rejected the
     uuid column; corrected to `NULLIF($5,'')::uuid`.

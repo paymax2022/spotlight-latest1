@@ -69,7 +69,7 @@ stays in the service because RLS is bypassed.
 - **Verification is split and honest.** The 8 DB-free domain tests
   (`delegation_test.go`) pass. The 10 live-DB tests (`delegation_live_db_test.go`)
   — including the concurrent single-use race and the full E2E journey — pass against
-  the local Supabase stack with migration `20271072000000` applied. The live run
+  the local Supabase stack with migration `20271087000000` applied. The live run
   surfaced two bugs the DB-free pass could not: a `gate_id` cast miss in
   `RequestArrival` (text → uuid), and a nullable-scan miss in `ListEstates`
   (`estates.address` now `COALESCE`d). Both are fixed. Wider packages `app`,

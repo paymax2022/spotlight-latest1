@@ -40,7 +40,7 @@ Schema pre-check (read-only `to_regclass`): `ledger_accounts`, `crypto_swaps`,
 
 ## Command 4 — NEW deposit settlement (GAP-DEP-01 slice 1) built + verified
 Implemented `internal/crypto/deposit` (Settler + PGStore + DBResolver) and additive
-migration `20271071000000_crypto_deposits.sql` (applied to the local dev DB, `CREATE TABLE`
+migration `20271086000000_crypto_deposits.sql` (applied to the local dev DB, `CREATE TABLE`
 only — nothing dropped/reset). Option A realised as a once-only money-IN journal that
 atomically upserts the existing `crypto_holdings` projection (no second balance plane, no
 DDL on `finance/ledger`).

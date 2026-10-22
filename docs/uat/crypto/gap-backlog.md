@@ -15,7 +15,7 @@ persistence + address ownership still blocked (Option A approved 2026-10-21). **
 `Settler` (finality gate, once-only, owner-resolved-from-`crypto_accounts`, positivity) +
 `PGStore` (additive `crypto_deposits` journal, `UNIQUE(provider_op_id)`, atomically upserts
 the existing `crypto_holdings` projection — no second balance plane, no `finance/ledger` DDL)
-+ `DBResolver` + `ConfirmationPolicy`. Migration `20271071000000_crypto_deposits.sql`. 13 tests
++ `DBResolver` + `ConfirmationPolicy`. Migration `20271086000000_crypto_deposits.sql`. 13 tests
 green (8 domain, 5 live-DB) incl. a 16-way concurrent same-op-id race → exactly one credit.
 
 **Progress — Slice 2 DONE (webhook → settle, money-IN reaches the engine):**
