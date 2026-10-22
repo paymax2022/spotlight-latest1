@@ -7,7 +7,7 @@ import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { buildQuote, buildSwapQuote } from '../utils/cryptoFormatters';
 import { unwrapEnvelope } from '../utils/envelope';
-import { getTradingRail, getProviderBalances } from './swaps.api';
+import { getTradingRail, getProviderBalances, getProviderDepositAddress } from './swaps.api';
 import { portfolioFromBalances } from '../utils/providerPortfolio';
 import { getWallet } from '@/api/wallet.api';
 import {
@@ -363,6 +363,19 @@ export async function getDepositAddress(symbol: string, networkId: string): Prom
       minDeposit: { amount: Math.round(10 ** asset.decimals * 0.0001), symbol: asset.symbol },
       confirmations: network.confirmations,
       custodyProvider: 'mock-custody',
+    };
+  }
+  // Provider rail: a real address in the customer's own Quidax account; credited by the
+  // provider itself (the deposit then shows in the portfolio's provider balances).
+  if ((await getTradingRail()) === 'provider') {
+    const asset = (await getAssets()).find((a) => a.symbol === symbol);
+    const network = asset?.supportedNetworks.find((n) => n.id === networkId);
+    const a = await getProviderDepositAddress(symbol, networkId);
+    return {
+      symbol, networkId, networkName: network?.name ?? a.network, address: a.address, memo: a.tag,
+      minDeposit: { amount: 0, symbol }, // the provider publishes no minimum through this API
+      confirmations: network?.confirmations ?? 0,
+      custodyProvider: 'quidax',
     };
   }
   return unwrap<DepositAddress>(await api.get('/api/v1/crypto/deposit-address', { params: { symbol, network: networkId } }));

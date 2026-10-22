@@ -3,6 +3,7 @@ import { View, Text, Pressable, ScrollView, StyleSheet, RefreshControl } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
+import { CryptoStatusBanner } from '@/features/crypto/components';
 import {
   ArrowDownToLine, ArrowUpFromLine, PieChart, Receipt, ChevronRight,
   ShieldAlert, Eye, GraduationCap, Star,
@@ -88,6 +89,7 @@ export default function CryptoHomeScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
       >
         <RemoteBanner slug="crypto-trading" priority style={styles.banner} />
+        <View style={styles.statusBanner}><CryptoStatusBanner /></View>
 
         {portfolio.isLoading || eligibility.isLoading ? (
           <StateView kind="loading" message="Loading your crypto…" />
@@ -227,6 +229,7 @@ export default function CryptoHomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  statusBanner: { marginBottom: Spacing.sm },
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { paddingBottom: Spacing.xxl },
   banner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },

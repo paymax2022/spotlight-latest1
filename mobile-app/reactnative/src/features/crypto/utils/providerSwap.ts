@@ -119,6 +119,8 @@ export function swapErrorMessage(code: string | null, side: SwapSide): string {
     case 'not_found': return 'We could not find this order.';
     case 'invalid_request': return 'Check the amount and try again.';
     case 'provider_unavailable': return 'Our crypto partner is unavailable right now. Try again shortly.';
+    case 'trading_paused': return 'Crypto trading is paused for maintenance, so nothing was charged. Try again later.';
+    case 'market_disabled': return 'Trading in this coin is paused, so nothing was charged. You can still trade other coins.';
     default: return `We couldn't complete this ${verb}. Check your transaction history before trying again.`;
   }
 }
@@ -158,7 +160,7 @@ export function isRefusedBeforeExecution(code: string | null): boolean {
   return code !== null && [
     'pin_invalid', 'pin_required', 'pin_not_set', 'step_up_unavailable', 'quote_expired',
     'insufficient_funds', 'limit_exceeded', 'trading_not_allowed', 'rate_limited',
-    'idempotency_conflict', 'not_found', 'invalid_request',
+    'idempotency_conflict', 'not_found', 'invalid_request', 'trading_paused', 'market_disabled',
   ].includes(code);
 }
 
@@ -200,4 +202,20 @@ function defaultRand(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
   if (c?.randomUUID) return c.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+// ── deposits on the provider rail ───────────────────────────────────────────
+
+/** The app's network ids, in the provider's vocabulary. Unknown ids pass through lower-cased. */
+const PROVIDER_NETWORK: Record<string, string> = {
+  tron: 'trc20', ethereum: 'erc20', bsc: 'bep20', 'bnb-smart-chain': 'bep20', bitcoin: 'btc', solana: 'sol', xrpl: 'xrp',
+};
+export function providerNetwork(appNetworkId: string): string {
+  const id = appNetworkId.trim().toLowerCase();
+  return PROVIDER_NETWORK[id] ?? id;
+}
+
+/** True while the provider is still generating the address (HTTP 202 address_pending). */
+export function isAddressPending(err: unknown): boolean {
+  return swapErrorCode(err) === 'address_pending';
 }

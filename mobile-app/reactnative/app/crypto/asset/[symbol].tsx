@@ -17,7 +17,9 @@ import { PriceChange } from '@/features/crypto/components';
 import { RiskBadge } from '@/features/crypto/components';
 import { CryptoSparkline } from '@/features/crypto/components';
 import { VolatilityWarning } from '@/features/crypto/components';
-import { useAsset, useChart, useWatchlist, useToggleWatchlist } from '@/features/crypto/hooks/useCrypto';
+import { useAsset, useChart, useCryptoStatus, useWatchlist, useToggleWatchlist } from '@/features/crypto/hooks/useCrypto';
+import { tradeAvailability } from '@/features/crypto/utils/cryptoStatus';
+import { CryptoStatusBanner } from '@/features/crypto/components';
 import { formatFiatObj, formatFiatCompact, formatPct } from '@/features/crypto/utils/cryptoFormatters';
 import { CHART_RANGES, NO_ADVICE_DISCLOSURE } from '@/features/crypto/constants/crypto.constants';
 import type { ChartRange } from '@/features/crypto/types/crypto.types';
@@ -25,6 +27,7 @@ import type { ChartRange } from '@/features/crypto/types/crypto.types';
 export default function AssetDetailScreen() {
   const { symbol } = useLocalSearchParams<{ symbol: string }>();
   const asset = useAsset(symbol);
+  const status = useCryptoStatus();
   const [range, setRange] = useState<ChartRange>('1D');
   const chart = useChart(symbol, range);
   const watchlist = useWatchlist();
@@ -51,7 +54,8 @@ export default function AssetDetailScreen() {
   }
 
   const a = asset.data;
-  const tradable = a.status === 'active' && a.buyEnabled;
+  const avail = tradeAvailability(status.data ?? null, a);
+  const tradable = avail.canBuy || avail.canSell;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -113,15 +117,13 @@ export default function AssetDetailScreen() {
           <Stat label="Min order" value={formatFiatObj(a.price.amount > 0 ? { amount: a.minOrderAmount, currency: a.price.currency } : a.price)} />
         </View>
 
-        {/* Product-unavailable state */}
-        {!tradable ? (
+        <CryptoStatusBanner />
+
+        {/* Why trading is off for this asset (admin pause, market switch, delisting) */}
+        {avail.tradeReason ? (
           <View style={styles.unavailable}>
             <Ban size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
-            <Text style={styles.unavailableText}>
-              {a.status === 'delisted'
-                ? `${a.symbol} has been delisted and is no longer tradable on Paymax.`
-                : `Trading for ${a.symbol} is temporarily paused. You can still track its price here.`}
-            </Text>
+            <Text style={styles.unavailableText}>{avail.tradeReason}</Text>
           </View>
         ) : null}
 
@@ -171,11 +173,12 @@ export default function AssetDetailScreen() {
       <SafeAreaView edges={['bottom']} style={styles.footer}>
         {tradable ? (
           <View style={styles.footerRow}>
-            <PrimaryButton label="Sell" variant="secondary" onPress={() => router.push({ pathname: '/crypto/sell', params: { symbol: a.symbol } })} style={styles.footerBtn} />
-            <PrimaryButton label="Buy" onPress={() => router.push({ pathname: '/crypto/buy', params: { symbol: a.symbol } })} style={styles.footerBtn} />
+            {avail.canSell ? <PrimaryButton label="Sell" variant="secondary" onPress={() => router.push({ pathname: '/crypto/sell', params: { symbol: a.symbol } })} style={styles.footerBtn} /> : null}
+            {avail.canBuy ? <PrimaryButton label="Buy" onPress={() => router.push({ pathname: '/crypto/buy', params: { symbol: a.symbol } })} style={styles.footerBtn} /> : null}
           </View>
         ) : (
-          <PrimaryButton label="Trading unavailable" onPress={() => {}} disabled />
+          // Not a dead button: the useful thing to do while trading is off is to watch the price.
+          <PrimaryButton label="Set a price alert" variant="secondary" onPress={() => router.push({ pathname: '/crypto/alerts/new', params: { symbol: a.symbol } })} />
         )}
       </SafeAreaView>
     </SafeAreaView>

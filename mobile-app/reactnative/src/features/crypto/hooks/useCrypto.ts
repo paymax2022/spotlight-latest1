@@ -5,6 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as crypto from '../api/crypto.api';
 import * as swaps from '../api/swaps.api';
+import { isAddressPending } from '../utils/providerSwap';
 import { newIdempotencyKey } from '../utils/cryptoFormatters';
 import type {
   ChartRange,
@@ -121,6 +122,9 @@ export function useDepositAddress(symbol?: string, networkId?: string) {
     queryFn: () => crypto.getDepositAddress(symbol as string, networkId as string),
     enabled: Boolean(symbol && networkId),
     staleTime: 5 * 60_000,
+    // The provider may still be generating a new address (202): keep asking for ~1 minute.
+    retry: (n: number, err: unknown) => (isAddressPending(err) ? n < 12 : n < 1),
+    retryDelay: (n: number) => Math.min(8_000, 2_000 + n * 1_000),
   });
 }
 
@@ -228,4 +232,9 @@ export function useConfirmProviderSwap() {
       qc.invalidateQueries({ queryKey: [KEY, 'transactions'] });
     },
   });
+}
+
+/** Operational controls (pause, kill switch, switched-off markets, banner). Refreshes each minute. */
+export function useCryptoStatus() {
+  return useQuery({ queryKey: [KEY, 'status'], queryFn: () => swaps.getCryptoStatus(), staleTime: 30_000, refetchInterval: 60_000 });
 }

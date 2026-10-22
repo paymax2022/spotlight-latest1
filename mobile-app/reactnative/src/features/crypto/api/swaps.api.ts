@@ -9,7 +9,8 @@
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { unwrapEnvelope } from '../utils/envelope';
-import { parseSwap, newSwapKey, swapErrorCode, isUnmountedRoute404, type ProviderSwap, type SwapSide } from '../utils/providerSwap';
+import { parseSwap, newSwapKey, swapErrorCode, isUnmountedRoute404, providerNetwork, type ProviderSwap, type SwapSide } from '../utils/providerSwap';
+import { parseStatus, type StatusRead } from '../utils/cryptoStatus';
 
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CRYPTO_USE_MOCK, true);
 
@@ -107,6 +108,41 @@ export async function getProviderSwap(id: string): Promise<ProviderSwap> {
   } catch (err) {
     throw toSwapError(err);
   }
+}
+
+/**
+ * The operational controls (GET /crypto/status). null = this backend has no status route
+ * (older deploy: behave as before); 'unknown' = it exists but can't be read right now — the
+ * server refuses trades and withdrawals then, so the app says so instead of offering them.
+ */
+export async function getCryptoStatus(): Promise<StatusRead> {
+  if (USE_MOCK) return null;
+  try {
+    return parseStatus(unwrapEnvelope((await api.get('/api/v1/crypto/status')).data));
+  } catch (err) {
+    if (isUnmountedRoute404(err)) return null;
+    return 'unknown';
+  }
+}
+
+export interface ProviderDepositAddress { asset: string; network: string; address: string; tag?: string }
+
+/**
+ * The customer's deposit address in their provider account (provisioned on first use, then
+ * stable). The server answers 202 address_pending while the provider generates it; that is
+ * surfaced as a SwapApiError with swapCode 'address_pending' so the caller can retry.
+ */
+export async function getProviderDepositAddress(symbol: string, appNetworkId: string): Promise<ProviderDepositAddress> {
+  let res;
+  try {
+    res = await api.get('/api/v1/crypto/swaps/deposit-address', { params: { asset: symbol, network: providerNetwork(appNetworkId) } });
+  } catch (err) {
+    throw toSwapError(err);
+  }
+  if (res.status === 202) throw new SwapApiError('Your address is still being generated', 'address_pending', 202);
+  const d = unwrapEnvelope<Record<string, unknown>>(res.data);
+  if (!d || typeof d.address !== 'string' || !d.address) throw new SwapApiError('Malformed deposit address', null, res.status);
+  return { asset: String(d.asset ?? symbol), network: String(d.network ?? ''), address: d.address, tag: typeof d.tag === 'string' && d.tag ? d.tag : undefined };
 }
 
 export type { ProviderSwap, SwapSide };

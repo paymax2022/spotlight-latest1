@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Copy, Share2, TriangleAlert } from 'lucide-react-native';
@@ -15,7 +15,18 @@ import { AssetIcon } from '@/features/crypto/components';
 import { useAssets, useDepositAddress } from '@/features/crypto/hooks/useCrypto';
 import { formatCrypto } from '@/features/crypto/utils/cryptoFormatters';
 import { copyText } from '@/features/crypto/utils/clipboard';
+import { isAddressPending } from '@/features/crypto/utils/providerSwap';
 import { DEPOSIT_DISCLOSURE } from '@/features/crypto/constants/crypto.constants';
+
+/** Opens the system share sheet; where there is none (web), copies instead and says so. */
+async function shareAddress(symbol: string, network: string, address: string, memo?: string) {
+  const message = `My ${symbol} deposit address (${network}): ${address}${memo ? `\nMemo/tag: ${memo}` : ''}`;
+  try {
+    await Share.share({ message });
+  } catch {
+    copyText(address, `${symbol} deposit address`);
+  }
+}
 
 export default function DepositScreen() {
   const params = useLocalSearchParams<{ symbol?: string }>();
@@ -86,10 +97,12 @@ export default function DepositScreen() {
         </View>
 
         {/* Address + QR */}
-        {deposit.isLoading || !d ? (
-          <StateView kind="loading" message="Generating your address…" />
-        ) : deposit.isError ? (
-          <StateView kind="error" title="Couldn't load address" message="Please try again." actionLabel="Retry" onAction={() => deposit.refetch()} />
+        {deposit.isError ? (
+          <StateView kind="error" title="Couldn't get your address"
+            message={isAddressPending(deposit.error) ? 'Your address is still being created. Try again in a minute.' : 'Check your connection and try again.'}
+            actionLabel="Try again" onAction={() => deposit.refetch()} />
+        ) : deposit.isLoading || !d ? (
+          <StateView kind="loading" message="Getting your deposit address…" />
         ) : (
           <>
             <View style={styles.qrWrap}>
@@ -104,7 +117,7 @@ export default function DepositScreen() {
                   <Copy size={16} color={Colors.secondary} strokeWidth={2} />
                   <Text style={styles.actionText}>Copy</Text>
                 </Pressable>
-                <Pressable style={styles.actionBtn} onPress={() => copyText(d.address, `${d.symbol} deposit address`)} accessibilityRole="button" accessibilityLabel="Share address">
+                <Pressable style={styles.actionBtn} onPress={() => void shareAddress(d.symbol, d.networkName, d.address, d.memo)} accessibilityRole="button" accessibilityLabel="Share address">
                   <Share2 size={16} color={Colors.secondary} strokeWidth={2} />
                   <Text style={styles.actionText}>Share</Text>
                 </Pressable>
@@ -126,7 +139,7 @@ export default function DepositScreen() {
 
             {/* Meta */}
             <View style={styles.metaCard}>
-              <Meta label="Minimum deposit" value={formatCrypto(d.minDeposit.amount, d.symbol, selected.decimals)} />
+              {d.minDeposit.amount > 0 ? <Meta label="Minimum deposit" value={formatCrypto(d.minDeposit.amount, d.symbol, selected.decimals)} /> : null}
               <Meta label="Credited after" value={`${d.confirmations} confirmations`} />
             </View>
 
