@@ -182,9 +182,10 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 	// Owner-scope the destination account: a merchant may only withdraw to their
 	// OWN saved bank account (owner-scoping / prevents cross-tenant payout).
 	var acctVerified bool
+	var nameStatus *string
 	if err := s.db.QueryRow(ctx,
-		`SELECT is_verified FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`,
-		in.BankAccountID, ownerID).Scan(&acctVerified); err != nil {
+		`SELECT is_verified, name_match_status FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`,
+		in.BankAccountID, ownerID).Scan(&acctVerified, &nameStatus); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrWithdrawNoBankAccount
 		}
@@ -193,6 +194,11 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 	// FOOD-UAT-B-003: only a name-enquiry-verified destination may receive money.
 	if !acctVerified {
 		return nil, ErrBankAccountUnverified
+	}
+	// With name matching on, the holder name must have been checked (or an admin
+	// approved it); an account verified before matching existed must be re-added.
+	if s.nameMatchOn && (nameStatus == nil || (*nameStatus != NameMatchMatched && *nameStatus != NameMatchApproved)) {
+		return nil, ErrBankAccountNameUnchecked
 	}
 
 	// KYB gate (FOOD-UAT-F-004, fail-closed): a merchant whose business
@@ -718,14 +724,18 @@ func (s *Service) scanWithdrawal(row rowScanner) (*Withdrawal, error) {
 // masked to the last 4 digits on read — the full value is stored only for a
 // future disbursement and never returned to clients.
 type BankAccount struct {
-	ID                  string    `json:"id"`
-	BankName            string    `json:"bank_name"`
-	BankCode            string    `json:"bank_code"`
-	AccountNumberMasked string    `json:"account_number_masked"`
-	AccountName         string    `json:"account_name"`
-	IsVerified          bool      `json:"is_verified"`
-	IsDefault           bool      `json:"is_default"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                  string `json:"id"`
+	BankName            string `json:"bank_name"`
+	BankCode            string `json:"bank_code"`
+	AccountNumberMasked string `json:"account_number_masked"`
+	AccountName         string `json:"account_name"`
+	IsVerified          bool   `json:"is_verified"`
+	IsDefault           bool   `json:"is_default"`
+	// NameMatchStatus is set when payout-account name matching ran: matched,
+	// review (held — withdrawals refused until an admin decides), admin_approved
+	// or admin_rejected. Empty when it did not run.
+	NameMatchStatus string    `json:"name_match_status,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // AddBankAccountRequest is the body for saving a settlement account.
@@ -817,6 +827,17 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 	bankName := strings.TrimSpace(req.BankName)
 	accountName := strings.TrimSpace(req.AccountName)
 
+	// Name matching: the names this payout account may be held under. Read
+	// before any write, so an owner with no verified identity writes nothing.
+	var identity payoutIdentity
+	if s.nameMatchOn {
+		id, err := s.payoutIdentityFor(ctx, ownerID)
+		if err != nil {
+			return nil, err
+		}
+		identity = id
+	}
+
 	// Attempt verification against the provider (Paystack, etc.). If the provider
 	// is wired and the call succeeds, use the authoritative account name from the
 	// provider and set is_verified=true. If the call fails (network, invalid account,
@@ -824,10 +845,18 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 	// with is_verified=false.
 	isVerified := false
 	verifiedAccountName := accountName
+	var nameStatus *string
+	var nameScore *int
 	if s.disbursement != nil {
 		if resolution, err := s.disbursement.ResolveAccount(ctx, bankCode, acct); err == nil {
 			isVerified = true
 			verifiedAccountName = resolution.AccountName
+			if s.nameMatchOn {
+				// The bank's holder name must belong to the owner or their approved
+				// business; otherwise the account is held for review, not verified.
+				v, st, sc := nameMatchVerdict(resolution.AccountName, identity, s.nameAutoVerify)
+				isVerified, nameStatus, nameScore = v, &st, &sc
+			}
 		} else {
 			// Soft-fail: log the error but proceed with the add. Customers can still
 			// add accounts when the provider is unreachable (allows offline onboarding).
@@ -840,19 +869,25 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 		return nil, err
 	}
 	if _, err := s.db.Exec(ctx, `
-		INSERT INTO restaurant_bank_accounts (user_id, bank_name, bank_code, account_number, account_name, is_verified, is_default)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
-		ON CONFLICT (user_id, bank_code, account_number) DO NOTHING`,
-		ownerID, bankName, bankCode, acct, verifiedAccountName, isVerified, count == 0); err != nil {
+		INSERT INTO restaurant_bank_accounts (user_id, bank_name, bank_code, account_number, account_name, is_verified, is_default, name_match_status, name_match_score)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT (user_id, bank_code, account_number) DO UPDATE SET
+			account_name = EXCLUDED.account_name, is_verified = EXCLUDED.is_verified,
+			name_match_status = EXCLUDED.name_match_status, name_match_score = EXCLUDED.name_match_score,
+			updated_at = now()
+		-- Re-adding only ever re-checks an account saved before name matching ran
+		-- (status NULL); a decided or matched row is left exactly as it is.
+		WHERE restaurant_bank_accounts.name_match_status IS NULL AND EXCLUDED.name_match_status IS NOT NULL`,
+		ownerID, bankName, bankCode, acct, verifiedAccountName, isVerified, count == 0, nameStatus, nameScore); err != nil {
 		return nil, err
 	}
 
 	var b BankAccount
 	var num string
 	if err := s.db.QueryRow(ctx, `
-		SELECT id, bank_name, bank_code, account_number, account_name, is_verified, is_default, created_at
+		SELECT id, bank_name, bank_code, account_number, account_name, is_verified, is_default, COALESCE(name_match_status, ''), created_at
 		FROM restaurant_bank_accounts WHERE user_id=$1 AND bank_code=$2 AND account_number=$3`,
-		ownerID, bankCode, acct).Scan(&b.ID, &b.BankName, &b.BankCode, &num, &b.AccountName, &b.IsVerified, &b.IsDefault, &b.CreatedAt); err != nil {
+		ownerID, bankCode, acct).Scan(&b.ID, &b.BankName, &b.BankCode, &num, &b.AccountName, &b.IsVerified, &b.IsDefault, &b.NameMatchStatus, &b.CreatedAt); err != nil {
 		return nil, err
 	}
 	b.AccountNumberMasked = maskAccountNumber(num)
@@ -861,7 +896,8 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 	if s.audit != nil {
 		s.audit.LogAction(ownerID, "", "restaurant.bank_account.added", "restaurant", "restaurant_bank_account", b.ID,
 			nil,
-			map[string]any{"bank_code": b.BankCode, "account_number_masked": b.AccountNumberMasked, "is_verified": b.IsVerified, "is_default": b.IsDefault},
+			map[string]any{"bank_code": b.BankCode, "account_number_masked": b.AccountNumberMasked, "is_verified": b.IsVerified, "is_default": b.IsDefault,
+				"name_match_status": b.NameMatchStatus, "name_match_score": nameScore},
 			"", "", "warning")
 	}
 	s.notify(ctx, Notification{
@@ -870,13 +906,21 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 		Body:  fmt.Sprintf("%s %s was added for payouts. If this wasn't you, contact support immediately.", b.BankName, b.AccountNumberMasked),
 		Data:  map[string]any{"bank_account_id": b.ID},
 	})
+	if b.NameMatchStatus == NameMatchReview {
+		s.notify(ctx, Notification{
+			UserID: ownerID, Event: EventBankAccountAdded,
+			Title: "Payout bank account under review",
+			Body:  "The name on this account does not match your verified identity or business name, so it can't receive withdrawals until our team reviews it.",
+			Data:  map[string]any{"bank_account_id": b.ID, "name_match_status": b.NameMatchStatus},
+		})
+	}
 	return &b, nil
 }
 
 // ListBankAccounts returns the caller's saved accounts (default first), masked.
 func (s *Service) ListBankAccounts(ctx context.Context, ownerID string) ([]BankAccount, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, bank_name, bank_code, account_number, account_name, is_verified, is_default, created_at
+		SELECT id, bank_name, bank_code, account_number, account_name, is_verified, is_default, COALESCE(name_match_status, ''), created_at
 		FROM restaurant_bank_accounts WHERE user_id=$1 ORDER BY is_default DESC, created_at DESC`, ownerID)
 	if err != nil {
 		return nil, err
@@ -886,7 +930,7 @@ func (s *Service) ListBankAccounts(ctx context.Context, ownerID string) ([]BankA
 	for rows.Next() {
 		var b BankAccount
 		var num string
-		if err := rows.Scan(&b.ID, &b.BankName, &b.BankCode, &num, &b.AccountName, &b.IsVerified, &b.IsDefault, &b.CreatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.BankName, &b.BankCode, &num, &b.AccountName, &b.IsVerified, &b.IsDefault, &b.NameMatchStatus, &b.CreatedAt); err != nil {
 			return nil, err
 		}
 		b.AccountNumberMasked = maskAccountNumber(num)

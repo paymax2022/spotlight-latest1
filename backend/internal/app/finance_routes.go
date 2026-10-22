@@ -1630,11 +1630,22 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// until that gap is closed.
 			WithWithdrawals(cfg.FeatureRestaurantWithdrawalsEnabled)
 
-		// Wire the Paystack disbursement provider for real-time bank account
-		// verification on AddBankAccount (soft-fail if provider unavailable).
-		if paystackDisb != nil {
-			restaurantSvc = restaurantSvc.WithDisbursementProvider(paystackDisb)
+		// Real-time bank account verification on AddBankAccount (soft-fail if no
+		// provider answers).
+		// Bank name-enquiry for payout accounts: Monnify first, Paystack as the
+		// fallback (only configured clients — see nameEnquiryResolver).
+		if nameEnquiry := newNameEnquiryResolver(monnifyDisb, paystackDisb); nameEnquiry != nil {
+			restaurantSvc = restaurantSvc.WithDisbursementProvider(nameEnquiry)
 		}
+		// Payout-account holder name must match the owner's verified identity
+		// (FEATURE_BANK_ACCOUNT_NAME_MATCH, default off). A match only verifies the
+		// account automatically while the KYC ownership gate is on — without it a
+		// passed BVN/NIN need not be the caller's own — so with the gate off every
+		// new account is held for admin review instead.
+		if cfg.FeatureBankAccountNameMatch && !cfg.FeatureKYCOwnershipGate {
+			log.Println("[restaurant] bank-account name match ON but FEATURE_KYC_OWNERSHIP_GATE off — every new payout account will be held for review")
+		}
+		restaurantSvc = restaurantSvc.WithBankNameMatch(cfg.FeatureBankAccountNameMatch, cfg.FeatureKYCOwnershipGate, kycverify.NewRepository(pool))
 
 		// Backend-owned presigned R2 uploads for KYB documents, attached to the
 		// service so it both mints owner upload URLs and signs stored keys back into
@@ -1993,6 +2004,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Same idempotent DispatchOrder underneath; RBAC is the boundary.
 		restAdmin.POST("/orders/:id/dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminRedispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
+		// Payout accounts held because the holder name did not match (FEATURE_BANK_ACCOUNT_NAME_MATCH).
+		restAdmin.GET("/bank-accounts/held", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListHeldBankAccounts)
+		restAdmin.POST("/bank-accounts/:id/name-match", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideBankAccountName)
 		// Review moderation (FOOD-UAT-G-003).
 		restAdmin.GET("/reviews", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminListReviews)
 		restAdmin.POST("/reviews/:id/hide", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminHideReview)
@@ -2859,10 +2873,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		doctorSvc := doctor.NewService(pool, ledgerSvc, tiersSvc, redisClient).WithRealtime(rtcIssuer, doctorHub)
 
-		// Wire the Paystack disbursement provider for real-time bank account
-		// verification on CreateBankAccount (soft-fail if provider unavailable).
-		if paystackDisb != nil {
-			doctorSvc = doctorSvc.WithDisbursementProvider(paystackDisb)
+		// Real-time bank account verification on CreateBankAccount (soft-fail if
+		// no provider answers): Monnify first, Paystack as the fallback.
+		if nameEnquiry := newNameEnquiryResolver(monnifyDisb, paystackDisb); nameEnquiry != nil {
+			doctorSvc = doctorSvc.WithDisbursementProvider(nameEnquiry)
 		}
 
 		// Central Commission & Profit registry: record realized Spotlight profit at the
