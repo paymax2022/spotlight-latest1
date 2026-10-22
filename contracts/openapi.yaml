@@ -16678,7 +16678,7 @@ paths:
                   is_default: { type: boolean }
                   name_match_status: { type: string, enum: [matched, review, admin_approved, admin_rejected], description: Absent when name matching did not run }
                   created_at: { type: string, format: date-time }
-        '400': { description: Invalid account number, or transaction PIN missing }
+        '400': { description: "Invalid account number, or transaction PIN missing" }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Transaction PIN verification failed }
         '422': { description: The owner has no verified identity (BVN or NIN) yet }
