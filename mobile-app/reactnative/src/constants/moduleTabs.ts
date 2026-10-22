@@ -33,6 +33,7 @@ export const FILM_ACADEMY_TABS: readonly ModuleTab[] = [
   { href: '/film-academy',             label: 'Overview',    icon: GraduationCap },
   { href: '/film-academy/learn',       label: 'Learn',       icon: BookOpen },
   { href: '/film-academy/assignments', label: 'Assignments', icon: ClipboardList },
+  { href: '/film-academy/exams',       label: 'Exams',       icon: FileText },
   { href: '/film-academy/tuition',     label: 'Tuition',     icon: Wallet },
 ] as const;
 
