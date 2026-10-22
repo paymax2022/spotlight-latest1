@@ -150,11 +150,47 @@ export function compareUnits(a: string, b: string): number {
   return fa === fb ? 0 : fa < fb ? -1 : 1;
 }
 
-// ── one-shot PIN hand-off (review → processing), never through route params ──
+/**
+ * Refusals the server makes BEFORE any money moves or the provider is asked. Only these
+ * may be shown as "nothing was charged"; any other failure has an unknown outcome.
+ */
+export function isRefusedBeforeExecution(code: string | null): boolean {
+  return code !== null && [
+    'pin_invalid', 'pin_required', 'pin_not_set', 'step_up_unavailable', 'quote_expired',
+    'insufficient_funds', 'limit_exceeded', 'trading_not_allowed', 'rate_limited',
+    'idempotency_conflict', 'not_found', 'invalid_request',
+  ].includes(code);
+}
 
-let pendingPin: string | null = null;
-export function setSwapPin(pin: string): void { pendingPin = pin ? pin : null; }
-export function takeSwapPin(): string | null { const p = pendingPin; pendingPin = null; return p; }
+/**
+ * True only for the Go API's own "no such route" 404 (`{"error":"No API route matches …"}`),
+ * which means the provider pipeline is not mounted. Any other 404 (a proxy or edge page) is
+ * NOT proof of the legacy rail and must not switch a trade to it.
+ */
+export function isUnmountedRoute404(err: unknown): boolean {
+  const e = err as { response?: { status?: number; data?: { error?: unknown } } } | undefined;
+  const msg = e?.response?.data?.error;
+  return e?.response?.status === 404 && typeof msg === 'string' && msg.startsWith('No API route matches');
+}
+
+// ── one-shot PIN hand-off (review → processing), never through route params ──
+// Bound to ONE swap and side, and short-lived: a PIN left behind by an abandoned flow can
+// never confirm a different (or later) swap.
+
+export const SWAP_PIN_TTL_MS = 60_000;
+let pendingPin: { pin: string; swapId: string; side: SwapSide; at: number } | null = null;
+
+export function setSwapPin(pin: string, swapId: string, side: SwapSide, now: number = Date.now()): void {
+  pendingPin = pin && swapId ? { pin, swapId, side, at: now } : null;
+}
+/** Consume the PIN for exactly this swap/side; anything else (or a stale PIN) is discarded. */
+export function takeSwapPin(swapId: string, side: SwapSide, now: number = Date.now()): string | null {
+  const p = pendingPin;
+  pendingPin = null;
+  if (!p || p.swapId !== swapId || p.side !== side || now - p.at > SWAP_PIN_TTL_MS) return null;
+  return p.pin;
+}
+export function clearSwapPin(): void { pendingPin = null; }
 
 /** A fresh Idempotency-Key for one quote request (a re-quote gets a new one). */
 export function newSwapKey(rand: () => string = defaultRand): string {

@@ -18,8 +18,8 @@ import { getProviderSwap } from '../api/swaps.api';
 import { formatFiat } from '../utils/cryptoFormatters';
 import { quoteInputFor, unitsToMinor } from '../utils/providerPortfolio';
 import {
-  POLL_BUDGET_MS, isSwapPinError, phaseOf, pollDelayMs, setSwapPin, swapErrorCode, swapErrorMessage,
-  takeSwapPin, type ProviderSwap, type SwapSide,
+  POLL_BUDGET_MS, clearSwapPin, isRefusedBeforeExecution, isSwapPinError, phaseOf, pollDelayMs, setSwapPin,
+  swapErrorCode, swapErrorMessage, takeSwapPin, type ProviderSwap, type SwapSide,
 } from '../utils/providerSwap';
 import type { AmountBasis } from '../types/crypto.types';
 
@@ -68,6 +68,7 @@ export function ProviderTradeReview({ side, symbol, basis, amount, pinError: ini
   }, [asset.data, fetchQuote]);
 
   const onExpire = useCallback(() => setExpired(true), []);
+  useEffect(() => () => clearSwapPin(), []); // leaving review drops any PIN not yet used
   const verb = verbOf(side);
   const header = <ScreenHeader title="Review order" subtitle={`${verb} ${symbol}`} />;
 
@@ -103,7 +104,7 @@ export function ProviderTradeReview({ side, symbol, basis, amount, pinError: ini
     if (expired) { setPin(''); fetchQuote(); return; }
     if (!/^\d{4}$/.test(pin)) { setPinError('Enter your 4-digit transaction PIN.'); return; }
     setPinError(undefined);
-    setSwapPin(pin);
+    setSwapPin(pin, swap.id, side); // bound to this swap and side, short-lived
     setPin('');
     router.push({ pathname: `/crypto/${side}/processing`, params: { symbol, basis, amount, swapId: swap.id } });
   };
@@ -203,6 +204,7 @@ export function RailGate({ title, provider, legacy }: { title: string; provider:
 
 type Outcome =
   | { kind: 'working' }
+  | { kind: 'unknown' }
   | { kind: 'pending'; swap: ProviderSwap }
   | { kind: 'review'; swap: ProviderSwap };
 
@@ -211,6 +213,11 @@ export function ProviderTradeProcessing({ side, symbol, basis, amount, swapId }:
   const confirmM = useConfirmProviderSwap();
   const [outcome, setOutcome] = useState<Outcome>({ kind: 'working' });
   const fired = useRef(false);
+  // Take the PIN on the FIRST render, for this exact swap and side, so it never lingers.
+  const pinRef = useRef<string | null | undefined>(undefined);
+  if (pinRef.current === undefined) pinRef.current = takeSwapPin(swapId, side);
+  const decimalsRef = useRef(8);
+  if (asset.data) decimalsRef.current = asset.data.decimals;
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -221,7 +228,7 @@ export function ProviderTradeProcessing({ side, symbol, basis, amount, swapId }:
   const finish = useCallback((sw: ProviderSwap) => {
     const phase = phaseOf(sw.status);
     if (phase === 'done') {
-      const decimals = asset.data?.decimals ?? 8;
+      const decimals = decimalsRef.current;
       const cryptoUnits = side === 'buy' ? (sw.receivedAmount ?? sw.quotedAmount) : (sw.amount ?? '0');
       const ngn = side === 'buy' ? sw.totalKobo : sw.ngnKobo - sw.feeKobo;
       router.replace({
@@ -246,7 +253,7 @@ export function ProviderTradeProcessing({ side, symbol, basis, amount, swapId }:
     }
     if (phase === 'review') { setOutcome({ kind: 'review', swap: sw }); return true; }
     return false;
-  }, [asset.data, side, symbol, basis, amount]);
+  }, [side, symbol, basis, amount]);
 
   const follow = useCallback(async (sw: ProviderSwap) => {
     if (finish(sw)) return;
@@ -264,29 +271,54 @@ export function ProviderTradeProcessing({ side, symbol, basis, amount, swapId }:
   }, [finish]);
 
   useEffect(() => {
-    if (fired.current || !asset.data) return;
+    if (fired.current) return;
     fired.current = true;
-    const pin = takeSwapPin();
-    if (!pin) { backToReview(); return; } // reload / deep link: never confirm without a fresh PIN
+    const pin = pinRef.current;
+    pinRef.current = null;
+    if (!pin) { backToReview(); return; } // reload / deep link / stale: never confirm without a fresh PIN
     confirmM.mutate({ id: swapId, pin }, {
       onSuccess: (sw) => { void follow(sw); },
       onError: async (err) => {
         const code = swapErrorCode(err);
         if (isSwapPinError(code)) { backToReview(swapErrorMessage(code, side)); return; }
-        // The confirm may have reached the provider before failing; the swap's own
-        // state is the truth, so read it before telling the user anything.
-        try {
-          const sw = await getProviderSwap(swapId);
-          if (sw.status !== 'quoted') { void follow(sw); return; } // past quoted: the confirm got somewhere
-        } catch { /* fall through to the error screen */ }
-        router.replace({
+        const refused = () => router.replace({
           pathname: `/crypto/${side}/failed`,
           params: { symbol, basis, amount, kind: code === 'quote_expired' ? 'quote_expired' : 'error', reason: swapErrorMessage(code, side) },
         });
+        if (isRefusedBeforeExecution(code)) { refused(); return; } // nothing moved
+        // Anything else may have reached the provider; the swap's own state is the truth,
+        // so read it before telling the user anything — and never claim nothing moved.
+        try {
+          const sw = await getProviderSwap(swapId);
+          if (sw.status === 'quoted') { refused(); return; } // the confirm never started
+          void follow(sw);
+        } catch {
+          if (alive.current) setOutcome({ kind: 'unknown' });
+        }
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asset.data]);
+  }, []);
+
+  if (outcome.kind === 'unknown') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.center}>
+          <View style={[styles.ring, { backgroundColor: Colors.iconBgPurple }]}>
+            <Hourglass size={44} color={Colors.primary} strokeWidth={2} />
+          </View>
+          <Text style={styles.title}>We couldn't confirm the result</Text>
+          <Text style={styles.sub}>
+            {`The connection dropped while this ${side === 'buy' ? 'order' : 'sale'} was being sent, so it may have gone through. Check your portfolio before trying again so you don't ${side === 'buy' ? 'buy' : 'sell'} twice.`}
+          </Text>
+          <View style={styles.refCard}><Text style={styles.refText}>Reference {swapId.slice(0, 8).toUpperCase()}</Text></View>
+        </View>
+        <SafeAreaView edges={['bottom']} style={styles.footer}>
+          <PrimaryButton label="Go to portfolio" onPress={() => router.dismissTo('/crypto/portfolio')} />
+        </SafeAreaView>
+      </SafeAreaView>
+    );
+  }
 
   if (outcome.kind === 'review' || outcome.kind === 'pending') {
     const review = outcome.kind === 'review';

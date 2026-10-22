@@ -221,6 +221,7 @@ export function useConfirmProviderSwap() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, pin }: { id: string; pin: string }) => swaps.confirmProviderSwap(id, pin),
+    gcTime: 0, // the variables hold the PIN: never keep them in the mutation cache
     onSettled: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
       qc.invalidateQueries({ queryKey: [KEY, 'positions'] });

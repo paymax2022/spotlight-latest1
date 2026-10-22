@@ -87,7 +87,11 @@ export default function SellProcessingScreen() {
           // Never fall back to a legacy order on the provider rail: re-quote instead.
           : <Redirect href={{ pathname: '/crypto/sell/review', params: { symbol: p.symbol, basis: p.basis, amount: p.amount } }} />
       )}
-      legacy={() => <LegacySellProcessingScreen />}
+      // A swapId means this order was quoted on the provider rail: never place a legacy
+      // (PIN-less) order for it, even if the rail reads differently now.
+      legacy={() => (p.swapId
+        ? <Redirect href={{ pathname: '/crypto/sell/review', params: { symbol: p.symbol, basis: p.basis, amount: p.amount } }} />
+        : <LegacySellProcessingScreen />)}
     />
   );
 }

@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseSwap, secondsLeft, phaseOf, pollDelayMs, swapErrorCode, isSwapPinError, swapErrorMessage,
-  normaliseUnits, compareUnits, setSwapPin, takeSwapPin, newSwapKey,
+  normaliseUnits, compareUnits, setSwapPin, takeSwapPin, clearSwapPin, newSwapKey,
+  isRefusedBeforeExecution, isUnmountedRoute404,
 } from '../providerSwap.ts';
 
 const view = {
@@ -85,12 +86,34 @@ test('compareUnits is exact where floats are not', () => {
   assert.equal(compareUnits('2', '12'), -1);
 });
 
-test('the swap PIN is handed off once and never stored empty', () => {
-  setSwapPin('4821');
-  assert.equal(takeSwapPin(), '4821');
-  assert.equal(takeSwapPin(), null);
-  setSwapPin('');
-  assert.equal(takeSwapPin(), null);
+test('the swap PIN is handed off once, to the same swap and side, while fresh', () => {
+  setSwapPin('4821', 'sw1', 'buy', 1000);
+  assert.equal(takeSwapPin('sw1', 'buy', 2000), '4821');
+  assert.equal(takeSwapPin('sw1', 'buy', 2000), null, 'consumed once');
+  setSwapPin('4821', 'sw1', 'buy', 1000);
+  assert.equal(takeSwapPin('sw2', 'buy', 2000), null, 'never confirms a different swap');
+  assert.equal(takeSwapPin('sw1', 'buy', 2000), null, 'a mismatched read discards it');
+  setSwapPin('4821', 'sw1', 'sell', 1000);
+  assert.equal(takeSwapPin('sw1', 'buy', 2000), null, 'never the other side');
+  setSwapPin('4821', 'sw1', 'buy', 0);
+  assert.equal(takeSwapPin('sw1', 'buy', 61_000), null, 'stale PINs expire');
+  setSwapPin('', 'sw1', 'buy');
+  assert.equal(takeSwapPin('sw1', 'buy'), null);
+  setSwapPin('4821', 'sw1', 'buy');
+  clearSwapPin();
+  assert.equal(takeSwapPin('sw1', 'buy'), null);
+});
+
+test('only pre-execution refusals may say nothing was charged', () => {
+  for (const c of ['pin_invalid', 'quote_expired', 'insufficient_funds', 'limit_exceeded', 'rate_limited']) assert.equal(isRefusedBeforeExecution(c), true, c);
+  for (const c of ['internal', 'swap_not_confirmable', 'provider_unavailable', null]) assert.equal(isRefusedBeforeExecution(c), false, String(c));
+});
+
+test('only the Go API\'s own no-route 404 means the legacy rail', () => {
+  assert.equal(isUnmountedRoute404({ response: { status: 404, data: { success: false, error: 'No API route matches GET /api/v1/crypto/swaps/config' } } }), true);
+  assert.equal(isUnmountedRoute404({ response: { status: 404, data: '<html>Not Found</html>' } }), false);
+  assert.equal(isUnmountedRoute404({ response: { status: 404, data: { error: 'not_found' } } }), false);
+  assert.equal(isUnmountedRoute404({ response: { status: 502 } }), false);
 });
 
 test('each quote gets its own idempotency key', () => {

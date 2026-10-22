@@ -9,7 +9,7 @@
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { unwrapEnvelope } from '../utils/envelope';
-import { parseSwap, newSwapKey, swapErrorCode, type ProviderSwap, type SwapSide } from '../utils/providerSwap';
+import { parseSwap, newSwapKey, swapErrorCode, isUnmountedRoute404, type ProviderSwap, type SwapSide } from '../utils/providerSwap';
 
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CRYPTO_USE_MOCK, true);
 
@@ -39,9 +39,9 @@ const RAIL_TTL_MS = 60_000;
 let railCache: { rail: TradingRail; at: number } | null = null;
 
 /**
- * Which rail trades go to. A 404 on /swaps/config means the provider pipeline is not
- * mounted: stay on the legacy ledger endpoints. Any OTHER failure throws — a network
- * blip must never silently send a trade to the other rail.
+ * Which rail trades go to. The Go API's own no-route 404 on /swaps/config means the
+ * provider pipeline is not mounted: stay on the legacy ledger endpoints. Any OTHER failure
+ * (including a 404 from a proxy or edge) throws — a blip never switches the rail.
  */
 export async function getTradingRail(now: () => number = Date.now): Promise<TradingRail> {
   if (USE_MOCK) return 'ledger';
@@ -51,7 +51,7 @@ export async function getTradingRail(now: () => number = Date.now): Promise<Trad
     const cfg = unwrapEnvelope<{ rail?: string }>((await api.get('/api/v1/crypto/swaps/config')).data);
     rail = cfg?.rail === 'provider' ? 'provider' : 'ledger';
   } catch (err) {
-    if ((err as { response?: { status?: number } })?.response?.status !== 404) throw toSwapError(err);
+    if (!isUnmountedRoute404(err)) throw toSwapError(err); // only the API's own no-route 404 means legacy
     rail = 'ledger';
   }
   railCache = { rail, at: now() };
