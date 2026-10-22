@@ -123,9 +123,24 @@ func (s *Service) closeAppointment(ctx context.Context, appointmentID, actorID s
 	if target == ApptCancelled && !asAdmin && actorID == f.patientID {
 		from = []string{string(ApptBooked), string(ApptConfirmed)}
 	}
+	// The claim only commits when the payment that follows can actually happen:
+	// the escrow must still be payable in the target direction. A close that
+	// cannot pay (no settlement on a legacy row, or money already moved under the
+	// old code) leaves the appointment open and fixable instead of terminal with
+	// the escrow stuck behind it.
+	payable := []string{string(settlement.StatusEscrowed)}
+	if target == ApptCancelled {
+		payable = append(payable, string(settlement.StatusDisputed))
+	}
+	if target == ApptCompleted && f.doctorUserID == "" {
+		return permanentError{"telemedicine: doctor record has no linked account to settle to"}
+	}
 	tag, err := s.db.Exec(ctx, `
 		UPDATE appointments SET status = $2, closed_at = now(), review_required_at = NULL
-		WHERE id = $1 AND status = ANY($3)`, appointmentID, string(target), from)
+		WHERE id = $1 AND status = ANY($3)
+		  AND EXISTS (SELECT 1 FROM settlements st
+		              WHERE st.id = appointments.settlement_id AND st.status = ANY($4))`,
+		appointmentID, string(target), from, payable)
 	if err != nil {
 		return fmt.Errorf("telemedicine: claim %s: %w", target, err)
 	}
@@ -137,6 +152,17 @@ func (s *Service) closeAppointment(ctx context.Context, appointmentID, actorID s
 		switch {
 		case cur == string(target):
 			// Already closed this way: finish the money if it never landed.
+		case f.settlementID == "":
+			return permanentError{"telemedicine: appointment has no settlement to close against"}
+		case cur == string(ApptInProgress) && target == ApptCancelled && !asAdmin && actorID == f.patientID:
+			return ErrConsultInProgress
+		case cur == string(ApptBooked) || cur == string(ApptConfirmed) || cur == string(ApptInProgress):
+			// Open, but the escrow is no longer payable this way (moved under the old code).
+			sett, gerr := s.settlement.GetByID(ctx, f.settlementID)
+			if gerr != nil {
+				return fmt.Errorf("telemedicine: load settlement: %w", gerr)
+			}
+			return permanentError{fmt.Sprintf("telemedicine: cannot %s, settlement is %s", map[AppointmentStatus]string{ApptCompleted: "settle", ApptCancelled: "refund"}[target], sett.Status)}
 		case cur == string(ApptInProgress) && target == ApptCancelled:
 			return ErrConsultInProgress
 		case cur == string(ApptCompleted) && target == ApptCancelled:

@@ -75,6 +75,7 @@ func TestLiveDB_Close_EmitsAuditOnSettleAndRefund(t *testing.T) {
 	if a.auditCount(t, "telemedicine.appointment.settled") != 1 {
 		t.Fatal("L-H3: settle wrote no audit row")
 	}
+	// (doctors.user_id is NOT NULL, so "a doctor with no account" cannot occur.)
 	b := newAuditedFixture(t)
 	if err := b.svc.CancelAppointment(b.ctx, b.appt, b.patientID); err != nil {
 		t.Fatalf("cancel: %v", err)
@@ -190,5 +191,36 @@ func TestLiveDB_PatientCancelIsMirroredOntoTheConsole(t *testing.T) {
 	}
 	if consoleStatus != "cancelled" {
 		t.Fatalf("L-M1: console still shows %q after the patient cancelled and was refunded", consoleStatus)
+	}
+}
+
+// N-1/N-2 (ledger re-audit): the claim only commits when the payment can happen,
+// so a close that cannot pay leaves the appointment open (and fixable) instead
+// of terminal with the escrow stuck behind it.
+func TestLiveDB_Close_ClaimRequiresAPayableSettlement(t *testing.T) {
+	// Money already moved under the old code, appointment left open: a close
+	// claims nothing and says why.
+	// (doctors.user_id is NOT NULL, so "a doctor with no account" cannot occur.)
+	b := newAuditedFixture(t)
+	if _, err := b.pool.Exec(b.ctx, `UPDATE settlements SET status='refunded' WHERE id=(SELECT settlement_id FROM appointments WHERE id=$1)`, b.appt); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.svc.CompleteAppointment(b.ctx, b.appt, b.doctorUserID); err == nil {
+		t.Fatal("N-1: completing an appointment whose escrow was already refunded must be refused")
+	}
+	if got := b.status(t); got != "booked" {
+		t.Fatalf("N-1: appointment flipped to %q over a refunded escrow", got)
+	}
+
+	// No settlement at all (legacy rows): nothing is claimed.
+	c := newAuditedFixture(t)
+	if _, err := c.pool.Exec(c.ctx, `UPDATE appointments SET settlement_id = NULL WHERE id=$1`, c.appt); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.svc.CancelAppointment(c.ctx, c.appt, c.patientID); err == nil {
+		t.Fatal("N-2: closing an appointment with no settlement must be refused")
+	}
+	if got := c.status(t); got != "booked" {
+		t.Fatalf("N-2: appointment with no settlement flipped to %q", got)
 	}
 }
