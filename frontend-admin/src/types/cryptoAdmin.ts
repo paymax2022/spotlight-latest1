@@ -252,3 +252,111 @@ export interface CryptoReconcilerBacklog {
   oldest_updated_at?: string;
   oldest_age_seconds: number;
 }
+
+// ── Operational controls, health, audit, deposits (backend/internal/cryptosvc, ADR-PR856) ──
+
+export type CryptoBannerSeverity = 'info' | 'warning' | 'critical';
+
+export interface CryptoBanner {
+  message: string;
+  severity: CryptoBannerSeverity;
+}
+
+export interface CryptoControlsVersion {
+  version: number;
+  trading_paused: boolean;
+  withdrawals_paused: boolean;
+  disabled_assets: string[];
+  /** Effective per-trade NGN cap in kobo (the code ceiling when nothing lower is set). */
+  max_quote_kobo: number;
+  banner: CryptoBanner | null;
+  reason: string;
+  created_by: string;
+  created_at?: string;
+}
+
+export interface CryptoControlsResponse {
+  current: CryptoControlsVersion;
+  ceiling_kobo: number;
+  history: CryptoControlsVersion[];
+}
+
+export interface CryptoControlsUpdate {
+  expected_version: number;
+  trading_paused: boolean;
+  withdrawals_paused: boolean;
+  disabled_assets: string[];
+  /** 0 = the code ceiling. */
+  max_quote_kobo: number;
+  banner: CryptoBanner | null;
+  reason: string;
+}
+
+export type CryptoProviderStatus = 'idle' | 'ok' | 'degraded' | 'down' | 'unknown';
+
+export interface CryptoProviderHealth {
+  provider: string;
+  checked_at: string;
+  status: CryptoProviderStatus;
+  window_seconds?: number;
+  calls?: number;
+  failures?: number;
+  throttled?: number;
+  failure_rate?: number;
+  p50_ms?: number;
+  p95_ms?: number;
+  last_success_at?: string;
+  last_failure_at?: string;
+  last_failure?: string;
+  webhook_last_received_at?: string;
+  webhook_lag_seconds?: number;
+}
+
+export interface CryptoAuditEntry {
+  id: string;
+  actor: string;
+  action: string;
+  entity_type: string;
+  entity_id?: string;
+  old_value?: unknown;
+  new_value?: unknown;
+  reason?: string;
+  created_at: string;
+}
+
+export interface CryptoAuditPage {
+  entries: CryptoAuditEntry[];
+  next_before?: string;
+}
+
+export interface CryptoAuditFilter {
+  action?: string;
+  actor?: string;
+  entity_id?: string;
+  before?: string;
+  limit?: number;
+}
+
+export type CryptoDepositStatus = 'pending' | 'accepted' | 'rejected';
+
+export interface CryptoDepositRow {
+  id: string;
+  user_id: string;
+  asset: string;
+  network: string;
+  amount: string;
+  status: CryptoDepositStatus;
+  txid: string;
+  confirmations: number;
+  required_confirmations: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CryptoReconcileRunResult {
+  resolved: number;
+  released: number;
+  parked: number;
+  expired: number;
+  errors: number;
+}
