@@ -10004,7 +10004,7 @@ paths:
   /telemedicine/admin/appointments/{id}/resolve:
     post:
       operationId: adminResolveTelemedicineAppointment
-      summary: "Admin settles (pays the doctor) or refunds (pays the patient) an appointment. Audited. Needs telemedicine.admin.manage."
+      summary: "Admin settles (pays the doctor) or refunds (pays the patient) an appointment in the review queue. The decision is audited before payment. Needs telemedicine.admin.manage."
       tags: [Telemedicine]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -10023,7 +10023,7 @@ paths:
         '200': { description: "Resolved" }
         '400': { description: "Missing reason or unknown action" }
         '404': { description: "Not found" }
-        '409': { description: "Appointment or settlement is not in a resolvable state" }
+        '409': { description: "Not in the review queue, or the appointment or settlement is not resolvable" }
   # Pre-consult intake: mounted only with FEATURE_TELEMEDICINE_INTAKE_ENABLED.
   /telemedicine/appointments/{id}/intake:
     get:

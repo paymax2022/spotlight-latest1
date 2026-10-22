@@ -60,6 +60,14 @@ The console side changed too:
 
 `ConfirmAppointment` became conditional as well. Migration `20271092000000` adds `closed_at`, `review_required_at` and `review_reason`.
 
+The claim also requires the escrow to still be payable in that direction, and a linked doctor account for a settle. A close that cannot pay leaves the appointment open with a clear error, instead of terminal with the escrow stuck.
+
+Admins can resolve only appointments in the review queue. Their decision and reason are audited when they claim, before payment. A payment the reconciler finds permanently refused goes to the review queue rather than being retried forever.
+
+Migration `20271093000000` revokes PostgREST access to `doctor_compliance_audit` and `appointments`:
+- the actor recorded on an audit row could otherwise edit or delete it through the old `FOR ALL` owner policy;
+- `appointments.review_reason` holds the patient's complaint, which the assigned doctor could otherwise read.
+
 These close-path changes apply whether or not the bridge flag is on. They only refuse races the old code lost, and heal what it left half-done.
 
 ## Consequences

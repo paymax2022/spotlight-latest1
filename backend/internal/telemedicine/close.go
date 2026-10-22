@@ -139,8 +139,9 @@ func (s *Service) closeAppointment(ctx context.Context, appointmentID, actorID s
 		UPDATE appointments SET status = $2, closed_at = now(), review_required_at = NULL
 		WHERE id = $1 AND status = ANY($3)
 		  AND EXISTS (SELECT 1 FROM settlements st
-		              WHERE st.id = appointments.settlement_id AND st.status = ANY($4))`,
-		appointmentID, string(target), from, payable)
+		              WHERE st.id = appointments.settlement_id AND st.status = ANY($4))
+		  AND (NOT $5::boolean OR review_required_at IS NOT NULL)`,
+		appointmentID, string(target), from, payable, asAdmin)
 	if err != nil {
 		return fmt.Errorf("telemedicine: claim %s: %w", target, err)
 	}
@@ -149,9 +150,13 @@ func (s *Service) closeAppointment(ctx context.Context, appointmentID, actorID s
 		if err := s.db.QueryRow(ctx, `SELECT status FROM appointments WHERE id=$1`, appointmentID).Scan(&cur); err != nil {
 			return ErrAppointmentNotFound
 		}
+		var flagged bool
+		_ = s.db.QueryRow(ctx, `SELECT review_required_at IS NOT NULL FROM appointments WHERE id=$1`, appointmentID).Scan(&flagged)
 		switch {
 		case cur == string(target):
 			// Already closed this way: finish the money if it never landed.
+		case asAdmin && !flagged:
+			return permanentError{"telemedicine: only appointments in the review queue can be resolved by an admin"}
 		case f.settlementID == "":
 			return permanentError{"telemedicine: appointment has no settlement to close against"}
 		case cur == string(ApptInProgress) && target == ApptCancelled && !asAdmin && actorID == f.patientID:
@@ -176,6 +181,14 @@ func (s *Service) closeAppointment(ctx context.Context, appointmentID, actorID s
 	by := "party"
 	if asAdmin {
 		by = "admin"
+		// The decision itself is the auditable act: record it now, so it survives
+		// even if the payment lands later through the reconciler.
+		if tag.RowsAffected() == 1 && s.audit != nil {
+			if err := s.audit.InsertAudit(ctx, actorID, "telemedicine.appointment.resolved_by_admin", "appointment", appointmentID, "",
+				map[string]any{"decision": string(target), "reason": reason, "settlement_id": f.settlementID}); err != nil {
+				log.Printf("[telemedicine][audit] admin decision %s: %v", appointmentID, err)
+			}
+		}
 	}
 	if err := s.payClosure(ctx, appointmentID, actorID, target, f, by, reason); err != nil {
 		return err
@@ -307,7 +320,7 @@ func (s *Service) ReconcileConsults(ctx context.Context, now time.Time) (Reconci
 	rows, err := s.db.Query(ctx, `
 		SELECT a.id::text, a.status
 		FROM appointments a JOIN settlements st ON st.id = a.settlement_id
-		WHERE a.closed_at IS NOT NULL AND a.closed_at < $1
+		WHERE a.closed_at IS NOT NULL AND a.closed_at < $1 AND a.review_required_at IS NULL
 		  AND ((a.status = 'completed' AND st.status = 'escrowed')
 		    OR (a.status = 'cancelled' AND st.status IN ('escrowed','disputed')))
 		ORDER BY a.closed_at LIMIT 100`, now.Add(-closeClaimGrace))
@@ -335,6 +348,13 @@ func (s *Service) ReconcileConsults(ctx context.Context, now time.Time) (Reconci
 		if err := s.payClosure(ctx, p.id, "", target, f, "reconciler", "unpaid claim"); err != nil {
 			log.Printf("[telemedicine][reconcile] %s %s: %v", p.id, p.status, err)
 			rep.Failed++
+			// A refusal retrying cannot fix would be swept forever and starve newer
+			// claims: hand it to the admin review queue instead.
+			var perm interface{ Permanent() bool }
+			if errors.As(err, &perm) {
+				_, _ = s.db.Exec(ctx, `UPDATE appointments SET review_required_at = now(), review_reason = 'reconcile: payment refused'
+					WHERE id = $1 AND review_required_at IS NULL`, p.id)
+			}
 			continue
 		}
 		if target == ApptCompleted {
@@ -382,8 +402,8 @@ func StartConsultReconciler(ctx context.Context, s *Service, interval time.Durat
 // consult starts the patient can simply cancel, so only in_progress qualifies.
 func (s *Service) ReportConsultProblem(ctx context.Context, appointmentID, patientID, note string) error {
 	note = strings.TrimSpace(note)
-	if len(note) > 500 {
-		note = note[:500]
+	if r := []rune(note); len(r) > 500 {
+		note = string(r[:500])
 	}
 	tag, err := s.db.Exec(ctx, `
 		UPDATE appointments SET review_required_at = now(), review_reason = 'patient: ' || $3
@@ -408,9 +428,32 @@ func (s *Service) ReportConsultProblem(ctx context.Context, appointmentID, patie
 	return permanentError{"telemedicine: only a consult in progress can be reported; cancel it instead"}
 }
 
+// ReviewItem is one entry in the admin review queue.
+type ReviewItem struct {
+	Appointment
+	ReviewReason     string    `json:"review_reason"`
+	ReviewRequiredAt time.Time `json:"review_required_at"`
+}
+
 // ListAppointmentsNeedingReview is the admin queue: open appointments flagged by
-// the reconciler or the patient, oldest first.
-func (s *Service) ListAppointmentsNeedingReview(ctx context.Context) ([]Appointment, error) {
+// the reconciler or the patient, plus closed ones whose payment the reconciler
+// could not complete, oldest first.
+func (s *Service) ListAppointmentsNeedingReview(ctx context.Context) ([]ReviewItem, error) {
+	appts, err := s.reviewAppointments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ReviewItem, 0, len(appts))
+	for _, a := range appts {
+		it := ReviewItem{Appointment: a}
+		_ = s.db.QueryRow(ctx, `SELECT COALESCE(review_reason,''), review_required_at FROM appointments WHERE id=$1`, a.ID).
+			Scan(&it.ReviewReason, &it.ReviewRequiredAt)
+		out = append(out, it)
+	}
+	return out, nil
+}
+
+func (s *Service) reviewAppointments(ctx context.Context) ([]Appointment, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT a.id, a.patient_id, a.doctor_id,
 		       COALESCE(a.doctor_name,''), COALESCE(a.doctor_specialty,''),
@@ -419,7 +462,8 @@ func (s *Service) ListAppointmentsNeedingReview(ctx context.Context) ([]Appointm
 		       a.fee_kobo, COALESCE(a.platform_fee_kobo,0), COALESCE(NULLIF(a.total_kobo, 0), a.fee_kobo),
 		       a.idempotency_key, COALESCE(a.settlement_id::text,''), a.created_at
 		FROM appointments a
-		WHERE a.review_required_at IS NOT NULL AND a.status IN ('booked','confirmed','in_progress')
+		WHERE a.review_required_at IS NOT NULL
+		  AND (a.status IN ('booked','confirmed','in_progress') OR a.closed_at IS NOT NULL)
 		ORDER BY a.review_required_at ASC LIMIT 200`)
 	if err != nil {
 		return nil, err

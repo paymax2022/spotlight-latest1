@@ -224,3 +224,60 @@ func TestLiveDB_Close_ClaimRequiresAPayableSettlement(t *testing.T) {
 		t.Fatalf("N-2: appointment with no settlement flipped to %q", got)
 	}
 }
+
+// Security re-check of PR #879 (flag-on blockers):
+//
+//	H-A  the audit trail and appointments are not writable through PostgREST
+//	M-A  an admin resolves only appointments in the review queue
+//	M-C  the admin's decision is audited at the claim, before any payment
+func TestLiveDB_AdminResolveOnlyFromTheQueueAndAuditsTheDecision(t *testing.T) {
+	f := newAuditedFixture(t)
+	admin := f.stranger(t)
+	if err := f.svc.AdminResolveAppointment(f.ctx, admin, f.appt, "settle", "never happened"); err == nil {
+		t.Fatal("M-A: an admin settled an appointment that was not in the review queue")
+	}
+	if got := f.status(t); got != "booked" {
+		t.Fatalf("M-A: unflagged appointment moved to %q", got)
+	}
+	if _, err := f.pool.Exec(f.ctx, `UPDATE appointments SET review_required_at = now(), review_reason='test' WHERE id=$1`, f.appt); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.AdminResolveAppointment(f.ctx, admin, f.appt, "refund", "no doctor"); err != nil {
+		t.Fatalf("flagged resolve: %v", err)
+	}
+	var actor, reason string
+	if err := f.pool.QueryRow(f.ctx, `
+		SELECT user_id::text, detail->>'reason' FROM doctor_compliance_audit
+		WHERE entity_id=$1 AND action='telemedicine.appointment.resolved_by_admin'`, f.appt).Scan(&actor, &reason); err != nil {
+		t.Fatalf("M-C: the admin decision was not audited: %v", err)
+	}
+	if actor != admin || reason != "no doctor" {
+		t.Fatalf("M-C: decision audited as actor=%q reason=%q", actor, reason)
+	}
+	queue, err := f.svc.ListAppointmentsNeedingReview(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range queue {
+		if it.ID == f.appt {
+			t.Fatal("a resolved appointment must leave the review queue")
+		}
+	}
+}
+
+func TestLiveDB_AuditAndAppointmentsNotWritableViaPostgREST(t *testing.T) {
+	pool := uatFixesPool(t)
+	ctx := context.Background()
+	for _, tbl := range []string{"doctor_compliance_audit", "appointments"} {
+		for _, role := range []string{"anon", "authenticated"} {
+			var any bool
+			if err := pool.QueryRow(ctx,
+				`SELECT has_table_privilege($1, 'public.'||$2, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE')`, role, tbl).Scan(&any); err != nil {
+				t.Fatal(err)
+			}
+			if any {
+				t.Errorf("H-A/M-B: %s holds privileges on %s", role, tbl)
+			}
+		}
+	}
+}
