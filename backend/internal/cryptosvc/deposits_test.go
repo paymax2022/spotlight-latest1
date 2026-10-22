@@ -172,3 +172,35 @@ func TestDepositRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestASuccessEventTheProviderCannotShowYetIsRetried(t *testing.T) {
+	r, acct := depositRig(t)
+	r.prov.PutDeposit(deposit(acct, "dp1", cryptoprov.DepositPending)) // provider read lags its own event
+	_, err := r.svc.cfg.Ingest.process(context.Background(), r.prov, "mock", cryptoprov.Event{Type: "deposit.successful", Ref: "dp1", Account: acct})
+	if !errors.Is(err, ErrDepositNotYetVisible) {
+		t.Fatalf("err = %v, want a retryable ErrDepositNotYetVisible", err)
+	}
+	r.prov.PutDeposit(deposit(acct, "dp1", cryptoprov.DepositAccepted)) // the redelivery sees it
+	if out, err := r.svc.cfg.Ingest.process(context.Background(), r.prov, "mock", cryptoprov.Event{Type: "deposit.successful", Ref: "dp1", Account: acct}); err != nil || out != OutcomeApplied {
+		t.Fatalf("redelivery = %s, %v", out, err)
+	}
+	if got, _ := r.svc.Deposits(context.Background(), user, 10); got[0].Status != cryptoprov.DepositAccepted {
+		t.Fatalf("status = %s", got[0].Status)
+	}
+}
+
+func TestPendingAddressPollsDoNotMintAddressesRepeatedly(t *testing.T) {
+	r, _ := depositRig(t)
+	r.prov.SetAddressPending(true)
+	for i := 0; i < 3; i++ {
+		_, _ = r.svc.DepositAddress(context.Background(), user, "USDT", "trc20")
+	}
+	if n := r.prov.AddressCreates(); n != 1 {
+		t.Fatalf("create requests = %d, want 1 while the address is generating", n)
+	}
+	r.now = r.now.Add(addressCreateGap + 1)
+	_, _ = r.svc.DepositAddress(context.Background(), user, "USDT", "trc20")
+	if n := r.prov.AddressCreates(); n != 2 {
+		t.Fatalf("create requests = %d, want a retry after the gap", n)
+	}
+}

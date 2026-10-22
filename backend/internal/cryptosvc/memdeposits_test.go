@@ -52,21 +52,27 @@ func (m *memDeposits) SaveDepositAddress(_ context.Context, userID, provider str
 	return nil
 }
 
-func (m *memDeposits) UpsertDeposit(_ context.Context, d DepositRecord) (bool, error) {
+func (m *memDeposits) UpsertDeposit(_ context.Context, d DepositRecord) (bool, cryptoprov.DepositStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := d.Provider + "|" + d.ProviderDepositID
 	prev, ok := m.deps[k]
-	if ok && !depositAdvances(prev.Status, d.Status) && prev.Confirmations >= d.Confirmations {
-		return false, nil
+	if !ok {
+		m.deps[k] = d
+		return true, d.Status, nil
 	}
-	if ok && !depositAdvances(prev.Status, d.Status) {
+	advances := depositAdvances(prev.Status, d.Status)
+	if !advances && prev.Confirmations >= d.Confirmations {
+		return false, "", nil
+	}
+	if advances {
+		prev.Status = d.Status
+	}
+	if d.Confirmations > prev.Confirmations {
 		prev.Confirmations = d.Confirmations
-		m.deps[k] = prev
-		return true, nil
 	}
-	m.deps[k] = d
-	return true, nil
+	m.deps[k] = prev
+	return true, prev.Status, nil
 }
 
 func (m *memDeposits) ListDeposits(_ context.Context, userID string, limit int) ([]DepositRecord, error) {

@@ -492,6 +492,19 @@ func (c *Client) GetDeposit(ctx context.Context, accountID, id string) (cryptopr
 	}, nil
 }
 
+// eventKey is the dedupe key for a webhook. Quidax sends several events of the SAME type for
+// one deposit as it progresses (confirmations, then success), so a deposit key also carries the
+// payload's status and confirmation count: each progress step is processed once, and an exact
+// redelivery is still a duplicate. The payload values only shape the key; the state recorded
+// always comes from a re-query.
+func eventKey(event, id, status string, confirmations int) string {
+	k := "quidax:" + event + ":" + id
+	if strings.HasPrefix(event, "deposit.") {
+		k += fmt.Sprintf(":%s:%d", lower(status), confirmations)
+	}
+	return k
+}
+
 // idString reads a provider id that may be a JSON string or number.
 func idString(v any) string {
 	switch t := v.(type) {
@@ -712,10 +725,14 @@ func (c *Client) ParseWebhook(body []byte) (cryptoprov.Event, error) {
 		return cryptoprov.Event{}, errors.New("quidax: webhook missing event or data")
 	}
 	var d struct {
-		ID   any `json:"id"`
-		User struct {
+		ID     any    `json:"id"`
+		Status string `json:"status"`
+		User   struct {
 			ID any `json:"id"`
 		} `json:"user"`
+		Tx struct {
+			Confirmations int `json:"confirmations"`
+		} `json:"payment_transaction"`
 	}
 	if err := json.Unmarshal(env.Data, &d); err != nil {
 		return cryptoprov.Event{}, errors.New("quidax: webhook data unreadable")
@@ -725,7 +742,7 @@ func (c *Client) ParseWebhook(body []byte) (cryptoprov.Event, error) {
 		return cryptoprov.Event{}, errors.New("quidax: webhook data has no id")
 	}
 	return cryptoprov.Event{
-		Key:     "quidax:" + env.Event + ":" + id,
+		Key:     eventKey(env.Event, id, d.Status, d.Tx.Confirmations),
 		Type:    env.Event,
 		Ref:     id,
 		Account: idString(d.User.ID),

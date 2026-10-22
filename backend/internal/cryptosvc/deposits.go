@@ -47,8 +47,8 @@ type DepositStore interface {
 	SaveDepositAddress(ctx context.Context, userID, provider string, a cryptoprov.DepositAddress) error
 	// UpsertDeposit records a deposit. Status only moves forward (pending -> accepted or
 	// rejected; a terminal status never changes); confirmations only increase. changed
-	// reports whether anything was written.
-	UpsertDeposit(ctx context.Context, d DepositRecord) (changed bool, err error)
+	// reports whether anything was written; stored is the status now on the row when changed.
+	UpsertDeposit(ctx context.Context, d DepositRecord) (changed bool, stored cryptoprov.DepositStatus, err error)
 	ListDeposits(ctx context.Context, userID string, limit int) ([]DepositRecord, error)
 }
 
@@ -88,29 +88,33 @@ func (s *Service) DepositAddress(ctx context.Context, userID, asset, network str
 	} else if ok {
 		return a, nil
 	}
+	p, err := s.provider()
+	if err != nil {
+		return cryptoprov.DepositAddress{}, err
+	}
+	wp, err := cryptoprov.As[cryptoprov.WalletProvider](p)
+	if err != nil {
+		return cryptoprov.DepositAddress{}, err
+	}
+	// Provision the account OUTSIDE the address lock: each lock holds a pooled connection, and
+	// nesting the account lock inside it would need two per caller and could drain the pool.
+	acct, err := s.ensureAccount(ctx, p, userID)
+	if err != nil {
+		return cryptoprov.DepositAddress{}, err
+	}
 	var out cryptoprov.DepositAddress
-	err := s.locked(ctx, "addr:"+userID+":"+asset+":"+network, func(ctx context.Context) error {
+	err = s.locked(ctx, "addr:"+userID+":"+asset+":"+network, func(ctx context.Context) error {
 		if a, ok, err := s.cfg.Deposits.SavedDepositAddress(ctx, userID, s.cfg.Provider, asset, network); err != nil {
 			return err
 		} else if ok {
 			out = a
 			return nil
 		}
-		p, err := s.provider()
-		if err != nil {
-			return err
-		}
-		wp, err := cryptoprov.As[cryptoprov.WalletProvider](p)
-		if err != nil {
-			return err
-		}
-		acct, err := s.ensureAccount(ctx, p, userID)
-		if err != nil {
-			return err
-		}
-		// Read first: asking to create again can mint a second address on some networks.
+		// Read first: asking to create again can mint a second address on some networks. And
+		// while one is being generated, ask to create at most once per addressCreateGap: the
+		// app polls on 202 and each poll must not mint another.
 		a, err := wp.DepositAddress(ctx, acct, asset, network)
-		if errors.Is(err, cryptoprov.ErrAddressPending) {
+		if errors.Is(err, cryptoprov.ErrAddressPending) && s.mayCreateAddress(userID+":"+asset+":"+network) {
 			a, err = wp.CreateDepositAddress(ctx, acct, asset, network)
 		}
 		if err != nil {
@@ -133,6 +137,30 @@ func (s *Service) DepositAddress(ctx context.Context, userID, asset, network str
 	})
 	return out, err
 }
+
+// addressCreateGap is the least time between create requests for one pending address.
+const addressCreateGap = 10 * time.Minute
+
+// mayCreateAddress reports whether a create request may be sent for key now, and records it.
+// In-process only: across instances the worst case is one extra request per instance.
+func (s *Service) mayCreateAddress(key string) bool {
+	s.addrMu.Lock()
+	defer s.addrMu.Unlock()
+	now := s.cfg.Now()
+	if s.addrCreated == nil {
+		s.addrCreated = map[string]time.Time{}
+	}
+	if t, ok := s.addrCreated[key]; ok && now.Sub(t) < addressCreateGap {
+		return false
+	}
+	s.addrCreated[key] = now
+	return true
+}
+
+// ErrDepositNotYetVisible means the provider announced a final deposit state its own API does
+// not show yet. Returned (not swallowed) so the dedupe row is released and the provider's
+// redelivery re-reads it, instead of the deposit sticking at pending.
+var ErrDepositNotYetVisible = errors.New("cryptosvc: provider has not caught up with its deposit event yet")
 
 // Deposits lists the user's recorded deposits, newest first.
 func (s *Service) Deposits(ctx context.Context, userID string, limit int) ([]DepositRecord, error) {
@@ -175,9 +203,11 @@ func (i *Ingest) processDeposit(ctx context.Context, p cryptoprov.Provider, prov
 		return "", fmt.Errorf("cryptosvc: re-query deposit: %w", err)
 	}
 	if d.AccountID != "" && d.AccountID != ev.Account {
-		return "", fmt.Errorf("cryptosvc: deposit %s belongs to account %s, not %s", d.ID, d.AccountID, ev.Account)
+		// Unreachable with an account-scoped re-query; never retry it forever.
+		log.Printf("[crypto] ALERT deposit %s re-queried under account %s reports account %s; ignored", d.ID, ev.Account, d.AccountID)
+		return OutcomeIgnored, nil
 	}
-	changed, err := i.deposits.UpsertDeposit(ctx, DepositRecord{
+	changed, stored, err := i.deposits.UpsertDeposit(ctx, DepositRecord{
 		Provider: providerName, ProviderDepositID: d.ID, UserID: userID, Currency: d.Currency, Network: d.Network,
 		Address: d.Address, Amount: d.Amount, Fee: d.Fee, TxID: d.TxID, Status: d.Status,
 		Confirmations: d.Confirmations, RequiredConfirmations: d.RequiredConfirmations,
@@ -185,8 +215,11 @@ func (i *Ingest) processDeposit(ctx context.Context, p cryptoprov.Provider, prov
 	if err != nil {
 		return "", fmt.Errorf("cryptosvc: record deposit: %w", err)
 	}
+	if ev.Type == "deposit.successful" && d.Status == cryptoprov.DepositPending {
+		return "", ErrDepositNotYetVisible // recorded as pending; the redelivery finishes it
+	}
 	if changed && i.audit != nil {
-		i.audit.Audit(ctx, AuditEvent{Actor: "system:provider", Action: "crypto.deposit." + string(d.Status), EntityID: d.ID,
+		i.audit.Audit(ctx, AuditEvent{Actor: "system:provider", Action: "crypto.deposit." + string(stored), EntityID: d.ID,
 			Detail: map[string]any{"user_id": userID, "asset": d.Currency, "amount": d.Amount.String(), "confirmations": d.Confirmations}})
 	}
 	return OutcomeApplied, nil

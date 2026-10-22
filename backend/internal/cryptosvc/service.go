@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -88,6 +89,9 @@ const MaxQuoteKobo int64 = 1_000_000_000_000
 type Service struct {
 	cfg    ServiceConfig
 	inproc keyedGate
+
+	addrMu      sync.Mutex
+	addrCreated map[string]time.Time // last deposit-address create request per user:asset:network
 }
 
 // NewService builds the pipeline.

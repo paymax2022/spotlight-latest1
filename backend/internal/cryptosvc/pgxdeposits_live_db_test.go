@@ -52,11 +52,11 @@ func TestLive_DepositUpsertNeverRegressesAndAddressFirstWins(t *testing.T) {
 		{cryptoprov.DepositPending, 1, false}, // duplicate
 		{cryptoprov.DepositPending, 5, true},  // more confirmations
 		{cryptoprov.DepositAccepted, 12, true},
-		{cryptoprov.DepositPending, 3, false},  // late, out of order
+		{cryptoprov.DepositPending, 3, false},   // late, out of order
 		{cryptoprov.DepositRejected, 12, false}, // terminal never flips
 	}
 	for i, st := range steps {
-		changed, err := s.UpsertDeposit(ctx, rec(st.st, st.conf))
+		changed, _, err := s.UpsertDeposit(ctx, rec(st.st, st.conf))
 		if err != nil || changed != st.changed {
 			t.Fatalf("step %d: changed=%v err=%v, want %v", i, changed, err, st.changed)
 		}

@@ -22,7 +22,10 @@ An inbound crypto deposit therefore arrives where the user's holdings already li
   - Addresses Quidax generates asynchronously return `202 address_pending`.
   - The KYC trade gate applies, fail-closed.
 
+- **Each progress step is processed once.** The webhook dedupe key for a deposit includes the payload's status and confirmation count. Quidax sends several events of the same type for one deposit, and a plain `event:id` key would drop every one after the first. If a `deposit.successful` arrives before the provider's own API shows it, the record stays pending and the handler returns a retryable error. The provider then redelivers instead of the deposit sticking at pending.
+
 ## Consequences
 - Deposits can't unbalance the ledger, and there is nothing to reverse.
 - **Platform-side limits on crypto inflow** (tier caps on deposit value) aren't enforced here. Quidax's own compliance (AML rejections → `rejected`) applies. An inflow cap would need a valuation policy, which is a separate decision.
+- **A provider flip from accepted to rejected is not recorded,** because final statuses never change. The balance is unaffected, since it is read from the provider. If this happens, ops sees it in Quidax, not in our history.
 - **Withdrawals must also move to the provider sub-account before the provider rail goes live.** The legacy withdrawal pays out from the internal ledger book, which doesn't hold provider-rail crypto.

@@ -73,3 +73,26 @@ func TestParseWebhookCarriesTheAccountForDeposits(t *testing.T) {
 		t.Fatalf("event = %+v, %v", ev, err)
 	}
 }
+
+func TestDepositEventKeysDistinguishProgressButDedupeRedeliveries(t *testing.T) {
+	c := newClient(t, "https://x.invalid", nil)
+	key := func(body string) string {
+		ev, err := c.ParseWebhook([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ev.Key
+	}
+	conf1 := `{"event":"deposit.transaction.confirmation","data":{"id":"dp_9","status":"submitted","payment_transaction":{"confirmations":1},"user":{"id":"a"}}}`
+	conf2 := `{"event":"deposit.transaction.confirmation","data":{"id":"dp_9","status":"submitted","payment_transaction":{"confirmations":2},"user":{"id":"a"}}}`
+	if key(conf1) == key(conf2) {
+		t.Fatal("a later confirmation was keyed as a duplicate of an earlier one")
+	}
+	if key(conf1) != key(conf1) {
+		t.Fatal("an exact redelivery must dedupe")
+	}
+	swap := `{"event":"swap_transaction.completed","data":{"id":"sw_1","status":"completed"}}`
+	if key(swap) != "quidax:swap_transaction.completed:sw_1" {
+		t.Fatalf("swap keys must not change: %s", key(swap))
+	}
+}

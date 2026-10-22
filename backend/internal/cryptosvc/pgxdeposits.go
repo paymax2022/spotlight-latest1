@@ -49,9 +49,11 @@ func (s *PGStore) SaveDepositAddress(ctx context.Context, userID, provider strin
 
 // UpsertDeposit implements DepositStore. The conflict branch only writes when the status
 // moves forward from pending or the confirmations increase, so an out-of-order event can
-// never regress a deposit. The owner (user_id) of an existing row is never changed.
-func (s *PGStore) UpsertDeposit(ctx context.Context, d DepositRecord) (bool, error) {
-	tag, err := s.pool.Exec(ctx,
+// never regress a deposit (and a provider flipping accepted -> rejected is not recorded:
+// see ADR-PR855). The owner (user_id) of an existing row is never changed.
+func (s *PGStore) UpsertDeposit(ctx context.Context, d DepositRecord) (bool, cryptoprov.DepositStatus, error) {
+	var stored string
+	err := s.pool.QueryRow(ctx,
 		`INSERT INTO public.crypto_deposits
 		   (provider, provider_deposit_id, user_id, currency, network, address, amount, fee, txid, status, confirmations, required_confirmations)
 		 VALUES ($1,$2,$3::uuid,$4,$5,$6,$7::numeric,$8::numeric,$9,$10,$11,$12)
@@ -62,13 +64,17 @@ func (s *PGStore) UpsertDeposit(ctx context.Context, d DepositRecord) (bool, err
 		   txid = COALESCE(NULLIF(EXCLUDED.txid, ''), crypto_deposits.txid),
 		   updated_at = now()
 		 WHERE (crypto_deposits.status = 'pending' AND EXCLUDED.status <> 'pending')
-		    OR EXCLUDED.confirmations > crypto_deposits.confirmations`,
+		    OR EXCLUDED.confirmations > crypto_deposits.confirmations
+		 RETURNING status`,
 		d.Provider, d.ProviderDepositID, d.UserID, d.Currency, d.Network, d.Address,
-		d.Amount.String(), d.Fee.String(), d.TxID, string(d.Status), d.Confirmations, d.RequiredConfirmations)
-	if err != nil {
-		return false, err
+		d.Amount.String(), d.Fee.String(), d.TxID, string(d.Status), d.Confirmations, d.RequiredConfirmations).Scan(&stored)
+	if errors.Is(err, pgx.ErrNoRows) { // the conflict WHERE skipped the update: nothing advanced
+		return false, "", nil
 	}
-	return tag.RowsAffected() > 0, nil
+	if err != nil {
+		return false, "", err
+	}
+	return true, cryptoprov.DepositStatus(stored), nil
 }
 
 // ListDeposits implements DepositStore.

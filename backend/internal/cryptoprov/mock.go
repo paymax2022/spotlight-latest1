@@ -31,6 +31,7 @@ type Mock struct {
 	wallets     map[string][]Wallet // keyed by account id
 	deposits    map[string]Deposit  // keyed by deposit id
 	addrPending bool
+	addrCreates int
 }
 
 // AccountsCreated counts provider accounts created, to prove a service never makes a second one.
@@ -289,21 +290,28 @@ func (m *Mock) CreateDepositAddress(_ context.Context, accountID, currency, netw
 	if err := m.take("depositaddress"); err != nil {
 		return DepositAddress{}, err
 	}
+	m.addrCreates++
 	if m.addrPending {
 		return DepositAddress{}, ErrAddressPending
 	}
 	return DepositAddress{Currency: currency, Network: network, Address: fmt.Sprintf("mock-%s-%s-%s", accountID, currency, network)}, nil
 }
 
-// DepositAddress implements WalletProvider (same deterministic address as Create).
-func (m *Mock) DepositAddress(ctx context.Context, accountID, currency, network string) (DepositAddress, error) {
+// DepositAddress implements WalletProvider (a read; same deterministic address as Create).
+func (m *Mock) DepositAddress(_ context.Context, accountID, currency, network string) (DepositAddress, error) {
 	m.mu.Lock()
-	pending := m.addrPending
-	m.mu.Unlock()
-	if pending {
+	defer m.mu.Unlock()
+	if m.addrPending {
 		return DepositAddress{}, ErrAddressPending
 	}
-	return m.CreateDepositAddress(ctx, accountID, currency, network)
+	return DepositAddress{Currency: currency, Network: network, Address: fmt.Sprintf("mock-%s-%s-%s", accountID, currency, network)}, nil
+}
+
+// AddressCreates counts CreateDepositAddress calls.
+func (m *Mock) AddressCreates() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.addrCreates
 }
 
 // SetAddressPending makes deposit-address reads report ErrAddressPending.

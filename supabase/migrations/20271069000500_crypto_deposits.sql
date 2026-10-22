@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS public.crypto_deposits (
   updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (provider, provider_deposit_id)
 );
+-- A deposit webhook names the provider ACCOUNT; it must map back to exactly one user.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_crypto_accounts_provider_account
+  ON public.crypto_accounts (provider, provider_account_id);
+
 CREATE INDEX IF NOT EXISTS idx_crypto_deposits_user_created
   ON public.crypto_deposits (user_id, created_at DESC);
 
