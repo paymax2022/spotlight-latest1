@@ -275,7 +275,13 @@ func (s *Service) auditMoney(ctx context.Context, actorID, partyID, action, appo
 	if reason != "" {
 		detail["reason"] = reason
 	}
-	if err := s.audit.InsertAudit(ctx, userID, action, "appointment", appointmentID, "", detail); err != nil {
+	// Deterministic key + a partial unique index: one row per settlement and
+	// action, however many writers (request, reconciler replicas) race to it.
+	idem := "tm:" + action + ":" + sett.ID
+	if err := s.audit.InsertAudit(ctx, userID, action, "appointment", appointmentID, idem, detail); err != nil {
+		if strings.Contains(err.Error(), "doctor_compliance_audit_tm_money_uniq") {
+			return // already recorded
+		}
 		log.Printf("[telemedicine][audit] %s %s: %v", action, appointmentID, err)
 	}
 }

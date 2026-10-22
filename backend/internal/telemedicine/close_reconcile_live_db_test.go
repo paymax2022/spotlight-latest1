@@ -356,3 +356,27 @@ func TestLiveDB_Reconcile_QueuesARepeatedlyFailingPaymentForReview(t *testing.T)
 		t.Fatalf("a failed payment must leave the escrow intact, got %q", got)
 	}
 }
+
+// Two reconciler replicas recovering the same lost audit row write it once: the
+// row carries a deterministic idempotency key behind a unique index.
+func TestLiveDB_Reconcile_ConcurrentRecoveryWritesOneAuditRow(t *testing.T) {
+	f := newAuditedFixture(t)
+	if err := f.svc.CompleteAppointment(f.ctx, f.appt, f.doctorUserID); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if _, err := f.pool.Exec(f.ctx, `DELETE FROM doctor_compliance_audit WHERE entity_id=$1`, f.appt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(f.ctx, `UPDATE appointments SET closed_at = now() - interval '10 minutes' WHERE id=$1`, f.appt); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, _ = f.svc.ReconcileConsults(f.ctx, time.Now()) }()
+	}
+	wg.Wait()
+	if n := f.auditCount(t, "telemedicine.appointment.settled"); n != 1 {
+		t.Fatalf("concurrent recovery wrote %d settle audit rows, want 1", n)
+	}
+}

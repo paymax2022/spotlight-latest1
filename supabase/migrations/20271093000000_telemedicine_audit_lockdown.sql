@@ -12,3 +12,10 @@ REVOKE ALL ON TABLE public.doctor_compliance_audit FROM PUBLIC, anon, authentica
 REVOKE ALL ON TABLE public.appointments            FROM PUBLIC, anon, authenticated;
 GRANT  ALL ON TABLE public.doctor_compliance_audit TO service_role;
 GRANT  ALL ON TABLE public.appointments            TO service_role;
+
+-- One settle and one refund audit row per settlement. The backend writes them
+-- with a deterministic idempotency key (tm:<action>:<settlement_id>), so the
+-- reconciler's lost-row recovery cannot duplicate one when replicas race.
+CREATE UNIQUE INDEX IF NOT EXISTS doctor_compliance_audit_tm_money_uniq
+    ON public.doctor_compliance_audit (idempotency_key)
+    WHERE idempotency_key LIKE 'tm:telemedicine.appointment.%';
