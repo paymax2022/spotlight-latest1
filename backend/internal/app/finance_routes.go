@@ -2267,6 +2267,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				log.Println("[transport] FEATURE_PARCEL_RECEIVER_PIN_SMS is on but TERMII_API_KEY is unset — receivers will not be texted their drop-off PIN")
 			}
 		}
+		// Free receiver PIN channels: email (Resend; nil without a key — never put
+		// a nil *ResendClient in the interface) and Expo push (keyless).
+		if cfg.FeatureParcelReceiverPinNotifyEnabled {
+			var mail transport.ReceiverEmailSender
+			if rc := integrations.NewResendClient(cfg.ResendAPIKey, cfg.ResendFromEmail); rc != nil {
+				mail = rc
+			} else {
+				log.Println("[transport] FEATURE_PARCEL_RECEIVER_PIN_NOTIFY is on but RESEND_API_KEY is unset — receiver PIN emails are off; push still on")
+			}
+			transportSvc = transportSvc.WithReceiverPinNotify(mail, integrations.NewExpoPushClient(cfg.ExpoPushToken))
+		}
 		// Bridge transport dispatch/estimation onto the provider-agnostic
 		// MapService (OpenStack/OSRM by default) instead of the ad-hoc maps stub.
 		if mapSvc != nil {

@@ -312,6 +312,11 @@ type Config struct {
 	// parcel is picked up, text the receiver their drop-off PIN (Termii), at most
 	// once per parcel. Needs TERMII_API_KEY; off or unconfigured = no SMS.
 	FeatureParcelReceiverPinSMSEnabled bool
+	// FeatureParcelReceiverPinNotifyEnabled (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY):
+	// the free channels for the receiver's drop-off PIN after pickup: email to
+	// the booking's receiver_email (needs RESEND_API_KEY) and push + email to the
+	// receiver's verified Paymax account (Expo push is keyless).
+	FeatureParcelReceiverPinNotifyEnabled bool
 	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) ride-hailing checkout path
 	// (transport/paystackcheckout): a ride paid directly via Paystack, escrowed
@@ -1007,6 +1012,7 @@ func Load() Config {
 		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
 		FeatureParcelPrepaidInsuranceEnabled:         getEnvBool("FEATURE_PARCEL_PREPAID_INSURANCE", false),
 		FeatureParcelReceiverPinSMSEnabled:           getEnvBool("FEATURE_PARCEL_RECEIVER_PIN_SMS", false),
+		FeatureParcelReceiverPinNotifyEnabled:        getEnvBool("FEATURE_PARCEL_RECEIVER_PIN_NOTIFY", false),
 		ParcelInsuranceMinPremiumKobo:                getEnvInt("PARCEL_INSURANCE_MIN_PREMIUM_KOBO", 200000),
 		FeatureTransportPaystackCheckoutEnabled:      getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureTransportPaystackParcelEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_PARCEL_ENABLED", false),
