@@ -18,9 +18,6 @@ import {
   getProvider,
   getConsult,
   sendConsultMessage,
-  getIntake,
-  saveIntakeDraftForAppt,
-  submitApptIntake,
   getHealthProfile,
   type RecordQuery,
 } from './api';
@@ -127,45 +124,6 @@ export function useSubmitIntake() {
     }) => submitIntake(args.schemaId, args.schemaVersion, args.values, args.subjectId),
     onSuccess: (_d, vars) =>
       qc.invalidateQueries({ queryKey: [KEY, 'intake-draft', vars.schemaId] }),
-  });
-}
-
-export function useApptIntake(appointmentId?: string) {
-  return useQuery({
-    queryKey: [KEY, 'appt-intake', appointmentId],
-    queryFn: () => getIntake(appointmentId as string),
-    enabled: Boolean(appointmentId),
-    staleTime: 0,
-    // Advisory enrichment on an appointment card. Either outcome is final — an
-    // intake that does not exist yet, or a Pre-Consult feature this environment has
-    // not mounted (the route is behind FEATURE_HEALTH_INTAKE_ENABLED) — so the
-    // default retry only multiplies 404s per row.
-    retry: false,
-  });
-}
-
-export function useSaveApptDraft(appointmentId?: string) {
-  return useMutation({
-    mutationFn: (args: { answers: IntakeResponseValues; consentVersion?: string }) =>
-      saveIntakeDraftForAppt(appointmentId as string, args.answers, args.consentVersion),
-  });
-}
-
-/**
- * Submit the Pre-Consult intake. The mutation result carries an optional
- * `red_flag` the wizard surfaces as the M13 interstitial (never blocks help).
- */
-export function useSubmitApptIntake(appointmentId?: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (args: { answers: IntakeResponseValues; consentVersion: string }) =>
-      submitApptIntake(appointmentId as string, args.answers, args.consentVersion),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [KEY, 'appt-intake', appointmentId] });
-      qc.invalidateQueries({ queryKey: [KEY, 'health-profile'] });
-      qc.invalidateQueries({ queryKey: ['tele-appointment', appointmentId] });
-      qc.invalidateQueries({ queryKey: ['tele-appointments'] });
-    },
   });
 }
 

@@ -121,6 +121,36 @@ func (h *Handler) ListMyPrescriptions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rx})
 }
 
+// ListMyRefills — GET /refills  (patient; prescriptions with an authorized refill left)
+func (h *Handler) ListMyRefills(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	rx, err := h.svc.MyRefills(c.Request.Context(), id)
+	if err != nil {
+		failErr(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "refills": rx})
+}
+
+// RxQueue — GET /prescriptions/queue  (the owning pharmacist's work list)
+func (h *Handler) RxQueue(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	items, err := h.svc.RxQueue(c.Request.Context(), id)
+	if err != nil {
+		failErr(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": items})
+}
+
 // ListProducts — GET /products?pharmacy_provider_id=&q=  (NAFDAC-gated, Rx flag, HL-5)
 // q is an optional case-insensitive search on the medicine name or owning pharmacy name.
 func (h *Handler) ListProducts(c *gin.Context) {

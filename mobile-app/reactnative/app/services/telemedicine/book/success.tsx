@@ -10,7 +10,7 @@ import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useApptIntake } from '@/features/health/hooks';
+import { useApptIntake } from '@/features/telemedicine/intake';
 
 export default function BookingSuccessScreen() {
   const params = useLocalSearchParams<{

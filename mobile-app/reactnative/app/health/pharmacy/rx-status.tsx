@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { FileText, Clock, BadgeCheck, CircleX, CircleAlert, Plus } from 'lucide-react-native';
+import { FileText, Clock, BadgeCheck, CircleX, CircleAlert, Plus, Send, PackageCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -18,6 +18,8 @@ import { formatDate } from '@/features/health/constants/health.constants';
 export default function RxStatusScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: rx, isLoading, isError, refetch } = usePrescription(id);
+  const authorized = rx ? (rx.refillsAuthorized ?? 0) : 0;
+  const refillsLeft = rx ? Math.max(0, authorized - (rx.refillsUsed ?? 0)) : 0;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -32,10 +34,14 @@ export default function RxStatusScreen() {
           {/* Status hero */}
           <View style={[styles.hero, shadow1]}>
             <View style={styles.heroIconWrap}>
-              {rx.status === 'verifying' ? (
+              {rx.status === 'issued' ? (
+                <Send size={34} color={Colors.secondary} strokeWidth={1.8} />
+              ) : rx.status === 'verifying' ? (
                 <Clock size={34} color={Colors.onWarning} strokeWidth={1.8} />
               ) : rx.status === 'verified' ? (
                 <BadgeCheck size={34} color={Colors.teal} strokeWidth={1.8} />
+              ) : rx.status === 'dispensed' ? (
+                <PackageCheck size={34} color={Colors.teal} strokeWidth={1.8} />
               ) : rx.status === 'clarification' ? (
                 <CircleAlert size={34} color={Colors.onWarning} strokeWidth={1.8} />
               ) : (
@@ -44,20 +50,28 @@ export default function RxStatusScreen() {
             </View>
             <PharmacyStatusPill rx={rx.status} />
             <Text style={styles.heroTitle}>
-              {rx.status === 'verifying'
+              {rx.status === 'issued'
+                ? 'Ready to send'
+                : rx.status === 'verifying'
                 ? 'Verifying your prescription'
                 : rx.status === 'verified'
                 ? 'Prescription verified'
+                : rx.status === 'dispensed'
+                ? 'Dispensed'
                 : rx.status === 'clarification'
                 ? 'More information needed'
                 : 'Prescription rejected'}
             </Text>
             <Text style={styles.heroSub}>
-              {rx.status === 'verifying'
+              {rx.status === 'issued'
+                ? 'Your doctor has issued this e-Rx. Send it to a pharmacy and a licensed pharmacist will verify it before dispensing.'
+                : rx.status === 'verifying'
                 ? 'A licensed pharmacist is reviewing it. This usually takes a few minutes.'
                 : rx.status === 'verified'
                 ? `Verified by ${rx.pharmacistName ?? 'a pharmacist'}${rx.pharmacyName ? ` · ${rx.pharmacyName}` : ''}.`
-                : rx.pharmacistNote ?? 'Please review the pharmacist note and re-upload.'}
+                : rx.status === 'dispensed'
+                ? `The medicine was handed over${rx.pharmacyName ? ` at ${rx.pharmacyName}` : ''}. A pharmacist released ${rx.refillsUsed ?? 0} of ${rx.refillsAuthorized ?? 0} authorized refill${(rx.refillsAuthorized ?? 0) === 1 ? '' : 's'}.`
+                : rx.pharmacistNote ?? 'Review the pharmacist note below.'}
             </Text>
           </View>
 
@@ -75,12 +89,27 @@ export default function RxStatusScreen() {
               <FileText size={22} color={Colors.secondary} strokeWidth={2} />
             </View>
             <View style={styles.heroBody}>
-              <Text style={styles.docTitle}>Uploaded prescription</Text>
+              <Text style={styles.docTitle}>
+                {rx.source === 'consult' ? 'E-prescription' : 'Prescription'}
+              </Text>
               <Text style={styles.docSub}>
-                {rx.patientName} · Uploaded {formatDate(rx.uploadedAt)}
+                {rx.patientName} · Issued {formatDate(rx.uploadedAt)}
+                {rx.prescriberName ? ` by ${rx.prescriberName}` : ''}
               </Text>
             </View>
           </View>
+
+          {/* Refill authority (DP-004) */}
+          {(rx.refillsAuthorized ?? 0) > 0 ? (
+            <View style={styles.refills}>
+              <Text style={styles.refillsTitle}>Refills</Text>
+              <Text style={styles.refillsBody}>
+                {refillsLeft > 0
+                  ? `${refillsLeft} of ${authorized} refill${authorized > 1 ? 's' : ''} still authorized. A pharmacist releases one when you present this prescription.`
+                  : `All ${authorized} authorized refill${authorized > 1 ? 's have' : ' has'} been dispensed. Ask your doctor for a new prescription.`}
+              </Text>
+            </View>
+          ) : null}
 
           {/* Items (once verified) */}
           {rx.items.length > 0 ? (
@@ -110,13 +139,23 @@ export default function RxStatusScreen() {
         </ScrollView>
       )}
 
-      {rx && rx.status === 'verified' ? (
+      {rx && rx.status === 'issued' ? (
+        <View style={styles.footer}>
+          <PrimaryButton label="Send to a pharmacy" onPress={() => router.push('/health/pharmacy/send-rx')} />
+        </View>
+      ) : rx && rx.status === 'verified' ? (
         <View style={styles.footer}>
           <PrimaryButton label="Order verified medicines" onPress={() => router.push('/health/pharmacy/cart')} />
         </View>
       ) : rx && (rx.status === 'rejected' || rx.status === 'clarification') ? (
+        // Only a prescriber can produce a valid e-Rx — re-sending the same
+        // rejected document would just be rejected again.
         <View style={styles.footer}>
-          <PrimaryButton label="Re-upload prescription" onPress={() => router.replace('/health/pharmacy/upload-rx')} />
+          <PrimaryButton label="Book a doctor consult" onPress={() => router.push('/services/telemedicine/book')} />
+        </View>
+      ) : rx && rx.status === 'dispensed' && refillsLeft > 0 ? (
+        <View style={styles.footer}>
+          <PrimaryButton label="Ask about a refill" onPress={() => router.push('/health/pharmacy/refills')} />
         </View>
       ) : null}
     </SafeAreaView>
@@ -154,6 +193,14 @@ const styles = StyleSheet.create({
   },
   noteLabel: { ...Typography.labelSm, color: Colors.onWarning, textTransform: 'uppercase', letterSpacing: 0.4 },
   noteBody: { ...Typography.bodySm, color: Colors.onWarning, lineHeight: 19 },
+  refills: {
+    backgroundColor: Colors.iconBgTeal,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    gap: 4,
+  },
+  refillsTitle: { ...Typography.labelSm, color: Colors.teal, textTransform: 'uppercase', letterSpacing: 0.4 },
+  refillsBody: { ...Typography.bodySm, color: Colors.tertiaryContainer, lineHeight: 19 },
   docCard: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -28,8 +28,8 @@ const DOC_ROWS: { type: VcnDocType; label: string; required: boolean }[] = [
 ];
 
 // Mock-first "attach document": in USE_MOCK there is no real DocumentPicker, so we
-// mint a fake storage_key (mirrors pharmacy upload-rx). In live mode the same
-// affordance would hand off to the existing upload pipeline to obtain the key.
+// mint a fake storage_key. In live mode the same affordance would hand off to the
+// existing upload pipeline to obtain the key.
 function fakeStorageKey(type: VcnDocType): string {
   return `vet/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}/${type}`;
 }

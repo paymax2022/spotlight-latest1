@@ -1,8 +1,8 @@
-import React, { useRef, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, TextInput, Platform } from 'react-native';
+import React, { useRef } from 'react';
+import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ShieldCheck, Wallet as WalletIcon, Video, Phone, MessageCircle } from 'lucide-react-native';
+import { Wallet as WalletIcon, Video, Phone, MessageCircle } from 'lucide-react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
@@ -16,7 +16,7 @@ import { TeleHeader } from '@/features/telemedicine/components';
 import type { ConsultType, BookAppointmentResult } from '@/types/telemedicine';
 import PrimaryButton from '@/components/PrimaryButton';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
-import { submitApptIntake } from '@/features/health/api';
+import { INTAKE_QUERY_KEY, submitIntake } from '@/features/telemedicine/intake';
 import { CONSENT_VERSION } from '@/features/health/api/preconsult.mock';
 import { getIntakeDraft, clearIntakeDraft } from '@/features/health/intakeDraftStore';
 import { slotToISO } from '@/features/telemedicine/pricing';
@@ -38,8 +38,6 @@ export default function ConfirmBookingScreen() {
     doctorId: string; slotId: string; slotDate: string; slotTime: string; consultType: ConsultType; reason: string;
   }>();
 
-  const [pin, setPin] = useState('');
-  const [pinError, setPinError] = useState('');
   const idemKeyRef = useRef('');
   const checkout = usePurchasePayment<BookAppointmentResult>();
 
@@ -72,8 +70,6 @@ export default function ConfirmBookingScreen() {
 
   const onConfirm = () => {
     if (!doctor || isPending || !priced) return;
-    if (!/^\d{4}$/.test(pin)) { setPinError('Enter your 4-digit transaction PIN.'); return; }
-    setPinError('');
     idemKeyRef.current = generateIdempotencyKey();
     checkout.start({
       amountKobo: totalKobo,
@@ -103,9 +99,9 @@ export default function ConfirmBookingScreen() {
         try {
           const pre = await getIntakeDraft(`pre-${params.doctorId}`);
           if (pre && Object.keys(pre).length > 0) {
-            await submitApptIntake(result.appointmentId, pre, CONSENT_VERSION);
+            await submitIntake(result.appointmentId, pre, CONSENT_VERSION);
             await clearIntakeDraft(`pre-${params.doctorId}`);
-            qc.invalidateQueries({ queryKey: ['health', 'appt-intake', result.appointmentId] });
+            qc.invalidateQueries({ queryKey: [INTAKE_QUERY_KEY, result.appointmentId] });
           }
         } catch { /* non-blocking — booking already succeeded */ }
         router.replace({
@@ -174,24 +170,12 @@ export default function ConfirmBookingScreen() {
             </View>
             {insufficient && <Text style={styles.lowBadge}>Low</Text>}
           </View>
-        </View>
 
-        <View style={[styles.card, shadow1]}>
-          <View style={styles.secureHead}>
-            <ShieldCheck size={16} color={Colors.teal} strokeWidth={2.2} />
-            <Text style={styles.secureText}>Enter your transaction PIN to authorise</Text>
-          </View>
-          <TextInput
-            style={[styles.pinInput, pinError ? styles.pinError : null]}
-            placeholder="••••"
-            placeholderTextColor={Colors.outline}
-            keyboardType="number-pad"
-            secureTextEntry
-            maxLength={4}
-            value={pin}
-            onChangeText={(t) => { setPin(t.replace(/[^0-9]/g, '')); setPinError(''); }}
-          />
-          {pinError ? <Text style={styles.errorText}>{pinError}</Text> : null}
+          <Text style={styles.payHint}>
+            {insufficient
+              ? 'Your wallet will not cover this. Top up, or pay by card at the next step.'
+              : 'You will choose how to pay, then confirm with your transaction PIN.'}
+          </Text>
         </View>
       </ScrollView>
 
@@ -241,10 +225,7 @@ const styles = StyleSheet.create({
   walletLabel: { ...Typography.labelMd, color: Colors.onSurface },
   walletBalance:{ ...Typography.caption, color: Colors.onSurfaceVariant },
   lowBadge:    { ...Typography.labelSm, color: Colors.error, backgroundColor: Colors.errorContainer, paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.full, overflow: 'hidden' },
-  secureHead:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.md },
-  secureText:  { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
-  pinInput:    { height: 56, borderWidth: 1.5, borderColor: Colors.outlineVariant, borderRadius: Radius.lg, textAlign: 'center', letterSpacing: 12, ...Typography.headlineMd, color: Colors.onSurface, backgroundColor: Colors.surfaceContainerLow },
-  pinError:    { borderColor: Colors.error },
+  payHint:     { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.md, lineHeight: 20 },
   errorText:   { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.sm },
   footer:      { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Platform.OS === 'ios' ? 32 : Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh },
 });

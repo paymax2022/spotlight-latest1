@@ -15,22 +15,22 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import WizardProgress from '@/features/registration/components/WizardProgress';
-import { pickFileForField } from '@/features/registration/utils/filePicker';
 import { IntakeField, RedFlagInterstitial, EmergencyBanner } from '@/features/health/components';
 import {
+  INTAKE_UPLOAD_UNAVAILABLE_COPY,
   useApptIntake, useSaveApptDraft, useSubmitApptIntake,
-} from '@/features/health/hooks';
-import { presignAttachment } from '@/features/health/api';
+} from '@/features/telemedicine/intake';
 import {
-  visibleSteps, validateStep, validatePreConsult, firstUnansweredStepIndex, formatMedList,
+  visibleSteps, stepFields, applyGateAnswer, reconcileGates, validateStep, validatePreConsult,
+  firstUnansweredStepIndex, formatIntakeValue,
 } from '@/features/health/utils';
 import { INTAKE_NOT_DIAGNOSIS_COPY } from '@/features/health/constants/health.constants';
 import {
   getIntakeDraft, setIntakeDraft, clearIntakeDraft,
 } from '@/features/health/intakeDraftStore';
 import type {
-  IntakeResponseValues, IntakeValue, IntakeErrors, RedFlagResult, IntakeAttachment,
-  IntakeField as IntakeFieldT, PreConsultIntakeSchema,
+  IntakeResponseValues, IntakeValue, IntakeErrors, RedFlagResult,
+  PreConsultIntakeSchema,
 } from '@/features/health/types';
 
 type Phase = 'wizard' | 'review' | 'redflag' | 'done';
@@ -59,8 +59,6 @@ export default function PreConsultIntakeWizard() {
   const [stepIndex, setStepIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('wizard');
   const [redFlag, setRedFlag] = useState<RedFlagResult | null>(null);
-  const [attachments, setAttachments] = useState<IntakeAttachment[]>([]);
-  const [attachBusy, setAttachBusy] = useState(false);
   const hydrated = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -82,16 +80,19 @@ export default function PreConsultIntakeWizard() {
       if (cancelled) return;
       // Server answers win on conflict (last write), local fills gaps offline.
       const merged: IntakeResponseValues = { ...(local ?? {}), ...intake.answers };
+      // A draft written before the gate hid its detail can hold both "No allergies"
+      // and an allergen list — the doctor would read the contradiction. Reconcile.
+      const gated = reconcileGates(merged);
       // Prefill the chief complaint from the "reason for visit" typed at booking,
       // so we never re-ask what the patient already told us (PRD §3 low-friction).
-      if (!merged.chief_complaint && typeof reason === 'string' && reason.trim()) {
-        merged.chief_complaint = reason.trim();
+      if (!gated.chief_complaint && typeof reason === 'string' && reason.trim()) {
+        gated.chief_complaint = reason.trim();
       }
-      setValues(merged);
+      setValues(gated);
       hydrated.current = true;
       // M3 resume: jump to the first unanswered step.
       if (resume === '1' && schema) {
-        setStepIndex(firstUnansweredStepIndex(schema, merged));
+        setStepIndex(firstUnansweredStepIndex(schema, gated));
       }
     })();
     return () => { cancelled = true; };
@@ -114,7 +115,7 @@ export default function PreConsultIntakeWizard() {
 
   const setValue = (fieldId: string, value: IntakeValue) => {
     setValues((prev) => {
-      const next = { ...prev, [fieldId]: value };
+      const next = applyGateAnswer({ ...prev, [fieldId]: value }, fieldId);
       persist(next);
       return next;
     });
@@ -123,35 +124,6 @@ export default function PreConsultIntakeWizard() {
       const { [fieldId]: _removed, ...rest } = prev;
       return rest;
     });
-  };
-
-  const onPickAttachment = async (field: IntakeFieldT) => {
-    const picked = await pickFileForField(field.accept);
-    if (!picked) return;
-    setAttachBusy(true);
-    try {
-      const { uploadUrl, attachment } = await presignAttachment(appointmentId, {
-        fieldId: field.id, fileName: picked.name, mimeType: picked.mimeType,
-      });
-      // Live: PUT the file binary to uploadUrl. Mock URLs are no-ops.
-      if (!uploadUrl.startsWith('mock://')) {
-        const blob = await (await fetch(picked.uri)).blob();
-        await fetch(uploadUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': picked.mimeType } });
-      }
-      setAttachments((prev) => [...prev, attachment]);
-      const nextRefs = [...attachments, attachment].map((a) => a.storageKey);
-      setValue(field.id, nextRefs);
-    } catch {
-      alertAsync({ title: 'Upload failed', message: 'Could not attach that file. Please try again.' });
-    } finally {
-      setAttachBusy(false);
-    }
-  };
-
-  const removeAttachment = (attId: string, fieldId: string) => {
-    const next = attachments.filter((a) => a.id !== attId);
-    setAttachments(next);
-    setValue(fieldId, next.filter((a) => a.fieldId === fieldId).map((a) => a.storageKey));
   };
 
   if (bundleQ.isLoading) {
@@ -211,7 +183,6 @@ export default function PreConsultIntakeWizard() {
       <ReviewScreen
         schema={schema}
         values={values}
-        attachments={attachments}
         submitting={submit.isPending}
         onBack={() => setPhase('wizard')}
         onSubmit={onSubmit}
@@ -310,17 +281,14 @@ export default function PreConsultIntakeWizard() {
             </View>
           ) : null}
 
-          {step.fields.map((field) => (
+          {stepFields(step, values).map((field) => (
             <IntakeField
               key={field.id}
               field={field}
               value={values[field.id] ?? null}
               error={errors[field.id]}
               onChange={(v) => setValue(field.id, v)}
-              onPickAttachment={onPickAttachment}
-              attachments={attachments.filter((a) => a.fieldId === field.id)}
-              onRemoveAttachment={(attId) => removeAttachment(attId, field.id)}
-              attachmentBusy={attachBusy}
+              attachmentNote={INTAKE_UPLOAD_UNAVAILABLE_COPY}
             />
           ))}
         </ScrollView>
@@ -344,30 +312,15 @@ export default function PreConsultIntakeWizard() {
 }
 
 function ReviewScreen({
-  schema, values, attachments, submitting, onBack, onSubmit,
+  schema, values, submitting, onBack, onSubmit,
 }: {
   schema: PreConsultIntakeSchema;
   values: IntakeResponseValues;
-  attachments: IntakeAttachment[];
   submitting: boolean;
   onBack: () => void;
   onSubmit: () => void;
 }) {
   const steps = visibleSteps(schema, values);
-
-  const renderValue = (field: IntakeFieldT): string => {
-    const v = values[field.id];
-    if (v == null || v === '' || (Array.isArray(v) && v.length === 0)) return '—';
-    if (field.type === 'boolean') return v ? 'Yes' : 'No';
-    if (field.type === 'med_list') { const lines = formatMedList(v); return lines.length ? lines.join(', ') : '—'; }
-    if (field.type === 'attachment') return `${attachments.filter((a) => a.fieldId === field.id).length} file(s)`;
-    if (Array.isArray(v)) {
-      const labels = v.map((val) => field.options?.find((o) => o.value === val)?.label ?? val);
-      return labels.join(', ');
-    }
-    if (field.options) return field.options.find((o) => o.value === v)?.label ?? String(v);
-    return String(v);
-  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -380,7 +333,7 @@ function ReviewScreen({
         {steps.map((s) => (
           <View key={s.id} style={styles.reviewCard}>
             <Text style={styles.reviewTitle}>{s.title}</Text>
-            {s.fields.map((f) => (
+            {stepFields(s, values).map((f) => (
               <View key={f.id} style={styles.reviewRow}>
                 <Text style={styles.reviewLabel}>{f.label}</Text>
                 <Text
@@ -389,7 +342,7 @@ function ReviewScreen({
                     (f.id === 'allergies_list' || f.id === 'medications_list') && styles.reviewCritical,
                   ]}
                 >
-                  {renderValue(f)}
+                  {formatIntakeValue(f, values[f.id])}
                 </Text>
               </View>
             ))}

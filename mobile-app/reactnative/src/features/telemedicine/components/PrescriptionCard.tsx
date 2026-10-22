@@ -20,6 +20,12 @@ export default function PrescriptionCard({ prescription }: { prescription: Presc
         </View>
       </View>
 
+      {prescription.items.length === 0 ? (
+        <Text style={styles.empty}>
+          Your doctor recorded the prescription without a medication list. Ask them in the consult chat.
+        </Text>
+      ) : null}
+
       {prescription.items.map((item, i) => (
         <View key={i} style={[styles.item, i > 0 && styles.itemBorder]}>
           <Text style={styles.medName}>{item.name}</Text>
@@ -49,6 +55,7 @@ const styles = StyleSheet.create({
   iconBox:     { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
   title:       { ...Typography.titleMd, color: Colors.onSurface },
   sub:         { ...Typography.caption, color: Colors.onSurfaceVariant },
+  empty:       { ...Typography.bodySm, color: Colors.onSurfaceVariant, lineHeight: 20 },
   item:        { paddingVertical: Spacing.sm, gap: 6 },
   itemBorder:  { borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh },
   medName:     { ...Typography.labelLg, color: Colors.onSurface },

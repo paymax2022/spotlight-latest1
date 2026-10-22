@@ -94,11 +94,11 @@ type HMOEligibilityProjection struct {
 }
 
 func (s *Service) StartAppointment(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
-	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "in_progress", nil, raw)
+	return s.transitionAppointment(ctx, userID, appointmentID, "in_progress", nil, raw)
 }
 
 func (s *Service) EndAppointment(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
-	appt, err := s.repo.TransitionAppointment(ctx, userID, appointmentID, "completed", nil, raw)
+	appt, err := s.transitionAppointment(ctx, userID, appointmentID, "completed", nil, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -115,11 +115,11 @@ func (s *Service) EndAppointment(ctx context.Context, userID, appointmentID stri
 }
 
 func (s *Service) CancelAppointment(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
-	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "cancelled", nil, raw)
+	return s.transitionAppointment(ctx, userID, appointmentID, "cancelled", nil, raw)
 }
 
 func (s *Service) MarkNoShow(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
-	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "no_show", nil, raw)
+	return s.transitionAppointment(ctx, userID, appointmentID, "no_show", nil, raw)
 }
 
 // GetClinicalNote returns the latest clinical note for an appointment, or nil (not an

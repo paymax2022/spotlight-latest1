@@ -9,7 +9,7 @@ import {
   MapPin,
   MessageCircle,
   Stethoscope,
-  Upload,
+  Send,
   TriangleAlert,
   ChevronRight,
   X,
@@ -34,7 +34,7 @@ const ACTION_ROUTES: Record<SymptomEscalationAction['type'], string> = {
   TELEHEALTH_CONSULT: '/services/telemedicine', // existing booking + pre-consult intake flow
   NEAREST_FACILITY: '/health/triage/emergency', // existing MapService-backed nearest-ER screen
   EMERGENCY_GUIDANCE: '/health/triage/emergency',
-  UPLOAD_RX: '/health/pharmacy/upload-rx', // existing prescription upload (Journey D)
+  UPLOAD_RX: '/health/pharmacy/send-rx', // hand an issued e-Rx to a pharmacy (Journey D)
 };
 
 function runAction(action: SymptomEscalationAction) {
@@ -47,7 +47,8 @@ function runAction(action: SymptomEscalationAction) {
  * license"). Rendered full-screen for T3/T4: says WHAT was flagged and WHY,
  * then routes to care. T4 (EMERGENCY) shows emergency guidance + nearest
  * facility and NO commerce UI. T3 (CONSULT) routes to pharmacist chat /
- * telehealth and captures POM demand via prescription upload (Journey D).
+ * telehealth and captures POM demand by sending the patient's e-Rx to a pharmacy
+ * (Journey D).
  */
 export default function SymptomEscalationScreen() {
   const { terms, refiners } = useSymptomSearchStore();
@@ -166,7 +167,7 @@ export default function SymptomEscalationScreen() {
             const icon =
               action.type === 'PHARMACIST_CHAT' ? MessageCircle :
               action.type === 'TELEHEALTH_CONSULT' ? Stethoscope :
-              action.type === 'UPLOAD_RX' ? Upload : ChevronRight;
+              action.type === 'UPLOAD_RX' ? Send : ChevronRight;
             const Icon = icon;
             return (
               <Pressable
@@ -190,18 +191,18 @@ export default function SymptomEscalationScreen() {
             );
           })}
 
-          {/* Journey D — POM demand capture via the existing upload flow */}
+          {/* Journey D — POM demand capture: send an already-issued e-Rx to a pharmacy */}
           <Pressable
-            onPress={() => runAction({ type: 'UPLOAD_RX', label: 'Upload prescription' })}
+            onPress={() => runAction({ type: 'UPLOAD_RX', label: 'Send an e-Rx' })}
             style={({ pressed }) => [styles.actionCard, shadow1, pressed && styles.pressed]}
             accessibilityRole="button"
           >
             <View style={[styles.actionIcon, { backgroundColor: Colors.iconBgPurple }]}>
-              <Upload size={18} color={Colors.primary} strokeWidth={2} />
+              <Send size={18} color={Colors.primary} strokeWidth={2} />
             </View>
             <View style={styles.flex}>
               <Text style={styles.actionTitle}>Already have a prescription?</Text>
-              <Text style={styles.actionSub}>Upload it — a pharmacist verifies before dispensing.</Text>
+              <Text style={styles.actionSub}>Send it to a pharmacy — a pharmacist verifies before dispensing.</Text>
             </View>
             <ChevronRight size={18} color={Colors.outline} strokeWidth={2} />
           </Pressable>

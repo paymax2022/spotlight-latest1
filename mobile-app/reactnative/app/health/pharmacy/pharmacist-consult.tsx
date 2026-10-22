@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, FlatList, Pressable, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { Send, ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -20,54 +21,68 @@ export default function PharmacistConsultScreen() {
     const body = text.trim();
     if (!body) return;
     setText('');
-    send.mutate(body);
+    // Keep the text visible if the send fails — silently clearing it would make
+    // the patient think the pharmacist received and ignored the question.
+    send.mutate(body, { onError: () => setText(body) });
   };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Ask a pharmacist" subtitle="HealthPlus · Pharm. Grace E." />
-
-      <View style={styles.banner}>
-        <ShieldCheck size={13} color={Colors.teal} strokeWidth={2} />
-        <Text style={styles.bannerText}>Licensed pharmacist. Not a substitute for emergency care.</Text>
-      </View>
+      <ScreenHeader title="Ask a pharmacist" />
 
       {isLoading ? (
-        <StateView kind="loading" message="Loading chat…" />
+        <StateView kind="loading" message="Connecting…" />
       ) : isError ? (
-        <StateView kind="error" title="Couldn't load chat" message="Please try again." actionLabel="Retry" onAction={refetch} />
+        <StateView
+          kind="error"
+          title="No pharmacist is on this line"
+          message="Pharmacist chat isn't connected to a live pharmacy yet, so a message here would go nowhere. A pharmacist still verifies every prescription before it is dispensed."
+          actionLabel="Ask a doctor instead"
+          onAction={() => router.push('/services/telemedicine/book')}
+          secondaryActionLabel="Retry"
+          onSecondaryAction={refetch}
+        />
       ) : (
-        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
-          <FlatList
-            data={messages ?? []}
-            keyExtractor={(m) => m.id}
-            contentContainerStyle={styles.list}
-            showsVerticalScrollIndicator={false}
-            renderItem={({ item }) => (
-              <View style={[styles.bubbleRow, item.fromPharmacist ? styles.left : styles.right]}>
-                <View style={[styles.bubble, item.fromPharmacist ? styles.bubbleIn : styles.bubbleOut]}>
-                  <Text style={[styles.body, !item.fromPharmacist && styles.bodyOut]}>{item.body}</Text>
-                  <Text style={[styles.time, !item.fromPharmacist && styles.timeOut]}>{relativeTime(item.at)}</Text>
-                </View>
-              </View>
-            )}
-            ListEmptyComponent={<StateView kind="empty" compact icon="MessageCircle" title="Start the conversation" message="Ask about dosage, interactions and more." />}
-          />
-
-          <View style={styles.inputBar}>
-            <TextInput
-              style={styles.input}
-              placeholder="Type a message…"
-              placeholderTextColor={Colors.outline}
-              value={text}
-              onChangeText={setText}
-              multiline
-            />
-            <Pressable style={[styles.sendBtn, !text.trim() && styles.sendDisabled]} onPress={onSend} disabled={!text.trim()}>
-              <Send size={18} color={Colors.onPrimary} strokeWidth={2} />
-            </Pressable>
+        <>
+          <View style={styles.banner}>
+            <ShieldCheck size={13} color={Colors.teal} strokeWidth={2} />
+            <Text style={styles.bannerText}>Advice here is general — not a substitute for emergency care.</Text>
           </View>
-        </KeyboardAvoidingView>
+
+          <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
+            <FlatList
+              data={messages ?? []}
+              keyExtractor={(m) => m.id}
+              contentContainerStyle={styles.list}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => (
+                <View style={[styles.bubbleRow, item.fromPharmacist ? styles.left : styles.right]}>
+                  <View style={[styles.bubble, item.fromPharmacist ? styles.bubbleIn : styles.bubbleOut]}>
+                    <Text style={[styles.body, !item.fromPharmacist && styles.bodyOut]}>{item.body}</Text>
+                    <Text style={[styles.time, !item.fromPharmacist && styles.timeOut]}>{relativeTime(item.at)}</Text>
+                  </View>
+                </View>
+              )}
+              ListEmptyComponent={<StateView kind="empty" compact icon="MessageCircle" title="Start the conversation" message="Ask about dosage, interactions and more." />}
+            />
+
+            {send.isError ? <Text style={styles.sendError}>Your message was not sent. It is still in the box.</Text> : null}
+
+            <View style={styles.inputBar}>
+              <TextInput
+                style={styles.input}
+                placeholder="Type a message…"
+                placeholderTextColor={Colors.outline}
+                value={text}
+                onChangeText={setText}
+                multiline
+              />
+              <Pressable style={[styles.sendBtn, !text.trim() && styles.sendDisabled]} onPress={onSend} disabled={!text.trim()}>
+                <Send size={18} color={Colors.onPrimary} strokeWidth={2} />
+              </Pressable>
+            </View>
+          </KeyboardAvoidingView>
+        </>
       )}
     </SafeAreaView>
   );
@@ -99,6 +114,7 @@ const styles = StyleSheet.create({
   bodyOut: { color: Colors.onPrimary },
   time: { ...Typography.caption, color: Colors.onSurfaceVariant },
   timeOut: { color: Colors.inverseOnSurface },
+  sendError: { ...Typography.labelSm, color: Colors.error, paddingHorizontal: Spacing.containerMargin },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',

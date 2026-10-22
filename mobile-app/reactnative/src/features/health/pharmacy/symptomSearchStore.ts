@@ -68,9 +68,10 @@ export const useSymptomSearchStore = create<SymptomSearchState>((set) => ({
 export function skuToCartProduct(sku: PharmacySkuOption): PharmacyProduct {
   return {
     id: sku.product_id,
-    // pharmacy is chosen at checkout (pharmacy-select), so leave these blank.
-    pharmacyId: '',
-    pharmacyName: '',
+    // The server attributes each SKU to the pharmacy that sells it — the cart needs
+    // it, because one order can only come from one pharmacy.
+    pharmacyId: sku.pharmacy_provider_id,
+    pharmacyName: sku.pharmacy_name,
     name: sku.name,
     brand: sku.brand,
     form: sku.pack_size,

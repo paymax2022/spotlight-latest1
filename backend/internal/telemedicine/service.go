@@ -48,6 +48,10 @@ type Service struct {
 	// applies the decision but skips the audit row rather than failing the
 	// request over a logging concern.
 	audit AuditWriter
+	// livekit mints consult-room join tokens (doctor-console bridge, see
+	// bridge.go). Wired via WithLiveKit; nil means "no media server configured"
+	// and the token endpoint reports configured:false instead of failing.
+	livekit liveKitTokens
 }
 
 // NewService builds the service with the platform booking fee OFF. The fee is a
@@ -441,6 +445,11 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 		if existing, err := s.appointmentByIdempotencyKey(ctx, patientID, req.IdempotencyKey); err != nil {
 			return nil, fmt.Errorf("telemedicine: check idempotency key: %w", err)
 		} else if existing != nil {
+			// Heal-on-replay: if the first attempt crashed after writing the
+			// appointment but before bridging doctor-console rows, the retry
+			// re-attempts the (idempotent) bridge instead of returning a
+			// booking the doctor can never see.
+			s.bridgeToDoctorConsole(ctx, existing)
 			return existing, nil
 		}
 	}
@@ -552,6 +561,12 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	); err != nil {
 		return nil, fmt.Errorf("telemedicine: insert appointment: %w", err)
 	}
+	// Doctor-console bridge (best-effort, idempotent): create the mirrored
+	// appointment + chat thread so the rich consult screens light up for the
+	// owning doctor. Money has moved and the appointment row is committed by
+	// this point — a bridge failure is logged, never turned back into a
+	// booking error, and the idempotent replay path re-attempts it.
+	s.bridgeToDoctorConsole(ctx, appt)
 	return appt, nil
 }
 
@@ -647,7 +662,7 @@ func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctor
 		Scan(&appt.ID, &appt.DoctorID, &appt.Status, &appt.SettlementID, &appt.PlatformFeeKobo); err != nil {
 		return errors.New("telemedicine: appointment not found")
 	}
-	if appt.Status != ApptBooked && appt.Status != ApptConfirmed {
+	if appt.Status != ApptBooked && appt.Status != ApptConfirmed && appt.Status != ApptInProgress {
 		return errors.New("telemedicine: appointment is not in a completable state")
 	}
 	var dbDoctorUserID string
@@ -749,10 +764,10 @@ func (s *Service) IssuePrescription(ctx context.Context, appointmentID, doctorUs
 // Object-level authZ: only the patient or the assigned doctor of that
 // appointment may read it back.
 func (s *Service) GetPrescription(ctx context.Context, appointmentID, callerUserID string) (*Prescription, error) {
-	var patientID, doctorID string
+	var patientID, doctorID, doctorName string
 	if err := s.db.QueryRow(ctx,
-		`SELECT patient_id, doctor_id FROM appointments WHERE id=$1`,
-		appointmentID).Scan(&patientID, &doctorID); err != nil {
+		`SELECT patient_id, doctor_id, COALESCE(doctor_name,'') FROM appointments WHERE id=$1`,
+		appointmentID).Scan(&patientID, &doctorID, &doctorName); err != nil {
 		return nil, errors.New("telemedicine: appointment not found")
 	}
 	var dbDoctorUserID string
@@ -765,10 +780,22 @@ func (s *Service) GetPrescription(ctx context.Context, appointmentID, callerUser
 	p := &Prescription{}
 	const q = `SELECT id, appointment_id, doctor_id, patient_id, medications, instructions, issued_at
 	            FROM prescriptions WHERE appointment_id=$1 ORDER BY issued_at DESC LIMIT 1`
-	if err := s.db.QueryRow(ctx, q, appointmentID).Scan(
+	err := s.db.QueryRow(ctx, q, appointmentID).Scan(
 		&p.ID, &p.AppointmentID, &p.DoctorID, &p.PatientID, &p.Medications, &p.Instructions, &p.IssuedAt,
-	); err != nil {
-		return nil, errors.New("telemedicine: prescription not found")
+	)
+	if err != nil {
+		// No telemedicine-side prescription: fall back to the doctor console,
+		// where the rich consult screen issues into doctor_prescriptions keyed
+		// by the bridged appointment id (identical to this appointment's id).
+		return s.prescriptionFromDoctorConsole(ctx, appointmentID, patientID, doctorID, doctorName)
+	}
+	p.DoctorName = doctorName
+	// Split the free-text list line-wise so clients render one shape:
+	// items[] with a name, regardless of who issued the prescription.
+	for _, line := range strings.FieldsFunc(p.Medications, func(r rune) bool { return r == '\n' || r == ';' }) {
+		if name := strings.TrimSpace(line); name != "" {
+			p.Items = append(p.Items, RxItem{Name: name})
+		}
 	}
 	return p, nil
 }

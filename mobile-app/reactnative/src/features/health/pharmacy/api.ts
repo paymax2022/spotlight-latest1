@@ -13,10 +13,12 @@ import type {
   Prescription,
   PharmacyOrder,
   OrderStatus,
+  OrderEvent,
   CartLine,
   CreateOrderInput,
   MedicationItem,
-  Refill,
+  PrescriptionRefill,
+  RxItem,
   PharmacyReview,
   SubmitReviewInput,
   RxStatus,
@@ -25,7 +27,8 @@ import type {
   CatalogStockItem,
   ProviderRxQueueItem,
   RxDecision,
-  ControlledLogEntry,
+  MyPharmacy,
+  UpsertProductInput,
   ProviderEarnings,
   StockAlert,
   ProductCategory,
@@ -234,6 +237,20 @@ const MOCK_PHARMACIES: PharmacyVendor[] = [
 
 const MOCK_PRESCRIPTIONS: Prescription[] = [
   {
+    // Issued by a consult and not yet sent anywhere — the state the patient's
+    // "send to a pharmacy" action acts on.
+    id: 'rx_issued',
+    source: 'consult',
+    status: 'issued',
+    uploadedAt: new Date().toISOString(),
+    patientName: 'Ada Obi',
+    prescriberName: 'Dr. Bello',
+    docColor: Colors.iconBgBlue,
+    items: [
+      { name: 'Paracetamol 500mg', dosage: '1 tab, 3x daily', quantity: '24 tablets', productId: 'prod_para' },
+    ],
+  },
+  {
     id: 'rx_verifying',
     source: 'upload',
     status: 'verifying',
@@ -280,12 +297,12 @@ const MOCK_ORDER: PharmacyOrder = {
   pharmacyId: 'ph_health',
   pharmacyName: 'HealthPlus Pharmacy',
   lines: [
-    { productId: 'prod_lisin', name: 'Lisinopril', form: '10mg · 30 tablets', priceKobo: 420000, qty: 1, rxRequired: true, imageColor: Colors.iconBgPurple },
-    { productId: 'prod_para', name: 'Paracetamol', form: '500mg · 24 tablets', priceKobo: 65000, qty: 2, rxRequired: false, imageColor: Colors.iconBgTeal },
+    { productId: 'prod_amox', pharmacyId: 'ph_health', pharmacyName: 'HealthPlus Pharmacy', name: 'Amoxicillin', form: '500mg · 21 capsules', priceKobo: 285000, qty: 1, rxRequired: true, imageColor: Colors.iconBgBlue },
+    { productId: 'prod_para', pharmacyId: 'ph_health', pharmacyName: 'HealthPlus Pharmacy', name: 'Paracetamol', form: '500mg · 24 tablets', priceKobo: 65000, qty: 2, rxRequired: false, imageColor: Colors.iconBgTeal },
   ],
-  subtotalKobo: 550000,
+  subtotalKobo: 415000,
   deliveryFeeKobo: 120000,
-  totalKobo: 670000,
+  totalKobo: 415000,
   paymentHeld: true,
   createdAt: new Date(Date.now() - 90 * 60_000).toISOString(),
   rider: { name: 'Tunde A.', phone: '+2348012345678', vehicle: 'Bike · LAG-221-KJA' },
@@ -306,10 +323,10 @@ const MOCK_PICKUP_ORDER: PharmacyOrder = {
   reference: 'PHX-48107',
   status: 'ready_for_pickup',
   fulfilment: 'pickup',
-  pharmacyId: 'ph_medplus',
-  pharmacyName: 'MedPlus',
+  pharmacyId: 'ph_alpha',
+  pharmacyName: 'Alpha Pharmacy',
   lines: [
-    { productId: 'prod_vitc', name: 'Vitamin C', form: '1000mg · 30 tablets', priceKobo: 180000, qty: 1, rxRequired: false, imageColor: Colors.iconBgGold },
+    { productId: 'prod_vitc', pharmacyId: 'ph_alpha', pharmacyName: 'Alpha Pharmacy', name: 'Vitamin C', form: '1000mg · 30 tablets', priceKobo: 180000, qty: 1, rxRequired: false, imageColor: Colors.iconBgGold },
   ],
   subtotalKobo: 180000,
   deliveryFeeKobo: 0,
@@ -335,11 +352,11 @@ const MOCK_PAST_ORDER: PharmacyOrder = {
   pharmacyId: 'ph_health',
   pharmacyName: 'HealthPlus Pharmacy',
   lines: [
-    { productId: 'prod_oral', name: 'ORS Sachets', form: '10 sachets', priceKobo: 90000, qty: 1, rxRequired: false, imageColor: Colors.iconBgGreen },
+    { productId: 'prod_baby', pharmacyId: 'ph_health', pharmacyName: 'HealthPlus Pharmacy', name: 'Infant Multivitamin', form: 'Syrup · 100ml', priceKobo: 145000, qty: 1, rxRequired: false, imageColor: Colors.iconBgTeal },
   ],
-  subtotalKobo: 90000,
+  subtotalKobo: 145000,
   deliveryFeeKobo: 120000,
-  totalKobo: 210000,
+  totalKobo: 145000,
   paymentHeld: false,
   createdAt: new Date(Date.now() - 12 * 86_400_000).toISOString(),
   requiresRx: false,
@@ -353,13 +370,14 @@ const MOCK_PAST_ORDER: PharmacyOrder = {
 let ORDERS: PharmacyOrder[] = [MOCK_ORDER, MOCK_PICKUP_ORDER, MOCK_PAST_ORDER];
 
 const MOCK_MEDS: MedicationItem[] = [
-  { id: 'med_lisin', name: 'Lisinopril', form: '10mg', schedule: '1 tablet · once daily', adherence: 92, daysLeft: 6, rxRequired: true, productId: 'prod_lisin' },
-  { id: 'med_vitc', name: 'Vitamin C', form: '1000mg', schedule: '1 tablet · once daily', adherence: 78, daysLeft: 18, rxRequired: false, productId: 'prod_vitc' },
+  { id: 'rx_verified:0', rxId: 'rx_verified', name: 'Lisinopril 10mg', schedule: '1 tab daily · 30 tablets', status: 'verified', refillsAuthorized: 3, refillsUsed: 1 },
+  { id: 'rx_verifying:0', rxId: 'rx_verifying', name: 'Amoxicillin 500mg', schedule: '1 cap, 3x daily · 21 capsules', status: 'verifying', refillsAuthorized: 0, refillsUsed: 0 },
 ];
 
-const MOCK_REFILLS: Refill[] = [
-  { id: 'rf_lisin', medicationName: 'Lisinopril 10mg', form: '30 tablets', dueAt: new Date(Date.now() + 6 * 86_400_000).toISOString(), scheduled: false, autoRefill: true, rxId: 'rx_verified', productId: 'prod_lisin' },
-  { id: 'rf_vitc', medicationName: 'Vitamin C 1000mg', form: '30 tablets', dueAt: new Date(Date.now() + 18 * 86_400_000).toISOString(), scheduled: false, autoRefill: false, productId: 'prod_vitc' },
+// A refill is a prescription with authorized refills left (DP-004) — the same read
+// the live endpoint returns, so the fixture carries the same fields.
+const MOCK_REFILLS: PrescriptionRefill[] = [
+  { rxId: 'rx_verified', drugs: ['Lisinopril 10mg'], refillsAuthorized: 3, refillsUsed: 1, lastDispensedAt: new Date(Date.now() - 86_400_000).toISOString() },
 ];
 
 const MOCK_REVIEWS: PharmacyReview[] = [
@@ -399,7 +417,11 @@ function mapProduct(raw: any): PharmacyProduct {
     controlled: !!raw.is_controlled,
     imageColor: tintForId(String(raw.id ?? '')),
     description: raw.description ?? '',
-    inStock: (raw.active ?? true) && (raw.stock_qty ?? 0) > 0,
+    // The server's own sellable signal. `stock_qty > 0` is NOT availability: 0 means
+    // the owner never opted this product into inventory tracking, which the order
+    // path treats as unlimited — inferring it here marked sellable products as sold
+    // out (see the in_stock comment on the Go Product).
+    inStock: raw.in_stock ?? true,
     rating: raw.rating ?? 0,
     reviewCount: raw.review_count ?? 0,
     manufacturer: raw.manufacturer ?? '',
@@ -501,14 +523,12 @@ export async function getPharmacy(id: string): Promise<PharmacyVendor> {
 }
 
 // The backend's list route (GET /prescriptions) returns { success, prescriptions }
-// where each row is the narrow PrescriptionSummary read model (see Go
-// healthpharmacy.PrescriptionSummary) — id/state/prescriber_id/pharmacy_provider_id/
-// reject_reason/item_count/created_at only. It carries no item names, patient
-// name, pharmacy/pharmacist name, or verified-at timestamp, so those fields
-// render this list (home banner, Rx wallet) already fall back gracefully when
-// `items` is empty.
+// where each row is the narrow pharmacy PrescriptionSummary read model — id, state,
+// the drug names, both refill counters and reject_reason. Prescriber/pharmacy are
+// carried as uuids only, and there is no verified-at timestamp on this read, so the
+// names below stay empty and rx-status refetches the single prescription for them.
 const RX_STATUS_FROM_STATE: Record<string, RxStatus> = {
-  ISSUED: 'verifying',
+  ISSUED: 'issued',
   SENT_TO_PHARMACY: 'verifying',
   VERIFYING: 'verifying',
   VERIFIED: 'verified',
@@ -516,17 +536,24 @@ const RX_STATUS_FROM_STATE: Record<string, RxStatus> = {
   FULFILLED: 'dispensed',
   REJECTED: 'rejected',
 };
+function summaryItems(drugs: unknown): RxItem[] {
+  return (Array.isArray(drugs) ? drugs : []).map((d) => ({ name: String(d), dosage: '', quantity: '' }));
+}
 function mapPrescriptionSummary(raw: any): Prescription {
   return {
     id: raw.id,
-    source: 'upload',
+    // Every live row here was issued by a prescriber (healthrx) — there is no
+    // patient document upload surface, so 'upload' would be a fiction.
+    source: 'consult',
     status: RX_STATUS_FROM_STATE[raw.state] ?? 'verifying',
     uploadedAt: raw.created_at,
     pharmacistNote: raw.reject_reason || undefined,
     patientName: '',
-    items: [],
+    items: summaryItems(raw.drugs),
     docColor: tintForId(String(raw.id ?? '')),
     fulfilled: raw.state === 'DISPENSED' || raw.state === 'FULFILLED',
+    refillsAuthorized: raw.refills_authorized ?? 0,
+    refillsUsed: raw.refills_used ?? 0,
   };
 }
 
@@ -547,7 +574,7 @@ export async function getPrescriptions(): Promise<Prescription[]> {
 function mapPrescription(raw: any): Prescription {
   return {
     id: raw.id,
-    source: 'upload',
+    source: 'consult',
     status: RX_STATUS_FROM_STATE[raw.state] ?? 'verifying',
     uploadedAt: raw.created_at,
     verifiedAt: raw.verified_by ? raw.created_at : undefined,
@@ -560,6 +587,8 @@ function mapPrescription(raw: any): Prescription {
     })),
     docColor: Colors.secondary,
     fulfilled: raw.state === 'DISPENSED' || raw.state === 'FULFILLED',
+    refillsAuthorized: raw.refills_authorized ?? 0,
+    refillsUsed: raw.refills_used ?? 0,
   };
 }
 
@@ -579,24 +608,29 @@ export async function getPrescription(id: string): Promise<Prescription> {
   return mapPrescription(data.prescription);
 }
 
-/** Upload an Rx for pharmacist verification (HL-3) → enters VERIFYING. */
-export async function uploadPrescription(input: { patientName: string; note?: string }): Promise<Prescription> {
+/**
+ * Send one of the patient's own e-prescriptions to a pharmacy for verification
+ * (HL-3: ISSUED → SENT_TO_PHARMACY). This is the only Rx action a patient has: a
+ * prescription is issued by a licensed prescriber through a consult, and there is no
+ * server route that accepts a photographed Rx — no upload endpoint, no storage key
+ * and no data-model home for one, so a photo could never reach a pharmacist's queue.
+ * `POST /health/prescriptions/:id/send` is owned by the rx package and mounted under
+ * /health, not under PHARMACY_API.
+ */
+export async function sendPrescriptionToPharmacy(rxId: string, pharmacyProviderId: string): Promise<Prescription> {
   if (USE_MOCK) {
-    await delay(600);
-    const rx: Prescription = {
-      id: `rx_${Date.now()}`,
-      source: 'upload',
-      status: 'verifying',
-      uploadedAt: new Date().toISOString(),
-      patientName: input.patientName,
-      docColor: Colors.iconBgBlue,
-      items: [],
-    };
-    MOCK_PRESCRIPTIONS.unshift(rx);
-    return rx;
+    await delay(500);
+    const rx = MOCK_PRESCRIPTIONS.find((r) => r.id === rxId);
+    if (!rx) throw new Error('Prescription not found');
+    rx.status = 'verifying';
+    rx.pharmacyName = MOCK_PHARMACIES.find((p) => p.id === pharmacyProviderId)?.name ?? '';
+    return { ...rx };
   }
-  const { data } = await api.post<Prescription>(`${PHARMACY_API}/prescriptions/upload`, input);
-  return data;
+  const { data } = await api.post<{ prescription?: unknown }>(`${HEALTH_API_BASE}/prescriptions/${rxId}/send`, {
+    pharmacy_provider_id: pharmacyProviderId,
+  });
+  if (!data.prescription) throw new Error('Prescription was not sent');
+  return mapPrescription(data.prescription);
 }
 
 const ORDER_STATUS_FROM_STATE: Record<string, OrderStatus> = {
@@ -619,9 +653,68 @@ const ORDER_STATUS_FROM_STATE: Record<string, OrderStatus> = {
 // amount is attributed to subtotal), no `rider`/`etaLabel`, and lines carry
 // no `form`/`imageColor` — those default to empty/derived so the card still
 // renders, matching the mapProduct convention above.
+// The backend stores only an order's current `state` and its `created_at`; there is
+// no per-transition timestamp row. So the progress rail is derived from the state
+// machine: earlier steps are marked reached WITHOUT inventing when they happened —
+// only "Order placed" carries a real time, the rest show as reached/pending.
+const ORDER_RAIL_RANK: Record<string, number> = {
+  created: 0,
+  rx_pending: 1,
+  confirmed: 2,
+  dispensed: 3,
+  in_delivery: 4,
+  ready_for_pickup: 4,
+  delivered: 5,
+  collected: 5,
+};
+
+function deriveTimeline(state: OrderStatus, fulfilment: 'delivery' | 'pickup', requiresRx: boolean, createdAt: string): OrderEvent[] {
+  if (state === 'cancelled' || state === 'refunded' || state === 'closed') {
+    return [
+      { status: 'created', label: 'Order placed · payment held', at: createdAt, done: true },
+      {
+        status: state,
+        label: state === 'cancelled' ? 'Cancelled · held money returned' : 'Refunded · held money returned',
+        done: true,
+      },
+    ];
+  }
+
+  const rail: { status: OrderStatus; label: string }[] = [
+    { status: 'created', label: 'Order placed · payment held' },
+    ...(requiresRx ? [{ status: 'rx_pending' as OrderStatus, label: 'Prescription checked by the pharmacist' }] : []),
+    { status: 'confirmed', label: 'Confirmed by pharmacy' },
+    { status: 'dispensed', label: 'Dispensed & packed' },
+    ...(fulfilment === 'delivery'
+      ? [
+          { status: 'in_delivery' as OrderStatus, label: 'Out for delivery' },
+          { status: 'delivered' as OrderStatus, label: 'Delivered' },
+        ]
+      : [
+          { status: 'ready_for_pickup' as OrderStatus, label: 'Ready for pickup' },
+          { status: 'collected' as OrderStatus, label: 'Collected' },
+        ]),
+  ];
+
+  const rank = ORDER_RAIL_RANK[state] ?? 0;
+  return rail.map((step, i) => ({
+    status: step.status,
+    label: step.label,
+    ...(i === 0 ? { at: createdAt } : {}),
+    done: (ORDER_RAIL_RANK[step.status] ?? 0) <= rank,
+  }));
+}
+
 function mapOrder(raw: any): PharmacyOrder {
+  const state: OrderStatus = ORDER_STATUS_FROM_STATE[raw.state] ?? 'created';
+  const fulfilment = raw.fulfilment_method === 'DELIVERY' ? 'delivery' : 'pickup';
+  const requiresRx = !!raw.prescription_id;
   const lines: CartLine[] = (raw.lines ?? []).map((l: any) => ({
     productId: l.product_id,
+    // Every line of one order belongs to the order's pharmacy by construction
+    // (CreateOrder rejects a product outside its catalog), so the order id carries.
+    pharmacyId: raw.pharmacy_provider_id ?? '',
+    pharmacyName: '',
     name: l.product_name ?? '',
     form: '',
     priceKobo: l.unit_price_kobo ?? 0,
@@ -632,8 +725,8 @@ function mapOrder(raw: any): PharmacyOrder {
   return {
     id: raw.id,
     reference: raw.id,
-    status: ORDER_STATUS_FROM_STATE[raw.state] ?? 'created',
-    fulfilment: raw.fulfilment_method === 'DELIVERY' ? 'delivery' : 'pickup',
+    status: state,
+    fulfilment,
     pharmacyId: raw.pharmacy_provider_id ?? '',
     pharmacyName: '',
     lines,
@@ -644,9 +737,9 @@ function mapOrder(raw: any): PharmacyOrder {
     createdAt: raw.created_at,
     pickupCode: raw.pickup_code ?? undefined,
     deliveryAddress: raw.delivery_address ?? undefined,
-    requiresRx: !!raw.prescription_id,
+    requiresRx,
     rxId: raw.prescription_id ?? undefined,
-    timeline: [],
+    timeline: deriveTimeline(state, fulfilment, requiresRx, raw.created_at),
   };
 }
 
@@ -698,7 +791,8 @@ export async function createOrder(input: CreateOrderInput): Promise<PharmacyOrde
       lines: input.lines,
       subtotalKobo,
       deliveryFeeKobo,
-      totalKobo: subtotalKobo + deliveryFeeKobo,
+      // Goods only, matching what the live CreateOrder holds (see mapOrder).
+      totalKobo: subtotalKobo,
       paymentHeld: true,
       createdAt: new Date().toISOString(),
       pickupCode: input.fulfilment === 'pickup' ? String(1000 + Math.floor(Math.random() * 8999)) : undefined,
@@ -757,35 +851,43 @@ export async function reorder(orderId: string): Promise<PharmacyOrder['lines']> 
   return data;
 }
 
+/** The patient's current medicines, derived from their own e-Rx history. There is no
+ * /medications route and no adherence or days-of-supply model on the backend, so an
+ * honest "my medications" list is exactly this: the drug lines on their prescriptions
+ * plus the refill authority (DP-004) still left on each. */
 export async function getMedications(): Promise<MedicationItem[]> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_MEDS;
-  }
-  const { data } = await api.get<MedicationItem[]>(`${PHARMACY_API}/medications`);
-  return data;
+  const rxs = await getPrescriptions();
+  if (USE_MOCK) return MOCK_MEDS;
+  return rxs.flatMap((rx) =>
+    rx.items.map((item, index) => ({
+      id: `${rx.id}:${index}`,
+      rxId: rx.id,
+      name: item.name,
+      schedule: [item.dosage, item.quantity].filter(Boolean).join(' · '),
+      status: rx.status,
+      refillsAuthorized: rx.refillsAuthorized ?? 0,
+      refillsUsed: rx.refillsUsed ?? 0,
+    })),
+  );
 }
 
-export async function getRefills(): Promise<Refill[]> {
+// GET /pharmacy/refills — the caller's prescriptions that still have authorized
+// refills left (DP-004). The counters live on the prescription; a refill is spent by
+// the PHARMACIST at the counter (POST /prescriptions/:id/refills/dispense), so there
+// is nothing for the patient to "schedule" here — this list is the read that tells
+// them whether asking for one is possible at all.
+export async function getRefills(): Promise<PrescriptionRefill[]> {
   if (USE_MOCK) {
     await delay();
-    return MOCK_REFILLS;
+    return [...MOCK_REFILLS];
   }
-  const { data } = await api.get<Refill[]>(`${PHARMACY_API}/refills`);
-  return data;
-}
-
-export async function scheduleRefill(id: string, autoRefill: boolean): Promise<Refill> {
-  if (USE_MOCK) {
-    await delay(350);
-    const rf = MOCK_REFILLS.find((r) => r.id === id);
-    if (!rf) throw new Error('Refill not found');
-    rf.scheduled = true;
-    rf.autoRefill = autoRefill;
-    return { ...rf };
-  }
-  const { data } = await api.post<Refill>(`${PHARMACY_API}/refills/${id}/schedule`, { autoRefill });
-  return data;
+  const { data } = await api.get<{ refills?: unknown[] }>(`${PHARMACY_API}/refills`);
+  return (data.refills ?? []).map((raw: any) => ({
+    rxId: raw.id,
+    drugs: Array.isArray(raw.drugs) ? raw.drugs.map(String) : [],
+    refillsAuthorized: raw.refills_authorized ?? 0,
+    refillsUsed: raw.refills_used ?? 0,
+  }));
 }
 
 // GET /pharmacy/pharmacies/{id}/reviews (ADR-017) — the live surface is always
@@ -879,6 +981,9 @@ interface ProviderApplicationWire {
   provider_type: string;
   display_name: string;
   state: 'DRAFT' | 'SUBMITTED' | 'UNDER_REVIEW' | 'NEEDS_INFO' | 'APPROVED' | 'SUSPENDED' | 'REJECTED';
+  /** The health_providers row created when an admin approves this application.
+   *  Absent until then, and it is the id product writes and review reads need. */
+  provider_id?: string;
 }
 
 function mapApplicationState(state: ProviderApplicationWire['state']): ProviderOnboardingState['status'] {
@@ -934,8 +1039,12 @@ export async function submitProviderOnboarding(
   }
   let app = await findPharmacyApplication();
   if (!app) {
+    // provider_type is the BUSINESS entity ('pharmacy'), not the professional role
+    // ('pharmacist'): DiscoverPharmacies, GetPharmacy and the admin dashboard all
+    // filter health_providers on provider_type='pharmacy', so an application filed
+    // as 'pharmacist' produced an approved storefront that no patient could ever see.
     const created = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications`, {
-      domain: 'PHARMACY', provider_type: 'pharmacist', display_name: input.businessName ?? '',
+      domain: 'PHARMACY', provider_type: 'pharmacy', display_name: input.businessName ?? '',
     });
     app = created.data.application;
   }
@@ -959,22 +1068,28 @@ export async function submitProviderOnboarding(
 }
 
 const MOCK_CATALOG: CatalogStockItem[] = [
-  { productId: 'prod_amox', name: 'Amoxicillin', form: '500mg · 21 capsules', priceKobo: 285000, nafdacReg: 'A4-0123', rxRequired: true, stock: 48, reorderLevel: 20, active: true },
-  { productId: 'prod_lisin', name: 'Lisinopril', form: '10mg · 30 tablets', priceKobo: 420000, nafdacReg: 'A4-7781', rxRequired: true, stock: 12, reorderLevel: 15, active: true },
-  { productId: 'prod_para', name: 'Paracetamol', form: '500mg · 24 tablets', priceKobo: 65000, nafdacReg: 'A4-0991', rxRequired: false, stock: 4, reorderLevel: 30, active: true },
-  { productId: 'prod_vitc', name: 'Vitamin C', form: '1000mg · 30 tablets', priceKobo: 180000, nafdacReg: 'B1-4420', rxRequired: false, stock: 0, reorderLevel: 25, active: false },
+  { productId: 'prod_amox', pharmacyProviderId: 'ph_health', pharmacyName: 'HealthPlus Pharmacy', name: 'Amoxicillin', form: '500mg · 21 capsules', priceKobo: 285000, nafdacReg: 'A4-0123', nafdacStatus: 'REGISTERED', rxRequired: true, stock: 48, inStock: true, active: true },
+  { productId: 'prod_lisin', pharmacyProviderId: 'ph_health', pharmacyName: 'HealthPlus Pharmacy', name: 'Lisinopril', form: '10mg · 30 tablets', priceKobo: 420000, nafdacReg: 'A4-7781', nafdacStatus: 'REGISTERED', rxRequired: true, stock: 12, inStock: true, active: true },
+  { productId: 'prod_para', pharmacyProviderId: 'ph_health', pharmacyName: 'HealthPlus Pharmacy', name: 'Paracetamol', form: '500mg · 24 tablets', priceKobo: 65000, nafdacReg: 'A4-0991', nafdacStatus: 'REGISTERED', rxRequired: false, stock: 0, inStock: false, active: true },
+  { productId: 'prod_vitc', pharmacyProviderId: 'ph_health', pharmacyName: 'HealthPlus Pharmacy', name: 'Vitamin C', form: '1000mg · 30 tablets', priceKobo: 180000, nafdacReg: 'B1-4420', nafdacStatus: 'PENDING', rxRequired: false, stock: 30, inStock: true, active: false },
 ];
 
 function mapCatalogItem(raw: any): CatalogStockItem {
   return {
     productId: raw.id,
+    pharmacyProviderId: raw.pharmacy_provider_id ?? '',
+    pharmacyName: raw.pharmacy_name ?? '',
     name: raw.name ?? '',
     form: '',
     priceKobo: raw.price_kobo ?? 0,
     nafdacReg: raw.nafdac_ref ?? '',
+    nafdacStatus: raw.nafdac_status ?? '',
     rxRequired: !!raw.rx_required,
     stock: raw.stock_qty ?? 0,
-    reorderLevel: 0, // no per-product reorder threshold in the current schema
+    // The server's own sellable signal. Deliberately NOT stock_qty > 0: an
+    // untracked product sits at 0 forever and is still buyable (see the column
+    // comment on health/pharmacy's Product).
+    inStock: raw.in_stock !== false,
     active: !!raw.active,
   };
 }
@@ -989,15 +1104,85 @@ export async function getProviderCatalog(): Promise<CatalogStockItem[]> {
   return (data.products ?? []).map(mapCatalogItem);
 }
 
-export async function getStockAlerts(): Promise<StockAlert[]> {
+/** Add or edit one line of the pharmacy's shelf. POST /products is an upsert keyed
+ *  on `id`, scoped to the verified owner (HL-2) and rejected outright when the
+ *  NAFDAC reference is blank or not REGISTERED (HL-5) — those come back as 422
+ *  messages from the server and the caller surfaces them verbatim.
+ *  `providerId` is the caller's approved health_providers row (see getMyPharmacy). */
+export async function upsertProduct(providerId: string, input: UpsertProductInput): Promise<CatalogStockItem> {
+  if (USE_MOCK) {
+    await delay(400);
+    const id = input.id ?? `prod_${Date.now()}`;
+    const row: CatalogStockItem = {
+      productId: id,
+      pharmacyProviderId: providerId,
+      pharmacyName: 'HealthPlus Pharmacy',
+      name: input.name,
+      form: '',
+      priceKobo: input.priceKobo,
+      nafdacReg: input.nafdacReg,
+      nafdacStatus: 'REGISTERED',
+      rxRequired: input.rxRequired,
+      stock: input.stockQty,
+      inStock: input.stockQty > 0,
+      active: input.active,
+    };
+    const existing = MOCK_CATALOG.findIndex((c) => c.productId === id);
+    if (existing >= 0) MOCK_CATALOG[existing] = row;
+    else MOCK_CATALOG.push(row);
+    return row;
+  }
+  const { data } = await api.post<{ product?: unknown }>(`${PHARMACY_API}/products`, {
+    id: input.id,
+    pharmacy_provider_id: providerId,
+    name: input.name,
+    nafdac_ref: input.nafdacReg,
+    nafdac_status: 'REGISTERED',
+    rx_required: input.rxRequired,
+    price_kobo: input.priceKobo,
+    stock_qty: input.stockQty,
+    active: input.active,
+  });
+  if (!data.product) throw new Error('Product was not saved');
+  return mapCatalogItem(data.product);
+}
+
+/** The signed-in user's own pharmacy. Everything a pharmacist can write — listing
+ *  a product, reading their reviews — is scoped to the health_providers row that
+ *  only exists once an admin has approved their application, so this reports
+ *  approval rather than guessing an id. */
+export async function getMyPharmacy(): Promise<MyPharmacy> {
   if (USE_MOCK) {
     await delay();
-    return MOCK_CATALOG
-      .filter((c) => c.stock <= c.reorderLevel)
-      .map((c) => ({ productId: c.productId, name: c.name, stock: c.stock, reorderLevel: c.reorderLevel, severity: c.stock === 0 ? 'out' : 'low' }));
+    return { providerId: 'ph_health', businessName: 'HealthPlus Pharmacy', approved: true };
   }
-  const { data } = await api.get<StockAlert[]>(`${PHARMACY_API}/provider/stock-alerts`);
-  return data;
+  const app = await findPharmacyApplication();
+  if (!app) return { providerId: '', businessName: '', approved: false };
+  return {
+    providerId: app.provider_id ?? '',
+    businessName: app.display_name,
+    approved: app.state === 'APPROVED',
+  };
+}
+
+/** Items on this pharmacy's own shelf that a patient cannot buy right now.
+ *  There is no /provider/stock-alerts route and no reorder threshold in the
+ *  schema, so this is derived from GET /products/mine — the same rows the
+ *  inventory screen shows. */
+export async function getStockAlerts(): Promise<StockAlert[]> {
+  const shelf = await getProviderCatalog();
+  return shelf
+    .filter((p) => !p.active || p.nafdacStatus !== 'REGISTERED' || !p.inStock)
+    .map((p) => ({
+      productId: p.productId,
+      name: p.name,
+      stock: p.stock,
+      reason: !p.active
+        ? 'deactivated'
+        : p.nafdacStatus !== 'REGISTERED'
+          ? 'nafdac_pending'
+          : 'sold_out',
+    }));
 }
 
 // GET /orders (h.ListMine) — the pharmacist's owner-scoped fulfilment inbox.
@@ -1047,6 +1232,10 @@ export async function handoffOrder(orderId: string, mode: 'dispatch' | 'pickup',
   return mapOrder(data.order);
 }
 
+// GET /pharmacy/prescriptions/queue — prescriptions pinned to a pharmacy the caller
+// owns, in the states a pharmacist works (SENT_TO_PHARMACY / VERIFYING / VERIFIED).
+// The client used to call /provider/rx-queue, which no route ever served, so the
+// pharmacist could not see the work the patient's "send" produced.
 export async function getProviderRxQueue(): Promise<ProviderRxQueueItem[]> {
   if (USE_MOCK) {
     await delay();
@@ -1056,11 +1245,23 @@ export async function getProviderRxQueue(): Promise<ProviderRxQueueItem[]> {
       prescriberName: r.prescriberName,
       uploadedAt: r.uploadedAt,
       itemCount: r.items.length,
+      drugs: r.items.map((i) => i.name),
+      refillsAuthorized: r.refillsAuthorized ?? 0,
+      refillsUsed: r.refillsUsed ?? 0,
       status: r.status,
     }));
   }
-  const { data } = await api.get<ProviderRxQueueItem[]>(`${PHARMACY_API}/provider/rx-queue`);
-  return data;
+  const { data } = await api.get<{ prescriptions?: unknown[] }>(`${PHARMACY_API}/prescriptions/queue`);
+  return (data.prescriptions ?? []).map((raw: any) => ({
+    rxId: raw.id,
+    patientName: raw.patient_name ?? '',
+    uploadedAt: raw.updated_at ?? raw.created_at,
+    itemCount: raw.item_count ?? 0,
+    drugs: Array.isArray(raw.drugs) ? raw.drugs.map(String) : [],
+    refillsAuthorized: raw.refills_authorized ?? 0,
+    refillsUsed: raw.refills_used ?? 0,
+    status: RX_STATUS_FROM_STATE[raw.state] ?? 'verifying',
+  }));
 }
 
 export async function decideRx(rxId: string, decision: RxDecision, note?: string): Promise<Prescription> {
@@ -1096,40 +1297,38 @@ export async function decideRx(rxId: string, decision: RxDecision, note?: string
   return getPrescription(rxId);
 }
 
-export async function getControlledLog(): Promise<ControlledLogEntry[]> {
+/**
+ * Dispense one authorized refill (DP-004) — the pharmacist's action at the counter.
+ * POST /health/prescriptions/:id/refills/dispense; the server refuses (409) once
+ * refills_used reaches refills_authorized, so a patient can never be promised a
+ * refill the prescriber did not write.
+ */
+export async function dispenseRefill(rxId: string): Promise<Prescription> {
   if (USE_MOCK) {
-    await delay();
-    return [
-      { id: 'cl_1', drugName: 'Codeine syrup (restricted)', patientName: 'Withheld', quantity: '1 × 100ml', pharmacistName: 'Pharm. Grace E.', registerRef: 'CR-2026-0042', at: new Date(Date.now() - 86_400_000).toISOString() },
-    ];
+    await delay(450);
+    const rx = MOCK_PRESCRIPTIONS.find((r) => r.id === rxId);
+    if (!rx) throw new Error('Prescription not found');
+    if ((rx.refillsUsed ?? 0) >= (rx.refillsAuthorized ?? 0)) throw new Error('No authorized refills left');
+    rx.refillsUsed = (rx.refillsUsed ?? 0) + 1;
+    return { ...rx };
   }
-  const { data } = await api.get<ControlledLogEntry[]>(`${PHARMACY_API}/provider/controlled-log`);
-  return data;
+  const { data } = await api.post<{ prescription?: unknown }>(
+    `${HEALTH_API_BASE}/prescriptions/${rxId}/refills/dispense`,
+    {},
+  );
+  if (!data.prescription) throw new Error('Refill dispense returned no prescription');
+  return mapPrescription(data.prescription);
 }
 
 export async function getProviderEarnings(): Promise<ProviderEarnings> {
   if (USE_MOCK) {
     await delay();
-    return {
-      availableKobo: 1845000,
-      pendingKobo: 670000,
-      lifetimeKobo: 28940000,
-      payouts: [
-        { id: 'po_1', amountKobo: 5000000, at: new Date(Date.now() - 7 * 86_400_000).toISOString(), status: 'paid' },
-        { id: 'po_2', amountKobo: 3200000, at: new Date(Date.now() - 1 * 86_400_000).toISOString(), status: 'processing' },
-      ],
-      settlements: [
-        { orderRef: 'PHX-48213', grossKobo: 670000, feeKobo: 67000, netKobo: 603000, status: 'held', at: new Date(Date.now() - 90 * 60_000).toISOString() },
-        { orderRef: 'PHX-47990', grossKobo: 210000, feeKobo: 21000, netKobo: 189000, status: 'released', at: new Date(Date.now() - 12 * 86_400_000).toISOString() },
-      ],
-    };
+    return { availableKobo: 1845000, pendingKobo: 670000, ordersPaid: 128 };
   }
-  // exist. The backend's PharmacyEarnings is three flat totals (released_kobo,
-  // held_kobo, orders_paid — backend/internal/health/pharmacy/model.go) with NO
-  // per-payout or per-settlement breakdown, so payouts[]/settlements[] are left
-  // empty rather than inventing rows the backend never returned — payout release
-  // is fully automatic on order Complete (see requestPayout below), there is no
-  // pending-payout ledger to list.
+  // The backend's earnings read model is three flat totals plus a count
+  // (released_kobo, held_kobo, orders_paid — backend/internal/health/pharmacy/model.go).
+  // There is no per-payout or per-settlement breakdown to list, because release is
+  // automatic on order completion and no payout-request ledger exists.
   const { data } = await api.get<{ earnings?: { released_kobo?: number; held_kobo?: number; orders_paid?: number } }>(
     `${PHARMACY_API}/earnings`,
   );
@@ -1137,19 +1336,6 @@ export async function getProviderEarnings(): Promise<ProviderEarnings> {
   return {
     availableKobo: e.released_kobo ?? 0,
     pendingKobo: e.held_kobo ?? 0,
-    lifetimeKobo: e.released_kobo ?? 0,
-    payouts: [],
-    settlements: [],
+    ordersPaid: e.orders_paid ?? 0,
   };
-}
-
-// Payout release is automatic on order Complete (escrow.Release pays the owner
-// directly) — there is no admin-reviewable pending-payout queue or manual
-// request endpoint on the backend to call here.
-export async function requestPayout(_amountKobo: number, _idempotencyKey: string): Promise<{ ok: true }> {
-  if (USE_MOCK) {
-    await delay(500);
-    return { ok: true };
-  }
-  throw new Error('Payouts release automatically when an order completes — there is nothing to request.');
 }

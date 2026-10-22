@@ -220,6 +220,16 @@ export const featureFlags = {
    * envs in step when enabling.
    */
   otpEmail: () => envFlag('FEATURE_OTP_EMAIL_ENABLED'),
+
+  /**
+   * Film Academy assessment slice (PRD BK-06/07 + BK-10) — the shared question
+   * bank, SME review queue, and server-scored exams. Gates the learner
+   * /api/academy/exams* surface and the admin /api/admin/academy/questions* +
+   * exam-authoring routes. Off by default: the 256 starter questions import as
+   * DRAFT and stay non-exam-eligible until SME approval, so an unset flag is
+   * strictly safe and the whole plane stays reversible until the bank is reviewed.
+   */
+  filmAcademyAssessment: () => envFlag('FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;

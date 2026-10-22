@@ -16,7 +16,7 @@ import { getAppointment, cancelAppointment, formatKobo, PLACEHOLDER_APPOINTMENTS
 import { getErrorMessage } from '@/utils/errorMapper';
 import { TeleHeader, DoctorAvatar, ConsultStatusBadge } from '@/features/telemedicine/components';
 import { IntakeStatusBadge } from '@/features/health/components';
-import { useApptIntake } from '@/features/health/hooks';
+import { useApptIntake } from '@/features/telemedicine/intake';
 import type { ConsultType } from '@/types/telemedicine';
 import PrimaryButton from '@/components/PrimaryButton';
 import { ClipboardList, ChevronRight } from 'lucide-react-native';

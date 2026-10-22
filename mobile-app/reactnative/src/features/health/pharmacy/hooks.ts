@@ -8,14 +8,13 @@ import {
   getPharmacy,
   getPrescriptions,
   getPrescription,
-  uploadPrescription,
+  sendPrescriptionToPharmacy,
   getOrders,
   getOrder,
   createOrder,
   reorder,
   getMedications,
   getRefills,
-  scheduleRefill,
   getReviews,
   submitReview,
   getConsultThread,
@@ -24,20 +23,22 @@ import {
   submitProviderOnboarding,
   getProviderCatalog,
   getStockAlerts,
+  getMyPharmacy,
+  upsertProduct,
   getProviderOrders,
   dispenseOrder,
   handoffOrder,
   getProviderRxQueue,
   decideRx,
-  getControlledLog,
+  dispenseRefill,
   getProviderEarnings,
-  requestPayout,
 } from './api';
 import type {
   ProductCategory,
   CreateOrderInput,
   SubmitReviewInput,
   RxDecision,
+  UpsertProductInput,
 } from './types';
 import type { DiscoverPharmaciesOpts } from './api';
 
@@ -91,11 +92,15 @@ export function usePrescription(id?: string) {
   });
 }
 
-export function useUploadPrescription() {
+export function useSendPrescriptionToPharmacy() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { patientName: string; note?: string }) => uploadPrescription(input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'prescriptions'] }),
+    mutationFn: (args: { rxId: string; pharmacyProviderId: string }) =>
+      sendPrescriptionToPharmacy(args.rxId, args.pharmacyProviderId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'prescriptions'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'medications'] });
+    },
   });
 }
 
@@ -130,14 +135,6 @@ export function useMedications() {
 
 export function useRefills() {
   return useQuery({ queryKey: [KEY, 'refills'], queryFn: getRefills, staleTime: 30_000 });
-}
-
-export function useScheduleRefill() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (args: { id: string; autoRefill: boolean }) => scheduleRefill(args.id, args.autoRefill),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'refills'] }),
-  });
 }
 
 export function useReviews(pharmacyId?: string) {
@@ -182,6 +179,25 @@ export function useSubmitProviderOnboarding() {
 
 export function useProviderCatalog() {
   return useQuery({ queryKey: [KEY, 'provider', 'catalog'], queryFn: getProviderCatalog, staleTime: 30_000 });
+}
+
+/** The caller's own pharmacy, or an unapproved/absent application. Everything a
+ *  pharmacist can write depends on it, so screens ask before they offer. */
+export function useMyPharmacy() {
+  return useQuery({ queryKey: [KEY, 'provider', 'my-pharmacy'], queryFn: getMyPharmacy, staleTime: 60_000 });
+}
+
+/** Add or edit one shelf line. Pass the pharmacy provider id from useMyPharmacy(). */
+export function useUpsertProduct() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { providerId: string; input: UpsertProductInput }) => upsertProduct(args.providerId, args.input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'provider', 'catalog'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'provider', 'stock-alerts'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'products'] });
+    },
+  });
 }
 
 export function useStockAlerts() {
@@ -230,18 +246,18 @@ export function useDecideRx() {
   });
 }
 
-export function useControlledLog() {
-  return useQuery({ queryKey: [KEY, 'provider', 'controlled-log'], queryFn: getControlledLog, staleTime: 60_000 });
+export function useDispenseRefill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rxId: string) => dispenseRefill(rxId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'provider', 'rx-queue'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'prescriptions'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'refills'] });
+    },
+  });
 }
 
 export function useProviderEarnings() {
   return useQuery({ queryKey: [KEY, 'provider', 'earnings'], queryFn: getProviderEarnings, staleTime: 30_000 });
-}
-
-export function useRequestPayout() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (args: { amountKobo: number; idempotencyKey: string }) => requestPayout(args.amountKobo, args.idempotencyKey),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'provider', 'earnings'] }),
-  });
 }

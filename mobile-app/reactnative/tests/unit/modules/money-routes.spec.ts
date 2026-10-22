@@ -27,6 +27,7 @@ describe('transaction-PIN gate: browse routes stay open', () => {
     ['mobility'],
     ['marketplace'],
     ['services'],
+    ['services', 'telemedicine'],
     ['(tabs)', 'home'],
     ['profile'],
     ['learn', 'academy'],
@@ -66,6 +67,7 @@ describe('transaction-PIN gate: money paths still gate', () => {
     ['connect', 'wallet', 'fund'],
     ['creators', 'payout'],
     ['services', 'airtime'],
+    ['services', 'telemedicine', 'book', 'confirm'],
   ];
 
   for (const segments of moneyRoutes) {

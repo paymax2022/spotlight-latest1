@@ -159,6 +159,37 @@ export const RED_FLAG_ROUTING_META: Record<
 export const INTAKE_NOT_DIAGNOSIS_COPY =
   'These details are patient-reported to help your doctor prepare. They are not a diagnosis or medical advice.';
 
+/**
+ * The red-flag interstitial wording, keyed by the routing decision. One source
+ * for the intake mock evaluator and the live telemedicine mapper: what a patient
+ * reads in a safety moment must not drift between modules.
+ */
+export const INTAKE_RED_FLAG_COPY: Record<RedFlagResult['routing'], RedFlagResult['guidance']> = {
+  CRISIS: {
+    title: 'You deserve support right now',
+    body:
+      "Thank you for telling us. You don't have to face this alone — support is available and reaching out " +
+      'can help. Please consider contacting a mental health professional or a crisis line now. If you might ' +
+      'act on thoughts of harming yourself, or are in immediate danger, contact local emergency services.',
+    // Admin-configured per locale (health_intake_config.crisis_guidance.crisis_line); blank by default.
+    crisis_line: '',
+    show_emergency_number: true,
+  },
+  EMERGENCY: {
+    title: 'These symptoms may need emergency care',
+    body:
+      'Based on what you reported, please seek in-person emergency care now rather than waiting for a ' +
+      'tele-consult. Call emergency services or go to the nearest emergency department.',
+    show_emergency_number: true,
+  },
+  URGENT_CARE: {
+    title: 'This sounds urgent',
+    body:
+      'You rated your symptoms as severe. If they are getting worse or you feel unsafe waiting, please ' +
+      'consider urgent in-person care. Otherwise your doctor will prioritise your consult.',
+  },
+};
+
 // NDPA consent copy surfaced anywhere we read/share health data (HL-8).
 export const NDPA_CONSENT_COPY =
   'Health data is sensitive personal data under the NDPA 2023. It is encrypted, access-logged, and only shared with an active consent grant you can revoke at any time.';

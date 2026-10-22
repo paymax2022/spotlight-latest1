@@ -254,6 +254,14 @@ type Config struct {
 	// FeatureEventsComps (FEATURE_EVENTS_COMPS) exposes comp tickets, attendee CSV export and organiser announcements.
 	FeatureEventsComps   bool
 	FeatureEstateEnabled bool
+	// FeatureEstateMerchantGate (SP-01) enforces that a user holds an approved
+	// estate-management merchant identity before creating an estate. Default off:
+	// CreateEstate keeps its historical behaviour until the gate is ratified.
+	FeatureEstateMerchantGate bool
+	// EstateGuardRatePerMin / EstateCodeRatePerMin cap per-user guard admit/lookup
+	// and access-code creation requests (SP-02; estate routes previously unlimitted).
+	EstateGuardRatePerMin int
+	EstateCodeRatePerMin  int
 	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) estate dues path (estate/paystackcheckout): direct
 	// Paystack payment posted DR provider-clearing / CR settlement, never
@@ -995,6 +1003,7 @@ func Load() Config {
 		FeatureEventsTeamRoles:                       getEnvBool("FEATURE_EVENTS_TEAM_ROLES", false),
 		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
+		FeatureEstateMerchantGate:                    getEnvBool("FEATURE_ESTATE_MERCHANT_GATE", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:                     getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
@@ -1131,6 +1140,9 @@ func Load() Config {
 		FinanceTransferRatePerMin: getEnvInt("FINANCE_TRANSFER_RATE_PER_MIN", 30),
 		FinancePinRatePerMin:      getEnvInt("FINANCE_PIN_RATE_PER_MIN", 10),
 		MapsBudgetAlertWebhook:    getEnv("MAPS_BUDGET_ALERT_WEBHOOK", ""),
+
+		EstateGuardRatePerMin: getEnvInt("ESTATE_GUARD_RATE_PER_MIN", 30),
+		EstateCodeRatePerMin:  getEnvInt("ESTATE_CODE_RATE_PER_MIN", 10),
 
 		ConnectFreeVoteRatePerMin: getEnvInt("CONNECT_FREE_VOTE_RATE_PER_MIN", 30),
 		ConnectPaidVoteRatePerMin: getEnvInt("CONNECT_PAID_VOTE_RATE_PER_MIN", 10),

@@ -6,23 +6,20 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
   Mic, MicOff, Video as VideoIcon, VideoOff, PhoneOff, MessageCircle, Send, NotebookPen, ClipboardList,
 } from 'lucide-react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
-import { getAppointment, PLACEHOLDER_APPOINTMENTS } from '@/api/telemedicine.api';
+import {
+  getAppointment, getAppointmentCallToken, getAppointmentMessages, sendAppointmentMessage,
+  PLACEHOLDER_APPOINTMENTS,
+} from '@/api/telemedicine.api';
 import { DoctorAvatar } from '@/features/telemedicine/components';
 import { useLocalMedia } from '@/features/telemedicine/useLocalMedia';
 import SelfVideo from '@/features/telemedicine/SelfVideo';
-import { useApptIntake } from '@/features/health/hooks';
+import { useApptIntake } from '@/features/telemedicine/intake';
 import PrimaryButton from '@/components/PrimaryButton';
-
-interface ChatMessage { id: string; from: 'me' | 'doctor'; text: string; }
-
-const SEED_CHAT: ChatMessage[] = [
-  { id: 'm1', from: 'doctor', text: "Hello! I'm here. How are you feeling today?" },
-];
 
 // Designated consult length. The session timer counts down from this and stops
 // (and auto-ends the call) at 0. Kept here until the appointment model carries a
@@ -36,10 +33,10 @@ export default function ConsultRoomScreen() {
   const [showChat, setShowChat] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [notes, setNotes] = useState('');
-  const [chat, setChat] = useState<ChatMessage[]>(SEED_CHAT);
   const [draft, setDraft] = useState('');
   const [seconds, setSeconds] = useState(0);
   const [ended, setEnded] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: appt } = useQuery({
     queryKey: ['tele-appointment', id],
@@ -51,6 +48,31 @@ export default function ConsultRoomScreen() {
   // Fail-safe — anything other than an explicit SUBMITTED blocks the room.
   const intakeQ = useApptIntake(String(id));
   const intakeReady = intakeQ.data?.intake.status === 'SUBMITTED';
+
+  // The thread is the doctor console's — one chat both sides actually write to.
+  const chatQ = useQuery({
+    queryKey: ['tele-consult-chat', id],
+    queryFn:  () => getAppointmentMessages(String(id)),
+    refetchInterval: 5000,
+    enabled: intakeReady && !ended,
+  });
+
+  // Control plane: does this environment have media keys for the room? Nothing
+  // here pretends a connection that the server didn't hand out.
+  const callQ = useQuery({
+    queryKey: ['tele-consult-call', id],
+    queryFn:  () => getAppointmentCallToken(String(id)),
+    enabled: intakeReady && !ended,
+    staleTime: Infinity,
+  });
+
+  const sendMsg = useMutation({
+    mutationFn: (body: string) => sendAppointmentMessage(String(id), body),
+    onSuccess: () => {
+      setDraft('');
+      queryClient.invalidateQueries({ queryKey: ['tele-consult-chat', id] });
+    },
+  });
 
   // Real camera + mic (browser getUserMedia on web; no-op placeholder on native).
   // Only requested once the patient is actually in the room.
@@ -82,9 +104,9 @@ export default function ConsultRoomScreen() {
   useEffect(() => { media.setVideoEnabled(camOn); }, [camOn, media]);
 
   const send = () => {
-    if (!draft.trim()) return;
-    setChat((c) => [...c, { id: `m${c.length + 1}`, from: 'me', text: draft.trim() }]);
-    setDraft('');
+    const text = draft.trim();
+    if (!text || sendMsg.isPending) return;
+    sendMsg.mutate(text);
   };
 
   const endCall = () => {
@@ -97,6 +119,21 @@ export default function ConsultRoomScreen() {
   const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
   const ss = String(remaining % 60).padStart(2, '0');
   const doctor = appt?.doctor;
+  const messages = chatQ.data ?? [];
+  const callInfo = callQ.data;
+
+  // The media badge tells the truth about what this environment actually wired:
+  // a LiveKit room when the server hands out a token, a local preview when it
+  // has no media keys. Never a fake "Connected".
+  const connLabel = ended
+    ? 'Session ended'
+    : media.status === 'denied'
+      ? 'Camera & mic blocked — allow access'
+      : media.status === 'requesting'
+        ? 'Starting camera…'
+        : callInfo?.configured
+          ? `Room ${callInfo.room ?? 'ready'} · camera ${camOn ? 'on' : 'off'} · mic ${micOn ? 'on' : 'off'}`
+          : `No call service configured — preview only · camera ${camOn ? 'on' : 'off'} · mic ${micOn ? 'on' : 'off'}`;
 
   // Intake gate — block the live room until the patient has submitted intake.
   if (!intakeReady) {
@@ -152,15 +189,7 @@ export default function ConsultRoomScreen() {
         <Text style={styles.docName}>{doctor?.name}</Text>
         <Text style={styles.docSpec}>{doctor?.specialties.join(' • ')}</Text>
         <View style={styles.connBadge}>
-          <Text style={styles.connText}>
-            {ended
-              ? 'Session ended'
-              : media.status === 'denied'
-                ? 'Camera & mic blocked — allow access'
-                : media.status === 'requesting'
-                  ? 'Starting camera…'
-                  : `Your camera ${camOn ? 'on' : 'off'} · mic ${micOn ? 'on' : 'off'}`}
-          </Text>
+          <Text style={styles.connText}>{connLabel}</Text>
         </View>
 
         {/* Self preview — real local camera on web (getUserMedia) */}
@@ -174,15 +203,26 @@ export default function ConsultRoomScreen() {
         <View style={styles.chatPanel}>
           <Text style={styles.panelTitle}>Chat</Text>
           <ScrollView style={{ maxHeight: 180 }} contentContainerStyle={{ gap: Spacing.sm }}>
-            {chat.map((m) => (
-              <View key={m.id} style={[styles.bubble, m.from === 'me' ? styles.bubbleMe : styles.bubbleDoc]}>
-                <Text style={[styles.bubbleText, m.from === 'me' && { color: Colors.white }]}>{m.text}</Text>
-              </View>
-            ))}
+            {chatQ.isError ? (
+              <Text style={styles.panelHint}>Chat isn’t available for this visit yet.</Text>
+            ) : messages.length === 0 ? (
+              <Text style={styles.panelHint}>
+                No messages yet. Send one and your doctor sees it in their consult console.
+              </Text>
+            ) : (
+              messages.map((m) => (
+                <View key={m.id} style={[styles.bubble, m.author === 'patient' ? styles.bubbleMe : styles.bubbleDoc]}>
+                  <Text style={[styles.bubbleText, m.author === 'patient' && { color: Colors.white }]}>{m.body}</Text>
+                </View>
+              ))
+            )}
+            {sendMsg.isError ? (
+              <Text style={styles.panelHint}>Message not sent — check your connection and try again.</Text>
+            ) : null}
           </ScrollView>
           <View style={styles.chatInputRow}>
             <TextInput style={styles.chatInput} placeholder="Type a message" placeholderTextColor={Colors.outline} value={draft} onChangeText={setDraft} />
-            <Pressable style={styles.sendBtn} onPress={send}><Send size={18} color={Colors.white} strokeWidth={2} /></Pressable>
+            <Pressable style={styles.sendBtn} onPress={send} disabled={sendMsg.isPending}><Send size={18} color={Colors.white} strokeWidth={2} /></Pressable>
           </View>
         </View>
       )}
@@ -255,6 +295,7 @@ const styles = StyleSheet.create({
   selfText:   { ...Typography.labelMd, color: Colors.white },
   chatPanel:  { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md, padding: Spacing.md, borderRadius: Radius.xl, backgroundColor: Colors.surfaceContainerLowest, gap: Spacing.sm },
   panelTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  panelHint:  { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   bubble:     { maxWidth: '80%', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: Radius.lg },
   bubbleMe:   { alignSelf: 'flex-end', backgroundColor: Colors.primary },
   bubbleDoc:  { alignSelf: 'flex-start', backgroundColor: Colors.surfaceContainerLow },

@@ -11,16 +11,22 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useOrder } from '@/features/health/pharmacy/hooks';
+import { useOrder, usePharmacies } from '@/features/health/pharmacy/hooks';
 import { useCartStore } from '@/features/health/pharmacy/cartStore';
 import { formatNaira } from '@/features/health/constants/health.constants';
 
 export default function ReorderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading, isError, refetch } = useOrder(id);
+  // The order payload carries the pharmacy's id but not its display name, and the
+  // cart uses that name to tell the patient which storefront their items belong
+  // to — resolve it from the discoverable list.
+  const { data: pharmacies } = usePharmacies();
   const addLine = useCartStore((s) => s.add);
+  const heldByName = useCartStore((s) => s.lines[0]?.pharmacyName ?? '');
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [done, setDone] = useState(false);
+  const [conflict, setConflict] = useState(false);
 
   React.useEffect(() => {
     if (order) {
@@ -32,14 +38,18 @@ export default function ReorderScreen() {
 
   const onReorder = () => {
     if (!order) return;
+    const pharmacyName =
+      order.pharmacyName || (pharmacies ?? []).find((p) => p.id === order.pharmacyId)?.name || '';
+    let rejected = false;
     order.lines
       .filter((l) => selected[l.productId])
-      .forEach((l) =>
-        addLine(
+      .forEach((l) => {
+        // add() refuses a product from a second pharmacy — one order, one storefront.
+        if (!addLine(
           {
             id: l.productId,
             pharmacyId: order.pharmacyId,
-            pharmacyName: order.pharmacyName,
+            pharmacyName,
             name: l.name,
             brand: '',
             form: l.form,
@@ -55,9 +65,12 @@ export default function ReorderScreen() {
             manufacturer: '',
           },
           l.qty,
-        ),
-      );
-    setDone(true);
+        )) {
+          rejected = true;
+        }
+      });
+    setConflict(rejected);
+    setDone(!rejected);
   };
 
   const selectedTotal = (order?.lines ?? [])
@@ -108,6 +121,12 @@ export default function ReorderScreen() {
           </ScrollView>
 
           <View style={styles.footer}>
+            {conflict ? (
+              <Text style={styles.conflict}>
+                Your cart holds {heldByName || 'another pharmacy'}’s items, and one order comes from one pharmacy.
+                Empty the cart first, then reorder.
+              </Text>
+            ) : null}
             {done ? (
               <PrimaryButton label="Go to cart" onPress={() => router.replace('/health/pharmacy/cart')} />
             ) : (
@@ -154,5 +173,6 @@ const styles = StyleSheet.create({
   rxTag: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
   rxTagText: { ...Typography.caption, color: Colors.secondary, fontWeight: '700' as const },
   price: { ...Typography.labelLg, color: Colors.primary },
+  conflict: { ...Typography.bodySm, color: Colors.error, marginBottom: Spacing.sm, lineHeight: 18 },
   footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background },
 });

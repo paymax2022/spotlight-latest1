@@ -12,7 +12,7 @@ import { shadow1 } from '@/constants/tokens';
 import { getAppointments, PLACEHOLDER_APPOINTMENTS } from '@/api/telemedicine.api';
 import { TeleHeader, DoctorAvatar, ConsultStatusBadge } from '@/features/telemedicine/components';
 import { IntakeStatusBadge } from '@/features/health/components';
-import { useApptIntake } from '@/features/health/hooks';
+import { useApptIntake } from '@/features/telemedicine/intake';
 import type { Appointment, ConsultType } from '@/types/telemedicine';
 
 const TYPE_ICON: Record<ConsultType, typeof Video> = { video: Video, audio: Phone, chat: MessageCircle };

@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, ActivityIndicator } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { View, Text, ScrollView, StyleSheet, Platform, ActivityIndicator, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Stethoscope, ClipboardList, ArrowRight } from 'lucide-react-native';
@@ -11,12 +11,16 @@ import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import { getVisitSummary, getPrescription } from '@/api/telemedicine.api';
 import { TeleHeader, PrescriptionCard } from '@/features/telemedicine/components';
+import { exportVisitSummary, summaryFileName } from '@/features/telemedicine/exportSummary';
 import PrimaryButton from '@/components/PrimaryButton';
 
 export default function VisitSummaryScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const recordRef = useRef<View>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState<string | null>(null);
 
-  const { data: summary, isLoading: loadingSummary } = useQuery({
+  const { data: summary, isLoading: loadingSummary, isError: summaryMissing } = useQuery({
     queryKey: ['tele-summary', id],
     queryFn:  () => getVisitSummary(String(id)),
   });
@@ -26,6 +30,16 @@ export default function VisitSummaryScreen() {
     queryFn:  () => getPrescription(String(id)),
   });
 
+  const onDownload = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setExportNote(null);
+    const outcome = await exportVisitSummary(recordRef.current, summaryFileName(String(id)));
+    setExporting(false);
+    if (outcome === 'failed') setExportNote('Could not save the summary. Please try again.');
+    else if (outcome === 'unsupported') setExportNote('Saving is not available on this device.');
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Visit Summary" />
@@ -33,51 +47,66 @@ export default function VisitSummaryScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         {loadingSummary && !summary ? (
           <ActivityIndicator color={Colors.primary} style={{ marginTop: Spacing.xl }} />
+        ) : summaryMissing ? (
+          <View style={[styles.card, shadow1]}>
+            <Text style={styles.cardTitle}>Summary not filed yet</Text>
+            <Text style={styles.notes}>
+              Your doctor hasn’t written up this visit. It shows up here as soon as they close the
+              consult — you can still rate the visit below.
+            </Text>
+          </View>
         ) : (
           <>
-            <View style={[styles.card, shadow1]}>
-              <View style={styles.head}>
-                <View style={styles.iconBox}><Stethoscope size={18} color={Colors.primary} strokeWidth={2} /></View>
-                <Text style={styles.cardTitle}>Diagnosis</Text>
-              </View>
-              <Text style={styles.diagnosis}>{summary?.diagnosis}</Text>
-            </View>
-
-            <View style={[styles.card, shadow1]}>
-              <View style={styles.head}>
-                <View style={[styles.iconBox, { backgroundColor: Colors.iconBgBlue }]}><ClipboardList size={18} color={Colors.secondary} strokeWidth={2} /></View>
-                <Text style={styles.cardTitle}>Clinical notes</Text>
-              </View>
-              <Text style={styles.notes}>{summary?.notes}</Text>
-              {summary?.followUp ? (
-                <View style={styles.followUp}>
-                  <Text style={styles.followLabel}>Follow-up</Text>
-                  <Text style={styles.followText}>{summary.followUp}</Text>
+            <View ref={recordRef} collapsable={false} style={styles.record}>
+              <View style={[styles.card, shadow1]}>
+                <View style={styles.head}>
+                  <View style={styles.iconBox}><Stethoscope size={18} color={Colors.primary} strokeWidth={2} /></View>
+                  <Text style={styles.cardTitle}>Diagnosis</Text>
                 </View>
-              ) : null}
+                <Text style={styles.diagnosis}>{summary?.diagnosis}</Text>
+              </View>
+
+              <View style={[styles.card, shadow1]}>
+                <View style={styles.head}>
+                  <View style={[styles.iconBox, { backgroundColor: Colors.iconBgBlue }]}><ClipboardList size={18} color={Colors.secondary} strokeWidth={2} /></View>
+                  <Text style={styles.cardTitle}>Clinical notes</Text>
+                </View>
+                <Text style={styles.notes}>{summary?.notes}</Text>
+                {summary?.followUp ? (
+                  <View style={styles.followUp}>
+                    <Text style={styles.followLabel}>Follow-up</Text>
+                    <Text style={styles.followText}>{summary.followUp}</Text>
+                  </View>
+                ) : null}
+              </View>
+
+              {prescription ? <PrescriptionCard prescription={prescription} /> : null}
             </View>
 
-            {prescription ? <PrescriptionCard prescription={prescription} /> : null}
-
-            <View style={styles.orderCard}>
+            <Pressable
+              style={styles.orderCard}
+              onPress={() => router.push('/health/pharmacy/send-rx')}
+            >
               <View style={{ flex: 1 }}>
                 <Text style={styles.orderTitle}>Order your medication</Text>
                 <Text style={styles.orderSub}>Get this prescription delivered from a partner pharmacy.</Text>
               </View>
               <ArrowRight size={20} color={Colors.secondary} strokeWidth={2} />
-            </View>
+            </Pressable>
           </>
         )}
       </ScrollView>
 
       <View style={styles.footer}>
+        {exportNote ? <Text style={styles.exportNote}>{exportNote}</Text> : null}
         <View style={styles.footerRow}>
           <PrimaryButton
-            label="Download"
+            label={exporting ? 'Saving…' : 'Download'}
             variant="secondary"
             fullWidth={false}
             style={{ flex: 1 }}
-            onPress={() => { /* TODO(Phase C): export PDF visit summary */ }}
+            disabled={exporting || (!!summaryMissing)}
+            onPress={onDownload}
           />
           <PrimaryButton
             label="Rate visit"
@@ -94,6 +123,9 @@ export default function VisitSummaryScreen() {
 const styles = StyleSheet.create({
   safe:        { flex: 1, backgroundColor: Colors.background },
   content:     { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.lg, paddingBottom: 120, gap: Spacing.md },
+  // Everything the patient saves as their record; the action cards stay out of it.
+  record:      { gap: Spacing.md },
+  exportNote:  { ...Typography.labelSm, color: Colors.error, marginBottom: Spacing.sm },
   card:        { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
   head:        { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.sm },
   iconBox:     { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },

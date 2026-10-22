@@ -22,7 +22,10 @@ export default function CartScreen() {
   const remove = useCartStore((s) => s.remove);
   const { data: prescriptions } = usePrescriptions();
 
-  const hasVerifiedRx = (prescriptions ?? []).some((r) => r.status === 'verified');
+  // HL-3: the order needs a prescription reference the pharmacist can confirm — an
+  // e-Rx already sent to a pharmacy counts, one still sitting in the wallet does not.
+  const verifiedRx = (prescriptions ?? []).some((r) => r.status === 'verified');
+  const hasRx = verifiedRx || (prescriptions ?? []).some((r) => r.status === 'verifying');
 
   if (lines.length === 0) {
     return (
@@ -84,16 +87,18 @@ export default function CartScreen() {
 
         {/* Rx gate (HL-3) */}
         {cart.requiresRx ? (
-          <View style={[styles.rxGate, hasVerifiedRx ? styles.rxGateOk : styles.rxGateWarn]}>
-            <ScrollText size={16} color={hasVerifiedRx ? Colors.teal : Colors.onWarning} strokeWidth={2} />
-            <Text style={[styles.rxGateText, { color: hasVerifiedRx ? Colors.tertiaryContainer : Colors.onWarning }]}>
-              {hasVerifiedRx
+          <View style={[styles.rxGate, hasRx ? styles.rxGateOk : styles.rxGateWarn]}>
+            <ScrollText size={16} color={hasRx ? Colors.teal : Colors.onWarning} strokeWidth={2} />
+            <Text style={[styles.rxGateText, { color: hasRx ? Colors.tertiaryContainer : Colors.onWarning }]}>
+              {verifiedRx
                 ? 'A verified prescription will be attached at checkout.'
-                : 'This order contains prescription medicine. Upload an Rx to continue.'}
+                : hasRx
+                ? 'Your e-Rx is with a pharmacist. It will be attached here and the order confirms once they verify it.'
+                : 'This order contains prescription-only medicine. A doctor issues it as an e-Rx — send one to the pharmacy to continue.'}
             </Text>
-            {!hasVerifiedRx ? (
-              <Pressable onPress={() => router.push('/health/pharmacy/upload-rx')}>
-                <Text style={styles.rxGateLink}>Upload</Text>
+            {!hasRx ? (
+              <Pressable onPress={() => router.push('/health/pharmacy/send-rx')}>
+                <Text style={styles.rxGateLink}>Send</Text>
               </Pressable>
             ) : null}
           </View>
@@ -102,23 +107,30 @@ export default function CartScreen() {
         {/* Totals */}
         <View style={[styles.totals, shadow1]}>
           <Row label="Subtotal" value={formatNaira(cart.subtotalKobo)} />
-          <Row label="Delivery" value={cart.deliveryFeeKobo ? formatNaira(cart.deliveryFeeKobo) : 'Set at checkout'} muted />
+          <Row
+            label="Rider’s fare"
+            value={cart.deliveryFeeKobo ? `${formatNaira(cart.deliveryFeeKobo)} separately` : 'Set at checkout'}
+            muted
+          />
           <View style={styles.divider} />
-          <Row label="Total" value={formatNaira(cart.totalKobo)} bold />
+          <Row label="Held with this order" value={formatNaira(cart.totalKobo)} bold />
         </View>
 
         <View style={styles.safety}>
           <ShieldCheck size={13} color={Colors.teal} strokeWidth={2} />
-          <Text style={styles.safetyText}>Payment is held securely and released to the pharmacy on delivery/pickup.</Text>
+          <Text style={styles.safetyText}>
+            The pharmacy holds your medicine payment and it is released on delivery or pickup. The rider’s fare is settled
+            separately and is not part of the held amount.
+          </Text>
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
         <PrimaryButton
-          label={cart.requiresRx && !hasVerifiedRx ? 'Upload Rx to continue' : 'Choose a pharmacy'}
+          label={cart.requiresRx && !hasRx ? 'Send an e-Rx to continue' : 'Continue to checkout'}
           onPress={() =>
-            cart.requiresRx && !hasVerifiedRx
-              ? router.push('/health/pharmacy/upload-rx')
+            cart.requiresRx && !hasRx
+              ? router.push('/health/pharmacy/send-rx')
               : router.push('/health/pharmacy/pharmacy-select')
           }
         />

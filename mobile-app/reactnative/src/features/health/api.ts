@@ -16,22 +16,9 @@ import type {
   Consult,
   ConsultChatMessage,
   HealthHubSummary,
-  ApptIntakeBundle,
-  PreConsultIntake,
-  SubmitIntakeResult,
-  IntakeAttachment,
   HealthProfile,
 } from './types';
-import {
-  PRECONSULT_SCHEMA,
-  PRECONSULT_PREFILL,
-  CONSENT_VERSION,
-  CONSENT_BODY,
-  mockGetIntake,
-  mockSaveDraft,
-  mockSubmitIntake,
-  mockGetHealthProfile,
-} from './api/preconsult.mock';
+import { mockGetHealthProfile } from './api/preconsult.mock';
 import {
   MOCK_SUBJECTS,
   MOCK_RECORDS,
@@ -237,98 +224,6 @@ export async function submitIntake(
     subjectId,
     values,
   });
-  return data;
-}
-
-// Endpoints (Next proxy → Go /api/finance/health):
-//   GET    /intake/appointments/{id}            → bundle (intake/schema/prefill/consent)
-//   PUT    /intake/appointments/{id}/draft       (autosave)
-//   POST   /intake/appointments/{id}/submit      → { status, red_flag? }
-//   POST   /intake/appointments/{id}/attachments/presign
-//   GET    /intake/health-profile               (M17)
-
-export async function getIntake(appointmentId: string): Promise<ApptIntakeBundle> {
-  if (USE_MOCK) {
-    await delay();
-    const intake = mockGetIntake(appointmentId);
-    return {
-      intake,
-      schema: PRECONSULT_SCHEMA,
-      prefill: PRECONSULT_PREFILL,
-      consent: {
-        version: CONSENT_VERSION,
-        body: CONSENT_BODY,
-        acceptedVersion: intake.consentVersion,
-      },
-    };
-  }
-  const { data } = await api.get<ApptIntakeBundle>(
-    `${HEALTH_API_BASE}/intake/appointments/${appointmentId}`,
-  );
-  return data;
-}
-
-/** Autosave the in-progress draft (debounced by the wizard). */
-export async function saveIntakeDraftForAppt(
-  appointmentId: string,
-  answers: IntakeResponseValues,
-  consentVersion?: string,
-): Promise<PreConsultIntake> {
-  if (USE_MOCK) {
-    await delay(120);
-    return mockSaveDraft(appointmentId, answers, consentVersion);
-  }
-  const { data } = await api.put<PreConsultIntake>(
-    `${HEALTH_API_BASE}/intake/appointments/${appointmentId}/draft`,
-    { answers, consent_version: consentVersion },
-  );
-  return data;
-}
-
-/**
- * Submit the Pre-Consult intake — runs server-side red-flag triage (§5).
- * Named `submitApptIntake` to avoid colliding with the legacy schema-driven
- * `submitIntake` above (PRD calls this "submitIntake").
- */
-export async function submitApptIntake(
-  appointmentId: string,
-  answers: IntakeResponseValues,
-  consentVersion: string,
-): Promise<SubmitIntakeResult> {
-  if (USE_MOCK) {
-    await delay(480);
-    return mockSubmitIntake(appointmentId, answers, consentVersion);
-  }
-  const { data } = await api.post<SubmitIntakeResult>(
-    `${HEALTH_API_BASE}/intake/appointments/${appointmentId}/submit`,
-    { answers, consent_version: consentVersion },
-  );
-  return data;
-}
-
-/** Presign an attachment upload (M12), then the client PUTs the file to the URL. */
-export async function presignAttachment(
-  appointmentId: string,
-  file: { fieldId: string; fileName: string; mimeType: string },
-): Promise<{ uploadUrl: string; attachment: IntakeAttachment }> {
-  if (USE_MOCK) {
-    await delay(260);
-    const id = `att_${Date.now()}`;
-    return {
-      uploadUrl: `mock://health/intake/${appointmentId}/attachments/${id}`,
-      attachment: {
-        id,
-        fieldId: file.fieldId,
-        fileName: file.fileName,
-        mimeType: file.mimeType,
-        storageKey: `intake/${appointmentId}/${id}/${file.fileName}`,
-      },
-    };
-  }
-  const { data } = await api.post<{ uploadUrl: string; attachment: IntakeAttachment }>(
-    `${HEALTH_API_BASE}/intake/appointments/${appointmentId}/attachments/presign`,
-    file,
-  );
   return data;
 }
 

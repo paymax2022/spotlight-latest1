@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Modal, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { X, Video, Phone, MessageCircle, UserX } from 'lucide-react-native';
+import { X, Video, Phone, MessageCircle, UserX, TriangleAlert } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
@@ -17,6 +17,10 @@ import type { StatusTone } from '@/features/doctor/components';
 import { useAppointment, useStartConsultation, useEndConsultation, useMarkNoShow, useCancelAppointment, useRescheduleAppointment } from '@/features/doctor/hooks';
 import { APPOINTMENT_BILLING_LABELS, CONSULT_SOON_WINDOW_MINS, CONSULT_LATE_GRACE_MINS } from '@/features/doctor/constants';
 import { formatKobo, computeConsultCountdown } from '@/api/doctor.batch1.api';
+import { useAppointmentIntakeRow } from '@/features/telemedicine/intake';
+import { PRECONSULT_SCHEMA } from '@/features/health/api/preconsult.mock';
+import { visibleSteps, stepFields, formatIntakeValue } from '@/features/health/utils';
+import { INTAKE_RED_FLAG_COPY } from '@/features/health/constants/health.constants';
 import type { AppointmentBilling, ConsultType } from '@/types/doctor.batch1';
 
 const TYPE_ICON: Record<ConsultType, LucideIcon> = { video: Video, audio: Phone, chat: MessageCircle };
@@ -97,6 +101,17 @@ export default function AppointmentDetailScreen() {
   const isLive = appt.status === 'in_progress';
   const isActive = appt.status === 'upcoming' || appt.status === 'confirmed';
 
+  // The patient's pre-visit details, read from the telemedicine intake row. The
+  // server only answers for the assigned doctor and logs the access (ids only),
+  // so the NDPA copy the patient accepted is true on this screen too.
+  const intakeQ = useAppointmentIntakeRow(appt.id);
+  const intakeAnswers = intakeQ.data?.intake.answers ?? {};
+  const intakeRows = intakeQ.data
+    ? visibleSteps(PRECONSULT_SCHEMA, intakeAnswers)
+        .flatMap((s) => stepFields(s, intakeAnswers))
+        .filter((f) => f.type !== 'attachment')
+    : [];
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Appointment" />
@@ -124,6 +139,45 @@ export default function AppointmentDetailScreen() {
           <InfoRow label="Fee" value={billing === 'free_follow_up' ? 'Free follow-up' : formatKobo(appt.feeKobo)} />
           {!!appt.reason && <InfoRow label="Reason" value={appt.reason} />}
         </SectionCard>
+
+        {/* Patient-reported pre-visit health check (telemedicine intake) */}
+        {intakeQ.data && (
+          <SectionCard title="Pre-visit health check" style={styles.card}>
+            {intakeQ.data.intake.status === 'SUBMITTED' ? (
+              <View style={styles.intakeBody}>
+                {intakeQ.data.redFlag && (
+                  <View style={styles.redFlag}>
+                    <TriangleAlert size={16} color={Colors.error} strokeWidth={2} />
+                    <View style={styles.redFlagText}>
+                      <Text style={styles.redFlagTitle}>
+                        {INTAKE_RED_FLAG_COPY[intakeQ.data.redFlag.routing].title}
+                      </Text>
+                      <Text style={styles.redFlagBody}>
+                        {INTAKE_RED_FLAG_COPY[intakeQ.data.redFlag.routing].body}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+                {intakeRows.map((f) => (
+                  <InfoRow
+                    key={f.id}
+                    label={f.label}
+                    value={formatIntakeValue(f, intakeAnswers[f.id])}
+                  />
+                ))}
+                <Text style={styles.note}>
+                  Patient-reported and not a diagnosis. Submitted{' '}
+                  {new Date(intakeQ.data.intake.submittedAt ?? intakeQ.data.intake.updatedAt ?? Date.now())
+                    .toLocaleString('en-NG', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.note}>
+                The patient has not completed this yet — it is required before they can join the consult.
+              </Text>
+            )}
+          </SectionCard>
+        )}
 
         {/* F11 — HMO-covered billing variant */}
         {billing === 'hmo' && (
@@ -205,6 +259,14 @@ const styles = StyleSheet.create({
   blockGap:    { marginBottom: Spacing.md },
   card:        { marginBottom: Spacing.md },
   note:        { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
+  intakeBody:  { gap: Spacing.xs },
+  redFlag:     {
+    flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm,
+    backgroundColor: Colors.iconBgGold, borderRadius: Radius.md, padding: Spacing.sm,
+  },
+  redFlagText:  { flex: 1 },
+  redFlagTitle: { ...Typography.labelMd, color: Colors.onSurface },
+  redFlagBody:  { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2, lineHeight: 18 },
   actions:     { gap: Spacing.sm },
   btn:         { marginTop: Spacing.sm },
   actionRow:   { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm },

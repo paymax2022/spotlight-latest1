@@ -26,7 +26,7 @@ import {
 } from '../_ui';
 import * as svc from '@/services/filmAcademyAdminService';
 
-type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'settings';
+type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'assessment' | 'bank' | 'exams' | 'settings';
 
 const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'batches',     label: 'Batches',      hint: 'Cohorts the app offers on /film-academy' },
@@ -35,6 +35,9 @@ const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'curriculum',  label: 'Curriculum',   hint: 'Modules, lessons and the week 1-4 assignment timeline' },
   { key: 'progress',    label: 'Progress',     hint: 'Who has sent which part, and who is behind' },
   { key: 'submissions', label: 'Submissions',  hint: 'Grades appear on /film-academy/assignments' },
+  { key: 'assessment',  label: 'Import',       hint: 'Stage the 256 MCQ bank (preview → commit as drafts)' },
+  { key: 'bank',        label: 'Question Bank',hint: 'SME review queue — approve to make a question exam-eligible' },
+  { key: 'exams',       label: 'Exams',        hint: 'Author exams and publish them once the approved pool covers the draw' },
   { key: 'settings',    label: 'Settings',     hint: 'Fees and areas used by the apply form' },
 ];
 
@@ -106,6 +109,9 @@ export default function FilmAcademyAdminPage() {
       {tab === 'curriculum'   ? <CurriculumTab onNotice={setNotice} /> : null}
       {tab === 'progress'     ? <ProgressTab onNotice={setNotice} /> : null}
       {tab === 'submissions'  ? <SubmissionsTab onNotice={setNotice} /> : null}
+      {tab === 'assessment'   ? <ImportTab onNotice={setNotice} /> : null}
+      {tab === 'bank'         ? <QuestionBankTab onNotice={setNotice} /> : null}
+      {tab === 'exams'        ? <ExamsTab onNotice={setNotice} /> : null}
       {tab === 'settings'     ? <SettingsTab onNotice={setNotice} /> : null}
     </Page>
   );
@@ -1416,6 +1422,469 @@ function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
           </td>
         </tr>
       )}
+    </>
+  );
+}
+
+// ── ASSESSMENT: question-bank import, SME review, exams ─────────────────────
+// The whole plane is behind FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED on the web
+// app; with it off every call here 503s, which the call() helper surfaces as a
+// plain error message. Import stages drafts only — a question becomes exam-
+// eligible ONLY via an approve here (scores:manage), so the 256 starter MCQs
+// never reach a learner unreviewed.
+
+const FILM_STAGES = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'];
+
+/** Read a picked .csv file into text. */
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result ?? ''));
+    r.onerror = () => rej(new Error('Could not read that file'));
+    r.readAsText(file);
+  });
+}
+
+function ImportTab({ onNotice }: NoticeProp) {
+  const [filename, setFilename] = useState('assessment-bank.csv');
+  const [csv, setCsv] = useState('');
+  const [preview, setPreview] = useState<svc.FilmImportPreview | null>(null);
+  const [busy, setBusy] = useState<null | 'preview' | 'commit'>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const onPick = async (f: File | undefined) => {
+    if (!f) return;
+    setFilename(f.name); setError(null);
+    try { setCsv(await readFileAsText(f)); setPreview(null); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const runPreview = async () => {
+    if (!csv.trim()) { setError('Choose a CSV file (or paste its text) first.'); return; }
+    setBusy('preview'); setError(null);
+    try { setPreview(await svc.previewQuestionImport(filename, csv)); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); setPreview(null); }
+    finally { setBusy(null); }
+  };
+
+  const runCommit = async () => {
+    if (!csv.trim()) return;
+    if (!window.confirm(
+      'Commit these rows as DRAFT questions?\n\nImporting NEVER approves a question and NEVER auto-publishes — every row lands as a draft in the review queue.',
+    )) return;
+    setBusy('commit'); setError(null);
+    try {
+      const r = await svc.commitQuestionImport(filename, csv);
+      const c = r.committed;
+      onNotice(`Imported ${c.inserted} new, updated ${c.updated}, unchanged ${c.unchanged}; ${c.locked} approved item(s) left untouched.`);
+      setPreview(null);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  };
+
+  return (
+    <>
+      <Card title="Import the question bank" right={
+        <span style={{ fontSize: '0.75rem', color: colors.muted }}>CSV · one row per MCQ</span>
+      }>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <input type="file" accept=".csv,text/csv" onChange={(e) => void onPick(e.target.files?.[0])} />
+          <input style={{ ...input(), maxWidth: 260 }} value={filename}
+            onChange={(e) => setFilename(e.target.value)} aria-label="filename" />
+        </div>
+        <textarea
+          style={{ ...input(), minHeight: 120, fontFamily: 'ui-monospace, monospace', fontSize: '0.75rem', whiteSpace: 'pre' }}
+          value={csv}
+          onChange={(e) => { setCsv(e.target.value); setPreview(null); }}
+          placeholder="…or paste the CSV text here"
+        />
+        {error ? <p style={{ color: colors.danger, fontSize: '0.85rem' }}>{error}</p> : null}
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+          <button style={btn()} disabled={busy !== null || !csv.trim()} onClick={() => void runPreview()}>
+            {busy === 'preview' ? 'Previewing…' : 'Preview'}
+          </button>
+          <button style={btnPrimary()} disabled={busy !== null || !csv.trim() || !preview} onClick={() => void runCommit()}>
+            {busy === 'commit' ? 'Committing…' : 'Commit as drafts'}
+          </button>
+        </div>
+        <AuditNote>
+          A preview records an uncommitted batch and changes nothing. Commit re-validates the CSV on the server
+          (it never trusts this browser’s counts) and is idempotent: a repeat import of identical rows updates
+          matching drafts and leaves any approved/retired question untouched.
+        </AuditNote>
+      </Card>
+
+      {preview ? (
+        <Card title="Preview">
+          <div style={{ display: 'flex', gap: '0.9rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+            <Kpi label="Rows" value={String(preview.totals.rows)} />
+            <Kpi label="Valid" value={String(preview.totals.accepted)} accent={colors.success} />
+            <Kpi label="Rejected" value={String(preview.totals.rejected)} accent={preview.totals.rejected ? colors.danger : colors.muted} />
+            <Kpi label="Warnings" value={String(preview.totals.warned)} accent={colors.muted} />
+          </div>
+
+          {preview.rejected.length > 0 ? (
+            <>
+              <h3 style={{ fontSize: '0.85rem', margin: '0.5rem 0' }}>Rejected rows (fix &amp; re-import)</h3>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={th()}>Row</th><th style={th()}>Question ID</th><th style={th()}>Problem</th></tr></thead>
+                  <tbody>
+                    {preview.rejected.map((p, i) => (
+                      <tr key={i}><td style={td()}>{p.row}</td><td style={td()}>{p.externalCode ?? '—'}</td><td style={td()}>{p.message}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+
+          {preview.warned.length > 0 ? (
+            <details style={{ marginTop: '0.75rem' }}>
+              <summary style={{ fontSize: '0.82rem', cursor: 'pointer' }}>{preview.warned.length} warning(s)</summary>
+              <ul style={{ fontSize: '0.78rem', color: colors.muted }}>
+                {preview.warned.map((p, i) => <li key={i}>Row {p.row}: {p.message}</li>)}
+              </ul>
+            </details>
+          ) : null}
+        </Card>
+      ) : null}
+    </>
+  );
+}
+
+function QuestionBankTab({ onNotice }: NoticeProp) {
+  const [status, setStatus] = useState('');
+  const [stage, setStage] = useState('');
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const list = useAsync(
+    () => svc.listQuestions({ status: status || undefined, stage: stage || undefined, q: q || undefined, page, pageSize: 25 }),
+    [status, stage, q, page, reloadKey],
+  );
+
+  const act = async (id: string, decision: string, done: string) => {
+    setBusy(id);
+    try {
+      await svc.reviewQuestion(id, decision, '');
+      onNotice(done);
+      setReloadKey((k) => k + 1);
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  };
+
+  const rows = list.data?.questions ?? [];
+  const total = list.data?.total ?? 0;
+  const hasMore = list.data?.hasMore ?? false;
+
+  return (
+    <>
+      <Card title="Question bank &amp; SME review">
+        <FilterBar>
+          <select style={select()} value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+            <option value="">Any status</option>
+            <option value="draft">draft</option>
+            <option value="review">review</option>
+            <option value="approved">approved</option>
+            <option value="retired">retired</option>
+          </select>
+          <select style={select()} value={stage} onChange={(e) => { setStage(e.target.value); setPage(1); }}>
+            <option value="">Any stage</option>
+            {FILM_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <input style={input()} placeholder="Search stem or Question ID" value={q}
+            onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+        </FilterBar>
+
+        <StateBlock loading={list.loading} error={list.error} empty={rows.length === 0}
+          emptyText="No questions match. Import the bank first (Import tab).">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+              <thead><tr>
+                <th style={th()}>Question ID</th><th style={th()}>Stage</th><th style={th()}>Module</th>
+                <th style={th()}>Stem</th><th style={th()}>Status</th><th style={th()} />
+              </tr></thead>
+              <tbody>
+                {rows.map((row) => {
+                  const isOpen = openId === row.id;
+                  const editable = row.status === 'draft' || row.status === 'review';
+                  return (
+                    <React.Fragment key={row.id}>
+                      <tr style={{ cursor: 'pointer' }} onClick={() => setOpenId(isOpen ? null : row.id)}>
+                        <td style={td()}><code style={{ fontSize: '0.75rem' }}>{row.external_code}</code></td>
+                        <td style={td()}>{row.film_stage}</td>
+                        <td style={td()}>{row.film_module_code}</td>
+                        <td style={{ ...td(), maxWidth: 360 }}>{row.stem}</td>
+                        <td style={td()}><Badge status={row.status} /></td>
+                        <td style={{ ...td(), whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+                          {editable ? (
+                            <button style={btnPrimary()} disabled={busy === row.id}
+                              onClick={() => void act(row.id, 'approve', 'Approved — the question is now exam-eligible.')}>
+                              Approve
+                            </button>
+                          ) : null}
+                          {row.status === 'approved' ? (
+                            <button style={btnDanger()} disabled={busy === row.id}
+                              onClick={() => void act(row.id, 'suspend', 'Suspended — withdrawn from future draws.')}>
+                              Suspend
+                            </button>
+                          ) : null}
+                          {row.status === 'retired' ? (
+                            <button style={btn()} disabled={busy === row.id}
+                              onClick={() => void act(row.id, 'reactivate', 'Reactivated — approved again.')}>
+                              Reactivate
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                      {isOpen ? (
+                        <tr><td colSpan={6} style={{ ...td(), backgroundColor: 'rgba(128,128,128,0.06)' }}>
+                          <QuestionDetail row={row} onNotice={onNotice} onSaved={() => setReloadKey((k) => k + 1)} />
+                        </td></tr>
+                      ) : null}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.6rem', fontSize: '0.8rem', color: colors.muted }}>
+            <span>Page {page} · {total} matching</span>
+            <span>
+              <button style={btn()} disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Prev</button>{' '}
+              <button style={btn()} disabled={!hasMore} onClick={() => setPage((p) => p + 1)}>Next</button>
+            </span>
+          </div>
+        </StateBlock>
+        <AuditNote>
+          Approving requires the reviewer capability (scores:manage), separate from the import/authoring
+          capability (programs:manage) — separation of duties. An approved question is content-locked; to
+          change it, reimport a corrected row (which creates a new version rather than mutating an examined one).
+        </AuditNote>
+      </Card>
+    </>
+  );
+}
+
+/** Expanded view of one bank row: content, the correct answer, review history, and
+ * (for a draft) an in-place editor. */
+function QuestionDetail({ row, onNotice, onSaved }: { row: svc.FilmQuestion; onNotice: (s: string | null) => void; onSaved: () => void }) {
+  const [detail, setDetail] = useState<{ question: svc.FilmQuestion; reviews: svc.FilmReview[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const editable = row.status === 'draft' || row.status === 'review';
+  const [stem, setStem] = useState(row.stem);
+  const [opts, setOpts] = useState(row.options);
+  const [correct, setCorrect] = useState(row.answer?.correct?.[0] ?? '');
+  const [points, setPoints] = useState(String(row.film_points ?? 1));
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    svc.getQuestion(row.id).then((d) => { if (alive) setDetail(d); })
+      .catch(() => { if (alive) setDetail(null); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [row.id]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await svc.editQuestion({ id: row.id, stem, options: opts, correctOptionIds: correct ? [correct] : [], points: Number(points) || 1 });
+      onNotice('Draft updated.');
+      onSaved();
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: '0.5rem' }}>
+      <div style={{ fontSize: '0.75rem', color: colors.muted }}>
+        Dept {row.film_department ?? '—'} · Outcome {row.film_learning_outcome ?? '—'} · Cognitive {row.film_cognitive ?? '—'} · Difficulty {row.film_difficulty ?? '—'} · v{row.source_version ?? '—'}
+      </div>
+
+      {editable ? (
+        <>
+          <Field label="Stem">
+            <textarea style={{ ...input(), minHeight: 60 }} value={stem} onChange={(e) => setStem(e.target.value)} />
+          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+            {opts.map((o, i) => (
+              <div key={o.id} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input type="radio" name={`correct-${row.id}`} checked={correct === o.id} onChange={() => setCorrect(o.id)} />
+                <span style={{ width: 14, fontWeight: 700 }}>{String.fromCharCode(65 + i)}</span>
+                <input style={input()} value={o.text}
+                  onChange={(e) => setOpts((prev) => prev.map((p, j) => (j === i ? { ...p, text: e.target.value } : p)))} />
+              </div>
+            ))}
+          </div>
+          <Field label="Points">
+            <input type="number" min={1} style={{ ...input(), width: 100 }} value={points} onChange={(e) => setPoints(e.target.value)} />
+          </Field>
+          <div><button style={btnPrimary()} disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save draft'}</button></div>
+        </>
+      ) : (
+        <>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.82rem' }}>
+            {opts.map((o) => (
+              <li key={o.id} style={{ fontWeight: correct === o.id ? 700 : 400 }}>
+                {o.text}{detail?.question.answer?.correct?.includes(o.id) ? '  ✓ correct' : ''}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {detail?.question?.answer?.explanation ? (
+        <div style={{ fontSize: '0.78rem', color: colors.muted }}><strong>Explanation:</strong> {detail.question.answer.explanation}</div>
+      ) : null}
+
+      {loading ? <div style={{ fontSize: '0.8rem', color: colors.muted }}>Loading review history…</div> : null}
+      {detail && detail.reviews.length > 0 ? (
+        <div style={{ fontSize: '0.76rem' }}>
+          <strong>Review history</strong>
+          <ul style={{ margin: '0.2rem 0 0', paddingLeft: '1.1rem', color: colors.muted }}>
+            {detail.reviews.map((rv) => (
+              <li key={rv.id}>{rv.decision}: {rv.from_status ?? '—'} → {rv.to_status ?? '—'} · {fmtDate(rv.created_at)}{rv.note ? ` · ${rv.note}` : ''}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ExamsTab({ onNotice }: NoticeProp) {
+  const curriculum = useAsync(() => svc.getCurriculum(), []);
+  const exams = useAsync(() => svc.listExams(), [], true);
+  const programs = curriculum.data?.programs ?? [];
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { void exams.reload(); /* re-run when reloadKey changes */ }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [form, setForm] = useState({
+    program_id: '', title: '', description: '', kind: 'stage_exam',
+    draw_stage: 'L1', draw_module_codes: '', draw_count: '10',
+    pass_mark: '70', time_limit_minutes: '30', max_attempts: '1',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const create = async () => {
+    if (!form.program_id || !form.title.trim()) { setError('Choose a programme and give the exam a title.'); return; }
+    setSaving(true); setError(null);
+    try {
+      await svc.createExam({
+        program_id: form.program_id,
+        title: form.title.trim(),
+        description: form.description || null,
+        kind: form.kind,
+        draw_stage: form.draw_stage || null,
+        draw_module_codes: form.draw_module_codes.split(',').map((s) => s.trim()).filter(Boolean),
+        draw_count: Number(form.draw_count) || 10,
+        pass_mark: Number(form.pass_mark),
+        time_limit_minutes: Number(form.time_limit_minutes) || 30,
+        max_attempts: Number(form.max_attempts) || 1,
+      });
+      setForm((f) => ({ ...f, title: '', description: '' }));
+      setReloadKey((k) => k + 1);
+      onNotice('Exam created (unpublished). Publish it once its approved pool covers the draw.');
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
+
+  const publish = async (id: string) => {
+    setBusy(id);
+    try { await svc.publishExam(id); onNotice('Published.'); setReloadKey((k) => k + 1); }
+    catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  };
+
+  const rows = exams.data ?? [];
+
+  return (
+    <>
+      <Card title="Author an exam">
+        {error ? <p style={{ color: colors.danger, fontSize: '0.85rem' }}>{error}</p> : null}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: '0.8rem' }}>
+          <Field label="Programme">
+            <select style={select()} value={form.program_id} onChange={(e) => setForm({ ...form, program_id: e.target.value })}>
+              <option value="">Choose…</option>
+              {programs.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+            </select>
+          </Field>
+          <Field label="Title"><input style={input()} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+          <Field label="Kind">
+            <select style={select()} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+              <option value="practice">practice</option>
+              <option value="checkpoint">checkpoint</option>
+              <option value="stage_exam">stage exam</option>
+            </select>
+          </Field>
+          <Field label="Draw stage">
+            <select style={select()} value={form.draw_stage} onChange={(e) => setForm({ ...form, draw_stage: e.target.value })}>
+              {FILM_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="Module codes (comma, optional)"><input style={input()} value={form.draw_module_codes}
+            placeholder="FM01, FM02" onChange={(e) => setForm({ ...form, draw_module_codes: e.target.value })} /></Field>
+          <Field label="Questions to draw"><input type="number" min={1} style={input()} value={form.draw_count} onChange={(e) => setForm({ ...form, draw_count: e.target.value })} /></Field>
+          <Field label="Pass mark (%)"><input type="number" min={0} max={100} style={input()} value={form.pass_mark} onChange={(e) => setForm({ ...form, pass_mark: e.target.value })} /></Field>
+          <Field label="Time limit (min)"><input type="number" min={1} style={input()} value={form.time_limit_minutes} onChange={(e) => setForm({ ...form, time_limit_minutes: e.target.value })} /></Field>
+          <Field label="Max attempts"><input type="number" min={1} style={input()} value={form.max_attempts} onChange={(e) => setForm({ ...form, max_attempts: e.target.value })} /></Field>
+        </div>
+        <Field label="Description">
+          <textarea style={{ ...input(), minHeight: 50 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        </Field>
+        <div style={{ marginTop: '0.75rem' }}>
+          <button style={btnPrimary()} disabled={saving} onClick={() => void create()}>{saving ? 'Creating…' : 'Create exam'}</button>
+        </div>
+      </Card>
+
+      <Card title="Exams">
+        <StateBlock loading={exams.loading} error={exams.error} empty={rows.length === 0}
+          emptyText="No exams yet. Author one above — it starts unpublished.">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 860 }}>
+              <thead><tr>
+                <th style={th()}>Title</th><th style={th()}>Kind</th><th style={th()}>Draw</th>
+                <th style={th()}>Pass</th><th style={th()}>Limit</th><th style={th()}>State</th><th style={th()} />
+              </tr></thead>
+              <tbody>
+                {rows.map((x) => (
+                  <tr key={x.id}>
+                    <td style={td()}>{x.title}</td>
+                    <td style={td()}>{x.kind}</td>
+                    <td style={td()}>{x.draw_stage ?? '—'}{x.draw_module_codes?.length ? ` · ${x.draw_module_codes.join(', ')}` : ''} · {x.draw_count ?? 0}q</td>
+                    <td style={td()}>{x.pass_mark}%</td>
+                    <td style={td()}>{x.time_limit_minutes}m · {x.max_attempts}×</td>
+                    <td style={td()}><Badge status={x.is_published ? 'approved' : 'draft'} label={x.is_published ? 'published' : 'unpublished'} /></td>
+                    <td style={{ ...td(), whiteSpace: 'nowrap' }}>
+                      {x.is_published ? (
+                        <button style={btn()} disabled={busy === x.id} onClick={() => void (async () => {
+                          setBusy(x.id); try { await svc.unpublishExam(x.id); setReloadKey((k) => k + 1); }
+                          catch (e) { alert(e instanceof Error ? e.message : String(e)); } finally { setBusy(null); }
+                        })()}>Unpublish</button>
+                      ) : (
+                        <button style={btnPrimary()} disabled={busy === x.id} onClick={() => void publish(x.id)}>Publish</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </StateBlock>
+        <AuditNote>
+          Publishing runs a server-side pool preflight: an exam only goes live when its draw stage (and optional
+          module restriction) has at least as many APPROVED questions as its draw count. If it fails, the reason —
+          the exact shortfall — is shown; approve more questions or lower the count.
+        </AuditNote>
+      </Card>
     </>
   );
 }

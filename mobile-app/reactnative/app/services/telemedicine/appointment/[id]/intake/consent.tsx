@@ -10,7 +10,7 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useApptIntake, useSaveApptDraft } from '@/features/health/hooks';
+import { useApptIntake, useSaveApptDraft } from '@/features/telemedicine/intake';
 import { NDPA_CONSENT_COPY } from '@/features/health/constants/health.constants';
 
 /**
@@ -29,7 +29,9 @@ export default function IntakeConsentScreen() {
   const onContinue = () => {
     if (!consent) return;
     saveDraft.mutate(
-      { answers: {}, consentVersion: consent.version },
+      // The draft store overwrites the answer map, so re-send what the patient
+      // has already given — consenting on a returning wizard must not blank it.
+      { answers: bundleQ.data?.intake.answers ?? {}, consentVersion: consent.version },
       {
         onSuccess: () => {
           bundleQ.refetch();

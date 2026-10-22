@@ -11,6 +11,7 @@
 // deterministically from a value in it. Nothing here invents a rating, a fee, a
 // review or a date.
 import { Colors } from '@/constants/tokens';
+import { INTAKE_RED_FLAG_COPY } from '@/features/health/constants/health.constants';
 import { mapAppointmentMoney, mapDoctorMoney } from './pricing';
 import type {
   Appointment,
@@ -19,9 +20,18 @@ import type {
   ConsultType,
   Doctor,
   DoctorSummary,
+  Prescription,
+  PrescriptionItem,
   Review,
   Specialty,
+  VisitSummary,
 } from '@/types/telemedicine';
+import type {
+  IntakeResponseValues,
+  PreConsultIntake,
+  RedFlagResult,
+  SubmitIntakeResult,
+} from '@/features/health/types';
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -244,4 +254,118 @@ export function mapLiveReview(raw: unknown): Review {
     comment:       str(r.comment),
     createdAt:     str(r.created_at),
   };
+}
+
+/**
+ * GET /appointments/:id/prescription. The server row is snake_case and its drug
+ * list may arrive structured (a doctor-console prescription bridges in with
+ * `items[]`) or as the legacy free-text `medications` column; either way the
+ * card needs `items[]`, so the text is split line-wise rather than guessed at.
+ */
+export function mapLivePrescription(raw: unknown): Prescription {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const structured = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
+  const items: PrescriptionItem[] = structured.length > 0
+    ? structured.map((it) => ({
+        name:      str(it.name),
+        dosage:    str(it.dosage),
+        frequency: str(it.frequency),
+        duration:  str(it.duration),
+      })).filter((it) => it.name)
+    : str(r.medications)
+        .split(/\n|;/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((name) => ({ name, dosage: '', frequency: '', duration: '' }));
+  return {
+    id:            str(r.id),
+    appointmentId: str(r.appointment_id),
+    doctorName:    str(r.doctor_name) || 'Your doctor',
+    issuedAt:      str(r.issued_at),
+    items,
+  };
+}
+
+/** GET /appointments/:id/summary — snake_case row → the camelCase screen shape. */
+export function mapLiveVisitSummary(raw: unknown): VisitSummary {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    id:            str(r.id),
+    appointmentId: str(r.appointment_id),
+    diagnosis:     str(r.diagnosis),
+    notes:         str(r.notes),
+    followUp:      str(r.follow_up) || undefined,
+  };
+}
+
+/** One line of the bridged consult chat, as the patient app renders it. */
+export interface LiveChatMessage {
+  id: string;
+  /** 'patient' | 'doctor' — the author column, never trusted from the client. */
+  author: 'patient' | 'doctor';
+  body: string;
+  createdAt: string;
+}
+
+export function mapLiveChatMessages(raw: unknown): LiveChatMessage[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((m) => {
+    const r = (m ?? {}) as Record<string, unknown>;
+    return {
+      id: str(r.id),
+      author: str(r.author) === 'doctor' ? ('doctor' as const) : ('patient' as const),
+      body: str(r.body),
+      createdAt: str(r.created_at),
+    };
+  });
+}
+
+/**
+ * The server's captured safety outcome → the interstitial's own shape. The
+ * wording is the app's (single-sourced in INTAKE_RED_FLAG_COPY), never the
+ * server's, so the copy stays reviewable; the server decides only WHETHER and
+ * WHICH ROUTING, from the structured answers.
+ */
+export function mapLiveRedFlag(raw: unknown): RedFlagResult | undefined {
+  const routing = str((raw as Record<string, unknown> | null)?.routing);
+  if (routing !== 'EMERGENCY' && routing !== 'URGENT_CARE' && routing !== 'CRISIS') return undefined;
+  return {
+    severity: routing === 'URGENT_CARE' ? 'urgent' : 'emergency',
+    routing,
+    guidance: INTAKE_RED_FLAG_COPY[routing],
+  };
+}
+
+/** GET/PUT/POST /appointments/:id/intake* answer this row. */
+export interface LiveIntake {
+  intake: PreConsultIntake;
+  redFlag?: RedFlagResult;
+  /** False on a doctor read — only the patient may write their own answers. */
+  patientOwns: boolean;
+}
+
+export function mapLiveIntake(raw: unknown): LiveIntake {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const answers = (r.answers ?? {}) as IntakeResponseValues;
+  return {
+    intake: {
+      appointmentId: str(r.appointment_id),
+      schemaId: str(r.schema_id),
+      schemaVersion: num(r.schema_version),
+      status: str(r.status) === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT',
+      answers: answers && typeof answers === 'object' ? answers : {},
+      consentVersion: str(r.consent_version) || undefined,
+      submittedAt: str(r.submitted_at) || undefined,
+      updatedAt: str(r.updated_at) || undefined,
+      doctorName: str(r.doctor_name) || undefined,
+    },
+    redFlag: mapLiveRedFlag(r.red_flag),
+    patientOwns: bool(r.patient_owns),
+  };
+}
+
+/** The wizard trades in { status, red_flag, intake }; the server answers one row. */
+export function mapLiveIntakeSubmit(raw: unknown): SubmitIntakeResult {
+  const { intake, redFlag } = mapLiveIntake(raw);
+  return { status: intake.status, red_flag: redFlag, intake };
 }

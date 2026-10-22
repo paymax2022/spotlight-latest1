@@ -12,9 +12,13 @@ import {
 import {
   mapLiveAppointment,
   mapLiveBookingResult,
+  mapLiveChatMessages,
   mapLiveDoctor,
+  mapLivePrescription,
   mapLiveReview,
   mapLiveSpecialty,
+  mapLiveVisitSummary,
+  type LiveChatMessage,
 } from '@/features/telemedicine/mapping';
 import type {
   Specialty,
@@ -277,16 +281,55 @@ export async function getAppointment(id: string): Promise<Appointment | undefine
 }
 
 export async function getPrescription(appointmentId: string): Promise<Prescription> {
-  // Closest live route: POST /appointments/:id/prescription is how a doctor
-  // via the visit summary endpoint's appointment id and fall back to the same
-  // path pattern (backend may accept GET on this path for the patient view).
   if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_PRESCRIPTION); }
-  return unwrap<Prescription>(await api.get(`${BASE}/appointments/${appointmentId}/prescription`));
+  // GET /appointments/:id/prescription answers the snake_case row (telemedicine
+  // prescription, or one bridged from the doctor console) — not the camelCase
+  // shape the card renders.
+  return mapLivePrescription(unwrap<unknown>(await api.get(`${BASE}/appointments/${appointmentId}/prescription`)));
 }
 
 export async function getVisitSummary(appointmentId: string): Promise<VisitSummary> {
   if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_SUMMARY); }
-  return unwrap<VisitSummary>(await api.get(`${BASE}/appointments/${appointmentId}/summary`));
+  return mapLiveVisitSummary(unwrap<unknown>(await api.get(`${BASE}/appointments/${appointmentId}/summary`)));
+}
+
+/**
+ * The consult chat lives on the doctor-console thread (the single place both
+ * sides can write), so these three endpoints are the patient's window onto it.
+ * An appointment that was never bridged answers with an empty list.
+ */
+export async function getAppointmentMessages(appointmentId: string): Promise<LiveChatMessage[]> {
+  if (TELEMEDICINE_USE_MOCK) { return wait([]); }
+  const raw = unwrap<unknown[]>(await api.get(`${BASE}/appointments/${appointmentId}/messages`));
+  return mapLiveChatMessages(raw);
+}
+
+export async function sendAppointmentMessage(
+  appointmentId: string,
+  body: string,
+): Promise<LiveChatMessage> {
+  if (TELEMEDICINE_USE_MOCK) {
+    return wait({ id: `m-${Date.now()}`, author: 'patient', body, createdAt: new Date().toISOString() }, 200);
+  }
+  const raw = unwrap<unknown>(
+    await api.post(`${BASE}/appointments/${appointmentId}/messages`, { body }),
+  );
+  return mapLiveChatMessages([raw])[0];
+}
+
+/** Per-appointment call configuration. `configured:false` means no media keys. */
+export interface ConsultCallInfo {
+  configured: boolean;
+  provider?: string;
+  url?: string;
+  room?: string;
+  token?: string;
+  role?: string;
+}
+
+export async function getAppointmentCallToken(appointmentId: string): Promise<ConsultCallInfo> {
+  if (TELEMEDICINE_USE_MOCK) { return wait({ configured: false }); }
+  return unwrap<ConsultCallInfo>(await api.get(`${BASE}/appointments/${appointmentId}/call-token`));
 }
 
 export async function bookAppointment(input: BookAppointmentInput): Promise<BookAppointmentResult> {
@@ -360,12 +403,25 @@ export async function issuePrescription(
   appointmentId: string,
   input: { items: Prescription['items']; notes?: string },
 ): Promise<Prescription> {
-  // Doctor-facing action (POST /appointments/:id/prescription).
+  // Doctor-facing action (POST /appointments/:id/prescription). The server takes
+  // the legacy free-text `medications` + `instructions`, so the structured items
+  // are flattened here and re-split by `mapLivePrescription` on read.
   if (TELEMEDICINE_USE_MOCK) {
     const rx: Prescription = { id: `rx-${Date.now()}`, appointmentId, doctorName: DEMO_PRESCRIPTION.doctorName, issuedAt: new Date().toISOString(), items: input.items };
     return wait(rx, 500);
   }
-  return unwrap<Prescription>(await api.post(`${BASE}/appointments/${appointmentId}/prescription`, input));
+  const medications = input.items
+    .map((i) => [i.name, i.dosage].filter(Boolean).join(' ') + [i.frequency, i.duration].filter(Boolean).map((p) => `— ${p}`).join(' '))
+    .filter(Boolean)
+    .join('\n');
+  return mapLivePrescription(
+    unwrap<unknown>(
+      await api.post(`${BASE}/appointments/${appointmentId}/prescription`, {
+        medications,
+        instructions: input.notes ?? '',
+      }),
+    ),
+  );
 }
 
 export function formatKobo(kobo: number): string {

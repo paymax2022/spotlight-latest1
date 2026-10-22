@@ -16,12 +16,19 @@ import {
   initialsFromName,
   mapLiveAppointment,
   mapLiveBookingResult,
+  mapLiveChatMessages,
   mapLiveDoctor,
+  mapLiveIntake,
+  mapLiveIntakeSubmit,
+  mapLivePrescription,
+  mapLiveRedFlag,
   mapLiveReview,
   mapLiveSpecialty,
+  mapLiveVisitSummary,
   referenceFor,
   specialtyLabel,
 } from '@/features/telemedicine/mapping';
+import { INTAKE_RED_FLAG_COPY } from '@/features/health/constants/health.constants';
 
 /** telemedicine.Doctor as the handler writes it (handler.go ListDoctors → {"data":[…]}). */
 const SERVER_DOCTOR = {
@@ -251,5 +258,153 @@ describe('mapLiveReview', () => {
     assert.equal(rev.rating, 5);
     assert.equal(rev.comment, 'Thorough.');
     assert.equal(rev.createdAt, '2026-09-21T09:00:00Z');
+  });
+});
+
+describe('mapLivePrescription', () => {
+  it('uses the structured items a bridged doctor-console prescription carries', () => {
+    // telemedicine.Prescription with Items []RxItem (service.go
+    // prescriptionFromDoctorConsole): the card must not re-parse text.
+    const rx = mapLivePrescription({
+      id:             'rx-1',
+      appointment_id: 'apt-1',
+      doctor_id:      'doc-1',
+      patient_id:     'pat-1',
+      medications:    'Paracetamol 500mg — Twice daily for 5 days',
+      issued_at:      '2026-09-21T10:00:00Z',
+      doctor_name:    'Dr. Amaka Obi',
+      items: [
+        { name: 'Paracetamol', dosage: '500mg', frequency: 'Twice daily', duration: '5 days' },
+        { name: 'Amoxicillin', dosage: '250mg', frequency: 'Thrice daily', duration: '7 days' },
+      ],
+    });
+    assert.equal(rx.doctorName, 'Dr. Amaka Obi');
+    assert.equal(rx.items.length, 2);
+    assert.equal(rx.items[1].name, 'Amoxicillin');
+    assert.equal(rx.items[1].duration, '7 days');
+  });
+
+  it('splits the free-text medications column when there are no items', () => {
+    // A telemedicine-side prescription is issued as one `medications` string
+    // (binding:"required"); the item list is derived line-wise, not invented.
+    const rx = mapLivePrescription({
+      id:          'rx-2',
+      medications: 'Paracetamol 500mg\nAmoxicillin 250mg; Rest',
+      issued_at:   '2026-09-21T10:00:00Z',
+    });
+    assert.deepEqual(rx.items.map((i) => i.name), ['Paracetamol 500mg', 'Amoxicillin 250mg', 'Rest']);
+    assert.equal(rx.items[0].dosage, '');
+    assert.equal(rx.doctorName, 'Your doctor');
+  });
+});
+
+describe('mapLiveVisitSummary', () => {
+  it('maps the summary row and leaves an absent follow-up undefined', () => {
+    const s = mapLiveVisitSummary({
+      id:             'sum-1',
+      appointment_id: 'apt-1',
+      doctor_id:      'doc-1',
+      patient_id:     'pat-1',
+      diagnosis:      'Malaria, uncomplicated',
+      notes:          'Treat symptomatically.',
+      follow_up:      '',
+      created_at:     '2026-09-21T10:05:00Z',
+    });
+    assert.equal(s.diagnosis, 'Malaria, uncomplicated');
+    assert.equal(s.notes, 'Treat symptomatically.');
+    assert.equal(s.followUp, undefined);
+  });
+});
+
+describe('mapLiveChatMessages', () => {
+  it('keeps server authorship and order', () => {
+    // doctor_chat_messages rows out of bridge.go: `author` is decided by the
+    // server, so the bubble side must never be inferred client-side.
+    const msgs = mapLiveChatMessages([
+      { id: 'm1', author: 'doctor', body: 'Take it after food.', message_kind: 'text', created_at: '2026-09-21T10:10:00Z' },
+      { id: 'm2', author: 'patient', body: 'Thank you.', message_kind: 'text', created_at: '2026-09-21T10:11:00Z' },
+    ]);
+    assert.equal(msgs.length, 2);
+    assert.equal(msgs[0].author, 'doctor');
+    assert.equal(msgs[1].author, 'patient');
+    assert.equal(msgs[1].body, 'Thank you.');
+  });
+
+  it('tolerates a non-array payload', () => {
+    assert.deepEqual(mapLiveChatMessages(null), []);
+  });
+});
+
+// Pre-consult intake row (backend/internal/telemedicine/intake.go
+// AppointmentIntake). The bug these guard: the wizard used to call the health
+// platform's intake routes, which key every row on health_appointments — so for
+// a real tele-consult each call answered 404 and "Join consultation" never
+// unlocked on a paid booking.
+describe('mapLiveIntake', () => {
+  const SERVER_INTAKE = {
+    id: '0f0c2b3c-1a2b-4c5d-8e9f-0a1b2c3d4e5f',
+    appointment_id: '8fea24a2-7f4a-449e-86a7-86ae99a1f313',
+    status: 'SUBMITTED',
+    schema_id: 'preconsult_v1',
+    schema_version: 1,
+    consent_version: '2026-01',
+    answers: { chief_complaint: 'Cough for a week', allergies_none: false, red_flag_symptoms: ['chest_pain'], severity: 6 },
+    red_flag: { severity: 'emergency', routing: 'EMERGENCY', hits: ['chest_pain'] },
+    submitted_at: '2026-10-20T09:12:00Z',
+    updated_at: '2026-10-20T09:12:00Z',
+    doctor_name: 'Dr E2E Bridge Test',
+    patient_owns: true,
+  };
+
+  it('carries the row into the wizard screen shape', () => {
+    const { intake, patientOwns } = mapLiveIntake(SERVER_INTAKE);
+    assert.equal(intake.appointmentId, SERVER_INTAKE.appointment_id);
+    assert.equal(intake.status, 'SUBMITTED');
+    assert.equal(intake.consentVersion, '2026-01');
+    assert.equal(intake.doctorName, 'Dr E2E Bridge Test');
+    assert.equal(intake.answers.chief_complaint, 'Cough for a week');
+    assert.equal(patientOwns, true);
+  });
+
+  it('pairs the server routing with the app-owned safety copy', () => {
+    const { redFlag } = mapLiveIntake(SERVER_INTAKE);
+    assert.equal(redFlag?.routing, 'EMERGENCY');
+    // The wording is the app's, never the server's, so it cannot drift per-side.
+    assert.equal(redFlag?.guidance.title, INTAKE_RED_FLAG_COPY.EMERGENCY.title);
+  });
+
+  it('maps a clean, not-yet-started intake to an empty DRAFT', () => {
+    const { intake, redFlag } = mapLiveIntake({
+      appointment_id: 'a1', status: 'DRAFT', schema_id: 'preconsult_v1', schema_version: 1,
+      answers: {}, patient_owns: true,
+    });
+    assert.equal(intake.status, 'DRAFT');
+    assert.equal(intake.consentVersion, undefined);
+    assert.deepEqual(intake.answers, {});
+    assert.equal(redFlag, undefined);
+  });
+
+  it('never invents an answer for a missing one', () => {
+    const { intake } = mapLiveIntake({ status: 'SUBMITTED', answers: null });
+    assert.deepEqual(intake.answers, {});
+  });
+
+  it('ignores a routing the app has no copy for', () => {
+    // A new server routing must not crash the interstitial with undefined text.
+    assert.equal(mapLiveRedFlag({ routing: 'WAIT_AND_SEE' }), undefined);
+  });
+});
+
+describe('mapLiveIntakeSubmit', () => {
+  it('answers the wizard with the server-authoritative urgent routing', () => {
+    const res = mapLiveIntakeSubmit({
+      appointment_id: 'a1', status: 'SUBMITTED', answers: { severity: 9 },
+      red_flag: { severity: 'urgent', routing: 'URGENT_CARE', hits: ['severity_9_plus'] },
+      patient_owns: true,
+    });
+    assert.equal(res.status, 'SUBMITTED');
+    assert.equal(res.red_flag?.severity, 'urgent');
+    assert.equal(res.red_flag?.guidance.title, INTAKE_RED_FLAG_COPY.URGENT_CARE.title);
+    assert.equal(res.intake.status, 'SUBMITTED');
   });
 });
