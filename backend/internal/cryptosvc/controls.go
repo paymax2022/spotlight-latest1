@@ -222,3 +222,20 @@ func TradeGateFunc(src ControlSource) func(ctx context.Context, asset string) er
 		return v.tradeAllowed(asset)
 	}
 }
+
+// TradeLimitFunc caps one legacy buy or sell at the per-trade NGN limit. Fail-closed.
+func TradeLimitFunc(src ControlSource) func(ctx context.Context, ngnKobo int64) error {
+	return func(ctx context.Context, ngnKobo int64) error {
+		if src == nil {
+			return fmt.Errorf("%w: controls are not configured", ErrTradingPaused)
+		}
+		v, err := src.Current(ctx)
+		if err != nil {
+			return fmt.Errorf("%w: controls unreadable: %v", ErrTradingPaused, err)
+		}
+		if ngnKobo > v.QuoteLimitKobo() {
+			return ErrAboveLimit
+		}
+		return nil
+	}
+}

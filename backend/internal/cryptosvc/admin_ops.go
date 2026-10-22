@@ -79,7 +79,7 @@ func (a *PGAuditLog) Search(ctx context.Context, q AuditQuery) ([]AuditRow, erro
 		    AND ($4::timestamptz IS NULL OR created_at < $4::timestamptz)
 		  ORDER BY created_at DESC
 		  LIMIT $5`,
-		strings.ReplaceAll(strings.ReplaceAll(q.ActionPrefix, `%`, ``), `_`, `\_`), q.Actor, q.EntityID, before, q.Limit)
+		likePrefix(q.ActionPrefix), q.Actor, q.EntityID, before, q.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +100,11 @@ func (a *PGAuditLog) Search(ctx context.Context, q AuditQuery) ([]AuditRow, erro
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// likePrefix escapes LIKE metacharacters (backslash first) so the prefix matches literally.
+func likePrefix(p string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(p)
 }
 
 // LastWebhookAt implements WebhookClock.

@@ -96,3 +96,15 @@ func TestDepositEventKeysDistinguishProgressButDedupeRedeliveries(t *testing.T) 
 		t.Fatalf("swap keys must not change: %s", key(swap))
 	}
 }
+
+func TestTelemetryNeverCarriesAccountOrEntityIDs(t *testing.T) {
+	for in, want := range map[string]string{
+		"/users/acct1/deposits/dp_9":        "/users/*/deposits/*",
+		"/users/acct1/wallets/usdt/address": "/users/*/wallets/usdt/address",
+		"/markets/tickers/usdtngn":          "/markets/tickers/usdtngn",
+	} {
+		if got := maskPath(in); got != want {
+			t.Errorf("maskPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

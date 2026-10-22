@@ -194,7 +194,7 @@ func (c *Client) do(ctx context.Context, method, path, query string, body any) (
 		started := time.Now()
 		resp, err := c.hc.Do(req)
 		if err != nil {
-			c.calls.Record(started, time.Since(started), 0, method+" "+path+" -> transport error")
+			c.calls.Record(started, time.Since(started), 0, method+" "+maskPath(path)+" -> transport error")
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
@@ -209,7 +209,7 @@ func (c *Client) do(ctx context.Context, method, path, query string, body any) (
 		}
 		raw, rerr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		_ = resp.Body.Close()
-		c.calls.Record(started, time.Since(started), resp.StatusCode, fmt.Sprintf("%s %s -> %d", method, path, resp.StatusCode))
+		c.calls.Record(started, time.Since(started), resp.StatusCode, fmt.Sprintf("%s %s -> %d", method, maskPath(path), resp.StatusCode))
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if rerr != nil {
@@ -497,6 +497,21 @@ func (c *Client) GetDeposit(ctx context.Context, accountID, id string) (cryptopr
 		Amount: amt, Fee: fee, TxID: d.TxID, Status: st,
 		Confirmations: d.Tx.Confirmations, RequiredConfirmations: d.Tx.RequiredConfirmations,
 	}, nil
+}
+
+// maskPath hides the sub-account (and entity) ids in a request path for telemetry:
+// "/users/acct1/deposits/dp_9" -> "/users/*/deposits/*". Health text never carries ids.
+func maskPath(p string) string {
+	parts := strings.Split(p, "/")
+	for i := 1; i < len(parts); i++ {
+		switch parts[i-1] {
+		case "users", "deposits", "withdraws", "swap_transactions", "swap_quotation", "instant_swaps":
+			if parts[i] != "" {
+				parts[i] = "*"
+			}
+		}
+	}
+	return strings.Join(parts, "/")
 }
 
 // eventKey is the dedupe key for a webhook. Quidax sends several events of the SAME type for

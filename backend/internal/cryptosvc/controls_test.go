@@ -263,3 +263,37 @@ func TestAdminControlsUpdate(t *testing.T) {
 		t.Fatalf("get: %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestARetriedConfirmStillHonoursAPauseSetAfterTheClaim(t *testing.T) {
+	r, m := controlledRig(t)
+	q := r.quote(t, "k1", 1_000_000)
+	// Simulate a confirm that claimed quoted->confirming and then died before executing.
+	if ok, err := r.store.TransitionSwap(context.Background(), q.ID, "quoted", "confirming", decimal.Zero, ""); err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	setControls(t, m, Controls{TradingPaused: true})
+	if _, err := r.svc.Confirm(context.Background(), user, q.ID); !errors.Is(err, ErrTradingPaused) {
+		t.Fatalf("retried confirm while paused: %v", err)
+	}
+	if r.prov.confirms != 0 || r.led.total() != 0 {
+		t.Fatal("a paused retry reached the provider or held money")
+	}
+}
+
+func TestALimitLoweredAfterTheQuoteStopsTheConfirm(t *testing.T) {
+	r, m := controlledRig(t)
+	q := r.quote(t, "k1", 1_000_000)
+	setControls(t, m, Controls{MaxQuoteKobo: 500_000})
+	if _, err := r.svc.Confirm(context.Background(), user, q.ID); !errors.Is(err, ErrAboveLimit) {
+		t.Fatalf("confirm above a lowered limit: %v", err)
+	}
+	if r.prov.confirms != 0 || r.led.total() != 0 {
+		t.Fatal("moved money above the limit")
+	}
+}
+
+func TestAuditActionPrefixIsMatchedLiterally(t *testing.T) {
+	if got := likePrefix(`a_b%c\`); got != `a\_b\%c\\` {
+		t.Fatalf("likePrefix = %q", got)
+	}
+}

@@ -3452,6 +3452,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 					return nil
 				},
 			)
+			limitGate := cryptosvc.TradeLimitFunc(cryptoControls)
+			cryptoLegacy.WithTradeLimit(func(ctx context.Context, ngnKobo int64) error {
+				err := limitGate(ctx, ngnKobo)
+				switch {
+				case err == nil:
+					return nil
+				case errors.Is(err, cryptosvc.ErrAboveLimit):
+					return crypto.ErrAboveTradeLimit
+				}
+				return fmt.Errorf("%w: %v", crypto.ErrTradingPaused, err) // unreadable: fail closed
+			})
 		}
 		// Customer withdrawals require the transaction PIN, verified server-side
 		// (the app's OTP step was client-only). Without this wiring they fail closed.

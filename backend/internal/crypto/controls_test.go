@@ -54,3 +54,21 @@ func TestAWithdrawalNeedsAnIndependentDecider(t *testing.T) {
 		t.Fatalf("independent decision refused: %v", err)
 	}
 }
+
+func TestLegacyTradeLimit(t *testing.T) {
+	s := (&Service{}).WithTradeLimit(func(_ context.Context, k int64) error {
+		if k > 100 {
+			return ErrAboveTradeLimit
+		}
+		return nil
+	})
+	if err := s.checkLimit(context.Background(), 101); !errors.Is(err, ErrAboveTradeLimit) {
+		t.Fatalf("over the limit: %v", err)
+	}
+	if err := s.checkLimit(context.Background(), 100); err != nil {
+		t.Fatalf("at the limit: %v", err)
+	}
+	if err := independentApprover("ABC-1", "abc-1"); !errors.Is(err, ErrSelfDecision) {
+		t.Fatal("self-decision must be caught regardless of id case")
+	}
+}

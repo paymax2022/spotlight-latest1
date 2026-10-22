@@ -344,6 +344,22 @@ func (s *Service) Balances(ctx context.Context, userID string) ([]cryptoprov.Wal
 	return out, nil
 }
 
+// controlsAllow applies the operational controls to an existing swap at confirm time: the
+// pause, the market switch and the per-trade limit (lowered after the quote). Fail-closed.
+func (s *Service) controlsAllow(ctx context.Context, rec SwapRecord) error {
+	ctl, err := s.controls(ctx)
+	if err != nil {
+		return err
+	}
+	if err := ctl.tradeAllowed(tradedAsset(rec)); err != nil {
+		return err
+	}
+	if rec.NGNKobo > ctl.QuoteLimitKobo() {
+		return ErrAboveLimit
+	}
+	return nil
+}
+
 // tradedAsset is the crypto a swap buys or sells.
 func tradedAsset(r SwapRecord) string {
 	if r.Side == SideSell {
@@ -497,11 +513,7 @@ func (s *Service) Confirm(ctx context.Context, userID, swapID string) (SwapRecor
 		out = rec
 		if rec.State == cryptoprov.SwapStateQuoted {
 			// A pause or market switch set after the quote stops it here, before any hold.
-			ctl, err := s.controls(ctx)
-			if err != nil {
-				return err
-			}
-			if err := ctl.tradeAllowed(tradedAsset(rec)); err != nil {
+			if err := s.controlsAllow(ctx, rec); err != nil {
 				return err
 			}
 			if err := s.gate(ctx, userID); err != nil {
@@ -526,8 +538,13 @@ func (s *Service) Confirm(ctx context.Context, userID, swapID string) (SwapRecor
 			return nil // processing or final: nothing to execute
 		}
 		if rec.ProviderSwapID == "" && !rec.ExecuteAttempted {
-			// Not yet at the provider: a user frozen or de-tiered since the claim stops here.
-			if gerr := s.gate(ctx, userID); gerr != nil {
+			// Not yet at the provider: a user frozen or de-tiered, or an admin pause / market
+			// switch / lower limit set since the claim (a retried confirm), stops here.
+			gerr := s.controlsAllow(ctx, rec)
+			if gerr == nil {
+				gerr = s.gate(ctx, userID)
+			}
+			if gerr != nil {
 				// Nothing has reached the provider, so any hold already posted is safe to
 				// release; otherwise a user frozen mid-confirm would be stranded.
 				if ferr := s.cfg.Settler.Fail(ctx, rec); ferr != nil { // side-aware: a sell holds nothing
