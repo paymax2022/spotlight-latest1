@@ -1,16 +1,14 @@
--- PENDING (orchestrator applies + renumbers at consolidation; lanes do not migrate).
--- STYA-D005: realtor booking RPCs accept forged/duplicate/invalid input.
---   * realtor_create_shortlet_booking: client_ref is stored but never deduplicated
---     (a retry creates a second booking — STY-BKS-016); no past-date guard;
---     no guest-capacity guard; cleaning fee is hardcoded 25_000 NGN.
---   * realtor_book_hotel_room: guests are never checked against room_type
---     capacity (STY-BKH-010); no past-date guard; client_ref not deduplicated
---     (STY-BKS-016).
--- ADDITIVE-ONLY (CREATE UNIQUE INDEX IF NOT EXISTS on nullable client_ref is
--- safe — Postgres allows multiple NULLs). CREATE OR REPLACE FUNCTION keeps
--- signatures identical.
-
-BEGIN;
+-- Stays UAT (STYA-D005, lane stays-a): realtor booking RPCs accepted forged,
+-- duplicate or invalid input.
+--   * client_ref was stored but never deduplicated — a retry created a second
+--     booking (STY-BKS-016). A per-user partial unique index plus an in-RPC
+--     lookup now return the existing booking; a concurrent duplicate that loses
+--     the race returns the winner instead of a raw unique_violation.
+--   * no past-date guard on either RPC.
+--   * realtor_book_hotel_room never checked guests against room capacity
+--     (STY-BKH-010).
+-- Additive-only: partial unique indexes on nullable client_ref (multiple NULLs
+-- allowed), CREATE OR REPLACE with identical signatures so existing GRANTs hold.
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_realtor_shortlet_client_ref
   ON public.realtor_shortlet_bookings (user_id, client_ref)
@@ -62,8 +60,14 @@ BEGIN
             'Self check-in from 3:00 PM. Use the access code on the smart lock at the main door. Wi-Fi details are on the fridge.',
             p_client_ref)
         RETURNING * INTO v_booking;
-    EXCEPTION WHEN exclusion_violation THEN
-        RAISE EXCEPTION 'dates_unavailable';
+    EXCEPTION
+        WHEN exclusion_violation THEN
+            RAISE EXCEPTION 'dates_unavailable';
+        WHEN unique_violation THEN
+            SELECT * INTO v_existing FROM realtor_shortlet_bookings
+             WHERE user_id = auth.uid() AND client_ref = p_client_ref;
+            IF NOT FOUND THEN RAISE; END IF;
+            RETURN to_jsonb(v_existing) || jsonb_build_object('deduplicated', true);
     END;
 
     RETURN to_jsonb(v_booking) || jsonb_build_object(
@@ -111,6 +115,7 @@ BEGIN
     v_nightly := COALESCE((v_plan->>'nightly_kobo')::BIGINT, (v_rt.rate_plans->0->>'nightly_kobo')::BIGINT, 0);
     v_nights  := GREATEST(1, (p_check_out - p_check_in));
 
+    BEGIN
     INSERT INTO realtor_hotel_reservations (hotel_id, room_type_id, user_id, room_type_name, rate_plan_name,
         check_in, check_out, nights, guests, guest_name, guest_phone, special_request, total_kobo,
         status, confirmation_code, client_ref)
@@ -118,8 +123,12 @@ BEGIN
         p_check_in, p_check_out, v_nights, p_guests, p_guest_name, p_guest_phone, p_special_request, v_nightly * v_nights,
         'confirmed', upper(substr(replace(gen_random_uuid()::text,'-',''),1,8)), p_client_ref)
     RETURNING * INTO v_res;
+    EXCEPTION WHEN unique_violation THEN
+        SELECT * INTO v_existing FROM realtor_hotel_reservations
+         WHERE user_id = auth.uid() AND client_ref = p_client_ref;
+        IF NOT FOUND THEN RAISE; END IF;
+        RETURN to_jsonb(v_existing) || jsonb_build_object('deduplicated', true);
+    END;
 
     RETURN to_jsonb(v_res) || jsonb_build_object('hotel_name', v_hotel.name);
 END $$;
-
-COMMIT;
