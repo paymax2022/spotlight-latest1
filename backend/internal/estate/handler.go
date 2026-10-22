@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -231,14 +232,13 @@ func (h *Handler) LookupCode(c *gin.Context) {
 	c.JSON(http.StatusOK, payload)
 }
 
-// requireResident is the pre-body authorization check for the guard POSTs.
-// The services assert membership themselves, but they run AFTER
-// ShouldBindJSON — so a non-member got a 400 on a malformed body where a
-// member gets 403, an error-shape oracle that confirms both the route and its
-// expected payload (V7b residual). Assert FIRST; the service re-checks inside,
-// which is defense in depth, not drift — this call only fixes the ORDER.
-func (h *Handler) requireResident(c *gin.Context, userID string) bool {
-	if err := h.svc.assertResident(c.Request.Context(), c.Param("id"), userID); err != nil {
+// requireGuard is the pre-body authorization check for the guard POSTs. The
+// services assert the gate role themselves, but they run AFTER ShouldBindJSON —
+// so a non-guard would get a 400 on a malformed body where a guard gets 403, an
+// error-shape oracle. Assert FIRST (SP-01/SP-02: gate role, not mere membership);
+// the service re-checks inside as defense in depth.
+func (h *Handler) requireGuard(c *gin.Context, userID string) bool {
+	if err := h.svc.assertGate(c.Request.Context(), c.Param("id"), userID, guardRoles...); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return false
 	}
@@ -247,7 +247,7 @@ func (h *Handler) requireResident(c *gin.Context, userID string) bool {
 
 func (h *Handler) GuardCheckin(c *gin.Context) {
 	guardID := ginutil.UserID(c)
-	if !h.requireResident(c, guardID) {
+	if !h.requireGuard(c, guardID) {
 		return
 	}
 	var req GuardCheckinRequest
@@ -269,7 +269,7 @@ func (h *Handler) GuardCheckin(c *gin.Context) {
 
 func (h *Handler) GuardCheckout(c *gin.Context) {
 	guardID := ginutil.UserID(c)
-	if !h.requireResident(c, guardID) {
+	if !h.requireGuard(c, guardID) {
 		return
 	}
 	var body struct {
@@ -289,7 +289,7 @@ func (h *Handler) GuardCheckout(c *gin.Context) {
 
 func (h *Handler) SubmitIncident(c *gin.Context) {
 	guardID := ginutil.UserID(c)
-	if !h.requireResident(c, guardID) {
+	if !h.requireGuard(c, guardID) {
 		return
 	}
 	var req SubmitIncidentRequest
@@ -311,7 +311,7 @@ func (h *Handler) SubmitIncident(c *gin.Context) {
 
 func (h *Handler) HandoverShift(c *gin.Context) {
 	guardID := ginutil.UserID(c)
-	if !h.requireResident(c, guardID) {
+	if !h.requireGuard(c, guardID) {
 		return
 	}
 	var req HandoverRequest
@@ -333,7 +333,7 @@ func (h *Handler) HandoverShift(c *gin.Context) {
 
 func (h *Handler) SyncOfflineLogs(c *gin.Context) {
 	guardID := ginutil.UserID(c)
-	if !h.requireResident(c, guardID) {
+	if !h.requireGuard(c, guardID) {
 		return
 	}
 	var req SyncRequest
@@ -361,6 +361,118 @@ func (h *Handler) ListIncidents(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": incidents})
+}
+
+// GrantRole delegates a scoped, optionally expiring officer role (estate_admin only).
+func (h *Handler) GrantRole(c *gin.Context) {
+	adminID := ginutil.UserID(c)
+	var req GrantRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	var expires *time.Time
+	if req.ExpiresAt != "" {
+		t, err := time.Parse(time.RFC3339, req.ExpiresAt)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "expires_at must be RFC3339"})
+			return
+		}
+		expires = &t
+	}
+	g, err := h.svc.GrantRole(c.Request.Context(), c.Param("id"), adminID, req.UserID, req.Role, expires)
+	if err != nil {
+		code := http.StatusInternalServerError
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		} else if strings.HasPrefix(err.Error(), "estate: unknown staff role") || err.Error() == "estate: user_id required" {
+			code = http.StatusBadRequest
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, g)
+}
+
+// RevokeRole removes a delegated role immediately (estate_admin only).
+func (h *Handler) RevokeRole(c *gin.Context) {
+	adminID := ginutil.UserID(c)
+	if err := h.svc.RevokeRole(c.Request.Context(), c.Param("id"), adminID, c.Param("uid"), c.Param("role")); err != nil {
+		code := http.StatusInternalServerError
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		} else if strings.HasPrefix(err.Error(), "estate: no active grant") {
+			code = http.StatusNotFound
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ListGrants returns the estate's delegated grants (estate_admin only).
+func (h *Handler) ListGrants(c *gin.Context) {
+	gs, err := h.svc.ListGrants(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
+	if err != nil {
+		code := http.StatusInternalServerError
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gs})
+}
+
+// RequestArrival opens a host-approval request for a gated code (guard only).
+func (h *Handler) RequestArrival(c *gin.Context) {
+	guardID := ginutil.UserID(c)
+	if !h.requireGuard(c, guardID) {
+		return
+	}
+	var body struct {
+		CodeID string `json:"code_id" binding:"required"`
+		GateID string `json:"gate_id"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	id, err := h.svc.RequestArrival(c.Request.Context(), c.Param("id"), guardID, body.CodeID, body.GateID)
+	if err != nil {
+		code := http.StatusInternalServerError
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		} else if strings.HasPrefix(err.Error(), "access code not found") ||
+			strings.HasPrefix(err.Error(), "estate: this code does not require") {
+			code = http.StatusBadRequest
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"arrival_request_id": id})
+}
+
+// DecideArrival lets the issuing host accept or decline a pending arrival.
+func (h *Handler) DecideArrival(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req DecideArrivalRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if err := h.svc.DecideArrival(c.Request.Context(), c.Param("id"), userID, c.Param("rid"), req.Approve); err != nil {
+		code := http.StatusInternalServerError
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		} else if strings.HasPrefix(err.Error(), "arrival request not found") ||
+			strings.HasPrefix(err.Error(), "estate: arrival already decided") {
+			code = http.StatusBadRequest
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *Handler) CreateAccessCode(c *gin.Context) {
@@ -596,7 +708,7 @@ func (h *Handler) GetResidentCard(c *gin.Context) {
 
 func (h *Handler) ListEstates(c *gin.Context) {
 	search := c.Query("search")
-	estates, err := h.svc.ListEstates(c.Request.Context(), search)
+	estates, err := h.svc.ListEstates(c.Request.Context(), ginutil.UserID(c), search)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
