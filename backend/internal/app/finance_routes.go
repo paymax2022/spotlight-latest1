@@ -3423,6 +3423,36 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		})
 		log.Printf("[crypto] price/withdrawal provider mode: %s", cryptoMode)
 		cryptoLegacy := crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw)
+		// Operational controls (trading pause, market switch, withdrawal kill switch, limit,
+		// banner): one store for both rails. Customers read GET /crypto/status; admins edit
+		// GET/PUT /admin/crypto/controls (crypto.admin). Both gates fail closed.
+		cryptoControls := cryptosvc.NewPGControlsStore(pool)
+		ctlMember := cryptoV1.Group("/crypto")
+		ctlMember.Use(mapsAuth())
+		ctlAdmin := cryptoV1.Group("/admin/crypto")
+		ctlAdmin.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermAdmin))
+		cryptosvc.RegisterControlRoutes(ctlMember, ctlAdmin, cryptoControls)
+		if cryptoLegacy != nil {
+			tradeGate, withdrawGate := cryptosvc.TradeGateFunc(cryptoControls), cryptosvc.WithdrawalGate(cryptoControls)
+			cryptoLegacy.WithControls(
+				func(ctx context.Context, symbol string) error {
+					err := tradeGate(ctx, symbol)
+					switch {
+					case err == nil:
+						return nil
+					case errors.Is(err, cryptosvc.ErrMarketDisabled):
+						return crypto.ErrMarketDisabled
+					}
+					return fmt.Errorf("%w: %v", crypto.ErrTradingPaused, err) // paused or unreadable
+				},
+				func(ctx context.Context) error {
+					if err := withdrawGate(ctx); err != nil {
+						return fmt.Errorf("%w: %v", crypto.ErrWithdrawalsPaused, err)
+					}
+					return nil
+				},
+			)
+		}
 		// Customer withdrawals require the transaction PIN, verified server-side
 		// (the app's OTP step was client-only). Without this wiring they fail closed.
 		if cryptoLegacy != nil {
@@ -3454,7 +3484,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				LockPoolConns:     cfg.CryptoLockPoolConns,
 				ReconcileInterval: time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
 				Fees:              cryptosvc.DefaultFeeSchedule(),
-			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc})
+			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc, Controls: cryptoControls})
 			if werr != nil {
 				log.Printf("[crypto] swap pipeline NOT mounted: %v", werr)
 			} else {

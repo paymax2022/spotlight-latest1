@@ -53,6 +53,11 @@ func (s *Service) AdminDecideWithdrawal(ctx context.Context, actorID, id, decisi
 	var returnUnits int64
 	switch decision {
 	case "approve":
+		// The kill switch stops new dispatch: approvals wait; rejections (which return the
+		// parked units) stay allowed.
+		if err := s.checkWithdraw(ctx); err != nil {
+			return nil, err
+		}
 		to, action = WithdrawalApproved, "crypto.admin.withdraw.approve"
 	case "reject":
 		to, action = WithdrawalFailed, "crypto.admin.withdraw.reject"
