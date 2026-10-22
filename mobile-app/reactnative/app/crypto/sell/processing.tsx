@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
+import { ProviderTradeProcessing, RailGate } from '@/features/crypto/components/ProviderTrade';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -11,7 +12,7 @@ import { useAsset, useExecuteSell } from '@/features/crypto/hooks/useCrypto';
 import { buildQuote } from '@/features/crypto/utils/cryptoFormatters';
 import type { AmountBasis } from '@/features/crypto/types/crypto.types';
 
-export default function SellProcessingScreen() {
+function LegacySellProcessingScreen() {
   const params = useLocalSearchParams<{ symbol: string; basis: string; amount: string; expiresAt: string }>();
   const asset = useAsset(params.symbol);
   const sell = useExecuteSell();
@@ -71,6 +72,27 @@ export default function SellProcessingScreen() {
         <Text style={styles.sub}>Filling at the locked price and crediting your cash. This only takes a moment — please don't close the app.</Text>
       </View>
     </SafeAreaView>
+  );
+}
+
+
+export default function SellProcessingScreen() {
+  const p = useLocalSearchParams<{ symbol: string; basis: string; amount: string; swapId?: string }>();
+  return (
+    <RailGate
+      title="Processing"
+      provider={() => (
+        p.swapId
+          ? <ProviderTradeProcessing side="sell" symbol={p.symbol} basis={(p.basis as AmountBasis) ?? 'crypto'} amount={p.amount} swapId={p.swapId} />
+          // Never fall back to a legacy order on the provider rail: re-quote instead.
+          : <Redirect href={{ pathname: '/crypto/sell/review', params: { symbol: p.symbol, basis: p.basis, amount: p.amount } }} />
+      )}
+      // A swapId means this order was quoted on the provider rail: never place a legacy
+      // (PIN-less) order for it, even if the rail reads differently now.
+      legacy={() => (p.swapId
+        ? <Redirect href={{ pathname: '/crypto/sell/review', params: { symbol: p.symbol, basis: p.basis, amount: p.amount } }} />
+        : <LegacySellProcessingScreen />)}
+    />
   );
 }
 

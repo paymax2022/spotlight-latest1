@@ -206,6 +206,10 @@ export interface Position {
   unrealizedPct: number;       // signed %
   price: FiatMoney;            // current price per coin
   change24hPct: number;
+  /** Provider rail: cost basis isn't known, so gain/loss fields are 0 and must not be shown. */
+  costUnknown?: boolean;
+  /** Provider rail: exact sellable units (decimal string), excluding provider-locked funds. */
+  availableUnits?: string;
 }
 
 export interface CryptoPortfolio {
@@ -218,6 +222,8 @@ export interface CryptoPortfolio {
   dayChangePct: number;
   investableBalance: FiatMoney; // available invest-wallet cash to deploy
   positions: Position[];
+  /** Provider rail: no cost basis, so all-time gain/invested are unknown (not ₦0). */
+  costUnknown?: boolean;
 }
 
 /** Why trading might be blocked — drives the restricted/KYC-pending states. */

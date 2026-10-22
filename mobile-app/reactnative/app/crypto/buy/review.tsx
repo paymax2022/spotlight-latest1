@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { ProviderTradeReview, RailGate } from '@/features/crypto/components/ProviderTrade';
 import { goBack } from '@/lib/navigation';
 import { Fingerprint } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
@@ -20,7 +21,7 @@ import { useAsset } from '@/features/crypto/hooks/useCrypto';
 import { buildQuote, formatCrypto, formatFiatObj } from '@/features/crypto/utils/cryptoFormatters';
 import type { AmountBasis, CryptoQuote } from '@/features/crypto/types/crypto.types';
 
-export default function BuyReviewScreen() {
+function LegacyBuyReviewScreen() {
   const params = useLocalSearchParams<{ symbol: string; basis: string; amount: string }>();
   const asset = useAsset(params.symbol);
   const basis = (params.basis as AmountBasis) ?? 'fiat';
@@ -121,6 +122,21 @@ export default function BuyReviewScreen() {
         )}
       </SafeAreaView>
     </SafeAreaView>
+  );
+}
+
+
+/** Quidax-backed quote when the server's swap pipeline is live; the legacy book otherwise. */
+export default function BuyReviewScreen() {
+  const p = useLocalSearchParams<{ symbol: string; basis: string; amount: string; pinError?: string }>();
+  return (
+    <RailGate
+      title="Review order"
+      provider={() => (
+        <ProviderTradeReview side="buy" symbol={p.symbol} basis={(p.basis as AmountBasis) ?? 'fiat'} amount={p.amount} pinError={p.pinError} />
+      )}
+      legacy={() => <LegacyBuyReviewScreen />}
+    />
   );
 }
 

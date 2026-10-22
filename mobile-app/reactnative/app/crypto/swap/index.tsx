@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { RailGate } from '@/features/crypto/components/ProviderTrade';
 import { ArrowDownUp, ChevronDown } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -20,7 +21,7 @@ import { sanitizeMoneyInput } from '@/utils/money';
 
 const PERCENTS = [25, 50, 100];
 
-export default function SwapEntryScreen() {
+function LegacySwapEntryScreen() {
   const { from: fromParam } = useLocalSearchParams<{ from?: string }>();
   const assets = useAssets();
   const portfolio = useCryptoPortfolio();
@@ -180,6 +181,34 @@ export default function SwapEntryScreen() {
         <PrimaryButton label="Review swap" onPress={onContinue} disabled={disabled} />
       </SafeAreaView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * Coin-to-coin swaps run on the legacy book only. With the Quidax pipeline live, holdings
+ * sit with the provider, so a legacy swap would trade balances the user doesn't see.
+ */
+export default function SwapEntryScreen() {
+  return (
+    <RailGate
+      title="Swap"
+      provider={() => (
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <ScreenHeader title="Swap" />
+          <StateView
+            kind="empty"
+            icon="ArrowLeftRight"
+            title="Coin-to-coin swaps are coming"
+            message="For now, sell one coin for naira, then buy the other. Both are instant."
+            actionLabel="Sell a coin"
+            onAction={() => router.replace('/crypto/sell')}
+            secondaryActionLabel="Buy a coin"
+            onSecondaryAction={() => router.replace('/crypto/buy')}
+          />
+        </SafeAreaView>
+      )}
+      legacy={() => <LegacySwapEntryScreen />}
+    />
   );
 }
 

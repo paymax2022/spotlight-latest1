@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { unitsToMinor } from '@/features/crypto/utils/providerPortfolio';
 import { ArrowDownUp } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -33,7 +34,10 @@ export default function SellEntryScreen() {
   const fiat = DEFAULT_FIAT;
   const decimals = asset.data?.decimals ?? 8;
   const position = portfolio.data?.positions.find((p) => p.symbol === symbol);
-  const heldMinor = position?.quantity.amount ?? 0;
+  // Provider rail: only the AVAILABLE units can be sold (locked funds back open withdrawals).
+  const heldMinor = position?.availableUnits != null
+    ? unitsToMinor(position.availableUnits, decimals)
+    : position?.quantity.amount ?? 0;
 
   const amount = basis === 'crypto' ? parseCryptoToMinor(input, decimals) : parseFiatToMinor(input, fiat);
 

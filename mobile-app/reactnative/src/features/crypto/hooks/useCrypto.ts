@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as crypto from '../api/crypto.api';
+import * as swaps from '../api/swaps.api';
 import { newIdempotencyKey } from '../utils/cryptoFormatters';
 import type {
   ChartRange,
@@ -199,6 +200,31 @@ export function useInitiateWithdrawal() {
       crypto.initiateWithdrawal(draft, quote, pin, newIdempotencyKey('wd')),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'transactions'] });
+    },
+  });
+}
+
+// ── Provider rail (Quidax via cryptosvc) ────────────────────────────────────
+
+/** 'provider' when the server's swap pipeline is mounted, else 'ledger'. */
+export function useTradingRail() {
+  return useQuery({ queryKey: [KEY, 'rail'], queryFn: () => swaps.getTradingRail(), staleTime: 60_000, retry: 1 });
+}
+
+/** Price a buy/sell on the server. Each call is a NEW quote. */
+export function useProviderQuote() {
+  return useMutation({ mutationFn: (input: swaps.SwapQuoteInput) => swaps.quoteProviderSwap(input) });
+}
+
+export function useConfirmProviderSwap() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, pin }: { id: string; pin: string }) => swaps.confirmProviderSwap(id, pin),
+    gcTime: 0, // the variables hold the PIN: never keep them in the mutation cache
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'positions'] });
       qc.invalidateQueries({ queryKey: [KEY, 'transactions'] });
     },
   });

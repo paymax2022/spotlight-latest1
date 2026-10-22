@@ -73,9 +73,11 @@ export default function CryptoPortfolioScreen() {
               <Text style={styles.heroAmount}>{formatFiatObj(d.totalValue)}</Text>
               <View style={styles.heroChangeRow}>
                 <View style={styles.heroPill}>
-                  <PriceChange pct={d.totalGainLossPct} showIcon textStyle={styles.heroPillText} />
+                  <PriceChange pct={d.costUnknown ? d.dayChangePct : d.totalGainLossPct} showIcon textStyle={styles.heroPillText} />
                 </View>
-                <Text style={styles.heroChangeText}>{formatFiatObj(d.totalGainLoss)} all-time</Text>
+                <Text style={styles.heroChangeText}>
+                  {d.costUnknown ? `${formatFiatObj(d.dayChange)} today, at indicative prices` : `${formatFiatObj(d.totalGainLoss)} all-time`}
+                </Text>
               </View>
 
               <View style={styles.heroDivider} />
@@ -83,7 +85,7 @@ export default function CryptoPortfolioScreen() {
               <View style={styles.heroStats}>
                 <View style={styles.heroStat}>
                   <Text style={styles.heroStatLabel}>Invested</Text>
-                  <Text style={styles.heroStatValue}>{formatFiatObj(d.totalCostBasis)}</Text>
+                  <Text style={styles.heroStatValue}>{d.costUnknown ? '—' : formatFiatObj(d.totalCostBasis)}</Text>
                 </View>
                 <View style={styles.heroStat}>
                   <Text style={styles.heroStatLabel}>Today</Text>

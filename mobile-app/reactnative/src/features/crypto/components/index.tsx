@@ -312,7 +312,8 @@ export function HoldingRow({ position, onPress }: HoldingRowProps) {
       </View>
       <View style={holdingRowStyles.right}>
         <Text style={holdingRowStyles.value} numberOfLines={1}>{formatFiatObj(position.marketValue)}</Text>
-        <PriceChange pct={position.unrealizedPct} />
+        {/* Provider rail has no cost basis: show the 24h move, never a fake 0% gain. */}
+        <PriceChange pct={position.costUnknown ? position.change24hPct : position.unrealizedPct} />
       </View>
     </Pressable>
   );

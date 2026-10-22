@@ -7,6 +7,9 @@ import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { buildQuote, buildSwapQuote } from '../utils/cryptoFormatters';
 import { unwrapEnvelope } from '../utils/envelope';
+import { getTradingRail, getProviderBalances } from './swaps.api';
+import { portfolioFromBalances } from '../utils/providerPortfolio';
+import { getWallet } from '@/api/wallet.api';
 import {
   MOCK_ASSETS,
   MOCK_POSITIONS,
@@ -287,11 +290,19 @@ export async function getPortfolio(): Promise<CryptoPortfolio> {
       positions,
     };
   }
+  // Provider rail: holdings live in the user's Quidax sub-account, and buys spend the
+  // main NGN wallet, so neither comes from the legacy internal-ledger portfolio.
+  if ((await getTradingRail()) === 'provider') {
+    const [balances, assets, wallet] = await Promise.all([getProviderBalances(), getAssets(), getWallet()]);
+    const cashKobo = wallet.balanceUnavailable ? 0 : Math.round(wallet.balance * 100);
+    return portfolioFromBalances(balances, assets, cashKobo);
+  }
   return unwrap<CryptoPortfolio>(await api.get('/api/v1/crypto/portfolio'));
 }
 
 export async function getPositions(): Promise<Position[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_POSITIONS]; }
+  if ((await getTradingRail()) === 'provider') return (await getPortfolio()).positions;
   return unwrap<Position[]>(await api.get('/api/v1/crypto/portfolio/holdings'));
 }
 
