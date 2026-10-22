@@ -40,7 +40,29 @@ A security review of the first version found several problems:
   - `20271090000000` adds the intake table.
   - `20271091000000` adds the thread uniqueness index and the revokes.
 
+## Closing an appointment: claim, then pay, then reconcile
+The ledger audit found two problems that blocked turning the bridge on:
+- The old close moved the money and then flipped the appointment in a separate, unconditional UPDATE, so a dropped request could leave them disagreeing for good.
+- Nothing let a patient recover escrow from a consult that started and never ended.
+
+Every close (`telemedicine/close.go`) now works like this:
+1. **Claim.** One conditional UPDATE moves the appointment to `completed` or `cancelled`, only from a state the actor may close from, and stamps `closed_at`. Complete and cancel race to that row; exactly one wins.
+2. **Pay.** Settle or refund through the idempotent settlement service, on a context the caller cannot cancel. Each settle and refund writes an audit row (`telemedicine.appointment.settled` / `.refunded`, with actor, amounts and reason).
+3. **Reconcile.** `ReconcileConsults`, on a 10-minute ticker, finishes any claim whose payment did not land. It also queues a consult `in_progress` for more than 12 h (`StuckConsultAfter`) for admin review. A patient can queue a started consult themselves (`report-problem`). An admin settles or refunds from the review queue through the same audited path (`telemedicine.admin.manage`).
+
+Why not one transaction across the appointment lock and Settle: settlement opens its own pool connections, and holding a transaction connection while acquiring another starves the pool under load (settlement's own warning).
+
+The console side changed too:
+- Its terminal states are final: same-state repeats stay idempotent.
+- A patient cancel is mirrored onto the console row.
+- End records commission only once the telemedicine escrow actually settled.
+- The sync runs detached from the request and does not retry permanent refusals.
+
+`ConfirmAppointment` became conditional as well. Migration `20271092000000` adds `closed_at`, `review_required_at` and `review_reason`.
+
+These close-path changes apply whether or not the bridge flag is on. They only refuse races the old code lost, and heal what it left half-done.
+
 ## Consequences
 - The rest of the `doctor_*` tables still carry Supabase's default grants. Locking them down is a follow-up, done the same way.
-- A console transition whose sync fails after retries leaves the booking unsettled until a person re-runs it. There is no automatic reconciler yet.
+- The settlement split still computes 15% with a float (`settlement/service.go`). It is exact for every fee up to ₦300k (verified), but should move to integer basis points in the shared settlement package.
 - Pinned by `telemedicine/bridge_hardening_live_db_test.go` (planted rows, thread hijack, foreign actor, status matrix with settle-once, in-progress cancel, closed-appointment call token, triage on edit, intake authz matrix, flag off, PostgREST lockdown) and `doctor/console_write_ownership_live_db_test.go`.

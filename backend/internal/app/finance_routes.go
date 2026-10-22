@@ -2217,6 +2217,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			telemedSvc.WithLiveKit(lkClient)
 		}
 		telemedHandler := telemedicine.NewHandler(telemedSvc)
+		// Finishes closes whose payment did not land and queues stuck consults for
+		// review (ADR-PR879). Idempotent; harmless with the bridge off (it only
+		// touches closes made by the claim-then-pay path, and only the bridge sets
+		// in_progress).
+		telemedicine.StartConsultReconciler(context.Background(), telemedSvc, 10*time.Minute)
 
 		// Legacy /api/finance/telemedicine/... (kept for backward compat)
 		teleGroup := finance.Group("/telemedicine")
@@ -2254,6 +2259,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Doctor-console bridge: shared chat thread, live Rx/summary readback
 		// already ride on the prescription/summary GETs above.
 		if telemedBridgeOn {
+			v1Tele.POST("/appointments/:id/report-problem", telemedHandler.ReportConsultProblem)
 			v1Tele.GET("/appointments/:id/messages", telemedHandler.ListAppointmentMessages)
 			v1Tele.POST("/appointments/:id/messages", telemedHandler.SendAppointmentMessage)
 			v1Tele.GET("/appointments/:id/call-token", telemedHandler.GetAppointmentCallToken)
@@ -2288,6 +2294,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		teleAdmin.GET("/doctors", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListDoctors)
 		teleAdmin.GET("/appointments", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListAppointments)
 		teleAdmin.POST("/doctors/:userId/verify", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminVerifyDoctor)
+		// Consults that cannot close themselves (stuck in_progress, or patient-reported):
+		// an admin settles or refunds through the same audited claim-then-pay path.
+		teleAdmin.GET("/appointments/review", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListReviewQueue)
+		teleAdmin.POST("/appointments/:id/resolve", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminResolveAppointment)
 	}
 
 	if cfg.FeaturePharmacyEnabled {

@@ -99,8 +99,16 @@ func (s *Service) ConfirmAppointment(ctx context.Context, appointmentID, userID 
 	if status != string(ApptBooked) {
 		return errors.New("telemedicine: only booked appointments can be confirmed")
 	}
-	_, err := s.db.Exec(ctx, `UPDATE appointments SET status='confirmed' WHERE id=$1`, appointmentID)
-	return err
+	// Conditional: a cancel that lands between the read above and this write
+	// must not be revived as confirmed.
+	tag, err := s.db.Exec(ctx, `UPDATE appointments SET status='confirmed' WHERE id=$1 AND status='booked'`, appointmentID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("telemedicine: only booked appointments can be confirmed")
+	}
+	return nil
 }
 
 // RescheduleAppointment moves an appointment to a new time. Completed or

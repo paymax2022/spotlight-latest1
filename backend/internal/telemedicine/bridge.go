@@ -66,8 +66,8 @@ var (
 	// ErrAppointmentClosed refuses a call token for a cancelled/completed visit.
 	ErrAppointmentClosed = errors.New("telemedicine: appointment is closed")
 	// ErrSyncActorNotDoctor refuses a console sync from anyone but the
-	// appointment's assigned doctor.
-	ErrSyncActorNotDoctor = errors.New("telemedicine: console sync is only accepted from the assigned doctor")
+	// appointment's assigned doctor. Permanent: the console does not retry it.
+	ErrSyncActorNotDoctor error = permanentError{"telemedicine: console sync is only accepted from the assigned doctor"}
 )
 
 // assignedDoctorUserID is the auth user of the appointment's doctor: the only
@@ -541,12 +541,14 @@ func (s *Service) SyncFromDoctorConsole(ctx context.Context, appointmentID, stat
 			WHERE id=$1 AND status IN ('booked','confirmed')`, appointmentID)
 		return err
 	case "completed":
-		if current == string(ApptCompleted) || current == string(ApptCancelled) {
+		// A completed appointment goes through the close again: it is idempotent
+		// and finishes the settlement if an earlier attempt claimed but never paid.
+		if current == string(ApptCancelled) {
 			return nil
 		}
 		return s.CompleteAppointment(ctx, appointmentID, doctorUserID)
 	case "cancelled":
-		if current == string(ApptCancelled) || current == string(ApptCompleted) {
+		if current == string(ApptCompleted) {
 			return nil
 		}
 		return s.CancelAppointment(ctx, appointmentID, doctorUserID)

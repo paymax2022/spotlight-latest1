@@ -57,6 +57,9 @@ type Service struct {
 // to keep a bridged booking consistent. Satisfied by *telemedicine.Service.
 type TelemedicineSync interface {
 	SyncFromDoctorConsole(ctx context.Context, appointmentID, status, doctorUserID string) error
+	// ConsultSettled reports whether the id is a bridged telemedicine booking and,
+	// if so, whether its escrow settled. End records commission only once it has.
+	ConsultSettled(ctx context.Context, appointmentID string) (bridged, settled bool, err error)
 }
 
 // NewService wires the doctor service. redis may be nil (lock falls back to the
@@ -239,15 +242,21 @@ func (s *Service) syncTelemedicine(ctx context.Context, doctorUserID, appointmen
 	if s.tele == nil {
 		return
 	}
-	// A failed sync on 'completed'/'cancelled' leaves the telemedicine side
-	// unsettled (escrow held, never lost) while the console shows it closed, so
-	// retry a few times before giving up. Every sync path is idempotent.
+	// The sync moves money on 'completed'/'cancelled', so it must not stop
+	// halfway because the console's HTTP request was dropped: run it detached
+	// from the request, with its own deadline. Transient failures are retried a
+	// few times; a permanent refusal (wrong actor, closed appointment) is not.
+	// Anything still failing is finished later by the telemedicine reconciler
+	// (every path is idempotent), so the console transition itself never fails.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+	defer cancel()
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		if err = s.tele.SyncFromDoctorConsole(ctx, appointmentID, status, doctorUserID); err == nil {
 			return
 		}
-		if ctx.Err() != nil {
+		var p interface{ Permanent() bool }
+		if (errors.As(err, &p) && p.Permanent()) || ctx.Err() != nil {
 			break
 		}
 		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)

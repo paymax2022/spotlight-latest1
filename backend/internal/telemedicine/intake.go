@@ -238,10 +238,20 @@ func (s *Service) writeIntake(ctx context.Context, appointmentID, userID string,
 	// editable, and a symptom added later (chest pain after submitting) must
 	// still route the patient. The stored outcome only ever rises — an edit can
 	// add urgency, never remove it (raiseRedFlag).
+	// Read-merge-write under a per-appointment advisory lock, so two concurrent
+	// edits cannot both read the old triage and drop each other's escalation.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("telemedicine: begin intake write: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('telemedicine_intake:' || $1, 0))`, appointmentID); err != nil {
+		return nil, fmt.Errorf("telemedicine: lock intake: %w", err)
+	}
 	var prevStatus string
 	var prevSeverity, prevRouting *string
 	var prevHitsRaw []byte
-	if err := s.db.QueryRow(ctx, `
+	if err := tx.QueryRow(ctx, `
 		SELECT status, red_flag_severity, red_flag_routing, COALESCE(red_flag_hits, '[]'::jsonb)
 		FROM telemedicine_intakes WHERE appointment_id=$1::uuid`, appointmentID).
 		Scan(&prevStatus, &prevSeverity, &prevRouting, &prevHitsRaw); err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -308,12 +318,15 @@ func (s *Service) writeIntake(ctx context.Context, appointmentID, userID string,
 		schemaVersion = defaultIntakeSchemaVersion
 	}
 
-	_, err = s.db.Exec(ctx, up,
+	_, err = tx.Exec(ctx, up,
 		uuid.New().String(), appointmentID, patientID, doctorID, schemaID, schemaVersion,
 		req.ConsentVersion, status, string(answersRaw), severity, routing, hitsRaw, submit, triage,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("telemedicine: write intake: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("telemedicine: commit intake: %w", err)
 	}
 
 	// Re-read as the patient — the writer always is them, and reading through the

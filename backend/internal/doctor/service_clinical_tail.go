@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"time"
 
 	"spotlight/backend/internal/integrations/rtc"
@@ -109,6 +110,20 @@ func (s *Service) EndAppointment(ctx context.Context, userID, appointmentID stri
 	// appointment is billed at (the same basis the doctor's own per-consult commission
 	// is withheld on). A recorder failure is logged and swallowed — it must NEVER fail
 	// or reverse the consult completion. Nil recorder ⇒ no-op (commission feature off).
+	// A consult bridged from a telemedicine booking realizes commission only once
+	// its escrow actually settled. If the sync could not settle it (or it was
+	// refunded), recording here would book profit on money that never moved.
+	if s.tele != nil {
+		bridged, settled, terr := s.tele.ConsultSettled(context.WithoutCancel(ctx), appointmentID)
+		if terr != nil {
+			log.Printf("[doctor][commission] appointment %s: settlement check: %v (commission not recorded)", appointmentID, terr)
+			return appt, nil
+		}
+		if bridged && !settled {
+			log.Printf("[doctor][commission] appointment %s: telemedicine escrow not settled; commission not recorded", appointmentID)
+			return appt, nil
+		}
+	}
 	uid := userID
 	s.recordCommissionSafe(ctx, "Health", "Doctor", "", appt.FeeKobo, appointmentID, &uid)
 	return appt, nil

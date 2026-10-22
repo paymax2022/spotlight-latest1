@@ -9974,6 +9974,56 @@ paths:
         '404': { description: "Not found, or not a participant" }
         '409': { description: "Appointment is cancelled or completed" }
         '503': { description: "Media server unavailable" }
+  /telemedicine/appointments/{id}/report-problem:
+    post:
+      operationId: reportConsultProblem
+      summary: "Patient queues a consult in progress for an admin decision (bridge flag)."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 500 }
+      responses:
+        '200': { description: "Queued for review (idempotent)" }
+        '404': { description: "Not found, or not the patient" }
+        '409': { description: "Only a consult in progress can be reported; cancel it instead" }
+  /telemedicine/admin/appointments/review:
+    get:
+      operationId: adminListTelemedicineReviewQueue
+      summary: "Open appointments flagged for review (stuck in progress, or patient-reported). Needs telemedicine.admin.view."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: "Flagged appointments, oldest first (max 200)" }
+  /telemedicine/admin/appointments/{id}/resolve:
+    post:
+      operationId: adminResolveTelemedicineAppointment
+      summary: "Admin settles (pays the doctor) or refunds (pays the patient) an appointment. Audited. Needs telemedicine.admin.manage."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, reason]
+              properties:
+                action: { type: string, enum: [settle, refund] }
+                reason: { type: string, minLength: 1 }
+      responses:
+        '200': { description: "Resolved" }
+        '400': { description: "Missing reason or unknown action" }
+        '404': { description: "Not found" }
+        '409': { description: "Appointment or settlement is not in a resolvable state" }
   # Pre-consult intake: mounted only with FEATURE_TELEMEDICINE_INTAKE_ENABLED.
   /telemedicine/appointments/{id}/intake:
     get:
