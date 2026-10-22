@@ -1,4 +1,4 @@
-# ADR-PRNNN: Lock the PIN-bearing transport tables out of PostgREST
+# ADR-PR858: Lock the PIN-bearing transport tables out of PostgREST
 
 **Status:** Accepted · **Date:** 2026-10-22 · **Area:** transport security
 

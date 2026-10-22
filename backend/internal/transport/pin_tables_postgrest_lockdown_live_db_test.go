@@ -1,7 +1,7 @@
 package transport_test
 
-// LIVE-DB grant test for the PIN-table PostgREST lockdown (ADR-PR<n>, see
-// docs/adr/ADR-PR<n>-pin-tables-postgrest-lockdown.md). parcels, towing_jobs, trips
+// LIVE-DB grant test for the PIN-table PostgREST lockdown (ADR-PR858, see
+// docs/adr/ADR-PR858-pin-tables-postgrest-lockdown.md). parcels, towing_jobs, trips
 // and business_deliveries each carry a handover secret (pickup/dropoff PIN,
 // towing pin, trip PIN) and were reachable over PostgREST with an ordinary
 // user JWT: the courier/driver SELECT policy exposed the PIN column, and the

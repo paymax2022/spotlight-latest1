@@ -1,4 +1,4 @@
--- ADR-PR<n>: lock the PIN-bearing transport tables out of PostgREST.
+-- ADR-PR858: lock the PIN-bearing transport tables out of PostgREST.
 --
 -- parcels (pickup_pin, dropoff_pin), towing_jobs (pin), trips (trip_pin) and
 -- business_deliveries (dropoff_pin) each hold a handover secret that the
