@@ -1197,6 +1197,25 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if mapSvc != nil {
 			estateSvc = estateSvc.WithGeocoder(maps.NewLocationGeocoder(mapSvc))
 		}
+		// SP-01: gate estate creation behind an approved estate-management merchant.
+		// Flag-off (default) preserves historical behaviour: the gate stays nil and
+		// CreateEstate is unchanged. When on, a creator without an ACTIVE
+		// onb_merchant_profile for the estate_management type is refused (fail closed).
+		// Grant-based guard authz (FEATURE_ESTATE_GUARD_GRANTS, default off): off keeps
+		// the previous "any resident" gate rule so existing guards are not locked out.
+		estateSvc = estateSvc.WithGuardGrants(cfg.FeatureEstateGuardGrants)
+		if cfg.FeatureEstateMerchantGate {
+			estateSvc = estateSvc.WithEstateMerchantGate(estate.EstateMerchantGateFunc(func(ctx context.Context, userID string) (bool, error) {
+				var ok bool
+				err := pool.QueryRow(ctx,
+					`SELECT EXISTS (SELECT 1 FROM onb_merchant_profile
+					 WHERE user_id=$1 AND merchant_type_id='estate_management' AND status='ACTIVE')`,
+					userID,
+				).Scan(&ok)
+				return ok, err
+			}))
+			log.Println("[estate] FEATURE_ESTATE_MERCHANT_GATE on: CreateEstate requires an approved estate manager")
+		}
 		// Block 37/43: push delivery. The adapter resolves the recipient's device
 		// push tokens and enqueues via the platform notifications queue (asynq).
 		// In-app feed rows are persisted by the estate service regardless; only
@@ -1251,6 +1270,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estateHandler := estate.NewHandler(estateSvc).
 			WithPresigner(estatePresigner, cfg.R2Bucket)
 		estGroup := finance.Group("/estate")
+
+		// SP-01/SP-02: rate-limit the code-space brute-force surface (guard lookup /
+		// admit) and code creation. Estate routes previously carried no rate limit at
+		// all, including the SOS/guard endpoints (gap-analysis theme 5).
+		estateGuardLimit := middleware.PerUserRateLimit(redisClient, "estate-guard", max(cfg.EstateGuardRatePerMin, 1))
+		estateCodeLimit := middleware.PerUserRateLimit(redisClient, "estate-code", max(cfg.EstateCodeRatePerMin, 1))
 
 		// Presigned uploads (Blocks 25/28/35/39)
 		estGroup.POST("/:id/uploads/presign", estateHandler.PresignUpload)
@@ -1353,23 +1378,32 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Block 28: Guard app
 		estGroup.GET("/:id/gates", estateHandler.ListGates)
-		estGroup.GET("/:id/guard/expected-visitors", estateHandler.GetExpectedVisitors)
-		estGroup.GET("/:id/guard/lookup", estateHandler.LookupCode)
-		estGroup.POST("/:id/guard/checkin", estateHandler.GuardCheckin)
-		estGroup.POST("/:id/guard/checkout", estateHandler.GuardCheckout)
+		estGroup.GET("/:id/guard/expected-visitors", estateGuardLimit, estateHandler.GetExpectedVisitors)
+		estGroup.GET("/:id/guard/lookup", estateGuardLimit, estateHandler.LookupCode)
+		estGroup.POST("/:id/guard/checkin", estateGuardLimit, estateHandler.GuardCheckin)
+		estGroup.POST("/:id/guard/checkout", estateGuardLimit, estateHandler.GuardCheckout)
+		// SP-02: guard raises a host-approval request for a gated code.
+		estGroup.POST("/:id/guard/arrival-request", estateGuardLimit, estateHandler.RequestArrival)
 		estGroup.POST("/:id/guard/incident", estateHandler.SubmitIncident)
 		estGroup.GET("/:id/guard/incidents", estateHandler.ListIncidents)
 		estGroup.POST("/:id/guard/shift-handover", estateHandler.HandoverShift)
 		estGroup.POST("/:id/guard/sync", estateHandler.SyncOfflineLogs)
 
 		// Block 27: Extended visitor access codes
-		estGroup.POST("/:id/access-codes", estateHandler.CreateAccessCode)
+		estGroup.POST("/:id/access-codes", estateCodeLimit, estateHandler.CreateAccessCode)
 		estGroup.GET("/:id/access-codes", estateHandler.ListAccessCodes)
 		estGroup.GET("/:id/access-codes/:cid", estateHandler.GetAccessCode)
 		estGroup.POST("/:id/access-codes/:cid/revoke", estateHandler.RevokeCode)
 		estGroup.POST("/:id/access-codes/:cid/extend", estateHandler.ExtendCode)
 		estGroup.POST("/:id/access-codes/:cid/blacklist", estateHandler.BlacklistVisitor)
 		estGroup.GET("/:id/access-codes/:cid/history", estateHandler.GetCheckinHistory)
+		// SP-02: the issuing host accepts/declines a pending arrival for their code.
+		estGroup.POST("/:id/arrival-requests/:rid/decision", estateHandler.DecideArrival)
+
+		// SP-01: delegated officer roles (estate_admin manages; guards act on grants).
+		estGroup.GET("/:id/staff-grants", estateHandler.ListGrants)
+		estGroup.POST("/:id/staff-grants", estateHandler.GrantRole)
+		estGroup.DELETE("/:id/staff-grants/:uid/:role", estateHandler.RevokeRole)
 
 		// Block 26: Dashboard
 		estGroup.GET("/:id/dashboard", estateHandler.GetDashboard)
