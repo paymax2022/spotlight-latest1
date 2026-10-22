@@ -74,6 +74,9 @@ func (s *Service) AdminDecideWithdrawal(ctx context.Context, actorID, id, decisi
 	if cur.Status != WithdrawalPendingReview {
 		return nil, ErrInvalidTransition
 	}
+	if err := independentApprover(actorID, cur.UserID); err != nil {
+		return nil, err
+	}
 	if decision == "reject" {
 		returnUnits = cur.Units
 	}

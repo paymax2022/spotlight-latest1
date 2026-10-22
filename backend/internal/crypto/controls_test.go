@@ -42,3 +42,15 @@ func TestKillSwitchBlocksApprovalButNotRejection(t *testing.T) {
 		t.Fatalf("withdraw under the kill switch: %v", err)
 	}
 }
+
+func TestAWithdrawalNeedsAnIndependentDecider(t *testing.T) {
+	if err := independentApprover("admin-1", "admin-1"); !errors.Is(err, ErrSelfDecision) {
+		t.Fatalf("self-decision: %v", err)
+	}
+	if err := independentApprover("", "user-1"); !errors.Is(err, ErrSelfDecision) {
+		t.Fatalf("anonymous decision: %v", err)
+	}
+	if err := independentApprover("admin-1", "user-1"); err != nil {
+		t.Fatalf("independent decision refused: %v", err)
+	}
+}

@@ -18,7 +18,18 @@ var (
 	ErrMarketDisabled = errors.New("crypto: this market is switched off")
 	// ErrWithdrawalsPaused: the withdrawal kill switch is on (or its state is unknown).
 	ErrWithdrawalsPaused = errors.New("crypto: withdrawals are paused")
+	// ErrSelfDecision: an admin may not decide their own withdrawal (QDX-ADM-009).
+	ErrSelfDecision = errors.New("crypto: you cannot decide your own withdrawal")
 )
+
+// independentApprover refuses an admin deciding a withdrawal they requested themselves, and a
+// decision with no identified actor. Either decision (approve or reject) needs a second person.
+func independentApprover(actorID, ownerID string) error {
+	if actorID == "" || actorID == ownerID {
+		return ErrSelfDecision
+	}
+	return nil
+}
 
 // TradeControlFunc refuses a trade in symbol with ErrTradingPaused or ErrMarketDisabled.
 type TradeControlFunc func(ctx context.Context, symbol string) error
