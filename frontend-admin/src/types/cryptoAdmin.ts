@@ -253,7 +253,7 @@ export interface CryptoReconcilerBacklog {
   oldest_age_seconds: number;
 }
 
-// ── Operational controls, health, audit, deposits (backend/internal/cryptosvc, ADR-PR856) ──
+// ── Operational controls, health, audit, deposits (backend/internal/cryptosvc, ADR-PR859) ──
 
 export type CryptoBannerSeverity = 'info' | 'warning' | 'critical';
 

@@ -14,7 +14,7 @@ import (
 // limits, maintenance banner). One versioned, append-only record: every change is a new
 // version with who/why, written atomically with its audit row, and refused against a stale
 // version — the same discipline as the fee schedule. Enforcement fails CLOSED: if the
-// controls cannot be read, no quote, confirm or withdrawal proceeds. ADR-PR856.
+// controls cannot be read, no quote, confirm or withdrawal proceeds. ADR-PR859.
 
 // Banner is a customer-facing notice.
 type Banner struct {

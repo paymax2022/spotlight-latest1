@@ -1,4 +1,4 @@
--- Crypto operational controls: versioned, append-only (ADR-PR856).
+-- Crypto operational controls: versioned, append-only (ADR-PR859).
 --
 -- ADDITIVE-ONLY. Safe to re-run. Service-role only (admin API behind the Go backend).
 -- Each row is one complete state (trading pause, withdrawal kill switch, disabled markets,
