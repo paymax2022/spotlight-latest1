@@ -46,9 +46,11 @@ func wireTransportCardDirect(
 ) *transportpaystackcheckout.Engine {
 	cardStore := transportpaystackcheckout.NewPGStore(pool)
 	engine := transportpaystackcheckout.NewEngine(paystackClient, cardStore, settlementSvc)
-	// Piece (partial) refunds for a charge that funds several settlements (car
-	// hire fare + deposit). Inert for parcel/towing/movers, which never produce a
-	// settlement keyed "<reference>:<suffix>"; without this such a refund fails closed.
+	// Piece (partial) refunds for a charge that funds several things: car hire
+	// (fare + deposit settlements) and an insured parcel (fare settlement
+	// "<reference>:fare" + the ledgerless insurance premium piece, ADR-PR837).
+	// Inert for towing/movers and uninsured parcels; without this a piece refund
+	// fails closed.
 	engine.EnablePartialRefunds(paystackClient, cardStore)
 	// How long after a refund POST was started an EMPTY gateway lookup is still not
 	// trusted to mean "no refund exists" (Paystack's list can lag). Default 10 min.

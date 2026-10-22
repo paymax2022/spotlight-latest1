@@ -18,6 +18,12 @@ name: adr guard
 #      main. Those were checked in their own PR, so an added file that is
 #      byte-identical to the copy on origin/main is skipped. Anything new or
 #      altered in the PR is still checked in full.
+#   5. A stacked PR's placeholder: PR #N merged INTO this PR's head branch (not
+#      main), so its ADR-PR<N> file arrives here unassigned. That placeholder is
+#      accepted when GitHub confirms #N is merged and its base was this PR's head
+#      branch — or a branch that was itself merged into it (stacks up to 5 deep).
+#      adr-assign rewrites each ADR-PR<n> token separately, so it still gets its
+#      own number on merge.
 #
 # Only ADDED files are checked, so historic duplicates do not fail every PR.
 
@@ -28,6 +34,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read # rule 5: look up a stacked PR's base branch
 
 jobs:
   guard:
@@ -51,6 +58,9 @@ jobs:
           # script injection. It also keeps this script runnable (and testable)
           # outside Actions.
           BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -81,6 +91,23 @@ jobs:
             if printf '%s' "$base" | grep -qE '^ADR-PR[0-9]+-'; then
               n=$(printf '%s' "$base" | grep -oE '^ADR-PR[0-9]+' | sed 's/ADR-PR//')
               if [ "$n" != "$PR_NUMBER" ]; then
+                # Rule 5: a PR stacked on this one, merged into its head branch,
+                # directly or through a chain of merged stacked PRs.
+                pr=$n; ok=0
+                for _ in 1 2 3 4 5; do
+                  info=$(gh api "repos/$REPO/pulls/$pr" --jq '"\(.merged_at != null) \(.base.ref)"' 2>/dev/null || true)
+                  [ "${info%% *}" = "true" ] || break
+                  b=${info#* }
+                  if [ "$b" = "$HEAD_REF" ]; then ok=1; break; fi
+                  # The PR whose head was that base branch, merged onward.
+                  pr=$(gh api "repos/$REPO/pulls?state=closed&head=${REPO%%/*}:$b&per_page=10" \
+                         --jq '[.[] | select(.merged_at != null)][0].number // empty' 2>/dev/null || true)
+                  [ -n "$pr" ] || break
+                done
+                if [ "$ok" = 1 ]; then
+                  echo "OK  $base (stacked PR #$n merged into $HEAD_REF; number assigned on merge)"
+                  continue
+                fi
                 echo "::error file=$f::Placeholder says PR #$n but this is PR #$PR_NUMBER. Rename to ADR-PR${PR_NUMBER}-<slug>.md and update its references, or the merge-time rewrite will mislabel it."
                 fail=1
               else

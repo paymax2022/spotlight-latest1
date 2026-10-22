@@ -7,6 +7,7 @@ import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   Parcel,
+  ParcelPhase,
   ParcelEstimate,
   ParcelEstimateRequest,
   ParcelBookRequest,
@@ -22,6 +23,14 @@ import {
   type ParcelCardDirectInput,
 } from '../utils/cardDirect';
 import {
+  toCourierActionPhase,
+  toCourierHistory,
+  toCourierRequests,
+  toParcel,
+  toParcelList,
+  type CourierDelivery,
+} from '../utils/parcelWire';
+import {
   mockParcelEstimate,
   makeParcel,
   parcelStore,
@@ -29,6 +38,8 @@ import {
   MOCK_PARCEL_HISTORY,
   MOCK_COURIER,
   mockCourierRequests,
+  mockBookRefusal,
+  mockRefusal,
 } from './parcel.mock';
 
 const USE_MOCK =
@@ -59,7 +70,9 @@ export async function estimateParcel(req: ParcelEstimateRequest): Promise<Parcel
 export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
   if (USE_MOCK) {
     await delay(900);
+    mockBookRefusal(req);
     const est = mockParcelEstimate(req);
+    const premium = req.insure ? est.insuranceKobo : 0;
     const parcel = makeParcel({
       pickup: req.pickup,
       dropoff: req.dropoff,
@@ -67,16 +80,20 @@ export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
       size: req.size,
       speed: req.speed,
       declaredValueKobo: req.declaredValueKobo,
-      fareKobo: est.totalKobo,
+      fareKobo: est.fareKobo,
       receiverName: req.receiverName,
       receiverPhone: req.receiverPhone,
       photoUrl: req.photoUrl ?? null,
       phase: 'created',
+      insuranceOpted: !!req.insure,
+      insurancePaidKobo: premium,
+      insuranceStatus: req.insure ? 'held' : req.declaredValueKobo > 0 ? 'declined' : 'none',
     });
     parcelStore.active = parcel;
     return parcel;
   }
-  return unwrap<Parcel>(
+  // Go returns the flat parcel (status, pickupAddress…) — see utils/parcelWire.
+  return toParcel(
     await api.post(
       `${BASE}/mobility/parcels`,
       {
@@ -93,9 +110,10 @@ export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
         payment_method: req.paymentMethod,
         ...(req.expectedFareKobo != null ? { expected_fare_kobo: req.expectedFareKobo } : {}),
         ...(req.routeToken ? { route_token: req.routeToken } : {}),
+        ...(req.insure ? { insure: true, expected_insurance_kobo: req.expectedInsuranceKobo } : {}),
       },
       idemHeader(req.idempotencyKey),
-    ),
+    ).then((res) => unwrap<unknown>(res)),
   );
 }
 
@@ -113,6 +131,7 @@ export async function initiateParcelPaystack(
 ): Promise<ParcelCardDirectIntent> {
   if (USE_MOCK) {
     await delay(600);
+    if (req.insure) mockRefusal(422, 'INSURANCE_CARD_NOT_SUPPORTED');
     return {
       reference: `parcelorder-${req.idempotencyKey}`,
       authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
@@ -144,25 +163,28 @@ export async function getParcelPaystackStatus(reference: string): Promise<Parcel
 export async function getParcel(id: string): Promise<Parcel> {
   if (USE_MOCK) {
     await delay(260);
-    if (parcelStore.active?.id === id) return advanceMockParcel(parcelStore.active);
+    if (parcelStore.active?.id === id) return (parcelStore.active = advanceMockParcel(parcelStore.active));
     const found = MOCK_PARCEL_HISTORY.find((p) => p.id === id);
     if (!found) throw new Error('Parcel not found');
     return found;
   }
-  return unwrap<Parcel>(await api.get(`${BASE}/mobility/parcels/${id}`));
+  return toParcel(unwrap<unknown>(await api.get(`${BASE}/mobility/parcels/${id}`)));
 }
 
 export async function getParcels(): Promise<Parcel[]> {
   if (USE_MOCK) {
     await delay();
     const list = [...MOCK_PARCEL_HISTORY];
-    if (parcelStore.active) list.unshift(advanceMockParcel(parcelStore.active));
+    if (parcelStore.active) list.unshift((parcelStore.active = advanceMockParcel(parcelStore.active)));
     return list.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  return unwrap<Parcel[]>(await api.get(`${BASE}/mobility/parcels`));
+  // { parcels: [...] } on the wire.
+  return toParcelList(unwrap<unknown>(await api.get(`${BASE}/mobility/parcels`)));
 }
 
-export async function cancelParcel(id: string): Promise<Parcel> {
+// The server answers { ok, status, refund_status } — not a parcel — so callers
+// refetch the detail if they need it.
+export async function cancelParcel(id: string): Promise<void> {
   if (USE_MOCK) {
     await delay(500);
     const p = parcelStore.active;
@@ -171,9 +193,9 @@ export async function cancelParcel(id: string): Promise<Parcel> {
       p.paymentStatus = 'refunded';
       parcelStore.active = null;
     }
-    return p ?? makeParcel({ phase: 'cancelled', paymentStatus: 'refunded' });
+    return;
   }
-  return unwrap<Parcel>(await api.post(`${BASE}/mobility/parcels/${id}/cancel`, {}));
+  await api.post(`${BASE}/mobility/parcels/${id}/cancel`, {});
 }
 
 export async function rateParcel(
@@ -203,7 +225,8 @@ export async function getCourierRequests(): Promise<CourierParcelRequest[]> {
     await delay(360);
     return mockCourierRequests();
   }
-  return unwrap<CourierParcelRequest[]>(await api.get(`${BASE}/driver/parcels/requests`));
+  // { requests: [{ id, pickupAddress, … }] } on the wire.
+  return toCourierRequests(unwrap<unknown>(await api.get(`${BASE}/driver/parcels/requests`)));
 }
 
 export async function acceptCourierRequest(id: string, idempotencyKey: string): Promise<Parcel> {
@@ -211,10 +234,11 @@ export async function acceptCourierRequest(id: string, idempotencyKey: string): 
     await delay(600);
     return makeParcel({ id, phase: 'courier_assigned', courier: MOCK_COURIER });
   }
-  return unwrap<Parcel>(await api.post(`${BASE}/driver/parcels/${id}/accept`, {}, idemHeader(idempotencyKey)));
+  return toParcel(unwrap<unknown>(await api.post(`${BASE}/driver/parcels/${id}/accept`, {}, idemHeader(idempotencyKey))));
 }
 
-export async function courierVerifyPickupPin(id: string, pin: string): Promise<Parcel> {
+// Rider actions answer { ok, status }: each returns the phase the parcel is now in.
+export async function courierVerifyPickupPin(id: string, pin: string): Promise<ParcelPhase> {
   if (USE_MOCK) {
     await delay(400);
     if (!/^\d{4}$/.test(pin)) {
@@ -223,20 +247,26 @@ export async function courierVerifyPickupPin(id: string, pin: string): Promise<P
       err.status = 422;
       throw err;
     }
-    return makeParcel({ id, phase: 'pickup_pin_verified', courier: MOCK_COURIER });
+    return 'pickup_pin_verified';
   }
-  return unwrap<Parcel>(await api.post(`${BASE}/driver/parcels/${id}/verify-pickup-pin`, { pin }));
+  return toCourierActionPhase(
+    unwrap<unknown>(await api.post(`${BASE}/driver/parcels/${id}/verify-pickup-pin`, { pin })),
+    'pickup_pin_verified',
+  );
 }
 
-export async function courierPickedUp(id: string, photoUrl: string): Promise<Parcel> {
+export async function courierPickedUp(id: string, photoUrl: string): Promise<ParcelPhase> {
   if (USE_MOCK) {
     await delay(500);
-    return makeParcel({ id, phase: 'in_transit', courier: MOCK_COURIER, photoUrl });
+    return 'in_transit';
   }
-  return unwrap<Parcel>(await api.post(`${BASE}/driver/parcels/${id}/picked-up`, { photo_url: photoUrl }));
+  return toCourierActionPhase(
+    unwrap<unknown>(await api.post(`${BASE}/driver/parcels/${id}/picked-up`, { photo_url: photoUrl })),
+    'in_transit',
+  );
 }
 
-export async function courierVerifyDropoff(id: string, pin: string, proofUrl: string): Promise<Parcel> {
+export async function courierVerifyDropoff(id: string, pin: string, proofUrl: string): Promise<ParcelPhase> {
   if (USE_MOCK) {
     await delay(500);
     if (!/^\d{4}$/.test(pin)) {
@@ -245,9 +275,39 @@ export async function courierVerifyDropoff(id: string, pin: string, proofUrl: st
       err.status = 422;
       throw err;
     }
-    return makeParcel({ id, phase: 'delivered', courier: MOCK_COURIER, proofUrl, paymentStatus: 'settled', deliveredAt: new Date().toISOString(), pickupPin: null, dropoffPin: null });
+    return 'delivered';
   }
-  return unwrap<Parcel>(await api.post(`${BASE}/driver/parcels/${id}/verify-dropoff`, { pin, proof_url: proofUrl }));
+  return toCourierActionPhase(
+    unwrap<unknown>(await api.post(`${BASE}/driver/parcels/${id}/verify-dropoff`, { pin, proof_url: proofUrl })),
+    'delivered',
+  );
+}
+
+/**
+ * The rider's own deliveries with what they were paid (server-computed net).
+ * Returns null when the server has no history endpoint yet (404), so the
+ * earnings screen can say so instead of totalling the wrong list.
+ */
+export async function getCourierHistory(): Promise<CourierDelivery[] | null> {
+  if (USE_MOCK) {
+    await delay(320);
+    return MOCK_PARCEL_HISTORY.map((p) => ({
+      parcelId: p.id,
+      dropoff: p.dropoff,
+      phase: p.phase,
+      fareKobo: p.fareKobo,
+      netKobo: null,
+      deliveredAt: p.deliveredAt,
+    }));
+  }
+  try {
+    // GET /driver/parcels (transport.CourierParcels): the courier's own jobs and
+    // what each paid them. There is no /history sub-route.
+    return toCourierHistory(unwrap<unknown>(await api.get(`${BASE}/driver/parcels`)));
+  } catch (e) {
+    if ((e as { response?: { status?: number } })?.response?.status === 404) return null;
+    throw e;
+  }
 }
 
 export function clearMockActiveParcel(): void {

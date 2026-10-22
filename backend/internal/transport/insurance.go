@@ -36,6 +36,17 @@ type InsuranceBinder interface {
 	// the caller only needs to decide what to do about the parcel, never retry
 	// a refund itself.
 	BindFromQuote(ctx context.Context, userID, quoteID, idempotencyKey string) (policyID string, premiumKobo int64, err error)
+	// BindFromQuotePrepaid binds cover whose premium (paidKobo) the customer
+	// already paid into the insurance hold at booking. The saga moves it to
+	// provider clearing and absorbs any gap to the real premium; on a failed
+	// bind it refunds paidKobo — unless it failed before taking it, in which
+	// case it is still in the hold (see finishPrepaidRefund).
+	BindFromQuotePrepaid(ctx context.Context, userID, quoteID string, paidKobo int64, idempotencyKey string) (policyID string, premiumKobo int64, err error)
+	// BindOutcome reports what the insurer did with the purchase sent under
+	// idempotencyKey: in_flight | succeeded | failed | unknown, or "" if none
+	// was sent. Read-only; the reconciler uses it to settle a premium a crash
+	// left between the insurer and the parcel.
+	BindOutcome(ctx context.Context, idempotencyKey string) (state, policyID string, err error)
 	// CancelPolicy best-effort cancels a bound policy (e.g. parcel cancelled
 	// before pickup). Errors are for logging only.
 	CancelPolicy(ctx context.Context, userID, policyID, reason string) error

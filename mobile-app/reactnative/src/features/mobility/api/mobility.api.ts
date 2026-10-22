@@ -525,8 +525,11 @@ export interface DriverDocPresign {
   fileUrl: string;
 }
 
+/** Parcel courier evidence the same presign accepts (never a driver_documents row). */
+export type ParcelEvidenceType = 'parcel_pickup' | 'parcel_proof';
+
 export async function presignDriverDocument(input: {
-  docType: DocumentDraft['docType'];
+  docType: DocumentDraft['docType'] | ParcelEvidenceType;
   fileName: string;
   mimeType: string;
 }): Promise<DriverDocPresign> {
@@ -571,6 +574,18 @@ export async function uploadDriverDocumentFile(input: {
   expiryDate?: string;
 }): Promise<DriverProfile> {
   const { docType, file, expiryDate } = input;
+  const fileUrl = await uploadDriverFile(docType, file);
+  return uploadDriverDocument({ docType, fileUrl, expiryDate });
+}
+
+/**
+ * Presign → PUT the file to R2; returns the server-chosen object key. Shared by
+ * driver documents and the parcel courier's pickup photo / proof of delivery.
+ */
+export async function uploadDriverFile(
+  docType: DocumentDraft['docType'] | ParcelEvidenceType,
+  file: { uri: string; name: string; mimeType: string },
+): Promise<string> {
   const mimeType = normalizeDocMimeType(file.mimeType, file.name);
   const { uploadUrl, fileUrl } = await presignDriverDocument({
     docType,
@@ -587,7 +602,7 @@ export async function uploadDriverDocumentFile(input: {
     });
     if (!res.ok) throw new Error(`R2 upload failed (${res.status})`);
   }
-  return uploadDriverDocument({ docType, fileUrl, expiryDate });
+  return fileUrl;
 }
 
 export async function uploadDriverDocument(draft: DocumentDraft): Promise<DriverProfile> {
