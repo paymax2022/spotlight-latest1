@@ -51,6 +51,11 @@ const (
 	// the reconciler steps in.
 	closeClaimGrace = 2 * time.Minute
 	payTimeout      = 30 * time.Second
+	// MaxReconcileAttempts is how many failed sweeps an unpaid close gets before
+	// it is handed to the admin review queue instead of being retried forever.
+	MaxReconcileAttempts = 5
+	// auditRecoveryWindow bounds the lost-audit sweep to recent closes.
+	auditRecoveryWindow = 7 * 24 * time.Hour
 )
 
 // permanentError marks a refusal that retrying cannot change. The doctor
@@ -308,7 +313,62 @@ func (s *Service) ConsultSettled(ctx context.Context, appointmentID string) (bri
 
 // ReconcileReport counts what one sweep did.
 type ReconcileReport struct {
-	Settled, Refunded, Flagged, Failed int
+	Settled, Refunded, Flagged, Failed, AuditsRecovered int
+}
+
+// recoverLostAudits writes the settle/refund audit row for recent closes whose
+// money moved but whose row never landed (the audit write runs after the
+// settlement commits, so a crash in between loses it, and a replay sees the
+// money already moved and writes nothing). Idempotent: it only selects closes
+// with no matching row. The sink is the doctor module's compliance audit
+// (doctor_compliance_audit, wired via WithAudit).
+func (s *Service) recoverLostAudits(ctx context.Context, now time.Time) int {
+	if s.audit == nil {
+		return 0
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT a.id::text, a.status
+		FROM appointments a JOIN settlements st ON st.id = a.settlement_id
+		WHERE a.closed_at IS NOT NULL AND a.closed_at < $1 AND a.closed_at > $2
+		  AND ((a.status = 'completed' AND st.status = 'settled')
+		    OR (a.status = 'cancelled' AND st.status = 'refunded'))
+		  AND NOT EXISTS (
+		      SELECT 1 FROM doctor_compliance_audit au
+		      WHERE au.entity_type = 'appointment' AND au.entity_id = a.id::text
+		        AND au.action = CASE a.status WHEN 'completed' THEN 'telemedicine.appointment.settled'
+		                                      ELSE 'telemedicine.appointment.refunded' END)
+		ORDER BY a.closed_at LIMIT 100`, now.Add(-closeClaimGrace), now.Add(-auditRecoveryWindow))
+	if err != nil {
+		log.Printf("[telemedicine][reconcile] lost-audit scan: %v", err)
+		return 0
+	}
+	type lost struct{ id, status string }
+	var todo []lost
+	for rows.Next() {
+		var l lost
+		if err := rows.Scan(&l.id, &l.status); err == nil {
+			todo = append(todo, l)
+		}
+	}
+	rows.Close()
+	n := 0
+	for _, l := range todo {
+		f, err := s.loadCloseFacts(ctx, l.id)
+		if err != nil {
+			continue
+		}
+		sett, err := s.settlement.GetByID(ctx, f.settlementID)
+		if err != nil {
+			continue
+		}
+		action, party := "telemedicine.appointment.settled", f.doctorUserID
+		if l.status == string(ApptCancelled) {
+			action, party = "telemedicine.appointment.refunded", f.patientID
+		}
+		s.auditMoney(ctx, "", party, action, l.id, sett, f.platformFeeKobo, "reconciler (recovered)", "audit row was missing")
+		n++
+	}
+	return n
 }
 
 // ReconcileConsults finishes claims whose payment did not land and queues
@@ -348,13 +408,17 @@ func (s *Service) ReconcileConsults(ctx context.Context, now time.Time) (Reconci
 		if err := s.payClosure(ctx, p.id, "", target, f, "reconciler", "unpaid claim"); err != nil {
 			log.Printf("[telemedicine][reconcile] %s %s: %v", p.id, p.status, err)
 			rep.Failed++
-			// A refusal retrying cannot fix would be swept forever and starve newer
-			// claims: hand it to the admin review queue instead.
+			// Count the failure. A refusal retrying cannot fix, or one that has failed
+			// MaxReconcileAttempts sweeps, goes to the admin review queue so it is not
+			// swept forever and cannot starve newer claims.
 			var perm interface{ Permanent() bool }
-			if errors.As(err, &perm) {
-				_, _ = s.db.Exec(ctx, `UPDATE appointments SET review_required_at = now(), review_reason = 'reconcile: payment refused'
-					WHERE id = $1 AND review_required_at IS NULL`, p.id)
-			}
+			permanent := errors.As(err, &perm) && perm.Permanent()
+			_, _ = s.db.Exec(ctx, `
+				UPDATE appointments
+				SET reconcile_attempts = reconcile_attempts + 1,
+				    review_required_at = CASE WHEN $2 OR reconcile_attempts + 1 >= $3 THEN now() ELSE review_required_at END,
+				    review_reason      = CASE WHEN $2 OR reconcile_attempts + 1 >= $3 THEN 'reconcile: payment did not complete' ELSE review_reason END
+				WHERE id = $1 AND review_required_at IS NULL`, p.id, permanent, MaxReconcileAttempts)
 			continue
 		}
 		if target == ApptCompleted {
@@ -364,6 +428,8 @@ func (s *Service) ReconcileConsults(ctx context.Context, now time.Time) (Reconci
 			s.mirrorConsoleCancel(ctx, p.id)
 		}
 	}
+
+	rep.AuditsRecovered = s.recoverLostAudits(ctx, now)
 
 	tag, err := s.db.Exec(ctx, `
 		UPDATE appointments SET review_required_at = $1, review_reason = 'stuck_in_progress'
@@ -389,8 +455,8 @@ func StartConsultReconciler(ctx context.Context, s *Service, interval time.Durat
 				if rep, err := s.ReconcileConsults(ctx, time.Now()); err != nil {
 					log.Printf("[telemedicine][reconcile] sweep: %v", err)
 				} else if rep != (ReconcileReport{}) {
-					log.Printf("[telemedicine][reconcile] settled=%d refunded=%d flagged=%d failed=%d",
-						rep.Settled, rep.Refunded, rep.Flagged, rep.Failed)
+					log.Printf("[telemedicine][reconcile] settled=%d refunded=%d flagged=%d failed=%d audits_recovered=%d",
+						rep.Settled, rep.Refunded, rep.Flagged, rep.Failed, rep.AuditsRecovered)
 				}
 			}
 		}

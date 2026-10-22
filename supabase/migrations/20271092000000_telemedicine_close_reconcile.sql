@@ -13,6 +13,9 @@
 ALTER TABLE public.appointments ADD COLUMN IF NOT EXISTS closed_at          TIMESTAMPTZ;
 ALTER TABLE public.appointments ADD COLUMN IF NOT EXISTS review_required_at TIMESTAMPTZ;
 ALTER TABLE public.appointments ADD COLUMN IF NOT EXISTS review_reason      TEXT;
+-- Failed reconcile sweeps for this close; at the cap the row goes to review
+-- instead of being retried forever.
+ALTER TABLE public.appointments ADD COLUMN IF NOT EXISTS reconcile_attempts INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS appointments_closed_unpaid_idx
     ON public.appointments (closed_at) WHERE closed_at IS NOT NULL;

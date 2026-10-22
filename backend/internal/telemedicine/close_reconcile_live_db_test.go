@@ -13,6 +13,8 @@ package telemedicine_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -279,5 +281,78 @@ func TestLiveDB_AuditAndAppointmentsNotWritableViaPostgREST(t *testing.T) {
 				t.Errorf("H-A/M-B: %s holds privileges on %s", role, tbl)
 			}
 		}
+	}
+}
+
+// Ledger re-audit Lows (ADR-PR879):
+//
+//	N-3  a settle/refund whose audit row was lost (crash between the money commit
+//	     and the audit write) gets its row written by the reconciler, exactly once
+//	cap  a payment that keeps failing for a non-permanent reason is queued for
+//	     review after MaxReconcileAttempts sweeps instead of being retried forever
+func TestLiveDB_Reconcile_RecoversALostAuditRowOnce(t *testing.T) {
+	f := newAuditedFixture(t)
+	if err := f.svc.CompleteAppointment(f.ctx, f.appt, f.doctorUserID); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	// Simulate the crash: the money committed, the audit row never landed.
+	if _, err := f.pool.Exec(f.ctx, `DELETE FROM doctor_compliance_audit WHERE entity_id=$1 AND action='telemedicine.appointment.settled'`, f.appt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(f.ctx, `UPDATE appointments SET closed_at = now() - interval '10 minutes' WHERE id=$1`, f.appt); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := f.svc.ReconcileConsults(f.ctx, time.Now()); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+	if n := f.auditCount(t, "telemedicine.appointment.settled"); n != 1 {
+		t.Fatalf("N-3: want exactly one recovered settle audit row, got %d", n)
+	}
+}
+
+func TestLiveDB_Reconcile_QueuesARepeatedlyFailingPaymentForReview(t *testing.T) {
+	f := newAuditedFixture(t)
+	// Every ledger posting for THIS settlement fails (a transient-looking error).
+	var settID string
+	if err := f.pool.QueryRow(f.ctx, `SELECT settlement_id::text FROM appointments WHERE id=$1`, f.appt).Scan(&settID); err != nil {
+		t.Fatal(err)
+	}
+	fn := "tm_fail_settle_" + strings.ReplaceAll(settID[:8], "-", "")
+	if _, err := f.pool.Exec(f.ctx, fmt.Sprintf(`
+		CREATE FUNCTION %[1]s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.idempotency_key LIKE 'settle:%[2]s%%' THEN RAISE EXCEPTION 'injected ledger outage'; END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER %[1]s BEFORE INSERT ON ledger_entries FOR EACH ROW EXECUTE FUNCTION %[1]s();`, fn, settID)); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = f.pool.Exec(bg, `DROP TRIGGER IF EXISTS `+fn+` ON ledger_entries`)
+		_, _ = f.pool.Exec(bg, `DROP FUNCTION IF EXISTS `+fn+`()`)
+	})
+	if _, err := f.pool.Exec(f.ctx, `UPDATE appointments SET status='completed', closed_at = now() - interval '10 minutes' WHERE id=$1`, f.appt); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < telemedicine.MaxReconcileAttempts; i++ {
+		if _, err := f.svc.ReconcileConsults(f.ctx, time.Now()); err != nil {
+			t.Fatalf("reconcile %d: %v", i, err)
+		}
+	}
+	var queued bool
+	var attempts int
+	if err := f.pool.QueryRow(f.ctx, `SELECT review_required_at IS NOT NULL, reconcile_attempts FROM appointments WHERE id=$1`, f.appt).
+		Scan(&queued, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if !queued || attempts != telemedicine.MaxReconcileAttempts {
+		t.Fatalf("cap: after %d failed sweeps want queued for review, got queued=%v attempts=%d",
+			telemedicine.MaxReconcileAttempts, queued, attempts)
+	}
+	if got := f.settlementStatus(t); got != "escrowed" {
+		t.Fatalf("a failed payment must leave the escrow intact, got %q", got)
 	}
 }

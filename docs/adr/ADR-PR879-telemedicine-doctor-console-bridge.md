@@ -62,6 +62,10 @@ The console side changed too:
 
 The claim also requires the escrow to still be payable in that direction, and a linked doctor account for a settle. A close that cannot pay leaves the appointment open with a clear error, instead of terminal with the escrow stuck.
 
+The reconciler also covers two failure modes:
+- **Lost audit rows.** The settle/refund audit row is written after the money commits, so a crash in between could lose it. The reconciler writes any missing row for closes from the last 7 days, exactly once.
+- **Repeated failures.** A payment that keeps failing for a non-permanent reason goes to the review queue after `MaxReconcileAttempts` (5) sweeps (`reconcile_attempts`), instead of being retried forever.
+
 Admins can resolve only appointments in the review queue. Their decision and reason are audited when they claim, before payment. A payment the reconciler finds permanently refused goes to the review queue rather than being retried forever.
 
 Migration `20271093000000` revokes PostgREST access to `doctor_compliance_audit` and `appointments`:
