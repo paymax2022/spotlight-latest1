@@ -16634,6 +16634,110 @@ paths:
         '400': { description: Missing Idempotency-Key header }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Verified KYC tier below the withdrawal floor }
+  /api/finance/restaurant/bank-accounts:
+    post:
+      operationId: restaurantAddBankAccount
+      summary: Save a restaurant payout bank account (transaction PIN required)
+      description: >
+        Runs bank name-enquiry. With FEATURE_BANK_ACCOUNT_NAME_MATCH on, the account is verified only
+        when the holder name the bank returns matches the owner's provider-verified legal name, that
+        identity is anchored on a BVN/NIN/vNIN check with no conflicting check, and the KYC ownership
+        gate is on. Otherwise it is saved with is_verified=false and name_match_status=review, and
+        withdrawals to it are refused until an admin decides. Re-adding an account saved before
+        matching existed re-runs the check on the same row. An owner with no verified identity
+        cannot add an account (422).
+      tags: [Restaurant]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bank_code, account_number, pin]
+              properties:
+                bank_name: { type: string }
+                bank_code: { type: string }
+                account_number: { type: string, pattern: '^[0-9]{10}$' }
+                account_name: { type: string, description: Ignored when name-enquiry succeeds }
+                pin: { type: string, description: Transaction PIN (step-up) }
+      responses:
+        '201':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  bank_name: { type: string }
+                  bank_code: { type: string }
+                  account_number_masked: { type: string }
+                  account_name: { type: string }
+                  is_verified: { type: boolean }
+                  is_default: { type: boolean }
+                  name_match_status: { type: string, enum: [matched, review, admin_approved, admin_rejected], description: Absent when name matching did not run }
+                  created_at: { type: string, format: date-time }
+        '400': { description: "Invalid account number, or transaction PIN missing" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Transaction PIN verification failed }
+        '422': { description: The owner has no verified identity (BVN or NIN) yet }
+        '503': { description: Step-up or name check unavailable (fail closed) }
+  /api/restaurant/admin/bank-accounts/held:
+    get:
+      operationId: adminListHeldRestaurantBankAccounts
+      summary: Payout accounts held because the holder name did not match
+      description: Oldest first, at most 200. Account numbers are masked.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Held accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        owner_id: { type: string, format: uuid }
+                        bank_name: { type: string }
+                        account_number_masked: { type: string }
+                        account_name: { type: string }
+                        name_match_score: { type: integer, minimum: 0, maximum: 100 }
+                        verified_name: { type: string, description: "Owner's provider-verified legal name, to compare with account_name" }
+                        verified_name_strong: { type: boolean, description: "Anchored on a BVN/NIN/vNIN check with no conflicting check" }
+                        kyb_legal_names: { type: array, items: { type: string }, description: Owner's approved KYB legal names (owner-typed; context only) }
+                        created_at: { type: string, format: date-time }
+        '403': { description: Missing restaurant.admin.onboarding }
+  /api/restaurant/admin/bank-accounts/{id}/name-match:
+    post:
+      operationId: adminDecideRestaurantBankAccountName
+      summary: Approve (account becomes verified) or reject a held payout account
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, reason]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                reason: { type: string, minLength: 1 }
+      responses:
+        '200': { description: Decided }
+        '400': { description: Missing reason }
+        '403': { description: Missing restaurant.admin.onboarding }
+        '404': { description: No account awaiting a name decision with that id }
+        '422': { description: Unknown decision }
   /api/restaurant/admin/menu-taxonomy/categories:
     get:
       operationId: adminListMenuTaxonomy

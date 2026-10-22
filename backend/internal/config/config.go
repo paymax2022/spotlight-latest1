@@ -297,6 +297,10 @@ type Config struct {
 	FeatureVoteBridgeEnabled     bool
 	FeatureTransportEnabled      bool
 	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
+	// FeatureBankAccountNameMatch: a restaurant payout account is verified only when
+	// the bank holder name matches the owner's KYC-verified name or an approved KYB
+	// legal name; mismatches are held for admin review. Off = name-enquiry only.
+	FeatureBankAccountNameMatch bool
 	// FeatureParcelRateCardEnabled prices parcels from transport_parcel_rate_card
 	// (size × speed multiplier + minimum fare per cell). Off = legacy multipliers.
 	FeatureParcelRateCardEnabled bool
@@ -1004,6 +1008,7 @@ func Load() Config {
 		FeatureVoteBridgeEnabled:                     getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
+		FeatureBankAccountNameMatch:                  getEnvBool("FEATURE_BANK_ACCOUNT_NAME_MATCH", false),
 		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
 		FeatureParcelPrepaidInsuranceEnabled:         getEnvBool("FEATURE_PARCEL_PREPAID_INSURANCE", false),
 		FeatureParcelReceiverPinSMSEnabled:           getEnvBool("FEATURE_PARCEL_RECEIVER_PIN_SMS", false),
