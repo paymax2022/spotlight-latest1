@@ -103,6 +103,9 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkTrade(ctx, from.Symbol, to.Symbol); err != nil {
+		return nil, err
+	}
 
 	// Replay anchor BEFORE the holdings check: the order row records LAST in
 	// this flow, so a found row means every leg is durable — a completed swap
@@ -471,6 +474,9 @@ func networkFeeUnits(units int64) int64 {
 func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID string, units, feeKobo int64, idemKey string) (*Withdrawal, error) {
 	if units <= 0 || idemKey == "" {
 		return nil, ErrBadRequest
+	}
+	if err := s.checkWithdraw(ctx); err != nil { // kill switch: nothing is parked or charged
+		return nil, err
 	}
 	// The fiat processing fee is platform policy, not client input — a request
 	// could otherwise pass fee_kobo=0 and skip the paymax_revenue leg entirely.

@@ -50,6 +50,8 @@ type DepositStore interface {
 	// reports whether anything was written; stored is the status now on the row when changed.
 	UpsertDeposit(ctx context.Context, d DepositRecord) (changed bool, stored cryptoprov.DepositStatus, err error)
 	ListDeposits(ctx context.Context, userID string, limit int) ([]DepositRecord, error)
+	// AdminListDeposits lists every user's deposits (status "" = all), newest first.
+	AdminListDeposits(ctx context.Context, status cryptoprov.DepositStatus, limit int) ([]DepositRecord, error)
 }
 
 // depositAdvances reports whether next is a forward move from prev.

@@ -57,6 +57,10 @@ type Service struct {
 	withdraw WithdrawalProvider // pluggable on-chain broadcast seam (mock default)
 	tiers    walletDebitLimiter
 	stepUp   StepUpFunc // withdrawal second factor (WithStepUp); nil = withdrawals refused
+
+	tradeCtl    TradeControlFunc    // trading pause + market switch (WithControls)
+	limitCtl    LimitControlFunc    // per-trade NGN limit (WithTradeLimit)
+	withdrawCtl WithdrawControlFunc // withdrawal kill switch (WithControls)
 }
 
 // NewService builds the crypto service. If price is nil the deterministic
@@ -224,6 +228,12 @@ func (s *Service) Buy(ctx context.Context, userID, assetID string, cashKobo int6
 	if !a.IsActive {
 		return nil, ErrAssetInactive
 	}
+	if err := s.checkTrade(ctx, a.Symbol); err != nil {
+		return nil, err
+	}
+	if err := s.checkLimit(ctx, cashKobo); err != nil {
+		return nil, err
+	}
 	priceKobo, ok := s.price.PriceKobo(ctx, a.Symbol)
 	if !ok || priceKobo <= 0 {
 		return nil, ErrNotFound
@@ -293,6 +303,9 @@ func (s *Service) Sell(ctx context.Context, userID, assetID string, units int64,
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkTrade(ctx, a.Symbol); err != nil {
+		return nil, err
+	}
 	priceKobo, ok := s.price.PriceKobo(ctx, a.Symbol)
 	if !ok || priceKobo <= 0 {
 		return nil, ErrNotFound
@@ -308,6 +321,9 @@ func (s *Service) Sell(ctx context.Context, userID, assetID string, units int64,
 	cashKobo := cashForUnits(units, priceKobo, a.MinorUnitScale)
 	if cashKobo <= 0 {
 		return nil, ErrAmountTooSmall
+	}
+	if err := s.checkLimit(ctx, cashKobo); err != nil {
+		return nil, err
 	}
 
 	o := Order{

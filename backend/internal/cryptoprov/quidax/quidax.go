@@ -75,6 +75,7 @@ type Client struct {
 	sleep         func(ctx context.Context, d time.Duration) error
 	now           func() time.Time
 	budget        *budget
+	calls         cryptoprov.CallRecorder // health telemetry (admin provider-health page)
 }
 
 // New validates the configuration and builds a Client.
@@ -190,8 +191,10 @@ func (c *Client) do(ctx context.Context, method, path, query string, body any) (
 			req.Header.Set("Content-Type", "application/json")
 		}
 
+		started := time.Now()
 		resp, err := c.hc.Do(req)
 		if err != nil {
+			c.calls.Record(started, time.Since(started), 0, method+" "+maskPath(path)+" -> transport error")
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
@@ -206,6 +209,7 @@ func (c *Client) do(ctx context.Context, method, path, query string, body any) (
 		}
 		raw, rerr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		_ = resp.Body.Close()
+		c.calls.Record(started, time.Since(started), resp.StatusCode, fmt.Sprintf("%s %s -> %d", method, maskPath(path), resp.StatusCode))
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if rerr != nil {
@@ -341,6 +345,9 @@ func (c *Client) CreateAccount(ctx context.Context, u cryptoprov.UserRef) (crypt
 	}
 	return cryptoprov.AccountRef{ID: d.ID}, nil
 }
+
+// Health implements cryptoprov.HealthReporter.
+func (c *Client) Health(now time.Time) cryptoprov.Health { return c.calls.Snapshot(now) }
 
 // Wallets implements cryptoprov.WalletProvider.
 func (c *Client) Wallets(ctx context.Context, accountID string) ([]cryptoprov.Wallet, error) {
@@ -490,6 +497,21 @@ func (c *Client) GetDeposit(ctx context.Context, accountID, id string) (cryptopr
 		Amount: amt, Fee: fee, TxID: d.TxID, Status: st,
 		Confirmations: d.Tx.Confirmations, RequiredConfirmations: d.Tx.RequiredConfirmations,
 	}, nil
+}
+
+// maskPath hides the sub-account (and entity) ids in a request path for telemetry:
+// "/users/acct1/deposits/dp_9" -> "/users/*/deposits/*". Health text never carries ids.
+func maskPath(p string) string {
+	parts := strings.Split(p, "/")
+	for i := 1; i < len(parts); i++ {
+		switch parts[i-1] {
+		case "users", "deposits", "withdraws", "swap_transactions", "swap_quotation", "instant_swaps":
+			if parts[i] != "" {
+				parts[i] = "*"
+			}
+		}
+	}
+	return strings.Join(parts, "/")
 }
 
 // eventKey is the dedupe key for a webhook. Quidax sends several events of the SAME type for

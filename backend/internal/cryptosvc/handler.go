@@ -52,6 +52,8 @@ type HandlerDeps struct {
 	Recon *Reconciler
 	// FeeAdmin is the editable fee-schedule history behind the admin API; nil answers 503.
 	FeeAdmin FeeStore
+	// AuditLog backs the admin audit search; nil answers 503.
+	AuditLog AuditSearcher
 }
 
 const (
@@ -413,6 +415,12 @@ func (h *handler) writeErr(c *gin.Context, err error) {
 		fail(c, http.StatusUnprocessableEntity, "limit_exceeded")
 	case errors.Is(err, ErrSettlementConflict):
 		fail(c, http.StatusConflict, "swap_not_confirmable")
+	case errors.Is(err, ErrTradingPaused):
+		fail(c, http.StatusServiceUnavailable, "trading_paused")
+	case errors.Is(err, ErrMarketDisabled):
+		fail(c, http.StatusForbidden, "market_disabled")
+	case errors.Is(err, ErrAboveLimit):
+		fail(c, http.StatusUnprocessableEntity, "limit_exceeded")
 	default:
 		log.Printf("[crypto] request failed: %v", err)
 		fail(c, http.StatusInternalServerError, "internal")

@@ -28,6 +28,8 @@ type Tab = { href: string; label: string; key: string };
 export function CryptoTabs({ active }: { active: string }) {
   const tabs: Tab[] = [
     { href: '/admin/crypto', label: 'Overview', key: 'overview' },
+    { href: '/admin/crypto/controls', label: 'Controls', key: 'controls' },
+    { href: '/admin/crypto/health', label: 'Provider health', key: 'health' },
     { href: '/admin/crypto/orders', label: 'Orders', key: 'orders' },
     { href: '/admin/crypto/withdrawals', label: 'Withdrawals / AML', key: 'withdrawals' },
     { href: '/admin/crypto/swaps', label: 'Swaps', key: 'swaps' },
@@ -37,6 +39,8 @@ export function CryptoTabs({ active }: { active: string }) {
     { href: '/admin/crypto/addresses', label: 'Address review', key: 'addresses' },
     { href: '/admin/crypto/reconciliation', label: 'Reconciliation', key: 'reconciliation' },
     { href: '/admin/crypto/assets', label: 'Assets', key: 'assets' },
+    { href: '/admin/crypto/deposits', label: 'Deposits', key: 'deposits' },
+    { href: '/admin/crypto/audit', label: 'Audit log', key: 'audit' },
   ];
   return (
     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>

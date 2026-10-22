@@ -59,6 +59,9 @@ type ServiceConfig struct {
 	Audit Auditor
 	// Deposits stores deposit addresses and records (nil = deposits unavailable).
 	Deposits DepositStore
+	// Controls is the operational state (pause, market switch, limit). nil = all open (unit
+	// tests); a read error refuses the quote/confirm.
+	Controls ControlSource
 }
 
 // schedule returns the fee schedule a new quote is priced from. The bps and fee are stored on the
@@ -237,12 +240,22 @@ func (s *Service) Quote(ctx context.Context, req QuoteRequest) (SwapRecord, erro
 	if err != nil {
 		return SwapRecord{}, err
 	}
+	ctl, err := s.controls(ctx)
+	if err != nil {
+		return SwapRecord{}, err
+	}
+	if err := ctl.tradeAllowed(asset); err != nil {
+		return SwapRecord{}, err
+	}
 	bps, err := fees.Bps(asset)
 	if err != nil {
 		return SwapRecord{}, err
 	}
 	if side == SideSell {
-		return s.quoteSell(ctx, req, asset, bps)
+		return s.quoteSell(ctx, req, asset, bps, ctl.QuoteLimitKobo())
+	}
+	if req.NGNKobo > ctl.QuoteLimitKobo() {
+		return SwapRecord{}, ErrAboveLimit
 	}
 	fee, err := FeeKobo(req.NGNKobo, bps)
 	if err != nil {
@@ -331,6 +344,30 @@ func (s *Service) Balances(ctx context.Context, userID string) ([]cryptoprov.Wal
 	return out, nil
 }
 
+// controlsAllow applies the operational controls to an existing swap at confirm time: the
+// pause, the market switch and the per-trade limit (lowered after the quote). Fail-closed.
+func (s *Service) controlsAllow(ctx context.Context, rec SwapRecord) error {
+	ctl, err := s.controls(ctx)
+	if err != nil {
+		return err
+	}
+	if err := ctl.tradeAllowed(tradedAsset(rec)); err != nil {
+		return err
+	}
+	if rec.NGNKobo > ctl.QuoteLimitKobo() {
+		return ErrAboveLimit
+	}
+	return nil
+}
+
+// tradedAsset is the crypto a swap buys or sells.
+func tradedAsset(r SwapRecord) string {
+	if r.Side == SideSell {
+		return r.FromCurrency
+	}
+	return r.ToCurrency
+}
+
 // heldKobo is the NGN a swap holds between confirm and settlement: a buy's amount plus
 // fee; nothing for a sell (its crypto sits with the provider).
 func heldKobo(r SwapRecord) int64 {
@@ -345,7 +382,7 @@ func heldKobo(r SwapRecord) int64 {
 // The quoted NGN is FLOORED to whole kobo, so the platform never promises more than the
 // provider quoted; the payout itself is the provider's confirmed figure (CompleteSell,
 // bounded by the slippage band around this quote).
-func (s *Service) quoteSell(ctx context.Context, req QuoteRequest, asset string, bps int) (SwapRecord, error) {
+func (s *Service) quoteSell(ctx context.Context, req QuoteRequest, asset string, bps int, limitKobo int64) (SwapRecord, error) {
 	p, err := s.provider()
 	if err != nil {
 		return SwapRecord{}, err
@@ -382,6 +419,8 @@ func (s *Service) quoteSell(ctx context.Context, req QuoteRequest, asset string,
 		return SwapRecord{}, errors.New("cryptosvc: sell amount is worth less than one kobo")
 	case ngnKobo > MaxQuoteKobo:
 		return SwapRecord{}, errors.New("cryptosvc: sell amount is above the per-quote maximum")
+	case ngnKobo > limitKobo:
+		return SwapRecord{}, ErrAboveLimit
 	}
 	fee, err := FeeKobo(ngnKobo, bps)
 	if err != nil {
@@ -473,6 +512,10 @@ func (s *Service) Confirm(ctx context.Context, userID, swapID string) (SwapRecor
 		}
 		out = rec
 		if rec.State == cryptoprov.SwapStateQuoted {
+			// A pause or market switch set after the quote stops it here, before any hold.
+			if err := s.controlsAllow(ctx, rec); err != nil {
+				return err
+			}
 			if err := s.gate(ctx, userID); err != nil {
 				return err
 			}
@@ -495,8 +538,13 @@ func (s *Service) Confirm(ctx context.Context, userID, swapID string) (SwapRecor
 			return nil // processing or final: nothing to execute
 		}
 		if rec.ProviderSwapID == "" && !rec.ExecuteAttempted {
-			// Not yet at the provider: a user frozen or de-tiered since the claim stops here.
-			if gerr := s.gate(ctx, userID); gerr != nil {
+			// Not yet at the provider: a user frozen or de-tiered, or an admin pause / market
+			// switch / lower limit set since the claim (a retried confirm), stops here.
+			gerr := s.controlsAllow(ctx, rec)
+			if gerr == nil {
+				gerr = s.gate(ctx, userID)
+			}
+			if gerr != nil {
 				// Nothing has reached the provider, so any hold already posted is safe to
 				// release; otherwise a user frozen mid-confirm would be stranded.
 				if ferr := s.cfg.Settler.Fail(ctx, rec); ferr != nil { // side-aware: a sell holds nothing

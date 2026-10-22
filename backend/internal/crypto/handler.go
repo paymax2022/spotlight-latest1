@@ -32,6 +32,10 @@ var errMap = httperr.New(http.StatusBadRequest,
 	// uses (E2E-FIN-046). An unwired/degraded gate is a dependency failure: 503.
 	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
 	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired, ErrLedgerReconPending),
+	// 423 Locked, not 503: 5xx text is sanitised, and the app must tell "paused" from "outage".
+	httperr.R(http.StatusLocked, ErrTradingPaused, ErrWithdrawalsPaused),
+	httperr.R(http.StatusUnprocessableEntity, ErrAboveTradeLimit),
+	httperr.R(http.StatusForbidden, ErrMarketDisabled, ErrSelfDecision),
 	httperr.R(http.StatusNotFound, ErrNotFound, ErrAddressNotFound),
 	httperr.R(http.StatusConflict, ErrInsufficient, ErrAssetInactive, ErrAmountTooSmall,
 		ErrSameAsset, ErrInvalidTransition, ErrWithdrawTooSmall, ErrAddressExists,

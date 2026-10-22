@@ -38,6 +38,9 @@ type WireDeps struct {
 	Ledger    *ledger.Service
 	Tiers     *tiers.Service
 	Transfers *transfers.Service
+	// Controls gates quotes and confirms (pause, market switch, limit). Required: Wire refuses
+	// to mount a money path without it.
+	Controls ControlSource
 }
 
 // Wired is the assembled swap module.
@@ -56,8 +59,8 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 		return nil, errors.New("cryptosvc: Quidax API key is not configured")
 	case strings.TrimSpace(cfg.WebhookSecret) == "":
 		return nil, errors.New("cryptosvc: Quidax webhook secret is not configured (webhooks would all be rejected)")
-	case d.Pool == nil || d.Ledger == nil || d.Tiers == nil || d.Transfers == nil:
-		return nil, errors.New("cryptosvc: pool, ledger, tiers and transfers services are required")
+	case d.Pool == nil || d.Ledger == nil || d.Tiers == nil || d.Transfers == nil || d.Controls == nil:
+		return nil, errors.New("cryptosvc: pool, ledger, tiers, transfers and controls are required")
 	case strings.TrimSpace(cfg.DatabaseURL) == "":
 		return nil, errors.New("cryptosvc: DATABASE_URL is required for the dedicated lock pool")
 	}
@@ -98,7 +101,7 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 	fees := NewPGFeeStore(d.Pool, cfg.Fees)
 	ingest := NewIngest(reg, store).WithSettler(settler).WithAuditor(auditor).WithDeposits(store)
 	svc := NewService(ServiceConfig{
-		Registry: reg, Provider: client.Name(), Store: store, Settler: settler, Ingest: ingest, Deposits: store,
+		Registry: reg, Provider: client.Name(), Store: store, Settler: settler, Ingest: ingest, Deposits: store, Controls: d.Controls,
 		Fees: cfg.Fees, FeeSource: fees, Users: &PGUserDirectory{Pool: d.Pool},
 		Gate:   &TierTradeGate{Pool: d.Pool, Tiers: d.Tiers, MinTier: cfg.MinTier},
 		Locker: locker, Audit: auditor,
@@ -127,7 +130,7 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 	go rec.Run(rctx, cfg.ReconcileInterval)
 
 	return &Wired{
-		Deps:  HandlerDeps{Service: svc, Ingest: ingest, StepUp: &TransfersStepUp{Svc: d.Transfers}, Recon: rec, FeeAdmin: fees},
+		Deps:  HandlerDeps{Service: svc, Ingest: ingest, StepUp: &TransfersStepUp{Svc: d.Transfers}, Recon: rec, FeeAdmin: fees, AuditLog: &PGAuditLog{Pool: d.Pool}},
 		Close: func() { cancel(); closeLeader(); closeLocks() },
 	}, nil
 }
