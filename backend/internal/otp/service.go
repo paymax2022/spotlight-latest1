@@ -93,6 +93,8 @@ type Service struct {
 	sender  EmailSender
 	limiter Limiter
 	cfg     Config
+
+	testMode *TestMode // nil/inactive in every real deployment; see test_mode.go
 }
 
 // NewService refuses to build without a pepper.
@@ -184,9 +186,17 @@ func (s *Service) Issue(ctx context.Context, email, name, purpose, ip string) er
 		}
 	}
 
-	code, err := Generate(s.cfg.Length)
-	if err != nil {
-		return fmt.Errorf("otp: generate: %w", err)
+	// Dev-only deterministic seam (test_mode.go): reserved test phones get the
+	// fixed code through the same store/limits, with delivery skipped.
+	deterministic := s.testMode.AppliesTo(email)
+	var code string
+	if deterministic {
+		code = TestOTPCode
+	} else {
+		code, err = Generate(s.cfg.Length)
+		if err != nil {
+			return fmt.Errorf("otp: generate: %w", err)
+		}
 	}
 
 	now := time.Now().UTC()
@@ -198,6 +208,10 @@ func (s *Service) Issue(ctx context.Context, email, name, purpose, ip string) er
 	}
 	if err := s.store.Put(ctx, k, rec, s.cfg.TTL); err != nil {
 		return fmt.Errorf("otp: store: %w", err)
+	}
+	if deterministic {
+		log.Printf("[otp] INFO: dev test-otp issued: phone=%s, code=<redacted>", redactLast4(email))
+		return nil
 	}
 
 	if err := s.sender.SendOTP(ctx, email, name, code, s.cfg.TTL); err != nil {

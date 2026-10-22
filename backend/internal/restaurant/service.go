@@ -158,6 +158,9 @@ type Service struct {
 	// (the bucket is private). nil/unconfigured ⇒ uploads fail closed with
 	// ErrKYBUploadsUnavailable and the paste-a-link path keeps working.
 	kybPresigner *r2.Presigner
+	// stepUp verifies the caller's transaction PIN before a payout bank account is
+	// saved (FOOD-UAT-B-002). nil ⇒ AddBankAccount fails closed (ErrStepUpUnavailable).
+	stepUp func(ctx context.Context, userID, pin string) error
 }
 
 // OrderAuditor is the nil-safe seam into the shared durable audit sink
@@ -410,6 +413,7 @@ type itemWithRest struct {
 type orderPricing struct {
 	primaryRestaurantID string
 	ownerID             string
+	orderType           OrderType
 	scheduledFor        *time.Time
 	itemsWithRest       []itemWithRest
 	subtotal            int64
@@ -442,6 +446,11 @@ type orderPricing struct {
 // here, because a caller that only wants a quote (QuoteOrder) must trigger
 // NONE of them.
 func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*orderPricing, error) {
+	// FOOD-UAT-D-007: per-type request shape, before anything is read or priced.
+	orderType, terr := validateOrderType(req, time.Now())
+	if terr != nil {
+		return nil, terr
+	}
 	// Collect unique restaurants from items (or use the route's restaurantID as fallback).
 	// This enables multi-restaurant orders while maintaining backward compatibility.
 	restaurantMap := make(map[string]bool)
@@ -481,6 +490,14 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		Scan(&isOpen, &ownerID, &rLat, &rLng, &pricingCfg.ServiceFeeBp, &pricingCfg.SurgeBp, &packagingFeePerPackKobo); err != nil {
 		return nil, fmt.Errorf("%w (%s)", ErrRestaurantNotFound, primaryRestaurantID)
 	}
+	// FOOD-UAT-C-004: with listing moderation on, a store whose listing is not APPROVED is
+	// invisible in discovery and so must not be orderable by direct id either.
+	if s.moderationOn {
+		var listing string
+		if err := s.db.QueryRow(ctx, `SELECT COALESCE(listing_review_status,'DRAFT') FROM restaurants WHERE id=$1`, primaryRestaurantID).Scan(&listing); err != nil || listing != string(ListingApproved) {
+			return nil, fmt.Errorf("%w (%s)", ErrRestaurantNotFound, primaryRestaurantID)
+		}
+	}
 
 	// A scheduled order books a FUTURE slot, so it is gated on that slot falling inside
 	// the restaurant's weekly hours (SG-001/002) rather than on the restaurant being open
@@ -495,6 +512,18 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// which releases it into the live queue or auto-cancels AND REFUNDS it (SG-002).
 	if !isOpen && scheduledFor == nil {
 		return nil, fmt.Errorf("%w (%s)", ErrRestaurantClosed, primaryRestaurantID)
+	}
+	// FOOD-UAT-B-009: weekly hours, today's holiday closure and a timed pause also gate an
+	// IMMEDIATE order. A store with none of them is governed by is_open alone (unchanged).
+	// Fail closed: if the schedule cannot be read the order is refused, not waved through.
+	if scheduledFor == nil {
+		openNow, oerr := s.IsOpenNow(ctx, primaryRestaurantID, time.Now())
+		if oerr != nil {
+			return nil, oerr
+		}
+		if !openNow {
+			return nil, fmt.Errorf("%w (%s)", ErrRestaurantClosed, primaryRestaurantID)
+		}
 	}
 
 	// Verify secondary restaurants (if multi-restaurant) are also open — same rule.
@@ -518,10 +547,12 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		restID := input.RestaurantOf(restaurantID)
 		var mi MenuItem
 		const qMI = `SELECT id, restaurant_id, name, price_kobo, ` + availableNow + ` AS is_available,
-		             COALESCE(prep_time_minutes, (SELECT r.prep_time_minutes FROM restaurants r WHERE r.id = menu_items.restaurant_id)) AS prep_minutes
+		             COALESCE(prep_time_minutes, (SELECT r.prep_time_minutes FROM restaurants r WHERE r.id = menu_items.restaurant_id)) AS prep_minutes,
+		             max_qty_per_order
 		             FROM menu_items WHERE id=$1 AND restaurant_id=$2`
 		var prep int
-		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable, &prep); err != nil {
+		var itemMaxQty *int
+		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable, &prep, &itemMaxQty); err != nil {
 			return nil, fmt.Errorf("%w (%s in restaurant %s)", ErrMenuItemNotFound, input.MenuItemID, restID)
 		}
 		if !mi.IsAvailable {
@@ -536,6 +567,10 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		// only fires on the INSERT, long after the escrow debit is posted.
 		if input.Quantity > maxLineQuantity {
 			return nil, fmt.Errorf("%w: quantity %d for '%s' exceeds the per-line maximum of %d", ErrOrderInvalid, input.Quantity, mi.Name, maxLineQuantity)
+		}
+		// FOOD-UAT-B-008: the seller's own per-item cap, when set, is stricter than the global one.
+		if itemMaxQty != nil && *itemMaxQty >= 1 && input.Quantity > *itemMaxQty {
+			return nil, fmt.Errorf("%w: quantity %d for '%s' exceeds the per-order maximum of %d set by the seller", ErrOrderInvalid, input.Quantity, mi.Name, *itemMaxQty)
 		}
 
 		// Chosen modifiers price the line. resolveLineModifiers is fail-closed against
@@ -600,7 +635,10 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	deliveryKobo := DeliveryFeeKobo
 	var breakdown *DeliveryFeeBreakdown
 	var distanceMeters, etaMinutes *float64
-	if dLat, dLng, ok := req.DeliveryCoords(); ok && rLat != nil && rLng != nil {
+	if !orderType.UsesRider() {
+		// Pickup / dine-in: nothing is delivered, so no delivery fee and no breakdown.
+		deliveryKobo = 0
+	} else if dLat, dLng, ok := req.DeliveryCoords(); ok && rLat != nil && rLng != nil {
 		cfg := s.feeRepo.LoadDeliveryConfig(ctx, restaurantID)
 		night := IsNightAt(time.Now().In(lagosTZ).Hour(), cfg)
 		b := s.computeDeliveryFee(ctx, *rLat, *rLng, dLat, dLng, night, false /* weather: no live feed in v1 */, cfg)
@@ -624,7 +662,9 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// applyBp floors, so neither can round UP past its exact basis-point fraction.
 	surgeKobo := applyBp(subtotal, pricingCfg.SurgeBp)
 	itemsKobo := subtotal + surgeKobo
-	serviceFeeKobo := applyBp(itemsKobo, pricingCfg.ServiceFeeBp)
+	// C-010: per-restaurant floor / cap / whole-naira rounding on the bp fee (shared by the
+	// quote and placement paths, which both price through priceOrder).
+	serviceFeeKobo := s.serviceFeePolicyKobo(ctx, primaryRestaurantID, applyBp(itemsKobo, pricingCfg.ServiceFeeBp))
 
 	// Rider tip: escrowed WITH the order total and paid 100% to the rider at
 	// settlement (settlement.Split.TipKobo). This is the ONE client-supplied amount on
@@ -633,6 +673,9 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	//   - it may not exceed the order's own value, which rejects fat-finger/hostile
 	//     amounts up front and keeps `total` far from int64 overflow.
 	tipKobo := max(req.TipKobo, 0)
+	if !orderType.UsesRider() {
+		tipKobo = 0 // the tip is a 100% rider leg; a rider-less order has no payee for it
+	}
 	if tipKobo > itemsKobo+deliveryKobo {
 		return nil, fmt.Errorf("%w: tip of %d kobo exceeds the order value of %d kobo", ErrOrderInvalid, tipKobo, itemsKobo+deliveryKobo)
 	}
@@ -697,6 +740,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	return &orderPricing{
 		primaryRestaurantID: primaryRestaurantID,
 		ownerID:             ownerID,
+		orderType:           orderType,
 		scheduledFor:        scheduledFor,
 		itemsWithRest:       itemsWithRest,
 		subtotal:            subtotal,
@@ -928,6 +972,23 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// FOOD-UAT-C-012 / D-007: delivery-only fields. A pickup or dine-in order carries no
+	// address, pin or recipient contact; a delivery order stores the pin the customer
+	// dropped (validated by the handler) plus landmark / recipient phone.
+	var deliveryAddress string
+	var dLatPtr, dLngPtr *float64
+	var landmarkPtr, recipPhonePtr, tablePtr *string
+	if pricing.orderType.UsesRider() {
+		deliveryAddress = req.DeliveryAddress
+		if la, ln, ok := req.DeliveryCoords(); ok {
+			dLatPtr, dLngPtr = &la, &ln
+		}
+		landmarkPtr = nullIfEmptyPtr(cleanLandmark(req.DeliveryLandmark))
+		recipPhonePtr = nullIfEmptyPtr(cleanRecipientPhone(req.DeliveryRecipientPhone))
+	}
+	if pricing.orderType == OrderTypeDineIn {
+		tablePtr = nullIfEmptyPtr(cleanTableNumber(req.TableNumber))
+	}
 	order := &Order{
 		ID:               orderID,
 		CustomerID:       customerID,
@@ -951,7 +1012,9 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		Status:              OrderPending,
 		IdempotencyKey:      req.IdempotencyKey,
 		SettlementID:        sett.ID,
-		DeliveryAddress:     req.DeliveryAddress,
+		DeliveryAddress:     deliveryAddress,
+		OrderType:           pricing.orderType,
+		TableNumber:         tablePtr,
 		DistanceMeters:      distanceMeters,
 		EtaMinutes:          etaMinutes,
 		DeliveryBreakdown:   breakdown,
@@ -968,8 +1031,9 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	}
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, promo_id, promo_funder, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, special_instructions, scheduled_for, packaging_fee_kobo, package_count)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, promo_id, promo_funder, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, special_instructions, scheduled_for, packaging_fee_kobo, package_count,
+		                    order_type, table_number, delivery_latitude, delivery_longitude, delivery_landmark, delivery_recipient_phone)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, primaryRestaurantID,
@@ -979,6 +1043,7 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
 		nullIfEmpty(order.SpecialInstructions), order.ScheduledFor,
 		order.PackagingFeeKobo, order.PackageCount,
+		string(pricing.orderType), tablePtr, dLatPtr, dLngPtr, landmarkPtr, recipPhonePtr,
 	)
 	if err != nil {
 		s.releasePromoReservationSafe(ctx, promoID, orderID)
@@ -1056,6 +1121,9 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 // client-controlled input — no HTTP request DTO has a field that can select
 // the external path below.
 func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*Order, error) {
+	if strings.TrimSpace(req.QuoteID) != "" {
+		return s.placeOrderWithQuote(ctx, restaurantID, customerID, req) // FOOD-UAT-C-007
+	}
 	return s.placeOrder(ctx, restaurantID, customerID, req, false, 0)
 }
 
@@ -1207,6 +1275,15 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 	if err != nil {
 		return err
 	}
+	// Pickup / dine-in: the restaurant itself records collection (picked_up), served and
+	// closed — there is no rider POD for it (FOOD-UAT-D-007). Owner-only.
+	if ot := s.orderTypeOf(ctx, orderID); !ot.UsesRider() &&
+		(newStatus == OrderPickedUp || newStatus == OrderServed || newStatus == OrderClosed) {
+		if classifyOrderActor(actorID, customer, owner, rider) != roleOwner {
+			return ErrForbidden
+		}
+		return s.transitionInternal(ctx, orderID, actorID, newStatus)
+	}
 	if aerr := authorizeStatusChange(actorID, customer, owner, rider, newStatus); aerr != nil {
 		return aerr
 	}
@@ -1231,16 +1308,37 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 	// (e.g. one created outside the escrow path) scans cleanly instead of erroring —
 	// which the previous `settlement_id` scan into a string masked as "order not
 	// found". Mirrors the COALESCE(settlement_id::text,'') pattern in delivery.go.
-	const q = `SELECT id, restaurant_id, status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1`
-	if err := s.db.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
+	//
+	// Compare-and-set (FOOD-UAT-D-001): the read takes a row lock (FOR UPDATE) inside a
+	// tx, canTransition is evaluated against the LOCKED state, and the UPDATE is further
+	// guarded with `AND status=$prior`. A concurrent cancelAndRefund / refundAndClose
+	// (which lock the same row) therefore either commits first — in which case we see its
+	// terminal status and refuse — or waits for us. Without this an accept racing a cancel
+	// left status='preparing' on an already-refunded escrow.
+	const q = `SELECT id, restaurant_id, status, COALESCE(settlement_id::text,''), COALESCE(order_type,'delivery') FROM orders WHERE id=$1 FOR UPDATE`
+	var orderType OrderType
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := tx.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID, &orderType); err != nil {
 		return errors.New("restaurant: order not found")
 	}
 
-	if !canTransition(order.Status, newStatus) {
+	// Order-type-aware guard (FOOD-UAT-D-007); delivery uses the original table.
+	if !canTransitionFor(orderType, order.Status, newStatus) {
 		return fmt.Errorf("restaurant: cannot move order from %s to %s", order.Status, newStatus)
 	}
 
-	if _, err := s.db.Exec(ctx, `UPDATE orders SET status=$1 WHERE id=$2`, string(newStatus), orderID); err != nil {
+	tag, err := tx.Exec(ctx, `UPDATE orders SET status=$1 WHERE id=$2 AND status=$3`, string(newStatus), orderID, string(order.Status))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrOrderTransitionConflict
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 
@@ -1249,7 +1347,10 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 	s.recordOrderEvent(ctx, orderID, actorID, order.Status, newStatus)
 
 	// On delivery, settle: 80% restaurant owner, 10% rider (stubbed to owner if no rider), 10% platform.
-	if newStatus == OrderDelivered {
+	// Pickup settles on customer collection (picked_up), dine-in on served — no rider leg:
+	// settleOrder sees rider_id NULL and takes the rider-less split (ResolveCommissionSplit
+	// ProviderPctNoRider), so only the merchant and platform legs post.
+	if newStatus == OrderDelivered || (!orderType.UsesRider() && newStatus == settleStatusFor(orderType)) {
 		if err := s.settleOrder(ctx, orderID, order.RestaurantID, order.SettlementID); err != nil {
 			return fmt.Errorf("restaurant: settle order: %w", err)
 		}
@@ -1266,6 +1367,8 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 		// with this, so — like the dispatch call right below — a generation
 		// hiccup must not roll back the already-committed ready transition;
 		// DispatchOrder retries it (it's idempotent) on every dispatch/redispatch.
+		// Pickup: the code is what the customer shows at the counter. Dine-in never
+		// reaches ready.
 		if _, cerr := s.ensurePickupCode(ctx, orderID); cerr != nil {
 			s.notify(ctx, Notification{UserID: "", Event: EventPickupCodeErr,
 				Title: "Pickup code error", Body: cerr.Error(),
@@ -1273,7 +1376,7 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 		}
 		var assigned *string
 		_ = s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&assigned)
-		if assigned == nil {
+		if assigned == nil && orderType.UsesRider() { // pickup orders skip dispatch
 			if derr := s.DispatchOrder(ctx, orderID); derr != nil {
 				// A dispatch hiccup must not roll back the ready transition; the
 				// restaurant can re-trigger dispatch. Surface it to logs via notify.
@@ -1296,7 +1399,11 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 			s.notify(ctx, Notification{UserID: rider, Event: EventOrderReady, Title: "Order ready for pickup", Body: "The order is ready — head to the restaurant.", Data: map[string]any{"order_id": orderID}})
 		}
 	case OrderPickedUp:
-		s.notify(ctx, Notification{UserID: customer, Event: EventOrderPickedUp, Title: "Order picked up", Body: "Your order is on the way.", Data: map[string]any{"order_id": orderID}})
+		body := "Your order is on the way."
+		if !orderType.UsesRider() {
+			body = "Thanks for collecting your order. Enjoy!"
+		}
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderPickedUp, Title: "Order picked up", Body: body, Data: map[string]any{"order_id": orderID}})
 	case OrderDelivered:
 		s.notify(ctx, Notification{UserID: customer, Event: EventOrderDelivered, Title: "Order delivered", Body: "Enjoy your meal!", Data: map[string]any{"order_id": orderID}})
 	}
@@ -1417,12 +1524,13 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	}
 	var ownerID string
 	_ = s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
+	cs := s.ResolveCommissionSplit(ctx, restaurantID) // FOOD-UAT-F-003: admin-editable split (default 80/10/10)
 	split := settlement.Split{
 		ProviderID:  ownerID,
-		ProviderPct: splitProviderPct,
-		PlatformPct: splitPlatformPct,
+		ProviderPct: cs.ProviderPct(),
+		PlatformPct: cs.PlatformPct(),
 		RiderID:     riderID,
-		RiderPct:    splitRiderPct,
+		RiderPct:    cs.RiderPct(),
 		// The tip was escrowed with the order total at placement; Settle pays it 100%
 		// to the rider on top of the percentage split (which prices total − tip, so
 		// neither the restaurant nor the platform takes a cut of it).
@@ -1447,7 +1555,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 		ServiceFeeKobo: serviceFeeKobo,
 	}
 	if riderID == nil {
-		split.ProviderPct = splitProviderPctNoRider
+		split.ProviderPct = cs.ProviderPctNoRider()
 		split.RiderPct = 0
 		// No rider ⇒ no payee for the tip (Split.Validate rejects a tip without a
 		// rider). Unreachable via the live flow — ConfirmHandoff is the only path to
@@ -1532,7 +1640,8 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	if status == string(OrderCancelled) {
 		return tx.Commit(ctx) // already cancelled — idempotent no-op
 	}
-	if status == string(OrderPickedUp) || status == string(OrderDelivered) {
+	if status == string(OrderPickedUp) || status == string(OrderDelivered) ||
+		status == string(OrderServed) || status == string(OrderClosed) {
 		return errors.New("restaurant: cannot cancel an order that is already picked up or delivered")
 	}
 	// Give any promo redemption back: the order is refunded in full, so the code was
@@ -1778,6 +1887,11 @@ var (
 	// ErrForbidden — the caller is not a party to this order (or not the party allowed
 	// to make this specific transition). Object-level authZ failure.
 	ErrForbidden = errors.New("restaurant: forbidden")
+
+	// ErrOrderTransitionConflict — the order's status changed under us (a concurrent
+	// cancel/refund/transition won the race), so the compare-and-set status UPDATE
+	// matched no row. Handlers map it to 409 Conflict; the caller should re-read.
+	ErrOrderTransitionConflict = errors.New("restaurant: order status changed concurrently")
 	// ErrDeliveredViaHandoff — `delivered` cannot be set through the generic status
 	// endpoint; the assigned rider must use ConfirmHandoff, which enforces the
 	// delivery-code proof-of-delivery. This closes the POD-bypass hole.
@@ -2043,8 +2157,12 @@ func (s *Service) MarkDeliveryFailed(ctx context.Context, orderID, riderID, reas
 	if !canTransition(OrderStatus(status), OrderDeliveryFailed) {
 		return fmt.Errorf("restaurant: cannot report failed delivery from %s", status)
 	}
-	if _, err := s.db.Exec(ctx, `UPDATE orders SET status='delivery_failed', status_reason=$2 WHERE id=$1`, orderID, reason); err != nil {
+	tag, err := s.db.Exec(ctx, `UPDATE orders SET status='delivery_failed', status_reason=$2 WHERE id=$1 AND status=$3`, orderID, reason, status)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrOrderTransitionConflict
 	}
 	s.recordOrderEvent(ctx, orderID, riderID, OrderStatus(status), OrderDeliveryFailed)
 	if customer != "" {

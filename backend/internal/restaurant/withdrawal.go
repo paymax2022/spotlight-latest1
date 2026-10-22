@@ -181,14 +181,25 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 
 	// Owner-scope the destination account: a merchant may only withdraw to their
 	// OWN saved bank account (owner-scoping / prevents cross-tenant payout).
-	var ok bool
+	var acctVerified bool
 	if err := s.db.QueryRow(ctx,
-		`SELECT true FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`,
-		in.BankAccountID, ownerID).Scan(&ok); err != nil {
+		`SELECT is_verified FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`,
+		in.BankAccountID, ownerID).Scan(&acctVerified); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrWithdrawNoBankAccount
 		}
 		return nil, fmt.Errorf("restaurant: withdrawal resolve bank account: %w", err)
+	}
+	// FOOD-UAT-B-003: only a name-enquiry-verified destination may receive money.
+	if !acctVerified {
+		return nil, ErrBankAccountUnverified
+	}
+
+	// KYB gate (FOOD-UAT-F-004, fail-closed): a merchant whose business
+	// verification is not currently approved (never approved, or revoked later)
+	// cannot move wallet money out. Mirrors the store-open gate in SetAvailability.
+	if err := s.assertOwnerKYBApproved(ctx, s.db, ownerID); err != nil {
+		return nil, err
 	}
 
 	// Tier guard (fail-closed): Tier 0 wallet disabled → blocked; over daily cap → blocked.
@@ -230,6 +241,12 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 		_ = tx.Rollback(ctx)
 		existing.AlreadyProcessed = true
 		return existing, nil
+	}
+
+	// KYB re-check INSIDE the tx (FOOD-UAT-F-004): closes the window in which an
+	// admin revokes KYB between the pooled gate above and the reserve posting.
+	if err := s.assertOwnerKYBApproved(ctx, tx, ownerID); err != nil {
+		return nil, err
 	}
 
 	// Daily-cap re-check INSIDE the tx, under the wallet lock (F7): the pooled
@@ -335,6 +352,26 @@ func (s *Service) disburse(ctx context.Context, req WithdrawalDisburseRequest) (
 	return d.Disburse(ctx, req)
 }
 
+// kybQuerier is satisfied by both the pool and a pgx.Tx.
+type kybQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// assertOwnerKYBApproved fails closed with ErrKYBNotApproved unless the owner has
+// at least one restaurant whose kyb_status is currently 'approved'.
+func (s *Service) assertOwnerKYBApproved(ctx context.Context, q kybQuerier, ownerID string) error {
+	var ok bool
+	if err := q.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM restaurants WHERE owner_id=$1 AND kyb_status=$2)`,
+		ownerID, string(KYBApproved)).Scan(&ok); err != nil {
+		return fmt.Errorf("restaurant: withdrawal kyb check: %w", err)
+	}
+	if !ok {
+		return ErrKYBNotApproved
+	}
+	return nil
+}
+
 // MarkWithdrawalPaid settles a reserved withdrawal after the provider confirms
 // the payout landed. It posts the balanced settle leg (DR suspense → CR
 // provider_clearing — the money has left the platform; the wallet is NOT touched
@@ -373,6 +410,13 @@ func (s *Service) MarkWithdrawalPaid(ctx context.Context, withdrawalID, provider
 	}
 	if w.Status != WithdrawalStatusProcessing && w.Status != WithdrawalStatusPending {
 		return nil, ErrWithdrawNotReady // e.g. already reversed — cannot pay
+	}
+	// KYB re-check at settlement (FOOD-UAT-F-004): KYB may have been revoked between
+	// request and processing. Refuse BEFORE any ledger post; the row stays
+	// processing with funds still parked in suspense, so ops can mark it failed
+	// (reversal back to the merchant wallet) or re-run once KYB is reinstated.
+	if err := s.assertOwnerKYBApproved(ctx, tx, w.UserID); err != nil {
+		return nil, err
 	}
 
 	// Balanced settle leg (DR suspense → CR provider_clearing). Posted under the row
@@ -690,6 +734,43 @@ type AddBankAccountRequest struct {
 	BankCode      string `json:"bank_code" binding:"required"`
 	AccountNumber string `json:"account_number" binding:"required"`
 	AccountName   string `json:"account_name" binding:"required"`
+	// PIN is the caller's transaction PIN (step-up, FOOD-UAT-B-002). Required by AddBankAccount;
+	// ignored by the read-only account verification route.
+	PIN string `json:"pin,omitempty"`
+}
+
+// EventBankAccountAdded notifies the owner that a payout destination was saved.
+const EventBankAccountAdded = "restaurant.bank_account.added"
+
+var (
+	// ErrBankAccountUnverified: the chosen payout account never passed name-enquiry
+	// verification (is_verified=false). HTTP 400.
+	ErrBankAccountUnverified = errors.New("restaurant: bank account is not verified; remove it and re-add once the bank name-enquiry succeeds")
+	// ErrStepUpRequired: no transaction PIN supplied. HTTP 400.
+	ErrStepUpRequired = errors.New("restaurant: transaction PIN is required to add a payout bank account")
+	// ErrStepUpFailed: the PIN was wrong / not set / locked. HTTP 403.
+	ErrStepUpFailed = errors.New("restaurant: transaction PIN verification failed")
+	// ErrStepUpUnavailable: no verifier wired — fail closed. HTTP 503.
+	ErrStepUpUnavailable = errors.New("restaurant: step-up verification is unavailable")
+)
+
+// WithStepUp wires the transaction-PIN verifier (transfers.Service.VerifyPin).
+func (s *Service) WithStepUp(fn func(ctx context.Context, userID, pin string) error) *Service {
+	s.stepUp = fn
+	return s
+}
+
+func (s *Service) requireStepUp(ctx context.Context, userID, pin string) error {
+	if s.stepUp == nil {
+		return ErrStepUpUnavailable
+	}
+	if strings.TrimSpace(pin) == "" {
+		return ErrStepUpRequired
+	}
+	if err := s.stepUp(ctx, userID, pin); err != nil {
+		return fmt.Errorf("%w: %v", ErrStepUpFailed, err)
+	}
+	return nil
 }
 
 func maskAccountNumber(n string) string {
@@ -725,6 +806,12 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 	acct := strings.TrimSpace(req.AccountNumber)
 	if len(acct) != 10 || !isAllDigits(acct) {
 		return nil, errors.New("restaurant: account_number must be 10 digits")
+	}
+	// FOOD-UAT-B-002: step-up BEFORE any write — saving a payout destination is a
+	// takeover vector (an attacker with a stolen session redirects the merchant's
+	// money), so it needs the transaction PIN, fail-closed.
+	if err := s.requireStepUp(ctx, ownerID, req.PIN); err != nil {
+		return nil, err
 	}
 	bankCode := strings.TrimSpace(req.BankCode)
 	bankName := strings.TrimSpace(req.BankName)
@@ -769,6 +856,20 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 		return nil, err
 	}
 	b.AccountNumberMasked = maskAccountNumber(num)
+	// Durable audit + owner confirmation (FOOD-UAT-B-002). Both are best-effort and
+	// never gate the add; the confirmation lets the owner spot an account they did not add.
+	if s.audit != nil {
+		s.audit.LogAction(ownerID, "", "restaurant.bank_account.added", "restaurant", "restaurant_bank_account", b.ID,
+			nil,
+			map[string]any{"bank_code": b.BankCode, "account_number_masked": b.AccountNumberMasked, "is_verified": b.IsVerified, "is_default": b.IsDefault},
+			"", "", "warning")
+	}
+	s.notify(ctx, Notification{
+		UserID: ownerID, Event: EventBankAccountAdded,
+		Title: "Payout bank account added",
+		Body:  fmt.Sprintf("%s %s was added for payouts. If this wasn't you, contact support immediately.", b.BankName, b.AccountNumberMasked),
+		Data:  map[string]any{"bank_account_id": b.ID},
+	})
 	return &b, nil
 }
 

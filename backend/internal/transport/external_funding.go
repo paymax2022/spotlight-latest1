@@ -80,6 +80,22 @@ func (s *Service) SetDomainExternalRefunder(domain string, r ExternalRefunder) {
 	s.domainRefunders[domain] = r
 }
 
+// ExternalPieceRefunder is OPTIONAL on a domain's ExternalRefunder: it refunds
+// part of a card charge that is NOT a settlement — a parcel's prepaid insurance
+// premium, held in ledger.AccountInsurancePremiumHold — back to the card.
+// Gateway half only: pieceKey names the piece (it must start with "piece:"),
+// the call is idempotent on it (a piece already refunded returns nil without a
+// gateway call), and nil means the gateway holds the refund. The caller then
+// posts its own ledger leg, so the order is always gateway first, ledger second.
+type ExternalPieceRefunder interface {
+	RefundExternalPiece(ctx context.Context, entityID, pieceKey string, amountKobo int64) error
+}
+
+// ParcelInsurancePieceKey is the ONE piece key a card-paid parcel premium is
+// refunded under, whichever path refunds it (bind failed, cancel before or
+// after the bind, reconciler): the gateway can never refund it twice.
+const ParcelInsurancePieceKey = "piece:parcel_insurance_premium"
+
 // settlementFundedExternally reports whether settlementID was funded by an
 // external rail (EscrowExternal). Any lookup failure is returned, never
 // guessed: callers must not pick a refund rail on a guess.

@@ -297,6 +297,17 @@ type Config struct {
 	FeatureVoteBridgeEnabled     bool
 	FeatureTransportEnabled      bool
 	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
+	// FeatureParcelRateCardEnabled prices parcels from transport_parcel_rate_card
+	// (size × speed multiplier + minimum fare per cell). Off = legacy multipliers.
+	FeatureParcelRateCardEnabled bool
+	// ParcelInsuranceMinPremiumKobo floors the indicative Goods-in-Transit
+	// premium on the parcel estimate (PARCEL_INSURANCE_MIN_PREMIUM_KOBO, default
+	// 200000 = ₦2,000, the minimum MyCover bound on a live quote). Display only.
+	ParcelInsuranceMinPremiumKobo int
+	// FeatureParcelPrepaidInsuranceEnabled (FEATURE_PARCEL_PREPAID_INSURANCE):
+	// parcel insurance is an opt-in tick paid at booking with the fare and held
+	// until the policy binds. Off = legacy (bound and debited at courier accept).
+	FeatureParcelPrepaidInsuranceEnabled bool
 	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) ride-hailing checkout path
 	// (transport/paystackcheckout): a ride paid directly via Paystack, escrowed
@@ -780,6 +791,11 @@ type Config struct {
 	// unless MocksAllowed(); see otp_routes.go for why it can never reach staging/prod.
 	BrevoEndpoint string
 
+	// FeatureTestOTPDeterministicEnabled turns on the dev-only deterministic OTP
+	// (code 123456 for +234999* phones, no SMS sent). Honoured ONLY where
+	// MocksAllowed(); otherwise refused. See internal/otp/test_mode.go.
+	FeatureTestOTPDeterministicEnabled bool
+
 	// OTPPepper is the server-side HMAC key for code and identifier hashing.
 	// REQUIRED whenever the feature is on: otp.NewService refuses to construct
 	// without it, and the routes then answer 503 misconfigured rather than
@@ -984,6 +1000,9 @@ func Load() Config {
 		FeatureVoteBridgeEnabled:                     getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
+		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
+		FeatureParcelPrepaidInsuranceEnabled:         getEnvBool("FEATURE_PARCEL_PREPAID_INSURANCE", false),
+		ParcelInsuranceMinPremiumKobo:                getEnvInt("PARCEL_INSURANCE_MIN_PREMIUM_KOBO", 200000),
 		FeatureTransportPaystackCheckoutEnabled:      getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureTransportPaystackParcelEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_PARCEL_ENABLED", false),
 		FeatureTransportPaystackTowingEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_TOWING_ENABLED", false),
@@ -1164,14 +1183,15 @@ func Load() Config {
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
 		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
 
-		FeatureOTPEmailEnabled:    getEnvBool("FEATURE_OTP_EMAIL_ENABLED", false),
-		FeatureOTPLoginMFAEnabled: getEnvBool("FEATURE_OTP_LOGIN_MFA_ENABLED", false),
-		BrevoAPIKey:               getEnv("BREVO_API_KEY", ""),
-		BrevoSenderName:           getEnv("BREVO_SENDER_NAME", "Spotlight"),
-		BrevoSenderEmail:          getEnv("BREVO_SENDER_EMAIL", ""),
-		BrevoOTPTemplateID:        int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
-		BrevoTimeoutSeconds:       getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
-		BrevoEndpoint:             getEnv("BREVO_ENDPOINT", ""),
+		FeatureOTPEmailEnabled:             getEnvBool("FEATURE_OTP_EMAIL_ENABLED", false),
+		FeatureOTPLoginMFAEnabled:          getEnvBool("FEATURE_OTP_LOGIN_MFA_ENABLED", false),
+		BrevoAPIKey:                        getEnv("BREVO_API_KEY", ""),
+		BrevoSenderName:                    getEnv("BREVO_SENDER_NAME", "Spotlight"),
+		BrevoSenderEmail:                   getEnv("BREVO_SENDER_EMAIL", ""),
+		BrevoOTPTemplateID:                 int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
+		BrevoTimeoutSeconds:                getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
+		BrevoEndpoint:                      getEnv("BREVO_ENDPOINT", ""),
+		FeatureTestOTPDeterministicEnabled: getEnvBool("FEATURE_TEST_OTP_DETERMINISTIC_ENABLED", false),
 
 		OTPPepper:                getEnv("OTP_PEPPER", ""),
 		OTPLength:                getEnvInt("OTP_LENGTH", 6),

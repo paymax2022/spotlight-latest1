@@ -57,6 +57,7 @@ export default function RestaurantDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const [profile, setProfile] = useState<UpdateRestaurantRequest>({});
+  const [traceOrderId, setTraceOrderId] = useState('');
   const [newCategory, setNewCategory] = useState('');
   const [newItem, setNewItem] = useState<{ categoryId: string; name: string; price: string }>({
     categoryId: '', name: '', price: '',
@@ -179,6 +180,25 @@ export default function RestaurantDetailPage() {
           Force-closing is the operator override for a store taking orders it cannot fulfil. The
           merchant can reopen from their own app unless you also suspend them.
         </p>
+      </Card>
+
+      {/* ── Order trace lookup (FOOD-UAT-G-006) ─────────────────────────── */}
+      <Card title="Order trace" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <Input
+            value={traceOrderId}
+            onChange={(e) => setTraceOrderId(e.target.value)}
+            placeholder="Order ID (uuid)"
+            aria-label="Order ID"
+          />
+          <Button
+            variant="outline"
+            disabled={!traceOrderId.trim()}
+            onClick={() => router.push(`/admin/restaurant/orders/${encodeURIComponent(traceOrderId.trim())}/trace`)}
+          >
+            View trace
+          </Button>
+        </div>
       </Card>
 
       {/* ── Profile ──────────────────────────────────────────────────────── */}

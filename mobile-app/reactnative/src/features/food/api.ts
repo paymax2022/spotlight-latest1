@@ -13,6 +13,8 @@ import type {
   ChatMessage,
   RiderOffer,
   PlaceOrderRequest,
+  OrderQuote,
+  PromoPreview,
   RateOrderRequest,
   LatLng,
 } from './types';
@@ -256,6 +258,19 @@ export async function listOrders(role: OrderRole): Promise<Order[]> {
 }
 
 /** Place an order — money mutation → Idempotency-Key. Totals come from server. */
+/** Wire shape of one order line. `modifier_ids` only when modifiers were chosen. */
+const wireItem = (i: PlaceOrderRequest['items'][number]) => ({
+  item_id: i.itemId,
+  qty: i.qty,
+  restaurant_id: i.restaurantId, // multi-restaurant support
+  ...(i.modifierIds && i.modifierIds.length > 0 ? { modifier_ids: i.modifierIds } : {}),
+});
+const wirePackItem = (i: { itemId: string; qty: number; modifierIds?: string[] }) => ({
+  item_id: i.itemId,
+  qty: i.qty,
+  ...(i.modifierIds && i.modifierIds.length > 0 ? { modifier_ids: i.modifierIds } : {}),
+});
+
 export async function placeOrder(req: PlaceOrderRequest): Promise<Order> {
   if (USE_MOCK) {
     await delay(900);
@@ -284,16 +299,20 @@ export async function placeOrder(req: PlaceOrderRequest): Promise<Order> {
       await api.post(
         `${BASE}/${encodeURIComponent(req.restaurantId)}/orders`,
         {
-          items: req.items.map((i) => ({
-            item_id: i.itemId,
-            qty: i.qty,
-            restaurant_id: i.restaurantId, // multi-restaurant support
-          })),
+          items: req.items.map(wireItem),
           // Takeaway packaging is billed per physical package (the container).
           package_count: req.packageCount,
-          packages: req.packages?.map((p) => ({ items: p.items.map((i) => ({ item_id: i.itemId, qty: i.qty })) })),
+          packages: req.packages?.map((p) => ({ items: p.items.map(wirePackItem) })),
           delivery_address: req.deliveryAddress,
           delivery_location: req.deliveryLocation,
+          // FOOD-UAT-C-007 / C-011: the quote the pay-sheet total came from and the
+          // promo the buyer saw applied. Optional; the server re-prices.
+          quote_id: req.quoteId,
+          promo_code: req.promoCode,
+          // FOOD-UAT-D-007: omitted for delivery so legacy requests are byte-identical.
+          ...(req.orderType && req.orderType !== 'delivery' ? { order_type: req.orderType } : {}),
+          ...(req.scheduledFor ? { scheduled_for: req.scheduledFor } : {}),
+          ...(req.tableNumber ? { table_number: req.tableNumber } : {}),
         },
         idemHeader(req.idempotencyKey),
       ),
@@ -340,15 +359,13 @@ export async function initiateFoodOrderPaystack(
     await api.post(
       `${BASE}/${encodeURIComponent(req.restaurantId)}/orders/paystack/initiate`,
       {
-        items: req.items.map((i) => ({
-          item_id: i.itemId,
-          qty: i.qty,
-          restaurant_id: i.restaurantId, // multi-restaurant support
-        })),
+        items: req.items.map(wireItem),
         package_count: req.packageCount,
-        packages: req.packages?.map((p) => ({ items: p.items.map((i) => ({ item_id: i.itemId, qty: i.qty })) })),
+        packages: req.packages?.map((p) => ({ items: p.items.map(wirePackItem) })),
         delivery_address: req.deliveryAddress,
         delivery_location: req.deliveryLocation,
+        quote_id: req.quoteId,
+        promo_code: req.promoCode,
         email: req.email,
         callback_url: req.callbackUrl,
       },
@@ -488,24 +505,35 @@ export async function sendMessage(
 }
 
 // RIDER endpoints
+interface RiderOfferCardWire {
+  order_id: string;
+  restaurant_name: string;
+  restaurant_location?: LatLng | null;
+  delivery_address: string;
+  delivery_location?: LatLng | null;
+  payout_kobo: number;
+  distance_meters?: number;
+  item_count: number;
+}
+interface RiderOffersEnvelope {
+  offers: unknown[] | null;
+  cards: RiderOfferCardWire[] | null;
+}
+interface RiderActiveEnvelope {
+  deliveries: unknown[] | null;
+}
 export async function getRiderOffers(): Promise<RiderOffer[]> {
   if (USE_MOCK) {
     await delay(300);
     return mockRiderOffers();
   }
-  const raw = unwrap<
-    {
-      order_id: string;
-      restaurant_name: string;
-      restaurant_location?: LatLng | null;
-      delivery_address: string;
-      delivery_location?: LatLng | null;
-      payout_kobo: number;
-      distance_meters?: number;
-      item_count: number;
-    }[]
-  >(await api.get(`${BASE}/rider/offers`));
-  return raw.map((o) => ({
+  // Wire shape: { offers: Order[] | null, cards: RiderOfferCardWire[] | null }.
+  // `cards` carries restaurant name / payout / item count that Order lacks.
+  const env = unwrap<RiderOffersEnvelope | RiderOfferCardWire[] | null>(
+    await api.get(`${BASE}/rider/offers`),
+  );
+  const cards = Array.isArray(env) ? env : (env?.cards ?? []);
+  return cards.map((o) => ({
     orderId: o.order_id,
     restaurantName: o.restaurant_name,
     restaurantLocation: o.restaurant_location ?? null,
@@ -525,8 +553,9 @@ export async function getRiderActive(): Promise<Order | null> {
     );
     return active ? advanceMockOrder(active.id) : null;
   }
-  const data = unwrap<Order | null>(await api.get(`${BASE}/rider/active`));
-  return data ? mapOrder(data) : null;
+  const env = unwrap<RiderActiveEnvelope | null>(await api.get(`${BASE}/rider/active`));
+  const first = env?.deliveries?.[0] ?? null;
+  return first ? mapOrder(first) : null;
 }
 
 export async function assignRider(orderId: string, idempotencyKey: string): Promise<Order> {
@@ -596,7 +625,7 @@ export async function confirmHandoff(orderId: string, code: string): Promise<Ord
   );
 }
 
-export async function postRiderLocation(orderId: string, loc: LatLng): Promise<void> {
+export async function postRiderLocation(orderId: string, loc: LatLng, lastPostedAt?: string): Promise<void> {
   if (USE_MOCK) {
     await delay(120);
     const o = mockStore.orders[orderId];
@@ -606,6 +635,8 @@ export async function postRiderLocation(orderId: string, loc: LatLng): Promise<v
   await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/location`, {
     lat: loc.lat,
     lng: loc.lng,
+    // ISO time of the device GPS fix; lets the server/customer see staleness.
+    last_posted_at: lastPostedAt ?? new Date().toISOString(),
   });
 }
 
@@ -644,3 +675,140 @@ export async function loadCartFromServer(): Promise<SavedCart | null> {
     return null; // fallback to local storage
   }
 }
+
+// ── FOOD-UAT-D-007: pickup / dine-in (merchant + customer helpers) ───────────
+// Appended only; the rider API above is untouched.
+
+/**
+ * Merchant verifies the customer's pickup code at the counter.
+ * POST `${BASE}/orders/:id/pickup` { code } — the same route the rider uses.
+ * BACKEND GAP: the Go ConfirmPickup (dispatch.go) still requires the caller to be
+ * the assigned rider, so for pickup_* orders this is refused until the service
+ * accepts the restaurant owner for non-delivery order types. Lockout (429) from
+ * VerifyOrderCode surfaces as a thrown error.
+ */
+export async function confirmPickupAsMerchant(orderId: string, code: string): Promise<Order> {
+  if (USE_MOCK) {
+    await delay(420);
+    return mockConfirmPickup(orderId, code);
+  }
+  return mapOrder(
+    unwrap<Order>(await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/pickup`, { code })),
+  );
+}
+
+/**
+ * Restaurant assigns/changes a dine-in table. PATCH `${BASE}/:rid/orders/:id/table`.
+ * BACKEND GAP: no such route in W6-B (table_number is set only at placement).
+ */
+export async function assignTable(restaurantId: string, orderId: string, tableNumber: string): Promise<Order> {
+  const table = tableNumber.trim();
+  if (!table) throw new Error('Enter a table number.');
+  if (USE_MOCK) {
+    await delay(300);
+    return { ...(await getOrder(orderId)), tableNumber: table };
+  }
+  return mapOrder(
+    unwrap<Order>(
+      await api.patch(
+        `${BASE}/${encodeURIComponent(restaurantId)}/orders/${encodeURIComponent(orderId)}/table`,
+        { table_number: table },
+      ),
+    ),
+  );
+}
+
+/** Dine-in: preparing -> served (existing status route; backend FSM allows it). */
+export function markServed(restaurantId: string, orderId: string): Promise<Order> {
+  return setOrderStatus(restaurantId, orderId, 'served');
+}
+
+/** Dine-in: served -> closed (existing status route; backend FSM allows it). */
+export function markClosed(restaurantId: string, orderId: string): Promise<Order> {
+  return setOrderStatus(restaurantId, orderId, 'closed');
+}
+
+/**
+ * Customer signals "I'm here" for a pickup order. POST `${BASE}/orders/:id/arrived`.
+ * BACKEND GAP: route not present in W6-B; the screen degrades to a local
+ * acknowledgement + chat nudge when this 404s (see pickup-code.tsx).
+ */
+export async function signalArrival(orderId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(300);
+    return;
+  }
+  await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/arrived`, {});
+}
+
+// ---------------------------------------------------------------------------
+// FOOD-UAT-C-007 / C-011: server-authoritative price quote + promo preview.
+// Both take the cart shape PlaceOrder takes (snake_case wire) and are read-only
+// on money: nothing is charged or reserved.
+// ---------------------------------------------------------------------------
+
+export interface PricingCartInput {
+  restaurantId: string;
+  items: PlaceOrderRequest['items'];
+  packageCount?: number;
+  deliveryAddress?: string;
+  deliveryLocation?: LatLng | null;
+  promoCode?: string;
+}
+
+const pricingBody = (c: PricingCartInput) => ({
+  restaurant_id: c.restaurantId,
+  items: c.items.map(wireItem),
+  package_count: c.packageCount,
+  delivery_address: c.deliveryAddress ?? '',
+  delivery_lat: c.deliveryLocation?.lat,
+  delivery_lng: c.deliveryLocation?.lng,
+  promo_code: c.promoCode?.trim() || undefined,
+});
+
+const int = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : 0);
+
+/** POST `${BASE}/orders/quote` — exact breakdown PlaceOrder would charge + a 15-min quote_id. */
+export async function quoteOrder(c: PricingCartInput): Promise<OrderQuote> {
+  if (USE_MOCK) {
+    await delay(200);
+    return {
+      subtotalKobo: 0, serviceFeeKobo: 0, deliveryFeeKobo: 0, surgeBp: 0, surgeKobo: 0,
+      packagingKobo: 0, promoDiscountKobo: 0, tipKobo: 0, totalKobo: 0,
+      quoteId: `mock-quote-${Date.now()}`, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    };
+  }
+  const r = unwrap<Record<string, unknown>>(await api.post(`${BASE}/orders/quote`, pricingBody(c)));
+  return {
+    subtotalKobo: int(r.subtotal_kobo),
+    serviceFeeKobo: int(r.service_fee_kobo),
+    deliveryFeeKobo: int(r.delivery_fee_kobo),
+    surgeBp: int(r.surge_bp),
+    surgeKobo: int(r.surge_kobo),
+    packagingKobo: int(r.packaging_kobo),
+    promoDiscountKobo: int(r.promo_discount_kobo),
+    promoRejection: typeof r.promo_rejection === 'string' && r.promo_rejection ? r.promo_rejection : undefined,
+    tipKobo: int(r.tip_kobo),
+    totalKobo: int(r.total_kobo),
+    quoteId: String(r.quote_id ?? ''),
+    expiresAt: String(r.expires_at ?? ''),
+  };
+}
+
+/** POST `${BASE}/orders/preview-promo` — a rejected code is `valid:false`, not an error. */
+export async function previewPromo(c: PricingCartInput): Promise<PromoPreview> {
+  if (USE_MOCK) {
+    await delay(150);
+    return { valid: false, reason: 'invalid', discountKobo: 0, effectiveTotalKobo: 0 };
+  }
+  const r = unwrap<Record<string, unknown>>(await api.post(`${BASE}/orders/preview-promo`, pricingBody(c)));
+  return {
+    valid: r.valid === true,
+    reason: typeof r.reason === 'string' && r.reason ? r.reason : undefined,
+    discountKobo: int(r.discount_kobo),
+    effectiveTotalKobo: int(r.effective_total_kobo),
+  };
+}
+
+/** Quotes and promo previews need the live backend; the mock has no price catalogue. */
+export const FOOD_QUOTE_ENABLED = !USE_MOCK;

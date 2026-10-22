@@ -14,7 +14,9 @@ import { useCartStore, cartItemCount, cartSubtotalKobo, MAX_SAME_FOOD_PER_PACKAG
 import { packsForRestaurant } from '@/features/food/packScope';
 import { formatNaira, formatNairaWhole } from '@/features/food/utils';
 import { DynamicIcon } from '@/features/food/components';
-import type { MenuItem } from '@/features/food/types';
+import type { MenuItem, CartModifier } from '@/features/food/types';
+import ModifierSheet from '@/features/food/components/ModifierSheet';
+import { lineKeyOf } from '@/features/food/modifiers';
 import { readyInLabel } from '@/features/food/prepLabel';
 import { DishNutritionBlock } from '@/features/nutrition';
 import { HomeMenuButton } from '@/components/HomeMenu';
@@ -144,14 +146,21 @@ export default function RestaurantDetailScreen() {
   }, [overflowNote]);
 
   // Menu quantity reflects the ACTIVE pack (the same food can sit in several packs).
-  const qtyFor = (itemId: string) => activePkg?.lines.find((l) => l.itemId === itemId)?.qty ?? 0;
+  const qtyFor = (itemId: string) => activePkg?.lines.filter((l) => l.itemId === itemId).reduce((n, l) => n + l.qty, 0) ?? 0;
 
-  const onAddItem = (item: MenuItem) => {
+  // FOOD-UAT-C-005: an item with modifier groups opens the option sheet first;
+  // a plain item goes straight to the cart as before.
+  const [modifierItem, setModifierItem] = React.useState<MenuItem | null>(null);
+  const onAddItem = (item: MenuItem, modifiers?: CartModifier[]) => {
     if (!restaurant) return;
+    if (!modifiers && item.modifierGroups && item.modifierGroups.length > 0) {
+      setModifierItem(item);
+      return;
+    }
     // Menu adds auto-overflow: when the active pack is full for a regular item (max
     // portions reached, or it already holds a different main), a NEW pack opens with
     // the selected item and becomes active — shopping just continues.
-    const res = addItem(restaurant.id, restaurant.name, item, activeId ?? undefined, { autoOverflow: true });
+    const res = addItem(restaurant.id, restaurant.name, item, activeId ?? undefined, { autoOverflow: true, modifiers });
     if (res.overflowed && res.packageIndex) {
       setOverflowNote(`Pack ${res.packageIndex} started for ${item.name}`);
     }
@@ -264,11 +273,14 @@ export default function RestaurantDetailScreen() {
                       <Text style={s.packEmptyLine}>No food yet — pick from the menu below.</Text>
                     ) : (
                       p.lines.map((l) => (
-                        <View key={l.itemId} style={s.packLine}>
-                          <Text style={s.packLineName} numberOfLines={1}>{l.name}</Text>
+                        <View key={lineKeyOf(l)} style={s.packLine}>
+                          <Text style={s.packLineName} numberOfLines={1}>
+                            {l.name}
+                            {l.modifiers && l.modifiers.length > 0 ? ` (${l.modifiers.map((m) => m.name).join(', ')})` : ''}
+                          </Text>
                           <Text style={s.packLineQty}>×{l.qty}</Text>
                           <Pressable
-                            onPress={() => removeItem(p.id, l.itemId)}
+                            onPress={() => removeItem(p.id, lineKeyOf(l))}
                             hitSlop={8}
                             style={s.packLineRemove}
                             accessibilityLabel={`Remove ${l.name} from pack ${i + 1}`}
@@ -298,6 +310,14 @@ export default function RestaurantDetailScreen() {
               </View>
             ))}
           </ScrollView>
+          <ModifierSheet
+            item={modifierItem}
+            onClose={() => setModifierItem(null)}
+            onConfirm={(item, mods) => {
+              setModifierItem(null);
+              onAddItem(item, mods);
+            }}
+          />
 
           {totalCartCount > 0 ? (
             <Pressable style={[s.cartBar, shadow2]} onPress={() => router.push('/food/checkout')} accessibilityRole="button">

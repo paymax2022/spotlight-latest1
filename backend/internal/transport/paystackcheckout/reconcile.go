@@ -120,6 +120,9 @@ func (e *Engine) Reconcile(ctx context.Context, minAge, maxAge time.Duration) (R
 			return st, err
 		}
 		for _, row := range pending {
+			if isLedgerlessPiece(row.RefundKey) {
+				continue // no settlement: its domain posts the ledger leg (and retries it)
+			}
 			sett, gerr := e.settlement.GetByID(ctx, row.SettlementID)
 			if gerr != nil || (sett.Status != settlement.StatusEscrowed && sett.Status != settlement.StatusDisputed) {
 				continue // finished (or unreadable: next sweep)
@@ -170,7 +173,7 @@ func (e *Engine) retryRefund(ctx context.Context, rec Intent) refundOutcome {
 		if found {
 			return restore("a booking exists for this charge — NOT refunding (needs manual reconciliation)")
 		}
-		if lerr := e.reverseLedger(bctx, rec.Reference, "card_direct_order_failed"); lerr != nil {
+		if lerr := e.unwindUnbooked(bctx, &rec, "card_direct_order_failed"); lerr != nil {
 			return restore("ledger unwind failed: " + lerr.Error())
 		}
 	}

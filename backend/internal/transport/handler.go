@@ -524,6 +524,11 @@ var driverDocTypes = map[string]bool{
 	"lasrra":          true,
 	"psv":             true,
 	"profile_photo":   true,
+	// Parcel courier evidence: the pickup photo and the proof of delivery,
+	// sent as photo_url / proof_url on picked-up / verify-dropoff. Presign
+	// only — these never become driver_documents rows.
+	"parcel_pickup": true,
+	"parcel_proof":  true,
 }
 
 // driverAllowedUploadContentTypes restricts what a presigned PUT may upload

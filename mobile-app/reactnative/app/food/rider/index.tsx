@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Alert, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -16,6 +16,7 @@ import { formatNaira, formatDistance, toFoodError } from '@/features/food/utils'
 import { confirmAsync } from '@/lib/confirm';
 import type { RiderOffer } from '@/features/food/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import { useDriverHome } from '@/features/mobility/hooks/useMobility';
 
 function OfferCard({
   offer,
@@ -91,6 +92,17 @@ export default function RiderOffersScreen() {
   const { data: active } = useRiderActive({ poll: true });
   const accept = useAcceptOffer();
   const decline = useDeclineOffer();
+  // FOOD-UAT-E-005: on-shift toggle. Offers are only dispatched to riders whose driver
+  // status is `online` (the same flag the mobility driver home flips), so the control
+  // lives here where a food rider actually works.
+  const { me: driver, setStatus } = useDriverHome();
+  const onShift = !!driver.data?.online;
+  const toggleShift = (next: boolean) => {
+    setStatus.mutate(
+      { status: next ? 'online' : 'offline' },
+      { onError: (e) => Alert.alert(next ? 'Could not go on shift' : 'Could not go off shift', toFoodError(e).message) },
+    );
+  };
 
   const onAccept = (orderId: string) => {
     accept.mutate(orderId, {
@@ -135,6 +147,21 @@ export default function RiderOffersScreen() {
           </Pressable>
         ) : null}
 
+        <View style={[s.shiftRow, shadow1]}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.shiftTitle}>{onShift ? 'On shift' : 'Off shift'}</Text>
+            <Text style={s.shiftSub}>
+              {onShift ? 'You can receive delivery offers.' : 'Go on shift to start receiving delivery offers.'}
+            </Text>
+          </View>
+          <Switch
+            value={onShift}
+            onValueChange={toggleShift}
+            disabled={setStatus.isPending || driver.isLoading}
+            accessibilityLabel="Toggle on-shift status"
+          />
+        </View>
+
         <Text style={s.sectionTitle}>Available offers</Text>
 
         {isLoading ? (
@@ -178,4 +205,7 @@ const s = StyleSheet.create({
   activeBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.secondary, borderRadius: Radius.lg, padding: Spacing.md, marginBottom: Spacing.lg },
   activeText: { ...Typography.labelMd, color: Colors.white, flex: 1 },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginBottom: Spacing.md },
+  shiftRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.md, marginBottom: Spacing.lg },
+  shiftTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  shiftSub: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
 });

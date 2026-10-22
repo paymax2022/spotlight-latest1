@@ -51,6 +51,11 @@ paths = [
     '''^RAILWAY_CONFIG_TEMPLATE\.md$''',
     '''^REGISTRATION_E2E_TEST_RESULTS\.md$''',
     '''^docs/qa/modules/cashtag\.md$''',
+    '''^docs/qa/food-uat-332/''',   # Phase 5 UAT evidence docs — redacted-token evidence strings
+                                    #   (e.g. "accept/pickup/handoff" at line 76 of
+                                    #   cluster-a-identity-rbac.md) hit generic-api-key on entropy ~3.65;
+                                    #   no actual secrets, all evidence lines reference code paths and
+                                    #   HTTP verbs. Full triage: PR #849 (2026-10-21).
     '''^frontend-web/src/server/voting-bridge/README\.md$''',
     '''^IMPLEMENTATION_CHECKLIST\.md$''', # curl-auth-header hits on "Bearer YOUR_TOKEN" example snippets (entropy 3.12)
     '''^tools/loadtest/integration/write-env\.sh$''',   # emits placeholder Paystack key values into generated local .env files — placeholders, not credentials

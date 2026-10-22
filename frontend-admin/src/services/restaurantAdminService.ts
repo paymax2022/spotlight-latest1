@@ -1028,3 +1028,120 @@ export async function reverseWithdrawal(id: string, reason: string): Promise<Wit
 export function nairaLabel(kobo: number): string {
   return `₦${(((kobo ?? 0) / 100)).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+// ── FOOD-UAT-G-006 / G-007: order trace + GMV / net-revenue / cohort reports ──
+// Read-only. /api/restaurant/admin/orders/:id/trace (restaurant.admin.trace) and
+// /api/restaurant/admin/reports/* (restaurant.admin.reports). Amounts are integer
+// kobo; cohort rates are integer basis points.
+
+export type TraceEventKind = 'order' | 'transition' | 'dispatch' | 'payment' | 'dispute' | 'payout' | 'code_lockout' | 'audit';
+export interface TraceEvent {
+  id: string;
+  kind: TraceEventKind | string;
+  actor_user_id: string | null;
+  at: string;
+  before: unknown;
+  after: unknown;
+  note: string;
+  correlation_id: string;
+}
+
+export async function getOrderTrace(orderId: string): Promise<{ events: TraceEvent[] }> {
+  if (USE_MOCK) throw new Error(`Order trace ${NOT_IN_FIXTURE_MODE}`);
+  const r = await reqAt<{ events?: TraceEvent[] }>(`${adminBase()}/orders/${encodeURIComponent(orderId)}/trace`);
+  return { events: r.events ?? [] };
+}
+
+export interface ReportQuery {
+  from?: string;
+  to?: string;
+  restaurant_id?: string;
+  zone?: string;
+  group_by?: 'day' | 'week' | 'month';
+}
+export interface GMVReport { from: string; to: string; group_by: string; orders: number; total_kobo: number; buckets: { bucket: string; orders: number; gmv_kobo: number }[] }
+export interface NetRevenueReport { from: string; to: string; group_by: string; orders: number; total_kobo: number; buckets: { bucket: string; orders: number; fee_kobo: number }[] }
+export interface CohortReport {
+  from: string; to: string;
+  cohorts: { cohort_month: string; customers: number; repeat_customers: number; repeat_rate_bps: number; retention: { month_offset: number; active_customers: number; rate_bps: number }[] }[];
+}
+
+function reportQs(q: ReportQuery & { kind?: string; format?: string }): string {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v) p.set(k, String(v));
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+
+export async function getGMVReport(q: ReportQuery): Promise<GMVReport> {
+  if (USE_MOCK) throw new Error(`Reports ${NOT_IN_FIXTURE_MODE}`);
+  return reqAt<GMVReport>(`${adminBase()}/reports/gmv${reportQs(q)}`);
+}
+export async function getNetRevenueReport(q: ReportQuery): Promise<NetRevenueReport> {
+  if (USE_MOCK) throw new Error(`Reports ${NOT_IN_FIXTURE_MODE}`);
+  return reqAt<NetRevenueReport>(`${adminBase()}/reports/net-revenue${reportQs(q)}`);
+}
+export async function getCohortReport(q: ReportQuery): Promise<CohortReport> {
+  if (USE_MOCK) throw new Error(`Reports ${NOT_IN_FIXTURE_MODE}`);
+  return reqAt<CohortReport>(`${adminBase()}/reports/cohorts${reportQs(q)}`);
+}
+
+/** Fetches the server-generated CSV and returns it as a Blob for download. */
+export async function exportReportCsv(kind: 'gmv' | 'net-revenue' | 'cohorts', q: ReportQuery): Promise<Blob> {
+  if (USE_MOCK) throw new Error(`Report export ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(`${adminBase()}/reports/export${reportQs({ ...q, kind, format: 'csv' })}`, { headers: authHeaders(), cache: 'no-store' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Export failed (${res.status})`);
+  }
+  return res.blob();
+}
+
+// ── Rider suspend / pause / resume (FOOD-UAT-G-010) ───────────────────────────
+// Drives the transport admin verification endpoint. The rider roster id is
+// drivers.user_id, while PATCH /drivers/:id/verification keys on drivers.id, so
+// the driver row is resolved through the transport driver list first.
+// Suspending (or rejecting) releases the rider's in-flight orders server-side
+// (FOOD-UAT-A-001); "pause" is under_review (no new offers, reversible) and
+// "resume" is approved.
+
+export type RiderVerificationAction = 'suspend' | 'pause' | 'resume';
+export interface RiderDriverRecord {
+  id: string;
+  user_id: string;
+  name: string;
+  vehicle_type?: string;
+  verification_status: string;
+}
+
+const RIDER_ACTION_STATUS: Record<RiderVerificationAction, string> = {
+  suspend: 'suspended',
+  pause: 'under_review',
+  resume: 'approved',
+};
+
+function transportAdminBase(): string {
+  return `${financeBase()}/admin/transport`;
+}
+
+export async function getRiderDriverRecord(riderUserId: string): Promise<RiderDriverRecord> {
+  if (USE_MOCK) throw new Error(`Rider suspension ${NOT_IN_FIXTURE_MODE}`);
+  const body = await reqAt<{ drivers?: RiderDriverRecord[] }>(`${transportAdminBase()}/drivers`);
+  const rec = (body?.drivers ?? []).find((d) => d.user_id === riderUserId);
+  if (!rec) throw new Error('Driver record not found for this rider');
+  return rec;
+}
+
+export async function setRiderVerification(
+  riderUserId: string,
+  action: RiderVerificationAction,
+  reason: string,
+): Promise<{ verification_status: string }> {
+  if (USE_MOCK) throw new Error(`Rider suspension ${NOT_IN_FIXTURE_MODE}`);
+  if (action !== 'resume' && !reason.trim()) throw new Error('A reason is required');
+  const rec = await getRiderDriverRecord(riderUserId);
+  return reqAt<{ verification_status: string }>(`${transportAdminBase()}/drivers/${encodeURIComponent(rec.id)}/verification`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: RIDER_ACTION_STATUS[action], reason: reason.trim() }),
+  });
+}

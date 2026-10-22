@@ -14,7 +14,10 @@ export interface FacilityBooking {
 }
 export interface CreateBookingInput { facilityId: string; startsAt: string; endsAt: string; idempotencyKey: string; }
 
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_FACILITIES_USE_MOCK, true);
+// The /api/v1/estate/facilities handlers are live and query real tables, so this defaults to live:
+// a forgotten flag fails visibly instead of inventing amenities and bookings. Set
+// EXPO_PUBLIC_FACILITIES_USE_MOCK=true to force fixtures locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_FACILITIES_USE_MOCK, false);
 export const FACILITIES_API_BASE = '/api/v1/estate/facilities';
 
 export const KIND_META: Record<FacilityKind, { label: string; icon: string }> = {
@@ -41,10 +44,16 @@ const facilities: Facility[] = [
   { id: 'f3', estateId: 'est_amber_court', name: 'Tennis Court', kind: 'court', capacity: 4, feeKobo: 1_500_000 },
   { id: 'f4', estateId: 'est_amber_court', name: 'Fitness Gym', kind: 'gym', capacity: 20, feeKobo: 0 },
 ];
-let bookings: FacilityBooking[] = [
+const bookings: FacilityBooking[] = [
   { id: 'b1', estateId: 'est_amber_court', facilityId: 'f1', facilityName: 'Amber Clubhouse', residentId: 'res_demo', startsAt: iso(72 * H), endsAt: iso(78 * H), status: 'confirmed', amountKobo: 5_000_000, createdAt: iso(-20 * H) },
 ];
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+
+// createBooking and cancelBooking have live route handlers, so fixture mode refuses loudly
+// instead of reporting a reservation made or cancelled that never reached the database.
+// Mirrors frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a booking change it did not make. Set EXPO_PUBLIC_FACILITIES_USE_MOCK=false to do this against the live backend.`);
 const idem = (k?: string) => ({ headers: { 'Idempotency-Key': k ?? generateIdempotencyKey() } });
 
 export async function listFacilities(): Promise<Facility[]> {
@@ -56,14 +65,10 @@ export async function listMyBookings(): Promise<FacilityBooking[]> {
   const { data } = await api.get<FacilityBooking[]>(`${FACILITIES_API_BASE}/bookings`); return data;
 }
 export async function createBooking(input: CreateBookingInput): Promise<FacilityBooking> {
-  if (USE_MOCK) {
-    await latency(450); const f = facilities.find((x) => x.id === input.facilityId); if (!f) throw new Error('Facility not found');
-    const b: FacilityBooking = { id: `b_${Date.now()}`, estateId: 'est_amber_court', facilityId: f.id, facilityName: f.name, residentId: 'res_demo', startsAt: input.startsAt, endsAt: input.endsAt, status: f.feeKobo > 0 ? 'pending' : 'confirmed', amountKobo: f.feeKobo, createdAt: new Date().toISOString() };
-    bookings = [b, ...bookings]; return { ...b };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Booking a facility');
   const { data } = await api.post<FacilityBooking>(`${FACILITIES_API_BASE}/bookings`, input, idem(input.idempotencyKey)); return data;
 }
 export async function cancelBooking(id: string): Promise<FacilityBooking> {
-  if (USE_MOCK) { await latency(250); const b = bookings.find((x) => x.id === id); if (!b) throw new Error('Not found'); b.status = 'cancelled'; return { ...b }; }
+  if (USE_MOCK) throw notInFixtureMode('Cancelling a booking');
   const { data } = await api.post<FacilityBooking>(`${FACILITIES_API_BASE}/bookings/${id}/cancel`, {}, idem()); return data;
 }

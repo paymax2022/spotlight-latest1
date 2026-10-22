@@ -78,8 +78,22 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 		            AND o.status NOT IN ('delivered','cancelled','rejected','dispatch_failed','delivery_failed')) AS active_load,
 		       (SELECT max(o2.assigned_at) FROM orders o2 WHERE o2.rider_id = d.user_id) AS last_assigned
 		FROM drivers d
-		WHERE d.status = 'online' AND d.verification_status = 'approved'`
-	rows, err := s.db.Query(ctx, q, rlat, rlng)
+		WHERE d.status = 'online' AND d.verification_status = 'approved'
+		  -- FOOD-UAT-E-004: never re-offer to a rider who already declined or let an
+		  -- offer expire for THIS order. Their stale rows would otherwise win the
+		  -- fan-out slots (ON CONFLICT DO NOTHING then drops them), starving fresh riders.
+		  AND NOT EXISTS (SELECT 1 FROM restaurant_delivery_offers pr
+		                   WHERE pr.order_id = $3 AND pr.rider_id = d.user_id
+		                     AND pr.status IN ('declined','expired'))
+		  -- FOOD-UAT-A-013: skip riders whose driving licence has expired (and no
+		  -- current licence is on file). No licence document = legacy row, still eligible.
+		  AND NOT (
+		    EXISTS (SELECT 1 FROM driver_documents dd WHERE dd.driver_id = d.id AND dd.doc_type = 'drivers_licence'
+		              AND dd.status <> 'rejected' AND (dd.status = 'expired' OR dd.expiry_date < CURRENT_DATE))
+		    AND NOT EXISTS (SELECT 1 FROM driver_documents dd2 WHERE dd2.driver_id = d.id AND dd2.doc_type = 'drivers_licence'
+		              AND dd2.status NOT IN ('rejected','expired') AND (dd2.expiry_date IS NULL OR dd2.expiry_date >= CURRENT_DATE))
+		  )`
+	rows, err := s.db.Query(ctx, q, rlat, rlng, orderID)
 	if err != nil {
 		return fmt.Errorf("restaurant: find riders: %w", err)
 	}
@@ -160,16 +174,19 @@ func (s *Service) ConfirmPickup(ctx context.Context, orderID, riderID, code stri
 	if dbCode == nil || *dbCode == "" {
 		return errors.New("restaurant: no pickup code on this order")
 	}
-	if code == "" || code != *dbCode {
-		return errors.New("restaurant: incorrect pickup code")
-	}
-	if _, err := s.db.Exec(ctx, `UPDATE orders SET picked_up_at=COALESCE(picked_up_at, now()) WHERE id=$1`, orderID); err != nil {
+	// FOOD-UAT-E-008: attempt-limited, constant-time verify (429 on lockout).
+	if err := s.VerifyOrderCode(ctx, orderID, CodeKindPickup, code, *dbCode); err != nil {
 		return err
 	}
 	// The pickup-code POD has been verified above, so advance via the internal
 	// transition — the public UpdateStatus forbids `picked_up` to close the
 	// same bypass `delivered` had (a bare status write skipping the code).
+	// FOOD-UAT-E-009: the FSM guard runs BEFORE any column write, so a refused
+	// transition (cancelled / wrong state / lost race) leaves picked_up_at untouched.
 	if err := s.transitionInternal(ctx, orderID, riderID, OrderPickedUp); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE orders SET picked_up_at=COALESCE(picked_up_at, now()) WHERE id=$1`, orderID); err != nil {
 		return err
 	}
 	return nil
@@ -193,18 +210,20 @@ func (s *Service) ConfirmHandoff(ctx context.Context, orderID, riderID, code str
 	if dbCode == nil || *dbCode == "" {
 		return errors.New("restaurant: no delivery code on this order")
 	}
-	if code == "" || code != *dbCode {
-		return errors.New("restaurant: incorrect delivery code")
-	}
-	if _, err := s.db.Exec(ctx,
-		`UPDATE orders SET delivered_at=COALESCE(delivered_at, now()), dispatch_status='delivered' WHERE id=$1`,
-		orderID); err != nil {
+	if err := s.VerifyOrderCode(ctx, orderID, CodeKindDelivery, code, *dbCode); err != nil {
 		return err
 	}
 	// The delivery-code POD has been verified above, so advance to delivered via the
 	// internal transition (the public UpdateStatus forbids `delivered` to close the POD
-	// bypass). This runs the settlement split + notifies.
+	// bypass). This runs the settlement split + notifies. FOOD-UAT-E-009: the FSM guard
+	// runs BEFORE the delivered_at / dispatch_status writes so a refused transition can't
+	// leave an undelivered order stamped delivered.
 	if err := s.transitionInternal(ctx, orderID, riderID, OrderDelivered); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx,
+		`UPDATE orders SET delivered_at=COALESCE(delivered_at, now()), dispatch_status='delivered' WHERE id=$1`,
+		orderID); err != nil {
 		return err
 	}
 	customer, _, _, _ := s.orderParties(ctx, orderID) //nolint:dogsled // tuple unpack; unused positions

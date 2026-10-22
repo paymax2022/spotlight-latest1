@@ -234,6 +234,14 @@ type PayoutStatus struct {
 }
 
 // WebhookEvent is the normalized form of a provider transfer/collection webhook.
+// Normalized WebhookEvent.Type values for dispute/refund events (FOOD-UAT-H-004).
+// Status carries "created" | "resolved" for disputes, "processed" for refunds.
+const (
+	EventTypeChargebackCreated  = "chargeback_created"
+	EventTypeChargebackResolved = "chargeback_resolved"
+	EventTypeRefundProcessed    = "refund_processed"
+)
+
 type WebhookEvent struct {
 	Type        string // "transfer" | "collection" | "bill" | "unknown"
 	ProviderRef string // provider transfer ref (routes to bank_transfers)

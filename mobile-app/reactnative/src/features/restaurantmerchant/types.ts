@@ -37,6 +37,10 @@ export interface MerchantMenuItem {
   priceKobo: Kobo;
   imageUrl?: string | null;
   isAvailable: boolean;
+  /** Optimistic-concurrency token; echo back as expectedVersion on edit (FOOD-UAT-B-006). */
+  version?: number;
+  /** Seller-set per-order cap; undefined = platform default (FOOD-UAT-B-008). */
+  maxQtyPerOrder?: number;
 }
 
 export interface MerchantMenuCategory {
