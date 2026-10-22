@@ -167,6 +167,79 @@ paths:
                         total: { type: string, description: available + locked (decimal string) }
         '401': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
+  /crypto/swaps/deposit-address:
+    get:
+      tags: [Swaps]
+      summary: The caller's deposit address for an asset (provider rail)
+      description: >-
+        Provisions the provider sub-account and address on first use (KYC trade gate applies,
+        fail-closed) and returns the same address afterwards. 202 address_pending while the
+        provider is still generating it; ask again shortly. Deposits credit the provider
+        sub-account directly and post no platform ledger entries (ADR-PR855).
+      operationId: getCryptoDepositAddress
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: asset, in: query, required: true, schema: { type: string, pattern: '^[A-Za-z0-9]{2,10}$' } }
+        - { name: network, in: query, required: false, schema: { type: string, pattern: '^[A-Za-z0-9_-]{0,20}$' } }
+      responses:
+        '200':
+          description: Address
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, deposit_address]
+                properties:
+                  success: { type: boolean }
+                  deposit_address:
+                    type: object
+                    required: [asset, network, address]
+                    properties:
+                      asset: { type: string }
+                      network: { type: string }
+                      address: { type: string }
+                      tag: { type: string, description: Memo/destination tag some networks require }
+        '202': { description: 'Address is being generated (error: address_pending)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /crypto/swaps/deposits:
+    get:
+      tags: [Swaps]
+      summary: The caller's recorded deposits, newest first (max 50)
+      description: Each row is the provider's state from a re-query, never a webhook payload.
+      operationId: listCryptoDeposits
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Deposits
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, deposits]
+                properties:
+                  success: { type: boolean }
+                  deposits:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, asset, amount, status, confirmations, required_confirmations]
+                      properties:
+                        id: { type: string }
+                        asset: { type: string }
+                        network: { type: string }
+                        amount: { type: string, description: Decimal string }
+                        status: { type: string, enum: [pending, accepted, rejected] }
+                        txid: { type: string }
+                        confirmations: { type: integer }
+                        required_confirmations: { type: integer }
+                        created_at: { type: string, format: date-time }
+                        updated_at: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /crypto/swaps/{id}:
     get:
       tags: [Swaps]

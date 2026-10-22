@@ -57,3 +57,7 @@ func IsAmbiguous(err error) bool {
 func IsCanceled(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
+
+// ErrAddressPending means the provider is still generating a deposit address. It is not a
+// failure: ask again shortly (providers generate some addresses asynchronously).
+var ErrAddressPending = errors.New("cryptoprov: deposit address is still being generated")

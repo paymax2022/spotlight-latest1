@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -56,6 +57,8 @@ type ServiceConfig struct {
 	MinQuoteLife time.Duration
 	// Audit records money-relevant actions (nil = none; production wiring sets it).
 	Audit Auditor
+	// Deposits stores deposit addresses and records (nil = deposits unavailable).
+	Deposits DepositStore
 }
 
 // schedule returns the fee schedule a new quote is priced from. The bps and fee are stored on the
@@ -86,6 +89,9 @@ const MaxQuoteKobo int64 = 1_000_000_000_000
 type Service struct {
 	cfg    ServiceConfig
 	inproc keyedGate
+
+	addrMu      sync.Mutex
+	addrCreated map[string]time.Time // last deposit-address create request per user:asset:network
 }
 
 // NewService builds the pipeline.
