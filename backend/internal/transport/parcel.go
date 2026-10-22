@@ -705,7 +705,8 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		       insurance_opted, insurance_paid_kobo, insurance_status,
 		       pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
 		       (SELECT st.status FROM settlements st WHERE st.id = parcels.settlement_id),
-		       EXISTS (SELECT 1 FROM mode_ratings r WHERE r.mode='parcel' AND r.job_id=parcels.id::text AND r.rater_id=parcels.sender_id)
+		       EXISTS (SELECT 1 FROM mode_ratings r WHERE r.mode='parcel' AND r.job_id=parcels.id::text AND r.rater_id=parcels.sender_id),
+		       receiver_notified_at
 		FROM parcels WHERE id=$1`
 	var (
 		pid, senderID, pickup, dropoff, receiver, rphone, category, size, speed, status string
@@ -719,13 +720,14 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		pickupLat, pickupLng, dropoffLat, dropoffLng                                    *float64
 		paymentStatus                                                                   *string
 		rated                                                                           bool
+		receiverNotifiedAt                                                              *time.Time
 	)
 	if err := s.db.QueryRow(ctx, q, id).Scan(
 		&pid, &senderID, &courierID, &pickup, &dropoff, &receiver, &rphone,
 		&category, &size, &speed, &declared, &fare, &insurance, &insurancePolicyID,
 		&status, &pickupPin, &dropoffPin, &photoURL, &proofURL, &distM, &createdAt,
 		&insuranceOpted, &insurancePaid, &insuranceStatus,
-		&pickupLat, &pickupLng, &dropoffLat, &dropoffLng, &paymentStatus, &rated,
+		&pickupLat, &pickupLng, &dropoffLat, &dropoffLng, &paymentStatus, &rated, &receiverNotifiedAt,
 	); err != nil {
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "parcel not found")
 	}
@@ -764,6 +766,13 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 	}
 	// Only the sender may read the PINs (courier verifies, never reads), and
 	// only while the parcel is live: a finished parcel has nothing to unlock.
+	if isSender {
+		// When the receiver was texted the drop-off PIN; null = tell them yourself.
+		out["receiverNotifiedAt"] = nil
+		if receiverNotifiedAt != nil {
+			out["receiverNotifiedAt"] = *receiverNotifiedAt
+		}
+	}
 	if isSender && status != "delivered" && status != "cancelled" && status != "failed" {
 		out["pickupPin"] = pickupPin
 		out["dropoffPin"] = dropoffPin
@@ -1005,6 +1014,9 @@ func (s *Service) MarkParcelPickedUp(ctx context.Context, id, driverUserID, phot
 		return err
 	}
 	s.recordModeEvent(ctx, driverUserID, "parcel.in_transit", "parcel", id, "picked_up", "in_transit", nil)
+	// The receiver must hand the courier the drop-off PIN: text it to them now
+	// (best-effort, at most once, off the request path).
+	s.notifyReceiverAfterPickup(ctx, id)
 	return nil
 }
 

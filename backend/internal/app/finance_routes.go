@@ -2258,6 +2258,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		transportSvc = transportSvc.WithParcelRateCard(cfg.FeatureParcelRateCardEnabled).
 			WithParcelInsuranceMinPremium(int64(cfg.ParcelInsuranceMinPremiumKobo)).
 			WithPrepaidInsurance(cfg.FeatureParcelPrepaidInsuranceEnabled)
+		// Receiver drop-off PIN by SMS. NewTermiiClient is nil without a key; never
+		// hand a nil *TermiiClient to the interface (it would read as configured).
+		if cfg.FeatureParcelReceiverPinSMSEnabled {
+			if termii := integrations.NewTermiiClient(cfg.TermiiAPIKey, cfg.TermiiSenderID); termii != nil {
+				transportSvc = transportSvc.WithReceiverPinSMS(termii)
+			} else {
+				log.Println("[transport] FEATURE_PARCEL_RECEIVER_PIN_SMS is on but TERMII_API_KEY is unset — receivers will not be texted their drop-off PIN")
+			}
+		}
 		// Bridge transport dispatch/estimation onto the provider-agnostic
 		// MapService (OpenStack/OSRM by default) instead of the ad-hoc maps stub.
 		if mapSvc != nil {
