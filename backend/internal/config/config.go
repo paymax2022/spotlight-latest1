@@ -254,6 +254,19 @@ type Config struct {
 	// FeatureEventsComps (FEATURE_EVENTS_COMPS) exposes comp tickets, attendee CSV export and organiser announcements.
 	FeatureEventsComps   bool
 	FeatureEstateEnabled bool
+	// FeatureEstateMerchantGate (SP-01) enforces that a user holds an approved
+	// estate-management merchant identity before creating an estate. Default off:
+	// CreateEstate keeps its historical behaviour until the gate is ratified.
+	FeatureEstateMerchantGate bool
+	// FeatureEstateGuardGrants (FEATURE_ESTATE_GUARD_GRANTS) makes guard/gate
+	// operations require estate_admin or a live staff grant, and narrows estate
+	// listing to the caller's estates. Default off: any resident keeps gate access
+	// (the previous rule) until grants have been issued (ADR-PR876).
+	FeatureEstateGuardGrants bool
+	// EstateGuardRatePerMin / EstateCodeRatePerMin cap per-user guard admit/lookup
+	// and access-code creation requests (SP-02; estate routes previously unlimitted).
+	EstateGuardRatePerMin int
+	EstateCodeRatePerMin  int
 	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) estate dues path (estate/paystackcheckout): direct
 	// Paystack payment posted DR provider-clearing / CR settlement, never
@@ -304,6 +317,10 @@ type Config struct {
 	FeatureVoteBridgeEnabled         bool
 	FeatureTransportEnabled          bool
 	FeatureTransportModesEnabled     bool // parcel/bus/towing/movers/car-hire expansion
+	// FeatureBankAccountNameMatch: a restaurant payout account is verified only when
+	// the bank holder name matches the owner's KYC-verified name or an approved KYB
+	// legal name; mismatches are held for admin review. Off = name-enquiry only.
+	FeatureBankAccountNameMatch bool
 	// FeatureParcelRateCardEnabled prices parcels from transport_parcel_rate_card
 	// (size × speed multiplier + minimum fare per cell). Off = legacy multipliers.
 	FeatureParcelRateCardEnabled bool
@@ -998,6 +1015,8 @@ func Load() Config {
 		FeatureEventsTeamRoles:                       getEnvBool("FEATURE_EVENTS_TEAM_ROLES", false),
 		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
+		FeatureEstateMerchantGate:                    getEnvBool("FEATURE_ESTATE_MERCHANT_GATE", false),
+		FeatureEstateGuardGrants:                     getEnvBool("FEATURE_ESTATE_GUARD_GRANTS", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:                     getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
@@ -1013,6 +1032,7 @@ func Load() Config {
 		FeatureVoteBridgeEnabled:                     getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
+		FeatureBankAccountNameMatch:                  getEnvBool("FEATURE_BANK_ACCOUNT_NAME_MATCH", false),
 		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
 		FeatureParcelPrepaidInsuranceEnabled:         getEnvBool("FEATURE_PARCEL_PREPAID_INSURANCE", false),
 		FeatureParcelReceiverPinSMSEnabled:           getEnvBool("FEATURE_PARCEL_RECEIVER_PIN_SMS", false),
@@ -1136,6 +1156,9 @@ func Load() Config {
 		FinanceTransferRatePerMin: getEnvInt("FINANCE_TRANSFER_RATE_PER_MIN", 30),
 		FinancePinRatePerMin:      getEnvInt("FINANCE_PIN_RATE_PER_MIN", 10),
 		MapsBudgetAlertWebhook:    getEnv("MAPS_BUDGET_ALERT_WEBHOOK", ""),
+
+		EstateGuardRatePerMin: getEnvInt("ESTATE_GUARD_RATE_PER_MIN", 30),
+		EstateCodeRatePerMin:  getEnvInt("ESTATE_CODE_RATE_PER_MIN", 10),
 
 		ConnectFreeVoteRatePerMin: getEnvInt("CONNECT_FREE_VOTE_RATE_PER_MIN", 30),
 		ConnectPaidVoteRatePerMin: getEnvInt("CONNECT_PAID_VOTE_RATE_PER_MIN", 10),

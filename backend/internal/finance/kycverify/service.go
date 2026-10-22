@@ -274,6 +274,7 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 	// result to FAILED with a user-facing reason (masked last-4 hint on a
 	// mismatch). Exempt ID types and non-PASS results are untouched. A read error
 	// fails CLOSED (we never let a PASS stand when ownership could not be checked).
+	ownershipProved := false
 	if s.ownershipGate && ct == provider.KycIDNumber &&
 		gr.Result.Status == provider.KycPassed && isPhoneBearingIDType(req.IDType) {
 		phone, verified := "", false
@@ -290,6 +291,7 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 			s.audit(ctx, "kycverify.ownership.blocked", userID, stored.ID,
 				fmt.Sprintf("type=%s id_type=%s", ct, req.IDType))
 		}
+		ownershipProved = gr.Result.Status == provider.KycPassed
 	}
 
 	if err := applyCheckTransition(stored.Status, gr.Result.Status); err != nil {
@@ -301,6 +303,20 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 	stored.Match = gr.Result.Match
 	stored.Confidence = gr.Result.Confidence
 	stored.ExtractedFields = gr.Result.ExtractedFields
+	if ct == provider.KycIDNumber && req.IDType != "" {
+		// Record which ID the name came from (VerifiedLegalName only trusts names
+		// from ownership-checkable ID types).
+		if stored.ExtractedFields == nil {
+			stored.ExtractedFields = map[string]string{}
+		}
+		stored.ExtractedFields[idTypeField] = strings.ToLower(req.IDType)
+		// Written after the provider's fields, so a provider can never set it.
+		if ownershipProved {
+			stored.ExtractedFields[ownershipVerifiedField] = "true"
+		} else {
+			delete(stored.ExtractedFields, ownershipVerifiedField)
+		}
+	}
 	stored.Reason = gr.Result.Reason
 	stored.RawPayloadRef = rawRef
 	if err := s.repo.UpdateCheckResult(ctx, stored); err != nil {

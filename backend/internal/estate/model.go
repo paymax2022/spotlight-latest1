@@ -286,7 +286,37 @@ type AccessCode struct {
 	MaxUses      int       `json:"max_uses"`
 	Status       string    `json:"status"`
 	Blacklisted  bool      `json:"blacklisted"`
-	CreatedAt    time.Time `json:"created_at"`
+	// RequireHostApproval, when true, makes a guard admit contingent on an
+	// approved visitor_arrival_request from the issuing host.
+	RequireHostApproval bool      `json:"require_host_approval"`
+	GateID              string    `json:"gate_id,omitempty"` // optional gate binding
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+// StaffGrant is an expiring, revocable delegated officer capability scoped to one
+// estate (see estate_staff_grants). It is distinct from the estate_residents super
+// role and never carries estate_admin.
+type StaffGrant struct {
+	ID        string     `json:"id"`
+	EstateID  string     `json:"estate_id"`
+	UserID    string     `json:"user_id"`
+	Role      string     `json:"role"`
+	GrantedBy string     `json:"granted_by"`
+	GrantedAt time.Time  `json:"granted_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+}
+
+// GrantRoleRequest is the body for POST /estate/:id/staff-grants.
+type GrantRoleRequest struct {
+	UserID    string `json:"user_id" binding:"required"`
+	Role      string `json:"role" binding:"required"`
+	ExpiresAt string `json:"expires_at"` // RFC3339; empty = no expiry
+}
+
+// DecideArrivalRequest is the body for POST .../arrival-requests/:rid/decision.
+type DecideArrivalRequest struct {
+	Approve bool `json:"approve"`
 }
 
 // Checkin is a gate arrival or checkout event for a visitor.
@@ -302,15 +332,17 @@ type Checkin struct {
 
 // CreateAccessCodeRequest is the body for POST /estate/:id/access-codes.
 type CreateAccessCodeRequest struct {
-	VisitorName  string    `json:"visitor_name" binding:"required,min=2,max=200"`
-	VisitorPhone string    `json:"visitor_phone"`
-	VehiclePlate string    `json:"vehicle_plate"`
-	Purpose      string    `json:"purpose"`
-	CodeType     string    `json:"code_type" binding:"required"`
-	ValidFrom    time.Time `json:"valid_from" binding:"required"`
-	ValidUntil   time.Time `json:"valid_until" binding:"required"`
-	MaxUses      int       `json:"max_uses"`
-	Recurrence   *string   `json:"recurrence"` // raw JSON string
+	VisitorName         string    `json:"visitor_name" binding:"required,min=2,max=200"`
+	VisitorPhone        string    `json:"visitor_phone"`
+	VehiclePlate        string    `json:"vehicle_plate"`
+	Purpose             string    `json:"purpose"`
+	CodeType            string    `json:"code_type" binding:"required"`
+	ValidFrom           time.Time `json:"valid_from" binding:"required"`
+	ValidUntil          time.Time `json:"valid_until" binding:"required"`
+	MaxUses             int       `json:"max_uses"`
+	Recurrence          *string   `json:"recurrence"` // raw JSON string
+	RequireHostApproval bool      `json:"require_host_approval"`
+	GateID              string    `json:"gate_id"` // optional gate binding
 }
 
 // ExtendCodeRequest is the body for POST /estate/:id/access-codes/:cid/extend.

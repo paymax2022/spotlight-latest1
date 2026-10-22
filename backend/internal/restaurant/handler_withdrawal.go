@@ -41,13 +41,53 @@ func (h *Handler) AddBankAccount(c *gin.Context) {
 		switch {
 		case errors.Is(err, ErrStepUpFailed):
 			st = http.StatusForbidden
-		case errors.Is(err, ErrStepUpUnavailable):
+		case errors.Is(err, ErrStepUpUnavailable), errors.Is(err, ErrNameMatchUnavailable):
 			st = http.StatusServiceUnavailable
+		case errors.Is(err, ErrKYCNameRequired):
+			st = http.StatusUnprocessableEntity
+		case errors.Is(err, errNameLookup):
+			st = http.StatusInternalServerError
 		}
 		c.JSON(st, gin.H{keyError: httperr.Msg(c, st, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, b)
+}
+
+// AdminListHeldBankAccounts → GET /api/restaurant/admin/bank-accounts/held
+// Payout accounts whose holder name did not match the owner's verified identity
+// or approved business name, awaiting a decision.
+func (h *Handler) AdminListHeldBankAccounts(c *gin.Context) {
+	list, err := h.svc.AdminListHeldBankAccounts(adminCtx(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// AdminDecideBankAccountName → POST /api/restaurant/admin/bank-accounts/:id/name-match
+// Body {decision: approve|reject, reason}. Approve makes the account verified.
+func (h *Handler) AdminDecideBankAccountName(c *gin.Context) {
+	var body struct {
+		Decision string `json:"decision" binding:"required"`
+		Reason   string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	err := h.svc.AdminDecideBankAccountName(adminCtx(c), ginutil.UserID(c), c.Param("id"), body.Decision, body.Reason)
+	switch {
+	case err == nil:
+		c.JSON(http.StatusOK, gin.H{"success": true})
+	case errors.Is(err, ErrHeldBankAccountNotFound):
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+	case errors.Is(err, ErrNameDecisionReason):
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+	default:
+		c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
+	}
 }
 
 func (h *Handler) ListBankAccounts(c *gin.Context) {
@@ -97,7 +137,7 @@ func (h *Handler) VerifyBankAccount(c *gin.Context) {
 
 func withdrawalErrStatus(err error) int {
 	switch {
-	case errors.Is(err, ErrWithdrawMissingIdem), errors.Is(err, ErrWithdrawBadAmount), errors.Is(err, ErrBankAccountUnverified):
+	case errors.Is(err, ErrWithdrawMissingIdem), errors.Is(err, ErrWithdrawBadAmount), errors.Is(err, ErrBankAccountUnverified), errors.Is(err, ErrBankAccountNameUnchecked):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrWithdrawNoBankAccount), errors.Is(err, ErrWithdrawNotFound):
 		return http.StatusNotFound

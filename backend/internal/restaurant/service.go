@@ -149,6 +149,11 @@ type Service struct {
 	// refund logs for manual reconciliation instead of running incorrectly.
 	externalRefunder ExternalRefunder
 	disbursement     provider.DisbursementProvider // optional; nil ⇒ no account verification on bank-account add
+	// nameMatchOn + verifiedNames: payout-account holder name must match the
+	// owner's verified identity or approved KYB name (WithBankNameMatch).
+	nameMatchOn    bool
+	nameAutoVerify bool
+	verifiedNames  VerifiedNameReader
 	// audit is the durable audit sink order transitions write through
 	// (recordOrderEvent). nil ⇒ transition events stay unwritten — the
 	// transition itself is unaffected either way.

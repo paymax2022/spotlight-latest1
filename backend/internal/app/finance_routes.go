@@ -1208,6 +1208,25 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if mapSvc != nil {
 			estateSvc = estateSvc.WithGeocoder(maps.NewLocationGeocoder(mapSvc))
 		}
+		// SP-01: gate estate creation behind an approved estate-management merchant.
+		// Flag-off (default) preserves historical behaviour: the gate stays nil and
+		// CreateEstate is unchanged. When on, a creator without an ACTIVE
+		// onb_merchant_profile for the estate_management type is refused (fail closed).
+		// Grant-based guard authz (FEATURE_ESTATE_GUARD_GRANTS, default off): off keeps
+		// the previous "any resident" gate rule so existing guards are not locked out.
+		estateSvc = estateSvc.WithGuardGrants(cfg.FeatureEstateGuardGrants)
+		if cfg.FeatureEstateMerchantGate {
+			estateSvc = estateSvc.WithEstateMerchantGate(estate.EstateMerchantGateFunc(func(ctx context.Context, userID string) (bool, error) {
+				var ok bool
+				err := pool.QueryRow(ctx,
+					`SELECT EXISTS (SELECT 1 FROM onb_merchant_profile
+					 WHERE user_id=$1 AND merchant_type_id='estate_management' AND status='ACTIVE')`,
+					userID,
+				).Scan(&ok)
+				return ok, err
+			}))
+			log.Println("[estate] FEATURE_ESTATE_MERCHANT_GATE on: CreateEstate requires an approved estate manager")
+		}
 		// Block 37/43: push delivery. The adapter resolves the recipient's device
 		// push tokens and enqueues via the platform notifications queue (asynq).
 		// In-app feed rows are persisted by the estate service regardless; only
@@ -1262,6 +1281,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estateHandler := estate.NewHandler(estateSvc).
 			WithPresigner(estatePresigner, cfg.R2Bucket)
 		estGroup := finance.Group("/estate")
+
+		// SP-01/SP-02: rate-limit the code-space brute-force surface (guard lookup /
+		// admit) and code creation. Estate routes previously carried no rate limit at
+		// all, including the SOS/guard endpoints (gap-analysis theme 5).
+		estateGuardLimit := middleware.PerUserRateLimit(redisClient, "estate-guard", max(cfg.EstateGuardRatePerMin, 1))
+		estateCodeLimit := middleware.PerUserRateLimit(redisClient, "estate-code", max(cfg.EstateCodeRatePerMin, 1))
 
 		// Presigned uploads (Blocks 25/28/35/39)
 		estGroup.POST("/:id/uploads/presign", estateHandler.PresignUpload)
@@ -1364,23 +1389,32 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Block 28: Guard app
 		estGroup.GET("/:id/gates", estateHandler.ListGates)
-		estGroup.GET("/:id/guard/expected-visitors", estateHandler.GetExpectedVisitors)
-		estGroup.GET("/:id/guard/lookup", estateHandler.LookupCode)
-		estGroup.POST("/:id/guard/checkin", estateHandler.GuardCheckin)
-		estGroup.POST("/:id/guard/checkout", estateHandler.GuardCheckout)
+		estGroup.GET("/:id/guard/expected-visitors", estateGuardLimit, estateHandler.GetExpectedVisitors)
+		estGroup.GET("/:id/guard/lookup", estateGuardLimit, estateHandler.LookupCode)
+		estGroup.POST("/:id/guard/checkin", estateGuardLimit, estateHandler.GuardCheckin)
+		estGroup.POST("/:id/guard/checkout", estateGuardLimit, estateHandler.GuardCheckout)
+		// SP-02: guard raises a host-approval request for a gated code.
+		estGroup.POST("/:id/guard/arrival-request", estateGuardLimit, estateHandler.RequestArrival)
 		estGroup.POST("/:id/guard/incident", estateHandler.SubmitIncident)
 		estGroup.GET("/:id/guard/incidents", estateHandler.ListIncidents)
 		estGroup.POST("/:id/guard/shift-handover", estateHandler.HandoverShift)
 		estGroup.POST("/:id/guard/sync", estateHandler.SyncOfflineLogs)
 
 		// Block 27: Extended visitor access codes
-		estGroup.POST("/:id/access-codes", estateHandler.CreateAccessCode)
+		estGroup.POST("/:id/access-codes", estateCodeLimit, estateHandler.CreateAccessCode)
 		estGroup.GET("/:id/access-codes", estateHandler.ListAccessCodes)
 		estGroup.GET("/:id/access-codes/:cid", estateHandler.GetAccessCode)
 		estGroup.POST("/:id/access-codes/:cid/revoke", estateHandler.RevokeCode)
 		estGroup.POST("/:id/access-codes/:cid/extend", estateHandler.ExtendCode)
 		estGroup.POST("/:id/access-codes/:cid/blacklist", estateHandler.BlacklistVisitor)
 		estGroup.GET("/:id/access-codes/:cid/history", estateHandler.GetCheckinHistory)
+		// SP-02: the issuing host accepts/declines a pending arrival for their code.
+		estGroup.POST("/:id/arrival-requests/:rid/decision", estateHandler.DecideArrival)
+
+		// SP-01: delegated officer roles (estate_admin manages; guards act on grants).
+		estGroup.GET("/:id/staff-grants", estateHandler.ListGrants)
+		estGroup.POST("/:id/staff-grants", estateHandler.GrantRole)
+		estGroup.DELETE("/:id/staff-grants/:uid/:role", estateHandler.RevokeRole)
 
 		// Block 26: Dashboard
 		estGroup.GET("/:id/dashboard", estateHandler.GetDashboard)
@@ -1641,11 +1675,26 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// until that gap is closed.
 			WithWithdrawals(cfg.FeatureRestaurantWithdrawalsEnabled)
 
-		// Wire the Paystack disbursement provider for real-time bank account
-		// verification on AddBankAccount (soft-fail if provider unavailable).
-		if paystackDisb != nil {
+		// Real-time bank account verification on AddBankAccount (soft-fail if no
+		// provider answers). With FEATURE_BANK_ACCOUNT_NAME_MATCH on, name-enquiry
+		// is Monnify first with Paystack as the fallback (only configured clients —
+		// see nameEnquiryResolver); off, it is Paystack alone, exactly as before.
+		if cfg.FeatureBankAccountNameMatch {
+			if nameEnquiry := newNameEnquiryResolver(monnifyDisb, paystackDisb); nameEnquiry != nil {
+				restaurantSvc = restaurantSvc.WithDisbursementProvider(nameEnquiry)
+			}
+		} else if paystackDisb != nil {
 			restaurantSvc = restaurantSvc.WithDisbursementProvider(paystackDisb)
 		}
+		// Payout-account holder name must match the owner's verified identity
+		// (FEATURE_BANK_ACCOUNT_NAME_MATCH, default off). A match only verifies the
+		// account automatically while the KYC ownership gate is on — without it a
+		// passed BVN/NIN need not be the caller's own — so with the gate off every
+		// new account is held for admin review instead.
+		if cfg.FeatureBankAccountNameMatch && !cfg.FeatureKYCOwnershipGate {
+			log.Println("[restaurant] bank-account name match ON but FEATURE_KYC_OWNERSHIP_GATE off — every new payout account will be held for review")
+		}
+		restaurantSvc = restaurantSvc.WithBankNameMatch(cfg.FeatureBankAccountNameMatch, cfg.FeatureKYCOwnershipGate, kycverify.NewRepository(pool))
 
 		// Backend-owned presigned R2 uploads for KYB documents, attached to the
 		// service so it both mints owner upload URLs and signs stored keys back into
@@ -2004,6 +2053,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Same idempotent DispatchOrder underneath; RBAC is the boundary.
 		restAdmin.POST("/orders/:id/dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminRedispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
+		// Payout accounts held because the holder name did not match (FEATURE_BANK_ACCOUNT_NAME_MATCH).
+		// Mounted only with the flag on: both read name_match_* columns, which a DB
+		// that has not had migration 20271088000000 yet does not have.
+		if cfg.FeatureBankAccountNameMatch {
+			restAdmin.GET("/bank-accounts/held", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListHeldBankAccounts)
+			restAdmin.POST("/bank-accounts/:id/name-match", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideBankAccountName)
+		}
 		// Review moderation (FOOD-UAT-G-003).
 		restAdmin.GET("/reviews", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminListReviews)
 		restAdmin.POST("/reviews/:id/hide", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminHideReview)
@@ -2918,6 +2974,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Wire the Paystack disbursement provider for real-time bank account
 		// verification on CreateBankAccount (soft-fail if provider unavailable).
+		// Doctors get no name matching, so they stay on the provider that pays them.
 		if paystackDisb != nil {
 			doctorSvc = doctorSvc.WithDisbursementProvider(paystackDisb)
 		}
