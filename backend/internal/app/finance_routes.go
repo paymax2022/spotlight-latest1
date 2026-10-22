@@ -1631,11 +1631,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			WithWithdrawals(cfg.FeatureRestaurantWithdrawalsEnabled)
 
 		// Real-time bank account verification on AddBankAccount (soft-fail if no
-		// provider answers).
-		// Bank name-enquiry for payout accounts: Monnify first, Paystack as the
-		// fallback (only configured clients — see nameEnquiryResolver).
-		if nameEnquiry := newNameEnquiryResolver(monnifyDisb, paystackDisb); nameEnquiry != nil {
-			restaurantSvc = restaurantSvc.WithDisbursementProvider(nameEnquiry)
+		// provider answers). With FEATURE_BANK_ACCOUNT_NAME_MATCH on, name-enquiry
+		// is Monnify first with Paystack as the fallback (only configured clients —
+		// see nameEnquiryResolver); off, it is Paystack alone, exactly as before.
+		if cfg.FeatureBankAccountNameMatch {
+			if nameEnquiry := newNameEnquiryResolver(monnifyDisb, paystackDisb); nameEnquiry != nil {
+				restaurantSvc = restaurantSvc.WithDisbursementProvider(nameEnquiry)
+			}
+		} else if paystackDisb != nil {
+			restaurantSvc = restaurantSvc.WithDisbursementProvider(paystackDisb)
 		}
 		// Payout-account holder name must match the owner's verified identity
 		// (FEATURE_BANK_ACCOUNT_NAME_MATCH, default off). A match only verifies the
@@ -2874,9 +2878,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		doctorSvc := doctor.NewService(pool, ledgerSvc, tiersSvc, redisClient).WithRealtime(rtcIssuer, doctorHub)
 
 		// Real-time bank account verification on CreateBankAccount (soft-fail if
-		// no provider answers): Monnify first, Paystack as the fallback.
-		if nameEnquiry := newNameEnquiryResolver(monnifyDisb, paystackDisb); nameEnquiry != nil {
-			doctorSvc = doctorSvc.WithDisbursementProvider(nameEnquiry)
+		// no provider answers). Monnify-first resolution rides the same flag as
+		// restaurant name matching; off, it is Paystack alone, exactly as before.
+		if cfg.FeatureBankAccountNameMatch {
+			if nameEnquiry := newNameEnquiryResolver(monnifyDisb, paystackDisb); nameEnquiry != nil {
+				doctorSvc = doctorSvc.WithDisbursementProvider(nameEnquiry)
+			}
+		} else if paystackDisb != nil {
+			doctorSvc = doctorSvc.WithDisbursementProvider(paystackDisb)
 		}
 
 		// Central Commission & Profit registry: record realized Spotlight profit at the

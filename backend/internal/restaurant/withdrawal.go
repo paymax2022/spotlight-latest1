@@ -183,8 +183,14 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 	// OWN saved bank account (owner-scoping / prevents cross-tenant payout).
 	var acctVerified bool
 	var nameStatus *string
-	if err := s.db.QueryRow(ctx,
-		`SELECT is_verified, name_match_status FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`,
+	// The name_match_* columns are only touched while name matching is on, so with
+	// the flag off this query is the pre-feature one and runs on a schema that has
+	// not had migration 20271088000000 yet (backend can deploy before the DB).
+	acctQuery := `SELECT is_verified, NULL::text FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`
+	if s.nameMatchOn {
+		acctQuery = `SELECT is_verified, name_match_status FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`
+	}
+	if err := s.db.QueryRow(ctx, acctQuery,
 		in.BankAccountID, ownerID).Scan(&acctVerified, &nameStatus); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrWithdrawNoBankAccount
@@ -868,7 +874,16 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM restaurant_bank_accounts WHERE user_id=$1`, ownerID).Scan(&count); err != nil {
 		return nil, err
 	}
-	if _, err := s.db.Exec(ctx, `
+	if !s.nameMatchOn {
+		// Flag off: exactly the pre-feature statement (no name_match_* columns).
+		if _, err := s.db.Exec(ctx, `
+		INSERT INTO restaurant_bank_accounts (user_id, bank_name, bank_code, account_number, account_name, is_verified, is_default)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT (user_id, bank_code, account_number) DO NOTHING`,
+			ownerID, bankName, bankCode, acct, verifiedAccountName, isVerified, count == 0); err != nil {
+			return nil, err
+		}
+	} else if _, err := s.db.Exec(ctx, `
 		INSERT INTO restaurant_bank_accounts (user_id, bank_name, bank_code, account_number, account_name, is_verified, is_default, name_match_status, name_match_score)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (user_id, bank_code, account_number) DO UPDATE SET
@@ -885,7 +900,7 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 	var b BankAccount
 	var num string
 	if err := s.db.QueryRow(ctx, `
-		SELECT id, bank_name, bank_code, account_number, account_name, is_verified, is_default, COALESCE(name_match_status, ''), created_at
+		SELECT id, bank_name, bank_code, account_number, account_name, is_verified, is_default, `+s.nameMatchStatusColumn()+`, created_at
 		FROM restaurant_bank_accounts WHERE user_id=$1 AND bank_code=$2 AND account_number=$3`,
 		ownerID, bankCode, acct).Scan(&b.ID, &b.BankName, &b.BankCode, &num, &b.AccountName, &b.IsVerified, &b.IsDefault, &b.NameMatchStatus, &b.CreatedAt); err != nil {
 		return nil, err
@@ -917,10 +932,20 @@ func (s *Service) AddBankAccount(ctx context.Context, ownerID string, req AddBan
 	return &b, nil
 }
 
+// nameMatchStatusColumn is the select expression for BankAccount.NameMatchStatus:
+// the real column while name matching is on, a constant empty string otherwise,
+// so flag-off reads never reference a column the DB may not have yet.
+func (s *Service) nameMatchStatusColumn() string {
+	if s.nameMatchOn {
+		return `COALESCE(name_match_status, '')`
+	}
+	return `''`
+}
+
 // ListBankAccounts returns the caller's saved accounts (default first), masked.
 func (s *Service) ListBankAccounts(ctx context.Context, ownerID string) ([]BankAccount, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, bank_name, bank_code, account_number, account_name, is_verified, is_default, COALESCE(name_match_status, ''), created_at
+		SELECT id, bank_name, bank_code, account_number, account_name, is_verified, is_default, `+s.nameMatchStatusColumn()+`, created_at
 		FROM restaurant_bank_accounts WHERE user_id=$1 ORDER BY is_default DESC, created_at DESC`, ownerID)
 	if err != nil {
 		return nil, err
