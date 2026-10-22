@@ -16,6 +16,14 @@ services:
       # flag mismatch was leaving /my-rewards unmounted (404/500 on the client).
       # Distinct from FEATURE_REFERRAL_REWARDS_ENABLED (the Direct-Rewards engine).
       FEATURE_REFERRALS_ENABLED: "true"
+      # Publish the Utility Bills module so /api/finance/utilitybills/* mounts and
+      # the registry lists `utilityPayments` at /api/v1/modules/visibility — without
+      # it the mobile services grid hides every utility tile (airtime, data,
+      # electricity, cable-tv, bills). config.go reads FEATURE_UTILITY_BILLS_ENABLED
+      # (default false) and migration 20270320000000 set the module's env_flag to the
+      # same name; the stale FEATURE_UTILITY_PAYMENTS_ENABLED in backend/.env is read
+      # by no Go code. Same flag-mismatch class as FEATURE_REFERRALS_ENABLED above.
+      FEATURE_UTILITY_BILLS_ENABLED: "true"
       # Point at the host-side local Supabase Postgres (supabase start → port 54322).
       # Override in CI/prod with a real DATABASE_URL.
       DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable
