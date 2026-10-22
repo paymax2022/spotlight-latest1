@@ -318,6 +318,29 @@ export interface DepositAddress {
   custodyProvider: string;
 }
 
+/**
+ * A settled money-IN credit as journaled by the backend (GET /crypto/deposits). A row exists
+ * ONLY once the transfer reached its confirmation floor and was credited exactly once, so the
+ * presence of a record IS the "credited" fact the deposit pending→credited screen waits on.
+ * `units` are integer asset minor units; render with minorUnitScale.
+ */
+export interface CryptoDepositRecord {
+  id: string;
+  provider: string;
+  providerOpId: string;
+  symbol: string;
+  network: string;
+  address?: string;
+  units: number;             // integer minor units
+  minorUnitScale: number;    // e.g. 1e8 for BTC
+  confirmations: number;
+  requiredConfs: number;
+  txHash?: string;
+  createdAt: string;
+  creditedAt: string;
+  credited: boolean;         // confirmations >= requiredConfs
+}
+
 /** A saved, whitelisted destination address (Phase-4 withdrawal control). */
 export interface CryptoAddress {
   id: string;
