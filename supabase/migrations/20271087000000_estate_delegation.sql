@@ -35,8 +35,10 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public'
                    AND tablename = 'estate_staff_grants' AND policyname = 'staff_grants_select') THEN
         CREATE POLICY "staff_grants_select" ON estate_staff_grants FOR SELECT TO authenticated
-            USING (EXISTS (SELECT 1 FROM estate_residents er
-                WHERE er.estate_id = estate_staff_grants.estate_id AND er.user_id = auth.uid()));
+            USING (user_id = auth.uid()
+                OR EXISTS (SELECT 1 FROM estate_residents er
+                    WHERE er.estate_id = estate_staff_grants.estate_id AND er.user_id = auth.uid()
+                      AND er.role = 'estate_admin'));
     END IF;
 END $$;
 DO $$ BEGIN
@@ -85,7 +87,8 @@ DO $$ BEGIN
             USING (
                 host_id = auth.uid()
                 OR EXISTS (SELECT 1 FROM estate_residents er
-                    WHERE er.estate_id = visitor_arrival_requests.estate_id AND er.user_id = auth.uid())
+                    WHERE er.estate_id = visitor_arrival_requests.estate_id AND er.user_id = auth.uid()
+                      AND er.role = 'estate_admin')
             );
     END IF;
 END $$;
@@ -97,11 +100,35 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+-- An approval admits ONE visit: the guard's admit consumes it (consumed_at) in the
+-- same transaction as the code use. Separate ALTER so a table created by an
+-- earlier apply of this migration also gets the column.
+ALTER TABLE visitor_arrival_requests ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMPTZ;
+
+-- ── PostgREST lockdown (ADR-PR858 pattern) ─────────────────────────────────────
+-- Both tables are written and read only by the Go backend (service_role). Who is
+-- at the gate for whom, and the guard roster, are not for other residents to
+-- read through /rest/v1, so anon/authenticated get no privileges at all. The
+-- SELECT policies above are kept narrow anyway (own rows + estate admins) as a
+-- second line should a grant ever be re-added.
+REVOKE ALL ON TABLE estate_staff_grants      FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE visitor_arrival_requests FROM PUBLIC, anon, authenticated;
+GRANT  ALL ON TABLE estate_staff_grants      TO service_role;
+GRANT  ALL ON TABLE visitor_arrival_requests TO service_role;
+
 -- ── Seed the Estate-Management merchant type for the CreateEstate gate ────────
 -- The workplan (§2.1) requires an approved estate-manager merchant before a user
 -- may create an estate. onboarding has no estate type today; seed one (idempotent)
 -- so the server-side gate has a deterministic thing to check for an ACTIVE
 -- onb_merchant_profile against. Gate enforcement is behind FEATURE_ESTATE_MERCHANT_GATE.
+-- The role an approved estate manager receives. It carries NO permissions: it
+-- marks the merchant identity only. (estate-admin is the platform-wide
+-- estate.admin.* console role and must not be handed to every estate merchant.)
+INSERT INTO roles (name, slug, description, role_type)
+VALUES ('Estate Manager', 'estate-manager',
+        'Approved estate-management merchant: may create estates. No platform permissions.', 'merchant')
+ON CONFLICT (slug) DO NOTHING;
+
 INSERT INTO onb_module (id, slug, name, description, status, sort_order)
 VALUES ('estate', 'estate', 'Estate Management',
         'Gated-community estate management and visitor access operations.', 'open', 60)
@@ -111,5 +138,9 @@ INSERT INTO onb_merchant_type
     (id, module_id, slug, name, description, required_kyc_tier, role_to_grant, status)
 VALUES ('estate_management', 'estate', 'estate-management', 'Estate Manager',
         'Authorised to create and manage estates and delegate scoped staff roles.',
-        0, 'estate_manager', 'open')
+        0, 'estate-manager', 'open')
 ON CONFLICT (id) DO NOTHING;
+-- An earlier apply seeded the unprovisioned slug 'estate_manager'; point it at
+-- the real role so onboarding approval can grant it.
+UPDATE onb_merchant_type SET role_to_grant = 'estate-manager'
+WHERE id = 'estate_management' AND role_to_grant = 'estate_manager';

@@ -1201,6 +1201,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Flag-off (default) preserves historical behaviour: the gate stays nil and
 		// CreateEstate is unchanged. When on, a creator without an ACTIVE
 		// onb_merchant_profile for the estate_management type is refused (fail closed).
+		// Grant-based guard authz (FEATURE_ESTATE_GUARD_GRANTS, default off): off keeps
+		// the previous "any resident" gate rule so existing guards are not locked out.
+		estateSvc = estateSvc.WithGuardGrants(cfg.FeatureEstateGuardGrants)
 		if cfg.FeatureEstateMerchantGate {
 			estateSvc = estateSvc.WithEstateMerchantGate(estate.EstateMerchantGateFunc(func(ctx context.Context, userID string) (bool, error) {
 				var ok bool

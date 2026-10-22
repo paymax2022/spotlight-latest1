@@ -57,9 +57,25 @@ stays in the service because RLS is bypassed.
 
 ## Consequences
 
-- **Backwards compatible by default.** The flag is off and `require_host_approval`
-  defaults false, so existing estates and auto-admit journeys behave exactly as before.
-  Officer delegation is additive; nothing that relied on the two-role model broke.
+- **Backwards compatible by default, through two flags.** Without them the grant-based
+  guard rule would 403 every resident who works the gate today, because no grants
+  exist yet. So:
+  - `FEATURE_ESTATE_GUARD_GRANTS` (default off) switches guard/gate authz from "any
+    active resident" (the previous rule) to "`estate_admin` or a live grant", and
+    narrows `ListEstates` to the caller's estates. Turn it on per environment only
+    after estate admins have granted their guards roles.
+  - `FEATURE_ESTATE_MERCHANT_GATE` (default off) gates CreateEstate. A refusal is 403.
+  - `require_host_approval` defaults false, so auto-admit journeys are unchanged.
+  - Not flagged: the guard/code rate limits (30 and 10 per user per minute) and the
+    staff-grant / arrival routes, which only estate admins and guards can call.
+- **One approval, one visit.** A host approval admits one check-in, within 15 minutes
+  of the decision. The admit consumes it (`consumed_at`) in the same transaction as the
+  code use, so a multi-use code needs a fresh approval per visit and concurrent admits
+  cannot share one.
+- **Not readable through PostgREST.** `estate_staff_grants` and `visitor_arrival_requests`
+  give anon/authenticated no privileges (ADR-PR858 pattern); only the backend reads them.
+- **The approved estate manager gets `estate-manager`**, a new role with no
+  permissions. The platform `estate-admin` console role is deliberately not used.
 - **`estate_admin` still sees everything.** The grant plane narrows *guard* writes, not
   the super role. Retiring `estate_admin`'s blanket reach (maker-checker, admin step-up)
   is SP-05, out of scope here.
@@ -67,7 +83,7 @@ stays in the service because RLS is bypassed.
   QR, offline buffer with revocation propagation, and a hard gate↔estate binding on
   admit. These remain Missing/Partial in the gap analysis.
 - **Verification is split and honest.** The 8 DB-free domain tests
-  (`delegation_test.go`) pass. The 10 live-DB tests (`delegation_live_db_test.go`)
+  (`delegation_test.go`) pass. The live-DB tests (`delegation_live_db_test.go`, `review_fixes_live_db_test.go`)
   — including the concurrent single-use race and the full E2E journey — pass against
   the local Supabase stack with migration `20271087000000` applied. The live run
   surfaced two bugs the DB-free pass could not: a `gate_id` cast miss in

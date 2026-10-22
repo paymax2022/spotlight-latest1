@@ -107,7 +107,7 @@ func TestLiveDBAssertGateFailClosed(t *testing.T) {
 	seedResident(t, ctx, pool, estateID, deleted, "resident")
 	_, _ = pool.Exec(ctx, `UPDATE estate_residents SET deleted_at=NOW() WHERE estate_id=$1 AND user_id=$2`, estateID, deleted)
 
-	svc := NewService(pool, nil)
+	svc := NewService(pool, nil).WithGuardGrants(true)
 
 	if err := svc.assertGate(ctx, estateID, admin, "gate_officer"); err != nil {
 		t.Fatalf("estate_admin must pass assertGate, got %v", err)
@@ -137,7 +137,7 @@ func TestLiveDBGrantRevokeAndExpiry(t *testing.T) {
 	seedResident(t, ctx, pool, estateID, officer, "resident")
 	someoneElse := seedDuesUser(t, ctx, pool)
 
-	svc := NewService(pool, nil)
+	svc := NewService(pool, nil).WithGuardGrants(true)
 
 	// Non-admin cannot delegate.
 	if _, err := svc.GrantRole(ctx, estateID, someoneElse, officer, "gate_officer", nil); err == nil {
@@ -188,7 +188,7 @@ func TestLiveDBListEstatesIsolation(t *testing.T) {
 	outsider := seedDuesUser(t, ctx, pool)
 	officer := seedDuesUser(t, ctx, pool)
 
-	svc := NewService(pool, nil)
+	svc := NewService(pool, nil).WithGuardGrants(true)
 
 	// Empty caller fails closed.
 	if _, err := svc.ListEstates(ctx, "", ""); !errors.Is(err, ErrNotMember) {
@@ -244,7 +244,7 @@ func TestLiveDBSingleUseAtomicRace(t *testing.T) {
 	guard := seedDuesUser(t, ctx, pool)
 	seedGuard(t, ctx, pool, estateID, guard, "gate_officer", nil)
 
-	svc := NewService(pool, nil)
+	svc := NewService(pool, nil).WithGuardGrants(true)
 	code := mustCreateCode(t, svc, ctx, estateID, host, CreateAccessCodeRequest{
 		VisitorName: "Guest A", CodeType: "one_time",
 		ValidFrom: time.Now().Add(-time.Minute), ValidUntil: time.Now().Add(time.Hour),
@@ -304,7 +304,7 @@ func TestLiveDBExpiryDenied(t *testing.T) {
 	guard := seedDuesUser(t, ctx, pool)
 	seedGuard(t, ctx, pool, estateID, guard, "gate_officer", nil)
 
-	svc := NewService(pool, nil)
+	svc := NewService(pool, nil).WithGuardGrants(true)
 	code := mustCreateCode(t, svc, ctx, estateID, host, CreateAccessCodeRequest{
 		VisitorName: "Expired Guest", CodeType: "one_time",
 		ValidFrom: time.Now().Add(-3 * time.Hour), ValidUntil: time.Now().Add(-2 * time.Hour),
@@ -327,7 +327,7 @@ func TestLiveDBGuardAuthzRequiredOnCheckIn(t *testing.T) {
 	naughty := seedDuesUser(t, ctx, pool)
 	seedResident(t, ctx, pool, estateID, naughty, "resident")
 
-	svc := NewService(pool, nil)
+	svc := NewService(pool, nil).WithGuardGrants(true)
 	code := mustCreateCode(t, svc, ctx, estateID, host, CreateAccessCodeRequest{
 		VisitorName: "Guest", CodeType: "one_time",
 		ValidFrom: time.Now().Add(-time.Minute), ValidUntil: time.Now().Add(time.Hour), MaxUses: 1,
@@ -349,7 +349,7 @@ func TestLiveDBArrivalGating(t *testing.T) {
 	guard := seedDuesUser(t, ctx, pool)
 	seedGuard(t, ctx, pool, estateID, guard, "gate_officer", nil)
 
-	svc := NewService(pool, nil)
+	svc := NewService(pool, nil).WithGuardGrants(true)
 	code := mustCreateCode(t, svc, ctx, estateID, host, CreateAccessCodeRequest{
 		VisitorName: "Approval Guest", CodeType: "one_time",
 		ValidFrom: time.Now().Add(-time.Minute), ValidUntil: time.Now().Add(time.Hour),
@@ -387,7 +387,7 @@ func TestLiveDBDeclinedArrivalStaysDenied(t *testing.T) {
 	guard := seedDuesUser(t, ctx, pool)
 	seedGuard(t, ctx, pool, estateID, guard, "gate_officer", nil)
 
-	svc := NewService(pool, nil)
+	svc := NewService(pool, nil).WithGuardGrants(true)
 	code := mustCreateCode(t, svc, ctx, estateID, host, CreateAccessCodeRequest{
 		VisitorName: "Declined Guest", CodeType: "one_time",
 		ValidFrom: time.Now().Add(-time.Minute), ValidUntil: time.Now().Add(time.Hour),
@@ -418,7 +418,7 @@ func TestLiveDBArrivalDecisionAuthz(t *testing.T) {
 	other := seedDuesUser(t, ctx, pool)
 	seedResident(t, ctx, pool, estateID, other, "resident")
 
-	svc := NewService(pool, nil)
+	svc := NewService(pool, nil).WithGuardGrants(true)
 	code := mustCreateCode(t, svc, ctx, estateID, host, CreateAccessCodeRequest{
 		VisitorName: "Authz Guest", CodeType: "one_time",
 		ValidFrom: time.Now().Add(-time.Minute), ValidUntil: time.Now().Add(time.Hour),
@@ -444,7 +444,7 @@ func TestLiveDBE2EVisitorAccessJourney(t *testing.T) {
 	// 2. Admin delegates a gate officer.
 	guard := seedDuesUser(t, ctx, pool)
 	seedResident(t, ctx, pool, estateID, guard, "resident")
-	svc := NewService(pool, nil)
+	svc := NewService(pool, nil).WithGuardGrants(true)
 	if _, err := svc.GrantRole(ctx, estateID, admin, guard, "gate_officer", nil); err != nil {
 		t.Fatalf("GrantRole: %v", err)
 	}

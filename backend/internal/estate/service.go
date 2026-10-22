@@ -29,6 +29,12 @@ type AddressGeocoder interface {
 
 // Service manages estates, visitor passes, and private elections.
 type Service struct {
+	// guardGrantsOn (FEATURE_ESTATE_GUARD_GRANTS) switches guard/gate authz from
+	// "any resident" to "estate_admin or a live staff grant", and narrows
+	// ListEstates to the caller's own estates. Off (default): both behave exactly
+	// as before PR #876, so existing guards keep working until grants exist.
+	guardGrantsOn bool
+
 	db       *pgxpool.Pool
 	redis    *goredis.Client
 	geocoder AddressGeocoder
@@ -422,23 +428,34 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 		return payload, fmt.Errorf("entry denied: %s", denyReason(payload.Code))
 	}
 
-	// SP-02: a code flagged require_host_approval may only be admitted once the
-	// issuing host has approved a live arrival request for it.
-	if payload.Code.RequireHostApproval {
-		status, err := s.latestArrivalStatus(ctx, payload.Code.ID)
-		if err != nil {
-			return nil, err
-		}
-		if status != "approved" {
-			return payload, fmt.Errorf("entry denied: awaiting host approval")
-		}
-	}
-
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// SP-02: a code flagged require_host_approval is admitted only against a host
+	// approval decided within arrivalApprovalTTL, and each approval admits ONCE:
+	// it is consumed here, in the same transaction as the code use, so a
+	// multi-use code needs a fresh approval per visit and two concurrent admits
+	// cannot share one approval (FOR UPDATE SKIP LOCKED + consumed_at).
+	if payload.Code.RequireHostApproval {
+		var approvalID string
+		err := tx.QueryRow(ctx,
+			`UPDATE visitor_arrival_requests SET consumed_at = NOW()
+			 WHERE id = (SELECT id FROM visitor_arrival_requests
+			             WHERE access_code_id = $1 AND status = 'approved' AND consumed_at IS NULL
+			               AND decided_at >= NOW() - make_interval(secs => $2)
+			             ORDER BY decided_at DESC LIMIT 1
+			             FOR UPDATE SKIP LOCKED)
+			 RETURNING id`, payload.Code.ID, arrivalApprovalTTL.Seconds()).Scan(&approvalID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return payload, fmt.Errorf("entry denied: awaiting host approval")
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// Atomic consume: the guard re-checks every admission condition inside the
 	// UPDATE so concurrent admits of the same code cannot overshoot max_uses or
@@ -1391,6 +1408,9 @@ func (s *Service) GetMyJoinRequest(ctx context.Context, estateID, userID string)
 // via a live staff grant). SP-01: it previously returned every estate's name,
 // address and admin_id to any authenticated caller — a cross-estate disclosure.
 func (s *Service) ListEstates(ctx context.Context, callerID, search string) ([]Estate, error) {
+	if !s.guardGrantsOn {
+		return s.listAllEstates(ctx, search)
+	}
 	if callerID == "" {
 		return nil, ErrNotMember
 	}
@@ -1405,6 +1425,30 @@ func (s *Service) ListEstates(ctx context.Context, callerID, search string) ([]E
 		AND ($1='' OR e.name ILIKE '%' || $1 || '%' OR e.address ILIKE '%' || $1 || '%')
 		ORDER BY e.name LIMIT 50`
 	rows, err := s.db.Query(ctx, q, search, callerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Estate
+	for rows.Next() {
+		var e Estate
+		if err := rows.Scan(&e.ID, &e.Name, &e.Address, &e.AdminID, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// listAllEstates is ListEstates before PR #876 (every estate, for discovery). It
+// stays the behaviour while FEATURE_ESTATE_GUARD_GRANTS is off. The only change is
+// COALESCE(address): the old query failed the whole list on one NULL address.
+func (s *Service) listAllEstates(ctx context.Context, search string) ([]Estate, error) {
+	const q = `
+		SELECT id, name, COALESCE(address,''), admin_id, created_at FROM estates
+		WHERE ($1='' OR name ILIKE '%' || $1 || '%' OR address ILIKE '%' || $1 || '%')
+		ORDER BY name LIMIT 50`
+	rows, err := s.db.Query(ctx, q, search)
 	if err != nil {
 		return nil, err
 	}

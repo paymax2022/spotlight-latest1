@@ -81,6 +81,11 @@ func (s *Service) hasLiveGrant(ctx context.Context, estateID, userID string, rol
 // deleted accounts. This replaces the previous assertResident on the guard
 // endpoints, which let ANY estate member admit visitors and forge gate events.
 func (s *Service) assertGate(ctx context.Context, estateID, userID string, roles ...string) error {
+	if !s.guardGrantsOn {
+		// FEATURE_ESTATE_GUARD_GRANTS off: the pre-#876 rule (any active member),
+		// so guards who work the gate today are not locked out before grants exist.
+		return s.assertResident(ctx, estateID, userID)
+	}
 	var role string
 	var banned, deleted bool
 	err := s.db.QueryRow(ctx,
@@ -108,6 +113,16 @@ func (s *Service) assertGate(ctx context.Context, estateID, userID string, roles
 	}
 	return nil
 }
+
+// WithGuardGrants turns on grant-based guard authz (FEATURE_ESTATE_GUARD_GRANTS).
+func (s *Service) WithGuardGrants(on bool) *Service {
+	s.guardGrantsOn = on
+	return s
+}
+
+// arrivalApprovalTTL is how long a host's approval stays usable at the gate. An
+// approval admits one visit within this window; after it the guard must ask again.
+const arrivalApprovalTTL = 15 * time.Minute
 
 // guardRoles is the role set permitted to admit/scan visitors.
 var guardRoles = []string{"gate_officer", "gate_supervisor"}

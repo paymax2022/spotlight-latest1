@@ -60,6 +60,10 @@ func (h *Handler) CreateEstate(c *gin.Context) {
 		return
 	}
 	e, err := h.svc.CreateEstate(c.Request.Context(), userID, req)
+	if errors.Is(err, ErrEstateManagerApprovalRequired) {
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return

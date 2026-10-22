@@ -258,6 +258,11 @@ type Config struct {
 	// estate-management merchant identity before creating an estate. Default off:
 	// CreateEstate keeps its historical behaviour until the gate is ratified.
 	FeatureEstateMerchantGate bool
+	// FeatureEstateGuardGrants (FEATURE_ESTATE_GUARD_GRANTS) makes guard/gate
+	// operations require estate_admin or a live staff grant, and narrows estate
+	// listing to the caller's estates. Default off: any resident keeps gate access
+	// (the previous rule) until grants have been issued (ADR-PR876).
+	FeatureEstateGuardGrants bool
 	// EstateGuardRatePerMin / EstateCodeRatePerMin cap per-user guard admit/lookup
 	// and access-code creation requests (SP-02; estate routes previously unlimitted).
 	EstateGuardRatePerMin int
@@ -1000,6 +1005,7 @@ func Load() Config {
 		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureEstateMerchantGate:                    getEnvBool("FEATURE_ESTATE_MERCHANT_GATE", false),
+		FeatureEstateGuardGrants:                     getEnvBool("FEATURE_ESTATE_GUARD_GRANTS", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:                     getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
