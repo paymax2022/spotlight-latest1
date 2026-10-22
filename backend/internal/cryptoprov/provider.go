@@ -44,9 +44,18 @@ type AccountProvider interface {
 }
 
 // WalletProvider reads balances and issues deposit addresses for an account.
+// DepositAddress reads the current address; CreateDepositAddress asks for one. Either
+// returns ErrAddressPending while the provider is still generating it.
 type WalletProvider interface {
 	Wallets(ctx context.Context, accountID string) ([]Wallet, error)
+	DepositAddress(ctx context.Context, accountID, currency, network string) (DepositAddress, error)
 	CreateDepositAddress(ctx context.Context, accountID, currency, network string) (DepositAddress, error)
+}
+
+// DepositProvider re-reads one inbound deposit: the authoritative state a deposit webhook
+// is checked against (a webhook payload is never trusted on its own).
+type DepositProvider interface {
+	GetDeposit(ctx context.Context, accountID, id string) (Deposit, error)
 }
 
 // SwapProvider converts one asset to another. A quote is valid only for a short
@@ -99,6 +108,31 @@ type DepositAddress struct {
 	Address  string
 	Tag      string
 }
+
+// Deposit is crypto received into a provider account. The provider credits its own
+// sub-account; the platform records it for history and notification.
+type Deposit struct {
+	ID                    string
+	AccountID             string
+	Currency              string
+	Network               string
+	Address               string
+	Amount                decimal.Decimal
+	Fee                   decimal.Decimal
+	TxID                  string
+	Status                DepositStatus
+	Confirmations         int
+	RequiredConfirmations int
+}
+
+// DepositStatus is the provider-side state of a deposit.
+type DepositStatus string
+
+const (
+	DepositPending  DepositStatus = "pending"  // seen on-chain, not yet credited
+	DepositAccepted DepositStatus = "accepted" // credited to the account
+	DepositRejected DepositStatus = "rejected" // refused (for example an AML hit)
+)
 
 // Ticker is a market price snapshot.
 type Ticker struct {
@@ -177,6 +211,9 @@ type Event struct {
 	Key  string
 	Type string
 	Ref  string
+	// Account is the provider account the event concerns, when the payload names one. Like
+	// Raw it is only a re-query hint.
+	Account string
 	// Raw is the original data object. It is for diagnostics and re-query hints only:
 	// the service must re-read the provider for the authoritative state and never
 	// release value on a webhook payload alone.

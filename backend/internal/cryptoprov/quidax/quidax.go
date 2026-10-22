@@ -391,10 +391,116 @@ func (c *Client) CreateDepositAddress(ctx context.Context, accountID, currency, 
 		Address string `json:"address"`
 		Tag     string `json:"destination_tag"`
 	}
-	if err := json.Unmarshal(data, &d); err != nil || d.Address == "" {
-		return cryptoprov.DepositAddress{}, errors.New("quidax: deposit address missing")
+	if err := json.Unmarshal(data, &d); err != nil {
+		return cryptoprov.DepositAddress{}, errors.New("quidax: deposit address unreadable")
+	}
+	if d.Address == "" { // generated asynchronously: a wallet.address.generated webhook follows
+		return cryptoprov.DepositAddress{}, cryptoprov.ErrAddressPending
 	}
 	return cryptoprov.DepositAddress{Currency: upper(currency), Network: network, Address: d.Address, Tag: d.Tag}, nil
+}
+
+// DepositAddress implements cryptoprov.WalletProvider: the account's current address.
+func (c *Client) DepositAddress(ctx context.Context, accountID, currency, network string) (cryptoprov.DepositAddress, error) {
+	if accountID == "" || currency == "" {
+		return cryptoprov.DepositAddress{}, errors.New("quidax: account id and currency are required")
+	}
+	q := ""
+	if network != "" {
+		q = url.Values{"network": {network}}.Encode()
+	}
+	data, err := c.do(ctx, http.MethodGet, "/users/"+pathID(accountID)+"/wallets/"+pathID(lower(currency))+"/address", q, nil)
+	if err != nil {
+		return cryptoprov.DepositAddress{}, err
+	}
+	var d struct {
+		Address *string `json:"address"`
+		Tag     *string `json:"destination_tag"`
+		Network string  `json:"network"`
+	}
+	if err := json.Unmarshal(data, &d); err != nil {
+		return cryptoprov.DepositAddress{}, errors.New("quidax: deposit address unreadable")
+	}
+	if d.Address == nil || *d.Address == "" {
+		return cryptoprov.DepositAddress{}, cryptoprov.ErrAddressPending
+	}
+	out := cryptoprov.DepositAddress{Currency: upper(currency), Network: network, Address: *d.Address}
+	if out.Network == "" {
+		out.Network = d.Network
+	}
+	if d.Tag != nil {
+		out.Tag = *d.Tag
+	}
+	return out, nil
+}
+
+// GetDeposit implements cryptoprov.DepositProvider.
+func (c *Client) GetDeposit(ctx context.Context, accountID, id string) (cryptoprov.Deposit, error) {
+	if accountID == "" || id == "" {
+		return cryptoprov.Deposit{}, errors.New("quidax: account id and deposit id are required")
+	}
+	data, err := c.do(ctx, http.MethodGet, "/users/"+pathID(accountID)+"/deposits/"+pathID(id), "", nil)
+	if err != nil {
+		return cryptoprov.Deposit{}, err
+	}
+	var d struct {
+		ID       any    `json:"id"`
+		Currency string `json:"currency"`
+		Amount   string `json:"amount"`
+		Fee      string `json:"fee"`
+		TxID     string `json:"txid"`
+		Status   string `json:"status"`
+		Tx       struct {
+			Confirmations         int `json:"confirmations"`
+			RequiredConfirmations int `json:"required_confirmations"`
+		} `json:"payment_transaction"`
+		Addr struct {
+			Address string `json:"address"`
+			Network string `json:"network"`
+		} `json:"payment_address"`
+		User struct {
+			ID any `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(data, &d); err != nil {
+		return cryptoprov.Deposit{}, errors.New("quidax: deposit unreadable")
+	}
+	depID := idString(d.ID)
+	amt, aerr := parseDecimal(d.Amount)
+	fee, ferr := optionalDecimal(d.Fee)
+	switch {
+	case depID == "" || d.Currency == "":
+		return cryptoprov.Deposit{}, errors.New("quidax: deposit is missing its id or currency")
+	case aerr != nil || !amt.IsPositive() || ferr != nil:
+		return cryptoprov.Deposit{}, errors.New("quidax: deposit amount is malformed or not positive")
+	}
+	st := cryptoprov.DepositPending
+	switch s := lower(d.Status); {
+	case s == "accepted":
+		st = cryptoprov.DepositAccepted
+	case s == "rejected" || strings.HasPrefix(s, "failed"):
+		st = cryptoprov.DepositRejected
+	}
+	acct := idString(d.User.ID)
+	if acct == "" {
+		acct = accountID
+	}
+	return cryptoprov.Deposit{
+		ID: depID, AccountID: acct, Currency: upper(d.Currency), Network: d.Addr.Network, Address: d.Addr.Address,
+		Amount: amt, Fee: fee, TxID: d.TxID, Status: st,
+		Confirmations: d.Tx.Confirmations, RequiredConfirmations: d.Tx.RequiredConfirmations,
+	}, nil
+}
+
+// idString reads a provider id that may be a JSON string or number.
+func idString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		return decimal.NewFromFloat(t).String()
+	}
+	return ""
 }
 
 // ---- swaps -----------------------------------------------------------------
@@ -606,26 +712,24 @@ func (c *Client) ParseWebhook(body []byte) (cryptoprov.Event, error) {
 		return cryptoprov.Event{}, errors.New("quidax: webhook missing event or data")
 	}
 	var d struct {
-		ID any `json:"id"`
+		ID   any `json:"id"`
+		User struct {
+			ID any `json:"id"`
+		} `json:"user"`
 	}
 	if err := json.Unmarshal(env.Data, &d); err != nil {
 		return cryptoprov.Event{}, errors.New("quidax: webhook data unreadable")
 	}
-	var id string
-	switch v := d.ID.(type) {
-	case string:
-		id = v
-	case float64:
-		id = decimal.NewFromFloat(v).String()
-	}
+	id := idString(d.ID)
 	if id == "" {
 		return cryptoprov.Event{}, errors.New("quidax: webhook data has no id")
 	}
 	return cryptoprov.Event{
-		Key:  "quidax:" + env.Event + ":" + id,
-		Type: env.Event,
-		Ref:  id,
-		Raw:  []byte(env.Data),
+		Key:     "quidax:" + env.Event + ":" + id,
+		Type:    env.Event,
+		Ref:     id,
+		Account: idString(d.User.ID),
+		Raw:     []byte(env.Data),
 	}, nil
 }
 

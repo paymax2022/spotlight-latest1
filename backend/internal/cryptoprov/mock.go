@@ -29,6 +29,8 @@ type Mock struct {
 	accounts    map[string]AccountRef // keyed by UserRef.UserID
 	created     int
 	wallets     map[string][]Wallet // keyed by account id
+	deposits    map[string]Deposit  // keyed by deposit id
+	addrPending bool
 }
 
 // AccountsCreated counts provider accounts created, to prove a service never makes a second one.
@@ -71,6 +73,7 @@ func NewMock(name string, now func() time.Time) *Mock {
 		faults:      map[string]error{},
 		accounts:    map[string]AccountRef{},
 		wallets:     map[string][]Wallet{},
+		deposits:    map[string]Deposit{},
 	}
 }
 
@@ -286,5 +289,47 @@ func (m *Mock) CreateDepositAddress(_ context.Context, accountID, currency, netw
 	if err := m.take("depositaddress"); err != nil {
 		return DepositAddress{}, err
 	}
+	if m.addrPending {
+		return DepositAddress{}, ErrAddressPending
+	}
 	return DepositAddress{Currency: currency, Network: network, Address: fmt.Sprintf("mock-%s-%s-%s", accountID, currency, network)}, nil
+}
+
+// DepositAddress implements WalletProvider (same deterministic address as Create).
+func (m *Mock) DepositAddress(ctx context.Context, accountID, currency, network string) (DepositAddress, error) {
+	m.mu.Lock()
+	pending := m.addrPending
+	m.mu.Unlock()
+	if pending {
+		return DepositAddress{}, ErrAddressPending
+	}
+	return m.CreateDepositAddress(ctx, accountID, currency, network)
+}
+
+// SetAddressPending makes deposit-address reads report ErrAddressPending.
+func (m *Mock) SetAddressPending(p bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.addrPending = p
+}
+
+// PutDeposit records (or replaces) the deposit GetDeposit reports.
+func (m *Mock) PutDeposit(d Deposit) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deposits[d.ID] = d
+}
+
+// GetDeposit implements DepositProvider.
+func (m *Mock) GetDeposit(_ context.Context, accountID, id string) (Deposit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.take("getdeposit"); err != nil {
+		return Deposit{}, err
+	}
+	d, ok := m.deposits[id]
+	if !ok || d.AccountID != accountID {
+		return Deposit{}, &APIError{Provider: m.name, Status: 404, Code: "not_found"}
+	}
+	return d, nil
 }
