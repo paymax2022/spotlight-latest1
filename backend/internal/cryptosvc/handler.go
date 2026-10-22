@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -119,6 +120,8 @@ func RegisterRoutes(member *gin.RouterGroup, hooks *gin.RouterGroup, d HandlerDe
 	member.POST("/swaps/:id/confirm", withLimit(d.ConfirmLimit, h.confirm)...)
 	member.GET("/swaps/config", h.config)
 	member.GET("/swaps/balances", h.balances)
+	member.GET("/swaps/deposit-address", h.depositAddress)
+	member.GET("/swaps/deposits", h.deposits)
 	member.GET("/swaps/:id", h.get)
 	if hooks != nil && d.Ingest != nil {
 		hooks.POST("/crypto/:provider", h.webhook)
@@ -294,6 +297,84 @@ func (h *handler) balances(c *gin.Context) {
 		out = append(out, BalanceView{Asset: w.Currency, Available: w.Balance.String(), Locked: w.Locked.String(), Total: w.Balance.Add(w.Locked).String()})
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "balances": out})
+}
+
+// DepositAddressView is where the user sends crypto. Tag is the memo some networks need.
+type DepositAddressView struct {
+	Asset   string `json:"asset"`
+	Network string `json:"network"`
+	Address string `json:"address"`
+	Tag     string `json:"tag,omitempty"`
+}
+
+func (h *handler) depositAddress(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	a, err := h.d.Service.DepositAddress(c.Request.Context(), uid, c.Query("asset"), c.Query("network"))
+	switch {
+	case err == nil:
+		c.JSON(http.StatusOK, gin.H{"success": true, "deposit_address": DepositAddressView{Asset: a.Currency, Network: a.Network, Address: a.Address, Tag: a.Tag}})
+	case errors.Is(err, cryptoprov.ErrAddressPending):
+		// Not a failure: the provider is generating it. The app asks again shortly.
+		c.JSON(http.StatusAccepted, gin.H{"success": false, "error": "address_pending"})
+	case errors.Is(err, ErrInvalidDepositRequest):
+		fail(c, http.StatusBadRequest, "invalid_request")
+	case errors.Is(err, ErrDepositsUnavailable):
+		fail(c, http.StatusServiceUnavailable, "deposits_unavailable")
+	case errors.Is(err, ErrTradeNotAllowed):
+		fail(c, http.StatusForbidden, "trading_not_allowed")
+	default:
+		log.Printf("[crypto] deposit address for %s: %v", uid, err)
+		fail(c, http.StatusBadGateway, "provider_unavailable")
+	}
+}
+
+// DepositView is one recorded deposit. Amounts are decimal strings.
+type DepositView struct {
+	ID                    string `json:"id"`
+	Asset                 string `json:"asset"`
+	Network               string `json:"network,omitempty"`
+	Amount                string `json:"amount"`
+	Status                string `json:"status"`
+	TxID                  string `json:"txid,omitempty"`
+	Confirmations         int    `json:"confirmations"`
+	RequiredConfirmations int    `json:"required_confirmations"`
+	CreatedAt             string `json:"created_at,omitempty"`
+	UpdatedAt             string `json:"updated_at,omitempty"`
+}
+
+func (h *handler) deposits(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	ds, err := h.d.Service.Deposits(c.Request.Context(), uid, 50)
+	if err != nil {
+		if errors.Is(err, ErrDepositsUnavailable) {
+			fail(c, http.StatusServiceUnavailable, "deposits_unavailable")
+			return
+		}
+		log.Printf("[crypto] deposits for %s: %v", uid, err)
+		fail(c, http.StatusInternalServerError, "internal")
+		return
+	}
+	out := make([]DepositView, 0, len(ds))
+	for _, d := range ds {
+		v := DepositView{ID: d.ProviderDepositID, Asset: d.Currency, Network: d.Network, Amount: d.Amount.String(), Status: string(d.Status),
+			TxID: d.TxID, Confirmations: d.Confirmations, RequiredConfirmations: d.RequiredConfirmations}
+		if !d.CreatedAt.IsZero() {
+			v.CreatedAt = d.CreatedAt.UTC().Format(time.RFC3339)
+		}
+		if !d.UpdatedAt.IsZero() {
+			v.UpdatedAt = d.UpdatedAt.UTC().Format(time.RFC3339)
+		}
+		out = append(out, v)
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "deposits": out})
 }
 
 func (h *handler) get(c *gin.Context) {

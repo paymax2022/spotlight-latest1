@@ -96,9 +96,9 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 	// The editable schedule: quotes read the live version per request. cfg.Fees (validated above) is
 	// the base that applies until the first version is stored.
 	fees := NewPGFeeStore(d.Pool, cfg.Fees)
-	ingest := NewIngest(reg, store).WithSettler(settler).WithAuditor(auditor)
+	ingest := NewIngest(reg, store).WithSettler(settler).WithAuditor(auditor).WithDeposits(store)
 	svc := NewService(ServiceConfig{
-		Registry: reg, Provider: client.Name(), Store: store, Settler: settler, Ingest: ingest,
+		Registry: reg, Provider: client.Name(), Store: store, Settler: settler, Ingest: ingest, Deposits: store,
 		Fees: cfg.Fees, FeeSource: fees, Users: &PGUserDirectory{Pool: d.Pool},
 		Gate:   &TierTradeGate{Pool: d.Pool, Tiers: d.Tiers, MinTier: cfg.MinTier},
 		Locker: locker, Audit: auditor,

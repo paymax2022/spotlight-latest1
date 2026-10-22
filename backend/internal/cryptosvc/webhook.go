@@ -38,11 +38,12 @@ type SwapSettler interface {
 
 // Ingest authenticates, dedupes and applies provider webhooks.
 type Ingest struct {
-	reg     *cryptoprov.Registry
-	store   Store
-	now     func() time.Time
-	settler SwapSettler
-	audit   Auditor
+	reg      *cryptoprov.Registry
+	store    Store
+	now      func() time.Time
+	settler  SwapSettler
+	audit    Auditor
+	deposits DepositStore
 }
 
 // WithAuditor records completed and failed settlements.
@@ -126,6 +127,9 @@ func (i *Ingest) Handle(ctx context.Context, providerName string, headers map[st
 }
 
 func (i *Ingest) process(ctx context.Context, p cryptoprov.Provider, providerName string, ev cryptoprov.Event) (Outcome, error) {
+	if isDepositEvent(ev.Type) && i.deposits != nil {
+		return i.processDeposit(ctx, p, providerName, ev)
+	}
 	if !isSwapEvent(ev.Type) {
 		return OutcomeIgnored, nil
 	}
