@@ -101,7 +101,7 @@ func TestLiveDB_ReceiverPin_PickupTextsTheReceiverTheDropoffPinOnce(t *testing.T
 	if sms.count() != 1 {
 		t.Fatalf("%d SMS sent, want 1", sms.count())
 	}
-	if sms.sent[0].to != "+2348000000000" {
+	if sms.sent[0].to != "2348000000000" { // Termii international format
 		t.Fatalf("SMS went to %q, want the receiver's phone", sms.sent[0].to)
 	}
 	if !strings.Contains(sms.sent[0].body, dropoffPin) {
@@ -185,12 +185,15 @@ func TestLiveDB_ReceiverPin_NeverLogsOrAuditsThePin(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
 	f := newPrepaidParcelFixture(t, true)
-	sms := &fakeReceiverSMS{err: errors.New("termii: provider returned 400")}
+	sms := &echoingReceiverSMS{}
 	f.svc.WithReceiverPinSMS(sms)
 	p, dropoffPin, _ := pickedUpParcel(t, f)
 	noticeState(t, f, p.ID)
+	if sms.calls != 1 {
+		t.Fatalf("%d sends, want 1", sms.calls)
+	}
 
-	if strings.Contains(buf.String(), dropoffPin) || strings.Contains(buf.String(), "+2348000000000") {
+	if strings.Contains(buf.String(), dropoffPin) || strings.Contains(buf.String(), "2348000000000") {
 		t.Fatalf("logs carry the PIN or the full receiver phone:\n%s", buf.String())
 	}
 	var leaked int
@@ -205,11 +208,51 @@ func TestLiveDB_ReceiverPin_NeverLogsOrAuditsThePin(t *testing.T) {
 	}
 }
 
+// echoingReceiverSMS fails with an error that echoes the request back — the
+// worst case for a provider error ending up in the logs.
+type echoingReceiverSMS struct{ calls int }
+
+func (e *echoingReceiverSMS) SendSMS(_ context.Context, to, body string) error {
+	e.calls++
+	return errors.New("termii: provider returned 400: {\"to\":\"" + to + "\",\"sms\":\"" + body + "\"}")
+}
+
+// A row written straight through PostgREST (no payment, a PIN that is not a PIN)
+// must never be texted: that would make Paymax an open SMS relay.
+func TestLiveDB_ReceiverPin_NeverTextsAnUnpaidOrForgedParcel(t *testing.T) {
+	f := newPrepaidParcelFixture(t, true)
+	sms := &fakeReceiverSMS{}
+	f.svc.WithReceiverPinSMS(sms)
+	ctx := context.Background()
+
+	forged, _ := f.book(t, parcelReq())
+	if _, err := f.pool.Exec(ctx, `UPDATE parcels SET status='in_transit', dropoff_pin='1234. Verify your account at https://evil.example' WHERE id=$1`, forged.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.notifyReceiverDropoffPin(ctx, forged.ID)
+	if state, _ := noticeStateWithin(t, f, forged.ID, time.Second); state != "failed" {
+		t.Fatalf("forged PIN: notice state %q, want failed (invalid_pin)", state)
+	}
+
+	unpaid, _ := f.book(t, parcelReq())
+	if _, err := f.pool.Exec(ctx, `UPDATE parcels SET status='in_transit', settlement_id=NULL WHERE id=$1`, unpaid.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.notifyReceiverDropoffPin(ctx, unpaid.ID)
+	if state, _ := noticeStateWithin(t, f, unpaid.ID, 500*time.Millisecond); state != "" {
+		t.Fatalf("unpaid parcel: notice state %q, want never claimed", state)
+	}
+	if sms.count() != 0 {
+		t.Fatalf("%d SMS sent for forged/unpaid parcels, want 0", sms.count())
+	}
+}
+
 func TestReceiverPhoneNormalisation(t *testing.T) {
 	for in, want := range map[string]string{
-		"+234 803-123 4567": "+2348031234567",
-		"08031234567":       "08031234567",
-		"(0803) 123 4567":   "08031234567",
+		"+234 803-123 4567": "2348031234567",
+		"08031234567":       "2348031234567",
+		"(0803) 123 4567":   "2348031234567",
+		"+447911123456":     "447911123456",
 		"":                  "",
 		"call me":           "",
 		"+23480":            "",

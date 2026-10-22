@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Parcel: tell the receiver their drop-off PIN by SMS (FEATURE_PARCEL_RECEIVER_PIN_SMS).
--- See docs/adr/ADR-PR<pr>-parcel-receiver-dropoff-pin-sms.md (placeholder rewritten on merge).
+-- See ADR-PR857 (docs/adr/ADR-PR857-parcel-receiver-dropoff-pin-sms.md).
 --
 -- Additive only. The two columns make the send at-most-once and visible:
 --   receiver_pin_notice  NULL (never attempted) | sending (claimed) | sent | failed
