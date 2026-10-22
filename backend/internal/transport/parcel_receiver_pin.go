@@ -129,22 +129,24 @@ func (s *Service) notifyReceiverDropoffPin(ctx context.Context, parcelID string)
 		return // already claimed (sent / failed / in flight), not in transit, or no row
 	}
 
+	// Each failure is logged BEFORE it is recorded, so a recorded outcome
+	// always has its log line.
 	if !dropoffPinRe.MatchString(pin) {
-		s.finishReceiverNotice(ctx, parcelID, senderID, false, "invalid_pin")
 		log.Printf("[transport] parcel %s: receiver PIN SMS not sent: the stored PIN is not a server-generated PIN", parcelID)
+		s.finishReceiverNotice(ctx, parcelID, senderID, false, "invalid_pin")
 		return
 	}
 	to := normaliseReceiverPhone(phone)
 	if to == "" {
-		s.finishReceiverNotice(ctx, parcelID, senderID, false, "invalid_phone")
 		log.Printf("[transport] parcel %s: receiver PIN SMS not sent: receiver phone is not a phone number", parcelID)
+		s.finishReceiverNotice(ctx, parcelID, senderID, false, "invalid_phone")
 		return
 	}
 	if sendErr := s.receiverSMS.SendSMS(ctx, to, receiverPinMessage(pin)); sendErr != nil {
-		s.finishReceiverNotice(ctx, parcelID, senderID, false, "provider_error")
 		// The provider's error text, never the body we sent (it holds the PIN).
 		log.Printf("[transport] parcel %s: receiver PIN SMS to %s failed: %s", parcelID, maskReceiverPhone(to),
 			redact(sendErr.Error(), pin, to, strings.TrimSpace(phone)))
+		s.finishReceiverNotice(ctx, parcelID, senderID, false, "provider_error")
 		return
 	}
 	s.finishReceiverNotice(ctx, parcelID, senderID, true, "")

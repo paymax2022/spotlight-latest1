@@ -36,6 +36,12 @@ func (f *fakeReceiverSMS) SendSMS(_ context.Context, to, body string) error {
 	return f.err
 }
 
+func (f *fakeReceiverSMS) first() (to, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sent[0].to, f.sent[0].body
+}
+
 func (f *fakeReceiverSMS) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -101,13 +107,14 @@ func TestLiveDB_ReceiverPin_PickupTextsTheReceiverTheDropoffPinOnce(t *testing.T
 	if sms.count() != 1 {
 		t.Fatalf("%d SMS sent, want 1", sms.count())
 	}
-	if sms.sent[0].to != "2348000000000" { // Termii international format
-		t.Fatalf("SMS went to %q, want the receiver's phone", sms.sent[0].to)
+	to, body := sms.first()
+	if to != "2348000000000" { // Termii international format
+		t.Fatalf("SMS went to %q, want the receiver's phone", to)
 	}
-	if !strings.Contains(sms.sent[0].body, dropoffPin) {
-		t.Fatalf("SMS body %q does not carry the drop-off PIN", sms.sent[0].body)
+	if !strings.Contains(body, dropoffPin) {
+		t.Fatalf("SMS body %q does not carry the drop-off PIN", body)
 	}
-	if strings.Contains(sms.sent[0].body, *p.PickupPin) && *p.PickupPin != dropoffPin {
+	if strings.Contains(body, *p.PickupPin) && *p.PickupPin != dropoffPin {
 		t.Fatal("the SMS must never carry the PICKUP PIN")
 	}
 
@@ -180,8 +187,9 @@ func TestLiveDB_ReceiverPin_OffSendsNothing(t *testing.T) {
 }
 
 func TestLiveDB_ReceiverPin_NeverLogsOrAuditsThePin(t *testing.T) {
-	var buf bytes.Buffer
-	log.SetOutput(&buf)
+	// The send logs from its own goroutine: capture through a locked writer.
+	buf := &lockedBuffer{}
+	log.SetOutput(buf)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
 	f := newPrepaidParcelFixture(t, true)
@@ -189,8 +197,11 @@ func TestLiveDB_ReceiverPin_NeverLogsOrAuditsThePin(t *testing.T) {
 	f.svc.WithReceiverPinSMS(sms)
 	p, dropoffPin, _ := pickedUpParcel(t, f)
 	noticeState(t, f, p.ID)
-	if sms.calls != 1 {
-		t.Fatalf("%d sends, want 1", sms.calls)
+	if c := sms.callCount(); c != 1 {
+		t.Fatalf("%d sends, want 1", c)
+	}
+	if !strings.Contains(buf.String(), "receiver PIN SMS to") {
+		t.Fatalf("the failed send was not logged at all:\n%s", buf.String())
 	}
 
 	if strings.Contains(buf.String(), dropoffPin) || strings.Contains(buf.String(), "2348000000000") {
@@ -210,10 +221,21 @@ func TestLiveDB_ReceiverPin_NeverLogsOrAuditsThePin(t *testing.T) {
 
 // echoingReceiverSMS fails with an error that echoes the request back — the
 // worst case for a provider error ending up in the logs.
-type echoingReceiverSMS struct{ calls int }
+type echoingReceiverSMS struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (e *echoingReceiverSMS) callCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls
+}
 
 func (e *echoingReceiverSMS) SendSMS(_ context.Context, to, body string) error {
+	e.mu.Lock()
 	e.calls++
+	e.mu.Unlock()
 	return errors.New("termii: provider returned 400: {\"to\":\"" + to + "\",\"sms\":\"" + body + "\"}")
 }
 
@@ -245,6 +267,24 @@ func TestLiveDB_ReceiverPin_NeverTextsAnUnpaidOrForgedParcel(t *testing.T) {
 	if sms.count() != 0 {
 		t.Fatalf("%d SMS sent for forged/unpaid parcels, want 0", sms.count())
 	}
+}
+
+// lockedBuffer is a log sink safe to read while another goroutine writes.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func TestReceiverPhoneNormalisation(t *testing.T) {
