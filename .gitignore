@@ -129,3 +129,6 @@ parse_err.txt
 # not docs).
 task-tracker.json
 *_TASK_TRACKER.json
+
+# Film Academy assessment bank = the answer key. Never commit it (public repo); see tests/fixtures/academy/README.md.
+frontend-web/tests/fixtures/academy/*.csv

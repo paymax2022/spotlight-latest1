@@ -37,7 +37,7 @@ function csv(...rows: string[]): string {
 }
 
 const VALID_ROW =
-  'TMFA-L1-01-01,L1,FM01,Pipeline,Which phase turns an approved script into a shoot plan?,Pre-production,Post-production,Exhibition,Distribution,A,Pre-production,1';
+  'TEST-L1-99-01,L1,FM01,Synthetic,Which colour is the synthetic test answer?,Blue,Red,Green,Yellow,A,Blue,1';
 
 describe('import header check', () => {
   it('passes on the supplied bank header and reports the missing ones otherwise', () => {
@@ -55,7 +55,7 @@ describe('row validation (QA-01)', () => {
     expect(r.accepted).toHaveLength(1);
     expect(r.rejected).toHaveLength(0);
     const d = r.accepted[0];
-    expect(d.externalCode).toBe('TMFA-L1-01-01');
+    expect(d.externalCode).toBe('TEST-L1-99-01');
     expect(d.options.map((o) => o.id)).toEqual(['a', 'b', 'c', 'd']);
     expect(d.answer.correct).toEqual(['a']);
     expect(d.points).toBe(1);
@@ -128,7 +128,7 @@ describe('content hash (idempotent-import fingerprint)', () => {
     expect(draftContentHash(a)).toBe(draftContentHash(b));
 
     const changed = parseAndValidate(csv(
-      'TMFA-L1-01-01,L1,FM01,Pipeline,DIFFERENT stem?,Pre-production,Post-production,Exhibition,Distribution,A,Pre-production,1',
+      'TEST-L1-99-01,L1,FM01,Synthetic,DIFFERENT stem?,Blue,Red,Green,Yellow,A,Blue,1',
     )).accepted[0];
     expect(draftContentHash(changed)).not.toBe(draftContentHash(a));
   });
@@ -136,7 +136,7 @@ describe('content hash (idempotent-import fingerprint)', () => {
   it('ignores cosmetic case/whitespace in options when hashing', () => {
     const a = parseAndValidate(csv(VALID_ROW)).accepted[0];
     const spaced = parseAndValidate(csv(
-      'TMFA-L1-01-01,L1,FM01,Pipeline,Which phase turns an approved script into a shoot plan?,  pre-production  ,Post-production,Exhibition,Distribution,A,Pre-production,1',
+      'TEST-L1-99-01,L1,FM01,Synthetic,Which colour is the synthetic test answer?,  blue  ,Red,Green,Yellow,A,Blue,1',
     )).accepted[0];
     expect(draftContentHash(spaced)).toBe(draftContentHash(a));
   });

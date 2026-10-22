@@ -179,6 +179,12 @@ ALTER TABLE academy_exam_attempt_responses   ENABLE ROW LEVEL SECURITY;
 --    USING (true) read policy let anon read every key, including drafts.
 --  * the three new tables are admin/server data. No is_admin() policies: is_admin()
 --    reads user_profiles.role, which users can write themselves.
+-- An earlier draft of this migration created is_admin() policies on the new
+-- tables; remove them wherever that draft ran.
+DROP POLICY IF EXISTS admin_manage_academy_qimport_batches        ON academy_question_import_batches;
+DROP POLICY IF EXISTS admin_manage_academy_qreviews               ON academy_question_reviews;
+DROP POLICY IF EXISTS admin_manage_academy_exam_attempt_responses ON academy_exam_attempt_responses;
+
 REVOKE ALL ON TABLE academy_question_items          FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE academy_question_import_batches FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE academy_question_reviews        FROM PUBLIC, anon, authenticated;
