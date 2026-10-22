@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   parseSwap, secondsLeft, phaseOf, pollDelayMs, swapErrorCode, isSwapPinError, swapErrorMessage,
   normaliseUnits, compareUnits, setSwapPin, takeSwapPin, clearSwapPin, newSwapKey,
-  isRefusedBeforeExecution, isUnmountedRoute404,
+  isRefusedBeforeExecution, isUnmountedRoute404, providerNetwork, isAddressPending,
 } from '../providerSwap.ts';
 
 const view = {
@@ -64,7 +64,7 @@ test('swapErrorCode reads the cryptosvc `error` field', () => {
 });
 
 test('every refusal message says whether money moved', () => {
-  for (const code of ['quote_expired', 'insufficient_funds', 'limit_exceeded', 'step_up_unavailable']) {
+  for (const code of ['quote_expired', 'insufficient_funds', 'limit_exceeded', 'step_up_unavailable', 'trading_paused', 'market_disabled']) {
     assert.match(swapErrorMessage(code, 'buy'), /nothing was charged/i, code);
   }
   assert.match(swapErrorMessage('boom', 'sell'), /history/i, 'an unknown error sends the user to history, not to retry blindly');
@@ -121,4 +121,13 @@ test('each quote gets its own idempotency key', () => {
   const rand = () => `r${++n}`;
   assert.notEqual(newSwapKey(rand), newSwapKey(rand));
   assert.match(newSwapKey(), /^swq-[A-Za-z0-9-]+$/);
+});
+
+test('deposit networks are named the way the provider names them', () => {
+  assert.equal(providerNetwork('tron'), 'trc20');
+  assert.equal(providerNetwork('Ethereum'), 'erc20');
+  assert.equal(providerNetwork('bitcoin'), 'btc');
+  assert.equal(providerNetwork('polygon'), 'polygon');
+  assert.equal(isAddressPending({ swapCode: 'address_pending' }), true);
+  assert.equal(isAddressPending({ response: { data: { error: 'provider_unavailable' } } }), false);
 });

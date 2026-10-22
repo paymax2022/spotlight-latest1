@@ -1,5 +1,5 @@
 import { CRYPTO_FEE_LABEL, CRYPTO_STATUS_STYLE, QUOTE_EXPIRY_SECONDS, RISK_STYLE, SIDE_LABEL, VOLATILITY_DISCLOSURE } from '../constants/crypto.constants';
-import { useAssets } from '../hooks/useCrypto';
+import { useAssets, useCryptoStatus } from '../hooks/useCrypto';
 import type { CandlePoint, CryptoAsset, CryptoQuote, CryptoTransactionSummary, Position, RiskRating } from '../types/crypto.types';
 import { formatCountdown, formatCrypto, formatFiatObj, formatPct, formatPrice, relativeTime, secondsUntil } from '../utils/cryptoFormatters';
 import { Colors, Radius, Spacing, Typography } from '@/constants/tokens';
@@ -473,4 +473,49 @@ const volatilityWarningStyles = StyleSheet.create({
   compact: { padding: Spacing.sm },
   iconBox: { marginTop: 1 },
   text: { ...Typography.labelSm, color: Colors.onSurface, flex: 1, lineHeight: 18 },
+});
+
+// ── Operational status banner (GET /crypto/status) ──────────────────────────
+// The admin's customer message, or — when trading/withdrawals are paused without one — a
+// plain notice, so nobody fills in a form the server will refuse.
+
+const BANNER_TONE = {
+  info: { bg: Colors.iconBgPurple, fg: Colors.primary },
+  warning: { bg: Colors.iconBgGold, fg: Colors.onSurface },
+  critical: { bg: Colors.errorContainer, fg: Colors.error },
+} as const;
+
+export function CryptoStatusBanner() {
+  const status = useCryptoStatus();
+  const st = status.data;
+  let tone: keyof typeof BANNER_TONE | null = null;
+  let message: string | null = null;
+  if (st === 'unknown') {
+    tone = 'warning';
+    message = "We can't confirm crypto trading is available right now. Your holdings are safe.";
+  } else if (st) {
+    if (st.banner) {
+      tone = st.banner.severity;
+      message = st.banner.message;
+    } else if (st.tradingPaused) {
+      tone = 'warning';
+      message = 'Crypto trading is paused for maintenance. Your holdings are safe.';
+    } else if (st.withdrawalsPaused) {
+      tone = 'warning';
+      message = 'Crypto withdrawals are paused for now. Trading is unaffected.';
+    }
+  }
+  if (!tone || !message) return null;
+  const t = BANNER_TONE[tone];
+  return (
+    <View style={[statusBannerStyles.card, { backgroundColor: t.bg }]} accessibilityRole="alert" accessibilityLiveRegion="polite">
+      <Info size={16} color={t.fg} strokeWidth={2} />
+      <Text style={[statusBannerStyles.text, { color: t.fg }]}>{message}</Text>
+    </View>
+  );
+}
+
+const statusBannerStyles = StyleSheet.create({
+  card: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-start', borderRadius: Radius.lg, padding: Spacing.md },
+  text: { ...Typography.labelLg, flex: 1, lineHeight: 20 },
 });

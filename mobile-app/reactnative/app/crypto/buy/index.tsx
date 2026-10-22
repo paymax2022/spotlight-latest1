@@ -13,7 +13,8 @@ import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
 import { AssetIcon } from '@/features/crypto/components';
 import { VolatilityWarning } from '@/features/crypto/components';
-import { useAsset, useCryptoPortfolio } from '@/features/crypto/hooks/useCrypto';
+import { useAsset, useCryptoPortfolio, useCryptoStatus } from '@/features/crypto/hooks/useCrypto';
+import { tradeAvailability } from '@/features/crypto/utils/cryptoStatus';
 import {
   buildQuote, formatFiat, formatFiatObj, formatCrypto, formatPrice,
   parseFiatToMinor, parseCryptoToMinor, fiatMinorToInput,
@@ -25,6 +26,7 @@ import { sanitizeMoneyInput } from '@/utils/money';
 export default function BuyEntryScreen() {
   const { symbol } = useLocalSearchParams<{ symbol: string }>();
   const asset = useAsset(symbol);
+  const status = useCryptoStatus();
   const portfolio = useCryptoPortfolio();
   const [basis, setBasis] = useState<AmountBasis>('fiat');
   const [input, setInput] = useState('');
@@ -56,6 +58,15 @@ export default function BuyEntryScreen() {
   }
 
   const a = asset.data;
+  const avail = tradeAvailability(status.data ?? null, a);
+  if (!avail.canBuy) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Buy" />
+        <StateView kind="empty" icon="PauseCircle" title="Trading is paused" message={avail.tradeReason ?? `You can't buy ${a.symbol} right now.`} actionLabel="Back to Crypto" onAction={() => router.replace('/crypto')} />
+      </SafeAreaView>
+    );
+  }
   const investable = portfolio.data?.investableBalance.amount ?? 0;
   const belowMin = quote ? quote.totalFiat.amount < a.minOrderAmount : false;
   const aboveMax = quote ? quote.totalFiat.amount > a.maxOrderAmount : false;

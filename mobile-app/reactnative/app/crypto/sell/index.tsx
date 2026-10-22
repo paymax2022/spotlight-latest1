@@ -13,7 +13,8 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
 import { AssetIcon } from '@/features/crypto/components';
-import { useAsset, useCryptoPortfolio } from '@/features/crypto/hooks/useCrypto';
+import { useAsset, useCryptoPortfolio, useCryptoStatus } from '@/features/crypto/hooks/useCrypto';
+import { tradeAvailability } from '@/features/crypto/utils/cryptoStatus';
 import {
   buildQuote, formatFiat, formatFiatObj, formatCrypto, formatPrice,
   parseFiatToMinor, parseCryptoToMinor,
@@ -27,6 +28,7 @@ const PERCENTS = [25, 50, 75, 100];
 export default function SellEntryScreen() {
   const { symbol } = useLocalSearchParams<{ symbol: string }>();
   const asset = useAsset(symbol);
+  const status = useCryptoStatus();
   const portfolio = useCryptoPortfolio();
   const [basis, setBasis] = useState<AmountBasis>('crypto');
   const [input, setInput] = useState('');
@@ -64,6 +66,15 @@ export default function SellEntryScreen() {
   }
 
   const a = asset.data;
+  const avail = tradeAvailability(status.data ?? null, a);
+  if (!avail.canSell) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Sell" />
+        <StateView kind="empty" icon="PauseCircle" title="Trading is paused" message={avail.tradeReason ?? `You can't sell ${a.symbol} right now.`} actionLabel="Back to Crypto" onAction={() => router.replace('/crypto')} />
+      </SafeAreaView>
+    );
+  }
 
   // Restricted/empty: nothing to sell.
   if (heldMinor <= 0) {

@@ -11,9 +11,9 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import { AssetIcon } from '@/features/crypto/components';
-import {
-  useCryptoPortfolio, useAssets, useAddresses, useWithdrawalEligibility,
-} from '@/features/crypto/hooks/useCrypto';
+import { useCryptoPortfolio, useAssets, useAddresses, useWithdrawalEligibility, useCryptoStatus } from '@/features/crypto/hooks/useCrypto';
+import { withdrawalBlock } from '@/features/crypto/utils/cryptoStatus';
+import { RailGate } from '@/features/crypto/components/ProviderTrade';
 import {
   formatCrypto, formatFiatObj, parseCryptoToMinor, relativeTime,
 } from '@/features/crypto/utils/cryptoFormatters';
@@ -25,9 +25,10 @@ function maskAddress(value: string): string {
   return v.length <= 12 ? v : `${v.slice(0, 6)}…${v.slice(-4)}`;
 }
 
-export default function WithdrawEntryScreen() {
+function LegacyWithdrawEntryScreen() {
   const params = useLocalSearchParams<{ symbol?: string }>();
   const eligibility = useWithdrawalEligibility();
+  const status = useCryptoStatus();
   const portfolio = useCryptoPortfolio();
   const assets = useAssets();
 
@@ -55,6 +56,16 @@ export default function WithdrawEntryScreen() {
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Withdraw crypto" />
         <StateView kind="loading" message="Loading…" />
+      </SafeAreaView>
+    );
+  }
+
+  const paused = withdrawalBlock(status.data ?? null);
+  if (paused) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Withdraw crypto" />
+        <StateView kind="empty" icon="PauseCircle" title="Withdrawals are paused" message={paused} actionLabel="Back to Crypto" onAction={() => router.replace('/crypto')} />
       </SafeAreaView>
     );
   }
@@ -206,6 +217,36 @@ export default function WithdrawEntryScreen() {
         <PrimaryButton label="Review withdrawal" onPress={onContinue} disabled={disabled} />
       </SafeAreaView>
     </SafeAreaView>
+  );
+}
+
+
+/**
+ * On the Quidax rail the crypto sits in the customer's provider account, and external
+ * withdrawals from it are not live yet (the legacy path pays from the internal book, which
+ * holds none of it). Say so plainly instead of offering a form the server would refuse.
+ */
+export default function WithdrawEntryScreen() {
+  return (
+    <RailGate
+      title="Withdraw crypto"
+      provider={() => (
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <ScreenHeader title="Withdraw crypto" />
+          <StateView
+            kind="empty"
+            icon="Wallet"
+            title="Withdrawals to other wallets are coming"
+            message="Your crypto is safe in your Paymax account. You can sell it for naira at any time, and it reaches your wallet within seconds."
+            actionLabel="Sell crypto"
+            onAction={() => router.replace('/crypto/sell')}
+            secondaryActionLabel="Back to Crypto"
+            onSecondaryAction={() => router.replace('/crypto')}
+          />
+        </SafeAreaView>
+      )}
+      legacy={() => <LegacyWithdrawEntryScreen />}
+    />
   );
 }
 
