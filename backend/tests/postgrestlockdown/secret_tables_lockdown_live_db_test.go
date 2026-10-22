@@ -240,6 +240,19 @@ func livePool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("ping: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	// The hole only exists where public tables default-grant to the PostgREST
+	// roles, as Supabase does. On a bare Postgres (e.g. the CI compat prelude)
+	// every denial below would pass with or without the migration.
+	var supabaseGrants bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT EXISTS (SELECT 1 FROM pg_default_acl d, aclexplode(d.defaclacl) a
+		                WHERE d.defaclnamespace = 'public'::regnamespace AND d.defaclobjtype = 'r'
+		                  AND a.grantee = 'authenticated'::regrole)`).Scan(&supabaseGrants); err != nil {
+		t.Fatalf("default-acl probe: %v", err)
+	}
+	if !supabaseGrants {
+		t.Skip("public schema has no Supabase default grants to authenticated — denials would pass vacuously")
+	}
 	return pool
 }
 
@@ -308,17 +321,20 @@ func TestSecretTablesPostgRESTLockdown_Integration(t *testing.T) {
 
 	// Catalog check: neither PUBLIC nor the PostgREST roles hold any table or
 	// column privilege, so a later blanket GRANT re-exposing a secret fails here.
+	// Reads the ACLs directly: information_schema only lists grants the
+	// connected role is party to, so it would read 0 for a non-superuser DSN.
 	t.Run("catalog: no privileges for PUBLIC/anon/authenticated", func(t *testing.T) {
 		pool := livePool(t)
 		for _, tbl := range secretTables {
 			var tableGrants, columnGrants int
 			if err := pool.QueryRow(ctx, `
-				SELECT (SELECT count(*) FROM information_schema.role_table_grants
-				         WHERE table_schema='public' AND table_name=$1
-				           AND grantee IN ('PUBLIC','anon','authenticated')),
-				       (SELECT count(*) FROM information_schema.column_privileges
-				         WHERE table_schema='public' AND table_name=$1
-				           AND grantee IN ('PUBLIC','anon','authenticated'))`,
+				WITH r AS (SELECT ('public.'||$1)::regclass AS rel),
+				     g AS (SELECT 0::oid AS oid
+				           UNION ALL SELECT oid FROM pg_roles WHERE rolname IN ('anon','authenticated'))
+				SELECT (SELECT count(*) FROM pg_class c, r, aclexplode(c.relacl) a
+				         WHERE c.oid = r.rel AND a.grantee IN (SELECT oid FROM g)),
+				       (SELECT count(*) FROM pg_attribute at, r, aclexplode(at.attacl) a
+				         WHERE at.attrelid = r.rel AND a.grantee IN (SELECT oid FROM g))`,
 				tbl.name).Scan(&tableGrants, &columnGrants); err != nil {
 				t.Fatalf("%s: catalog query: %v", tbl.name, err)
 			}
