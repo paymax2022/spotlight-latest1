@@ -1,4 +1,4 @@
-# ADR: Estate delegated officer roles and server-side gate enforcement
+# ADR-PR876: Estate delegated officer roles and server-side gate enforcement
 
 **Status:** Accepted · **Date:** 2026-10-22 · **Area:** estate security (SP-01 + SP-02)
 
