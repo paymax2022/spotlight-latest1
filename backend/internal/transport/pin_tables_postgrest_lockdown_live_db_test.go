@@ -1,7 +1,7 @@
 package transport_test
 
 // LIVE-DB grant test for the PIN-table PostgREST lockdown (ADR-PR<n>, see
-// docs/adr/ADR-PR-parcels-postgrest-lockdown.md). parcels, towing_jobs, trips
+// docs/adr/ADR-PR<n>-pin-tables-postgrest-lockdown.md). parcels, towing_jobs, trips
 // and business_deliveries each carry a handover secret (pickup/dropoff PIN,
 // towing pin, trip PIN) and were reachable over PostgREST with an ordinary
 // user JWT: the courier/driver SELECT policy exposed the PIN column, and the
@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -113,11 +114,14 @@ func actAs(ctx context.Context, t *testing.T, tx pgx.Tx, role, userID string) {
 	}
 }
 
-func wantPermissionDenied(t *testing.T, what string, err error) {
+// wantPermissionDenied requires a grant-level denial on table itself, so a
+// 42501 from some other object (or an RLS WITH CHECK refusal) cannot pass.
+func wantPermissionDenied(t *testing.T, what, table string, err error) {
 	t.Helper()
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
-		t.Fatalf("%s: want permission denied (42501), got %v", what, err)
+	if !errors.As(err, &pgErr) || pgErr.Code != "42501" ||
+		!strings.Contains(pgErr.Message, "permission denied for table "+table) {
+		t.Fatalf("%s: want permission denied for table %s, got %v", what, table, err)
 	}
 }
 
@@ -153,6 +157,31 @@ func pinFixture(ctx context.Context, t *testing.T, tbl pinTable) (tx pgx.Tx, own
 
 func TestPinTablesPostgRESTLockdown_Integration(t *testing.T) {
 	ctx := context.Background()
+
+	// Catalog check: neither PUBLIC nor the PostgREST roles hold any table or
+	// column privilege, so a later blanket GRANT re-exposing a PIN fails here.
+	t.Run("catalog: no privileges for PUBLIC/anon/authenticated", func(t *testing.T) {
+		pool := deliverySchemaPool(t)
+		defer pool.Close()
+		for _, tbl := range pinTables {
+			var tableGrants, columnGrants int
+			if err := pool.QueryRow(ctx, `
+				SELECT (SELECT count(*) FROM information_schema.role_table_grants
+				         WHERE table_schema='public' AND table_name=$1
+				           AND grantee IN ('PUBLIC','anon','authenticated')),
+				       (SELECT count(*) FROM information_schema.column_privileges
+				         WHERE table_schema='public' AND table_name=$1
+				           AND grantee IN ('PUBLIC','anon','authenticated'))`,
+				tbl.name).Scan(&tableGrants, &columnGrants); err != nil {
+				t.Fatalf("%s: catalog query: %v", tbl.name, err)
+			}
+			if tableGrants != 0 || columnGrants != 0 {
+				t.Errorf("%s: want no PUBLIC/anon/authenticated privileges, got %d table + %d column grants",
+					tbl.name, tableGrants, columnGrants)
+			}
+		}
+	})
+
 	for _, tbl := range pinTables {
 		tbl := tbl
 		t.Run(tbl.name+"/courier cannot read PIN", func(t *testing.T) {
@@ -160,38 +189,38 @@ func TestPinTablesPostgRESTLockdown_Integration(t *testing.T) {
 			actAs(ctx, t, tx, "authenticated", courierUserID)
 			var pin *string
 			err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM %s WHERE id=$1`, tbl.pinColumn, tbl.name), rowID).Scan(&pin)
-			wantPermissionDenied(t, "courier SELECT "+tbl.pinColumn, err)
+			wantPermissionDenied(t, "courier SELECT "+tbl.pinColumn, tbl.name, err)
 		})
 		t.Run(tbl.name+"/owner cannot read PIN", func(t *testing.T) {
 			tx, ownerID, _, _, rowID := pinFixture(ctx, t, tbl)
 			actAs(ctx, t, tx, "authenticated", ownerID)
 			var pin *string
 			err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM %s WHERE id=$1`, tbl.pinColumn, tbl.name), rowID).Scan(&pin)
-			wantPermissionDenied(t, "owner SELECT "+tbl.pinColumn, err)
+			wantPermissionDenied(t, "owner SELECT "+tbl.pinColumn, tbl.name, err)
 		})
 		t.Run(tbl.name+"/owner cannot forge a row", func(t *testing.T) {
 			tx, ownerID, _, driverID, _ := pinFixture(ctx, t, tbl)
 			actAs(ctx, t, tx, "authenticated", ownerID)
 			_, err := tx.Exec(ctx, tbl.forge, ownerID, driverID)
-			wantPermissionDenied(t, "forged INSERT", err)
+			wantPermissionDenied(t, "forged INSERT", tbl.name, err)
 		})
 		t.Run(tbl.name+"/courier cannot update or delete", func(t *testing.T) {
 			tx, _, courierUserID, _, rowID := pinFixture(ctx, t, tbl)
 			actAs(ctx, t, tx, "authenticated", courierUserID)
 			_, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET updated_at = now() WHERE id=$1`, tbl.name), rowID)
-			wantPermissionDenied(t, "UPDATE", err)
+			wantPermissionDenied(t, "UPDATE", tbl.name, err)
 			// The failed UPDATE aborted the tx; probe DELETE on a fresh fixture.
 			tx2, _, courier2, _, row2 := pinFixture(ctx, t, tbl)
 			actAs(ctx, t, tx2, "authenticated", courier2)
 			_, err = tx2.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id=$1`, tbl.name), row2)
-			wantPermissionDenied(t, "DELETE", err)
+			wantPermissionDenied(t, "DELETE", tbl.name, err)
 		})
 		t.Run(tbl.name+"/anon holds nothing", func(t *testing.T) {
 			tx, _, _, _, rowID := pinFixture(ctx, t, tbl)
 			actAs(ctx, t, tx, "anon", uuid.NewString())
 			var id string
 			err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE id=$1`, tbl.name), rowID).Scan(&id)
-			wantPermissionDenied(t, "anon SELECT", err)
+			wantPermissionDenied(t, "anon SELECT", tbl.name, err)
 		})
 		t.Run(tbl.name+"/service_role keeps full access", func(t *testing.T) {
 			tx, _, _, _, rowID := pinFixture(ctx, t, tbl)

@@ -20,10 +20,10 @@
 -- would re-expose the PIN columns, so any future direct client read must be a
 -- column-scoped GRANT that omits them.
 
-REVOKE ALL ON TABLE public.parcels             FROM anon, authenticated;
-REVOKE ALL ON TABLE public.towing_jobs         FROM anon, authenticated;
-REVOKE ALL ON TABLE public.trips               FROM anon, authenticated;
-REVOKE ALL ON TABLE public.business_deliveries FROM anon, authenticated;
+REVOKE ALL ON TABLE public.parcels             FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.towing_jobs         FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.trips               FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.business_deliveries FROM PUBLIC, anon, authenticated;
 
 -- Column-level grants survive a table-level REVOKE; clear any that exist so the
 -- PIN columns cannot stay readable through one.
@@ -36,10 +36,11 @@ BEGIN
         FROM information_schema.column_privileges
         WHERE table_schema = 'public'
           AND table_name IN ('parcels','towing_jobs','trips','business_deliveries')
-          AND grantee IN ('anon','authenticated')
+          AND grantee IN ('PUBLIC','anon','authenticated')
     LOOP
-        EXECUTE format('REVOKE %s (%I) ON TABLE public.%I FROM %I',
-                       r.privilege_type, r.column_name, r.table_name, r.grantee);
+        EXECUTE format('REVOKE %s (%I) ON TABLE public.%I FROM %s',
+                       r.privilege_type, r.column_name, r.table_name,
+                       CASE r.grantee WHEN 'PUBLIC' THEN 'PUBLIC' ELSE quote_ident(r.grantee) END);
     END LOOP;
 END $$;
 
