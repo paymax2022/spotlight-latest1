@@ -1,15 +1,15 @@
 package transport
 
-// LIVE-DB tests: the free channels for the receiver's drop-off PIN
+// LIVE-DB tests: the free channel for the receiver's drop-off PIN
 // (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY). Skipped unless TEST_DATABASE_URL is set.
 // Pins:
 //  1. A receiver_email given at booking is emailed the PIN after pickup.
-//  2. A receiver whose phone matches exactly ONE Paymax account with a VERIFIED
-//     phone gets a push on their devices and an email to their account address.
-//  3. An unverified match, an ambiguous match, or a match on the courier's own
-//     account gets nothing through the account channels.
-//  4. A malformed receiver_email is refused at booking (400) before any money moves.
-//  5. The PIN, the email address and the phone never reach the logs.
+//  2. The receiver's "own" Paymax account is NEVER a channel: user_profiles
+//     phone/phone_verified are self-writable, so a courier's second account
+//     claiming the receiver's number as verified must get nothing (security
+//     review C1, ADR-PR860).
+//  3. A malformed receiver_email is refused at booking (400) before any money moves.
+//  4. The PIN, the address and the phone never reach the logs.
 
 import (
 	"context"
@@ -60,32 +60,6 @@ func (f *fakeReceiverEmail) texts() []string {
 		out = append(out, s.text)
 	}
 	return out
-}
-
-type fakeReceiverPush struct {
-	mu     sync.Mutex
-	tokens [][]string
-	bodies []string
-}
-
-func (f *fakeReceiverPush) SendPush(_ context.Context, tokens []string, _, body string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.tokens = append(f.tokens, append([]string(nil), tokens...))
-	f.bodies = append(f.bodies, body)
-	return nil
-}
-
-func (f *fakeReceiverPush) first() (tokens []string, body string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.tokens[0], f.bodies[0]
-}
-
-func (f *fakeReceiverPush) calls() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.tokens)
 }
 
 // uniqueReceiverPhone keeps account-matching tests from seeing each other's rows.
@@ -149,8 +123,8 @@ func pickedUpParcelTo(t *testing.T, f *prepaidParcelFixture, phone, email string
 
 func TestLiveDB_ReceiverPinNotify_EmailsTheReceiverEmailGivenAtBooking(t *testing.T) {
 	f := newPrepaidParcelFixture(t, true)
-	mail, push := &fakeReceiverEmail{}, &fakeReceiverPush{}
-	f.svc.WithReceiverPinNotify(mail, push)
+	mail := &fakeReceiverEmail{}
+	f.svc.WithReceiverPinNotify(mail)
 
 	p, pin, rider := pickedUpParcelTo(t, f, uniqueReceiverPhone(), "Ada.Receiver@Example.com")
 	if state, at := noticeState(t, f, p.ID); state != "sent" || at == nil {
@@ -165,9 +139,6 @@ func TestLiveDB_ReceiverPinNotify_EmailsTheReceiverEmailGivenAtBooking(t *testin
 	if via := notifiedVia(t, f, p.ID); len(via) != 1 || via[0] != "email" {
 		t.Fatalf("notified via %v, want [email]", via)
 	}
-	if push.calls() != 0 {
-		t.Fatal("no account matched: no push may be sent")
-	}
 	asSender, _ := f.svc.ParcelDetail(context.Background(), p.ID, f.sender)
 	if asSender["receiverEmail"] != "ada.receiver@example.com" || asSender["receiverNotifiedAt"] == nil {
 		t.Fatalf("sender detail: receiverEmail=%v receiverNotifiedAt=%v", asSender["receiverEmail"], asSender["receiverNotifiedAt"])
@@ -178,91 +149,29 @@ func TestLiveDB_ReceiverPinNotify_EmailsTheReceiverEmailGivenAtBooking(t *testin
 	}
 }
 
-func TestLiveDB_ReceiverPinNotify_VerifiedAccountGetsPushAndAccountEmail(t *testing.T) {
+// Regression for security review C1: anyone can mark their own profile phone
+// "verified", so a second account claiming the receiver's number (with a push
+// token) must never be sent the PIN — no push, no email to it.
+func TestLiveDB_ReceiverPinNotify_NeverSendsToAnAccountClaimingTheReceiverPhone(t *testing.T) {
 	f := newPrepaidParcelFixture(t, true)
-	mail, push := &fakeReceiverEmail{}, &fakeReceiverPush{}
-	f.svc.WithReceiverPinNotify(mail, push)
+	mail := &fakeReceiverEmail{}
+	f.svc.WithReceiverPinNotify(mail)
 	phone := uniqueReceiverPhone()
-	// Stored in local format: the match is on the national number.
-	_, accountEmail := seedReceiverAccount(t, f, "0"+phone[4:], true, "ExponentPushToken[receiver-"+phone[5:]+"]")
+	_, claimerEmail := seedReceiverAccount(t, f, phone, true, "ExponentPushToken[claimer]")
 
-	p, pin, _ := pickedUpParcelTo(t, f, phone, "")
-	if state, _ := noticeState(t, f, p.ID); state != "sent" {
-		t.Fatalf("notice state %q, want sent", state)
+	p, _, _ := pickedUpParcelTo(t, f, phone, "") // no receiver_email given
+	state, at := noticeState(t, f, p.ID)
+	if state != "failed" || at != nil {
+		t.Fatalf("state=%q at=%v, want failed (no channel): the claimed account is not a channel", state, at)
 	}
-	if push.calls() != 1 {
-		t.Fatalf("push calls=%d, want one push to the receiver's device", push.calls())
-	}
-	if tokens, body := push.first(); len(tokens) != 1 || !strings.Contains(body, pin) {
-		t.Fatalf("push tokens=%v, want one device and the PIN in the body", tokens)
-	}
-	if to := mail.to(); len(to) != 1 || to[0] != accountEmail {
-		t.Fatalf("emails went to %v, want the receiver account's email %s", to, accountEmail)
-	}
-	via := notifiedVia(t, f, p.ID)
-	if strings.Join(via, ",") != "email,push" {
-		t.Fatalf("notified via %v, want [email push]", via)
-	}
-}
-
-func TestLiveDB_ReceiverPinNotify_UnverifiedAmbiguousOrCourierMatchesGetNothing(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		setup func(t *testing.T, f *prepaidParcelFixture, phone string)
-	}{
-		{"unverified phone", func(t *testing.T, f *prepaidParcelFixture, phone string) {
-			seedReceiverAccount(t, f, phone, false, "ExponentPushToken[unverified]")
-		}},
-		{"two verified accounts claim the phone", func(t *testing.T, f *prepaidParcelFixture, phone string) {
-			seedReceiverAccount(t, f, phone, true, "ExponentPushToken[a]")
-			seedReceiverAccount(t, f, "0"+phone[4:], true, "ExponentPushToken[b]")
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newPrepaidParcelFixture(t, true)
-			mail, push := &fakeReceiverEmail{}, &fakeReceiverPush{}
-			f.svc.WithReceiverPinNotify(mail, push)
-			phone := uniqueReceiverPhone()
-			tc.setup(t, f, phone)
-			p, _, _ := pickedUpParcelTo(t, f, phone, "")
-			state, at := noticeState(t, f, p.ID)
-			if state != "failed" || at != nil || push.calls() != 0 || len(mail.to()) != 0 {
-				t.Fatalf("state=%q at=%v push=%d mail=%v, want nothing sent", state, at, push.calls(), mail.to())
-			}
-		})
-	}
-
-	t.Run("the courier's own account", func(t *testing.T) {
-		f := newPrepaidParcelFixture(t, true)
-		mail, push := &fakeReceiverEmail{}, &fakeReceiverPush{}
-		f.svc.WithReceiverPinNotify(mail, push)
-		phone := uniqueReceiverPhone()
-		ctx := context.Background()
-		req := parcelReq()
-		req.ReceiverPhone = phone
-		p, _ := f.book(t, req)
-		rider := seedParcelRider(t, ctx, f.pool, "Self Receiver Rider")
-		// The courier claims the receiver's number as their own verified phone.
-		if _, err := f.pool.Exec(ctx, `
-			INSERT INTO public.user_profiles (id, phone, phone_verified) VALUES ($1,$2,true)
-			ON CONFLICT (id) DO UPDATE SET phone=EXCLUDED.phone, phone_verified=true`, rider, phone); err != nil {
-			t.Fatal(err)
+	for _, to := range mail.to() {
+		if to == claimerEmail {
+			t.Fatal("the PIN was emailed to an account that merely claims the receiver's phone")
 		}
-		if _, err := f.svc.AcceptParcel(ctx, p.ID, rider); err != nil {
-			t.Fatal(err)
-		}
-		p = f.parcel(t, p.ID)
-		if err := f.svc.VerifyParcelPickupPin(ctx, p.ID, rider, *p.PickupPin); err != nil {
-			t.Fatal(err)
-		}
-		if err := f.svc.MarkParcelPickedUp(ctx, p.ID, rider, "https://r2.test/p.jpg"); err != nil {
-			t.Fatal(err)
-		}
-		noticeState(t, f, p.ID)
-		if push.calls() != 0 || len(mail.to()) != 0 {
-			t.Fatalf("the courier was sent the drop-off PIN: push=%d mail=%v", push.calls(), mail.to())
-		}
-	})
+	}
+	if len(mail.to()) != 0 {
+		t.Fatalf("emails sent: %v, want none", mail.to())
+	}
 }
 
 func TestLiveDB_ReceiverPinNotify_MalformedReceiverEmailRefusedAtBooking(t *testing.T) {
@@ -287,7 +196,7 @@ func TestLiveDB_ReceiverPinNotify_NeverLogsThePinOrAddresses(t *testing.T) {
 
 	f := newPrepaidParcelFixture(t, true)
 	mail := &fakeReceiverEmail{err: errors.New("resend returned 422: echo")}
-	f.svc.WithReceiverPinNotify(mail, &fakeReceiverPush{})
+	f.svc.WithReceiverPinNotify(mail)
 	phone := uniqueReceiverPhone()
 	p, pin, _ := pickedUpParcelTo(t, f, phone, "leak-check@example.com")
 	noticeState(t, f, p.ID)
@@ -309,6 +218,9 @@ func TestReceiverEmailNormalisation(t *testing.T) {
 		"two@@example.com":       "",
 		"spaces in@example.com":  "",
 		"x@y":                    "",
+		"x<v@evil.com>":          "",
+		"Ada <ada@example.com>":  "",
+		"a;b@c.d":                "",
 	} {
 		if got := normaliseReceiverEmail(in); got != want {
 			t.Errorf("normaliseReceiverEmail(%q) = %q, want %q", in, got, want)

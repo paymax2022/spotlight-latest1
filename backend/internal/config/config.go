@@ -313,9 +313,8 @@ type Config struct {
 	// once per parcel. Needs TERMII_API_KEY; off or unconfigured = no SMS.
 	FeatureParcelReceiverPinSMSEnabled bool
 	// FeatureParcelReceiverPinNotifyEnabled (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY):
-	// the free channels for the receiver's drop-off PIN after pickup: email to
-	// the booking's receiver_email (needs RESEND_API_KEY) and push + email to the
-	// receiver's verified Paymax account (Expo push is keyless).
+	// email the parcel receiver their drop-off PIN after pickup, to the
+	// receiver_email given at booking (needs RESEND_API_KEY). Free.
 	FeatureParcelReceiverPinNotifyEnabled bool
 	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) ride-hailing checkout path

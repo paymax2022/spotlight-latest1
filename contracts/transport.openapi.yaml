@@ -241,7 +241,7 @@ components:
             pass the drop-off PIN on themselves.
         receiverNotifiedVia:
           type: array
-          items: { type: string, enum: [email, push, sms] }
+          items: { type: string, enum: [email, sms] }
           description: Sender only. The channels the drop-off PIN reached the receiver through; empty when none.
         receiverEmail: { type: string, nullable: true, description: 'Sender only. The receiver email given at booking, if any.' }
     ParcelRequest:
@@ -1159,12 +1159,11 @@ paths:
       summary: Courier — mark parcel picked up
       description: >
         Moves the parcel to in_transit, then tells the receiver the drop-off PIN through every channel
-        that can reach them. All of them are free except SMS:
-          - email, to the receiver_email given at booking (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY);
-          - push and email, to the receiver's Paymax account, but only when receiver_phone matches exactly
-            one account whose phone is VERIFIED, and that account is neither the courier's nor the
-            sender's (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY);
-          - SMS to receiver_phone (FEATURE_PARCEL_RECEIVER_PIN_SMS, paid; off by default).
+        that can reach them:
+          - email, to the receiver_email given at booking (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY; free);
+          - SMS to receiver_phone (FEATURE_PARCEL_RECEIVER_PIN_SMS; paid, off by default).
+        A Paymax account whose profile phone matches receiver_phone is deliberately never a channel:
+        profile phones are self-asserted, so anyone could claim the receiver's number.
         It runs at most once per parcel, however often this call is retried, and only for a paid booking.
         It is best-effort: a failed send never fails or delays this call. receiverNotifiedAt and
         receiverNotifiedVia report what reached the receiver. The PIN is never written to logs or

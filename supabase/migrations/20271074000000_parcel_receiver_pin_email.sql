@@ -1,6 +1,6 @@
 -- =============================================================================
--- Parcel: reach the receiver with the drop-off PIN through free channels:
--- email and push (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY). See ADR-PR<n> (renamed on PR open).
+-- Parcel: email the receiver their drop-off PIN, to an address the sender gives
+-- at booking (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY). See ADR-PR860 (docs/adr/ADR-PR860-parcel-receiver-pin-email.md).
 --
 -- Additive only.
 --   receiver_email         optional address the sender gives at booking

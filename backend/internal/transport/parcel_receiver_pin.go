@@ -3,25 +3,27 @@ package transport
 import (
 	"context"
 	"log"
+	"net/mail"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
 
-// Receiver drop-off PIN after pickup (ADR-PR857 SMS; ADR-PR<n> email + push).
+// Receiver drop-off PIN after pickup (ADR-PR857 SMS; ADR-PR860 email + push).
 //
 // The courier must collect the drop-off PIN from the receiver, but only the
 // sender can read it (ParcelDetail). Once the parcel is picked up, the receiver
 // is told the PIN, so a delivery never stalls at the door waiting on the sender
 // to relay it. Channels, each optional and independently wired:
-//   - email to parcels.receiver_email, given by the sender at booking   (free)
-//   - push + email to the receiver's Paymax account — only when
-//     receiver_phone matches exactly ONE account with a VERIFIED phone that is
-//     neither the courier's nor the sender's (an unverified match would let
-//     anyone register the receiver's number and collect their PIN)    (free)
-//     FEATURE_PARCEL_RECEIVER_PIN_NOTIFY covers both of the above.
+//   - email to parcels.receiver_email, which only the sender sets, at booking
+//     (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY; free)
 //   - SMS to receiver_phone (FEATURE_PARCEL_RECEIVER_PIN_SMS; paid)
+// The receiver's own Paymax account is deliberately NOT a channel (no push, no
+// account email): user_profiles.phone / phone_verified are writable by their
+// owner over PostgREST and nothing server-side proves them, so "the account
+// whose verified phone is the receiver's" can be anyone who claims that number
+// — e.g. a courier's second account (ADR-PR860).
 // The notice counts as sent when at least one channel accepted it;
 // receiver_notified_via records which.
 //
@@ -51,12 +53,6 @@ type ReceiverEmailSender interface {
 	SendEmail(ctx context.Context, to, subject, text string) error
 }
 
-// ReceiverPushSender pushes one notification to a user's devices
-// (integrations.ExpoPushClient).
-type ReceiverPushSender interface {
-	SendPush(ctx context.Context, tokens []string, title, body string) error
-}
-
 // WithReceiverPinSMS turns the receiver PIN text on. nil (the default, and what
 // the wiring passes when the flag is off or SMS is not configured) = off.
 func (s *Service) WithReceiverPinSMS(sender ReceiverSMSSender) *Service {
@@ -64,46 +60,45 @@ func (s *Service) WithReceiverPinSMS(sender ReceiverSMSSender) *Service {
 	return s
 }
 
-// WithReceiverPinNotify turns the free channels on: email (to receiver_email
-// and to a matched account) and push (to a matched account). Either may be nil.
-func (s *Service) WithReceiverPinNotify(email ReceiverEmailSender, push ReceiverPushSender) *Service {
-	s.receiverEmail, s.receiverPush = email, push
+// WithReceiverPinNotify turns the free channel on: email to the receiver_email
+// given at booking. nil = off.
+func (s *Service) WithReceiverPinNotify(email ReceiverEmailSender) *Service {
+	s.receiverEmail = email
 	return s
 }
 
 func (s *Service) receiverNoticeOn() bool {
-	return s.receiverSMS != nil || s.receiverEmail != nil || s.receiverPush != nil
+	return s.receiverSMS != nil || s.receiverEmail != nil
 }
 
-// receiverEmailRe is deliberately plain: one @, no spaces, a dotted domain.
-var receiverEmailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+// receiverEmailDomainRe: the domain must have a dot (net/mail accepts "x@y").
+var receiverEmailDomainRe = regexp.MustCompile(`^[a-z0-9-]+(\.[a-z0-9-]+)+$`)
 
-// normaliseReceiverEmail returns the address lower-cased and trimmed, or "" if
-// it is not one (or is longer than the 254 an address may be).
+// normaliseReceiverEmail returns the bare address lower-cased, or "" unless the
+// input is exactly one plain address (no display name, no angle brackets, no
+// comments), at most 254 characters, with a dotted domain.
 func normaliseReceiverEmail(raw string) string {
 	e := strings.ToLower(strings.TrimSpace(raw))
-	if len(e) > 254 || !receiverEmailRe.MatchString(e) {
+	if e == "" || len(e) > 254 {
+		return ""
+	}
+	a, err := mail.ParseAddress(e)
+	if err != nil || a.Name != "" || a.Address != e {
+		return ""
+	}
+	at := strings.LastIndexByte(e, '@')
+	if at < 1 || !receiverEmailDomainRe.MatchString(e[at+1:]) {
 		return ""
 	}
 	return e
 }
 
-// receiverNationalNumber is the last 10 digits — how user_profiles.phone is
-// matched everywhere (services.NormalizePhone, user_profiles_phone_nsn_idx).
-func receiverNationalNumber(phone string) string {
-	d := strings.Map(func(r rune) rune {
-		if r >= '0' && r <= '9' {
-			return r
-		}
-		return -1
-	}, phone)
-	if len(d) < 10 {
-		return ""
-	}
-	return d[len(d)-10:]
-}
-
-const receiverPinSendTimeout = 20 * time.Second
+// receiverPinSendTimeout bounds the whole notice; each channel also gets its
+// own receiverPinChannelTimeout so a slow provider cannot starve the next one.
+const (
+	receiverPinSendTimeout    = 40 * time.Second
+	receiverPinChannelTimeout = 15 * time.Second
+)
 
 // receiverPhoneRe: optional + then 7–15 digits, after stripping spaces, dashes
 // and brackets (the connect onboarding rule).
@@ -177,53 +172,6 @@ func (s *Service) notifyReceiverAfterPickup(ctx context.Context, parcelID string
 	}()
 }
 
-// receiverAccount is the receiver's own Paymax account, when there is exactly one.
-type receiverAccount struct {
-	userID, email string
-	pushTokens    []string
-}
-
-// findReceiverAccount resolves receiver_phone to ONE account with a verified
-// phone, excluding the courier and the sender. Ambiguous or unverified → none.
-func (s *Service) findReceiverAccount(ctx context.Context, phone, courierUserID, senderID string) *receiverAccount {
-	nsn := receiverNationalNumber(phone)
-	if nsn == "" {
-		return nil
-	}
-	rows, err := s.db.Query(ctx, `
-		SELECT up.id::text, COALESCE(au.email, '')
-		FROM public.user_profiles up LEFT JOIN auth.users au ON au.id = up.id
-		WHERE up.phone_verified IS TRUE
-		  AND right(regexp_replace(COALESCE(up.phone,''), '\D', '', 'g'), 10) = $1
-		LIMIT 2`, nsn)
-	if err != nil {
-		return nil
-	}
-	var found []receiverAccount
-	for rows.Next() {
-		var a receiverAccount
-		if rows.Scan(&a.userID, &a.email) == nil {
-			found = append(found, a)
-		}
-	}
-	rows.Close()
-	if len(found) != 1 || found[0].userID == courierUserID || found[0].userID == senderID {
-		return nil
-	}
-	a := found[0]
-	trows, err := s.db.Query(ctx, `SELECT token FROM public.device_push_tokens WHERE user_id=$1::uuid ORDER BY updated_at DESC LIMIT 10`, a.userID)
-	if err == nil {
-		for trows.Next() {
-			var tok string
-			if trows.Scan(&tok) == nil && tok != "" {
-				a.pushTokens = append(a.pushTokens, tok)
-			}
-		}
-		trows.Close()
-	}
-	return &a
-}
-
 // notifyReceiverDropoffPin claims the parcel's one receiver notice and sends it
 // through every channel that can reach the receiver. Safe to call any number of
 // times, concurrently: only the claim winner sends.
@@ -234,16 +182,15 @@ func (s *Service) notifyReceiverDropoffPin(ctx context.Context, parcelID string)
 	ctx, cancel := context.WithTimeout(ctx, receiverPinSendTimeout)
 	defer cancel()
 
-	var senderID, phone, pin, courierUserID string
+	var senderID, phone, pin string
 	var receiverEmail *string
 	err := s.db.QueryRow(ctx, `
 		UPDATE parcels SET receiver_pin_notice='sending'
 		WHERE id=$1 AND receiver_pin_notice IS NULL
 		  AND status IN ('picked_up','in_transit') AND dropoff_pin IS NOT NULL
 		  AND settlement_id IS NOT NULL
-		RETURNING sender_id::text, receiver_phone, receiver_email, dropoff_pin,
-		          COALESCE((SELECT d.user_id::text FROM drivers d WHERE d.id = parcels.courier_id), '')`,
-		parcelID).Scan(&senderID, &phone, &receiverEmail, &pin, &courierUserID)
+		RETURNING sender_id::text, receiver_phone, receiver_email, dropoff_pin`,
+		parcelID).Scan(&senderID, &phone, &receiverEmail, &pin)
 	if err != nil {
 		return // already claimed (sent / failed / in flight), not in transit, or no row
 	}
@@ -257,54 +204,32 @@ func (s *Service) notifyReceiverDropoffPin(ctx context.Context, parcelID string)
 	}
 
 	var via []string
-	add := func(ch string) {
-		for _, v := range via {
-			if v == ch {
-				return
-			}
-		}
-		via = append(via, ch)
-	}
-	emailed := map[string]bool{}
-	sendEmail := func(to, who string) {
-		if s.receiverEmail == nil || to == "" || emailed[to] {
-			return
-		}
-		emailed[to] = true
-		if err := s.receiverEmail.SendEmail(ctx, to, receiverPinEmailSubject, receiverPinEmail(pin)); err != nil {
-			log.Printf("[transport] parcel %s: receiver PIN email (%s) failed: %s", parcelID, who, redact(err.Error(), pin, to))
-			return
-		}
-		add("email")
-	}
 
-	// 1. The address the sender gave at booking.
-	if receiverEmail != nil {
-		sendEmail(normaliseReceiverEmail(*receiverEmail), "booking address")
-	}
-	// 2. The receiver's own verified account: push to their devices, email them.
-	if s.receiverEmail != nil || s.receiverPush != nil {
-		if acct := s.findReceiverAccount(ctx, phone, courierUserID, senderID); acct != nil {
-			if s.receiverPush != nil && len(acct.pushTokens) > 0 {
-				if err := s.receiverPush.SendPush(ctx, acct.pushTokens, "Your parcel is on its way", receiverPinMessage(pin)); err != nil {
-					log.Printf("[transport] parcel %s: receiver PIN push failed: %s", parcelID, redact(err.Error(), append([]string{pin}, acct.pushTokens...)...))
-				} else {
-					add("push")
-				}
+	// 1. Email to the address the sender gave at booking (free).
+	if s.receiverEmail != nil && receiverEmail != nil {
+		if to := normaliseReceiverEmail(*receiverEmail); to != "" {
+			cctx, ccancel := context.WithTimeout(ctx, receiverPinChannelTimeout)
+			err := s.receiverEmail.SendEmail(cctx, to, receiverPinEmailSubject, receiverPinEmail(pin))
+			ccancel()
+			if err != nil {
+				log.Printf("[transport] parcel %s: receiver PIN email failed: %s", parcelID, redact(err.Error(), pin, to))
+			} else {
+				via = append(via, "email")
 			}
-			sendEmail(normaliseReceiverEmail(acct.email), "account address")
 		}
 	}
-	// 3. SMS (paid; its own flag).
+	// 2. SMS (paid; its own flag).
 	if s.receiverSMS != nil {
+		cctx, ccancel := context.WithTimeout(ctx, receiverPinChannelTimeout)
+		defer ccancel()
 		if to := normaliseReceiverPhone(phone); to == "" {
 			log.Printf("[transport] parcel %s: receiver PIN SMS not sent: receiver phone is not a phone number", parcelID)
-		} else if err := s.receiverSMS.SendSMS(ctx, to, receiverPinMessage(pin)); err != nil {
+		} else if err := s.receiverSMS.SendSMS(cctx, to, receiverPinMessage(pin)); err != nil {
 			// The provider's error text, never the body we sent (it holds the PIN).
 			log.Printf("[transport] parcel %s: receiver PIN SMS to %s failed: %s", parcelID, maskReceiverPhone(to),
 				redact(err.Error(), pin, to, strings.TrimSpace(phone)))
 		} else {
-			add("sms")
+			via = append(via, "sms")
 		}
 	}
 

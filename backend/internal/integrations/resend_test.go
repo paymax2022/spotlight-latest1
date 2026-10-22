@@ -45,28 +45,3 @@ func TestResendClient_SendsAndNeverEchoesTheMessageInErrors(t *testing.T) {
 		t.Fatal("no key = nil client")
 	}
 }
-
-func TestExpoPushClient_SucceedsOnAnOkTicketFailsWhenNoDeviceAccepts(t *testing.T) {
-	reply := `{"data":[{"status":"error","message":"DeviceNotRegistered"},{"status":"ok","id":"t1"}]}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var msgs []map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&msgs)
-		if len(msgs) != 2 || msgs[0]["to"] != "tok-a" {
-			t.Errorf("messages %v", msgs)
-		}
-		_, _ = io.WriteString(w, reply)
-	}))
-	defer srv.Close()
-	c := NewExpoPushClient("")
-	c.url = srv.URL
-	if err := c.SendPush(context.Background(), []string{"tok-a", "tok-b"}, "T", "PIN 4321"); err != nil {
-		t.Fatalf("one ok ticket = delivered: %v", err)
-	}
-	reply = `{"data":[{"status":"error","message":"DeviceNotRegistered"}]}`
-	if err := c.SendPush(context.Background(), []string{"tok-a", "tok-b"}, "T", "PIN 4321"); err == nil || strings.Contains(err.Error(), "4321") {
-		t.Fatalf("no ok ticket must fail without echoing the body: %v", err)
-	}
-	if err := c.SendPush(context.Background(), nil, "T", "x"); err == nil {
-		t.Fatal("no tokens must fail")
-	}
-}
