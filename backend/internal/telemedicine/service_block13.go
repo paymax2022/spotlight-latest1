@@ -231,6 +231,11 @@ func (s *Service) GetVisitSummary(ctx context.Context, appointmentID, userID str
 		FROM doctor_soap_notes WHERE appointment_id=$1`, appointmentID).
 		Scan(&doctorID, &assessment, &objective, &plan)
 	if derr != nil {
+		// Third source: the doctor console's clinical note for a bridged
+		// appointment (the rich consult screen's Notes tab writes there).
+		if vs2, berr := s.visitSummaryFromDoctorConsole(ctx, appointmentID, patientID); berr == nil {
+			return vs2, nil
+		}
 		return nil, errors.New("telemedicine: no visit summary available")
 	}
 	return &VisitSummary{

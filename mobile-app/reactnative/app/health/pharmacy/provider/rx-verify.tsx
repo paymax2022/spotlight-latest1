@@ -54,10 +54,16 @@ function QueueView() {
               <ScrollText size={18} color={Colors.secondary} strokeWidth={2} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.name} numberOfLines={1}>{item.patientName}</Text>
+              <Text style={styles.name} numberOfLines={1}>{item.patientName || 'Patient not named'}</Text>
+              <Text style={styles.drugs} numberOfLines={2}>
+                {item.drugs.length > 0 ? item.drugs.join(' · ') : `${item.itemCount} item${item.itemCount === 1 ? '' : 's'}`}
+              </Text>
               <Text style={styles.sub} numberOfLines={1}>
                 {item.prescriberName ? `Dr ${item.prescriberName} · ` : ''}
-                {item.itemCount} item{item.itemCount === 1 ? '' : 's'} · {relativeTime(item.uploadedAt)}
+                {relativeTime(item.uploadedAt)}
+                {(item.refillsAuthorized ?? 0) > 0
+                  ? ` · ${Math.max(0, (item.refillsAuthorized ?? 0) - (item.refillsUsed ?? 0))}/${item.refillsAuthorized} refills left`
+                  : ''}
               </Text>
             </View>
             <PharmacyStatusPill rx={item.status} />
@@ -110,7 +116,7 @@ function DetailView({ id }: { id: string }) {
           <Text style={styles.docSub}>
             {data.prescriberName ? `Prescriber: Dr ${data.prescriberName}` : 'Prescriber not stated'}
           </Text>
-          <Text style={styles.docSub}>Uploaded {formatDate(data.uploadedAt)}</Text>
+          <Text style={styles.docSub}>Issued {formatDate(data.uploadedAt)}</Text>
           <View style={{ marginTop: Spacing.xs }}>
             <PharmacyStatusPill rx={data.status} />
           </View>
@@ -217,6 +223,7 @@ const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   icon: { width: 38, height: 38, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   name: { ...Typography.labelLg, color: Colors.onSurface },
+  drugs: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2, lineHeight: 18 },
   sub: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 1 },
   docCard: {
     flexDirection: 'row',

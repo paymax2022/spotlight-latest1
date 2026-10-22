@@ -715,6 +715,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 	}
 
+	// Self-hosted LiveKit (FEATURE_LIVEKIT_ENABLED) replaces the dev stub / VideoSDK for live
+	// classes when it is configured and valid; flag off leaves the previous provider in place.
+	// With the flag on but LiveKit unusable, live classes refuse (they do not fall back to the stub).
+	// Built exactly once for the whole finance surface — registerLiveKit mounts routes, so a
+	// second call would panic gin. Consumers: academy live classes (below) and the telemedicine
+	// consult-room control plane (doctor-console bridge). nil ⇒ not configured.
+	lkClient := registerLiveKit(r, cfg, rbac, mapsAuth())
+
 	// Reuses wallet ledger (reward credits), KYC/tiers, RBAC academy.*; exam
 	// beachhead behind its own sub-flag. Member /api/finance/academy/*,
 	// admin /api/academy/admin/* (+ /api/academy for identity/curriculum/commerce).
@@ -727,10 +735,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// unbacked academy rails (BNPL/payout/disburse/billing). nil per-rail ⇒ that
 		// package keeps its in-process dev stub (academy_rails_external.go).
 		academyBNPL, academyDisburse, academyBilling, academyPayout := academyRails(cfg)
-		// Self-hosted LiveKit (FEATURE_LIVEKIT_ENABLED) replaces the dev stub / VideoSDK for live
-		// classes when it is configured and valid; flag off leaves the previous provider in place.
-		// With the flag on but LiveKit unusable, live classes refuse (they do not fall back to the stub).
-		academyLive := academyLiveRoomsFor(cfg, registerLiveKit(r, cfg, rbac, mapsAuth()))
+		academyLive := academyLiveRoomsFor(cfg, lkClient)
 		RegisterAcademy(r, finance, pool, rbac, mapsAuth(), ledgerSvc, academyRTC, academyLive, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler, cfg.FeatureInternalAcademyAPIEnabled, cfg.LedgerServiceToken)
 
 		// EdTech PLATFORM super-admin oversight (SU-01..SU-12): read-only cross-tenant
@@ -2120,6 +2125,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		registerNutritionRoutes(finance, nutritionAdmin, pool, rbac, cfg.AnthropicAPIKey)
 	}
 
+	// Declared at the finance surface's scope: the doctor-console module (wired
+	// further down) attaches this service as its reverse-sync target for
+	// bridged appointments. nil when telemedicine is off — the console stays
+	// standalone.
+	var telemedSvc *telemedicine.Service
+
 	if cfg.FeatureTelemedicineEnabled {
 		settlementSvcT := settlement.NewService(pool, ledgerSvc)
 		// Platform booking fee (ADR-044), default OFF. Off resolves to a 0-bp rate,
@@ -2133,10 +2144,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// WithAudit reuses the SAME audit sink the doctor module's own MDCN review
 		// console writes to (doctor_compliance_audit via doctor.Repository), so an
 		// approve/reject recorded from EITHER admin console lands in one trail.
-		telemedSvc := telemedicine.NewService(pool, settlementSvcT).
+		telemedSvc = telemedicine.NewService(pool, settlementSvcT).
 			WithTiers(tiersSvc).
 			WithPlatformFeeBp(platformFeeBp).
 			WithAudit(doctor.NewRepository(pool))
+		if lkClient != nil {
+			// Consult-room control plane: per-appointment LiveKit join tokens
+			// (doctor-console bridge). Unwired → call-token says configured:false.
+			telemedSvc.WithLiveKit(lkClient)
+		}
 		telemedHandler := telemedicine.NewHandler(telemedSvc)
 
 		// Legacy /api/finance/telemedicine/... (kept for backward compat)
@@ -2172,6 +2188,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Tele.DELETE("/appointments/:id", telemedHandler.CancelAppointment)
 		v1Tele.POST("/appointments/:id/prescription", telemedHandler.IssuePrescription)
 		v1Tele.GET("/appointments/:id/prescription", telemedHandler.GetPrescription)
+		// Doctor-console bridge: shared chat thread, live Rx/summary readback
+		// already ride on the prescription/summary GETs above.
+		v1Tele.GET("/appointments/:id/messages", telemedHandler.ListAppointmentMessages)
+		v1Tele.POST("/appointments/:id/messages", telemedHandler.SendAppointmentMessage)
+		v1Tele.GET("/appointments/:id/call-token", telemedHandler.GetAppointmentCallToken)
+		// Pre-consult intake (telemedicine_intakes). One GET serves both sides —
+		// the patient's wizard and the doctor console's readback — because the
+		// authZ is "patient OR assigned doctor" in the query itself. The
+		// questionnaire is app-shipped, so the server stores answers, status,
+		// consent and the submit-time safety outcome.
+		v1Tele.GET("/appointments/:id/intake", telemedHandler.GetAppointmentIntake)
+		v1Tele.PUT("/appointments/:id/intake/draft", telemedHandler.SaveAppointmentIntakeDraft)
+		v1Tele.POST("/appointments/:id/intake/submit", telemedHandler.SubmitAppointmentIntake)
 		// Doctor-facing
 		v1Tele.POST("/doctor/register", telemedHandler.RegisterDoctorV2)
 		v1Tele.GET("/doctor/dashboard", telemedHandler.GetDoctorDashboard)
@@ -2869,6 +2898,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		doctorHub := platformWS.New(wsOriginAllowed)
 
 		doctorSvc := doctor.NewService(pool, ledgerSvc, tiersSvc, redisClient).WithRealtime(rtcIssuer, doctorHub)
+		if telemedSvc != nil {
+			// Doctor-console bridge: lifecycle transitions on appointments that
+			// were bridged from telemedicine bookings mirror back onto the
+			// telemedicine appointment (settlement/refund ride on it unchanged).
+			doctorSvc.WithTelemedicineSync(telemedSvc)
+		}
 
 		// Wire the Paystack disbursement provider for real-time bank account
 		// verification on CreateBankAccount (soft-fail if provider unavailable).

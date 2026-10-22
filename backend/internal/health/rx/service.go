@@ -285,13 +285,32 @@ func (s *Service) Get(ctx context.Context, requesterID, rxID string) (*Prescript
 	}
 	// object-level authZ: patient, prescriber, or assigned pharmacist may read;
 	// any other actor folds to the same not-found a missing rx returns.
+	//
+	// "Assigned pharmacist" is the OWNER OF THE PINNED PHARMACY, not the user who
+	// happened to press verify: a pharmacist must read the drug lines BEFORE making
+	// the HL-3 decision, and verified_by is only set BY that decision. Reading it as
+	// the sole pharmacist signal made the detail route 404 for exactly the clinician
+	// it exists for — the queue handed them an id they could not open.
 	if requesterID != p.PatientID && requesterID != p.PrescriberID &&
 		(p.VerifiedBy == nil || *p.VerifiedBy != requesterID) {
-		return nil, ErrPrescriptionNotFound
+		if !s.requesterOwnsPinnedPharmacy(ctx, requesterID, p.PharmacyProviderID) {
+			return nil, ErrPrescriptionNotFound
+		}
 	}
 	items, _ := s.loadItems(ctx, rxID)
 	p.Items = items
 	return p, nil
+}
+
+// requesterOwnsPinnedPharmacy reports whether the caller owns the APPROVED
+// pharmacy the prescription is pinned to. Fail-closed: no gate wired, no pinned
+// pharmacy, or a lookup error all read as "not a party".
+func (s *Service) requesterOwnsPinnedPharmacy(ctx context.Context, requesterID string, providerID *string) bool {
+	if s.pharmacyGate == nil || requesterID == "" || providerID == nil || *providerID == "" {
+		return false
+	}
+	ok, err := s.pharmacyGate.VerifiedPharmacyOwner(ctx, requesterID, *providerID)
+	return err == nil && ok
 }
 
 // ListForPatient returns the caller's own prescriptions, most recent first —
@@ -386,10 +405,18 @@ func (s *Service) transition(ctx context.Context, actorID, rxID string, to State
 func lockPrescription(ctx context.Context, tx pgx.Tx, rxID string) (*prescriptionRow, error) {
 	var p prescriptionRow
 	var state string
-	const q = `SELECT id, prescriber_id, patient_id, pharmacy_provider_id, verified_by, state,
+	// Every column Prescription carries is read here, not just the ones the gate
+	// needs: transition() returns THIS row to the caller, so a narrower select made
+	// every state change answer with a zero created_at ("0001-01-01T00:00:00Z") and
+	// an empty reject_reason — the patient's Rx status screen dates the prescription
+	// from that field, and a rejection shows no reason at all.
+	const q = `SELECT id, consult_id, prescriber_id, patient_id, pharmacy_provider_id, verified_by, state,
+	                  dispensed_at, reject_reason, created_at, refills_authorized, refills_used,
 	                  EXISTS (SELECT 1 FROM health_prescription_items i WHERE i.prescription_id=health_prescriptions.id AND i.is_pom)
 	           FROM health_prescriptions WHERE id=$1 FOR UPDATE`
-	if err := tx.QueryRow(ctx, q, rxID).Scan(&p.ID, &p.PrescriberID, &p.PatientID, &p.PharmacyProviderID, &p.VerifiedBy, &state, &p.hasPOM); err != nil {
+	if err := tx.QueryRow(ctx, q, rxID).Scan(&p.ID, &p.ConsultID, &p.PrescriberID, &p.PatientID, &p.PharmacyProviderID,
+		&p.VerifiedBy, &state, &p.DispensedAt, &p.RejectReason, &p.CreatedAt, &p.RefillsAuthorized, &p.RefillsUsed,
+		&p.hasPOM); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrPrescriptionNotFound
 		}
@@ -594,6 +621,52 @@ func (h *Handler) Dispense(c *gin.Context) {
 		return
 	}
 	p, err := h.svc.Dispense(c.Request.Context(), id, c.Param("id"))
+	if err != nil {
+		rxFail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
+}
+
+// AuthorizeRefills — POST /prescriptions/:id/refills  { count }  (prescriber, DP-004)
+//
+// The service method existed with its tests since DP-004 but was never mounted, so
+// no prescriber could grant a refill and no refill could ever exist.
+func (h *Handler) AuthorizeRefills(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if !uuidPathID(c) {
+		return
+	}
+	var req struct {
+		Count int `json:"count"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	p, err := h.svc.AuthorizeRefills(c.Request.Context(), id, c.Param("id"), req.Count)
+	if err != nil {
+		rxFail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
+}
+
+// DispenseRefill — POST /prescriptions/:id/refills/dispense  (pharmacist, DP-004)
+func (h *Handler) DispenseRefill(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if !uuidPathID(c) {
+		return
+	}
+	p, err := h.svc.DispenseRefill(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
 		rxFail(c, err)
 		return

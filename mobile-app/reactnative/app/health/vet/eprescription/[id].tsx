@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ShieldCheck, Pill, CalendarClock, Info } from 'lucide-react-native';
@@ -46,7 +46,10 @@ export default function EPrescriptionScreen() {
   const onUnlock = () => ack.mutate(rx.id, { onSuccess: () => setUnlocked(true) });
   const onSend = () =>
     sendToPharmacy.mutate(rx.id, {
-      onSuccess: () => router.push('/health/pharmacy/upload-rx'),
+      // A pet e-Rx belongs to the vet vertical; it used to hand off into the human
+      // pharmacy upload screen, which neither accepts a vet prescription nor any
+      // upload at all.
+      onSuccess: () => Alert.alert('Sent to the pharmacy', 'A pharmacist will verify it before dispensing.'),
     });
 
   return (

@@ -383,7 +383,7 @@ func (s *Service) AcceptAppointment(ctx context.Context, userID, appointmentID, 
 	if idemKey == "" {
 		return nil, ErrIdempotencyRequired
 	}
-	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "confirmed", nil, raw)
+	return s.transitionAppointment(ctx, userID, appointmentID, "confirmed", nil, raw)
 }
 
 // RejectAppointment cancels the appointment (and mirrors the request → rejected).
@@ -391,7 +391,7 @@ func (s *Service) RejectAppointment(ctx context.Context, userID, appointmentID, 
 	if idemKey == "" {
 		return nil, ErrIdempotencyRequired
 	}
-	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "cancelled", nil, raw)
+	return s.transitionAppointment(ctx, userID, appointmentID, "cancelled", nil, raw)
 }
 
 // RescheduleAppointment moves the appointment back to upcoming and records the proposed
@@ -406,7 +406,7 @@ func (s *Service) RescheduleAppointment(ctx context.Context, userID, appointment
 	if slot == nil {
 		slot = p.ProposedSlot
 	}
-	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "upcoming", slot, raw)
+	return s.transitionAppointment(ctx, userID, appointmentID, "upcoming", slot, raw)
 }
 
 // GET list/get already shipped in Wave 3a (ListHMOClaims / GetHMOClaim). Wave 4 adds

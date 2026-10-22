@@ -12,16 +12,17 @@ import {
 
 /**
  * Persistent, NON-dismissable info line for every symptom-search screen
- * (PRD Journey A step 4): "These are general options for your symptoms, not a
- * diagnosis. Speak to a pharmacist free — tap here." Tapping routes into the
- * existing free pharmacist chat. Never render a close affordance.
+ * (PRD Journey A step 4): the options shown are general advice, not a diagnosis,
+ * with a link through to the pharmacist question screen. Tapping routes into
+ * `/health/pharmacy/pharmacist-consult`, which states plainly whether a live
+ * pharmacist channel is connected. Never render a close affordance.
  */
 export default function SymptomDisclaimerBar() {
   return (
     <Pressable
       onPress={() => router.push('/health/pharmacy/pharmacist-consult')}
       accessibilityRole="button"
-      accessibilityLabel="Speak to a pharmacist for free"
+      accessibilityLabel="Ask a pharmacist about these options"
       style={({ pressed }) => [styles.bar, pressed && styles.pressed]}
     >
       <Info size={14} color={Colors.secondary} strokeWidth={2} />

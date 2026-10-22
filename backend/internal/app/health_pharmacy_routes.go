@@ -92,11 +92,15 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	}
 
 	pg := member.Group("/health/pharmacy")
-	pg.GET("/products", h.ListProducts)                         // NAFDAC-gated, Rx flag (HL-5)
-	pg.GET("/products/mine", h.MyProducts)                      // owner shelf incl. off-sale (before :id)
-	pg.GET("/products/:id", h.GetProduct)                       // single product + owning pharmacy
-	pg.POST("/products", h.UpsertProduct)                       // pharmacy owner, HL-5 write-gate
-	pg.GET("/prescriptions", h.ListMyPrescriptions)             // patient's own list
+	pg.GET("/products", h.ListProducts)             // NAFDAC-gated, Rx flag (HL-5)
+	pg.GET("/products/mine", h.MyProducts)          // owner shelf incl. off-sale (before :id)
+	pg.GET("/products/:id", h.GetProduct)           // single product + owning pharmacy
+	pg.POST("/products", h.UpsertProduct)           // pharmacy owner, HL-5 write-gate
+	pg.GET("/prescriptions", h.ListMyPrescriptions) // patient's own list
+	// The pharmacist's e-Rx work list — declared as a static segment, which Gin
+	// prefers over the /prescriptions/:id/verify wildcard below it.
+	pg.GET("/prescriptions/queue", h.RxQueue)                   // owning pharmacist
+	pg.GET("/refills", h.ListMyRefills)                         // patient, DP-004 refills left
 	pg.POST("/prescriptions/:id/verify", h.VerifyPrescription)  // pharmacist, HL-3
 	pg.GET("/pharmacies", h.DiscoverPharmacies)                 // browse ALL pharmacies — proximity/rating (HL-2)
 	pg.GET("/pharmacies/:id", h.GetPharmacy)                    // pharmacy detail
@@ -254,14 +258,24 @@ func (a *rxListerAdapter) ListForPatient(ctx context.Context, patientID string) 
 	}
 	out := make([]healthpharmacy.PrescriptionSummary, len(rows))
 	for i, r := range rows {
+		drugs := make([]string, 0, len(r.Items))
+		for _, it := range r.Items {
+			drugs = append(drugs, it.DrugName)
+		}
 		out[i] = healthpharmacy.PrescriptionSummary{
 			ID:                 r.ID,
 			State:              string(r.State),
 			PrescriberID:       r.PrescriberID,
+			PatientID:          r.PatientID,
 			PharmacyProviderID: r.PharmacyProviderID,
 			RejectReason:       r.RejectReason,
 			ItemCount:          len(r.Items),
-			CreatedAt:          r.CreatedAt,
+			Drugs:              drugs,
+			// DP-004 counters ride along so the patient's wallet/refill list can say
+			// how many fills are left without a second round-trip per row.
+			RefillsAuthorized: r.RefillsAuthorized,
+			RefillsUsed:       r.RefillsUsed,
+			CreatedAt:         r.CreatedAt,
 		}
 	}
 	return out, nil

@@ -5,6 +5,7 @@ import { Colors } from '@/constants/tokens';
 import type { OrderStatus, RxStatus, ProductCategory } from './types';
 
 export const RX_STATUS_META: Record<RxStatus, { label: string; color: string; bg: string; icon: string }> = {
+  issued: { label: 'Ready to send', color: Colors.secondary, bg: Colors.iconBgBlue, icon: 'Send' },
   verifying: { label: 'Verifying', color: Colors.onWarning, bg: Colors.iconBgGold, icon: 'Clock' },
   verified: { label: 'Verified', color: Colors.teal, bg: Colors.iconBgTeal, icon: 'BadgeCheck' },
   rejected: { label: 'Rejected', color: Colors.error, bg: Colors.errorContainer, icon: 'CircleX' },

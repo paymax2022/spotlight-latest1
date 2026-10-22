@@ -259,3 +259,48 @@ func (h *Handler) UploadLicenceDoc(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"upload_id": doc.ID}})
 }
+
+// ListAppointmentMessages reads the bridged consult chat thread for an
+// appointment (doctor-console bridge; GET /appointments/:id/messages).
+func (h *Handler) ListAppointmentMessages(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	msgs, err := h.svc.ListAppointmentMessages(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": msgs})
+}
+
+// SendAppointmentMessage posts one chat line to the bridged thread from either
+// party (POST /appointments/:id/messages, body {body}).
+func (h *Handler) SendAppointmentMessage(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req struct {
+		Body string `json:"body"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	m, err := h.svc.SendAppointmentMessage(c.Request.Context(), c.Param("id"), userID, req.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": m})
+}
+
+// GetAppointmentCallToken is the consult-room media control plane
+// (GET /appointments/:id/call-token). configured:false is a successful answer
+// that means "no media server wired" — the client then stays in local-demo
+// mode and must say so honestly.
+func (h *Handler) GetAppointmentCallToken(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	info, err := h.svc.GetAppointmentCallToken(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": info})
+}

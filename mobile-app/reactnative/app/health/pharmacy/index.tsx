@@ -3,7 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Image } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
-  Upload,
+  Send,
   ChevronRight,
   Pill,
   ScrollText,
@@ -12,6 +12,11 @@ import {
   ClipboardList,
   MessageCircle,
   ShieldCheck,
+  ShieldPlus,
+  Boxes,
+  BellRing,
+  Star,
+  Wallet,
   HeartPulse,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
@@ -24,7 +29,7 @@ import SearchBar from '@/components/SearchBar';
 import StateView from '@/components/StateView';
 import PharmacyProductCard from '@/features/health/components/PharmacyProductCard';
 import { ProviderOnboardingCard } from '@/features/health/components';
-import { useProducts, usePrescriptions } from '@/features/health/pharmacy/hooks';
+import { useProducts, usePrescriptions, useMyPharmacy } from '@/features/health/pharmacy/hooks';
 import { useCartStore } from '@/features/health/pharmacy/cartStore';
 import { formatNaira } from '@/features/health/constants/health.constants';
 import { PHARMACY_SYMPTOM_SEARCH_ENABLED } from '@/features/health/api/symptomSearch.api';
@@ -38,15 +43,26 @@ const PHARMACY_BANNER_URL = `${api.defaults.baseURL}/api/v1/public/media/banners
 const PHARMACY_BANNER_ASPECT_RATIO = 2048 / 768;
 
 const QUICK_ACTIONS = [
-  { key: 'upload', label: 'Upload Rx', icon: Upload, href: '/health/pharmacy/upload-rx', bg: Colors.iconBgBlue, color: Colors.secondary },
+  { key: 'send', label: 'Send e-Rx', icon: Send, href: '/health/pharmacy/send-rx', bg: Colors.iconBgBlue, color: Colors.secondary },
   { key: 'refills', label: 'Refills', icon: RefreshCw, href: '/health/pharmacy/refills', bg: Colors.iconBgTeal, color: Colors.teal },
   { key: 'meds', label: 'My meds', icon: ClipboardList, href: '/health/pharmacy/medication-list', bg: Colors.iconBgPurple, color: Colors.primary },
   { key: 'orders', label: 'Orders', icon: ScrollText, href: '/health/pharmacy/orders', bg: Colors.iconBgGold, color: Colors.onWarning },
 ] as const;
 
+// The pharmacist's own screens, reachable only from here.
+const STUDIO_LINKS = [
+  { key: 'orders', label: 'Order queue', icon: ClipboardList, href: '/health/pharmacy/provider/orders', bg: Colors.iconBgBlue, color: Colors.secondary },
+  { key: 'rx', label: 'Verify e-Rx', icon: ShieldCheck, href: '/health/pharmacy/provider/rx-verify', bg: Colors.iconBgTeal, color: Colors.teal },
+  { key: 'inventory', label: 'Inventory', icon: Boxes, href: '/health/pharmacy/provider/catalog', bg: Colors.iconBgPurple, color: Colors.primary },
+  { key: 'attention', label: 'Needs attention', icon: BellRing, href: '/health/pharmacy/provider/stock-alerts', bg: Colors.iconBgGold, color: Colors.onWarning },
+  { key: 'reviews', label: 'Reviews', icon: Star, href: '/health/pharmacy/provider/reviews', bg: Colors.iconBgGold, color: Colors.gold },
+  { key: 'earnings', label: 'Earnings', icon: Wallet, href: '/health/pharmacy/provider/earnings', bg: Colors.iconBgTeal, color: Colors.teal },
+] as const;
+
 export default function PharmacyHomeScreen() {
   const { data: products, isLoading, isError, refetch } = useProducts();
   const { data: prescriptions } = usePrescriptions();
+  const { data: mine } = useMyPharmacy();
   // Subscribe to `lines` (not just count()) so the per-product steppers and the
   // cart CTA's amount re-render on every quantity change, not only when the
   // number of units happens to change.
@@ -59,15 +75,20 @@ export default function PharmacyHomeScreen() {
     (productId: string) => lines.find((l) => l.productId === productId)?.qty ?? 0,
     [lines],
   );
+  const cartPharmacyName = useCartStore((s) => s.lines[0]?.pharmacyName ?? '');
   const [bannerFailed, setBannerFailed] = React.useState(false);
+  // Set when the cart refuses a second pharmacy's product — one order is one
+  // pharmacy, because CreateOrder prices every line against one catalog.
+  const [cartNotice, setCartNotice] = React.useState<string | null>(null);
 
   const verifyingRx = (prescriptions ?? []).find((r) => r.status === 'verifying');
+  const issuableRx = (prescriptions ?? []).find((r) => r.status === 'issued');
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader
         title="Pharmacy"
-        subtitle="Order meds & upload prescriptions"
+        subtitle="Order meds & send your e-Rx"
         rightSlot={
           <Pressable onPress={() => router.push('/health/pharmacy/cart')} hitSlop={8} accessibilityLabel="Cart">
             <ShoppingCart size={22} color={Colors.primary} strokeWidth={2} />
@@ -111,14 +132,18 @@ export default function PharmacyHomeScreen() {
           </Pressable>
         ) : null}
 
-        {/* Upload Rx hero (HL-3) */}
-        <Pressable style={[styles.hero, shadow1]} onPress={() => router.push('/health/pharmacy/upload-rx')}>
+        {/* Send-your-e-Rx hero (HL-3) */}
+        <Pressable style={[styles.hero, shadow1]} onPress={() => router.push('/health/pharmacy/send-rx')}>
           <View style={styles.heroIcon}>
-            <Upload size={22} color={Colors.onPrimary} strokeWidth={2} />
+            <Send size={22} color={Colors.onPrimary} strokeWidth={2} />
           </View>
           <View style={styles.heroBody}>
-            <Text style={styles.heroTitle}>Upload your prescription</Text>
-            <Text style={styles.heroSub}>A licensed pharmacist verifies it before dispensing.</Text>
+            <Text style={styles.heroTitle}>Send your e-Rx</Text>
+            <Text style={styles.heroSub}>
+              {issuableRx
+                ? 'A prescription is waiting to go to a pharmacy.'
+                : 'A doctor issues it after a consult; a pharmacist verifies it before dispensing.'}
+            </Text>
           </View>
           <ChevronRight size={20} color={Colors.onPrimary} strokeWidth={2} />
         </Pressable>
@@ -154,7 +179,7 @@ export default function PharmacyHomeScreen() {
           </View>
           <View style={styles.heroBody}>
             <Text style={styles.consultTitle}>Ask a pharmacist</Text>
-            <Text style={styles.consultSub}>Free chat about dosage, interactions & more</Text>
+            <Text style={styles.consultSub}>Dosage, interactions & how to take your medicines</Text>
           </View>
           <ChevronRight size={18} color={Colors.outline} strokeWidth={2} />
         </Pressable>
@@ -180,7 +205,10 @@ export default function PharmacyHomeScreen() {
                 <PharmacyProductCard
                   product={p}
                   onPress={() => router.push({ pathname: '/health/pharmacy/product/[id]', params: { id: p.id } })}
-                  onAdd={() => addToCart(p)}
+                  onAdd={() => {
+                    if (addToCart(p)) setCartNotice(null);
+                    else setCartNotice(`Your cart is from ${cartPharmacyName || 'another pharmacy'} — one order comes from one pharmacy.`);
+                  }}
                   inCartQty={qtyFor(p.id)}
                   onSetQty={(qty) => setCartQty(p.id, qty)}
                 />
@@ -189,6 +217,38 @@ export default function PharmacyHomeScreen() {
           </View>
         )}
 
+        {/* Pharmacist workspace. These screens have always existed but nothing
+            linked to them, so an approved pharmacy owner had no way to reach
+            their own queue. */}
+        {mine && (mine.providerId || mine.businessName) ? (
+          <View>
+            <View style={styles.studioHead}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sectionTitle}>Pharmacy studio</Text>
+                <Text style={styles.studioSub} numberOfLines={1}>
+                  {mine.businessName || 'Your pharmacy'} ·{' '}
+                  {mine.approved ? 'Verified' : 'Verification in progress'}
+                </Text>
+              </View>
+              <View style={[styles.studioPill, { backgroundColor: mine.approved ? Colors.iconBgTeal : Colors.iconBgGold }]}>
+                <Text style={[styles.studioPillText, { color: mine.approved ? Colors.teal : Colors.onWarning }]}>
+                  {mine.approved ? 'Live' : 'Pending'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.studioGrid}>
+              {STUDIO_LINKS.map((s) => (
+                <Pressable key={s.key} style={styles.studioTile} onPress={() => router.push(s.href as never)}>
+                  <View style={[styles.studioIcon, { backgroundColor: s.bg }]}>
+                    <s.icon size={18} color={s.color} strokeWidth={2} />
+                  </View>
+                  <Text style={styles.studioLabel}>{s.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
         {/* NDPA / safety strip */}
         <View style={styles.safety}>
           <ShieldCheck size={13} color={Colors.teal} strokeWidth={2} />
@@ -196,6 +256,8 @@ export default function PharmacyHomeScreen() {
             All listed products are NAFDAC-registered. Prescription medicines need a pharmacist-verified Rx.
           </Text>
         </View>
+
+        {cartNotice ? <Text style={styles.cartNotice}>{cartNotice}</Text> : null}
 
         {count > 0 ? (
           <Pressable style={[styles.cartCta, shadow1]} onPress={() => router.push('/health/pharmacy/cart')}>
@@ -297,6 +359,25 @@ const styles = StyleSheet.create({
   consultSub: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle: { ...Typography.titleLg, color: Colors.onSurface },
+  studioHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.md },
+  studioSub: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
+  studioPill: { paddingHorizontal: Spacing.sm + 2, paddingVertical: 5, borderRadius: Radius.full },
+  studioPillText: { ...Typography.labelSm, fontWeight: '700' as const },
+  studioGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  studioTile: {
+    width: '31.5%',
+    flexGrow: 1,
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xs,
+    backgroundColor: Colors.surfaceContainerLowest,
+    borderWidth: 1,
+    borderColor: Colors.outlineVariant,
+    borderRadius: Radius.lg,
+  },
+  studioIcon: { width: 40, height: 40, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
+  studioLabel: { ...Typography.labelSm, color: Colors.onSurface, textAlign: 'center' },
   link: { ...Typography.labelMd, color: Colors.secondary },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   gridItem: { width: '48%' },
@@ -310,6 +391,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   safetyText: { ...Typography.caption, color: Colors.tertiaryContainer, flex: 1, lineHeight: 15 },
+  cartNotice: { ...Typography.labelSm, color: Colors.error, marginBottom: Spacing.sm },
   cartCta: {
     flexDirection: 'row',
     alignItems: 'center',

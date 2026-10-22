@@ -182,13 +182,43 @@ func (s *Service) SetRxLister(r RxLister) { s.rxLister = r }
 // decoupled from healthrx's own Prescription type (mirrors the RxGate/
 // RxVerifier seam pattern: pharmacy never imports healthrx's concrete types).
 type PrescriptionSummary struct {
+	ID                 string  `json:"id"`
+	State              string  `json:"state"`
+	PrescriberID       string  `json:"prescriber_id"`
+	PatientID          string  `json:"patient_id"`
+	PharmacyProviderID *string `json:"pharmacy_provider_id,omitempty"`
+	RejectReason       string  `json:"reject_reason"`
+	ItemCount          int     `json:"item_count"`
+	// Drugs are the prescribed medication names. The wallet and refill lists are
+	// useless without them — a patient who holds three prescriptions sees three
+	// identical "1 item" rows and cannot tell which is their blood pressure
+	// medicine. healthrx already loads the items for this read, so this is a
+	// projection, not an extra query.
+	Drugs             []string  `json:"drugs"`
+	RefillsAuthorized int       `json:"refills_authorized"`
+	RefillsUsed       int       `json:"refills_used"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+// RxQueueItem is one prescription pinned to a pharmacy the caller owns — the
+// pharmacist's work list. Carries the patient's display name because the
+// dispensing counter is where two people with the same drug list get told apart;
+// the id alone is not actionable for a human.
+type RxQueueItem struct {
 	ID                 string    `json:"id"`
 	State              string    `json:"state"`
+	PatientID          string    `json:"patient_id"`
+	PatientName        string    `json:"patient_name"`
 	PrescriberID       string    `json:"prescriber_id"`
-	PharmacyProviderID *string   `json:"pharmacy_provider_id,omitempty"`
+	PharmacyProviderID string    `json:"pharmacy_provider_id"`
+	PharmacyName       string    `json:"pharmacy_name"`
 	RejectReason       string    `json:"reject_reason"`
 	ItemCount          int       `json:"item_count"`
+	Drugs              []string  `json:"drugs"`
+	RefillsAuthorized  int       `json:"refills_authorized"`
+	RefillsUsed        int       `json:"refills_used"`
 	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // RxLister is the narrow seam into healthrx for the pharmacy "My
@@ -207,6 +237,75 @@ func (s *Service) MyPrescriptions(ctx context.Context, patientID string) ([]Pres
 		return nil, errors.New("pharmacy: rx lister not configured")
 	}
 	return s.rxLister.ListForPatient(ctx, patientID)
+}
+
+// MyRefills returns the caller's prescriptions that still have an authorized refill
+// outstanding. DP-004 counts the INITIAL fill separately from the refills granted on
+// top of it, so "refills remaining" is exactly RefillsAuthorized - RefillsUsed and a
+// prescription with no authorized refills is not a refill — it needs a new
+// consultation. Nothing here decides whether the refill is *dispensable*: that is
+// healthrx's DispenseRefill gate (initial fill done, POM verified), which the app
+// calls when the patient acts on one of these rows.
+func (s *Service) MyRefills(ctx context.Context, patientID string) ([]PrescriptionSummary, error) {
+	all, err := s.MyPrescriptions(ctx, patientID)
+	if err != nil {
+		return nil, err
+	}
+	out := []PrescriptionSummary{}
+	for _, p := range all {
+		if p.RefillsUsed < p.RefillsAuthorized {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// rxQueueStates are the prescription states a pharmacist works through: sent to
+// their pharmacy and awaiting the decision, mid-decision, or decided but not yet
+// filled. ISSUED rows are excluded — a prescription the patient has not sent to
+// this pharmacy yet is not this pharmacy's work, and showing it would invite a
+// dispensing decision on something that never arrived.
+var rxQueueStates = []string{"SENT_TO_PHARMACY", "VERIFYING", "VERIFIED"}
+
+// RxQueue lists the prescriptions pinned to any pharmacy the caller OWNS
+// (APPROVED + domain PHARMACY — the same HL-1/HL-2 identity every other
+// pharmacist-side gate in this module uses). The mobile provider screens had this
+// endpoint in their client for months while no route existed, so the pharmacist
+// could never see the work the patient's "send to pharmacy" produced; verification
+// was only reachable by guessing a prescription id from a notification.
+func (s *Service) RxQueue(ctx context.Context, pharmacistID string) ([]RxQueueItem, error) {
+	if pharmacistID == "" {
+		return nil, errors.New("pharmacy: unauthenticated")
+	}
+	const q = `
+		SELECT p.id, p.state, p.patient_id, COALESCE(up.full_name, ''), p.prescriber_id,
+		       p.pharmacy_provider_id, COALESCE(hp.display_name, ''), COALESCE(p.reject_reason, ''),
+		       p.refills_authorized, p.refills_used, p.created_at, p.updated_at,
+		       COALESCE((SELECT array_agg(i.drug_name ORDER BY i.created_at)
+		                 FROM health_prescription_items i WHERE i.prescription_id = p.id), '{}')
+		FROM health_prescriptions p
+		JOIN health_providers hp ON hp.id = p.pharmacy_provider_id
+		LEFT JOIN user_profiles up ON up.id = p.patient_id
+		WHERE hp.owner_user_id = $1 AND hp.domain = 'PHARMACY' AND hp.status = 'APPROVED'
+		  AND p.state = ANY($2)
+		ORDER BY p.updated_at DESC LIMIT 100`
+	rows, err := s.db.Query(ctx, q, pharmacistID, rxQueueStates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RxQueueItem{}
+	for rows.Next() {
+		var it RxQueueItem
+		if err := rows.Scan(&it.ID, &it.State, &it.PatientID, &it.PatientName, &it.PrescriberID,
+			&it.PharmacyProviderID, &it.PharmacyName, &it.RejectReason,
+			&it.RefillsAuthorized, &it.RefillsUsed, &it.CreatedAt, &it.UpdatedAt, &it.Drugs); err != nil {
+			return nil, err
+		}
+		it.ItemCount = len(it.Drugs)
+		out = append(out, it)
+	}
+	return out, rows.Err()
 }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
@@ -345,13 +444,22 @@ func (s *Service) UpsertProduct(ctx context.Context, ownerID string, p Product) 
 	if p.RxRequired {
 		category = "prescription"
 	}
+	// Restock is only meaningful if this write can restore availability: the order
+	// path flips in_stock false the moment a tracked product's stock_qty reaches 0,
+	// and a product with in_stock false is invisible to patients. So raising the
+	// count re-lists the item, while leaving it at 0 keeps whatever the depletion
+	// signal already said — an untracked (stock_qty 0) new product still gets the
+	// column default of true.
 	const q = `
 		INSERT INTO pharmacy_products
 			(id, pharmacy_provider_id, name, category, nafdac_ref, nafdac_status, rx_required, is_controlled, price_kobo, stock_qty, active)
 		VALUES ($1,$2,$3,$10,$4,$5,$6,false,$7,$8,$9)
 		ON CONFLICT (id) DO UPDATE SET
-			name=$3, category=$10, nafdac_ref=$4, nafdac_status=$5, rx_required=$6, price_kobo=$7, stock_qty=$8, active=$9, updated_at=now()`
-	if _, err := s.db.Exec(ctx, q, p.ID, p.PharmacyProviderID, p.Name, p.NAFDACRef, p.NAFDACStatus, p.RxRequired, p.PriceKobo, p.StockQty, p.Active, category); err != nil {
+			name=$3, category=$10, nafdac_ref=$4, nafdac_status=$5, rx_required=$6, price_kobo=$7, stock_qty=$8, active=$9,
+			in_stock=($8 > 0 OR pharmacy_products.in_stock), updated_at=now()
+		RETURNING in_stock`
+	if err := s.db.QueryRow(ctx, q, p.ID, p.PharmacyProviderID, p.Name, p.NAFDACRef, p.NAFDACStatus, p.RxRequired,
+		p.PriceKobo, p.StockQty, p.Active, category).Scan(&p.InStock); err != nil {
 		return nil, fmt.Errorf("pharmacy: upsert product: %w", err)
 	}
 	s.audited(ownerID, "", "health.pharmacy.product.upsert", p.ID, nil,
@@ -359,9 +467,10 @@ func (s *Service) UpsertProduct(ctx context.Context, ownerID string, p Product) 
 	return &p, nil
 }
 
-// ListProducts returns the active, NAFDAC-registered catalog for a pharmacy. The
-// catalog only ever contains registered products (HL-5 enforced at write), so the
-// read is a plain active filter; the Rx-required flag is surfaced to the client.
+// ListProducts returns the SELLABLE catalog: active, NAFDAC-registered (HL-5),
+// still in stock, and owned by a pharmacy. The catalog only ever contains
+// registered products (HL-5 enforced at write), so the read is a plain filter;
+// the Rx-required flag is surfaced to the client.
 func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuery string) ([]Product, error) {
 	// Each product is owned by a pharmacy — surface that pharmacy's display name
 	// (LEFT JOIN health_providers) so the client can show and search by it. Both
@@ -391,12 +500,26 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 	// Note nafdac_ref is documented on the struct as "HL-5: required" but the
 	// column is nullable and no row has one — a data/schema question this does not
 	// settle, and deliberately: a catalog that 500s hides it instead of showing it.
+	// An unowned product can never be bought: priceAndValidateLines prices every
+	// line with `WHERE id=$1 AND pharmacy_provider_id=$2`, so an order over it
+	// fails "product not found in this pharmacy catalog" for EVERY pharmacy — HL-2
+	// additionally requires an approved supplier to order against. Listing it is
+	// therefore not a neutral omission but an advert the patient can only fail at,
+	// after filling a cart. Such rows exist (the pre-provider legacy catalog), so
+	// the read excludes them rather than relying on data cleanup.
+	//
+	// Note stock_qty is deliberately NOT filtered here: 0 means "inventory not
+	// tracked" (the DB default), not "sold out" — see the stock comments in
+	// CreateOrder. Availability is carried by in_stock, which owners flip false
+	// when a tracked product runs out; ordering by it puts sellable stock first
+	// without hiding the untracked items that are legitimately purchasable.
 	q := fmt.Sprintf(`
 		SELECT pr.id, COALESCE(pr.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
-		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at
+		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.in_stock, pr.active, pr.created_at
 		FROM pharmacy_products pr
 		LEFT JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id
-		WHERE pr.active = true AND pr.nafdac_status = 'REGISTERED'%s
+		WHERE pr.active = true AND pr.nafdac_status = 'REGISTERED'
+		  AND pr.in_stock = true AND pr.pharmacy_provider_id IS NOT NULL%s
 		ORDER BY pr.name ASC LIMIT 200`, where)
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -407,7 +530,7 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 	for rows.Next() {
 		var p Product
 		if err := rows.Scan(&p.ID, &p.PharmacyProviderID, &p.PharmacyName, &p.Name, &p.NAFDACRef, &p.NAFDACStatus,
-			&p.RxRequired, &p.IsControlled, &p.PriceKobo, &p.StockQty, &p.Active, &p.CreatedAt); err != nil {
+			&p.RxRequired, &p.IsControlled, &p.PriceKobo, &p.StockQty, &p.InStock, &p.Active, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -417,19 +540,22 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 
 // GetProduct returns a single active, NAFDAC-registered catalog product with its
 // owning pharmacy's display name. Mirrors ListProducts' shape (LEFT JOIN
-// health_providers) so the detail screen has the same attribution as the list.
+// health_providers) so the detail screen has the same attribution as the list —
+// including its exclusions, so a product that cannot be ordered is equally
+// invisible on both paths.
 func (s *Service) GetProduct(ctx context.Context, id string) (*Product, error) {
 	// Same nullable-provider handling as ListProducts — a detail page must not 500
 	// on a product the list can show.
 	const q = `
 		SELECT pr.id, COALESCE(pr.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
-		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at
+		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.in_stock, pr.active, pr.created_at
 		FROM pharmacy_products pr
 		LEFT JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id
-		WHERE pr.id = $1 AND pr.active = true AND pr.nafdac_status = 'REGISTERED'`
+		WHERE pr.id = $1 AND pr.active = true AND pr.nafdac_status = 'REGISTERED'
+		  AND pr.in_stock = true AND pr.pharmacy_provider_id IS NOT NULL`
 	var p Product
 	if err := s.db.QueryRow(ctx, q, id).Scan(&p.ID, &p.PharmacyProviderID, &p.PharmacyName, &p.Name, &p.NAFDACRef,
-		&p.NAFDACStatus, &p.RxRequired, &p.IsControlled, &p.PriceKobo, &p.StockQty, &p.Active, &p.CreatedAt); err != nil {
+		&p.NAFDACStatus, &p.RxRequired, &p.IsControlled, &p.PriceKobo, &p.StockQty, &p.InStock, &p.Active, &p.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -1875,7 +2001,7 @@ func (s *Service) ListProductsForOwner(ctx context.Context, ownerID string) ([]P
 	const q = `
 		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
 		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty,
-		       pr.active, pr.created_at
+		       pr.in_stock, pr.active, pr.created_at
 		FROM pharmacy_products pr
 		JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id
 		WHERE hp.owner_user_id = $1
@@ -1894,7 +2020,7 @@ func (s *Service) ListProductsForOwner(ctx context.Context, ownerID string) ([]P
 		var p Product
 		if err := rows.Scan(&p.ID, &p.PharmacyProviderID, &p.PharmacyName, &p.Name, &p.NAFDACRef,
 			&p.NAFDACStatus, &p.RxRequired, &p.IsControlled, &p.PriceKobo, &p.StockQty,
-			&p.Active, &p.CreatedAt); err != nil {
+			&p.InStock, &p.Active, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

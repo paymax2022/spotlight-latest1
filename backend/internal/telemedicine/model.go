@@ -79,8 +79,12 @@ type AppointmentStatus string
 const (
 	ApptBooked    AppointmentStatus = "booked"
 	ApptConfirmed AppointmentStatus = "confirmed"
-	ApptCompleted AppointmentStatus = "completed"
-	ApptCancelled AppointmentStatus = "cancelled"
+	// ApptInProgress mirrors the doctor console's live-consult state. A consult
+	// started from the console moves the telemedicine appointment here before it
+	// completes (settlement still only runs through CompleteAppointment).
+	ApptInProgress AppointmentStatus = "in_progress"
+	ApptCompleted  AppointmentStatus = "completed"
+	ApptCancelled  AppointmentStatus = "cancelled"
 )
 
 // Appointment is a scheduled or on-demand consultation.
@@ -120,6 +124,24 @@ type Prescription struct {
 	Medications   string    `json:"medications"`
 	Instructions  string    `json:"instructions,omitempty"`
 	IssuedAt      time.Time `json:"issued_at"`
+	// DoctorName is read back from the appointment row so the patient's
+	// prescription card can sign it without a second query.
+	DoctorName string `json:"doctor_name,omitempty"`
+	// Items is the structured drug list. A doctor-console prescription bridges
+	// in with real items; a telemedicine text prescription is split line-wise so
+	// clients never have to parse Medications themselves.
+	Items []RxItem `json:"items,omitempty"`
+}
+
+// RxItem is one drug line on a prescription, mirroring the doctor console's
+// doctor_prescription_items row.
+type RxItem struct {
+	Name      string `json:"name"`
+	Dosage    string `json:"dosage,omitempty"`
+	Route     string `json:"route,omitempty"`
+	Frequency string `json:"frequency,omitempty"`
+	Duration  string `json:"duration,omitempty"`
+	Notes     string `json:"notes,omitempty"`
 }
 
 // SOAPNote captures a structured consultation note.

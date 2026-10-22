@@ -12,8 +12,15 @@ function recompute(lines: CartLine[], deliveryFeeKobo: number): Cart {
     lines,
     subtotalKobo,
     deliveryFeeKobo: lines.length ? deliveryFeeKobo : 0,
-    totalKobo: subtotalKobo + (lines.length ? deliveryFeeKobo : 0),
+    // Goods only — deliberately NOT subtotal + delivery. CreateOrder prices the order
+    // at Σ(price × qty) and holds exactly that; the courier's fare is a separate
+    // transport money event it never touches. A total that added the fee promised a
+    // hold larger than the money actually moved.
+    totalKobo: subtotalKobo,
     requiresRx: lines.some((l) => l.rxRequired),
+    // Set by the first line added; the store refuses a second pharmacy's product.
+    pharmacyId: lines[0]?.pharmacyId ?? '',
+    pharmacyName: lines[0]?.pharmacyName ?? '',
   };
 }
 
@@ -25,7 +32,10 @@ interface CartState {
   rxId?: string;
   cart: () => Cart;
   count: () => number;
-  add: (product: PharmacyProduct, qty?: number) => void;
+  /** Adds to the cart. Returns false when the product belongs to a different
+   *  pharmacy than the cart's — one order is one pharmacy, so a mixed cart could
+   *  never be placed (see add()). */
+  add: (product: PharmacyProduct, qty?: number) => boolean;
   setQty: (productId: string, qty: number) => void;
   remove: (productId: string) => void;
   clear: () => void;
@@ -42,8 +52,17 @@ export const useCartStore = create<CartState>((set, get) => ({
   cart: () => recompute(get().lines, get().deliveryFeeKobo),
   count: () => get().lines.reduce((s, l) => s + l.qty, 0),
 
-  add: (product, qty = 1) =>
-    set((st) => {
+  add: (product, qty = 1) => {
+    const st = get();
+    // Only products carrying a pharmacy_provider_id may enter the cart. CreateOrder
+    // prices every line with `WHERE id=$1 AND pharmacy_provider_id=$2`, so an
+    // unattributed item (e.g. a symptom-search SKU, which the server returns without
+    // pharmacy attribution) can never be matched to the order's pharmacy — adding it
+    // would build a cart that is guaranteed to fail at payment.
+    if (!product.pharmacyId) return false;
+    const owner = st.lines[0]?.pharmacyId;
+    if (owner && owner !== product.pharmacyId) return false;
+    set(() => {
       const existing = st.lines.find((l) => l.productId === product.id);
       const lines = existing
         ? st.lines.map((l) => (l.productId === product.id ? { ...l, qty: l.qty + qty } : l))
@@ -51,6 +70,8 @@ export const useCartStore = create<CartState>((set, get) => ({
             ...st.lines,
             {
               productId: product.id,
+              pharmacyId: product.pharmacyId,
+              pharmacyName: product.pharmacyName,
               name: product.name,
               form: product.form,
               priceKobo: product.priceKobo,
@@ -59,8 +80,10 @@ export const useCartStore = create<CartState>((set, get) => ({
               imageColor: product.imageColor,
             },
           ];
-      return { lines };
-    }),
+      return { lines, pharmacyId: product.pharmacyId || st.pharmacyId };
+    });
+    return true;
+  },
 
   setQty: (productId, qty) =>
     set((st) => ({

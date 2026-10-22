@@ -44,6 +44,28 @@ export function formatMedList(value: IntakeValue): string[] {
   return value.split(/\n|,/).map((s) => s.trim()).filter(Boolean);
 }
 
+/**
+ * One answer as it is read back — the wizard's review screen and the doctor
+ * console both use this, so the wording cannot drift apart between the patient
+ * who typed it and the clinician who acts on it. An empty "select any that
+ * apply" is the answer None, not a blank we failed to record; "—" told the
+ * doctor the patient never reached the question.
+ */
+export function formatIntakeValue(field: IntakeField, value: IntakeValue): string {
+  if (Array.isArray(value) && value.length === 0) return field.type === 'multi_select' ? 'None' : '—';
+  if (value == null || value === '') return field.type === 'attachment' ? 'Not available' : '—';
+  if (field.type === 'boolean') return value ? 'Yes' : 'No';
+  if (field.type === 'med_list') {
+    const lines = formatMedList(value);
+    return lines.length ? lines.join(', ') : '—';
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => field.options?.find((o) => o.value === v)?.label ?? String(v)).join(', ');
+  }
+  if (field.options) return field.options.find((o) => o.value === value)?.label ?? String(value);
+  return String(value);
+}
+
 function validateField(field: IntakeField, value: IntakeValue): string | null {
   if (field.required && isEmpty(value, field.type)) {
     return 'This field is required';
@@ -80,6 +102,35 @@ export function firstErrorFieldId(errors: IntakeErrors): string | undefined {
   return Object.keys(errors)[0];
 }
 
+/**
+ * A step's fields with the ones answered away by their gate removed. Kept out of
+ * `visibleSteps` because that is the step list (progress, review, jump-to-step);
+ * this is the field list inside one step.
+ */
+export function stepFields(step: IntakeStep, values: IntakeResponseValues): IntakeField[] {
+  return step.fields.filter((f) => !isGatedOff(f.id, values));
+}
+
+/**
+ * Applying a gate answer: switching to "No" drops the detail it had unlocked, so
+ * a draft can never carry both `conditions_none: false` and a condition list.
+ * Answers written by older drafts are reconciled here on the way in.
+ */
+export function applyGateAnswer(values: IntakeResponseValues, fieldId: string): IntakeResponseValues {
+  const details = gatedDetailFields(fieldId);
+  if (!details.length || values[fieldId] !== false) return values;
+  const next: IntakeResponseValues = { ...values };
+  for (const detailId of details) delete next[detailId];
+  return next;
+}
+
+/** Drop every detail whose gate says "No" — used when loading a stored draft. */
+export function reconcileGates(values: IntakeResponseValues): IntakeResponseValues {
+  return Object.values(LIST_GATES)
+    .filter((gateId, i, all) => all.indexOf(gateId) === i)
+    .reduce((acc, gateId) => applyGateAnswer(acc, gateId), values);
+}
+
 /** Whether a step's `when` predicate is satisfied by the current answers. */
 export function isStepVisible(step: IntakeStep, values: IntakeResponseValues): boolean {
   if (!step.when) return true;
@@ -103,6 +154,43 @@ export function visibleSteps(
 }
 
 /**
+ * The safety-critical list questions pair a boolean ("do you take/have any…?")
+ * with the detail it unlocks. `meds_none`/`allergies_none`/`conditions_none` are
+ * the ANSWER-YES flags (the names are legacy), so `true` makes the detail
+ * required and `false` must make it impossible to hold a value — otherwise the
+ * doctor reads "No ongoing conditions" above "Asthma, Hypertension".
+ */
+const LIST_GATES: Record<string, string> = {
+  medications_list: 'meds_none',
+  allergies_list: 'allergies_none',
+  allergies_other: 'allergies_none',
+  conditions_list: 'conditions_none',
+  conditions_other: 'conditions_none',
+};
+
+/**
+ * The subset of gated details the doctor must always read when the gate says
+ * yes. The free-text "other" fields are optional enrichments — gating them for
+ * requiredness would block the wizard while the list itself is already answered.
+ */
+const REQUIRED_DETAIL_GATES: Record<string, string> = {
+  medications_list: 'meds_none',
+  allergies_list: 'allergies_none',
+  conditions_list: 'conditions_none',
+};
+
+/** Detail fields that belong to a boolean gate, e.g. 'conditions_none' → its list + other. */
+export function gatedDetailFields(gateId: string): string[] {
+  return Object.keys(LIST_GATES).filter((detailId) => LIST_GATES[detailId] === gateId);
+}
+
+/** Whether a detail field is currently answered away by its gate ("No" → hidden, value cleared). */
+export function isGatedOff(fieldId: string, values: IntakeResponseValues): boolean {
+  const gateId = LIST_GATES[fieldId];
+  return gateId != null && values[gateId] === false;
+}
+
+/**
  * Pre-Consult field validation. Honours the conditional "none" toggles for the
  * safety-critical med/allergy/condition list fields: if the patient says they
  * DO take meds / DO have allergies, the detail field becomes required.
@@ -113,12 +201,7 @@ function validatePreConsultField(
   values: IntakeResponseValues,
 ): string | null {
   // Conditional requiredness driven by the matching boolean toggle.
-  const conditionalRequired: Record<string, string> = {
-    medications_list: 'meds_none',
-    allergies_list: 'allergies_none',
-    conditions_list: 'conditions_none',
-  };
-  const toggleId = conditionalRequired[field.id];
+  const toggleId = REQUIRED_DETAIL_GATES[field.id];
   if (toggleId && values[toggleId] === true && isEmpty(value, field.type)) {
     return 'Please add at least one, or change your answer above';
   }
@@ -150,7 +233,7 @@ export function validatePreConsult(
 ): IntakeErrors {
   const errors: IntakeErrors = {};
   for (const step of visibleSteps(schema, values)) {
-    for (const field of step.fields) {
+    for (const field of stepFields(step, values)) {
       const message = validatePreConsultField(field, values[field.id] ?? null, values);
       if (message) errors[field.id] = message;
     }
@@ -161,7 +244,7 @@ export function validatePreConsult(
 /** Validate a single step (used on Next). */
 export function validateStep(step: IntakeStep, values: IntakeResponseValues): IntakeErrors {
   const errors: IntakeErrors = {};
-  for (const field of step.fields) {
+  for (const field of stepFields(step, values)) {
     const message = validatePreConsultField(field, values[field.id] ?? null, values);
     if (message) errors[field.id] = message;
   }
