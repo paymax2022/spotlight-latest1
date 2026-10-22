@@ -1,0 +1,35 @@
+level,id,name,core,conditional,p0,code_paths,test_paths,automated_status,manual_status,notes
+WS,GOV,Test governance & scope control,10,0,8,-,docs/uat/crypto/*,Partial,Not Run,This artifact set is the GOV work product; no separate automated suite applies
+WS,AUTH,Identity signup/verify/MFA/lock,18,0,13,internal/app (mapsAuth),crypto/handler_ext.go:UnauthenticatedRequests,Partial,Not Run,Platform-wide auth is out of crypto scope; crypto relies on mapsAuth bearer + PermTrade gate
+WS,KYC,KYC tier gates trading,19,1,14,internal/finance/tiers,crypto/tier_gate_test.go;cryptosvc:TestLive_TierTradeGate;ErrTradeNotAllowed,Pass,Not Run,Trading-gate subset proven incl. live tier; onboarding UI is not crypto
+WS,RBAC,Role & cross-tenant isolation,16,0,15,internal/app middleware RequirePermission,cryptosvc:TestAnotherUsersSwap*;crypto/member_permissions_live_db_test.go,Pass,Not Run,Object-level authZ strong; admin-vs-member split enforced by PermAdmin
+WS,QDX,Quidax adapter contract (retry/ratelimit/error class/secret),16,0,14,internal/cryptoprov/quidax,cryptoprov/quidax httptest suite,Pass,Not Run,Verified vs httptest only; live sandbox contract is Blocked (no permitted creds)
+WS,SUB,Subaccount mapping once-only,14,0,12,cryptoprov AccountProvider,cryptosvc:TestCreateAccount;TestLive_ConcurrentFirstQuotesCreateOneAccount,Pass,Not Run,One provider account per user under concurrency proven incl. live DB
+WS,MKT,Markets/orderbook/candles/market switch,19,0,9,internal/crypto ListAssets/Chart,crypto invariants (assets list/chart),Partial,Not Run,Asset list + chart built; NO orderbook endpoint and ticker not surfaced to client — GAP-MKT-01
+WS,SWAP,Instant swap (15s TTL product),0,20,17,internal/cryptosvc quote/confirm FSM,20 cryptosvc swap tests incl. TestLive_*,Pass,Not Applicable,Machinery built+green; the SWAP *product* stays Conditional until enabled
+WS,ORD,Order placement/validation/limits,24,0,23,internal/crypto Buy/Sell,crypto+cryptosvc order suite,Pass,Not Run,Market buy/sell + confirm validated; idempotency enforced
+WS,FILL,Fills/partial/cancel/expiry,22,0,18,internal/crypto,TestCompletedEventRequeriesAndCompletes;WithdrawalFSM/SwapFSM,Partial,Not Run,Terminal-state FSM strong; limit-order PARTIAL-FILL/CANCEL-residual not evidenced — GAP-FILL-01
+WS,LED,Double-entry ledger invariants,24,0,24,internal/finance/ledger;cryptosvc/settle.go,~60 ledger/conservation tests incl. TestLive_*ConservesMoney,Pass,Not Run,Money conservation/refund-integrity/once-only proven against real Postgres
+WS,WAL,Wallet addresses/networks/memo,18,0,15,crypto DepositAddress/ScreenAddress,cryptoprov CreateDepositAddress tests,Partial,Not Run,Address gen + screen built; per-chain format/memo needs live verification — GAP-WAL-01
+WS,DEP,Inbound deposit → confirmations → credit,22,0,20,internal/crypto/deposit (Settler+PGStore+DBResolver+SettleDeposit);cryptoprov DepositProvider+Mock+quidax;cryptosvc Ingest deposit routing;app bridge;CRYPTO_DEPOSIT_CONFIRMATIONS;migration 20271071000000_crypto_deposits,cryptodep 16 domain+7 live_db (once-only 16-way race/conservation/isolation/scale);cryptosvc 6 routing;quidax 6,Partial,Blocked,Slice1+2 built+green: webhook→provider-requery→settle wired & tested (mock + live-DB 0.005BTC=500000 units once, replay dup, dust/pending/orphan credit nobody); payload never sets value. NOT run vs live Quidax sandbox (event name/confirmations field unverified); deposit reconciler + admin/mobile surface (slice3) remain → E2E-05 Partial/Blocked, never Pass
+WS,WDR,Withdrawal FSM/fee/limit/step-up,27,0,25,crypto withdrawals+confirm+admin decision,TestWithdrawalFSM_*;TestWithdraw*;eligibility,Pass,Not Run,FSM/eligibility/quote/replay validated; live on-chain send Blocked
+WS,RAMP,NGN fiat on/off-ramp,0,18,18,NONE,NONE,Not Applicable,Not Applicable,Separate provider product; Conditional until contract enabled
+WS,XFER,Internal crypto transfer,0,13,11,NONE,NONE,Not Applicable,Not Applicable,Conditional; not built
+WS,FEE,Fee schedules & decimal precision,21,0,19,cryptosvc fees/pgfees,~25 TestFeeSchedule*+CashForUnits/UnitsForCash guards,Pass,Not Run,Precision overflow/truncation guards + fail-closed ceiling + versioned audit all green
+WS,WEB,Webhook HMAC/replay/dedup/size,24,0,23,cryptosvc webhook+Ingest,TestWebhook*;TestVerifySignature*;TestPGStore_WebhookDedupe,Pass,Not Run,Signature/dedup/size-limit/idempotent 200 green; live-signed provider event Blocked
+WS,REC,Reconciliation & leader lock,22,0,20,cryptosvc reconciler,TestReconciler*+TestLive_OnlyOneReplicaLeads/ReconcilerEndToEnd,Pass,Not Run,Leader lock, idempotent pass, backlog rollup, exception states green incl. live
+WS,RISK,Sanctions/geofence/velocity/step-up,21,1,19,cryptosvc step-up;finance tiers debit guard,TestAWrongPinIsAudited;EnforceDebitLimit;TransfersStepUpNeverScoresAnEmptyPin,Partial,Not Run,Step-up PIN + debit-limit built; sanctions-screen/geofence/velocity/impossible-travel not evidenced — GAP-RISK-01
+WS,ADM,Admin ops & privileged approvals,18,0,13,cryptosvc admin.go;crypto admin,TestAdminResolve*(no-double-credit/refusal/audit),Pass,Not Run,Resolve/release safety + fee audit green; full maker-checker pairing not evidenced — GAP-ADM-01
+WS,SUP,Support case tooling/limits,12,0,3,NONE,NONE,Not Run,Not Run,No crypto-specific support surface; low P0 count
+WS,REP,Statements & P&L reporting,15,2,8,crypto admin reconciliation view,admin reconciliation subset,Partial,Not Run,Admin reconciliation view exists; customer statement/P&L export not built — GAP-REP-01
+WS,NOT,Notifications (email/SMS/push),15,0,6,platform notify (generic),NONE,Not Run,Not Run,No crypto-specific notification tests
+WS,UIX,Mobile UX & accessibility,20,1,13,reactnative app/crypto/** (34 screens),NONE (no UI automation),Built,Not Run,Screens exist + wired to live routes; offline/a11y/screen-reader E2E Not Run
+WS,VAPI,API security VAPT (ASVS/API Top10),28,0,25,-,-,Not Run,Blocked,Needs authorized staging + tooling; BR-18 forbids unsanctioned scanning; do not fabricate
+WS,VMOB,Mobile VAPT (MASVS),17,1,13,-,-,Not Run,Blocked,Needs owned instrumented test builds/devices
+WS,VINF,Infra/IAM/SBOM VAPT,18,0,14,-,-,Not Run,Blocked,Needs staging cloud/IAM inventory
+WS,PERF,Performance/SLO/soak,22,0,14,-,-,Not Run,Blocked,Owner must set numeric p95/p99/throughput/RTO/RPO before testing (spec §11)
+WS,RES,Resilience/chaos/DR,20,0,20,cryptosvc advisory-lock/reconciler,fault subset within REC,Partial,Blocked,Leader-lock/failover-safe settle green; DB-failover/queue-replay chaos Not Run
+WS,REG,Regression & migration safety,20,0,16,-,-,Not Run,Blocked,Golden dataset + prior-build diff Not Run
+WS,OPS,Operations/deploy/runbooks,17,0,16,-,-,Not Run,Not Applicable,Staging deploy artefacts out of repo scope
+WS,PRV,Privacy/retention/legal,17,0,14,-,-,Not Run,Blocked,Legal counsel gate; not a code task
+WS,ABU,Adversarial races/double-spend/replay,15,0,15,cryptosvc confirm/settle/ingest,TestCompleteAndFailRacing*;TestLive_Concurrent*;ReplayDifferentAmountFailsClosed,Pass,Not Run,Double-spend + exactly-one-terminal-outcome + replay-safety proven incl. live concurrency
