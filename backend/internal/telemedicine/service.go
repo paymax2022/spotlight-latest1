@@ -32,6 +32,13 @@ var ErrTierGateUnwired = errors.New("telemedicine: money path requires a tier ga
 
 // Service manages doctors, appointments, prescriptions, SOAP notes, and pharmacy.
 type Service struct {
+	// consoleBridge (FEATURE_TELEMEDICINE_CONSOLE_BRIDGE_ENABLED, ADR-PR879)
+	// turns on the doctor-console bridge: mirroring bookings into the console,
+	// console readbacks, the shared chat, and console → telemedicine status sync
+	// (which can settle or refund). Off (default): none of it runs, so booking,
+	// completion and refunds behave exactly as before the bridge existed.
+	consoleBridge bool
+
 	db         *pgxpool.Pool
 	settlement *settlement.Service
 	// tiers is the checkout daily-cap gate evaluated inside the escrow debit
@@ -648,7 +655,7 @@ func (s *Service) GetAppointment(ctx context.Context, id, userID string) (*Appoi
 		return nil, err
 	}
 	if len(appts) == 0 {
-		return nil, errors.New("telemedicine: appointment not found")
+		return nil, ErrAppointmentNotFound
 	}
 	return &appts[0], nil
 }
@@ -719,6 +726,9 @@ func (s *Service) CancelAppointment(ctx context.Context, appointmentID, actorID 
 	}
 	if status == string(ApptCompleted) {
 		return errors.New("telemedicine: cannot cancel a completed appointment")
+	}
+	if status == string(ApptInProgress) && actorID == patientID {
+		return ErrConsultInProgress
 	}
 	if err := s.settlement.Refund(ctx, settlementID, "appointment_cancelled"); err != nil {
 		return fmt.Errorf("telemedicine: refund fee: %w", err)

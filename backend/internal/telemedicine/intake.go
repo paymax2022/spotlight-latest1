@@ -111,7 +111,7 @@ func (s *Service) loadIntakeAppointment(ctx context.Context, appointmentID, user
 		  ))`
 	err = s.db.QueryRow(ctx, q, appointmentID, userID).Scan(&patientID, &doctorID, &isPatient)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", false, errors.New("telemedicine: appointment not found")
+		return "", "", false, ErrAppointmentNotFound
 	}
 	if err != nil {
 		return "", "", false, fmt.Errorf("telemedicine: load intake appointment: %w", err)
@@ -234,11 +234,33 @@ func (s *Service) writeIntake(ctx context.Context, appointmentID, userID string,
 		return nil, fmt.Errorf("telemedicine: encode intake answers: %w", err)
 	}
 
+	// Triage runs on submit AND on every edit after submit: answers stay
+	// editable, and a symptom added later (chest pain after submitting) must
+	// still route the patient. The stored outcome only ever rises — an edit can
+	// add urgency, never remove it (raiseRedFlag).
+	var prevStatus string
+	var prevSeverity, prevRouting *string
+	var prevHitsRaw []byte
+	if err := s.db.QueryRow(ctx, `
+		SELECT status, red_flag_severity, red_flag_routing, COALESCE(red_flag_hits, '[]'::jsonb)
+		FROM telemedicine_intakes WHERE appointment_id=$1::uuid`, appointmentID).
+		Scan(&prevStatus, &prevSeverity, &prevRouting, &prevHitsRaw); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("telemedicine: read intake: %w", err)
+	}
+	triage := submit || prevStatus == IntakeSubmitted
 	var severity, routing any
 	var hitsRaw any
-	if submit {
+	if triage {
+		var prev *IntakeRedFlag
+		if prevRouting != nil && *prevRouting != "" {
+			prev = &IntakeRedFlag{Routing: *prevRouting}
+			if prevSeverity != nil {
+				prev.Severity = *prevSeverity
+			}
+			_ = json.Unmarshal(prevHitsRaw, &prev.Hits)
+		}
 		hits := []string{}
-		if rf := evaluateIntakeRedFlag(answers); rf != nil {
+		if rf := raiseRedFlag(prev, evaluateIntakeRedFlag(answers)); rf != nil {
 			severity, routing, hits = rf.Severity, rf.Routing, rf.Hits
 		}
 		b, err := json.Marshal(hits)
@@ -268,9 +290,9 @@ func (s *Service) writeIntake(ctx context.Context, appointmentID, userID string,
 		    answers_json    = EXCLUDED.answers_json,
 		    status          = CASE WHEN $13 THEN 'SUBMITTED' ELSE telemedicine_intakes.status END,
 		    submitted_at    = CASE WHEN $13 THEN now() ELSE telemedicine_intakes.submitted_at END,
-		    red_flag_severity = CASE WHEN $13 THEN EXCLUDED.red_flag_severity ELSE telemedicine_intakes.red_flag_severity END,
-		    red_flag_routing  = CASE WHEN $13 THEN EXCLUDED.red_flag_routing ELSE telemedicine_intakes.red_flag_routing END,
-		    red_flag_hits     = CASE WHEN $13 THEN EXCLUDED.red_flag_hits ELSE telemedicine_intakes.red_flag_hits END,
+		    red_flag_severity = CASE WHEN $14 THEN EXCLUDED.red_flag_severity ELSE telemedicine_intakes.red_flag_severity END,
+		    red_flag_routing  = CASE WHEN $14 THEN EXCLUDED.red_flag_routing ELSE telemedicine_intakes.red_flag_routing END,
+		    red_flag_hits     = CASE WHEN $14 THEN EXCLUDED.red_flag_hits ELSE telemedicine_intakes.red_flag_hits END,
 		    updated_at      = now()`
 
 	status := IntakeDraft
@@ -288,7 +310,7 @@ func (s *Service) writeIntake(ctx context.Context, appointmentID, userID string,
 
 	_, err = s.db.Exec(ctx, up,
 		uuid.New().String(), appointmentID, patientID, doctorID, schemaID, schemaVersion,
-		req.ConsentVersion, status, string(answersRaw), severity, routing, hitsRaw, submit,
+		req.ConsentVersion, status, string(answersRaw), severity, routing, hitsRaw, submit, triage,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("telemedicine: write intake: %w", err)
@@ -336,6 +358,31 @@ func evaluateIntakeRedFlag(answers IntakeAnswers) *IntakeRedFlag {
 	return nil
 }
 
+// redFlagRank orders triage outcomes by urgency.
+func redFlagRank(rf *IntakeRedFlag) int {
+	if rf == nil {
+		return 0
+	}
+	switch rf.Routing {
+	case "CRISIS":
+		return 3
+	case "EMERGENCY":
+		return 2
+	case "URGENT_CARE":
+		return 1
+	}
+	return 0
+}
+
+// raiseRedFlag keeps the more urgent of the stored and the fresh outcome, so a
+// later edit can escalate a submitted intake but never quietly de-escalate it.
+func raiseRedFlag(prev, next *IntakeRedFlag) *IntakeRedFlag {
+	if redFlagRank(next) > redFlagRank(prev) {
+		return next
+	}
+	return prev
+}
+
 func stringSlice(v any) []string {
 	switch s := v.(type) {
 	case []string:
@@ -379,9 +426,18 @@ func (h *Handler) SubmitAppointmentIntake(c *gin.Context) {
 	h.writeIntakeRequest(c, true)
 }
 
+// maxIntakeBody caps an intake write; the app-shipped questionnaire is a few KB.
+const maxIntakeBody = 64 << 10
+
 func (h *Handler) writeIntakeRequest(c *gin.Context, submit bool) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxIntakeBody)
 	var req SaveIntakeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{keyError: httperr.Msg(c, http.StatusRequestEntityTooLarge, err)})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
@@ -398,6 +454,9 @@ func (h *Handler) writeIntakeRequest(c *gin.Context, submit bool) {
 		it, err = h.svc.SaveAppointmentIntakeDraft(c.Request.Context(), appointmentID, userID, req)
 	}
 	switch {
+	case errors.Is(err, ErrAppointmentNotFound):
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		return
 	case errors.Is(err, ErrNotIntakeOwner):
 		// A doctor (or anyone else) posting into a patient's intake is a
 		// forbidden write, not a missing resource.

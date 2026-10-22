@@ -284,6 +284,10 @@ func (h *Handler) SendAppointmentMessage(c *gin.Context) {
 		return
 	}
 	m, err := h.svc.SendAppointmentMessage(c.Request.Context(), c.Param("id"), userID, req.Body)
+	if errors.Is(err, ErrAppointmentNotFound) || errors.Is(err, ErrNotBridged) {
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
@@ -298,6 +302,14 @@ func (h *Handler) SendAppointmentMessage(c *gin.Context) {
 func (h *Handler) GetAppointmentCallToken(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	info, err := h.svc.GetAppointmentCallToken(c.Request.Context(), c.Param("id"), userID)
+	if errors.Is(err, ErrAppointmentNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		return
+	}
+	if errors.Is(err, ErrAppointmentClosed) {
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 		return

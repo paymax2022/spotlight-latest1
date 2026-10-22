@@ -50,6 +50,39 @@ type liveKitTokens interface {
 	ClientURL() string
 }
 
+// WithConsoleBridge turns the doctor-console bridge on
+// (FEATURE_TELEMEDICINE_CONSOLE_BRIDGE_ENABLED). See Service.consoleBridge.
+func (s *Service) WithConsoleBridge(on bool) *Service {
+	s.consoleBridge = on
+	return s
+}
+
+var (
+	// ErrAppointmentNotFound covers both "no such appointment" and "not a
+	// participant": a caller learns nothing about appointments they are not on.
+	ErrAppointmentNotFound = errors.New("telemedicine: appointment not found")
+	// ErrConsultInProgress refuses a patient cancel once the doctor has started.
+	ErrConsultInProgress = errors.New("telemedicine: the consultation has started and can no longer be cancelled")
+	// ErrAppointmentClosed refuses a call token for a cancelled/completed visit.
+	ErrAppointmentClosed = errors.New("telemedicine: appointment is closed")
+	// ErrSyncActorNotDoctor refuses a console sync from anyone but the
+	// appointment's assigned doctor.
+	ErrSyncActorNotDoctor = errors.New("telemedicine: console sync is only accepted from the assigned doctor")
+)
+
+// assignedDoctorUserID is the auth user of the appointment's doctor: the only
+// account whose console rows the bridge trusts.
+func (s *Service) assignedDoctorUserID(ctx context.Context, appointmentID string) (string, error) {
+	var uid string
+	err := s.db.QueryRow(ctx, `
+		SELECT COALESCE(d.user_id::text,'') FROM appointments a JOIN doctors d ON d.id = a.doctor_id
+		WHERE a.id = $1`, appointmentID).Scan(&uid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrAppointmentNotFound
+	}
+	return uid, err
+}
+
 // WithLiveKit wires the consult call-token control plane. Nil-safe: unwired,
 // GetAppointmentCallToken reports configured:false.
 func (s *Service) WithLiveKit(lk liveKitTokens) *Service {
@@ -65,6 +98,9 @@ func (s *Service) WithLiveKit(lk liveKitTokens) *Service {
 // succeeds. Both inserts are idempotent, so the replay path re-attempts the
 // bridge and heals a crashed first attempt.
 func (s *Service) bridgeToDoctorConsole(ctx context.Context, appt *Appointment) {
+	if !s.consoleBridge {
+		return
+	}
 	if err := s.writeDoctorConsoleRows(ctx, appt); err != nil {
 		log.Printf("[telemedicine][bridge] appointment %s: %v", appt.ID, err)
 	}
@@ -113,7 +149,7 @@ func (s *Service) writeDoctorConsoleRows(ctx context.Context, appt *Appointment)
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO doctor_chat_threads (id, user_id, appointment_id, patient, consult_type, status)
 		SELECT gen_random_uuid(), $2::uuid, $1, $3::jsonb, $4, 'active'
-		WHERE NOT EXISTS (SELECT 1 FROM doctor_chat_threads WHERE appointment_id = $1)`,
+		WHERE NOT EXISTS (SELECT 1 FROM doctor_chat_threads WHERE appointment_id = $1 AND user_id = $2::uuid)`,
 		appt.ID, doctorUserID, string(patientJSON), appt.ConsultationType,
 	)
 	if err != nil {
@@ -191,8 +227,19 @@ var ErrNotBridged = errors.New("telemedicine: appointment is not bridged to a do
 // threadForAppointment resolves the bridged chat thread plus its owning
 // doctor's auth id (doctor_chat_messages rows are keyed to the doctor).
 func (s *Service) threadForAppointment(ctx context.Context, appointmentID string) (threadID, doctorUserID string, err error) {
+	if !s.consoleBridge {
+		return "", "", ErrNotBridged
+	}
+	// Only the ASSIGNED doctor's thread counts. Any other thread carrying this
+	// appointment id (planted, or left over) is ignored, so patient messages can
+	// never be routed into a thread someone else owns.
 	err = s.db.QueryRow(ctx, `
-		SELECT id::text, user_id::text FROM doctor_chat_threads WHERE appointment_id=$1`,
+		SELECT t.id::text, t.user_id::text
+		FROM doctor_chat_threads t
+		JOIN appointments a ON a.id = t.appointment_id
+		JOIN doctors d ON d.id = a.doctor_id AND d.user_id = t.user_id
+		WHERE t.appointment_id = $1
+		ORDER BY t.created_at ASC LIMIT 1`,
 		appointmentID).Scan(&threadID, &doctorUserID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", ErrNotBridged
@@ -305,6 +352,11 @@ func (s *Service) GetAppointmentCallToken(ctx context.Context, appointmentID, us
 	if err != nil {
 		return nil, err
 	}
+	switch appt.Status {
+	case ApptBooked, ApptConfirmed, ApptInProgress:
+	default:
+		return nil, ErrAppointmentClosed
+	}
 	if s.livekit == nil {
 		return &ConsultCallInfo{Configured: false}, nil
 	}
@@ -337,14 +389,21 @@ func (s *Service) GetAppointmentCallToken(ctx context.Context, appointmentID, us
 // consult screen writes doctor_prescriptions/_items) onto the telemedicine
 // Prescription the patient's summary renders.
 func (s *Service) prescriptionFromDoctorConsole(ctx context.Context, appointmentID, patientID, doctorID, doctorName string) (*Prescription, error) {
+	if !s.consoleBridge {
+		return nil, errors.New("telemedicine: prescription not found")
+	}
 	var rxID, status string
 	var issuedAt *time.Time
 	var diagnosis *string
+	// Only a prescription written by the appointment's assigned doctor: the row's
+	// appointment_id alone proves nothing about who wrote it.
 	err := s.db.QueryRow(ctx, `
-		SELECT id::text, status, issued_at, diagnosis
-		FROM doctor_prescriptions
-		WHERE appointment_id=$1 AND status <> 'draft'
-		ORDER BY issued_at DESC NULLS LAST LIMIT 1`, appointmentID).
+		SELECT p.id::text, p.status, p.issued_at, p.diagnosis
+		FROM doctor_prescriptions p
+		JOIN appointments a ON a.id = p.appointment_id
+		JOIN doctors d ON d.id = a.doctor_id AND d.user_id = p.user_id
+		WHERE p.appointment_id=$1 AND p.status <> 'draft'
+		ORDER BY p.issued_at DESC NULLS LAST LIMIT 1`, appointmentID).
 		Scan(&rxID, &status, &issuedAt, &diagnosis)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errors.New("telemedicine: prescription not found")
@@ -402,6 +461,9 @@ func (s *Service) prescriptionFromDoctorConsole(ctx context.Context, appointment
 // console's clinical note (doctor_clinical_notes) for a bridged appointment,
 // preferring a finalized/shared note over a draft.
 func (s *Service) visitSummaryFromDoctorConsole(ctx context.Context, appointmentID, patientID string) (*VisitSummary, error) {
+	if !s.consoleBridge {
+		return nil, errors.New("telemedicine: no visit summary available")
+	}
 	var doctorID string
 	if err := s.db.QueryRow(ctx, `SELECT doctor_id FROM appointments WHERE id=$1`, appointmentID).
 		Scan(&doctorID); err != nil {
@@ -409,10 +471,12 @@ func (s *Service) visitSummaryFromDoctorConsole(ctx context.Context, appointment
 	}
 	var subjective, objective, assessment, plan *string
 	err := s.db.QueryRow(ctx, `
-		SELECT subjective, objective, assessment, plan
-		FROM doctor_clinical_notes
-		WHERE appointment_id=$1
-		ORDER BY (status='draft') ASC, updated_at DESC LIMIT 1`, appointmentID).
+		SELECT n.subjective, n.objective, n.assessment, n.plan
+		FROM doctor_clinical_notes n
+		JOIN appointments a ON a.id = n.appointment_id
+		JOIN doctors d ON d.id = a.doctor_id AND d.user_id = n.user_id
+		WHERE n.appointment_id=$1
+		ORDER BY (n.status='draft') ASC, n.updated_at DESC LIMIT 1`, appointmentID).
 		Scan(&subjective, &objective, &assessment, &plan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errors.New("telemedicine: no visit summary available")
@@ -446,8 +510,21 @@ func (s *Service) visitSummaryFromDoctorConsole(ctx context.Context, appointment
 // CompleteAppointment and 'cancelled' the real refund through
 // CancelAppointment — the console never touches the ledger directly.
 func (s *Service) SyncFromDoctorConsole(ctx context.Context, appointmentID, status, doctorUserID string) error {
+	if !s.consoleBridge {
+		return nil
+	}
+	assigned, err := s.assignedDoctorUserID(ctx, appointmentID)
+	if errors.Is(err, ErrAppointmentNotFound) {
+		return nil // not a bridged telemedicine appointment
+	}
+	if err != nil {
+		return fmt.Errorf("telemedicine: sync lookup: %w", err)
+	}
+	if assigned == "" || assigned != doctorUserID {
+		return ErrSyncActorNotDoctor
+	}
 	var current string
-	err := s.db.QueryRow(ctx, `SELECT status FROM appointments WHERE id=$1`, appointmentID).Scan(&current)
+	err = s.db.QueryRow(ctx, `SELECT status FROM appointments WHERE id=$1`, appointmentID).Scan(&current)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}

@@ -116,7 +116,7 @@ func (s *Service) RescheduleAppointment(ctx context.Context, appointmentID, user
 	if !s.isParticipant(ctx, appointmentID, userID, patientID) {
 		return errors.New("telemedicine: not authorised for this appointment")
 	}
-	if status == string(ApptCompleted) || status == string(ApptCancelled) {
+	if status == string(ApptCompleted) || status == string(ApptCancelled) || status == string(ApptInProgress) {
 		return fmt.Errorf("telemedicine: cannot reschedule a %s appointment", status)
 	}
 	_, err := s.db.Exec(ctx,

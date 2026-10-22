@@ -291,12 +291,19 @@ type Config struct {
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
 	// false: the gate's route map is hand-built and must be validated against real
 	// traffic before it can refuse anything.
-	FeatureModuleGateEnforce     bool
-	FeatureNutritionEnabled      bool // Nutrition Resolution Engine (NRE)
-	FeatureTelemedicineEnabled   bool
-	FeatureVoteBridgeEnabled     bool
-	FeatureTransportEnabled      bool
-	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
+	FeatureModuleGateEnforce   bool
+	FeatureNutritionEnabled    bool // Nutrition Resolution Engine (NRE)
+	FeatureTelemedicineEnabled bool
+	// FeatureTelemedicineConsoleBridgeEnabled (FEATURE_TELEMEDICINE_CONSOLE_BRIDGE_ENABLED,
+	// ADR-PR879) mirrors bookings into the doctor console and lets console
+	// transitions sync back (including settle/refund). Default off.
+	FeatureTelemedicineConsoleBridgeEnabled bool
+	// FeatureTelemedicineIntakeEnabled (FEATURE_TELEMEDICINE_INTAKE_ENABLED) mounts the
+	// pre-consult intake API. Default off.
+	FeatureTelemedicineIntakeEnabled bool
+	FeatureVoteBridgeEnabled         bool
+	FeatureTransportEnabled          bool
+	FeatureTransportModesEnabled     bool // parcel/bus/towing/movers/car-hire expansion
 	// FeatureParcelRateCardEnabled prices parcels from transport_parcel_rate_card
 	// (size × speed multiplier + minimum fare per cell). Off = legacy multipliers.
 	FeatureParcelRateCardEnabled bool
@@ -1001,6 +1008,8 @@ func Load() Config {
 		FeatureModuleGateEnforce:                     getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
 		FeatureNutritionEnabled:                      getEnvBool("FEATURE_NUTRITION_ENABLED", false),
 		FeatureTelemedicineEnabled:                   getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
+		FeatureTelemedicineConsoleBridgeEnabled:      getEnvBool("FEATURE_TELEMEDICINE_CONSOLE_BRIDGE_ENABLED", false),
+		FeatureTelemedicineIntakeEnabled:             getEnvBool("FEATURE_TELEMEDICINE_INTAKE_ENABLED", false),
 		FeatureVoteBridgeEnabled:                     getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),

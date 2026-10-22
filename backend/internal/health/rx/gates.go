@@ -240,6 +240,18 @@ func (s *Service) AuthorizeRefills(ctx context.Context, prescriberID, rxID strin
 	if st := State(state); st == StateDispensed || st == StateFulfilled {
 		return nil, ErrRefillsLocked
 	}
+	// HL-4: controlled substances are excluded at MVP, refills included. Issue
+	// already refuses them; this keeps a refill from ever widening one.
+	if count > 0 {
+		var controlled bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM health_prescription_items WHERE prescription_id=$1 AND is_controlled)`, rxID).
+			Scan(&controlled); err != nil {
+			return nil, fmt.Errorf("rx: check controlled items: %w", err)
+		}
+		if controlled {
+			return nil, errors.New("rx: controlled substances cannot be refilled (HL-4)")
+		}
+	}
 	if _, err := tx.Exec(ctx, `UPDATE health_prescriptions SET refills_authorized=$2, updated_at=now() WHERE id=$1`, rxID, count); err != nil {
 		return nil, fmt.Errorf("rx: set refills: %w", err)
 	}

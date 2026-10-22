@@ -26,7 +26,10 @@ const SB_URL = readEnv('SUPABASE_URL', ENV_FILES) || readEnv('NEXT_PUBLIC_SUPABA
 const SERVICE_KEY = readEnv('SUPABASE_SERVICE_ROLE_KEY', ENV_FILES);
 const DATABASE_URL = readEnv('DATABASE_URL', ['backend/.env']);
 if (!SERVICE_KEY || !DATABASE_URL) throw new Error('missing SUPABASE_SERVICE_ROLE_KEY / DATABASE_URL');
-if (!/127\.0\.0\.1|localhost/.test(SB_URL)) throw new Error('refusing non-local Supabase: ' + SB_URL);
+// Both targets must be local: this script writes ledger credits directly.
+const isLocal = (u) => /^[a-z]+:\/\/([^@/]*@)?(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(u);
+if (!isLocal(SB_URL)) throw new Error('refusing non-local Supabase: ' + SB_URL);
+if (!isLocal(DATABASE_URL)) throw new Error('refusing non-local DATABASE_URL');
 
 async function createUser(email) {
   const res = await fetch(SB_URL + '/auth/v1/admin/users', {
@@ -59,6 +62,14 @@ const creditLegs = (userId, key) => [
        from ledger_accounts a
       where a.type = 'provider_clearing' and a.user_id is null
         and not exists (select 1 from ledger_entries e where e.idempotency_key = '${key}:clearing');`,
+  // Fail the whole (single-transaction) run unless BOTH legs landed: a credit
+  // without its clearing debit would break ledger conservation.
+  `do $$ begin
+     if (select count(*) from ledger_entries
+          where idempotency_key in ('${key}', '${key}:clearing')) <> 2 then
+       raise exception 'tele-e2e fixture: unbalanced seed for % (is there a provider_clearing account?)', '${key}';
+     end if;
+   end $$;`,
 ].join('\n');
 
 const sql = [

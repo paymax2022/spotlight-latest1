@@ -239,14 +239,40 @@ func (s *Service) syncTelemedicine(ctx context.Context, doctorUserID, appointmen
 	if s.tele == nil {
 		return
 	}
-	if err := s.tele.SyncFromDoctorConsole(ctx, appointmentID, status, doctorUserID); err != nil {
-		log.Printf("[doctor][tele-sync] appointment %s → %s: %v", appointmentID, status, err)
+	// A failed sync on 'completed'/'cancelled' leaves the telemedicine side
+	// unsettled (escrow held, never lost) while the console shows it closed, so
+	// retry a few times before giving up. Every sync path is idempotent.
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err = s.tele.SyncFromDoctorConsole(ctx, appointmentID, status, doctorUserID); err == nil {
+			return
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
 	}
+	log.Printf("[doctor][tele-sync] appointment %s → %s failed after retries: %v", appointmentID, status, err)
+}
+
+// assertOwnAppointment refuses a console write that names an appointment the
+// caller does not own: the telemedicine bridge reads console notes and
+// prescriptions back to the patient, so a row attached to someone else's
+// appointment would be shown as that doctor's (ADR-PR879).
+func (s *Service) assertOwnAppointment(ctx context.Context, userID, appointmentID string) error {
+	if appointmentID == "" {
+		return nil
+	}
+	_, err := s.repo.GetAppointment(ctx, userID, appointmentID)
+	return err
 }
 
 func (s *Service) SaveNote(ctx context.Context, userID, appointmentID, idemKey string, req SaveNoteRequest) (*ClinicalNote, error) {
 	if idemKey == "" {
 		return nil, ErrIdempotencyRequired
+	}
+	if err := s.assertOwnAppointment(ctx, userID, appointmentID); err != nil {
+		return nil, err
 	}
 	return s.repo.InsertNote(ctx, userID, appointmentID, idemKey, req)
 }
@@ -254,6 +280,11 @@ func (s *Service) SaveNote(ctx context.Context, userID, appointmentID, idemKey s
 func (s *Service) CreatePrescription(ctx context.Context, userID, idemKey string, req CreatePrescriptionRequest) (*Prescription, error) {
 	if idemKey == "" {
 		return nil, ErrIdempotencyRequired
+	}
+	if req.AppointmentID != nil {
+		if err := s.assertOwnAppointment(ctx, userID, *req.AppointmentID); err != nil {
+			return nil, err
+		}
 	}
 	return s.repo.InsertPrescription(ctx, userID, idemKey, req)
 }

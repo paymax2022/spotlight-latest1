@@ -144,6 +144,9 @@ func (s *Service) SaveClinicalNote(ctx context.Context, userID, appointmentID, i
 			return nil, err
 		}
 	}
+	if err := s.assertOwnAppointment(ctx, userID, appointmentID); err != nil {
+		return nil, err
+	}
 	return s.repo.InsertNote(ctx, userID, appointmentID, idemKey, req)
 }
 

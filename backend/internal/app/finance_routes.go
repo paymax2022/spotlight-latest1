@@ -50,6 +50,7 @@ import (
 	"spotlight/backend/internal/groups"
 	"spotlight/backend/internal/insurance/embedded"
 	"spotlight/backend/internal/integrations"
+	"spotlight/backend/internal/integrations/livekit"
 	"spotlight/backend/internal/integrations/llm"
 	"spotlight/backend/internal/integrations/rtc"
 	"spotlight/backend/internal/invest"
@@ -721,7 +722,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// Built exactly once for the whole finance surface — registerLiveKit mounts routes, so a
 	// second call would panic gin. Consumers: academy live classes (below) and the telemedicine
 	// consult-room control plane (doctor-console bridge). nil ⇒ not configured.
-	lkClient := registerLiveKit(r, cfg, rbac, mapsAuth())
+	// Mounted only when one of those consumers is on, as before the bridge.
+	telemedBridgeOn := cfg.FeatureTelemedicineEnabled && cfg.FeatureTelemedicineConsoleBridgeEnabled
+	var lkClient *livekit.Client
+	if cfg.FeatureAcademyEnabled || telemedBridgeOn {
+		lkClient = registerLiveKit(r, cfg, rbac, mapsAuth())
+	}
 
 	// Reuses wallet ledger (reward credits), KYC/tiers, RBAC academy.*; exam
 	// beachhead behind its own sub-flag. Member /api/finance/academy/*,
@@ -2147,7 +2153,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		telemedSvc = telemedicine.NewService(pool, settlementSvcT).
 			WithTiers(tiersSvc).
 			WithPlatformFeeBp(platformFeeBp).
-			WithAudit(doctor.NewRepository(pool))
+			WithAudit(doctor.NewRepository(pool)).
+			WithConsoleBridge(telemedBridgeOn)
 		if lkClient != nil {
 			// Consult-room control plane: per-appointment LiveKit join tokens
 			// (doctor-console bridge). Unwired → call-token says configured:false.
@@ -2190,17 +2197,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Tele.GET("/appointments/:id/prescription", telemedHandler.GetPrescription)
 		// Doctor-console bridge: shared chat thread, live Rx/summary readback
 		// already ride on the prescription/summary GETs above.
-		v1Tele.GET("/appointments/:id/messages", telemedHandler.ListAppointmentMessages)
-		v1Tele.POST("/appointments/:id/messages", telemedHandler.SendAppointmentMessage)
-		v1Tele.GET("/appointments/:id/call-token", telemedHandler.GetAppointmentCallToken)
+		if telemedBridgeOn {
+			v1Tele.GET("/appointments/:id/messages", telemedHandler.ListAppointmentMessages)
+			v1Tele.POST("/appointments/:id/messages", telemedHandler.SendAppointmentMessage)
+			v1Tele.GET("/appointments/:id/call-token", telemedHandler.GetAppointmentCallToken)
+		}
 		// Pre-consult intake (telemedicine_intakes). One GET serves both sides —
 		// the patient's wizard and the doctor console's readback — because the
 		// authZ is "patient OR assigned doctor" in the query itself. The
 		// questionnaire is app-shipped, so the server stores answers, status,
 		// consent and the submit-time safety outcome.
-		v1Tele.GET("/appointments/:id/intake", telemedHandler.GetAppointmentIntake)
-		v1Tele.PUT("/appointments/:id/intake/draft", telemedHandler.SaveAppointmentIntakeDraft)
-		v1Tele.POST("/appointments/:id/intake/submit", telemedHandler.SubmitAppointmentIntake)
+		if cfg.FeatureTelemedicineIntakeEnabled {
+			v1Tele.GET("/appointments/:id/intake", telemedHandler.GetAppointmentIntake)
+			v1Tele.PUT("/appointments/:id/intake/draft", telemedHandler.SaveAppointmentIntakeDraft)
+			v1Tele.POST("/appointments/:id/intake/submit", telemedHandler.SubmitAppointmentIntake)
+		}
 		// Doctor-facing
 		v1Tele.POST("/doctor/register", telemedHandler.RegisterDoctorV2)
 		v1Tele.GET("/doctor/dashboard", telemedHandler.GetDoctorDashboard)
@@ -2898,7 +2909,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		doctorHub := platformWS.New(wsOriginAllowed)
 
 		doctorSvc := doctor.NewService(pool, ledgerSvc, tiersSvc, redisClient).WithRealtime(rtcIssuer, doctorHub)
-		if telemedSvc != nil {
+		if telemedSvc != nil && telemedBridgeOn {
 			// Doctor-console bridge: lifecycle transitions on appointments that
 			// were bridged from telemedicine bookings mirror back onto the
 			// telemedicine appointment (settlement/refund ride on it unchanged).
