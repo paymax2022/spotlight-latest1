@@ -47,9 +47,9 @@ func (h *Handler) ListRestaurants(c *gin.Context) {
 		// ?min_price & ?max_price (kobo) back a price-range filter.
 		MinPriceKobo: queryInt64Ptr(c, "min_price"),
 		MaxPriceKobo: queryInt64Ptr(c, "max_price"),
-			// ?cuisine_id & ?category_id are repeatable taxonomy filters.
-			CuisineIDs:  c.QueryArray("cuisine_id"),
-			CategoryIDs: c.QueryArray("category_id"),
+		// ?cuisine_id & ?category_id are repeatable taxonomy filters.
+		CuisineIDs:  c.QueryArray("cuisine_id"),
+		CategoryIDs: c.QueryArray("category_id"),
 		// callerUserID marks which rows THIS caller liked (see attachLikedFlags).
 	}, ginutil.UserID(c))
 	if err != nil {
