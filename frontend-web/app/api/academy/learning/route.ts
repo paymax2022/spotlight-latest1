@@ -40,8 +40,8 @@ export async function GET(request: Request) {
         .eq('program_id', learner.programId)
         .not('module_id', 'is', null),
       supabase
-        .from('academy_attempts')
-        .select('exam_id, state, academy_attempt_results(score_percent, earned_points, max_points)')
+        .from('academy_exam_attempts')
+        .select('exam_id, status, score, total_points, percentage, passed')
         .eq('enrollment_id', learner.enrollmentId),
     ]);
 
@@ -77,22 +77,23 @@ export async function GET(request: Request) {
       }),
     );
 
-    const attemptsByExamId = new Map<string, { state: string; scorePercent: number; earnedPoints: number; maxPoints: number } | null>();
+    const attemptsByExamId = new Map<string, { status: string; percentage: number; score: number; totalPoints: number; passed: boolean } | null>();
     (attemptsRes.data ?? []).forEach((a) => {
       const attempt = a as {
         exam_id: string;
-        state: string;
-        academy_attempt_results?: Array<{ score_percent: number; earned_points: number; max_points: number }> | null;
+        status: string;
+        score: number;
+        total_points: number;
+        percentage: number;
+        passed: boolean;
       };
-      const result = (attempt.academy_attempt_results ?? [])[0];
-      if (result) {
-        attemptsByExamId.set(attempt.exam_id, {
-          state: attempt.state,
-          scorePercent: result.score_percent,
-          earnedPoints: result.earned_points,
-          maxPoints: result.max_points,
-        });
-      }
+      attemptsByExamId.set(attempt.exam_id, {
+        status: attempt.status,
+        percentage: attempt.percentage,
+        score: attempt.score,
+        totalPoints: attempt.total_points,
+        passed: attempt.passed,
+      });
     });
 
     // Unpublished lessons are filtered here rather than in the query: the embedded
@@ -115,7 +116,7 @@ export async function GET(request: Request) {
       // Get quiz for this module
       const exam = examsByModuleId.get(mod.id);
       const attempt = exam ? attemptsByExamId.get(exam.id) : null;
-      const quizPassed = attempt && attempt.scorePercent >= exam!.pass_mark;
+      const quizPassed = attempt && attempt.percentage >= exam!.pass_mark;
 
       // Module is locked if the previous module's quiz was not passed at 85%
       const previousModuleQuizPassed = idx === 0 ? true : (() => {
@@ -147,10 +148,10 @@ export async function GET(request: Request) {
           maxAttempts: exam.max_attempts,
           canStart: !isLocked,
           lastResult: attempt ? {
-            scorePercent: attempt.scorePercent,
+            scorePercent: Math.round(attempt.percentage),
             passed: quizPassed,
-            earnedPoints: attempt.earnedPoints,
-            maxPoints: attempt.maxPoints,
+            earnedPoints: attempt.score,
+            maxPoints: attempt.totalPoints,
           } : null,
         };
       }
