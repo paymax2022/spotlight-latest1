@@ -42,7 +42,7 @@ const TEST_METERS: Record<MeterType, string> = {
 const schema = z.object({
   meterNumber:   z.string().min(6, 'Enter a valid meter number'),
   customerPhone: z.string().min(10, 'Enter a valid phone number').regex(/^(\+234|0)[789][01]\d{8}$/, 'Enter a valid Nigerian number'),
-  amount:        z.number({ invalid_type_error: 'Enter an amount' }).min(500, 'Minimum ₦500'),
+  amount:        z.number({ error: 'Enter an amount' }).min(500, 'Minimum ₦500'),
 });
 type Form = z.infer<typeof schema>;
 
