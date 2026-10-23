@@ -30,11 +30,78 @@ const APPLICATION_SELECT = [
   'phone',
   'batch_id',
   'talent_category',
+  'areas_of_interest',
+  'pricing_selections',
   'created_at',
   // academy_batches has no end_date column — asking for one makes PostgREST reject
   // the whole select, which surfaced as a bare 500 on the applicant's status screen.
   'academy_batches(batch_name, start_date)',
 ].join(', ');
+
+// AppliedArea is one interest area the candidate chose, resolved to its display
+// label and the price of the option they picked, so the status screen can show
+// exactly what they applied — and are paying — for.
+type AppliedArea = {
+  slug: string;
+  label: string;
+  optionKey: string | null;
+  optionLabel: string | null;
+  priceNgn: number;
+};
+
+// resolveAppliedAreas turns the application's stored slugs + pricing_selections
+// into labelled, priced rows. The price per area is the option the applicant
+// chose (pricing_selections[slug] → academy_area_pricing_options), falling back
+// to the area's own fee when no option was recorded (older applications). Returns
+// [] on any lookup error rather than failing the whole status screen — the areas
+// are supplementary context, not the point of the page.
+async function resolveAppliedAreas(
+  supabase: ReturnType<typeof createAdminClient>,
+  application: Record<string, any>,
+): Promise<AppliedArea[]> {
+  const slugs = (Array.isArray(application.areas_of_interest) ? application.areas_of_interest : [])
+    .map((s: unknown) => String(s))
+    .filter(Boolean);
+  if (slugs.length === 0) return [];
+
+  const selections = (application.pricing_selections && typeof application.pricing_selections === 'object'
+    ? application.pricing_selections
+    : {}) as Record<string, string>;
+
+  const { data: areaRows, error: areaErr } = await supabase
+    .from('academy_interest_areas')
+    .select('id, slug, label, fee_ngn')
+    .in('slug', slugs);
+  if (areaErr || !areaRows) {
+    console.error('[academy/application] areas lookup failed', areaErr);
+    return [];
+  }
+  const areas = areaRows as Array<{ id: string; slug: string; label: string; fee_ngn: number | null }>;
+
+  const { data: optionRows } = await supabase
+    .from('academy_area_pricing_options')
+    .select('area_id, key, label, price_ngn')
+    .in('area_id', areas.map((a) => a.id));
+  const options = (optionRows ?? []) as Array<{ area_id: string; key: string; label: string; price_ngn: number }>;
+
+  // Preserve the order the applicant's slugs were stored in.
+  const bySlug = new Map(areas.map((a) => [a.slug, a]));
+  return slugs
+    .map((slug: string): AppliedArea | null => {
+      const area = bySlug.get(slug);
+      if (!area) return null;
+      const key = selections[slug] ?? null;
+      const option = key ? options.find((o) => o.area_id === area.id && o.key === key) ?? null : null;
+      return {
+        slug: area.slug,
+        label: area.label,
+        optionKey: key,
+        optionLabel: option?.label ?? null,
+        priceNgn: Number(option?.price_ngn ?? area.fee_ngn ?? 0),
+      };
+    })
+    .filter((a): a is AppliedArea => a !== null);
+}
 
 /**
  * Applications submitted before a user_id was stamped (or submitted while signed out and
@@ -232,6 +299,8 @@ export async function GET(request: Request) {
       (a, b) => Number(a.installment_number ?? 0) - Number(b.installment_number ?? 0),
     );
 
+    const areas = await resolveAppliedAreas(supabase, application as Record<string, any>);
+
     // The submission itself is not written to the history table, so it is synthesised here
     // rather than left as a gap at the top of the applicant's timeline.
     const timeline = [
@@ -254,6 +323,11 @@ export async function GET(request: Request) {
       enrolled: Boolean(enrolRes.data),
       compliance: summariseCompliance(payments),
       actions: buildActions(application as Record<string, any>, payments, Boolean(enrolRes.data)),
+      // The interest areas the applicant chose, with the option/price they picked,
+      // plus the tuition total — so the status screen can show what they applied
+      // and are paying for.
+      areas,
+      tuitionTotalNgn: Number((application as Record<string, any>).tuition_total_ngn ?? 0),
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {

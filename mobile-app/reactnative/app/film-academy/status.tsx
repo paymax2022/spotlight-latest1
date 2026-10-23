@@ -191,6 +191,37 @@ export default function FilmAcademyStatusScreen() {
               )}
             </View>
 
+            {/* The interest areas the applicant chose and is paying for, each with
+                the priced option they picked. Hidden on an older server that does
+                not return them. */}
+            {(data?.areas?.length ?? 0) > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Your areas of interest</Text>
+                <View style={styles.card}>
+                  {data!.areas.map((a) => (
+                    <View key={a.slug} style={styles.areaRow}>
+                      <View style={styles.areaBody}>
+                        <Text style={styles.areaLabel}>{a.label}</Text>
+                        {!!a.optionLabel && <Text style={styles.areaOption}>{a.optionLabel}</Text>}
+                      </View>
+                      <Text style={styles.areaPrice}>{formatNaira(a.priceNgn)}</Text>
+                    </View>
+                  ))}
+                  <View style={styles.areaTotalRow}>
+                    <Text style={styles.areaTotalLabel}>Total tuition</Text>
+                    <Text style={styles.areaTotalValue}>{formatNaira(data!.tuitionTotalNgn)}</Text>
+                  </View>
+                  <Text style={styles.cardMeta}>
+                    {data!.plan
+                      ? `${paidCount} of ${payments.length} instalment${payments.length === 1 ? '' : 's'} paid`
+                      : Number(application.application_fee_paid ?? 0) > 0 || application.payment_status === 'paid'
+                        ? 'Application fee paid — tuition payable once approved'
+                        : 'Application fee not yet confirmed'}
+                  </Text>
+                </View>
+              </View>
+            )}
+
             {(data?.actions.length ?? 0) > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>What happens next</Text>
@@ -290,6 +321,16 @@ const styles = StyleSheet.create({
   feeRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   feeLabel:    { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   feeValue:    { ...Typography.titleMd, color: Colors.onSurface },
+
+  areaRow:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm, paddingVertical: Spacing.xs },
+  areaBody:    { flex: 1 },
+  areaLabel:   { ...Typography.bodyMd, color: Colors.onSurface },
+  areaOption:  { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  areaPrice:   { ...Typography.bodyMd, color: Colors.onSurface },
+  areaTotalRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                    borderTopWidth: 1, borderTopColor: Colors.surfaceVariant, marginTop: Spacing.xs, paddingTop: Spacing.sm },
+  areaTotalLabel: { ...Typography.labelLg, color: Colors.onSurface },
+  areaTotalValue: { ...Typography.titleMd, color: Colors.onSurface },
 
   instalmentRow:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingTop: Spacing.sm },
   instalmentLabel: { ...Typography.bodyMd, color: Colors.onSurface },
