@@ -267,3 +267,23 @@ func (r *BindRegistry) UnresolvedCount(ctx context.Context) (int, error) {
 		int64(bindClaimStaleAfter.Seconds())).Scan(&n)
 	return n, err
 }
+
+// Outcome reports what is known about the purchase sent under key: state is
+// in_flight | succeeded | failed | unknown, policyID the policy row it was
+// claimed for. found=false means no purchase was ever sent under the key.
+// Read-only — for callers deciding whether money tied to a bind may move.
+func (r *BindRegistry) Outcome(ctx context.Context, key string) (state, policyID string, found bool, err error) {
+	if r == nil || r.db == nil {
+		return "", "", false, nil
+	}
+	err = r.db.QueryRow(ctx, `
+		SELECT state, COALESCE(policy_id::text, '') FROM public.insurance_provider_bind WHERE idempotency_key = $1`,
+		key).Scan(&state, &policyID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	return state, policyID, true, nil
+}

@@ -8,7 +8,7 @@ unified multi-currency ledger. Additive module — the existing `internal/financ
 ## Design invariants (enforced in code)
 - **Money** is always `{amount: integer minor units, currency: ISO-4217}` — `Money` in `money.go`. No floats stored.
 - **Every mutation carries an `Idempotency-Key`** — enforced in handlers + a unique index on `idempotency_key`; replays return the original result.
-- **Provider-agnostic caller** — `Provider` interface (`provider.go`); the router decides. Adapters: `adapters/eversend.go`, `adapters/maplerad.go`.
+- **Provider-agnostic caller** — `Provider` interface (`provider.go`); the router decides. Adapters: `adapters/eversend.go`, `adapters/vertofx.go`.
 - **Quote → (lock) → execute** against a `quote_id` — `QuoteBook` (`quotebook.go`); executing an expired quote returns `rate_expired`.
 - **One ledger is the source of truth** — balanced, append-only entries in `orch_ledger_entries`; balances are projections.
 
@@ -24,7 +24,7 @@ unified multi-currency ledger. Additive module — the existing `internal/financ
 | `treasury.go` | Float buckets, exposure limits, liquidity confidence (§7) |
 | `quotebook.go` | Quote lifecycle store with lock TTL (§5.8) |
 | `provider.go` | `Provider` adapter interface (§10) |
-| `adapters/` | Eversend + Maplerad deterministic adapters (no creds needed in dev) |
+| `adapters/` | Eversend + VertoFX adapters (no creds needed in dev) |
 | `service.go` | Orchestrator: quote aggregation, routing, execution, failover, ledger |
 | `store.go` | `Store` persistence interface + in-memory implementation |
 | `repository.go` | Postgres (pgx) `Store` — transactional, row-locked, idempotent |
@@ -41,7 +41,7 @@ See `contracts/openapi.yaml` (tag **FX Orchestration**) for the full contract.
 ## Enabling
 1. Apply the migration `supabase/migrations/20260621000000_fx_orchestration.sql`.
 2. Set env: `FEATURE_FX_ORCHESTRATION_ENABLED=true` (plus `DATABASE_URL`).
-3. Optional: `MAPLERAD_PROD=true` for live adapters.
+3. Optional: `EVERSEND_PROD=true` / `VERTOFX_PROD=true` for live adapters.
 
 Routes register in `internal/app/finance_routes.go` only when the flag and DB are present.
 
@@ -59,8 +59,8 @@ end-to-end conversion (happy path, **idempotent replay**, **insufficient balance
 **rate expired**, **provider failover to the alternative**, missing idempotency key).
 
 ## Live providers, webhooks, treasury & Redis
-- **Live adapters:** `adapters/maplerad_live.go` (wraps the shared maplerad client) and `adapters/eversend_live.go` (wraps `internal/provider/eversend`, token auth, major⇄minor unit conversion). Selected in `finance_routes.go` when credentials are set; otherwise the deterministic adapters keep corridors routable. Both verify HMAC-SHA256 webhooks and fall back to deterministic pricing on any remote error.
-- **Credentials:** read from env only (`MAPLERAD_SECRET_KEY/PUBLIC_KEY`, `EVERSEND_CLIENT_ID/CLIENT_SECRET`, `*_WEBHOOK_SECRET`). Local values live in `backend/.env` (gitignored); see `backend/.env.example`.
+- **Live adapters:** `adapters/vertofx.go` (wraps `internal/provider/vertofx`) and `adapters/eversend.go` (wraps `internal/provider/eversend`, token auth, major⇄minor unit conversion). Selected in `finance_routes.go` when credentials are set; otherwise the deterministic adapters keep corridors routable. Both verify HMAC-SHA256 webhooks and fall back to deterministic pricing on any remote error.
+- **Credentials:** read from env only (`VERTOFX_CLIENT_ID/API_KEY`, `EVERSEND_CLIENT_ID/CLIENT_SECRET`, `*_WEBHOOK_SECRET`). Local values live in `backend/.env` (gitignored); see `backend/.env.example`.
 - **Redis quote book:** `redis_quotebook.go` (`RedisQuoteBook`) — JSON at `fx:quote:<id>`, TTL = lock window, SETNX consumed-marker for single execution across instances. Used automatically when `REDIS_URL` resolves.
 - **Webhooks:** outbound signed events via `WebhookEmitter` (`Paymax-Signature: t=…,v1=…`, set `PAYMAX_WEBHOOK_OUT_URL`/`PAYMAX_WEBHOOK_SECRET`); inbound at `POST /api/v1/fx/webhooks/:provider` (provider-signed, no auth).
 - **Treasury automation:** `StartTreasuryMonitor` background loop auto-rebalances buckets at/below low-water and emits `balance.low`.

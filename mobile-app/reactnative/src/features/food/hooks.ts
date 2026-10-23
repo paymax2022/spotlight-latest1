@@ -8,6 +8,7 @@ import * as food from './api';
 import { newIdempotencyKey, toFoodError } from './utils';
 import type { OrderRole, OrderStatus, PlaceOrderRequest, RateOrderRequest, LatLng } from './types';
 import { goneRestaurantIds } from './availability';
+import { getTaxonomy } from './taxonomy';
 
 const KEY = 'food';
 
@@ -34,18 +35,20 @@ const discoveryRetryDelay = (attempt: number) => Math.min(1_000 * 2 ** attempt, 
  * ones) so a screen can honestly say "showing 20 of 137".
  */
 export function useRestaurantSearch(params: food.RestaurantQuery = {}) {
-  const { q = '', cuisine = '', sort, promo = false, featured = false, nearLat, nearLng, minPriceKobo, maxPriceKobo } = params;
+  const { q = '', cuisine = '', sort, promo = false, featured = false, nearLat, nearLng, minPriceKobo, maxPriceKobo, cuisineIds, categoryIds } = params;
+  const cuisineKey = cuisineIds?.length ? [...cuisineIds].sort().join(',') : '';
+  const categoryKey = categoryIds?.length ? [...categoryIds].sort().join(',') : '';
   const query = useInfiniteQuery({
     // Every filter is in the key: a page fetched under one set of filters must
     // never be served for another. Coordinates are rounded to ~1km so the
     // normal GPS jitter between renders doesn't mint a fresh cache key (and a
     // fresh page-0 fetch) every time distance sort re-evaluates.
     queryKey: [KEY, 'restaurants', {
-      q, cuisine, sort: sort ?? 'newest', promo, featured, minPriceKobo, maxPriceKobo,
+      q, cuisine, sort: sort ?? 'newest', promo, featured, minPriceKobo, maxPriceKobo, cuisineKey, categoryKey,
       near: nearLat != null && nearLng != null ? `${nearLat.toFixed(2)},${nearLng.toFixed(2)}` : null,
     }],
     queryFn: ({ pageParam }) =>
-      food.listRestaurants({ q, cuisine, sort, promo, featured, nearLat, nearLng, minPriceKobo, maxPriceKobo, offset: pageParam }),
+      food.listRestaurants({ q, cuisine, sort, promo, featured, nearLat, nearLng, minPriceKobo, maxPriceKobo, cuisineIds, categoryIds, offset: pageParam }),
     initialPageParam: 0,
     // Page by the offset the SERVER reports it served, never by a locally
     // accumulated count: the two diverge the moment a row is added or removed
@@ -66,6 +69,16 @@ export function useRestaurantSearch(params: food.RestaurantQuery = {}) {
     // request, so an older page carries a staler figure.
     total: pages?.[pages.length - 1]?.total ?? 0,
   };
+}
+
+/** Cuisine/category taxonomy; data is null when the backend flag is off. */
+export function useTaxonomy() {
+  return useQuery({
+    queryKey: [KEY, 'taxonomy'],
+    queryFn: getTaxonomy,
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
 }
 
 export function useRestaurant(id?: string) {
@@ -414,8 +427,8 @@ export function useAssignRider() {
 
 export function usePostRiderLocation() {
   return useMutation({
-    mutationFn: ({ orderId, loc }: { orderId: string; loc: LatLng }) =>
-      food.postRiderLocation(orderId, loc),
+    mutationFn: ({ orderId, loc, lastPostedAt }: { orderId: string; loc: LatLng; lastPostedAt?: string }) =>
+      food.postRiderLocation(orderId, loc, lastPostedAt),
   });
 }
 
@@ -465,5 +478,80 @@ export function useRedispatch() {
       qc.invalidateQueries({ queryKey: [KEY, 'order', orderId] });
       qc.invalidateQueries({ queryKey: [KEY, 'orders'] });
     },
+  });
+}
+
+// ── FOOD-UAT-D-007: pickup / dine-in ─────────────────────────────────────────
+function invalidateOrder(qc: ReturnType<typeof useQueryClient>, orderId: string) {
+  qc.invalidateQueries({ queryKey: [KEY, 'order', orderId] });
+  qc.invalidateQueries({ queryKey: [KEY, 'orders'] });
+}
+
+export function useConfirmPickupAsMerchant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ orderId, code }: { orderId: string; code: string }) => food.confirmPickupAsMerchant(orderId, code),
+    onSuccess: (_d, v) => invalidateOrder(qc, v.orderId),
+  });
+}
+
+export function useAssignTable() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { restaurantId: string; orderId: string; tableNumber: string }) =>
+      food.assignTable(v.restaurantId, v.orderId, v.tableNumber),
+    onSuccess: (_d, v) => invalidateOrder(qc, v.orderId),
+  });
+}
+
+export function useMarkServed() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { restaurantId: string; orderId: string }) => food.markServed(v.restaurantId, v.orderId),
+    onSuccess: (_d, v) => invalidateOrder(qc, v.orderId),
+  });
+}
+
+export function useMarkClosed() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { restaurantId: string; orderId: string }) => food.markClosed(v.restaurantId, v.orderId),
+    onSuccess: (_d, v) => invalidateOrder(qc, v.orderId),
+  });
+}
+
+export function useSignalArrival() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: string) => food.signalArrival(orderId),
+    onSuccess: (_d, orderId) => invalidateOrder(qc, orderId),
+  });
+}
+
+// ── FOOD-UAT-C-007 / C-011: server quote + promo preview ─────────────────────
+/**
+ * Server-authoritative price quote for the current cart. Keyed by `signature`
+ * (see pricingSignature) so any cart/address/promo change fetches a fresh quote.
+ * Not retried: a refusal (closed kitchen, bad modifier) will not become a 200.
+ */
+export function useOrderQuote(cart: food.PricingCartInput | null, signature: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [KEY, 'order-quote', signature],
+    queryFn: () => food.quoteOrder(cart as food.PricingCartInput),
+    enabled: enabled && cart != null,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/** Live promo preview for an already-debounced `code`. */
+export function usePromoPreview(cart: food.PricingCartInput | null, code: string, signature: string, enabled: boolean) {
+  const trimmed = code.trim();
+  return useQuery({
+    queryKey: [KEY, 'promo-preview', signature, trimmed.toUpperCase()],
+    queryFn: () => food.previewPromo({ ...(cart as food.PricingCartInput), promoCode: trimmed }),
+    enabled: enabled && cart != null && trimmed.length > 0,
+    staleTime: 30_000,
+    retry: false,
   });
 }

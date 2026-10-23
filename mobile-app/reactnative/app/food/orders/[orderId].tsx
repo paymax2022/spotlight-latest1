@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -21,6 +21,13 @@ import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Tab = 'tracking' | 'chat';
 
+/** "Rider location updated 12s ago" — flags a stale fix after 60s. */
+function locationAgeLabel(at: number): string {
+  const secs = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (secs < 60) return `Rider location updated ${secs}s ago`;
+  return `Rider location may be out of date (last update ${Math.round(secs / 60)} min ago)`;
+}
+
 export default function OrderTrackingScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const [tab, setTab] = useState<Tab>('tracking');
@@ -28,6 +35,12 @@ export default function OrderTrackingScreen() {
   const { data: order, isLoading, isError, refetch } = useOrder(orderId, { poll: true });
   const realtime = useOrderRealtime(orderId, { status: order?.status });
   const cancelOrder = useCancelOrder();
+  // Re-render every 10s so the staleness label stays honest between frames.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 10000);
+    return () => clearInterval(t);
+  }, []);
 
   // Prefer the live socket frame for status/location; fall back to the polled order.
   const status = realtime.status ?? order?.status;
@@ -139,6 +152,20 @@ export default function OrderTrackingScreen() {
                 </View>
               ) : null}
 
+              {/* Staleness of the rider's last GPS fix (server-stamped). */}
+              {isLiveTrackable(status) && realtime.riderLocationAt ? (
+                <Text style={s.staleNote} accessibilityLiveRegion="polite">
+                  {locationAgeLabel(realtime.riderLocationAt)}
+                </Text>
+              ) : null}
+
+              {/* Server-computed ETA to drop-off (FOOD-UAT-E-014) */}
+              {isLiveTrackable(status) && realtime.etaMinutes ? (
+                <Text style={s.staleNote} accessibilityLiveRegion="polite">
+                  Arriving in about {realtime.etaMinutes} min
+                </Text>
+              ) : null}
+
               {/* Rider card */}
               {order.rider && !isTerminalStatus(status) ? (
                 <View style={s.block}>
@@ -179,6 +206,9 @@ export default function OrderTrackingScreen() {
                 {status === 'delivered' && !order.rated ? (
                   <PrimaryButton label="Rate your order" onPress={() => router.push(`/food/orders/${order.id}/rate`)} />
                 ) : null}
+                {status === 'delivered' ? (
+                  <PrimaryButton label="Report a problem" variant="secondary" onPress={() => router.push(`/food/orders/${order.id}/dispute`)} />
+                ) : null}
                 {canCancel ? (
                   <PrimaryButton label="Cancel order" variant="danger" loading={cancelOrder.isPending} onPress={onCancel} />
                 ) : null}
@@ -193,6 +223,7 @@ export default function OrderTrackingScreen() {
 }
 
 const s = StyleSheet.create({
+  staleNote: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs, textAlign: 'center' },
   safe: { flex: 1, backgroundColor: Colors.background },
   topBar: {
     height: 64,

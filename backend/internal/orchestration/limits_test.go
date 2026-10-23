@@ -98,7 +98,7 @@ func TestServiceEnforcesLimitsAtQuote(t *testing.T) {
 	clock := baseTime()
 	store := NewMemStore()
 	svc := NewService(
-		[]Provider{stubProvider{name: "eversend"}, stubProvider{name: "maplerad"}},
+		[]Provider{stubProvider{name: "eversend"}, stubProvider{name: "partner"}},
 		store,
 		Options{Now: func() time.Time { return clock }, Limits: retailLimits(zeroUsage)},
 	)

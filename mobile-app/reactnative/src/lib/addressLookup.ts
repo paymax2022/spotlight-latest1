@@ -11,7 +11,7 @@
 import * as proxy from '@/features/mobility/api/maps.api';
 import { MAPS_PROXY_DISABLED } from '@/features/mobility/api/maps.api';
 
-export type AddressSource = 'proxy' | 'mock';
+export type AddressSource = 'proxy' | 'mapbox' | 'mock';
 
 /** Whether the backend maps proxy should be attempted at all. When disabled via
  *  EXPO_PUBLIC_MAPS_BASE_URL=off, the resolver is offline-only (no network). */
@@ -73,9 +73,76 @@ function markProxyUp(): void {
   proxyDownUntil = 0;
 }
 
+// Mapbox Geocoding API v5 fallback. Sits between the backend MapService proxy
+// (preferred, Google-backed, provider key stays server-side) and the offline
+// deterministic geocoder (dev-only safety net). Enabled when
+// EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is set — the token is a pk.* public key safe
+// to embed in a client build; it is NOT a server secret. Used when the proxy
+// is down or returns zero suggestions, so the merchant-manage address field
+// still works in environments where the Go /api/finance/maps proxy isn't
+// reachable (e.g. the restaurant onboarding path when the backend container
+// predates the maps module).
+const MAPBOX_TOKEN = (process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '').trim();
+const MAPBOX_COOLDOWN_MS = 60_000;
+let mapboxDownUntil = 0;
+
+function mapboxEnabled(): boolean {
+  return MAPBOX_TOKEN !== '';
+}
+function mapboxLikelyUp(): boolean {
+  return Date.now() >= mapboxDownUntil;
+}
+function markMapboxDown(): void {
+  mapboxDownUntil = Date.now() + MAPBOX_COOLDOWN_MS;
+}
+function markMapboxUp(): void {
+  mapboxDownUntil = 0;
+}
+
+interface MapboxFeature {
+  id?: string;
+  place_name?: string;
+  text?: string;
+  center?: [number, number]; // [lng, lat]
+  context?: Array<{ text?: string }>;
+}
+
+async function mapboxSearch(query: string, near?: { lat: number; lng: number }, signal?: AbortSignal): Promise<AddressHit[]> {
+  const base = 'https://api.mapbox.com/geocoding/v5/mapbox.places';
+  const params = new URLSearchParams({
+    access_token: MAPBOX_TOKEN,
+    country: 'ng',
+    types: 'address,place,poi,neighborhood,locality',
+    limit: '5',
+    autocomplete: 'true',
+    language: 'en',
+  });
+  if (near) params.set('proximity', `${near.lng},${near.lat}`);
+  const url = `${base}/${encodeURIComponent(query)}.json?${params.toString()}`;
+  const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`mapbox ${res.status}`);
+  const body = (await res.json()) as { features?: MapboxFeature[] };
+  return (body.features ?? []).map((f, idx): AddressHit => {
+    const label = f.place_name ?? f.text ?? '';
+    const { primary, secondary } = splitLabel(label);
+    const hasCenter = Array.isArray(f.center) && f.center.length === 2;
+    return {
+      id: f.id ?? `mapbox:${idx}:${label}`,
+      label,
+      primary,
+      secondary,
+      lat: hasCenter ? f.center![1] : undefined,
+      lng: hasCenter ? f.center![0] : undefined,
+      source: 'mapbox',
+    };
+  }).filter((h) => h.label !== '');
+}
+
 /** True when AT LEAST ONE backend exists for address lookup. */
 export function addressLookupEnabled(): boolean {
-  return (proxyEnabled() && proxyLikelyUp()) || offlineEnabled();
+  return (proxyEnabled() && proxyLikelyUp())
+    || (mapboxEnabled() && mapboxLikelyUp())
+    || offlineEnabled();
 }
 
 function splitLabel(label: string): { primary: string; secondary: string } {
@@ -251,8 +318,23 @@ export async function searchAddress(query: string, opts: LookupOpts = {}): Promi
       markProxyDown();
     }
   }
-  // Proxy unavailable/empty — degrade to the offline geocoder so the field stays
-  // usable (and never surfaces a raw provider error) in dev/demo builds.
+  // Mid-tier fallback — Mapbox Geocoding v5. Used when the backend MapService
+  // proxy is unreachable or returned an empty list. Avoids the deterministic
+  // offline fallback below (which produces synthetic coordinates) when a real
+  // provider token is available.
+  if (mapboxEnabled() && mapboxLikelyUp()) {
+    try {
+      const suggestions = await mapboxSearch(q, opts.near, opts.signal);
+      markMapboxUp();
+      if (suggestions.length > 0) return suggestions;
+    } catch (e) {
+      if (aborted(e)) return [];
+      markMapboxDown();
+    }
+  }
+  // Proxy + Mapbox both unavailable/empty — degrade to the offline geocoder so
+  // the field stays usable (and never surfaces a raw provider error) in
+  // dev/demo builds.
   if (offlineEnabled()) return offlineSearch(q, opts.near);
   return [];
 }
@@ -278,6 +360,21 @@ export async function resolveCoordinate(
     } catch (e) {
       if (aborted(e)) return null;
       markProxyDown();
+    }
+  }
+  // Mapbox mid-tier geocode fallback — same provider as the suggestion list, so
+  // a proxy-sourced text hit (no coords) still resolves to a real coordinate
+  // instead of being faked by the offline geocoder below.
+  if (mapboxEnabled() && mapboxLikelyUp()) {
+    try {
+      const [first] = await mapboxSearch(hit.label, undefined, opts.signal);
+      markMapboxUp();
+      if (first && typeof first.lat === 'number' && typeof first.lng === 'number') {
+        return { label: hit.label, lat: first.lat, lng: first.lng, source: 'mapbox', precise: false };
+      }
+    } catch (e) {
+      if (aborted(e)) return null;
+      markMapboxDown();
     }
   }
   // Offline fallback: synthesize a deterministic coordinate from the label so a

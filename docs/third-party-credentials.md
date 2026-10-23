@@ -28,7 +28,7 @@ Status legend: ✅ adapter live-ready (just add creds) · 🟡 sandbox-verified 
 |---|---|---|---|---|---|
 | **Paystack** | `PAYSTACK_SECRET_KEY` (`sk_test_`/`sk_live_`), `PAYSTACK_PUBLIC_KEY` (`pk_`), `PAYSTACK_WEBHOOK_SECRET` | sk_test_… | sk_live_… + register webhook | transfers, disbursement, registration payment, marketplace | ✅ real (HMAC-SHA512 webhook) |
 | **Monnify** | `MONNIFY_API_KEY` (`MK_TEST_`/`MK_PROD_`), `MONNIFY_SECRET_KEY`, `MONNIFY_CONTRACT_CODE`, `MONNIFY_WEBHOOK_SECRET`, `MONNIFY_PROD` | MK_TEST_ | MK_PROD_ + contract code | transfers (2nd rail) | ✅ real |
-| **Maplerad** | `MAPLERAD_SECRET_KEY` (`mpr_sandbox_sk_`/`mpr_live_sk_`), `MAPLERAD_PUBLIC_KEY`, `MAPLERAD_WEBHOOK_SECRET`, `MAPLERAD_PROD` | sandbox | live | FX, virtual accounts, **(virtual cards — issuer not wired)** | ✅ transfers/FX real; 🔴 card issuing |
+| **VertoFX** | `VERTOFX_CLIENT_ID`, `VERTOFX_API_KEY`, `VERTOFX_WEBHOOK_SECRET`, `VERTOFX_PROD`, `FEATURE_VERTOFX` | sandbox | live | FX, NGN virtual accounts (preferred VA provider) | per-provider status in FX_GO_LIVE.md; card issuing unavailable |
 | **Eversend** | `EVERSEND_CLIENT_ID`, `EVERSEND_CLIENT_SECRET`, `EVERSEND_WEBHOOK_SECRET`, `EVERSEND_PROD` | sandbox | live | FX (alt rail) | ✅ real |
 
 ## KYC / identity (routed via `KYC_ROUTE_*` chains)
@@ -74,13 +74,13 @@ Status legend: ✅ adapter live-ready (just add creds) · 🟡 sandbox-verified 
 |---|---|---|---|---|---|
 | **Invest broker + market data** | `INVEST_BROKER_BASE_URL`, `INVEST_BROKER_API_KEY`, `INVEST_BROKER_WEBHOOK_SECRET`, `INVEST_MARKETDATA_BASE_URL`, `INVEST_MARKETDATA_API_KEY` | blank → MockBroker/MockMarketData | real broker + market-data gateway | investment (stocks) | 🔴 no provider — mock default |
 | **Crypto exchange / price / custody** | — (route hardcodes `NewMockPriceProvider`) | — | needs price feed (Coingecko/Binance) + custody (Fireblocks/BitGo) + on-chain broadcast | crypto | 🔴 not wired — mock price, mock custody, NO on-chain |
-| **Card issuer** | — (`orchestration/handler_cards.go` stub) | — | Maplerad Card API / Sudo / Union54 | virtual cards | 🔴 not wired |
+| **Card issuer** | — (`orchestration/handler_cards.go` stub) | — | Sudo / Union54 (none selected; FX cards disabled) | virtual cards | 🔴 not wired |
 | **Academy BNPL/payout rails** | `RAILS_MODE=live` + rail base URLs | dev `Stub*Rail` | real BNPL + payout gateway | academy edupay | 🟡 HTTP adapters exist; point at a provider |
 
 ---
 
 ## Minimum set to launch the READ-heavy / already-real modules
-Supabase, Redis, R2, Resend, Termii, Paystack (+Monnify), Maplerad+Eversend (FX/VA),
+Supabase, Redis, R2, Resend, Termii, Paystack (+Monnify), VertoFX+Eversend (FX/VA),
 Dojah/SmileID/YouVerify (KYC), Anthropic, VideoSDK, Maps (Google), Infermedica, Stays
 supplier. The 🔴 items (virtual cards, crypto custody/price, invest broker, lab LIS)
 require procuring a provider before those specific verticals can go live — the code

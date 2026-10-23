@@ -67,7 +67,7 @@ The following blocks are **done** in `frontend-web/` — they form the migration
 P2 Foundation (sequential within sub-lane, sub-lanes parallel):
   ├── Platform primitives: db (pgx), redis, queue (asynq), search (ES), ws (WebSocket)
   ├── Finance core: ledger → wallet → kyc → tiers → transfers → referrals
-  ├── Provider adapters: Paystack, (Maplerad future), (VideoSDK RTC future)
+  ├── Provider adapters: Paystack, (VertoFX/Eversend FX), (VideoSDK RTC future)
   ├── Notifications: push/email/SMS via asynq
   ├── Settlement scaffold
   ├── Disputes scaffold
@@ -75,7 +75,7 @@ P2 Foundation (sequential within sub-lane, sub-lanes parallel):
   └── Admin shell: extend frontend-admin with module screen-sets
 
 P3+ Vertical lanes (parallel after P2 gate):
-  FX (Maplerad) | Groups | Events/Tickets | Estate/Voting | Crowdfunding |
+  FX (Eversend/VertoFX) | Groups | Events/Tickets | Estate/Voting | Crowdfunding |
   Restaurant/Delivery | Transport | Telemedicine | Spotlight integration
 ```
 

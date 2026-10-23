@@ -4,8 +4,7 @@
  * Lane: fx orchestration (/api/v1/fx/*), utilitybills member+admin,
  * transfers/resolve-account, restaurant bank-accounts — plus flag-gate
  * evidence probes for the modules whose routes are NOT mounted in the local
- * stack (crypto/invest/trading/fractionalre/spotlightwealth/arena/finance-fx/
- * maplerad/doctor).
+ * stack (crypto/invest/trading/fractionalre/spotlightwealth/arena/doctor).
  *
  * Everything auth/provisioning/ledger-fixture re-exports from the proven
  * finance/cross helper stacks. Fixture funding posts the SAME balanced journal

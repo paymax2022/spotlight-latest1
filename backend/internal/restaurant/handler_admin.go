@@ -1,8 +1,11 @@
 package restaurant
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -419,4 +422,27 @@ func (s *Service) AdminListRestaurants(ctx context.Context, params AdminRestaura
 		Offset:      p.Offset,
 		HasMore:     p.Offset+len(out) < total,
 	}, nil
+}
+
+// PutDeliveryConfigValidated fronts PutDeliveryConfig with request validation so a
+// negative/out-of-range fee is a 400 with a clear message, not a DB-constraint 500
+// (FOOD-UAT-G-005). The body is restored for the delegate handler.
+// PUT /restaurant/admin/delivery-config
+func (h *Handler) PutDeliveryConfigValidated(c *gin.Context) {
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid request body"})
+		return
+	}
+	var cfg DeliveryFeeConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid JSON body"})
+		return
+	}
+	if err := cfg.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
+	h.PutDeliveryConfig(c)
 }

@@ -14,7 +14,7 @@
 // is no import cycle.
 // Deliberately independent of the older, tiered (5/8/12/15%) Direct Referral
 // Rewards engine in finance/referrals — that engine computes its own margin
-// from a module-specific proxy and is wired to exactly one path (Maplerad bill
+// from a module-specific proxy and is wired to exactly one path (utility bill
 // payments) behind its own flag. This package reads the SAME commission_earnings
 // figure (spotlight_revenue_kobo) that ~18 modules already write via
 // commission.RecordFor/RecordExact, so it applies uniformly across all of them

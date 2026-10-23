@@ -133,7 +133,7 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
 - **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
   - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3 — done in Batch 8),
     repairs (4 — done in Batch 9), reports (2, read-only — done in Batch 10), tasks (3 — done in Batch 11; the
-    "stub" comment was a false positive), vendors (6), facilities (4 — done in Batch 13). Every call matches a handler, every
+    "stub" comment was a false positive), vendors (6 — done in Batch 12), facilities (4 — done in Batch 13). Every call matches a handler, every
     table exists, no read-side traps.
   - **Blocked — path mismatch, do not flip:** `ainotes` (1 of 4 calls matches; `GET
     /estate/ai-notes/:id`, `POST /estate/ai-notes/:id/approve`, `POST /estate/meetings/:id/ai-notes`
@@ -247,6 +247,25 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
     fee shown in the app is not money the system takes — flagging in case a wallet-charged booking
     flow was intended. Not changed.
 
+### Batch 12 (2026-10-17) — vendors (money path; two notes)
+- **vendors** (`src/features/vendors/api.ts`) — frontend-web handlers (`app/api/v1/estate/vendors`,
+  `.../self`). `verify_mobile_module.py`: **6/6 client calls match**; tables `estate_vendors`,
+  `vendor_jobs` exist; no read-side traps. 3 reads (directory, jobs, earnings), 3 mutations converted
+  (`updateJobStatus`, `onboardVendor`, `submitQuote`). e2e pin added (the e2e only reads the
+  directory + jobs list). No handler tests (code reading). The write handlers are **well-defended** —
+  the two notes below are pre-existing, not introduced here, and nothing is changed.
+  - **Note 1 — the client's `'paid'` payout path is dead against the web handler.** `updateJobStatus`
+    sends `status:'paid'` with an Idempotency-Key, but `jobs/[id]/status/route.ts` deliberately
+    EXCLUDES `'paid'` from its allowed statuses (comment: payout must go through the Go vendor-payout
+    route, which checks `completed`, posts the ledger credit in a txn, records payout_ref). So a
+    `'paid'` call here 400s. In practice no UI triggers it — `NEXT_JOB_ACTIONS` stops at `completed` —
+    so it is dead code, not a live defect. Good server-side defense against a client-driven settle.
+  - **Note 2 — a submitted quote does not change what the client shows.** `quote/route.ts` writes
+    `quote_kobo` (NOT `amount_kobo`, with a comment that writing `amount_kobo` would let a vendor
+    overwrite the payout and drain settlement) and returns the unchanged `amount_kobo`; the client's
+    `submitQuote` maps `amountKobo` from `amount_kobo`, so the vendor sees the old figure after
+    quoting. Arguably correct (the quote is pending admin acceptance, not the payout) but a UX gap.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -274,7 +293,7 @@ creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
 one module), notifications, nutrition, properties, realtor, referral (2 files),
-social (see Batch 4 — blocked), spotlightwealth, stays, stocks, transfers, vendors, plus
+social (see Batch 4 — blocked), spotlightwealth, stays, stocks, transfers, plus
 `src/api/doctor.client.ts` and `src/api/telemedicine.api.ts`.
 (An earlier version of this list had ~26 names: it only scanned `constants/` and `api/`
 sub-folders and missed modules whose flag lives in `api.ts` at the feature root.)

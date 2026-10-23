@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"spotlight/backend/internal/provider/eversend"
-	"spotlight/backend/internal/provider/maplerad"
 )
 
 func main() {
@@ -21,21 +20,6 @@ func main() {
 
 	failed := false
 	any := false
-
-	if key := os.Getenv("MAPLERAD_SECRET_KEY"); key != "" {
-		any = true
-		_, _ = fmt.Fprintln(os.Stdout, "→ Maplerad: requesting USD→NGN quote for $1,000…")
-		cli := maplerad.New(key, os.Getenv("MAPLERAD_PROD") == "true")
-		q, err := cli.GetFXQuote(ctx, maplerad.FXQuoteRequest{SourceCurrency: "USD", TargetCurrency: "NGN", AmountKobo: 100_000})
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stdout, "  ✗ Maplerad error: %v\n", err)
-			failed = true
-		} else {
-			_, _ = fmt.Fprintf(os.Stdout, "  ✓ Maplerad rate=%v target=%d fee=%d quote_id=%s\n", q.Rate, q.TargetAmountMinor, q.Fee, q.QuoteID)
-		}
-	} else {
-		_, _ = fmt.Fprintln(os.Stdout, "• Maplerad: MAPLERAD_SECRET_KEY not set — skipped")
-	}
 
 	if id, sec := os.Getenv("EVERSEND_CLIENT_ID"), os.Getenv("EVERSEND_CLIENT_SECRET"); id != "" && sec != "" {
 		any = true

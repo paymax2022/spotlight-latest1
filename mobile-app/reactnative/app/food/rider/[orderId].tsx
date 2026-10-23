@@ -25,6 +25,9 @@ import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Tab = 'delivery' | 'chat';
 
+/** Foreground GPS post cadence (watchPosition timeInterval). */
+const FOREGROUND_POST_MS = 15000;
+
 export default function RiderActiveDeliveryScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const [tab, setTab] = useState<Tab>('delivery');
@@ -40,17 +43,57 @@ export default function RiderActiveDeliveryScreen() {
   const status = realtime.status ?? order?.status;
   const riderLocation = realtime.riderLocation ?? order?.rider?.location ?? null;
 
-  // Heartbeat the rider's location while en route (drives the customer's live map).
+  // Post the rider's REAL device GPS while en route (drives the customer's live
+  // map). Previously this re-posted the server-stored order.rider.location, so a
+  // stationary/stale server fix was echoed forever. expo-location is loaded
+  // lazily (same defensive pattern as useDeviceCoords).
+  const trackable = !!order && !!status && isLiveTrackable(status);
   useEffect(() => {
-    if (!order || !status || !isLiveTrackable(status)) return;
-    const loc = order.rider?.location;
-    if (!loc) return;
-    const t = setInterval(() => {
-      postLocation.mutate({ orderId: order.id, loc });
-    }, 8000);
-    return () => clearInterval(t);
+    if (!order || !trackable) return;
+    let Location: any = null; // eslint-disable-line @typescript-eslint/no-explicit-any
+    try {
+      Location = require('expo-location'); // eslint-disable-line @typescript-eslint/no-var-requires
+    } catch {
+      return;
+    }
+    if (!Location?.watchPositionAsync) return;
+    let cancelled = false;
+    let sub: { remove: () => void } | null = null;
+    let lastSent = 0;
+    const orderIdNow = order.id;
+    (async () => {
+      try {
+        const perm = await Location.requestForegroundPermissionsAsync();
+        if (perm.status !== 'granted' || cancelled) return;
+        sub = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy?.Balanced ?? 3,
+            timeInterval: FOREGROUND_POST_MS,
+            distanceInterval: 10,
+          },
+          (pos: { coords: { latitude: number; longitude: number }; timestamp?: number }) => {
+            const now = Date.now();
+            // Throttle: at most one post per cadence window.
+            if (now - lastSent < FOREGROUND_POST_MS - 1000) return;
+            lastSent = now;
+            postLocation.mutate({
+              orderId: orderIdNow,
+              loc: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+              lastPostedAt: new Date(pos.timestamp ?? now).toISOString(),
+            });
+          },
+        );
+        if (cancelled) sub?.remove();
+      } catch {
+        /* permission/hardware failure: rider keeps working, customer sees staleness */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      sub?.remove();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order?.id, status]);
+  }, [order?.id, trackable]);
 
   const onPickup = () => {
     if (!order || pickupCode.trim().length < 4) return;

@@ -11,14 +11,14 @@ export const MOCK_CARDS: Card[] = [
     last4: '4242', expMonth: 8, expYear: 28, cardholderName: 'SPOTLIGHT USER',
     balance: 420_00, status: 'active', color: 'purple', spentThisMonth: 86_40,
     controls: { monthlyLimit: 500_00, perTxLimit: 200_00, online: true, atm: false, international: true, contactless: true },
-    provider: 'maplerad', createdAt: iso(86_400_000 * 60),
+    provider: 'vertofx', createdAt: iso(86_400_000 * 60),
   },
   {
     id: 'card_2', label: 'Travel', brand: 'mastercard', currency: 'USD',
     last4: '5588', expMonth: 3, expYear: 27, cardholderName: 'SPOTLIGHT USER',
     balance: 1_250_00, status: 'frozen', color: 'graphite', spentThisMonth: 0,
     controls: { monthlyLimit: null, perTxLimit: null, online: true, atm: true, international: true, contactless: true },
-    provider: 'maplerad', createdAt: iso(86_400_000 * 20),
+    provider: 'vertofx', createdAt: iso(86_400_000 * 20),
   },
 ];
 

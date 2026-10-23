@@ -142,9 +142,6 @@ func (h *Handler) InboundWebhook(c *gin.Context) {
 	prov := c.Param("provider")
 	payload, _ := io.ReadAll(c.Request.Body)
 	sig := c.GetHeader("Webhook-Signature")
-	if sig == "" {
-		sig = c.GetHeader("X-Maplerad-Signature")
-	}
 	if !h.svc.VerifyProviderWebhook(prov, payload, sig) {
 		writeErr(c, NewError(ErrAuthentication, "invalid_signature", "Webhook signature verification failed."))
 		return

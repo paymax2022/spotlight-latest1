@@ -46,6 +46,9 @@ type Service struct {
 	// parcelRouteSecret signs parcel route tokens (WithParcelRouteTokenSecret);
 	// "" = tokens off, bookings route live. See parcel_route_token.go.
 	parcelRouteSecret string
+	// prepaidInsuranceOn: parcel insurance is opt-in and paid at booking
+	// (WithPrepaidInsurance). See parcel_insurance_prepaid.go.
+	prepaidInsuranceOn bool
 
 	db               *pgxpool.Pool
 	settlement       *settlement.Service
@@ -60,6 +63,14 @@ type Service struct {
 	// Read-only afterwards, so no lock. See external_funding.go.
 	domainRefunders map[string]ExternalRefunder
 	bus             BusConfig // wallet bus path: deferred settlement / cancel cutoff / booking lead (WithBusConfig)
+	// parcelRateCardOn prices parcels from transport_parcel_rate_card (WithParcelRateCard).
+	parcelRateCardOn bool
+	// parcelInsuranceMinKobo floors the indicative Goods-in-Transit premium at the
+	// provider's minimum (WithParcelInsuranceMinPremium); 0 = no floor.
+	parcelInsuranceMinKobo int64
+	// receiverSMS texts the receiver their drop-off PIN after pickup
+	// (WithReceiverPinSMS, parcel_receiver_pin.go); nil = off.
+	receiverSMS ReceiverSMSSender
 }
 
 // ExternalRefunder is the nil-safe seam transport.Service uses to correctly
@@ -642,7 +653,13 @@ func nullPhase(p TripPhase) any {
 
 // writeAudit inserts a row into transport_audit_log. Every admin mutation must
 // call this. old/new are JSON-serialised; nil values are stored as SQL NULL.
-func writeAudit(ctx context.Context, db *pgxpool.Pool, adminID, action, entityType, entityID string, oldVal, newVal any, reason string) error {
+// auditExecer is satisfied by both *pgxpool.Pool and pgx.Tx, so a mutation can
+// write its audit row inside its own transaction (all-or-nothing).
+type auditExecer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func writeAudit(ctx context.Context, db auditExecer, adminID, action, entityType, entityID string, oldVal, newVal any, reason string) error {
 	var oldJSON, newJSON []byte
 	if oldVal != nil {
 		oldJSON = jsonx.Marshal(oldVal)
@@ -763,10 +780,14 @@ func StartStuckSettlementReconciler(ctx context.Context, svc *Service, interval,
 		n, err := svc.ReconcileStuckSettlements(cctx, grace)
 		if err != nil {
 			log.Printf("[transport] stuck-settlement sweep error: %v", err)
-			return
-		}
-		if n > 0 {
+		} else if n > 0 {
 			log.Printf("[transport] stuck-settlement sweep: reconciled=%d", n)
+		}
+		// Parcel insurance premiums a crash or failure left in between.
+		if m, ierr := svc.ReconcileParcelInsurance(cctx, grace); ierr != nil {
+			log.Printf("[transport] parcel-insurance sweep error: %v", ierr)
+		} else if m > 0 {
+			log.Printf("[transport] parcel-insurance sweep: resolved=%d", m)
 		}
 	}
 	go func() {

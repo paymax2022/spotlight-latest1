@@ -5,7 +5,7 @@ import { handleDvaTransferWebhook } from '@/src/server/virtual-accounts/webhook'
 import { handleUtilityPaystackWebhook } from './utility-handler';
 import { handleBankTransferWebhook } from '@/src/server/transfers/bank-webhook';
 import { handleGatewayPaystackWebhook } from './gateway-handler';
-import { forwardGoOwnedPaystackEvent } from './go-forward';
+import { forwardGoOwnedPaystackEvent, isGoFoodChargebackEvent } from './go-forward';
 
 // Paystack sends all events to one URL. Each handler is responsible for:
 //   1. Re-verifying the signature independently
@@ -98,11 +98,16 @@ export async function POST(request: Request) {
     );
   }
 
+  // FOOD-UAT-H-004: dispute/refund events for food orders are relayed to Go; say
+  // so instead of the old silent processed:false.
+  const forwardedToGo = isGoFoodChargebackEvent(event) && settled[settled.length - 1]?.processed;
+
   return Response.json(
     {
       received:  true,
       duplicate: settled.some((r) => r.duplicate),
       processed: settled.some((r) => r.processed),
+      ...(forwardedToGo ? { reason: 'forwarded-to-go' } : {}),
     },
     { status: 200 },
   );

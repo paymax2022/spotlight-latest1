@@ -15,13 +15,22 @@ import (
 // It is derived from the same internal Candidate the Phase-1 discovery/search
 // endpoints build, so ranking and privacy rules are shared, not re-implemented.
 type ProfileCard struct {
-	ProfileID      string   `json:"profileId"`
-	DisplayName    *string  `json:"displayName,omitempty"`
-	City           *string  `json:"city,omitempty"`
-	Verified       bool     `json:"verified"`
-	IntentTags     []string `json:"intentTags"`
-	DistanceLabel  string   `json:"distanceLabel,omitempty"`  // e.g. "within 25 km"
-	DistanceBucket int      `json:"distanceBucket,omitempty"` // coarse km bucket (nearby only)
+	ProfileID   string   `json:"profileId"`
+	DisplayName *string  `json:"displayName,omitempty"`
+	City        *string  `json:"city,omitempty"`
+	Verified    bool     `json:"verified"`
+	IntentTags  []string `json:"intentTags"`
+	// Card enrichment so the deck renders real photos/age/bio instead of blank
+	// placeholders. Photos are signed, display-ordered R2 URLs and are ALWAYS a
+	// list (never null) so the mobile client's `.map`/`[0]` can never crash. age
+	// is derived from dob server-side — the raw dob is never exposed.
+	Photos   []string `json:"photos"`
+	Age      *int     `json:"age,omitempty"`
+	Headline *string  `json:"headline,omitempty"`
+	Bio      *string  `json:"bio,omitempty"`
+
+	DistanceLabel  string `json:"distanceLabel,omitempty"`  // e.g. "within 25 km"
+	DistanceBucket int    `json:"distanceBucket,omitempty"` // coarse km bucket (nearby only)
 }
 
 // SwipeResult is the minimal shape Swipe needs back from the like recorder — the
@@ -55,21 +64,29 @@ var (
 	ErrNothingToUndo  = errors.New("connect: no recent swipe to undo")
 )
 
-// cardFrom maps the internal Candidate to the camelCase mobile card. It copies only
-// the already-privacy-safe fields (never lat/lng). The match-reason card is internal
-// and intentionally dropped from the stack contract.
-func cardFrom(c Candidate) ProfileCard {
-	tags := c.IntentTags
+// cardFrom maps the internal rawCandidate to the camelCase mobile card. It copies
+// only the already-privacy-safe fields (never lat/lng — distance is pre-bucketed
+// into distanceLabel) plus the signed photos the caller resolved. The match-reason
+// card is internal and intentionally dropped from the stack contract.
+func cardFrom(rc rawCandidate, distanceLabel string, photos []string) ProfileCard {
+	tags := rc.intentTags
 	if tags == nil {
 		tags = []string{}
 	}
+	if photos == nil {
+		photos = []string{}
+	}
 	return ProfileCard{
-		ProfileID:     c.ProfileID,
-		DisplayName:   c.DisplayName,
-		City:          c.City,
-		Verified:      c.Verified,
+		ProfileID:     rc.profileID,
+		DisplayName:   rc.displayName,
+		City:          rc.city,
+		Verified:      rc.verified,
 		IntentTags:    tags,
-		DistanceLabel: c.DistanceLabel,
+		Photos:        photos,
+		Age:           rc.age,
+		Headline:      rc.headline,
+		Bio:           rc.bio,
+		DistanceLabel: distanceLabel,
 	}
 }
 
@@ -116,24 +133,42 @@ func (s *Service) Stack(ctx context.Context, userID string, f StackFilters) ([]P
 		return nil, err
 	}
 
-	out := make([]ProfileCard, 0, len(raws))
+	kept := make([]rawCandidate, 0, len(raws))
 	for _, rc := range raws {
 		if passed[rc.profileID] {
 			continue
 		}
-		cand := s.toCandidate(rc, vlat, vlng, buckets)
 		// Distance cap (bucketed): only drop when both sides have geo.
 		if f.MaxDistKm > 0 && vlat != nil && vlng != nil && rc.geoLat != nil && rc.geoLng != nil {
 			if haversineKm(*vlat, *vlng, *rc.geoLat, *rc.geoLng) > float64(maxDist) {
 				continue
 			}
 		}
-		out = append(out, cardFrom(cand))
-		if len(out) >= f.Limit {
+		kept = append(kept, rc)
+		if len(kept) >= f.Limit {
 			break
 		}
 	}
+
+	photos, err := s.photosByProfile(ctx, profileIDs(kept))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProfileCard, 0, len(kept))
+	for _, rc := range kept {
+		out = append(out, cardFrom(rc, distanceLabelFor(rc, vlat, vlng, buckets), photos[rc.profileID]))
+	}
 	return out, nil
+}
+
+// profileIDs collects the profile ids of a candidate slice for the batch photo
+// load, preserving order (unused by the query but handy for callers).
+func profileIDs(rcs []rawCandidate) []string {
+	ids := make([]string, 0, len(rcs))
+	for _, rc := range rcs {
+		ids = append(ids, rc.profileID)
+	}
+	return ids
 }
 
 // passedTargets returns the set of profile ids the viewer has passed on. Reads the
@@ -176,7 +211,10 @@ func (s *Service) LikesYou(ctx context.Context, userID string, limit int) ([]Pro
 	const q = `
 		SELECT p.id, p.display_name, p.city, p.geo_lat, p.geo_lng,
 		       COALESCE(v.status IN ('l0_passed','l1_passed'), false) AS verified,
-		       pm.intent_tags
+		       pm.intent_tags,
+		       p.headline, p.bio,
+		       CASE WHEN p.dob IS NULL THEN NULL
+		            ELSE date_part('year', age(p.dob))::int END AS age
 		FROM connect_likes l
 		JOIN connect_profiles p ON p.id = l.from_profile
 		LEFT JOIN connect_profile_modes pm ON pm.profile_id = p.id AND pm.mode = 'dating'
@@ -194,15 +232,28 @@ func (s *Service) LikesYou(ctx context.Context, userID string, limit int) ([]Pro
 	}
 	defer rows.Close()
 
-	out := make([]ProfileCard, 0)
+	kept := make([]rawCandidate, 0)
 	for rows.Next() {
 		var rc rawCandidate
-		if err := rows.Scan(&rc.profileID, &rc.displayName, &rc.city, &rc.geoLat, &rc.geoLng, &rc.verified, &rc.intentTags); err != nil {
+		if err := rows.Scan(&rc.profileID, &rc.displayName, &rc.city, &rc.geoLat, &rc.geoLng, &rc.verified, &rc.intentTags,
+			&rc.headline, &rc.bio, &rc.age); err != nil {
 			return nil, err
 		}
-		out = append(out, cardFrom(s.toCandidate(rc, vlat, vlng, buckets)))
+		kept = append(kept, rc)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	photos, err := s.photosByProfile(ctx, profileIDs(kept))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProfileCard, 0, len(kept))
+	for _, rc := range kept {
+		out = append(out, cardFrom(rc, distanceLabelFor(rc, vlat, vlng, buckets), photos[rc.profileID]))
+	}
+	return out, nil
 }
 
 // Nearby returns a bucketed-distance list ONLY — no raw coordinates ever leave the
@@ -228,8 +279,9 @@ func (s *Service) Nearby(ctx context.Context, userID string, limit int) ([]Profi
 	}
 
 	type withDist struct {
-		card ProfileCard
-		km   float64
+		rc     rawCandidate
+		bucket int
+		km     float64
 	}
 	tmp := make([]withDist, 0, len(raws))
 	for _, rc := range raws {
@@ -241,19 +293,28 @@ func (s *Service) Nearby(ctx context.Context, userID string, limit int) ([]Profi
 		if !within {
 			continue // beyond the largest bucket → not "nearby"
 		}
-		card := cardFrom(s.toCandidate(rc, vlat, vlng, buckets))
-		card.DistanceBucket = bucket
-		tmp = append(tmp, withDist{card: card, km: d})
+		tmp = append(tmp, withDist{rc: rc, bucket: bucket, km: d})
 	}
 	// Ascending by true distance so the closest surface first, but ONLY the coarse
 	// bucket is ever serialised (privacy: exact km stays server-side).
 	sort.SliceStable(tmp, func(i, j int) bool { return tmp[i].km < tmp[j].km })
+	if len(tmp) > limit {
+		tmp = tmp[:limit]
+	}
+
+	ids := make([]string, 0, len(tmp))
+	for _, wd := range tmp {
+		ids = append(ids, wd.rc.profileID)
+	}
+	photos, err := s.photosByProfile(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]ProfileCard, 0, len(tmp))
 	for _, wd := range tmp {
-		out = append(out, wd.card)
-		if len(out) >= limit {
-			break
-		}
+		card := cardFrom(wd.rc, distanceLabelFor(wd.rc, vlat, vlng, buckets), photos[wd.rc.profileID])
+		card.DistanceBucket = wd.bucket
+		out = append(out, card)
 	}
 	return out, nil
 }

@@ -556,7 +556,7 @@ func (s *Service) pickCollectionProvider(accountType, currency string) Provider 
 			}
 		}
 	}
-	preferred := "maplerad"
+	preferred := "vertofx"
 	if accountType == "iban" {
 		preferred = "eversend"
 	}

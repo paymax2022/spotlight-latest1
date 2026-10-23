@@ -17,8 +17,10 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 )
 
 const errKey = "error"
@@ -123,7 +125,73 @@ func Msg(c *gin.Context, status int, err error) string {
 	if err == nil {
 		return ""
 	}
+	// Gin's request binding returns validator.ValidationErrors, whose Error()
+	// is a raw dump — "Key: 'ResolveAccountRequest.AccountNumber' Error:Field
+	// validation for 'AccountNumber' failed on the 'required' tag". It is a 400
+	// with no internalSignature, so Sanitize would pass it through verbatim,
+	// leaking the Go struct/field names and showing users an unreadable string.
+	// Rewrite it into a short, human message naming the offending fields in the
+	// API's own snake_case before sanitizing.
+	var ve validator.ValidationErrors
+	if errors.As(err, &ve) {
+		return Sanitize(c, status, formatValidationErrors(ve))
+	}
 	return Sanitize(c, status, err.Error())
+}
+
+// formatValidationErrors turns a validator.ValidationErrors into a readable,
+// client-safe sentence such as "account_number is required, bank_code is
+// required". Field names are reported in snake_case to match the request
+// contract (the Go struct name is never included).
+func formatValidationErrors(ve validator.ValidationErrors) string {
+	if len(ve) == 0 {
+		return genericMessage(http.StatusBadRequest)
+	}
+	parts := make([]string, 0, len(ve))
+	for _, fe := range ve {
+		field := toSnakeCase(fe.Field())
+		switch fe.Tag() {
+		case "required":
+			parts = append(parts, field+" is required")
+		case "email":
+			parts = append(parts, field+" must be a valid email address")
+		case "min":
+			parts = append(parts, field+" is too short")
+		case "max":
+			parts = append(parts, field+" is too long")
+		case "len":
+			parts = append(parts, field+" has an invalid length")
+		case "gt", "gte", "lt", "lte":
+			parts = append(parts, field+" is out of range")
+		case "oneof":
+			parts = append(parts, field+" has an unsupported value")
+		default:
+			parts = append(parts, field+" is invalid")
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// toSnakeCase converts an exported Go field name (AccountNumber, BankCode) to
+// the snake_case the request contract uses (account_number, bank_code). Runs of
+// capitals are kept together so "URL" or "ID" do not explode into single
+// letters: "AccountID" → "account_id".
+func toSnakeCase(s string) string {
+	var b strings.Builder
+	runes := []rune(s)
+	for i, r := range runes {
+		if r >= 'A' && r <= 'Z' {
+			prevLower := i > 0 && runes[i-1] >= 'a' && runes[i-1] <= 'z'
+			nextLower := i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z'
+			if i > 0 && (prevLower || nextLower) {
+				b.WriteByte('_')
+			}
+			b.WriteRune(r - 'A' + 'a')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // Sanitize is the string form of Msg for callers holding an already-built

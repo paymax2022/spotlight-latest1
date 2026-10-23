@@ -90,7 +90,13 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// 'complete'. Wire an SMS-delivering OTP service (Termii) so the
 	// phone/request + phone/verify endpoints can close the loop. Unconfigured
 	// (no OTP_PEPPER or TERMII_API_KEY) → handler answers 503.
-	if sender := integrations.NewTermiiClient(cfg.TermiiAPIKey, cfg.TermiiSenderID); sender != nil && cfg.OTPPepper != "" {
+	testOTP := otp.NewTestMode(cfg.FeatureTestOTPDeterministicEnabled, cfg.MocksAllowed(), cfg.AppEnv)
+	termii := integrations.NewTermiiClient(cfg.TermiiAPIKey, cfg.TermiiSenderID)
+	if (termii != nil || testOTP.Active()) && cfg.OTPPepper != "" {
+		var sender otp.EmailSender = otp.NoopSender() // test mode without Termii: no delivery
+		if termii != nil {
+			sender = termii
+		}
 		phoneOTP, err := otp.NewService(
 			otp.NewPostgresStore(pool),
 			sender,
@@ -100,7 +106,7 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if err != nil {
 			log.Printf("[connect] phone-verify OTP service failed to build: %v", err)
 		} else {
-			onboardingHandler.WithPhoneOTP(phoneOTP)
+			onboardingHandler.WithPhoneOTP(phoneOTP.WithTestMode(testOTP))
 		}
 	} else {
 		log.Println("[connect] phone verification unavailable — OTP_PEPPER or TERMII_API_KEY unset")
@@ -814,6 +820,9 @@ func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup
 	matchHandler := connectmatching.NewHandler(matchSvc)
 
 	discoverySvc := connectdiscovery.NewService(pool)
+	// The same presigner that signs the owner's own photos signs the photos we
+	// return on another member's public profile-detail card (bucket is private).
+	discoverySvc.WithPresigner(profilePresigner)
 	discoveryHandler := connectdiscovery.NewHandler(discoverySvc)
 
 	// rewind/boosts). Reuses the SAME discovery ranking + the SAME matching
@@ -871,6 +880,7 @@ func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup
 	// every route, IN ADDITION to the inherited member auth; the boost POST adds
 	// connect.boost.purchase). ---
 	discoveryGate := middleware.RequirePermission(rbac, permDiscoveryAccess)
+	member.GET("/discovery/profiles/:id", discoveryGate, memberDiscovery.ProfileDetail)
 	member.GET("/discovery/stack", discoveryGate, memberDiscovery.Stack)
 	member.POST("/discovery/swipe", discoveryGate, memberDiscovery.Swipe)
 	member.GET("/discovery/likes-you", discoveryGate, memberDiscovery.LikesYou)
@@ -891,7 +901,7 @@ func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup
 			verifHandler.Status)
 	}
 
-	log.Println("[connect:phase1] routes registered — profile/modes/media, verification, discovery, likes, matches, search, discovery stack/swipe/likes-you/nearby/rewind/boosts")
+	log.Println("[connect:phase1] routes registered — profile/modes/media, verification, discovery, likes, matches, search, discovery profiles/:id/stack/swipe/likes-you/nearby/rewind/boosts")
 }
 
 // connectLikeRecorderAdapter adapts connectmatching.Service.Like (which returns

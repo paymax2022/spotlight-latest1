@@ -132,7 +132,7 @@ type CardStore interface {
 // sqlCardStore is the Postgres-backed implementation.
 type sqlCardStore struct {
 	db *pgxpool.Pool
-	// issuer is the optional card-issuing provider seam (Maplerad). When nil the
+	// issuer is the optional card-issuing provider seam. When nil the
 	// store keeps the deterministic synthesized last4/PAN behaviour so a DB-less or
 	// provider-less dev setup still works. Only the card LIFECYCLE (issue / reveal /
 	// freeze / terminate) routes through the issuer; FUNDING stays on the ledger.
@@ -301,7 +301,7 @@ func (s *sqlCardStore) CreateCard(ctx context.Context, business string, draft Ca
 			(id, business_id, label, brand, currency, last4, exp_month, exp_year, cardholder_name,
 			 balance_minor, status, color, spent_this_month_minor, controls, provider, provider_card_id,
 			 idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,'active',$10,0,$11,'maplerad',$12,$13)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,'active',$10,0,$11,'internal',$12,$13)
 		RETURNING `+cardCols,
 		id, business, label, brand, currency, last4, expMonth, expYear, cardholder,
 		color, controlsJSON(defaultCardControls()), providerCardIDArg, idemArg))

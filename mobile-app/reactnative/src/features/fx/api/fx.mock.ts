@@ -61,7 +61,7 @@ export const MOCK_BENEFICIARIES: Beneficiary[] = [
 export const MOCK_VIRTUAL_ACCOUNTS: VirtualAccount[] = [
   {
     id: 'va_ngn_1', currency: 'NGN', type: 'virtual_account', status: 'active',
-    provider: 'maplerad', createdAt: iso(86_400_000 * 40),
+    provider: 'vertofx', createdAt: iso(86_400_000 * 40),
     details: {
       accountName: 'Paymax / Spotlight User', accountNumber: '9901234567',
       bankName: 'Providus Bank', reference: 'PMX-COL-NGN',
@@ -112,7 +112,7 @@ export const MOCK_TRANSACTIONS: TransactionDetail[] = [
     title: 'Payout to John Snow', direction: 'out',
     source: { amount: 100_00, currency: 'USD' }, destination: { amount: 60_250_00, currency: 'XAF' },
     createdAt: iso(86_400_000 * 1),
-    route: { provider: 'maplerad', corridor: 'USD-XAF', rail: 'mobile_money' },
+    route: { provider: 'vertofx', corridor: 'USD-XAF', rail: 'mobile_money' },
     quotedRate: 602.5, executedRate: 600.1,
     fees: [
       { type: 'provider_fee', amount: { amount: 25, currency: 'USD' } },

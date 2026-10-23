@@ -105,8 +105,8 @@ Legend: **R** = required for the Core+Payments launch · ✦ = has test/live var
 - `VTPASS_ENVIRONMENT` (`sandbox`/`live`), `VTPASS_API_KEY`, `VTPASS_PUBLIC_KEY`, `VTPASS_SECRET_KEY`,
   plus `UTILITY_PROVIDER_CREDENTIALS_KEY` (encryption key — generate it).
 
-### FX — Maplerad / Eversend (optional) ✦
-- `MAPLERAD_SECRET_KEY`/`MAPLERAD_PUBLIC_KEY` (`mpr_sandbox_*`/`mpr_prod_*`), `MAPLERAD_PROD`, `MAPLERAD_WEBHOOK_SECRET`.
+### FX — Eversend / VertoFX (optional) ✦
+- `VERTOFX_CLIENT_ID`/`VERTOFX_API_KEY`, `VERTOFX_PROD`, `VERTOFX_WEBHOOK_SECRET`, `FEATURE_VERTOFX`.
 - `EVERSEND_CLIENT_ID`/`EVERSEND_CLIENT_SECRET`, `EVERSEND_PROD`, `EVERSEND_WEBHOOK_SECRET`.
 
 ### Storage — Cloudflare R2 (optional)

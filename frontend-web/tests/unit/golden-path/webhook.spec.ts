@@ -55,6 +55,12 @@ vi.mock('../../../app/api/webhooks/paystack/gateway-handler', () => ({
 
 vi.mock('../../../app/api/webhooks/paystack/go-forward', () => ({
   forwardGoOwnedPaystackEvent: vi.fn(),
+  // H-004 chargeback additions in go-forward.ts — route.ts imports these too,
+  // so the mock must expose them even when only forwardGoOwnedPaystackEvent is
+  // exercised directly. isGoFoodChargebackEvent is a pure boolean predicate so
+  // defaulting it to false keeps the route's non-chargeback path intact.
+  GO_FOOD_CHARGEBACK_EVENTS: [] as const,
+  isGoFoodChargebackEvent: vi.fn().mockReturnValue(false),
 }));
 
 import { POST } from '../../../app/api/webhooks/paystack/route';

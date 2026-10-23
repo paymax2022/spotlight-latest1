@@ -92,6 +92,37 @@ components:
       type: object
       properties:
         error: { type: string }
+    ParcelRateCell:
+      type: object
+      description: One size x speed cell. Integer basis points and kobo, never floats.
+      required: [zone, size, speed, multiplierBps, minFareKobo, active]
+      properties:
+        zone: { type: string }
+        size: { type: string, enum: [small, medium, large] }
+        speed: { type: string, enum: [standard, express, same_day, scheduled] }
+        multiplierBps: { type: integer, format: int64, minimum: 1000, maximum: 100000, description: '10000 = 1.0x' }
+        minFareKobo: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+        active: { type: boolean }
+        updatedBy: { type: string, format: uuid, nullable: true }
+        updatedAt: { type: string, format: date-time }
+    ParcelRateCard:
+      type: object
+      required: [zone, cells]
+      properties:
+        zone: { type: string }
+        cells:
+          type: array
+          items: { $ref: '#/components/schemas/ParcelRateCell' }
+    ParcelRateCellPatch:
+      type: object
+      description: At least one of multiplier_bps, min_fare_kobo, active must be present.
+      required: [reason]
+      properties:
+        zone: { type: string, default: default }
+        multiplier_bps: { type: integer, format: int64, minimum: 1000, maximum: 100000 }
+        min_fare_kobo: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+        active: { type: boolean }
+        reason: { type: string, minLength: 1, maxLength: 500 }
     BusTicket:
       type: object
       description: A wallet-booked bus ticket (camelCase keys). Money fields are integer kobo.
@@ -142,6 +173,102 @@ components:
       type: object
       description: Generic success envelope. Most handlers wrap the payload in a `data` key or a named key (trip/offers/schedules/…).
       additionalProperties: true
+    ParcelPlace:
+      type: object
+      properties:
+        address: { type: string }
+        lat: { type: number, nullable: true }
+        lng: { type: number, nullable: true }
+    ParcelCourier:
+      type: object
+      description: The assigned courier as the sender sees them. The phone is masked; contact goes through the app.
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        photoUrl: { type: string, nullable: true }
+        rating: { type: number }
+        vehicleType: { type: string, nullable: true }
+        plateNumber: { type: string, nullable: true }
+        vehicle: { type: string, description: 'Display line, e.g. "Bike • LND-238-KJA"' }
+        phoneMasked: { type: string, nullable: true }
+    ParcelDetail:
+      type: object
+      description: >
+        GET /mobility/parcels/{id} (sender or assigned courier) and POST /driver/parcels/{id}/accept.
+        The flat address keys are kept for older clients; `pickup`/`dropoff` carry the coordinates.
+        `pickupPin`/`dropoffPin` are returned to the sender only, and only while the parcel is live
+        (never once it is delivered or cancelled).
+      properties:
+        id: { type: string, format: uuid }
+        senderId: { type: string, format: uuid }
+        courierId: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [created, courier_assigned, pickup_pin_verified, picked_up, in_transit, dropoff_verified, delivered, cancelled, failed, disputed] }
+        pickupAddress: { type: string }
+        dropoffAddress: { type: string }
+        pickup: { $ref: '#/components/schemas/ParcelPlace' }
+        dropoff: { $ref: '#/components/schemas/ParcelPlace' }
+        receiverName: { type: string }
+        receiverPhone: { type: string }
+        category: { type: string }
+        size: { type: string }
+        speed: { type: string }
+        declaredValueKobo: { $ref: '#/components/schemas/Money' }
+        fareKobo: { $ref: '#/components/schemas/Money' }
+        insuranceKobo: { $ref: '#/components/schemas/Money' }
+        totalKobo: { $ref: '#/components/schemas/Money' }
+        insurancePolicyId: { type: string, nullable: true }
+        insuranceOpted: { type: boolean }
+        insurancePaidKobo: { $ref: '#/components/schemas/Money' }
+        insuranceStatus: { type: string, enum: [none, declined, held, binding, bound, refunded, refund_failed] }
+        courier: { allOf: [{ $ref: '#/components/schemas/ParcelCourier' }], nullable: true }
+        paymentStatus: { type: string, nullable: true, enum: [escrowed, settled, refunded, disputed], description: The fare escrow's settlement status; null when nothing was escrowed }
+        deliveredAt: { type: string, format: date-time, nullable: true }
+        rated: { type: boolean, description: The sender has rated this delivery }
+        photoUrl: { type: string, nullable: true }
+        proofUrl: { type: string, nullable: true }
+        distanceM: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+        pickupPin: { type: string, description: Sender only, while live }
+        dropoffPin: { type: string, description: Sender only, while live }
+        receiverNotifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            Sender only. When the receiver was sent the drop-off PIN by SMS (FEATURE_PARCEL_RECEIVER_PIN_SMS).
+            Null when no SMS was sent: flag off, SMS not configured, or the send failed. The app should
+            then tell the sender to pass the drop-off PIN on themselves.
+    ParcelRequest:
+      type: object
+      description: An open parcel a courier can accept. No receiver details before acceptance.
+      properties:
+        id: { type: string, format: uuid }
+        pickupAddress: { type: string }
+        dropoffAddress: { type: string }
+        pickup: { $ref: '#/components/schemas/ParcelPlace' }
+        dropoff: { $ref: '#/components/schemas/ParcelPlace' }
+        category: { type: string }
+        size: { type: string }
+        speed: { type: string }
+        fareKobo: { $ref: '#/components/schemas/Money' }
+        estCourierNetKobo: { allOf: [{ $ref: '#/components/schemas/Money' }], description: "What this courier would be paid on delivery: the fare split by the courier's commission tier, computed by the same function that settles" }
+        distanceM: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CourierParcel:
+      type: object
+      description: A parcel in the courier's own history.
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string }
+        pickup: { $ref: '#/components/schemas/ParcelPlace' }
+        dropoff: { $ref: '#/components/schemas/ParcelPlace' }
+        category: { type: string }
+        size: { type: string }
+        speed: { type: string }
+        fareKobo: { $ref: '#/components/schemas/Money' }
+        earnedKobo: { allOf: [{ $ref: '#/components/schemas/Money' }], description: 'What the courier was actually paid (the settled provider leg); 0 until delivered' }
+        createdAt: { type: string, format: date-time }
+        deliveredAt: { type: string, format: date-time, nullable: true }
 
 paths:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -383,7 +510,7 @@ paths:
       tags: [mobility-driver]
       summary: Verify the rider's 4-digit trip PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Trip }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Trip }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/trips/{id}/start:
     post:
       tags: [mobility-driver]
@@ -454,6 +581,55 @@ paths:
   /admin/transport/pricing:
     get: { tags: [mobility-admin], summary: Get pricing config, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
     patch: { tags: [mobility-admin], summary: Update pricing config, responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } } }
+  /admin/transport/parcel-rate-card:
+    get:
+      tags: [mobility-admin]
+      summary: Parcel rate card for a zone (size x speed multiplier and minimum fare)
+      description: >-
+        Every stored cell of transport_parcel_rate_card for the zone, inactive ones included, in display
+        order (size small/medium/large, then speed standard/express/same_day/scheduled). No fallback: a
+        zone with no rows returns an empty `cells` array (pricing itself falls back to 'default').
+        Cells price parcels only while FEATURE_PARCEL_RATE_CARD_ENABLED is on.
+      parameters:
+        - { name: zone, in: query, required: false, schema: { type: string, default: default } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParcelRateCard' }
+        '403': { description: Missing mobility.view }
+  /admin/transport/parcel-rate-card/{size}/{speed}:
+    patch:
+      tags: [mobility-admin]
+      summary: Update one parcel rate-card cell (audited)
+      description: >-
+        Updates multiplier_bps, min_fare_kobo and/or active on an EXISTING cell (no upsert) and writes a
+        transport_audit_log row (action parcel_rate_card.update, old + new cell, reason) in the same
+        transaction. Bounds are validated server-side: multiplier_bps 1000-100000 (0.1x-10x),
+        min_fare_kobo 0-100000000 (₦0-₦1,000,000). Integers only. A card-checkout quote freezes the cell it
+        priced from, so an edit never changes an in-flight checkout; it applies to the next estimate.
+      parameters:
+        - { name: size, in: path, required: true, schema: { type: string, enum: [small, medium, large] } }
+        - { name: speed, in: path, required: true, schema: { type: string, enum: [standard, express, same_day, scheduled] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ParcelRateCellPatch' }
+      responses:
+        '200':
+          description: The updated cell
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParcelRateCell' }
+        '400':
+          description: Invalid size/speed, out-of-bounds value, nothing to change, or missing reason
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { description: Missing mobility.manage }
+        '404': { description: No such cell for the zone }
   /admin/transport/commission:
     get: { tags: [mobility-admin], summary: List commission tiers, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/commission/{tier}:
@@ -470,6 +646,32 @@ paths:
       summary: Update a safety incident
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } }
+  /admin/transport/pin-attempts/reset:
+    post:
+      tags: [mobility-admin]
+      summary: Clear a hand-off's wrong-PIN record (lifts a cooldown or a hard lock; audited)
+      description: >-
+        Support action for a hand-off that is PIN_LOCKED (see the driver verify endpoints). Deletes the
+        transport_pin_attempts row for (entity_type, entity_id, purpose) and writes a transport_audit_log
+        row (action pin_attempts.reset, the cleared record as old value, reason) in the same transaction.
+        It does not reveal or change the PIN.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entity_type, entity_id, purpose, reason]
+              properties:
+                entity_type: { type: string, enum: [trip, parcel, business_delivery, towing_job] }
+                entity_id: { type: string }
+                purpose: { type: string, enum: [start, pickup, dropoff] }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { description: 'Cleared: { ok, cleared: { failedCount, hardLocked } }' }
+        '400': { description: Invalid entity_type / purpose, or missing reason }
+        '403': { description: Missing mobility.manage }
+        '404': { description: No wrong-PIN record for that hand-off }
   /admin/transport/reports/summary:
     get: { tags: [mobility-admin], summary: Reports summary, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/audit:
@@ -642,7 +844,63 @@ paths:
     post:
       tags: [parcel]
       summary: Estimate a parcel delivery (no money moves)
-      responses: { '200': { description: Estimate }, '401': { description: Not authenticated } }
+      description: >
+        Prices the requested size and speed, and every other offered size x speed on the same route
+        (`options`), so each choice can show its own price. With FEATURE_PARCEL_RATE_CARD_ENABLED the
+        price comes from the admin rate card (multiplier + minimum fare per size x speed); otherwise
+        from the legacy multipliers. `speed` accepts standard, express, same_day (shown as Priority;
+        `priority` is accepted as an alias) and scheduled. `insuranceKobo` is an indicative
+        Goods-in-Transit premium on `declared_value_kobo` (never charged at booking; floored at the
+        insurer's minimum); `insurance` names the cover.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pickup, dropoff]
+              properties:
+                pickup: { type: object, properties: { address: { type: string }, lat: { type: number }, lng: { type: number } } }
+                dropoff: { type: object, properties: { address: { type: string }, lat: { type: number }, lng: { type: number } } }
+                category: { type: string }
+                size: { type: string, enum: [small, medium, large] }
+                speed: { type: string, enum: [standard, express, same_day, priority, scheduled] }
+                declared_value_kobo: { type: integer, format: int64, minimum: 0 }
+      responses:
+        '200':
+          description: Estimate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  distanceM: { type: integer }
+                  durationS: { type: integer }
+                  fareKobo: { type: integer, format: int64, description: Fare for the requested size and speed - the amount a booking is charged }
+                  insuranceKobo: { type: integer, format: int64, description: Indicative premium; 0 when no declared value }
+                  totalKobo: { type: integer, format: int64 }
+                  sizeMultiplier: { type: number, description: Legacy multiplier (informational) }
+                  speedMultiplier: { type: number, description: Legacy multiplier (informational) }
+                  options:
+                    type: array
+                    description: Every offered size x speed (small, medium, large x standard, express, same_day), in that order
+                    items:
+                      type: object
+                      properties:
+                        size: { type: string }
+                        speed: { type: string }
+                        fareKobo: { type: integer, format: int64 }
+                  insurance:
+                    type: object
+                    description: Present when insurance is wired on the server
+                    properties:
+                      productCode: { type: string }
+                      productName: { type: string }
+                      underwriter: { type: string }
+                      provider: { type: string }
+                      minPremiumKobo: { type: integer, format: int64 }
+                      indicative: { type: boolean }
+        '401': { description: Not authenticated }
   /mobility/parcels:
     post:
       tags: [parcel]
@@ -660,6 +918,19 @@ paths:
         price.
         Omitted, the server books at its live fare as before (older app builds, scheduled
         dispatch). The card-direct rail ignores it; it already freezes the quoted fare.
+        Insurance (FEATURE_PARCEL_PREPAID_INSURANCE) is opt-in with `insure: true`: the wallet pays the
+        fare AND the estimate's premium now, as two separate integer-kobo debits. The fare is escrowed for
+        the courier; the premium is held apart (it never reaches the courier settlement) until the policy
+        binds when a courier accepts. The customer pays exactly the premium shown; the platform absorbs any
+        difference to the insurer's final premium. If cover cannot be bound, or the parcel is cancelled
+        (before or after the cover binds), the premium is refunded to the wallet (to the card for a
+        card-direct booking, see POST /mobility/parcels/paystack/initiate). The wallet must cover
+        fare + premium up front (else 402 INSUFFICIENT_FUNDS, nothing charged). The parcel's
+        `insuranceStatus` reports declined (not ticked) | held | binding | bound | refunded |
+        refund_failed, or none for parcels booked before this feature (they keep the legacy flow).
+        Without `insure` no premium is charged. With the flag off, `insure` is ignored (legacy: cover
+        bound and debited separately at courier accept). Re-using an Idempotency-Key whose premium was
+        already refunded is 409 IDEMPOTENCY_KEY_CONFLICT (book again with a new key).
         Optional `route_token` is the `routeToken` returned by POST /mobility/parcels/estimate (issued only
         when the server has PARCEL_ROUTE_TOKEN_SECRET): a server-signed snapshot of that estimate's route
         distance/duration for the same pickup/dropoff, valid 15 minutes. With a valid token the booking
@@ -690,11 +961,27 @@ paths:
                 prohibited_ack: { type: boolean }
                 expected_fare_kobo: { type: integer, format: int64, description: 'Fare (kobo) the customer confirmed; mismatch → 409 FARE_CHANGED' }
                 route_token: { type: string, description: 'routeToken from the estimate; prices from its signed route (15 min)' }
+                insure: { type: boolean, description: 'Buy Goods-in-Transit cover, paid now with the fare (FEATURE_PARCEL_PREPAID_INSURANCE). Needs declared_value_kobo > 0 and a complete sender profile.' }
+                expected_insurance_kobo: { type: integer, format: int64, description: 'Premium (kobo) the customer confirmed (the estimate insuranceKobo); mismatch → 409 FARE_CHANGED' }
       responses:
         '200': { description: Parcel }
         '400': { description: INVALID_IDEMPOTENCY_KEY (reserved key namespace) }
         '401': { description: Not authenticated }
-        '402': { description: Insufficient balance }
+        '402': { description: 'Insufficient balance (INSUFFICIENT_FUNDS: with insure, the wallet must cover fare + premium)' }
+        '422':
+          description: >-
+            Insurance refused before anything was charged: INSURANCE_DECLARED_VALUE_REQUIRED,
+            INSURANCE_UNAVAILABLE, or INSURANCE_PROFILE_INCOMPLETE (body `missing` lists the sender
+            profile fields the insurer needs: first_name, last_name, email, phone, gender,
+            date_of_birth, address).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  code: { type: string, enum: [INSURANCE_DECLARED_VALUE_REQUIRED, INSURANCE_UNAVAILABLE, INSURANCE_PROFILE_INCOMPLETE] }
+                  missing: { type: array, items: { type: string } }
         '409':
           description: >-
             FARE_CHANGED (the price moved since the estimate; nothing was charged), or
@@ -708,6 +995,8 @@ paths:
                   code: { type: string, enum: [FARE_CHANGED, IDEMPOTENCY_KEY_CONFLICT] }
                   fare_kobo: { type: integer, format: int64 }
                   expected_fare_kobo: { type: integer, format: int64 }
+                  insurance_kobo: { type: integer, format: int64, description: 'Live premium, when the insurance price changed' }
+                  expected_insurance_kobo: { type: integer, format: int64 }
     get:
       tags: [parcel]
       summary: List parcels
@@ -717,7 +1006,7 @@ paths:
       tags: [parcel]
       summary: Get a parcel
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '404': { description: Not found } }
+      responses: { '200': { description: Parcel, content: { application/json: { schema: { $ref: '#/components/schemas/ParcelDetail' } } } }, '401': { description: Not authenticated }, '403': { description: Not the sender or the assigned courier }, '404': { description: Not found } }
   /mobility/parcels/{id}/cancel:
     post:
       tags: [parcel]
@@ -733,10 +1022,20 @@ paths:
       summary: Start a card-direct parcel checkout (server-quoted amount; no wallet debit) — money mutation
       description: >
         Body is the SAME as POST /mobility/parcels (pickup, dropoff, receiver_name, receiver_phone,
-        category, size, speed, declared_value_kobo, prohibited_ack) plus optional `email` and
+        category, size, speed, declared_value_kobo, prohibited_ack, insure) plus optional `email` and
         `callback_url` (gateway-only; stripped before the request is frozen). There is NO amount
-        field: the server prices the parcel (fare only; the indicative insurance premium is never
-        charged at booking), freezes the quote, and asks Paystack for exactly that amount.
+        field: the server prices the parcel, freezes the quote, and asks Paystack for exactly that
+        amount. Without `insure` (or with FEATURE_PARCEL_PREPAID_INSURANCE off) the amount is the fare
+        only. With `insure: true` the amount is fare + the estimate's premium (`insuranceKobo`), both
+        frozen at initiate, so a later rate change cannot alter what this checkout charges. The insured
+        checkout is refused BEFORE anything is quoted or stored when cover is impossible: 422
+        INSURANCE_DECLARED_VALUE_REQUIRED, INSURANCE_UNAVAILABLE or INSURANCE_PROFILE_INCOMPLETE (same
+        meaning as on POST /mobility/parcels). On confirmation the verified charge is split: the fare
+        is escrowed for the courier exactly as without insurance; the premium is held apart (never in
+        the courier settlement) until the cover binds at courier accept. If cover cannot be bound, or
+        the parcel is cancelled (before or after the bind), the premium is refunded TO THE CARD, never
+        to the wallet; a cancel refunds the fare to the card separately. Each card refund is for its
+        own exact amount, and the refunds of one charge never add up to more than was collected.
         Idempotency-Key is REQUIRED as a header (8-100 chars of A-Z a-z 0-9 . _ = -). Replaying a key
         with the same request returns the same reference (and the stored authorization URL while
         unpaid; the terminal status once processed); the same key with a different request or
@@ -758,13 +1057,13 @@ paths:
                       reference: { type: string, description: 'parcelorder-<Idempotency-Key>' }
                       authorizationUrl: { type: string, description: Empty when status is not pending }
                       accessCode: { type: string }
-                      amountKobo: { type: integer, format: int64, description: Server-quoted amount in kobo }
+                      amountKobo: { type: integer, format: int64, description: 'Server-quoted amount in kobo: the fare, or fare + insurance premium when `insure` is true' }
                       status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
         '400': { description: 'invalid_input, idempotency_key_required or invalid_idempotency_key' }
         '401': { description: Not authenticated }
         '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
         '409': { description: 'idempotency_conflict, or authorization_unavailable (the checkout URL was never persisted and Paystack will not initialize the reference twice: start a new checkout; a payment already made still confirms automatically)' }
-        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored.; or Prohibited-items acknowledgement missing (PROHIBITED_ACK_REQUIRED)" }
+        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored.; or Prohibited-items acknowledgement missing (PROHIBITED_ACK_REQUIRED); or, with `insure: true`, INSURANCE_DECLARED_VALUE_REQUIRED / INSURANCE_UNAVAILABLE / INSURANCE_PROFILE_INCOMPLETE (body `missing` lists the profile fields). Nothing is quoted or stored." }
         '429': { description: Per-user rate limit on checkout creation (rate_limited) }
   /mobility/parcels/paystack/{reference}/status:
     get:
@@ -779,6 +1078,11 @@ paths:
         accepted the refund, `refunding` means a refund is in flight (outcome being verified with the
         gateway), `amount_mismatch`/`order_failed` mean the gateway definitively did not refund yet
         and the reconciler is retrying. Always safe to poll; a `refunded` status never reverts.
+        With `insure`, confirmation books only when the verified amount equals the frozen fare +
+        premium; it escrows the fare and holds the premium as two separate ledger postings keyed off
+        this reference, so a replayed webhook or poll never holds the premium twice. A confirmed
+        insured parcel whose premium or fare is later refunded to the card stays `confirmed` here (each
+        refund is a separate piece of the charge); it becomes `refunded` once the whole charge is back.
       parameters:
         - { name: reference, in: path, required: true, schema: { type: string } }
       responses:
@@ -795,7 +1099,7 @@ paths:
                     properties:
                       reference: { type: string }
                       status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
-                      amountKobo: { type: integer, format: int64 }
+                      amountKobo: { type: integer, format: int64, description: 'Amount collected: the fare, or fare + insurance premium' }
                       parcelId: { type: string, format: uuid, description: Present once confirmed }
         '401': { description: Not authenticated }
         '404': { description: 'unknown_reference (also returned for a reference that is not yours)' }
@@ -803,7 +1107,30 @@ paths:
     get:
       tags: [parcel]
       summary: Courier — list parcel requests
-      responses: { '200': { description: Requests }, '401': { description: Not authenticated } }
+      responses: { '200': { description: Requests, content: { application/json: { schema: { type: object, properties: { requests: { type: array, items: { $ref: '#/components/schemas/ParcelRequest' } } } } } } }, '401': { description: Not authenticated }, '403': { description: Not an approved driver } }
+  /driver/parcels:
+    get:
+      tags: [parcel]
+      summary: Courier — my parcels (assigned and past) with what each paid me
+      description: >
+        Newest first, at most 100. `totals.earnedKobo` sums the settled provider legs of delivered
+        parcels, so it is what actually reached the courier's wallet.
+      responses:
+        '200':
+          description: History
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  parcels: { type: array, items: { $ref: '#/components/schemas/CourierParcel' } }
+                  totals:
+                    type: object
+                    properties:
+                      delivered: { type: integer }
+                      earnedKobo: { $ref: '#/components/schemas/Money' }
+        '401': { description: Not authenticated }
+        '403': { description: Not an approved driver }
   /driver/parcels/{id}/accept:
     post:
       tags: [parcel]
@@ -812,17 +1139,23 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated } }
+      responses: { '200': { description: 'Parcel (no PINs)', content: { application/json: { schema: { $ref: '#/components/schemas/ParcelDetail' } } } }, '401': { description: Not authenticated }, '409': { description: 'INVALID_STATE - already taken or not open' } }
   /driver/parcels/{id}/verify-pickup-pin:
     post:
       tags: [parcel]
       summary: Courier — verify the sender's pickup PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/parcels/{id}/picked-up:
     post:
       tags: [parcel]
       summary: Courier — mark parcel picked up
+      description: >
+        Moves the parcel to in_transit. With FEATURE_PARCEL_RECEIVER_PIN_SMS on and SMS configured, the
+        receiver (receiver_phone) is then sent ONE SMS carrying the drop-off PIN. It goes out at most once
+        per parcel, however often this is retried. It is best-effort: a failed send never fails or delays
+        this call, and the parcel's receiverNotifiedAt stays null. The PIN is never written to logs or
+        audit records.
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: Parcel }, '401': { description: Not authenticated } }
   /driver/parcels/{id}/verify-dropoff:
@@ -830,7 +1163,17 @@ paths:
       tags: [parcel]
       summary: Courier — verify the receiver's dropoff PIN (settles on delivery)
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin: { type: string }
+                proof_url: { type: string, description: 'Proof-of-delivery photo URL. Missing or empty = 422 PROOF_REQUIRED' }
+      responses: { '200': { description: 'Delivered: { ok, status }' }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH (wrong PIN; body attempts_before_cooldown) or PROOF_REQUIRED (no proof_url — checked first, and never counts as a PIN guess)' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
 
   # ═══════════════════════════════════════════════════════════════════════════
   # BUS BOOKING   [FeatureTransportModesEnabled]
@@ -1105,7 +1448,7 @@ paths:
       tags: [towing]
       summary: Operator — verify the customer's PIN
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Job }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+      responses: { '200': { description: Job }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/towing/{id}/start:
     post:
       tags: [towing]
@@ -1418,7 +1761,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '200': { description: Delivery }, '401': { description: Not authenticated } }
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated }, '422': { description: 'PIN_MISMATCH — wrong PIN; body attempts_before_cooldown' }, '429': { description: 'PIN_LOCKED — 5 wrong PINs: cooldown (15 min), even the right PIN is refused; body retry_after_s' }, '423': { description: 'PIN_LOCKED — 15 wrong PINs: locked until support clears it' } }
   /driver/business/{id}/fail:
     post:
       tags: [business-logistics]

@@ -22,7 +22,9 @@ export default function Complete() {
   }, []);
 
   const goDiscover = () => router.replace('/connect/discover');
-  const goProfile = () => router.replace('/connect/mehub');
+  // Land on the real Me hub (the tab, with the bottom nav). `/connect/mehub` was
+  // an orphan, nav-less duplicate that nothing else links to.
+  const goProfile = () => router.replace('/connect/me');
   const failedPhotos = complete.data?.photoUploadFailures ?? 0;
 
   return (

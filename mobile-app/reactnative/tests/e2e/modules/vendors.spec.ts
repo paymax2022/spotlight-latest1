@@ -3,7 +3,8 @@ import { loginAs } from '../helpers/auth';
 import { mockAmbientRequests } from '../helpers/common';
 
 /**
- * Estate vendors hub. EXPO_PUBLIC_VENDORS_USE_MOCK defaults true, so the
+ * Estate vendors hub. EXPO_PUBLIC_VENDORS_USE_MOCK is pinned true in
+ * playwright.config.ts, so the
  * directory (Chukwu Plumbing Works, BrightSpark Electricals, …) and job list
  * come from the in-memory fixtures in vendors/api.ts — no endpoint stubs
  * needed, and /vendors has no registry gate.

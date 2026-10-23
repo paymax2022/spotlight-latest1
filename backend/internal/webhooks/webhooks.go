@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"spotlight/backend/go-common/httperr"
-	mapleraddomain "spotlight/backend/internal/finance/maplerad"
 	"spotlight/backend/internal/finance/transfers"
 	"spotlight/backend/internal/finance/va"
 	"spotlight/backend/internal/finance/wallet"
@@ -19,59 +19,6 @@ import (
 )
 
 const keyError = "error"
-
-// MapleradHandler is the single hardened Maplerad webhook endpoint (ADR-012
-// settlement backbone). Pipeline: read raw body → verify signature → parse →
-// dedupe + dispatch (in the domain service) → ACK fast. Deterministic failures
-// always return 200 so Maplerad stops retrying; the dedupe insert makes every
-// redelivery a no-op and the ledger effect is idempotent.
-type MapleradHandler struct {
-	verifier provider.DisbursementProvider // signature verify + parse (the maplerad.Client)
-	svc      *mapleraddomain.Service
-}
-
-// NewMapleradHandler builds the Maplerad webhook handler. verifier MUST be the
-// Maplerad gateway client (it owns VerifyWebhookSignature + ParseWebhook).
-func NewMapleradHandler(verifier provider.DisbursementProvider, svc *mapleraddomain.Service) *MapleradHandler {
-	return &MapleradHandler{verifier: verifier, svc: svc}
-}
-
-// Handle handles POST /api/webhooks/maplerad/go (unauthenticated; body-signed).
-func (h *MapleradHandler) Handle(c *gin.Context) {
-	body, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.Status(http.StatusBadRequest)
-		return
-	}
-	// Maplerad signs the raw body; the signature rides in this header.
-	sig := c.GetHeader("maplerad-signature")
-	if sig == "" {
-		sig = c.GetHeader("x-maplerad-signature")
-	}
-	if !h.verifier.VerifyWebhookSignature(body, sig) {
-		c.Status(http.StatusUnauthorized)
-		return
-	}
-	ev, err := h.verifier.ParseWebhook(body)
-	if err != nil {
-		c.Status(http.StatusBadRequest)
-		return
-	}
-
-	// ACK fast: dedupe + dispatch is light (dedupe insert is one row; the ledger
-	// effect is idempotent). Bound the work so a slow DB never holds the provider
-	// connection past its window.
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
-
-	if err := h.svc.HandleWebhookEvent(ctx, ev); err != nil {
-		// Deterministic processing failure → still 200 so Maplerad stops retrying;
-		// the event is recorded in webhook_event with status=failed for follow-up.
-		c.JSON(http.StatusOK, gin.H{"ok": false, keyError: httperr.Msg(c, http.StatusOK, err)})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
 
 // MonnifyHandler dispatches inbound Monnify webhooks (disbursement + collection)
 // to the transfers settlement path. Signature is verified against the configured
@@ -173,6 +120,25 @@ type RestaurantOrderConfirmer interface {
 // Paystack rejects a ":" in a transaction reference.
 const RestaurantOrderReferencePrefix = "foodorder-"
 
+// FoodChargebackEvent is a normalized Paystack dispute/refund event for a
+// "foodorder-" reference (FOOD-UAT-H-004). Mirrors restaurant.ChargebackEvent;
+// declared here so webhooks does not import restaurant.
+type FoodChargebackEvent struct {
+	Kind            string // "dispute" | "refund"
+	ProviderEventID string
+	Reference       string
+	AmountKobo      int64
+	Resolved        bool
+	Resolution      string
+}
+
+// FoodChargebackHandler reverses/records a food-order chargeback. Impl is an
+// adapter over restaurant.Service.HandleChargeback, injected via
+// SetFoodChargebackHandler; nil ⇒ no-op (same seam contract as the confirmers).
+type FoodChargebackHandler interface {
+	HandleFoodChargeback(ctx context.Context, ev FoodChargebackEvent) error
+}
+
 // RideOrderConfirmer is the confirm-and-book entry point for Paystack-funded
 // ride-hailing checkouts ("rideorder:" prefix). Impl is
 // *transport/paystackcheckout.Service.OnChargeSuccess; same seam contract as
@@ -223,7 +189,12 @@ type PaystackHandler struct {
 	restaurantConfirmer RestaurantOrderConfirmer // optional; nil ⇒ restaurant Paystack checkout off (no-op)
 	rideConfirmer       RideOrderConfirmer       // optional; nil ⇒ transport Paystack checkout off (no-op)
 	duesConfirmer       DuesOrderConfirmer       // optional; nil ⇒ estate dues Paystack checkout off (no-op)
+	foodChargebacks     FoodChargebackHandler    // optional; nil ⇒ food chargeback ingestion off (logged)
 }
+
+// SetFoodChargebackHandler injects the food-order chargeback handler; called
+// alongside SetRestaurantOrderConfirmer.
+func (h *PaystackHandler) SetFoodChargebackHandler(c FoodChargebackHandler) { h.foodChargebacks = c }
 
 func NewPaystackHandler(payment provider.PaymentProvider, vaSvc *va.Service, xferSvc *transfers.Service, walletSvc *wallet.Service) *PaystackHandler {
 	return &PaystackHandler{payment: payment, vaSvc: vaSvc, xferSvc: xferSvc, walletSvc: walletSvc}
@@ -303,6 +274,8 @@ func (h *PaystackHandler) Handle(c *gin.Context) {
 		dispatchErr = h.handleTransferUpdate(ctx, event.Data, "failed")
 	case "transfer.reversed":
 		dispatchErr = h.handleTransferUpdate(ctx, event.Data, "reversed")
+	case "charge.dispute.create", "charge.dispute.resolve", "refund.processed":
+		dispatchErr = h.handleDisputeOrRefund(ctx, event.Event, event.Data)
 	}
 	// Errors are logged but we always return 200 to stop Paystack retrying
 	// for deterministic failures (e.g. unknown reference).
@@ -311,6 +284,55 @@ func (h *PaystackHandler) Handle(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// disputeData covers charge.dispute.create / charge.dispute.resolve (nested
+// transaction) and refund.processed (flat transaction_reference).
+type disputeData struct {
+	ID          json.Number `json:"id"`
+	Amount      int64       `json:"amount"`
+	Resolution  string      `json:"resolution"`
+	Transaction struct {
+		Reference string `json:"reference"`
+		Amount    int64  `json:"amount"`
+	} `json:"transaction"`
+	TransactionReference string `json:"transaction_reference"`
+}
+
+// handleDisputeOrRefund routes dispute/refund events. Only "foodorder-"
+// references are acted on; every other module's references are logged and
+// ignored so this can never disturb voting/crypto/wallet flows.
+func (h *PaystackHandler) handleDisputeOrRefund(ctx context.Context, eventName string, data json.RawMessage) error {
+	var d disputeData
+	if err := json.Unmarshal(data, &d); err != nil {
+		return fmt.Errorf("paystack webhook: unmarshal %s: %w", eventName, err)
+	}
+	ref := d.Transaction.Reference
+	amount := d.Transaction.Amount
+	if eventName == "refund.processed" {
+		ref, amount = d.TransactionReference, d.Amount
+	}
+	if !strings.HasPrefix(ref, RestaurantOrderReferencePrefix) {
+		log.Printf("[paystack-webhook] %s for non-food reference %q ignored", eventName, ref)
+		return nil
+	}
+	if h.foodChargebacks == nil {
+		log.Printf("[paystack-webhook] %s for %s received but food chargeback handler not wired — NOT reversed", eventName, ref)
+		return nil
+	}
+	ev := FoodChargebackEvent{
+		Kind:            "dispute",
+		ProviderEventID: d.ID.String(),
+		Reference:       ref,
+		AmountKobo:      amount,
+		Resolved:        eventName == "charge.dispute.resolve",
+		Resolution:      d.Resolution,
+	}
+	if eventName == "refund.processed" {
+		ev.Kind = "refund"
+	}
+	log.Printf("[paystack-webhook] dispatching %s id=%s ref=%s to food chargeback handler", eventName, ev.ProviderEventID, ref)
+	return h.foodChargebacks.HandleFoodChargeback(ctx, ev)
 }
 
 func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.RawMessage) error {

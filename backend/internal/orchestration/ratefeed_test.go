@@ -142,7 +142,7 @@ func TestServiceBlocksStaleRateQuote(t *testing.T) {
 	feed := NewRateFeed(RateFeedConfig{TTL: 30 * time.Second, MaxDeviationPct: 50})
 	_, _ = feed.Publish("USD", "NGN", 1598.20, clock)
 	svc := NewService(
-		[]Provider{stubProvider{name: "eversend"}, stubProvider{name: "maplerad"}},
+		[]Provider{stubProvider{name: "eversend"}, stubProvider{name: "partner"}},
 		store,
 		Options{Now: func() time.Time { return clock }, Rates: feed},
 	)

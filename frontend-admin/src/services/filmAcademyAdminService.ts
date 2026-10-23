@@ -392,3 +392,159 @@ export async function updateInterestArea(input: Partial<AcademyInterestArea> & {
     method: 'PUT', body: JSON.stringify(input),
   })).area;
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// ASSESSMENT slice (PRD BK-06/07 + BK-10): question bank, SME review, exams.
+// These drive /api/admin/academy/questions* and /api/admin/academy/exams*.
+// Import commits DRAFTS only; approve (scores:manage) is the sole path that makes
+// a question exam-eligible; publish preflights that the approved pool covers the
+// exam's draw. Nothing here is reachable without FEATURE_FILM_ACADEMY_ASSESSMENT.
+// ────────────────────────────────────────────────────────────────────────────
+
+export type FilmQuestionOption = { id: string; text: string };
+export type FilmQuestionAnswer = { correct: string[]; explanation?: string | null };
+
+export type FilmQuestion = {
+  id: string;
+  external_code: string | null;
+  film_stage: string | null;
+  film_module_code: string | null;
+  film_department: string | null;
+  film_learning_outcome: string | null;
+  film_cognitive: string | null;
+  film_difficulty: string | null;
+  film_points: number | string | null;
+  source_version: string | null;
+  status: string;
+  stem: string;
+  options: FilmQuestionOption[];
+  answer: FilmQuestionAnswer;
+};
+
+export type FilmReview = {
+  id: string;
+  reviewer_id: string | null;
+  decision: string;
+  note: string;
+  from_status: string | null;
+  to_status: string | null;
+  created_at: string;
+};
+
+export type FilmImportRowProblem = { row: number; externalCode?: string; message: string };
+
+export type FilmImportPreview = {
+  batchId: string;
+  totals: { rows: number; accepted: number; rejected: number; warned: number };
+  rejected: FilmImportRowProblem[];
+  warned: FilmImportRowProblem[];
+};
+
+export type FilmImportCommit = {
+  batchId: string;
+  committed: { inserted: number; updated: number; unchanged: number; locked: number; batchId: string | null };
+  rejected: FilmImportRowProblem[];
+};
+
+export async function previewQuestionImport(filename: string, csv: string): Promise<FilmImportPreview> {
+  const r = await call<FilmImportPreview>(`${B}/questions/import-preview`, {
+    method: 'POST', body: JSON.stringify({ filename, csv }),
+  });
+  return {
+    batchId: r.batchId,
+    totals: r.totals ?? { rows: 0, accepted: 0, rejected: 0, warned: 0 },
+    rejected: r.rejected ?? [],
+    warned: r.warned ?? [],
+  };
+}
+
+export async function commitQuestionImport(filename: string, csv: string): Promise<FilmImportCommit> {
+  const r = await call<FilmImportCommit>(`${B}/questions/import-commit`, {
+    method: 'POST', body: JSON.stringify({ filename, csv }),
+  });
+  return {
+    batchId: r.batchId,
+    committed: r.committed ?? { inserted: 0, updated: 0, unchanged: 0, locked: 0, batchId: null },
+    rejected: r.rejected ?? [],
+  };
+}
+
+export async function listQuestions(filter?: {
+  status?: string; stage?: string; moduleCode?: string; q?: string; page?: number; pageSize?: number;
+}): Promise<{ questions: FilmQuestion[]; total: number; page: number; pageSize: number; hasMore: boolean }> {
+  const qs = new URLSearchParams();
+  if (filter?.status) qs.set('status', filter.status);
+  if (filter?.stage) qs.set('stage', filter.stage);
+  if (filter?.moduleCode) qs.set('moduleCode', filter.moduleCode);
+  if (filter?.q) qs.set('q', filter.q);
+  if (filter?.page) qs.set('page', String(filter.page));
+  if (filter?.pageSize) qs.set('pageSize', String(filter.pageSize));
+  const suffix = qs.toString() ? `?${qs}` : '';
+  const r = await call<{ questions?: FilmQuestion[]; total?: number; page?: number; pageSize?: number; hasMore?: boolean }>(
+    `${B}/questions${suffix}`,
+  );
+  return {
+    questions: r.questions ?? [], total: r.total ?? 0, page: r.page ?? 1,
+    pageSize: r.pageSize ?? 25, hasMore: r.hasMore ?? false,
+  };
+}
+
+export async function getQuestion(id: string): Promise<{ question: FilmQuestion; reviews: FilmReview[] }> {
+  return await call<{ question: FilmQuestion; reviews: FilmReview[] }>(`${B}/questions/${encodeURIComponent(id)}`);
+}
+
+export async function editQuestion(input: {
+  id: string; stem?: string; options?: FilmQuestionOption[];
+  correctOptionIds?: string[]; explanation?: string; points?: number;
+  filmStage?: string; filmModuleCode?: string;
+}): Promise<void> {
+  await call(`${B}/questions`, { method: 'PATCH', body: JSON.stringify(input) });
+}
+
+export async function reviewQuestion(id: string, decision: string, note: string): Promise<string | undefined> {
+  const r = await call<{ status?: string }>(`${B}/questions/${encodeURIComponent(id)}/review`, {
+    method: 'POST', body: JSON.stringify({ decision, note }),
+  });
+  return r.status;
+}
+
+export type FilmExam = {
+  id: string;
+  program_id: string;
+  title: string;
+  description: string | null;
+  kind: string;
+  pass_mark: number;
+  time_limit_minutes: number;
+  max_attempts: number;
+  is_published: boolean;
+  draw_stage: string | null;
+  draw_module_codes: string[] | null;
+  draw_count: number | null;
+};
+
+export async function listExams(programId?: string): Promise<FilmExam[]> {
+  const suffix = programId ? `?programId=${encodeURIComponent(programId)}` : '';
+  return (await call<{ exams?: FilmExam[] }>(`${B}/exams${suffix}`)).exams ?? [];
+}
+
+export async function createExam(input: Partial<FilmExam> & { program_id: string; title: string }): Promise<FilmExam> {
+  const r = await call<{ exam: FilmExam }>(`${B}/exams`, { method: 'POST', body: JSON.stringify(input) });
+  return r.exam;
+}
+
+export async function updateExam(id: string, input: Partial<FilmExam>): Promise<FilmExam> {
+  const r = await call<{ exam: FilmExam }>(`${B}/exams/${encodeURIComponent(id)}`, {
+    method: 'PATCH', body: JSON.stringify(input),
+  });
+  return r.exam;
+}
+
+/** Publish runs the pool preflight on the server; a shortfall throws with the reason. */
+export async function publishExam(id: string): Promise<void> {
+  await call(`${B}/exams/${encodeURIComponent(id)}/publish`, { method: 'POST', body: JSON.stringify({ action: 'publish' }) });
+}
+
+export async function unpublishExam(id: string): Promise<void> {
+  await call(`${B}/exams/${encodeURIComponent(id)}/publish`, { method: 'POST', body: JSON.stringify({ action: 'unpublish' }) });
+}

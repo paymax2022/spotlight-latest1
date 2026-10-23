@@ -180,7 +180,7 @@ type VirtualAccount struct {
 	Type       string `json:"type"` // virtual_account | iban
 	Provider   string `json:"provider"`
 	Status     string `json:"status"`
-	// ProviderRef is the provider's own handle for this account (Maplerad: the
+	// ProviderRef is the provider's own handle for this account (e.g. the
 	// virtual account number). It is the join key that matches an inbound
 	// collection webhook back to this customer and currency — must be persisted;
 	// `details->>'account_number'` is a jsonb key, not a join key.

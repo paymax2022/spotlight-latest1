@@ -36,6 +36,29 @@ export async function mockAmbientRequests(page: Page) {
       body: JSON.stringify({ data: { beneficiaries: [] } }),
     });
   });
+
+  // Home-grid ambient queries. These are fired by home widgets and MUST NOT
+  // 401 against a seeded fake session — the axios 401 interceptor signs the
+  // user out, which kills the screen under test mid-flow (observed as the
+  // home grid rendering, then the test timing out when a trailing 401 bounces
+  // the SPA to /login). Mock them to empty-but-200 to stay inert.
+  for (const url of [
+    '**/api/finance/events/my/tickets**',
+    '**/api/finance/events**',
+    '**/api/v1/landing/placements**',
+    '**/api/media/banners/**',
+    '**/api/v1/wallet/balance**',
+    '**/rest/v1/utility_transactions**',
+  ]) {
+    await page.route(url, async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: [], items: [], events: [], placements: [], tickets: [], balance: 0 }),
+      });
+    });
+  }
 }
 
 /**

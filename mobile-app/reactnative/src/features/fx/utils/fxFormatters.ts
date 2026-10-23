@@ -166,10 +166,10 @@ export function midRate(from: CurrencyCode, to: CurrencyCode): number {
 }
 
 function chooseRoute(from: CurrencyCode, to: CurrencyCode, rail: Rail): { route: QuoteRoute; alt: QuoteRoute } {
-  // Default routing bias (spec §3): FX/USD-EUR inbound → eversend; NGN/Francophone/issuing → maplerad.
+  // Default routing bias (spec §3): FX/USD-EUR inbound → eversend; NGN/Francophone → vertofx.
   const eversendBias = to === 'USD' || to === 'EUR' || from === 'USD' || from === 'EUR';
-  const primary = eversendBias ? 'eversend' : 'maplerad';
-  const secondary = eversendBias ? 'maplerad' : 'eversend';
+  const primary = eversendBias ? 'eversend' : 'vertofx';
+  const secondary = eversendBias ? 'vertofx' : 'eversend';
   const corridor = `${from}-${to}`;
   return {
     route: { provider: primary, corridor, rail },

@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Plus, Users, Tag, Percent, ScanLine, ChevronRight, Pencil, Copy, Pause, Play, XCircle, UserCog } from 'lucide-react-native';
@@ -9,6 +9,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
+import { alertAsync, confirmAsync } from '@/lib/confirm';
 import StateView from '@/components/StateView';
 import {
   useOrganiserEvents, useDuplicateEvent, usePauseEvent, useResumeEvent, useCancelEvent,
@@ -132,7 +133,8 @@ function EventActions({ stats }: { stats: OrganiserEventStats }) {
   const state = String(e.state);
   const ended = state === 'CLOSED' || state === 'CANCELLED';
 
-  const fail = (title: string) => (err: unknown) => Alert.alert(title, lifecycleErrorMessage(err));
+  // confirm.ts helpers, not Alert.alert: Alert.alert is a no-op on react-native-web.
+  const fail = (title: string) => (err: unknown) => { void alertAsync({ title, message: lifecycleErrorMessage(err) }); };
 
   const onEdit = () => router.push({ pathname: '/events/organiser/create', params: { id: e.id } });
   const onDuplicate = () =>
@@ -142,29 +144,27 @@ function EventActions({ stats }: { stats: OrganiserEventStats }) {
     });
   const onPause = () => pause.mutate(undefined, { onError: fail('Couldn\'t pause sales') });
   const onResume = () => resume.mutate(undefined, { onError: fail('Couldn\'t resume sales') });
-  const onCancel = () => {
+  const onCancel = async () => {
     cancelKey.current = cancelKey.current ?? idempotencyKey();
     const refund = formatNaira(Math.floor((stats.gross_kobo * CANCEL_REFUND_PCT) / 100));
     const impact = stats.tickets_sold > 0
       ? `${stats.tickets_sold} ticket${stats.tickets_sold === 1 ? '' : 's'} · ${refund} refunded at ${CANCEL_REFUND_PCT}%`
       : 'No tickets have been sold, so nothing will be refunded.';
-    Alert.alert(
-      `Cancel "${e.title}"?`,
-      `${impact}\n\nThe remaining ${100 - CANCEL_REFUND_PCT}% is kept as a platform fee. This can't be undone.`,
-      [
-        { text: 'Keep event', style: 'cancel' },
-        {
-          text: 'Cancel event', style: 'destructive',
-          onPress: () => cancel.mutate(
-            { reason: 'Cancelled by organiser', idemKey: cancelKey.current as string },
-            { onSuccess: () => { cancelKey.current = null; }, onError: (err) => {
-                // A definite server answer (HTTP status) ends this intent; only a network failure keeps the key for replay.
-                if ((err as { response?: { status?: number } })?.response?.status) cancelKey.current = null;
-                fail('Couldn\'t cancel event')(err);
-              } },
-          ),
-        },
-      ],
+    const ok = await confirmAsync({
+      title: `Cancel "${e.title}"?`,
+      message: `${impact}\n\nThe remaining ${100 - CANCEL_REFUND_PCT}% is kept as a platform fee. This can't be undone.`,
+      confirmLabel: 'Cancel event',
+      cancelLabel: 'Keep event',
+      destructive: true,
+    });
+    if (!ok) return;
+    cancel.mutate(
+      { reason: 'Cancelled by organiser', idemKey: cancelKey.current as string },
+      { onSuccess: () => { cancelKey.current = null; }, onError: (err) => {
+          // A definite server answer (HTTP status) ends this intent; only a network failure keeps the key for replay.
+          if ((err as { response?: { status?: number } })?.response?.status) cancelKey.current = null;
+          fail('Couldn\'t cancel event')(err);
+        } },
     );
   };
 
