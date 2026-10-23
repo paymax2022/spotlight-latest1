@@ -125,7 +125,7 @@ export async function GET(request: Request) {
         const prevExam = examsByModuleId.get(prevMod.id);
         if (!prevExam) return true; // no quiz on previous module, not locked
         const prevAttempt = attemptsByExamId.get(prevExam.id);
-        return prevAttempt && prevAttempt.scorePercent >= 85;
+        return prevAttempt && prevAttempt.percentage >= 85;
       })();
       const isLocked = !previousModuleQuizPassed;
 
