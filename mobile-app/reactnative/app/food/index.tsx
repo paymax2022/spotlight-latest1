@@ -23,6 +23,7 @@ import { useDebouncedValue } from '@/features/food/useDebouncedValue';
 import { useDeviceCoords } from '@/features/food/useDeviceCoords';
 import { useCartStore, cartItemCount } from '@/features/food/cartStore';
 import { formatNairaWhole } from '@/features/food/utils';
+import { effectiveTaxonomyIds } from '@/features/food/taxonomyIds';
 import { DynamicIcon, TaxonomyFilters } from '@/features/food/components';
 import type { Restaurant } from '@/features/food/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
@@ -300,6 +301,13 @@ export default function FoodDiscoveryScreen() {
   const taxonomy = useTaxonomy();
   const [cuisineIds, setCuisineIds] = useState<string[]>([]);
   const [categoryIds, setCategoryIds] = useState<string[]>([]);
+  const taxonomyData = taxonomy.data ?? null;
+  // Only ids the visible taxonomy offers reach the query; a vanished taxonomy
+  // or stale id means "All". When taxonomy is present its cuisine row replaces
+  // the legacy free-text one, so the legacy selection is ignored while hidden.
+  const effCuisineIds = effectiveTaxonomyIds(cuisineIds, taxonomyData, 'cuisines');
+  const effCategoryIds = effectiveTaxonomyIds(categoryIds, taxonomyData, 'categories');
+  const legacyCuisine: Cuisine = taxonomyData ? 'all' : cuisine;
   const cartPackages = useCartStore((s) => s.packages);
   const cartCount = cartItemCount(cartPackages);
 
@@ -356,11 +364,11 @@ export default function FoodDiscoveryScreen() {
     isFetchingNextPage,
   } = useRestaurantSearch({
     q: debouncedSearch,
-    cuisine: cuisine === 'all' ? '' : cuisine,
+    cuisine: legacyCuisine === 'all' ? '' : legacyCuisine,
     minPriceKobo: priceRange.min,
     maxPriceKobo: priceRange.max,
-    cuisineIds,
-    categoryIds,
+    cuisineIds: effCuisineIds,
+    categoryIds: effCategoryIds,
     ...(nearbyParams ?? {}),
   });
 
@@ -486,15 +494,16 @@ export default function FoodDiscoveryScreen() {
         ) : null}
 
         <TaxonomyFilters
-          taxonomy={taxonomy.data ?? null}
-          cuisineIds={cuisineIds}
-          categoryIds={categoryIds}
+          taxonomy={taxonomyData}
+          cuisineIds={effCuisineIds}
+          categoryIds={effCategoryIds}
           onChange={(n) => {
             setCuisineIds(n.cuisineIds);
             setCategoryIds(n.categoryIds);
           }}
         />
 
+        {!taxonomyData ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chips} contentContainerStyle={s.chipsContent}>
           {CUISINE_FILTERS.map((f) => {
             const active = cuisine === f.key;
@@ -510,6 +519,7 @@ export default function FoodDiscoveryScreen() {
             );
           })}
         </ScrollView>
+        ) : null}
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chips} contentContainerStyle={s.chipsContent}>
           {PRICE_FILTERS.map((f) => {
@@ -533,9 +543,9 @@ export default function FoodDiscoveryScreen() {
           <Text style={s.sectionTitle}>
             {viewMeta
               ? viewMeta.label
-              : cuisine === 'all'
+              : legacyCuisine === 'all'
                 ? 'All Restaurants'
-                : CUISINE_FILTERS.find((f) => f.key === cuisine)?.label}
+                : CUISINE_FILTERS.find((f) => f.key === legacyCuisine)?.label}
           </Text>
           {!isLoading && !isError ? (
             <View style={s.sectionMetaBadge}>
