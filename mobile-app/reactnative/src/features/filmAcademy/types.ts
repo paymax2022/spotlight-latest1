@@ -146,6 +146,20 @@ export interface FilmAcademyApplicationStatus {
   plan: { id: string; total_amount_ngn: number; discounted_amount_ngn: number | null; installments_count: number } | null;
   payments: FilmAcademyInstalment[];
   actions: FilmAcademyAction[];
+  /** The interest areas the applicant chose, with the priced option they picked. */
+  areas: FilmAcademyAppliedArea[];
+  /** Naira. The total tuition for the chosen areas. */
+  tuitionTotalNgn: number;
+}
+
+/** One interest area the candidate applied for, resolved to label + chosen price. */
+export interface FilmAcademyAppliedArea {
+  slug: string;
+  label: string;
+  optionKey: string | null;
+  optionLabel: string | null;
+  /** Naira — the price of the option the applicant selected for this area. */
+  priceNgn: number;
 }
 
 /** Why the learning area is not open yet. Decided server-side. */

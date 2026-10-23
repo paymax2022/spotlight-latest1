@@ -84,6 +84,9 @@ export async function getApplicationStatus(): Promise<FilmAcademyApplicationStat
     plan: body?.plan ?? null,
     payments: body?.payments ?? [],
     actions: body?.actions ?? [],
+    // Empty on an older server — the status screen simply hides the section.
+    areas: body?.areas ?? [],
+    tuitionTotalNgn: Number(body?.tuitionTotalNgn ?? body?.application?.tuition_total_ngn ?? 0),
   };
 }
 
