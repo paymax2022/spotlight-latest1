@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Icons from 'lucide-react-native';
@@ -13,7 +13,9 @@ import { useRestaurant } from '@/features/food/hooks';
 import { useCartStore, cartItemCount, cartSubtotalKobo, MAX_SAME_FOOD_PER_PACKAGE } from '@/features/food/cartStore';
 import { packsForRestaurant } from '@/features/food/packScope';
 import { formatNaira, formatNairaWhole } from '@/features/food/utils';
-import { DynamicIcon } from '@/features/food/components';
+import { DynamicIcon, MenuSectionTabs } from '@/features/food/components';
+import { sectionsForDisplay } from '@/features/food/menuSections';
+import { activeSectionIndex } from '@/features/food/activeSection';
 import type { MenuItem, CartModifier } from '@/features/food/types';
 import ModifierSheet from '@/features/food/components/ModifierSheet';
 import { lineKeyOf } from '@/features/food/modifiers';
@@ -169,6 +171,22 @@ export default function RestaurantDetailScreen() {
     if (activeId) decrementItem(activeId, item.id);
   };
 
+  // Menu section tabs: header y offsets (content coordinates) recorded via onLayout.
+  const scrollRef = React.useRef<ScrollView>(null);
+  const sectionOffsets = React.useRef<number[]>([]);
+  const [activeSection, setActiveSection] = React.useState(0);
+  const sections = React.useMemo(() => (restaurant ? sectionsForDisplay(restaurant) : []), [restaurant]);
+  const SECTION_SLACK = 24;
+  const onMenuScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const idx = activeSectionIndex(e.nativeEvent.contentOffset.y, sectionOffsets.current, SECTION_SLACK);
+    if (idx >= 0) setActiveSection((prev) => (prev === idx ? prev : idx));
+  };
+  const onSelectSection = (i: number) => {
+    const y = sectionOffsets.current[i];
+    setActiveSection(i);
+    if (typeof y === 'number') scrollRef.current?.scrollTo({ y: Math.max(0, y - Spacing.sm), animated: true });
+  };
+
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
@@ -190,7 +208,14 @@ export default function RestaurantDetailScreen() {
         <StateView kind="error" title="Couldn't load this restaurant" actionLabel="Retry" onAction={() => refetch()} />
       ) : (
         <>
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
+          <MenuSectionTabs sections={sections} activeIndex={activeSection} onSelect={onSelectSection} />
+          <ScrollView
+            ref={scrollRef}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={s.content}
+            onScroll={onMenuScroll}
+            scrollEventThrottle={32}
+          >
             <View style={[s.header, shadow1]}>
               <View style={[s.iconBox, { backgroundColor: restaurant.iconBg }]}>
                 <DynamicIcon name={restaurant.icon} color={restaurant.iconColor} size={30} />
@@ -295,8 +320,14 @@ export default function RestaurantDetailScreen() {
               })
             )}
 
-            {restaurant.menu.map((cat) => (
-              <View key={cat.id} style={s.section}>
+            {sections.map((cat, idx) => (
+              <View
+                key={cat.id ?? `idx-${idx}`}
+                style={s.section}
+                onLayout={(e) => {
+                  sectionOffsets.current[idx] = e.nativeEvent.layout.y;
+                }}
+              >
                 <Text style={s.sectionTitle}>{cat.name}</Text>
                 {cat.items.map((item) => (
                   <MenuRow
