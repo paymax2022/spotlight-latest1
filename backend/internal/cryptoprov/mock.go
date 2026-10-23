@@ -24,6 +24,8 @@ type Mock struct {
 	swaps       map[string]Swap // keyed by swap id
 	swapByQuote map[string]string
 	withdraws   map[string]Withdrawal // keyed by Reference
+	deposits    map[string]Deposit    // keyed by Deposit.ID
+	depositIDs  []string              // insertion order, for ListDeposits
 	nextID      int
 	faults      map[string]error      // keyed by operation name, consumed once
 	accounts    map[string]AccountRef // keyed by UserRef.UserID
@@ -67,6 +69,7 @@ func NewMock(name string, now func() time.Time) *Mock {
 		swaps:       map[string]Swap{},
 		swapByQuote: map[string]string{},
 		withdraws:   map[string]Withdrawal{},
+		deposits:    map[string]Deposit{},
 		faults:      map[string]error{},
 		accounts:    map[string]AccountRef{},
 	}
@@ -83,7 +86,8 @@ func (m *Mock) SetPrice(market string, price decimal.Decimal) {
 }
 
 // FailNext makes the next call to op return err, then resumes normal behaviour.
-// op is one of: ticker, quote, confirm, getswap, withdraw, getwithdraw.
+// op is one of: ticker, quote, confirm, getswap, withdraw, getwithdraw, getdeposit,
+// listdeposits.
 func (m *Mock) FailNext(op string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -258,4 +262,61 @@ func (m *Mock) GetWithdrawal(_ context.Context, _, id string) (Withdrawal, error
 		}
 	}
 	return Withdrawal{}, ErrNotFound
+}
+
+// AddDeposit seeds an inbound transfer for an account, as the provider would report it.
+// The deposit's ID and AccountID are taken from d; a test injects the authoritative
+// amount/confirmations/status a webhook re-query should return.
+func (m *Mock) AddDeposit(d Deposit) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.deposits[d.ID]; !exists {
+		m.depositIDs = append(m.depositIDs, d.ID)
+	}
+	m.deposits[d.ID] = d
+}
+
+// ConfirmDeposit advances a seeded deposit's state, simulating the provider finalising
+// it between a webhook delivery and the re-query (or a test standing it up before one).
+func (m *Mock) ConfirmDeposit(id string, status DepositStatus, confirmations int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deposits[id]
+	if !ok {
+		return ErrNotFound
+	}
+	d.Status, d.Confirmations = status, confirmations
+	m.deposits[id] = d
+	return nil
+}
+
+// GetDeposit implements DepositProvider. It returns the provider's authoritative record,
+// which is what the service settles from — never a webhook payload.
+func (m *Mock) GetDeposit(_ context.Context, accountID, id string) (Deposit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.take("getdeposit"); err != nil {
+		return Deposit{}, err
+	}
+	d, ok := m.deposits[id]
+	if !ok || d.AccountID != accountID {
+		return Deposit{}, ErrNotFound
+	}
+	return d, nil
+}
+
+// ListDeposits implements DepositProvider, oldest seeded first, scoped to the account.
+func (m *Mock) ListDeposits(_ context.Context, accountID string) ([]Deposit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.take("listdeposits"); err != nil {
+		return nil, err
+	}
+	out := make([]Deposit, 0, len(m.depositIDs))
+	for _, id := range m.depositIDs {
+		if d := m.deposits[id]; d.AccountID == accountID {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }

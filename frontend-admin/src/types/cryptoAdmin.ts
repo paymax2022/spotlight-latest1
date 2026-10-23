@@ -252,3 +252,44 @@ export interface CryptoReconcilerBacklog {
   oldest_updated_at?: string;
   oldest_age_seconds: number;
 }
+
+// GET /admin/crypto/deposits — settled money-IN credits (backend/internal/crypto, table
+// crypto_deposits). A row exists ONLY once a transfer cleared its confirmation floor and was
+// credited exactly once, so this is a money-IN history, not an exception queue. units are integer
+// asset-minor-units; render via fmtUnits(units, minor_unit_scale, symbol).
+export interface CryptoDeposit {
+  id: string;
+  provider: string;
+  provider_op_id: string;
+  user_id: string;
+  symbol: string;
+  network: string;
+  address?: string;
+  units: number;
+  minor_unit_scale: number;
+  confirmations: number;
+  required_confs: number;
+  tx_hash?: string;
+  created_at: string;
+  credited_at: string;
+}
+
+// GET /admin/crypto/deposits/reconciler — the money-IN safety net's in-process state
+// (backend/internal/cryptosvc DepositReconciler). Counts + alert text only.
+export interface CryptoDepositReconcilerStatus {
+  success: boolean;
+  note: string;
+  replica: {
+    started_at: string;
+    runs: number;
+    led_runs: number;
+    skipped_runs: number;
+    last_run_at: string;
+    last_led_at: string;
+    last_led: boolean;
+    last_error: string;
+    last_result: { accounts: number; scanned: number; settled: number; duplicates: number; awaiting: number; ignored: number; truncated: boolean; errors: number };
+    totals: { settled: number; duplicates: number; awaiting: number; ignored: number; errors: number };
+    recent_alerts: CryptoReconcilerAlert[];
+  };
+}

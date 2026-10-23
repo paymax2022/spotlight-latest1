@@ -32,6 +32,7 @@ export function CryptoTabs({ active }: { active: string }) {
     { href: '/admin/crypto/withdrawals', label: 'Withdrawals / AML', key: 'withdrawals' },
     { href: '/admin/crypto/swaps', label: 'Swaps', key: 'swaps' },
     { href: '/admin/crypto/review', label: 'Review queue', key: 'review' },
+    { href: '/admin/crypto/deposits', label: 'Deposits', key: 'deposits' },
     { href: '/admin/crypto/reconciler', label: 'Swap reconciler', key: 'reconciler' },
     { href: '/admin/crypto/fees', label: 'Fees', key: 'fees' },
     { href: '/admin/crypto/addresses', label: 'Address review', key: 'addresses' },

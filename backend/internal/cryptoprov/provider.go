@@ -65,6 +65,16 @@ type WithdrawalProvider interface {
 	GetWithdrawal(ctx context.Context, accountID, id string) (Withdrawal, error)
 }
 
+// DepositProvider reads inbound (money-IN) transfers for an account. A deposit webhook
+// only NAMES a transfer; GetDeposit is the authoritative re-query whose confirmation
+// count, amount and status the service settles from — never the payload. ListDeposits
+// backs the deposit reconciler (a later slice) that catches transfers whose webhook was
+// lost or delivered under-confirmed.
+type DepositProvider interface {
+	GetDeposit(ctx context.Context, accountID, depositID string) (Deposit, error)
+	ListDeposits(ctx context.Context, accountID string) ([]Deposit, error)
+}
+
 // WebhookProvider authenticates and parses inbound provider events.
 type WebhookProvider interface {
 	VerifyWebhook(headers map[string]string, body []byte) error
@@ -172,11 +182,43 @@ const (
 	WithdrawalRejected   WithdrawalStatus = "rejected"
 )
 
+// Deposit is one inbound transfer as the provider authoritatively reports it. Amount is
+// in WHOLE asset units (a decimal string on the wire) because the per-asset minor-unit
+// scale lives on our side, not the provider's; converting Amount to integer minor units
+// is the deposit service's job once it has resolved the asset. ID is the provider's
+// deposit operation id — the idempotency anchor the journal keys on.
+type Deposit struct {
+	ID            string
+	AccountID     string
+	Currency      string
+	Network       string
+	Address       string
+	Amount        decimal.Decimal
+	Confirmations int
+	Status        DepositStatus
+	TxHash        string
+}
+
+// DepositStatus is the provider-side state of an inbound transfer.
+type DepositStatus string
+
+const (
+	DepositPending   DepositStatus = "pending"
+	DepositConfirmed DepositStatus = "confirmed"
+	DepositReorged   DepositStatus = "reorged"
+	DepositFailed    DepositStatus = "failed"
+)
+
 // Event is a parsed webhook. Key is the provider's stable dedupe key.
 type Event struct {
 	Key  string
 	Type string
 	Ref  string
+	// Account is the provider sub-account the event concerns, when the payload carries
+	// it. It is used only to LOCATE the authoritative re-query for deposit events (a
+	// deposit has no prior local row to look up, unlike a swap); it is never trusted for
+	// value or as the credit recipient. Empty for events that do not carry it.
+	Account string
 	// Raw is the original data object. It is for diagnostics and re-query hints only:
 	// the service must re-read the provider for the authoritative state and never
 	// release value on a webhook payload alone.
