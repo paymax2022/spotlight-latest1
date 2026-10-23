@@ -146,20 +146,6 @@ export interface FilmAcademyApplicationStatus {
   plan: { id: string; total_amount_ngn: number; discounted_amount_ngn: number | null; installments_count: number } | null;
   payments: FilmAcademyInstalment[];
   actions: FilmAcademyAction[];
-  /** The interest areas the applicant chose, with the priced option they picked. */
-  areas: FilmAcademyAppliedArea[];
-  /** Naira. The total tuition for the chosen areas. */
-  tuitionTotalNgn: number;
-}
-
-/** One interest area the candidate applied for, resolved to label + chosen price. */
-export interface FilmAcademyAppliedArea {
-  slug: string;
-  label: string;
-  optionKey: string | null;
-  optionLabel: string | null;
-  /** Naira — the price of the option the applicant selected for this area. */
-  priceNgn: number;
 }
 
 /** Why the learning area is not open yet. Decided server-side. */
@@ -184,12 +170,27 @@ export interface FilmAcademyLesson {
   completed_at: string | null;
 }
 
+export interface FilmAcademyModuleQuiz {
+  id: string;
+  title: string;
+  passMark: number; /** 85 for module quizzes */
+  timeLimitMinutes: number;
+  maxAttempts: number;
+  canStart: boolean;
+  /** Null = not attempted, else the learner's last result (scorePercent >= 85 = passed) */
+  lastResult: { scorePercent: number; passed: boolean; earnedPoints: number; maxPoints: number } | null;
+}
+
 export interface FilmAcademyModule {
   id: string;
   title: string;
   description: string | null;
   lessons: FilmAcademyLesson[];
   completedCount: number;
+  /** Module-level quiz (tiered learning: 85% required to unlock next module) */
+  quiz?: FilmAcademyModuleQuiz;
+  /** True if this module is locked (previous module's quiz not passed at 85%) */
+  isLocked?: boolean;
 }
 
 export interface FilmAcademyCurriculum {
