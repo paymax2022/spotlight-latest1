@@ -590,13 +590,13 @@ paths:
           required: false
           explode: true
           schema: { type: array, items: { type: string, format: uuid } }
-          description: 'Repeatable cuisine taxonomy id; keeps restaurants tagged with any of them. Honoured only when the menu taxonomy flag is on.'
+          description: 'Repeatable cuisine taxonomy id; keeps restaurants tagged with any of them. Honoured regardless of the menu taxonomy flag (only the cuisines and sections response fields and the taxonomy read routes are flag-gated).'
         - name: category_id
           in: query
           required: false
           explode: true
           schema: { type: array, items: { type: string, format: uuid } }
-          description: 'Repeatable menu category taxonomy id; keeps restaurants that sell an item in any of them. Honoured only when the menu taxonomy flag is on.'
+          description: 'Repeatable menu category taxonomy id; keeps restaurants that sell an item in any of them. Honoured regardless of the menu taxonomy flag (only the cuisines and sections response fields and the taxonomy read routes are flag-gated).'
       responses:
         '200':
           description: One page of open restaurants
