@@ -276,7 +276,7 @@ func TestFollowAndGetOrganiser_RejectBeforeDB(t *testing.T) {
 // list display_name, bio and updated_at, never banner_url. The live half is in
 // migration_live_db_test.go (has_column_privilege).
 func TestMigrationEventsSocial_NoBannerGrantToAuthenticated(t *testing.T) {
-	b, err := os.ReadFile("../../../supabase/migrations/20271045000000_events_social.sql")
+	b, err := os.ReadFile("../../../supabase/migrations/20271094000000_events_social.sql")
 	if err != nil {
 		t.Fatalf("read migration: %v", err)
 	}

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Feature flags: backend `FEATURE_EVENTS_SOCIAL`, mobile `EXPO_PUBLIC_EVENTS_SOCIAL`. Mobile defaults to off unless the value is exactly `true`.
-- Migrations are additive only: no DROP, no rename, no type narrowing. Provisional version `20271045000000`, one above the current `origin/main` head `20271043000000`. Re-run `scripts/ci/check-migration-versions.sh` immediately before merging.
+- Migrations are additive only: no DROP, no rename, no type narrowing. Provisional version `20271094000000`, one above the current `origin/main` head `20271043000000`. Re-run `scripts/ci/check-migration-versions.sh` immediately before merging.
 - Contract first: `contracts/openapi.yaml` changes merge before any handler code.
 - Likes and follows move no money: no ledger posting and no `Idempotency-Key` requirement. Both endpoints are still idempotent by construction (primary keys).
 - ADR: the decision to store counters on the rows gets `docs/adr/ADR-PR<pr-number>-events-social.md`. Never choose the ADR number yourself; cite `ADR-PR<pr-number>` in every reference.
@@ -63,7 +63,7 @@
 ### Task 2: Migration
 
 **Files:**
-- Create: `supabase/migrations/20271045000000_events_social.sql`
+- Create: `supabase/migrations/20271094000000_events_social.sql`
 
 **Interfaces:**
 - Produces: tables `event_likes(event_id, user_id)`, `organiser_follows(organiser_id, follower_id)`, `organiser_profiles(organiser_id PK, display_name, bio, banner_url, follower_count)`. Columns on `events`: `banner_url`, `venue_lat`, `venue_lng`, `venue_place_id`, `like_count`.

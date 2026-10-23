@@ -17,7 +17,7 @@ Events need likes and organiser follows, with counts on the event and organiser 
 
 - Reads are one row per event or organiser, with no `count(*)` on the hot path.
 - Direct PostgREST inserts into `event_likes` and `organiser_follows` are allowed by RLS. They bypass the counter update, so a counter can drift from its rows. A reconciliation query is the follow-up, and it is not in this PR.
-- `FEATURE_EVENTS_SOCIAL` must not be enabled before the migration `20271045000000_events_social.sql` is applied in that environment.
+- `FEATURE_EVENTS_SOCIAL` must not be enabled before the migration `20271094000000_events_social.sql` is applied in that environment.
 
 ## Alternatives considered
 

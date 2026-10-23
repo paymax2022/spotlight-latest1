@@ -74,7 +74,7 @@ type Service struct {
 	// socialReads turns on the events-social read and write columns (banner_url,
 	// venue_lat, venue_lng, venue_place_id, like_count and the event_likes join).
 	// Off by default; only the FEATURE_EVENTS_SOCIAL block in app wiring sets it,
-	// so a database without migration 20271045000000 keeps the original queries.
+	// so a database without migration 20271094000000 keeps the original queries.
 	socialReads bool
 }
 
@@ -88,7 +88,7 @@ func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = 
 
 // EnableSocialReads switches event reads and writes to the events-social column
 // set. Call it only when FEATURE_EVENTS_SOCIAL is on: the columns exist only once
-// migration 20271045000000 is applied. Returns s for chaining.
+// migration 20271094000000 is applied. Returns s for chaining.
 func (s *Service) EnableSocialReads() *Service {
 	s.socialReads = true
 	return s
@@ -144,7 +144,7 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	const ins = `
 		INSERT INTO events (id, organizer_id, organiser_id, title, description, venue, state, category, starts_at, ends_at, fee_bps)
 		VALUES ($1,$2,$2,$3,$4,$5,'DRAFT',$6,$7,$8,$9)`
-	// The social variant also writes the venue coordinates (migration 20271045000000).
+	// The social variant also writes the venue coordinates (migration 20271094000000).
 	const insSocial = `
 		INSERT INTO events (id, organizer_id, organiser_id, title, description, venue, state, category, starts_at, ends_at, fee_bps,
 		                    venue_lat, venue_lng, venue_place_id)
@@ -253,7 +253,7 @@ func (s *Service) GetEvent(ctx context.Context, eventID string) (*Event, error) 
 
 // legacyEventByIDQuery is the GetEvent select from before events-social, byte for
 // byte. It is used whenever the social flag is off, so a database without
-// migration 20271045000000 keeps working for every caller of GetEvent.
+// migration 20271094000000 keeps working for every caller of GetEvent.
 // The description is coalesced to an empty string: the legacy 20260616240000
 // events shape leaves it NULL-able; AdminGetEvent coalesces it the same way.
 const legacyEventByIDQuery = `SELECT id, organiser_id, title, COALESCE(description,''), venue, state, COALESCE(category,''), starts_at, ends_at, fee_bps, created_at FROM events WHERE id=$1`
