@@ -39,7 +39,7 @@ const schema = z.object({
     .string()
     .min(10, 'Enter a valid phone number')
     .regex(/^(\+234|0)[789][01]\d{8}$/, 'Enter a valid Nigerian phone number'),
-  amount: z.number({ invalid_type_error: 'Enter an amount' }).min(50, 'Minimum ₦50').max(50000, 'Maximum ₦50,000'),
+  amount: z.number({ error: 'Enter an amount' }).min(50, 'Minimum ₦50').max(50000, 'Maximum ₦50,000'),
 });
 type Form = z.infer<typeof schema>;
 
