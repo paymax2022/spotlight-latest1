@@ -233,7 +233,9 @@ export async function getProfileDetail(id: string): Promise<DiscoveryProfile> {
     return { ...found };
   }
   const res = await api.get(`${CONNECT_API_BASE}/discovery/profiles/${id}`);
-  return unwrap<DiscoveryProfile>(res);
+  // Normalize like the stack does: the detail screen reads .photos/.interests/
+  // .prompts unguarded, so a sparse or differently-cased card must never reach it.
+  return normalizeProfile((unwrap(res) ?? {}) as Record<string, unknown>);
 }
 
 // A `like` on someone who already liked you yields a mutual match → unlocks
