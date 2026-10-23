@@ -1,7 +1,7 @@
 package fx_test
 
 // LIVE-DB suite for INBOUND FX COLLECTIONS (deposits into a provisioned virtual
-// account / IBAN) — the last link of the VertoFX/Eversend collections rail.
+// account / IBAN) — the last link of the generic (non-Verto) collections rail; VertoFX has its own webhook handler.
 // Everything ahead of this link already existed: the live provider adapters, the
 // credential-gated wiring, Service.CreateCollection provisioning a virtual
 // account into orch_collections, the mobile Receive screen, and a signed
@@ -51,10 +51,10 @@ func seedVirtualAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 	providerRef := "99" + uuid.NewString()[:8]
 	va := &orchestration.VirtualAccount{
 		ID: "va_" + uuid.NewString(), CustomerID: customer, Currency: currency,
-		Type: "virtual_account", Provider: "vertofx", Status: "active",
+		Type: "virtual_account", Provider: "eversend", Status: "active",
 		ProviderRef: providerRef,
 		Details: map[string]any{
-			"account_name": "Paymax Customer", "account_number": providerRef, "bank_name": "vertofx",
+			"account_name": "Paymax Customer", "account_number": providerRef, "bank_name": "eversend",
 		},
 		CreatedAt: time.Now(),
 	}
@@ -119,7 +119,7 @@ func TestLiveDB_OrchCollection_CreditsTheUSDWallet(t *testing.T) {
 	_, providerRef := seedVirtualAccount(t, ctx, pool, store, user, "USD")
 
 	svc := collectionOnlyService(t, store)
-	if err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), providerRef, "USD", 250_00)); err != nil {
+	if err := svc.HandleProviderEvent(ctx, "eversend", collectionEvent("evt_"+uuid.NewString(), providerRef, "USD", 250_00)); err != nil {
 		t.Fatalf("handle collection webhook: %v", err)
 	}
 
@@ -141,7 +141,7 @@ func TestLiveDB_OrchCollection_NGNCreditsTheMainWallet(t *testing.T) {
 	_, providerRef := seedVirtualAccount(t, ctx, pool, store, user, "NGN")
 
 	svc := collectionOnlyService(t, store)
-	if err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), providerRef, "NGN", 10_000_00)); err != nil {
+	if err := svc.HandleProviderEvent(ctx, "eversend", collectionEvent("evt_"+uuid.NewString(), providerRef, "NGN", 10_000_00)); err != nil {
 		t.Fatalf("handle collection webhook: %v", err)
 	}
 
@@ -165,7 +165,7 @@ func TestLiveDB_OrchCollection_ReplayCreditsOnce(t *testing.T) {
 	svc := collectionOnlyService(t, store)
 	body := collectionEvent("evt_replay_"+uuid.NewString(), providerRef, "USD", 500_00)
 	for i := range 3 {
-		if err := svc.HandleProviderEvent(ctx, "vertofx", body); err != nil {
+		if err := svc.HandleProviderEvent(ctx, "eversend", body); err != nil {
 			t.Fatalf("delivery %d: %v", i+1, err)
 		}
 	}
@@ -189,7 +189,7 @@ func TestLiveDB_OrchCollection_UnmatchedReferenceCreditsNothing(t *testing.T) {
 
 	svc := collectionOnlyService(t, store)
 	// A deposit quoting an account we never provisioned. Acknowledged, never credited.
-	if err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), "99999999-not-ours", "USD", 999_00)); err != nil {
+	if err := svc.HandleProviderEvent(ctx, "eversend", collectionEvent("evt_"+uuid.NewString(), "99999999-not-ours", "USD", 999_00)); err != nil {
 		t.Fatalf("unmatched webhook should be acknowledged, got: %v", err)
 	}
 
@@ -212,7 +212,7 @@ func TestLiveDB_OrchCollection_CurrencyMismatchIsRefused(t *testing.T) {
 
 	svc := collectionOnlyService(t, store)
 	// EUR arriving on a USD account: crediting either currency would be a guess.
-	err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), providerRef, "EUR", 100_00))
+	err := svc.HandleProviderEvent(ctx, "eversend", collectionEvent("evt_"+uuid.NewString(), providerRef, "EUR", 100_00))
 	if err == nil {
 		t.Fatal("currency mismatch was accepted — the deposit must be refused, not credited to a guessed wallet")
 	}
@@ -237,7 +237,7 @@ func TestLiveDB_OrchCollection_AppearsOnTheCollectionsFeed(t *testing.T) {
 	vaID, providerRef := seedVirtualAccount(t, ctx, pool, store, user, "USD")
 
 	svc := collectionOnlyService(t, store)
-	if err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), providerRef, "USD", 75_00)); err != nil {
+	if err := svc.HandleProviderEvent(ctx, "eversend", collectionEvent("evt_"+uuid.NewString(), providerRef, "USD", 75_00)); err != nil {
 		t.Fatalf("handle collection webhook: %v", err)
 	}
 
@@ -276,7 +276,7 @@ func TestLiveDB_OrchCollection_FeedRowIsAFullyFormedDeposit(t *testing.T) {
 	_, providerRef := seedVirtualAccount(t, ctx, pool, store, user, "USD")
 
 	svc := collectionOnlyService(t, store)
-	if err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), providerRef, "USD", 1_250_00)); err != nil {
+	if err := svc.HandleProviderEvent(ctx, "eversend", collectionEvent("evt_"+uuid.NewString(), providerRef, "USD", 1_250_00)); err != nil {
 		t.Fatalf("handle collection webhook: %v", err)
 	}
 
