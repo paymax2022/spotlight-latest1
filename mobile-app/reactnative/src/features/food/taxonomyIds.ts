@@ -21,3 +21,12 @@ export function effectiveTaxonomyIds(
   );
   return selected.filter((id) => present.has(id));
 }
+
+/**
+ * The legacy free-text cuisine row is superseded only when the taxonomy
+ * actually offers cuisine chips; otherwise it stays so cuisine filtering
+ * never disappears.
+ */
+export function showLegacyCuisineRow(taxonomy: TaxonomyLike | null): boolean {
+  return !(taxonomy && (taxonomy.cuisines?.length ?? 0) > 0);
+}

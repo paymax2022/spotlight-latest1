@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { effectiveTaxonomyIds } from '@/features/food/taxonomyIds';
+import { effectiveTaxonomyIds, showLegacyCuisineRow } from '@/features/food/taxonomyIds';
 
 const tax = {
   cuisines: [{ id: 'c1', slug: 'a', name: 'A' }],
@@ -21,4 +21,13 @@ describe('effectiveTaxonomyIds', () => {
     assert.deepEqual(effectiveTaxonomyIds(['k1'], tax, 'categories'), ['k1']);
     assert.deepEqual(effectiveTaxonomyIds(['k1'], tax, 'cuisines'), []);
   });
+});
+
+describe('showLegacyCuisineRow', () => {
+  it('shows legacy row for null taxonomy', () => assert.equal(showLegacyCuisineRow(null), true));
+  it('shows legacy row when cuisines empty but categories present', () =>
+    assert.equal(showLegacyCuisineRow({ ...tax, cuisines: [] }), true));
+  it('shows legacy row when both empty', () =>
+    assert.equal(showLegacyCuisineRow({ cuisines: [], categories: [] }), true));
+  it('hides legacy row when cuisines non-empty', () => assert.equal(showLegacyCuisineRow(tax), false));
 });

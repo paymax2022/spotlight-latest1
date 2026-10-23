@@ -23,7 +23,7 @@ import { useDebouncedValue } from '@/features/food/useDebouncedValue';
 import { useDeviceCoords } from '@/features/food/useDeviceCoords';
 import { useCartStore, cartItemCount } from '@/features/food/cartStore';
 import { formatNairaWhole } from '@/features/food/utils';
-import { effectiveTaxonomyIds } from '@/features/food/taxonomyIds';
+import { effectiveTaxonomyIds, showLegacyCuisineRow } from '@/features/food/taxonomyIds';
 import { DynamicIcon, TaxonomyFilters } from '@/features/food/components';
 import type { Restaurant } from '@/features/food/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
@@ -307,7 +307,8 @@ export default function FoodDiscoveryScreen() {
   // the legacy free-text one, so the legacy selection is ignored while hidden.
   const effCuisineIds = effectiveTaxonomyIds(cuisineIds, taxonomyData, 'cuisines');
   const effCategoryIds = effectiveTaxonomyIds(categoryIds, taxonomyData, 'categories');
-  const legacyCuisine: Cuisine = taxonomyData ? 'all' : cuisine;
+  const legacyRowVisible = showLegacyCuisineRow(taxonomyData);
+  const legacyCuisine: Cuisine = legacyRowVisible ? cuisine : 'all';
   const cartPackages = useCartStore((s) => s.packages);
   const cartCount = cartItemCount(cartPackages);
 
@@ -503,7 +504,7 @@ export default function FoodDiscoveryScreen() {
           }}
         />
 
-        {!taxonomyData ? (
+        {legacyRowVisible ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chips} contentContainerStyle={s.chipsContent}>
           {CUISINE_FILTERS.map((f) => {
             const active = cuisine === f.key;
