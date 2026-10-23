@@ -53,6 +53,10 @@ type Restaurant struct {
 	// omitted (false) elsewhere rather than guessed.
 	LikeCount int64 `json:"like_count"`
 	Liked     bool  `json:"liked,omitempty"`
+
+	// Cuisines are the restaurant's active cuisine tags. Set only when taxonomy
+	// browsing is on (WithTaxonomy), so it is absent from the JSON otherwise.
+	Cuisines []CuisineRef `json:"cuisines,omitempty"`
 }
 
 // MenuCategory groups menu items (e.g. "Starters", "Mains").

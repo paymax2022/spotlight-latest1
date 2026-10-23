@@ -1644,6 +1644,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restaurantSvc = restaurantSvc.WithRealtime(restaurantRT)
 
 		restaurantSvc = restaurantSvc.WithDiscounts(cfg.FeatureRestaurantDiscounts)
+		restaurantSvc = restaurantSvc.WithTaxonomy(cfg.FeatureRestaurantAdminCategories)
 		restaurantHandler := restaurant.NewHandler(restaurantSvc).WithRealtime(restaurantHub)
 		restGroup := finance.Group("/restaurant")
 

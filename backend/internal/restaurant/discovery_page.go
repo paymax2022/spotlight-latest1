@@ -353,6 +353,11 @@ func (s *Service) ListOpenRestaurantsPage(ctx context.Context, params DiscoveryP
 	if err := s.attachLikedFlags(ctx, callerUserID, list); err != nil {
 		return nil, err
 	}
+	if s.taxonomyOn {
+		if err := s.attachCuisines(ctx, list); err != nil {
+			return nil, err
+		}
+	}
 	return &RestaurantPage{
 		Restaurants: list,
 		Total:       total,

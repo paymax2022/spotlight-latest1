@@ -129,6 +129,7 @@ var (
 type Service struct {
 	db            *pgxpool.Pool
 	discountsOn   bool // FEATURE_RESTAURANT_DISCOUNTS: menu reads show discounted prices
+	taxonomyOn    bool // FEATURE_RESTAURANT_ADMIN_CATEGORIES: cuisines + taxonomy menu sections
 	settlement    *settlement.Service
 	ledger        *ledger.Service // money path for payout-run disbursement (nil → payouts disabled)
 	geocoder      AddressGeocoder
