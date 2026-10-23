@@ -4,6 +4,8 @@ import { Colors, Spacing, Radius, Typography } from '@/constants/tokens';
 import type { MenuSection } from '../types';
 
 interface Props {
+  /** False until the page has scrolled to the menu. */
+  visible?: boolean;
   sections: MenuSection[];
   /** Index of the section currently in view. */
   activeIndex: number;
@@ -15,8 +17,8 @@ interface Props {
  * section or fewer; empty sections never render a tab. Chip styling mirrors
  * TaxonomyFilters on /food.
  */
-export default function MenuSectionTabs({ sections, activeIndex, onSelect }: Props) {
-  if (sections.length <= 1) return null;
+export default function MenuSectionTabs({ visible = true, sections, activeIndex, onSelect }: Props) {
+  if (!visible || sections.length <= 1) return null;
   return (
     <View style={s.bar}>
       <ScrollView

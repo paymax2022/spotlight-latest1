@@ -24,3 +24,34 @@ describe('activeSectionIndex', () => {
     assert.equal(activeSectionIndex(1000, [400, undefined as unknown as number, 1500], 8), 0);
   });
 });
+
+import { menuTabsVisible, contentOffsetFromWindow } from '@/features/food/activeSection';
+
+describe('menuTabsVisible', () => {
+  it('is false before the menu is reached', () => {
+    assert.equal(menuTabsVisible(100, [400, 900], 24), false);
+  });
+  it('is true at and after first offset minus slack', () => {
+    assert.equal(menuTabsVisible(375, [400, 900], 24), false);
+    assert.equal(menuTabsVisible(376, [400, 900], 24), true);
+    assert.equal(menuTabsVisible(5000, [400, 900], 24), true);
+  });
+  it('is false for empty or unmeasured offsets', () => {
+    assert.equal(menuTabsVisible(5000, [], 24), false);
+    assert.equal(menuTabsVisible(5000, [undefined as unknown as number, NaN], 24), false);
+  });
+  it('uses the first measured entry when the leading ones are unmeasured', () => {
+    assert.equal(menuTabsVisible(580, [undefined as unknown as number, 600], 24), true);
+  });
+});
+
+describe('contentOffsetFromWindow', () => {
+  it('is scroll-invariant for a fixed section', () => {
+    // section at content y 700, viewport top at window y 120
+    assert.equal(contentOffsetFromWindow(820, 120, 0), 700);
+    assert.equal(contentOffsetFromWindow(520, 120, 300), 700);
+  });
+  it('handles a section scrolled above the viewport', () => {
+    assert.equal(contentOffsetFromWindow(20, 120, 800), 700);
+  });
+});

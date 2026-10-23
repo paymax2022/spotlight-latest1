@@ -15,7 +15,7 @@ import { packsForRestaurant } from '@/features/food/packScope';
 import { formatNaira, formatNairaWhole } from '@/features/food/utils';
 import { DynamicIcon, MenuSectionTabs } from '@/features/food/components';
 import { sectionsForDisplay } from '@/features/food/menuSections';
-import { activeSectionIndex } from '@/features/food/activeSection';
+import { activeSectionIndex, menuTabsVisible, contentOffsetFromWindow } from '@/features/food/activeSection';
 import type { MenuItem, CartModifier } from '@/features/food/types';
 import ModifierSheet from '@/features/food/components/ModifierSheet';
 import { lineKeyOf } from '@/features/food/modifiers';
@@ -171,20 +171,73 @@ export default function RestaurantDetailScreen() {
     if (activeId) decrementItem(activeId, item.id);
   };
 
-  // Menu section tabs: header y offsets (content coordinates) recorded via onLayout.
+  // Menu section tabs.
+  // Section offsets are NOT taken from onLayout: react-native-web fires onLayout
+  // on size changes only, so when content above the menu (packs, notes) changes
+  // height the recorded y goes stale. Instead each section is re-measured with
+  // measureInWindow (works on web and native) against the ScrollView's own window
+  // position and converted to content coordinates (contentOffsetFromWindow), on
+  // tab press and on scroll (single in-flight measure at a time).
   const scrollRef = React.useRef<ScrollView>(null);
+  const sectionRefs = React.useRef<Array<View | null>>([]);
   const sectionOffsets = React.useRef<number[]>([]);
+  const scrollYRef = React.useRef(0);
+  const measuring = React.useRef(false);
   const [activeSection, setActiveSection] = React.useState(0);
+  const [tabsShown, setTabsShown] = React.useState(false);
   const sections = React.useMemo(() => (restaurant ? sectionsForDisplay(restaurant) : []), [restaurant]);
   const SECTION_SLACK = 24;
-  const onMenuScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const idx = activeSectionIndex(e.nativeEvent.contentOffset.y, sectionOffsets.current, SECTION_SLACK);
+
+  const measureSections = React.useCallback((): Promise<number[]> => {
+    const sv = scrollRef.current as unknown as { measureInWindow?: (cb: (x: number, y: number) => void) => void } | null;
+    const count = sections.length;
+    if (!sv?.measureInWindow || count === 0) return Promise.resolve([]);
+    return new Promise<number[]>((resolve) => {
+      sv.measureInWindow!((_x, viewportY) => {
+        const out: number[] = new Array(count).fill(NaN);
+        let pending = count;
+        const done = () => {
+          if (--pending === 0) {
+            sectionOffsets.current = out; // length === sections.length
+            resolve(out);
+          }
+        };
+        for (let i = 0; i < count; i++) {
+          const node = sectionRefs.current[i];
+          if (!node) { done(); continue; }
+          node.measureInWindow((_sx, sy) => {
+            out[i] = contentOffsetFromWindow(sy, viewportY, scrollYRef.current);
+            done();
+          });
+        }
+      });
+    });
+  }, [sections.length]);
+
+  const applyScroll = React.useCallback((y: number) => {
+    const offs = sectionOffsets.current;
+    setTabsShown(menuTabsVisible(y, offs, SECTION_SLACK));
+    const idx = activeSectionIndex(y, offs, SECTION_SLACK);
     if (idx >= 0) setActiveSection((prev) => (prev === idx ? prev : idx));
+  }, []);
+
+  const onMenuScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const y = e.nativeEvent.contentOffset.y;
+    scrollYRef.current = y;
+    applyScroll(y);
+    if (measuring.current) return;
+    measuring.current = true;
+    measureSections()
+      .then(() => applyScroll(scrollYRef.current))
+      .finally(() => { measuring.current = false; });
   };
-  const onSelectSection = (i: number) => {
-    const y = sectionOffsets.current[i];
+  const onSelectSection = async (i: number) => {
     setActiveSection(i);
-    if (typeof y === 'number') scrollRef.current?.scrollTo({ y: Math.max(0, y - Spacing.sm), animated: true });
+    const offs = await measureSections();
+    const y = offs[i];
+    if (typeof y === 'number' && Number.isFinite(y)) {
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - Spacing.sm), animated: true });
+    }
   };
 
   return (
@@ -208,7 +261,7 @@ export default function RestaurantDetailScreen() {
         <StateView kind="error" title="Couldn't load this restaurant" actionLabel="Retry" onAction={() => refetch()} />
       ) : (
         <>
-          <MenuSectionTabs sections={sections} activeIndex={activeSection} onSelect={onSelectSection} />
+          <MenuSectionTabs visible={tabsShown} sections={sections} activeIndex={activeSection} onSelect={onSelectSection} />
           <ScrollView
             ref={scrollRef}
             showsVerticalScrollIndicator={false}
@@ -324,9 +377,8 @@ export default function RestaurantDetailScreen() {
               <View
                 key={cat.id ?? `idx-${idx}`}
                 style={s.section}
-                onLayout={(e) => {
-                  sectionOffsets.current[idx] = e.nativeEvent.layout.y;
-                }}
+                ref={(n) => { sectionRefs.current[idx] = n; }}
+                collapsable={false}
               >
                 <Text style={s.sectionTitle}>{cat.name}</Text>
                 {cat.items.map((item) => (
