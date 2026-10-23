@@ -1,6 +1,7 @@
 package restaurant
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -21,7 +22,7 @@ func TestDiscoveryParamsNormalized(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.in.normalized(); got != tc.want {
+			if got := tc.in.normalized(); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("normalized() = %+v, want %+v", got, tc.want)
 			}
 		})
