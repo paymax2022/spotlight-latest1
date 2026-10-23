@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -95,5 +96,23 @@ func TestGroupMenuSections_EmptyAndJSON(t *testing.T) {
 	b, _ = json.Marshal(Restaurant{})
 	if strings.Contains(string(b), `"cuisines"`) {
 		t.Fatalf("cuisines must be omitted when unset: %s", b)
+	}
+}
+
+func TestLegacySlug_AlwaysValid(t *testing.T) {
+	re := regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+	seen := map[string]string{}
+	for _, l := range []string{"Hot Food!", "???", "日本料理", "🍕", "한국", "  "} {
+		got := legacySlug(l)
+		if got == "" || !re.MatchString(got) {
+			t.Errorf("legacySlug(%q) = %q, want non-empty valid slug", l, got)
+		}
+		if prev, dup := seen[got]; dup {
+			t.Errorf("legacySlug(%q) = %q collides with %q", l, got, prev)
+		}
+		seen[got] = l
+		if legacySlug(l) != got {
+			t.Errorf("legacySlug(%q) not stable", l)
+		}
 	}
 }

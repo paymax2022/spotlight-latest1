@@ -2,6 +2,8 @@ package restaurant
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 )
@@ -93,7 +95,7 @@ func groupMenuSections(items []MenuItem, itemCat map[string]string, cats []secti
 	return out
 }
 
-// legacySlug lower-cases a label to [a-z0-9-].
+// legacySlug lower-cases a label to [a-z0-9-]; never returns "".
 func legacySlug(label string) string {
 	var b strings.Builder
 	dash := false
@@ -106,7 +108,14 @@ func legacySlug(label string) string {
 			dash = true
 		}
 	}
-	return strings.TrimRight(b.String(), "-")
+	if s := strings.TrimRight(b.String(), "-"); s != "" {
+		return s
+	}
+	// Nothing ASCII survived (punctuation, CJK, emoji): keep the slug valid and
+	// distinct per label with a stable short hash.
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(label))
+	return fmt.Sprintf("section-%08x", h.Sum32())
 }
 
 // loadItemSectionPlacement returns each item's taxonomy category id and legacy
