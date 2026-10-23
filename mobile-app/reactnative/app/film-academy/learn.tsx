@@ -283,7 +283,7 @@ const styles = StyleSheet.create({
   lockedOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
                    backgroundColor: Colors.background, borderRadius: Radius.lg,
                    alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
-  lockedText:  { ...Typography.titleSm, color: Colors.onSurface },
+  lockedText:  { ...Typography.titleMd, color: Colors.onSurface },
   lockedDetail: { ...Typography.bodySm, color: Colors.onSurfaceVariant, textAlign: 'center',
                   paddingHorizontal: Spacing.md },
 });
