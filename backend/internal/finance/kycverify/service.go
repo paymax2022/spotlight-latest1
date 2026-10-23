@@ -391,7 +391,7 @@ func (s *Service) audit(_ context.Context, event, userID, id, detail string) {
 }
 
 // Domain errors for the KYC verification gateway. The handler maps these to HTTP
-// status codes (handler.go). Mirrors the maplerad model.go error vocabulary.
+// status codes (handler.go).
 var (
 	// ErrForbidden — object-level authz: caller does not own the resource. 403.
 	ErrForbidden = errors.New("kycverify: not authorized for this resource")
@@ -471,7 +471,7 @@ type Consent struct {
 
 // Pure webhook-pipeline decision logic (no DB, no network). The webhook handler
 // applies these decisions; keeping them pure makes the dedupe rule + terminal
-// mapping independently unit-testable (mirrors maplerad/service.go).
+// mapping independently unit-testable (pure, no I/O).
 
 // DedupeDecision is the pure outcome of the dedupe step. The handler INSERTs into
 // webhook_event ON CONFLICT (provider,event_id) DO NOTHING; rowsInserted reports

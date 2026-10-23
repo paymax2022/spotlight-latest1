@@ -139,7 +139,7 @@ func (s stubProvider) VerifyWebhookSignature([]byte, string) bool { return true 
 
 func newTestService(now *time.Time, fail bool) (*Service, Store) {
 	store := NewMemStore()
-	svc := NewService([]Provider{stubProvider{name: "eversend", fail: fail}, stubProvider{name: "maplerad"}}, store, Options{
+	svc := NewService([]Provider{stubProvider{name: "eversend", fail: fail}, stubProvider{name: "partner"}}, store, Options{
 		Now: func() time.Time { return *now },
 	})
 	return svc, store
@@ -212,7 +212,7 @@ func TestConversionRateExpired(t *testing.T) {
 func TestConversionFailoverToAlternative(t *testing.T) {
 	ctx := context.Background()
 	clock := time.Now()
-	// eversend fails; router should still execute via the maplerad alternative.
+	// eversend fails; router should still execute via the partner alternative.
 	svc, _ := newTestService(&clock, true)
 	cust := "cus_3"
 	_ = svc.SeedBalance(ctx, cust, "USD", 1_000_00)
@@ -221,8 +221,8 @@ func TestConversionFailoverToAlternative(t *testing.T) {
 	if e != nil {
 		t.Fatalf("failover should succeed via alternative, got %v", e)
 	}
-	if conv.Route.Provider != "maplerad" {
-		t.Fatalf("expected failover to maplerad, got %s", conv.Route.Provider)
+	if conv.Route.Provider != "partner" {
+		t.Fatalf("expected failover to partner, got %s", conv.Route.Provider)
 	}
 }
 
@@ -368,7 +368,7 @@ func TestPickCollectionProvider_UsesDefault(t *testing.T) {
 	mk := func(def string, supports bool) *Service {
 		now := time.Now()
 		return NewService([]Provider{
-			defProv{stubProvider{name: "vertofx"}, supports, 1}, stubProvider{name: "maplerad"}, stubProvider{name: "eversend"},
+			defProv{stubProvider{name: "vertofx"}, supports, 1}, stubProvider{name: "partner"}, stubProvider{name: "eversend"},
 		}, NewMemStore(), Options{Now: func() time.Time { return now }}, WithDefaultProvider(def))
 	}
 	if p := mk("vertofx", true).pickCollectionProvider("virtual", "USD"); p.Name() != "vertofx" {
@@ -377,10 +377,10 @@ func TestPickCollectionProvider_UsesDefault(t *testing.T) {
 	if p := mk("vertofx", false).pickCollectionProvider("iban", "EUR"); p.Name() != "eversend" {
 		t.Fatalf("got %s want eversend", p.Name())
 	}
-	if p := mk("vertofx", false).pickCollectionProvider("virtual", "USD"); p.Name() != "maplerad" {
-		t.Fatalf("got %s want maplerad", p.Name())
+	if p := mk("vertofx", false).pickCollectionProvider("virtual", "USD"); p.Name() != "vertofx" {
+		t.Fatalf("got %s want vertofx (preferred virtual-account provider)", p.Name())
 	}
-	if p := mk("", true).pickCollectionProvider("virtual", "USD"); p.Name() != "maplerad" {
-		t.Fatalf("empty default got %s want maplerad", p.Name())
+	if p := mk("", true).pickCollectionProvider("virtual", "USD"); p.Name() != "vertofx" {
+		t.Fatalf("empty default got %s want vertofx", p.Name())
 	}
 }

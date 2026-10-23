@@ -9,7 +9,7 @@ import { Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const TYPES: (FxTxType | 'all')[] = ['all', 'conversion', 'transfer', 'collection'];
 const STATUSES: (FxTxStatus | 'all')[] = ['all', 'successful', 'processing', 'pending', 'failed', 'reversed'];
-const PROVIDERS: (Provider | 'all')[] = ['all', 'eversend', 'maplerad'];
+const PROVIDERS: (Provider | 'all')[] = ['all', 'eversend', 'vertofx'];
 
 export default function FxTransactionsPage() {
   const [rows, setRows] = useState<FxTxSummary[]>([]);

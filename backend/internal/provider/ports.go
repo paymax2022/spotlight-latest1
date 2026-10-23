@@ -19,61 +19,10 @@ import (
 // Adapters must wrap this ONLY around errors they can positively vouch for.
 var ErrProviderRefused = errors.New("provider: request refused, nothing was created upstream")
 
-// Additive gateway ports for the Maplerad WaaS integration (ADR-012). These sit
-// alongside PaymentProvider / DisbursementProvider / VirtualAccountProvider
-// (interfaces.go) — domain code depends ONLY on these ports; all Maplerad HTTP/SDK
-// code lives in internal/provider/maplerad and never leaks its types outward.
-// NGN v1 scope: Identity (customer mapping), Wallet (provision + reconciliation
-// balance), Bills. USD wallets / cards / FX are Phase 2 and intentionally absent.
-
-// Identity — 1 Paymax user ↔ 1 provider customer, created at the required KYC tier.
-
-// CustomerRequest forwards the already-KYC-verified identity to the provider.
-// BVN/NIN are PII — never log them; the adapter sends them to Identity only.
-type CustomerRequest struct {
-	UserID    string
-	FirstName string
-	LastName  string
-	Email     string
-	Phone     string
-	BVN       string
-	NIN       string
-	Country   string // ISO-2, "NG" in v1
-}
-
-// Customer is the provider-side customer record (domain model, not a provider DTO).
-type Customer struct {
-	ID        string // provider customer id (persist as provider_customers.customer_id)
-	FirstName string
-	LastName  string
-	Email     string
-	Status    string
-}
-
-// IdentityProvider maps a Paymax user to a provider customer. Capability is gated
-// by the existing KYC tier BEFORE this is called — this is downstream of the gate.
-type IdentityProvider interface {
-	CreateCustomer(ctx context.Context, req CustomerRequest) (*Customer, error)
-	GetCustomer(ctx context.Context, customerID string) (*Customer, error)
-	Name() string
-}
-
-// Wallet — provider custody wallet. GetProviderBalance is for RECONCILIATION ONLY;
-// the hot path always reads the internal ledger, never the provider balance.
-
-// ProviderBalance is a custody balance snapshot used only by reconciliation.
-type ProviderBalance struct {
-	WalletID   string
-	Currency   string
-	AmountKobo int64 // integer minor units (kobo); never float
-}
-
-// WalletProvider provisions and reads the provider custody wallet.
-type WalletProvider interface {
-	ProvisionWallet(ctx context.Context, customerID, currency string) (walletID string, err error)
-	GetProviderBalance(ctx context.Context, walletID string) (*ProviderBalance, error)
-	Name() string
-}
+// Additive gateway ports. These sit alongside PaymentProvider /
+// DisbursementProvider / VirtualAccountProvider (interfaces.go) — domain code
+// depends ONLY on these ports; provider HTTP/SDK code lives in its own
+// internal/provider/<name> package and never leaks its types outward.
 
 // Bills — async-authoritative: reconcile the sync result with the webhook,
 // idempotent on the client reference.
@@ -151,8 +100,8 @@ type BillValidation struct {
 
 // BillsValidator is the OPTIONAL customer-verification half of a bills provider.
 // It is deliberately a separate interface from BillsProvider rather than extra
-// methods on it: not every bills provider can verify a customer (Maplerad's bills
-// API has no equivalent), and widening BillsProvider would force every
+// methods on it: not every bills provider can verify a customer (some providers' bills
+// APIs have no equivalent), and widening BillsProvider would force every
 // implementer to carry a method it cannot honour. Callers type-assert for it and
 // skip verification when a provider does not implement it.
 type BillsValidator interface {

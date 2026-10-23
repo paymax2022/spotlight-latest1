@@ -38,6 +38,8 @@ type NavItem = {
 
 const navItemsBase: NavItem[] = [
   { label: 'Dashboard', href: '/admin', section: 'Overview' },
+  // User details live at /admin/users/[id]; the list is the entry point for picking one.
+  { label: 'User Details', href: '/admin/users', section: 'Overview', permissions: ['users.view'] },
   { label: 'Analytics', href: '/admin/analytics', section: 'Overview' },
   { label: 'Navigation Analytics', href: '/admin/analytics/navigation', section: 'Overview', permissions: ['audit.logs.view'] },
   { label: 'Navigation Funnel', href: '/admin/analytics/navigation/funnel', section: 'Overview', permissions: ['audit.logs.view'] },

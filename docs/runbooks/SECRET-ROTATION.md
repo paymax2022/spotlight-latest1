@@ -75,7 +75,7 @@ that appeared in a committed `.env`/snapshot as compromised and rotate it at the
 source. Based on the config surface, rotate at minimum:
 
 - Supabase: `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, anon key, DB password (`DATABASE_URL`).
-- Payment/rails providers: Paystack (`sk_*`), Maplerad (`mpr_*`), Monnify, Eversend.
+- Payment/rails providers: Paystack (`sk_*`), Monnify, Eversend, VertoFX.
 - KYC providers: Dojah, Smile ID, Youverify keys.
 - Messaging/media: Resend, Termii, Cloudflare R2 (`R2_*`), VideoSDK.
 - AI: `ANTHROPIC_API_KEY`.

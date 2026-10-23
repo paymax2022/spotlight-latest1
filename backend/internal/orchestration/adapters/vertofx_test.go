@@ -319,10 +319,10 @@ func TestVertoFX_ProdFailsClosed(t *testing.T) {
 }
 
 // Uses the REAL adapters so a currency/corridor mismatch in the collection
-// default (bare "USD" vs "USD-USD") would route to maplerad and fail here.
+// default (bare "USD" vs "USD-USD") would route to the wrong provider and fail here.
 func TestCollectionDefault_RealVertoFX(t *testing.T) {
 	mk := func(def string) *orch.Service {
-		return orch.NewService([]orch.Provider{NewMapleradFX(false), NewEversend(false), NewVertoFX(false)},
+		return orch.NewService([]orch.Provider{NewEversend(false), NewVertoFX(false)},
 			orch.NewMemStore(), orch.Options{}, orch.WithDefaultProvider(def))
 	}
 	ctx := context.Background()
@@ -330,7 +330,7 @@ func TestCollectionDefault_RealVertoFX(t *testing.T) {
 		{"vertofx", "virtual", "USD", "vertofx"},
 		{"vertofx", "iban", "EUR", "vertofx"},
 		{"vertofx", "virtual", "GBP", "vertofx"},
-		{"", "virtual", "USD", "maplerad"},
+		{"", "virtual", "USD", "vertofx"},
 		{"", "iban", "EUR", "eversend"},
 	} {
 		va, e := mk(tc.def).CreateCollection(ctx, "c1", orch.CollectionRequest{Currency: tc.cur, Type: tc.typ})

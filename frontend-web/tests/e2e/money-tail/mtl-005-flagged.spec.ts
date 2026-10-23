@@ -33,9 +33,8 @@ const FLAG_GATED: { path: string; flag: string; note?: string }[] = [
   { path: '/api/finance/fractionalre/admin/dashboard', flag: 'FEATURE_FRACTIONAL_RE_ENABLED' },
   { path: '/api/v1/spotlight/videos', flag: 'FEATURE_SPOTLIGHTWEALTH_ENABLED' },
   { path: '/api/arena/competitions', flag: 'FEATURE_ARENA_ENABLED' },
-  { path: '/api/finance/fx/history', flag: 'FEATURE_FX_ENABLED+MAPLERAD_SECRET_KEY', note: 'flag ON but fxHandler nil — no Maplerad key' },
-  { path: '/api/finance/admin/fx/markup', flag: 'MAPLERAD_SECRET_KEY', note: 'markup store built only with a Maplerad client' },
-  { path: '/api/finance/maplerad/customer', flag: 'FEATURE_MAPLERAD_ENABLED' },
+  { path: '/api/finance/fx/history', flag: 'FEATURE_FX_ENABLED', note: 'flag ON but fxHandler is never wired' },
+  { path: '/api/finance/admin/fx/markup', flag: 'FEATURE_FX_ENABLED', note: 'markup handler is always mounted; no provider key needed' },
   { path: '/api/v1/doctor/profile', flag: 'FEATURE_DOCTOR_ENABLED' },
 ];
 

@@ -38,8 +38,7 @@ Never expose these to a client. The Go backend reads them via `internal/config`.
 | `PAYSTACK_WEBHOOK_SECRET` | Unused — read into config (`PaystackWebhookKey`) but never consumed anywhere. Safe to leave unset; do not rely on it for webhook verification |
 | `PAYSTACK_BASE_URL` | Dev-only Paystack API override — point at the tools/fakes service (e.g. `http://localhost:9100`) to run initialize/verify/refund without real keys. Empty = live `https://api.paystack.co`. `config.Validate()` fails boot if set outside development |
 | `MONNIFY_API_KEY`, `MONNIFY_SECRET_KEY`, `MONNIFY_WEBHOOK_SECRET` | Monnify transfers |
-| `MAPLERAD_SECRET_KEY`, `MAPLERAD_WEBHOOK_SECRET` | Maplerad `sk_…` + webhook |
-| `MAPLERAD_PUBLIC_KEY` | Maplerad publishable key (kept server-side; app never calls Maplerad directly) |
+| `VERTOFX_CLIENT_ID`, `VERTOFX_API_KEY`, `VERTOFX_WEBHOOK_SECRET` | VertoFX credentials + webhook (NGN virtual accounts, FX; gated by `FEATURE_VERTOFX`) |
 | `MAPS_GOOGLE_KEY` | Google Maps (autocomplete, geocoding, Distance Matrix) — **all address lookup runs server-side through this** |
 | `MAPS_GEOAPIFY_KEY`, `MAPS_MAPTILER_KEY`, `MAPS_HERE_KEY`, `MAPS_MAPBOX_TOKEN` | Other map provider keys (fallbacks / tiles) |
 | `RESEND_API_KEY` | Transactional email (notifications — fire-and-forget) |
@@ -89,8 +88,8 @@ Two automated guards back up the rules above:
 1. **Fail-fast startup validation** — `backend/internal/config/Validate()` runs in
    `main()`. With `APP_ENV=production` the service **refuses to boot** if a required
    secret (for an enabled feature) is missing, still a placeholder, or the wrong
-   shape — e.g. a `pk_` value in `PAYSTACK_SECRET_KEY`, or a `sandbox` Maplerad key
-   while `MAPLERAD_PROD=true`. In dev/staging the same checks log warnings only, so
+   shape — e.g. a `pk_` value in `PAYSTACK_SECRET_KEY`, or a sandbox VertoFX key
+   while `VERTOFX_PROD=true`. In dev/staging the same checks log warnings only, so
    local work with placeholders still boots. Covered by `validate_test.go`.
 
 2. **Client secret-hygiene guard** — `scripts/check-client-secrets.sh` fails if any
@@ -105,7 +104,7 @@ Two automated guards back up the rules above:
 Test/sandbox keys were previously present in a client `.env`. They have been moved
 server-side, but because they were bundled/committed at some point you should:
 
-1. **Rotate** the affected keys in each provider dashboard (Paystack, Maplerad, …).
+1. **Rotate** the affected keys in each provider dashboard (Paystack, VertoFX, …).
 2. Confirm `PAYSTACK_SECRET_KEY` in `backend/.env` matches the rotated key — that's
    the value Paystack webhook HMAC verification actually checks against
    (`PAYSTACK_WEBHOOK_SECRET` is unused; see the table above). No separate webhook

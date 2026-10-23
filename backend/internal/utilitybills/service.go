@@ -2163,7 +2163,7 @@ func stringMetadata(metadata map[string]any) map[string]string {
 }
 
 // Background reconciliation job (Phase 3, closes UTIL-002). Follows the
-// goroutine+ticker pattern from maplerad/jobs.go's StartOrphanSweep: runs on an
+// goroutine+ticker pattern used by the other finance reconcile jobs: runs on an
 // interval, stops when ctx is cancelled, and never lets one bad tick kill the
 // loop.
 

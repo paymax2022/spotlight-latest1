@@ -192,7 +192,7 @@ func TestOrchGlobalConservation_SurvivesPosting(t *testing.T) {
 			{Type: orchestration.FeeRail, Amount: orchestration.NewMoney(railFee, "USD")},
 			{Type: orchestration.FeeSpread, Amount: orchestration.NewMoney(spread, "USD")},
 		},
-		Route:          orchestration.Route{Provider: "maplerad", Corridor: "USD-NGN", Rail: orchestration.RailBankTransfer},
+		Route:          orchestration.Route{Provider: "vertofx", Corridor: "USD-NGN", Rail: orchestration.RailBankTransfer},
 		TransactionID:  "tx_" + uuid.NewString(),
 		IdempotencyKey: "orch-global-conv-" + uuid.NewString(), CreatedAt: time.Now(),
 	}

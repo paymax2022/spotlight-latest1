@@ -58,7 +58,7 @@ two independent code paths both believed they owned settlement).
 | Storage | Cloudflare R2 (`@aws-sdk/client-s3` presigned URLs) | Bucket `spotlight-openmic-songs`, set via `R2_BUCKET` env var — **no default**. The old bucket name `spotlight-open-mic` does not exist in the account; several modules (marketplace `account.api.ts`, mobility, featured-placement fixtures, registration uploads) still pass it literally and are flagged in CLAUDE.md as "unverified and likely broken the same way" |
 | Email | Resend API (`RESEND_API_KEY`) | No queue — fire-and-forget; failures are silent |
 | Payments | Paystack | HMAC-SHA512 webhook verification; live handler at `frontend-web/app/api/webhooks/paystack/route.ts` |
-| FX | Maplerad | Live for some rails (see Module 10 note) |
+| FX | Eversend, VertoFX | Live for some rails (see Module 10 note) |
 | Cache / locks / queue | Redis (`backend/internal/platform/redis/`) | Idempotency cache, Redlock (distributed locking), asynq job queue |
 | DB access, money-path | pgx pool (`backend/internal/platform/db/`) | Direct transactional Postgres access, used specifically for finance writes |
 | DB access, Spotlight modules | Supabase REST + SQL RPCs | Read-heavy / legacy-adjacent modules |
@@ -343,7 +343,7 @@ test.
 The UAT queue lists this as **Not Started**. `backend/internal/finance/fx` exists in the completed
 backend module list in `PAYMAX_BUILD_PLAYBOOK.md` and `frontend-admin/app/admin/fx/` has a console
 surface. Per project memory, FX from mobile to the Go backend is live via server-side quotes, with
-the Maplerad rail reported live and a second provider (Eversend) still needing a real secret; the
+VertoFX as the preferred provider and Eversend still needing a real secret; the
 NGN side of FX is reported to be the **same** main wallet ledger (`ledger_entries`), not a separate
 balance. None of this has been through the UAT engagement's own discovery/defect/sign-off process —
 treat it as "built and partially operated," not verified.

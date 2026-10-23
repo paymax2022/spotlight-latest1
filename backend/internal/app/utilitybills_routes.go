@@ -30,7 +30,7 @@ import (
 //	admin  : /api/finance/admin/utilitybills/*  (RBAC finance.admin.utilitybills)
 //
 // The WHOLE thing is inside one `if cfg.FeatureUtilityBillsEnabled && pool != nil`
-// block, cloned from the Maplerad wiring in finance_routes.go: no flag, no money
+// block, cloned from the other finance-domain wiring in finance_routes.go: no flag, no money
 // path, and nothing to roll back but the flag.
 // Phase 1 mounts only the MONEY-affecting admin actions (get / requery / reverse
 // / unresolved-bind count). The full 24-route admin surface is Phase 4. They are
@@ -49,7 +49,7 @@ import (
 // admin route even with a valid token.
 // ctx is the app-lifetime background context (registerFinanceRoutes's own
 // context.Background()) that scopes the Phase 3 requery-sweep job — the same
-// ctx the Maplerad block passes directly to StartReconcile/StartOrphanSweep.
+// ctx the other finance jobs receive.
 func RegisterUtilityBills(
 	ctx context.Context,
 	r *gin.Engine,

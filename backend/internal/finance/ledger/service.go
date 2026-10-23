@@ -253,7 +253,7 @@ func (s *Service) PostJournal(ctx context.Context, j JournalEntry) error {
 // PostJournalGated posts a balanced journal whose DEBIT leg is the user's own
 // wallet, running the strict KYC-tier daily-debit cap inside the tx under the
 // wallet advisory lock — the serialised counterpart to PostJournal for callers
-// that post planned legs (maplerad) instead of the wallet-Debit primitive.
+// that post planned legs instead of the wallet-Debit primitive.
 // walletLockKey is the wallet owner (the lock key; usually the payer's userID).
 func (s *Service) PostJournalGated(ctx context.Context, j JournalEntry, walletLockKey string) error {
 	guard := s.walletDebitGuard()

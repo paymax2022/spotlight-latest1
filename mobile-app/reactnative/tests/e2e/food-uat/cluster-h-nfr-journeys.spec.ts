@@ -312,7 +312,7 @@ test.describe('Fraud and Abuse', () => {
     }
     test.info().annotations.push({ type: 'note', description: 'Verified-beneficiary swap-before-transfer logic needs live owner token.' });
   });
-  blocked('RST-UAT-0332', 'Detect refund plus chargeback double credit', 'Blocked: no chargeback ingestion path in restaurant/paystackcheckout (only finance/maplerad); see FOOD-UAT-H-004');
+  blocked('RST-UAT-0332', 'Detect refund plus chargeback double credit', 'Blocked: no chargeback ingestion path in restaurant/paystackcheckout (no provider chargeback feed exists); see FOOD-UAT-H-004');
 });
 
 /* ---------------- Cross-role journeys ---------------- */

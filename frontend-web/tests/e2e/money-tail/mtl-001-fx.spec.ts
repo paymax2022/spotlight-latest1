@@ -2,10 +2,10 @@
  * MTL-001 — FX orchestration core money journey (/api/v1/fx/*).
  *
  * FEATURE_FX_ORCHESTRATION_ENABLED=true in backend/.env and the deterministic
- * provider adapters (adapters.MapleradFX / Eversend) are wired because no live
- * MAPLERAD_SECRET_KEY / EVERSEND creds exist locally — quotes/executions are
+ * provider adapters (adapters.VertoFX / Eversend) are wired because no live
+ * VERTOFX / EVERSEND creds exist locally — quotes/executions are
  * real service calls through the SQL store; the provider leg is the
- * deterministic dev adapter, NOT a live PSP (psp-unverified: no real Maplerad/
+ * deterministic dev adapter, NOT a live PSP (psp-unverified: no real VertoFX/
  * Eversend settlement is possible in this environment).
  *
  * Money facts asserted:
@@ -187,14 +187,14 @@ test.describe('MTL-001 fx orchestration core', () => {
   test('collection VA → provider webhook credit → idempotent redelivery; unmatched ref credits nothing', async ({ request }) => {
     const { user, token } = await fundedUser(request, 'mtl001c');
 
-    // ── provision an NGN virtual account via the deterministic maplerad adapter ──
+    // ── provision an NGN virtual account via the deterministic vertofx adapter ──
     const va = await goFetch(request, '/api/v1/fx/collections/virtual-accounts', {
       method: 'POST',
       token,
       data: { currency: 'NGN', type: 'virtual_account' },
     });
     expect(va.status).toBe(201);
-    expect(va.body.provider).toBe('maplerad');
+    expect(va.body.provider).toBe('vertofx');
     const acctNumber = va.body.details?.account_number as string;
     expect(acctNumber).toBeTruthy();
 
@@ -217,7 +217,7 @@ test.describe('MTL-001 fx orchestration core', () => {
         sender_name: 'E2E Sender',
       },
     };
-    const wh = await goFetchAnon(request, '/api/v1/fx/webhooks/maplerad', {
+    const wh = await goFetchAnon(request, '/api/v1/fx/webhooks/vertofx', {
       data: deposit,
       headers: { 'Webhook-Signature': 'e2e-dev-signature' },
     });
@@ -240,7 +240,7 @@ test.describe('MTL-001 fx orchestration core', () => {
     expect(colLegs.some((l) => l.account === 'provider_clearing' && l.side === 'DEBIT' && l.total === 250_000)).toBe(true);
 
     // ── redelivery of the SAME event id credits exactly once ──
-    const wh2 = await goFetchAnon(request, '/api/v1/fx/webhooks/maplerad', {
+    const wh2 = await goFetchAnon(request, '/api/v1/fx/webhooks/vertofx', {
       data: deposit,
       headers: { 'Webhook-Signature': 'e2e-dev-signature' },
     });
@@ -248,7 +248,7 @@ test.describe('MTL-001 fx orchestration core', () => {
     expect(walletBalanceSql(user.userId)).toBe(FUND_KOBO + 250_000);
 
     // ── unmatched account reference: acknowledged, never credited ──
-    const orphan = await goFetchAnon(request, '/api/v1/fx/webhooks/maplerad', {
+    const orphan = await goFetchAnon(request, '/api/v1/fx/webhooks/vertofx', {
       data: { event: 'collection.successful', id: `evt-orphan-${Date.now()}`, data: { id: `evt-orphan-${Date.now()}`, account_number: '0000000001', currency: 'NGN', amount: 999_999 } },
       headers: { 'Webhook-Signature': 'e2e-dev-signature' },
     });
@@ -256,7 +256,7 @@ test.describe('MTL-001 fx orchestration core', () => {
     expect(walletBalanceSql(user.userId)).toBe(FUND_KOBO + 250_000);
 
     // ── unsigned webhook rejected ──
-    const unsigned = await goFetchAnon(request, '/api/v1/fx/webhooks/maplerad', { data: deposit });
+    const unsigned = await goFetchAnon(request, '/api/v1/fx/webhooks/vertofx', { data: deposit });
     expect(unsigned.status).toBe(401);
   });
 

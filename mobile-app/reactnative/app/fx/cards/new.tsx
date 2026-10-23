@@ -46,7 +46,7 @@ export default function CreateCardScreen() {
     expMonth: 12, expYear: 28, cardholderName: 'SPOTLIGHT USER', balance: fundingAmount,
     status: 'active', color, spentThisMonth: 0,
     controls: { monthlyLimit: null, perTxLimit: null, online: true, atm: false, international: true, contactless: true },
-    provider: 'maplerad', createdAt: new Date().toISOString(),
+    provider: 'vertofx', createdAt: new Date().toISOString(),
   };
 
   const disabled = !label.trim() || fundingAmount <= 0 || insufficient;

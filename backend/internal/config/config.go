@@ -100,19 +100,6 @@ type Config struct {
 	CryptoQuidaxLiveKey     string
 	CryptoQuidaxLiveBaseURL string
 
-	// Maplerad credentials (FX + alternative VA provider).
-	MapleradSecretKey     string
-	MapleradPublicKey     string
-	MapleradProd          bool
-	MapleradWebhookSecret string
-	// MapleradBaseURL overrides the provider API root (regional endpoint, or a
-	// provider fake for e2e). Empty ⇒ the sandbox/prod default selected by
-	// MAPLERAD_PROD. WithBaseURL ignores "", so wiring it unconditionally is safe.
-	MapleradBaseURL string
-	// FeatureMapleradEnabled gates the Maplerad WaaS DOMAIN money path (ADR-012):
-	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
-	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
-	FeatureMapleradEnabled bool
 	// FeatureUtilityBillsEnabled gates the Utility Bills DOMAIN money path:
 	// member /api/finance/utilitybills/* routes, admin routes, and background
 	// jobs (pending-transaction requery sweep). DEFAULT OFF — no flag, no
@@ -920,12 +907,6 @@ func Load() Config {
 		CryptoQuidaxLiveKey:     getEnv("QUIDAX_LIVE_API_KEY", ""),
 		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://openapi.quidax.io/exchange-open-api/api/v1"),
 
-		MapleradSecretKey:          getEnv("MAPLERAD_SECRET_KEY", ""),
-		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
-		MapleradProd:               getEnvBool("MAPLERAD_PROD", false),
-		MapleradWebhookSecret:      getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
-		MapleradBaseURL:            getEnv("MAPLERAD_BASE_URL", ""),
-		FeatureMapleradEnabled:     getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
 		FeatureUtilityBillsEnabled: getEnvBool("FEATURE_UTILITY_BILLS_ENABLED", false),
 
 		EversendClientID:      getEnv("EVERSEND_CLIENT_ID", ""),
@@ -1308,13 +1289,8 @@ func (c Config) Validate() error {
 	require(c.FeatureBankTransfersEnabled && strings.EqualFold(strings.TrimSpace(c.TransferProviderDefault), "monnify"),
 		"MONNIFY_SECRET_KEY", c.MonnifySecretKey)
 
-	require(c.FeatureMapleradEnabled, "MAPLERAD_SECRET_KEY", c.MapleradSecretKey)
-	prefix(c.MapleradSecretKey, "mpr_", "MAPLERAD_SECRET_KEY")
 	if c.VertoFXProd && c.VertoFXBaseURL != "" {
 		problems = append(problems, "VERTOFX_BASE_URL must not be set when VERTOFX_PROD=true — it reroutes every VertoFX call away from the real provider")
-	}
-	if c.IsProd() && c.FeatureMapleradEnabled && c.MapleradProd && strings.Contains(c.MapleradSecretKey, "sandbox") {
-		problems = append(problems, "MAPLERAD_SECRET_KEY is a sandbox key but MAPLERAD_PROD=true")
 	}
 
 	// Multi-provider KYC verification (ADR-013): when enabled, at least one
@@ -1400,9 +1376,6 @@ func (c Config) Validate() error {
 		}
 		if c.FeatureTransportEnabled && !c.FeatureMapsEnabled {
 			strict = append(strict, "FEATURE_TRANSPORT_ENABLED=true requires FEATURE_MAPS_ENABLED=true (no MapService means MockMaps)")
-		}
-		if c.MapleradBaseURL != "" {
-			strict = append(strict, "MAPLERAD_BASE_URL must not be set outside development — it reroutes every Maplerad call away from the real provider")
 		}
 		if c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled {
 			if isPlaceholder(c.PaystackSecretKey) {

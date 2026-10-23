@@ -443,7 +443,7 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 // PostJournalWithGuard writes a balanced journal like PostJournal, but inside
 // the wallet's advisory lock and behind a replay-verified guard — the
 // user_wallet-debit counterpart of DebitWithBalanceCheck for callers that post
-// via planned journal legs (maplerad) rather than the wallet-Debit primitive.
+// via planned journal legs rather than the wallet-Debit primitive.
 //   - pg_advisory_xact_lock(hashtext("wallet:"+walletLockKey)) — same key
 //     namespace as DebitWithBalanceCheck, so a journal-debit serialises
 //     against a wallet debit on the same user.
