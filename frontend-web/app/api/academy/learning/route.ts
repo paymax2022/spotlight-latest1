@@ -3,6 +3,7 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { resolveLearner } from '@/src/server/services/academy';
+import { bestAttemptsByExam, type AttemptRow } from '@/src/server/services/academy/bestAttempt';
 
 export async function GET(request: Request) {
   try {
@@ -77,24 +78,7 @@ export async function GET(request: Request) {
       }),
     );
 
-    const attemptsByExamId = new Map<string, { status: string; percentage: number; score: number; totalPoints: number; passed: boolean } | null>();
-    (attemptsRes.data ?? []).forEach((a) => {
-      const attempt = a as {
-        exam_id: string;
-        status: string;
-        score: number;
-        total_points: number;
-        percentage: number;
-        passed: boolean;
-      };
-      attemptsByExamId.set(attempt.exam_id, {
-        status: attempt.status,
-        percentage: attempt.percentage,
-        score: attempt.score,
-        totalPoints: attempt.total_points,
-        passed: attempt.passed,
-      });
-    });
+    const attemptsByExamId = bestAttemptsByExam((attemptsRes.data ?? []) as AttemptRow[]);
 
     // Unpublished lessons are filtered here rather than in the query: the embedded
     // select cannot filter the child rows, so leaving it to Postgres would leak
@@ -125,7 +109,7 @@ export async function GET(request: Request) {
         const prevExam = examsByModuleId.get(prevMod.id);
         if (!prevExam) return true; // no quiz on previous module, not locked
         const prevAttempt = attemptsByExamId.get(prevExam.id);
-        return prevAttempt && prevAttempt.percentage >= 85;
+        return !!prevAttempt && prevAttempt.percentage >= prevExam.pass_mark;
       })();
       const isLocked = !previousModuleQuizPassed;
 
@@ -159,7 +143,7 @@ export async function GET(request: Request) {
       return result;
     });
 
-    const allLessons = modules.flatMap((m) => m.lessons);
+    const allLessons = modules.flatMap((m) => m.lessons as Array<{ completed: boolean }>);
     return successResponse({
       success: true,
       locked: false,
