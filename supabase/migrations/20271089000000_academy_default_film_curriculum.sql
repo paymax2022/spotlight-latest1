@@ -1,4 +1,4 @@
--- ADR-PR<pr-number>-film-academy-default-curriculum
+-- ADR-PR882-film-academy-default-curriculum
 -- Default film-academy curriculum, served to any enrolment whose batch has no
 -- program attached (see ensureEnrollment default-program fallback). Additive &
 -- idempotent: adds academy_programs.is_default, seeds one published default
