@@ -16,6 +16,7 @@ import {
 } from '@/features/events/hooks';
 import { idempotencyKey, lifecycleErrorMessage } from '@/features/events/api';
 import type { OrganiserEventStats } from '@/features/events/types';
+import EventsTabBar from '@/features/events/components/EventsTabBar';
 import { useEventsRealtime } from '@/features/events/realtime/useEventsRealtime';
 import { EventColors, formatNaira, formatNairaCompact, EVENT_STATE_BADGE, EVENTS_EDIT_LIFECYCLE_ENABLED, EVENTS_TICKETING_DEPTH_ENABLED, EVENTS_TEAM_ROLES_ENABLED } from '@/features/events/constants/events.constants';
 
@@ -110,6 +111,7 @@ export default function OrganiserDashboard() {
           <View style={{ height: Spacing.xxl }} />
         </ScrollView>
       )}
+      <EventsTabBar />
     </SafeAreaView>
   );
 }

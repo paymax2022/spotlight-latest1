@@ -133,7 +133,7 @@ func (h *Handler) CreateEvent(c *gin.Context) {
 }
 
 func (h *Handler) GetEvent(c *gin.Context) {
-	out, err := h.svc.GetEvent(c.Request.Context(), c.Param("id"))
+	out, err := h.svc.GetEventForCaller(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
 	// E2E-SEC-060: ListEvents already restricts anonymous/non-organiser callers
 	// to publiclyVisibleStates — the by-id read must honour the same gate or
 	// DRAFT/SUSPENDED events stay readable to anyone holding (or guessing) the

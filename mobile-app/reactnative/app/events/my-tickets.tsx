@@ -12,6 +12,7 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
+import EventsTabBar from '@/features/events/components/EventsTabBar';
 import { useMyTickets } from '@/features/events/hooks';
 import { getEvent } from '@/features/events/api';
 import { EventColors, TICKET_STATE_BADGE, eventCoverEmoji, eventBannerColor } from '@/features/events/constants/events.constants';
@@ -91,6 +92,7 @@ export default function MyTickets() {
           <View style={{ height: Spacing.xxl }} />
         </ScrollView>
       )}
+      <EventsTabBar />
     </SafeAreaView>
   );
 }
