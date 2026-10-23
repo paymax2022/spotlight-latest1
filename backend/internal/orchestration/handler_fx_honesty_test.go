@@ -57,7 +57,7 @@ func seedTransfer(t *testing.T, store Store, customer, ref string) {
 		ID: "tx_" + ref, Reference: ref, CustomerID: customer, Status: "processing",
 		Source:      NewMoney(500_000, "NGN"),
 		Destination: NewMoney(500_000, "NGN"),
-		Route:       Route{Provider: "maplerad", Corridor: "NGN-NGN", Rail: RailBankTransfer},
+		Route:       Route{Provider: "partner", Corridor: "NGN-NGN", Rail: RailBankTransfer},
 		Fees:        []Fee{},
 		CreatedAt:   time.Now(),
 	}

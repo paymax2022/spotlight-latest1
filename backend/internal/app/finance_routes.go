@@ -38,7 +38,6 @@ import (
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/kycverify"
 	"spotlight/backend/internal/finance/ledger"
-	mapleraddomain "spotlight/backend/internal/finance/maplerad"
 	"spotlight/backend/internal/finance/ratings"
 	"spotlight/backend/internal/finance/referrals"
 	"spotlight/backend/internal/finance/settlement"
@@ -73,7 +72,6 @@ import (
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
-	"spotlight/backend/internal/provider/maplerad"
 	"spotlight/backend/internal/provider/monnify"
 	"spotlight/backend/internal/provider/paystack"
 	"spotlight/backend/internal/realtor"
@@ -97,7 +95,7 @@ import (
 // It RETURNS the *referrals.RewardService built by the Direct Referral Rewards engine
 // (nil when the engine is flag-off or the pool is nil) so router.go can thread the
 // emitter into Phase-1 revenue modules wired OUTSIDE this function — currently the
-// Marketplace (RegisterMarketplace). Modules built INSIDE this function (the Maplerad
+// Marketplace (RegisterMarketplace). Modules built INSIDE this function (the utility
 // bills domain) are wired with it directly here.
 // Also returns the KYC verification gateway (*kycverify.Service, nil when
 // FEATURE_KYC_VERIFY_ENABLED is off or pool is nil) so router.go can thread it
@@ -236,10 +234,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// paystackClient is the CONCRETE Paystack client, kept alongside the
 	// paymentProvider interface var above for callers that need a
 	// Paystack-specific capability not on provider.PaymentProvider (namely
-	// RefundPayment — see restaurant/paystackcheckout.Gateway). paymentProvider
-	// may later be overridden to Maplerad below; paystackClient never is, so a
-	// feature that specifically needs Paystack (not "whichever provider is
-	// configured") reads this instead of paymentProvider.
+	// RefundPayment — see restaurant/paystackcheckout.Gateway).
 	var paystackClient *paystack.Client
 
 	if cfg.PaystackSecretKey != "" {
@@ -247,19 +242,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		paymentProvider = ps
 		vaProvider = ps
 		paystackClient = ps
-	}
-
-	// Maplerad overrides VA provider when its key is set (preferred for NGN DVAs + FX).
-	mapleradKey := cfg.MapleradSecretKey
-	var mapleradClient *maplerad.Client
-	// cardIssuer is the card-LIFECYCLE seam for the FX virtual cards store; nil when
-	// no issuer is configured (store then keeps synthesized card material).
-	var cardIssuer providerInterfaces.CardIssuer
-	if mapleradKey != "" {
-		mapleradClient = maplerad.New(mapleradKey, cfg.MapleradProd).WithBaseURL(cfg.MapleradBaseURL)
-		vaProvider = mapleradClient
-		paymentProvider = mapleradClient // use Maplerad as payment provider too when available
-		cardIssuer = mapleradClient
 	}
 
 	// Each real client is wrapped with a deterministic mock fallback (mock-first
@@ -304,33 +286,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// the provider (idempotent; also self-heals via GET /finance/va/me).
 	kycSvc.WithVAProvisioner(vaSvc)
 
-	var fxHandler *fx.Handler
-	var fxMarkupHandler *fx.MarkupHandler
-	if mapleradClient != nil {
-		fxSvc := fx.NewService(pool, ledgerSvc, mapleradClient, redisClient)
-		// Operator-tunable Paymax FX markup (ADR-030). Maplerad returns no fee —
-		// it prices its margin into the rate — so the customer-facing fee is ours,
-		// and it lives in fx_markup_rates where an admin can change it at runtime
-		// (no restart, no cache: resolved per quote). Seeded at 1%.
-		fxMarkupStore := fx.NewMarkupStore(pool)
-		fxSvc.SetMarkup(fxMarkupStore)
-		fxMarkupHandler = fx.NewMarkupHandler(fxMarkupStore)
-		// Commission recording under Finance/Currency Exchange (nil-safe, flag-gated,
-		// ledger-less — the conversion's own legs already move money). RATE NOTE:
-		// this module computes no isolated Spotlight margin (provider rate +
-		// passthrough fee), so the central 10% of principal is an attributed figure
-		// that likely OVER-states the true margin (see docs/commission).
-		if cfg.FeatureCommissionEnabled {
-			fxSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
-			log.Println("[fx] commission recording wired → Finance/Currency Exchange (earning-row only; no ledger re-post)")
-		}
-		fxHandler = fx.NewHandler(fxSvc)
-	}
+	// Operator-tunable Paymax FX markup (ADR-030): the customer-facing fee lives in
+	// fx_markup_rates where an admin can change it at runtime (no restart, no
+	// cache: resolved per quote). Seeded at 1%. The legacy wallet quote/convert
+	// service has no FX provider wired, so only the markup admin surface mounts.
+	fxMarkupHandler := fx.NewMarkupHandler(fx.NewMarkupStore(pool))
 
-	// Webhook handler. Signature verification must use the PAYSTACK client — not
-	// paymentProvider, which Maplerad overrides above (its HMAC secret is the
-	// Maplerad key, so every Paystack delivery would 401 and its fulfilments
-	// (DVA credits, transfer settle, dues/fees/food orders) would never land).
+	// Webhook handler. Signature verification uses the PAYSTACK client directly
+	// (its HMAC secret is the Paystack key), so DVA credits, transfer settle and
+	// dues/fees/food order fulfilments land.
 	var webhookHandler *webhooks.PaystackHandler
 	if paystackClient != nil {
 		webhookHandler = webhooks.NewPaystackHandler(paystackClient, vaSvc, xferSvc, walletSvc)
@@ -750,21 +714,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 	}
 
-	if cfg.FeatureFXEnabled && fxHandler != nil {
-		fxGroup := finance.Group("/fx")
-		fxGroup.POST("/quote", fxHandler.GetQuote)
-		// convert is a money mutation — same budget as the transfer initiates.
-		fxGroup.POST("/convert", transferRate, fxHandler.Convert)
-		fxGroup.GET("/history", fxHandler.ListHistory)
-		fxGroup.GET("/wallets/:currency", fxHandler.GetWallet)
-	}
-
-	// Mounted on the root engine with mapsAuth() so the permission middleware can
-	// read the caller, matching the transfers/KYC admin consoles. Deliberately a
-	// SEPARATE grant from finance.admin.transfers: changing what every customer
-	// pays on FX has a wider blast radius than working a queue. Registered
-	// independently of FeatureFXEnabled so the rate stays readable and correctable
-	// even while the customer-facing FX surface is switched off.
 	if fxMarkupHandler != nil {
 		fxAdmin := r.Group("/api/finance/admin/fx")
 		fxAdmin.Use(mapsAuth()) // RequireAuthContext + mirror user_id
@@ -773,7 +722,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		fxAdmin.GET("/markup/audit", middleware.RequirePermission(rbac, "finance.admin.fx_markup"), fxMarkupHandler.ListAudit)
 	}
 
-	// Smart order routing across Eversend + Maplerad, spread engine, treasury,
+	// Smart order routing across Eversend + VertoFX, spread engine, treasury,
 	// unified multi-currency ledger, quote->lock->execute with idempotency.
 	if cfg.FeatureFXOrchestrationEnabled {
 		orchStore := orchestration.NewSQLStore(pool)
@@ -794,9 +743,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		floatBuckets := []orchestration.FloatBucket{
 			{Provider: "eversend", Currency: "USD", BalanceMinor: 820_000_00, LowWaterMinor: 200_000_00, HighWaterMinor: 1_000_000_00, ExposureLimitMinor: 5_000_000_00},
 			{Provider: "eversend", Currency: "NGN", BalanceMinor: 1_800_000_000_00, LowWaterMinor: 250_000_000_00, HighWaterMinor: 9_000_000_000_00, ExposureLimitMinor: 50_000_000_000_00},
-			{Provider: "maplerad", Currency: "NGN", BalanceMinor: 2_400_000_000_00, LowWaterMinor: 250_000_000_00, HighWaterMinor: 9_000_000_000_00, ExposureLimitMinor: 50_000_000_000_00},
-			{Provider: "maplerad", Currency: "USD", BalanceMinor: 600_000_00, LowWaterMinor: 150_000_00, HighWaterMinor: 800_000_00, ExposureLimitMinor: 4_000_000_00},
-			{Provider: "maplerad", Currency: "XAF", BalanceMinor: 420_000_000_00, LowWaterMinor: 100_000_000_00, HighWaterMinor: 500_000_000_00, ExposureLimitMinor: 5_000_000_000_00},
 		}
 		if cfg.FeatureVertoFXEnabled {
 			// Seed VertoFX float so it is not scored 0-liquidity / failing CanCover.
@@ -849,7 +795,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		orchHandler := orchestration.NewHandler(orchSvc).
 			WithSecondary(orchestration.NewSecondaryStore(pool)).
 			WithBusiness(orchestration.NewBusinessStore(pool)).
-			WithCards(orchestration.NewCardStore(pool, cardIssuer)).
 			WithCollections(orchestration.NewCollectionStore(pool)).
 			WithVerification(orchestration.NewVerificationStore(pool))
 
@@ -919,17 +864,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		og.GET("/notifications", orchHandler.ListNotifications)
 		og.PATCH("/notifications/:id", orchHandler.MarkNotificationRead)
 		og.POST("/notifications/read-all", orchHandler.MarkAllNotificationsRead)
-		// Consistent :id param across all card sub-routes (gin requires it).
-		og.GET("/cards", orchHandler.ListCards)
-		og.POST("/cards", orchHandler.CreateCard)
-		og.GET("/cards/:id", orchHandler.GetCard)
-		og.GET("/cards/:id/transactions", orchHandler.ListCardTransactions)
-		og.POST("/cards/:id/reveal", orchHandler.RevealCard)
-		og.POST("/cards/:id/fund", transferRate, orchHandler.FundCard)
-		og.POST("/cards/:id/freeze", orchHandler.FreezeCard)
-		og.POST("/cards/:id/unfreeze", orchHandler.UnfreezeCard)
-		og.POST("/cards/:id/terminate", orchHandler.TerminateCard)
-		og.PATCH("/cards/:id/controls", orchHandler.UpdateCardControls)
+		// FX virtual cards are disabled: no card-issuing provider is configured, so
+		// the /cards routes are intentionally not mounted.
 		// Inbound provider webhooks (no auth; provider-signed).
 		r.POST("/api/v1/fx/webhooks/:provider", orchHandler.InboundWebhook)
 		log.Println("[finance] FX orchestration routes registered at /api/v1/fx")
@@ -951,65 +887,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 	}
 
-	// --- Maplerad WaaS DOMAIN money path (ADR-012, NGN v1) ---
-	// Gated by FEATURE_MAPLERAD_ENABLED (no flag, no money path). The domain
-	// service depends ONLY on the provider GATEWAY PORTS — the concrete Maplerad
-	// client (built with its webhook secret) is injected as all five ports. Member
-	// routes are auth'd via the finance group's requireUserID; the webhook is
-	// mounted UNAUTHENTICATED (signature verified inside the handler); the
-	// reconcile + orphan-sweep jobs run as ctx-scoped goroutines.
-	if cfg.FeatureMapleradEnabled && pool != nil {
-		mplClient := maplerad.New(cfg.MapleradSecretKey, cfg.MapleradProd).
-			WithBaseURL(cfg.MapleradBaseURL).
-			WithWebhookSecret(cfg.MapleradWebhookSecret)
-		mplSvc := mapleraddomain.NewService(mapleraddomain.Deps{
-			Pool:         pool,
-			Ledger:       ledgerSvc,
-			Tiers:        tiersSvc,
-			VA:           vaSvc,
-			Identity:     mplClient,
-			Wallet:       mplClient,
-			Bills:        mplClient,
-			Disbursement: mplClient,
-			VAPort:       mplClient,
-		})
-		// Thread the Direct Referral Rewards emitter into the bills path (PRD §2.5/§7.1).
-		// OPTIONAL + nil-safe: only wire a NON-nil concrete service. Passing a typed-nil
-		// *referrals.RewardService through the interface setter would produce a non-nil
-		// interface wrapping a nil pointer (the classic Go nil-interface trap) and the
-		// `!= nil` guard would then call a method on nil — so we gate on rewardSvc here.
-		// When FEATURE_REFERRAL_REWARDS_ENABLED is off the emitter stays nil and a
-		// settled bill simply skips the emit. On success the domain calls
-		// emitter.OnPurchaseSettled{Module:"bills", ...} post-commit.
-		if rewardSvc != nil {
-			mplSvc.WithReferralEmitter(rewardSvc)
-		}
-		mplHandler := mapleraddomain.NewHandler(mplSvc)
-
-		mplGroup := finance.Group("/maplerad")
-		mplGroup.POST("/customer", mplHandler.CreateCustomer)
-		mplGroup.POST("/virtual-account", mplHandler.OpenVirtualAccount)
-		mplGroup.POST("/transfers", mplHandler.InitiateTransfer)
-		mplGroup.GET("/transfers/:ref", mplHandler.GetTransfer)
-		mplGroup.POST("/bills", mplHandler.PurchaseBill)
-
-		// Unauthenticated webhook (body-signed; verified inside the handler).
-		mplWH := webhooks.NewMapleradHandler(mplClient, mplSvc)
-		r.POST("/api/webhooks/maplerad/go", mplWH.Handle)
-
-		// Background reconciliation: daily full recon + hourly orphan sweep.
-		mapleraddomain.StartReconcile(ctx, mplSvc, 24*time.Hour)
-		mapleraddomain.StartOrphanSweep(ctx, mplSvc, time.Hour)
-		log.Println("[finance] Maplerad WaaS domain routes + webhook + jobs registered")
-	}
-
 	// Gated by FEATURE_UTILITY_BILLS_ENABLED inside RegisterUtilityBills (no flag,
 	// no money path). Member routes at /api/finance/utilitybills/*; the
 	// money-affecting admin actions at /api/finance/admin/utilitybills/* behind
 	// RBAC finance.admin.utilitybills. Reuses wallet/ledger/commission — the debit
 	// goes through walletSvc, so the tier/daily-limit check fires exactly as it
 	// does for every other module rather than being reimplemented here. The
-	// hourly requery-sweep job (Phase 3) runs on the same ctx as Maplerad's jobs.
+	// hourly requery-sweep job (Phase 3) runs on the same ctx as the other finance jobs.
 	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, auditSink)
 
 	// --- Multi-provider KYC verification gateway (ADR-013) ---

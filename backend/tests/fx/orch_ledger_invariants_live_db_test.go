@@ -151,7 +151,7 @@ func TestOrchLedger_ConversionIsBalancedPerCurrency(t *testing.T) {
 			{Type: orchestration.FeeRail, Amount: orchestration.NewMoney(railFee, "USD")},
 			{Type: orchestration.FeeSpread, Amount: orchestration.NewMoney(spread, "USD")},
 		},
-		Route:          orchestration.Route{Provider: "maplerad", Corridor: "USD-NGN", Rail: orchestration.RailBankTransfer},
+		Route:          orchestration.Route{Provider: "vertofx", Corridor: "USD-NGN", Rail: orchestration.RailBankTransfer},
 		TransactionID:  "tx_" + uuid.NewString(),
 		IdempotencyKey: "orch-inv-conv-" + uuid.NewString(), CreatedAt: time.Now(),
 	}
@@ -238,7 +238,7 @@ func TestOrchLedger_TransferIsBalancedPerCurrency(t *testing.T) {
 			{Type: orchestration.FeeRail, Amount: orchestration.NewMoney(railFee, "USD")},
 			{Type: orchestration.FeeSpread, Amount: orchestration.NewMoney(spread, "USD")},
 		},
-		Route:          orchestration.Route{Provider: "maplerad", Corridor: "USD-NGN", Rail: orchestration.RailBankTransfer},
+		Route:          orchestration.Route{Provider: "vertofx", Corridor: "USD-NGN", Rail: orchestration.RailBankTransfer},
 		TransactionID:  "tx_" + uuid.NewString(),
 		IdempotencyKey: "orch-inv-tr-" + uuid.NewString(), CreatedAt: time.Now(),
 	}
@@ -297,7 +297,7 @@ func TestOrchLedger_ZeroSpreadStaysBalanced(t *testing.T) {
 				Fees: []orchestration.Fee{
 					{Type: orchestration.FeeSpread, Amount: orchestration.NewMoney(tc.spread, "USD")},
 				},
-				Route:          orchestration.Route{Provider: "maplerad", Corridor: "USD-USD", Rail: orchestration.RailBankTransfer},
+				Route:          orchestration.Route{Provider: "vertofx", Corridor: "USD-USD", Rail: orchestration.RailBankTransfer},
 				TransactionID:  "tx_" + uuid.NewString(),
 				IdempotencyKey: "orch-inv-spread-" + uuid.NewString(), CreatedAt: time.Now(),
 			}
@@ -317,10 +317,10 @@ func TestOrchLedger_ZeroSpreadStaysBalanced(t *testing.T) {
 }
 
 // TestOrchLedger_EndToEndQuoteExecuteIsBalanced drives the FULL production path —
-// orchestration.NewService over the deterministic Eversend/Maplerad adapters and
+// orchestration.NewService over the deterministic Eversend/VertoFX adapters and
 // the real sqlStore — from quote through execution, the way the QA conversions
 // that surfaced this bug were made. The adapters are the no-credential fallback
-// the app wires when MAPLERAD_*/EVERSEND_* are unset, so conversions settle
+// the app wires when VERTOFX_*/EVERSEND_* are unset, so conversions settle
 // locally and no provider call leaves the machine.
 func TestOrchLedger_EndToEndQuoteExecuteIsBalanced(t *testing.T) {
 	ctx := context.Background()
@@ -332,7 +332,7 @@ func TestOrchLedger_EndToEndQuoteExecuteIsBalanced(t *testing.T) {
 
 	store := orchestration.NewSQLStore(pool)
 	svc := orchestration.NewService(
-		[]orchestration.Provider{adapters.NewEversend(false), adapters.NewMapleradFX(false)},
+		[]orchestration.Provider{adapters.NewEversend(false), adapters.NewVertoFX(false)},
 		store,
 		orchestration.Options{
 			Spread: orchestration.NewSpreadEngine(105,

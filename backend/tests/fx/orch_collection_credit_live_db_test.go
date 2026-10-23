@@ -1,7 +1,7 @@
 package fx_test
 
 // LIVE-DB suite for INBOUND FX COLLECTIONS (deposits into a provisioned virtual
-// account / IBAN) — the last link of the Maplerad/Eversend collections rail.
+// account / IBAN) — the last link of the VertoFX/Eversend collections rail.
 // Everything ahead of this link already existed: the live provider adapters, the
 // credential-gated wiring, Service.CreateCollection provisioning a virtual
 // account into orch_collections, the mobile Receive screen, and a signed
@@ -37,7 +37,7 @@ import (
 func collectionOnlyService(t *testing.T, store orchestration.Store) *orchestration.Service {
 	t.Helper()
 	return orchestration.NewService(
-		[]orchestration.Provider{adapters.NewMapleradFX(false), adapters.NewEversend(false)},
+		[]orchestration.Provider{adapters.NewVertoFX(false), adapters.NewEversend(false)},
 		store,
 		orchestration.Options{LockWindow: 90 * time.Second},
 	)
@@ -51,10 +51,10 @@ func seedVirtualAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 	providerRef := "99" + uuid.NewString()[:8]
 	va := &orchestration.VirtualAccount{
 		ID: "va_" + uuid.NewString(), CustomerID: customer, Currency: currency,
-		Type: "virtual_account", Provider: "maplerad", Status: "active",
+		Type: "virtual_account", Provider: "vertofx", Status: "active",
 		ProviderRef: providerRef,
 		Details: map[string]any{
-			"account_name": "Paymax Customer", "account_number": providerRef, "bank_name": "maplerad",
+			"account_name": "Paymax Customer", "account_number": providerRef, "bank_name": "vertofx",
 		},
 		CreatedAt: time.Now(),
 	}
@@ -78,10 +78,10 @@ func collectionEventRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 	return n
 }
 
-// mapleradCollection is the webhook body Maplerad sends for a virtual-account
+// collectionEvent is the webhook body the provider sends for a virtual-account
 // credit. The event names are the ones the provider client already recognises
-// (internal/provider/maplerad/maplerad.go ParseWebhook).
-func mapleradCollection(eventID, providerRef, currency string, amountMinor int64) []byte {
+// (provider ParseWebhook).
+func collectionEvent(eventID, providerRef, currency string, amountMinor int64) []byte {
 	return []byte(`{
 		"id": "` + eventID + `",
 		"event": "collection.successful",
@@ -119,7 +119,7 @@ func TestLiveDB_OrchCollection_CreditsTheUSDWallet(t *testing.T) {
 	_, providerRef := seedVirtualAccount(t, ctx, pool, store, user, "USD")
 
 	svc := collectionOnlyService(t, store)
-	if err := svc.HandleProviderEvent(ctx, "maplerad", mapleradCollection("evt_"+uuid.NewString(), providerRef, "USD", 250_00)); err != nil {
+	if err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), providerRef, "USD", 250_00)); err != nil {
 		t.Fatalf("handle collection webhook: %v", err)
 	}
 
@@ -141,7 +141,7 @@ func TestLiveDB_OrchCollection_NGNCreditsTheMainWallet(t *testing.T) {
 	_, providerRef := seedVirtualAccount(t, ctx, pool, store, user, "NGN")
 
 	svc := collectionOnlyService(t, store)
-	if err := svc.HandleProviderEvent(ctx, "maplerad", mapleradCollection("evt_"+uuid.NewString(), providerRef, "NGN", 10_000_00)); err != nil {
+	if err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), providerRef, "NGN", 10_000_00)); err != nil {
 		t.Fatalf("handle collection webhook: %v", err)
 	}
 
@@ -163,9 +163,9 @@ func TestLiveDB_OrchCollection_ReplayCreditsOnce(t *testing.T) {
 	_, providerRef := seedVirtualAccount(t, ctx, pool, store, user, "USD")
 
 	svc := collectionOnlyService(t, store)
-	body := mapleradCollection("evt_replay_"+uuid.NewString(), providerRef, "USD", 500_00)
+	body := collectionEvent("evt_replay_"+uuid.NewString(), providerRef, "USD", 500_00)
 	for i := range 3 {
-		if err := svc.HandleProviderEvent(ctx, "maplerad", body); err != nil {
+		if err := svc.HandleProviderEvent(ctx, "vertofx", body); err != nil {
 			t.Fatalf("delivery %d: %v", i+1, err)
 		}
 	}
@@ -189,7 +189,7 @@ func TestLiveDB_OrchCollection_UnmatchedReferenceCreditsNothing(t *testing.T) {
 
 	svc := collectionOnlyService(t, store)
 	// A deposit quoting an account we never provisioned. Acknowledged, never credited.
-	if err := svc.HandleProviderEvent(ctx, "maplerad", mapleradCollection("evt_"+uuid.NewString(), "99999999-not-ours", "USD", 999_00)); err != nil {
+	if err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), "99999999-not-ours", "USD", 999_00)); err != nil {
 		t.Fatalf("unmatched webhook should be acknowledged, got: %v", err)
 	}
 
@@ -212,7 +212,7 @@ func TestLiveDB_OrchCollection_CurrencyMismatchIsRefused(t *testing.T) {
 
 	svc := collectionOnlyService(t, store)
 	// EUR arriving on a USD account: crediting either currency would be a guess.
-	err := svc.HandleProviderEvent(ctx, "maplerad", mapleradCollection("evt_"+uuid.NewString(), providerRef, "EUR", 100_00))
+	err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), providerRef, "EUR", 100_00))
 	if err == nil {
 		t.Fatal("currency mismatch was accepted — the deposit must be refused, not credited to a guessed wallet")
 	}
@@ -237,7 +237,7 @@ func TestLiveDB_OrchCollection_AppearsOnTheCollectionsFeed(t *testing.T) {
 	vaID, providerRef := seedVirtualAccount(t, ctx, pool, store, user, "USD")
 
 	svc := collectionOnlyService(t, store)
-	if err := svc.HandleProviderEvent(ctx, "maplerad", mapleradCollection("evt_"+uuid.NewString(), providerRef, "USD", 75_00)); err != nil {
+	if err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), providerRef, "USD", 75_00)); err != nil {
 		t.Fatalf("handle collection webhook: %v", err)
 	}
 
@@ -276,7 +276,7 @@ func TestLiveDB_OrchCollection_FeedRowIsAFullyFormedDeposit(t *testing.T) {
 	_, providerRef := seedVirtualAccount(t, ctx, pool, store, user, "USD")
 
 	svc := collectionOnlyService(t, store)
-	if err := svc.HandleProviderEvent(ctx, "maplerad", mapleradCollection("evt_"+uuid.NewString(), providerRef, "USD", 1_250_00)); err != nil {
+	if err := svc.HandleProviderEvent(ctx, "vertofx", collectionEvent("evt_"+uuid.NewString(), providerRef, "USD", 1_250_00)); err != nil {
 		t.Fatalf("handle collection webhook: %v", err)
 	}
 

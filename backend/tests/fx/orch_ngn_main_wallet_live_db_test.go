@@ -210,7 +210,7 @@ func ngnConversion(cust string, sourceMinor, destMinor, spread int64) *orchestra
 		Fees: []orchestration.Fee{
 			{Type: orchestration.FeeSpread, Amount: orchestration.NewMoney(spread, "NGN")},
 		},
-		Route:          orchestration.Route{Provider: "maplerad", Corridor: "NGN-USD", Rail: orchestration.RailBankTransfer},
+		Route:          orchestration.Route{Provider: "vertofx", Corridor: "NGN-USD", Rail: orchestration.RailBankTransfer},
 		TransactionID:  "tx_" + uuid.NewString(),
 		IdempotencyKey: "orch-ngn-conv-" + uuid.NewString(), CreatedAt: time.Now(),
 	}
@@ -277,7 +277,7 @@ func TestLiveDB_OrchNGN_ConversionCreditsTheMainWallet(t *testing.T) {
 		Destination: orchestration.NewMoney(destMinor, "NGN"),
 		Rate:        1575.0, AllInRate: 1575.0,
 		Fees:           []orchestration.Fee{{Type: orchestration.FeeSpread, Amount: orchestration.NewMoney(50, "USD")}},
-		Route:          orchestration.Route{Provider: "maplerad", Corridor: "USD-NGN", Rail: orchestration.RailBankTransfer},
+		Route:          orchestration.Route{Provider: "vertofx", Corridor: "USD-NGN", Rail: orchestration.RailBankTransfer},
 		TransactionID:  "tx_" + uuid.NewString(),
 		IdempotencyKey: "orch-ngn-conv-in-" + uuid.NewString(), CreatedAt: time.Now(),
 	}
@@ -380,7 +380,7 @@ func TestLiveDB_OrchNGN_TransferDebitsTheMainWallet(t *testing.T) {
 		Destination: orchestration.NewMoney(sourceTotal, "NGN"),
 		QuotedRate:  1, ExecutedRate: 1,
 		Fees:           []orchestration.Fee{{Type: orchestration.FeeSpread, Amount: orchestration.NewMoney(0, "NGN")}},
-		Route:          orchestration.Route{Provider: "maplerad", Corridor: "NGN-NGN", Rail: orchestration.RailBankTransfer},
+		Route:          orchestration.Route{Provider: "vertofx", Corridor: "NGN-NGN", Rail: orchestration.RailBankTransfer},
 		TransactionID:  "tx_" + uuid.NewString(),
 		IdempotencyKey: "orch-ngn-tr-" + uuid.NewString(), CreatedAt: time.Now(),
 	}
