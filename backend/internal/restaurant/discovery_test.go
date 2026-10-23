@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestBuildSearchQuery_DishSearch(t *testing.T) {
@@ -125,5 +127,33 @@ func TestNormalized_DropsNonUUIDIDs(t *testing.T) {
 	}
 	if len(n.CategoryIDs) != 0 {
 		t.Errorf("CategoryIDs = %v", n.CategoryIDs)
+	}
+}
+
+func TestNormalized_EmptyIDParamIsNoFilter(t *testing.T) {
+	for _, vals := range [][]string{{""}, {" ", "\t"}} {
+		p := DiscoveryParams{CuisineIDs: vals, CategoryIDs: vals}.normalized()
+		sql, _ := buildDiscoveryWhere(p, false)
+		if strings.Contains(sql, "FALSE") {
+			t.Errorf("blank ids %q must mean no filter, got: %s", vals, sql)
+		}
+	}
+}
+
+func TestNormalized_NonEmptyInvalidIDStillEmptyPage(t *testing.T) {
+	p := DiscoveryParams{CuisineIDs: []string{"", "bad"}, CategoryIDs: []string{" ", "bad"}}.normalized()
+	sql, _ := buildDiscoveryWhere(p, false)
+	if strings.Count(sql, "AND FALSE") != 2 {
+		t.Errorf("non-empty invalid ids must yield an empty page: %s", sql)
+	}
+}
+
+func TestKeepUUIDs_CapsAt50(t *testing.T) {
+	in := make([]string, 0, 80)
+	for i := 0; i < 80; i++ {
+		in = append(in, uuid.NewString())
+	}
+	if got := keepUUIDs(in); len(got) != 50 {
+		t.Errorf("len = %d, want 50", len(got))
 	}
 }

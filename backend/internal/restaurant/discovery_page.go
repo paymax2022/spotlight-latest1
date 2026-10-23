@@ -72,9 +72,25 @@ type DiscoveryParams struct {
 }
 
 // keepUUIDs returns only the values that parse as UUIDs, canonicalised.
+// maxTaxonomyIDs caps each repeatable taxonomy id list.
+const maxTaxonomyIDs = 50
+
+// hasNonBlank reports whether any value is non-empty after trimming.
+func hasNonBlank(in []string) bool {
+	for _, v := range in {
+		if strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func keepUUIDs(in []string) []string {
 	var out []string
 	for _, v := range in {
+		if len(out) >= maxTaxonomyIDs {
+			break
+		}
 		if id, err := uuid.Parse(strings.TrimSpace(v)); err == nil {
 			out = append(out, id.String())
 		}
@@ -92,8 +108,10 @@ func (p DiscoveryParams) normalized() DiscoveryParams {
 	if strings.EqualFold(out.Cuisine, "all") {
 		out.Cuisine = ""
 	}
-	out.cuisineIDsSupplied = out.cuisineIDsSupplied || len(p.CuisineIDs) > 0
-	out.categoryIDsSupplied = out.categoryIDsSupplied || len(p.CategoryIDs) > 0
+	// An empty or blank value (?cuisine_id=) is no filter at all, so it must not
+	// count as supplied; a non-empty but invalid value still does (empty page).
+	out.cuisineIDsSupplied = out.cuisineIDsSupplied || hasNonBlank(p.CuisineIDs)
+	out.categoryIDsSupplied = out.categoryIDsSupplied || hasNonBlank(p.CategoryIDs)
 	out.CuisineIDs = keepUUIDs(p.CuisineIDs)
 	out.CategoryIDs = keepUUIDs(p.CategoryIDs)
 	if out.Limit <= 0 || out.Limit > maxDiscoveryLimit {
