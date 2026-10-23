@@ -52,7 +52,7 @@ export default function FxCardsRegistryPage() {
             </tbody>
           </table>
         )}
-        <p style={{ fontSize: '0.78rem', color: colors.muted, marginTop: '0.75rem' }}>Issuing is routed to the issuing-capable provider (Maplerad at V1). PCI card data is isolated; only last-4 is shown here.</p>
+        <p style={{ fontSize: '0.78rem', color: colors.muted, marginTop: '0.75rem' }}>Card issuing is currently unavailable. PCI card data is isolated; only last-4 is shown here.</p>
       </Card>
 
       <Card title="Suspicious card activity">

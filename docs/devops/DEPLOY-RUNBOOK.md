@@ -9,7 +9,7 @@ deploy time; never commit live keys or paste them in chat.
 ## 0. Preconditions (once per environment)
 
 - Postgres/Supabase reachable; `DATABASE_URL` set in the deploy environment only.
-- Secret manager holds: Supabase URL/anon/service-role keys, Paystack/Maplerad keys (if
+- Secret manager holds: Supabase URL/anon/service-role keys, Paystack/VertoFX keys (if
   live rails), `WS_TICKET_SIGNING_SECRET` (shared by frontend-web + backend for food WS),
   LLM key (health triage), provider keys per module.
 - `RAILS_MODE` set per environment: `fake` (dev), `sandbox` (staging), `live` (prod).

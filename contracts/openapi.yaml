@@ -6902,7 +6902,7 @@ paths:
       summary: Provider async callback — status updates and inbound collections
       description: >-
         Signature-verified (HMAC-SHA256 over the raw body, `Webhook-Signature`;
-        Maplerad may send `X-Maplerad-Signature`). Verification FAILS CLOSED — an
+        Verification FAILS CLOSED — an
         unconfigured `*_WEBHOOK_SECRET` rejects every delivery rather than
         accepting unsigned ones.
 
@@ -6918,9 +6918,8 @@ paths:
       tags: [FX Orchestration]
       security: []
       parameters:
-        - { name: provider, in: path, required: true, schema: { type: string, enum: [maplerad, eversend] } }
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [vertofx, eversend] } }
         - { name: Webhook-Signature, in: header, required: false, schema: { type: string }, description: "HMAC-SHA256 of the raw body, hex-encoded." }
-        - { name: X-Maplerad-Signature, in: header, required: false, schema: { type: string }, description: Alternate header name used by Maplerad. }
       requestBody:
         required: true
         description: Raw provider event payload.

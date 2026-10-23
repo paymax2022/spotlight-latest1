@@ -58,7 +58,7 @@ export async function createCard(draft: CreateCardDraft, idempotencyKey: string)
       cardholderName: 'SPOTLIGHT USER',
       balance: draft.fundingAmount, status: 'active', color: draft.color, spentThisMonth: 0,
       controls: { monthlyLimit: null, perTxLimit: null, online: true, atm: false, international: true, contactless: true },
-      provider: 'maplerad', createdAt: new Date().toISOString(),
+      provider: 'vertofx', createdAt: new Date().toISOString(),
     };
     MOCK_CARDS.unshift(created);
     MOCK_CARD_SENSITIVE[created.id] = { pan: `${last4} •••• •••• ${last4}`, cvv: String(secureRandomInt(100, 999)), expiry: `${String(created.expMonth).padStart(2, '0')}/${created.expYear}` };

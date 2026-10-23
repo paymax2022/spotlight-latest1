@@ -66,7 +66,7 @@ export interface QuoteFee {
 }
 
 export interface QuoteRoute {
-  provider: string;      // 'eversend' | 'maplerad' | …  (opaque to the caller)
+  provider: string;      // 'eversend' | 'vertofx' | …  (opaque to the caller)
   corridor: string;      // 'USD-NGN'
   rail: Rail;
 }

@@ -104,7 +104,7 @@ Per `docs/architecture/audit.md`, the Spotlight/Paymax platform consists of:
 - Admin (RBAC, audit)
 
 **P3+ Vertical Lanes:**
-- FX (Maplerad)
+- FX (Eversend / VertoFX)
 - Groups
 - Events/Tickets
 - Estate/Voting ✅ (has contract)
