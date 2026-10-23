@@ -91,10 +91,10 @@ export async function GET(request: Request) {
       const lessons = (mod.academy_lessons ?? [])
         .filter((l) => l.is_published !== false)
         .sort((a, b) => Number(a.order_index ?? 0) - Number(b.order_index ?? 0))
-        .map((l) => ({
+        .map((l): Record<string, unknown> & { completed: boolean; completed_at: string | null } => ({
           ...l,
           completed: done.get(l.id as string)?.completed === true,
-          completed_at: done.get(l.id as string)?.completed_at ?? null,
+          completed_at: (done.get(l.id as string)?.completed_at as string | null | undefined) ?? null,
         }));
 
       // Get quiz for this module
@@ -113,7 +113,7 @@ export async function GET(request: Request) {
       })();
       const isLocked = !previousModuleQuizPassed;
 
-      const result: Record<string, unknown> = {
+      const result: Record<string, unknown> & { lessons: typeof lessons } = {
         id: mod.id,
         title: mod.title,
         description: mod.description,

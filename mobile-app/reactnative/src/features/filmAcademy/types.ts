@@ -121,6 +121,15 @@ export interface FilmAcademyInstalment {
   status: string | null;
 }
 
+/** One interest area the applicant chose, with the priced option they picked. NAIRA. */
+export interface FilmAcademyAppliedArea {
+  slug: string;
+  label: string;
+  optionKey: string | null;
+  optionLabel: string | null;
+  priceNgn: number;
+}
+
 export interface FilmAcademyApplicationStatus {
   application: {
     id: string;
@@ -146,6 +155,10 @@ export interface FilmAcademyApplicationStatus {
   plan: { id: string; total_amount_ngn: number; discounted_amount_ngn: number | null; installments_count: number } | null;
   payments: FilmAcademyInstalment[];
   actions: FilmAcademyAction[];
+  /** Interest areas applied for. Empty on an older server. */
+  areas: FilmAcademyAppliedArea[];
+  /** Naira. Sum of the priced areas; 0 when unknown. */
+  tuitionTotalNgn: number;
 }
 
 /** Why the learning area is not open yet. Decided server-side. */
