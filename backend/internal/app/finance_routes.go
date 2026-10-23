@@ -1644,7 +1644,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restaurantSvc = restaurantSvc.WithRealtime(restaurantRT)
 
 		restaurantSvc = restaurantSvc.WithDiscounts(cfg.FeatureRestaurantDiscounts)
-		restaurantSvc = restaurantSvc.WithTaxonomy(cfg.FeatureRestaurantAdminCategories)
+		// Customer taxonomy browsing needs the taxonomy itself (admin-categories) AND its
+		// own switch, so it can be turned off without touching merchant/admin surfaces.
+		taxonomyBrowse := cfg.FeatureRestaurantAdminCategories && cfg.FeatureRestaurantTaxonomyBrowse
+		restaurantSvc = restaurantSvc.WithTaxonomy(taxonomyBrowse)
 		restaurantHandler := restaurant.NewHandler(restaurantSvc).WithRealtime(restaurantHub)
 		restGroup := finance.Group("/restaurant")
 
@@ -1839,6 +1842,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if cfg.FeatureRestaurantAdminCategories && pool != nil {
 			taxonomy.Register(restAdmin, restGroup, taxonomy.NewHandler(taxonomy.NewService(pool)),
 				func(permission string) gin.HandlerFunc { return middleware.RequirePermission(rbac, permission) })
+			if cfg.FeatureRestaurantTaxonomyBrowse {
+				taxonomy.RegisterBrowse(restGroup, taxonomy.NewHandler(taxonomy.NewService(pool)))
+			}
 		}
 		restAdmin.GET("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.GetDeliveryConfig)
 		restAdmin.PUT("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.PutDeliveryConfigValidated)

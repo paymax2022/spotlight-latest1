@@ -9,7 +9,7 @@ import (
 )
 
 // Taxonomy-driven customer menu sections and restaurant cuisines. Everything here
-// is behind Service.taxonomyOn (FEATURE_RESTAURANT_ADMIN_CATEGORIES); with the flag
+// is behind Service.taxonomyOn (FEATURE_RESTAURANT_TAXONOMY_BROWSE AND FEATURE_RESTAURANT_ADMIN_CATEGORIES); with the flag
 // off none of it runs and the responses are byte-for-byte what they were.
 
 // CuisineRef is the slim cuisine tag a customer sees on a restaurant.

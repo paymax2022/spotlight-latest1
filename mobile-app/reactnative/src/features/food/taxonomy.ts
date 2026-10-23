@@ -60,8 +60,8 @@ export async function getTaxonomy(): Promise<Taxonomy | null> {
     if (USE_MOCK) return null;
     const { api } = await import('@/api/client');
     const [cats, cuis] = await Promise.allSettled([
-      api.get(`${RESTAURANT_BASE}/menu-taxonomy/categories`),
-      api.get(`${RESTAURANT_BASE}/menu-taxonomy/cuisines`),
+      api.get(`${RESTAURANT_BASE}/menu-taxonomy/browse/categories`),
+      api.get(`${RESTAURANT_BASE}/menu-taxonomy/browse/cuisines`),
     ]);
     if (cats.status === 'rejected' || cuis.status === 'rejected') return null;
     return mapTaxonomy(cats.value.data, cuis.value.data);

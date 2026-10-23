@@ -32,6 +32,9 @@ services:
       # "No API route matches …/menu-taxonomy/categories". Same flag-gating class as
       # the flags above.
       FEATURE_RESTAURANT_ADMIN_CATEGORIES: "true"
+      # Customer taxonomy browsing (needs the flag above). Off = customers see the legacy
+      # food home / menu; merchant and admin taxonomy are unaffected.
+      FEATURE_RESTAURANT_TAXONOMY_BROWSE: "true"
       # Point at the host-side local Supabase Postgres (supabase start → port 54322).
       # Override in CI/prod with a real DATABASE_URL.
       DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable

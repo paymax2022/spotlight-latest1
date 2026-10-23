@@ -130,7 +130,7 @@ components:
         cuisine: { type: string }
         cuisines:
           type: array
-          description: 'Cuisine taxonomy tags for this restaurant. Present only when the menu taxonomy flag is on.'
+          description: 'Cuisine taxonomy tags for this restaurant. Present only when the taxonomy browse flag is on (FEATURE_RESTAURANT_TAXONOMY_BROWSE together with FEATURE_RESTAURANT_ADMIN_CATEGORIES).'
           items:
             type: object
             properties:
@@ -590,25 +590,25 @@ paths:
           required: false
           explode: true
           schema: { type: array, items: { type: string, format: uuid } }
-          description: 'Repeatable cuisine taxonomy id; keeps restaurants tagged with any of them. Honoured regardless of the menu taxonomy flag (only the cuisines and sections response fields and the taxonomy read routes are flag-gated).'
+          description: 'Repeatable cuisine taxonomy id; keeps restaurants tagged with any of them. Honoured regardless of the taxonomy browse flag (only the cuisines and sections response fields and the /menu-taxonomy/browse reads are flag-gated).'
         - name: category_id
           in: query
           required: false
           explode: true
           schema: { type: array, items: { type: string, format: uuid } }
-          description: 'Repeatable menu category taxonomy id; keeps restaurants that sell an item in any of them. Honoured regardless of the menu taxonomy flag (only the cuisines and sections response fields and the taxonomy read routes are flag-gated).'
+          description: 'Repeatable menu category taxonomy id; keeps restaurants that sell an item in any of them. Honoured regardless of the taxonomy browse flag (only the cuisines and sections response fields and the /menu-taxonomy/browse reads are flag-gated).'
       responses:
         '200':
           description: One page of open restaurants
           content: { application/json: { schema: { $ref: '#/components/schemas/RestaurantPage' } } }
         '401': { description: Not authenticated }
-  /menu-taxonomy/categories:
+  /menu-taxonomy/browse/categories:
     get:
       tags: [customer]
       summary: Menu category taxonomy tree (customer read)
       description: >
         Active menu categories as a tree, for browse filters. Present only when the
-        menu taxonomy flag is on (FeatureRestaurantAdminCategories); otherwise the
+        taxonomy browse flag is on (FEATURE_RESTAURANT_TAXONOMY_BROWSE and FEATURE_RESTAURANT_ADMIN_CATEGORIES); otherwise the
         route is not mounted.
       responses:
         '200':
@@ -620,13 +620,13 @@ paths:
                 properties:
                   data: { type: array, items: { $ref: '#/components/schemas/TaxonomyNode' } }
         '401': { description: Not authenticated }
-  /menu-taxonomy/cuisines:
+  /menu-taxonomy/browse/cuisines:
     get:
       tags: [customer]
       summary: Cuisine taxonomy list (customer read)
       description: >
         Active cuisines, for browse filters. Present only when the menu taxonomy
-        flag is on (FeatureRestaurantAdminCategories); otherwise the route is not
+        browse flag is on (FEATURE_RESTAURANT_TAXONOMY_BROWSE and FEATURE_RESTAURANT_ADMIN_CATEGORIES); otherwise the route is not
         mounted.
       responses:
         '200':
@@ -658,7 +658,7 @@ paths:
                     type: array
                     description: >
                       Menu grouped into taxonomy sections, additive next to `categories`.
-                      Present only when the menu taxonomy flag is on. A legacy fallback
+                      Present only when the taxonomy browse flag is on. A legacy fallback
                       section has `id: null`.
                     items:
                       type: object

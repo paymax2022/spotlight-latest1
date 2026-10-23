@@ -268,6 +268,13 @@ type Config struct {
 	// owners get 403 on category create/delete, and the admin taxonomy routes mount.
 	FeatureRestaurantAdminCategories bool
 
+	// FeatureRestaurantTaxonomyBrowse is the customer-facing kill switch for taxonomy
+	// browsing: the /menu-taxonomy/browse reads, `cuisines` on restaurants and
+	// `sections` on restaurant detail. It is ANDed with FeatureRestaurantAdminCategories
+	// (the taxonomy must exist before it can be browsed); off leaves the merchant and
+	// admin taxonomy surfaces untouched. Default OFF.
+	FeatureRestaurantTaxonomyBrowse bool
+
 	// FeatureRestaurantDiscounts turns on owner discounts (automatic, item or category
 	// or whole-restaurant). Off means no discount routes and no discounted prices.
 	FeatureRestaurantDiscounts bool
@@ -995,6 +1002,7 @@ func Load() Config {
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:                     getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
 		FeatureRestaurantAdminCategories:             getEnvBool("FEATURE_RESTAURANT_ADMIN_CATEGORIES", false),
+		FeatureRestaurantTaxonomyBrowse:              getEnvBool("FEATURE_RESTAURANT_TAXONOMY_BROWSE", false),
 		FeatureRestaurantDiscounts:                   getEnvBool("FEATURE_RESTAURANT_DISCOUNTS", false),
 		FeatureRestaurantWithdrawalsEnabled:          getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
 		FeatureRestaurantPaystackCheckoutEnabled:     getEnvBool("FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED", false),
