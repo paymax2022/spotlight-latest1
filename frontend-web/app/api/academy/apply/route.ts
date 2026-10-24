@@ -5,6 +5,12 @@ import { ApiError, errorResponse, handleApiError, successResponse } from '@/src/
 import { requireRequestUser, type RequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getActiveAcademySettings, getBatchAreaSlugs } from '@/src/server/services/academy';
+import {
+  priceSelections,
+  type OptionRow,
+  type PricedSelection,
+  type Selection,
+} from '@/src/server/services/academy/areaOptionPricing';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
 import { verifyPaystackTransaction } from '@/src/lib/payments';
 import {
@@ -225,7 +231,27 @@ export async function POST(request: Request) {
     // Session-derived, never client-supplied — see getApplicantIdentity.
     const email = identity.email || getString(body.email);
     const phone = identity.phone || getString(body.phone);
-    const areasOfInterest = getStringArray(body.areas_of_interest);
+    // `selections` is the priced path: one chosen option per area. Only ids and
+    // the boarding flag are read from it — any price the client sends is ignored.
+    const hasSelections = body.selections !== undefined && body.selections !== null;
+    const selections: Selection[] = [];
+    if (hasSelections) {
+      if (!Array.isArray(body.selections)) {
+        return errorResponse('Selections must be a list of area options', 400);
+      }
+      for (const raw of body.selections as unknown[]) {
+        const item = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+        const area = getString(item.area);
+        const optionId = getString(item.option_id);
+        if (!area || !optionId || typeof item.boarding !== 'boolean') {
+          return errorResponse('One of the selected options is invalid', 400);
+        }
+        selections.push({ area, option_id: optionId, boarding: item.boarding });
+      }
+    }
+    const areasOfInterest = hasSelections
+      ? selections.map((sel) => sel.area)
+      : getStringArray(body.areas_of_interest);
     const motivation = getString(body.motivation);
     const experience = getString(body.experience);
     const now = new Date().toISOString();
@@ -256,7 +282,7 @@ export async function POST(request: Request) {
     // number, so nothing it sends is used in this sum.
     const { data: areaRows, error: areaError } = await supabase
       .from('academy_interest_areas')
-      .select('slug, fee_ngn, is_active')
+      .select('id, slug, fee_ngn, is_active')
       .in('slug', areasOfInterest);
     if (areaError) throw areaError;
 
@@ -286,6 +312,59 @@ export async function POST(request: Request) {
       }
     }
 
+    // Option rows for the selected areas. Loaded from the DB at apply time so the
+    // snapshot below reflects the prices in force NOW, never the client's claim.
+    const areaIdBySlug = new Map<string, string>();
+    for (const a of activeAreas) {
+      const row = a as { id?: string; slug: string };
+      if (row.id) areaIdBySlug.set(String(row.slug), String(row.id));
+    }
+    const slugByAreaId = new Map<string, string>(
+      Array.from(areaIdBySlug.entries()).map(([slug, id]) => [id, slug]),
+    );
+    let optionRows: OptionRow[] = [];
+    if (areaIdBySlug.size > 0) {
+      const { data: rawOptions, error: optionsError } = await supabase
+        .from('academy_area_options')
+        .select(
+          'id, area_id, label, duration_label, price_no_boarding_ngn, price_with_boarding_ngn, is_active',
+        )
+        .in('area_id', Array.from(areaIdBySlug.values()));
+      if (optionsError) throw optionsError;
+      optionRows = ((Array.isArray(rawOptions) ? rawOptions : []) as Array<
+        Omit<OptionRow, 'area_slug'> & { area_id: string }
+      >)
+        .filter((o) => slugByAreaId.has(String(o.area_id)))
+        .map((o) => ({
+          id: String(o.id),
+          area_slug: slugByAreaId.get(String(o.area_id)) as string,
+          label: o.label,
+          duration_label: o.duration_label ?? null,
+          price_no_boarding_ngn: Number(o.price_no_boarding_ngn),
+          price_with_boarding_ngn:
+            o.price_with_boarding_ngn === null || o.price_with_boarding_ngn === undefined
+              ? null
+              : Number(o.price_with_boarding_ngn),
+          is_active: o.is_active === true,
+        }));
+    }
+
+    let pricedSelections: PricedSelection[] | null = null;
+    let optionsTotal = 0;
+    if (hasSelections) {
+      const priced = priceSelections(selections, optionRows, MAX_INTEREST_AREAS_PER_APPLICATION);
+      if (!priced.ok) return errorResponse(priced.error, 400);
+      pricedSelections = priced.priced;
+      optionsTotal = priced.total_ngn;
+    } else if (optionRows.some((o) => o.is_active)) {
+      // An old client that only sends areas cannot price an area that now has
+      // options: charging fee_ngn would quote the wrong tuition.
+      return errorResponse(
+        'Please choose an option for each selected area. Update the app to continue.',
+        400,
+      );
+    }
+
     // TUITION, not an application fee. academy_interest_areas.fee_ngn is the
     // cost of TAKING that area — payable on acceptance and refundable. It is
     // recorded against the application for later billing and is deliberately
@@ -293,10 +372,12 @@ export async function POST(request: Request) {
     // This was previously added to the amount collected at submit, which would
     // have taken ~₦255,000 up front, non-refundably, for a Film Directing
     // application nobody had reviewed yet.
-    const tuitionTotal = activeAreas.reduce(
-      (sum, a) => sum + Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
-      0,
-    );
+    const tuitionTotal = pricedSelections
+      ? optionsTotal
+      : activeAreas.reduce(
+          (sum, a) => sum + Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
+          0,
+        );
 
     // The only thing payable at APPLICATION time. Non-refundable per
     // academy_settings.application_fee_refundable.
@@ -514,6 +595,8 @@ export async function POST(request: Request) {
       // Frozen at application time: repricing an area later must not change what
       // a past applicant appears to owe.
       tuition_total_ngn: tuitionTotal,
+      // Snapshot of what was priced, so later option edits never rewrite it.
+      ...(pricedSelections ? { selected_options: pricedSelections } : {}),
       terms_accepted: true,
       terms_accepted_at: now,
     };
@@ -522,7 +605,9 @@ export async function POST(request: Request) {
       .from('academy_applications')
       .insert(enhancedInsertPayload);
 
-    if (insertError && isSchemaMismatchError(insertError)) {
+    // The legacy fallback drops tuition and the snapshot; never do that silently
+    // for an option-priced application.
+    if (insertError && !pricedSelections && isSchemaMismatchError(insertError)) {
       const retryResult = await supabase.from('academy_applications').insert(baseInsertPayload);
       insertError = retryResult.error;
     }
@@ -637,7 +722,7 @@ export async function GET(request: Request) {
     // same rows.
     const { data: areaRows } = await supabase
       .from('academy_interest_areas')
-      .select('slug, label, description, fee_ngn')
+      .select('id, slug, label, description, fee_ngn')
       .eq('is_active', true)
       .order('sort_order', { ascending: true });
 
@@ -653,8 +738,36 @@ export async function GET(request: Request) {
       (batchAreas[row.batch_id] ??= []).push(row.area_slug);
     }
 
+    const areaIds = (areaRows ?? []).map((a) => String((a as { id: string }).id));
+    type OptionOut = {
+      id: string; label: string; duration_label: string | null;
+      price_no_boarding_ngn: number; price_with_boarding_ngn: number | null;
+    };
+    const optionsByArea: Record<string, OptionOut[]> = {};
+    if (areaIds.length > 0) {
+      const { data: activeOptionRows } = await supabase
+        .from('academy_area_options')
+        .select('id, area_id, label, duration_label, price_no_boarding_ngn, price_with_boarding_ngn')
+        .eq('is_active', true)
+        .in('area_id', areaIds)
+        .order('sort_order', { ascending: true });
+      for (const o of (activeOptionRows ?? []) as Array<OptionOut & { area_id: string }>) {
+        (optionsByArea[String(o.area_id)] ??= []).push({
+          id: o.id,
+          label: o.label,
+          duration_label: o.duration_label ?? null,
+          price_no_boarding_ngn: Number(o.price_no_boarding_ngn),
+          price_with_boarding_ngn:
+            o.price_with_boarding_ngn === null || o.price_with_boarding_ngn === undefined
+              ? null
+              : Number(o.price_with_boarding_ngn),
+        });
+      }
+    }
+
     const interestAreas = (areaRows ?? []).map((a) => ({
       slug: String((a as { slug: string }).slug),
+      options: optionsByArea[String((a as { id: string }).id)] ?? [],
       label: String((a as { label: string }).label),
       description: (a as { description: string | null }).description ?? null,
       fee_ngn: Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
