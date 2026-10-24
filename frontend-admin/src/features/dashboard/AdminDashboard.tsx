@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { AdminMenuCounts } from '@/types/admin';
 import type { AdminOverview, OverviewModule } from '@/types/adminOverview';
-import { getAdminMenuCounts, getAdminOverview } from '@/services/adminApiClient';
+import { getAdminMenuCounts, getAdminOverviewResult, type OverviewFailure } from '@/services/adminApiClient';
 import { canManageStem, canReadStem, useStemRoles } from '@/config/stemAccess';
 type QuickLink = {
   label: string;
@@ -111,7 +111,7 @@ export function AdminDashboard() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [counts, setCounts] = useState<AdminMenuCounts | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<OverviewFailure | null>(null);
 
   const stemRoles = useStemRoles();
   const visibleQuickLinks = quickLinks.filter((item) => {
@@ -122,14 +122,14 @@ export function AdminDashboard() {
 
   const load = useCallback(() => {
     setLoaded(false);
-    setFailed(false);
+    setFailure(null);
     // Independent on purpose: the legacy programme counters come from a different
     // endpoint, and one being down must not blank the other.
-    Promise.allSettled([getAdminOverview(), getAdminMenuCounts()]).then(([o, c]) => {
-      const ov = o.status === 'fulfilled' ? o.value : null;
-      setOverview(ov);
+    Promise.allSettled([getAdminOverviewResult(), getAdminMenuCounts()]).then(([o, c]) => {
+      const res = o.status === 'fulfilled' ? o.value : null;
+      setOverview(res?.ok ? res.overview : null);
       setCounts(c.status === 'fulfilled' ? c.value : null);
-      setFailed(!ov);
+      setFailure(res?.ok ? null : (res?.reason ?? 'unreachable'));
       setLoaded(true);
     });
   }, []);
@@ -219,8 +219,20 @@ export function AdminDashboard() {
 
         {!loaded ? (
           <p style={{ color: C.muted, margin: '12px 0 0', fontSize: 13 }}>Reading queues…</p>
-        ) : failed ? (
-          <p style={{ color: C.red, margin: '12px 0 0', fontSize: 13 }}>
+        ) : failure === 'unauthorized' ? (
+          <p role="alert" style={{ color: C.red, margin: '12px 0 0', fontSize: 13 }}>
+            Your admin session has expired or is no longer valid, so no queue is being reported here. The
+            backend is answering. This is not an all-clear —{' '}
+            <a href="/admin/login?next=%2Fadmin" style={{ color: C.red, fontWeight: 600 }}>sign in again</a>{' '}
+            to see the queues.
+          </p>
+        ) : failure === 'forbidden' ? (
+          <p role="alert" style={{ color: C.red, margin: '12px 0 0', fontSize: 13 }}>
+            This account is signed in but is not allowed to read the operations overview, so no queue is
+            being reported here. This is not an all-clear — ask a super admin for access.
+          </p>
+        ) : failure === 'unreachable' ? (
+          <p role="alert" style={{ color: C.red, margin: '12px 0 0', fontSize: 13 }}>
             The overview API did not answer, so no queue is being reported here. This is not an all-clear —
             check the backend is running before treating it as one.
           </p>
@@ -322,8 +334,9 @@ export function AdminDashboard() {
           <ul style={{ margin: '14px 0 0', paddingLeft: 18, color: C.muted, fontSize: 13, lineHeight: 1.9 }}>
             <li>
               Overview API:{' '}
-              <strong style={{ color: failed ? C.red : C.green }}>
-                {!loaded ? 'loading…' : failed ? 'unreachable' : 'connected'}
+              <strong style={{ color: failure ? C.red : C.green }}>
+                {!loaded ? 'loading…' : failure === 'unauthorized' ? 'session expired'
+                  : failure === 'forbidden' ? 'access denied' : failure ? 'unreachable' : 'connected'}
               </strong>
             </li>
             <li>

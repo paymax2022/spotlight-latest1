@@ -53,6 +53,65 @@ describe('adminApiClient — calls the session-cookie proxy, never sends a beare
     expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
 
+  describe('getAdminOverviewResult — says why it failed', () => {
+    function mockStatus(status: number, body?: unknown, jsonThrows = false) {
+      const fn = vi.fn(async () => ({
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => {
+          if (jsonThrows) throw new SyntaxError('Unexpected token <');
+          return body;
+        },
+      }));
+      vi.stubGlobal('fetch', fn);
+      return fn;
+    }
+
+    it('401 is unauthorized (session), even though the backend answered', async () => {
+      mockStatus(401, { success: false, error: 'Not authenticated.' });
+      const mod = await import('@/services/adminApiClient');
+      expect(await mod.getAdminOverviewResult()).toEqual({ ok: false, reason: 'unauthorized' });
+      expect(await mod.getAdminOverview()).toBeNull();
+    });
+
+    it('403 is forbidden (signed in, no access)', async () => {
+      mockStatus(403, { success: false });
+      const mod = await import('@/services/adminApiClient');
+      expect(await mod.getAdminOverviewResult()).toEqual({ ok: false, reason: 'forbidden' });
+    });
+
+    it.each([502, 503, 504, 500, 404])('%i is unreachable', async (status) => {
+      mockStatus(status, { success: false });
+      const mod = await import('@/services/adminApiClient');
+      expect(await mod.getAdminOverviewResult()).toEqual({ ok: false, reason: 'unreachable' });
+    });
+
+    it('a non-JSON body (e.g. an HTML error page) is unreachable', async () => {
+      mockStatus(200, undefined, true);
+      const mod = await import('@/services/adminApiClient');
+      expect(await mod.getAdminOverviewResult()).toEqual({ ok: false, reason: 'unreachable' });
+    });
+
+    it('a network error is unreachable', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+      const mod = await import('@/services/adminApiClient');
+      expect(await mod.getAdminOverviewResult()).toEqual({ ok: false, reason: 'unreachable' });
+    });
+
+    it('a 200 without success/modules is unreachable, not a fake empty overview', async () => {
+      mockStatus(200, { success: true });
+      const mod = await import('@/services/adminApiClient');
+      expect(await mod.getAdminOverviewResult()).toEqual({ ok: false, reason: 'unreachable' });
+    });
+
+    it('a good answer returns the overview', async () => {
+      mockStatus(200, { success: true, generated_at: 't', modules: [] });
+      const mod = await import('@/services/adminApiClient');
+      expect(await mod.getAdminOverviewResult()).toEqual({ ok: true, overview: { generated_at: 't', modules: [] } });
+      expect(await mod.getAdminOverview()).toEqual({ generated_at: 't', modules: [] });
+    });
+  });
+
   it('adminAuthHeaders never attaches Authorization — even with a stale key planted', async () => {
     // A leftover/forged localStorage entry must not be picked up: the service
     // layer does not read the key at all any more.
