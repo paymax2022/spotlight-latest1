@@ -1,8 +1,8 @@
 # FX exchange — real end-to-end test runbook
 
-Purpose: run the mobile FX exchange against the **real Go backend** (Maplerad
+Purpose: run the mobile FX exchange against the **real Go backend** (VertoFX
 sandbox) instead of in-app mocks, and verify the full path
-`mobile → frontend-web proxy → Go orchestration → Maplerad`.
+`mobile → frontend-web proxy → Go orchestration → VertoFX`.
 
 ## Request path
 
@@ -16,7 +16,7 @@ Expo app (:8081)
                  └─ proxyToGoBackend → GO_BACKEND_URL (default http://localhost:8080) /api/v1/fx/*
                       └─ Go FX orchestration handler (gated by FEATURE_FX_ORCHESTRATION_ENABLED)
                            · auth: RequireAuthContext → user_id, then requireUserID()
-                           └─ Maplerad LIVE adapter (MAPLERAD_SECRET_KEY set, MAPLERAD_PROD=false)
+                           └─ VertoFX LIVE adapter (FEATURE_VERTOFX=true, VERTOFX_API_KEY set, VERTOFX_PROD=false)
 ```
 
 ## Env matrix (what makes it "real")
@@ -28,12 +28,12 @@ Expo app (:8081)
 | frontend-web | `FEATURE_FX_ENABLED` | `true` | `frontend-web/.env.local` | set |
 | frontend-web | `GO_BACKEND_URL` | `http://localhost:8080` (default) | env / default | default OK |
 | backend | `FEATURE_FX_ORCHESTRATION_ENABLED` | `true` | `backend/.env` | already |
-| backend | `MAPLERAD_SECRET_KEY` | `mpr_sandbo…` | `backend/.env` | already |
-| backend | `MAPLERAD_PROD` | `false` | `backend/.env` | already (sandbox) |
+| backend | `VERTOFX_API_KEY` | sandbox key | `backend/.env` | set |
+| backend | `VERTOFX_PROD` | `false` | `backend/.env` | sandbox |
 
-With no `MAPLERAD_SECRET_KEY` the backend falls back to a deterministic
+With no `VERTOFX_API_KEY` the backend falls back to a deterministic
 (non-network) adapter, so the corridor still resolves — but this runbook uses the
-live sandbox key that is already present.
+live sandbox key.
 
 ## Start sequence
 

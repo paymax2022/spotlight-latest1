@@ -5,7 +5,7 @@
  * SQL BusinessStore/CardStore — they carry no ledger money path of their own,
  * but they are part of the uncovered FX surface and are exercised against the
  * real routes + real Postgres. Card issuing degrades when no issuer is wired
- * (cardIssuer = nil locally: no MAPLERAD_SECRET_KEY) — the route still answers
+ * (card issuing is unavailable: the backend no longer mounts /api/v1/fx/cards*) — the route still answers
  * honestly, which is the contract we assert.
  */
 
@@ -151,7 +151,7 @@ test.describe('MTL-002 fx business console', () => {
       headers: { 'Idempotency-Key': `mtl-card-${Date.now()}` },
       data: { label: 'e2e card', brand: 'visa', currency: 'USD', color: 'purple', fundingAmount: 0 },
     });
-    // No card issuer is wired locally (MAPLERAD_SECRET_KEY unset → cardIssuer nil):
+    // No card issuer is wired locally (card issuing is unavailable; routes may be unmounted):
     // the route must answer honestly — success with a stored row, or a
     // contract-shaped refusal. Either way the path is exercised.
     expect([200, 201, 400, 402, 422, 503]).toContain(created.status);

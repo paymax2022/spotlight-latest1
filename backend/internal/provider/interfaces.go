@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// PaymentProvider abstracts a payment gateway (Paystack, Maplerad, etc.).
+// PaymentProvider abstracts a payment gateway (Paystack, etc.).
 type PaymentProvider interface {
 	// InitializePayment creates a payment session and returns the authorization URL.
 	InitializePayment(ctx context.Context, req InitializePaymentRequest) (*InitializePaymentResponse, error)
@@ -24,7 +24,7 @@ type PaymentProvider interface {
 	Name() string
 }
 
-// CardIssuer abstracts a card-issuing gateway (Maplerad, etc.). It covers the card
+// CardIssuer abstracts a card-issuing gateway (none wired today). It covers the card
 // LIFECYCLE only — issue / reveal / freeze / terminate. Card FUNDING is NOT here:
 // funding stays on the internal double-entry ledger (orch_fx_card_txns). Any
 // provider-side settlement of card spend is treasury-level reconciliation and is
@@ -32,7 +32,7 @@ type PaymentProvider interface {
 // Provider credentials are server-side only. Card secrets (PAN/CVV) live in the
 // provider's PCI-isolated vault and are fetched on demand via RevealCard.
 type CardIssuer interface {
-	// Name returns the provider identifier (e.g. "maplerad").
+	// Name returns the provider identifier (e.g. "paystack").
 	Name() string
 	// IssueCard provisions a virtual card at the provider and returns the
 	// provider card id plus the non-secret metadata (last4, expiry, brand).
@@ -234,6 +234,14 @@ type PayoutStatus struct {
 }
 
 // WebhookEvent is the normalized form of a provider transfer/collection webhook.
+// Normalized WebhookEvent.Type values for dispute/refund events (FOOD-UAT-H-004).
+// Status carries "created" | "resolved" for disputes, "processed" for refunds.
+const (
+	EventTypeChargebackCreated  = "chargeback_created"
+	EventTypeChargebackResolved = "chargeback_resolved"
+	EventTypeRefundProcessed    = "refund_processed"
+)
+
 type WebhookEvent struct {
 	Type        string // "transfer" | "collection" | "bill" | "unknown"
 	ProviderRef string // provider transfer ref (routes to bank_transfers)

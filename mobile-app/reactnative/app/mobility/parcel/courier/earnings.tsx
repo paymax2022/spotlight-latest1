@@ -11,47 +11,55 @@ import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
-import { useParcels } from '@/features/mobility/hooks/useModes';
+import { useCourierHistory } from '@/features/mobility/hooks/useModes';
 import { formatNaira, formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
+import { summariseCourierEarnings } from '@/features/mobility/utils/parcelWire';
 
+// The rider's own deliveries and what the server says they were paid. No
+// client-side commission: a net the server didn't report is shown as
+// unavailable, and with no history endpoint the screen says so.
 export default function CourierEarningsScreen() {
-  const parcels = useParcels();
-
-  const delivered = (parcels.data ?? []).filter((p) => p.phase === 'delivered');
-  const grossKobo = delivered.reduce((sum, p) => sum + p.fareKobo, 0);
-  const netKobo = Math.round(grossKobo * 0.8);
+  const history = useCourierHistory();
+  const summary = history.data ? summariseCourierEarnings(history.data) : null;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Courier earnings" />
-      {parcels.isLoading ? (
+      {history.isLoading ? (
         <StateView kind="loading" message="Loading earnings…" />
-      ) : parcels.isError ? (
-        <MobilityEdgeState kind={errKind(parcels.error)} actionLabel="Retry" onAction={() => parcels.refetch()} />
+      ) : history.isError ? (
+        <MobilityEdgeState kind={errKind(history.error)} actionLabel="Retry" onAction={() => history.refetch()} />
+      ) : !summary ? (
+        <MobilityEdgeState
+          kind="empty"
+          title="Earnings aren't available yet"
+          message="Your delivery history can't be shown in the app yet. Payouts for completed deliveries still go to your wallet."
+          actionLabel="Retry"
+          onAction={() => history.refetch()}
+        />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <View style={[styles.summary, shadow1]}>
             <Text style={styles.summaryLabel}>Net earnings</Text>
-            <Text style={styles.summaryValue}>{formatNaira(netKobo)}</Text>
+            <Text style={styles.summaryValue}>{summary.netKobo != null ? formatNaira(summary.netKobo) : '—'}</Text>
             <View style={styles.summaryRow}>
-              <View style={styles.summaryCol}><Text style={styles.colLabel}>Gross</Text><Text style={styles.colValue}>{formatNairaWhole(grossKobo)}</Text></View>
-              <View style={styles.summaryCol}><Text style={styles.colLabel}>Deliveries</Text><Text style={styles.colValue}>{delivered.length}</Text></View>
-              <View style={styles.summaryCol}><Text style={styles.colLabel}>Commission</Text><Text style={styles.colValue}>20%</Text></View>
+              <View style={styles.summaryCol}><Text style={styles.colLabel}>Fares</Text><Text style={styles.colValue}>{formatNairaWhole(summary.grossKobo)}</Text></View>
+              <View style={styles.summaryCol}><Text style={styles.colLabel}>Deliveries</Text><Text style={styles.colValue}>{summary.delivered.length}</Text></View>
             </View>
           </View>
 
           <Text style={styles.section}>Recent deliveries</Text>
-          {delivered.length === 0 ? (
+          {summary.delivered.length === 0 ? (
             <MobilityEdgeState kind="empty" compact title="No deliveries yet" message="Completed deliveries will show here." />
           ) : (
-            delivered.map((p) => (
-              <View key={p.id} style={styles.row}>
+            summary.delivered.map((d) => (
+              <View key={d.parcelId} style={styles.row}>
                 <View style={styles.rowIcon}><Package size={18} color={Colors.primary} strokeWidth={2} /></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.rowTitle} numberOfLines={1}>{p.dropoff.address}</Text>
-                  <Text style={styles.rowMeta}>Delivered</Text>
+                  <Text style={styles.rowTitle} numberOfLines={1}>{d.dropoff.address || 'Delivery'}</Text>
+                  <Text style={styles.rowMeta}>Delivered · fare {formatNairaWhole(d.fareKobo)}</Text>
                 </View>
-                <Text style={styles.rowNet}>+{formatNairaWhole(Math.round(p.fareKobo * 0.8))}</Text>
+                <Text style={styles.rowNet}>{d.netKobo != null ? `+${formatNairaWhole(d.netKobo)}` : '—'}</Text>
               </View>
             ))
           )}

@@ -61,7 +61,7 @@ The main module already does ports-and-adapters well; the trading module mirrors
 - `internal/provider/interfaces.go` — `PaymentProvider`, `DisbursementProvider`, `VirtualAccountProvider`.
 - `internal/provider/ports.go` — `IdentityProvider`, `WalletProvider`, `BillsProvider`.
 - KYC ports — `IdNumberPort`, `FacialPort`, `LivenessPort`, `DocumentPort`, `AmlPort`.
-- Adapters: `paystack`, `monnify`, `maplerad`, `eversend`, Dojah/Smile/Youverify.
+- Adapters: `paystack`, `monnify`, `eversend`, `vertofx`, Dojah/Smile/Youverify.
 - Failover registries: `provider/disbursement/registry.go`, `kycverify/gateway.go`.
 
 ---

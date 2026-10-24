@@ -1,0 +1,14 @@
+{
+    "parcels": [
+        {
+            "category": "documents",
+            "createdAt": "2026-10-18T01:04:49.247761+01:00",
+            "dropoffAddress": "B, Lagos",
+            "fareKobo": 233719,
+            "id": "b4c70cf6-caf9-4a9b-a939-86815610722a",
+            "pickupAddress": "A, Lagos",
+            "size": "small",
+            "status": "delivered"
+        }
+    ]
+}

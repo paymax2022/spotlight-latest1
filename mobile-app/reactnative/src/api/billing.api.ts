@@ -177,6 +177,22 @@ export async function getUtilityPaystackIntent(reference: string): Promise<Utili
   };
 }
 
+// Actively settle a Paystack utility intent instead of only waiting for the
+// webhook. The webhook never reaches a local dev server (api.paystack.co cannot
+// POST to localhost), and even in production the browser callback redirect is
+// routinely missed on the in-app checkout (the webview closes / the deep link is
+// intercepted before it follows the HTTP redirect to /callback), leaving the
+// intent 'pending' forever. This POSTs the same idempotent verify endpoint the
+// callback uses — it verifies the charge at Paystack, vends, and settles (or
+// refunds) the intent. Ownership and rate limiting are enforced server-side.
+// Mirrors the wallet-topup verify-on-read fallback and the business-fee verify
+// call. Best-effort: resolution is still read from the intent row, so a failed
+// verify (already settled, network blip) must not surface as a screen error.
+export async function verifyUtilityPaystackIntent(reference: string): Promise<void> {
+  if (!reference) return;
+  await api.post('/api/v1/utility/paystack/verify', { reference });
+}
+
 async function postUtilityValidation(input: {
   category: UtilityCategory;
   billerId: string;

@@ -15,7 +15,7 @@ You are finishing work that was built in a sandbox that could NOT: run the Go to
 2. **KYC multi-provider verification** (ADR-013) — `backend/internal/finance/kycverify/*`, `backend/internal/provider/{kyc_verify.go,dojah,smileid,youverify}`, `backend/internal/platform/crypto/aesgcm.go`, migration `20260823000000_kyc_verification.sql`, `frontend-admin/app/admin/finance/kyc-verify/*`, `mobile-app/reactnative/app/kyc-verify/*`. Flag: `FEATURE_KYC_VERIFY_ENABLED`.
 3. **Address lookup → Google** — `backend/internal/maps/*` (config routes geocode/reverse/autocomplete/matrix → google, new Google Distance Matrix adapter), restaurant delivery fee route-distance, mobile `src/lib/addressLookup.ts` + `EXPO_PUBLIC_MAPS_BASE_URL`. Flag: `FEATURE_MAPS_ENABLED`, key `MAPS_GOOGLE_KEY`.
 4. **Config validation + secret hygiene** — `backend/internal/config/validate.go` (fail-fast in prod), `scripts/check-client-secrets.sh`, `docs/ENV.md`.
-5. Confirm still-green: any other modules already merged (placement, restaurant delivery fee, transfers, maplerad, telemedicine intake, nutrition).
+5. Confirm still-green: any other modules already merged (placement, restaurant delivery fee, transfers, telemedicine intake, nutrition).
 
 ## Phase 0 — Baseline & branch
 - `git switch -c finalize/backend-integration` (or your convention).

@@ -128,6 +128,15 @@ components:
         address: { type: string }
         phone: { type: string }
         cuisine: { type: string }
+        cuisines:
+          type: array
+          description: 'Cuisine taxonomy tags for this restaurant. Present only when the taxonomy browse flag is on (FEATURE_RESTAURANT_TAXONOMY_BROWSE together with FEATURE_RESTAURANT_ADMIN_CATEGORIES).'
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              slug: { type: string }
+              name: { type: string }
         image_url: { type: string }
         logo_url:
           type: string
@@ -150,6 +159,31 @@ components:
             True when the restaurant has an offer that is live right now. Only the
             flag is exposed, never the offer's terms — a discount is validated and
             priced server-side at order placement.
+    TaxonomyNode:
+      type: object
+      description: Menu category taxonomy node (mirrors taxonomy.Node).
+      properties:
+        id: { type: string, format: uuid }
+        parent_id: { type: string, format: uuid, nullable: true }
+        name: { type: string }
+        slug: { type: string }
+        kind: { type: string }
+        icon: { type: string, nullable: true }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+        is_system_seeded: { type: boolean }
+        item_count: { type: integer }
+        children: { type: array, items: { $ref: '#/components/schemas/TaxonomyNode' } }
+    TaxonomyCuisine:
+      type: object
+      description: Cuisine taxonomy entry (mirrors taxonomy.Cuisine).
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+        is_system_seeded: { type: boolean }
     RestaurantPage:
       type: object
       description: One page of the discovery list plus the totals a client needs to keep paging.
@@ -551,10 +585,58 @@ paths:
         - { name: sort, in: query, schema: { type: string, enum: [newest, rating, name, eta], default: newest }, description: 'eta sorts by kitchen prep time.' }
         - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 50 }, description: 'Page size.' }
         - { name: offset, in: query, schema: { type: integer, default: 0 }, description: 'Page offset. Page with the offset the server reports, never a locally accumulated count.' }
+        - name: cuisine_id
+          in: query
+          required: false
+          explode: true
+          schema: { type: array, items: { type: string, format: uuid } }
+          description: 'Repeatable cuisine taxonomy id; keeps restaurants tagged with any of them. Honoured regardless of the taxonomy browse flag (only the cuisines and sections response fields and the /menu-taxonomy/browse reads are flag-gated).'
+        - name: category_id
+          in: query
+          required: false
+          explode: true
+          schema: { type: array, items: { type: string, format: uuid } }
+          description: 'Repeatable menu category taxonomy id; keeps restaurants that sell an item in any of them. Honoured regardless of the taxonomy browse flag (only the cuisines and sections response fields and the /menu-taxonomy/browse reads are flag-gated).'
       responses:
         '200':
           description: One page of open restaurants
           content: { application/json: { schema: { $ref: '#/components/schemas/RestaurantPage' } } }
+        '401': { description: Not authenticated }
+  /menu-taxonomy/browse/categories:
+    get:
+      tags: [customer]
+      summary: Menu category taxonomy tree (customer read)
+      description: >
+        Active menu categories as a tree, for browse filters. Present only when the
+        taxonomy browse flag is on (FEATURE_RESTAURANT_TAXONOMY_BROWSE and FEATURE_RESTAURANT_ADMIN_CATEGORIES); otherwise the
+        route is not mounted.
+      responses:
+        '200':
+          description: Active category tree
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/TaxonomyNode' } }
+        '401': { description: Not authenticated }
+  /menu-taxonomy/browse/cuisines:
+    get:
+      tags: [customer]
+      summary: Cuisine taxonomy list (customer read)
+      description: >
+        Active cuisines, for browse filters. Present only when the menu taxonomy
+        browse flag is on (FEATURE_RESTAURANT_TAXONOMY_BROWSE and FEATURE_RESTAURANT_ADMIN_CATEGORIES); otherwise the route is not
+        mounted.
+      responses:
+        '200':
+          description: Active cuisines
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/TaxonomyCuisine' } }
         '401': { description: Not authenticated }
   /{id}:
     get:
@@ -572,6 +654,20 @@ paths:
                   restaurant: { $ref: '#/components/schemas/Restaurant' }
                   categories: { type: array, items: { $ref: '#/components/schemas/MenuCategory' } }
                   items: { type: array, items: { $ref: '#/components/schemas/MenuItem' } }
+                  sections:
+                    type: array
+                    description: >
+                      Menu grouped into taxonomy sections, additive next to `categories`.
+                      Present only when the taxonomy browse flag is on. A legacy fallback
+                      section has `id: null`.
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid, nullable: true }
+                        name: { type: string }
+                        slug: { type: string }
+                        sort_order: { type: integer }
+                        items: { type: array, items: { $ref: '#/components/schemas/MenuItem' } }
         '401': { description: Not authenticated }
         '404': { description: Not found }
     patch:

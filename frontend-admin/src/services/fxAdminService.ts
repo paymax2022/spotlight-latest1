@@ -74,7 +74,7 @@ const OVERVIEW: FxOverview = {
   floatHealthPct: 86,
   providerMix: [
     { provider: 'eversend', share: 58, volumeUsdCents: 2_482_690_00 },
-    { provider: 'maplerad', share: 42, volumeUsdCents: 1_797_810_00 },
+    { provider: 'vertofx', share: 42, volumeUsdCents: 1_797_810_00 },
   ],
   topCorridors: [
     { corridor: 'USD-NGN', volumeUsdCents: 1_920_000_00, marginUsdCents: 22_400_00, successRate: 98.9 },
@@ -85,7 +85,7 @@ const OVERVIEW: FxOverview = {
   ],
   breakers: [
     { provider: 'eversend', state: 'closed' },
-    { provider: 'maplerad', state: 'half_open' },
+    { provider: 'vertofx', state: 'half_open' },
   ],
 };
 
@@ -100,19 +100,19 @@ const TXNS: FxTxDetail[] = [
     statusHistory: [{ status: 'pending', at: '2026-06-19T10:21:00Z' }, { status: 'settled', at: '2026-06-19T10:21:04Z' }],
     scoring: [
       { provider: 'eversend', chosen: true, score: 0.91, cost: 0.95, coverage: 1, liquidity: 0.88, reliability: 0.92 },
-      { provider: 'maplerad', chosen: false, score: 0.86, cost: 0.89, coverage: 1, liquidity: 0.8, reliability: 0.9 },
+      { provider: 'vertofx', chosen: false, score: 0.86, cost: 0.89, coverage: 1, liquidity: 0.8, reliability: 0.9 },
     ],
   },
   {
     id: 'tx_77810', reference: 'PMX-TR-77810', type: 'transfer', status: 'successful',
-    customer: 'Jane Doe', customerEmail: 'jane@example.com', provider: 'maplerad', corridor: 'USD-XAF', rail: 'mobile_money',
+    customer: 'Jane Doe', customerEmail: 'jane@example.com', provider: 'vertofx', corridor: 'USD-XAF', rail: 'mobile_money',
     source: { amountMinor: 100_00, currency: 'USD' }, destination: { amountMinor: 60_250_00, currency: 'XAF' },
     quotedRate: 602.5, executedRate: 600.1, providerRef: 'mpl_5521cd', narration: 'Vendor settlement',
     createdAt: '2026-06-19T09:02:00Z',
     fees: [{ type: 'provider_fee', amount: { amountMinor: 25, currency: 'USD' } }, { type: 'paymax_spread', amount: { amountMinor: 1_05, currency: 'USD' } }],
     statusHistory: [{ status: 'queued', at: '2026-06-19T09:02:00Z' }, { status: 'processing', at: '2026-06-19T09:02:12Z' }, { status: 'paid', at: '2026-06-19T09:02:40Z' }],
     scoring: [
-      { provider: 'maplerad', chosen: true, score: 0.93, cost: 0.9, coverage: 1, liquidity: 0.95, reliability: 0.94 },
+      { provider: 'vertofx', chosen: true, score: 0.93, cost: 0.9, coverage: 1, liquidity: 0.95, reliability: 0.94 },
       { provider: 'eversend', chosen: false, score: 0.79, cost: 0.82, coverage: 0.7, liquidity: 0.85, reliability: 0.9 },
     ],
   },
@@ -126,7 +126,7 @@ const TXNS: FxTxDetail[] = [
     statusHistory: [{ status: 'queued', at: '2026-06-19T07:40:00Z' }, { status: 'failed', at: '2026-06-19T07:40:30Z' }],
     scoring: [
       { provider: 'eversend', chosen: true, score: 0.74, cost: 0.8, coverage: 0.9, liquidity: 0.6, reliability: 0.7 },
-      { provider: 'maplerad', chosen: false, score: 0.72, cost: 0.75, coverage: 0.9, liquidity: 0.7, reliability: 0.78 },
+      { provider: 'vertofx', chosen: false, score: 0.72, cost: 0.75, coverage: 0.9, liquidity: 0.7, reliability: 0.78 },
     ],
     failureReason: 'Beneficiary wallet could not be validated by the provider.',
   },
@@ -142,23 +142,23 @@ const TXNS: FxTxDetail[] = [
   },
   {
     id: 'tx_90108', reference: 'PMX-CV-90108', type: 'conversion', status: 'processing',
-    customer: 'Tunde B.', customerEmail: 'tunde@example.com', provider: 'maplerad', corridor: 'NGN-USD', rail: 'wallet',
+    customer: 'Tunde B.', customerEmail: 'tunde@example.com', provider: 'vertofx', corridor: 'NGN-USD', rail: 'wallet',
     source: { amountMinor: 1_600_000_00, currency: 'NGN' }, destination: { amountMinor: 996_00, currency: 'USD' },
     quotedRate: 0.000626, executedRate: null, providerRef: 'mpl_inflight_2', narration: null,
     createdAt: '2026-06-19T10:58:00Z',
     fees: [{ type: 'paymax_spread', amount: { amountMinor: 16_800_00, currency: 'NGN' } }],
     statusHistory: [{ status: 'pending', at: '2026-06-19T10:58:00Z' }],
     scoring: [
-      { provider: 'maplerad', chosen: true, score: 0.88, cost: 0.9, coverage: 1, liquidity: 0.82, reliability: 0.9 },
+      { provider: 'vertofx', chosen: true, score: 0.88, cost: 0.9, coverage: 1, liquidity: 0.82, reliability: 0.9 },
       { provider: 'eversend', chosen: false, score: 0.87, cost: 0.92, coverage: 1, liquidity: 0.8, reliability: 0.88 },
     ],
   },
 ];
 
 const WEIGHTS: RoutingWeights[] = [
-  { corridor: 'USD-NGN', tier: 'All tiers', wCost: 0.45, wCover: 0.2, wLiq: 0.2, wRel: 0.15, enabled: { eversend: true, maplerad: true }, bias: 'auto' },
-  { corridor: 'USD-XAF', tier: 'All tiers', wCost: 0.3, wCover: 0.35, wLiq: 0.2, wRel: 0.15, enabled: { eversend: false, maplerad: true }, bias: 'maplerad' },
-  { corridor: 'EUR-NGN', tier: 'All tiers', wCost: 0.5, wCover: 0.2, wLiq: 0.2, wRel: 0.1, enabled: { eversend: true, maplerad: true }, bias: 'eversend' },
+  { corridor: 'USD-NGN', tier: 'All tiers', wCost: 0.45, wCover: 0.2, wLiq: 0.2, wRel: 0.15, enabled: { eversend: true, vertofx: true }, bias: 'auto' },
+  { corridor: 'USD-XAF', tier: 'All tiers', wCost: 0.3, wCover: 0.35, wLiq: 0.2, wRel: 0.15, enabled: { eversend: false, vertofx: true }, bias: 'vertofx' },
+  { corridor: 'EUR-NGN', tier: 'All tiers', wCost: 0.5, wCover: 0.2, wLiq: 0.2, wRel: 0.1, enabled: { eversend: true, vertofx: true }, bias: 'eversend' },
 ];
 
 const PROVIDERS: ProviderConfig[] = [
@@ -169,7 +169,7 @@ const PROVIDERS: ProviderConfig[] = [
     breaker: 'closed', adapterStatus: 'live',
   },
   {
-    provider: 'maplerad', displayName: 'Maplerad', enabled: true,
+    provider: 'vertofx', displayName: 'VertoFX', enabled: true,
     corridors: ['USD-NGN', 'USD-XAF', 'NGN-USD'], rails: ['bank_transfer', 'mobile_money', 'iban', 'stablecoin'],
     exposureLimitUsdCents: 4_000_000_00, exposureUsedUsdCents: 1_797_810_00, latencyMsP95: 690, successRate: 97.9,
     breaker: 'half_open', adapterStatus: 'live',
@@ -179,13 +179,13 @@ const PROVIDERS: ProviderConfig[] = [
 const FLOATS: FloatBucket[] = [
   { provider: 'eversend', currency: 'USD', balanceMinor: 820_000_00, lowWaterMinor: 200_000_00, highWaterMinor: 1_000_000_00, status: 'healthy' },
   { provider: 'eversend', currency: 'NGN', balanceMinor: 180_000_000_00, lowWaterMinor: 250_000_000_00, highWaterMinor: 900_000_000_00, status: 'low' },
-  { provider: 'maplerad', currency: 'USD', balanceMinor: 96_000_00, lowWaterMinor: 150_000_00, highWaterMinor: 800_000_00, status: 'critical' },
-  { provider: 'maplerad', currency: 'XAF', balanceMinor: 420_000_000_00, lowWaterMinor: 100_000_000_00, highWaterMinor: 500_000_000_00, status: 'healthy' },
+  { provider: 'vertofx', currency: 'USD', balanceMinor: 96_000_00, lowWaterMinor: 150_000_00, highWaterMinor: 800_000_00, status: 'critical' },
+  { provider: 'vertofx', currency: 'XAF', balanceMinor: 420_000_000_00, lowWaterMinor: 100_000_000_00, highWaterMinor: 500_000_000_00, status: 'healthy' },
 ];
 
 const REBALANCES: RebalanceEvent[] = [
-  { id: 'rb1', from: 'eversend', to: 'maplerad', currency: 'USD', amountMinor: 200_000_00, path: 'stablecoin', status: 'completed', createdAt: '2026-06-19T05:00:00Z' },
-  { id: 'rb2', from: 'maplerad', to: 'eversend', currency: 'NGN', amountMinor: 80_000_000_00, path: 'fiat', status: 'pending', createdAt: '2026-06-19T09:30:00Z' },
+  { id: 'rb1', from: 'eversend', to: 'vertofx', currency: 'USD', amountMinor: 200_000_00, path: 'stablecoin', status: 'completed', createdAt: '2026-06-19T05:00:00Z' },
+  { id: 'rb2', from: 'vertofx', to: 'eversend', currency: 'NGN', amountMinor: 80_000_000_00, path: 'fiat', status: 'pending', createdAt: '2026-06-19T09:30:00Z' },
 ];
 
 const SPREADS: SpreadRule[] = [
@@ -197,14 +197,14 @@ const SPREADS: SpreadRule[] = [
 
 const RECON_RUNS: ReconRun[] = [
   { id: 'run1', provider: 'eversend', date: '2026-06-18', matched: 642, breaks: 1, status: 'breaks' },
-  { id: 'run2', provider: 'maplerad', date: '2026-06-18', matched: 511, breaks: 2, status: 'breaks' },
+  { id: 'run2', provider: 'vertofx', date: '2026-06-18', matched: 511, breaks: 2, status: 'breaks' },
   { id: 'run3', provider: 'eversend', date: '2026-06-17', matched: 690, breaks: 0, status: 'clean' },
 ];
 
 const RECON_BREAKS: ReconBreak[] = [
   { id: 'bk1', runId: 'run1', provider: 'eversend', reference: 'PMX-TR-77410', type: 'fee', expectedMinor: 1_05, actualMinor: 1_20, currency: 'USD', status: 'open', createdAt: '2026-06-18T23:10:00Z' },
-  { id: 'bk2', runId: 'run2', provider: 'maplerad', reference: 'PMX-TR-77512', type: 'rate', expectedMinor: 60_250_00, actualMinor: 60_010_00, currency: 'XAF', status: 'investigating', createdAt: '2026-06-18T23:14:00Z' },
-  { id: 'bk3', runId: 'run2', provider: 'maplerad', reference: 'PMX-CV-90044', type: 'timing', expectedMinor: 0, actualMinor: 0, currency: 'USD', status: 'open', createdAt: '2026-06-18T23:20:00Z' },
+  { id: 'bk2', runId: 'run2', provider: 'vertofx', reference: 'PMX-TR-77512', type: 'rate', expectedMinor: 60_250_00, actualMinor: 60_010_00, currency: 'XAF', status: 'investigating', createdAt: '2026-06-18T23:14:00Z' },
+  { id: 'bk3', runId: 'run2', provider: 'vertofx', reference: 'PMX-CV-90044', type: 'timing', expectedMinor: 0, actualMinor: 0, currency: 'USD', status: 'open', createdAt: '2026-06-18T23:20:00Z' },
 ];
 
 export async function getOverview(): Promise<FxOverview> {
@@ -456,7 +456,7 @@ export async function getAnalytics(): Promise<FxAnalytics> {
       ],
       providerReliability: [
         { provider: 'eversend', successRate: 98.7, avgLatencyMs: 540, failovers: 6, uptime: 99.9 },
-        { provider: 'maplerad', successRate: 97.9, avgLatencyMs: 690, failovers: 11, uptime: 99.5 },
+        { provider: 'vertofx', successRate: 97.9, avgLatencyMs: 690, failovers: 11, uptime: 99.5 },
       ],
       routingEfficiency: [
         { corridor: 'USD-NGN', chosenVsBestBps: 2.1, optimalPct: 96 },
@@ -476,8 +476,8 @@ export async function getAnalytics(): Promise<FxAnalytics> {
 
 const VA_REGISTRY: VirtualAccountReg[] = [
   { id: 'va1', customer: 'Acme Ltd', currency: 'USD', type: 'iban', identifier: 'GB29NWBK60161331926819', provider: 'eversend', status: 'active', createdAt: '2026-05-20T10:00:00Z' },
-  { id: 'va2', customer: 'Acme Ltd', currency: 'NGN', type: 'virtual_account', identifier: '9901234567', provider: 'maplerad', status: 'active', createdAt: '2026-05-21T10:00:00Z' },
-  { id: 'va3', customer: 'Jane Doe', currency: 'NGN', type: 'virtual_account', identifier: '9907654321', provider: 'maplerad', status: 'active', createdAt: '2026-06-12T10:00:00Z' },
+  { id: 'va2', customer: 'Acme Ltd', currency: 'NGN', type: 'virtual_account', identifier: '9901234567', provider: 'vertofx', status: 'active', createdAt: '2026-05-21T10:00:00Z' },
+  { id: 'va3', customer: 'Jane Doe', currency: 'NGN', type: 'virtual_account', identifier: '9907654321', provider: 'vertofx', status: 'active', createdAt: '2026-06-12T10:00:00Z' },
   { id: 'va4', customer: 'Kwame Mensah', currency: 'USD', type: 'iban', identifier: 'GB12ABCD09876543210987', provider: 'eversend', status: 'closed', createdAt: '2026-04-18T10:00:00Z' },
 ];
 
@@ -509,9 +509,9 @@ export async function getBeneficiaryIssues(): Promise<BeneficiaryValidationIssue
 }
 
 const ISSUED_CARDS: IssuedCard[] = [
-  { id: 'ic1', customer: 'Acme Ltd', brand: 'visa', currency: 'USD', last4: '4242', status: 'active', provider: 'maplerad', balanceMinor: 420_00, spentMinor: 86_40, createdAt: '2026-04-20T10:00:00Z' },
-  { id: 'ic2', customer: 'Acme Ltd', brand: 'mastercard', currency: 'USD', last4: '5588', status: 'frozen', provider: 'maplerad', balanceMinor: 1_250_00, spentMinor: 0, createdAt: '2026-05-30T10:00:00Z' },
-  { id: 'ic3', customer: 'Jane Doe', brand: 'visa', currency: 'USD', last4: '9012', status: 'active', provider: 'maplerad', balanceMinor: 60_00, spentMinor: 44_10, createdAt: '2026-06-12T10:00:00Z' },
+  { id: 'ic1', customer: 'Acme Ltd', brand: 'visa', currency: 'USD', last4: '4242', status: 'active', provider: 'eversend', balanceMinor: 420_00, spentMinor: 86_40, createdAt: '2026-04-20T10:00:00Z' },
+  { id: 'ic2', customer: 'Acme Ltd', brand: 'mastercard', currency: 'USD', last4: '5588', status: 'frozen', provider: 'eversend', balanceMinor: 1_250_00, spentMinor: 0, createdAt: '2026-05-30T10:00:00Z' },
+  { id: 'ic3', customer: 'Jane Doe', brand: 'visa', currency: 'USD', last4: '9012', status: 'active', provider: 'eversend', balanceMinor: 60_00, spentMinor: 44_10, createdAt: '2026-06-12T10:00:00Z' },
 ];
 
 const SUSPICIOUS: SuspiciousCardActivity[] = [
@@ -539,7 +539,7 @@ const CATALOGUE: FxSettingsCatalogue = {
     { corridor: 'USD-NGN', enabled: true, defaultProvider: 'auto' },
     { corridor: 'EUR-NGN', enabled: true, defaultProvider: 'eversend' },
     { corridor: 'GBP-NGN', enabled: true, defaultProvider: 'auto' },
-    { corridor: 'USD-XAF', enabled: true, defaultProvider: 'maplerad' },
+    { corridor: 'USD-XAF', enabled: true, defaultProvider: 'vertofx' },
     { corridor: 'USD-GHS', enabled: true, defaultProvider: 'eversend' },
     { corridor: 'USD-KES', enabled: false, defaultProvider: 'eversend' },
   ],

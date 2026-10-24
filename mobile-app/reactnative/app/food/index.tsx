@@ -17,14 +17,17 @@ import {
   useFeaturedRestaurants,
   useNearbyRestaurants,
   useToggleRestaurantLike,
+  useTaxonomy,
 } from '@/features/food/hooks';
 import { useDebouncedValue } from '@/features/food/useDebouncedValue';
 import { useDeviceCoords } from '@/features/food/useDeviceCoords';
 import { useCartStore, cartItemCount } from '@/features/food/cartStore';
 import { formatNairaWhole } from '@/features/food/utils';
-import { DynamicIcon } from '@/features/food/components';
+import { effectiveTaxonomyIds, showLegacyCuisineRow } from '@/features/food/taxonomyIds';
+import { DynamicIcon, TaxonomyFilters } from '@/features/food/components';
 import type { Restaurant } from '@/features/food/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import { RemoteBanner } from '@/features/media/banners';
 
 /** Price-range filter chips (server-side `min_order_kobo` bound). */
 const PRICE_FILTERS = [
@@ -293,6 +296,19 @@ export default function FoodDiscoveryScreen() {
   const [search, setSearch] = useState('');
   const [view, setView] = useState<BrowseView | null>(() => asBrowseView(params.view));
   const [priceFilter, setPriceFilter] = useState<PriceFilterKey>('any');
+  // Taxonomy is optional: null (flag off / call failed) hides the rows and
+  // leaves the discovery query untouched.
+  const taxonomy = useTaxonomy();
+  const [cuisineIds, setCuisineIds] = useState<string[]>([]);
+  const [categoryIds, setCategoryIds] = useState<string[]>([]);
+  const taxonomyData = taxonomy.data ?? null;
+  // Only ids the visible taxonomy offers reach the query; a vanished taxonomy
+  // or stale id means "All". When taxonomy is present its cuisine row replaces
+  // the legacy free-text one, so the legacy selection is ignored while hidden.
+  const effCuisineIds = effectiveTaxonomyIds(cuisineIds, taxonomyData, 'cuisines');
+  const effCategoryIds = effectiveTaxonomyIds(categoryIds, taxonomyData, 'categories');
+  const legacyRowVisible = showLegacyCuisineRow(taxonomyData);
+  const legacyCuisine: Cuisine = legacyRowVisible ? cuisine : 'all';
   const cartPackages = useCartStore((s) => s.packages);
   const cartCount = cartItemCount(cartPackages);
 
@@ -349,9 +365,11 @@ export default function FoodDiscoveryScreen() {
     isFetchingNextPage,
   } = useRestaurantSearch({
     q: debouncedSearch,
-    cuisine: cuisine === 'all' ? '' : cuisine,
+    cuisine: legacyCuisine === 'all' ? '' : legacyCuisine,
     minPriceKobo: priceRange.min,
     maxPriceKobo: priceRange.max,
+    cuisineIds: effCuisineIds,
+    categoryIds: effCategoryIds,
     ...(nearbyParams ?? {}),
   });
 
@@ -394,17 +412,7 @@ export default function FoodDiscoveryScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
-        <LinearGradient colors={['#FB923C', '#EF4444', '#7F1D1D']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[s.hero, shadow2]}>
-          <View style={s.heroWatermark}>
-            <Icons.ChefHat size={140} color="rgba(255,255,255,0.10)" strokeWidth={1} />
-          </View>
-          <View style={s.heroEyebrow}>
-            <Icons.Sparkles size={12} color={Colors.white} strokeWidth={2} />
-            <Text style={s.heroEyebrowText}>Paymax Food</Text>
-          </View>
-          <Text style={s.heroTitle}>Hungry?{'\n'}Order now</Text>
-          <Text style={s.heroSubtitle}>Restaurants near you, live tracked delivery — pay with your Paymax wallet.</Text>
-        </LinearGradient>
+        <RemoteBanner slug="food-hero" priority style={s.heroBanner} />
 
         <View style={s.searchFloat}>
           <SearchBar value={search} onChangeText={setSearch} placeholder="Search restaurant or dish…" />
@@ -430,6 +438,23 @@ export default function FoodDiscoveryScreen() {
           <View style={s.sellText}>
             <Text style={s.sellTitle}>Sell food on Paymax</Text>
             <Text style={s.sellSub}>Set up your restaurant, add your menu, start taking orders.</Text>
+          </View>
+          <Icons.ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+        </Pressable>
+
+        {/* FOOD-UAT-A-012: riders are onboarded in Mobility; give Food users a door. */}
+        <Pressable
+          onPress={() => router.push('/mobility/driver/onboarding')}
+          style={({ pressed }) => [s.sellRow, pressed && { opacity: 0.9 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Deliver food — apply to ride"
+        >
+          <View style={s.sellIcon}>
+            <Icons.Bike size={20} color={Colors.primary} strokeWidth={2} />
+          </View>
+          <View style={s.sellText}>
+            <Text style={s.sellTitle}>Deliver food — apply to ride</Text>
+            <Text style={s.sellSub}>Become a Paymax rider and earn on every delivery.</Text>
           </View>
           <Icons.ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
         </Pressable>
@@ -469,6 +494,17 @@ export default function FoodDiscoveryScreen() {
           </View>
         ) : null}
 
+        <TaxonomyFilters
+          taxonomy={taxonomyData}
+          cuisineIds={effCuisineIds}
+          categoryIds={effCategoryIds}
+          onChange={(n) => {
+            setCuisineIds(n.cuisineIds);
+            setCategoryIds(n.categoryIds);
+          }}
+        />
+
+        {legacyRowVisible ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chips} contentContainerStyle={s.chipsContent}>
           {CUISINE_FILTERS.map((f) => {
             const active = cuisine === f.key;
@@ -484,6 +520,7 @@ export default function FoodDiscoveryScreen() {
             );
           })}
         </ScrollView>
+        ) : null}
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chips} contentContainerStyle={s.chipsContent}>
           {PRICE_FILTERS.map((f) => {
@@ -507,9 +544,9 @@ export default function FoodDiscoveryScreen() {
           <Text style={s.sectionTitle}>
             {viewMeta
               ? viewMeta.label
-              : cuisine === 'all'
+              : legacyCuisine === 'all'
                 ? 'All Restaurants'
-                : CUISINE_FILTERS.find((f) => f.key === cuisine)?.label}
+                : CUISINE_FILTERS.find((f) => f.key === legacyCuisine)?.label}
           </Text>
           {!isLoading && !isError ? (
             <View style={s.sectionMetaBadge}>
@@ -636,7 +673,8 @@ const s = StyleSheet.create({
   heroEyebrowText: { ...Typography.labelSm, color: Colors.white },
   heroTitle: { ...Typography.headlineLg, color: Colors.white, marginTop: Spacing.sm },
   heroSubtitle: { ...Typography.bodySm, color: 'rgba(255,255,255,0.88)', marginTop: Spacing.sm, marginBottom: Spacing.lg, maxWidth: '85%' },
-  searchFloat: { marginTop: -26, marginBottom: Spacing.xs, zIndex: 2 },
+  heroBanner: { marginHorizontal: Spacing.containerMargin, marginTop: Spacing.sm },
+  searchFloat: { marginTop: Spacing.md, marginBottom: Spacing.xs, zIndex: 2 },
   sellRow: {
     flexDirection: 'row',
     alignItems: 'center',

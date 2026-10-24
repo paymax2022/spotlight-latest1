@@ -51,7 +51,7 @@ func (e *Engine) refundUnbooked(ctx context.Context, rec *Intent, fence Fence, c
 		// or while — compensating. Reverse the external settlement for this
 		// reference BEFORE refunding the customer so the books balance whatever
 		// Book managed to do. Idempotent; a no-op when nothing was escrowed.
-		if err := e.settlement.RefundExternalByKeyPrefix(ctx, rec.Reference, "card_direct_order_failed"); err != nil {
+		if err := e.unwindUnbooked(ctx, rec, "card_direct_order_failed"); err != nil {
 			log.Printf("[transport/paystackcheckout] ledger unwind failed for %s (%v) — gateway refund NOT issued; left processing for retry", rec.Reference, err)
 			return refundBlocked
 		}

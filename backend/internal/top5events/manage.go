@@ -2,6 +2,7 @@ package top5events
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -101,6 +102,12 @@ func (s *Service) Resume(ctx context.Context, callerID, eventID string) error {
 }
 
 // EventPatch carries optional edits; nil fields are left unchanged.
+//
+// The venue coordinates (events-social, ruling R44) need three states, like
+// OrganiserPatch.BannerURL, so each has a Set flag recording whether the key was
+// present: absent means no change, null clears the column, a value sets it (an
+// empty venue_place_id also clears). They are applied only when the social flag
+// is on; with it off they are ignored, as unknown keys were before.
 type EventPatch struct {
 	Title       *string    `json:"title,omitempty"`
 	Description *string    `json:"description,omitempty"`
@@ -108,12 +115,70 @@ type EventPatch struct {
 	Category    *string    `json:"category,omitempty"`
 	StartsAt    *time.Time `json:"starts_at,omitempty"`
 	EndsAt      *time.Time `json:"ends_at,omitempty"`
+
+	VenueLat        *float64 `json:"-"`
+	VenueLatSet     bool     `json:"-"`
+	VenueLng        *float64 `json:"-"`
+	VenueLngSet     bool     `json:"-"`
+	VenuePlaceID    *string  `json:"-"`
+	VenuePlaceIDSet bool     `json:"-"`
+}
+
+// UnmarshalJSON decodes the plain fields as before and reads venue_lat,
+// venue_lng and venue_place_id as raw values, so an absent key and an explicit
+// null stay distinguishable.
+func (p *EventPatch) UnmarshalJSON(b []byte) error {
+	type plain EventPatch // no methods: avoids recursing into this UnmarshalJSON
+	var aux struct {
+		plain
+		VenueLat     json.RawMessage `json:"venue_lat"`
+		VenueLng     json.RawMessage `json:"venue_lng"`
+		VenuePlaceID json.RawMessage `json:"venue_place_id"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	*p = EventPatch(aux.plain)
+	var err error
+	if p.VenueLat, p.VenueLatSet, err = rawNullable[float64](aux.VenueLat, "venue_lat"); err != nil {
+		return err
+	}
+	if p.VenueLng, p.VenueLngSet, err = rawNullable[float64](aux.VenueLng, "venue_lng"); err != nil {
+		return err
+	}
+	if p.VenuePlaceID, p.VenuePlaceIDSet, err = rawNullable[string](aux.VenuePlaceID, "venue_place_id"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// rawNullable decodes one optional, nullable JSON value: set is false when the key
+// was absent, and the pointer is nil for an explicit null.
+func rawNullable[T any](raw json.RawMessage, name string) (v *T, set bool, err error) {
+	if raw == nil {
+		return nil, false, nil
+	}
+	if string(raw) == "null" {
+		return nil, true, nil
+	}
+	var x T
+	if err := json.Unmarshal(raw, &x); err != nil {
+		return nil, true, fmt.Errorf("%s has the wrong type: %w", name, err)
+	}
+	return &x, true, nil
 }
 
 // UpdateEvent applies a patch under the tiered-lock rules. The owner or a
 // MANAGER may edit. Time changes are refused (ErrEditLocked) once tickets are
 // sold, except in DRAFT; nothing is written on any refusal.
 func (s *Service) UpdateEvent(ctx context.Context, callerID, eventID string, patch EventPatch) (*Event, error) {
+	// Venue coordinates are range-checked before any database access, and only
+	// when the social flag is on (with it off they are ignored).
+	if s.socialReads {
+		if err := checkVenueCoords(patch.VenueLat, patch.VenueLng); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := s.authorizeManage(ctx, callerID, eventID); err != nil {
 		return nil, err
 	}
@@ -179,6 +244,19 @@ func (s *Service) UpdateEvent(ctx context.Context, callerID, eventID string, pat
 	if patch.EndsAt != nil {
 		add("ends_at", *patch.EndsAt)
 	}
+	if s.socialReads {
+		// Soft fields, like venue: editable whenever soft edits are. A nil value
+		// with its Set flag writes NULL (clears the pin).
+		if patch.VenueLatSet {
+			add("venue_lat", nullableValue(patch.VenueLat))
+		}
+		if patch.VenueLngSet {
+			add("venue_lng", nullableValue(patch.VenueLng))
+		}
+		if patch.VenuePlaceIDSet {
+			add("venue_place_id", nullableValue(normPlaceID(patch.VenuePlaceID)))
+		}
+	}
 	if len(sets) > 0 {
 		sets = append(sets, "updated_at=now()")
 		if _, err := tx.Exec(ctx, "UPDATE events SET "+strings.Join(sets, ", ")+" WHERE id=$1", args...); err != nil {
@@ -192,6 +270,14 @@ func (s *Service) UpdateEvent(ctx context.Context, callerID, eventID string, pat
 		s.log(callerID, "events.update", eventID, map[string]any{"field": col, "new": v})
 	}
 	return s.GetEvent(ctx, eventID)
+}
+
+// nullableValue unwraps a pointer for an SQL argument: nil becomes SQL NULL.
+func nullableValue[T any](v *T) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 // DuplicateEvent clones an event into a fresh DRAFT owned by callerID, in one

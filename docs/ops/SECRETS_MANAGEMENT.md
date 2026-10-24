@@ -33,7 +33,7 @@
 | `R2_SECRET_ACCESS_KEY` / `R2_ACCESS_KEY_ID` | An R2 token scoped to the single bucket (`spotlight-open-mic`) with only the operations used (put/get/sign). | Account-wide R2 credentials |
 | `ANTHROPIC_API_KEY` | Server-side only; a key with spend limits/budget. | Expose to client; share with non-AI surfaces |
 | `VIDEOSDK_SECRET` | Backend RTC token signing only. | Embed in mobile/web bundle |
-| `MAPLERAD_*` / `EVERSEND_*` webhook secrets | Verify inbound provider webhooks; one per provider. | Reuse the provider API key as the webhook secret |
+| `VERTOFX_*` / `EVERSEND_*` webhook secrets | Verify inbound provider webhooks; one per provider. | Reuse the provider API key as the webhook secret |
 | `CONNECT_VERIFICATION_PEPPER` | Backend hashing only; treat as long-lived (rotating invalidates existing hashes — plan a migration). | Log; expose |
 | `ADMIN_API_KEY` / `SPOTLIGHT_ADMIN_API_KEY` | Strong random; per-environment. Migrate admin to per-user JWT+RBAC (risk RBAC-3) so the shared key isn't the only gate. | Leave empty in prod (empty = open admin) |
 

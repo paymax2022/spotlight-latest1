@@ -18,7 +18,7 @@ import {
   useCreateCategory, useDeleteCategory, useCreateItem, useDeleteItem, usePayoutReadiness,
   useMenuTaxonomy, useCreateTaxonomyItem, useUpdateItem,
 } from '@/features/restaurantmerchant/hooks';
-import type { MerchantMenuCategory, MerchantStore, StoreGeoPoint } from '@/features/restaurantmerchant/types';
+import type { MerchantMenuCategory, MerchantMenuItem, MerchantStore, StoreGeoPoint } from '@/features/restaurantmerchant/types';
 import {
   subcategoriesFor, validateItemDraft, type ItemDraft, type ItemDraftErrors, type TaxonomyCategory,
 } from '@/features/restaurantmerchant/taxonomy';
@@ -339,6 +339,15 @@ function ManageStore({
           </Card>
         )}
 
+        {/* FOOD-UAT-A-010 (Option A): menu-building stays open before approval so
+            applicants can prepare; this says plainly they are not live yet. */}
+        {kybNotice && (kybStatus === 'submitted' || kybStatus === 'under_review' || kybStatus === 'needs_more_info') ? (
+          <Card>
+            <Text style={styles.payoutWarnTitle}>Pending approval — not yet accepting orders</Text>
+            <Text style={styles.muted}>You can keep building your menu while we review your business.</Text>
+          </Card>
+        ) : null}
+
         <PayoutReadinessBanner storeId={storeId} />
 
         {/* Quick links to orders + earnings. */}
@@ -647,6 +656,7 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
                 />
                 <Text style={styles.muted}>{it.isAvailable ? 'In stock' : 'Out'}</Text>
               </View>
+              <MaxQtyField item={it} storeId={storeId} />
               <Pressable onPress={() => confirmDeleteItem(it.id, it.name)} hitSlop={8}>
                 <Trash2 size={16} color={Colors.outline} />
               </Pressable>
@@ -765,11 +775,18 @@ function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCat
   );
 }
 
+// Dietary labels and allergen warnings, stored together as the item's dietary_tags
+// (the backend keeps one open-vocabulary tag set; customers see them on the menu).
+const DIETARY_TAG_OPTIONS = ['vegan', 'vegetarian', 'halal', 'gluten-free', 'spicy'];
+const ALLERGEN_TAG_OPTIONS = ['contains-nuts', 'contains-dairy', 'contains-eggs', 'contains-gluten', 'contains-shellfish', 'contains-soy', 'contains-fish'];
+
 function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string }) {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [photo, setPhoto] = useState<{ key: string; uri: string | null }>({ key: '', uri: null });
   const [error, setError] = useState<string | null>(null);
+  const [tags, setTags] = useState<string[]>([]);
+  const toggleTag = (t: string) => setTags((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
   const createItem = useCreateItem(storeId);
   const add = () => {
     if (!name.trim()) { setError('Enter the item name.'); return; }
@@ -779,8 +796,8 @@ function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string 
     if (!parsed.ok) { setError(parsed.error); return; }
     setError(null);
     createItem.mutate(
-      { categoryId, name: name.trim(), priceKobo: parsed.kobo, imageUrl: photo.key || undefined },
-      { onSuccess: () => { setName(''); setPrice(''); setPhoto({ key: '', uri: null }); } },
+      { categoryId, name: name.trim(), priceKobo: parsed.kobo, imageUrl: photo.key || undefined, dietaryTags: tags },
+      { onSuccess: () => { setName(''); setPrice(''); setPhoto({ key: '', uri: null }); setTags([]); } },
     );
   };
   return (
@@ -805,8 +822,46 @@ function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string 
           {createItem.isPending ? <ActivityIndicator color="#fff" size="small" /> : <Plus size={18} color="#fff" />}
         </Pressable>
       </View>
+      <Text style={styles.label}>Dietary and allergens (optional)</Text>
+      <View style={styles.chipWrap}>
+        {[...DIETARY_TAG_OPTIONS, ...ALLERGEN_TAG_OPTIONS].map((t) => {
+          const on = tags.includes(t);
+          return (
+            <Pressable key={t} accessibilityRole="button" accessibilityState={{ selected: on }}
+              onPress={() => toggleTag(t)} style={[styles.outletChip, on && styles.outletChipOn]}>
+              <Text style={[styles.outletChipText, on && styles.outletChipTextOn]}>{t}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
+  );
+}
+
+/** Per-order quantity cap for one item (FOOD-UAT-B-008). Blank = platform default. */
+function MaxQtyField({ item, storeId }: { item: MerchantMenuItem; storeId: string }) {
+  const update = useUpdateItem(storeId);
+  const [val, setVal] = useState(item.maxQtyPerOrder ? String(item.maxQtyPerOrder) : '');
+  const commit = () => {
+    const trimmed = val.trim();
+    const n = trimmed === '' ? 0 : Number(trimmed);
+    if (!Number.isInteger(n) || n < 0 || n > 1000) {
+      alertAsync({ title: 'Max per order', message: 'Enter a whole number from 1 to 1000, or leave blank for no limit.' });
+      return;
+    }
+    if (n === (item.maxQtyPerOrder ?? 0)) return;
+    update.mutate({ itemId: item.id, patch: { maxQtyPerOrder: n, expectedVersion: item.version } }, {
+      onError: (e) => alertAsync({ title: `Could not update ${item.name}`, message: (e as Error).message }),
+    });
+  };
+  return (
+    <TextInput
+      value={val} onChangeText={setVal} onBlur={commit} onSubmitEditing={commit}
+      placeholder="Max/order" keyboardType="number-pad" placeholderTextColor={Colors.outline}
+      accessibilityLabel={`${item.name} maximum quantity per order`}
+      style={[styles.input, { width: 84, paddingVertical: 4 }]}
+    />
   );
 }
 

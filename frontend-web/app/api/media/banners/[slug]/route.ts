@@ -73,6 +73,11 @@ const BANNERS: Record<string, Banner> = {
     width: 2048, height: 768,
     alt: 'Restaurant — order food from your favourite spots.',
   },
+  'food-hero': {
+    cloudinaryPublicId: 'Happy_Lagos_restaurant_delivery_nd1gdd',
+    width: 1774, height: 887,
+    alt: 'Paymax Food — restaurants near you, delivered fast.',
+  },
   association: {
     cloudinaryPublicId: 'SPOTLIGHT/Banners/banner-association_survj3',
     width: 2048, height: 768,

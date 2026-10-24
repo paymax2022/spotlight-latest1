@@ -1,6 +1,9 @@
 export * from './types';
 export * from './hooks';
 export * from './utils';
+export { sectionsForDisplay } from './menuSections';
+export { getTaxonomy } from './taxonomy';
+export type { Taxonomy } from './taxonomy';
 export { useOrderRealtime } from './useOrderRealtime';
 export { useRestaurantQueueRealtime } from './useRestaurantQueueRealtime';
 export {

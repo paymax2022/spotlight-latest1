@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
@@ -18,6 +19,9 @@ import (
 )
 
 const keyError = "error"
+
+// EventDisputeResolved fans the outcome of a resolved dispute out to the merchant and rider (F-009).
+const EventDisputeResolved = "restaurant.dispute.resolved"
 
 // FoodDispute is a restaurant food-order dispute (a projection of the shared `disputes`
 // ticket + this module's resolution/refund record).
@@ -317,6 +321,19 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 	// instant. A tip still queued against the rider's next delivery is NOT announced as
 	// credited; the recovery sweep notifies separately when it lands.
 	credited := refundKobo + tipRefundedKobo
+	// F-009: the merchant and the rider are parties too — tell them the outcome (no amounts
+	// the other side shouldn't see; the rider hears of a tip recovery separately).
+	if _, ownerID, riderParty, perr := s.disputeOrderParties(ctx, orderID); perr == nil {
+		outcome := map[string]any{"order_id": orderID, "dispute_id": disputeID, "resolution": string(res)}
+		if ownerID != "" {
+			s.notify(ctx, Notification{UserID: ownerID, Event: EventDisputeResolved, Title: "Dispute resolved",
+				Body: "A dispute on one of your orders was resolved.", Data: outcome})
+		}
+		if riderParty != "" {
+			s.notify(ctx, Notification{UserID: riderParty, Event: EventDisputeResolved, Title: "Dispute resolved",
+				Body: "A dispute on a delivery you made was resolved.", Data: outcome})
+		}
+	}
 	if credited > 0 {
 		s.notify(ctx, Notification{UserID: customerID, Event: EventOrderCancelled, Title: "Dispute resolved — refund issued",
 			Body: "Your dispute was resolved and a refund was credited to your wallet.",
@@ -333,11 +350,46 @@ func (s *Service) GetFoodDispute(ctx context.Context, disputeID, actorID string)
 	if err != nil {
 		return nil, err
 	}
-	customer, owner, rider, perr := s.orderParties(ctx, d.OrderID)
-	if perr == nil && classifyOrderActor(actorID, customer, owner, rider) == roleNone {
+	// Fail closed (FOOD-UAT-F-010): the party check must never be skipped. Only a
+	// genuinely missing order/restaurant is "not found"; any other lookup error
+	// propagates as an internal error rather than leaking the dispute.
+	customer, owner, rider, perr := s.disputeOrderParties(ctx, d.OrderID)
+	if perr != nil {
+		return nil, perr
+	}
+	if classifyOrderActor(actorID, customer, owner, rider) == roleNone {
 		return nil, fmt.Errorf("%w: not a party to this dispute", ErrForbidden)
 	}
 	return d, nil
+}
+
+// ErrDisputeLookup marks an infrastructure/data failure while resolving a
+// dispute's order parties (maps to HTTP 500, never to a successful read).
+var ErrDisputeLookup = errors.New("restaurant: dispute lookup failed")
+
+// disputeOrderParties is orderParties with error fidelity: pgx.ErrNoRows becomes
+// ErrDisputeInvalid (422, dispute has no resolvable order) and every other error is
+// wrapped in ErrDisputeLookup.
+func (s *Service) disputeOrderParties(ctx context.Context, orderID string) (customer, owner, rider string, err error) {
+	var restaurantID string
+	var riderPtr *string
+	if err = s.db.QueryRow(ctx, `SELECT customer_id, restaurant_id, rider_id FROM orders WHERE id=$1`, orderID).
+		Scan(&customer, &restaurantID, &riderPtr); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", "", fmt.Errorf("%w: order not found", ErrDisputeInvalid)
+		}
+		return "", "", "", fmt.Errorf("%w: order: %v", ErrDisputeLookup, err)
+	}
+	if err = s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&owner); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", "", fmt.Errorf("%w: restaurant not found", ErrDisputeInvalid)
+		}
+		return "", "", "", fmt.Errorf("%w: restaurant: %v", ErrDisputeLookup, err)
+	}
+	if riderPtr != nil {
+		rider = *riderPtr
+	}
+	return customer, owner, rider, nil
 }
 
 // loadFoodDispute reads the shared ticket + this module's resolution record.
@@ -452,7 +504,7 @@ func (s *Service) AdminListFoodDisputes(ctx context.Context, status string, limi
 		SELECT d.id, d.user_id, d.reference, d.type, d.description, d.status, d.admin_note, d.created_at,
 		       r.resolution, COALESCE(r.refund_kobo,0)
 		FROM disputes d
-		LEFT JOIN restaurant_dispute_refunds r ON r.dispute_id = d.id
+		LEFT JOIN restaurant_dispute_refunds r ON r.dispute_id = d.id::text
 		WHERE d.module_type='food'`
 	args := []any{}
 	if status != "" {
@@ -690,6 +742,8 @@ func disputeErrCode(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrDisputeInvalid):
 		return http.StatusUnprocessableEntity
+	case errors.Is(err, ErrDisputeLookup):
+		return http.StatusInternalServerError
 	default:
 		return http.StatusBadRequest
 	}

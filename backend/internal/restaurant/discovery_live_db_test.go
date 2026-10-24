@@ -116,3 +116,82 @@ func hasRestaurant(list []Restaurant, id string) bool {
 	}
 	return false
 }
+
+// TestLiveDB_DiscoveryTaxonomyFilters: category_id matches a restaurant through
+// an available item's category OR sub-category; a category with no available
+// item matches nothing (total == 0); cuisine_id matches via restaurant_cuisines.
+func TestLiveDB_DiscoveryTaxonomyFilters(t *testing.T) {
+	pool := discoveryPool(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+	svc := NewService(pool, nil)
+
+	owner := uuid.New().String()
+	_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test")
+	testsupport.CleanupUser(t, pool, owner)
+
+	suffix := uuid.New().String()[:8]
+	parentID, subID, emptyID, cuisineID := uuid.New().String(), uuid.New().String(), uuid.New().String(), uuid.New().String()
+	mustExec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, a...); err != nil {
+			t.Fatalf("seed: %v (%s)", err, q)
+		}
+	}
+	mustExec(`INSERT INTO restaurant_taxonomy_categories (id,name,slug,kind) VALUES ($1,$2,$3,'FOOD')`, parentID, "Rice "+suffix, "rice-"+suffix)
+	mustExec(`INSERT INTO restaurant_taxonomy_categories (id,parent_id,name,slug,kind) VALUES ($1,$2,$3,$4,'FOOD')`, subID, parentID, "Jollof "+suffix, "jollof-"+suffix)
+	mustExec(`INSERT INTO restaurant_taxonomy_categories (id,name,slug,kind) VALUES ($1,$2,$3,'FOOD')`, emptyID, "Empty "+suffix, "empty-"+suffix)
+	mustExec(`INSERT INTO cuisines (id,name,slug) VALUES ($1,$2,$3)`, cuisineID, "Cu "+suffix, "cu-"+suffix)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM menu_items WHERE taxonomy_category_id = ANY($1::uuid[])`, []string{parentID, emptyID})
+		_, _ = pool.Exec(ctx, `DELETE FROM restaurant_cuisines WHERE cuisine_id = $1`, cuisineID)
+		_, _ = pool.Exec(ctx, `DELETE FROM cuisines WHERE id = $1`, cuisineID)
+		_, _ = pool.Exec(ctx, `DELETE FROM restaurant_taxonomy_categories WHERE id = $1`, subID)
+		_, _ = pool.Exec(ctx, `DELETE FROM restaurant_taxonomy_categories WHERE id = ANY($1::uuid[])`, []string{parentID, emptyID})
+	})
+
+	withItem, other := uuid.New().String(), uuid.New().String()
+	for _, id := range []string{withItem, other} {
+		mustExec(`INSERT INTO restaurants (id, owner_id, name, address, is_open, rating) VALUES ($1,$2,'Taxo Cafe','1 St',TRUE,5.0)`, id, owner)
+	}
+	cat, err := svc.CreateCategory(ctx, withItem, owner, "Mains")
+	if err != nil {
+		t.Fatalf("category: %v", err)
+	}
+	item, err := svc.CreateItem(ctx, withItem, owner, CreateItemRequest{CategoryID: cat.ID, Name: "Party " + suffix, PriceKobo: 100000})
+	if err != nil {
+		t.Fatalf("item: %v", err)
+	}
+	mustExec(`UPDATE menu_items SET taxonomy_category_id=$1, taxonomy_subcategory_id=$2, is_available=TRUE WHERE id=$3`, parentID, subID, item.ID)
+	mustExec(`INSERT INTO restaurant_cuisines (restaurant_id, cuisine_id) VALUES ($1,$2)`, withItem, cuisineID)
+
+	page := func(p DiscoveryParams) *RestaurantPage {
+		t.Helper()
+		pg, err := svc.ListOpenRestaurantsPage(ctx, p, "")
+		if err != nil {
+			t.Fatalf("page: %v", err)
+		}
+		return pg
+	}
+	for name, id := range map[string]string{"parent": parentID, "sub": subID} {
+		pg := page(DiscoveryParams{CategoryIDs: []string{id}})
+		if !hasRestaurant(pg.Restaurants, withItem) || hasRestaurant(pg.Restaurants, other) || pg.Total != 1 {
+			t.Errorf("category_id (%s) should return only the restaurant with the item; total=%d", name, pg.Total)
+		}
+	}
+	if pg := page(DiscoveryParams{CategoryIDs: []string{emptyID}}); pg.Total != 0 || len(pg.Restaurants) != 0 {
+		t.Errorf("empty category should match nothing, total=%d", pg.Total)
+	}
+	// An unavailable item must not make the restaurant match.
+	mustExec(`UPDATE menu_items SET is_available=FALSE WHERE id=$1`, item.ID)
+	if pg := page(DiscoveryParams{CategoryIDs: []string{parentID}}); pg.Total != 0 {
+		t.Errorf("unavailable item must not match, total=%d", pg.Total)
+	}
+	if pg := page(DiscoveryParams{CuisineIDs: []string{cuisineID}}); pg.Total != 1 || !hasRestaurant(pg.Restaurants, withItem) {
+		t.Errorf("cuisine_id should match via restaurant_cuisines, total=%d", pg.Total)
+	}
+	// All-invalid ids -> empty page, not an unfiltered one.
+	if pg := page(DiscoveryParams{CategoryIDs: []string{"not-a-uuid"}}); pg.Total != 0 {
+		t.Errorf("invalid ids must match nothing, total=%d", pg.Total)
+	}
+}

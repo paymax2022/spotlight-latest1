@@ -39,6 +39,8 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   delivered: 'Delivered',
   cancelled: 'Cancelled',
   no_rider: 'No rider available',
+  served: 'Served',
+  closed: 'Closed',
 };
 
 export type StatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
@@ -55,6 +57,8 @@ export const STATUS_TONE: Record<OrderStatus, StatusTone> = {
   delivered: 'success',
   cancelled: 'danger',
   no_rider: 'danger',
+  served: 'success',
+  closed: 'neutral',
 };
 
 /**

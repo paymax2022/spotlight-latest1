@@ -18,7 +18,7 @@
 // Deliberately dependency-free (types only) so it is unit-testable under
 // `node --test` without pulling in the RN runtime.
 
-import type { Restaurant, RestaurantDetail, MenuCategory, MenuItem, LatLng, Order, OrderItem } from './types';
+import type { CuisineRef, MenuSection, Restaurant, RestaurantDetail, MenuCategory, MenuItem, LatLng, Order, OrderItem, ModifierGroup } from './types';
 
 type Raw = Record<string, unknown>;
 
@@ -80,6 +80,13 @@ function etaLabelFrom(prepMinutes: number): string {
   return `${p}–${p + 10} min`;
 }
 
+function mapCuisineRefs(input: unknown): CuisineRef[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  return input
+    .map((c) => { const r = asRaw(c); return { id: str(r.id), slug: str(r.slug), name: str(r.name) }; })
+    .filter((c) => c.id);
+}
+
 export function mapRestaurant(input: unknown): Restaurant {
   const raw = asRaw(input);
 
@@ -97,6 +104,7 @@ export function mapRestaurant(input: unknown): Restaurant {
     id: str(pick(raw, 'id')),
     name: str(pick(raw, 'name')),
     cuisine,
+    cuisineRefs: mapCuisineRefs(pick(raw, 'cuisines')),
 
     // does send. Empty (never undefined) when it sends none — the search filter
     // calls .some() on this directly.
@@ -200,6 +208,10 @@ export function mapOrder(input: unknown): Order {
   const deliveryCode = pick(raw, 'deliveryCode', 'delivery_code');
   const pickupCode = pick(raw, 'pickupCode', 'pickup_code');
   const riderId = pick(raw, 'riderId', 'rider_id');
+  const orderType = pick(raw, 'orderType', 'order_type');
+  const tableNumber = pick(raw, 'tableNumber', 'table_number');
+  const scheduledFor = pick(raw, 'scheduledFor', 'scheduled_for');
+  const arrivedAt = pick(raw, 'arrivedAt', 'arrived_at');
   // /api/finance/restaurant/orders/:id). Defaulting it to '' would be worse
   // than leaving it alone: app/food/orders/[orderId]/rate.tsx reads
   // `order?.restaurantName ?? 'the restaurant'`, and ?? does not catch an empty
@@ -223,12 +235,55 @@ export function mapOrder(input: unknown): Order {
     deliveryCode: (deliveryCode as string | null) ?? null,
     pickupCode: (pickupCode as string | null) ?? null,
     riderId: (riderId as string | null) ?? null,
+    orderType: (orderType as Order['orderType']) ?? 'delivery',
+    tableNumber: (tableNumber as string | null) ?? null,
+    scheduledFor: (scheduledFor as string | null) ?? null,
+    arrivedAt: (arrivedAt as string | null) ?? null,
   };
 }
 
 export function mapOrderList(input: unknown): unknown[] {
   const rows = Array.isArray(input) ? input : asRaw(input).orders;
   return Array.isArray(rows) ? rows : [];
+}
+
+/**
+ * Modifier groups on a menu item. Accepts `modifier_groups` / `modifierGroups` /
+ * `modifiers` (each group carrying `modifiers` or `options`). Malformed groups
+ * and options with no id are dropped; no usable group yields undefined so a
+ * plain item stays plain.
+ */
+export function mapModifierGroups(input: unknown): ModifierGroup[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const groups: ModifierGroup[] = [];
+  for (const g of input) {
+    const raw = asRaw(g);
+    const id = str(pick(raw, 'id'));
+    const opts = pick(raw, 'options', 'modifiers');
+    if (!id || !Array.isArray(opts)) continue;
+    const options = opts
+      .map((o) => {
+        const r = asRaw(o);
+        return {
+          id: str(pick(r, 'id')),
+          name: str(pick(r, 'name')),
+          priceDeltaKobo: Math.max(0, kobo(pick(r, 'priceDeltaKobo', 'price_delta_kobo'))),
+          available: bool(pick(r, 'available', 'is_available'), true),
+        };
+      })
+      .filter((o) => o.id);
+    if (options.length === 0) continue;
+    const required = bool(pick(raw, 'required'), false);
+    groups.push({
+      id,
+      name: str(pick(raw, 'name')),
+      required,
+      minSelect: Math.max(0, Math.trunc(num(pick(raw, 'minSelect', 'min_select')))),
+      maxSelect: Math.max(1, Math.trunc(num(pick(raw, 'maxSelect', 'max_select'))) || 1),
+      options,
+    });
+  }
+  return groups.length > 0 ? groups : undefined;
 }
 
 export function mapMenuItem(input: unknown): MenuItem {
@@ -248,6 +303,8 @@ export function mapMenuItem(input: unknown): MenuItem {
     foodType: undefined,
 
     prepMinutes: num(pick(raw, 'prepMinutes', 'prep_minutes')) > 0 ? num(pick(raw, 'prepMinutes', 'prep_minutes')) : undefined,
+
+    modifierGroups: mapModifierGroups(pick(raw, 'modifierGroups', 'modifier_groups', 'modifiers')),
   };
 }
 
@@ -256,6 +313,17 @@ export function mapMenuCategory(input: unknown): MenuCategory {
   const items = pick(raw, 'items');
   return {
     id: str(pick(raw, 'id')),
+    name: str(pick(raw, 'name')),
+    items: Array.isArray(items) ? items.map(mapMenuItem) : [],
+  };
+}
+
+export function mapMenuSection(input: unknown): MenuSection {
+  const raw = asRaw(input);
+  const items = pick(raw, 'items');
+  const id = raw.id;
+  return {
+    id: typeof id === 'string' && id ? id : null,
     name: str(pick(raw, 'name')),
     items: Array.isArray(items) ? items.map(mapMenuItem) : [],
   };
@@ -270,9 +338,11 @@ export function mapRestaurantDetail(input: unknown): RestaurantDetail {
   const raw = asRaw(input);
   const nested = pick(raw, 'restaurant');
   const categories = pick(raw, 'categories', 'menu');
+  const sections = pick(raw, 'sections');
 
   return {
     ...mapRestaurant(nested ?? raw),
     menu: Array.isArray(categories) ? categories.map(mapMenuCategory) : [],
+    sections: Array.isArray(sections) ? sections.map(mapMenuSection) : undefined,
   };
 }

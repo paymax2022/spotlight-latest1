@@ -12,11 +12,15 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StateView from '@/components/StateView';
+import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
+import { venuePatchFromSelection } from '@/features/events/venuePatch';
 import { useCreateEvent, useEvent, useUpdateEvent } from '@/features/events/hooks';
 import { lifecycleErrorMessage } from '@/features/events/api';
 import { EventColors, EVENT_CATEGORIES } from '@/features/events/constants/events.constants';
 import type { CreateEventInput, EventCategory, EventPatch } from '@/features/events/types';
 import { sanitizeMoneyInput } from '@/utils/money';
+
+const EVENTS_SOCIAL = process.env.EXPO_PUBLIC_EVENTS_SOCIAL === 'true';
 
 // field config to a control. Adding a field/step = editing this schema only.
 type FieldType = 'text' | 'multiline' | 'category';
@@ -27,6 +31,8 @@ interface TierDraft { name: string; price: string; qty: string }
 interface FormState {
   title: string; category: EventCategory; description: string;
   venue: string;
+  // Set by the address picker (events-social only); null until a place is picked.
+  venue_lat: number | null; venue_lng: number | null; venue_place_id: string | null;
   startsAtISO: string; endsAtISO: string;
 }
 
@@ -54,6 +60,7 @@ export default function CreateEvent() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>({
     title: '', category: 'music', description: '', venue: '',
+    venue_lat: null, venue_lng: null, venue_place_id: null,
     startsAtISO: new Date(Date.now() + 14 * 86400000).toISOString(),
     endsAtISO: new Date(Date.now() + 14 * 86400000 + 4 * 3600000).toISOString(),
   });
@@ -66,6 +73,7 @@ export default function CreateEvent() {
     if (!isEdit || !loaded || prefilled) return;
     setForm({
       title: loaded.title, category: loaded.category, description: loaded.description, venue: loaded.venue,
+      venue_lat: loaded.venue_lat ?? null, venue_lng: loaded.venue_lng ?? null, venue_place_id: loaded.venue_place_id ?? null,
       startsAtISO: loaded.starts_at, endsAtISO: loaded.ends_at,
     });
     setPrefilled(true);
@@ -76,6 +84,13 @@ export default function CreateEvent() {
   const totalSteps = isEdit ? STEPS.length : STEPS.length + 1; // schema steps (+ tiers step when creating)
 
   const set = (k: keyof FormState, v: any) => setForm((f) => ({ ...f, [k]: v }));
+
+  // Typing invalidates a picked place, so the old pin is dropped with the text.
+  const onVenueText = (v: string) => setForm((f) => ({ ...f, venue: v, venue_lat: null, venue_lng: null, venue_place_id: null }));
+  // venue_place_id stays null until the Maps proxy returns a real provider place
+  // id; the selection's plusCode is a different identifier and is not stored there.
+  const onVenueSelect = (a: SelectedAddress) =>
+    setForm((f) => ({ ...f, ...venuePatchFromSelection({ label: a.label, lat: a.lat, lng: a.lng, placeId: null }) }));
 
   const validateStep = (): boolean => {
     const errs: Record<string, string> = {};
@@ -102,6 +117,13 @@ export default function CreateEvent() {
       if (form.title !== loaded.title) patch.title = form.title;
       if (form.description !== loaded.description) patch.description = form.description;
       if (form.venue !== loaded.venue) patch.venue = form.venue;
+      if (EVENTS_SOCIAL) {
+        // Only changed values are sent. Typing over a stored venue clears its
+        // pin, which goes out as null so the old coordinates don't outlive the text.
+        if (form.venue_lat !== (loaded.venue_lat ?? null)) patch.venue_lat = form.venue_lat;
+        if (form.venue_lng !== (loaded.venue_lng ?? null)) patch.venue_lng = form.venue_lng;
+        if (form.venue_place_id !== (loaded.venue_place_id ?? null)) patch.venue_place_id = form.venue_place_id;
+      }
       if (form.category !== loaded.category) patch.category = form.category;
       if (!timeLocked) {
         if (form.startsAtISO !== loaded.starts_at) patch.starts_at = form.startsAtISO;
@@ -122,6 +144,10 @@ export default function CreateEvent() {
     const input: CreateEventInput = {
       title: form.title, category: form.category, description: form.description,
       venue: form.venue,
+      // Coordinates ride along only when a place was picked; never as nulls.
+      ...(EVENTS_SOCIAL && form.venue_lat !== null && form.venue_lng !== null
+        ? { venue_lat: form.venue_lat, venue_lng: form.venue_lng, ...(form.venue_place_id ? { venue_place_id: form.venue_place_id } : {}) }
+        : {}),
       starts_at: form.startsAtISO, ends_at: form.endsAtISO,
       tiers: tiers.map((t) => ({ name: t.name.trim(), price_kobo: Math.round(Number(t.price) * 100), capacity: t.qty ? Number(t.qty) : 100_000 })),
     };
@@ -168,6 +194,22 @@ export default function CreateEvent() {
                         );
                       })}
                     </View>
+                  </View>
+                );
+              }
+              if (EVENTS_SOCIAL && f.key === 'venue') {
+                return (
+                  <View key={f.key as string} style={{ marginBottom: Spacing.md }}>
+                    <Text style={styles.fieldLabel}>{f.label}</Text>
+                    <AddressAutocompleteInput
+                      value={form.venue}
+                      onChangeText={onVenueText}
+                      onSelect={onVenueSelect}
+                      placeholder={f.placeholder}
+                      resolved={form.venue_lat !== null && form.venue_lng !== null}
+                      inlineDropdown
+                    />
+                    {errors[f.key as string] ? <Text style={styles.fieldError}>{errors[f.key as string]}</Text> : null}
                   </View>
                 );
               }
@@ -251,6 +293,7 @@ const styles = StyleSheet.create({
   stepTitle: { ...Typography.headlineMd, color: Colors.onSurface },
   stepSub: { ...Typography.bodyMd, color: EventColors.muted, marginBottom: Spacing.lg },
   fieldLabel: { ...Typography.labelMd, color: Colors.onSurface, marginBottom: Spacing.xs },
+  fieldError: { ...Typography.caption, color: EventColors.danger, marginTop: Spacing.xs },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   chip: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerLow, borderWidth: 1, borderColor: Colors.outlineVariant },
   chipActive: { backgroundColor: EventColors.brand, borderColor: EventColors.brand },

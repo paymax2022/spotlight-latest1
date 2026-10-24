@@ -79,6 +79,16 @@ func TestRestaurantRouteShapeRegistersWithoutConflict(t *testing.T) {
 	a.POST("/withdrawals/:withdrawalId/paid", noop)
 	a.POST("/withdrawals/:withdrawalId/failed", noop)
 
+	// Admin /orders group — multiple sibling routes under /orders/:id/* must all
+	// use the SAME param name. Phase-5 Wave-10 verify (W10-VERIFY) caught a boot
+	// panic where /orders/:orderId/unlock-codes conflicted with the existing
+	// /orders/:id/{assign,dispatch,trace} siblings. Mirroring the full set here
+	// makes any future param-name clash fail at test time instead of at boot.
+	a.POST("/orders/:id/assign", noop)
+	a.POST("/orders/:id/dispatch", noop)
+	a.GET("/orders/:id/trace", noop)
+	a.POST("/orders/:id/unlock-codes", noop)
+
 	if len(r.Routes()) == 0 {
 		t.Fatal("no routes registered")
 	}

@@ -253,7 +253,7 @@ func (s *Service) PostJournal(ctx context.Context, j JournalEntry) error {
 // PostJournalGated posts a balanced journal whose DEBIT leg is the user's own
 // wallet, running the strict KYC-tier daily-debit cap inside the tx under the
 // wallet advisory lock — the serialised counterpart to PostJournal for callers
-// that post planned legs (maplerad) instead of the wallet-Debit primitive.
+// that post planned legs instead of the wallet-Debit primitive.
 // walletLockKey is the wallet owner (the lock key; usually the payer's userID).
 func (s *Service) PostJournalGated(ctx context.Context, j JournalEntry, walletLockKey string) error {
 	guard := s.walletDebitGuard()
@@ -451,6 +451,11 @@ const (
 	// migration 20271028000000. Auto-created on first GetOrCreateStandingAccount.
 	AccountCryptoClearing   AccountType = "crypto_clearing"
 	AccountTradingFeeIncome AccountType = "trading_fee_income"
+	// AccountInsurancePremiumHold holds a parcel's Goods-in-Transit premium from
+	// booking (paid with the fare) until the policy binds (→ provider_clearing)
+	// or is refunded (→ the payer's wallet). Never part of a courier settlement.
+	// Admitted by 20271068000000. Auto-created on first GetOrCreateStandingAccount.
+	AccountInsurancePremiumHold AccountType = "insurance_premium_hold"
 )
 
 // Account is a logical wallet / standing account in the ledger.

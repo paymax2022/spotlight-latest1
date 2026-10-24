@@ -38,7 +38,7 @@ Minimum money-path set that MUST be present and correct:
 - [ ] `REDIS_URL` (idempotency cache / Redlock / asynq)
 - [ ] `SPOTLIGHT_ADMIN_API_KEY` (HIGH) / backend `ADMIN_API_KEY` set to a strong value
 - [ ] R2: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (CRITICAL), `R2_ACCOUNT_ID`
-- [ ] Provider keys only for modules being enabled (Maplerad/Eversend/Anthropic/etc.)
+- [ ] Provider keys only for modules being enabled (VertoFX/Eversend/Anthropic/etc.)
 - [ ] Confirm `.env.local` / `.env` are NOT committed (INF-3) and CI logs never
       printed a secret.
 

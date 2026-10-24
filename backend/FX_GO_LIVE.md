@@ -21,11 +21,11 @@ quote consume/expiry, idempotent replay, insufficient balance, rate-expired,
 With network access and the sandbox credentials in `backend/.env`:
 ```bash
 cd backend
-make fxsmoke    # calls Maplerad + Eversend live; exits non-zero on failure
+make fxsmoke    # calls Eversend + VertoFX live; exits non-zero on failure
 ```
 This bypasses the deterministic fallback and hits the real provider APIs, so it
 fails loudly on auth/shape/network problems. Fix any shape mismatches in
-`internal/provider/{maplerad,eversend}` before enabling live traffic.
+`internal/provider/{eversend,vertofx}` before enabling live traffic.
 
 ## 3. Database
 ```bash
@@ -37,7 +37,7 @@ supabase db push   # applies 20260621000000_fx_orchestration.sql (additive-only)
 FEATURE_FX_ORCHESTRATION_ENABLED=true
 DATABASE_URL=postgres://…
 REDIS_URL=redis://…                      # enables the Redis-backed quote book
-MAPLERAD_SECRET_KEY=…  MAPLERAD_PUBLIC_KEY=…  MAPLERAD_WEBHOOK_SECRET=…
+FEATURE_VERTOFX=true  VERTOFX_CLIENT_ID=…  VERTOFX_API_KEY=…  VERTOFX_WEBHOOK_SECRET=…
 EVERSEND_CLIENT_ID=…  EVERSEND_CLIENT_SECRET=…  EVERSEND_WEBHOOK_SECRET=…
 PAYMAX_WEBHOOK_OUT_URL=…  PAYMAX_WEBHOOK_SECRET=…   # outbound signed events
 ```
@@ -46,7 +46,7 @@ Run: `make run` (sources `.env`).
 ## 5. Wire provider webhooks
 In each provider dashboard set the callback to:
 ```
-POST https://<host>/api/v1/fx/webhooks/maplerad
+POST https://<host>/api/v1/fx/webhooks/vertofx
 POST https://<host>/api/v1/fx/webhooks/eversend
 ```
 Inbound events are signature-verified then normalized into the unified ledger

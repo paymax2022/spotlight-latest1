@@ -35,6 +35,8 @@ type LocationUpdate struct {
 	Lat     float64 `json:"lat"`
 	Lng     float64 `json:"lng"`
 	TS      int64   `json:"ts"`
+	// EtaMinutes is the server-computed time to drop-off (E-014); omitted when unknown.
+	EtaMinutes *int `json:"eta_minutes,omitempty"`
 }
 
 // NewRealtime builds the fan-out. partiesFn resolves an order's participants
@@ -118,13 +120,13 @@ func (s *Service) broadcastStatus(orderID string, status OrderStatus) {
 	})
 }
 
-func (s *Service) broadcastLocation(orderID string, lat, lng float64) {
+func (s *Service) broadcastLocation(orderID string, lat, lng float64, eta *int) {
 	if s.rt == nil {
 		return
 	}
 	s.rt.publish(context.Background(), orderID, ws.Message{
 		Type:    "order.location",
-		Payload: LocationUpdate{OrderID: orderID, Lat: lat, Lng: lng, TS: time.Now().UnixMilli()},
+		Payload: LocationUpdate{OrderID: orderID, Lat: lat, Lng: lng, TS: time.Now().UnixMilli(), EtaMinutes: eta},
 	})
 }
 

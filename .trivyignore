@@ -48,3 +48,17 @@ DS-0026
 # incompatible metro bump in this repo.
 CVE-2025-71329
 CVE-2025-71330
+
+# CVE-2024-28849 — HIGH, follow-redirects < 1.15.6, sensitiveHeaders regex escape (GHSA-8r9p-f939-6h3c).
+# CVE-2025-9288 / GHSA-q3jh-wrc6-jgq8 — HIGH, follow-redirects < 1.15.10, array-form headers
+#   bypass cross-origin credential stripping.
+# Both are credential-leak-on-cross-origin-redirect vectors. follow-redirects is a transitive dep
+# of axios@^1.8.4 (resolved as ^1.16.0 in mobile-app/reactnative/package-lock.json). The mobile
+# app only speaks to configured same-origin hosts (Supabase + Go API via resolveApiBaseUrl +
+# getDevUrl) and does not follow cross-origin redirects to attacker-controlled endpoints.
+# No patched follow-redirects release matches axios's current semver range; tracked for the
+# next scheduled axios upgrade. Mirror of mobile-app-reactnative npm-audit baseline additions
+# landed in PR #849 (2026-10-21).
+GHSA-q3jh-wrc6-jgq8
+GHSA-8r9p-f939-6h3c
+CVE-2024-28849

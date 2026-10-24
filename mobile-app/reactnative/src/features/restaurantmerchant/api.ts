@@ -74,6 +74,8 @@ function mapItem(i: any): MerchantMenuItem {
     priceKobo: i.price_kobo ?? 0,
     imageUrl: i.image_url ?? null,
     isAvailable: !!i.is_available,
+    version: typeof i.version === 'number' ? i.version : undefined,
+    maxQtyPerOrder: typeof i.max_qty_per_order === 'number' ? i.max_qty_per_order : undefined,
   };
 }
 function mapCategory(c: any): MerchantMenuCategory {
@@ -268,7 +270,7 @@ export async function deleteCategory(id: string, categoryId: string): Promise<vo
 
 export async function createItem(
   id: string,
-  input: { categoryId: string; name: string; description?: string; priceKobo: number; imageUrl?: string },
+  input: { categoryId: string; name: string; description?: string; priceKobo: number; imageUrl?: string; dietaryTags?: string[] },
 ): Promise<MerchantMenuItem> {
   if (USE_MOCK) {
     await delay();
@@ -285,6 +287,7 @@ export async function createItem(
     name: input.name,
     description: input.description,
     price_kobo: input.priceKobo,
+    dietary_tags: input.dietaryTags,
     ...(input.imageUrl ? { image_url: input.imageUrl } : {}),
   };
   return mapItem(unwrap<any>(await api.post(`${BASE}/${enc(id)}/menu/items`, body)));
@@ -293,7 +296,7 @@ export async function createItem(
 export async function updateItem(
   id: string,
   itemId: string,
-  patch: { priceKobo?: number; isAvailable?: boolean; imageUrl?: string },
+  patch: { priceKobo?: number; isAvailable?: boolean; imageUrl?: string; maxQtyPerOrder?: number; expectedVersion?: number },
 ): Promise<MerchantMenuItem> {
   if (USE_MOCK) {
     await delay();
@@ -319,6 +322,9 @@ export async function updateItem(
   // Only sent when the owner touched the photo. '' clears it — the backend maps an
   // empty string to NULL, while omitting the field leaves the current picture alone.
   if (patch.imageUrl !== undefined) body.image_url = patch.imageUrl;
+  // FOOD-UAT-B-008: per-order cap (0 clears). FOOD-UAT-B-006: expected_version = compare-and-set.
+  if (patch.maxQtyPerOrder !== undefined) body.max_qty_per_order = patch.maxQtyPerOrder;
+  if (patch.expectedVersion !== undefined) body.expected_version = patch.expectedVersion;
   return mapItem(unwrap<any>(await api.patch(`${BASE}/${enc(id)}/menu/items/${enc(itemId)}`, body)));
 }
 
@@ -494,12 +500,26 @@ export async function submitKYB(id: string): Promise<RestaurantKYB> {
   return mapKYB(raw?.kyb ?? raw);
 }
 
-// Admin-managed taxonomy (read-only for owners). Returns [] in mock mode, which keeps
-// the screen on the legacy per-category add. A server without the flag answers 404,
-// which surfaces as a thrown error and the same fallback.
+// Admin-managed taxonomy (read-only for owners). Returns [] in mock mode AND
+// when the backend FEATURE_RESTAURANT_ADMIN_CATEGORIES flag is off (route 404s).
+// The 404 is a documented default-off state, not a bug — the caller falls back
+// to the legacy per-category add — so swallow it quietly instead of letting
+// axios log a console-level HTTP error. Any OTHER status is still thrown so
+// genuine server errors stay visible.
 export async function getMenuTaxonomy(): Promise<TaxonomyCategory[]> {
   if (USE_MOCK) return [];
-  const raw = unwrap<any>(await api.get(`${BASE}/menu-taxonomy/categories`));
+  let raw: unknown;
+  try {
+    raw = unwrap<any>(await api.get(`${BASE}/menu-taxonomy/categories`, {
+      // skipAuthRedirect — a flag-off 404 must never trigger the 401-sign-out
+      // interceptor path (an unrelated token-expiry would also bounce to login,
+      // but this is a feature-flag read, not an auth-sensitive call).
+      skipAuthRedirect: true,
+    }));
+  } catch (e: any) {
+    if (e?.response?.status === 404) return [];
+    throw e;
+  }
   const list: any[] = Array.isArray(raw) ? raw : [];
   return list.map((c) => ({
     id: c.id,
@@ -555,9 +575,10 @@ export async function setBusinessHours(id: string, windows: StoreHourWindow[]): 
   }));
   return ((raw?.windows ?? []) as any[]).map((w) => ({
     dayOfWeek: w.day_of_week,
-    // The server answers with minutes-of-day after normalising; render them back to the
-    // HH:MM the editor works in, so what the owner sees is what was stored.
-    open: formatMinute(w.open_minute),
-    close: formatMinute(w.close_minute),
+    // The owner hours route (FOOD-UAT-B-009) answers the PUT with the same overview the GET
+    // serves: HH:MM strings. Older builds answered minutes-of-day; render those back to the
+    // HH:MM the editor works in, so what the owner sees is what was stored either way.
+    open: typeof w.open === 'string' ? w.open : formatMinute(w.open_minute),
+    close: typeof w.close === 'string' ? w.close : formatMinute(w.close_minute),
   }));
 }

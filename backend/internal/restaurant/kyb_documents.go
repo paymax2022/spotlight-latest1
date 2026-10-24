@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,7 +50,102 @@ const (
 	kybPresignTTL = 5 * time.Minute
 	// kybViewTTL bounds a reviewer download URL (same window as estate documents).
 	kybViewTTL = 60 * time.Minute
+	// kybMaxDocBytes is the per-document size cap (FOOD-UAT-A-005).
+	kybMaxDocBytes int64 = 10 << 20
 )
+
+// ErrKYBFileTooLarge maps to 413; ErrKYBUnsupportedType maps to 415 (FOOD-UAT-A-005).
+var (
+	ErrKYBFileTooLarge    = errors.New("restaurant: document exceeds the 10 MB limit")
+	ErrKYBUnsupportedType = errors.New("restaurant: unsupported file type (use PDF, PNG or JPG)")
+	// errKYBObjectMissing: the object key was never uploaded (or is unreadable).
+	errKYBObjectMissing = errors.New("restaurant: the document has not been uploaded yet")
+)
+
+// kybAllowedContentTypes is the FOOD-UAT-A-005 content-type allowlist. WEBP, which the
+// extension map historically accepted, is not on the product allowlist.
+var kybAllowedContentTypes = map[string]bool{
+	"image/jpeg":      true,
+	"image/png":       true,
+	"application/pdf": true,
+}
+
+// kybMagicMatches checks the leading bytes of an uploaded object against the content
+// type its key's extension implies, so a renamed executable cannot pass as a PDF.
+func kybMagicMatches(contentType string, head []byte) bool {
+	switch contentType {
+	case "application/pdf":
+		return len(head) >= 4 && string(head[:4]) == "%PDF"
+	case "image/png":
+		return len(head) >= 8 && string(head[:8]) == "\x89PNG\r\n\x1a\n"
+	case "image/jpeg":
+		return len(head) >= 3 && head[0] == 0xFF && head[1] == 0xD8 && head[2] == 0xFF
+	}
+	return false
+}
+
+// kybObjectProbe returns the object's total size and first bytes. It is a variable so
+// tests can stub storage. The default issues a ranged GET on a short-lived presigned
+// URL (Range is not part of the signature), so no extra R2 credentials/SDK are needed.
+var kybObjectProbe = func(ctx context.Context, signedGetURL string) (total int64, head []byte, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, signedGetURL, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Range", "bytes=0-15")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return 0, nil, errors.New("storage unreachable")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden {
+		return 0, nil, errKYBObjectMissing
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return 0, nil, errors.New("storage error")
+	}
+	head, _ = io.ReadAll(io.LimitReader(resp.Body, 16))
+	total = resp.ContentLength
+	if cr := resp.Header.Get("Content-Range"); cr != "" { // "bytes 0-15/12345"
+		if i := strings.LastIndexByte(cr, '/'); i >= 0 {
+			if n, perr := strconv.ParseInt(cr[i+1:], 10, 64); perr == nil {
+				total = n
+			}
+		}
+	}
+	return total, head, nil
+}
+
+// verifyKYBObject enforces size and content on an uploaded object key before it is
+// recorded as evidence (FOOD-UAT-A-005). Presign cannot bind Content-Length, so this
+// is the authoritative check.
+func (s *Service) verifyKYBObject(ctx context.Context, key string) error {
+	want, ok := kybContentTypeByExt[strings.ToLower(path.Ext(key))]
+	if !ok || !kybAllowedContentTypes[want] {
+		return ErrKYBUnsupportedType
+	}
+	if s.kybPresigner == nil || !s.kybPresigner.Configured() {
+		return ErrKYBUploadsUnavailable
+	}
+	signed, err := s.kybPresigner.PresignGet(key, time.Minute)
+	if err != nil {
+		return ErrKYBUploadsUnavailable
+	}
+	total, head, err := kybObjectProbe(ctx, signed)
+	if errors.Is(err, errKYBObjectMissing) {
+		return err
+	}
+	if err != nil {
+		return ErrKYBUploadsUnavailable
+	}
+	if total > kybMaxDocBytes {
+		return ErrKYBFileTooLarge
+	}
+	if !kybMagicMatches(want, head) {
+		return ErrKYBUnsupportedType
+	}
+	return nil
+}
 
 // ErrKYBUploadsUnavailable means R2 is unset or failed its write probe. Callers
 // map it to 503 so the app can offer the paste-a-link fallback instead of a retry
@@ -67,7 +164,7 @@ var kybContentTypeByExt = map[string]string{
 	".png":  "image/png",
 	".jpg":  "image/jpeg",
 	".jpeg": "image/jpeg",
-	".webp": "image/webp",
+	".webp": "image/webp", // recognised for legacy keys; NOT accepted for new uploads (kybAllowedContentTypes)
 }
 
 // errKYBBadFileRef is returned for a document reference that is neither an
@@ -123,7 +220,7 @@ type KYBDocumentPresign struct {
 }
 
 // PresignKYBDocument mints a presigned upload URL for one KYB document (owner only).
-func (s *Service) PresignKYBDocument(ctx context.Context, restaurantID, userID, docType, fileName, contentType string) (*KYBDocumentPresign, error) {
+func (s *Service) PresignKYBDocument(ctx context.Context, restaurantID, userID, docType, fileName, contentType string, sizeBytes int64) (*KYBDocumentPresign, error) {
 	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageBanking); err != nil {
 		return nil, err
 	}
@@ -133,11 +230,19 @@ func (s *Service) PresignKYBDocument(ctx context.Context, restaurantID, userID, 
 	}
 	ext := strings.ToLower(path.Ext(strings.TrimSpace(fileName)))
 	want, ok := kybContentTypeByExt[ext]
-	if !ok {
-		return nil, errors.New("restaurant: unsupported file extension (use PDF, PNG, JPG or WEBP)")
+	if !ok || !kybAllowedContentTypes[want] {
+		return nil, ErrKYBUnsupportedType
 	}
 	if ct := strings.ToLower(strings.TrimSpace(contentType)); ct != want {
-		return nil, errors.New("restaurant: content type does not match the file extension")
+		return nil, ErrKYBUnsupportedType
+	}
+	// size_bytes is optional for older clients; when declared it is gated here, and
+	// the real object is re-checked when the document is recorded (verifyKYBObject).
+	if sizeBytes > kybMaxDocBytes {
+		return nil, ErrKYBFileTooLarge
+	}
+	if sizeBytes < 0 {
+		return nil, errors.New("restaurant: invalid size_bytes")
 	}
 	cur, _, err := s.loadKYB(ctx, restaurantID)
 	if err != nil {
@@ -183,12 +288,13 @@ func (h *Handler) PresignKYBDocument(c *gin.Context) {
 		DocType     string `json:"doc_type" binding:"required"`
 		FileName    string `json:"file_name" binding:"required"`
 		ContentType string `json:"content_type" binding:"required"`
+		SizeBytes   int64  `json:"size_bytes"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	p, err := h.svc.PresignKYBDocument(c.Request.Context(), c.Param("id"), userID, body.DocType, body.FileName, body.ContentType)
+	p, err := h.svc.PresignKYBDocument(c.Request.Context(), c.Param("id"), userID, body.DocType, body.FileName, body.ContentType, body.SizeBytes)
 	if err != nil {
 		if errors.Is(err, ErrKYBUploadsUnavailable) {
 			// httperr.Msg masks 5xx text; the app keys its paste-a-link fallback off
@@ -209,6 +315,9 @@ type AdminApplicationDoc struct {
 	Label    string `json:"label"`
 	URL      string `json:"url"`
 	Verified bool   `json:"verified"` // no per-document verification store yet; always false
+	// FOOD-UAT-A-007: replaced documents are kept; reviewers see every version.
+	Version    int  `json:"version"`
+	Superseded bool `json:"superseded"`
 }
 
 var kybDocLabels = map[string]struct{ kind, label string }{
@@ -231,7 +340,11 @@ func kybDocPresentation(docType string) (kind, label string) {
 }
 
 // kybDocRef is one stored document reference, not yet turned into a reviewer URL.
-type kybDocRef struct{ docType, ref string }
+type kybDocRef struct {
+	docType, ref string
+	version      int
+	superseded   bool
+}
 
 // kybDocRefsByRestaurant loads every outlet's stored document references in ONE
 // query. Nothing is signed here: signing happens per outlet, only for the outlets a
@@ -239,7 +352,8 @@ type kybDocRef struct{ docType, ref string }
 // download URLs for identity documents it is not showing.
 func (s *Service) kybDocRefsByRestaurant(ctx context.Context) (map[string][]kybDocRef, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT restaurant_id::text, doc_type, file_url FROM restaurant_kyb_documents ORDER BY created_at`)
+		`SELECT restaurant_id::text, doc_type, file_url, version, superseded_at IS NOT NULL
+		   FROM restaurant_kyb_documents ORDER BY created_at, version`)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +362,7 @@ func (s *Service) kybDocRefsByRestaurant(ctx context.Context) (map[string][]kybD
 	for rows.Next() {
 		var restaurantID string
 		var d kybDocRef
-		if err := rows.Scan(&restaurantID, &d.docType, &d.ref); err != nil {
+		if err := rows.Scan(&restaurantID, &d.docType, &d.ref, &d.version, &d.superseded); err != nil {
 			return nil, err
 		}
 		out[restaurantID] = append(out[restaurantID], d)
@@ -282,7 +396,10 @@ func (s *Service) adminDocsFor(restaurantID string, refs []kybDocRef) []AdminApp
 			href = signed
 		}
 		kind, label := kybDocPresentation(d.docType)
-		out = append(out, AdminApplicationDoc{Kind: kind, Label: label, URL: href})
+		if d.superseded {
+			label = fmt.Sprintf("%s (superseded v%d)", label, d.version)
+		}
+		out = append(out, AdminApplicationDoc{Kind: kind, Label: label, URL: href, Version: d.version, Superseded: d.superseded})
 	}
 	return out
 }

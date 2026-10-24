@@ -522,7 +522,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     zIndex: 20,
   },
-  dropdownInline: { position: 'relative', top: undefined, left: undefined, right: undefined },
+  // Zero the offsets rather than passing `undefined`: react-native-web skips
+  // undefined style values, so the base `top: '100%'` survived and pushed the
+  // in-flow list a full container height below the input (rendered, but off-screen).
+  dropdownInline: { position: 'relative', top: 0, left: 0, right: 0 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

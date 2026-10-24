@@ -53,6 +53,10 @@ type Restaurant struct {
 	// omitted (false) elsewhere rather than guessed.
 	LikeCount int64 `json:"like_count"`
 	Liked     bool  `json:"liked,omitempty"`
+
+	// Cuisines are the restaurant's active cuisine tags. Set only when taxonomy
+	// browsing is on (WithTaxonomy), so it is absent from the JSON otherwise.
+	Cuisines []CuisineRef `json:"cuisines,omitempty"`
 }
 
 // MenuCategory groups menu items (e.g. "Starters", "Mains").
@@ -73,14 +77,21 @@ type MenuItem struct {
 	PriceKobo    int64    `json:"price_kobo"`
 	ImageURL     *string  `json:"image_url,omitempty"`
 	IsAvailable  bool     `json:"is_available"`
-	DietaryTags  []string `json:"dietary_tags,omitempty"`
+	DietaryTags  []string `json:"dietary_tags"`
 	// PrepMinutes is how long this item takes to make: its own override, or the
 	// restaurant's default when none is set. PrepTimeOverride is the override alone.
 	PrepMinutes      int  `json:"prep_minutes"`
 	PrepTimeOverride *int `json:"prep_time_override,omitempty"`
+	// Version is the optimistic-concurrency token: send it back as expected_version on PATCH
+	// (FOOD-UAT-B-006). MaxQtyPerOrder is the seller's per-line cap, nil = global cap (B-008).
+	Version        int  `json:"version"`
+	MaxQtyPerOrder *int `json:"max_qty_per_order,omitempty"`
 	// Price is the price a customer sees, with the best live discount applied. Present
 	// only when restaurant discounts are on.
 	Price *ItemPrice `json:"price,omitempty"`
+	// ModifierGroups are the item's selectable option groups (FOOD-011 / C-005). Always
+	// serialized ([] when none) on the menu-detail response.
+	ModifierGroups []ModifierGroupWire `json:"modifier_groups"`
 }
 
 // OrderStatus tracks a delivery order through its lifecycle.
@@ -98,6 +109,9 @@ const (
 	OrderRejected       OrderStatus = "rejected"        // restaurant declined (pre-prep) → refund
 	OrderDispatchFailed OrderStatus = "dispatch_failed" // no rider sourced → refund
 	OrderDeliveryFailed OrderStatus = "delivery_failed" // rider couldn't deliver → ops/dispute resolves
+	// Dine-in lifecycle (FOOD-UAT-D-007): preparing → served (settles) → closed.
+	OrderServed OrderStatus = "served"
+	OrderClosed OrderStatus = "closed"
 )
 
 // refundedCloseStates are the terminal states reached by refunding the escrow.
@@ -162,6 +176,17 @@ type Order struct {
 	EtaMinutes        *float64              `json:"eta_minutes,omitempty"`
 	DeliveryBreakdown *DeliveryFeeBreakdown `json:"delivery_breakdown,omitempty"`
 	CreatedAt         time.Time             `json:"created_at"`
+
+	// OrderType is the fulfilment mode; TableNumber is set for dine_in only.
+	OrderType   OrderType `json:"order_type"`
+	TableNumber *string   `json:"table_number,omitempty"`
+	// Delivery pin + recipient contact (FOOD-UAT-C-012). PII: populated only on the
+	// assigned rider's view (see hydrateOrderExtras) — never on the customer's or an
+	// offered rider's.
+	DeliveryLatitude       *float64 `json:"delivery_latitude,omitempty"`
+	DeliveryLongitude      *float64 `json:"delivery_longitude,omitempty"`
+	DeliveryLandmark       *string  `json:"delivery_landmark,omitempty"`
+	DeliveryRecipientPhone *string  `json:"delivery_recipient_phone,omitempty"`
 }
 
 // OrderItem is one line in an order.
@@ -218,6 +243,11 @@ type PlaceOrderRequest struct {
 	// no longer 400s on bind.
 	IdempotencyKey string `json:"idempotency_key"`
 
+	// QuoteID, when set, is a signed quote from POST /orders/quote (FOOD-UAT-C-007).
+	// PlaceOrder then refuses (409 price_changed) if the freshly recomputed total
+	// differs from the quoted one, and consumes the quote so it cannot be replayed.
+	QuoteID string `json:"quote_id,omitempty"`
+
 	// TipKobo is an optional customer tip (whole kobo) paid 100% to the rider at
 	// settlement. It is escrowed with the order total. Negative values are clamped
 	// to 0 by PlaceOrder (never trusted from the client for money math).
@@ -233,6 +263,14 @@ type PlaceOrderRequest struct {
 	DeliveryLocation *LatLng  `json:"delivery_location,omitempty"`
 	// SpecialInstructions is a free-text order note; sanitized server-side (CT-009).
 	SpecialInstructions string `json:"special_instructions,omitempty"`
+	// OrderType selects the fulfilment mode (FOOD-UAT-D-007): delivery (default),
+	// pickup_now, pickup_scheduled or dine_in. TableNumber is required for dine_in.
+	OrderType   string `json:"order_type,omitempty"`
+	TableNumber string `json:"table_number,omitempty"`
+	// DeliveryLandmark / DeliveryRecipientPhone help the rider find and reach the
+	// recipient (FOOD-UAT-C-012). Persisted on the order; shown to the assigned rider only.
+	DeliveryLandmark       string `json:"delivery_landmark,omitempty"`
+	DeliveryRecipientPhone string `json:"delivery_recipient_phone,omitempty"`
 	// ScheduledFor, when set, places the order for a future slot (SG-001) — validated
 	// against the restaurant's hours + a lead/horizon window. Still escrowed now.
 	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`

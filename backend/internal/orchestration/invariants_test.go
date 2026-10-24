@@ -19,7 +19,7 @@ import (
 // success, so an all-fail run must leave balances untouched.
 func allFailService(now *time.Time) (*Service, Store) {
 	store := NewMemStore()
-	svc := NewService([]Provider{stubProvider{name: "eversend", fail: true}, stubProvider{name: "maplerad", fail: true}}, store, Options{
+	svc := NewService([]Provider{stubProvider{name: "eversend", fail: true}, stubProvider{name: "partner", fail: true}}, store, Options{
 		Now: func() time.Time { return *now },
 	})
 	return svc, store
@@ -158,7 +158,7 @@ func TestComplianceGateBlocksQuote(t *testing.T) {
 		}
 		return true, "", nil
 	})
-	svc := NewService([]Provider{stubProvider{name: "eversend"}, stubProvider{name: "maplerad"}}, store,
+	svc := NewService([]Provider{stubProvider{name: "eversend"}, stubProvider{name: "partner"}}, store,
 		Options{Now: func() time.Time { return clock }, Screener: blockSanctioned})
 	_ = svc.SeedBalance(ctx, "sanctioned", "USD", 1_000_00)
 	_ = svc.SeedBalance(ctx, "clean", "USD", 1_000_00)
@@ -184,7 +184,7 @@ func TestComplianceReScreenAtExecution(t *testing.T) {
 		}
 		return true, "", nil
 	})
-	svc := NewService([]Provider{stubProvider{name: "eversend"}, stubProvider{name: "maplerad"}}, store,
+	svc := NewService([]Provider{stubProvider{name: "eversend"}, stubProvider{name: "partner"}}, store,
 		Options{Now: func() time.Time { return clock }, Screener: screen})
 	_ = svc.SeedBalance(ctx, "c1", "USD", 1_000_00)
 	q, e := svc.CreateQuote(ctx, "c1", "retail", QuoteRequest{Source: "USD", Destination: "NGN", Amount: 100_00, Intent: IntentConversion, Lock: true})
