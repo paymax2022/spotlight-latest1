@@ -72,11 +72,12 @@ export default function CreatePrescriptionScreen() {
   const [signOpen, setSignOpen] = useState(false);
   const [signaturePin, setSignaturePin] = useState('');
 
-  // Demo patient context surfacing controlled/pregnancy/interaction warnings.
-  const warnings = useMemo<RxWarning[]>(
-    () => checkPrescriptionWarnings(lines, { isPregnant: true, currentMedications: ['Ibuprofen'] }),
-    [lines],
-  );
+  // Derived from the medicines on the prescription alone: controlled-substance
+  // status and interactions/duplicates between these lines. This consult surface
+  // has no allergies, pregnancy status or current-medication list for the patient,
+  // so none is invented — a fabricated "unsafe in pregnancy" banner on a real
+  // prescription is a clinical claim the app cannot support.
+  const warnings = useMemo<RxWarning[]>(() => checkPrescriptionWarnings(lines), [lines]);
 
   const updateLine = (index: number, patch: Partial<RxDrugLine>) =>
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
@@ -158,7 +159,9 @@ export default function CreatePrescriptionScreen() {
             <SelectField placeholder="Select diagnosis" value={diagnosis} options={DIAGNOSIS_OPTIONS.map((d) => d.label)} onChange={setDiagnosis} />
           </SectionCard>
 
-          {/* K15–K23 — safety check summary (consolidated warnings panel) */}
+          {/* K15–K23 — safety check summary (consolidated warnings panel). An empty
+              list means no drug-level conflict was found, NOT that the prescription
+              is safe for this patient, so the panel says so either way. */}
           {warnings.length > 0 && (
             <View style={styles.warnPanel}>
               <View style={styles.warnHead}>
@@ -177,6 +180,20 @@ export default function CreatePrescriptionScreen() {
                   recommendation={w.severity === 'critical' ? 'Review before issuing — confirm this is clinically appropriate.' : 'Confirm this is appropriate for the patient.'}
                 />
               ))}
+              <Text style={styles.warnFootnote}>
+                These checks read the medicines only. Confirm pregnancy or breastfeeding, allergies and any
+                medication the patient already takes before issuing.
+              </Text>
+            </View>
+          )}
+
+          {warnings.length === 0 && (
+            <View style={styles.warnClear}>
+              <ShieldCheck size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
+              <Text style={styles.warnClearText}>
+                No conflict between these medicines. Not a patient-specific clearance — confirm pregnancy or
+                breastfeeding, allergies and current medication yourself.
+              </Text>
             </View>
           )}
 
@@ -465,6 +482,9 @@ const styles = StyleSheet.create({
   warnPanel:    { marginBottom: Spacing.md },
   warnHead:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.sm },
   warnHeadText: { ...Typography.labelMd, color: Colors.primary },
+  warnFootnote: { ...Typography.caption, color: Colors.onSurfaceVariant, marginTop: Spacing.xs, lineHeight: 16 },
+  warnClear:    { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLow, marginBottom: Spacing.md },
+  warnClearText: { ...Typography.caption, color: Colors.onSurfaceVariant, flex: 1, lineHeight: 16 },
   lineCard:     { marginBottom: Spacing.md, gap: Spacing.sm },
   lineHead:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   lineIndex:    { ...Typography.labelLg, color: Colors.onSurface },

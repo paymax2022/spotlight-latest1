@@ -17,7 +17,7 @@ export default function PharmacyLayout() {
     >
       {/* Customer */}
       <Stack.Screen name="index" />
-      <Stack.Screen name="upload-rx" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
+      <Stack.Screen name="send-rx" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
       <Stack.Screen name="rx-status" />
       <Stack.Screen name="search" />
       <Stack.Screen name="product/[id]" />
@@ -44,12 +44,11 @@ export default function PharmacyLayout() {
       {/* Provider */}
       <Stack.Screen name="provider/onboarding" />
       <Stack.Screen name="provider/catalog" />
+      <Stack.Screen name="provider/add-product" />
       <Stack.Screen name="provider/orders" />
       <Stack.Screen name="provider/rx-verify" />
-      <Stack.Screen name="provider/controlled-log" />
       <Stack.Screen name="provider/dispense" />
       <Stack.Screen name="provider/handoff" />
-      <Stack.Screen name="provider/consult" />
       <Stack.Screen name="provider/stock-alerts" />
       <Stack.Screen name="provider/earnings" />
       <Stack.Screen name="provider/reviews" />

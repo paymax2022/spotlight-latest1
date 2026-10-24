@@ -227,6 +227,7 @@ function ClassGroupSection({ group, addLocked }: { group: SymptomClassGroup; add
 function SkuRow({ sku, addLocked }: { sku: PharmacySkuOption; addLocked: boolean }) {
   const add = useCartStore((s) => s.add);
   const setQty = useCartStore((s) => s.setQty);
+  const [blocked, setBlocked] = useState(false);
   const line = useCartStore((s) => s.lines.find((l) => l.productId === sku.product_id));
   const capped = sku.max_qty_per_window != null && (line?.qty ?? 0) >= sku.max_qty_per_window;
   const disabled = !sku.in_stock || addLocked;
@@ -244,6 +245,11 @@ function SkuRow({ sku, addLocked }: { sku: PharmacySkuOption; addLocked: boolean
         <Text style={styles.skuNafdac} numberOfLines={1}>NAFDAC {sku.nafdac_reg_no}</Text>
         <Text style={styles.skuPrice}>{formatNaira(sku.price_kobo)}</Text>
         {!sku.in_stock ? <Text style={styles.oos}>Out of stock</Text> : null}
+        {blocked ? (
+          <Text style={styles.oos}>
+            Sold by {sku.pharmacy_name || 'another pharmacy'} — your cart holds one pharmacy’s items at a time.
+          </Text>
+        ) : null}
       </View>
 
       {line ? (
@@ -263,7 +269,10 @@ function SkuRow({ sku, addLocked }: { sku: PharmacySkuOption; addLocked: boolean
         </View>
       ) : (
         <Pressable
-          onPress={() => !disabled && add(skuToCartProduct(sku))}
+          onPress={() => {
+            if (disabled) return;
+            setBlocked(!add(skuToCartProduct(sku)));
+          }}
           style={[styles.addBtn, disabled && styles.addBtnOff]}
           accessibilityRole="button"
           accessibilityLabel={addLocked ? 'Confirm with a pharmacist to add' : `Add ${sku.name} to cart`}

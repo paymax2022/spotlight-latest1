@@ -22,6 +22,8 @@ interface Props {
   attachments?: IntakeAttachment[];
   onRemoveAttachment?: (id: string) => void;
   attachmentBusy?: boolean;
+  /** Set when there is nowhere to put the bytes: replaces the picker, honestly. */
+  attachmentNote?: string;
 }
 
 /** "Patient-reported" chip — never present intake as a diagnosis (PRD §5.3). */
@@ -47,6 +49,7 @@ export default function IntakeField({
   attachments,
   onRemoveAttachment,
   attachmentBusy,
+  attachmentNote,
 }: Props) {
   const labelNode = (
     <View style={styles.labelRow}>
@@ -106,19 +109,25 @@ export default function IntakeField({
             ) : null}
           </View>
         ))}
-        <Pressable
-          onPress={() => onPickAttachment?.(field)}
-          disabled={attachmentBusy}
-          accessibilityRole="button"
-          style={[styles.attBtn, attachmentBusy && styles.disabled]}
-        >
-          {attachmentBusy ? (
-            <ActivityIndicator size="small" color={HealthColors.accent} />
-          ) : (
-            <Paperclip size={16} color={HealthColors.accent} strokeWidth={2} />
-          )}
-          <Text style={styles.attBtnText}>{attachmentBusy ? 'Uploading…' : 'Add a file'}</Text>
-        </Pressable>
+        {attachmentNote ? (
+          <View style={styles.attNote}>
+            <Text style={styles.attNoteText}>{attachmentNote}</Text>
+          </View>
+        ) : (
+          <Pressable
+            onPress={() => onPickAttachment?.(field)}
+            disabled={attachmentBusy}
+            accessibilityRole="button"
+            style={[styles.attBtn, attachmentBusy && styles.disabled]}
+          >
+            {attachmentBusy ? (
+              <ActivityIndicator size="small" color={HealthColors.accent} />
+            ) : (
+              <Paperclip size={16} color={HealthColors.accent} strokeWidth={2} />
+            )}
+            <Text style={styles.attBtnText}>{attachmentBusy ? 'Uploading…' : 'Add a file'}</Text>
+          </Pressable>
+        )}
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </View>
     );
@@ -305,6 +314,11 @@ const styles = StyleSheet.create({
     borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest,
   },
   attBtnText: { ...Typography.labelLg, color: HealthColors.accent },
+  attNote: {
+    borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerLow,
+    paddingHorizontal: Spacing.sm + 2, paddingVertical: 10,
+  },
+  attNoteText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, lineHeight: 18 },
   // medication list (repeatable)
   medRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, marginBottom: Spacing.sm },
   medInputs: { flex: 1, gap: Spacing.xs },

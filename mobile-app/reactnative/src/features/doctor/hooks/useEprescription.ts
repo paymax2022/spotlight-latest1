@@ -1,7 +1,6 @@
 // Rich e-prescription (drug lines, strengths/forms, alternatives, safety
 // warnings, lifecycle, digital-signature issue, cancel, share, send-to-pharmacy,
-// refill consultation, audit trail). Reads use the DEMO_* exports as
-// placeholderData; mutations auto-generate the Idempotency-Key.
+// refill consultation, audit trail). Mutations auto-generate the Idempotency-Key.
 // REUSES Phase 1 `useCreatePrescription`, `usePrescriptions`, `usePrescription`
 // (from `useClinical`) and Phase 2 `useReviewRefill` (from `usePharmacy`) — those
 // are not re-declared here. `checkPrescriptionWarnings`, `searchDrugCatalogue`
@@ -15,7 +14,6 @@ import {
   sharePrescription,
   sendToPharmacy,
   requestRefillConsultation,
-  DEMO_ISSUED_PRESCRIPTION,
 } from '@/api/doctor.batch3.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type {
@@ -38,7 +36,6 @@ export function useIssuedPrescription(id: string) {
     queryKey:        ['doctor', 'issued-prescription', id],
     queryFn:         () => getIssuedPrescription(id),
     enabled:         !!id,
-    placeholderData: DEMO_ISSUED_PRESCRIPTION,
     staleTime:       30_000,
   });
 }

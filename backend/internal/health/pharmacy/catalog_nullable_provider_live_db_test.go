@@ -8,6 +8,12 @@ package healthpharmacy_test
 // inside the loop, ONE unowned product returned 500 for the entire list rather
 // than omitting itself. All six products in the local database were unowned, so
 // the pharmacy catalog was completely unreachable.
+//
+// The read survives that row today by EXCLUDING it: an unowned product cannot be
+// ordered from any pharmacy (priceAndValidateLines matches lines on
+// pharmacy_provider_id, and HL-2 needs an approved supplier), so listing it only
+// lets a patient build a cart that must fail at pay time. The scan-shape fix
+// stands as defence in depth — the COALESCEs still hold for the JOIN'd columns.
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -44,31 +50,15 @@ func TestLiveDB_ListProducts_ToleratesAProductWithNoPharmacy(t *testing.T) {
 		t.Fatalf("ListProducts must not fail because a product has no pharmacy: %v", err)
 	}
 
-	var found *healthpharmacy.Product
 	for i := range products {
 		if products[i].ID == id {
-			found = &products[i]
-			break
+			t.Fatal("an unowned product is in the sellable catalog — no pharmacy can ever order it")
 		}
 	}
-	if found == nil {
-		t.Fatal("the unowned product is missing from the catalog — it should be listed, not dropped")
-	}
-	if found.PharmacyProviderID != "" {
-		t.Errorf("PharmacyProviderID = %q, want empty string for an unowned product", found.PharmacyProviderID)
-	}
-	// The display name beside it has always coalesced to "" for this case; the id
-	// now matches, so "unowned" is signalled the same way in both fields.
-	if found.PharmacyName != "" {
-		t.Errorf("PharmacyName = %q, want empty string", found.PharmacyName)
-	}
 
-	// The detail endpoint shares the query shape — same unowned-product semantics.
-	one, err := svc.GetProduct(ctx, id)
-	if err != nil {
-		t.Fatalf("GetProduct must not fail on an unowned product: %v", err)
-	}
-	if one.PharmacyProviderID != "" {
-		t.Errorf("GetProduct PharmacyProviderID = %q, want empty string", one.PharmacyProviderID)
+	// The detail endpoint shares the same exclusion, so a stale link reads as
+	// absent rather than as a product the patient can add to a cart.
+	if _, err := svc.GetProduct(ctx, id); err == nil {
+		t.Fatal("GetProduct returned an unowned product, which cannot be ordered")
 	}
 }

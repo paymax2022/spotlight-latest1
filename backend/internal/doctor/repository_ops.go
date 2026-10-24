@@ -476,9 +476,13 @@ func (r *Repository) GetAppointmentRequest(ctx context.Context, userID, id strin
 // reject→cancelled, reschedule→rescheduled) and mirrors the decision onto its request row
 // when one exists. Scoped + status-set → naturally idempotent. Returns the appointment.
 func (r *Repository) TransitionAppointment(ctx context.Context, userID, appointmentID, status string, requestedSlot *string, detail []byte) (*Appointment, error) {
+	// A terminal appointment (completed / cancelled / no_show) is final: it cannot
+	// be moved to another state, so a refunded consult cannot be re-run and Ended.
+	// Repeating the same terminal state stays an idempotent success.
 	const q = `
 		UPDATE doctor_appointments SET status = $3, updated_at = now()
-		WHERE id = $1 AND user_id = $2`
+		WHERE id = $1 AND user_id = $2
+		  AND (status NOT IN ('completed','cancelled','no_show') OR status = $3)`
 	tag, err := r.db.Exec(ctx, q, appointmentID, userID, status)
 	if err != nil {
 		return nil, err

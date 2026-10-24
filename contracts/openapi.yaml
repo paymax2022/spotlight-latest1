@@ -2788,6 +2788,41 @@ components:
         is_hidden: { type: boolean }
         created_at: { type: string, format: date-time }
 
+    AppointmentMessage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        author: { type: string, enum: [patient, doctor] }
+        body: { type: string }
+        message_kind: { type: string }
+        created_at: { type: string, format: date-time }
+    SaveIntakeRequest:
+      type: object
+      properties:
+        answers: { type: object, additionalProperties: true }
+        consent_version: { type: string }
+        schema_id: { type: string }
+        schema_version: { type: integer }
+    AppointmentIntake:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        appointment_id: { type: string, format: uuid }
+        status: { type: string, enum: [DRAFT, SUBMITTED] }
+        schema_id: { type: string }
+        schema_version: { type: integer }
+        consent_version: { type: string }
+        answers: { type: object, additionalProperties: true }
+        red_flag:
+          type: object
+          properties:
+            severity: { type: string }
+            routing: { type: string, enum: [CRISIS, EMERGENCY, URGENT_CARE] }
+            hits: { type: array, items: { type: string } }
+        submitted_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        doctor_name: { type: string }
+        patient_owns: { type: boolean }
     VisitSummary:
       type: object
       properties:
@@ -11050,6 +11085,198 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/VisitSummary' }
+
+  # Doctor-console bridge (ADR-PR879): mounted only with
+  # FEATURE_TELEMEDICINE_CONSOLE_BRIDGE_ENABLED. Caller must be the patient or the
+  # appointment's assigned doctor; anyone else gets 404.
+  /telemedicine/appointments/{id}/messages:
+    get:
+      operationId: listAppointmentMessages
+      summary: "List the consult chat (patient or assigned doctor). Empty when the appointment is not bridged."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Chat lines, oldest first (max 200)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/AppointmentMessage' } }
+        '404': { description: "Not found, or not a participant" }
+    post:
+      operationId: sendAppointmentMessage
+      summary: "Post one chat line. The author is derived from the caller, never from the body."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        '201':
+          description: The stored line
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AppointmentMessage' }
+        '404': { description: "Not found, not a participant, or not bridged" }
+  /telemedicine/appointments/{id}/call-token:
+    get:
+      operationId: getAppointmentCallToken
+      summary: "LiveKit join token for the consult room. configured:false when no media server is wired."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Call info (the assigned doctor is host, the patient a participant)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      configured: { type: boolean }
+                      provider: { type: string }
+                      url: { type: string }
+                      room: { type: string }
+                      token: { type: string }
+                      role: { type: string, enum: [host, participant] }
+        '404': { description: "Not found, or not a participant" }
+        '409': { description: "Appointment is cancelled or completed" }
+        '503': { description: "Media server unavailable" }
+  /telemedicine/appointments/{id}/report-problem:
+    post:
+      operationId: reportConsultProblem
+      summary: "Patient queues a consult in progress for an admin decision (bridge flag)."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 500 }
+      responses:
+        '200': { description: "Queued for review (idempotent)" }
+        '404': { description: "Not found, or not the patient" }
+        '409': { description: "Only a consult in progress can be reported; cancel it instead" }
+  /telemedicine/admin/appointments/review:
+    get:
+      operationId: adminListTelemedicineReviewQueue
+      summary: "Open appointments flagged for review (stuck in progress, or patient-reported). Needs telemedicine.admin.view."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: "Flagged appointments, oldest first (max 200)" }
+  /telemedicine/admin/appointments/{id}/resolve:
+    post:
+      operationId: adminResolveTelemedicineAppointment
+      summary: "Admin settles (pays the doctor) or refunds (pays the patient) an appointment in the review queue. The decision is audited before payment. Needs telemedicine.admin.manage."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, reason]
+              properties:
+                action: { type: string, enum: [settle, refund] }
+                reason: { type: string, minLength: 1 }
+      responses:
+        '200': { description: "Resolved" }
+        '400': { description: "Missing reason or unknown action" }
+        '404': { description: "Not found" }
+        '409': { description: "Not in the review queue, or the appointment or settlement is not resolvable" }
+  # Pre-consult intake: mounted only with FEATURE_TELEMEDICINE_INTAKE_ENABLED.
+  /telemedicine/appointments/{id}/intake:
+    get:
+      operationId: getAppointmentIntake
+      summary: "Read the pre-consult intake (patient or assigned doctor; a doctor read is audited)."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The intake (null data when none started)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AppointmentIntake' }
+        '404': { description: "Not found, or not a participant" }
+  /telemedicine/appointments/{id}/intake/draft:
+    put:
+      operationId: saveAppointmentIntakeDraft
+      summary: "Autosave intake answers (patient only). After submit, an edit re-runs triage; urgency only rises."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveIntakeRequest' }
+      responses:
+        '200':
+          description: The saved intake
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AppointmentIntake' }
+        '403': { description: "Caller is not the patient" }
+        '413': { description: "Body over 64 KB" }
+  /telemedicine/appointments/{id}/intake/submit:
+    post:
+      operationId: submitAppointmentIntake
+      summary: "Submit the intake (patient only) and capture the safety triage outcome."
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveIntakeRequest' }
+      responses:
+        '200':
+          description: The submitted intake, with red_flag when triage fired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AppointmentIntake' }
+        '403': { description: "Caller is not the patient" }
 
   /telemedicine/appointments/{id}/review:
     post:

@@ -10,6 +10,7 @@ import type {
   RedFlagResult,
 } from '../types';
 import { formatMedList } from '../utils';
+import { INTAKE_RED_FLAG_COPY } from '../constants/health.constants';
 
 const now = Date.now();
 const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString();
@@ -347,49 +348,18 @@ export function mockSaveDraft(appointmentId: string, answers: IntakeResponseValu
 }
 
 // Red-flag triage — runs at submit (§5). Pure product-safety routing, no diagnosis.
+// The wording is shared with the live telemedicine path (INTAKE_RED_FLAG_COPY).
 export function mockEvaluateRedFlag(answers: IntakeResponseValues): RedFlagResult | undefined {
   const flags = Array.isArray(answers.red_flag_symptoms) ? answers.red_flag_symptoms : [];
   if (flags.includes('self_harm')) {
-    return {
-      severity: 'emergency',
-      routing: 'CRISIS',
-      guidance: {
-        title: 'You deserve support right now',
-        body:
-          "Thank you for telling us. You don't have to face this alone — support is available and reaching out " +
-          'can help. Please consider contacting a mental health professional or a crisis line now. If you might ' +
-          'act on thoughts of harming yourself, or are in immediate danger, contact local emergency services.',
-        // Admin-configured per locale (health_intake_config.crisis_guidance.crisis_line); blank by default.
-        crisis_line: '',
-        show_emergency_number: true,
-      },
-    };
+    return { severity: 'emergency', routing: 'CRISIS', guidance: INTAKE_RED_FLAG_COPY.CRISIS };
   }
   if (flags.some((f) => ['chest_pain', 'breathing', 'stroke', 'bleeding'].includes(f))) {
-    return {
-      severity: 'emergency',
-      routing: 'EMERGENCY',
-      guidance: {
-        title: 'These symptoms may need emergency care',
-        body:
-          'Based on what you reported, please seek in-person emergency care now rather than waiting for a ' +
-          'tele-consult. Call emergency services or go to the nearest emergency department.',
-        show_emergency_number: true,
-      },
-    };
+    return { severity: 'emergency', routing: 'EMERGENCY', guidance: INTAKE_RED_FLAG_COPY.EMERGENCY };
   }
   const severity = typeof answers.severity === 'number' ? answers.severity : 0;
   if (severity >= 9) {
-    return {
-      severity: 'urgent',
-      routing: 'URGENT_CARE',
-      guidance: {
-        title: 'This sounds urgent',
-        body:
-          'You rated your symptoms as severe. If they are getting worse or you feel unsafe waiting, please ' +
-          'consider urgent in-person care. Otherwise your doctor will prioritise your consult.',
-      },
-    };
+    return { severity: 'urgent', routing: 'URGENT_CARE', guidance: INTAKE_RED_FLAG_COPY.URGENT_CARE };
   }
   return undefined;
 }

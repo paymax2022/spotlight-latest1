@@ -20,12 +20,20 @@ export default function ProductDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: p, isLoading, isError, refetch } = useProduct(id);
   const add = useCartStore((s) => s.add);
+  const cartPharmacyName = useCartStore((s) => s.lines[0]?.pharmacyName ?? '');
   const [qty, setQty] = useState(1);
   const [added, setAdded] = useState(false);
+  const [blocked, setBlocked] = useState(false);
 
   const onAdd = () => {
     if (!p) return;
-    add(p, qty);
+    // One order is one pharmacy, so a second pharmacy's product is refused by the
+    // cart rather than building an order the server can only reject.
+    if (!add(p, qty)) {
+      setBlocked(true);
+      return;
+    }
+    setBlocked(false);
     setAdded(true);
   };
 
@@ -82,10 +90,10 @@ export default function ProductDetailScreen() {
 
             {/* Rx gate notice */}
             {p.rxRequired ? (
-              <Pressable style={styles.rxNotice} onPress={() => router.push('/health/pharmacy/upload-rx')}>
+              <Pressable style={styles.rxNotice} onPress={() => router.push('/health/pharmacy/send-rx')}>
                 <Info size={15} color={Colors.secondary} strokeWidth={2} />
                 <Text style={styles.rxNoticeText}>
-                  This medicine needs a pharmacist-verified prescription. Upload one to complete checkout.
+                  This medicine needs a pharmacist-verified e-prescription. Send one to the pharmacy to complete checkout.
                 </Text>
               </Pressable>
             ) : null}
@@ -120,6 +128,12 @@ export default function ProductDetailScreen() {
 
           {/* Footer */}
           <View style={styles.footer}>
+            {blocked ? (
+              <Text style={styles.blockedNote}>
+                Your cart is from {cartPharmacyName || 'another pharmacy'}, and an order can only come from one. Check out
+                first, then start a new cart.
+              </Text>
+            ) : null}
             {!p.inStock ? (
               <PrimaryButton label="Out of stock" onPress={() => {}} disabled />
             ) : added ? (
@@ -194,7 +208,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceContainerLowest,
   },
   qtyValue: { ...Typography.titleLg, color: Colors.onSurface, minWidth: 28, textAlign: 'center' },
-  footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background },
+  footer: { padding: Spacing.containerMargin, gap: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background },
+  blockedNote: { ...Typography.labelSm, color: Colors.error },
   footerRow: { flexDirection: 'row', gap: Spacing.md },
   footerBtn: { flex: 1 },
   addCta: {

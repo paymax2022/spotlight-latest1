@@ -1,7 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Star } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { Star, ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -9,7 +10,7 @@ import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
-import { useReviews } from '@/features/health/pharmacy/hooks';
+import { useMyPharmacy, useReviews } from '@/features/health/pharmacy/hooks';
 import { formatDate } from '@/features/health/constants/health.constants';
 import type { PharmacyReview } from '@/features/health/pharmacy/types';
 
@@ -24,12 +25,45 @@ function Stars({ rating, size }: { rating: number; size: number }) {
 }
 
 export default function ProviderReviewsScreen() {
-  const { data, isLoading, isError, refetch, isRefetching } = useReviews();
+  // The reviews feed is scoped to the pharmacy row, which only exists once the
+  // provider application is approved — so ask for that id rather than reading
+  // every pharmacy's reviews.
+  const { data: mine, isLoading: mineLoading } = useMyPharmacy();
+  const { data, isLoading, isError, refetch, isRefetching } = useReviews(mine?.providerId);
 
   const reviews = data ?? [];
   const total = reviews.length;
   const average = total > 0 ? reviews.reduce((s, r) => s + r.rating, 0) / total : 0;
   const rounded = Math.round(average);
+
+  if (mineLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Reviews" subtitle="What patients say" />
+        <StateView kind="loading" message="Loading your pharmacy…" />
+      </SafeAreaView>
+    );
+  }
+
+  if (mine && !mine.providerId) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Reviews" subtitle="What patients say" />
+        <StateView
+          kind="empty"
+          icon="ShieldCheck"
+          title="Not discoverable yet"
+          message={
+            mine.businessName
+              ? `${mine.businessName} is still being verified. Patients can rate your pharmacy once it is live (HL-2).`
+              : 'Patients can rate your pharmacy once it has been verified and listed.'
+          }
+          actionLabel="Go to verification"
+          onAction={() => router.replace('/health/pharmacy/provider/onboarding')}
+        />
+      </SafeAreaView>
+    );
+  }
 
   const renderRow = ({ item }: { item: PharmacyReview }) => (
     <View style={[styles.card, shadow1]}>

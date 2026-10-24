@@ -154,17 +154,27 @@ func (r *PgxRepo) ApprovedClassByID(ctx context.Context, classID string) (*Thera
 // re-asserts HL-5 (NAFDAC REGISTERED, active) as defence in depth.
 func (r *PgxRepo) LiveSkusForClass(ctx context.Context, classID, region string, limit, offset int) ([]Sku, error) {
 	const q = `
-		SELECT s.id, s.product_id, p.name, s.brand, s.pack_size, s.price_kobo,
+		SELECT s.id, s.product_id, p.name,
+		       COALESCE(p.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''),
+		       s.brand, s.pack_size, s.price_kobo,
 		       COALESCE(NULLIF(s.nafdac_reg_no, ''), p.nafdac_ref, '') AS nafdac_reg_no,
 		       s.classification, s.therapeutic_class_id, s.region, s.in_stock,
 		       s.age_min_years, s.pregnancy_safe, s.max_qty_per_window
 		FROM pharmacy_skus s
 		JOIN pharmacy_products p ON p.id = s.product_id
+		JOIN health_providers hp ON hp.id = p.pharmacy_provider_id
 		WHERE s.therapeutic_class_id = $1
 		  AND s.active = true AND s.in_stock = true
 		  AND s.classification IN ('OTC','PHARMACY_ONLY')
 		  AND ($2 = '' OR s.region = '' OR s.region = $2)
 		  AND p.active = true AND p.nafdac_status = 'REGISTERED'
+		  -- Orderable-at-this-moment only, mirroring ListProducts (HL-2): CreateOrder
+		  -- re-checks each line against its pharmacy and refuses a product whose
+		  -- in_stock is false, so a SKU from an unapproved, undiscoverable or
+		  -- sold-out provider is an advert the patient can only fail at — after
+		  -- filling a cart.
+		  AND hp.domain = 'PHARMACY' AND hp.status = 'APPROVED' AND hp.discoverable = true
+		  AND p.in_stock = true
 		ORDER BY s.price_kobo ASC, s.id ASC
 		LIMIT $3 OFFSET $4`
 	rows, err := r.db.Query(ctx, q, classID, region, limit, offset)
@@ -175,7 +185,8 @@ func (r *PgxRepo) LiveSkusForClass(ctx context.Context, classID, region string, 
 	var out []Sku
 	for rows.Next() {
 		var s Sku
-		if err := rows.Scan(&s.ID, &s.ProductID, &s.Name, &s.Brand, &s.PackSize, &s.PriceKobo,
+		if err := rows.Scan(&s.ID, &s.ProductID, &s.Name, &s.PharmacyProviderID, &s.PharmacyName,
+			&s.Brand, &s.PackSize, &s.PriceKobo,
 			&s.NAFDACRegNo, &s.Classification, &s.TherapeuticClassID, &s.Region, &s.InStock,
 			&s.AgeMinYears, &s.PregnancySafe, &s.MaxQtyPerWindow); err != nil {
 			return nil, err

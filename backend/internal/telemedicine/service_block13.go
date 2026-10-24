@@ -99,8 +99,16 @@ func (s *Service) ConfirmAppointment(ctx context.Context, appointmentID, userID 
 	if status != string(ApptBooked) {
 		return errors.New("telemedicine: only booked appointments can be confirmed")
 	}
-	_, err := s.db.Exec(ctx, `UPDATE appointments SET status='confirmed' WHERE id=$1`, appointmentID)
-	return err
+	// Conditional: a cancel that lands between the read above and this write
+	// must not be revived as confirmed.
+	tag, err := s.db.Exec(ctx, `UPDATE appointments SET status='confirmed' WHERE id=$1 AND status='booked'`, appointmentID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("telemedicine: only booked appointments can be confirmed")
+	}
+	return nil
 }
 
 // RescheduleAppointment moves an appointment to a new time. Completed or
@@ -116,7 +124,7 @@ func (s *Service) RescheduleAppointment(ctx context.Context, appointmentID, user
 	if !s.isParticipant(ctx, appointmentID, userID, patientID) {
 		return errors.New("telemedicine: not authorised for this appointment")
 	}
-	if status == string(ApptCompleted) || status == string(ApptCancelled) {
+	if status == string(ApptCompleted) || status == string(ApptCancelled) || status == string(ApptInProgress) {
 		return fmt.Errorf("telemedicine: cannot reschedule a %s appointment", status)
 	}
 	_, err := s.db.Exec(ctx,
@@ -231,6 +239,11 @@ func (s *Service) GetVisitSummary(ctx context.Context, appointmentID, userID str
 		FROM doctor_soap_notes WHERE appointment_id=$1`, appointmentID).
 		Scan(&doctorID, &assessment, &objective, &plan)
 	if derr != nil {
+		// Third source: the doctor console's clinical note for a bridged
+		// appointment (the rich consult screen's Notes tab writes there).
+		if vs2, berr := s.visitSummaryFromDoctorConsole(ctx, appointmentID, patientID); berr == nil {
+			return vs2, nil
+		}
 		return nil, errors.New("telemedicine: no visit summary available")
 	}
 	return &VisitSummary{

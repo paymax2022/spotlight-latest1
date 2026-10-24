@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ShieldCheck, CircleAlert, Lock, PackageCheck, Truck, Package } from 'lucide-react-native';
+import { ShieldCheck, CircleAlert, Lock, PackageCheck, Truck, Package, RefreshCw } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -13,7 +13,13 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import PharmacyStatusPill from '@/features/health/components/PharmacyStatusPill';
 import PharmacyOrderTimeline from '@/features/health/components/PharmacyOrderTimeline';
-import { useOrder, useDispenseOrder, useHandoffOrder } from '@/features/health/pharmacy/hooks';
+import {
+  useOrder,
+  useDispenseOrder,
+  useHandoffOrder,
+  usePrescription,
+  useDispenseRefill,
+} from '@/features/health/pharmacy/hooks';
 import { newIdempotencyKey } from '@/features/health/pharmacy/cartStore';
 import { formatNaira } from '@/features/health/constants/health.constants';
 import type { PharmacyOrder } from '@/features/health/pharmacy/types';
@@ -27,6 +33,11 @@ export default function ProviderDispenseScreen() {
   const { data: order, isLoading, isError, refetch } = useOrder(id);
   const dispense = useDispenseOrder();
   const handoff = useHandoffOrder();
+  // DP-004: a refill is spent here at the counter against the prescription pinned
+  // to this order. usePrescription is disabled while rxId is undefined.
+  const { data: rx } = usePrescription(order?.rxId);
+  const dispenseRefill = useDispenseRefill();
+  const [refillErr, setRefillErr] = useState<string>();
 
   if (isLoading) {
     return (
@@ -49,6 +60,22 @@ export default function ProviderDispenseScreen() {
   const awaitingRx = order.requiresRx && !order.rxId;
   const isPreDispense = PRE_DISPENSE.includes(order.status);
   const isDispensed = order.status === 'dispensed';
+
+  const refillsAuthorized = rx?.refillsAuthorized ?? 0;
+  const refillsLeft = Math.max(0, refillsAuthorized - (rx?.refillsUsed ?? 0));
+  // The server requires the initial fill (state DISPENSED/FULFILLED) before any
+  // refill, and refuses once the authorized count is spent.
+  const refillReady = rx?.status === 'dispensed' && refillsLeft > 0;
+
+  const onDispenseRefill = async () => {
+    if (!rx) return;
+    setRefillErr(undefined);
+    try {
+      await dispenseRefill.mutateAsync(rx.id);
+    } catch {
+      setRefillErr('The pharmacy system refused this refill — the first fill may not be recorded yet, or the authorized refills are spent.');
+    }
+  };
 
   const onDispense = async () => {
     await dispense.mutateAsync({ orderId: order.id, idempotencyKey: newIdempotencyKey('dispense') });
@@ -107,16 +134,16 @@ export default function ProviderDispenseScreen() {
           ))}
           <View style={styles.divider} />
           <View style={styles.sumRow}>
-            <Text style={styles.sumLabel}>Subtotal</Text>
+            <Text style={styles.sumLabel}>Medicines held</Text>
             <Text style={styles.sumVal}>{formatNaira(order.subtotalKobo)}</Text>
           </View>
           <View style={styles.sumRow}>
-            <Text style={styles.sumLabel}>Delivery</Text>
-            <Text style={styles.sumVal}>{order.deliveryFeeKobo ? formatNaira(order.deliveryFeeKobo) : 'Free'}</Text>
+            <Text style={styles.sumLabel}>Rider’s fare</Text>
+            <Text style={styles.sumMuted}>{order.fulfilment === 'delivery' ? 'Settled separately' : '—'}</Text>
           </View>
           <View style={styles.divider} />
           <View style={styles.sumRow}>
-            <Text style={styles.totalLabel}>Total</Text>
+            <Text style={styles.totalLabel}>Held for this order</Text>
             <Text style={styles.totalVal}>{formatNaira(order.totalKobo)}</Text>
           </View>
         </View>
@@ -126,6 +153,33 @@ export default function ProviderDispenseScreen() {
         <View style={[styles.timelineCard, shadow1]}>
           <PharmacyOrderTimeline events={order.timeline} />
         </View>
+
+        {/* DP-004 refills on the attached e-Rx */}
+        {rx && refillsAuthorized > 0 ? (
+          <View style={[styles.refillCard, shadow1]}>
+            <View style={styles.refillHead}>
+              <RefreshCw size={16} color={Colors.teal} strokeWidth={2} />
+              <Text style={styles.refillTitle}>Refills on this prescription</Text>
+            </View>
+            <Text style={styles.refillBody}>
+              {refillsLeft > 0
+                ? `${refillsLeft} of ${refillsAuthorized} refill${refillsAuthorized > 1 ? 's' : ''} still authorized. Dispensing one records it against the e-Rx.`
+                : `All ${refillsAuthorized} authorized refill${refillsAuthorized > 1 ? 's have' : ' has'} been dispensed.`}
+            </Text>
+            {rx.status !== 'dispensed' && refillsLeft > 0 ? (
+              <Text style={styles.refillHint}>The first fill must be recorded before a refill can be dispensed.</Text>
+            ) : null}
+            {refillReady ? (
+              <PrimaryButton
+                label="Dispense a refill"
+                onPress={onDispenseRefill}
+                loading={dispenseRefill.isPending}
+                variant="secondary"
+              />
+            ) : null}
+            {refillErr ? <Text style={styles.refillErr}>{refillErr}</Text> : null}
+          </View>
+        ) : null}
 
         {/* HL-9 payment-held strip */}
         <View style={[styles.banner, styles.bannerOk]}>
@@ -189,6 +243,7 @@ const styles = StyleSheet.create({
   sumName: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1, marginRight: Spacing.sm },
   sumLabel: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   sumVal: { ...Typography.bodyMd, color: Colors.onSurface },
+  sumMuted: { ...Typography.bodySm, color: Colors.onSurfaceVariant, fontStyle: 'italic' },
   totalLabel: { ...Typography.titleMd, color: Colors.onSurface },
   totalVal: { ...Typography.titleMd, color: Colors.primary },
   divider: { height: 1, backgroundColor: Colors.outlineVariant },
@@ -199,6 +254,19 @@ const styles = StyleSheet.create({
     borderRadius: Radius.lg,
     padding: Spacing.md,
   },
+  refillCard: {
+    backgroundColor: Colors.surfaceContainerLowest,
+    borderWidth: 1,
+    borderColor: Colors.outlineVariant,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    gap: Spacing.sm,
+  },
+  refillHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  refillTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  refillBody: { ...Typography.bodySm, color: Colors.onSurfaceVariant, lineHeight: 18 },
+  refillHint: { ...Typography.caption, color: Colors.onSurfaceVariant },
+  refillErr: { ...Typography.bodySm, color: Colors.error },
   footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background },
   doneRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
   doneText: { ...Typography.labelLg, color: Colors.onSurfaceVariant },
