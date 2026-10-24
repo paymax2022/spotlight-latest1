@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"spotlight/backend/go-common/ginutil"
@@ -228,9 +229,31 @@ func (h *Handler) Withdraw(c *gin.Context) {
 		AddressID string `json:"address_id"`
 		Units     int64  `json:"units"`
 		FeeKobo   int64  `json:"fee_kobo"`
+		Pin       string `json:"pin"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
+		return
+	}
+	// Second factor BEFORE anything moves: the user's transaction PIN, verified on
+	// the server. Fail closed when no verifier is wired; never score an empty PIN.
+	if h.svc.stepUp == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": "withdrawals are unavailable", "code": "stepup_unavailable"})
+		return
+	}
+	if strings.TrimSpace(req.Pin) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "enter your transaction PIN to withdraw", "code": "pin_required"})
+		return
+	}
+	if err := h.svc.stepUp(c.Request.Context(), uid, req.Pin); err != nil {
+		switch {
+		case errors.Is(err, ErrPinNotSet):
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "create a transaction PIN before withdrawing", "code": "pin_not_set"})
+		case errors.Is(err, ErrStepUpRejected):
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "transaction PIN is incorrect or locked", "code": "pin_invalid"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not verify your PIN; try again"})
+		}
 		return
 	}
 	assetRef := req.AssetID

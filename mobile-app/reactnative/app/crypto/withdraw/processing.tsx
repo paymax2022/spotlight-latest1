@@ -9,9 +9,10 @@ import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { useQuoteWithdrawal, useInitiateWithdrawal } from '@/features/crypto/hooks/useCrypto';
 import type { WithdrawalDraft } from '@/features/crypto/types/crypto.types';
+import { takeWithdrawalPin, isPinRefusal } from '@/features/crypto/utils/withdrawStepUp';
 
 export default function WithdrawProcessingScreen() {
-  const p = useLocalSearchParams<{ assetId: string; symbol: string; networkId: string; addressId: string; amount: string; otp: string }>();
+  const p = useLocalSearchParams<{ assetId: string; symbol: string; networkId: string; addressId: string; amount: string }>();
   const quoteM = useQuoteWithdrawal();
   const initiate = useInitiateWithdrawal();
   const fired = useRef(false);
@@ -19,12 +20,18 @@ export default function WithdrawProcessingScreen() {
   useEffect(() => {
     if (fired.current) return;
     fired.current = true;
+    const { assetId, symbol, networkId, addressId, amount } = p;
+    const back = (pinError?: string) =>
+      router.replace({ pathname: '/crypto/withdraw/otp', params: { assetId, symbol, networkId, addressId, amount, ...(pinError ? { pinError } : {}) } });
+    // The PIN arrives in memory, once. None waiting (a reload, a deep link) → ask again.
+    const pin = takeWithdrawalPin();
+    if (!pin) { back(); return; }
     const draft: WithdrawalDraft = {
       assetId: p.assetId, symbol: p.symbol, networkId: p.networkId,
       addressId: p.addressId, amount: Number(p.amount),
     };
     quoteM.mutateAsync(draft)
-      .then((quote) => initiate.mutateAsync({ draft, quote, otp: p.otp ?? '' }))
+      .then((quote) => initiate.mutateAsync({ draft, quote, pin }))
       .then((result) => {
         router.replace({
           pathname: '/crypto/withdraw/pending',
@@ -37,6 +44,8 @@ export default function WithdrawProcessingScreen() {
       })
       .catch((err: unknown) => {
         const e = err as { message?: string };
+        // Wrong/locked PIN: nothing moved — let the user enter it again.
+        if (isPinRefusal(err)) { back(e?.message ?? 'Transaction PIN is incorrect.'); return; }
         router.replace({
           pathname: '/crypto/withdraw/failed',
           params: { reason: e?.message ?? 'The withdrawal could not be submitted. Your balance is unchanged.' },
