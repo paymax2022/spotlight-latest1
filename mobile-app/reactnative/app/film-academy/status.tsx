@@ -11,13 +11,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, CircleCheck, Clock, CircleAlert, FileText } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, CircleCheck, Clock, CircleAlert, FileText, BedDouble } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { getApplicationStatus, FILM_ACADEMY_STATUS_KEY } from '@/features/filmAcademy/api';
 import type { FilmAcademyAction, FilmAcademyTimelineEntry } from '@/features/filmAcademy/types';
+import { normaliseSelectedOptions } from '@/features/filmAcademy/picks';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 function formatNaira(n: number | null | undefined): string {
@@ -129,6 +130,13 @@ export default function FilmAcademyStatusScreen() {
   const payments = data?.payments ?? [];
   const paidCount = payments.filter((p) => p.status === 'paid').length;
   const presentation = statusPresentation(application?.status ?? null);
+  // The options chosen at apply time; empty for applications made before
+  // area options existed, which fall back to the plain areas list.
+  const chosen = normaliseSelectedOptions(application?.selected_options);
+  // The snapshot carries slugs only; labels come from the resolved areas.
+  const areaLabel = (slug: string) =>
+    data?.areas?.find((a) => a.slug === slug)?.label
+    ?? slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -194,19 +202,47 @@ export default function FilmAcademyStatusScreen() {
             {/* The interest areas the applicant chose and is paying for, each with
                 the priced option they picked. Hidden on an older server that does
                 not return them. */}
-            {(data?.areas?.length ?? 0) > 0 && (
+            {(chosen.length > 0 || (data?.areas?.length ?? 0) > 0) && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Your areas of interest</Text>
                 <View style={styles.card}>
-                  {data!.areas.map((a) => (
-                    <View key={a.slug} style={styles.areaRow}>
-                      <View style={styles.areaBody}>
-                        <Text style={styles.areaLabel}>{a.label}</Text>
-                        {!!a.optionLabel && <Text style={styles.areaOption}>{a.optionLabel}</Text>}
-                      </View>
-                      <Text style={styles.areaPrice}>{formatNaira(a.priceNgn)}</Text>
-                    </View>
-                  ))}
+                  {chosen.length > 0
+                    // The server-priced snapshot taken at apply time: option,
+                    // duration, boarding and the price that was frozen then.
+                    ? chosen.map((c) => (
+                        <View
+                          key={c.area_slug}
+                          style={styles.areaRow}
+                          accessible
+                          accessibilityLabel={`${areaLabel(c.area_slug)}, ${c.label}${
+                            c.duration_label ? `, ${c.duration_label}` : ''
+                          }, ${c.boarding ? 'with boarding' : 'without boarding'}, ${formatNaira(c.price_ngn)}`}
+                        >
+                          <View style={styles.areaBody}>
+                            <Text style={styles.areaLabel}>{areaLabel(c.area_slug)}</Text>
+                            <Text style={styles.areaOption}>
+                              {c.label}{c.duration_label ? ` · ${c.duration_label}` : ''}
+                            </Text>
+                            <View style={[styles.badge, !c.boarding && styles.badgeMuted]}>
+                              {c.boarding && <BedDouble size={12} color={Colors.primary} />}
+                              <Text style={[styles.badgeText, !c.boarding && styles.badgeTextMuted]}>
+                                {c.boarding ? 'With boarding' : 'Without boarding'}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={styles.areaPrice}>{formatNaira(c.price_ngn)}</Text>
+                        </View>
+                      ))
+                    // Older applications (no snapshot): the original display.
+                    : data!.areas.map((a) => (
+                        <View key={a.slug} style={styles.areaRow}>
+                          <View style={styles.areaBody}>
+                            <Text style={styles.areaLabel}>{a.label}</Text>
+                            {!!a.optionLabel && <Text style={styles.areaOption}>{a.optionLabel}</Text>}
+                          </View>
+                          <Text style={styles.areaPrice}>{formatNaira(a.priceNgn)}</Text>
+                        </View>
+                      ))}
                   <View style={styles.areaTotalRow}>
                     <Text style={styles.areaTotalLabel}>Total tuition</Text>
                     <Text style={styles.areaTotalValue}>{formatNaira(data!.tuitionTotalNgn)}</Text>
@@ -326,6 +362,12 @@ const styles = StyleSheet.create({
   areaBody:    { flex: 1 },
   areaLabel:   { ...Typography.bodyMd, color: Colors.onSurface },
   areaOption:  { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  badge:       { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', marginTop: 4,
+                 backgroundColor: Colors.iconBgPurple, borderRadius: Radius.sm,
+                 paddingHorizontal: Spacing.sm, paddingVertical: 2 },
+  badgeMuted:  { backgroundColor: Colors.surfaceVariant },
+  badgeText:   { ...Typography.labelSm, color: Colors.primary },
+  badgeTextMuted: { color: Colors.onSurfaceVariant },
   areaPrice:   { ...Typography.bodyMd, color: Colors.onSurface },
   areaTotalRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
                     borderTopWidth: 1, borderTopColor: Colors.surfaceVariant, marginTop: Spacing.xs, paddingTop: Spacing.sm },

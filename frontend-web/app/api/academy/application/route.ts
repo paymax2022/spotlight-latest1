@@ -32,6 +32,9 @@ const APPLICATION_SELECT = [
   'talent_category',
   'areas_of_interest',
   'pricing_selections',
+  // Server-priced snapshot of the chosen area options (option + boarding +
+  // price). NULL on applications made before area options existed.
+  'selected_options',
   'created_at',
   // academy_batches has no end_date column — asking for one makes PostgREST reject
   // the whole select, which surfaced as a bare 500 on the applicant's status screen.
