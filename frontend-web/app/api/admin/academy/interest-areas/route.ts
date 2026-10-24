@@ -1,5 +1,6 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
+import { addAuditEvent } from '@/src/server/admin/audit';
 import { createAdminClient } from '@/lib/supabase/server';
 import {
   attachPricingOptions,
@@ -44,6 +45,26 @@ function parseFee(v: unknown): number | null {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100) / 100;
+}
+
+/** Largest whole-naira value numeric(12,2) can hold. */
+const MAX_FORMAT_PRICE_NGN = 9_999_999_999;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A format price: a whole number of naira, strictly positive, fits the column.
+ * Zero is NOT allowed — a 0 tuition_total_ngn makes the tuition services fall
+ * back to the batch training_fee_ngn, a figure the applicant never saw. Accepts
+ * a number or a numeric string (the admin form posts either); blank, null and
+ * booleans are rejected rather than coerced to 0 the way Number() would.
+ */
+function parseFormatPrice(v: unknown): number | null {
+  let n: number;
+  if (typeof v === 'number') n = v;
+  else if (typeof v === 'string' && v.trim() !== '') n = Number(v.trim());
+  else return null;
+  if (!Number.isInteger(n) || n <= 0 || n > MAX_FORMAT_PRICE_NGN) return null;
+  return n;
 }
 
 /** Trims leading/trailing `ch` runs by index scan — NOT `.replace(/^_+|_+$/g, '')`,
@@ -169,11 +190,13 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    await assertAdminPermission(request, PERMISSION);
+    const admin = await assertAdminPermission(request, PERMISSION);
     const body = (await request.json().catch(() => null)) as AreaBody;
     if (!body) return errorResponse('Invalid JSON body', 400);
     const id = String(body.id ?? '').trim();
     if (!id) return errorResponse('id is required', 400);
+    // The column is uuid: anything else makes Postgres raise 22P02 → 500.
+    if (!UUID_RE.test(id)) return errorResponse('id must be a UUID', 400);
 
     // Deliberately NOT updatable: slug. Historic applications store it, so
     // changing it would orphan them.
@@ -204,9 +227,16 @@ export async function PUT(request: Request) {
       if (!isPricingKey(item?.key)) {
         return errorResponse(`Unknown pricing format: ${String(item?.key)}`, 400);
       }
-      const price = parseFee(item.price_ngn);
+      // A repeated key makes the upsert fail ("cannot affect row a second time").
+      if (validatedPricing.some((p) => p.key === item.key)) {
+        return errorResponse(`Duplicate pricing format: ${item.key}`, 400);
+      }
+      const price = parseFormatPrice(item.price_ngn);
       if (price === null) {
-        return errorResponse(`Price for ${item.key} must be a number of naira, zero or more`, 400);
+        return errorResponse(
+          `Price for ${item.key} must be a whole number of naira above zero (at most 9,999,999,999)`,
+          400,
+        );
       }
       validatedPricing.push({ key: item.key, price_ngn: price });
     }
@@ -225,6 +255,24 @@ export async function PUT(request: Request) {
     if (!data) return errorResponse('Area of interest not found', 404);
 
     if (validatedPricing.length > 0) {
+      const touchedKeys = validatedPricing.map((p) => p.key);
+      // Previous prices for the audit trail only — a failed read is logged and
+      // never blocks the save.
+      let oldValue: Record<string, number> | undefined;
+      const { data: oldRows, error: oldError } = await supabase
+        .from('academy_area_pricing_options')
+        .select('key, price_ngn')
+        .eq('area_id', id)
+        .in('key', touchedKeys);
+      if (oldError) {
+        logDbError('PUT pricing old-value read', oldError);
+      } else {
+        oldValue = {};
+        for (const r of (oldRows ?? []) as Array<{ key: string; price_ngn: unknown }>) {
+          oldValue[r.key] = Number(r.price_ngn);
+        }
+      }
+
       const rows = validatedPricing.map(({ key, price_ngn }) => {
         const def = pricingDefinition(key);
         return {
@@ -244,6 +292,19 @@ export async function PUT(request: Request) {
         logDbError('PUT pricing', pricingError);
         return errorResponse('Failed to save the area pricing', 500);
       }
+
+      addAuditEvent({
+        adminUser: admin.actorId || 'admin',
+        role: admin.role,
+        action: 'academy.area_pricing.update',
+        module: 'academy',
+        entityType: 'academy_area_pricing_options',
+        entityId: id,
+        reason: 'Updated area of interest pricing',
+        oldValue,
+        newValue: Object.fromEntries(validatedPricing.map((p) => [p.key, p.price_ngn])),
+        ipAddress: request.headers.get('x-forwarded-for') || undefined,
+      });
     }
 
     return successResponse({ success: true, area: data });
