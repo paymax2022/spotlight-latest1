@@ -25,6 +25,7 @@ import {
   Kpi, Bar, btn, btnPrimary, btnDanger, th, td, input, label, select, card, fmtDate,
 } from '../_ui';
 import * as svc from '@/services/filmAcademyAdminService';
+import { parseFormatPriceInput, FORMAT_PRICE_HINT } from './formatPrice';
 
 type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'assessment' | 'bank' | 'exams' | 'settings';
 
@@ -389,6 +390,10 @@ function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
   }, [area.pricing_options]);
 
   const dirty = options.some((o) => Number(prices[o.key]) !== Number(o.price_ngn));
+  // Never coerce a blank/invalid input to 0 — Save stays disabled until every line is valid.
+  const parsed = options.map((o) => ({ key: o.key, price_ngn: parseFormatPriceInput(prices[o.key]) }));
+  const invalid = parsed.some((p) => p.price_ngn === null);
+  const validPricing = () => parsed.map((p) => ({ key: p.key, price_ngn: p.price_ngn as number }));
 
   return (
     <div style={{
@@ -411,16 +416,18 @@ function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
       </div>
       {open && (
         <div style={{ padding: '0.2rem 0.75rem 0.6rem 2.3rem', display: 'grid', gap: '0.4rem' }}>
-          {options.map((o) => (
+          {options.map((o, i) => (
             <div key={o.key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               <div style={{ minWidth: 220, flex: 1, fontSize: '0.78rem' }}>
                 {o.label}{o.note ? ` (${o.note})` : ''}
               </div>
               <span style={{ fontSize: '0.75rem', color: colors.muted, whiteSpace: 'nowrap' }}>
-                = {naira(Math.max(0, Number(prices[o.key]) || 0))}
+                {parsed[i].price_ngn === null
+                  ? <span style={{ color: colors.danger }}>{FORMAT_PRICE_HINT}</span>
+                  : <>= {naira(parsed[i].price_ngn)}</>}
               </span>
               <span style={{ fontSize: '0.75rem', color: colors.muted }}>₦</span>
-              <input type="number" min={0} style={{ ...input(), width: 130 }}
+              <input type="number" min={1} step={1} style={{ ...input(), width: 130 }}
                 value={prices[o.key] ?? ''}
                 onClick={(e) => e.stopPropagation()}
                 onChange={(e) => setPrices((prev) => ({ ...prev, [o.key]: e.target.value }))} />
@@ -434,12 +441,11 @@ function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.15rem' }}>
               <button
                 style={btnPrimary()}
-                disabled={busy || !dirty}
+                disabled={busy || !dirty || invalid}
                 onClick={(e) => {
                   e.stopPropagation();
-                  void onSavePricing(
-                    options.map((o) => ({ key: o.key, price_ngn: Math.max(0, Number(prices[o.key]) || 0) })),
-                  );
+                  if (invalid) return;
+                  void onSavePricing(validPricing());
                 }}
               >
                 {dirty ? (busy ? 'Saving…' : 'Save prices') : 'Prices saved'}
@@ -1347,6 +1353,10 @@ function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
   }, [area.pricing_options]);
 
   const dirty = options.some((o) => Number(prices[o.key]) !== Number(o.price_ngn));
+  // Never coerce a blank/invalid input to 0 — Save stays disabled until every line is valid.
+  const parsed = options.map((o) => ({ key: o.key, price_ngn: parseFormatPriceInput(prices[o.key]) }));
+  const invalid = parsed.some((p) => p.price_ngn === null);
+  const validPricing = () => parsed.map((p) => ({ key: p.key, price_ngn: p.price_ngn as number }));
 
   return (
     <>
@@ -1385,17 +1395,19 @@ function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
         <tr>
           <td colSpan={4} style={{ ...td(), backgroundColor: 'rgba(128,128,128,0.06)' }}>
             <div style={{ display: 'grid', gap: '0.5rem', padding: '0.35rem 0' }}>
-              {options.map((o) => (
+              {options.map((o, i) => (
                 <div key={o.key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                   <div style={{ minWidth: 260, flex: 1 }}>
                     <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{o.label}</div>
                     {o.note ? <div style={{ fontSize: '0.72rem', color: colors.muted }}>{o.note}</div> : null}
                   </div>
                   <span style={{ fontSize: '0.78rem', color: colors.muted, whiteSpace: 'nowrap' }}>
-                    = {naira(Math.max(0, Number(prices[o.key]) || 0))}
+                    {parsed[i].price_ngn === null
+                      ? <span style={{ color: colors.danger }}>{FORMAT_PRICE_HINT}</span>
+                      : <>= {naira(parsed[i].price_ngn)}</>}
                   </span>
                   <span style={{ fontSize: '0.78rem', color: colors.muted }}>₦</span>
-                  <input type="number" min={0} style={{ ...input(), width: 140 }}
+                  <input type="number" min={1} step={1} style={{ ...input(), width: 140 }}
                     value={prices[o.key] ?? ''}
                     onChange={(e) => setPrices((prev) => ({ ...prev, [o.key]: e.target.value }))} />
                 </div>
@@ -1410,11 +1422,8 @@ function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
                   <input type="checkbox" checked={applyAll} onChange={(e) => setApplyAll(e.target.checked)} />
                   Apply these prices to <strong>all</strong> trainings
                 </label>
-                <button style={btnPrimary()} disabled={busy || !dirty || options.length === 0}
-                  onClick={() => void onSavePricing(
-                    options.map((o) => ({ key: o.key, price_ngn: Math.max(0, Number(prices[o.key]) || 0) })),
-                    applyAll,
-                  )}>
+                <button style={btnPrimary()} disabled={busy || !dirty || invalid || options.length === 0}
+                  onClick={() => { if (!invalid) void onSavePricing(validPricing(), applyAll); }}>
                   {dirty ? 'Save tuition' : 'Saved'}
                 </button>
               </div>
