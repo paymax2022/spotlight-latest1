@@ -240,6 +240,9 @@ type Config struct {
 	FeatureEventsTeamRoles bool
 	// FeatureEventsComps (FEATURE_EVENTS_COMPS) exposes comp tickets, attendee CSV export and organiser announcements.
 	FeatureEventsComps bool
+	// FeatureEventsOrganiserGate (FEATURE_EVENTS_ORGANISER_GATE) requires onboarding-approved
+	// organisers (RBAC events.manage) to create/duplicate/submit/publish events (EVTA-D001).
+	FeatureEventsOrganiserGate bool
 	// FeatureEventsOrganiserPayouts (FEATURE_EVENTS_ORGANISER_PAYOUTS) exposes the
 	// organiser settlement rail: per-event payout request/approve/reject, earnings
 	// statements and the admin settlement queue (EVTC-D003). Default OFF.
@@ -1026,6 +1029,7 @@ func Load() Config {
 		FeatureEventsTicketingDepth:                  getEnvBool("FEATURE_EVENTS_TICKETING_DEPTH", false),
 		FeatureEventsTeamRoles:                       getEnvBool("FEATURE_EVENTS_TEAM_ROLES", false),
 		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
+		FeatureEventsOrganiserGate:                   getEnvBool("FEATURE_EVENTS_ORGANISER_GATE", false),
 		FeatureEventsCardCheckoutEnabled:             getEnvBool("FEATURE_EVENTS_CARD_CHECKOUT", false),
 		FeatureEventsOrganiserPayouts:                getEnvBool("FEATURE_EVENTS_ORGANISER_PAYOUTS", false),
 		FeatureEventsSocial:                          getEnvBool("FEATURE_EVENTS_SOCIAL", false),

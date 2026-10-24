@@ -300,6 +300,9 @@ func (s *Service) DuplicateEvent(ctx context.Context, callerID, eventID string) 
 	if callerID == "" {
 		return nil, errors.New("events: caller required")
 	}
+	if err := s.requireOrganiser(ctx, callerID); err != nil {
+		return nil, err
+	}
 	// Visibility gate: owner/manager, or the source is publicly discoverable
 	// (same states ListEvents exposes to strangers). Else a stranger could
 	// copy, and thus read, someone's private draft.

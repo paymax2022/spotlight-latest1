@@ -260,8 +260,22 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 		return middleware.RequirePermission(rbac, permission)
 	}
 
+	// Organiser-upgrade gate (EVTA-D001): create/duplicate/submit/go-live need an
+	// onboarding-approved organiser (RBAC events.manage). Flag off = legacy.
+	// Grandfathering re-runs at boot so events created between migration
+	// 20271068004010 and the flag flip never lock their owners out.
+	if cfg.FeatureEventsOrganiserGate {
+		svc.SetOrganiserGate(true)
+		if n, gerr := svc.GrandfatherOrganisers(context.Background()); gerr != nil {
+			log.Printf("[top5events] organiser grandfathering failed (gate stays on, fail-closed): %v", gerr)
+		} else {
+			log.Printf("[top5events] organiser gate ON — grandfathered %d existing organiser(s)", n)
+		}
+	}
+
 	handler := top5events.NewHandler(svc)
 	handler.Register(member, admin, guard)
+	handler.RegisterOrganiserGate(member)
 	if cfg.FeatureEventsEditLifecycle {
 		handler.RegisterLifecycle(member)
 	}

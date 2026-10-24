@@ -70,9 +70,11 @@ type Service struct {
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	rt         RealtimePublisher  // optional; nil ⇒ ScanTicket's live check-in push is a no-op
 	notifier   NotificationSender // optional; nil ⇒ Announce records the row but sends nothing
-	card       *cardRail          // optional; nil ⇒ Paystack card checkout off (card_checkout.go)
-	payouts    payoutConfig       // organiser payout rail policy (payouts.go, EVTC-D003)
-	presigner  *r2.Presigner      // optional; nil ⇒ organiser banner uploads answer 503 and stored banner keys are hidden
+
+	organiserGate bool          // FEATURE_EVENTS_ORGANISER_GATE; false ⇒ legacy (any user may organise) — organiser_gate.go
+	card          *cardRail     // optional; nil ⇒ Paystack card checkout off (card_checkout.go)
+	payouts       payoutConfig  // organiser payout rail policy (payouts.go, EVTC-D003)
+	presigner     *r2.Presigner // optional; nil ⇒ organiser banner uploads answer 503 and stored banner keys are hidden
 
 	// socialReads turns on the events-social read and write columns (banner_url,
 	// venue_lat, venue_lng, venue_place_id, like_count and the event_likes join).
@@ -127,6 +129,9 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) (*Event, error) {
 	if organiserID == "" {
 		return nil, errors.New("events: organiser required")
+	}
+	if err := s.requireOrganiser(ctx, organiserID); err != nil {
+		return nil, err
 	}
 	e, err := prepareNewEvent(e, s.socialReads)
 	if err != nil {
@@ -189,6 +194,9 @@ func validateEventInput(title string, startsAt, endsAt time.Time) error {
 
 // Submit moves DRAFT -> SUBMITTED (organiser action; object-level authZ).
 func (s *Service) Submit(ctx context.Context, organiserID, eventID string) error {
+	if err := s.requireOrganiser(ctx, organiserID); err != nil {
+		return err
+	}
 	return s.transition(ctx, eventID, EventDraft, EventSubmitted, &organiserID, "events.submit")
 }
 
@@ -201,6 +209,9 @@ func (s *Service) Approve(ctx context.Context, adminID, eventID string) error {
 // whose run has already ended is refused — there is nothing left to sell and no
 // backfill workflow exists to legitimise it.
 func (s *Service) GoLive(ctx context.Context, organiserID, eventID string) error {
+	if err := s.requireOrganiser(ctx, organiserID); err != nil {
+		return err
+	}
 	ev, err := s.GetEvent(ctx, eventID)
 	if err != nil {
 		return err

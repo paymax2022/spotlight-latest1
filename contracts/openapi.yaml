@@ -8913,6 +8913,35 @@ paths:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/Event' }
         '400': { description: "Invalid body, or venue_lat outside [-90, 90] / venue_lng outside [-180, 180]" }
+        '403': { description: "Organiser gate on and caller has not been approved as an event organiser (apply via POST /api/v1/onboarding/applications, merchant type mt-event-organiser)" }
+
+  /events/organiser/eligibility:
+    get:
+      operationId: organiserEligibility
+      summary: Organiser capability for the caller — gate state, may-create flag, and the onboarding merchant type to apply for
+      description: >
+        Mounted regardless of the FEATURE_EVENTS_ORGANISER_GATE flag: with the flag off it
+        reports gate_enabled=false and can_organise=true (legacy behaviour — any authenticated
+        user may organise). With the flag on, can_organise reflects the RBAC events.manage
+        permission granted by an approved event-organiser onboarding application.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Organiser eligibility
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      gate_enabled: { type: boolean }
+                      can_organise: { type: boolean }
+                      merchant_type_id: { type: string, example: mt-event-organiser }
+        '401': { description: Unauthenticated }
 
   /events/{id}:
     get:
