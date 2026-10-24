@@ -66,7 +66,7 @@ addresses(+`/:id/decision`), reconciliation; `swaps/review`, `swaps/:id/resolve`
 Capabilities declared: `MarketProvider`, `AccountProvider`, `WalletProvider`
 (`Wallets` + `CreateDepositAddress` only — no deposit *listing* here), `SwapProvider`,
 `WithdrawalProvider`, **`DepositProvider`** (`GetDeposit` authoritative re-query + `ListDeposits`,
-ADR-PR798), `WebhookProvider` (swap + deposit events; `Event.Account` locates the deposit re-query).
+ADR-PR848), `WebhookProvider` (swap + deposit events; `Event.Account` locates the deposit re-query).
 Quidax base URL `https://openapi.quidax.io/exchange-open-api/api/v1`,
 `Authorization` secret header, webhook HMAC-SHA256 verify. Registry rejects duplicate active
 providers. `CryptoProvider` + TEST/LIVE creds selected by `IsProd()`; deterministic mock when
@@ -90,7 +90,7 @@ crypto_swaps), `20271031000000` (crypto_accounts + swap idempotency), `202710380
 `20261029000100_trading_wallet`. All applied to the local Supabase dev DB (verified: `ledger_accounts`,
 `crypto_swaps`, `crypto_fee_schedules`, `auth.users` present).
 
-## 7. Balance-plane asymmetry — RESOLVED by ADR-PR798 (Option A, deposit build now shipped)
+## 7. Balance-plane asymmetry — RESOLVED by ADR-PR848 (Option A, deposit build now shipped)
 
 - Customer **crypto-unit holdings** live in the legacy `crypto` plane (`crypto_holdings`, integer
   asset minor units, `Sell` guarded by `units >= 0` CHECK) — **not** as per-asset crypto accounts in
@@ -98,7 +98,7 @@ crypto_swaps), `20271031000000` (crypto_accounts + swap idempotency), `202710380
   and `ledger_entries.amount_kobo` has no per-asset scale).
 - `cryptosvc` settles **NGN kobo** legs only in the ledger (`SideSwap`: "crypto→crypto: no NGN leg,
   nothing to post").
-- **Decision (ADR-PR798):** money-IN does NOT fork the balance plane or DDL the fiat ledger. Inbound
+- **Decision (ADR-PR848):** money-IN does NOT fork the balance plane or DDL the fiat ledger. Inbound
   deposits credit the existing `crypto_holdings` projection, backed by an append-only
   `crypto_deposits` journal (`UNIQUE(provider_op_id)`) written in the same transaction — the
   `crypto.Repository.RecordFill` once-only idiom. `internal/crypto/deposit` is that engine;

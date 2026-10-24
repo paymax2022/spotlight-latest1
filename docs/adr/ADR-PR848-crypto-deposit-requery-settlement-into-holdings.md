@@ -1,4 +1,4 @@
-# ADR-PR798: Crypto deposits settle from a provider re-query into the existing holdings plane, confirmation-gated and once-only
+# ADR-PR848: Crypto deposits settle from a provider re-query into the existing holdings plane, confirmation-gated and once-only
 
 Status: accepted (behind `FEATURE_CRYPTO_SWAPS_ENABLED`; money-IN path)
 
