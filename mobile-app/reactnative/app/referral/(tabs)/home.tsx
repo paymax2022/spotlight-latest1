@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
@@ -15,12 +15,17 @@ import { RemoteBanner } from '@/features/media/banners';
 import { ReferralColors, COMPLIANT_EARN_SHORT } from '@/features/referral/constants/referral.constants';
 import { formatNaira } from '@/features/referral/constants/format';
 import { useDashboard, useActivity } from '@/features/referral/home/hooks';
+import { tierLabel, milestoneProgress } from '@/features/referral/home/homeMap';
+import type { NextMilestone } from '@/features/referral/home/types';
 
 // M-HOME-01 — Earn dashboard. Earnings snapshot (paid/pending/vesting/clawed-back),
 // invite count + funnel, leaderboard rank, quick-share, recent activity preview.
 export default function ReferralHome() {
-  const { data, isLoading, isError, refetch } = useDashboard();
+  const { data, isLoading, isError, refetch, isRefetching } = useDashboard();
   const activity = useActivity();
+  // Withdrawing needs a real, loaded, positive balance - never a placeholder zero.
+  const canWithdraw = !!data && !data.snapshotUnavailable && data.snapshot.eligibleKobo > 0;
+  const onRefresh = () => { refetch(); activity.refetch(); };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -38,7 +43,11 @@ export default function ReferralHome() {
       ) : isError || !data ? (
         <StateView kind="error" title="Couldn't load" message="Check your connection and try again." actionLabel="Retry" onAction={refetch} />
       ) : (
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={isRefetching || activity.isRefetching} onRefresh={onRefresh} tintColor={Colors.primary} />}
+        >
           <DisclosureCard tone="compliant" title="How you earn" body={COMPLIANT_EARN_SHORT} />
 
           <RemoteBanner slug="refer-earn" priority />
@@ -46,10 +55,25 @@ export default function ReferralHome() {
           {/* Eligible balance hero */}
           <View style={styles.hero}>
             <Text style={styles.heroLabel}>Ready to withdraw</Text>
-            <Text style={styles.heroValue}>{formatNaira(data.snapshot.eligibleKobo)}</Text>
+            {data.snapshotUnavailable ? (
+              <Text style={styles.heroUnavailable}>Not available right now</Text>
+            ) : (
+              <Text style={styles.heroValue}>{formatNaira(data.snapshot.eligibleKobo)}</Text>
+            )}
             <Text style={styles.heroSub}>Lifetime earned {formatNaira(data.snapshot.lifetimeEarnedKobo)}</Text>
+            {data.snapshotUnavailable ? (
+              <Text style={styles.heroHint}>We couldn't load your earnings breakdown. Pull down to refresh.</Text>
+            ) : data.snapshot.eligibleKobo <= 0 ? (
+              <Text style={styles.heroHint}>Nothing to withdraw yet. Rewards become withdrawable once they have vested.</Text>
+            ) : null}
             <View style={styles.heroActions}>
-              <Pressable style={styles.heroBtn} onPress={() => router.push('/referral/earnings/withdraw')} accessibilityRole="button">
+              <Pressable
+                style={[styles.heroBtn, !canWithdraw && styles.heroBtnDisabled]}
+                disabled={!canWithdraw}
+                onPress={() => router.push('/referral/earnings/withdraw')}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !canWithdraw }}
+              >
                 <Wallet size={16} color={Colors.onPrimary} strokeWidth={2} />
                 <Text style={styles.heroBtnText}>Withdraw</Text>
               </Pressable>
@@ -65,12 +89,16 @@ export default function ReferralHome() {
               <Text style={styles.cardTitle}>Earnings summary</Text>
               <ChevronRight size={18} color={Colors.outline} strokeWidth={2} />
             </View>
-            <View style={styles.snapGrid}>
-              <SnapTile state="pending" amount={data.snapshot.pendingKobo} />
-              <SnapTile state="vesting" amount={data.snapshot.vestingKobo} />
-              <SnapTile state="paid" amount={data.snapshot.paidKobo} />
-              <SnapTile state="clawed_back" amount={data.snapshot.clawedBackKobo} />
-            </View>
+            {data.snapshotUnavailable ? (
+              <Text style={styles.unavailableText}>The breakdown could not be loaded. Pull down to refresh.</Text>
+            ) : (
+              <View style={styles.snapGrid}>
+                <SnapTile state="pending" amount={data.snapshot.pendingKobo} />
+                <SnapTile state="vesting" amount={data.snapshot.vestingKobo} />
+                <SnapTile state="paid" amount={data.snapshot.paidKobo} />
+                <SnapTile state="clawed_back" amount={data.snapshot.clawedBackKobo} />
+              </View>
+            )}
           </Pressable>
 
           {/* Invite funnel + rank */}
@@ -79,10 +107,12 @@ export default function ReferralHome() {
             <StatCard icon={<UserCheck size={18} color={ReferralColors.ok} strokeWidth={2} />} value={data.signups != null ? `${data.activated}/${data.signups}` : String(data.activated)} label="Activated" />
             <StatCard
               icon={<Trophy size={18} color={ReferralColors.warn} strokeWidth={2} />}
-              value={data.rank ? `#${data.rank}` : '—'}
-              label={data.rankTier ?? 'Rank'}
+              value={tierLabel(data.rankTier) ?? '—'}
+              label="Tier"
             />
           </View>
+
+          {data.nextMilestone && data.nextMilestone.remaining > 0 ? <MilestoneCard milestone={data.nextMilestone} /> : null}
 
           {/* Quick-share */}
           <View style={styles.quickShare}>
@@ -155,6 +185,20 @@ function SnapTile({ state, amount }: { state: 'pending' | 'vesting' | 'paid' | '
   );
 }
 
+function MilestoneCard({ milestone }: { milestone: NextMilestone }) {
+  const { done, pct } = milestoneProgress(milestone);
+  const left = Math.max(milestone.remaining, 0);
+  return (
+    <View style={styles.milestone} accessibilityLabel={`${left} more activations to earn ${formatNaira(milestone.bonusKobo)}`}>
+      <Text style={styles.milestoneTitle}>
+        {left} more {left === 1 ? 'activation' : 'activations'} to earn {formatNaira(milestone.bonusKobo)}
+      </Text>
+      <View style={styles.milestoneBar}><View style={[styles.milestoneFill, { width: `${pct}%` }]} /></View>
+      <Text style={styles.milestoneSub}>{done} of {milestone.threshold} activations</Text>
+    </View>
+  );
+}
+
 function StatCard({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) {
   return (
     <View style={styles.statCard}>
@@ -182,7 +226,10 @@ const styles = StyleSheet.create({
   hero: { backgroundColor: Colors.primary, borderRadius: Radius.xl, padding: Spacing.lg, gap: 4 },
   heroLabel: { ...Typography.labelMd, color: Colors.onPrimary, opacity: 0.85 },
   heroValue: { ...Typography.displayLg, color: Colors.onPrimary, fontWeight: '800' as const },
+  heroUnavailable: { ...Typography.titleLg, color: Colors.onPrimary, fontWeight: '700' as const },
   heroSub: { ...Typography.bodySm, color: Colors.onPrimary, opacity: 0.8 },
+  heroHint: { ...Typography.bodySm, color: Colors.onPrimary, opacity: 0.9 },
+  heroBtnDisabled: { opacity: 0.45 },
   heroActions: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm },
   heroBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.onPrimaryContainer, paddingHorizontal: Spacing.md, paddingVertical: 10, borderRadius: Radius.full },
   heroBtnText: { ...Typography.labelLg, color: Colors.onPrimary },
@@ -195,6 +242,14 @@ const styles = StyleSheet.create({
   snapGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   snapTile: { width: '47%', flexGrow: 1, backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.md, padding: Spacing.sm, gap: 6 },
   snapAmount: { ...Typography.titleMd, color: Colors.onSurface, fontWeight: '700' as const },
+
+  unavailableText: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+
+  milestone: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.md, gap: Spacing.sm },
+  milestoneTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  milestoneBar: { height: 6, borderRadius: 3, backgroundColor: Colors.surfaceVariant, overflow: 'hidden' },
+  milestoneFill: { height: 6, borderRadius: 3, backgroundColor: Colors.primary },
+  milestoneSub: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
 
   statsRow: { flexDirection: 'row', gap: Spacing.sm },
   statCard: { flex: 1, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, paddingVertical: Spacing.md, alignItems: 'center', gap: 4 },

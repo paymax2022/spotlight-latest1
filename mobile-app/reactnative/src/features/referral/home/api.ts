@@ -1,10 +1,13 @@
-// Mock-first (USE_MOCK). Live path hits `${REFERRAL_API_BASE}/...`.
+// Live path hits the Direct Rewards engine; the mock path (USE_MOCK, off unless
+// EXPO_PUBLIC_REFERRAL_USE_MOCK=true and never in a deployed build) serves fixtures.
 // Money is ALWAYS integer kobo. Earnings tie to friends' verified activity (§7).
+// The mapping of engine payloads onto screen data lives in homeMap.ts (unit-tested).
 
 import { homeCounts } from './counts';
 import { api } from '@/api/client';
-import { USE_MOCK, REFERRAL_API_BASE } from '../constants/referral.constants';
-import type { EarnStateKey } from '../constants/referral.constants';
+import { USE_MOCK } from '../constants/referral.constants';
+import { buildActivity, mapMilestone, mapSnapshot } from './homeMap';
+import type { EngineDashboard, EngineEarning, EngineReferral, EngineRewards } from './engine';
 import type {
   DashboardSummary,
   EarningsSnapshot,
@@ -23,31 +26,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 // (note the trailing 's'), which returns BARE snake_case JSON.
 const REWARDS_ENGINE_BASE = '/api/v1/referrals';
 
-interface EngineDashboard {
-  code: string;
-  current_tier: string;
-  current_rate: number;
-  active_referral_count: number;
-  invited_count?: number;
-  activated_count?: number;
-  this_month_earned_kobo: number;
-  lifetime_earned_kobo: number;
-  next_milestone?: { threshold: number; bonus_kobo: number; remaining: number };
-}
-
-interface EngineEarning {
-  id: string;
-  referred_user_id: string;
-  module: string;
-  margin_kobo: number;
-  applied_rate: number;
-  reward_kobo: number;
-  status: string;
-  created_at: string;
-  credited_at?: string;
-  reversed_at?: string;
-}
-
 const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
 const MOCK_SNAPSHOT: EarningsSnapshot = {
@@ -62,6 +40,8 @@ const MOCK_SNAPSHOT: EarningsSnapshot = {
 
 const MOCK_SUMMARY: DashboardSummary = {
   snapshot: MOCK_SNAPSHOT,
+  snapshotUnavailable: false,
+  nextMilestone: { threshold: 10, bonusKobo: 500_000, remaining: 6 },
   invitesSent: 14,
   signups: 6,
   activated: 4,
@@ -93,37 +73,25 @@ export async function getDashboard(): Promise<DashboardSummary> {
     await delay();
     return { ...MOCK_SUMMARY, snapshot: { ...MOCK_SNAPSHOT } };
   }
-  // reward-ledger summary (GET /api/v1/referral/my-rewards) for the per-state
-  // snapshot. Money stays integer kobo, no float math.
+  // The dashboard is required; the per-state reward summary is not. If only the summary
+  // fails the screen still loads, with that section reported unavailable (never
+  // substituted with a different figure — see mapSnapshot).
   const [dRes, sRes] = await Promise.all([
-    api.get('/api/v1/referrals/me/dashboard'),
+    api.get(`${REWARDS_ENGINE_BASE}/me/dashboard`),
     api.get('/api/v1/referral/my-rewards').catch(() => null),
   ]);
   const d = unwrap<EngineDashboard>(dRes);
-  const s = sRes
-    ? unwrap<{
-        total_earned_kobo?: number;
-        eligible_kobo?: number;
-        paid_kobo?: number;
-        clawed_back_kobo?: number;
-        by_state?: Record<string, number>;
-      }>(sRes)
-    : null;
-  const byState = s?.by_state ?? {};
-  const snapshot: EarningsSnapshot = {
-    eligibleKobo: Math.trunc(s?.eligible_kobo ?? 0),
-    pendingKobo: Math.trunc(byState.pending ?? 0),
-    vestingKobo: Math.trunc(byState.vesting ?? 0),
-    paidKobo: Math.trunc(s?.paid_kobo ?? d.this_month_earned_kobo),
-    clawedBackKobo: Math.trunc(s?.clawed_back_kobo ?? 0),
-    lifetimeEarnedKobo: Math.trunc(s?.total_earned_kobo ?? d.lifetime_earned_kobo),
-    currency: 'NGN',
-  };
+  const rewards = sRes ? unwrap<EngineRewards>(sRes) : null;
+  const { snapshot, unavailable } = mapSnapshot(d, rewards);
   return {
     snapshot,
+    snapshotUnavailable: unavailable,
+    nextMilestone: mapMilestone(d.next_milestone),
     ...homeCounts(d),
-    rank: null, // TODO(referral phase3): needs leaderboard rank source (R2)
-    rankTotal: null, // TODO(referral phase3): needs leaderboard total (R2)
+    // No leaderboard rank source exists in the backend, so none is reported; the screen
+    // shows the tier and the next milestone instead.
+    rank: null,
+    rankTotal: null,
     rankTier: d.current_tier,
   };
 }
@@ -133,14 +101,15 @@ export async function getMyCode(): Promise<MyCode> {
     await delay(200);
     return { ...MOCK_MY_CODE };
   }
-  // POST /link round-trip). Build the invite link from the code.
-  const res = await api.get('/api/v1/referrals/me/dashboard');
+  // The code comes from the dashboard; the link is built from it.
+  const res = await api.get(`${REWARDS_ENGINE_BASE}/me/dashboard`);
   const d = unwrap<EngineDashboard>(res);
   const link = `https://spotlight.ng/j/${d.code}`;
   return {
     code: d.code,
     link,
-    shortLink: link, // TODO(referral phase3): no vanity/short-link source yet
+    // There is no separate vanity/short-link source: do not present the same URL twice.
+    shortLink: null,
   };
 }
 
@@ -149,38 +118,18 @@ export async function getActivity(): Promise<ActivityItem[]> {
     await delay(280);
     return MOCK_ACTIVITY.map((a) => ({ ...a }));
   }
-  // timeline from recent earnings (GET /me/earnings) — one reward row each.
-  const res = await api.get('/api/v1/referrals/me/earnings?limit=20&offset=0');
-  const body = unwrap<{ earnings: EngineEarning[] }>(res);
-  const earnings = body?.earnings ?? [];
-  return earnings.map((e) => ({
-    id: e.id,
-    kind: 'reward' as const,
-    title: 'Reward earned',
-    detail: `${e.module} · ${e.status}`,
-    createdAt: e.created_at,
-    amountKobo: e.reward_kobo,
-    state: mapEarningStatus(e.status),
-  }));
-}
-
-// Map engine earning status → reward-ledger EarnStateKey (drives the pill).
-// the RB0 reward-ledger uses lowercase states. Normalise so both map correctly.
-function mapEarningStatus(status: string): EarnStateKey {
-  switch ((status ?? '').toLowerCase()) {
-    case 'pending':
-      return 'pending';
-    case 'vesting':
-      return 'vesting';
-    case 'eligible':
-      return 'eligible';
-    case 'credited':
-    case 'paid':
-      return 'paid';
-    case 'reversed':
-    case 'clawed_back':
-      return 'clawed_back';
-    default:
-      return 'earned';
-  }
+  // People who joined with the code, plus the rewards they generated. Either source may
+  // fail on its own and the feed still shows the other; only when BOTH fail is it an error.
+  const [eRes, rRes] = await Promise.allSettled([
+    api.get(`${REWARDS_ENGINE_BASE}/me/earnings?limit=20&offset=0`),
+    api.get(`${REWARDS_ENGINE_BASE}/me/referrals?limit=20&offset=0`),
+  ]);
+  if (eRes.status === 'rejected' && rRes.status === 'rejected') throw eRes.reason;
+  const earnings = eRes.status === 'fulfilled'
+    ? unwrap<{ earnings?: EngineEarning[] }>(eRes.value)?.earnings ?? []
+    : [];
+  const referrals = rRes.status === 'fulfilled'
+    ? unwrap<{ referrals?: EngineReferral[] }>(rRes.value)?.referrals ?? []
+    : [];
+  return buildActivity(earnings, referrals);
 }
