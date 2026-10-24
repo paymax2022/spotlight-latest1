@@ -38,6 +38,13 @@ export default function AreaOptionSheet({ area, initial, onSelect, onClose }: Ar
     initial?.option_id ?? (options.length === 1 ? options[0].id : null),
   );
 
+  // `area` is live: a refetch can remove the chosen option or withdraw boarding
+  // while the sheet is open. Drop state that no longer matches, never keep it.
+  React.useEffect(() => {
+    if (selectedId && !options.some((o) => o.id === selectedId)) setSelectedId(null);
+    if (boarding && !boardingOffered) setBoarding(false);
+  }, [options, selectedId, boarding, boardingOffered]);
+
   const selected = options.find((o) => o.id === selectedId) ?? null;
   const selectedPrice = selected ? optionPrice(selected, boarding) : null;
   const canSelect = selected !== null && selectedPrice !== null;

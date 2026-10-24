@@ -19,7 +19,7 @@ type RequiredAction = {
 // routing, so each client maps `key` to its own destination. Returning one
 // client's path here would send the other client somewhere that does not exist.
 
-const APPLICATION_SELECT = [
+const APPLICATION_COLUMNS = [
   'id',
   'status',
   'payment_status',
@@ -39,7 +39,38 @@ const APPLICATION_SELECT = [
   // academy_batches has no end_date column — asking for one makes PostgREST reject
   // the whole select, which surfaced as a bare 500 on the applicant's status screen.
   'academy_batches(batch_name, start_date)',
-].join(', ');
+];
+const APPLICATION_SELECT = APPLICATION_COLUMNS.join(', ');
+// Deploy-order safety: if this code ships before migration 20271095000000 adds
+// `selected_options`, PostgREST rejects the whole select (42703) and the status
+// screen would 500 for every applicant. Retry once without the column.
+const APPLICATION_SELECT_LEGACY = APPLICATION_COLUMNS.filter((c) => c !== 'selected_options').join(', ');
+
+function isMissingSelectedOptionsColumn(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === '42703' || String(error.message ?? '').includes('selected_options');
+}
+
+/** The applicant's latest application matched on one column, tolerating a pre-migration DB. */
+async function lookupApplication(
+  supabase: ReturnType<typeof createAdminClient>,
+  column: 'user_id' | 'email',
+  value: string,
+) {
+  const run = (select: string) =>
+    supabase
+      .from('academy_applications')
+      .select(select)
+      .eq(column, value)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+  const first = await run(APPLICATION_SELECT);
+  if (!isMissingSelectedOptionsColumn(first.error)) return first;
+  console.warn('[academy/application] selected_options column missing; retrying without it');
+  return run(APPLICATION_SELECT_LEGACY);
+}
 
 // AppliedArea is one interest area the candidate chose, resolved to its display
 // label and the price of the option they picked, so the status screen can show
@@ -115,13 +146,7 @@ async function findMyApplication(
   supabase: ReturnType<typeof createAdminClient>,
   user: { id: string; email?: string },
 ) {
-  const { data: byUser, error: byUserError } = await supabase
-    .from('academy_applications')
-    .select(APPLICATION_SELECT)
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: byUser, error: byUserError } = await lookupApplication(supabase, 'user_id', user.id);
 
   if (byUserError) {
     console.error('[academy/application] lookup by user failed', byUserError);
@@ -131,13 +156,7 @@ async function findMyApplication(
 
   if (!user.email) return null;
 
-  const { data: byEmail, error: byEmailError } = await supabase
-    .from('academy_applications')
-    .select(APPLICATION_SELECT)
-    .eq('email', user.email)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: byEmail, error: byEmailError } = await lookupApplication(supabase, 'email', user.email);
 
   if (byEmailError) {
     console.error('[academy/application] lookup by email failed', byEmailError);

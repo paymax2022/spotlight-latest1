@@ -12,14 +12,13 @@
 
 import React from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert,
+  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, Keyboard,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Check, BedDouble, Trash2 } from 'lucide-react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -86,7 +85,17 @@ export default function FilmAcademyApplyScreen() {
   // One pick per area, keyed by area slug. Held raw; `picks` below is the
   // version re-bound to the batch's CURRENT areas (see reconcilePicks).
   const [rawPicks, setRawPicks]     = React.useState<AreaPick[]>([]);
-  const [sheetArea, setSheetArea]   = React.useState<FilmAcademyInterestArea | null>(null);
+  // Only the slug is held: the sheet is always given the LIVE area from the
+  // latest overview, never a snapshot taken when it opened.
+  const [sheetSlug, setSheetSlug]   = React.useState<string | null>(null);
+  // The footer drops its summary lines while the keyboard is up, so the
+  // motivation/experience fields keep enough room to type in.
+  const [keyboardUp, setKeyboardUp] = React.useState(false);
+  React.useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardUp(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardUp(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
   const [motivation, setMotivation] = React.useState('');
   const [experience, setExperience] = React.useState('');
   const [pref, setPref]             = React.useState<'one_off' | 'installment'>('installment');
@@ -127,12 +136,19 @@ export default function FilmAcademyApplyScreen() {
 
   const pickFor = (slug: string) => picks.find((p) => p.area.slug === slug);
 
+  const sheetArea = sheetSlug ? interestAreas.find((a) => a.slug === sheetSlug) ?? null : null;
+  // A refetch can remove the area (or all its options) while the sheet is open:
+  // close it rather than leave a picker for something no longer offered.
+  React.useEffect(() => {
+    if (sheetSlug && (!sheetArea || !hasOptions(sheetArea))) setSheetSlug(null);
+  }, [sheetSlug, sheetArea]);
+
   const onPicked = (
     area: FilmAcademyInterestArea,
     choice: { option: FilmAcademyAreaOption; boarding: boolean },
   ) => {
     setRawPicks(upsertPick(picks, { area, option: choice.option, boarding: choice.boarding }, maxAreas));
-    setSheetArea(null);
+    setSheetSlug(null);
     setError(null);
   };
 
@@ -287,7 +303,7 @@ export default function FilmAcademyApplyScreen() {
                   area={a}
                   pick={pick}
                   blocked={!pick && !canAddArea(picks, a, maxAreas)}
-                  onOpen={() => setSheetArea(a)}
+                  onOpen={() => setSheetSlug(a.slug)}
                   onRemove={() => setRawPicks(removePick(picks, a.slug))}
                 />
               );
@@ -295,6 +311,47 @@ export default function FilmAcademyApplyScreen() {
           </View>
         )}
 
+        {/* Itemised tuition lives in the scroll content; only the totals stay
+            sticky, so the footer never crowds out the form. */}
+        {picks.length > 0 && (
+          <View style={styles.summaryCard}>
+            <Text style={styles.label}>Your choices</Text>
+            {picks.map((p) => {
+              const price = optionPrice(p.option, p.boarding);
+              const priceText = price === null ? '—' : naira(price);
+              return (
+                <View
+                  key={p.area.slug}
+                  style={styles.summaryLine}
+                  accessible
+                  accessibilityLabel={`${p.area.label}, ${p.option.label}, ${
+                    p.boarding ? 'with boarding' : 'without boarding'
+                  }, ${priceText}`}
+                >
+                  <View style={styles.summaryLineText}>
+                    <Text style={styles.summaryLineLabel}>
+                      {p.area.label} — {p.option.label}
+                    </Text>
+                    {p.boarding && <BoardingBadge />}
+                  </View>
+                  <Text style={styles.summaryLineValue}>{priceText}</Text>
+                </View>
+              );
+            })}
+            <View style={[styles.footerRow, styles.summaryTotalRow]}>
+              <Text style={styles.footerLabel}>Tuition if accepted</Text>
+              <Text style={styles.footerValue}>{naira(summary.total)}</Text>
+            </View>
+            <Text style={styles.totalNote}>
+              Payable only if you are offered a place, and refundable. Nothing for
+              tuition is taken today.
+            </Text>
+          </View>
+        )}
+        <Text style={styles.totalNote}>
+          Pay now is the application fee. Non-refundable, and charged whether or not
+          you are offered a place.
+        </Text>
 
         <Field label="Why do you want to join?" value={motivation} onChange={setMotivation}
                placeholder="A few sentences" multiline />
@@ -316,51 +373,33 @@ export default function FilmAcademyApplyScreen() {
         <gateway.Sheet />
       </ScrollView>
 
-      {/* Sticky summary: always visible above the submit action, so the
-          applicant sees exactly what they are committing to before paying. */}
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>
-        {picks.length > 0 ? (
-          <View style={styles.footerLines}>
-            {picks.map((p) => {
-              const price = optionPrice(p.option, p.boarding);
-              const priceText = price === null ? '—' : naira(price);
-              return (
-                <View
-                  key={p.area.slug}
-                  style={styles.footerLine}
-                  accessible
-                  accessibilityLabel={`${p.area.label}, ${p.option.label}, ${
-                    p.boarding ? 'with boarding' : 'without boarding'
-                  }, ${priceText}`}
-                >
-                  <Text style={styles.footerLineLabel} numberOfLines={2}>
-                    {p.area.label} — {p.option.label}
-                  </Text>
-                  {p.boarding && <BoardingBadge />}
-                  <Text style={styles.footerLineValue}>{priceText}</Text>
-                </View>
-              );
-            })}
-            <View style={styles.footerRow}>
-              <Text style={styles.footerLabel}>Tuition if accepted</Text>
-              <Text style={styles.footerValue}>{naira(summary.total)}</Text>
+      {/* Compact sticky footer (~120dp): the two totals and the submit action.
+          The itemised lines and the refund copy are in the "Your choices" card. */}
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>
+        {!keyboardUp && (
+          <View style={styles.footerTotals}>
+            <View
+              style={styles.footerRow}
+              accessible
+              accessibilityLabel={`Tuition if accepted ${naira(summary.total)}, ${picks.length} of ${maxAreas} areas chosen`}
+            >
+              <Text style={styles.footerMeta} numberOfLines={1}>
+                Tuition if accepted · {picks.length} of {maxAreas} chosen
+              </Text>
+              <Text style={styles.footerMetaValue}>{naira(summary.total)}</Text>
             </View>
-            <Text style={styles.totalNote}>
-              Payable only if you are offered a place, and refundable. Nothing for
-              tuition is taken today.
-            </Text>
+            <View
+              style={styles.footerRow}
+              accessible
+              accessibilityLabel={`Pay now ${naira(baseFee)}, non-refundable application fee`}
+            >
+              <Text style={styles.totalGrandLabel} numberOfLines={1}>
+                Pay now <Text style={styles.footerMeta}>· application fee</Text>
+              </Text>
+              <Text style={styles.footerPay}>{naira(baseFee)}</Text>
+            </View>
           </View>
-        ) : (
-          <Text style={styles.totalNote}>No areas chosen yet.</Text>
         )}
-
-        <View style={[styles.footerRow, styles.footerPayRow]}>
-          <View style={styles.footerPayText}>
-            <Text style={styles.totalGrandLabel}>Pay now</Text>
-            <Text style={styles.totalNote}>Application fee · non-refundable</Text>
-          </View>
-          <Text style={styles.totalGrandValue}>{naira(baseFee)}</Text>
-        </View>
 
         {!!error && (
           <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text>
@@ -383,7 +422,7 @@ export default function FilmAcademyApplyScreen() {
             return p ? { option_id: p.option.id, boarding: p.boarding } : undefined;
           })()}
           onSelect={(choice) => onPicked(sheetArea, choice)}
-          onClose={() => setSheetArea(null)}
+          onClose={() => setSheetSlug(null)}
         />
       )}
     </SafeAreaView>
@@ -581,17 +620,24 @@ const styles = StyleSheet.create({
                  paddingHorizontal: Spacing.sm, paddingVertical: 2 },
   badgeText:   { ...Typography.labelSm, color: Colors.primary },
 
-  // Sticky summary + submit.
+  // Itemised summary card (in the scroll content).
+  summaryCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg,
+                 borderWidth: 1, borderColor: Colors.outlineVariant, padding: Spacing.md, gap: Spacing.sm },
+  summaryLine: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
+  summaryLineText: { flex: 1, gap: Spacing.xs },
+  summaryLineLabel: { ...Typography.bodySm, color: Colors.onSurface },
+  summaryLineValue: { ...Typography.bodySm, color: Colors.onSurface },
+  summaryTotalRow: { borderTopWidth: 1, borderTopColor: Colors.outlineVariant, paddingTop: Spacing.sm },
+
+  // Compact sticky footer: totals + submit.
   footer:      { backgroundColor: Colors.surfaceContainerLowest, borderTopLeftRadius: Radius.xl,
                  borderTopRightRadius: Radius.xl, paddingHorizontal: Spacing.containerMargin,
-                 paddingTop: Spacing.md, gap: Spacing.sm, ...shadow2 },
-  footerLines: { gap: Spacing.xs },
-  footerLine:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  footerLineLabel: { ...Typography.bodySm, color: Colors.onSurfaceVariant, flex: 1 },
-  footerLineValue: { ...Typography.bodySm, color: Colors.onSurface },
+                 paddingTop: Spacing.sm, gap: Spacing.sm, ...shadow2 },
+  footerTotals: { gap: 2 },
   footerRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.sm },
   footerLabel: { ...Typography.labelLg, color: Colors.onSurface },
   footerValue: { ...Typography.labelLg, color: Colors.onSurface },
-  footerPayRow: { borderTopWidth: 1, borderTopColor: Colors.outlineVariant, paddingTop: Spacing.sm },
-  footerPayText: { flex: 1 },
+  footerMeta:  { ...Typography.bodySm, color: Colors.onSurfaceVariant, flexShrink: 1 },
+  footerMetaValue: { ...Typography.bodySm, color: Colors.onSurface },
+  footerPay:   { ...Typography.labelLg, color: Colors.onSurface },
 });

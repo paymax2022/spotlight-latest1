@@ -33,8 +33,14 @@ const SNAPSHOT = [
   },
 ];
 
-/** Table-aware chainable fake; records every select() column list per table. */
-function makeClient(selects: Record<string, string[]>) {
+type AppError = { code?: string; message: string } | null;
+
+/**
+ * Table-aware chainable fake; records every select() column list per table.
+ * `appError(cols)` lets a test fail the academy_applications lookup for a
+ * given column list (e.g. the column not existing before the migration).
+ */
+function makeClient(selects: Record<string, string[]>, appError: (cols: string) => AppError = () => null) {
   const rows: Record<string, unknown> = {
     academy_applications: {
       id: 'app-1',
@@ -49,10 +55,20 @@ function makeClient(selects: Record<string, string[]>) {
   };
   return {
     from(table: string) {
-      const result = { data: rows[table] ?? null, error: null };
+      let result: { data: unknown; error: AppError } = { data: rows[table] ?? null, error: null };
       const b: any = {
         select(cols: string) {
           (selects[table] ??= []).push(cols);
+          if (table === 'academy_applications') {
+            const err = appError(cols);
+            if (err) {
+              result = { data: null, error: err };
+            } else if (!cols.includes('selected_options')) {
+              // A pre-migration DB has no such column to return.
+              const { selected_options: _omit, ...rest } = rows[table] as Record<string, unknown>;
+              result = { data: rest, error: null };
+            }
+          }
           return b;
         },
         eq: () => b,
@@ -83,5 +99,31 @@ describe('GET /api/academy/application — selected_options', () => {
     expect(selects.academy_applications?.[0]).toContain('selected_options');
     const body = await res.json();
     expect(body.application.selected_options).toEqual(SNAPSHOT);
+  });
+
+  it('status route falls back when selected_options column is missing (42703)', async () => {
+    vi.mocked(createAdminClient).mockReturnValue(
+      makeClient(selects, (cols) =>
+        cols.includes('selected_options')
+          ? { code: '42703', message: 'column academy_applications.selected_options does not exist' }
+          : null,
+      ) as never,
+    );
+    const res = await GET(makeRequest('/api/academy/application'));
+    expect(res.status).toBe(200);
+    expect(selects.academy_applications).toHaveLength(2);
+    expect(selects.academy_applications[1]).not.toContain('selected_options');
+    const body = await res.json();
+    expect(body.application.id).toBe('app-1');
+    expect(body.application.selected_options ?? null).toBeNull();
+  });
+
+  it('other errors still fail', async () => {
+    vi.mocked(createAdminClient).mockReturnValue(
+      makeClient(selects, () => ({ code: '08006', message: 'connection failure' })) as never,
+    );
+    const res = await GET(makeRequest('/api/academy/application'));
+    expect(res.status).toBe(500);
+    expect(selects.academy_applications).toHaveLength(1);
   });
 });

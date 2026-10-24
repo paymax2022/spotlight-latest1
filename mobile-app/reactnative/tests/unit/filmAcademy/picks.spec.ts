@@ -6,6 +6,7 @@ import {
   hasOptions, offersBoarding, canAddArea, upsertPick, removePick, reconcilePicks,
   toSelections, normaliseSelectedOptions, type AreaPick,
 } from '@/features/filmAcademy/picks';
+import { summarise } from '@/features/filmAcademy/optionPricing';
 import type { FilmAcademyAreaOption, FilmAcademyInterestArea } from '@/features/filmAcademy/types';
 
 const opt = (id: string, no: number, withB: number | null): FilmAcademyAreaOption => ({
@@ -85,6 +86,20 @@ test('toSelections sends slug, option id and a real boolean — never a price', 
     { area: 'directing', option_id: 'b1', boarding: false },
   ]);
   for (const s of sel) assert.equal('price' in s, false);
+});
+
+test('a boarding pick whose option has no boarding price never reaches selections or the summary', () => {
+  // The apply screen submits toSelections(reconcilePicks(raw, ...)) and totals summarise(picks).
+  const bad: AreaPick = { area: A, option: A.options[1], boarding: true }; // a2: no boarding price
+  const good = pick(B, 0, true);
+  const picks = reconcilePicks([bad, good], [A, B], 2);
+  assert.deepEqual(toSelections(picks), [{ area: 'directing', option_id: 'b1', boarding: true }]);
+  const s = summarise(picks);
+  assert.equal(s.lines.length, 1);
+  assert.equal(s.total, 400);
+  // Even if handed the raw (unreconciled) picks, the summary never prices it.
+  assert.equal(summarise([bad]).lines.length, 0);
+  assert.equal(summarise([bad]).total, 0);
 });
 
 test('normaliseSelectedOptions coerces the snapshot and drops junk', () => {
