@@ -14,7 +14,10 @@ import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
-import { getOverview } from '@/features/filmAcademy/api';
+import { getOverview, getCurriculum, FILM_ACADEMY_LEARN_KEY } from '@/features/filmAcademy/api';
+import { nextStep } from '@/features/filmAcademy/journey';
+import { useStartQuiz } from '@/features/filmAcademy/useStartQuiz';
+import ContinueCard from '@/features/filmAcademy/components/ContinueCard';
 import type { FilmAcademyBatch } from '@/features/filmAcademy/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { RemoteBanner } from '@/features/media/banners';
@@ -93,6 +96,32 @@ function BatchCard({ batch, applied, fallbackFee }: {
   );
 }
 
+/**
+ * "Continue learning" for someone who is already enrolled. Reads the same curriculum
+ * query My course uses (shared cache), and renders nothing while it loads, when the
+ * course is locked (not approved / not paid), or when there is no curriculum — an
+ * applicant's home must look exactly as it did before they were enrolled.
+ */
+function ContinueLearning() {
+  const { data } = useQuery({ queryKey: FILM_ACADEMY_LEARN_KEY, queryFn: getCurriculum });
+  const quiz = useStartQuiz();
+  if (!data || data.locked || data.modules.length === 0) return null;
+  const step = nextStep(data.modules);
+  if (!step) return null;
+  return (
+    <View style={{ gap: Spacing.xs }}>
+      <ContinueCard
+        step={step}
+        onStartQuiz={quiz.start}
+        starting={step.type === 'quiz' && quiz.startingId === step.quizId}
+      />
+      {!!quiz.error && step.type === 'quiz' && quiz.error.quizId === step.quizId && (
+        <Text style={styles.stateText}>{quiz.error.message}</Text>
+      )}
+    </View>
+  );
+}
+
 export default function FilmAcademyScreen() {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: FILM_ACADEMY_KEY,
@@ -149,6 +178,8 @@ export default function FilmAcademyScreen() {
             </Text>
           </View>
         )}
+
+        {applied.size > 0 && <ContinueLearning />}
 
         {/* Applicants land back here from the service tile, so the way into their
             own application has to be on this screen. Shown only once they have

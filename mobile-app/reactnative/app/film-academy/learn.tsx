@@ -1,7 +1,9 @@
-// A NATIVE screen. Modules and lessons for the enrolled learner, with progress.
+// A NATIVE screen. The enrolled learner's course: what to do next, progress, and the
+// modules with their lessons and quizzes.
 // "Locked" is a first-class state, not an error: an applicant who has not been
 // approved or has not paid gets a reason and a way forward, because a blank
-// screen here reads as a broken app.
+// screen here reads as a broken app. Individual modules lock the same way — as one
+// row that says how to unlock them (see ModuleCard).
 
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl } from 'react-native';
@@ -9,133 +11,47 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, CircleCheck, Circle, Lock, Clock, BookOpen, CheckCircle2, AlertCircle } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Lock, ClipboardList, FileText } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { getCurriculum, FILM_ACADEMY_LEARN_KEY } from '@/features/filmAcademy/api';
 import { lockCopy } from '@/features/filmAcademy/lockCopy';
-import type { FilmAcademyLesson, FilmAcademyModule } from '@/features/filmAcademy/types';
+import { nextStep, courseProgress } from '@/features/filmAcademy/journey';
+import { useStartQuiz } from '@/features/filmAcademy/useStartQuiz';
+import ContinueCard from '@/features/filmAcademy/components/ContinueCard';
+import ModuleCard from '@/features/filmAcademy/components/ModuleCard';
 import { HomeMenuButton } from '@/components/HomeMenu';
-
-function ModuleQuizSection({ module, isLessonsComplete }: { module: FilmAcademyModule; isLessonsComplete: boolean }) {
-  if (!module.quiz) return null;
-
-  const quiz = module.quiz;
-  const hasAttempted = !!quiz.lastResult;
-  const passed = hasAttempted && quiz.lastResult!.passed;
-  const score = hasAttempted ? quiz.lastResult!.scorePercent : null;
-
-  return (
-    <View style={styles.quizSection}>
-      <View style={styles.quizHeader}>
-        <BookOpen size={20} color={Colors.primary} />
-        <View style={{ flex: 1 }}>
-          <Text style={styles.quizTitle}>{quiz.title}</Text>
-          <Text style={styles.quizMeta}>Pass mark: {quiz.passMark}%</Text>
-        </View>
-      </View>
-
-      {!isLessonsComplete && (
-        <View style={[styles.quizState, { backgroundColor: Colors.surfaceVariant }]}>
-          <AlertCircle size={16} color={Colors.onSurfaceVariant} />
-          <Text style={styles.quizStateText}>Complete all lessons first</Text>
-        </View>
-      )}
-
-      {isLessonsComplete && !hasAttempted && (
-        <Pressable
-          onPress={() => router.push(`/film-academy/exams/${quiz.id}` as never)}
-          style={[styles.quizButton, { backgroundColor: Colors.primary }]}
-        >
-          <Text style={styles.quizButtonText}>Take Quiz</Text>
-          <ChevronRight size={16} color={Colors.onPrimary} />
-        </Pressable>
-      )}
-
-      {hasAttempted && (
-        <View style={[styles.quizResult, { backgroundColor: passed ? Colors.teal + '15' : Colors.error + '15' }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
-            {passed ? (
-              <CheckCircle2 size={20} color={Colors.teal} />
-            ) : (
-              <AlertCircle size={20} color={Colors.error} />
-            )}
-            <View style={{ flex: 1 }}>
-              <Text style={{ ...Typography.labelMd, color: Colors.onSurface }}>
-                {passed ? 'Quiz Passed' : 'Quiz Failed'}
-              </Text>
-              <Text style={{ ...Typography.bodySm, color: Colors.onSurfaceVariant }}>
-                Score: {score}%
-              </Text>
-            </View>
-          </View>
-          {!passed && (
-            <Pressable
-              onPress={() => router.push(`/film-academy/exams/${quiz.id}` as never)}
-              style={[styles.retryButton, { borderColor: Colors.error }]}
-            >
-              <Text style={{ ...Typography.labelSm, color: Colors.error }}>Retry</Text>
-            </Pressable>
-          )}
-        </View>
-      )}
-    </View>
-  );
-}
-
-function ModuleLockedOverlay() {
-  return (
-    <View style={styles.lockedOverlay}>
-      <Lock size={24} color={Colors.error} />
-      <Text style={styles.lockedText}>Locked</Text>
-      <Text style={styles.lockedDetail}>Complete previous module quiz at 85%</Text>
-    </View>
-  );
-}
-
-function LessonRow({ lesson }: { lesson: FilmAcademyLesson }) {
-  return (
-    <Pressable
-      onPress={() => router.push(`/film-academy/lesson/${lesson.id}` as never)}
-      style={styles.lessonRow}
-    >
-      {lesson.completed
-        ? <CircleCheck size={18} color={Colors.teal} />
-        : <Circle size={18} color={Colors.onSurfaceVariant} />}
-      <View style={styles.lessonBody}>
-        <Text style={[styles.lessonTitle, lesson.completed && styles.lessonTitleDone]}>
-          {lesson.title}
-        </Text>
-        {!!lesson.estimated_minutes && (
-          <View style={styles.lessonMetaRow}>
-            <Clock size={12} color={Colors.onSurfaceVariant} />
-            <Text style={styles.lessonMeta}>{lesson.estimated_minutes} min</Text>
-          </View>
-        )}
-      </View>
-      <ChevronRight size={16} color={Colors.onSurfaceVariant} />
-    </Pressable>
-  );
-}
 
 export default function FilmAcademyLearnScreen() {
   const { data, isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: FILM_ACADEMY_LEARN_KEY,
     queryFn: getCurriculum,
   });
+  const quiz = useStartQuiz();
 
-  const pct = data && data.totalLessons > 0
-    ? Math.round((data.completedLessons / data.totalLessons) * 100)
-    : 0;
+  // null = the learner has not touched any module yet, so the module they are currently
+  // working in is open by default and the rest are collapsed.
+  const [open, setOpen] = React.useState<Record<string, boolean> | null>(null);
 
+  const modules = data?.modules ?? [];
+  const step = nextStep(modules);
+  const pct = data ? courseProgress(data) : 0;
   const lock = lockCopy(data?.reason);
+
+  const defaultOpenId = step && step.type !== 'complete' ? modules[step.moduleIndex]?.id : modules[0]?.id;
+  const isOpen = (id: string) => (open ? !!open[id] : id === defaultOpenId);
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const base = prev ?? (defaultOpenId ? { [defaultOpenId]: true } : {});
+      return { ...base, [id]: !base[id] };
+    });
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => goBack('/film-academy')} hitSlop={12} style={styles.back}>
+        <Pressable onPress={() => goBack('/film-academy')} hitSlop={12} style={styles.back} accessibilityLabel="Go back">
           <ChevronLeft size={24} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>My course</Text>
@@ -175,49 +91,65 @@ export default function FilmAcademyLearnScreen() {
           </View>
         )}
 
-        {!isLoading && !error && !data?.locked && (
+        {!isLoading && !error && data && !data.locked && (
           <>
-            <View style={styles.card}>
-              <Text style={styles.progressPct}>{pct}%</Text>
-              <Text style={styles.cardMeta}>
-                {data!.completedLessons} of {data!.totalLessons} lesson
-                {data!.totalLessons === 1 ? '' : 's'} complete
-              </Text>
-              <View style={styles.bar}>
-                <View style={[styles.barFill, { width: `${pct}%` }]} />
+            {step && (
+              <ContinueCard
+                step={step}
+                onStartQuiz={quiz.start}
+                starting={step.type === 'quiz' && quiz.startingId === step.quizId}
+              />
+            )}
+            {!!quiz.error && step?.type === 'quiz' && quiz.error.quizId === step.quizId && (
+              <Text style={styles.errorText}>{quiz.error.message}</Text>
+            )}
+
+            <View style={styles.progress}>
+              <View style={styles.progressRow}>
+                <Text style={styles.progressPct}>{pct}%</Text>
+                <Text style={styles.progressMeta}>
+                  {data.completedLessons} of {data.totalLessons} lesson{data.totalLessons === 1 ? '' : 's'} complete
+                </Text>
               </View>
-              <Pressable
-                onPress={() => router.push('/film-academy/assignments' as never)}
-                style={styles.assignLink}
-              >
-                <Text style={styles.assignLinkText}>My assignments</Text>
-                <ChevronRight size={16} color={Colors.gold} />
+              <View style={styles.bar}><View style={[styles.barFill, { width: `${pct}%` }]} /></View>
+            </View>
+
+            <View style={styles.tiles}>
+              <Pressable onPress={() => router.push('/film-academy/assignments' as never)} style={styles.tile} accessibilityRole="button">
+                <ClipboardList size={18} color={Colors.primary} />
+                <Text style={styles.tileText}>Assignments</Text>
+                <ChevronRight size={16} color={Colors.onSurfaceVariant} />
+              </Pressable>
+              <Pressable onPress={() => router.push('/film-academy/exams' as never)} style={styles.tile} accessibilityRole="button">
+                <FileText size={18} color={Colors.primary} />
+                <Text style={styles.tileText}>Exams</Text>
+                <ChevronRight size={16} color={Colors.onSurfaceVariant} />
               </Pressable>
             </View>
 
-            {data!.modules.length === 0 && (
+            {modules.length === 0 && (
               <View style={styles.state}>
-                <Text style={styles.stateText}>
-                  No lessons have been published yet. Check back soon.
-                </Text>
+                <Text style={styles.stateText}>No lessons have been published yet. Check back soon.</Text>
               </View>
             )}
 
-            {data!.modules.map((m) => {
-              const isLessonsComplete = m.lessons.length > 0 && m.completedCount === m.lessons.length;
+            {modules.map((m, i) => {
+              const prev = i > 0 ? modules[i - 1] : null;
+              const unlockHint = prev
+                ? `Pass the Module ${i} quiz (${prev.quiz?.passMark ?? 85}%) to unlock`
+                : 'Not available yet';
               return (
-                <View key={m.id} style={[styles.card, m.isLocked && styles.cardLocked]}>
-                  {m.isLocked && <ModuleLockedOverlay />}
-                  <Text style={styles.moduleTitle}>{m.title}</Text>
-                  {!!m.description && <Text style={styles.cardMeta}>{m.description}</Text>}
-                  <Text style={styles.moduleMeta}>
-                    {m.completedCount} of {m.lessons.length} complete
-                  </Text>
-                  {m.lessons.map((l) => <LessonRow key={l.id} lesson={l} />)}
-                  {!m.isLocked && (
-                    <ModuleQuizSection module={m} isLessonsComplete={isLessonsComplete} />
-                  )}
-                </View>
+                <ModuleCard
+                  key={m.id}
+                  module={m}
+                  number={i + 1}
+                  expanded={isOpen(m.id)}
+                  onToggle={() => toggle(m.id)}
+                  unlockHint={unlockHint}
+                  onStartQuiz={quiz.start}
+                  startingQuizId={quiz.startingId}
+                  quizError={m.quiz && quiz.error?.quizId === m.quiz.id ? quiz.error.message : null}
+                />
               );
             })}
           </>
@@ -241,49 +173,17 @@ const styles = StyleSheet.create({
   retry:       { paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm,
                  borderRadius: Radius.md, backgroundColor: Colors.surfaceVariant },
   retryText:   { ...Typography.labelLg, color: Colors.onSurface },
+  errorText:   { ...Typography.bodySm, color: Colors.error },
 
-  card:        { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, gap: Spacing.xs },
-  cardMeta:    { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  progress:    { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, gap: Spacing.sm },
+  progressRow: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.sm },
   progressPct: { ...Typography.headlineMd, color: Colors.onSurface },
-  bar:         { height: 6, borderRadius: 3, backgroundColor: Colors.surfaceVariant,
-                 overflow: 'hidden', marginTop: Spacing.xs },
-  barFill:     { height: 6, borderRadius: 3, backgroundColor: Colors.gold },
-  assignLink:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                 marginTop: Spacing.sm },
-  assignLinkText: { ...Typography.labelLg, color: Colors.onWarning },
+  progressMeta: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  bar:         { height: 6, borderRadius: 3, backgroundColor: Colors.surfaceVariant, overflow: 'hidden' },
+  barFill:     { height: 6, borderRadius: 3, backgroundColor: Colors.primary },
 
-  moduleTitle: { ...Typography.titleMd, color: Colors.onSurface },
-  moduleMeta:  { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginBottom: Spacing.xs },
-
-  lessonRow:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-                 paddingVertical: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.surfaceVariant },
-  lessonBody:  { flex: 1, gap: 2 },
-  lessonTitle: { ...Typography.bodyMd, color: Colors.onSurface },
-  lessonTitleDone: { color: Colors.onSurfaceVariant },
-  lessonMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  lessonMeta:  { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-
-  quizSection: { marginTop: Spacing.md, paddingTop: Spacing.md, borderTopWidth: 1,
-                 borderTopColor: Colors.surfaceVariant, gap: Spacing.md },
-  quizHeader:  { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
-  quizTitle:   { ...Typography.labelLg, color: Colors.onSurface },
-  quizMeta:    { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
-  quizState:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-                 paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: Radius.sm },
-  quizStateText: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
-  quizButton:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                 paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, borderRadius: Radius.md },
-  quizButtonText: { ...Typography.labelLg, color: Colors.onPrimary, fontWeight: '600' },
-  quizResult:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                 paddingHorizontal: Spacing.md, paddingVertical: Spacing.md, borderRadius: Radius.sm },
-  retryButton: { borderWidth: 1, paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs,
-                 borderRadius: Radius.sm },
-
-  cardLocked:  { position: 'relative', opacity: 0.6 },
-  lockedOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-                   backgroundColor: Colors.background, borderRadius: Radius.lg,
-                   alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
-  lockedText:  { ...Typography.titleMd, color: Colors.onSurface },
-  lockedDetail: { ...Typography.bodySm, color: Colors.onSurfaceVariant, textAlign: 'center',
-                  paddingHorizontal: Spacing.md },
+  tiles:       { flexDirection: 'row', gap: Spacing.sm },
+  tile:        { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+                 backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.md },
+  tileText:    { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },
 });

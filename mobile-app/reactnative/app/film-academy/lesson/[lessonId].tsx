@@ -15,6 +15,7 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { getCurriculum, setLessonProgress, FILM_ACADEMY_LEARN_KEY } from '@/features/filmAcademy/api';
+import { locateLesson } from '@/features/filmAcademy/journey';
 import { Lecture } from '@/features/filmAcademy/Lecture';
 import { InlineVideo } from '@/features/filmAcademy/InlineVideo';
 import { getErrorMessage } from '@/utils/errorMapper';
@@ -35,8 +36,14 @@ export default function FilmAcademyLessonScreen() {
   const flatLessons = modules.flatMap((m) => m.lessons);
   const lessonIndex = flatLessons.findIndex((l) => l.id === lessonId);
   const lesson = lessonIndex >= 0 ? flatLessons[lessonIndex] : null;
-  const nextLesson = lessonIndex >= 0 ? flatLessons[lessonIndex + 1] ?? null : null;
+  // The next lesson must not lead into a locked module (the learner has not passed the
+  // quiz that opens it); from the last open lesson they go back to the course instead,
+  // where the pending quiz is waiting.
+  const openLessons = modules.filter((m) => !m.isLocked).flatMap((m) => m.lessons);
+  const openIndex = openLessons.findIndex((l) => l.id === lessonId);
+  const nextLesson = openIndex >= 0 ? openLessons[openIndex + 1] ?? null : null;
   const moduleTitle = modules.find((m) => m.lessons.some((l) => l.id === lessonId))?.title ?? '';
+  const where = lessonId ? locateLesson(modules, lessonId) : null;
 
   const toggle = async () => {
     if (!lesson) return;
@@ -80,6 +87,11 @@ export default function FilmAcademyLessonScreen() {
 
         {!!lesson && (
           <>
+            {!!where && (
+              <Text style={styles.position}>
+                Module {where.moduleIndex + 1} · Lesson {where.position} of {where.count}
+              </Text>
+            )}
             <Text style={styles.title}>{lesson.title}</Text>
             {!!lesson.estimated_minutes && (
               <View style={styles.metaRow}>
@@ -147,11 +159,11 @@ export default function FilmAcademyLessonScreen() {
               </Pressable>
             ) : (
               <Pressable
-                onPress={() => router.replace('/film-academy')}
+                onPress={() => router.replace('/film-academy/learn')}
                 style={styles.nextBtn}
               >
                 <Home size={18} color={Colors.onPrimary} />
-                <Text style={styles.nextBtnText}>Back to Academy</Text>
+                <Text style={styles.nextBtnText}>Back to my course</Text>
               </Pressable>
             )}
           </>
@@ -175,6 +187,7 @@ const styles = StyleSheet.create({
                  borderRadius: Radius.md, backgroundColor: Colors.surfaceVariant },
   retryText:   { ...Typography.labelLg, color: Colors.onSurface },
 
+  position:    { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   title:       { ...Typography.headlineMd, color: Colors.onSurface },
   metaRow:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
   meta:        { ...Typography.labelSm, color: Colors.onSurfaceVariant },
