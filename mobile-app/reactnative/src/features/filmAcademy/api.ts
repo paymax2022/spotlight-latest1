@@ -17,6 +17,7 @@ import type {
   FilmAcademyAttemptView,
   FilmAcademyExamResult,
 } from './types';
+import { normaliseOptions } from './optionPricing';
 
 type Envelope = { data?: unknown };
 
@@ -46,14 +47,8 @@ export async function getOverview(): Promise<FilmAcademyOverview> {
     // 'Screenwriting' while the database held 'script_writing'.
     interestAreas: (body?.interestAreas ?? []).map((a) => ({
       ...a,
-      // Older servers omit options; coerce numerics that may arrive as strings.
-      options: (a.options ?? []).map((o) => ({
-        ...o,
-        duration_label: o.duration_label ?? null,
-        price_no_boarding_ngn: Number(o.price_no_boarding_ngn),
-        price_with_boarding_ngn:
-          o.price_with_boarding_ngn == null ? null : Number(o.price_with_boarding_ngn),
-      })),
+      // Older servers omit options; prices are coerced safely (no 0/NaN).
+      options: normaliseOptions(a.options),
     })),
     // Absent = every batch unrestricted, which is the pre-feature behaviour.
     batchAreas: body?.batchAreas ?? {},
