@@ -68,6 +68,9 @@ type Service struct {
 	// parcelInsuranceMinKobo floors the indicative Goods-in-Transit premium at the
 	// provider's minimum (WithParcelInsuranceMinPremium); 0 = no floor.
 	parcelInsuranceMinKobo int64
+	// receiverSMS texts the receiver their drop-off PIN after pickup
+	// (WithReceiverPinSMS, parcel_receiver_pin.go); nil = off.
+	receiverSMS ReceiverSMSSender
 }
 
 // ExternalRefunder is the nil-safe seam transport.Service uses to correctly

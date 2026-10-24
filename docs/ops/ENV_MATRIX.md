@@ -52,10 +52,10 @@
 
 | Var | Surface | Sensitivity | Module | Notes |
 |---|---|---|---|---|
-| `MAPLERAD_SECRET_KEY` | web + backend | **SECRET** | FX/VA | |
-| `MAPLERAD_PUBLIC_KEY` | backend | config | FX/VA | |
-| `MAPLERAD_WEBHOOK_SECRET` | backend | **SECRET** | FX/VA | |
-| `MAPLERAD_PROD` | web + backend | config | FX/VA | flag: live vs sandbox |
+| `VERTOFX_CLIENT_ID` | backend | config | FX/VA | |
+| `VERTOFX_API_KEY` | backend | **SECRET** | FX/VA | |
+| `VERTOFX_WEBHOOK_SECRET` | backend | **SECRET** | FX/VA | |
+| `VERTOFX_PROD` | backend | config | FX/VA | flag: live vs sandbox |
 | `EVERSEND_CLIENT_ID` | backend | config | FX | |
 | `EVERSEND_CLIENT_SECRET` | backend | **SECRET** | FX | |
 | `EVERSEND_WEBHOOK_SECRET` | backend | **SECRET** | FX | |

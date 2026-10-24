@@ -50,6 +50,17 @@ type Event struct {
 	// mobile checkout renders it). Never set from a request body; AddTier is
 	// the only write path.
 	Tiers []TicketTier `json:"tiers,omitempty"`
+
+	// Social fields (events-social). The four venue/banner fields are nullable in
+	// the contract, so they are pointers WITHOUT omitempty: an unset value is sent as
+	// null and a client with no coordinates renders no map. LikeCount is the stored
+	// counter; Liked is per-caller and false for an anonymous read.
+	BannerURL    *string  `json:"banner_url"`
+	VenueLat     *float64 `json:"venue_lat"`
+	VenueLng     *float64 `json:"venue_lng"`
+	VenuePlaceID *string  `json:"venue_place_id"`
+	LikeCount    int      `json:"like_count"`
+	Liked        bool     `json:"liked"`
 }
 
 // EventListFilter narrows the discovery/list feed. Category and State are

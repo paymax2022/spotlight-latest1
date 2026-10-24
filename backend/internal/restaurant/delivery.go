@@ -35,6 +35,9 @@ func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error)
 type RestaurantDetail struct {
 	Restaurant Restaurant     `json:"restaurant"`
 	Categories []MenuCategory `json:"categories"`
+	// Sections is the taxonomy-ordered menu, additive beside Categories. Present
+	// only when taxonomy browsing is on (WithTaxonomy).
+	Sections []MenuSection `json:"sections,omitempty"`
 }
 
 // GetRestaurantDetail returns a restaurant and its menu (categories + items).
@@ -84,6 +87,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 			return nil, err
 		}
 	}
+	var allItems []MenuItem // every item, for taxonomy sections (taxonomy on only)
 	irows, err := s.db.Query(ctx, qi, restaurantID)
 	if err != nil {
 		return nil, err
@@ -106,6 +110,9 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 				c.Items = append(c.Items, it)
 			}
 		}
+		if s.taxonomyOn {
+			allItems = append(allItems, it)
+		}
 	}
 	if err := irows.Err(); err != nil {
 		return nil, err
@@ -125,6 +132,19 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	detail := &RestaurantDetail{Restaurant: r}
 	for _, id := range order {
 		detail.Categories = append(detail.Categories, *cats[id])
+	}
+	if s.taxonomyOn {
+		for j := range allItems {
+			allItems[j].ModifierGroups = mods[allItems[j].ID]
+		}
+		if detail.Sections, err = s.menuSections(ctx, restaurantID, allItems); err != nil {
+			return nil, err
+		}
+		cu := []Restaurant{detail.Restaurant}
+		if err := s.attachCuisines(ctx, cu); err != nil {
+			return nil, err
+		}
+		detail.Restaurant = cu[0]
 	}
 	return detail, nil
 }

@@ -3,7 +3,7 @@
 // and exposes async webhooks; auth is header-based (Authorization: <secret> +
 // AppId: <app_id>). No Dojah DTO leaks out — everything normalizes to
 // provider.KycCheckResult / provider.KycWebhookEvent.
-// This is the ONLY place Dojah HTTP code may live. Mirrors the maplerad adapter
+// This is the ONLY place Dojah HTTP code may live.
 // for HTTP/webhook style. Stdlib only.
 
 package dojah
@@ -94,7 +94,7 @@ func (c *Client) ScreenAML(ctx context.Context, req provider.KycVerifyRequest) (
 
 // VerifyKycSignature validates Dojah's HMAC-SHA256 signature over the raw body,
 // hex-encoded, using the vault-stored webhook secret, constant-time compared.
-// Mirrors the maplerad scheme. Rejects when secret or signature is missing.
+// Rejects when secret or signature is missing.
 func (c *Client) VerifyKycSignature(payload []byte, signature string) bool {
 	if c.webhookSecret == "" || signature == "" {
 		return false

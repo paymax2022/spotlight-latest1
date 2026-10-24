@@ -224,3 +224,26 @@ describe('mapMenuItem', () => {
     assert.equal(mapMenuItem({ price_kobo: 'nonsense' }).priceKobo, 0);
   });
 });
+
+describe('taxonomy fields', () => {
+  it('maps restaurant cuisines to cuisineRefs; absent -> undefined', () => {
+    const r = mapRestaurant({ ...GO_ROW, cuisines: [{ id: 'c1', slug: 'igbo', name: 'Igbo' }, { slug: 'bad' }] });
+    assert.deepEqual(r.cuisineRefs, [{ id: 'c1', slug: 'igbo', name: 'Igbo' }]);
+    assert.equal(mapRestaurant(GO_ROW).cuisineRefs, undefined);
+  });
+  it('maps detail sections, preserving a null id', () => {
+    const d = mapRestaurantDetail({
+      restaurant: GO_ROW,
+      categories: [],
+      sections: [
+        { id: null, name: 'Rice', slug: 'rice', sort_order: 1, items: [{ id: 'i1', name: 'Jollof', price_kobo: 100, is_available: true }] },
+        { id: 's2', name: 'Soup', slug: 'soup', sort_order: 2, items: [] },
+      ],
+    });
+    assert.equal(d.sections?.length, 2);
+    assert.equal(d.sections?.[0].id, null);
+    assert.equal(d.sections?.[0].items[0].priceKobo, 100);
+    assert.equal(d.sections?.[1].id, 's2');
+    assert.equal(mapRestaurantDetail({ restaurant: GO_ROW, categories: [] }).sections, undefined);
+  });
+});

@@ -9,10 +9,27 @@ export interface LatLng {
   lng: number;
 }
 
+export interface CuisineRef {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export interface TaxonomyCategory {
+  id: string;
+  name: string;
+  slug: string;
+  icon: string | null;
+  sortOrder: number;
+  children: TaxonomyCategory[];
+}
+
 export interface Restaurant {
   id: string;
   name: string;
   cuisine: string;
+  /** Taxonomy cuisines (server `cuisines`); undefined when the server sends none. */
+  cuisineRefs?: CuisineRef[];
   tags: string[];
   rating: number;
   ratingCount?: number;
@@ -106,8 +123,16 @@ export interface MenuCategory {
   items: MenuItem[];
 }
 
+/** A taxonomy menu section; `id` is null for sections not backed by a stored category. */
+export interface MenuSection {
+  id: string | null;
+  name: string;
+  items: MenuItem[];
+}
+
 export interface RestaurantDetail extends Restaurant {
   menu: MenuCategory[];
+  sections?: MenuSection[];
 }
 
 export interface CartLine {

@@ -39,6 +39,7 @@ import {
   withMockLikeState,
 } from './mock';
 import { mapRestaurants, mapRestaurantDetail, mapOrderList, mapOrder } from './normalize';
+import { serializeQueryParams, type QueryValue } from './queryString';
 import { computeDeliveryFeeMock, type DeliveryQuote } from './deliveryFee';
 export type { DeliveryQuote, DeliveryFeeBreakdown } from './deliveryFee';
 
@@ -51,6 +52,7 @@ export const USE_MOCK =
 // (created through the merchant flow, which IS wired to the real backend)
 // never showed up in customer discovery even after the is_open fix below.
 const BASE = '/api/finance/restaurant';
+export const RESTAURANT_BASE = BASE;
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
@@ -92,6 +94,9 @@ export interface RestaurantQuery {
   minPriceKobo?: number;
   /** Inclusive maximum order price, in kobo. */
   maxPriceKobo?: number;
+  /** Taxonomy filters; sent as repeated `cuisine_id` / `category_id` params. */
+  cuisineIds?: string[];
+  categoryIds?: string[];
   limit?: number;
   offset?: number;
 }
@@ -159,9 +164,13 @@ export async function listRestaurants(params: RestaurantQuery = {}): Promise<Res
         near_lng: params.nearLng,
         min_price: params.minPriceKobo,
         max_price: params.maxPriceKobo,
+        cuisine_id: params.cuisineIds?.length ? params.cuisineIds : undefined,
+        category_id: params.categoryIds?.length ? params.categoryIds : undefined,
         limit,
         offset,
       },
+      // axios would send arrays as `k[]=a`; the server wants repeated `k=a&k=b`.
+      paramsSerializer: (p: Record<string, QueryValue>) => serializeQueryParams(p),
     }),
   );
   const items = mapRestaurants(body);

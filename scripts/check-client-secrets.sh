@@ -37,7 +37,8 @@ report() { echo "  ✗ $1"; fail=1; }
 
 # Value shapes that indicate a real secret (NOT the xxxx/CHANGE_ME placeholders).
 # - Paystack/Stripe live/test SECRET keys: sk_live_/sk_test_ followed by real chars
-# - Maplerad secret: mpr_(sandbox|live)_sk_
+# - Legacy provider secret shape mpr_(sandbox|live)_sk_ (provider removed; kept so
+#   previously leaked keys are still caught)
 # - Restricted keys: rk_live_/rk_test_
 SECRET_VALUE_RE='=(sk_(live|test)_[A-Za-z0-9]{10,}|mpr_(sandbox|live)_sk_[A-Za-z0-9-]{10,}|rk_(live|test)_[A-Za-z0-9]{10,})'
 # Placeholder markers we treat as safe.

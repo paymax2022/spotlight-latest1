@@ -50,9 +50,14 @@ export async function resolveAccount(
   provider?: string,
 ): Promise<ResolvedAccount> {
   if (USE_MOCK) return transfersMock.resolveAccount(bankCode, accountNumber);
+  // Snake_case keys to match the Go ResolveAccountRequest binding (account_number,
+  // bank_code — both `binding:"required"`). There is no automatic request-body case
+  // transform; every other transfers call snake_cases its body by hand, and this one
+  // was the lone exception — sending camelCase meant the server saw both required
+  // fields empty and 400'd ("Field validation ... failed on the 'required' tag").
   const res = await api.post('/api/v1/transfers/resolve-account', {
-    bankCode,
-    accountNumber,
+    account_number: accountNumber,
+    bank_code: bankCode,
     provider,
   });
   const data = unwrap(res);

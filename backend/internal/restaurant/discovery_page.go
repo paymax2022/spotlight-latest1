@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"spotlight/backend/go-common/dbutil"
 )
 
@@ -56,6 +58,44 @@ type DiscoveryParams struct {
 	// never aggregated up), so that is what "price range" buckets on.
 	MinPriceKobo *int64
 	MaxPriceKobo *int64
+	// CuisineIDs / CategoryIDs are repeatable taxonomy filters (cuisine_id,
+	// category_id). Any-of within one list, AND across lists and every other
+	// filter. CategoryIDs matches a top-level category OR a sub-category on at
+	// least one AVAILABLE menu item of the restaurant. normalized() keeps only
+	// UUIDs; ids that were supplied but all invalid match nothing (empty page)
+	// rather than silently widening to an unfiltered list.
+	CuisineIDs  []string
+	CategoryIDs []string
+
+	cuisineIDsSupplied  bool
+	categoryIDsSupplied bool
+}
+
+// keepUUIDs returns only the values that parse as UUIDs, canonicalised.
+// maxTaxonomyIDs caps each repeatable taxonomy id list.
+const maxTaxonomyIDs = 50
+
+// hasNonBlank reports whether any value is non-empty after trimming.
+func hasNonBlank(in []string) bool {
+	for _, v := range in {
+		if strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func keepUUIDs(in []string) []string {
+	var out []string
+	for _, v := range in {
+		if len(out) >= maxTaxonomyIDs {
+			break
+		}
+		if id, err := uuid.Parse(strings.TrimSpace(v)); err == nil {
+			out = append(out, id.String())
+		}
+	}
+	return out
 }
 
 // normalized clamps caller-supplied paging/sort into the supported range. Values
@@ -68,6 +108,12 @@ func (p DiscoveryParams) normalized() DiscoveryParams {
 	if strings.EqualFold(out.Cuisine, "all") {
 		out.Cuisine = ""
 	}
+	// An empty or blank value (?cuisine_id=) is no filter at all, so it must not
+	// count as supplied; a non-empty but invalid value still does (empty page).
+	out.cuisineIDsSupplied = out.cuisineIDsSupplied || hasNonBlank(p.CuisineIDs)
+	out.categoryIDsSupplied = out.categoryIDsSupplied || hasNonBlank(p.CategoryIDs)
+	out.CuisineIDs = keepUUIDs(p.CuisineIDs)
+	out.CategoryIDs = keepUUIDs(p.CategoryIDs)
 	if out.Limit <= 0 || out.Limit > maxDiscoveryLimit {
 		out.Limit = defaultDiscoveryLimit
 	}
@@ -157,6 +203,19 @@ func buildDiscoveryWhere(p DiscoveryParams, moderationOn bool) (string, []any) {
 	}
 	if p.MaxPriceKobo != nil {
 		b.WriteString(" AND r.min_order_kobo <= " + ph(*p.MaxPriceKobo))
+	}
+	if len(p.CuisineIDs) > 0 {
+		b.WriteString(" AND EXISTS (SELECT 1 FROM restaurant_cuisines rc WHERE rc.restaurant_id = r.id" +
+			" AND rc.cuisine_id = ANY(" + ph(p.CuisineIDs) + "::uuid[]))")
+	} else if p.cuisineIDsSupplied {
+		b.WriteString(" AND FALSE")
+	}
+	if len(p.CategoryIDs) > 0 {
+		arr := ph(p.CategoryIDs) + "::uuid[]"
+		b.WriteString(" AND EXISTS (SELECT 1 FROM menu_items mi WHERE mi.restaurant_id = r.id AND mi.is_available" +
+			" AND (mi.taxonomy_category_id = ANY(" + arr + ") OR mi.taxonomy_subcategory_id = ANY(" + arr + ")))")
+	} else if p.categoryIDsSupplied {
+		b.WriteString(" AND FALSE")
 	}
 	return b.String(), args
 }
@@ -311,6 +370,11 @@ func (s *Service) ListOpenRestaurantsPage(ctx context.Context, params DiscoveryP
 	}
 	if err := s.attachLikedFlags(ctx, callerUserID, list); err != nil {
 		return nil, err
+	}
+	if s.taxonomyOn {
+		if err := s.attachCuisines(ctx, list); err != nil {
+			return nil, err
+		}
 	}
 	return &RestaurantPage{
 		Restaurants: list,

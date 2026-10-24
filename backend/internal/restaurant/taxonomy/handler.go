@@ -47,6 +47,16 @@ func Register(admin, owner *gin.RouterGroup, h *Handler, guard func(permission s
 	ow.GET("/cuisines", h.ListCuisines)
 }
 
+// RegisterBrowse mounts the customer-facing taxonomy reads under
+// /menu-taxonomy/browse. They are separate from the owner's /menu-taxonomy reads
+// (which the merchant console depends on) so customer browsing has its own kill
+// switch: not mounting these hides the chips without touching the merchant UI.
+func RegisterBrowse(owner *gin.RouterGroup, h *Handler) {
+	br := owner.Group("/menu-taxonomy/browse")
+	br.GET("/categories", h.ListCategories)
+	br.GET("/cuisines", h.ListCuisines)
+}
+
 func writeErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):

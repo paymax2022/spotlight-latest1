@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { EventPatch, TierPatch, PromoPatch, CreatePromoInput, IssueCompInput, AnnounceInput, AddTierInput, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate, AddTeamMemberInput } from './types';
+import { applyLikeToggle, applyFollowToggle, type ToggleState } from './social';
+import type { EventDetail, OrganiserProfile, EventPatch, TierPatch, PromoPatch, CreatePromoInput, IssueCompInput, AnnounceInput, AddTierInput, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate, AddTeamMemberInput } from './types';
 
 // Exported so useEventsRealtime (realtime/useEventsRealtime.ts) can invalidate
 // the exact same query keys on a push, rather than duplicating the shape.
@@ -17,6 +18,12 @@ export const KEYS = {
   organiser: ['events', 'organiser'] as const,
   attendees: (id: string) => ['events', 'attendees', id] as const,
   team:      (id: string) => ['events', 'team', id] as const,
+  // Public organiser page (events-social). Deliberately not under KEYS.organiser,
+  // which is the caller's own dashboard, so invalidating one never refetches the other.
+  organiserProfile: (id: string) => ['events', 'organiser-profile', id] as const,
+  // KEYS.followingAll is the prefix that invalidates every page of the feed.
+  followingAll: ['events', 'following'] as const,
+  following: (limit: number, offset: number) => ['events', 'following', { limit, offset }] as const,
 };
 
 export const useEvents = (params?: { category?: string; state?: string }) =>
@@ -274,4 +281,94 @@ export function useCreatePromo(eventId: string) {
     mutationFn: (input: CreatePromoInput) => api.createPromo(eventId, input),
     onSuccess: () => invalidate(eventId),
   });
+}
+
+// ── Social: likes, follows, organiser profile, following feed (events-social) ─
+export const useOrganiser = (organiserId: string) =>
+  useQuery({ queryKey: KEYS.organiserProfile(organiserId), queryFn: () => api.getOrganiser(organiserId), enabled: !!organiserId });
+
+export const useFollowingEvents = (limit = 20, offset = 0) =>
+  useQuery({ queryKey: KEYS.following(limit, offset), queryFn: () => api.listFollowingEvents(limit, offset) });
+
+const NOT_LOADED: ToggleState = { liked: false, count: 0 };
+
+// Like state lives on the event detail, so this shares the cache entry (and the
+// single fetch) with useEvent. toggle() flips the heart and count at once, calls
+// the API, and on failure puts back the exact snapshot taken in onMutate. On
+// success the server's state replaces the optimistic guess. toggle() does nothing
+// until the event has loaded, since there is no state to flip yet.
+export function useLikeEvent(eventId: string) {
+  const qc = useQueryClient();
+  const key = KEYS.event(eventId);
+  const event = useEvent(eventId);
+  const state: ToggleState = event.data ? { liked: event.data.liked, count: event.data.like_count } : NOT_LOADED;
+
+  const mutation = useMutation({
+    mutationFn: (next: boolean) => (next ? api.likeEvent(eventId) : api.unlikeEvent(eventId)),
+    onMutate: async (next: boolean) => {
+      await qc.cancelQueries({ queryKey: key });
+      const snapshot = qc.getQueryData<EventDetail>(key);
+      if (snapshot) {
+        const t = applyLikeToggle({ liked: snapshot.liked, count: snapshot.like_count }, next);
+        qc.setQueryData<EventDetail>(key, { ...snapshot, liked: t.liked, like_count: t.count });
+      }
+      return { snapshot };
+    },
+    onError: (_err, _next, ctx) => {
+      if (ctx?.snapshot) qc.setQueryData<EventDetail>(key, ctx.snapshot);
+    },
+    onSuccess: (server) => {
+      qc.setQueryData<EventDetail>(key, (old) => (old ? { ...old, liked: server.liked, like_count: server.like_count } : old));
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: key });
+    },
+  });
+
+  const toggle = () => {
+    if (!event.data || mutation.isPending) return;
+    mutation.mutate(!state.liked);
+  };
+  return { state, toggle, isPending: mutation.isPending, error: mutation.error };
+}
+
+// Same shape as useLikeEvent for the organiser follow button: state.liked means
+// "following" and state.count is the follower count (the shape applyFollowToggle
+// works on). Follow state lives on the organiser profile, so this shares the
+// useOrganiser cache entry. Settling also refreshes the following feed, whose
+// contents depend on who the caller follows.
+export function useFollowOrganiser(organiserId: string) {
+  const qc = useQueryClient();
+  const key = KEYS.organiserProfile(organiserId);
+  const profile = useOrganiser(organiserId);
+  const state: ToggleState = profile.data ? { liked: profile.data.following, count: profile.data.follower_count } : NOT_LOADED;
+
+  const mutation = useMutation({
+    mutationFn: (next: boolean) => (next ? api.followOrganiser(organiserId) : api.unfollowOrganiser(organiserId)),
+    onMutate: async (next: boolean) => {
+      await qc.cancelQueries({ queryKey: key });
+      const snapshot = qc.getQueryData<OrganiserProfile>(key);
+      if (snapshot) {
+        const t = applyFollowToggle({ liked: snapshot.following, count: snapshot.follower_count }, next);
+        qc.setQueryData<OrganiserProfile>(key, { ...snapshot, following: t.liked, follower_count: t.count });
+      }
+      return { snapshot };
+    },
+    onError: (_err, _next, ctx) => {
+      if (ctx?.snapshot) qc.setQueryData<OrganiserProfile>(key, ctx.snapshot);
+    },
+    onSuccess: (server) => {
+      qc.setQueryData<OrganiserProfile>(key, (old) => (old ? { ...old, following: server.following, follower_count: server.follower_count } : old));
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: KEYS.followingAll });
+    },
+  });
+
+  const toggle = () => {
+    if (!profile.data || mutation.isPending) return;
+    mutation.mutate(!state.liked);
+  };
+  return { state, toggle, isPending: mutation.isPending, error: mutation.error };
 }

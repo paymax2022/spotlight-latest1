@@ -2,6 +2,8 @@ package estate
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +29,12 @@ type AddressGeocoder interface {
 
 // Service manages estates, visitor passes, and private elections.
 type Service struct {
+	// guardGrantsOn (FEATURE_ESTATE_GUARD_GRANTS) switches guard/gate authz from
+	// "any resident" to "estate_admin or a live staff grant", and narrows
+	// ListEstates to the caller's own estates. Off (default): both behave exactly
+	// as before PR #876, so existing guards keep working until grants exist.
+	guardGrantsOn bool
+
 	db       *pgxpool.Pool
 	redis    *goredis.Client
 	geocoder AddressGeocoder
@@ -35,6 +43,13 @@ type Service struct {
 	kyc      KYCVerifier  // optional; required only when an election requires KYC
 	notifier Notifier     // optional; push delivery (in-app feed works without it)
 	llm      LLMGenerator // optional; required only for AI note-taking (Block 33)
+
+	// merchantGate authorises estate creation. When nil (the default, and
+	// whenever FEATURE_ESTATE_MERCHANT_GATE is off) CreateEstate keeps its
+	// historical behaviour and any authenticated user may create an estate. When
+	// set, it is consulted and a creator without an approved estate-management
+	// merchant identity is refused.
+	merchantGate EstateMerchantGate
 }
 
 func NewService(db *pgxpool.Pool, redis *goredis.Client) *Service {
@@ -50,6 +65,18 @@ func (s *Service) WithGeocoder(g AddressGeocoder) *Service {
 
 // CreateEstate creates a new estate and assigns the creator as estate_admin.
 func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEstateRequest) (*Estate, error) {
+	// SP-01: an approved estate-management merchant may create estates. When a
+	// gate is wired (FEATURE_ESTATE_MERCHANT_GATE on), it fails closed: an error
+	// or a false decision blocks creation so privileges are never self-granted.
+	if s.merchantGate != nil {
+		ok, err := s.merchantGate.CanCreateEstate(ctx, adminID)
+		if err != nil {
+			return nil, fmt.Errorf("estate: merchant gate check: %w", err)
+		}
+		if !ok {
+			return nil, ErrEstateManagerApprovalRequired
+		}
+	}
 	e := &Estate{
 		ID:        uuid.New().String(),
 		Name:      req.Name,
@@ -385,7 +412,7 @@ func (s *Service) ListGates(ctx context.Context, estateID, userID string) ([]Gat
 // the issuing resident's unit; the numeric code space is small enough to brute
 // force, so it must not be callable cross-estate (previously unauthenticated).
 func (s *Service) LookupCode(ctx context.Context, estateID, userID, numericCode, qrCode string) (*CheckinPayload, error) {
-	if err := s.assertResident(ctx, estateID, userID); err != nil {
+	if err := s.assertGate(ctx, estateID, userID, guardRoles...); err != nil {
 		return nil, err
 	}
 	return s.lookupCode(ctx, estateID, numericCode, qrCode)
@@ -398,7 +425,7 @@ func (s *Service) lookupCode(ctx context.Context, estateID, numericCode, qrCode 
 
 	q := `SELECT id, estate_id, issued_by, visitor_name, COALESCE(visitor_phone,''), COALESCE(vehicle_plate,''),
 		COALESCE(purpose,''), code_type, numeric_code, qr_code::TEXT, valid_from, valid_until,
-		used_count, max_uses, status, blacklisted, created_at
+		used_count, max_uses, status, blacklisted, require_host_approval, COALESCE(gate_id::TEXT,''), created_at
 		FROM visitor_access_codes WHERE estate_id=$1`
 	if numericCode != "" {
 		q += " AND numeric_code=$2"
@@ -412,7 +439,8 @@ func (s *Service) lookupCode(ctx context.Context, estateID, numericCode, qrCode 
 	if err := s.db.QueryRow(ctx, q, estateID, lookup).Scan(
 		&c.ID, &c.EstateID, &c.IssuedBy, &c.VisitorName, &c.VisitorPhone,
 		&c.VehiclePlate, &c.Purpose, &c.CodeType, &c.NumericCode, &c.QRCode,
-		&c.ValidFrom, &c.ValidUntil, &c.UsedCount, &c.MaxUses, &c.Status, &c.Blacklisted, &c.CreatedAt,
+		&c.ValidFrom, &c.ValidUntil, &c.UsedCount, &c.MaxUses, &c.Status, &c.Blacklisted,
+		&c.RequireHostApproval, &c.GateID, &c.CreatedAt,
 	); err != nil {
 		return nil, errors.New("access code not found")
 	}
@@ -441,7 +469,7 @@ func (s *Service) lookupCode(ctx context.Context, estateID, numericCode, qrCode 
 // ESTATE-AUTHZ: member-only — was callable by any authed user, letting them
 // consume someone else's visitor codes and forge gate events.
 func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, req GuardCheckinRequest) (*CheckinPayload, error) {
-	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+	if err := s.assertGate(ctx, estateID, guardID, guardRoles...); err != nil {
 		return nil, err
 	}
 	payload, err := s.lookupCode(ctx, estateID, req.NumericCode, req.QRCode)
@@ -458,21 +486,44 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// SP-02: a code flagged require_host_approval is admitted only against a host
+	// approval decided within arrivalApprovalTTL, and each approval admits ONCE:
+	// it is consumed here, in the same transaction as the code use, so a
+	// multi-use code needs a fresh approval per visit and two concurrent admits
+	// cannot share one approval (FOR UPDATE SKIP LOCKED + consumed_at).
+	if payload.Code.RequireHostApproval {
+		var approvalID string
+		err := tx.QueryRow(ctx,
+			`UPDATE visitor_arrival_requests SET consumed_at = NOW()
+			 WHERE id = (SELECT id FROM visitor_arrival_requests
+			             WHERE access_code_id = $1 AND status = 'approved' AND consumed_at IS NULL
+			               AND decided_at >= NOW() - make_interval(secs => $2)
+			             ORDER BY decided_at DESC LIMIT 1
+			             FOR UPDATE SKIP LOCKED)
+			 RETURNING id`, payload.Code.ID, arrivalApprovalTTL.Seconds()).Scan(&approvalID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return payload, errors.New("entry denied: awaiting host approval")
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Atomic consumption claim (EST-UAT-0094): the UPDATE re-asserts every
 	// admission predicate in the same statement that increments used_count, so
 	// two guards scanning one code concurrently cannot both win — the loser's
 	// UPDATE matches zero rows. The earlier read-then-write admitted both.
-	ct, err := tx.Exec(ctx,
+	tag, err := tx.Exec(ctx,
 		`UPDATE visitor_access_codes SET used_count=used_count+1,
 		status=CASE WHEN used_count+1 >= max_uses THEN 'used' ELSE status END
 		WHERE id=$1 AND status='active' AND blacklisted=FALSE
-		AND used_count < max_uses AND valid_from <= NOW() AND valid_until > NOW()`,
-		payload.Code.ID,
+		  AND valid_from <= NOW() AND valid_until >= NOW()
+		  AND used_count < max_uses`, payload.Code.ID,
 	)
 	if err != nil {
 		return nil, err
 	}
-	if ct.RowsAffected() == 0 {
+	if tag.RowsAffected() == 0 {
 		// State moved under us — re-read for an accurate deny reason.
 		payload, lerr := s.lookupCode(ctx, estateID, req.NumericCode, req.QRCode)
 		if lerr != nil || payload == nil {
@@ -516,7 +567,7 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 // CheckOutVisitor records a gate departure.
 // ESTATE-AUTHZ: member-only (was callable by any authed user).
 func (s *Service) CheckOutVisitor(ctx context.Context, estateID, guardID, codeID, gateID string) error {
-	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+	if err := s.assertGate(ctx, estateID, guardID, guardRoles...); err != nil {
 		return err
 	}
 	var cnt int
@@ -537,7 +588,7 @@ func (s *Service) CheckOutVisitor(ctx context.Context, estateID, guardID, codeID
 // ESTATE-AUTHZ: member-only (was callable by any authed user — forged incident
 // reports into any estate's security log).
 func (s *Service) SubmitIncidentReport(ctx context.Context, estateID, guardID string, req SubmitIncidentRequest) (*IncidentReport, error) {
-	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+	if err := s.assertGate(ctx, estateID, guardID, guardRoles...); err != nil {
 		return nil, err
 	}
 	rep := &IncidentReport{
@@ -554,7 +605,7 @@ func (s *Service) SubmitIncidentReport(ctx context.Context, estateID, guardID st
 // HandoverShift closes the current shift and optionally starts the next.
 // ESTATE-AUTHZ: member-only (was callable by any authed user — forged shifts).
 func (s *Service) HandoverShift(ctx context.Context, estateID, guardID string, req HandoverRequest) (*GuardShift, error) {
-	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+	if err := s.assertGate(ctx, estateID, guardID, guardRoles...); err != nil {
 		return nil, err
 	}
 	_, _ = s.db.Exec(ctx,
@@ -578,7 +629,7 @@ func (s *Service) HandoverShift(ctx context.Context, estateID, guardID string, r
 // names/phones/plates and the numeric entry codes); previously any authed user
 // could pull it for any estate id.
 func (s *Service) GetExpectedVisitors(ctx context.Context, estateID, userID string) ([]AccessCode, error) {
-	if err := s.assertResident(ctx, estateID, userID); err != nil {
+	if err := s.assertGate(ctx, estateID, userID, guardRoles...); err != nil {
 		return nil, err
 	}
 	const q = `SELECT id, estate_id, issued_by, visitor_name, COALESCE(visitor_phone,''), COALESCE(vehicle_plate,''),
@@ -609,7 +660,7 @@ func (s *Service) GetExpectedVisitors(ctx context.Context, estateID, userID stri
 // SyncOfflineLogs bulk-inserts offline gate events (idempotent via client_id UNIQUE).
 // ESTATE-AUTHZ: member-only (was callable by any authed user — forged logs).
 func (s *Service) SyncOfflineLogs(ctx context.Context, estateID, guardID string, logs []OfflineLogEntry) (int, error) {
-	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+	if err := s.assertGate(ctx, estateID, guardID, guardRoles...); err != nil {
 		return 0, err
 	}
 	synced := 0
@@ -673,7 +724,15 @@ func denyReason(c *AccessCode) string {
 
 // generateNumericCode produces a random 6-digit string, retrying on collision.
 func generateNumericCode() string {
-	return fmt.Sprintf("%06d", uuid.New().ID()%1_000_000)
+	// Cryptographically random 6 digits (was uuid.ID()-derived, which is not a CSPRNG
+	// and predictable). Brute-forcing the code space is further contained by the
+	// member-only lookup + per-estate rate limit mounted on the guard routes.
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%06d", uuid.New().ID()%1_000_000) // never fail issuance; still random-ish
+	}
+	n := binary.BigEndian.Uint32(b[:]) % 1_000_000
+	return fmt.Sprintf("%06d", n)
 }
 
 // CreateAccessCode issues a typed visitor access code with a unique 6-digit numeric code.
@@ -705,16 +764,20 @@ func (s *Service) CreateAccessCode(ctx context.Context, estateID, userID string,
 			CodeType: req.CodeType, NumericCode: numeric, QRCode: qrID,
 			ValidFrom: req.ValidFrom, ValidUntil: req.ValidUntil,
 			MaxUses: req.MaxUses, Status: "active", CreatedAt: time.Now(),
-			Recurrence: req.Recurrence,
+			Recurrence:          req.Recurrence,
+			RequireHostApproval: req.RequireHostApproval,
+			GateID:              req.GateID,
 		}
 		const q = `
 			INSERT INTO visitor_access_codes
 				(id, estate_id, issued_by, visitor_name, visitor_phone, vehicle_plate, purpose,
-				 code_type, numeric_code, qr_code, valid_from, valid_until, recurrence, max_uses)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`
+				 code_type, numeric_code, qr_code, valid_from, valid_until, recurrence, max_uses,
+				 require_host_approval, gate_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,'')::uuid)`
 		_, err := s.db.Exec(ctx, q,
 			c.ID, estateID, userID, req.VisitorName, req.VisitorPhone, req.VehiclePlate, req.Purpose,
 			req.CodeType, numeric, qrID, req.ValidFrom, req.ValidUntil, req.Recurrence, req.MaxUses,
+			req.RequireHostApproval, req.GateID,
 		)
 		if err != nil {
 			continue
@@ -1405,10 +1468,48 @@ func (s *Service) GetMyJoinRequest(ctx context.Context, estateID, userID string)
 	return jr, nil
 }
 
-// ListEstates lists all estates (for search/discovery).
-func (s *Service) ListEstates(ctx context.Context, search string) ([]Estate, error) {
+// ListEstates lists only the estates the caller belongs to (as a resident/admin or
+// via a live staff grant). SP-01: it previously returned every estate's name,
+// address and admin_id to any authenticated caller — a cross-estate disclosure.
+func (s *Service) ListEstates(ctx context.Context, callerID, search string) ([]Estate, error) {
+	if !s.guardGrantsOn {
+		return s.listAllEstates(ctx, search)
+	}
+	if callerID == "" {
+		return nil, ErrNotMember
+	}
 	const q = `
-		SELECT id, name, address, admin_id, created_at FROM estates
+		SELECT e.id, e.name, COALESCE(e.address,''), e.admin_id, e.created_at FROM estates e
+		WHERE (
+			EXISTS (SELECT 1 FROM estate_residents er WHERE er.estate_id = e.id AND er.user_id = $2)
+			OR EXISTS (SELECT 1 FROM estate_staff_grants g
+			           WHERE g.estate_id = e.id AND g.user_id = $2
+			             AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > NOW()))
+		)
+		AND ($1='' OR e.name ILIKE '%' || $1 || '%' OR e.address ILIKE '%' || $1 || '%')
+		ORDER BY e.name LIMIT 50`
+	rows, err := s.db.Query(ctx, q, search, callerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Estate
+	for rows.Next() {
+		var e Estate
+		if err := rows.Scan(&e.ID, &e.Name, &e.Address, &e.AdminID, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// listAllEstates is ListEstates before PR #876 (every estate, for discovery). It
+// stays the behaviour while FEATURE_ESTATE_GUARD_GRANTS is off. The only change is
+// COALESCE(address): the old query failed the whole list on one NULL address.
+func (s *Service) listAllEstates(ctx context.Context, search string) ([]Estate, error) {
+	const q = `
+		SELECT id, name, COALESCE(address,''), admin_id, created_at FROM estates
 		WHERE ($1='' OR name ILIKE '%' || $1 || '%' OR address ILIKE '%' || $1 || '%')
 		ORDER BY name LIMIT 50`
 	rows, err := s.db.Query(ctx, q, search)

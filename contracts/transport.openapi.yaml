@@ -230,6 +230,14 @@ components:
         createdAt: { type: string, format: date-time }
         pickupPin: { type: string, description: Sender only, while live }
         dropoffPin: { type: string, description: Sender only, while live }
+        receiverNotifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            Sender only. When the receiver was sent the drop-off PIN by SMS (FEATURE_PARCEL_RECEIVER_PIN_SMS).
+            Null when no SMS was sent: flag off, SMS not configured, or the send failed. The app should
+            then tell the sender to pass the drop-off PIN on themselves.
     ParcelRequest:
       type: object
       description: An open parcel a courier can accept. No receiver details before acceptance.
@@ -1142,6 +1150,12 @@ paths:
     post:
       tags: [parcel]
       summary: Courier — mark parcel picked up
+      description: >
+        Moves the parcel to in_transit. With FEATURE_PARCEL_RECEIVER_PIN_SMS on and SMS configured, the
+        receiver (receiver_phone) is then sent ONE SMS carrying the drop-off PIN. It goes out at most once
+        per parcel, however often this is retried. It is best-effort: a failed send never fails or delays
+        this call, and the parcel's receiverNotifiedAt stays null. The PIN is never written to logs or
+        audit records.
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: Parcel }, '401': { description: Not authenticated } }
   /driver/parcels/{id}/verify-dropoff:

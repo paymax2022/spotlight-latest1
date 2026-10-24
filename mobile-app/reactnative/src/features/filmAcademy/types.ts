@@ -121,6 +121,15 @@ export interface FilmAcademyInstalment {
   status: string | null;
 }
 
+/** One interest area the applicant chose, with the priced option they picked. NAIRA. */
+export interface FilmAcademyAppliedArea {
+  slug: string;
+  label: string;
+  optionKey: string | null;
+  optionLabel: string | null;
+  priceNgn: number;
+}
+
 export interface FilmAcademyApplicationStatus {
   application: {
     id: string;
@@ -146,6 +155,10 @@ export interface FilmAcademyApplicationStatus {
   plan: { id: string; total_amount_ngn: number; discounted_amount_ngn: number | null; installments_count: number } | null;
   payments: FilmAcademyInstalment[];
   actions: FilmAcademyAction[];
+  /** Interest areas applied for. Empty on an older server. */
+  areas: FilmAcademyAppliedArea[];
+  /** Naira. Sum of the priced areas; 0 when unknown. */
+  tuitionTotalNgn: number;
 }
 
 /** Why the learning area is not open yet. Decided server-side. */
@@ -170,12 +183,27 @@ export interface FilmAcademyLesson {
   completed_at: string | null;
 }
 
+export interface FilmAcademyModuleQuiz {
+  id: string;
+  title: string;
+  passMark: number; /** 85 for module quizzes */
+  timeLimitMinutes: number;
+  maxAttempts: number;
+  canStart: boolean;
+  /** Null = not attempted, else the learner's last result (scorePercent >= 85 = passed) */
+  lastResult: { scorePercent: number; passed: boolean; earnedPoints: number; maxPoints: number } | null;
+}
+
 export interface FilmAcademyModule {
   id: string;
   title: string;
   description: string | null;
   lessons: FilmAcademyLesson[];
   completedCount: number;
+  /** Module-level quiz (tiered learning: 85% required to unlock next module) */
+  quiz?: FilmAcademyModuleQuiz;
+  /** True if this module is locked (previous module's quiz not passed at 85%) */
+  isLocked?: boolean;
 }
 
 export interface FilmAcademyCurriculum {
@@ -247,4 +275,86 @@ export interface FilmAcademyAssignments {
   pageSize: number;
   total: number;
   hasMore: boolean;
+}
+
+// ── Exams (PRD BK-10) ────────────────────────────────────────────────────────
+// These mirror /api/academy/exams* and /api/academy/attempts* in frontend-web.
+// Server-authoritative: the draw, option shuffle, deadline and score all happen
+// there. Nothing here carries a correct answer — a learner sees only their own
+// picked option, never which one was right.
+
+/** Why an exam cannot be started — set by the server, mirrors examEligibility. */
+export type ExamBlockerCode =
+  | 'NOT_FOR_YOUR_PROGRAMME'
+  | 'EXAM_MISCONFIGURED'
+  | 'ATTEMPT_LIMIT_REACHED'
+  | 'EXAM_UNPUBLISHED';
+
+/** One exam on the learner's list. No draw config, no questions, no key. */
+export interface FilmAcademyExamSummary {
+  id: string;
+  title: string;
+  description: string | null;
+  kind: string;
+  passMark: number;
+  timeLimitMinutes: number;
+  maxAttempts: number;
+  attemptsUsed: number;
+  canStart: boolean;
+  blockerCode: ExamBlockerCode | null;
+  blockerMessage: string | null;
+}
+
+export interface FilmAcademyExamList {
+  locked: boolean;
+  reason?: LearningLockReason;
+  exams: FilmAcademyExamSummary[];
+}
+
+/** One option as presented to the learner — an opaque id, not a bank id. */
+export interface ExamPresentedOption {
+  presentationOptionId: string;
+  text: string;
+}
+
+export interface ExamPresentedQuestion {
+  attemptQuestionId: string;
+  stem: string;
+  points: number;
+  options: ExamPresentedOption[];
+}
+
+/** The started attempt: the immutable draw, already shuffled, plus the timer. */
+export interface FilmAcademyStartedAttempt {
+  attemptId: string;
+  state: 'in_progress';
+  startedAt: string;
+  deadlineAt: string;
+  questionCount: number;
+  questions: ExamPresentedQuestion[];
+}
+
+/** The committed score. `scorePercent` is 0-100; points are the raw sums. */
+export interface FilmAcademyExamResult {
+  attemptId: string;
+  state: 'scored';
+  scorePercent: number;
+  earnedPoints: number;
+  maxPoints: number;
+  passed: boolean;
+  answeredCount: number;
+  totalCount: number;
+}
+
+/** A loaded attempt — replayable while in progress, or the result once scored. */
+export interface FilmAcademyAttemptView {
+  attemptId: string;
+  state: string;
+  startedAt: string | null;
+  deadlineAt: string | null;
+  expired: boolean;
+  questions: ExamPresentedQuestion[];
+  /** attemptQuestionId -> the learner's own last saved presentationOptionId. */
+  answered: Record<string, string>;
+  result: FilmAcademyExamResult | null;
 }

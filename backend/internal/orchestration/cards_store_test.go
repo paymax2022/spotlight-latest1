@@ -91,7 +91,7 @@ func (m *memCardStore) CreateCard(_ context.Context, business string, draft Card
 	c := Card{
 		ID: "card_test_" + strconv.Itoa(m.created), Label: draft.Label, Brand: "visa", Currency: cur,
 		Last4: "4242", ExpMonth: 1, ExpYear: 30, CardholderName: "TEST USER",
-		Status: "active", Color: "purple", Controls: defaultCardControls(), Provider: "maplerad",
+		Status: "active", Color: "purple", Controls: defaultCardControls(), Provider: "partner",
 		CreatedAt: "2026-01-01T00:00:00Z",
 	}
 	m.cards[c.ID] = c

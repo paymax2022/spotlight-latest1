@@ -22,8 +22,8 @@ var (
 	// ErrTierTooLow means the user has not reached Tier 1 (BVN verified). A
 	// dedicated NGN virtual account is a regulated product and requires it.
 	ErrTierTooLow = errors.New("va: KYC tier 1 (BVN) required to provision a virtual account")
-	// ErrProviderUnavailable means no VA provider is configured (no Paystack/
-	// Maplerad key). Routes stay mounted but cannot provision until configured.
+	// ErrProviderUnavailable means no VA provider is configured (no Paystack
+	// key). Routes stay mounted but cannot provision until configured.
 	ErrProviderUnavailable = errors.New("va: virtual account provider not configured")
 )
 

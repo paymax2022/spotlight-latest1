@@ -13,13 +13,16 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
-import { getUtilityPaystackIntent } from '@/api/billing.api';
+import { getUtilityPaystackIntent, verifyUtilityPaystackIntent } from '@/api/billing.api';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 // Resolver screen for an in-app Paystack bill payment. A utility_paystack_intents
-// row is confirmed asynchronously by the Paystack webhook, which sets its status
-// and links the real utility_transactions row. We poll the intent by reference,
-// then hand off to the existing transaction status screen once the webhook lands.
+// row is settled server-side and links the real utility_transactions row. We
+// drive that settlement ourselves (verifyUtilityPaystackIntent) AND poll the
+// intent by reference, then hand off to the transaction status screen once it
+// resolves. Relying on the Paystack webhook alone leaves the intent 'pending'
+// forever on a local dev server (the webhook cannot reach localhost) and often
+// in production too (the in-app checkout misses the callback redirect).
 
 export default function PaystackIntentScreen() {
   const { reference } = useLocalSearchParams<{ reference: string }>();
@@ -35,7 +38,26 @@ export default function PaystackIntentScreen() {
     },
   });
 
-  // Once the webhook links the real transaction, replace into its status screen.
+  // Actively settle the intent rather than waiting for the webhook. Verify is
+  // idempotent server-side (it returns already_processed once settled and races
+  // the webhook safely), so we fire it on mount and on a slow interval while the
+  // intent is unresolved — ~12/min, under the endpoint's 20/min limit. It is
+  // best-effort: the intent-row poll above stays the source of truth, so a verify
+  // error (already settled, transient network) must never surface on screen.
+  const unresolved = !data || (data.status !== 'completed' && data.status !== 'failed');
+  React.useEffect(() => {
+    if (!reference || !unresolved) return;
+    let cancelled = false;
+    const settle = async () => {
+      try { await verifyUtilityPaystackIntent(reference); } catch { /* best-effort — poll owns the UI state */ }
+      if (!cancelled) refetch();
+    };
+    settle(); // kick immediately so a missed webhook/callback resolves at once
+    const id = setInterval(settle, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [reference, unresolved, refetch]);
+
+  // Once the intent links the real transaction, replace into its status screen.
   React.useEffect(() => {
     if (data?.status === 'completed' && data.transactionId) {
       router.replace(`/services/transactions/${data.transactionId}` as never);

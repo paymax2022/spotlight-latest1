@@ -1,7 +1,7 @@
 // Control-plane contract for the Paymax FX console (spec §13). All money is
 // integer minor units (kobo/cents). Mirrors the normalized API entities (§11).
 
-export type Provider = 'eversend' | 'maplerad';
+export type Provider = 'eversend' | 'vertofx';
 export type BreakerState = 'closed' | 'open' | 'half_open';
 
 export interface ProviderMixRow {

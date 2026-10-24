@@ -100,19 +100,6 @@ type Config struct {
 	CryptoQuidaxLiveKey     string
 	CryptoQuidaxLiveBaseURL string
 
-	// Maplerad credentials (FX + alternative VA provider).
-	MapleradSecretKey     string
-	MapleradPublicKey     string
-	MapleradProd          bool
-	MapleradWebhookSecret string
-	// MapleradBaseURL overrides the provider API root (regional endpoint, or a
-	// provider fake for e2e). Empty ⇒ the sandbox/prod default selected by
-	// MAPLERAD_PROD. WithBaseURL ignores "", so wiring it unconditionally is safe.
-	MapleradBaseURL string
-	// FeatureMapleradEnabled gates the Maplerad WaaS DOMAIN money path (ADR-012):
-	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
-	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
-	FeatureMapleradEnabled bool
 	// FeatureUtilityBillsEnabled gates the Utility Bills DOMAIN money path:
 	// member /api/finance/utilitybills/* routes, admin routes, and background
 	// jobs (pending-transaction requery sweep). DEFAULT OFF — no flag, no
@@ -252,8 +239,23 @@ type Config struct {
 	// FeatureEventsTeamRoles (FEATURE_EVENTS_TEAM_ROLES) exposes per-event team (MANAGER) grant routes.
 	FeatureEventsTeamRoles bool
 	// FeatureEventsComps (FEATURE_EVENTS_COMPS) exposes comp tickets, attendee CSV export and organiser announcements.
-	FeatureEventsComps   bool
+	FeatureEventsComps bool
+	// FeatureEventsSocial (FEATURE_EVENTS_SOCIAL) exposes event likes and organiser follows.
+	FeatureEventsSocial  bool
 	FeatureEstateEnabled bool
+	// FeatureEstateMerchantGate (SP-01) enforces that a user holds an approved
+	// estate-management merchant identity before creating an estate. Default off:
+	// CreateEstate keeps its historical behaviour until the gate is ratified.
+	FeatureEstateMerchantGate bool
+	// FeatureEstateGuardGrants (FEATURE_ESTATE_GUARD_GRANTS) makes guard/gate
+	// operations require estate_admin or a live staff grant, and narrows estate
+	// listing to the caller's estates. Default off: any resident keeps gate access
+	// (the previous rule) until grants have been issued (ADR-PR876).
+	FeatureEstateGuardGrants bool
+	// EstateGuardRatePerMin / EstateCodeRatePerMin cap per-user guard admit/lookup
+	// and access-code creation requests (SP-02; estate routes previously unlimitted).
+	EstateGuardRatePerMin int
+	EstateCodeRatePerMin  int
 	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) estate dues path (estate/paystackcheckout): direct
 	// Paystack payment posted DR provider-clearing / CR settlement, never
@@ -267,6 +269,13 @@ type Config struct {
 	// FeatureRestaurantAdminCategories moves menu-category ownership to the platform:
 	// owners get 403 on category create/delete, and the admin taxonomy routes mount.
 	FeatureRestaurantAdminCategories bool
+
+	// FeatureRestaurantTaxonomyBrowse is the customer-facing kill switch for taxonomy
+	// browsing: the /menu-taxonomy/browse reads, `cuisines` on restaurants and
+	// `sections` on restaurant detail. It is ANDed with FeatureRestaurantAdminCategories
+	// (the taxonomy must exist before it can be browsed); off leaves the merchant and
+	// admin taxonomy surfaces untouched. Default OFF.
+	FeatureRestaurantTaxonomyBrowse bool
 
 	// FeatureRestaurantDiscounts turns on owner discounts (automatic, item or category
 	// or whole-restaurant). Off means no discount routes and no discounted prices.
@@ -297,6 +306,10 @@ type Config struct {
 	FeatureVoteBridgeEnabled     bool
 	FeatureTransportEnabled      bool
 	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
+	// FeatureBankAccountNameMatch: a restaurant payout account is verified only when
+	// the bank holder name matches the owner's KYC-verified name or an approved KYB
+	// legal name; mismatches are held for admin review. Off = name-enquiry only.
+	FeatureBankAccountNameMatch bool
 	// FeatureParcelRateCardEnabled prices parcels from transport_parcel_rate_card
 	// (size × speed multiplier + minimum fare per cell). Off = legacy multipliers.
 	FeatureParcelRateCardEnabled bool
@@ -308,6 +321,10 @@ type Config struct {
 	// parcel insurance is an opt-in tick paid at booking with the fare and held
 	// until the policy binds. Off = legacy (bound and debited at courier accept).
 	FeatureParcelPrepaidInsuranceEnabled bool
+	// FeatureParcelReceiverPinSMSEnabled (FEATURE_PARCEL_RECEIVER_PIN_SMS): once a
+	// parcel is picked up, text the receiver their drop-off PIN (Termii), at most
+	// once per parcel. Needs TERMII_API_KEY; off or unconfigured = no SMS.
+	FeatureParcelReceiverPinSMSEnabled bool
 	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) ride-hailing checkout path
 	// (transport/paystackcheckout): a ride paid directly via Paystack, escrowed
@@ -899,12 +916,6 @@ func Load() Config {
 		CryptoQuidaxLiveKey:     getEnv("QUIDAX_LIVE_API_KEY", ""),
 		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://openapi.quidax.io/exchange-open-api/api/v1"),
 
-		MapleradSecretKey:          getEnv("MAPLERAD_SECRET_KEY", ""),
-		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
-		MapleradProd:               getEnvBool("MAPLERAD_PROD", false),
-		MapleradWebhookSecret:      getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
-		MapleradBaseURL:            getEnv("MAPLERAD_BASE_URL", ""),
-		FeatureMapleradEnabled:     getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
 		FeatureUtilityBillsEnabled: getEnvBool("FEATURE_UTILITY_BILLS_ENABLED", false),
 
 		EversendClientID:      getEnv("EVERSEND_CLIENT_ID", ""),
@@ -986,11 +997,15 @@ func Load() Config {
 		FeatureEventsTicketingDepth:                  getEnvBool("FEATURE_EVENTS_TICKETING_DEPTH", false),
 		FeatureEventsTeamRoles:                       getEnvBool("FEATURE_EVENTS_TEAM_ROLES", false),
 		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
+		FeatureEventsSocial:                          getEnvBool("FEATURE_EVENTS_SOCIAL", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
+		FeatureEstateMerchantGate:                    getEnvBool("FEATURE_ESTATE_MERCHANT_GATE", false),
+		FeatureEstateGuardGrants:                     getEnvBool("FEATURE_ESTATE_GUARD_GRANTS", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:                     getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
 		FeatureRestaurantAdminCategories:             getEnvBool("FEATURE_RESTAURANT_ADMIN_CATEGORIES", false),
+		FeatureRestaurantTaxonomyBrowse:              getEnvBool("FEATURE_RESTAURANT_TAXONOMY_BROWSE", false),
 		FeatureRestaurantDiscounts:                   getEnvBool("FEATURE_RESTAURANT_DISCOUNTS", false),
 		FeatureRestaurantWithdrawalsEnabled:          getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
 		FeatureRestaurantPaystackCheckoutEnabled:     getEnvBool("FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED", false),
@@ -1000,8 +1015,10 @@ func Load() Config {
 		FeatureVoteBridgeEnabled:                     getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
+		FeatureBankAccountNameMatch:                  getEnvBool("FEATURE_BANK_ACCOUNT_NAME_MATCH", false),
 		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
 		FeatureParcelPrepaidInsuranceEnabled:         getEnvBool("FEATURE_PARCEL_PREPAID_INSURANCE", false),
+		FeatureParcelReceiverPinSMSEnabled:           getEnvBool("FEATURE_PARCEL_RECEIVER_PIN_SMS", false),
 		ParcelInsuranceMinPremiumKobo:                getEnvInt("PARCEL_INSURANCE_MIN_PREMIUM_KOBO", 200000),
 		FeatureTransportPaystackCheckoutEnabled:      getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureTransportPaystackParcelEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_PARCEL_ENABLED", false),
@@ -1122,6 +1139,9 @@ func Load() Config {
 		FinanceTransferRatePerMin: getEnvInt("FINANCE_TRANSFER_RATE_PER_MIN", 30),
 		FinancePinRatePerMin:      getEnvInt("FINANCE_PIN_RATE_PER_MIN", 10),
 		MapsBudgetAlertWebhook:    getEnv("MAPS_BUDGET_ALERT_WEBHOOK", ""),
+
+		EstateGuardRatePerMin: getEnvInt("ESTATE_GUARD_RATE_PER_MIN", 30),
+		EstateCodeRatePerMin:  getEnvInt("ESTATE_CODE_RATE_PER_MIN", 10),
 
 		ConnectFreeVoteRatePerMin: getEnvInt("CONNECT_FREE_VOTE_RATE_PER_MIN", 30),
 		ConnectPaidVoteRatePerMin: getEnvInt("CONNECT_PAID_VOTE_RATE_PER_MIN", 10),
@@ -1280,13 +1300,8 @@ func (c Config) Validate() error {
 	require(c.FeatureBankTransfersEnabled && strings.EqualFold(strings.TrimSpace(c.TransferProviderDefault), "monnify"),
 		"MONNIFY_SECRET_KEY", c.MonnifySecretKey)
 
-	require(c.FeatureMapleradEnabled, "MAPLERAD_SECRET_KEY", c.MapleradSecretKey)
-	prefix(c.MapleradSecretKey, "mpr_", "MAPLERAD_SECRET_KEY")
 	if c.VertoFXProd && c.VertoFXBaseURL != "" {
 		problems = append(problems, "VERTOFX_BASE_URL must not be set when VERTOFX_PROD=true — it reroutes every VertoFX call away from the real provider")
-	}
-	if c.IsProd() && c.FeatureMapleradEnabled && c.MapleradProd && strings.Contains(c.MapleradSecretKey, "sandbox") {
-		problems = append(problems, "MAPLERAD_SECRET_KEY is a sandbox key but MAPLERAD_PROD=true")
 	}
 
 	// Multi-provider KYC verification (ADR-013): when enabled, at least one
@@ -1372,9 +1387,6 @@ func (c Config) Validate() error {
 		}
 		if c.FeatureTransportEnabled && !c.FeatureMapsEnabled {
 			strict = append(strict, "FEATURE_TRANSPORT_ENABLED=true requires FEATURE_MAPS_ENABLED=true (no MapService means MockMaps)")
-		}
-		if c.MapleradBaseURL != "" {
-			strict = append(strict, "MAPLERAD_BASE_URL must not be set outside development — it reroutes every Maplerad call away from the real provider")
 		}
 		if c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled {
 			if isPlaceholder(c.PaystackSecretKey) {

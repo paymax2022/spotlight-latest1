@@ -24,7 +24,6 @@ import (
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
-	"spotlight/backend/internal/provider/maplerad"
 )
 
 const (
@@ -80,11 +79,45 @@ func validCurrency(c string) bool {
 	return true
 }
 
+// ProviderQuoteRequest asks the FX provider for a single-use quote.
+type ProviderQuoteRequest struct {
+	SourceCurrency string
+	TargetCurrency string
+	AmountKobo     int64 // source currency minor units
+}
+
+// ProviderQuote is the provider's indicative rate and amounts.
+type ProviderQuote struct {
+	QuoteID           string
+	Rate              float64
+	TargetAmountMinor int64
+}
+
+// ProviderConvertRequest identifies the provider quote to execute. The quote
+// reference is single-use; replay protection lives on our side.
+type ProviderConvertRequest struct {
+	QuoteID string
+}
+
+// ProviderConversion is the normalized result of an executed conversion.
+type ProviderConversion struct {
+	TransactionID     string
+	Rate              float64
+	TargetAmountMinor int64
+}
+
+// Provider is the FX gateway the wallet FX service depends on. No implementation
+// is wired at present, so the /fx quote and convert routes stay unmounted.
+type Provider interface {
+	CreateFXQuote(ctx context.Context, req ProviderQuoteRequest) (*ProviderQuote, error)
+	ConvertFX(ctx context.Context, req ProviderConvertRequest) (*ProviderConversion, error)
+}
+
 // Service manages FX quotes, conversions, and currency wallets.
 type Service struct {
 	db         *pgxpool.Pool
 	ledger     *ledger.Service
-	provider   *maplerad.Client
+	provider   Provider
 	redis      *goredis.Client    // for quote reservation
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	markup     MarkupResolver     // Paymax FX markup; never nil after NewService
@@ -95,7 +128,7 @@ type Service struct {
 // same pool (tiers.NewService needs only the DB), so no extra wiring is required
 // at the call site — same convention as social.NewService. A nil pool leaves the
 // gate nil, and enforceDebitLimit then fails closed via ErrTierGateUnwired.
-func NewService(db *pgxpool.Pool, ledger *ledger.Service, provider *maplerad.Client, redis *goredis.Client) *Service {
+func NewService(db *pgxpool.Pool, ledger *ledger.Service, provider Provider, redis *goredis.Client) *Service {
 	s := &Service{db: db, ledger: ledger, provider: provider, redis: redis, markup: DefaultMarkup()}
 	if db != nil {
 		s.tiers = tiers.NewService(db)
@@ -188,12 +221,12 @@ func (s *Service) GetCurrencyWallet(ctx context.Context, userID, currency string
 	return w, nil
 }
 
-// GetQuote obtains an FX rate from Maplerad, stores it, and reserves it in Redis.
+// GetQuote obtains an FX rate from the provider, stores it, and reserves it in Redis.
 func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest) (*FXQuote, error) {
 	// CreateFXQuote (not the /fx/rates board): Convert needs the provider
-	// reference the board never issues. Maplerad's reference is single-use and
+	// reference the board never issues. The provider's reference is single-use and
 	// expires, so a Convert after quoteTTL fails closed.
-	providerResp, err := s.provider.CreateFXQuote(ctx, maplerad.FXQuoteRequest{
+	providerResp, err := s.provider.CreateFXQuote(ctx, ProviderQuoteRequest{
 		SourceCurrency: req.SourceCurrency,
 		TargetCurrency: req.TargetCurrency,
 		AmountKobo:     req.AmountKobo,
@@ -202,7 +235,7 @@ func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest)
 		return nil, fmt.Errorf("fx: get quote: %w", err)
 	}
 
-	// Maplerad prices its margin into the rate (no fee field), so the customer
+	// The provider prices its margin into the rate (no fee field), so the customer
 	// fee is OUR markup on the source principal. It is persisted on the quote so
 	// Convert debits the disclosed amount even if the markup changes meanwhile.
 	// Fail closed: an unresolvable rate refuses rather than charging a fee
@@ -300,9 +333,9 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 		return nil, fmt.Errorf("fx: debit source wallet: %w", err)
 	}
 
-	// Maplerad's exchange endpoint has no client-reference field; our reference
+	// The exchange call carries no client-reference field; our reference
 	// guards the ledger legs, not the provider call.
-	convResp, err := s.provider.ConvertFX(ctx, maplerad.ConvertFXRequest{
+	convResp, err := s.provider.ConvertFX(ctx, ProviderConvertRequest{
 		QuoteID: q.ProviderQuoteID,
 	})
 	if err != nil {
@@ -499,7 +532,7 @@ type CurrencyWallet struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// FXQuote holds a Maplerad rate quote that is Redis-reserved with a TTL.
+// FXQuote holds a provider rate quote that is Redis-reserved with a TTL.
 type FXQuote struct {
 	ID                string    `json:"id"`
 	UserID            string    `json:"user_id"`
@@ -746,7 +779,7 @@ func (h *MarkupHandler) ListAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{keyData: entries})
 }
 
-// Paymax FX markup. Maplerad prices its margin into the rate (no `fee` field on
+// Paymax FX markup. The provider prices its margin into the rate (no `fee` field on
 // the wire), so Paymax revenue here is an EXPLICIT markup, operator-tunable via
 // public.fx_markup_rates / PUT /api/finance/admin/fx/markup (ADR-030).
 // Operators work in PERCENT; the store keeps integer BASIS POINTS and

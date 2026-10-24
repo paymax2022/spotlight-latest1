@@ -18,7 +18,7 @@
 // Deliberately dependency-free (types only) so it is unit-testable under
 // `node --test` without pulling in the RN runtime.
 
-import type { Restaurant, RestaurantDetail, MenuCategory, MenuItem, LatLng, Order, OrderItem, ModifierGroup } from './types';
+import type { CuisineRef, MenuSection, Restaurant, RestaurantDetail, MenuCategory, MenuItem, LatLng, Order, OrderItem, ModifierGroup } from './types';
 
 type Raw = Record<string, unknown>;
 
@@ -80,6 +80,13 @@ function etaLabelFrom(prepMinutes: number): string {
   return `${p}–${p + 10} min`;
 }
 
+function mapCuisineRefs(input: unknown): CuisineRef[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  return input
+    .map((c) => { const r = asRaw(c); return { id: str(r.id), slug: str(r.slug), name: str(r.name) }; })
+    .filter((c) => c.id);
+}
+
 export function mapRestaurant(input: unknown): Restaurant {
   const raw = asRaw(input);
 
@@ -97,6 +104,7 @@ export function mapRestaurant(input: unknown): Restaurant {
     id: str(pick(raw, 'id')),
     name: str(pick(raw, 'name')),
     cuisine,
+    cuisineRefs: mapCuisineRefs(pick(raw, 'cuisines')),
 
     // does send. Empty (never undefined) when it sends none — the search filter
     // calls .some() on this directly.
@@ -310,6 +318,17 @@ export function mapMenuCategory(input: unknown): MenuCategory {
   };
 }
 
+export function mapMenuSection(input: unknown): MenuSection {
+  const raw = asRaw(input);
+  const items = pick(raw, 'items');
+  const id = raw.id;
+  return {
+    id: typeof id === 'string' && id ? id : null,
+    name: str(pick(raw, 'name')),
+    items: Array.isArray(items) ? items.map(mapMenuItem) : [],
+  };
+}
+
 /**
  * Detail is doubly mismatched: Go answers `{restaurant: {...}, categories: [...]}`
  * while the screens expect a FLAT Restaurant carrying `menu`. Flatten and rename
@@ -319,9 +338,11 @@ export function mapRestaurantDetail(input: unknown): RestaurantDetail {
   const raw = asRaw(input);
   const nested = pick(raw, 'restaurant');
   const categories = pick(raw, 'categories', 'menu');
+  const sections = pick(raw, 'sections');
 
   return {
     ...mapRestaurant(nested ?? raw),
     menu: Array.isArray(categories) ? categories.map(mapMenuCategory) : [],
+    sections: Array.isArray(sections) ? sections.map(mapMenuSection) : undefined,
   };
 }

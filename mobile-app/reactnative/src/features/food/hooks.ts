@@ -8,6 +8,7 @@ import * as food from './api';
 import { newIdempotencyKey, toFoodError } from './utils';
 import type { OrderRole, OrderStatus, PlaceOrderRequest, RateOrderRequest, LatLng } from './types';
 import { goneRestaurantIds } from './availability';
+import { getTaxonomy } from './taxonomy';
 
 const KEY = 'food';
 
@@ -34,18 +35,20 @@ const discoveryRetryDelay = (attempt: number) => Math.min(1_000 * 2 ** attempt, 
  * ones) so a screen can honestly say "showing 20 of 137".
  */
 export function useRestaurantSearch(params: food.RestaurantQuery = {}) {
-  const { q = '', cuisine = '', sort, promo = false, featured = false, nearLat, nearLng, minPriceKobo, maxPriceKobo } = params;
+  const { q = '', cuisine = '', sort, promo = false, featured = false, nearLat, nearLng, minPriceKobo, maxPriceKobo, cuisineIds, categoryIds } = params;
+  const cuisineKey = cuisineIds?.length ? [...cuisineIds].sort().join(',') : '';
+  const categoryKey = categoryIds?.length ? [...categoryIds].sort().join(',') : '';
   const query = useInfiniteQuery({
     // Every filter is in the key: a page fetched under one set of filters must
     // never be served for another. Coordinates are rounded to ~1km so the
     // normal GPS jitter between renders doesn't mint a fresh cache key (and a
     // fresh page-0 fetch) every time distance sort re-evaluates.
     queryKey: [KEY, 'restaurants', {
-      q, cuisine, sort: sort ?? 'newest', promo, featured, minPriceKobo, maxPriceKobo,
+      q, cuisine, sort: sort ?? 'newest', promo, featured, minPriceKobo, maxPriceKobo, cuisineKey, categoryKey,
       near: nearLat != null && nearLng != null ? `${nearLat.toFixed(2)},${nearLng.toFixed(2)}` : null,
     }],
     queryFn: ({ pageParam }) =>
-      food.listRestaurants({ q, cuisine, sort, promo, featured, nearLat, nearLng, minPriceKobo, maxPriceKobo, offset: pageParam }),
+      food.listRestaurants({ q, cuisine, sort, promo, featured, nearLat, nearLng, minPriceKobo, maxPriceKobo, cuisineIds, categoryIds, offset: pageParam }),
     initialPageParam: 0,
     // Page by the offset the SERVER reports it served, never by a locally
     // accumulated count: the two diverge the moment a row is added or removed
@@ -66,6 +69,16 @@ export function useRestaurantSearch(params: food.RestaurantQuery = {}) {
     // request, so an older page carries a staler figure.
     total: pages?.[pages.length - 1]?.total ?? 0,
   };
+}
+
+/** Cuisine/category taxonomy; data is null when the backend flag is off. */
+export function useTaxonomy() {
+  return useQuery({
+    queryKey: [KEY, 'taxonomy'],
+    queryFn: getTaxonomy,
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
 }
 
 export function useRestaurant(id?: string) {

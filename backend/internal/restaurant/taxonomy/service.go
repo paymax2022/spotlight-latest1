@@ -76,9 +76,17 @@ func (s *Service) ListTree(ctx context.Context, includeInactive bool) ([]Node, e
 	rows, err := s.db.Query(ctx, `
 		SELECT c.id, c.parent_id, c.name, c.slug, c.kind, c.icon, c.sort_order,
 		       c.is_active, c.is_system_seeded,
-		       (SELECT COUNT(*) FROM menu_items m
-		         WHERE m.taxonomy_category_id = c.id OR m.taxonomy_subcategory_id = c.id)
+		       COALESCE(ic.n, 0)
 		  FROM restaurant_taxonomy_categories c
+		  LEFT JOIN (
+		        -- UNION (not ALL): an item tagged with both a category and its
+		        -- subcategory counts once per category it matches, as the old OR did.
+		        SELECT cid, COUNT(*) AS n FROM (
+		            SELECT taxonomy_category_id AS cid, id FROM menu_items WHERE taxonomy_category_id IS NOT NULL
+		            UNION
+		            SELECT taxonomy_subcategory_id AS cid, id FROM menu_items WHERE taxonomy_subcategory_id IS NOT NULL
+		        ) u GROUP BY cid
+		  ) ic ON ic.cid = c.id
 		 WHERE $1 OR c.is_active
 		 ORDER BY c.sort_order, c.name`, includeInactive)
 	if err != nil {

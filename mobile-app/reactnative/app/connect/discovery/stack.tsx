@@ -13,6 +13,8 @@ import {
   MapPin,
   UserRound,
   Users,
+  Radio,
+  CalendarDays,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -45,6 +47,46 @@ const DEFAULT_FILTERS: DiscoveryFilters = {
   verifiedOnly: false,
   interests: [],
 };
+
+// Explore shortcuts surfaced above the deck so Discover is a hub, not just a
+// one-card-at-a-time stack. Every target is an already-built Connect screen.
+type ShortcutIcon = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
+const EXPLORE_SHORTCUTS: { key: string; label: string; icon: ShortcutIcon; route: string }[] = [
+  { key: 'picks', label: 'Daily picks', icon: Sparkles, route: '/connect/discovery/daily-picks' },
+  { key: 'likes', label: 'Likes you', icon: Heart, route: '/connect/discovery/likes-you' },
+  { key: 'nearby', label: 'Nearby', icon: MapPin, route: '/connect/discovery/map-nearby' },
+  { key: 'live', label: 'Live', icon: Radio, route: '/connect/live' },
+  { key: 'communities', label: 'Communities', icon: Users, route: '/connect/networking/communities' },
+  { key: 'events', label: 'Events', icon: CalendarDays, route: '/connect/networking/events' },
+];
+
+function ExploreShortcuts() {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.shortcutsRow}
+      style={styles.shortcutsWrap}
+    >
+      {EXPLORE_SHORTCUTS.map(({ key, label, icon: Icon, route }) => (
+        <Pressable
+          key={key}
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          onPress={() => router.push(route as never)}
+          style={({ pressed }) => [styles.shortcut, pressed && styles.shortcutPressed]}
+        >
+          <View style={styles.shortcutIcon}>
+            <Icon size={20} color={ConnectColors.brand} strokeWidth={2} />
+          </View>
+          <Text style={styles.shortcutLabel} numberOfLines={1}>
+            {label}
+          </Text>
+        </Pressable>
+      ))}
+    </ScrollView>
+  );
+}
 
 /**
  * Discovery card stack (PRD §10.2 DC-01). Date-mode swipe surface.
@@ -147,6 +189,8 @@ export default function DiscoveryStackScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: Colors.background }} edges={['top']}>
       <ScreenHeader title="Discover" showBack={false} rightSlot={headerRight} />
+
+      <ExploreShortcuts />
 
       <View style={styles.modeWrap}>
         <SegmentedControl options={MODE_OPTIONS} value={mode} onChange={onModeChange} />
@@ -322,6 +366,19 @@ function ActionButton({
 
 const styles = StyleSheet.create({
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  shortcutsWrap: { flexGrow: 0, paddingTop: Spacing.xs },
+  shortcutsRow: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, paddingBottom: Spacing.xs },
+  shortcut: { alignItems: 'center', width: 64, gap: 4 },
+  shortcutPressed: { opacity: 0.7 },
+  shortcutIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.iconBgPurple,
+  },
+  shortcutLabel: { ...Typography.caption, color: Colors.onSurfaceVariant, textAlign: 'center' },
   modeWrap: { paddingBottom: Spacing.sm },
   body: { flex: 1 },
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.md },

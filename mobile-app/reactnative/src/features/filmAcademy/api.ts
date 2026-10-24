@@ -12,6 +12,10 @@ import type {
   FilmAcademyApplicationStatus,
   FilmAcademyCurriculum,
   FilmAcademyAssignments,
+  FilmAcademyExamList,
+  FilmAcademyStartedAttempt,
+  FilmAcademyAttemptView,
+  FilmAcademyExamResult,
 } from './types';
 
 type Envelope = { data?: unknown };
@@ -80,6 +84,9 @@ export async function getApplicationStatus(): Promise<FilmAcademyApplicationStat
     plan: body?.plan ?? null,
     payments: body?.payments ?? [],
     actions: body?.actions ?? [],
+    // Empty on an older server — the status screen simply hides the section.
+    areas: body?.areas ?? [],
+    tuitionTotalNgn: Number(body?.tuitionTotalNgn ?? body?.application?.tuition_total_ngn ?? 0),
   };
 }
 
@@ -175,4 +182,85 @@ export async function submitAssignmentPart(input: {
   submissionText?: string;
 }): Promise<void> {
   await api.post('/api/academy/assignments/parts/submit', input);
+}
+
+// ── Exams (PRD BK-10) ────────────────────────────────────────────────────────
+// All server-authoritative. The learner sends NO content and NO ids it can be
+// trusted for; the exam plane is gated behind FEATURE_FILM_ACADEMY_ASSESSMENT and
+// 503s cleanly until an admin has reviewed the bank into exam-eligible questions.
+
+/** Shared so the list + take/result screens invalidate the same cache. */
+export const FILM_ACADEMY_EXAMS_KEY = ['film-academy', 'exams'];
+/** Per-attempt cache key so autosave/submit refresh only the attempt in play. */
+export const filmAcademyAttemptKey = (attemptId: string) => ['film-academy', 'attempt', attemptId];
+
+/** The learner's exams for their programme. `locked` is not an error. */
+export async function getExams(): Promise<FilmAcademyExamList> {
+  const res = await api.get('/api/academy/exams');
+  const body = unwrap<Partial<FilmAcademyExamList>>(res);
+  return {
+    locked: body?.locked ?? true,
+    reason: body?.reason,
+    exams: body?.exams ?? [],
+  };
+}
+
+/**
+ * Start (or resume, via the idempotency key) an attempt. The same key on retry
+ * returns the SAME attempt rather than drawing fresh, so a double tap cannot
+ * spend two of the learner's attempts.
+ */
+export async function startExamAttempt(
+  examId: string,
+  idempotencyKey: string,
+): Promise<FilmAcademyStartedAttempt> {
+  const res = await api.post(`/api/academy/exams/${encodeURIComponent(examId)}/attempt`, {
+    idempotencyKey,
+  });
+  // The server wraps the started attempt as { success, attempt }; unwrap peels the
+  // envelope, so read .attempt off the body, exactly like getExams reads .exams.
+  return unwrap<{ attempt: FilmAcademyStartedAttempt }>(res).attempt;
+}
+
+/** Load an attempt — its questions + saved answers while in progress, or its result. */
+export async function getAttempt(attemptId: string): Promise<FilmAcademyAttemptView> {
+  const res = await api.get(`/api/academy/attempts/${encodeURIComponent(attemptId)}`);
+  const view = unwrap<{ attempt?: Partial<FilmAcademyAttemptView> }>(res).attempt;
+  return {
+    attemptId: view?.attemptId ?? attemptId,
+    state: view?.state ?? 'in_progress',
+    startedAt: view?.startedAt ?? null,
+    deadlineAt: view?.deadlineAt ?? null,
+    expired: view?.expired ?? false,
+    questions: view?.questions ?? [],
+    answered: view?.answered ?? {},
+    result: view?.result ?? null,
+  };
+}
+
+/**
+ * Autosave one answer. Fire-and-forget from the UI; the server owns the deadline
+ * and rejects an expired or finalized attempt with 409, which the take screen
+ * surfaces without losing the learner's other saved picks.
+ */
+export async function saveAttemptAnswer(input: {
+  attemptId: string;
+  attemptQuestionId: string;
+  presentationOptionId: string;
+}): Promise<void> {
+  await api.post(`/api/academy/attempts/${encodeURIComponent(input.attemptId)}/answer`, {
+    attemptQuestionId: input.attemptQuestionId,
+    presentationOptionId: input.presentationOptionId,
+  });
+}
+
+/** Submit + finalize. The score is computed and written server-side; at-most-once. */
+export async function submitExamAttempt(attemptId: string): Promise<FilmAcademyExamResult> {
+  const res = await api.post(`/api/academy/attempts/${encodeURIComponent(attemptId)}/submit`, {});
+  const { result } = unwrap<{ result?: FilmAcademyExamResult }>(res);
+  // A submit that 200s without a receipt is a server bug, not a learner state:
+  // throw so the mutation's onError fires rather than caching result:null and
+  // rendering an empty "scored" screen.
+  if (!result) throw new Error('The exam was submitted, but no result came back. Please reload.');
+  return result;
 }

@@ -1,7 +1,10 @@
 import { api } from '@/api/client';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { USE_MOCK, API_BASE } from './constants/events.constants';
+import { checkFollowingPage } from './social';
+import { createEventBody } from './createBody';
 import type {
+  Event,
   EventSummary,
   EventDetail,
   TicketTier,
@@ -31,6 +34,11 @@ import type {
   IssueCompInput,
   AnnounceInput,
   AnnounceResult,
+  LikeState,
+  FollowState,
+  OrganiserProfile,
+  OrganiserPatch,
+  BannerPresign,
 } from './types';
 
 // Organiser lifecycle writes have a live endpoint and nothing a fixture could
@@ -90,6 +98,7 @@ const MOCK_EVENTS: EventDetail[] = [
     fee_bps: 500, created_at: daysAgo(60),
     description: 'A week-long celebration of Afrobeat. Live bands, food, and dancing all night.',
     tiers: TIERS_FELABRATION,
+    banner_url: null, venue_lat: 6.6018, venue_lng: 3.3515, venue_place_id: null, like_count: 128, liked: false,
   },
   {
     id: 'e_approved', organiser_id: 'u_org2', title: 'Lagos Tech Summit', category: 'tech', state: 'APPROVED',
@@ -100,6 +109,7 @@ const MOCK_EVENTS: EventDetail[] = [
       { id: 't_free', event_id: 'e_approved', name: 'Free Pass', price_kobo: 0, capacity: 500, sold: 320, active: true },
       { id: 't_pro', event_id: 'e_approved', name: 'Pro Pass', price_kobo: 3_500_000, capacity: 150, sold: 90, active: true },
     ],
+    banner_url: null, venue_lat: 6.4281, venue_lng: 3.4219, venue_place_id: null, like_count: 42, liked: false,
   },
   {
     id: 'e_closed', organiser_id: 'u_org3', title: 'Detty December Beach Rave', category: 'music', state: 'CLOSED',
@@ -107,6 +117,7 @@ const MOCK_EVENTS: EventDetail[] = [
     fee_bps: 500, created_at: daysAgo(80),
     description: 'Sun, sand and sound — the closer to the year.',
     tiers: [{ id: 't_ga', event_id: 'e_closed', name: 'General', price_kobo: 2_000_000, capacity: 4000, sold: 4000, active: false }],
+    banner_url: null, venue_lat: null, venue_lng: null, venue_place_id: null, like_count: 310, liked: false,
   },
   {
     id: 'e_draft', organiser_id: 'u_me', title: 'Abuja Comedy Night', category: 'comedy', state: 'DRAFT',
@@ -114,6 +125,7 @@ const MOCK_EVENTS: EventDetail[] = [
     fee_bps: 500, created_at: daysAgo(2),
     description: "A night of stand-up from Nigeria's funniest. (Pending approval.)",
     tiers: [{ id: 't_std', event_id: 'e_draft', name: 'Standard', price_kobo: 1_000_000, capacity: 300, sold: 0, active: true }],
+    banner_url: null, venue_lat: null, venue_lng: null, venue_place_id: null, like_count: 0, liked: false,
   },
 ];
 
@@ -197,7 +209,8 @@ export async function getEvent(id: string): Promise<EventDetail> {
     await delay();
     const e = MOCK_EVENTS.find((x) => x.id === id);
     if (!e) throw new Error('Event not found');
-    return e;
+    const like = MOCK_LIKES.get(id);
+    return like ? { ...e, liked: like.liked, like_count: like.like_count } : e;
   }
   return unwrap(await api.get(`${API_BASE}/${id}`));
 }
@@ -349,13 +362,13 @@ export async function createEvent(input: CreateEventInput): Promise<EventDetail>
       venue: input.venue, state: 'DRAFT', starts_at: input.starts_at, ends_at: input.ends_at,
       fee_bps: input.fee_bps ?? 500, category: input.category, created_at: new Date().toISOString(),
       tiers: input.tiers.map((t, i) => ({ id: `t_${i}`, event_id: id, name: t.name, price_kobo: t.price_kobo, capacity: t.capacity, sold: 0, active: true })),
+      banner_url: null, venue_lat: null, venue_lng: null, venue_place_id: null, like_count: 0, liked: false,
     };
   }
-  const created: EventDetail = await unwrap(await api.post(`${API_BASE}`, {
-    title: input.title, description: input.description, venue: input.venue,
-    category: input.category, starts_at: input.starts_at, ends_at: input.ends_at,
-    fee_bps: input.fee_bps ?? 500,
-  }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
+  // createEventBody adds venue_lat / venue_lng / venue_place_id only when a place
+  // was picked (events-social); without them the body is as before.
+  const created: EventDetail = await unwrap(await api.post(`${API_BASE}`, createEventBody(input),
+    { headers: { 'Idempotency-Key': idempotencyKey() } }));
 
   // Backend has no bulk tier-create — add each tier sequentially, then submit
   // the event into the organiser approval pipeline.
@@ -474,6 +487,170 @@ export async function updatePromo(eventId: string, promoId: string, patch: Promo
 export async function createPromo(eventId: string, input: CreatePromoInput): Promise<PromoCode> {
   if (USE_MOCK) throw notInFixtureMode('Creating a promo code');
   return unwrap(await api.post(`${API_BASE}/${eventId}/promos`, input));
+}
+
+// ── Social: likes, follows, organiser profile (FEATURE_EVENTS_SOCIAL) ───────
+// Likes and follows move no money, so there is no Idempotency-Key and no ledger.
+// Fixture mode keeps them in these in-memory Maps, seeded from MOCK_EVENTS. The
+// writes are SESSION-ONLY: they last until the app reloads and are never sent
+// anywhere. They are not persisted and must not be presented as saved.
+const MOCK_LIKES = new Map<string, LikeState>(
+  MOCK_EVENTS.map((e) => [e.id, { liked: e.liked, like_count: e.like_count }]),
+);
+
+const MOCK_ME = 'u_me';
+const MOCK_ORGANISER_NAMES: Record<string, string> = {
+  u_org1: 'Felabration Collective',
+  u_org2: 'Lagos Tech Co',
+  u_org3: 'Detty Nights',
+  [MOCK_ME]: 'My Events',
+};
+const MOCK_ORGANISER_FOLLOWERS: Record<string, number> = { u_org1: 1204, u_org2: 560, u_org3: 87, [MOCK_ME]: 0 };
+
+type MockOrganiser = {
+  display_name: string;
+  bio: string;
+  banner_url: string | null;
+  follower_count: number;
+  following: boolean;
+};
+
+const MOCK_ORGANISERS = new Map<string, MockOrganiser>(
+  Array.from(new Set(MOCK_EVENTS.map((e) => e.organiser_id))).map((id) => [id, {
+    display_name: MOCK_ORGANISER_NAMES[id] ?? id,
+    bio: '',
+    banner_url: null,
+    follower_count: MOCK_ORGANISER_FOLLOWERS[id] ?? 0,
+    following: false,
+  }]),
+);
+
+// A mock event without its tiers, as the profile and Following lists return it.
+// Like state is the live mock state, so a like on the detail shows there.
+function eventOf({ tiers: _tiers, ...ev }: EventDetail): Event {
+  const like = MOCK_LIKES.get(ev.id);
+  return like ? { ...ev, liked: like.liked, like_count: like.like_count } : ev;
+}
+
+// Upcoming public events of one organiser, as on the real profile page.
+function upcomingEventsOf(organiserId: string): Event[] {
+  return MOCK_EVENTS
+    .filter((e) => e.organiser_id === organiserId && (e.state === 'LIVE' || e.state === 'APPROVED'))
+    .map(eventOf);
+}
+
+function mockOrganiser(id: string): MockOrganiser {
+  const o = MOCK_ORGANISERS.get(id);
+  if (!o) throw new Error('Organiser not found');
+  return o;
+}
+
+function profileOf(id: string, o: MockOrganiser): OrganiserProfile {
+  return { organiser_id: id, ...o, events: upcomingEventsOf(id) };
+}
+
+async function setLike(id: string, liked: boolean): Promise<LikeState> {
+  if (USE_MOCK) {
+    await delay(120);
+    const cur = MOCK_LIKES.get(id);
+    if (!cur) throw new Error('Event not found');
+    // A repeat write returns the current state, like the server.
+    const next: LikeState = cur.liked === liked
+      ? cur
+      : { liked, like_count: Math.max(0, cur.like_count + (liked ? 1 : -1)) };
+    MOCK_LIKES.set(id, next);
+    return next;
+  }
+  const res = liked
+    ? await api.post(`${API_BASE}/${id}/like`, {})
+    : await api.delete(`${API_BASE}/${id}/like`);
+  return unwrap<LikeState>(res);
+}
+
+async function setFollow(id: string, following: boolean): Promise<FollowState> {
+  if (USE_MOCK) {
+    await delay(120);
+    // The server rejects a self-follow with 422.
+    if (id === MOCK_ME) throw new Error('You cannot follow yourself');
+    const o = mockOrganiser(id);
+    if (o.following !== following) {
+      o.following = following;
+      o.follower_count = Math.max(0, o.follower_count + (following ? 1 : -1));
+    }
+    return { following: o.following, follower_count: o.follower_count };
+  }
+  const res = following
+    ? await api.post(`${API_BASE}/organisers/${id}/follow`, {})
+    : await api.delete(`${API_BASE}/organisers/${id}/follow`);
+  return unwrap<FollowState>(res);
+}
+
+export const likeEvent = (id: string): Promise<LikeState> => setLike(id, true);
+export const unlikeEvent = (id: string): Promise<LikeState> => setLike(id, false);
+export const followOrganiser = (id: string): Promise<FollowState> => setFollow(id, true);
+export const unfollowOrganiser = (id: string): Promise<FollowState> => setFollow(id, false);
+
+export async function getOrganiser(id: string): Promise<OrganiserProfile> {
+  if (USE_MOCK) {
+    await delay();
+    return profileOf(id, mockOrganiser(id));
+  }
+  return unwrap(await api.get(`${API_BASE}/organisers/${id}`));
+}
+
+// PUT /organisers/me. Fixture mode edits the in-memory profile of the mock
+// caller (session-only, see above).
+export async function updateMyOrganiser(patch: OrganiserPatch): Promise<OrganiserProfile> {
+  if (USE_MOCK) {
+    await delay();
+    const cur = MOCK_ORGANISERS.get(MOCK_ME) ?? {
+      display_name: MOCK_ORGANISER_NAMES[MOCK_ME], bio: '', banner_url: null, follower_count: 0, following: false,
+    };
+    const next: MockOrganiser = {
+      ...cur,
+      display_name: patch.display_name ?? cur.display_name,
+      bio: patch.bio ?? cur.bio,
+      banner_url: patch.banner_url === undefined ? cur.banner_url : patch.banner_url,
+    };
+    MOCK_ORGANISERS.set(MOCK_ME, next);
+    return profileOf(MOCK_ME, next);
+  }
+  return unwrap(await api.put(`${API_BASE}/organisers/me`, patch));
+}
+
+// GET /following: upcoming events of the organisers the caller follows, paged.
+// Inputs are validated here the same way the server does (limit 1..100, offset
+// >= 0) so a bad value fails fast with a clear message instead of a 422.
+export async function listFollowingEvents(limit = 20, offset = 0): Promise<Event[]> {
+  checkFollowingPage(limit, offset);
+  if (USE_MOCK) {
+    await delay();
+    return MOCK_EVENTS
+      .filter((e) => MOCK_ORGANISERS.get(e.organiser_id)?.following && (e.state === 'LIVE' || e.state === 'APPROVED'))
+      .map(eventOf)
+      .slice(offset, offset + limit);
+  }
+  return pickList<Event>(await api.get(`${API_BASE}/following`, { params: { limit, offset } }), 'events');
+}
+
+// POST /organisers/me/banner/presign. The backend chooses the object key and
+// binds content_type into the signature; the caller PUTs the bytes to
+// upload_url, then saves object_key via updateMyOrganiser({ banner_url }).
+// Fixture mode returns a fake upload_url that nothing accepts: fixture uploads
+// are NOT persisted, and the caller must skip the network PUT for fixture:// URLs.
+export async function presignOrganiserBanner(fileName: string, contentType: string): Promise<BannerPresign> {
+  if (USE_MOCK) {
+    await delay(120);
+    const ext = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')) : '';
+    return {
+      upload_url: 'fixture://banner-upload',
+      object_key: `organiser/${MOCK_ME}/banner/fixture-${Date.now()}${ext}`,
+      content_type: contentType,
+      expires_in: 600,
+      method: 'PUT',
+    };
+  }
+  return unwrap(await api.post(`${API_BASE}/organisers/me/banner/presign`, { file_name: fileName, content_type: contentType }));
 }
 
 // ── Team roles (FEATURE_EVENTS_TEAM_ROLES) — not money, so no Idempotency-Key ──

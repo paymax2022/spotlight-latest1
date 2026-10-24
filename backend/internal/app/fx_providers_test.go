@@ -22,7 +22,7 @@ func TestFinanceWiring_VertoFXRegisteredWhenFlagOn(t *testing.T) {
 	if !hasProvider(ps, "vertofx") {
 		t.Fatalf("flag on: vertofx missing from providers")
 	}
-	if !hasProvider(ps, "eversend") || !hasProvider(ps, "maplerad") {
+	if !hasProvider(ps, "eversend") {
 		t.Fatalf("existing providers must remain")
 	}
 
@@ -31,7 +31,7 @@ func TestFinanceWiring_VertoFXRegisteredWhenFlagOn(t *testing.T) {
 	if hasProvider(ps, "vertofx") {
 		t.Fatalf("flag off: vertofx must not be registered")
 	}
-	if len(ps) != 2 {
-		t.Fatalf("flag off: want 2 providers, got %d", len(ps))
+	if len(ps) != 1 {
+		t.Fatalf("flag off: want 1 provider, got %d", len(ps))
 	}
 }
