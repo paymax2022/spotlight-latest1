@@ -57,6 +57,7 @@ tags:
   - { name: Tutor, description: Tutor marketplace — onboarding, assignments, grading, payouts (money-path) }
   - { name: Fees, description: EdTech School-Fees — schools, sessions, fee schedules, students, invoices, vault, promotion, competition, scholarship, trust-score, hardship, export (money-path) }
   - { name: Platform, description: EdTech platform super-admin oversight (platform_edtech_admin RBAC) }
+  - { name: FilmAcademy, description: Film Academy applications, interest areas and per-area tuition options (whole naira, programs:manage) }
 
 paths:
   # ══════════ Identity ══════════
@@ -2545,6 +2546,29 @@ paths:
       summary: SU-12 compliance posture (Model-A drift check)
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: object, additionalProperties: true } } } } } }
+        default: { $ref: '#/components/responses/Error' }
+
+  /api/admin/academy/area-options:
+    get:
+      tags: [FilmAcademy]
+      summary: Admin list tuition options per interest area (permission programs:manage)
+      parameters: [ { name: area_id, in: query, required: false, schema: { type: string, format: uuid } } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/AcademyAreaOption' } } } } } } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [FilmAcademy]
+      summary: Admin create a tuition option under an interest area (permission programs:manage)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AcademyAreaOptionInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/AcademyAreaOption' } } } } } }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [FilmAcademy]
+      summary: Admin update a tuition option; id is required in the body (permission programs:manage)
+      requestBody: { required: true, content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/AcademyAreaOptionInput' }, { type: object, required: [id], properties: { id: { type: string, format: uuid } } } ] } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/AcademyAreaOption' } } } } } }
         default: { $ref: '#/components/responses/Error' }
 
   # PATHS_END
@@ -5078,4 +5102,75 @@ components:
         scope_type: { type: string }
         scope_ref: { type: string }
         enabled: { type: boolean }
+    # ── Film Academy area options (tuition per interest area; WHOLE NAIRA, not kobo) ──
+    AcademyAreaOption:
+      type: object
+      required: [id, area_id, label, price_no_boarding_ngn, is_active, sort_order]
+      properties:
+        id: { type: string, format: uuid }
+        area_id: { type: string, format: uuid }
+        label: { type: string }
+        duration_label: { type: [string, 'null'] }
+        price_no_boarding_ngn: { type: integer, format: int64, minimum: 0, description: Whole naira (not kobo) }
+        price_with_boarding_ngn: { type: [integer, 'null'], format: int64, minimum: 0, description: Whole naira (not kobo); null = boarding not offered }
+        is_active: { type: boolean }
+        sort_order: { type: integer }
+    AcademyAreaOptionInput:
+      type: object
+      required: [area_id, label, price_no_boarding_ngn]
+      properties:
+        area_id: { type: string, format: uuid }
+        label: { type: string }
+        duration_label: { type: [string, 'null'] }
+        price_no_boarding_ngn: { type: integer, format: int64, minimum: 0 }
+        price_with_boarding_ngn: { type: [integer, 'null'], format: int64, minimum: 0 }
+        is_active: { type: boolean }
+        sort_order: { type: integer }
+    AcademyInterestArea:
+      type: object
+      required: [id, slug, label, options]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        label: { type: string }
+        description: { type: [string, 'null'] }
+        fee_ngn: { type: number, description: Naira }
+        is_active: { type: boolean }
+        sort_order: { type: integer }
+        options:
+          type: array
+          description: Active tuition options for this area, in display order
+          items: { $ref: '#/components/schemas/AcademyAreaOption' }
+    AcademyApplySelection:
+      type: object
+      required: [area, option_id, boarding]
+      properties:
+        area: { type: string, description: Interest-area slug }
+        option_id: { type: string, format: uuid }
+        boarding: { type: boolean, description: true = with boarding (only valid when the option has price_with_boarding_ngn) }
+    AcademyApplyRequest:
+      type: object
+      description: Applicant submission. The total is always recomputed server-side from selections; client amounts are never trusted.
+      properties:
+        selections:
+          type: array
+          items: { $ref: '#/components/schemas/AcademyApplySelection' }
+      additionalProperties: true
+    AcademyApplication:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        areas_of_interest: { type: array, items: { type: string } }
+        selected_options:
+          type: [array, 'null']
+          description: Server-resolved snapshot of chosen options; null on pre-options applications
+          items:
+            type: object
+            properties:
+              area: { type: string }
+              option_id: { type: string, format: uuid }
+              boarding: { type: boolean }
+              price_ngn: { type: integer, format: int64, description: Whole naira snapshot at apply time }
+            additionalProperties: true
+      additionalProperties: true
     # SCHEMAS_END
