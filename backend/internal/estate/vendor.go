@@ -296,6 +296,10 @@ func (s *Service) UploadCompletionEvidence(ctx context.Context, estateID, userID
 // Iron rules: Idempotency-Key required (fail-closed); balanced double-entry
 // (DEBIT estate settlement → CREDIT vendor wallet) via the ledger; idempotent on
 // the key (ledger + payout_idempotency_key unique index); audited.
+//
+// ESTD-D027: with dual control on, a job at/above the estate's vendor payout
+// threshold cannot be self-released by the vendor — it must go through an
+// approved vendor_payout request (dual_control.go), which calls payVendorJob.
 func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, idempotencyKey string) (*VendorJob, error) {
 	if idempotencyKey == "" {
 		return nil, ErrIdempotencyRequired
@@ -303,16 +307,53 @@ func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, id
 	if s.ledger == nil {
 		return nil, ErrLedgerUnavailable
 	}
-	vendorID, err := s.resolveVendorID(ctx, estateID, userID)
+	if _, err := s.resolveVendorID(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
+	if s.dualControl {
+		var amount int64
+		var status string
+		// Only a completed job can pay out; other states fall through to
+		// payVendorJob for the real FSM error instead of a misleading 409.
+		if err := s.db.QueryRow(ctx, `SELECT amount_kobo, status FROM vendor_jobs WHERE id=$1 AND estate_id=$2`, jobID, estateID).Scan(&amount, &status); err == nil && status == vendorJobDone {
+			th, err := s.CurrentThresholds(ctx, estateID)
+			if err != nil {
+				return nil, err // fail closed
+			}
+			if requiresChecker(ApprovalVendorPayout, amount, th) {
+				return nil, ErrDualControlRequired
+			}
+		}
+	}
+	return s.payVendorJob(ctx, estateID, userID, userID, jobID, idempotencyKey)
+}
+
+// payVendorJob is the payout side effect: credits vendorUserID's wallet from
+// estate settlement for a completed job. actorID is recorded on the audit row
+// (the vendor on the direct path, the checker on an approved request).
+func (s *Service) payVendorJob(ctx context.Context, estateID, actorID, vendorUserID, jobID, idempotencyKey string) (*VendorJob, error) {
+	if s.ledger == nil {
+		return nil, ErrLedgerUnavailable
+	}
+	vendorID, err := s.resolveVendorID(ctx, estateID, vendorUserID)
 	if err != nil {
 		return nil, err
 	}
+	// Row-lock the job for the whole payout so two concurrent releases (the
+	// vendor's direct request and an approved request, each with its own
+	// idempotency key) serialise: the loser waits, then sees 'paid'.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var amount int64
 	var status string
-	if err := s.db.QueryRow(ctx, `SELECT amount_kobo, status FROM vendor_jobs WHERE id=$1 AND estate_id=$2 AND vendor_id=$3`, jobID, estateID, vendorID).Scan(&amount, &status); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT amount_kobo, status FROM vendor_jobs WHERE id=$1 AND estate_id=$2 AND vendor_id=$3 FOR UPDATE`, jobID, estateID, vendorID).Scan(&amount, &status); err != nil {
 		return nil, errors.New("estate: job not found for this vendor")
 	}
-	if status == "paid" {
+	if status == vendorJobPaid {
+		_ = tx.Rollback(ctx)
 		return s.getJob(ctx, estateID, jobID) // idempotent: already paid
 	}
 	if status != "completed" {
@@ -326,14 +367,9 @@ func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, id
 		return nil, fmt.Errorf("estate: settlement account: %w", err)
 	}
 	ref := "estate_vendor_payout:" + estateID + ":" + jobID
-	if err := s.ledger.Credit(ctx, userID, ref, idempotencyKey, settle.ID, amount); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if err := s.ledger.Credit(ctx, vendorUserID, ref, idempotencyKey, settle.ID, amount); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, fmt.Errorf("estate: vendor payout credit: %w", err)
 	}
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	ct, err := tx.Exec(ctx,
 		`UPDATE vendor_jobs SET status='paid', paid_at=NOW(), payout_ref=$1, payout_idempotency_key=$2
 		 WHERE id=$3 AND estate_id=$4 AND status='completed'`,
@@ -345,7 +381,7 @@ func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, id
 		// Lost a race; return the canonical row.
 		return s.getJob(ctx, estateID, jobID)
 	}
-	if err := s.auditTx(ctx, tx, estateID, userID, "VENDOR_PAYOUT", "vendor_job", jobID, map[string]any{keyAmountKobo: amount, "reference": ref}); err != nil {
+	if err := s.auditTx(ctx, tx, estateID, actorID, "VENDOR_PAYOUT", "vendor_job", jobID, map[string]any{keyAmountKobo: amount, "reference": ref}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -43,6 +43,9 @@ type Service struct {
 	kyc      KYCVerifier  // optional; required only when an election requires KYC
 	notifier Notifier     // optional; push delivery (in-app feed works without it)
 	llm      LLMGenerator // optional; required only for AI note-taking (Block 33)
+	// dualControl gates the ESTD-D027 maker-checker flow (dual_control.go).
+	dualControl bool
+
 	// verificationRequired creates new estates in 'pending' (platform review
 	// queue, EST-UAT-0418) instead of 'active'. FEATURE_ESTATE_VERIFICATION_REQUIRED.
 	verificationRequired bool

@@ -160,6 +160,12 @@ export const featureFlags = {
   /** P3 Lane D — Estate access control and private elections */
   estate: () => envFlag('FEATURE_ESTATE_ENABLED'),
 
+  /** ESTD-D027 — maker-checker (two-admin approval) on high-risk estate admin
+   * actions + versioned approval thresholds. Mirrors the Go backend's
+   * FEATURE_ESTATE_DUAL_CONTROL_ENABLED; with it off the approval routes 503
+   * (and the Go routes are not mounted). */
+  estateDualControl: () => envFlag('FEATURE_ESTATE_DUAL_CONTROL_ENABLED'),
+
   /** P3 Lane E — Crowdfunding campaigns with escrow and goal tracking */
   crowdfunding: () => envFlag('FEATURE_CROWDFUNDING_ENABLED'),
 

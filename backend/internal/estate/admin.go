@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -136,6 +137,27 @@ func (s *Service) BanResident(ctx context.Context, estateID, adminID, targetUser
 	if targetUserID == adminID {
 		return errors.New("estate: cannot ban yourself")
 	}
+	if s.dualControl {
+		// ESTD-D027: a ban is dual-controlled — file it for a second admin.
+		a, err := s.CreateApproval(ctx, estateID, adminID, CreateApprovalInput{
+			Action: ApprovalResidentBan, SubjectID: targetUserID,
+			Payload:        mustJSON(map[string]string{auditKeyReason: reason}),
+			IdempotencyKey: "direct-ban:" + uuid.New().String(),
+		})
+		if errors.Is(err, ErrApprovalOpen) {
+			a, err = s.openApproval(ctx, estateID, ApprovalResidentBan, targetUserID)
+		}
+		if err != nil {
+			return err
+		}
+		return &PendingApprovalError{Request: a}
+	}
+	return s.banResident(ctx, estateID, adminID, targetUserID, reason)
+}
+
+// banResident is the ban side effect (direct path with dual control off, or
+// an approved resident_ban request).
+func (s *Service) banResident(ctx context.Context, estateID, adminID, targetUserID, reason string) error {
 	ct, err := s.db.Exec(ctx,
 		`UPDATE estate_residents SET banned_at=NOW(), ban_reason=$3 WHERE estate_id=$1 AND user_id=$2 AND deleted_at IS NULL`,
 		estateID, targetUserID, reason)

@@ -1363,6 +1363,8 @@ func (h *Handler) RequestVendorPayout(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		case errors.Is(err, ErrLedgerUnavailable):
 			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
+		case errors.Is(err, ErrDualControlRequired):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		}
@@ -1395,6 +1397,9 @@ func (h *Handler) BanResident(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&body)
 	if err := h.svc.BanResident(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("uid"), body.Reason); err != nil {
+		if writePendingApproval(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}

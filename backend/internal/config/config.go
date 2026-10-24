@@ -263,6 +263,11 @@ type Config struct {
 	// audited design as FeatureRestaurantPaystackCheckoutEnabled, minus the
 	// escrow/hold-release step (dues settle immediately).
 	FeatureEstateDuesPaystackCheckoutEnabled bool
+	// FeatureEstateDualControlEnabled (FEATURE_ESTATE_DUAL_CONTROL_ENABLED)
+	// turns on maker-checker for high-risk estate admin actions (ESTD-D027):
+	// above-threshold vendor payouts, resident bans, role grants and threshold
+	// changes need a second estate admin. Default OFF = single-actor behaviour.
+	FeatureEstateDualControlEnabled bool
 	// FeatureEstateLifecycleEnabled (FEATURE_ESTATE_LIFECYCLE_ENABLED) mounts the
 	// platform estate lifecycle routes (review queue, verify/reject/suspend/
 	// reactivate/close, legal hold — ESTD-D025). The write gate that refuses
@@ -1014,6 +1019,7 @@ func Load() Config {
 		FeatureEstateMerchantGate:                    getEnvBool("FEATURE_ESTATE_MERCHANT_GATE", false),
 		FeatureEstateGuardGrants:                     getEnvBool("FEATURE_ESTATE_GUARD_GRANTS", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureEstateDualControlEnabled:              getEnvBool("FEATURE_ESTATE_DUAL_CONTROL_ENABLED", false),
 		FeatureEstateLifecycleEnabled:                getEnvBool("FEATURE_ESTATE_LIFECYCLE_ENABLED", false),
 		FeatureEstateVerificationRequired:            getEnvBool("FEATURE_ESTATE_VERIFICATION_REQUIRED", false),
 		FeatureEstateImportEnabled:                   getEnvBool("FEATURE_ESTATE_IMPORT_ENABLED", false),

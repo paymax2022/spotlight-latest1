@@ -164,10 +164,18 @@ func notifPrefColumn(notifType string) string {
 const notifDedupeWindow = 10 * time.Minute
 
 const (
-	keyStatus     = "status"
-	keyReminded   = "reminded"
-	keyMethod     = "method"
-	keyAmountKobo = "amount_kobo"
+	keyStatus       = "status"
+	keyReminded     = "reminded"
+	keyMethod       = "method"
+	keyAmountKobo   = "amount_kobo"
+	keyAction       = "action"
+	keySubjectID    = "subject_id"
+	keyInitiatedBy  = "initiated_by"
+	keyUserID       = "user_id"
+	payloadKeyRole  = "role"
+	roleEstateAdmin = "estate_admin"
+	vendorJobPaid   = "paid"
+	vendorJobDone   = "completed"
 )
 
 // notificationAllowed reads the recipient's member settings once and returns

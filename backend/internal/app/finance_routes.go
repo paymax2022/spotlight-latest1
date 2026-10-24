@@ -1067,6 +1067,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estateSvc := estate.NewService(pool, redisClient).
 			WithLedger(ledgerSvc). // Block 29 dues money path: balanced double-entry
 			WithTiers(tiersSvc).   // fail-closed tier-limit check on wallet debit
+			// ESTD-D027 maker-checker on high-risk admin actions (default OFF).
+			WithDualControl(cfg.FeatureEstateDualControlEnabled).
 			// Block 31: KYC-gated elections. Adapts *kyc.Service to the estate
 			// KYCVerifier interface; a voter is "verified" at KYC status=verified.
 			WithKYC(estate.KYCVerifierFunc(func(ctx context.Context, userID string) (bool, error) {
@@ -1233,6 +1235,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.PUT("/:id/admin/subscription-plan", estateHandler.ConfigureSubscriptionPlan)
 		estGroup.GET("/:id/admin/audit-log", estateHandler.GetAuditLog)
 		estGroup.POST("/:id/admin/run-maintenance", estateHandler.RunMaintenance) // Block 47
+		// ESTD-D027: maker-checker approvals + versioned thresholds. Not mounted
+		// with the flag off (today's single-actor behaviour).
+		if cfg.FeatureEstateDualControlEnabled {
+			estGroup.GET("/:id/admin/approvals", estateHandler.ListApprovals)
+			estGroup.POST("/:id/admin/approvals", estateHandler.CreateApproval)
+			estGroup.GET("/:id/admin/approvals/:rid", estateHandler.GetApproval)
+			estGroup.POST("/:id/admin/approvals/:rid/approve", estateHandler.ApproveApproval)
+			estGroup.POST("/:id/admin/approvals/:rid/reject", estateHandler.RejectApproval)
+			estGroup.GET("/:id/admin/approval-thresholds", estateHandler.GetApprovalThresholds)
+		}
 
 		// Block 45: Settings & account
 		estGroup.GET("/:id/settings", estateHandler.GetMemberSettings)
