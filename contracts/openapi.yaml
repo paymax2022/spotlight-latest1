@@ -50,6 +50,89 @@ components:
       properties:
         success: { type: boolean }
 
+    # ── Estate platform lifecycle + legacy import ─────────────────────────────
+    EstateLifecycle:
+      type: object
+      required: [estate_id, status, legal_hold]
+      properties:
+        estate_id: { type: string, format: uuid }
+        name: { type: string }
+        address: { type: string }
+        admin_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, active, suspended, closed] }
+        status_reason: { type: string }
+        status_changed_at: { type: string, format: date-time }
+        status_changed_by: { type: string, format: uuid }
+        legal_hold: { type: boolean, description: Blocks deletion/purge paths (account PII scrub, household delete, hard estate delete) }
+        legal_hold_reason: { type: string }
+        created_at: { type: string, format: date-time }
+    EstateImportRequest:
+      type: object
+      properties:
+        source_ref: { type: string, description: Operator reference for the source export }
+        control_total_kobo: { type: integer, format: int64, description: Expected sum of importable opening balances; a mismatch at commit refuses the batch }
+        units:
+          type: array
+          items:
+            type: object
+            required: [external_ref, unit_label]
+            properties:
+              external_ref: { type: string, maxLength: 200 }
+              unit_label: { type: string, maxLength: 100 }
+              block: { type: string, maxLength: 50 }
+              floor: { type: string, maxLength: 20 }
+              property_type: { type: string, enum: [apartment, house, commercial, land, other], default: apartment }
+              occupancy_status: { type: string, enum: [vacant, occupied, reserved], default: vacant }
+        residents:
+          type: array
+          items:
+            type: object
+            required: [external_ref]
+            properties:
+              external_ref: { type: string, maxLength: 200 }
+              email: { type: string, description: Maps to an existing platform account (email or phone required — the importer never creates auth accounts) }
+              phone: { type: string }
+              unit_ref: { type: string, description: external_ref of a unit row in this batch or a previous import }
+              relationship: { type: string, enum: [occupant, owner, tenant], default: occupant }
+              residency_start: { type: string, format: date }
+              residency_end: { type: string, format: date }
+        opening_balances:
+          type: array
+          items:
+            type: object
+            required: [external_ref, resident_ref, amount_kobo, due_date]
+            properties:
+              external_ref: { type: string, maxLength: 200 }
+              resident_ref: { type: string }
+              unit_ref: { type: string }
+              category: { type: string, enum: [service_charge, security_levy, waste, water, electricity, rent, facility, penalty, other], default: other }
+              amount_kobo: { type: integer, format: int64, minimum: 1, description: Positive outstanding balance; credit (prepaid) balances are out of scope and reported as exceptions }
+              due_date: { type: string, format: date }
+    EstateImportBatch:
+      type: object
+      required: [id, estate_id, status, summary, exceptions]
+      properties:
+        id: { type: string, format: uuid }
+        estate_id: { type: string, format: uuid }
+        source_ref: { type: string }
+        status: { type: string, enum: [dry_run, committed] }
+        summary: { type: object, description: Per-entity counts (received/insert/update/link/unchanged/error), opening_balance_total_kobo, control-total verdict, destination aggregates }
+        exceptions:
+          type: array
+          items:
+            type: object
+            properties:
+              entity: { type: string, enum: [unit, resident, opening_balance] }
+              row: { type: integer, description: 0-based index within its entity array; -1 = batch level }
+              external_ref: { type: string }
+              code: { type: string }
+              message: { type: string }
+        commit_result: { type: object }
+        replayed: { type: boolean, description: True when a commit retry returned the stored result }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        committed_at: { type: string, format: date-time }
+
     # ── Property Management Suite ─────────────────────────────────────────────
     PropertyContextRef:
       type: object
@@ -5556,6 +5639,157 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses: { '200': { description: Report snapshot } }
+  # ── Estate platform lifecycle + legacy import (ESTD-D025 / ESTD-D034) ─────
+  # Platform routes under /api/finance/estate-admin/estates — sibling of the
+  # per-estate /estate/{id}/... surface (Gin radix, see estate_admin_routes.go).
+  # Lifecycle: RBAC estate.admin.lifecycle (super-admin / system-admin), flag
+  # FEATURE_ESTATE_LIFECYCLE_ENABLED. Import: RBAC estate.admin.import OR
+  # estate_admin membership of the target estate, flag
+  # FEATURE_ESTATE_IMPORT_ENABLED. Independently of both flags, every mutating
+  # /api/finance/estate/{id}/... route returns 423 ESTATE_NOT_ACTIVE while the
+  # estate is pending/suspended/closed (reads pass; emergencies, guard
+  # incident/checkout/sync and access-reduction revoke/blacklist exempt).
+  /api/finance/estate-admin/estates:
+    get:
+      operationId: estatePlatformListEstates
+      summary: List estates by lifecycle status (review queue when status=pending)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [pending, active, suspended, closed] } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 100, maximum: 500 } }
+      responses:
+        '200': { description: Estates, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/EstateLifecycle' } } } } } } }
+        '400': { description: Invalid status filter }
+        '403': { description: Missing estate.admin.lifecycle }
+  /api/finance/estate-admin/estates/{estateId}:
+    get:
+      operationId: estatePlatformGetEstate
+      summary: One estate's lifecycle state (status, reason, legal hold)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Lifecycle state, content: { application/json: { schema: { $ref: '#/components/schemas/EstateLifecycle' } } } }
+        '403': { description: Missing estate.admin.lifecycle }
+        '404': { description: Estate not found }
+  /api/finance/estate-admin/estates/{estateId}/lifecycle:
+    post:
+      operationId: estatePlatformTransitionEstate
+      summary: Apply a lifecycle transition — verify, reject, suspend, reactivate, close (reason required, audited)
+      description: >
+        pending → active (verify) | closed (reject); active ⇄ suspended
+        (suspend/reactivate); active|suspended → closed. Suspension refuses
+        mutating estate actions with 423 without deleting any record. The
+        estate admin is notified (rejections carry the reason).
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, reason]
+              properties:
+                action: { type: string, enum: [verify, reject, suspend, reactivate, close] }
+                reason: { type: string, minLength: 5, maxLength: 1000 }
+      responses:
+        '200': { description: New lifecycle state, content: { application/json: { schema: { $ref: '#/components/schemas/EstateLifecycle' } } } }
+        '400': { description: Invalid action or missing reason }
+        '403': { description: Missing estate.admin.lifecycle }
+        '404': { description: Estate not found }
+        '409': { description: Transition not allowed from the current status }
+  /api/finance/estate-admin/estates/{estateId}/legal-hold:
+    post:
+      operationId: estatePlatformSetLegalHold
+      summary: Place or lift a legal hold — blocks deletion/purge paths (reason required, audited)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled, reason]
+              properties:
+                enabled: { type: boolean }
+                reason: { type: string, minLength: 5, maxLength: 1000 }
+      responses:
+        '200': { description: New lifecycle state, content: { application/json: { schema: { $ref: '#/components/schemas/EstateLifecycle' } } } }
+        '400': { description: enabled or reason missing }
+        '403': { description: Missing estate.admin.lifecycle }
+        '404': { description: Estate not found }
+  /api/finance/estate-admin/estates/{estateId}/imports:
+    post:
+      operationId: estateImportDryRun
+      summary: Dry-run a legacy-data import — validates rows, dedupes on natural keys + external refs, writes only a dry_run batch
+      description: >
+        Validates units, resident memberships (mapped to EXISTING platform
+        accounts by email/phone — no auth accounts are created) and positive
+        opening dues balances (imported as ordinary pending dues invoices — a
+        receivable, not a money movement). Per-row problems land in the
+        exception report without blocking valid rows. Credit balances,
+        leases/deposits, payment history, visitor logs and election history
+        are out of scope (reported as exceptions or excluded).
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EstateImportRequest' }
+      responses:
+        '201': { description: Dry-run batch with counts + exception report, content: { application/json: { schema: { $ref: '#/components/schemas/EstateImportBatch' } } } }
+        '400': { description: Empty or oversized payload (max 5000 rows) }
+        '403': { description: Not a platform import operator or estate admin }
+        '404': { description: Estate not found }
+        '423': { description: Estate is suspended/closed — imports require pending|active }
+  /api/finance/estate-admin/estates/{estateId}/imports/{batchId}:
+    get:
+      operationId: estateImportGetBatch
+      summary: Import batch detail — dry-run or committed counts, exception report, destination aggregates
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Batch, content: { application/json: { schema: { $ref: '#/components/schemas/EstateImportBatch' } } } }
+        '403': { description: Not a platform import operator or estate admin }
+        '404': { description: Batch not found }
+  /api/finance/estate-admin/estates/{estateId}/imports/{batchId}/commit:
+    post:
+      operationId: estateImportCommit
+      summary: Commit a dry-run batch — Idempotency-Key required; re-plans the stored payload under an estate row lock, then applies it in one transaction
+      description: >
+        A retried commit with the same Idempotency-Key replays the stored
+        result (replayed: true); a different key on a committed batch is 409.
+        A failed opening-balance control total refuses the whole commit.
+        Re-importing a changed export is the delta re-apply: unchanged
+        external refs skip, changed refs update, new refs insert.
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { description: Committed batch (or idempotent replay), content: { application/json: { schema: { $ref: '#/components/schemas/EstateImportBatch' } } } }
+        '400': { description: Idempotency-Key missing }
+        '403': { description: Not a platform import operator or estate admin }
+        '404': { description: Batch not found }
+        '409': { description: Batch already committed under a different Idempotency-Key }
+        '422': { description: Opening-balance control total mismatch — commit refused }
+        '423': { description: Estate is suspended/closed — imports require pending|active }
   # ── END ESTATE SUPER-APP block ────────────────────────────────────────────
   # ── Property Management Suite (unification umbrella; behind
   #    FEATURE_PROPERTY_SUITE_ENABLED) ──────────────────────────────────────

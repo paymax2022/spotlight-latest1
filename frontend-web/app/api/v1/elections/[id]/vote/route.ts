@@ -20,7 +20,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!UUID_RE.test(id)) return errorResponse('Invalid election ID', 400);
     const supabase = createAdminClient();
 
-    const ctx = await getResidentContext(supabase, user.id);
+    const ctx = await getResidentContext(supabase, user.id, { forWrite: true });
     if (!ctx) throw new ApiError('You are not eligible to vote in this election', 403);
     // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
     if (!UUID_RE.test(id)) throw new ApiError('Invalid election ID', 400);

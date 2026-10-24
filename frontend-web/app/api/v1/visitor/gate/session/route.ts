@@ -3,6 +3,7 @@ import { ApiError, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { mapSession } from '@/src/server/visitor/gate.service';
+import { assertEstateWritable } from '@/src/server/estate/resident';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -56,6 +57,8 @@ export async function POST(request: Request) {
       .maybeSingle();
     if (memErr) throw memErr;
     if (!member) throw new ApiError('Not a member of this estate', 403);
+    // A suspended estate opens no new shifts (mirrors Go /:id/guard/checkin).
+    await assertEstateWritable(supabase, estateId);
 
     const { data: gate, error: gateErr } = await supabase
       .from('estate_gates')

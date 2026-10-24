@@ -1152,9 +1152,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			SecretAccessKey: cfg.R2SecretAccessKey,
 			Region:          cfg.R2Region,
 		})
+		estateSvc = estateSvc.WithVerificationRequired(cfg.FeatureEstateVerificationRequired)
 		estateHandler := estate.NewHandler(estateSvc).
-			WithPresigner(estatePresigner, cfg.R2Bucket)
+			WithPresigner(estatePresigner, cfg.R2Bucket).
+			WithPermissionChecker(func(userID, perm string) bool {
+				ok, err := rbac.CheckPermission(userID, perm, "global", "")
+				return err == nil && ok
+			})
 		estGroup := finance.Group("/estate")
+		// ESTD-D025: refuse mutating /estate/:id/... requests while the estate is
+		// pending/suspended/closed. Must stay ABOVE every route registration —
+		// Gin only applies group middleware to routes registered after Use.
+		estGroup.Use(estateHandler.LifecycleGate())
 
 		// SP-01/SP-02: rate-limit the code-space brute-force surface (guard lookup /
 		// admit) and code creation. Estate routes previously carried no rate limit at
@@ -1383,6 +1392,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Gin radix conflict with the /estate/:id/... param routes above. See
 		// estate_admin_routes.go for the full rationale.
 		RegisterEstateAdmin(finance, pool, rbac, middleware.RequireAuthContext(supabase, rbac))
+		RegisterEstatePlatformLifecycle(finance, estateHandler, rbac, cfg.FeatureEstateLifecycleEnabled, cfg.FeatureEstateImportEnabled)
 	}
 
 	// Property role registration rollout order, enforced in code: the flag only

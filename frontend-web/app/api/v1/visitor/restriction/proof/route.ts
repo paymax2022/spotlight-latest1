@@ -9,7 +9,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
-    const ctx = await getResidentContext(supabase, user.id);
+    const ctx = await getResidentContext(supabase, user.id, { forWrite: true });
 
     await supabase.from('visitor_notifications').insert({
       estate_id: ctx?.estateId ?? null,

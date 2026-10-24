@@ -17,7 +17,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!UUID_RE.test(id)) return errorResponse('Invalid election ID', 400);
     const supabase = createAdminClient();
 
-    const ctx = await getResidentContext(supabase, user.id);
+    const ctx = await getResidentContext(supabase, user.id, { forWrite: true });
     if (!ctx || ctx.role !== 'estate_admin') throw new ApiError('Only an estate admin can publish results', 403);
     // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
     if (!UUID_RE.test(id)) throw new ApiError('Invalid election ID', 400);

@@ -9,6 +9,7 @@ import {
   isUniqueViolation,
   mapAccessCode,
 } from '@/src/server/visitor/visitor.service';
+import { assertEstateWritable } from '@/src/server/estate/resident';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -34,6 +35,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if ((old as any).status !== 'active') {
       throw new ApiError('Only an active code can be regenerated', 409);
     }
+    // Regenerate issues a NEW code — a mutating estate action (ESTD-D025).
+    await assertEstateWritable(supabase, (old as any).estate_id);
 
     const { data: revoked, error: revokeErr } = await supabase
       .from('visitor_access_codes')

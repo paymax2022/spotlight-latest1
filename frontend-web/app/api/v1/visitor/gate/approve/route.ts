@@ -17,7 +17,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
-    const guard = await getGuardContext(supabase, user.id);
+    const guard = await getGuardContext(supabase, user.id, { forWrite: true });
     if (!guard) throw new ApiError('No active gate session', 403);
 
     const body = await request.json().catch(() => null);

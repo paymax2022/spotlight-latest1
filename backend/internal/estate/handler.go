@@ -16,7 +16,10 @@ import (
 	"spotlight/backend/internal/platform/r2"
 )
 
-const keyError = "error"
+const (
+	keyError = "error"
+	keyData  = "data"
+)
 
 // isMembershipErr reports whether err is an estate-membership/authorization
 // failure from assertResident/assertEstateAdmin/assertRoles. Those errors
@@ -48,6 +51,7 @@ type Handler struct {
 	svc           *Service
 	presigner     *r2.Presigner // optional; nil/unconfigured disables presigned uploads
 	presignBucket string
+	can           PermissionChecker // optional; platform RBAC for the import routes
 }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
@@ -619,6 +623,9 @@ func (h *Handler) AddHouseholdMember(c *gin.Context) {
 func (h *Handler) DeleteHouseholdMember(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.DeleteHouseholdMember(c.Request.Context(), c.Param("id"), userID, c.Param("mid")); err != nil {
+		if writeIfLifecycleBlocked(c, err) {
+			return
+		}
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
@@ -744,6 +751,9 @@ func (h *Handler) JoinWithInviteCode(c *gin.Context) {
 	}
 	r, err := h.svc.JoinWithInviteCode(c.Request.Context(), userID, req.Code)
 	if err != nil {
+		if writeIfLifecycleBlocked(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
@@ -1205,6 +1215,9 @@ func (h *Handler) UpdateMemberSettings(c *gin.Context) {
 
 func (h *Handler) DeleteAccount(c *gin.Context) {
 	if err := h.svc.SoftDeleteAccount(c.Request.Context(), c.Param("id"), ginutil.UserID(c)); err != nil {
+		if writeIfLifecycleBlocked(c, err) {
+			return
+		}
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}

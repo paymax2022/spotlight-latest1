@@ -13,7 +13,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const user = await requireRequestUser(request);
     const { id } = await context.params;
     const supabase = createAdminClient();
-    const ctx = await getResidentContext(supabase, user.id);
+    const ctx = await getResidentContext(supabase, user.id, { forWrite: true });
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
     // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
     if (!UUID_RE.test(id)) throw new ApiError('Invalid meeting ID', 400);

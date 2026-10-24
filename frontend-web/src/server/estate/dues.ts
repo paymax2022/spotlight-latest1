@@ -67,7 +67,8 @@ export async function payInvoice(input: PayInvoiceInput) {
   if (!idempotencyKey) throw new ApiError('Idempotency-Key header is required for dues payments.', 400);
 
   const supabase = createAdminClient();
-  const ctx = await getResidentContext(supabase, userId);
+  // Money mutation — the estate lifecycle gate applies before any ledger write.
+  const ctx = await getResidentContext(supabase, userId, { forWrite: true });
   if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
   const { data: invoice, error: invErr } = await supabase

@@ -43,6 +43,9 @@ type Service struct {
 	kyc      KYCVerifier  // optional; required only when an election requires KYC
 	notifier Notifier     // optional; push delivery (in-app feed works without it)
 	llm      LLMGenerator // optional; required only for AI note-taking (Block 33)
+	// verificationRequired creates new estates in 'pending' (platform review
+	// queue, EST-UAT-0418) instead of 'active'. FEATURE_ESTATE_VERIFICATION_REQUIRED.
+	verificationRequired bool
 
 	// merchantGate authorises estate creation. When nil (the default, and
 	// whenever FEATURE_ESTATE_MERCHANT_GATE is off) CreateEstate keeps its
@@ -63,6 +66,14 @@ func (s *Service) WithGeocoder(g AddressGeocoder) *Service {
 	return s
 }
 
+// WithVerificationRequired makes CreateEstate open new estates as 'pending'
+// applications that a platform operator must verify before any estate write
+// is accepted (see lifecycle.go). Off = estates are created 'active'.
+func (s *Service) WithVerificationRequired(on bool) *Service {
+	s.verificationRequired = on
+	return s
+}
+
 // CreateEstate creates a new estate and assigns the creator as estate_admin.
 func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEstateRequest) (*Estate, error) {
 	// SP-01: an approved estate-management merchant may create estates. When a
@@ -77,11 +88,16 @@ func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEs
 			return nil, ErrEstateManagerApprovalRequired
 		}
 	}
+	status := EstateStatusActive
+	if s.verificationRequired {
+		status = EstateStatusPending
+	}
 	e := &Estate{
 		ID:        uuid.New().String(),
 		Name:      req.Name,
 		Address:   req.Address,
 		AdminID:   adminID,
+		Status:    status,
 		CreatedAt: time.Now(),
 	}
 	tx, err := s.db.Begin(ctx)
@@ -90,8 +106,8 @@ func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEs
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	const insertEstate = `INSERT INTO estates (id, name, address, admin_id) VALUES ($1,$2,$3,$4)`
-	if _, err := tx.Exec(ctx, insertEstate, e.ID, e.Name, e.Address, e.AdminID); err != nil {
+	const insertEstate = `INSERT INTO estates (id, name, address, admin_id, status) VALUES ($1,$2,$3,$4,$5)`
+	if _, err := tx.Exec(ctx, insertEstate, e.ID, e.Name, e.Address, e.AdminID, e.Status); err != nil {
 		return nil, fmt.Errorf("estate: insert estate: %w", err)
 	}
 	const insertResident = `INSERT INTO estate_residents (estate_id, user_id, unit, role) VALUES ($1,$2,'',  'estate_admin')`
@@ -1156,6 +1172,9 @@ func (s *Service) DeleteHouseholdMember(ctx context.Context, estateID, userID, m
 	if err != nil {
 		return err
 	}
+	if err := s.assertNoLegalHold(ctx, estateID); err != nil {
+		return err
+	}
 	_, err = s.db.Exec(ctx, `DELETE FROM household_members WHERE id=$1 AND resident_id=$2`, memberID, resID)
 	return err
 }
@@ -1340,6 +1359,11 @@ func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (
 	if ic.UsedCount >= ic.MaxUses {
 		return nil, errors.New("estate: invite code has reached maximum uses")
 	}
+	// Lifecycle gate (ESTD-D025): this route has no :id, so LifecycleGate cannot
+	// see the estate — a suspended/pending/closed estate takes no new members.
+	if err := s.AssertEstateWritable(ctx, ic.EstateID); err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(ctx, `UPDATE estate_invite_codes SET used_count=used_count+1 WHERE id=$1`, ic.ID); err != nil {
 		return nil, fmt.Errorf("estate: update invite code: %w", err)
@@ -1505,12 +1529,15 @@ func (s *Service) ListEstates(ctx context.Context, callerID, search string) ([]E
 }
 
 // listAllEstates is ListEstates before PR #876 (every estate, for discovery). It
-// stays the behaviour while FEATURE_ESTATE_GUARD_GRANTS is off. The only change is
-// COALESCE(address): the old query failed the whole list on one NULL address.
+// stays the behaviour while FEATURE_ESTATE_GUARD_GRANTS is off. Two changes:
+// COALESCE(address) — the old query failed the whole list on one NULL address —
+// and status='active' — pending/suspended/closed estates are not publicly
+// discoverable (ESTD-D025; members still see their own via ListEstates).
 func (s *Service) listAllEstates(ctx context.Context, search string) ([]Estate, error) {
 	const q = `
 		SELECT id, name, COALESCE(address,''), admin_id, created_at FROM estates
-		WHERE ($1='' OR name ILIKE '%' || $1 || '%' OR address ILIKE '%' || $1 || '%')
+		WHERE status = 'active'
+		  AND ($1='' OR name ILIKE '%' || $1 || '%' OR address ILIKE '%' || $1 || '%')
 		ORDER BY name LIMIT 50`
 	rows, err := s.db.Query(ctx, q, search)
 	if err != nil {

@@ -9,11 +9,13 @@ export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
-    const guard = await getGuardContext(supabase, user.id);
-    if (!guard) throw new ApiError('No active gate session', 403);
-
     const body = await request.json().catch(() => null);
     if (!body) throw new ApiError('Invalid JSON body', 400);
+    // Emergency walk-ins stay open on a suspended estate (mirrors the Go
+    // /:id/guard/incident exemption); ordinary walk-ins are gated (ESTD-D025).
+    const guard = await getGuardContext(supabase, user.id, { forWrite: body?.action !== 'emergency' });
+    if (!guard) throw new ApiError('No active gate session', 403);
+
     const visitorName: string = String(body?.visitorName ?? '').trim();
     const unitLabel: string = String(body?.unitLabel ?? '').trim();
     const gateId: string = body?.gateId ?? guard.gateId;

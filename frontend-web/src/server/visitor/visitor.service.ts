@@ -6,23 +6,10 @@
 import { randomInt } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-export type ResidentContext = { estateId: string; unit: string; role: string };
-
-export async function getResidentContext(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<ResidentContext | null> {
-  const { data, error } = await supabase
-    .from('estate_residents')
-    .select('estate_id, unit, role')
-    .eq('user_id', userId)
-    .is('deleted_at', null)
-    .is('banned_at', null)
-    .limit(1)
-    .maybeSingle();
-  if (error || !data) return null;
-  return { estateId: (data as any).estate_id, unit: (data as any).unit ?? '', role: (data as any).role ?? 'resident' };
-}
+export type { ResidentContext } from '@/src/server/estate/resident';
+// One canonical membership resolver (estate/resident.ts) — mutating visitor
+// routes pass { forWrite: true } for the lifecycle gate (ESTD-D025).
+export { getResidentContext } from '@/src/server/estate/resident';
 
 // code_type enum reconciliation (DB has a narrower set than the client).
 const DB_TO_CLIENT: Record<string, string> = { ridehailing: 'ride_hailing', staff: 'domestic_staff', family: 'family_permanent' };

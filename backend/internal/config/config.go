@@ -263,8 +263,20 @@ type Config struct {
 	// audited design as FeatureRestaurantPaystackCheckoutEnabled, minus the
 	// escrow/hold-release step (dues settle immediately).
 	FeatureEstateDuesPaystackCheckoutEnabled bool
-	FeatureCrowdfundingEnabled               bool
-	FeatureRestaurantEnabled                 bool
+	// FeatureEstateLifecycleEnabled (FEATURE_ESTATE_LIFECYCLE_ENABLED) mounts the
+	// platform estate lifecycle routes (review queue, verify/reject/suspend/
+	// reactivate/close, legal hold — ESTD-D025). The write gate that refuses
+	// mutations on a non-active estate is always on: it is inert while every
+	// estate is 'active' (the migration default).
+	FeatureEstateLifecycleEnabled bool
+	// FeatureEstateVerificationRequired (FEATURE_ESTATE_VERIFICATION_REQUIRED)
+	// creates new estates 'pending' until a platform operator verifies them.
+	FeatureEstateVerificationRequired bool
+	// FeatureEstateImportEnabled (FEATURE_ESTATE_IMPORT_ENABLED) mounts the
+	// legacy-data import routes (dry-run / commit / exception report — ESTD-D034).
+	FeatureEstateImportEnabled bool
+	FeatureCrowdfundingEnabled bool
+	FeatureRestaurantEnabled   bool
 
 	// FeatureRestaurantAdminCategories moves menu-category ownership to the platform:
 	// owners get 403 on category create/delete, and the admin taxonomy routes mount.
@@ -1002,6 +1014,9 @@ func Load() Config {
 		FeatureEstateMerchantGate:                    getEnvBool("FEATURE_ESTATE_MERCHANT_GATE", false),
 		FeatureEstateGuardGrants:                     getEnvBool("FEATURE_ESTATE_GUARD_GRANTS", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureEstateLifecycleEnabled:                getEnvBool("FEATURE_ESTATE_LIFECYCLE_ENABLED", false),
+		FeatureEstateVerificationRequired:            getEnvBool("FEATURE_ESTATE_VERIFICATION_REQUIRED", false),
+		FeatureEstateImportEnabled:                   getEnvBool("FEATURE_ESTATE_IMPORT_ENABLED", false),
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:                     getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
 		FeatureRestaurantAdminCategories:             getEnvBool("FEATURE_RESTAURANT_ADMIN_CATEGORIES", false),

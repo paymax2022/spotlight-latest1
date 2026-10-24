@@ -8,6 +8,7 @@ type Estate struct {
 	Name      string    `json:"name"`
 	Address   string    `json:"address,omitempty"`
 	AdminID   string    `json:"admin_id"`
+	Status    string    `json:"status,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

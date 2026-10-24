@@ -15,6 +15,12 @@ info:
       - Auth: Bearer JWT issued by Supabase Auth. Estate scope is derived
         server-side from estate_residents; admin-only routes also require
         role = estate_admin.
+      - Estate lifecycle (ESTD-D025): every mutating operation below returns
+        423 while the estate is pending/suspended/closed — writes are refused,
+        records retained, reads unaffected. Exempt: emergencies (raise +
+        resolve) and access-reduction (blacklist, revoke, checkout, deny,
+        gate sync). Platform review/suspend/reactivate/close lives on the Go
+        API at /api/finance/estate-admin/estates/* (see contracts/openapi.yaml).
     Module spec — mirrors contracts/visitor.openapi.yaml. Served under /api/v1.
 
 servers:

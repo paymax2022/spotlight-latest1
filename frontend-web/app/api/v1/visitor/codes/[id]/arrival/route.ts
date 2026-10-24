@@ -18,7 +18,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     if (!UUID_RE.test(id)) throw new ApiError('Invalid access code ID', 400);
     const supabase = createAdminClient();
-    const guard = await getGuardContext(supabase, user.id);
+    const guard = await getGuardContext(supabase, user.id, { forWrite: true });
     if (!guard) throw new ApiError('No active gate session', 403);
 
     const body = await request.json().catch(() => null);

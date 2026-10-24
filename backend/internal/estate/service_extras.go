@@ -100,7 +100,7 @@ func notifCategory(notifType string) string {
 		return "facility"
 	case NotifAnnouncement:
 		return "announcement"
-	case NotifAdminApprovalRequired:
+	case NotifAdminApprovalRequired, NotifEstateStatusChanged:
 		return "system"
 	default: // task_assigned, task_overdue, and any future type
 		return "general"
@@ -393,6 +393,10 @@ func (s *Service) SoftDeleteAccount(ctx context.Context, estateID, userID string
 	if err != nil {
 		return err
 	}
+	// Legal hold (ESTD-D025): the PII scrub below is a purge path.
+	if err := s.assertNoLegalHold(ctx, estateID); err != nil {
+		return err
+	}
 	// Liability hold (EST-UAT-0016): an account with unpaid dues cannot be
 	// closed — the invoices must be settled or waived first so financial
 	// records are never orphaned.
@@ -618,6 +622,10 @@ func (s *Service) IssueSystemVisitorPass(ctx context.Context, req SystemPassRequ
 	}
 	if req.VisitorName == "" {
 		req.VisitorName = "Guest"
+	}
+	// A suspended/pending/closed estate issues no new gate passes (ESTD-D025).
+	if err := s.AssertEstateWritable(ctx, req.EstateID); err != nil {
+		return nil, err
 	}
 
 	// Attribute issuance to the estate's admin (a real auth.users id) so the

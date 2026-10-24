@@ -3,6 +3,7 @@ import { ApiError, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { ACCESS_CODE_COLUMNS, mapAccessCode } from '@/src/server/visitor/visitor.service';
+import { assertEstateWritable } from '@/src/server/estate/resident';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -22,11 +23,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     const { data: existing } = await supabase
       .from('visitor_access_codes')
-      .select('id, issued_by, status')
+      .select('id, issued_by, status, estate_id')
       .eq('id', id)
       .maybeSingle();
     if (!existing || (existing as any).issued_by !== user.id) throw new ApiError('Access code not found', 404);
     if ((existing as any).status !== 'active') throw new ApiError('Only active codes can be extended', 409);
+    await assertEstateWritable(supabase, (existing as any).estate_id);
 
     const { data: row, error } = await supabase
       .from('visitor_access_codes')

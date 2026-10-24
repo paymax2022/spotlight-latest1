@@ -45,7 +45,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
-    const resCtx = await getResidentContext(supabase, user.id);
+    const resCtx = await getResidentContext(supabase, user.id, { forWrite: true });
     if (!resCtx) throw new ApiError('Not a resident of any estate', 403);
     if (!UUID_RE.test(params.id)) throw new ApiError('Invalid repair request ID', 400);
     const body = await request.json().catch(() => null);
