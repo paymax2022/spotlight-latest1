@@ -45,9 +45,24 @@ func reconcilerPool(t *testing.T) *pgxpool.Pool {
 }
 
 // seedReconcilerAccount creates an auth.users row + a quidax sub-account mapping.
+// ensureBTCAsset makes sure an active BTC row exists. The deposit resolver maps a
+// deposit to crypto_assets by symbol, and nothing in the migrations seeds that table,
+// so on a fresh database these tests found no asset and treated every deposit as
+// unmapped. DO NOTHING keeps any row that already exists untouched.
+func ensureBTCAsset(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO crypto_assets (symbol, name, minor_unit_scale, is_active)
+		VALUES ('BTC', 'Bitcoin', 100000000, true)
+		ON CONFLICT (symbol) DO NOTHING`); err != nil {
+		t.Fatalf("seed BTC crypto_asset: %v", err)
+	}
+}
+
 func seedReconcilerAccount(t *testing.T, pool *pgxpool.Pool) (userID, providerAccountID string) {
 	t.Helper()
 	ctx := context.Background()
+	ensureBTCAsset(t, pool)
 	u := uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
