@@ -31,6 +31,8 @@ const APPLICATION_COLUMNS = [
   'batch_id',
   'talent_category',
   'areas_of_interest',
+  // Legacy per-area option keys (academy_area_pricing_options). No migration in
+  // this repo creates it, so it is OPTIONAL — see APPLICATION_OPTIONAL_COLUMNS.
   'pricing_selections',
   // Server-priced snapshot of the chosen area options (option + boarding +
   // price). NULL on applications made before area options existed.
@@ -41,14 +43,34 @@ const APPLICATION_COLUMNS = [
   'academy_batches(batch_name, start_date)',
 ];
 const APPLICATION_SELECT = APPLICATION_COLUMNS.join(', ');
-// Deploy-order safety: if this code ships before migration 20271095000000 adds
-// `selected_options`, PostgREST rejects the whole select (42703) and the status
-// screen would 500 for every applicant. Retry once without the column.
-const APPLICATION_SELECT_LEGACY = APPLICATION_COLUMNS.filter((c) => c !== 'selected_options').join(', ');
+// Columns a given database may not have: `selected_options` arrives with
+// migration 20271095000000 (deploy order: this code can ship first), and
+// `pricing_selections` is created by no migration at all. If either is
+// missing, PostgREST rejects the whole select (42703) and the status screen
+// would 500 for every applicant — so retry ONCE without both.
+const APPLICATION_OPTIONAL_COLUMNS = ['selected_options', 'pricing_selections'];
+const APPLICATION_SELECT_LEGACY = APPLICATION_COLUMNS.filter(
+  (c) => !APPLICATION_OPTIONAL_COLUMNS.includes(c),
+).join(', ');
 
-function isMissingSelectedOptionsColumn(error: { code?: string; message?: string } | null): boolean {
+/**
+ * True only for a missing-column error that names one of the optional columns.
+ * Both halves are required: a 42703 for any OTHER column is a real bug, and an
+ * unrelated error that merely mentions a column name must not be swallowed.
+ */
+function isMissingOptionalColumn(error: { code?: string; message?: string } | null): boolean {
   if (!error) return false;
-  return error.code === '42703' || String(error.message ?? '').includes('selected_options');
+  const message = String(error.message ?? '');
+  const missingColumn =
+    error.code === '42703' ||
+    error.code === 'PGRST204' ||
+    /column .* does not exist|could not find the .* column/i.test(message);
+  return missingColumn && APPLICATION_OPTIONAL_COLUMNS.some((c) => message.includes(c));
+}
+
+/** Missing table: Postgres 42P01 (undefined_table) or PostgREST PGRST205. */
+function isMissingTableError(error: { code?: string } | null | undefined): boolean {
+  return error?.code === '42P01' || error?.code === 'PGRST205';
 }
 
 /** The applicant's latest application matched on one column, tolerating a pre-migration DB. */
@@ -67,8 +89,11 @@ async function lookupApplication(
       .maybeSingle();
 
   const first = await run(APPLICATION_SELECT);
-  if (!isMissingSelectedOptionsColumn(first.error)) return first;
-  console.warn('[academy/application] selected_options column missing; retrying without it');
+  if (!isMissingOptionalColumn(first.error)) return first;
+  console.warn(
+    '[academy/application] optional column missing; retrying without selected_options/pricing_selections',
+    first.error?.message,
+  );
   return run(APPLICATION_SELECT_LEGACY);
 }
 
@@ -87,8 +112,11 @@ type AppliedArea = {
 // into labelled, priced rows. The price per area is the option the applicant
 // chose (pricing_selections[slug] → academy_area_pricing_options), falling back
 // to the area's own fee when no option was recorded (older applications). Returns
-// [] on any lookup error rather than failing the whole status screen — the areas
-// are supplementary context, not the point of the page.
+// [] when the areas lookup fails rather than failing the whole status screen —
+// the areas are supplementary context. The legacy academy_area_pricing_options
+// table may not exist (no migration creates it): a missing table is treated as
+// "no options"; any other error on it throws, because silently falling back to
+// fee_ngn would show the applicant a price that may be wrong.
 async function resolveAppliedAreas(
   supabase: ReturnType<typeof createAdminClient>,
   application: Record<string, any>,
@@ -112,10 +140,14 @@ async function resolveAppliedAreas(
   }
   const areas = areaRows as Array<{ id: string; slug: string; label: string; fee_ngn: number | null }>;
 
-  const { data: optionRows } = await supabase
+  const { data: optionRows, error: optionErr } = await supabase
     .from('academy_area_pricing_options')
     .select('area_id, key, label, price_ngn')
     .in('area_id', areas.map((a) => a.id));
+  if (optionErr && !isMissingTableError(optionErr)) {
+    console.error('[academy/application] pricing options lookup failed', optionErr);
+    throw optionErr;
+  }
   const options = (optionRows ?? []) as Array<{ area_id: string; key: string; label: string; price_ngn: number }>;
 
   // Preserve the order the applicant's slugs were stored in.

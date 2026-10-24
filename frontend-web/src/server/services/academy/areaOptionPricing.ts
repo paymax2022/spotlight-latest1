@@ -33,8 +33,9 @@ export type PriceResult =
 
 const fail = (error: string): PriceResult => ({ ok: false, error });
 
+/** A billable price: a safe whole-naira integer strictly greater than zero. */
 const isNaira = (n: unknown): n is number =>
-  typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  typeof n === "number" && Number.isSafeInteger(n) && n > 0;
 
 export function priceSelections(
   selections: Selection[],
@@ -72,13 +73,28 @@ export function priceSelections(
         return fail(`The option "${row.label}" is no longer available.`);
       }
 
+      // The ROW must be validly priced before any of it is quoted: a positive
+      // no-boarding price, and a with-boarding price that is absent or at least
+      // as high. Zero is never "free" — a zero tuition total falls back to the
+      // batch fee in the tuition services — so a zero-priced row is treated as
+      // not available. The DB CHECKs enforce the same rule; this is the
+      // fail-closed guard for rows that predate them.
+      if (
+        !isNaira(row.price_no_boarding_ngn) ||
+        (row.price_with_boarding_ngn !== null &&
+          (!isNaira(row.price_with_boarding_ngn) ||
+            row.price_with_boarding_ngn < row.price_no_boarding_ngn))
+      ) {
+        return fail(`The option "${row.label}" is not available. Please contact support.`);
+      }
+
       const boarding = sel.boarding === true;
       const price = boarding ? row.price_with_boarding_ngn : row.price_no_boarding_ngn;
       if (boarding && price === null) {
         return fail(`Boarding is not available for "${row.label}".`);
       }
       if (!isNaira(price)) {
-        return fail(`The price for "${row.label}" is unavailable. Please contact support.`);
+        return fail(`The option "${row.label}" is not available. Please contact support.`);
       }
 
       priced.push({

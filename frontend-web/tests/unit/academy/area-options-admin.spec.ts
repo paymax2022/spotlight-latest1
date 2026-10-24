@@ -1,7 +1,7 @@
 /**
  * /api/admin/academy/area-options — GET / POST / PUT (admin, programs:manage).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { makeRequest } from '../golden-path/_fixtures';
 
 vi.mock('next/server', () => ({
@@ -110,8 +110,15 @@ const validCreate = (over: Row = {}) => ({
   ...over,
 });
 
+const FLAG = 'FEATURE_FILM_ACADEMY_AREA_OPTIONS_ENABLED';
+
+afterEach(() => {
+  delete process.env[FLAG];
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
+  process.env[FLAG] = 'true';
   tables = {
     academy_interest_areas: [{ id: AREA_ID, slug: 'acting' }],
     academy_area_options: [stored()],
@@ -274,5 +281,61 @@ describe('admin area-options', () => {
     const updated = vi.mocked(addAuditEvent).mock.calls[1][0];
     expect(updated.oldValue).toMatchObject({ id: OPT_ID, price_no_boarding_ngn: 100000 });
     expect(updated.newValue).toMatchObject({ id: OPT_ID, price_no_boarding_ngn: 120000 });
+  });
+});
+
+describe('admin area-options — zero-price rule', () => {
+  it('POST rejects a zero no-boarding price', async () => {
+    const res = await post(validCreate({ price_no_boarding_ngn: 0, price_with_boarding_ngn: null }));
+    expect(res.status).toBe(400);
+    expect(String((await res.json()).error)).toMatch(/greater than zero/i);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('POST rejects a zero with-boarding price', async () => {
+    const res = await post(validCreate({ price_no_boarding_ngn: 100000, price_with_boarding_ngn: 0 }));
+    expect(res.status).toBe(400);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('PUT rejects setting the no-boarding price to zero', async () => {
+    const res = await put({ id: OPT_ID, price_no_boarding_ngn: 0, price_with_boarding_ngn: null });
+    expect(res.status).toBe(400);
+    expect(updates).toHaveLength(0);
+  });
+
+  it('PUT rejects setting the with-boarding price to zero', async () => {
+    const res = await put({ id: OPT_ID, price_with_boarding_ngn: 0 });
+    expect(res.status).toBe(400);
+    expect(updates).toHaveLength(0);
+  });
+
+  it('PUT partial update is checked against a stored zero price (pre-CHECK row)', async () => {
+    tables.academy_area_options = [stored({ price_no_boarding_ngn: 0, price_with_boarding_ngn: null })];
+    const res = await put({ id: OPT_ID, label: 'Renamed' });
+    expect(res.status).toBe(400);
+    expect(updates).toHaveLength(0);
+  });
+});
+
+describe('admin area-options — feature flag off', () => {
+  it.each(['GET', 'POST', 'PUT'] as const)('%s returns 404 with no permission or DB work', async (method) => {
+    process.env[FLAG] = 'false';
+    const res =
+      method === 'GET'
+        ? await GET(makeRequest(`${URL_BASE}?area_id=${AREA_ID}`, { method: 'GET' }))
+        : method === 'POST'
+          ? await post(validCreate())
+          : await put({ id: OPT_ID, label: 'X' });
+    expect(res.status).toBe(404);
+    expect(assertAdminPermission).not.toHaveBeenCalled();
+    expect(createAdminClient).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+    expect(updates).toHaveLength(0);
+  });
+
+  it('flag unset behaves as off', async () => {
+    delete process.env[FLAG];
+    expect((await post(validCreate())).status).toBe(404);
   });
 });

@@ -40,15 +40,22 @@ type AppError = { code?: string; message: string } | null;
  * `appError(cols)` lets a test fail the academy_applications lookup for a
  * given column list (e.g. the column not existing before the migration).
  */
-function makeClient(selects: Record<string, string[]>, appError: (cols: string) => AppError = () => null) {
+function makeClient(
+  selects: Record<string, string[]>,
+  appError: (cols: string) => AppError = () => null,
+  opts: { areas?: string[]; pricingOptionsError?: AppError } = {},
+) {
   const rows: Record<string, unknown> = {
     academy_applications: {
       id: 'app-1',
       status: 'pending',
       created_at: '2026-10-24T00:00:00Z',
-      areas_of_interest: [],
+      areas_of_interest: opts.areas ?? [],
       selected_options: SNAPSHOT,
+      pricing_selections: null,
     },
+    academy_interest_areas: [{ id: 'area-1', slug: 'directing', label: 'Directing', fee_ngn: 70000 }],
+    academy_area_pricing_options: [],
     academy_application_status_history: [],
     academy_installment_plans: null,
     academy_enrollments: null,
@@ -63,11 +70,16 @@ function makeClient(selects: Record<string, string[]>, appError: (cols: string) 
             const err = appError(cols);
             if (err) {
               result = { data: null, error: err };
-            } else if (!cols.includes('selected_options')) {
-              // A pre-migration DB has no such column to return.
-              const { selected_options: _omit, ...rest } = rows[table] as Record<string, unknown>;
+            } else {
+              // A pre-migration DB has no such columns to return.
+              const rest = { ...(rows[table] as Record<string, unknown>) };
+              if (!cols.includes('selected_options')) delete rest.selected_options;
+              if (!cols.includes('pricing_selections')) delete rest.pricing_selections;
               result = { data: rest, error: null };
             }
+          }
+          if (table === 'academy_area_pricing_options' && opts.pricingOptionsError) {
+            result = { data: null, error: opts.pricingOptionsError };
           }
           return b;
         },
@@ -125,5 +137,88 @@ describe('GET /api/academy/application — selected_options', () => {
     const res = await GET(makeRequest('/api/academy/application'));
     expect(res.status).toBe(500);
     expect(selects.academy_applications).toHaveLength(1);
+  });
+});
+
+describe('GET /api/academy/application — pre-migration tolerance', () => {
+  let selects: Record<string, string[]>;
+  beforeEach(() => {
+    selects = {};
+    vi.mocked(requireRequestUser).mockResolvedValue({ id: 'user-1', email: 'a@example.com' } as never);
+  });
+
+  const missing = (column: string) => (cols: string) =>
+    cols.includes(column)
+      ? { code: '42703', message: `column academy_applications.${column} does not exist` }
+      : null;
+
+  it.each(['pricing_selections', 'selected_options'])(
+    'retries once without BOTH optional columns when %s is missing (42703)',
+    async (column) => {
+      vi.mocked(createAdminClient).mockReturnValue(makeClient(selects, missing(column)) as never);
+      const res = await GET(makeRequest('/api/academy/application'));
+      expect(res.status).toBe(200);
+      expect(selects.academy_applications).toHaveLength(2);
+      expect(selects.academy_applications[1]).not.toContain('selected_options');
+      expect(selects.academy_applications[1]).not.toContain('pricing_selections');
+    },
+  );
+
+  it('a migrations-only DB (both columns missing) still loads the status screen', async () => {
+    vi.mocked(createAdminClient).mockReturnValue(
+      makeClient(selects, (cols) =>
+        cols.includes('pricing_selections') || cols.includes('selected_options')
+          ? { code: '42703', message: 'column academy_applications.pricing_selections does not exist' }
+          : null,
+      ) as never,
+    );
+    const res = await GET(makeRequest('/api/academy/application'));
+    expect(res.status).toBe(200);
+    expect(selects.academy_applications).toHaveLength(2);
+  });
+
+  it('42703 for an unrelated column is NOT swallowed (500, no retry)', async () => {
+    vi.mocked(createAdminClient).mockReturnValue(makeClient(selects, missing('tuition_total_ngn')) as never);
+    const res = await GET(makeRequest('/api/academy/application'));
+    expect(res.status).toBe(500);
+    expect(selects.academy_applications).toHaveLength(1);
+  });
+
+  it('a non-missing-column error that merely mentions selected_options is NOT swallowed', async () => {
+    vi.mocked(createAdminClient).mockReturnValue(
+      makeClient(selects, () => ({ code: '57014', message: 'canceling statement due to timeout (selected_options)' })) as never,
+    );
+    const res = await GET(makeRequest('/api/academy/application'));
+    expect(res.status).toBe(500);
+    expect(selects.academy_applications).toHaveLength(1);
+  });
+
+  it.each(['PGRST205', '42P01'])(
+    'treats a missing academy_area_pricing_options table (%s) as no options',
+    async (code) => {
+      vi.mocked(createAdminClient).mockReturnValue(
+        makeClient(selects, () => null, {
+          areas: ['directing'],
+          pricingOptionsError: { code, message: 'academy_area_pricing_options missing' },
+        }) as never,
+      );
+      const res = await GET(makeRequest('/api/academy/application'));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.areas).toEqual([
+        { slug: 'directing', label: 'Directing', optionKey: null, optionLabel: null, priceNgn: 70000 },
+      ]);
+    },
+  );
+
+  it('any other academy_area_pricing_options error still fails (500)', async () => {
+    vi.mocked(createAdminClient).mockReturnValue(
+      makeClient(selects, () => null, {
+        areas: ['directing'],
+        pricingOptionsError: { code: '08006', message: 'connection failure' },
+      }) as never,
+    );
+    const res = await GET(makeRequest('/api/academy/application'));
+    expect(res.status).toBe(500);
   });
 });

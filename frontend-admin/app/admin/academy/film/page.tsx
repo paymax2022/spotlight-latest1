@@ -1200,7 +1200,8 @@ function SettingsTab({ onNotice }: NoticeProp) {
   );
 }
 
-/** Whole non-negative naira from an input string, or null when blank/invalid. */
+/** Whole non-negative naira from an input string, or null when blank/invalid.
+ *  Callers additionally require > 0 for option prices. */
 function parseNaira(s: string): number | null {
   const t = s.trim();
   if (!/^\d+$/.test(t)) return null;
@@ -1216,11 +1217,18 @@ function validateOptionDraft(d: OptionDraft):
   | { ok: false; hint: string } {
   if (!d.label.trim()) return { ok: false, hint: 'Schedule label is required.' };
   const no = parseNaira(d.noBoarding);
-  if (no === null) return { ok: false, hint: 'Enter a whole-naira price without boarding.' };
+  // Zero is not "free": a zero tuition total falls back to the batch fee in the
+  // tuition services, so a ₦0 option would bill the wrong amount. The server and
+  // a DB CHECK enforce the same rule.
+  if (no === null || no <= 0) {
+    return { ok: false, hint: 'Enter a whole-naira price without boarding, greater than ₦0.' };
+  }
   let withB: number | null = null;
   if (d.withBoarding.trim() !== '') {
     withB = parseNaira(d.withBoarding);
-    if (withB === null) return { ok: false, hint: 'Boarding price must be a whole number (or blank).' };
+    if (withB === null || withB <= 0) {
+      return { ok: false, hint: 'Boarding price must be a whole number greater than ₦0 (or blank).' };
+    }
     if (withB < no) return { ok: false, hint: 'Boarding price cannot be lower than the no-boarding price.' };
   }
   return { ok: true, label: d.label.trim(), duration_label: d.duration.trim() || null, no, with: withB };
@@ -1315,12 +1323,12 @@ function AreaOptionsEditor({ area, options, onChanged, onNotice }: {
                     value={d.duration} onChange={(e) => set({ ...d, duration: e.target.value })} />
                 </td>
                 <td style={td()}>
-                  <input type="number" min={0} step={1} style={{ ...input(), width: 140 }}
+                  <input type="number" min={1} step={1} style={{ ...input(), width: 140 }}
                     aria-label="Price without boarding" value={d.noBoarding}
                     onChange={(e) => set({ ...d, noBoarding: e.target.value })} />
                 </td>
                 <td style={td()}>
-                  <input type="number" min={0} step={1} style={{ ...input(), width: 140 }}
+                  <input type="number" min={1} step={1} style={{ ...input(), width: 140 }}
                     aria-label="Price with boarding" placeholder="not offered" value={d.withBoarding}
                     onChange={(e) => set({ ...d, withBoarding: e.target.value })} />
                 </td>

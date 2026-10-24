@@ -2,6 +2,7 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission, type AdminIdentity } from '@/src/server/admin/auth';
 import { addAuditEvent } from '@/src/server/admin/audit';
 import { createAdminClient } from '@/lib/supabase/server';
+import { featureFlags } from '@/src/lib/feature-flags';
 
 // Per-area tuition options (schedule x boarding). Prices are WHOLE NAIRA
 // integers (bigint columns) and are the source of truth the apply endpoint
@@ -30,9 +31,17 @@ const INT4_MIN = -2147483648;
 const INT4_MAX = 2147483647;
 
 /** Safe integer only: 1e300 / 9e18 would 500 at the bigint column, and values
- *  past 2^53 are already silently rounded by JSON.parse. */
-function isWholeNonNegative(v: unknown): v is number {
-  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+ *  past 2^53 are already silently rounded by JSON.parse. Strictly POSITIVE: a
+ *  zero tuition total falls back to the batch fee in the tuition services, so
+ *  `₦0` would bill the wrong amount (DB CHECKs enforce the same rule). */
+function isWholePositive(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
+}
+
+/** Same flag-first order as the sibling flag-gated academy admin routes: a dark
+ *  module answers 404 before any permission or DB work. */
+function disabled() {
+  return featureFlags.filmAcademyAreaOptions() ? null : errorResponse('Not found', 404);
 }
 
 function isInt4(v: unknown): v is number {
@@ -75,6 +84,8 @@ const BOARDING_RULE_MSG = 'price_with_boarding_ngn cannot be lower than price_no
 
 export async function GET(request: Request) {
   try {
+    const off = disabled();
+    if (off) return off;
     await assertAdminPermission(request, PERMISSION);
     const areaId = new URL(request.url).searchParams.get('area_id')?.trim();
     if (!areaId) return errorResponse('area_id is required', 400);
@@ -99,6 +110,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const off = disabled();
+    if (off) return off;
     const identity = await assertAdminPermission(request, PERMISSION);
     const body = (await request.json().catch(() => null)) as OptionBody | null;
     if (!body || typeof body !== 'object') return errorResponse('Invalid JSON body', 400);
@@ -107,12 +120,12 @@ export async function POST(request: Request) {
     if (!areaId) return errorResponse('area_id is required', 400);
     if (!UUID_RE.test(areaId)) return errorResponse('area_id must be a valid UUID', 400);
     if (typeof body.label !== 'string' || !body.label.trim()) return errorResponse('Label is required', 400);
-    if (!isWholeNonNegative(body.price_no_boarding_ngn)) {
-      return errorResponse('price_no_boarding_ngn must be a whole number of naira, zero or more', 400);
+    if (!isWholePositive(body.price_no_boarding_ngn)) {
+      return errorResponse('price_no_boarding_ngn must be a whole number of naira greater than zero', 400);
     }
     const withBoarding = body.price_with_boarding_ngn ?? null;
-    if (withBoarding !== null && !isWholeNonNegative(withBoarding)) {
-      return errorResponse('price_with_boarding_ngn must be null or a whole number of naira, zero or more', 400);
+    if (withBoarding !== null && !isWholePositive(withBoarding)) {
+      return errorResponse('price_with_boarding_ngn must be null or a whole number of naira greater than zero', 400);
     }
     if (withBoarding !== null && withBoarding < body.price_no_boarding_ngn) {
       return errorResponse(BOARDING_RULE_MSG, 400);
@@ -163,6 +176,8 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const off = disabled();
+    if (off) return off;
     const identity = await assertAdminPermission(request, PERMISSION);
     const body = (await request.json().catch(() => null)) as OptionBody | null;
     if (!body || typeof body !== 'object') return errorResponse('Invalid JSON body', 400);
@@ -182,14 +197,14 @@ export async function PUT(request: Request) {
       patch.duration_label = d;
     }
     if (body.price_no_boarding_ngn !== undefined) {
-      if (!isWholeNonNegative(body.price_no_boarding_ngn)) {
-        return errorResponse('price_no_boarding_ngn must be a whole number of naira, zero or more', 400);
+      if (!isWholePositive(body.price_no_boarding_ngn)) {
+        return errorResponse('price_no_boarding_ngn must be a whole number of naira greater than zero', 400);
       }
       patch.price_no_boarding_ngn = body.price_no_boarding_ngn;
     }
     if (body.price_with_boarding_ngn !== undefined) {
-      if (body.price_with_boarding_ngn !== null && !isWholeNonNegative(body.price_with_boarding_ngn)) {
-        return errorResponse('price_with_boarding_ngn must be null or a whole number of naira, zero or more', 400);
+      if (body.price_with_boarding_ngn !== null && !isWholePositive(body.price_with_boarding_ngn)) {
+        return errorResponse('price_with_boarding_ngn must be null or a whole number of naira greater than zero', 400);
       }
       patch.price_with_boarding_ngn = body.price_with_boarding_ngn;
     }
@@ -216,12 +231,27 @@ export async function PUT(request: Request) {
 
     // Validate the boarding rule on the EFFECTIVE pair (patch over stored), so a
     // partial update that sends only one price is still checked.
-    const cur = existing as { price_no_boarding_ngn: number; price_with_boarding_ngn: number | null };
-    const effNo = (patch.price_no_boarding_ngn as number | undefined) ?? cur.price_no_boarding_ngn;
+    const cur = existing as { price_no_boarding_ngn: unknown; price_with_boarding_ngn: unknown };
+    // Stored bigint values are coerced (a driver may hand them back as strings);
+    // the whole-positive check below still rejects anything non-integral.
+    const storedNo = Number(cur.price_no_boarding_ngn);
+    const storedWith =
+      cur.price_with_boarding_ngn === null || cur.price_with_boarding_ngn === undefined
+        ? null
+        : Number(cur.price_with_boarding_ngn);
+    const effNo = (patch.price_no_boarding_ngn as number | undefined) ?? storedNo;
     const effWith =
       'price_with_boarding_ngn' in patch
         ? (patch.price_with_boarding_ngn as number | null)
-        : cur.price_with_boarding_ngn;
+        : storedWith;
+    // A stored row from before the CHECKs may already hold a zero price; any edit
+    // must leave the row valid, so the effective pair is held to the same rule.
+    if (!isWholePositive(effNo)) {
+      return errorResponse('price_no_boarding_ngn must be a whole number of naira greater than zero', 400);
+    }
+    if (effWith !== null && !isWholePositive(effWith)) {
+      return errorResponse('price_with_boarding_ngn must be null or a whole number of naira greater than zero', 400);
+    }
     if (effWith !== null && effWith < effNo) return errorResponse(BOARDING_RULE_MSG, 400);
 
     const { data, error } = await supabase

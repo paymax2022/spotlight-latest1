@@ -82,4 +82,23 @@ describe("priceSelections", () => {
     expect(priceSelections([{ area: "x", option_id: "b2", boarding: false }], bad, 3).ok).toBe(false);
     expect(priceSelections(null as unknown as Selection[], options, 3).ok).toBe(false);
   });
+  it("rejects a zero-priced option as not available (zero tuition would bill the batch fee)", () => {
+    const zero = [opt({ id: "z1", price_no_boarding_ngn: 0, price_with_boarding_ngn: 150000 })];
+    const r = priceSelections([{ area: "acting", option_id: "z1", boarding: false }], zero, 3);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/not available/i);
+    // The row itself is invalid, so even its non-zero boarding price is refused.
+    expect(priceSelections([{ area: "acting", option_id: "z1", boarding: true }], zero, 3).ok).toBe(false);
+  });
+  it("rejects a zero with-boarding price as not available", () => {
+    const zero = [opt({ id: "z2", price_no_boarding_ngn: 100000, price_with_boarding_ngn: 0 })];
+    const r = priceSelections([{ area: "acting", option_id: "z2", boarding: true }], zero, 3);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/not available/i);
+  });
+  it("rejects an inverted pair (with-boarding below no-boarding) as not available", () => {
+    const inverted = [opt({ id: "i1", price_no_boarding_ngn: 100000, price_with_boarding_ngn: 90000 })];
+    expect(priceSelections([{ area: "acting", option_id: "i1", boarding: true }], inverted, 3).ok).toBe(false);
+    expect(priceSelections([{ area: "acting", option_id: "i1", boarding: false }], inverted, 3).ok).toBe(false);
+  });
 });
