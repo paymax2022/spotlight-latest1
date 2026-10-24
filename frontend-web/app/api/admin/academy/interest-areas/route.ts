@@ -55,13 +55,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * A format price: a whole number of naira, strictly positive, fits the column.
  * Zero is NOT allowed — a 0 tuition_total_ngn makes the tuition services fall
  * back to the batch training_fee_ngn, a figure the applicant never saw. Accepts
- * a number or a numeric string (the admin form posts either); blank, null and
- * booleans are rejected rather than coerced to 0 the way Number() would.
+ * a JSON number, or a string of plain digits (surrounding whitespace trimmed) —
+ * the same rule as the admin form. Anything else (blank, null, booleans, and
+ * strings Number() would happily read such as "1e5", "0x10", "1.0") is rejected.
  */
 function parseFormatPrice(v: unknown): number | null {
   let n: number;
   if (typeof v === 'number') n = v;
-  else if (typeof v === 'string' && v.trim() !== '') n = Number(v.trim());
+  else if (typeof v === 'string' && /^\d+$/.test(v.trim())) n = Number(v.trim());
   else return null;
   if (!Number.isInteger(n) || n <= 0 || n > MAX_FORMAT_PRICE_NGN) return null;
   return n;
@@ -293,18 +294,24 @@ export async function PUT(request: Request) {
         return errorResponse('Failed to save the area pricing', 500);
       }
 
-      addAuditEvent({
-        adminUser: admin.actorId || 'admin',
-        role: admin.role,
-        action: 'academy.area_pricing.update',
-        module: 'academy',
-        entityType: 'academy_area_pricing_options',
-        entityId: id,
-        reason: 'Updated area of interest pricing',
-        oldValue,
-        newValue: Object.fromEntries(validatedPricing.map((p) => [p.key, p.price_ngn])),
-        ipAddress: request.headers.get('x-forwarded-for') || undefined,
-      });
+      // A no-op save (every touched key already at that price) is not a change.
+      // An unknown old value (read failed) is always audited.
+      const unchanged =
+        oldValue !== undefined && validatedPricing.every((p) => oldValue[p.key] === p.price_ngn);
+      if (!unchanged) {
+        addAuditEvent({
+          adminUser: admin.actorId || 'admin',
+          role: admin.role,
+          action: 'academy.area_pricing.update',
+          module: 'academy',
+          entityType: 'academy_area_pricing_options',
+          entityId: id,
+          reason: 'Updated area of interest pricing',
+          oldValue,
+          newValue: Object.fromEntries(validatedPricing.map((p) => [p.key, p.price_ngn])),
+          ipAddress: request.headers.get('x-forwarded-for') || undefined,
+        });
+      }
     }
 
     return successResponse({ success: true, area: data });

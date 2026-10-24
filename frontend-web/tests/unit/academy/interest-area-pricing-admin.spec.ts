@@ -72,6 +72,7 @@ async function expect400(body: unknown, messagePart: RegExp) {
   const json = (await res.json()) as { error?: string; message?: string };
   expect(JSON.stringify(json)).toMatch(messagePart);
   expect(calls.filter((c) => c.method === 'upsert')).toHaveLength(0);
+  expect(calls.filter((c) => c.method === 'update')).toHaveLength(0);
 }
 
 const upsertCalls = () => calls.filter((c) => c.table === 'academy_area_pricing_options' && c.method === 'upsert');
@@ -100,7 +101,14 @@ describe('PUT /api/admin/academy/interest-areas pricing', () => {
   });
 
   it('PUT pricing rejects a negative price', async () => {
-    await expect400({ id: AREA_ID, pricing: [{ key: 'weekend_day', price_ngn: -5000 }] }, /weekend_day/);
+    await expect400(
+      { id: AREA_ID, pricing: [{ key: 'weekend_day', price_ngn: -5000 }] },
+      /Price for weekend_day must be a whole number of naira above zero/,
+    );
+    await expect400(
+      { id: AREA_ID, pricing: [{ key: 'weekend_day', price_ngn: '-5000' }] },
+      /Price for weekend_day must be a whole number of naira above zero/,
+    );
   });
 
   it('PUT pricing rejects a fractional price', async () => {
@@ -136,7 +144,63 @@ describe('PUT /api/admin/academy/interest-areas pricing', () => {
   });
 
   it('PUT pricing rejects an unknown format key', async () => {
-    await expect400({ id: AREA_ID, pricing: [{ key: 'evening_class', price_ngn: 60000 }] }, /evening_class/);
+    await expect400(
+      { id: AREA_ID, pricing: [{ key: 'evening_class', price_ngn: 60000 }] },
+      /Unknown pricing format: evening_class/,
+    );
+  });
+
+  it('PUT pricing accepts only plain digit strings', async () => {
+    for (const bad of ['1e5', '0x10', '1.0', '0b11', ' ', ' 1e3 ', '1e-0', '0x186A0']) {
+      calls = [];
+      await expect400(
+        { id: AREA_ID, pricing: [{ key: 'weekday_day', price_ngn: bad }] },
+        /Price for weekday_day must be a whole number of naira above zero/,
+      );
+    }
+    for (const [good, expected] of [['50000', 50000], [' 50000 ', 50000]] as const) {
+      calls = [];
+      const res = await put({ id: AREA_ID, pricing: [{ key: 'weekday_day', price_ngn: good }] });
+      expect(res.status).toBe(200);
+      const [rows] = upsertCalls()[0].args as [Array<Record<string, unknown>>];
+      expect(rows[0]).toMatchObject({ key: 'weekday_day', price_ngn: expected });
+    }
+  });
+
+  it('upsert error returns 500 and writes no audit event', async () => {
+    upsertResult = { data: null, error: { message: 'boom', code: 'XX000' } };
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await put({ id: AREA_ID, pricing: [{ key: 'weekend_day', price_ngn: 65000 }] });
+    errSpy.mockRestore();
+    expect(res.status).toBe(500);
+    expect(upsertCalls()).toHaveLength(1);
+    expect(addAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it('PUT skips the audit event when no price changed', async () => {
+    // Stored: weekend_day 50000, weekday_boarding '150000.00' (numeric comes back as a string).
+    const res = await put({
+      id: AREA_ID,
+      pricing: [
+        { key: 'weekend_day', price_ngn: 50000 },
+        { key: 'weekday_boarding', price_ngn: 150000 },
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect(upsertCalls()).toHaveLength(1);
+    expect(addAuditEvent).not.toHaveBeenCalled();
+
+    // A key with no stored row counts as a change.
+    vi.mocked(addAuditEvent).mockClear();
+    const res2 = await put({
+      id: AREA_ID,
+      pricing: [
+        { key: 'weekend_day', price_ngn: 50000 },
+        { key: 'full_time_boarding', price_ngn: 200000 },
+      ],
+    });
+    expect(res2.status).toBe(200);
+    expect(addAuditEvent).toHaveBeenCalledTimes(1);
   });
 
   it('PUT rejects a non-UUID id before touching the database', async () => {
