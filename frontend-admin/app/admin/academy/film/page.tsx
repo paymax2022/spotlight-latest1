@@ -201,7 +201,7 @@ function BatchesTab({ onNotice }: NoticeProp) {
               <thead><tr>
                 <th style={th()}>Batch</th><th style={th()}>Status</th><th style={th()}>Starts</th>
                 <th style={th()}>Deadline</th><th style={th()}>Capacity</th>
-                <th style={th()}>Training fee</th><th style={th()}>Instalments</th>
+                <th style={th()}>Instalments</th>
                 <th style={th()}>Applications</th><th style={th()} />
               </tr></thead>
               <tbody>
@@ -212,7 +212,6 @@ function BatchesTab({ onNotice }: NoticeProp) {
                     <td style={td()}>{fmtDate(b.start_date)}</td>
                     <td style={td()}>{fmtDate(b.application_deadline)}</td>
                     <td style={td()}>{b.capacity ?? '—'}</td>
-                    <td style={td()}>{naira(b.training_fee_ngn)}</td>
                     <td style={td()}>{b.installments_count ?? 1} × {b.fee_frequency ?? 'monthly'}</td>
                     <td style={td()}>{b.academy_applications?.[0]?.count ?? 0}</td>
                     <td style={{ ...td(), whiteSpace: 'nowrap' }}>
@@ -249,10 +248,6 @@ function BatchesTab({ onNotice }: NoticeProp) {
               onChange={(e) => setEditing({ ...editing, application_deadline: e.target.value })} /></Field>
             <Field label="Capacity"><input type="number" min={0} style={input()} value={editing.capacity ?? 0}
               onChange={(e) => setEditing({ ...editing, capacity: Number(e.target.value) })} /></Field>
-            <Field label="Training fee (₦, whole naira)">
-              <input type="number" min={0} style={input()} value={editing.training_fee_ngn ?? 0}
-                onChange={(e) => setEditing({ ...editing, training_fee_ngn: Number(e.target.value) })} />
-            </Field>
             <Field label="Instalments"><input type="number" min={1} style={input()} value={editing.installments_count ?? 1}
               onChange={(e) => setEditing({ ...editing, installments_count: Number(e.target.value) })} /></Field>
             <Field label="Frequency">
@@ -283,7 +278,7 @@ function BatchesTab({ onNotice }: NoticeProp) {
                       if (e.target.checked) cur.add(a.slug); else cur.delete(a.slug);
                       setEditing({ ...editing, interest_area_slugs: [...cur] });
                     }} />
-                    {a.label}{a.fee_ngn ? ` (+${naira(a.fee_ngn)})` : ''}
+                    {a.label}{a.fee_ngn ? ` (${naira(a.fee_ngn)})` : ''}
                   </label>
                 );
               })}
@@ -1055,6 +1050,22 @@ function SettingsTab({ onNotice }: NoticeProp) {
     finally { setBusy(false); }
   };
 
+  // Draft per-area tuition, keyed by area id. Absent = unedited (shows the saved value).
+  const [feeDraft, setFeeDraft] = useState<Record<string, string>>({});
+  const saveAreaFee = async (a: svc.AcademyInterestArea) => {
+    const raw = feeDraft[a.id];
+    const fee = Number(raw);
+    if (raw === undefined || !Number.isFinite(fee) || fee < 0) return;
+    setBusy(true);
+    try {
+      await svc.updateInterestArea({ id: a.id, fee_ngn: Math.round(fee) });
+      setFeeDraft(({ [a.id]: _gone, ...rest }) => rest);
+      await areas.reload();
+      onNotice(`${a.label} tuition saved — applicants who pick it are quoted ₦${Math.round(fee).toLocaleString('en-NG')}.`);
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
   const toggleArea = async (a: svc.AcademyInterestArea) => {
     setBusy(true);
     try {
@@ -1081,10 +1092,6 @@ function SettingsTab({ onNotice }: NoticeProp) {
                   <input type="number" min={0} style={input()} value={form.application_fee}
                     onChange={(e) => setForm({ ...form, application_fee: Number(e.target.value) })} />
                 </Field>
-                <Field label="Tuition fee (₦)">
-                  <input type="number" min={0} style={input()} value={form.tuition_fee}
-                    onChange={(e) => setForm({ ...form, tuition_fee: Number(e.target.value) })} />
-                </Field>
                 <Field label="Application fee refundable">
                   <select style={select()} value={form.application_fee_refundable ? 'yes' : 'no'}
                     onChange={(e) => setForm({ ...form, application_fee_refundable: e.target.value === 'yes' })}>
@@ -1105,8 +1112,10 @@ function SettingsTab({ onNotice }: NoticeProp) {
 
       <Card title="Areas of interest">
         <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 0 }}>
-          These are the specialisations the apply form offers. The slug is what the application row
-          stores, so renaming a label is safe but the slug is the contract.
+          These are the specialisations the apply form offers. Each area carries its own tuition:
+          an applicant picks up to two, and their tuition is the sum of the areas they pick (payable
+          only if they are offered a place). The slug is what the application row stores, so
+          renaming a label is safe but the slug is the contract.
         </p>
         <FilterBar>
           <div style={{ minWidth: 240 }}>
@@ -1115,7 +1124,7 @@ function SettingsTab({ onNotice }: NoticeProp) {
               onChange={(e) => setNewArea({ ...newArea, label: e.target.value })} />
           </div>
           <div style={{ width: 160 }}>
-            <span style={label()}>Extra fee (₦)</span>
+            <span style={label()}>Tuition fee (₦)</span>
             <input type="number" min={0} style={input()} value={newArea.fee_ngn}
               onChange={(e) => setNewArea({ ...newArea, fee_ngn: e.target.value })} />
           </div>
@@ -1127,14 +1136,24 @@ function SettingsTab({ onNotice }: NoticeProp) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
               <th style={th()}>Label</th><th style={th()}>Slug</th>
-              <th style={th()}>Extra fee</th><th style={th()}>Active</th><th style={th()} />
+              <th style={th()}>Tuition fee (₦)</th><th style={th()}>Active</th><th style={th()} />
             </tr></thead>
             <tbody>
               {(areas.data ?? []).map((a) => (
                 <tr key={a.id}>
                   <td style={td()}>{a.label}</td>
                   <td style={td()}><code style={{ fontSize: '0.78rem' }}>{a.slug}</code></td>
-                  <td style={td()}>{naira(a.fee_ngn)}</td>
+                  <td style={td()}>
+                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                      <input type="number" min={0} style={{ ...input(), width: 130 }}
+                        aria-label={`${a.label} tuition fee`}
+                        value={feeDraft[a.id] ?? String(a.fee_ngn ?? 0)}
+                        onChange={(e) => setFeeDraft({ ...feeDraft, [a.id]: e.target.value })} />
+                      {feeDraft[a.id] !== undefined && Number(feeDraft[a.id]) !== Number(a.fee_ngn ?? 0) && (
+                        <button style={btnPrimary()} disabled={busy} onClick={() => void saveAreaFee(a)}>Save</button>
+                      )}
+                    </div>
+                  </td>
                   <td style={td()}><Badge status={a.is_active ? 'active' : 'draft'} label={a.is_active ? 'active' : 'inactive'} /></td>
                   <td style={td()}>
                     <button style={btn()} disabled={busy} onClick={() => void toggleArea(a)}>

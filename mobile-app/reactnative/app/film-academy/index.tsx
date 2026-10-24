@@ -1,7 +1,7 @@
 // tile must never hand the user to a browser. This calls the same
 // /api/academy/* endpoints the web console uses — sharing an API is fine.
-// Money note: academy_batches stores training_fee_ngn in NAIRA, not kobo. It
-// predates the kobo convention used across finance, so it is formatted as-is.
+// Money note: academy fees (application fee, per-area tuition) are NAIRA, not kobo. The
+// academy tables predate the kobo convention used across finance, so they are formatted as-is.
 
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
@@ -15,7 +15,7 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { getOverview } from '@/features/filmAcademy/api';
-import type { FilmAcademyBatch } from '@/features/filmAcademy/types';
+import type { FilmAcademyBatch, FilmAcademyInterestArea } from '@/features/filmAcademy/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { RemoteBanner } from '@/features/media/banners';
 
@@ -33,16 +33,11 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function BatchCard({ batch, applied, fallbackFee }: {
-  batch: FilmAcademyBatch; applied: boolean; fallbackFee: number | null;
+function BatchCard({ batch, applied, areas, maxAreas, applicationFee }: {
+  batch: FilmAcademyBatch; applied: boolean;
+  areas: FilmAcademyInterestArea[]; maxAreas: number; applicationFee: number;
 }) {
-  // A batch may carry no fee of its own — every cohort on staging has
-  // training_fee_ngn = 0 while the real tuition sits in settings.tuition_fee.
-  // Rendering the batch value verbatim showed "Training fee ₦0", which is worse
-  // than showing nothing because it reads as free.
-  const fee = batch.training_fee_ngn && batch.training_fee_ngn > 0
-    ? batch.training_fee_ngn
-    : fallbackFee;
+  const areaPriced = areas.some((a) => Number(a.fee_ngn ?? 0) > 0);
   return (
     <View style={styles.card}>
       <View style={styles.cardHead}>
@@ -69,10 +64,34 @@ function BatchCard({ batch, applied, fallbackFee }: {
         </View>
       )}
 
-      <View style={styles.feeRow}>
-        <Text style={styles.feeLabel}>Training fee</Text>
-        <Text style={styles.feeValue}>{formatNaira(fee)}</Text>
-      </View>
+      {areas.length > 0 && (
+        <View style={styles.areasBlock}>
+          <Text style={styles.areasLabel}>Areas of interest · choose up to {maxAreas}</Text>
+          <View style={styles.chipWrap}>
+            {areas.map((a) => (
+              <View key={a.slug} style={styles.chip}>
+                <Text style={styles.chipText}>
+                  {a.label}{a.fee_ngn > 0 ? ` · ${formatNaira(a.fee_ngn)}` : ''}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {applicationFee > 0 && (
+        <View style={styles.feeRow}>
+          <Text style={styles.feeLabel}>Application fee</Text>
+          <Text style={styles.feeValue}>{formatNaira(applicationFee)}</Text>
+        </View>
+      )}
+      {/* A batch carries no tuition of its own: tuition is the sum of the fees on the
+          areas the applicant picks, so there is deliberately no batch fee row. */}
+      <Text style={styles.feeNote}>
+        {areaPriced
+          ? `Tuition is the total of the areas you choose (up to ${maxAreas}), payable only if you are offered a place.`
+          : 'Tuition is set per area of interest and shown when you apply.'}
+      </Text>
       {!!batch.installments_count && batch.installments_count > 1 && (
         <Text style={styles.feeNote}>
           Payable in {batch.installments_count} instalments
@@ -195,14 +214,24 @@ export default function FilmAcademyScreen() {
           </>
         )}
 
-        {batches.map((b) => (
+        {batches.map((b) => {
+          // A batch absent from batchAreas (or with an empty list) offers every
+          // active area — same rule apply.tsx uses, so the card matches the form.
+          const offered = data?.batchAreas?.[b.id] ?? [];
+          const all = data?.interestAreas ?? [];
+          const areas = offered.length > 0 ? all.filter((a) => offered.includes(a.slug)) : all;
+          return (
           <BatchCard
             key={b.id}
             batch={b}
+            areas={areas}
+            maxAreas={data?.maxInterestAreas ?? 2}
+            applicationFee={String(data?.settings?.registration_type ?? '').toLowerCase() === 'paid'
+              ? Number(data?.settings?.application_fee ?? 0) : 0}
             applied={applied.has(b.id)}
-            fallbackFee={typeof data?.settings?.tuition_fee === 'number' ? data.settings.tuition_fee : null}
           />
-        ))}
+          );
+        })}
       </ScrollView>
     </SafeAreaView>
   );
@@ -239,6 +268,11 @@ const styles = StyleSheet.create({
                  marginTop: Spacing.sm },
   feeLabel:    { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   feeValue:    { ...Typography.titleMd, color: Colors.onSurface },
+  areasBlock:  { marginTop: Spacing.sm, gap: Spacing.xs },
+  areasLabel:  { ...Typography.labelLg, color: Colors.onSurface },
+  chipWrap:    { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip:        { backgroundColor: Colors.surfaceContainerHigh, borderRadius: Radius.sm, paddingHorizontal: 8, paddingVertical: 4 },
+  chipText:    { ...Typography.caption, color: Colors.onSurface },
   feeNote:     { ...Typography.caption, color: Colors.onSurfaceVariant },
   applyBtn:    { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 12,
                  alignItems: 'center', marginTop: Spacing.sm },
