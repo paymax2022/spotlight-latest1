@@ -330,7 +330,12 @@ export async function POST(request: Request) {
           'id, area_id, label, duration_label, price_no_boarding_ngn, price_with_boarding_ngn, is_active',
         )
         .in('area_id', Array.from(areaIdBySlug.values()));
-      if (optionsError) throw optionsError;
+      // Deploy order: before the options migration lands, the legacy payload
+      // must keep working. 42P01 (undefined_table) is tolerated ONLY when no
+      // selections were sent; the selections path fails closed.
+      const tableMissing =
+        (optionsError as { code?: string } | null)?.code === '42P01' && !hasSelections;
+      if (optionsError && !tableMissing) throw optionsError;
       optionRows = ((Array.isArray(rawOptions) ? rawOptions : []) as Array<
         Omit<OptionRow, 'area_slug'> & { area_id: string }
       >)

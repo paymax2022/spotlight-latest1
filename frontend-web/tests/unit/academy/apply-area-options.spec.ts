@@ -22,10 +22,16 @@ vi.mock('@/src/server/user/profile', () => ({
   getOrCreateUserProfile: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('@/src/lib/payments', () => ({ verifyPaystackTransaction: vi.fn() }));
+vi.mock('@/src/server/payments/academy-fee-intents', () => ({
+  getAcademyFeeIntentByReference: vi.fn().mockResolvedValue(null),
+  consumeAcademyFeeIntent: vi.fn().mockResolvedValue(true),
+  releaseAcademyFeeIntent: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { POST, GET } from '../../../app/api/academy/apply/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
+import { verifyPaystackTransaction } from '@/src/lib/payments';
 
 type Row = Record<string, unknown>;
 
@@ -47,7 +53,7 @@ function option(over: Row = {}): Row {
   };
 }
 
-function setup(tables: { areas?: Row[]; options?: Row[] }) {
+function setup(tables: { areas?: Row[]; options?: Row[]; settings?: Row; optionsTableMissing?: boolean }) {
   const inserts: Array<{ table: string; payload: Row }> = [];
   const data: Record<string, Row[]> = {
     academy_interest_areas: tables.areas ?? [AREA_ACTING],
@@ -56,7 +62,7 @@ function setup(tables: { areas?: Row[]; options?: Row[] }) {
     academy_batch_interest_areas: [],
     academy_applications: [],
     academy_settings: [
-      { registration_type: 'free', application_fee: 0, application_fee_refundable: false, tuition_fee: 0 },
+      tables.settings ?? { registration_type: 'free', application_fee: 0, application_fee_refundable: false, tuition_fee: 0 },
     ],
   };
   const from = (table: string) => {
@@ -94,7 +100,11 @@ function setup(tables: { areas?: Row[]; options?: Row[] }) {
       error: null,
     }));
     b.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
-      Promise.resolve({ data: rows(), error: null }).then(resolve, reject);
+      Promise.resolve(
+        table === 'academy_area_options' && tables.optionsTableMissing
+          ? { data: null, error: { code: '42P01', message: 'relation does not exist' } }
+          : { data: rows(), error: null },
+      ).then(resolve, reject);
     b.insert = vi.fn(async (payload: Row) => {
       inserts.push({ table, payload });
       return { error: null };
@@ -149,7 +159,7 @@ describe('GET /api/academy/apply — options', () => {
       price_no_boarding_ngn: 100000,
       price_with_boarding_ngn: 160000,
     });
-    // The fake does not filter/order in SQL, so assert the route asked for it.
+    // The fake applies the route's is_active filter and sort_order ordering.
     expect(acting.options.every((o: Row) => o.id !== 'o3')).toBe(true);
     expect(acting.options.map((o: Row) => o.id)).toEqual(['o1', 'o2']);
   });
@@ -248,16 +258,113 @@ describe('POST /api/academy/apply — selections', () => {
 
   it('snapshot is unchanged after the option price is later edited', async () => {
     const { data, inserts } = setup({ options: [option()] });
+    const sel = { selections: [{ area: 'acting', option_id: 'opt-acting-1', boarding: false }] };
+    expect((await post(body(sel))).status).toBe(201);
+
+    // Admin edits the price AFTER the first application was stored.
+    data.academy_area_options[0].price_no_boarding_ngn = 999999;
+    expect((await post(body(sel))).status).toBe(201);
+
+    const apps = inserts.filter((i) => i.table === 'academy_applications').map((i) => i.payload);
+    expect(apps).toHaveLength(2);
+    expect(apps[0].tuition_total_ngn).toBe(100000);
+    expect((apps[0].selected_options as Row[])[0].price_ngn).toBe(100000);
+    expect(apps[1].tuition_total_ngn).toBe(999999);
+    expect((apps[1].selected_options as Row[])[0].price_ngn).toBe(999999);
+  });
+});
+
+describe('POST /api/academy/apply — hardening', () => {
+  it('legacy POST proceeds when the options table is missing (42P01)', async () => {
+    const { inserts } = setup({ areas: [AREA_PLAIN], optionsTableMissing: true });
+    const res = await post(body({ areas_of_interest: ['plain'] }));
+    expect(res.status).toBe(201);
+    expect(inserts[0].payload.tuition_total_ngn).toBe(12000);
+  });
+
+  it('selections POST still fails closed when the options table is missing', async () => {
+    const { inserts } = setup({ optionsTableMissing: true });
     const res = await post(
       body({ selections: [{ area: 'acting', option_id: 'opt-acting-1', boarding: false }] }),
     );
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(500);
+    expect(inserts).toHaveLength(0);
+  });
 
-    // Admin edits the price AFTER the application was stored.
-    data.academy_area_options[0].price_no_boarding_ngn = 999999;
+  it('GET returns options: [] when the options table is missing', async () => {
+    setup({ areas: [AREA_ACTING], optionsTableMissing: true });
+    const res = await GET(makeRequest('/api/academy/apply', { method: 'GET' }));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.interestAreas[0].options).toEqual([]);
+  });
 
-    const stored = inserts.find((i) => i.table === 'academy_applications')!.payload;
-    expect(stored.tuition_total_ngn).toBe(100000);
-    expect((stored.selected_options as Row[])[0].price_ngn).toBe(100000);
+  it('POST 400 for an option belonging to another area', async () => {
+    const { inserts } = setup({
+      areas: [AREA_ACTING, AREA_DIRECT],
+      options: [option({ id: 'opt-dir-1', area_id: 'area-direct' })],
+    });
+    const res = await post(
+      body({ selections: [{ area: 'acting', option_id: 'opt-dir-1', boarding: false }] }),
+    );
+    expect(res.status).toBe(400);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('POST 400 for boarding on an option without a boarding price', async () => {
+    const { inserts } = setup({ options: [option({ price_with_boarding_ngn: null })] });
+    const res = await post(
+      body({ selections: [{ area: 'acting', option_id: 'opt-acting-1', boarding: true }] }),
+    );
+    expect(res.status).toBe(400);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('POST 400 for a duplicate area in selections', async () => {
+    const { inserts } = setup({ options: [option(), option({ id: 'opt-acting-2' })] });
+    const res = await post(
+      body({
+        selections: [
+          { area: 'acting', option_id: 'opt-acting-1', boarding: false },
+          { area: 'acting', option_id: 'opt-acting-2', boarding: false },
+        ],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('paid registration: required fee equals application_fee and tuition is not added', async () => {
+    const settings = {
+      registration_type: 'paid',
+      application_fee: 5000,
+      application_fee_refundable: false,
+      tuition_fee: 0,
+    };
+    const verify = vi.mocked(verifyPaystackTransaction);
+    const sel = {
+      selections: [{ area: 'acting', option_id: 'opt-acting-1', boarding: false }],
+      application_fee_reference: 'ref-1',
+    };
+
+    // Paying exactly the application fee (not fee + tuition) is accepted.
+    const first = setup({ options: [option()], settings });
+    verify.mockResolvedValue({
+      status: 'success', currency: 'NGN', amountKobo: 500000, customerEmail: 'student@example.com',
+    } as never);
+    const ok = await post(body(sel));
+    expect(ok.status).toBe(201);
+    const app = first.inserts.find((i) => i.table === 'academy_applications')!.payload;
+    expect(app.application_fee_paid).toBe(5000);
+    expect(app.tuition_total_ngn).toBe(100000);
+
+    // Paying less than the application fee is rejected.
+    const second = setup({ options: [option()], settings });
+    verify.mockResolvedValue({
+      status: 'success', currency: 'NGN', amountKobo: 499900, customerEmail: 'student@example.com',
+    } as never);
+    const low = await post(body(sel));
+    expect(low.status).toBe(400);
+    expect(second.inserts).toHaveLength(0);
   });
 });
