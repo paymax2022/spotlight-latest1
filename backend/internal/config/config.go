@@ -247,6 +247,14 @@ type Config struct {
 	// FeatureEventsSocial (FEATURE_EVENTS_SOCIAL) exposes event likes and organiser follows.
 	FeatureEventsSocial  bool
 	FeatureEstateEnabled bool
+	// FeatureEventsCardCheckoutEnabled (FEATURE_EVENTS_CARD_CHECKOUT) gates NEW
+	// Paystack card/bank-transfer checkouts for ticket orders (EVTB-D013): seats
+	// are held under the same tier FOR UPDATE lock as the wallet rail and settled
+	// ONLY on a server-verified charge into the same escrow. Default OFF. The
+	// webhook confirmer, owner status poll and reconciliation sweep stay live
+	// whenever a Paystack client is configured, so the flag can never strand a
+	// customer who already paid.
+	FeatureEventsCardCheckoutEnabled bool
 	// FeatureEstateMerchantGate (SP-01) enforces that a user holds an approved
 	// estate-management merchant identity before creating an estate. Default off:
 	// CreateEstate keeps its historical behaviour until the gate is ratified.
@@ -1018,6 +1026,7 @@ func Load() Config {
 		FeatureEventsTicketingDepth:                  getEnvBool("FEATURE_EVENTS_TICKETING_DEPTH", false),
 		FeatureEventsTeamRoles:                       getEnvBool("FEATURE_EVENTS_TEAM_ROLES", false),
 		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
+		FeatureEventsCardCheckoutEnabled:             getEnvBool("FEATURE_EVENTS_CARD_CHECKOUT", false),
 		FeatureEventsOrganiserPayouts:                getEnvBool("FEATURE_EVENTS_ORGANISER_PAYOUTS", false),
 		FeatureEventsSocial:                          getEnvBool("FEATURE_EVENTS_SOCIAL", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),

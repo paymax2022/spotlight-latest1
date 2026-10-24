@@ -7,6 +7,7 @@ import (
 	feespay "spotlight/backend/internal/academy/fees/payment"
 	estatepay "spotlight/backend/internal/estate/paystackcheckout"
 	restpay "spotlight/backend/internal/restaurant/paystackcheckout"
+	"spotlight/backend/internal/top5events"
 	transportpay "spotlight/backend/internal/transport/paystackcheckout"
 	"spotlight/backend/internal/webhooks"
 )
@@ -30,6 +31,7 @@ func TestPaystackReferencePrefixes_AreLegalAndMatchTheWebhookRouter(t *testing.T
 		{"towing", transportpay.TowingReferencePrefix, ""},
 		{"movers", transportpay.MoversReferencePrefix, ""},
 		{"car hire", transportpay.CarHireReferencePrefix, ""},
+		{"events tickets", top5events.CardReferencePrefix, ""},
 	}
 	seen := map[string]string{}
 	for _, c := range cases {

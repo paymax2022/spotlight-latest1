@@ -9494,6 +9494,92 @@ paths:
         '400': { description: "Missing Idempotency-Key or invalid body" }
         '404': { description: Event or tier not found }
 
+  /events/{id}/purchase/card:
+    post:
+      operationId: initiateEventCardCheckout
+      summary: >-
+        Hold seats and open a Paystack card/bank-transfer checkout for a ticket
+        order (FEATURE_EVENTS_CARD_CHECKOUT — 404 while off). The seats are held
+        under the same tier lock as the wallet purchase for a bounded window
+        (hold_expires_at); the charge settles ONLY on a server-verified
+        transaction (signed webhook or server-side verify — never the client
+        redirect). The amount is always server-computed; there is no amount
+        field in the request.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tier_id]
+              properties:
+                tier_id: { type: string, format: uuid }
+                quantity: { type: integer, minimum: 1, maximum: 10, default: 1 }
+                promo: { type: string, description: "Optional promo code" }
+                promo_code: { type: string, description: "Alias of promo" }
+                email: { type: string, format: email, description: "Billing email; falls back to the account's registered email" }
+                callback_url: { type: string, format: uri, description: "Optional https post-payment redirect; dropped unless its host is allowlisted server-side" }
+      responses:
+        '201':
+          description: Seats held; Paystack checkout initialised for the frozen server-computed amount
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      reference: { type: string, description: "evtorder-<Idempotency-Key>" }
+                      authorizationUrl: { type: string }
+                      accessCode: { type: string }
+                      amountKobo: { type: integer, format: int64 }
+                      currency: { type: string, enum: [NGN] }
+                      quantity: { type: integer }
+                      status: { type: string, enum: [pending] }
+                      holdExpiresAt: { type: string, format: date-time }
+        '400': { description: "Missing/invalid Idempotency-Key or invalid body" }
+        '404': { description: "Card checkout unavailable (flag off), or event/tier not found" }
+        '409': { description: "Idempotency-Key reused for a different checkout, or sold out" }
+        '422': { description: "Not purchasable (state, sales window, invite-only, promo) or nothing to charge (free ticket — use the wallet checkout)" }
+
+  /events/card/{reference}/status:
+    get:
+      operationId: eventCardCheckoutStatus
+      summary: >-
+        Owner-only poll of a card checkout. A still-open intent is re-verified
+        server-side against Paystack (self-heal where webhooks cannot reach).
+        Never settles on a client claim alone.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: reference, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Checkout status; tickets are present once status is confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      reference: { type: string }
+                      status: { type: string, enum: [pending, processing, confirmed, expired, refunding, refunded] }
+                      amountKobo: { type: integer, format: int64 }
+                      tickets:
+                        type: array
+                        items: { $ref: '#/components/schemas/Ticket' }
+        '404': { description: "Unknown reference (also returned for another user's reference)" }
+
   /events/tickets/{ticketId}/gift:
     post:
       operationId: giftEventTicket

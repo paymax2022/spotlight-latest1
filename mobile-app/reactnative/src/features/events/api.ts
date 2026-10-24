@@ -346,6 +346,64 @@ export async function purchaseTickets(input: PurchaseTicketInput): Promise<Purch
   return { ok: true, tickets, total_kobo: total };
 }
 
+// ── Card checkout (server rail, FEATURE_EVENTS_CARD_CHECKOUT) ───────────────
+// POST /:id/purchase/card — the server HOLDS the seats under the same tier
+// lock as the wallet purchase and initialises a Paystack transaction for its
+// own computed amount (the body carries NO amount). Settlement never trusts
+// the client redirect: it runs on the signed webhook or the server-side
+// verify the status poll drives — the same shape as mobility's card-direct
+// rail (useGatewayCheckout + resolver screen).
+
+export type CardCheckoutStatusValue =
+  'pending' | 'processing' | 'confirmed' | 'expired' | 'refunding' | 'refunded';
+
+export interface CardCheckoutIntent {
+  reference: string;
+  authorizationUrl: string;
+  accessCode?: string;
+  amountKobo: number;
+  currency: string;
+  quantity: number;
+  status: CardCheckoutStatusValue;
+  holdExpiresAt?: string;
+}
+
+export interface CardCheckoutStatus {
+  reference: string;
+  status: CardCheckoutStatusValue;
+  amountKobo: number;
+  tickets: Ticket[];
+}
+
+export async function initiateCardCheckout(
+  input: PurchaseTicketInput & { email?: string },
+): Promise<CardCheckoutIntent> {
+  if (USE_MOCK) {
+    await delay(600);
+    const e = MOCK_EVENTS.find((x) => x.id === input.eventId);
+    const tier = e?.tiers.find((t) => t.id === input.tier_id);
+    return {
+      reference: `evtorder-mock-${Date.now()}`,
+      authorizationUrl: `https://checkout.paystack.test/mock_${Date.now()}`,
+      amountKobo: (tier?.price_kobo ?? 0) * input.quantity,
+      currency: 'NGN',
+      quantity: input.quantity,
+      status: 'pending',
+    };
+  }
+  return unwrap<CardCheckoutIntent>(await api.post(`${API_BASE}/${input.eventId}/purchase/card`,
+    { tier_id: input.tier_id, quantity: input.quantity, promo: input.promo_code, email: input.email },
+    { headers: { 'Idempotency-Key': idempotencyKey() } }));
+}
+
+export async function getCardCheckoutStatus(reference: string): Promise<CardCheckoutStatus> {
+  if (USE_MOCK) {
+    await delay();
+    return { reference, status: 'confirmed', amountKobo: 0, tickets: [] };
+  }
+  return unwrap<CardCheckoutStatus>(await api.get(`${API_BASE}/card/${encodeURIComponent(reference)}/status`));
+}
+
 export async function giftTicket(input: GiftTicketInput): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
   // Contract field is `recipient` (the cashtag handle) — sending `cashtag`

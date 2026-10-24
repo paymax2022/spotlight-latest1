@@ -70,6 +70,7 @@ type Service struct {
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	rt         RealtimePublisher  // optional; nil ⇒ ScanTicket's live check-in push is a no-op
 	notifier   NotificationSender // optional; nil ⇒ Announce records the row but sends nothing
+	card       *cardRail          // optional; nil ⇒ Paystack card checkout off (card_checkout.go)
 	payouts    payoutConfig       // organiser payout rail policy (payouts.go, EVTC-D003)
 	presigner  *r2.Presigner      // optional; nil ⇒ organiser banner uploads answer 503 and stored banner keys are hidden
 
@@ -636,6 +637,11 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	// continue from wherever the previous attempt stopped rather than re-reserving
 	// (a naive retry would collide on uq_event_orders_idem and never finish paying).
 	if o, err := s.orderByIdem(ctx, idemKey); err == nil {
+		// A card-rail order is paid ONLY by its verified Paystack charge
+		// (card_checkout.go); replaying its key here must never wallet-debit it.
+		if o.rail != railWallet {
+			return nil, fmt.Errorf("%w: idempotency key belongs to a %s checkout", ErrValidation, o.rail)
+		}
 		return s.finalizePurchase(ctx, o)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("events: lookup order: %w", err)
@@ -658,62 +664,106 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Reserve inventory before money moves (a debit can never outrun capacity) and
+	// record the order as PENDING — the money has NOT been taken yet. The commit
+	// makes only the reservation durable; the debit + PAID flip run in
+	// finalizePurchase. If we crash after this commit, the order is a resumable
+	// PENDING (not a paid-looking free ticket), recoverable by a same-idemKey retry
+	// or ReconcilePendingOrders.
+	orderID, payable, err := s.reserveSeatTx(ctx, tx, seatReservation{
+		buyerID: buyerID, eventID: eventID, tierID: tierID, promo: promo, idemKey: idemKey, rail: railWallet,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("events: commit reservation: %w", err)
+	}
+
+	return s.finalizePurchase(ctx, pendingOrder{
+		id: orderID, eventID: eventID, buyerID: buyerID, tierID: tierID,
+		idemKey: idemKey, payable: payable, status: orderStatusPending,
+	})
+}
+
+// Payment rails an event order can be paid on (event_orders.payment_rail).
+const (
+	railWallet = "wallet"
+	railCard   = "card"
+)
+
+// seatReservation is one seat to hold for a checkout on either rail.
+type seatReservation struct {
+	buyerID, eventID, tierID, promo, idemKey string
+	rail                                     string // railWallet | railCard
+	cardRef                                  string // Paystack reference (railCard only)
+}
+
+// reserveSeatTx holds ONE seat inside tx: it locks the tier row FOR UPDATE,
+// enforces active / invite-only / sales window / sold < capacity, applies and
+// consumes the promo, bumps sold and inserts the PENDING order (+ promo
+// redemption). Shared by the wallet Purchase and the card checkout so both
+// rails serialise on the same tier lock and can never oversell between them.
+// Returns the new order id and the amount payable for the seat.
+//
+//nolint:gocognit,gocyclo // seat hold + order write is one serialisable step; kept linear
+func (s *Service) reserveSeatTx(ctx context.Context, tx pgx.Tx, r seatReservation) (string, int64, error) {
 	var price int64
 	var capacity, sold int
 	var active, inviteOnly bool
 	var salesStart, salesEnd *time.Time
-	if err := tx.QueryRow(ctx, `SELECT price_kobo, capacity, sold, active, sales_start_at, sales_end_at, invite_only FROM event_ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE`, tierID, eventID).Scan(&price, &capacity, &sold, &active, &salesStart, &salesEnd, &inviteOnly); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT price_kobo, capacity, sold, active, sales_start_at, sales_end_at, invite_only FROM event_ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE`, r.tierID, r.eventID).Scan(&price, &capacity, &sold, &active, &salesStart, &salesEnd, &inviteOnly); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+			return "", 0, ErrNotFound
 		}
-		return nil, fmt.Errorf("events: lock tier: %w", err)
+		return "", 0, fmt.Errorf("events: lock tier: %w", err)
 	}
 	if !active {
-		return nil, errors.New("events: tier inactive")
+		return "", 0, errors.New("events: tier inactive")
 	}
 	now := time.Now()
 	if inviteOnly {
-		return nil, ErrInviteOnly
+		return "", 0, ErrInviteOnly
 	}
 	if (salesStart != nil && now.Before(*salesStart)) || (salesEnd != nil && now.After(*salesEnd)) {
-		return nil, ErrTierNotOnSale
+		return "", 0, ErrTierNotOnSale
 	}
 	if capacity > 0 && sold >= capacity {
-		return nil, ErrSoldOut
+		return "", 0, ErrSoldOut
 	}
 
 	payable := price
 	var appliedPromoID string
-	if promo != "" {
+	if r.promo != "" {
 		var pid string
 		var pct, maxUses, used, perUser int
 		var promoTier *string
 		var amountOff *int64
 		var startsAt, endsAt *time.Time
-		err := tx.QueryRow(ctx, `SELECT id, percent_off, max_uses, used, tier_id::text, amount_off_kobo, starts_at, ends_at, per_user_limit FROM event_promo_codes WHERE event_id=$1 AND code=$2 AND active=true FOR UPDATE`, eventID, promo).
+		err := tx.QueryRow(ctx, `SELECT id, percent_off, max_uses, used, tier_id::text, amount_off_kobo, starts_at, ends_at, per_user_limit FROM event_promo_codes WHERE event_id=$1 AND code=$2 AND active=true FOR UPDATE`, r.eventID, r.promo).
 			Scan(&pid, &pct, &maxUses, &used, &promoTier, &amountOff, &startsAt, &endsAt, &perUser)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, fmt.Errorf("%w: unknown or inactive code", ErrPromoNotApplicable)
+				return "", 0, fmt.Errorf("%w: unknown or inactive code", ErrPromoNotApplicable)
 			}
-			return nil, fmt.Errorf("events: lock promo: %w", err)
+			return "", 0, fmt.Errorf("events: lock promo: %w", err)
 		}
 		if maxUses > 0 && used >= maxUses {
-			return nil, fmt.Errorf("%w: code exhausted", ErrPromoNotApplicable)
+			return "", 0, fmt.Errorf("%w: code exhausted", ErrPromoNotApplicable)
 		}
 		if (startsAt != nil && now.Before(*startsAt)) || (endsAt != nil && now.After(*endsAt)) {
-			return nil, fmt.Errorf("%w: outside validity window", ErrPromoNotApplicable)
+			return "", 0, fmt.Errorf("%w: outside validity window", ErrPromoNotApplicable)
 		}
-		if promoTier != nil && *promoTier != tierID {
-			return nil, fmt.Errorf("%w: code is for a different tier", ErrPromoNotApplicable)
+		if promoTier != nil && *promoTier != r.tierID {
+			return "", 0, fmt.Errorf("%w: code is for a different tier", ErrPromoNotApplicable)
 		}
 		if perUser > 0 {
 			var n int
-			if err := tx.QueryRow(ctx, `SELECT count(*) FROM event_promo_redemptions WHERE promo_id=$1 AND user_id=$2`, pid, buyerID).Scan(&n); err != nil {
-				return nil, fmt.Errorf("events: promo per-user count: %w", err)
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM event_promo_redemptions WHERE promo_id=$1 AND user_id=$2`, pid, r.buyerID).Scan(&n); err != nil {
+				return "", 0, fmt.Errorf("events: promo per-user count: %w", err)
 			}
 			if n >= perUser {
-				return nil, fmt.Errorf("%w: per-user limit reached", ErrPromoNotApplicable)
+				return "", 0, fmt.Errorf("%w: per-user limit reached", ErrPromoNotApplicable)
 			}
 		}
 		if amountOff != nil {
@@ -725,38 +775,35 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 			payable = price - (price*int64(pct))/100
 		}
 		if _, err := tx.Exec(ctx, `UPDATE event_promo_codes SET used=used+1 WHERE id=$1`, pid); err != nil {
-			return nil, fmt.Errorf("events: bump promo: %w", err)
+			return "", 0, fmt.Errorf("events: bump promo: %w", err)
 		}
 		appliedPromoID = pid
 	}
 
-	// Reserve inventory before money moves (a debit can never outrun capacity) and
-	// record the order as PENDING — the money has NOT been taken yet. The commit
-	// makes only the reservation durable; the debit + PAID flip run in
-	// finalizePurchase. If we crash after this commit, the order is a resumable
-	// PENDING (not a paid-looking free ticket), recoverable by a same-idemKey retry
-	// or ReconcilePendingOrders.
-	if _, err := tx.Exec(ctx, `UPDATE event_ticket_tiers SET sold=sold+1 WHERE id=$1`, tierID); err != nil {
-		return nil, fmt.Errorf("events: reserve inventory: %w", err)
+	// Hold the seat: sold+1 under the tier lock, order PENDING (no money yet).
+	if _, err := tx.Exec(ctx, `UPDATE event_ticket_tiers SET sold=sold+1 WHERE id=$1`, r.tierID); err != nil {
+		return "", 0, fmt.Errorf("events: reserve inventory: %w", err)
 	}
 	orderID := uuid.New().String()
-	const insOrder = `INSERT INTO event_orders (id, event_id, buyer_id, tier_id, total_kobo, status, idempotency_key) VALUES ($1,$2,$3,$4,$5,'PENDING',$6)`
-	if _, err := tx.Exec(ctx, insOrder, orderID, eventID, buyerID, tierID, payable, idemKey); err != nil {
-		return nil, fmt.Errorf("events: insert order: %w", err)
-	}
-	if appliedPromoID != "" {
-		if _, err := tx.Exec(ctx, `INSERT INTO event_promo_redemptions (id, promo_id, user_id, order_id) VALUES ($1,$2,$3,$4) ON CONFLICT (promo_id, order_id) DO NOTHING`, uuid.New().String(), appliedPromoID, buyerID, orderID); err != nil {
-			return nil, fmt.Errorf("events: record promo redemption: %w", err)
+	if r.rail == railCard {
+		// Card hold: the PENDING order IS the inventory hold, tagged with the
+		// Paystack reference that will pay it (see card_checkout.go).
+		const insCardOrder = `INSERT INTO event_orders (id, event_id, buyer_id, tier_id, total_kobo, status, idempotency_key, payment_rail, card_reference) VALUES ($1,$2,$3,$4,$5,'PENDING',$6,'card',$7)`
+		if _, err := tx.Exec(ctx, insCardOrder, orderID, r.eventID, r.buyerID, r.tierID, payable, r.idemKey, r.cardRef); err != nil {
+			return "", 0, fmt.Errorf("events: insert order: %w", err)
+		}
+	} else {
+		const insOrder = `INSERT INTO event_orders (id, event_id, buyer_id, tier_id, total_kobo, status, idempotency_key) VALUES ($1,$2,$3,$4,$5,'PENDING',$6)`
+		if _, err := tx.Exec(ctx, insOrder, orderID, r.eventID, r.buyerID, r.tierID, payable, r.idemKey); err != nil {
+			return "", 0, fmt.Errorf("events: insert order: %w", err)
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("events: commit reservation: %w", err)
+	if appliedPromoID != "" {
+		if _, err := tx.Exec(ctx, `INSERT INTO event_promo_redemptions (id, promo_id, user_id, order_id) VALUES ($1,$2,$3,$4) ON CONFLICT (promo_id, order_id) DO NOTHING`, uuid.New().String(), appliedPromoID, r.buyerID, orderID); err != nil {
+			return "", 0, fmt.Errorf("events: record promo redemption: %w", err)
+		}
 	}
-
-	return s.finalizePurchase(ctx, pendingOrder{
-		id: orderID, eventID: eventID, buyerID: buyerID, tierID: tierID,
-		idemKey: idemKey, payable: payable, status: "PENDING",
-	})
+	return orderID, payable, nil
 }
 
 // pendingOrder is the resumable state of a checkout between reservation and ticket
@@ -764,14 +811,15 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 type pendingOrder struct {
 	id, eventID, buyerID, tierID, idemKey, status string
 	payable                                       int64
+	rail                                          string // event_orders.payment_rail
 }
 
 // orderByIdem loads the existing order for an idempotency key (pgx.ErrNoRows if none).
 func (s *Service) orderByIdem(ctx context.Context, idemKey string) (pendingOrder, error) {
 	o := pendingOrder{idemKey: idemKey}
 	err := s.db.QueryRow(ctx,
-		`SELECT id, event_id, buyer_id, COALESCE(tier_id::text,''), total_kobo, status FROM event_orders WHERE idempotency_key=$1`, idemKey).
-		Scan(&o.id, &o.eventID, &o.buyerID, &o.tierID, &o.payable, &o.status)
+		`SELECT id, event_id, buyer_id, COALESCE(tier_id::text,''), total_kobo, status, payment_rail FROM event_orders WHERE idempotency_key=$1`, idemKey).
+		Scan(&o.id, &o.eventID, &o.buyerID, &o.tierID, &o.payable, &o.status, &o.rail)
 	return o, err
 }
 
@@ -804,7 +852,7 @@ func (s *Service) finalizePurchase(ctx context.Context, o pendingOrder) (*Ticket
 	// PENDING (a resumed PAID order already moved the money; skip to ticketing).
 	// Idempotent on idemKey:ticket — a resume after a crash mid-debit dedups (money
 	// already moved) instead of charging twice.
-	if o.status == "PENDING" && o.payable > 0 {
+	if o.status == orderStatusPending && o.payable > 0 {
 		escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 		if err != nil {
 			return nil, err
@@ -831,7 +879,7 @@ func (s *Service) finalizePurchase(ctx context.Context, o pendingOrder) (*Ticket
 
 	// Money is durably in escrow — advance PENDING → PAID (skipped for an already-
 	// PAID resume; the WHERE guard also makes a concurrent flip a no-op).
-	if o.status == "PENDING" {
+	if o.status == orderStatusPending {
 		if _, err := s.db.Exec(ctx, `UPDATE event_orders SET status='PAID' WHERE id=$1 AND status='PENDING'`, o.id); err != nil {
 			return nil, fmt.Errorf("events: mark order paid: %w", err)
 		}
@@ -906,7 +954,7 @@ func (s *Service) expireOrder(ctx context.Context, orderID, tierID string) {
 	if err := tx.QueryRow(ctx, `SELECT status FROM event_orders WHERE id=$1 FOR UPDATE`, orderID).Scan(&status); err != nil {
 		return
 	}
-	if status != "PENDING" {
+	if status != orderStatusPending {
 		return
 	}
 	if _, err := tx.Exec(ctx, `UPDATE event_orders SET status='EXPIRED' WHERE id=$1`, orderID); err != nil {
@@ -920,21 +968,22 @@ func (s *Service) expireOrder(ctx context.Context, orderID, tierID string) {
 	_ = tx.Commit(ctx)
 }
 
-// ReconcilePendingOrders finalizes or expires checkouts left PENDING by a crash
-// between reservation and payment. For each PENDING order older than olderThan it
+// ReconcilePendingOrders finalizes or expires WALLET checkouts left PENDING by a
+// crash between reservation and payment (card holds are swept by
+// ReconcileCardCheckouts — this path wallet-debits, so it must never see them). For each PENDING order older than olderThan it
 // re-runs finalizePurchase: a buyer with funds is charged + ticketed (idempotent);
 // one without has the order EXPIRED and the seat released. Driven periodically by
 // StartPendingOrderReconciler (reconciler.go). Returns (finalized, sweptToTerminalOrError).
 func (s *Service) ReconcilePendingOrders(ctx context.Context, olderThan time.Duration) (int, int, error) {
 	cutoff := time.Now().Add(-olderThan)
 	rows, err := s.db.Query(ctx,
-		`SELECT id, event_id, buyer_id, COALESCE(tier_id::text,''), total_kobo, idempotency_key FROM event_orders WHERE status='PENDING' AND created_at < $1`, cutoff)
+		`SELECT id, event_id, buyer_id, COALESCE(tier_id::text,''), total_kobo, idempotency_key FROM event_orders WHERE status='PENDING' AND payment_rail='wallet' AND created_at < $1`, cutoff)
 	if err != nil {
 		return 0, 0, err
 	}
 	var pend []pendingOrder
 	for rows.Next() {
-		o := pendingOrder{status: "PENDING"}
+		o := pendingOrder{status: orderStatusPending}
 		if rows.Scan(&o.id, &o.eventID, &o.buyerID, &o.tierID, &o.payable, &o.idemKey) == nil {
 			pend = append(pend, o)
 		}
