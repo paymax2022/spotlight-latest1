@@ -120,10 +120,13 @@ type ParcelEstimateRequest struct {
 
 // ParcelBookRequest is POST /mobility/parcels.
 type ParcelBookRequest struct {
-	Pickup            Place  `json:"pickup" binding:"required"`
-	Dropoff           Place  `json:"dropoff" binding:"required"`
-	ReceiverName      string `json:"receiver_name" binding:"required"`
-	ReceiverPhone     string `json:"receiver_phone" binding:"required"`
+	Pickup        Place  `json:"pickup" binding:"required"`
+	Dropoff       Place  `json:"dropoff" binding:"required"`
+	ReceiverName  string `json:"receiver_name" binding:"required"`
+	ReceiverPhone string `json:"receiver_phone" binding:"required"`
+	// ReceiverEmail is optional: the receiver is emailed the drop-off PIN after
+	// pickup (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY). Malformed = 400 invalid_input.
+	ReceiverEmail     string `json:"receiver_email,omitempty"`
 	Category          string `json:"category"`
 	Size              string `json:"size"`
 	Speed             string `json:"speed"`
@@ -371,6 +374,9 @@ func (s *Service) QuoteParcelBookingFrozenFor(ctx context.Context, senderID stri
 	if !req.ProhibitedAck {
 		return 0, nil, codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
 	}
+	if _, err := receiverEmailParam(req); err != nil {
+		return 0, nil, err
+	}
 	pr, err := s.priceParcel(ctx, req)
 	if err != nil {
 		return 0, nil, err
@@ -468,6 +474,19 @@ func resolveExternalInsertFailure(find func() (string, bool, error), reverse fun
 	return "", true, nil
 }
 
+// receiverEmailParam validates the optional receiver_email: nil when absent,
+// the normalised address when valid, 400 invalid_input when malformed.
+func receiverEmailParam(req ParcelBookRequest) (*string, error) {
+	if strings.TrimSpace(req.ReceiverEmail) == "" {
+		return nil, nil
+	}
+	e := normaliseReceiverEmail(req.ReceiverEmail)
+	if e == "" {
+		return nil, codedErr(http.StatusBadRequest, "invalid_input", "receiver_email is not a valid email address")
+	}
+	return &e, nil
+}
+
 // bookParcel is the shared body of BookParcel (wallet) and
 // BookParcelPaystackFunded (card-direct); `external`/`verifiedAmountKobo` are
 // never client-settable.
@@ -477,6 +496,10 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 	}
 	if !req.ProhibitedAck {
 		return "", codedErr(http.StatusUnprocessableEntity, "PROHIBITED_ACK_REQUIRED", "prohibited items acknowledgement required")
+	}
+	receiverEmail, err := receiverEmailParam(req)
+	if err != nil {
+		return "", err
 	}
 	// Replay: a repeat of an already-booked key (card-funded, or a wallet retry
 	// whose response was lost) returns that parcel untouched — no second escrow,
@@ -493,7 +516,6 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 		return id, nil
 	}
 	var pr *parcelPricing
-	var err error
 	var frozenPremium int64
 	if external && len(frozenPricing) > 0 {
 		// Price from the inputs frozen at quote time, NOT a fresh routing call:
@@ -648,15 +670,15 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 			(id, sender_id, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng,
 			 receiver_name, receiver_phone, category, size, declared_value_kobo, speed, prohibited_ack,
 			 fare_kobo, insurance_kobo, status, pickup_pin, dropoff_pin, distance_m, settlement_id, idempotency_key,
-			 insurance_opted, insurance_paid_kobo, insurance_status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'created',$18,$19,$20,$21,$22,$23,$24,$25)`
+			 insurance_opted, insurance_paid_kobo, insurance_status, receiver_email)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'created',$18,$19,$20,$21,$22,$23,$24,$25,$26)`
 	insuranceStatus := s.bookingInsuranceStatus(insured, req)
 	if _, err := s.db.Exec(ctx, q,
 		parcelID, senderID, req.Pickup.Address, req.Pickup.Lat, req.Pickup.Lng,
 		req.Dropoff.Address, req.Dropoff.Lat, req.Dropoff.Lng,
 		req.ReceiverName, req.ReceiverPhone, pr.category, pr.size, req.DeclaredValueKobo, pr.speed, req.ProhibitedAck,
 		fare, insurance, pickupPin, dropoffPin, route.DistanceM, sett.ID, idempotencyKey,
-		insured, premium, insuranceStatus,
+		insured, premium, insuranceStatus, receiverEmail,
 	); err != nil {
 		if external {
 			// The booking ctx may be the very thing that failed (deadline /
@@ -706,7 +728,7 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		       pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
 		       (SELECT st.status FROM settlements st WHERE st.id = parcels.settlement_id),
 		       EXISTS (SELECT 1 FROM mode_ratings r WHERE r.mode='parcel' AND r.job_id=parcels.id::text AND r.rater_id=parcels.sender_id),
-		       receiver_notified_at
+		       receiver_notified_at, receiver_email, COALESCE(receiver_notified_via, '{}')
 		FROM parcels WHERE id=$1`
 	var (
 		pid, senderID, pickup, dropoff, receiver, rphone, category, size, speed, status string
@@ -721,13 +743,15 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		paymentStatus                                                                   *string
 		rated                                                                           bool
 		receiverNotifiedAt                                                              *time.Time
+		receiverEmail                                                                   *string
+		receiverNotifiedVia                                                             []string
 	)
 	if err := s.db.QueryRow(ctx, q, id).Scan(
 		&pid, &senderID, &courierID, &pickup, &dropoff, &receiver, &rphone,
 		&category, &size, &speed, &declared, &fare, &insurance, &insurancePolicyID,
 		&status, &pickupPin, &dropoffPin, &photoURL, &proofURL, &distM, &createdAt,
 		&insuranceOpted, &insurancePaid, &insuranceStatus,
-		&pickupLat, &pickupLng, &dropoffLat, &dropoffLng, &paymentStatus, &rated, &receiverNotifiedAt,
+		&pickupLat, &pickupLng, &dropoffLat, &dropoffLng, &paymentStatus, &rated, &receiverNotifiedAt, &receiverEmail, &receiverNotifiedVia,
 	); err != nil {
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "parcel not found")
 	}
@@ -771,6 +795,11 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		out["receiverNotifiedAt"] = nil
 		if receiverNotifiedAt != nil {
 			out["receiverNotifiedAt"] = *receiverNotifiedAt
+		}
+		out["receiverNotifiedVia"] = receiverNotifiedVia
+		out["receiverEmail"] = nil
+		if receiverEmail != nil {
+			out["receiverEmail"] = *receiverEmail
 		}
 	}
 	if isSender && status != "delivered" && status != "cancelled" && status != "failed" {
