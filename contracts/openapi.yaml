@@ -4769,7 +4769,9 @@ paths:
                     Scopes the code; a code for one purpose cannot complete another.
                     `login` is deliberately absent — a login code mints a session, so
                     it is issued only by POST /api/auth/login after the password, never
-                    on request. Asking for one here returns 400.
+                    on request. `step_up` is likewise absent — it is issued only by
+                    POST /api/auth/step-up/challenge to an authenticated session.
+                    Asking for either here returns 400.
 
                 name:
                   type: string
@@ -4820,6 +4822,10 @@ paths:
                 purpose:
                   type: string
                   enum: [login, verify_email, password_reset]
+                  description: >
+                    `step_up` is deliberately absent — a step-up code is redeemable
+                    only by POST /api/auth/step-up/verify, which binds the grant to
+                    the caller's session; submitting one here returns 400.
       responses:
         '200':
           description: >
@@ -4949,6 +4955,235 @@ paths:
         '200': { description: Reset enforced; sessions revoked }
         '403': { description: Missing users.suspend permission }
         '503': { description: Feature disabled (flag off) }
+  # ╔══════════════════════════════════════════════════════════════════════╗
+  # ║ STEP-UP VERIFICATION — ESTD-D014 (EST-UAT-0385)                        ║
+  # ║ estate_member_settings.two_factor_enabled was advisory. This is the   ║
+  # ║ enforcement: a short-lived grant bound to (user, bearer token), minted║
+  # ║ by /verify below, required by the privileged routes listed in the ADR ║
+  # ║ (estate admin money/ban actions, /api/admin RBAC + user mutations,    ║
+  # ║ finance transfer retry/reverse, admin-console approvals).             ║
+  # ║ FEATURE_STEP_UP_ENFORCED defaults ON; gated routes fail closed —      ║
+  # ║ 403 step_up_required / step_up_expired, 503 step_up_unavailable.      ║
+  # ║ purpose=step_up codes are NOT issuable/redeemable via /api/auth/otp/*.║
+  # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/auth/step-up/challenge:
+    post:
+      operationId: stepUpChallenge
+      summary: Send a step-up verification code to the caller's account email
+      description: >
+        Authenticated only — the identity is taken from the bearer token, never
+        the body. Issues an email OTP with purpose step_up through the same
+        store, send budget and attempt ceiling as every other code.
+      tags: [StepUp]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '202':
+          description: Code sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  channel: { type: string, example: email }
+        '400': { description: "step_up_no_channel — the account has no email" }
+        '401': { description: Unauthenticated }
+        '429': { description: Send budget or resend cooldown exceeded }
+        '503': { description: "step_up_unavailable — OTP email service not wired" }
+  /api/auth/step-up/verify:
+    post:
+      operationId: stepUpVerify
+      summary: Redeem a step-up code, issuing a session-bound grant
+      description: >
+        On success a grant is written to auth_step_up_grants bound to the
+        caller's user id AND the sha256 of the exact bearer token presented —
+        a different login does not inherit it. TTL STEP_UP_TTL_SECONDS
+        (default 300, clamped 60..900).
+      tags: [StepUp]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, example: "482913" }
+      responses:
+        '200':
+          description: Grant issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  step_up:
+                    type: object
+                    properties:
+                      active: { type: boolean, example: true }
+                      expires_at: { type: string, format: date-time }
+                      ttl_seconds: { type: integer, example: 300 }
+        '400': { description: "invalid_code / code_expired / missing code" }
+        '401': { description: Unauthenticated }
+        '429': { description: Attempt ceiling or verify budget exceeded }
+        '503': { description: step_up_unavailable }
+  /api/auth/step-up/status:
+    get:
+      operationId: stepUpStatus
+      summary: Whether this session holds a live step-up grant
+      tags: [StepUp]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Grant state for the current bearer token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  step_up:
+                    type: object
+                    properties:
+                      active: { type: boolean }
+                      expires_at: { type: string, format: date-time, nullable: true }
+        '401': { description: Unauthenticated }
+        '503': { description: step_up_unavailable }
+  # ╔══════════════════════════════════════════════════════════════════════╗
+  # ║ SUPPORT VIEW-AS — ESTD-D028 (EST-UAT-0422)                             ║
+  # ║ No forged tokens: the agent keeps their own bearer token and names a  ║
+  # ║ backend-issued session via the X-Support-Impersonation header.        ║
+  # ║ Start requires the explicit support.impersonate permission (never     ║
+  # ║ conferred by super-admin) plus a completed step-up grant, a reason    ║
+  # ║ and a ticket ref. Sessions are time-boxed (<=60m) and READ-ONLY: any  ║
+  # ║ request carrying the header is refused unless it is a GET on the      ║
+  # ║ allow-list (see Start's read_routes). Start/stop/every request/every  ║
+  # ║ refusal is an append-only event in support_impersonation_events; the  ║
+  # ║ impersonated user sees the access at GET /api/auth/support-access and ║
+  # ║ is emailed a security notice. FEATURE_SUPPORT_IMPERSONATION_ENABLED   ║
+  # ║ defaults OFF; while off the header is refused, never ignored.         ║
+  # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/support/impersonation:
+    post:
+      operationId: startSupportImpersonation
+      summary: Open a read-only, audited support view-as session
+      description: >
+        Requires the explicit `support.impersonate` permission in the caller's
+        effective permission set (the super-admin bypass does not apply) and a
+        live step-up grant — always enforced, independent of
+        FEATURE_STEP_UP_ENFORCED, because this capability has no prior
+        behaviour to preserve. The target must exist, must not be the caller,
+        and must not hold a privileged role (super-admin, system-admin or
+        support-impersonation-agent).
+      tags: [SupportImpersonation]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_user_id, reason, ticket_ref]
+              properties:
+                target_user_id: { type: string, format: uuid }
+                reason: { type: string, minLength: 10, maxLength: 500 }
+                ticket_ref: { type: string, minLength: 3, maxLength: 64 }
+                duration_minutes: { type: integer, description: "defaults 15, capped by SUPPORT_IMPERSONATION_MAX_MINUTES (hard max 60)" }
+      responses:
+        '201':
+          description: Session opened
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  session:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      actor_user_id: { type: string, format: uuid }
+                      target_user_id: { type: string, format: uuid }
+                      reason: { type: string }
+                      ticket_ref: { type: string }
+                      mode: { type: string, example: read_only }
+                      started_at: { type: string, format: date-time }
+                      expires_at: { type: string, format: date-time }
+                  usage:
+                    type: object
+                    properties:
+                      header: { type: string, example: X-Support-Impersonation }
+                      read_only: { type: boolean, example: true }
+                      read_routes:
+                        type: array
+                        items: { type: string }
+                        example: ["GET /api/finance/estate/:id/dashboard", "GET /api/finance/estate/:id/profile"]
+        '400': { description: "invalid_target / reason_required / ticket_ref_required / invalid_duration" }
+        '401': { description: Unauthenticated }
+        '403': { description: "permission_required (missing support.impersonate) / step_up_required / target_protected / cannot_impersonate_self" }
+        '404': { description: target_not_found }
+        '503': { description: "feature_disabled (flag off) or unavailable" }
+  /api/support/impersonation/active:
+    get:
+      operationId: activeSupportImpersonation
+      summary: The caller's live view-as session, if any
+      tags: [SupportImpersonation]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The open session, or session=null
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  session: { type: object, nullable: true }
+        '401': { description: Unauthenticated }
+        '503': { description: "feature_disabled (flag off) or unavailable" }
+  /api/support/impersonation/{id}/stop:
+    post:
+      operationId: stopSupportImpersonation
+      summary: End the caller's own view-as session
+      description: >
+        Only the agent who opened the session can stop it (actor match, not
+        permission) so a de-provisioned agent can still close what they opened.
+      tags: [SupportImpersonation]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Session ended }
+        '401': { description: Unauthenticated }
+        '404': { description: session_not_found }
+        '503': { description: "feature_disabled (flag off) or unavailable" }
+  /api/auth/support-access:
+    get:
+      operationId: mySupportAccess
+      summary: The caller's support-access notice — every view-as of their account
+      description: >
+        The impersonated user's audit-visible notice: who opened a support
+        session on their account, why, under which ticket, and until when.
+        Readable regardless of FEATURE_SUPPORT_IMPERSONATION_ENABLED — history
+        is never hidden.
+      tags: [SupportImpersonation]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Support sessions targeting the caller, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  support_access:
+                    type: array
+                    items: { type: object }
+        '401': { description: Unauthenticated }
+        '503': { description: unavailable }
   # ╔══════════════════════════════════════════════════════════════════════╗
   # ║ ADMIN USER / RBAC ENDPOINT PARITY — #23 (Backend remainder)            ║
   # ║ Base: /api/admin/...  ·  bearerAuth  ·  deny-by-default permissions.   ║

@@ -103,7 +103,10 @@ import (
 // into registerConnectWalletRoutes — the /api/v1/kyc/tier1 handler needs it to
 // run a real Dojah/Smile ID/Youverify check instead of writing an unverified
 // pending status.
-func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub) (*referrals.RewardService, *kycverify.Service) {
+// the guards parameter merely surfaced the metric on this line.
+//
+//nolint:gocognit,gocyclo // monolith route registrar was already far over the threshold;
+func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub, guards platformGuards) (*referrals.RewardService, *kycverify.Service) {
 	if cfg.DatabaseURL == "" {
 		log.Println("[finance] DATABASE_URL not set — skipping financial routes")
 		return nil, nil
@@ -316,6 +319,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	finance := r.Group("/api/finance")
 	finance.Use(middleware.RequireAuthContext(supabase, rbac))
 	finance.Use(requireUserID())
+	// ESTD-D028: the only group hosting the support view-as read allow-list
+	// (middleware.supportImpersonationReadRoutes). Validates the session, audits
+	// the request (fail closed) and swaps the identity to the target user.
+	finance.Use(guards.applyImpersonation())
 
 	// The registry decides which modules an environment publishes — without these
 	// routes mounted, GET /api/v1/modules/visibility 404s and every client falls
@@ -389,8 +396,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	transfersAdmin.GET("", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.List)
 	transfersAdmin.GET("/provider-health", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.ProviderHealth)
 	transfersAdmin.GET("/:id", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Get)
-	transfersAdmin.POST("/:id/retry", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Retry)
-	transfersAdmin.POST("/:id/reverse", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Reverse)
+	transfersAdmin.POST("/:id/retry", middleware.RequirePermission(rbac, "finance.admin.transfers"), guards.stepUp("finance.admin.transfers.retry"), transfersAdminHandler.Retry)
+	transfersAdmin.POST("/:id/reverse", middleware.RequirePermission(rbac, "finance.admin.transfers"), guards.stepUp("finance.admin.transfers.reverse"), transfersAdminHandler.Reverse)
 
 	// READ-ONLY reporting over ledger_entries — the only source of truth for money
 	// movement across every module (there is no per-module transactions table).
@@ -1228,11 +1235,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Block 41: Admin panel & configuration
 		estGroup.GET("/:id/admin/dashboard", estateHandler.GetAdminDashboard)
 		estGroup.GET("/:id/admin/residents", estateHandler.AdminListResidents)
-		estGroup.POST("/:id/admin/residents/:uid/ban", estateHandler.BanResident)
-		estGroup.POST("/:id/admin/residents/:uid/restore", estateHandler.RestoreResident)
+		estGroup.POST("/:id/admin/residents/:uid/ban", guards.stepUp("estate.admin.residents.ban"), estateHandler.BanResident)
+		estGroup.POST("/:id/admin/residents/:uid/restore", guards.stepUp("estate.admin.residents.restore"), estateHandler.RestoreResident)
 		estGroup.GET("/:id/admin/config", estateHandler.GetEstateConfig)
 		estGroup.PUT("/:id/admin/rules", estateHandler.SetEstateRules)
-		estGroup.PUT("/:id/admin/subscription-plan", estateHandler.ConfigureSubscriptionPlan)
+		estGroup.PUT("/:id/admin/subscription-plan", guards.stepUp("estate.admin.subscription_plan"), estateHandler.ConfigureSubscriptionPlan)
 		estGroup.GET("/:id/admin/audit-log", estateHandler.GetAuditLog)
 		estGroup.POST("/:id/admin/run-maintenance", estateHandler.RunMaintenance) // Block 47
 		// ESTD-D027: maker-checker approvals + versioned thresholds. Not mounted
@@ -1256,7 +1263,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.GET("/:id/vendor/profile", estateHandler.GetVendorProfile)
 		estGroup.GET("/:id/vendor/earnings", estateHandler.GetVendorEarnings)
 		estGroup.GET("/:id/vendor/jobs", estateHandler.ListVendorJobs)
-		estGroup.POST("/:id/vendor/assign-job", estateHandler.AssignVendorJob)
+		estGroup.POST("/:id/vendor/assign-job", guards.stepUp("estate.admin.vendor.assign_job"), estateHandler.AssignVendorJob)
 		estGroup.POST("/:id/vendor/jobs/:jid/accept", estateHandler.AcceptVendorJob)
 		estGroup.POST("/:id/vendor/jobs/:jid/reject", estateHandler.RejectVendorJob)
 		estGroup.POST("/:id/vendor/jobs/:jid/checkin", estateHandler.CheckInVendorJob)
@@ -1332,10 +1339,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Block 29: Dues / Rent (money path — Idempotency-Key required on pay)
 		estGroup.GET("/:id/dues/invoices", estateHandler.ListInvoices)
-		estGroup.POST("/:id/dues/invoices", estateHandler.CreateInvoice)
+		estGroup.POST("/:id/dues/invoices", guards.stepUp("estate.admin.dues.invoice"), estateHandler.CreateInvoice)
 		estGroup.POST("/:id/dues/invoices/:invoiceId/pay", estateHandler.PayDues)
-		estGroup.POST("/:id/dues/restrictions", estateHandler.ApplyRestriction)
-		estGroup.POST("/:id/dues/restrictions/:residentId/lift", estateHandler.LiftRestriction)
+		estGroup.POST("/:id/dues/restrictions", guards.stepUp("estate.admin.dues.restrict"), estateHandler.ApplyRestriction)
+		estGroup.POST("/:id/dues/restrictions/:residentId/lift", guards.stepUp("estate.admin.dues.lift_restriction"), estateHandler.LiftRestriction)
 
 		// Paystack-funded dues payment (card / bank-transfer, no wallet, no
 		// KYC-tier gate — see estate/paystackcheckout package doc comment).

@@ -44,6 +44,29 @@ type Config struct {
 	// no-op (existing behaviour preserved). When ON, refresh rotation + reuse
 	// detection, revocation enforcement, and suspicious-login response are active.
 	FeatureSessionHardeningEnabled bool
+
+	// FeatureStepUpEnforced (ESTD-D014, ADR-PR<pr-number>) makes high-risk
+	// privileged routes (estate-admin money/role/ban actions, the /api/admin RBAC
+	// and user-control mutations, finance-admin transfer actions, admin-console
+	// money/limit approvals) refuse with 403 step_up_required until the caller
+	// completes POST /api/auth/step-up/verify in the same session. DEFAULT TRUE —
+	// a compliance rail, same precedent as FEATURE_TIER_LIMITS_ENABLED /
+	// FEATURE_INSURANCE_NIN_REQUIRED: skipping it must be an explicit
+	// per-environment opt-out, never the forgotten default. It fails CLOSED: with
+	// the OTP email service unwired (FEATURE_OTP_EMAIL_ENABLED off or Brevo
+	// unconfigured) those routes answer 503 step_up_unavailable. Set
+	// FEATURE_STEP_UP_ENFORCED=false to restore the previous behaviour.
+	// Unlike FEATURE_OTP_LOGIN_MFA_ENABLED (default off) it cannot lock anyone
+	// out of signing in — only out of the gated privileged actions.
+	FeatureStepUpEnforced bool
+	// StepUpTTLSeconds is how long a step-up grant lasts (clamped 60..900).
+	StepUpTTLSeconds int
+	// FeatureSupportImpersonationEnabled (ESTD-D028) mounts the read-only,
+	// audited support view-as surface. DEFAULT OFF — a new capability ships dark.
+	// While off, any request carrying X-Support-Impersonation is refused 403.
+	FeatureSupportImpersonationEnabled bool
+	// SupportImpersonationMaxMinutes caps a view-as session (clamped 1..60).
+	SupportImpersonationMaxMinutes int
 	// FeatureAdminUserModulesEnabled gates GET /api/admin/users/:id/modules (admin
 	// User 360 module membership). Default OFF: the route answers 404 when off.
 	FeatureAdminUserModulesEnabled bool
@@ -926,10 +949,15 @@ func Load() Config {
 		AccountLockMinutes:          getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
 
 		FeatureSessionHardeningEnabled: getEnvBool("FEATURE_SESSION_HARDENING_ENABLED", false),
-		FeatureAdminUserModulesEnabled: getEnvBool("FEATURE_ADMIN_USER_MODULES_ENABLED", false),
-		SuspiciousFailedLoginSpike:     getEnvInt("AUTH_SUSPICIOUS_FAILED_LOGIN_SPIKE", 3),
-		SuspiciousImpossibleKmH:        getEnvInt("AUTH_SUSPICIOUS_IMPOSSIBLE_KMH", 800),
-		SuspiciousEscalationPolicy:     getEnv("AUTH_SUSPICIOUS_ESCALATION_POLICY", "notify"),
+		FeatureStepUpEnforced:          getEnvBool("FEATURE_STEP_UP_ENFORCED", true),
+		StepUpTTLSeconds:               getEnvInt("STEP_UP_TTL_SECONDS", 300),
+
+		FeatureSupportImpersonationEnabled: getEnvBool("FEATURE_SUPPORT_IMPERSONATION_ENABLED", false),
+		SupportImpersonationMaxMinutes:     getEnvInt("SUPPORT_IMPERSONATION_MAX_MINUTES", 30),
+		FeatureAdminUserModulesEnabled:     getEnvBool("FEATURE_ADMIN_USER_MODULES_ENABLED", false),
+		SuspiciousFailedLoginSpike:         getEnvInt("AUTH_SUSPICIOUS_FAILED_LOGIN_SPIKE", 3),
+		SuspiciousImpossibleKmH:            getEnvInt("AUTH_SUSPICIOUS_IMPOSSIBLE_KMH", 800),
+		SuspiciousEscalationPolicy:         getEnv("AUTH_SUSPICIOUS_ESCALATION_POLICY", "notify"),
 
 		DatabaseURL:   getEnv("DATABASE_URL", ""),
 		RedisURL:      getEnv("REDIS_URL", "redis://localhost:6379"),
