@@ -393,6 +393,49 @@ export async function updateInterestArea(input: Partial<AcademyInterestArea> & {
   })).area;
 }
 
+/** Per-area tuition option (schedule x boarding). Prices are whole naira. */
+export type AcademyAreaOption = {
+  id: string;
+  area_id: string;
+  label: string;
+  duration_label: string | null;
+  price_no_boarding_ngn: number;
+  /** null = boarding not offered for this option. */
+  price_with_boarding_ngn: number | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string | null;
+};
+
+export async function listAreaOptions(areaId: string): Promise<AcademyAreaOption[]> {
+  return (await call<{ options?: AcademyAreaOption[] }>(
+    `${B}/area-options?area_id=${encodeURIComponent(areaId)}`,
+  )).options ?? [];
+}
+
+export async function createAreaOption(input: {
+  area_id: string;
+  label: string;
+  duration_label?: string | null;
+  price_no_boarding_ngn: number;
+  price_with_boarding_ngn: number | null;
+  sort_order?: number;
+  is_active?: boolean;
+}): Promise<AcademyAreaOption> {
+  return (await call<{ option: AcademyAreaOption }>(`${B}/area-options`, {
+    method: 'POST', body: JSON.stringify(input),
+  })).option;
+}
+
+export async function updateAreaOption(
+  input: Partial<Omit<AcademyAreaOption, 'id' | 'area_id'>> & { id: string },
+): Promise<AcademyAreaOption> {
+  return (await call<{ option: AcademyAreaOption }>(`${B}/area-options`, {
+    method: 'PUT', body: JSON.stringify(input),
+  })).option;
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // ASSESSMENT slice (PRD BK-06/07 + BK-10): question bank, SME review, exams.
 // These drive /api/admin/academy/questions* and /api/admin/academy/exams*.

@@ -278,7 +278,7 @@ function BatchesTab({ onNotice }: NoticeProp) {
                       if (e.target.checked) cur.add(a.slug); else cur.delete(a.slug);
                       setEditing({ ...editing, interest_area_slugs: [...cur] });
                     }} />
-                    {a.label}{a.fee_ngn ? ` (${naira(a.fee_ngn)})` : ''}
+                    {a.label}
                   </label>
                 );
               })}
@@ -1018,7 +1018,7 @@ function SettingsTab({ onNotice }: NoticeProp) {
   const areas = useAsync(() => svc.listInterestAreas(), []);
   const [form, setForm] = useState<svc.AcademySettings | null>(null);
   const [busy, setBusy] = useState(false);
-  const [newArea, setNewArea] = useState({ label: '', fee_ngn: '0' });
+  const [newArea, setNewArea] = useState({ label: '' });
 
   useEffect(() => { if (settings.data) setForm(settings.data); }, [settings.data]);
 
@@ -1042,28 +1042,39 @@ function SettingsTab({ onNotice }: NoticeProp) {
     if (!newArea.label.trim()) return;
     setBusy(true);
     try {
-      await svc.createInterestArea({ label: newArea.label.trim(), fee_ngn: Number(newArea.fee_ngn) || 0 });
-      setNewArea({ label: '', fee_ngn: '0' });
+      await svc.createInterestArea({ label: newArea.label.trim(), fee_ngn: 0 });
+      setNewArea({ label: '' });
       await areas.reload();
       onNotice('Area added — it now appears in the app’s apply form.');
     } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
 
-  // Draft per-area tuition, keyed by area id. Absent = unedited (shows the saved value).
-  const [feeDraft, setFeeDraft] = useState<Record<string, string>>({});
-  const saveAreaFee = async (a: svc.AcademyInterestArea) => {
-    const raw = feeDraft[a.id];
-    const fee = Number(raw);
-    if (raw === undefined || !Number.isFinite(fee) || fee < 0) return;
-    setBusy(true);
-    try {
-      await svc.updateInterestArea({ id: a.id, fee_ngn: Math.round(fee) });
-      setFeeDraft(({ [a.id]: _gone, ...rest }) => rest);
-      await areas.reload();
-      onNotice(`${a.label} tuition saved — applicants who pick it are quoted ₦${Math.round(fee).toLocaleString('en-NG')}.`);
-    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
+  // Options per area id (all, incl. inactive). Loaded up front for every area so the
+  // row summary ("from ₦X") is right without expanding.
+  const [optionsByArea, setOptionsByArea] = useState<Record<string, svc.AcademyAreaOption[]>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const areaList = areas.data;
+  useEffect(() => {
+    if (!areaList) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const lists = await Promise.all(areaList.map((a) => svc.listAreaOptions(a.id)));
+        if (cancelled) return;
+        const next: Record<string, svc.AcademyAreaOption[]> = {};
+        areaList.forEach((a, i) => { next[a.id] = lists[i]; });
+        setOptionsByArea(next);
+      } catch (e) {
+        if (!cancelled) onNotice(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [areaList]);
+  const reloadOptions = async (areaId: string) => {
+    const list = await svc.listAreaOptions(areaId);
+    setOptionsByArea((m) => ({ ...m, [areaId]: list }));
   };
 
   const toggleArea = async (a: svc.AcademyInterestArea) => {
@@ -1112,21 +1123,17 @@ function SettingsTab({ onNotice }: NoticeProp) {
 
       <Card title="Areas of interest">
         <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 0 }}>
-          These are the specialisations the apply form offers. Each area carries its own tuition:
-          an applicant picks up to two, and their tuition is the sum of the areas they pick (payable
-          only if they are offered a place). The slug is what the application row stores, so
-          renaming a label is safe but the slug is the contract.
+          These are the specialisations the apply form offers. Tuition is set per option under each
+          area (a schedule, with a price without boarding and optionally one with boarding). An area
+          with no active options is shown to applicants as &quot;Pricing coming soon&quot; and cannot be
+          chosen. The slug is what the application row stores, so renaming a label is safe but the
+          slug is the contract.
         </p>
         <FilterBar>
           <div style={{ minWidth: 240 }}>
             <span style={label()}>New area</span>
             <input style={input()} placeholder="e.g. Cinematography" value={newArea.label}
               onChange={(e) => setNewArea({ ...newArea, label: e.target.value })} />
-          </div>
-          <div style={{ width: 160 }}>
-            <span style={label()}>Tuition fee (₦)</span>
-            <input type="number" min={0} style={input()} value={newArea.fee_ngn}
-              onChange={(e) => setNewArea({ ...newArea, fee_ngn: e.target.value })} />
           </div>
           <button style={btnPrimary()} disabled={busy || !newArea.label.trim()} onClick={() => void addArea()}>Add</button>
         </FilterBar>
@@ -1135,38 +1142,210 @@ function SettingsTab({ onNotice }: NoticeProp) {
           emptyText="No areas yet — the apply form will show none until you add them.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
-              <th style={th()}>Label</th><th style={th()}>Slug</th>
-              <th style={th()}>Tuition fee (₦)</th><th style={th()}>Active</th><th style={th()} />
+              <th style={th()} /><th style={th()}>Label</th><th style={th()}>Slug</th>
+              <th style={th()}>Pricing</th><th style={th()}>Active</th><th style={th()} />
             </tr></thead>
             <tbody>
-              {(areas.data ?? []).map((a) => (
-                <tr key={a.id}>
-                  <td style={td()}>{a.label}</td>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{a.slug}</code></td>
-                  <td style={td()}>
-                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                      <input type="number" min={0} style={{ ...input(), width: 130 }}
-                        aria-label={`${a.label} tuition fee`}
-                        value={feeDraft[a.id] ?? String(a.fee_ngn ?? 0)}
-                        onChange={(e) => setFeeDraft({ ...feeDraft, [a.id]: e.target.value })} />
-                      {feeDraft[a.id] !== undefined && Number(feeDraft[a.id]) !== Number(a.fee_ngn ?? 0) && (
-                        <button style={btnPrimary()} disabled={busy} onClick={() => void saveAreaFee(a)}>Save</button>
-                      )}
-                    </div>
-                  </td>
-                  <td style={td()}><Badge status={a.is_active ? 'active' : 'draft'} label={a.is_active ? 'active' : 'inactive'} /></td>
-                  <td style={td()}>
-                    <button style={btn()} disabled={busy} onClick={() => void toggleArea(a)}>
-                      {a.is_active ? 'Deactivate' : 'Activate'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {(areas.data ?? []).map((a) => {
+                const opts = optionsByArea[a.id];
+                const activeOpts = (opts ?? []).filter((o) => o.is_active);
+                const from = activeOpts.length
+                  ? Math.min(...activeOpts.map((o) => o.price_no_boarding_ngn)) : null;
+                const open = !!expanded[a.id];
+                return (
+                  <React.Fragment key={a.id}>
+                    <tr>
+                      <td style={td()}>
+                        <button style={btn()} aria-expanded={open}
+                          aria-label={`${open ? 'Collapse' : 'Expand'} ${a.label} options`}
+                          onClick={() => setExpanded((m) => ({ ...m, [a.id]: !m[a.id] }))}>
+                          {open ? '▾' : '▸'}
+                        </button>
+                      </td>
+                      <td style={td()}>{a.label}</td>
+                      <td style={td()}><code style={{ fontSize: '0.78rem' }}>{a.slug}</code></td>
+                      <td style={td()}>
+                        {opts === undefined ? (
+                          <span style={{ color: colors.muted }}>…</span>
+                        ) : from === null ? (
+                          <span style={{ color: colors.muted }}>No options yet</span>
+                        ) : (
+                          <span>from {naira(from)} · {opts.length} option{opts.length === 1 ? '' : 's'}</span>
+                        )}
+                      </td>
+                      <td style={td()}><Badge status={a.is_active ? 'active' : 'draft'} label={a.is_active ? 'active' : 'inactive'} /></td>
+                      <td style={td()}>
+                        <button style={btn()} disabled={busy} onClick={() => void toggleArea(a)}>
+                          {a.is_active ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </td>
+                    </tr>
+                    {open && (
+                      <tr>
+                        <td style={td()} />
+                        <td style={td()} colSpan={5}>
+                          <AreaOptionsEditor area={a} options={opts ?? []}
+                            onChanged={() => reloadOptions(a.id)} onNotice={onNotice} />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </StateBlock>
       </Card>
     </>
+  );
+}
+
+/** Whole non-negative naira from an input string, or null when blank/invalid. */
+function parseNaira(s: string): number | null {
+  const t = s.trim();
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+type OptionDraft = { label: string; duration: string; noBoarding: string; withBoarding: string; active: boolean };
+
+/** Returns the request fields when the draft is valid, else a short hint. */
+function validateOptionDraft(d: OptionDraft):
+  | { ok: true; label: string; duration_label: string | null; no: number; with: number | null }
+  | { ok: false; hint: string } {
+  if (!d.label.trim()) return { ok: false, hint: 'Schedule label is required.' };
+  const no = parseNaira(d.noBoarding);
+  if (no === null) return { ok: false, hint: 'Enter a whole-naira price without boarding.' };
+  let withB: number | null = null;
+  if (d.withBoarding.trim() !== '') {
+    withB = parseNaira(d.withBoarding);
+    if (withB === null) return { ok: false, hint: 'Boarding price must be a whole number (or blank).' };
+    if (withB < no) return { ok: false, hint: 'Boarding price cannot be lower than the no-boarding price.' };
+  }
+  return { ok: true, label: d.label.trim(), duration_label: d.duration.trim() || null, no, with: withB };
+}
+
+function AreaOptionsEditor({ area, options, onChanged, onNotice }: {
+  area: svc.AcademyInterestArea;
+  options: svc.AcademyAreaOption[];
+  onChanged: () => Promise<void>;
+  onNotice: (m: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const blank: OptionDraft = { label: '', duration: '', noBoarding: '', withBoarding: '', active: true };
+  const [adding, setAdding] = useState<OptionDraft>(blank);
+  const [drafts, setDrafts] = useState<Record<string, OptionDraft>>({});
+
+  const draftOf = (o: svc.AcademyAreaOption): OptionDraft => drafts[o.id] ?? {
+    label: o.label, duration: o.duration_label ?? '', noBoarding: String(o.price_no_boarding_ngn),
+    withBoarding: o.price_with_boarding_ngn === null ? '' : String(o.price_with_boarding_ngn),
+    active: o.is_active,
+  };
+  const isDirty = (o: svc.AcademyAreaOption) => {
+    const d = drafts[o.id];
+    if (!d) return false;
+    const v = validateOptionDraft(d);
+    return !v.ok || v.label !== o.label || v.duration_label !== o.duration_label || v.no !== o.price_no_boarding_ngn
+      || v.with !== o.price_with_boarding_ngn || d.active !== o.is_active;
+  };
+
+  const saveOption = async (o: svc.AcademyAreaOption) => {
+    const v = validateOptionDraft(draftOf(o));
+    if (!v.ok) return;
+    setBusy(true);
+    try {
+      await svc.updateAreaOption({
+        id: o.id, label: v.label, duration_label: v.duration_label,
+        price_no_boarding_ngn: v.no, price_with_boarding_ngn: v.with, is_active: draftOf(o).active,
+      });
+      setDrafts(({ [o.id]: _gone, ...rest }) => rest);
+      await onChanged();
+      onNotice(`${area.label} — option “${v.label}” saved.`);
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const addOption = async () => {
+    const v = validateOptionDraft(adding);
+    if (!v.ok) return;
+    setBusy(true);
+    try {
+      const nextSort = options.reduce((m, o) => Math.max(m, o.sort_order ?? 0), 0) + 10;
+      await svc.createAreaOption({
+        area_id: area.id, label: v.label, duration_label: v.duration_label,
+        price_no_boarding_ngn: v.no, price_with_boarding_ngn: v.with,
+        is_active: adding.active, sort_order: nextSort,
+      });
+      setAdding(blank);
+      await onChanged();
+      onNotice(`${area.label} — option “${v.label}” added.`);
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const rows: Array<{ key: string; o: svc.AcademyAreaOption | null; d: OptionDraft; set: (n: OptionDraft) => void }> = [
+    ...options.map((o) => ({ key: o.id, o, d: draftOf(o), set: (n: OptionDraft) => setDrafts((m) => ({ ...m, [o.id]: n })) })),
+    { key: '__new', o: null, d: adding, set: setAdding },
+  ];
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead><tr>
+          <th style={th()}>Schedule</th><th style={th()}>Duration</th>
+          <th style={th()}>Price without boarding (₦)</th>
+          <th style={th()}>Price with boarding (₦, blank = not offered)</th>
+          <th style={th()}>Active</th><th style={th()} />
+        </tr></thead>
+        <tbody>
+          {rows.map(({ key, o, d, set }) => {
+            const v = validateOptionDraft(d);
+            // Stay quiet on an untouched "add" row; always explain a bad edit.
+            const hint = !v.ok && (o !== null || d.label || d.noBoarding || d.withBoarding) ? v.hint : null;
+            const canSave = v.ok && !busy && (o === null || isDirty(o));
+            return (
+              <tr key={key}>
+                <td style={td()}>
+                  <input style={input()} aria-label="Schedule" placeholder={o ? undefined : 'e.g. Weekdays'}
+                    value={d.label} onChange={(e) => set({ ...d, label: e.target.value })} />
+                </td>
+                <td style={td()}>
+                  <input style={input()} aria-label="Duration" placeholder={o ? undefined : 'e.g. 12 weeks'}
+                    value={d.duration} onChange={(e) => set({ ...d, duration: e.target.value })} />
+                </td>
+                <td style={td()}>
+                  <input type="number" min={0} step={1} style={{ ...input(), width: 140 }}
+                    aria-label="Price without boarding" value={d.noBoarding}
+                    onChange={(e) => set({ ...d, noBoarding: e.target.value })} />
+                </td>
+                <td style={td()}>
+                  <input type="number" min={0} step={1} style={{ ...input(), width: 140 }}
+                    aria-label="Price with boarding" placeholder="not offered" value={d.withBoarding}
+                    onChange={(e) => set({ ...d, withBoarding: e.target.value })} />
+                </td>
+                <td style={td()}>
+                  <input type="checkbox" aria-label="Active" checked={d.active}
+                    onChange={(e) => set({ ...d, active: e.target.checked })} />
+                </td>
+                <td style={td()}>
+                  <button style={btnPrimary()} disabled={!canSave}
+                    onClick={() => void (o ? saveOption(o) : addOption())}>
+                    {o ? 'Save' : 'Add option'}
+                  </button>
+                  {hint ? <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 4 }}>{hint}</div> : null}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {options.length === 0 ? (
+        <p style={{ fontSize: '0.78rem', color: colors.muted, margin: '0.5rem 0 0' }}>
+          No options yet — add one below; applicants cannot choose this area until it has an active option.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
