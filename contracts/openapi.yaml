@@ -1951,6 +1951,94 @@ components:
         expires_in: { type: integer, description: Seconds }
         method: { type: string, enum: [PUT] }
 
+    OrganiserPayout:
+      description: >
+        One organiser settlement payout (EVTC-D003). State machine:
+        pending -> processing -> paid | failed ; pending -> failed (checker
+        reject). Amounts are the INCREMENT covered by this payout: each new
+        payout pays the eligible total minus every non-failed earlier payout,
+        so a failed payout's amount is re-offered and a paid one is never
+        re-offered.
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        organiser_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, processing, paid, failed] }
+        gross_kobo: { type: integer, format: int64, description: "Incremental eligible gross covered by this payout" }
+        fee_kobo: { type: integer, format: int64, description: "Platform fee collected by this payout" }
+        net_kobo: { type: integer, format: int64, description: "Paid to the organiser's wallet by this payout" }
+        reserve_held_kobo: { type: integer, format: int64, description: "Reserve still held for the event after this payout" }
+        fee_bps: { type: integer }
+        reserve_bps: { type: integer }
+        refunds_kobo: { type: integer, format: int64, description: "Refunded orders snapshot at request time" }
+        disputed_kobo: { type: integer, format: int64, description: "Dispute-held orders snapshot at request time" }
+        destination: { type: string, enum: [wallet], description: "Funds land in the organiser's Paymax wallet; bank withdrawal uses the shared transfers rail" }
+        idempotency_key: { type: string }
+        requested_by: { type: string, format: uuid }
+        approved_by: { type: string, format: uuid, nullable: true }
+        failure_reason: { type: string, nullable: true }
+        ledger_reference: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        processing_at: { type: string, format: date-time, nullable: true }
+        paid_at: { type: string, format: date-time, nullable: true }
+        failed_at: { type: string, format: date-time, nullable: true }
+
+    EventPayoutStatement:
+      description: >
+        Per-event organiser earnings statement. Reconciles to the ledger:
+        gross_sales = refunds + disputed_held + eligible_gross;
+        eligible_gross = fees + reserve + net_earnings;
+        net_earnings = paid + pending + balance (a negative balance means the
+        organiser owes the platform, e.g. a dispute opened after a payout).
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        event_title: { type: string }
+        event_state: { type: string, enum: [DRAFT, SUBMITTED, APPROVED, LIVE, PAUSED, CLOSED, CANCELLED, SUSPENDED] }
+        ends_at: { type: string, format: date-time }
+        organiser_id: { type: string, format: uuid }
+        fee_bps: { type: integer }
+        reserve_bps: { type: integer }
+        gross_sales_kobo: { type: integer, format: int64 }
+        refunds_kobo: { type: integer, format: int64 }
+        disputed_held_kobo: { type: integer, format: int64 }
+        eligible_gross_kobo: { type: integer, format: int64 }
+        fees_kobo: { type: integer, format: int64 }
+        reserve_kobo: { type: integer, format: int64 }
+        net_earnings_kobo: { type: integer, format: int64 }
+        paid_kobo: { type: integer, format: int64 }
+        fees_collected_kobo: { type: integer, format: int64 }
+        pending_kobo: { type: integer, format: int64 }
+        balance_kobo: { type: integer, format: int64 }
+        available_kobo: { type: integer, format: int64, description: "Amount a new payout request would cover right now" }
+        eligible: { type: boolean }
+        reason: { type: string, nullable: true, description: "event_not_closed | hold_window when eligible is false" }
+        eligible_at: { type: string, format: date-time }
+        reserve_active: { type: boolean }
+        reserve_release_at: { type: string, format: date-time }
+        payouts:
+          type: array
+          items: { $ref: '#/components/schemas/OrganiserPayout' }
+
+    EventPayoutQueueLine:
+      description: One CLOSED event's settlement position in the admin payout queue.
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        event_title: { type: string }
+        organiser_id: { type: string, format: uuid }
+        ends_at: { type: string, format: date-time }
+        eligible: { type: boolean }
+        reason: { type: string, nullable: true }
+        eligible_at: { type: string, format: date-time }
+        available_kobo: { type: integer, format: int64 }
+        pending_kobo: { type: integer, format: int64 }
+        paid_kobo: { type: integer, format: int64 }
+        reserve_kobo: { type: integer, format: int64 }
+        in_flight_payout_id: { type: string, format: uuid, nullable: true }
+        last_payout_at: { type: string, format: date-time, nullable: true }
+
     TicketTier:
       type: object
       properties:
@@ -9606,6 +9694,101 @@ paths:
         '400': { description: "Missing Idempotency-Key or invalid body" }
         '404': { description: Vendor or wallet not found }
 
+  /events/{id}/payouts:
+    post:
+      operationId: requestOrganiserPayout
+      summary: Request settlement of the event's payable ticket proceeds (maker step — a checker must approve)
+      description: >-
+        Organiser payout rail (EVTC-D003), gated by FEATURE_EVENTS_ORGANISER_PAYOUTS
+        (flag off => 404). Eligible once the event is CLOSED and ends_at + the
+        configured hold window has passed. Payable = PAID orders net of
+        refunded/disputed orders, the event's fee_bps platform fee and the
+        configured reserve. Creates a PENDING payout; an admin checker must
+        approve it before the escrow -> organiser wallet / escrow ->
+        paymax_revenue legs post. The payee is always the event's organiser_id
+        and funds land in their Paymax wallet — bank withdrawal then runs
+        through the shared transfers rail (which owns bank-change controls), so
+        an in-flight payout can never be redirected by a bank-account change.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Payout created (status pending); a replay of the same Idempotency-Key returns the same payout
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserPayout' }
+        '400': { description: "Missing Idempotency-Key, or nothing is due to the organiser" }
+        '403': { description: "Caller is not the event's organiser, or the organiser is below the minimum KYC tier (fail-closed)" }
+        '404': { description: Event not found }
+        '409': { description: "Event not yet eligible (not CLOSED / inside hold window), a payout is already in flight, or the key was used for a different payout" }
+
+  /events/{id}/payout-statement:
+    get:
+      operationId: organiserPayoutStatement
+      summary: Per-event earnings statement for the owning organiser (gross, refunds, fees, reserve, paid, pending)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Earnings statement — reconciles to the ledger (gross = refunds + disputed + eligible; eligible = fees + reserve + net; net = paid + pending + balance)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/EventPayoutStatement' }
+        '403': { description: "Caller is not the event's organiser" }
+        '404': { description: Event not found }
+
+  /events/payouts/mine:
+    get:
+      operationId: myOrganiserPayouts
+      summary: List the caller's own payouts across all their events (per-merchant segregation)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Payout list (newest first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  payouts:
+                    type: array
+                    items: { $ref: '#/components/schemas/OrganiserPayout' }
+
+  /events/payouts/{payoutId}:
+    get:
+      operationId: getOrganiserPayout
+      summary: Read one of the caller's own payouts (404 for anyone else — existence/amounts are never disclosed)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: payoutId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Payout
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserPayout' }
+        '404': { description: Payout not found, or owned by a different organiser }
+
   # ── Events social (FEATURE_EVENTS_SOCIAL) — likes, organiser follows and profiles ──
   # Moves no money: no ledger posting, no Idempotency-Key. Like/follow are idempotent
   # by construction (primary keys); a repeat returns the current state, not an error.
@@ -9851,6 +10034,157 @@ paths:
         '403':
           description: Vendor has not completed KYC (fail-closed, NL-10)
         '404': { description: Event or vendor not found }
+
+  /api/events/admin/payouts:
+    get:
+      operationId: adminListEventPayouts
+      summary: Organiser payout register, optionally filtered by status (events.admin.view)
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, processing, paid, failed] }
+      responses:
+        '200':
+          description: Payouts (newest first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  payouts:
+                    type: array
+                    items: { $ref: '#/components/schemas/OrganiserPayout' }
+        '400': { description: Unknown status filter }
+
+  /api/events/admin/payouts/queue:
+    get:
+      operationId: adminEventPayoutQueue
+      summary: Settlement queue — CLOSED events with their payable / pending / paid / reserve positions (events.admin.view)
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Queue lines, most recently ended events first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  queue:
+                    type: array
+                    items: { $ref: '#/components/schemas/EventPayoutQueueLine' }
+
+  /api/events/admin/events/{id}/payout-statement:
+    get:
+      operationId: adminEventPayoutStatement
+      summary: Any event's settlement statement (events.admin.view)
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Earnings statement (same shape the organiser sees)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/EventPayoutStatement' }
+        '404': { description: Event not found }
+
+  /api/events/admin/{id}/payouts:
+    post:
+      operationId: adminRequestEventPayout
+      summary: Admin trigger — create a PENDING organiser payout for an eligible event (maker step, events.settle)
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Payout created (status pending); a different checker must approve it
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserPayout' }
+        '400': { description: "Missing Idempotency-Key, or nothing is due" }
+        '403': { description: Organiser below the minimum KYC tier (fail-closed) }
+        '404': { description: Event not found }
+        '409': { description: "Event not eligible yet, or a payout is already in flight" }
+
+  /api/events/admin/payouts/{payoutId}/approve:
+    post:
+      operationId: adminApproveEventPayout
+      summary: Checker approval — pending -> processing and the escrow legs post; retry-safe, never double-pays (events.settle)
+      description: >-
+        Approver must differ from the requester (maker-checker). On approval the
+        payout posts DR escrow / CR organiser wallet (net) and DR escrow / CR
+        paymax_revenue (fee) under keys derived from the payout id, then flips
+        paid. Re-approving or the payout reconciler re-drives a stuck PROCESSING
+        payout idempotently. A failed transfer marks the payout failed only when
+        the ledger of record shows no leg posted; a partially-posted payout stays
+        processing and is re-driven — money can never be lost or double-moved.
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: payoutId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Payout after approval (paid, or processing when a partial retry is still settling)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserPayout' }
+        '400': { description: Missing Idempotency-Key }
+        '403': { description: Organiser below the minimum KYC tier (fail-closed) }
+        '404': { description: Payout not found }
+        '409': { description: "Payout is not approvable (failed), or the approver is the requester" }
+        '422': { description: "Payout execution failed; row is marked failed and its amount is re-offered to the next request" }
+
+  /api/events/admin/payouts/{payoutId}/reject:
+    post:
+      operationId: adminRejectEventPayout
+      summary: Checker rejection — pending -> failed without moving money (events.settle)
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: payoutId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Payout failed; its amount is re-offered to the next request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserPayout' }
+        '400': { description: Reason required }
+        '404': { description: Payout not found }
+        '409': { description: Payout is not pending }
 
   # ── Crowdfunding ──────────────────────────────────────────────────────────────
   /crowdfunding/campaigns:

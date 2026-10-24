@@ -70,6 +70,7 @@ type Service struct {
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	rt         RealtimePublisher  // optional; nil ⇒ ScanTicket's live check-in push is a no-op
 	notifier   NotificationSender // optional; nil ⇒ Announce records the row but sends nothing
+	payouts    payoutConfig       // organiser payout rail policy (payouts.go, EVTC-D003)
 	presigner  *r2.Presigner      // optional; nil ⇒ organiser banner uploads answer 503 and stored banner keys are hidden
 
 	// socialReads turns on the events-social read and write columns (banner_url,

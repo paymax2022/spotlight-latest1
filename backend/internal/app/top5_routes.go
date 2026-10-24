@@ -270,6 +270,25 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 	if cfg.FeatureEventsComps {
 		handler.RegisterComps(member)
 	}
+	if cfg.FeatureEventsOrganiserPayouts {
+		// EVTC-D003: organiser settlement rail. The policy is ops-tunable; the
+		// defaults mirror top5events.DefaultPayoutPolicy (72h hold, 5% reserve
+		// released 30d after the event, KYC tier 1 — the NL-10 bar).
+		svc.SetPayoutPolicy(top5events.PayoutPolicy{
+			HoldWindow:     time.Duration(envInt("EVENTS_PAYOUT_HOLD_HOURS", 72)) * time.Hour,
+			ReserveBps:     envInt("EVENTS_PAYOUT_RESERVE_BPS", 500),
+			ReserveRelease: time.Duration(envInt("EVENTS_PAYOUT_RESERVE_RELEASE_DAYS", 30)) * 24 * time.Hour,
+			MinKYCTier:     envInt("EVENTS_PAYOUT_MIN_KYC_TIER", 1),
+		})
+		handler.RegisterPayouts(member, admin, guard)
+		// Re-drive payouts stuck PROCESSING (crash between the ledger legs and
+		// the paid flip). Row-locked + idempotent legs ⇒ safe on every instance.
+		top5events.StartPayoutReconciler(
+			context.Background(), svc,
+			time.Duration(envInt("EVENTS_PAYOUT_RECONCILE_INTERVAL_MINUTES", 5))*time.Minute,
+			time.Duration(envInt("EVENTS_PAYOUT_STUCK_MINUTES", 10))*time.Minute,
+		)
+	}
 	if cfg.FeatureEventsSocial {
 		// Event reads and writes use the social columns (banner, venue
 		// coordinates, like_count, the caller's like) only with the flag on: they

@@ -240,6 +240,10 @@ type Config struct {
 	FeatureEventsTeamRoles bool
 	// FeatureEventsComps (FEATURE_EVENTS_COMPS) exposes comp tickets, attendee CSV export and organiser announcements.
 	FeatureEventsComps bool
+	// FeatureEventsOrganiserPayouts (FEATURE_EVENTS_ORGANISER_PAYOUTS) exposes the
+	// organiser settlement rail: per-event payout request/approve/reject, earnings
+	// statements and the admin settlement queue (EVTC-D003). Default OFF.
+	FeatureEventsOrganiserPayouts bool
 	// FeatureEventsSocial (FEATURE_EVENTS_SOCIAL) exposes event likes and organiser follows.
 	FeatureEventsSocial  bool
 	FeatureEstateEnabled bool
@@ -1014,6 +1018,7 @@ func Load() Config {
 		FeatureEventsTicketingDepth:                  getEnvBool("FEATURE_EVENTS_TICKETING_DEPTH", false),
 		FeatureEventsTeamRoles:                       getEnvBool("FEATURE_EVENTS_TEAM_ROLES", false),
 		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
+		FeatureEventsOrganiserPayouts:                getEnvBool("FEATURE_EVENTS_ORGANISER_PAYOUTS", false),
 		FeatureEventsSocial:                          getEnvBool("FEATURE_EVENTS_SOCIAL", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureEstateMerchantGate:                    getEnvBool("FEATURE_ESTATE_MERCHANT_GATE", false),
