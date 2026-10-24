@@ -25,8 +25,26 @@ interface OptionBody {
   sort_order?: unknown;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INT4_MIN = -2147483648;
+const INT4_MAX = 2147483647;
+
+/** Safe integer only: 1e300 / 9e18 would 500 at the bigint column, and values
+ *  past 2^53 are already silently rounded by JSON.parse. */
 function isWholeNonNegative(v: unknown): v is number {
-  return typeof v === 'number' && Number.isInteger(v) && v >= 0;
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+}
+
+function isInt4(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= INT4_MIN && v <= INT4_MAX;
+}
+
+/** Trimmed string, or null for null/empty/whitespace. undefined = invalid type. */
+function normalizeDuration(v: unknown): string | null | undefined {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'string') return undefined;
+  const t = v.trim();
+  return t === '' ? null : t;
 }
 
 function logDbError(where: string, error: unknown): void {
@@ -60,6 +78,7 @@ export async function GET(request: Request) {
     await assertAdminPermission(request, PERMISSION);
     const areaId = new URL(request.url).searchParams.get('area_id')?.trim();
     if (!areaId) return errorResponse('area_id is required', 400);
+    if (!UUID_RE.test(areaId)) return errorResponse('area_id must be a valid UUID', 400);
 
     const supabase = createAdminClient();
     // Inactive options are included so an admin can re-enable what they retired.
@@ -86,6 +105,7 @@ export async function POST(request: Request) {
 
     const areaId = typeof body.area_id === 'string' ? body.area_id.trim() : '';
     if (!areaId) return errorResponse('area_id is required', 400);
+    if (!UUID_RE.test(areaId)) return errorResponse('area_id must be a valid UUID', 400);
     if (typeof body.label !== 'string' || !body.label.trim()) return errorResponse('Label is required', 400);
     if (!isWholeNonNegative(body.price_no_boarding_ngn)) {
       return errorResponse('price_no_boarding_ngn must be a whole number of naira, zero or more', 400);
@@ -97,10 +117,10 @@ export async function POST(request: Request) {
     if (withBoarding !== null && withBoarding < body.price_no_boarding_ngn) {
       return errorResponse(BOARDING_RULE_MSG, 400);
     }
-    const duration = body.duration_label ?? null;
-    if (duration !== null && typeof duration !== 'string') return errorResponse('duration_label must be a string or null', 400);
+    const duration = normalizeDuration(body.duration_label);
+    if (duration === undefined) return errorResponse('duration_label must be a string or null', 400);
     const sortOrder = body.sort_order ?? 0;
-    if (typeof sortOrder !== 'number' || !Number.isInteger(sortOrder)) return errorResponse('sort_order must be an integer', 400);
+    if (!isInt4(sortOrder)) return errorResponse('sort_order must be a 32-bit integer', 400);
     const isActive = body.is_active ?? true;
     if (typeof isActive !== 'boolean') return errorResponse('is_active must be a boolean', 400);
 
@@ -148,6 +168,7 @@ export async function PUT(request: Request) {
     if (!body || typeof body !== 'object') return errorResponse('Invalid JSON body', 400);
     const id = typeof body.id === 'string' ? body.id.trim() : '';
     if (!id) return errorResponse('id is required', 400);
+    if (!UUID_RE.test(id)) return errorResponse('id must be a valid UUID', 400);
 
     // area_id is deliberately not updatable: applications snapshot (area, option).
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -156,10 +177,9 @@ export async function PUT(request: Request) {
       patch.label = body.label.trim();
     }
     if (body.duration_label !== undefined) {
-      if (body.duration_label !== null && typeof body.duration_label !== 'string') {
-        return errorResponse('duration_label must be a string or null', 400);
-      }
-      patch.duration_label = body.duration_label;
+      const d = normalizeDuration(body.duration_label);
+      if (d === undefined) return errorResponse('duration_label must be a string or null', 400);
+      patch.duration_label = d;
     }
     if (body.price_no_boarding_ngn !== undefined) {
       if (!isWholeNonNegative(body.price_no_boarding_ngn)) {
@@ -174,9 +194,7 @@ export async function PUT(request: Request) {
       patch.price_with_boarding_ngn = body.price_with_boarding_ngn;
     }
     if (body.sort_order !== undefined) {
-      if (typeof body.sort_order !== 'number' || !Number.isInteger(body.sort_order)) {
-        return errorResponse('sort_order must be an integer', 400);
-      }
+      if (!isInt4(body.sort_order)) return errorResponse('sort_order must be a 32-bit integer', 400);
       patch.sort_order = body.sort_order;
     }
     if (body.is_active !== undefined) {

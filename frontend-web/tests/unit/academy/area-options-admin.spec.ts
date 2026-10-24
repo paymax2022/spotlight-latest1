@@ -206,4 +206,73 @@ describe('admin area-options', () => {
     expect(body.success).toBe(true);
     expect(body.options).toHaveLength(1);
   });
+
+  it('403 for GET, POST and PUT, with no DB access before the permission check', async () => {
+    vi.mocked(assertAdminPermission).mockRejectedValue(new Error('FORBIDDEN'));
+    expect((await GET(makeRequest(`${URL_BASE}?area_id=${AREA_ID}`, { method: 'GET' }))).status).toBe(403);
+    expect((await post(validCreate())).status).toBe(403);
+    expect((await put({ id: OPT_ID, label: 'X' })).status).toBe(403);
+    expect(createAdminClient).not.toHaveBeenCalled();
+    expect(addAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsafe-integer prices and out-of-range sort_order', async () => {
+    expect((await post(validCreate({ price_no_boarding_ngn: 1e300 }))).status).toBe(400);
+    expect((await post(validCreate({ price_no_boarding_ngn: 2 ** 53 }))).status).toBe(400);
+    expect((await post(validCreate({ price_no_boarding_ngn: 1, price_with_boarding_ngn: 2 ** 53 }))).status).toBe(400);
+    expect((await post(validCreate({ sort_order: 2 ** 31 }))).status).toBe(400);
+    expect((await post(validCreate({ sort_order: -(2 ** 31) - 1 }))).status).toBe(400);
+    expect((await put({ id: OPT_ID, price_no_boarding_ngn: 1e300 })).status).toBe(400);
+    expect((await put({ id: OPT_ID, sort_order: 2 ** 31 })).status).toBe(400);
+    expect(inserts).toHaveLength(0);
+    expect(updates).toHaveLength(0);
+  });
+
+  it('400 for non-UUID area_id (GET, POST) and id (PUT) before any DB call', async () => {
+    expect((await GET(makeRequest(`${URL_BASE}?area_id=not-a-uuid`, { method: 'GET' }))).status).toBe(400);
+    expect((await post(validCreate({ area_id: 'not-a-uuid' }))).status).toBe(400);
+    expect((await put({ id: 'not-a-uuid', label: 'X' })).status).toBe(400);
+    expect(createAdminClient).not.toHaveBeenCalled();
+  });
+
+  it('trims duration_label and stores empty/whitespace as null', async () => {
+    await post(validCreate({ duration_label: '  3 months  ' }));
+    expect(inserts[0].payload.duration_label).toBe('3 months');
+    await post(validCreate({ duration_label: '   ' }));
+    expect(inserts[1].payload.duration_label).toBeNull();
+    await put({ id: OPT_ID, duration_label: '  6 months ' });
+    expect(updates[0].payload.duration_label).toBe('6 months');
+    await put({ id: OPT_ID, duration_label: '' });
+    expect(updates[1].payload.duration_label).toBeNull();
+  });
+
+  it('PUT cannot change area_id, id or created_at', async () => {
+    const res = await put({
+      id: OPT_ID,
+      area_id: '33333333-3333-4333-8333-333333333333',
+      created_at: '1999-01-01T00:00:00.000Z',
+      label: 'Renamed',
+    });
+    expect(res.status).toBe(200);
+    expect(Object.keys(updates[0].payload).sort()).toEqual(['label', 'updated_at']);
+  });
+
+  it('PUT can set price_with_boarding_ngn to null', async () => {
+    const res = await put({ id: OPT_ID, price_with_boarding_ngn: null });
+    expect(res.status).toBe(200);
+    expect(updates[0].payload.price_with_boarding_ngn).toBeNull();
+    expect((await res.json()).option.price_with_boarding_ngn).toBeNull();
+  });
+
+  it('audit events carry oldValue and newValue', async () => {
+    await post(validCreate());
+    const created = vi.mocked(addAuditEvent).mock.calls[0][0];
+    expect(created.oldValue ?? null).toBeNull();
+    expect(created.newValue).toMatchObject({ label: 'Weekend', price_no_boarding_ngn: 100000 });
+
+    await put({ id: OPT_ID, price_no_boarding_ngn: 120000 });
+    const updated = vi.mocked(addAuditEvent).mock.calls[1][0];
+    expect(updated.oldValue).toMatchObject({ id: OPT_ID, price_no_boarding_ngn: 100000 });
+    expect(updated.newValue).toMatchObject({ id: OPT_ID, price_no_boarding_ngn: 120000 });
+  });
 });
