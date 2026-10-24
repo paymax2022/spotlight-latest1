@@ -59,14 +59,22 @@ export interface FilmAcademySelectedOption {
   price_ngn: number | null;
 }
 
-/** An admin-managed area of interest. `fee_ngn` is NAIRA and is added to the base fee. */
+/**
+ * An admin-managed area of interest. `fee_ngn` is the area's legacy TUITION in
+ * NAIRA — payable on acceptance, never part of the application fee — used only
+ * when area options are disabled.
+ */
 export interface FilmAcademyInterestArea {
   /** Written to academy_applications.areas_of_interest; stable once in use. */
   slug: string;
   label: string;
   description: string | null;
   fee_ngn: number;
-  /** Empty on an older server, or for an area with no options (legacy fee_ngn pricing). */
+  /**
+   * Active priced options. Always empty when area options are disabled (or on an
+   * older server). With them enabled, an area with no options is "Pricing coming
+   * soon" and cannot be chosen — it is NOT priced from fee_ngn.
+   */
   options: FilmAcademyAreaOption[];
 }
 
@@ -100,6 +108,12 @@ export interface FilmAcademyOverview {
    * rule the server actually enforces.
    */
   maxInterestAreas: number;
+  /**
+   * Server feature flag FEATURE_FILM_ACADEMY_AREA_OPTIONS_ENABLED. false (also
+   * when an older server omits it) = legacy simple area selection sent as
+   * `areas_of_interest`; true = option picker sent as `selections`.
+   */
+  areaOptionsEnabled: boolean;
   /** Signed-in applicant's known details, or null when signed out. */
   applicant: FilmAcademyApplicant | null;
 }
@@ -114,9 +128,9 @@ export interface FilmAcademyApplicationInput {
   full_name?: string;
   email?: string;
   phone?: string;
-  /** Legacy list; the server derives it from `selections` when those are sent. */
+  /** Legacy list (area options disabled); the server derives it from `selections` otherwise. */
   areas_of_interest?: string[];
-  /** Required for any area that has options. */
+  /** Area options enabled only — the server rejects it while they are disabled. */
   selections?: FilmAcademySelection[];
   motivation: string;
   experience?: string;

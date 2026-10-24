@@ -4,7 +4,7 @@
  * Uses a table-aware fake so each query resolves from its own table's rows,
  * independent of call order.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { makeRequest } from '../golden-path/_fixtures';
 
 vi.mock('next/server', () => ({
@@ -53,7 +53,7 @@ function option(over: Row = {}): Row {
   };
 }
 
-function setup(tables: { areas?: Row[]; options?: Row[]; settings?: Row; optionsTableMissing?: boolean }) {
+function setup(tables: { areas?: Row[]; options?: Row[]; settings?: Row; optionsTableMissing?: boolean | '42P01' | 'PGRST205' }) {
   const inserts: Array<{ table: string; payload: Row }> = [];
   const data: Record<string, Row[]> = {
     academy_interest_areas: tables.areas ?? [AREA_ACTING],
@@ -102,7 +102,9 @@ function setup(tables: { areas?: Row[]; options?: Row[]; settings?: Row; options
     b.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
       Promise.resolve(
         table === 'academy_area_options' && tables.optionsTableMissing
-          ? { data: null, error: { code: '42P01', message: 'relation does not exist' } }
+          ? tables.optionsTableMissing === '42P01'
+            ? { data: null, error: { code: '42P01', message: 'relation "academy_area_options" does not exist' } }
+            : { data: null, error: { code: 'PGRST205', message: "Could not find the table 'public.academy_area_options' in the schema cache" } }
           : { data: rows(), error: null },
       ).then(resolve, reject);
     b.insert = vi.fn(async (payload: Row) => {
@@ -130,8 +132,15 @@ function body(over: Row = {}) {
 
 const post = (b: Row) => POST(makeRequest('/api/academy/apply', { body: b }));
 
+const FLAG = 'FEATURE_FILM_ACADEMY_AREA_OPTIONS_ENABLED';
+
+afterEach(() => {
+  delete process.env[FLAG];
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
+  process.env[FLAG] = 'true';
   vi.mocked(requireRequestUser).mockResolvedValue({ id: 'user-001', email: 'student@example.com' } as never);
 });
 
@@ -262,7 +271,9 @@ describe('POST /api/academy/apply — selections', () => {
     expect((await post(body(sel))).status).toBe(201);
 
     // Admin edits the price AFTER the first application was stored.
+    // (with-boarding raised too: an inverted pair is now refused as unavailable).
     data.academy_area_options[0].price_no_boarding_ngn = 999999;
+    data.academy_area_options[0].price_with_boarding_ngn = 1999999;
     expect((await post(body(sel))).status).toBe(201);
 
     const apps = inserts.filter((i) => i.table === 'academy_applications').map((i) => i.payload);
@@ -275,28 +286,40 @@ describe('POST /api/academy/apply — selections', () => {
 });
 
 describe('POST /api/academy/apply — hardening', () => {
-  it('legacy POST proceeds when the options table is missing (42P01)', async () => {
-    const { inserts } = setup({ areas: [AREA_PLAIN], optionsTableMissing: true });
-    const res = await post(body({ areas_of_interest: ['plain'] }));
-    expect(res.status).toBe(201);
-    expect(inserts[0].payload.tuition_total_ngn).toBe(12000);
-  });
+  it.each(['PGRST205', '42P01'] as const)(
+    'legacy POST proceeds when the options table is missing (%s)',
+    async (code) => {
+      const { inserts } = setup({ areas: [AREA_PLAIN], optionsTableMissing: code });
+      const res = await post(body({ areas_of_interest: ['plain'] }));
+      expect(res.status).toBe(201);
+      expect(inserts[0].payload.tuition_total_ngn).toBe(12000);
+    },
+  );
 
-  it('selections POST still fails closed when the options table is missing', async () => {
-    const { inserts } = setup({ optionsTableMissing: true });
-    const res = await post(
-      body({ selections: [{ area: 'acting', option_id: 'opt-acting-1', boarding: false }] }),
-    );
-    expect(res.status).toBe(500);
-    expect(inserts).toHaveLength(0);
-  });
+  it.each(['PGRST205', '42P01'] as const)(
+    'selections POST still fails closed when the options table is missing (%s)',
+    async (code) => {
+      const { inserts } = setup({ optionsTableMissing: code });
+      const res = await post(
+        body({ selections: [{ area: 'acting', option_id: 'opt-acting-1', boarding: false }] }),
+      );
+      expect(res.status).toBe(500);
+      expect(inserts).toHaveLength(0);
+    },
+  );
 
-  it('GET returns options: [] when the options table is missing', async () => {
-    setup({ areas: [AREA_ACTING], optionsTableMissing: true });
+  it('GET returns options: [] and logs the error when the options table is missing', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    setup({ areas: [AREA_ACTING], optionsTableMissing: 'PGRST205' });
     const res = await GET(makeRequest('/api/academy/apply', { method: 'GET' }));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.interestAreas[0].options).toEqual([]);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('academy_area_options'),
+      expect.objectContaining({ code: 'PGRST205' }),
+    );
+    errSpy.mockRestore();
   });
 
   it('POST 400 for an option belonging to another area', async () => {
@@ -366,5 +389,55 @@ describe('POST /api/academy/apply — hardening', () => {
     const low = await post(body(sel));
     expect(low.status).toBe(400);
     expect(second.inserts).toHaveLength(0);
+  });
+});
+
+describe('/api/academy/apply — feature flag', () => {
+  it('GET reports areaOptionsEnabled: true when the flag is on', async () => {
+    setup({ areas: [AREA_ACTING], options: [option()] });
+    const json = await (await GET(makeRequest('/api/academy/apply', { method: 'GET' }))).json();
+    expect(json.areaOptionsEnabled).toBe(true);
+    expect(json.interestAreas[0].options).toHaveLength(1);
+  });
+
+  it.each([['false'], [undefined]])('GET with flag %s returns options: [] for every area and areaOptionsEnabled: false', async (value) => {
+    if (value === undefined) delete process.env[FLAG];
+    else process.env[FLAG] = value;
+    setup({ areas: [AREA_ACTING, AREA_PLAIN], options: [option()] });
+    const json = await (await GET(makeRequest('/api/academy/apply', { method: 'GET' }))).json();
+    expect(json.areaOptionsEnabled).toBe(false);
+    expect(json.interestAreas).toHaveLength(2);
+    for (const a of json.interestAreas) expect(a.options).toEqual([]);
+    // Legacy fee display data is still there.
+    expect(json.interestAreas.find((a: Row) => a.slug === 'acting').fee_ngn).toBe(50000);
+  });
+
+  it('POST with selections is rejected 400 when the flag is off', async () => {
+    process.env[FLAG] = 'false';
+    const { inserts } = setup({ options: [option()] });
+    const res = await post(
+      body({ selections: [{ area: 'acting', option_id: 'opt-acting-1', boarding: false }] }),
+    );
+    expect(res.status).toBe(400);
+    expect(String((await res.json()).error)).toMatch(/not available/i);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('legacy POST for an area that HAS options is accepted when the flag is off (fee_ngn tuition)', async () => {
+    process.env[FLAG] = 'false';
+    const { inserts } = setup({ options: [option()] });
+    const res = await post(body({ areas_of_interest: ['acting'] }));
+    expect(res.status).toBe(201);
+    const app = inserts.find((i) => i.table === 'academy_applications')!.payload;
+    expect(app.tuition_total_ngn).toBe(50000);
+    expect(app).not.toHaveProperty('selected_options');
+  });
+
+  it('legacy POST does not query the options table when the flag is off', async () => {
+    process.env[FLAG] = 'false';
+    setup({ areas: [AREA_PLAIN], optionsTableMissing: '42P01' });
+    // Even an unexpected options-table error is irrelevant: the table is not read.
+    const res = await post(body({ areas_of_interest: ['plain'] }));
+    expect(res.status).toBe(201);
   });
 });

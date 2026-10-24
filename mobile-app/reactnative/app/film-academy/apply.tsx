@@ -28,7 +28,8 @@ import PrimaryButton from '@/components/PrimaryButton';
 import AreaOptionSheet from '@/features/filmAcademy/components/AreaOptionSheet';
 import { fromPrice, optionPrice, summarise } from '@/features/filmAcademy/optionPricing';
 import {
-  canAddArea, hasOptions, reconcilePicks, removePick, toSelections, upsertPick, type AreaPick,
+  areaPayload, canAddArea, hasOptions, legacyTuition, reconcileLegacyAreas, reconcilePicks,
+  removePick, toggleLegacyArea, upsertPick, type AreaPick,
 } from '@/features/filmAcademy/picks';
 import type { FilmAcademyAreaOption, FilmAcademyInterestArea } from '@/features/filmAcademy/types';
 import { getOverview, applyToBatch } from '@/features/filmAcademy/api';
@@ -88,6 +89,8 @@ export default function FilmAcademyApplyScreen() {
   // Only the slug is held: the sheet is always given the LIVE area from the
   // latest overview, never a snapshot taken when it opened.
   const [sheetSlug, setSheetSlug]   = React.useState<string | null>(null);
+  // Legacy selection (area options disabled): plain slugs, re-bound below.
+  const [rawLegacy, setRawLegacy]   = React.useState<string[]>([]);
   // The footer drops its summary lines while the keyboard is up, so the
   // motivation/experience fields keep enough room to type in.
   const [keyboardUp, setKeyboardUp] = React.useState(false);
@@ -105,6 +108,9 @@ export default function FilmAcademyApplyScreen() {
   // The cap is served by the API, not hardcoded here: it is a commercial rule and
   // the server is what enforces it. This only stops the user reaching a rejection.
   const maxAreas = data?.maxInterestAreas ?? 2;
+  // Server feature flag. Off (or an older server) = legacy simple area selection
+  // sent as areas_of_interest; on = the option picker sent as selections.
+  const optionsOn = data?.areaOptionsEnabled === true;
 
   // Picks re-bound to what this batch offers NOW: a pick whose area, option or
   // boarding is no longer offered is dropped rather than submitted into a 400,
@@ -115,7 +121,13 @@ export default function FilmAcademyApplyScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [rawPicks, data, batchId, maxAreas],
   );
-  const atLimit = picks.length >= maxAreas;
+  const legacyAreas = React.useMemo(
+    () => reconcileLegacyAreas(rawLegacy, interestAreas, maxAreas),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawLegacy, data, batchId, maxAreas],
+  );
+  const chosenCount = optionsOn ? picks.length : legacyAreas.length;
+  const atLimit = chosenCount >= maxAreas;
 
   // TUITION for the chosen options — payable on ACCEPTANCE and refundable. It is
   // shown so the applicant knows the commitment, but it is NOT collected here:
@@ -124,6 +136,10 @@ export default function FilmAcademyApplyScreen() {
   // re-prices every selection from the database at submit, so this total is a
   // display convenience and cannot be used to pay less.
   const summary = summarise(picks);
+  // Legacy display tuition from each area's fee_ngn (only fees > 0 are listed).
+  const legacy = legacyTuition(legacyAreas, interestAreas);
+  const tuitionTotal = optionsOn ? summary.total : legacy.total;
+  const showTuition = optionsOn || legacy.total > 0;
 
   // The only amount charged at submit. Non-refundable.
   const applicationFee = baseFee;
@@ -140,8 +156,8 @@ export default function FilmAcademyApplyScreen() {
   // A refetch can remove the area (or all its options) while the sheet is open:
   // close it rather than leave a picker for something no longer offered.
   React.useEffect(() => {
-    if (sheetSlug && (!sheetArea || !hasOptions(sheetArea))) setSheetSlug(null);
-  }, [sheetSlug, sheetArea]);
+    if (sheetSlug && (!optionsOn || !sheetArea || !hasOptions(sheetArea))) setSheetSlug(null);
+  }, [sheetSlug, sheetArea, optionsOn]);
 
   const onPicked = (
     area: FilmAcademyInterestArea,
@@ -166,9 +182,10 @@ export default function FilmAcademyApplyScreen() {
         full_name: applicantName,
         email: applicantEmail,
         phone: applicantPhone,
-        // The server derives areas_of_interest from these and prices each one
-        // itself from the database; no amount is ever sent.
-        selections: toSelections(picks),
+        // Options on: selections (the server derives areas_of_interest and prices
+        // each one from the database). Off: areas_of_interest slugs, priced by
+        // the server from fee_ngn. Exactly one shape; no amount is ever sent.
+        ...areaPayload(optionsOn, picks, legacyAreas),
         motivation: motivation.trim(),
         experience: experience.trim() || undefined,
         payment_preference: pref,
@@ -193,8 +210,8 @@ export default function FilmAcademyApplyScreen() {
     if (!applicantEmail)     return setError('Please sign in to apply.');
     if (!applicantName)      return setError('Enter your full name.');
     if (!applicantPhone)     return setError('Enter your phone number.');
-    if (picks.length === 0)  return setError('Choose at least one area of interest.');
-    if (picks.length > maxAreas) {
+    if (chosenCount === 0)   return setError('Choose at least one area of interest.');
+    if (chosenCount > maxAreas) {
       return setError(`Choose at most ${maxAreas} areas of interest for this batch.`);
     }
     if (!motivation.trim())  return setError('Tell us why you want to join.');
@@ -282,8 +299,10 @@ export default function FilmAcademyApplyScreen() {
             accessibilityLiveRegion="polite"
           >
             {atLimit
-              ? `${picks.length} of ${maxAreas} chosen — remove one to swap it.`
-              : `${picks.length} of ${maxAreas} chosen. Tap an area to pick a course option.`}
+              ? `${chosenCount} of ${maxAreas} chosen — remove one to swap it.`
+              : optionsOn
+                ? `${chosenCount} of ${maxAreas} chosen. Tap an area to pick a course option.`
+                : `${chosenCount} of ${maxAreas} chosen. Tap an area to select it.`}
           </Text>
           <Text style={styles.totalNote}>
             Amounts shown are tuition, payable only if you are offered a place.
@@ -293,6 +312,24 @@ export default function FilmAcademyApplyScreen() {
           <Text style={styles.noticeText}>
             No areas are available to choose right now. Please try again later.
           </Text>
+        ) : !optionsOn ? (
+          <View style={styles.areaList}>
+            {interestAreas.map((a) => {
+              const on = legacyAreas.includes(a.slug);
+              return (
+                <LegacyAreaCard
+                  key={a.slug}
+                  area={a}
+                  on={on}
+                  blocked={!on && atLimit}
+                  onToggle={() => {
+                    setRawLegacy(toggleLegacyArea(legacyAreas, a.slug, interestAreas, maxAreas));
+                    setError(null);
+                  }}
+                />
+              );
+            })}
+          </View>
         ) : (
           <View style={styles.areaList}>
             {interestAreas.map((a) => {
@@ -313,7 +350,29 @@ export default function FilmAcademyApplyScreen() {
 
         {/* Itemised tuition lives in the scroll content; only the totals stay
             sticky, so the footer never crowds out the form. */}
-        {picks.length > 0 && (
+        {!optionsOn && legacy.total > 0 && (
+          <View style={styles.summaryCard}>
+            <Text style={styles.label}>Your choices</Text>
+            {legacy.lines.map((l) => (
+              <View key={l.slug} style={styles.summaryLine} accessible
+                    accessibilityLabel={`${l.label}, tuition ${naira(l.fee)}`}>
+                <View style={styles.summaryLineText}>
+                  <Text style={styles.summaryLineLabel}>{l.label}</Text>
+                </View>
+                <Text style={styles.summaryLineValue}>{naira(l.fee)}</Text>
+              </View>
+            ))}
+            <View style={[styles.footerRow, styles.summaryTotalRow]}>
+              <Text style={styles.footerLabel}>Tuition if accepted</Text>
+              <Text style={styles.footerValue}>{naira(legacy.total)}</Text>
+            </View>
+            <Text style={styles.totalNote}>
+              Payable only if you are offered a place, and refundable. Nothing for
+              tuition is taken today.
+            </Text>
+          </View>
+        )}
+        {optionsOn && picks.length > 0 && (
           <View style={styles.summaryCard}>
             <Text style={styles.label}>Your choices</Text>
             {picks.map((p) => {
@@ -378,16 +437,18 @@ export default function FilmAcademyApplyScreen() {
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>
         {!keyboardUp && (
           <View style={styles.footerTotals}>
-            <View
-              style={styles.footerRow}
-              accessible
-              accessibilityLabel={`Tuition if accepted ${naira(summary.total)}, ${picks.length} of ${maxAreas} areas chosen`}
-            >
-              <Text style={styles.footerMeta} numberOfLines={1}>
-                Tuition if accepted · {picks.length} of {maxAreas} chosen
-              </Text>
-              <Text style={styles.footerMetaValue}>{naira(summary.total)}</Text>
-            </View>
+            {showTuition && (
+              <View
+                style={styles.footerRow}
+                accessible
+                accessibilityLabel={`Tuition if accepted ${naira(tuitionTotal)}, ${chosenCount} of ${maxAreas} areas chosen`}
+              >
+                <Text style={styles.footerMeta} numberOfLines={1}>
+                  Tuition if accepted · {chosenCount} of {maxAreas} chosen
+                </Text>
+                <Text style={styles.footerMetaValue}>{naira(tuitionTotal)}</Text>
+              </View>
+            )}
             <View
               style={styles.footerRow}
               accessible
@@ -414,7 +475,7 @@ export default function FilmAcademyApplyScreen() {
         />
       </View>
 
-      {!!sheetArea && (
+      {optionsOn && !!sheetArea && (
         <AreaOptionSheet
           area={sheetArea}
           initial={(() => {
@@ -533,6 +594,44 @@ function AreaCard({ area, pick, blocked, onOpen, onRemove }: {
           </Pressable>
         </View>
       )}
+    </View>
+  );
+}
+
+/**
+ * Legacy area toggle, used while area options are disabled: tap to select or
+ * deselect, no option sheet. Shows the area's fee_ngn tuition only when > 0.
+ */
+function LegacyAreaCard({ area, on, blocked, onToggle }: {
+  area: FilmAcademyInterestArea;
+  on: boolean;
+  blocked: boolean;
+  onToggle: () => void;
+}) {
+  const fee = Number(area.fee_ngn);
+  const showFee = Number.isFinite(fee) && fee > 0;
+  const a11y = area.label
+    + (showFee ? `, tuition ${naira(fee)}` : '')
+    + (blocked ? ', unavailable — limit reached' : '');
+  return (
+    <View style={[styles.areaCard, on && styles.areaCardOn, blocked && styles.areaCardOff]}>
+      <Pressable
+        onPress={onToggle}
+        disabled={blocked}
+        style={({ pressed }) => [styles.areaMain, pressed && styles.areaPressed]}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: on, disabled: blocked }}
+        accessibilityLabel={a11y}
+      >
+        <View style={[styles.areaTick, on && styles.areaTickOn]}>
+          {on && <Check size={14} color={Colors.onPrimary} strokeWidth={3} />}
+        </View>
+        <View style={styles.areaBody}>
+          <Text style={styles.areaLabel}>{area.label}</Text>
+          {blocked ? <Text style={styles.areaMeta}>Limit reached</Text> : null}
+        </View>
+        {showFee ? <Text style={styles.areaPrice}>{naira(fee)}</Text> : null}
+      </Pressable>
     </View>
   );
 }

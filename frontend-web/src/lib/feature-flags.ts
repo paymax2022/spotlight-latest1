@@ -230,6 +230,17 @@ export const featureFlags = {
    * strictly safe and the whole plane stays reversible until the bank is reviewed.
    */
   filmAcademyAssessment: () => envFlag('FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED'),
+
+  /**
+   * Film Academy priced options per area (schedule x boarding, migration
+   * 20271095000000). Off by default. While off: GET /api/academy/apply returns
+   * every area with `options: []` and `areaOptionsEnabled: false`, POST rejects a
+   * `selections` payload and prices the legacy `areas_of_interest` payload from
+   * fee_ngn exactly as before, and /api/admin/academy/area-options 404s.
+   * Rollout precondition: keep OFF until the mobile build that sends
+   * `selections` is the minimum supported version.
+   */
+  filmAcademyAreaOptions: () => envFlag('FEATURE_FILM_ACADEMY_AREA_OPTIONS_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;

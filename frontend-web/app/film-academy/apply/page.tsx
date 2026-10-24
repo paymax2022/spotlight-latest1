@@ -6,6 +6,13 @@ import Link from 'next/link';
 import { authHeaders } from '@/src/lib/auth/client';
 import { createClient } from '@/src/lib/supabase/client';
 import { loadPaystackClient } from '@/src/lib/payments';
+import {
+  APP_ONLY_AREA_TEXT,
+  isAppOnlyArea,
+  legacyTuitionTotal,
+  submittableAreaSlugs,
+  type WebInterestArea,
+} from '@/src/lib/academy/webAreaSelection';
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(n);
@@ -30,13 +37,15 @@ type AcademySettings = {
 };
 
 /**
- * Admin-managed area of interest, carrying its own NAIRA tuition fee — the SAME
- * shape the mobile app consumes from this endpoint. This is the single source of
- * truth for both clients; nothing here is hardcoded, because inventing a
- * client-side list is exactly how a client ends up offering an area the
- * database does not have (or missing one it does).
+ * Admin-managed area of interest, carrying its own NAIRA tuition fee (and, when
+ * area options are enabled, its active options) — the SAME shape the mobile app
+ * consumes from this endpoint. This is the single source of truth for both
+ * clients; nothing here is hardcoded, because inventing a client-side list is
+ * exactly how a client ends up offering an area the database does not have (or
+ * missing one it does). The web form does not offer the option picker: an area
+ * with options is app-only here (see src/lib/academy/webAreaSelection.ts).
  */
-type InterestArea = { slug: string; label: string; description: string | null; fee_ngn: number };
+type InterestArea = WebInterestArea;
 
 const inp: React.CSSProperties = {
   width: '100%', padding: '11px 14px', borderRadius: 10, boxSizing: 'border-box',
@@ -83,6 +92,8 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
   const [interestAreas, setInterestAreas] = useState<InterestArea[]>([]);
   const [batchAreas, setBatchAreas]       = useState<Record<string, string[]>>({});
   const [maxInterestAreas, setMaxInterestAreas] = useState(2);
+  // Older servers omit it — treat as off (legacy selection for every area).
+  const [areaOptionsEnabled, setAreaOptionsEnabled] = useState(false);
   const [loading, setLoading]   = useState(true);
   const [step, setStep]         = useState<'select' | 'form' | 'done'>(prefillBatch ? 'form' : 'select');
   const [submitting, setSubmitting] = useState(false);
@@ -125,6 +136,7 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
         setBatchAreas(json.batchAreas && typeof json.batchAreas === 'object' ? json.batchAreas : {});
         // Fall back to 2 only if an older server omits it — the server still enforces.
         setMaxInterestAreas(Number.isFinite(json.maxInterestAreas) ? json.maxInterestAreas : 2);
+        setAreaOptionsEnabled(json.areaOptionsEnabled === true);
 
         if (json.applicant) {
           const known = json.applicant as Applicant;
@@ -175,16 +187,22 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
   const availableAreas = offeredSlugs.length > 0
     ? interestAreas.filter((a) => offeredSlugs.includes(a.slug))
     : interestAreas;
-  const atLimit = form.areas_of_interest.length >= maxInterestAreas;
+  // What can actually be sent: offered, selected and NOT app-only. Everything
+  // below (cap, total, validation, the POST body) reads this, so an app-only
+  // area can never be submitted — the server would refuse it with a 400, and
+  // with a paid registration that refusal would come AFTER the fee was charged.
+  const selectedAreas = submittableAreaSlugs(form.areas_of_interest, availableAreas, areaOptionsEnabled);
+  const atLimit = selectedAreas.length >= maxInterestAreas;
 
-  // TUITION for the chosen areas — payable on ACCEPTANCE and refundable. Shown so
-  // this same total from the same admin-managed rows when the application is
-  // submitted, so this is a display convenience and cannot be used to pay less.
-  const tuitionTotal = availableAreas
-    .filter((a) => form.areas_of_interest.includes(a.slug))
-    .reduce((sum, a) => sum + Number(a.fee_ngn ?? 0), 0);
+  // TUITION for the chosen areas — payable on ACCEPTANCE and refundable. The
+  // server computes this same total from the same admin-managed rows when the
+  // application is submitted, so this is a display convenience and cannot be
+  // used to pay less. App-only areas are excluded.
+  const tuitionTotal = legacyTuitionTotal(form.areas_of_interest, availableAreas, areaOptionsEnabled);
 
   function toggleArea(slug: string) {
+    const area = interestAreas.find((a) => a.slug === slug);
+    if (area && isAppOnlyArea(area, areaOptionsEnabled)) return;
     setForm((p) => {
       const on = p.areas_of_interest.includes(slug);
       if (on) return { ...p, areas_of_interest: p.areas_of_interest.filter((a) => a !== slug) };
@@ -214,8 +232,8 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
     if (!form.full_name.trim()) return 'Full name is required.';
     if (!form.email.trim() || !emailPattern.test(form.email.trim())) return 'A valid email address is required.';
     if (!form.phone.trim()) return 'Phone number is required.';
-    if (form.areas_of_interest.length === 0) return 'Choose at least one area of interest.';
-    if (form.areas_of_interest.length > maxInterestAreas) {
+    if (selectedAreas.length === 0) return 'Choose at least one area of interest.';
+    if (selectedAreas.length > maxInterestAreas) {
       return `Choose at most ${maxInterestAreas} areas of interest for this batch.`;
     }
     if (!form.motivation.trim()) return 'Tell us why you want to join.';
@@ -230,6 +248,8 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
         headers: await authHeaders(true),
         body: JSON.stringify({
           ...form,
+          // Never the raw selection: only offered, non-app-only areas.
+          areas_of_interest: selectedAreas,
           application_fee_reference: applicationFeeReference,
         }),
       });
@@ -571,7 +591,7 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
               <p style={{ fontSize: 12, color: atLimit ? '#f59e0b' : 'rgba(255,255,255,0.45)', marginBottom: 8 }}>
                 {atLimit
                   ? `You have chosen ${maxInterestAreas} of ${maxInterestAreas}. Deselect one to swap it.`
-                  : `Choose up to ${maxInterestAreas} for this batch — ${form.areas_of_interest.length} of ${maxInterestAreas} selected.`}
+                  : `Choose up to ${maxInterestAreas} for this batch — ${selectedAreas.length} of ${maxInterestAreas} selected.`}
               </p>
               {availableAreas.length === 0 ? (
                 <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)' }}>
@@ -580,15 +600,18 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   {availableAreas.map((area) => {
-                    const active = form.areas_of_interest.includes(area.slug);
+                    const appOnly = isAppOnlyArea(area, areaOptionsEnabled);
+                    const active = !appOnly && selectedAreas.includes(area.slug);
                     const fee = Number(area.fee_ngn ?? 0);
-                    const blocked = !active && atLimit;
+                    const blocked = appOnly || (!active && atLimit);
                     return (
                       <button
                         key={area.slug}
                         type="button"
                         onClick={() => toggleArea(area.slug)}
                         disabled={blocked}
+                        aria-disabled={blocked}
+                        title={appOnly ? APP_ONLY_AREA_TEXT : undefined}
                         style={{
                           display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
                           padding: '8px 14px', borderRadius: 12, fontSize: 12, fontWeight: 600,
@@ -600,7 +623,7 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
                       >
                         <span>{area.label}</span>
                         <span style={{ fontSize: 11, fontWeight: 500, opacity: 0.75 }}>
-                          {fee > 0 ? fmt(fee) : 'No tuition'}
+                          {appOnly ? APP_ONLY_AREA_TEXT : fee > 0 ? fmt(fee) : 'No tuition'}
                         </span>
                       </button>
                     );
@@ -628,7 +651,7 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
                     <span style={{ fontSize: 14, color: '#f1f5f9', fontWeight: 700 }}>{fmt(tuitionTotal)}</span>
                   </div>
                   {availableAreas
-                    .filter((a) => form.areas_of_interest.includes(a.slug) && Number(a.fee_ngn ?? 0) > 0)
+                    .filter((a) => selectedAreas.includes(a.slug) && Number(a.fee_ngn ?? 0) > 0)
                     .map((a) => (
                       <div key={a.slug} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 10, marginTop: 4 }}>
                         <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{a.label}</span>

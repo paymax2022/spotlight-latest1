@@ -2,7 +2,7 @@
 // be tested without rendering. Display-only: the server re-validates and
 // re-prices every selection, and is the authority on the area cap.
 
-import { naira, optionPrice } from './optionPricing';
+import { fromPrice, naira, optionPrice } from './optionPricing';
 import type {
   FilmAcademyAreaOption, FilmAcademyInterestArea, FilmAcademySelection, FilmAcademySelectedOption,
 } from './types';
@@ -97,4 +97,76 @@ export function normaliseSelectedOptions(raw: unknown): FilmAcademySelectedOptio
     });
   }
   return out;
+}
+
+// ── Feature-flag fallback ────────────────────────────────────────────────────
+// When the server reports areaOptionsEnabled=false (FEATURE_FILM_ACADEMY_AREA_
+// OPTIONS_ENABLED off, or an older server that omits it) the apply screen uses
+// LEGACY simple area selection: plain toggles, up to the cap, submitted as
+// `areas_of_interest` slugs and priced by the server from each area's fee_ngn.
+
+/** Toggles a slug in the legacy selection. Unoffered areas and adds over the cap are ignored. */
+export function toggleLegacyArea(
+  selected: string[],
+  slug: string,
+  offered: FilmAcademyInterestArea[],
+  max: number,
+): string[] {
+  if (selected.includes(slug)) return selected.filter((s) => s !== slug);
+  if (!offered.some((a) => a.slug === slug)) return selected;
+  if (selected.length >= max) return selected;
+  return [...selected, slug];
+}
+
+/** Drops slugs the batch no longer offers and enforces the cap (selection order kept). */
+export function reconcileLegacyAreas(
+  selected: string[],
+  offered: FilmAcademyInterestArea[],
+  max: number,
+): string[] {
+  const slugs = new Set(offered.map((a) => a.slug));
+  return selected.filter((s) => slugs.has(s)).slice(0, Math.max(0, max));
+}
+
+/**
+ * Legacy display tuition: one line per selected area whose fee_ngn is a positive
+ * amount, in offered order. Display-only — the server prices the submission.
+ */
+export function legacyTuition(
+  selected: string[],
+  offered: FilmAcademyInterestArea[],
+): { lines: { slug: string; label: string; fee: number }[]; total: number } {
+  const lines: { slug: string; label: string; fee: number }[] = [];
+  for (const a of offered) {
+    if (!selected.includes(a.slug)) continue;
+    const fee = naira(a.fee_ngn);
+    if (fee === null || fee <= 0) continue;
+    lines.push({ slug: a.slug, label: a.label, fee });
+  }
+  return { lines, total: lines.reduce((s, l) => s + l.fee, 0) };
+}
+
+/**
+ * The area part of the apply payload. Exactly one of the two shapes: the server
+ * refuses `selections` while the feature is off, and with it on derives
+ * areas_of_interest from the selections itself.
+ */
+export function areaPayload(
+  areaOptionsEnabled: boolean,
+  picks: AreaPick[],
+  legacySelected: string[],
+): { selections: FilmAcademySelection[] } | { areas_of_interest: string[] } {
+  return areaOptionsEnabled
+    ? { selections: toSelections(picks) }
+    : { areas_of_interest: [...legacySelected] };
+}
+
+/** What a cohort card shows under an area label: nothing while options are off. */
+export function areaPriceCaption(
+  area: FilmAcademyInterestArea,
+  areaOptionsEnabled: boolean,
+): { kind: 'none' } | { kind: 'from'; price: number } | { kind: 'soon' } {
+  if (!areaOptionsEnabled) return { kind: 'none' };
+  const from = fromPrice(area);
+  return from === null ? { kind: 'soon' } : { kind: 'from', price: from };
 }

@@ -54,6 +54,9 @@ export async function getOverview(): Promise<FilmAcademyOverview> {
     batchAreas: body?.batchAreas ?? {},
     // Fall back to 2 only if an older server omits it — the server still enforces.
     maxInterestAreas: body?.maxInterestAreas ?? 2,
+    // Strictly true only: an older server omits it, and the safe reading of
+    // "unknown" is the legacy path every server accepts.
+    areaOptionsEnabled: body?.areaOptionsEnabled === true,
     // What the account already knows about the applicant, so the apply form can
     // stop asking for it. Null when signed out, or on an older server.
     applicant: body?.applicant ?? null,

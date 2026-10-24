@@ -16,7 +16,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { getOverview } from '@/features/filmAcademy/api';
 import type { FilmAcademyBatch, FilmAcademyInterestArea } from '@/features/filmAcademy/types';
-import { fromPrice } from '@/features/filmAcademy/optionPricing';
+import { areaPriceCaption } from '@/features/filmAcademy/picks';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { RemoteBanner } from '@/features/media/banners';
 
@@ -34,9 +34,11 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function BatchCard({ batch, applied, areas, maxAreas, applicationFee }: {
+function BatchCard({ batch, applied, areas, maxAreas, applicationFee, areaOptionsEnabled }: {
   batch: FilmAcademyBatch; applied: boolean;
   areas: FilmAcademyInterestArea[]; maxAreas: number; applicationFee: number;
+  /** Off: area labels only — no "from ₦X" / "Pricing coming soon". */
+  areaOptionsEnabled: boolean;
 }) {
   return (
     <View style={styles.card}>
@@ -70,20 +72,23 @@ function BatchCard({ batch, applied, areas, maxAreas, applicationFee }: {
           {/* Informational here: options are chosen on the apply screen. */}
           <View style={styles.areaGrid}>
             {areas.map((a) => {
-              const from = fromPrice(a);
+              const caption = areaPriceCaption(a, areaOptionsEnabled);
               return (
                 <View
                   key={a.slug}
-                  style={[styles.areaCard, from === null && styles.areaCardOff]}
+                  style={[styles.areaCard, caption.kind === 'soon' && styles.areaCardOff]}
                   accessible
-                  accessibilityLabel={from === null
+                  accessibilityLabel={caption.kind === 'soon'
                     ? `${a.label}, pricing coming soon`
-                    : `${a.label}, from ${formatNaira(from)}`}
+                    : caption.kind === 'from'
+                      ? `${a.label}, from ${formatNaira(caption.price)}`
+                      : a.label}
                 >
                   <Text style={styles.areaLabel}>{a.label}</Text>
-                  {from === null
-                    ? <Text style={styles.areaSoon}>Pricing coming soon</Text>
-                    : <Text style={styles.areaFrom}>from {formatNaira(from)}</Text>}
+                  {caption.kind === 'soon' && <Text style={styles.areaSoon}>Pricing coming soon</Text>}
+                  {caption.kind === 'from' && (
+                    <Text style={styles.areaFrom}>from {formatNaira(caption.price)}</Text>
+                  )}
                 </View>
               );
             })}
@@ -233,6 +238,7 @@ export default function FilmAcademyScreen() {
             batch={b}
             areas={areas}
             maxAreas={data?.maxInterestAreas ?? 2}
+            areaOptionsEnabled={data?.areaOptionsEnabled === true}
             applicationFee={String(data?.settings?.registration_type ?? '').toLowerCase() === 'paid'
               ? Number(data?.settings?.application_fee ?? 0) : 0}
             applied={applied.has(b.id)}

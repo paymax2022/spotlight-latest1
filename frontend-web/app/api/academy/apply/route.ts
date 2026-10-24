@@ -11,6 +11,7 @@ import {
   type PricedSelection,
   type Selection,
 } from '@/src/server/services/academy/areaOptionPricing';
+import { featureFlags } from '@/src/lib/feature-flags';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
 import { verifyPaystackTransaction } from '@/src/lib/payments';
 import {
@@ -83,6 +84,16 @@ function isSchemaMismatchError(
     text.includes('pgrst204') ||
     text.includes('42703')
   );
+}
+
+/**
+ * The options table is missing (deploy order: web shipped before migration
+ * 20271095000000). Postgres answers 42P01 (undefined_table); PostgREST answers
+ * PGRST205 ("Could not find the table ... in the schema cache") — local
+ * PostgREST uses the latter, so both must be recognised.
+ */
+function isMissingTableError(error: { code?: string } | null | undefined) {
+  return error?.code === '42P01' || error?.code === 'PGRST205';
 }
 
 function isDuplicateApplicationError(error: { code?: string; message?: string } | null) {
@@ -234,6 +245,17 @@ export async function POST(request: Request) {
     // `selections` is the priced path: one chosen option per area. Only ids and
     // the boarding flag are read from it — any price the client sends is ignored.
     const hasSelections = body.selections !== undefined && body.selections !== null;
+    // Feature flag (FEATURE_FILM_ACADEMY_AREA_OPTIONS_ENABLED). While off, the
+    // priced path does not exist: a `selections` payload is refused outright and
+    // the legacy `areas_of_interest` payload is priced from fee_ngn exactly as
+    // before the feature (no options lookup, no "choose an option" rule).
+    const areaOptionsEnabled = featureFlags.filmAcademyAreaOptions();
+    if (hasSelections && !areaOptionsEnabled) {
+      return errorResponse(
+        'Area options are not available yet. Choose your areas of interest without an option.',
+        400,
+      );
+    }
     const selections: Selection[] = [];
     if (hasSelections) {
       if (!Array.isArray(body.selections)) {
@@ -276,10 +298,10 @@ export async function POST(request: Request) {
     }
     if (!motivation) return errorResponse('Motivation is required', 400);
 
-    // The fee is the BASE application fee plus the fee of every area the
-    // applicant selected. Computed HERE from the admin-managed rows: the client
-    // renders a running total for the user's benefit, but it could claim any
-    // number, so nothing it sends is used in this sum.
+    // Tuition (NOT the application fee) is priced HERE from the admin-managed
+    // rows: the chosen area options when `selections` are sent, otherwise each
+    // area's fee_ngn. The client renders a running total for the user's benefit,
+    // but it could claim any number, so nothing it sends is used in this sum.
     const { data: areaRows, error: areaError } = await supabase
       .from('academy_interest_areas')
       .select('id, slug, fee_ngn, is_active')
@@ -323,7 +345,7 @@ export async function POST(request: Request) {
       Array.from(areaIdBySlug.entries()).map(([slug, id]) => [id, slug]),
     );
     let optionRows: OptionRow[] = [];
-    if (areaIdBySlug.size > 0) {
+    if (areaOptionsEnabled && areaIdBySlug.size > 0) {
       const { data: rawOptions, error: optionsError } = await supabase
         .from('academy_area_options')
         .select(
@@ -331,10 +353,10 @@ export async function POST(request: Request) {
         )
         .in('area_id', Array.from(areaIdBySlug.values()));
       // Deploy order: before the options migration lands, the legacy payload
-      // must keep working. 42P01 (undefined_table) is tolerated ONLY when no
-      // selections were sent; the selections path fails closed.
+      // must keep working. A missing table (42P01 / PGRST205) is tolerated ONLY
+      // when no selections were sent; the selections path fails closed.
       const tableMissing =
-        (optionsError as { code?: string } | null)?.code === '42P01' && !hasSelections;
+        isMissingTableError(optionsError as { code?: string } | null) && !hasSelections;
       if (optionsError && !tableMissing) throw optionsError;
       optionRows = ((Array.isArray(rawOptions) ? rawOptions : []) as Array<
         Omit<OptionRow, 'area_slug'> & { area_id: string }
@@ -722,9 +744,10 @@ export async function GET(request: Request) {
 
     const settings = await getActiveAcademySettings();
 
-    // Admin-managed areas of interest, each carrying a NAIRA fee added to the
-    // base application_fee. Returned so the client can show a running total —
-    // same rows.
+    // Admin-managed areas of interest. fee_ngn is the area's legacy TUITION in
+    // naira (payable on acceptance, never part of the application fee); when
+    // area options are enabled, each area's active options carry the tuition
+    // instead and an area with options is priced only through them.
     const { data: areaRows } = await supabase
       .from('academy_interest_areas')
       .select('id, slug, label, description, fee_ngn')
@@ -749,13 +772,26 @@ export async function GET(request: Request) {
       price_no_boarding_ngn: number; price_with_boarding_ngn: number | null;
     };
     const optionsByArea: Record<string, OptionOut[]> = {};
-    if (areaIds.length > 0) {
-      const { data: activeOptionRows } = await supabase
+    // Flag off: no options are offered (every area returns options: []), so
+    // clients fall back to legacy area selection.
+    const areaOptionsEnabled = featureFlags.filmAcademyAreaOptions();
+    if (areaOptionsEnabled && areaIds.length > 0) {
+      const { data: activeOptionRows, error: optionsError } = await supabase
         .from('academy_area_options')
         .select('id, area_id, label, duration_label, price_no_boarding_ngn, price_with_boarding_ngn')
         .eq('is_active', true)
         .in('area_id', areaIds)
         .order('sort_order', { ascending: true });
+      if (optionsError) {
+        // Not fatal to the catalogue (areas then show no options and cannot be
+        // chosen), but never silent: a missing table or bad query must be seen.
+        const e = optionsError as { code?: string; message?: string; details?: string | null };
+        console.error('[academy/apply] GET academy_area_options lookup failed', {
+          code: e.code,
+          message: e.message,
+          details: e.details,
+        });
+      }
       for (const o of (activeOptionRows ?? []) as Array<OptionOut & { area_id: string }>) {
         (optionsByArea[String(o.area_id)] ??= []).push({
           id: o.id,
@@ -783,6 +819,7 @@ export async function GET(request: Request) {
     return successResponse({
       success: true, batches, appliedBatchIds, settings, interestAreas, batchAreas,
       maxInterestAreas: MAX_INTEREST_AREAS_PER_APPLICATION,
+      areaOptionsEnabled,
       applicant,
     });
   } catch (error) {
