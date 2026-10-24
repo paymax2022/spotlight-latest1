@@ -3,12 +3,14 @@ package kycverify
 import (
 	"context"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/dojah"
+	"spotlight/backend/internal/provider/monnify"
 	"spotlight/backend/internal/provider/smileid"
 	"spotlight/backend/internal/provider/youverify"
 )
@@ -155,6 +157,14 @@ func BuildRegistry(cfg config.Config) *Registry {
 		reg.register("youverify", c)
 	}
 
+	if strings.ToLower(cfg.AppEnv) == "development" {
+		reg.register("mock", NewMockProvider())
+	}
+	// Monnify — IdNumber, KycWebhookParser.
+	if cfg.MonnifyAPIKey != "" && cfg.MonnifySecretKey != "" {
+		c := monnify.New(cfg.MonnifyAPIKey, cfg.MonnifySecretKey, cfg.MonnifyContractCode, cfg.MonnifyWebhookSecret, cfg.MonnifyProd)
+		reg.register("monnify", c)
+	}
 	return reg
 }
 

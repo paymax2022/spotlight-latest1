@@ -14,6 +14,7 @@ import type {
   CryptoSwapOrder, CryptoAddress, CryptoAddressDecisionRequest,
   CryptoReconRow, CryptoReconSummary, CryptoReviewSwap, CryptoSwapResolveRequest,
   CryptoFeeScheduleResponse, CryptoFeeScheduleUpdate, CryptoFeeScheduleVersion, CryptoReconcilerStatus,
+  CryptoDeposit, CryptoDepositReconcilerStatus,
 } from '@/types/cryptoAdmin';
 
 // LIVE by default. Set NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK=true for fixtures.
@@ -435,4 +436,50 @@ export async function adminGetReconcilerStatus(): Promise<CryptoReconcilerStatus
     backlog: body.backlog ?? [],
     replica: { ...body.replica, recent_alerts: body.replica?.recent_alerts ?? [] },
   };
+}
+
+// GET /admin/crypto/deposits — settled money-IN credits (backend/internal/crypto deposits read,
+// table crypto_deposits). A row exists only once a transfer cleared the confirmation floor and was
+// credited exactly once, so this is money-IN history — the awaiting/unmapped exception queue is a
+// separate, undecided design and is NOT served here. Read-only.
+
+const MOCK_DEPOSITS: CryptoDeposit[] = [
+  { id: 'dep_1', provider: 'quidax', provider_op_id: 'qdx_dep_9001', user_id: 'usr_7f2a', symbol: 'BTC', network: 'bitcoin', address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', units: 500_000, minor_unit_scale: 100_000_000, confirmations: 6, required_confs: 3, tx_hash: '0x9f8e7d6c5b4a', created_at: iso(30), credited_at: iso(12) },
+  { id: 'dep_2', provider: 'quidax', provider_op_id: 'qdx_dep_9002', user_id: 'usr_2b9e', symbol: 'USDT', network: 'ethereum', address: '0x1234abcd5678ef901234abcd5678ef901234abcd', units: 15_000_000, minor_unit_scale: 1_000_000, confirmations: 12, required_confs: 12, tx_hash: '0x1234abcd5678', created_at: iso(90), credited_at: iso(60) },
+];
+
+export async function adminListDeposits(limit = 50, offset = 0, symbol = ''): Promise<CryptoDeposit[]> {
+  if (USE_MOCK) {
+    await delay();
+    return symbol ? MOCK_DEPOSITS.filter((d) => d.symbol === symbol) : [...MOCK_DEPOSITS];
+  }
+  const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (symbol) qs.set('symbol', symbol);
+  const res = await fetch(`${base()}/deposits?${qs.toString()}`, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 404) return []; // flag off / routes not mounted — nothing credited yet
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Deposits fetch failed'));
+  const body = await res.json();
+  return body?.deposits ?? [];
+}
+
+// GET /admin/crypto/deposits/reconciler — the money-IN safety net's in-process state
+// (backend/internal/cryptosvc DepositReconciler). 503 when money-IN settlement is not wired.
+const MOCK_DEPOSIT_RECONCILER: CryptoDepositReconcilerStatus = {
+  success: true,
+  note: 'FIXTURE DATA: this console is in fixture mode, so none of this is real.',
+  replica: {
+    started_at: '', runs: 0, led_runs: 0, skipped_runs: 0, last_run_at: '', last_led_at: '', last_led: false, last_error: '',
+    last_result: { accounts: 0, scanned: 0, settled: 0, duplicates: 0, awaiting: 0, ignored: 0, truncated: false, errors: 0 },
+    totals: { settled: 0, duplicates: 0, awaiting: 0, ignored: 0, errors: 0 },
+    recent_alerts: [],
+  },
+};
+
+export async function adminGetDepositReconcilerStatus(): Promise<CryptoDepositReconcilerStatus | null> {
+  if (USE_MOCK) return delay({ ...MOCK_DEPOSIT_RECONCILER });
+  const res = await fetch(`${base()}/deposits/reconciler`, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 404 || res.status === 503) return null;
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Deposit reconciler status fetch failed'));
+  const body = (await res.json()) as CryptoDepositReconcilerStatus;
+  return { ...body, replica: { ...body.replica, recent_alerts: body.replica?.recent_alerts ?? [] } };
 }

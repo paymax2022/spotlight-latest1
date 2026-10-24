@@ -9,7 +9,8 @@ import { handleApiError } from '@/src/lib/api/responses';
 // proxy guards on auth only. Go itself enforces object-level authZ, the escrow
 // Idempotency-Key (proxyToGoBackend copies it verbatim).
 // Auth policy mirrors the Go router: the public reads (GET /listings/:id,
-// /search, /categories(/:id), /sellers/:id/*, /boosts/tiers) are browsable at
+// /search, /categories(/:id), /sellers/:id/*, /boosted, /boosts/pricing,
+// /boosts/quote) are browsable at
 // KYC tier0 without a Bearer, so we do NOT hard-require a user on GET — we still
 // forward the Authorization header when present (proxyToGoBackend does this) so
 // authenticated reads get their per-user view. Every mutating verb requires a

@@ -58,7 +58,7 @@ export default function FreeFollowUpScreen() {
       <TeleHeader title="Free follow-up" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <WizardProgress current={17} total={19} label="Free follow-up policy" />
+          <WizardProgress current={17} total={18} label="Free follow-up policy" />
 
           <SectionCard title="Free follow-up policy" style={styles.card}>
             <Text style={styles.hint}>Offer patients free follow-up visits after a paid consultation.</Text>

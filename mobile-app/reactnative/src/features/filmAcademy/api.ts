@@ -45,13 +45,20 @@ export async function getOverview(): Promise<FilmAcademyOverview> {
     // and inventing client-side ones is exactly how the app came to offer
     // 'Screenwriting' while the database held 'script_writing'.
     interestAreas: body?.interestAreas ?? [],
-    // Absent = every batch unrestricted, which is the pre-feature behaviour.
+    // A batch's entry lists exactly the trainings it offers; an empty list
+    // means it has none set yet. Only a wholly absent map (an older server)
+    // still means "unrestricted".
     batchAreas: body?.batchAreas ?? {},
     // Fall back to 2 only if an older server omits it — the server still enforces.
     maxInterestAreas: body?.maxInterestAreas ?? 2,
     // What the account already knows about the applicant, so the apply form can
     // stop asking for it. Null when signed out, or on an older server.
     applicant: body?.applicant ?? null,
+    // Composite tuition structure — empty arrays on an older server, which is
+    // how the screens detect they must fall back to the legacy per-area fee.
+    pricingStructure: body?.pricingStructure ?? [],
+    deliverables: body?.deliverables ?? [],
+    feeExclusions: body?.feeExclusions ?? [],
   };
 }
 

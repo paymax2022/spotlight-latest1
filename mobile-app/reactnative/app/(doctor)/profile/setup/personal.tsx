@@ -12,7 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, WizardProgress } from '@/features/doctor/components';
 import { useProfileDraft, useSaveProfileDraft } from '@/features/doctor/hooks';
-import { TITLE_OPTIONS, GENDER_OPTIONS, NIGERIAN_STATES } from '@/features/doctor/constants';
+import { TITLE_OPTIONS, GENDER_OPTIONS, NIGERIAN_STATES, NIGERIAN_CITIES } from '@/features/doctor/constants';
 import type { PersonalInfo, GenderOption } from '@/types/doctor.profile';
 
 export default function PersonalInfoScreen() {
@@ -57,13 +57,14 @@ export default function PersonalInfoScreen() {
   }
 
   const genderLabel = GENDER_OPTIONS.find((g) => g.value === form.gender)?.label;
+  const cities = NIGERIAN_CITIES[form.state ?? 'default'] ?? NIGERIAN_CITIES['default'];
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Personal information" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <WizardProgress current={1} total={19} label="Personal information" />
+          <WizardProgress current={1} total={18} label="Personal information" />
 
           <SectionCard title="Your details" style={styles.card}>
             <SelectField label="Title" placeholder="Select title" value={form.title || undefined} options={TITLE_OPTIONS} onChange={(title) => set({ title })} searchable={false} />
@@ -74,14 +75,14 @@ export default function PersonalInfoScreen() {
           </SectionCard>
 
           <SectionCard title="Contact" style={styles.card}>
-            <TextInputField label="Email" placeholder="you@example.com" value={form.email} onChangeText={(email) => set({ email })} keyboardType="email-address" autoCapitalize="none" />
-            <PhoneNumberInput label="Phone" value={form.phone} onChange={({ e164, nsn }) => ((phone) => set({ phone }))(e164 || nsn)} />
+            <TextInputField label="Email" placeholder="you@example.com" value={form.email} editable={false} keyboardType="email-address" autoCapitalize="none" />
+            <PhoneNumberInput label="Phone" value={form.phone} onChange={({ e164 }) => set({ phone: e164 })} />
           </SectionCard>
 
           <SectionCard title="Location" style={styles.card}>
-            <SelectField label="State of practice" placeholder="Select state" value={form.state} options={NIGERIAN_STATES} onChange={(state) => set({ state })} />
-            <TextInputField label="City" placeholder="e.g. Lagos" value={form.city ?? ''} onChangeText={(city) => set({ city })} />
-            <TextInputField label="Address" placeholder="Street address" value={form.address ?? ''} onChangeText={(address) => set({ address })} />
+            <SelectField label="State of practice" placeholder="Select state" value={form.state} options={NIGERIAN_STATES} onChange={(state) => set({ state, city: '' })} />
+            <SelectField label="City" placeholder="Select city" value={form.city || undefined} options={cities} onChange={(city) => set({ city })} searchable={false} />
+            <TextInputField label="Address" placeholder="Street address of your clinic" value={form.address ?? ''} onChangeText={(address) => set({ address })} />
           </SectionCard>
 
           <PrimaryButton label="Continue" onPress={handleNext} loading={save.isPending} disabled={!canSubmit} style={styles.btn} />

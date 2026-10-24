@@ -47,7 +47,16 @@ func (s *Service) CreateTaxonomyItem(ctx context.Context, restaurantID, userID s
 	if err := validateItemPriceKobo(req.PriceKobo); err != nil {
 		return nil, err
 	}
-	return createTaxonomyItem(ctx, s.db, restaurantID, req)
+	if err := s.validateItemImageRef(restaurantID, req.ImageURL); err != nil {
+		return nil, err
+	}
+	it, err := createTaxonomyItem(ctx, s.db, restaurantID, req)
+	if err != nil {
+		return nil, err
+	}
+	// Return the picture as a customer sees it, not as the column stores it.
+	s.viewMenuItem(it)
+	return it, nil
 }
 
 func createTaxonomyItem(ctx context.Context, db *pgxpool.Pool, restaurantID string, req CreateTaxonomyItemRequest) (*MenuItem, error) {

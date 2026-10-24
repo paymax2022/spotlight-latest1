@@ -324,7 +324,7 @@ func TestProratedBoostRefund_ZeroPriceOrMissingDatesRefundsNothing(t *testing.T)
 	}
 }
 
-func TestCustomBoostDuration_RoundsPartDayUp(t *testing.T) {
+func TestBoostDaysFromRange_RoundsPartDayUp(t *testing.T) {
 	now := time.Date(2027, 1, 1, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name string
@@ -339,31 +339,31 @@ func TestCustomBoostDuration_RoundsPartDayUp(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := customBoostDuration(now, c.ends)
+			got, err := boostDaysFromRange(now, c.ends)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if got != c.want {
-				t.Errorf("customBoostDuration(...) = %d days, want %d", got, c.want)
+				t.Errorf("boostDaysFromRange(...) = %d days, want %d", got, c.want)
 			}
 		})
 	}
 }
 
-func TestCustomBoostDuration_RejectsPastOrPresentEnd(t *testing.T) {
+func TestBoostDaysFromRange_RejectsPastOrPresentEnd(t *testing.T) {
 	now := time.Date(2027, 1, 1, 12, 0, 0, 0, time.UTC)
 	for _, ends := range []time.Time{now, now.Add(-time.Minute)} {
-		if _, err := customBoostDuration(now, ends); err == nil {
+		if _, err := boostDaysFromRange(now, ends); err == nil {
 			t.Fatalf("ends_at=%v (not after now) must be rejected", ends)
 		}
 	}
 }
 
-func TestCustomBoostDuration_RejectsOverTheCap(t *testing.T) {
+func TestBoostDaysFromRange_RejectsOverTheCap(t *testing.T) {
 	now := time.Date(2027, 1, 1, 12, 0, 0, 0, time.UTC)
-	_, err := customBoostDuration(now, now.Add((maxCustomBoostDays+1)*24*time.Hour))
+	_, err := boostDaysFromRange(now, now.Add((maxBoostDays+1)*24*time.Hour))
 	if err == nil {
-		t.Fatal("a range exceeding maxCustomBoostDays must be rejected")
+		t.Fatal("a range exceeding maxBoostDays must be rejected")
 	}
 	var ce *CodedError
 	if !errors.As(err, &ce) {
@@ -374,25 +374,31 @@ func TestCustomBoostDuration_RejectsOverTheCap(t *testing.T) {
 	}
 }
 
-func TestBoostChargeTierKey_PackageModeIsTierVerbatim(t *testing.T) {
-	q := &BoostQuote{Mode: "package", Tier: "vip"}
-	if got := boostChargeTierKey(q); got != "vip" {
-		t.Errorf("package-mode key = %q, want the tier verbatim %q", got, "vip")
+// The charge key is the ledger's durable idempotency backstop, so it must be
+// REPRODUCIBLE: two calls that are the same buy — even milliseconds apart, as two
+// concurrent double-tap requests are — derive one key and post one debit.
+func TestBoostChargeTierKey_IsStableAcrossTheSameEndMoment(t *testing.T) {
+	end1 := time.Date(2027, 1, 5, 9, 30, 0, 0, time.UTC)
+
+	keyA := boostChargeTierKey(&BoostQuote{EndsAt: end1})
+	keyB := boostChargeTierKey(&BoostQuote{EndsAt: end1})                    // retry, same request
+	keyC := boostChargeTierKey(&BoostQuote{EndsAt: end1.Add(4 * time.Hour)}) // same billed end DATE, other clock read
+
+	if keyA != keyB {
+		t.Errorf("a retry of the SAME purchase must derive the SAME key: %q vs %q", keyA, keyB)
+	}
+	if keyA != keyC {
+		t.Errorf("two concurrent calls for one buy must derive the SAME key, got %q vs %q — a sub-day component would let a double-tap charge the wallet twice", keyA, keyC)
 	}
 }
 
-func TestBoostChargeTierKey_CustomModeIsDeterministicPerEndDate(t *testing.T) {
-	end1 := time.Date(2027, 1, 5, 9, 30, 0, 0, time.UTC)
-	end2 := time.Date(2027, 1, 6, 9, 30, 0, 0, time.UTC)
+// …while a DIFFERENT buy stays a different key: boost to end on 5 Jan, then boost
+// again to end on 6 Jan, is two charges, not a tolerated duplicate.
+func TestBoostChargeTierKey_DiffersPerBillingDay(t *testing.T) {
+	keyA := boostChargeTierKey(&BoostQuote{EndsAt: time.Date(2027, 1, 5, 9, 30, 0, 0, time.UTC)})
+	keyB := boostChargeTierKey(&BoostQuote{EndsAt: time.Date(2027, 1, 6, 9, 30, 0, 0, time.UTC)})
 
-	keyA := boostChargeTierKey(&BoostQuote{Mode: "custom", EndsAt: end1})
-	keyB := boostChargeTierKey(&BoostQuote{Mode: "custom", EndsAt: end1}) // retry, same request
-	keyC := boostChargeTierKey(&BoostQuote{Mode: "custom", EndsAt: end2}) // different request
-
-	if keyA != keyB {
-		t.Errorf("a retry of the SAME custom request must derive the SAME key: %q vs %q", keyA, keyB)
-	}
-	if keyA == keyC {
-		t.Errorf("two DIFFERENT custom requests must derive DIFFERENT keys, both got %q", keyA)
+	if keyA == keyB {
+		t.Errorf("two purchases with different billed end DATES derived the same key %q — the second would be tolerated as a duplicate and boost for free", keyA)
 	}
 }

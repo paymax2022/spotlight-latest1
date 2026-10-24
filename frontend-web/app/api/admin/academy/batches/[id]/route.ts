@@ -30,7 +30,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
       .eq('id', params.id)
       .maybeSingle();
     if (error || !data) return errorResponse('Batch not found', 404);
-    // Empty = unrestricted (offers every active area), not "offers nothing".
+    // The batch's own trainings — it offers exactly these, and none means none.
     const interest_area_slugs = await getBatchAreaSlugs(supabase, params.id);
     return successResponse({ success: true, batch: { ...data, interest_area_slugs } });
   } catch (error) {
@@ -44,6 +44,15 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     await assertAdminPermission(request, 'programs:manage');
     const body = (await request.json().catch(() => null)) as AcademyBatchMutationInput & Record<string, unknown>;
     if (!body) return errorResponse('Invalid JSON body', 400);
+    // A batch that mentions areas must name at least one — it offers exactly
+    // what is ticked, so "no areas" is not a legal edit, only a legal legacy
+    // row nobody may keep.
+    if ('interest_area_slugs' in body) {
+      const arr = body.interest_area_slugs;
+      if (!Array.isArray(arr) || arr.filter((s) => String(s ?? '').trim()).length === 0) {
+        return errorResponse('A batch must offer at least one training', 400);
+      }
+    }
     const supabase = createAdminClient();
     const batch = await saveAcademyBatch(supabase as any, body, params.id);
     const extra = getBatchFeeFields(body);

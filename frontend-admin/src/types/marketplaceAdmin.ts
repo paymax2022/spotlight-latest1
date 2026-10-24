@@ -100,6 +100,11 @@ export interface MktListing {
   escrow_eligible: boolean;
   state?: string;
   lga?: string | null;
+  // Present on the moderation queue/detail reads. Both null = the seller posted
+  // without a location, so the listing can never appear in a buyer's distance
+  // sort or "Near you" rail — worth flagging before approval.
+  lat?: number | null;
+  lng?: number | null;
   view_count?: number;
   save_count?: number;
   moderation_reason_code?: string | null;

@@ -78,14 +78,16 @@ export async function POST(request: Request) {
       await saveLocalUpload(objectKey, buffer);
     }
 
-    // ABSOLUTE, not relative. The mobile app renders this straight into an
-    // <Image>; a relative path resolves against the phone, not this server.
-    // request.url on Railway is the bind address (http://0.0.0.0:PORT) — use
-    // the configured public origin instead, same as contestants/share and
-    // vote-page.
-    const origin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
+    // ROOT-RELATIVE PATH, not an absolute URL. This row is read by the web app,
+    // the admin console and the Go voting API (which feeds the phone), and those
+    // do not share an origin — an URL minted here baked the uploading
+    // environment's host into the contest, so a banner added on a laptop stayed
+    // http://localhost:3000/… forever and loaded nowhere else. Each reader now
+    // attaches its own environment's origin: the web is same-origin, the admin
+    // console goes through its web-proxy, and the Go API prefixes
+    // WEB_APP_BASE_URL for mobile, which cannot resolve a path at all.
     const fileKeyParam = Buffer.from(objectKey, 'utf8').toString('base64url');
-    const url = `${origin}/api/admin/contests/banner/${fileKeyParam}`;
+    const url = `/api/admin/contests/banner/${fileKeyParam}`;
 
     return successResponse({
       success: true,

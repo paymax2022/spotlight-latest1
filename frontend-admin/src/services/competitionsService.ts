@@ -81,19 +81,27 @@ export async function createOpenMicCompetition(input: {
 }
 
 /**
- * Real contests as seen by the mobile app — GET /api/v1/connect/contests
- * (backend/internal/connect/voting), the SAME endpoint the mobile client's
- * getContests() calls (mobile-app/reactnative/src/features/voting/api/
- * voting.api.ts). Member-authenticated only (any signed-in user, no special
- * permission) — an admin session's Bearer token satisfies it as-is.
+ * Real contests for the admin console — GET /api/connect/admin/contests
+ * (backend/internal/connect/voting, guarded by connect.contests.view).
+ *
+ * This is deliberately NOT the mobile endpoint (/api/v1/connect/contests):
+ * that one maps ""/all to open + closed only, so a contest still in draft —
+ * which is every contest the moment it is created — is invisible here while
+ * voters can never read it. The admin route adds draft to the allowlist.
  *
  * There is no prize-pool / awards / benefits concept anywhere in this data —
  * connect_contests tracks paid_vote_kobo, free_votes_per_user and vote
  * counts, nothing else. A UI that shows prize pools here would be inventing
  * data, not displaying it.
+ *
+ * `limit` is explicit because the endpoint's own default is 50. An admin list
+ * that quietly stops at 50 is worse than a paged one — the missing contests
+ * look like they were never created.
  */
-export async function listVotingContests(): Promise<VotingContest[]> {
-  const res = await fetch(`${apiV1()}/connect/contests`, {
+export async function listVotingContests(limit = 500): Promise<VotingContest[]> {
+  const url = new URL(`${apiRoot()}/api/connect/admin/contests`);
+  url.searchParams.set('limit', String(limit));
+  const res = await fetch(url.toString(), {
     cache: 'no-store',
     headers: authHeaders(),
   });

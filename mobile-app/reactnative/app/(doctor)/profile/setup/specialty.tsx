@@ -54,7 +54,7 @@ export default function SpecialtyScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Medical specialty" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <WizardProgress current={4} total={19} label="Medical specialty" />
+        <WizardProgress current={4} total={18} label="Medical specialty" />
 
         <SectionCard title="Primary specialty" style={styles.card}>
           <Text style={styles.hint}>Select the specialty you primarily practise in.</Text>

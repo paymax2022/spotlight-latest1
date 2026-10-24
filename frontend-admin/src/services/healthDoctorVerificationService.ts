@@ -103,7 +103,10 @@ const QUEUE: MdcnQueueItem[] = [
 
 export async function listDoctorVerificationQueue(): Promise<MdcnQueueItem[]> {
   if (USE_MOCK) { await delay(); return QUEUE.map((q) => ({ ...q, matchedFields: { ...q.matchedFields } })); }
-  return getJson<MdcnQueueItem[]>('/verification/queue');
+  // The backend Queue handler responds gin.H{"items": [...]} (no `data` envelope),
+  // and ListQueue's nil slice serializes as items: null.
+  const r = await getJson<{ items?: MdcnQueueItem[] }>('/verification/queue');
+  return r.items ?? [];
 }
 
 export async function getDoctorVerification(id: string): Promise<MdcnReviewRecord> {

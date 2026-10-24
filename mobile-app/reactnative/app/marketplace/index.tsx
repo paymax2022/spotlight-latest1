@@ -1,6 +1,6 @@
 // rails (Near you / Price drops / Escrow-eligible). Skeletons (not spinners),
 // error we keep the last-known cache and show a subtle "saved results" banner.
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -10,17 +10,26 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import SearchBar from '@/components/SearchBar';
+import PromoBanner from '@/components/PromoBanner';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
-import { MarketColors } from '@/features/marketplace';
-import type { Category, ListingSummary } from '@/features/marketplace';
+import { useDeviceCoords } from '@/features/location/useDeviceCoords';
+import { MarketColors, discoveryApi } from '@/features/marketplace';
+import { DEFAULT_RADIUS_KM } from '@/features/marketplace/proximity';
+import type { BoostedListing, Category, ListingSummary } from '@/features/marketplace';
 import { useCategories, useHomeRails } from '@/features/marketplace/hooks';
 import { mainCategories, subcategoriesOf } from '@/features/marketplace/categoryTree';
 import { useMarketplaceMenu } from '@/features/marketplace/components/MarketplaceMenu';
+import ProximityBar from '@/features/marketplace/components/ProximityBar';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { CategoryGridSkeleton, RailSkeleton } from '@/features/marketplace/components/Skeletons';
 import CategoryIcon from '@/features/marketplace/components/CategoryIcon';
+
+// Six promoted cards on home, derived from the preview size getHomeRails() asks
+// for (one more than this) rather than being a second number to keep in sync: the
+// extra row is what tells a full-but-final page from a section with more behind it.
+const HOME_BOOSTED_CAP = discoveryApi.HOME_BOOSTED_PREVIEW - 1;
 
 function CategoryTile({ category, subCount }: { category: Category; subCount: number }) {
   // Icon + colour come from CategoryIcon: curated hues for the 12 mains, and the
@@ -47,14 +56,57 @@ function CategoryTile({ category, subCount }: { category: Category; subCount: nu
   );
 }
 
-function Rail({ title, data }: { title: string; data: ListingSummary[] }) {
-  if (data.length === 0) return null;
+function Rail({
+  title,
+  data,
+  empty,
+}: {
+  title: string;
+  data: ListingSummary[];
+  /** Rendered in place of the cards when the rail has nothing. Omit it for a
+      rail that should simply not appear (e.g. Price drops, mock-only). */
+  empty?: { title: string; message: string; icon: string };
+}) {
+  if (data.length === 0 && !empty) return null;
   return (
     <View style={styles.railWrap}>
       <SectionHeader title={title} />
+      {data.length > 0 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
+          {data.map((l) => (
+            <ListingCard key={l.id} item={l} horizontal onPress={(id) => router.push(`/marketplace/listing/${id}?source=home` as never)} />
+          ))}
+        </ScrollView>
+      ) : (
+        <StateView kind="empty" compact icon={empty!.icon} title={empty!.title} message={empty!.message} />
+      )}
+    </View>
+  );
+}
+
+// The promoted section sits directly under the category grid and above "Near you"
+// — a seller paying for visibility is buying placement in the first thing a buyer
+// sees, not a rail they have to scroll past three others to reach.
+//
+// It is capped at 6 cards, and the door behind it appears only when the fetch came
+// back with a 7th (HOME_BOOSTED_PREVIEW): six cards with nothing behind them would
+// offer a "View More" that leads to the same six. With nothing promoted at all the
+// section is hidden rather than rendering a heading over an empty row.
+//
+// The order is the server's — most UNSPENT boost value first — and is never
+// re-sorted here.
+function BoostedRail({ data }: { data: BoostedListing[] }) {
+  if (data.length === 0) return null;
+  return (
+    <View style={styles.railWrap}>
+      <SectionHeader
+        title="Boosted"
+        actionLabel={data.length > HOME_BOOSTED_CAP ? 'View More' : undefined}
+        onAction={data.length > HOME_BOOSTED_CAP ? () => router.push('/marketplace/boosted' as never) : undefined}
+      />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
-        {data.map((l) => (
-          <ListingCard key={l.id} item={l} horizontal onPress={(id) => router.push(`/marketplace/listing/${id}?source=home` as never)} />
+        {data.slice(0, HOME_BOOSTED_CAP).map((l) => (
+          <ListingCard key={l.id} item={l} horizontal onPress={(id) => router.push(`/marketplace/listing/${id}?source=boosted` as never)} />
         ))}
       </ScrollView>
     </View>
@@ -64,7 +116,12 @@ function Rail({ title, data }: { title: string; data: ListingSummary[] }) {
 export default function MarketplaceHome() {
   const menu = useMarketplaceMenu();
   const categories = useCategories();
-  const rails = useHomeRails();
+  // Proximity is opt-in and per-device: the bar below asks, and a denied answer
+  // becomes a visible state with a retry rather than a dialog repeated on every
+  // tab switch. Until it is granted, "Near you" stays empty on purpose.
+  const loc = useDeviceCoords();
+  const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
+  const rails = useHomeRails(loc.coords, radiusKm);
   const refreshing = categories.isFetching || rails.isFetching;
   // Offline-first: if a fetch failed but we still hold cached data, show it with a banner.
   const showCacheBanner = (categories.isError || rails.isError) && (!!categories.data || !!rails.data);
@@ -85,11 +142,40 @@ export default function MarketplaceHome() {
         <HomeMenuButton />
       </View>
 
-      <Pressable onPress={() => router.push('/marketplace/search' as never)} accessibilityRole="button" accessibilityLabel="Search marketplace">
-        <View style={styles.searchWrap} pointerEvents="none">
-          <SearchBar editable={false} placeholder="Search phones, cars, furniture…" />
-        </View>
-      </Pressable>
+      {/* Hero above the search bar: the first thing on the tab says what the
+          Marketplace is for and hands the seller straight to the composer. */}
+      <PromoBanner
+        badge="MARKETPLACE"
+        title="Buy and sell near you"
+        subtitle="List an item in minutes, get paid with escrow protection"
+        cta="Start selling"
+        onPress={() => router.push('/marketplace/sell' as never)}
+      />
+
+      {/* SearchBar owns its own tap target — an outer Pressable never fires,
+          because the readonly TextInput claims the touch and only the bar's
+          own onPress reaches it. */}
+      <SearchBar
+        editable={false}
+        placeholder="Search phones, cars, furniture…"
+        onPress={() => router.push('/marketplace/search' as never)}
+      />
+
+      <View style={styles.proximity}>
+        <ProximityBar
+          surface="home"
+          coords={loc.coords}
+          loading={loc.loading}
+          error={loc.error}
+          available={loc.available}
+          onAsk={() => void loc.request()}
+          onClear={loc.clear}
+          radiusKm={radiusKm}
+          // This rail IS a radius query, so clearing a chip resets to the default
+          // instead of asking for "everything within no distance".
+          onRadius={(km) => setRadiusKm(km ?? DEFAULT_RADIUS_KM)}
+        />
+      </View>
 
       {showCacheBanner ? (
         <View style={styles.cacheBanner}>
@@ -153,9 +239,34 @@ export default function MarketplaceHome() {
           />
         ) : (
           <>
-            <Rail title="Near you" data={rails.data?.nearYou ?? []} />
+            <BoostedRail data={rails.data?.boosted ?? []} />
+            <Rail
+              title={loc.coords ? `Near you · within ${radiusKm} km` : 'Near you'}
+              data={rails.data?.nearYou ?? []}
+              empty={
+                loc.coords
+                  ? {
+                      title: `Nothing listed within ${radiusKm} km`,
+                      message: 'Try a wider radius above — new posts from sellers around you appear here.',
+                      icon: 'MapPin',
+                    }
+                  : {
+                      title: 'Nothing near you yet',
+                      message: 'Turn on location above to measure how far each item actually is.',
+                      icon: 'MapPin',
+                    }
+              }
+            />
             <Rail title="Price drops" data={rails.data?.priceDrops ?? []} />
-            <Rail title="Escrow-eligible" data={rails.data?.escrowEligible ?? []} />
+            <Rail
+              title="Escrow-eligible"
+              data={rails.data?.escrowEligible ?? []}
+              empty={{
+                title: 'No escrow-eligible listings',
+                message: 'Sellers can protect a deal with escrow from their listing settings.',
+                icon: 'ShieldCheck',
+              }}
+            />
           </>
         )}
       </ScrollView>
@@ -168,8 +279,8 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.sm },
   menuBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: -6 },
   headerTitle: { ...Typography.headlineMd, color: Colors.onSurface },
-  searchWrap: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.sm },
   cacheBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: MarketColors.warnBg, marginHorizontal: Spacing.containerMargin, paddingHorizontal: Spacing.sm, paddingVertical: 6, borderRadius: Radius.md, marginBottom: Spacing.xs },
+  proximity: { marginTop: -2, marginBottom: Spacing.sm },
   cacheBannerText: { ...Typography.labelSm, color: MarketColors.warnText },
   scroll: { paddingBottom: Spacing.xxl },
   catGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, marginBottom: Spacing.md },

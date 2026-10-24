@@ -378,5 +378,96 @@ func (r *Repository) AdminHeldUnitsByAsset(ctx context.Context) (map[string]int6
 	return held, prows.Err()
 }
 
+// ListDeposits reads the settled money-IN journal (crypto_deposits), newest credited first. It
+// backs BOTH surfaces: an empty userID leaves it unscoped for the admin money-IN view (RBAC
+// crypto.admin upstream), while a member handler passes the owner id so a customer sees only
+// their own credits. symbol, when set, narrows to one asset. Only confirmation-gated, once-only
+// credits ever reach this table, so every row here is already settled — no status filter.
+func (r *Repository) ListDeposits(ctx context.Context, userID, symbol string, limit, offset int) ([]CryptoDeposit, error) {
+	q := `SELECT d.id, d.provider, d.provider_op_id, d.user_id, d.symbol, d.network, d.address,
+	             d.units, a.minor_unit_scale, d.confirmations, d.required_confs, d.tx_hash,
+	             d.created_at, d.credited_at
+	      FROM crypto_deposits d
+	      JOIN crypto_assets a ON a.id = d.asset_id`
+	var args []any
+	n := 0
+	if userID != "" {
+		n++
+		q += fmt.Sprintf(" WHERE d.user_id = $%d", n)
+		args = append(args, userID)
+	}
+	if symbol != "" {
+		n++
+		if userID == "" {
+			q += " WHERE"
+		} else {
+			q += " AND"
+		}
+		q += fmt.Sprintf(" d.symbol = $%d", n)
+		args = append(args, symbol)
+	}
+	n++
+	q += fmt.Sprintf(" ORDER BY d.credited_at DESC LIMIT $%d", n)
+	args = append(args, limit)
+	n++
+	q += fmt.Sprintf(" OFFSET $%d", n)
+	args = append(args, offset)
+
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CryptoDeposit{}
+	for rows.Next() {
+		d, err := scanDeposit(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// GetDeposit returns one credit by id. A non-empty userID scopes it to that owner (member
+// receipt); an empty userID leaves it open for the admin view. ErrNoRows when absent.
+func (r *Repository) GetDeposit(ctx context.Context, userID, id string) (CryptoDeposit, error) {
+	q := `SELECT d.id, d.provider, d.provider_op_id, d.user_id, d.symbol, d.network, d.address,
+	             d.units, a.minor_unit_scale, d.confirmations, d.required_confs, d.tx_hash,
+	             d.created_at, d.credited_at
+	      FROM crypto_deposits d
+	      JOIN crypto_assets a ON a.id = d.asset_id
+	      WHERE d.id = $1::uuid`
+	args := []any{id}
+	if userID != "" {
+		q += " AND d.user_id = $2::uuid"
+		args = append(args, userID)
+	}
+	d, err := scanDeposit(r.db.QueryRow(ctx, q, args...))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CryptoDeposit{}, ErrNotFound
+		}
+		return CryptoDeposit{}, err
+	}
+	return d, nil
+}
+
+func scanDeposit(row interface{ Scan(dest ...any) error }) (CryptoDeposit, error) {
+	var d CryptoDeposit
+	var addr, tx *string
+	if err := row.Scan(&d.ID, &d.Provider, &d.ProviderOpID, &d.UserID, &d.Symbol, &d.Network, &addr,
+		&d.Units, &d.MinorUnitScale, &d.Confirmations, &d.RequiredConfs, &tx, &d.CreatedAt, &d.CreditedAt); err != nil {
+		return CryptoDeposit{}, err
+	}
+	if addr != nil {
+		d.Address = *addr
+	}
+	if tx != nil {
+		d.TxHash = *tx
+	}
+	return d, nil
+}
+
 // touchAdminTime keeps the time import referenced even under build-tag pruning.
 var _ = time.Now

@@ -9,15 +9,9 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
-import { getDoctor, formatKobo, DEMO_DOCTORS } from '@/api/telemedicine.api';
+import { getDoctor, getDoctorReviews, formatKobo, PLACEHOLDER_DOCTORS } from '@/api/telemedicine.api';
 import { TeleHeader, DoctorAvatar, RatingStars } from '@/features/telemedicine/components';
 import PrimaryButton from '@/components/PrimaryButton';
-
-const DEMO_REVIEWS = [
-  { id: 'r1', name: 'Chidi N.', rating: 5, comment: 'Very thorough and patient. Explained everything clearly.' },
-  { id: 'r2', name: 'Aisha B.', rating: 5, comment: 'Quick to join the call and gave practical advice.' },
-  { id: 'r3', name: 'Femi A.', rating: 4, comment: 'Helpful consultation, prescription came through fast.' },
-];
 
 export default function DoctorProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -25,7 +19,14 @@ export default function DoctorProfileScreen() {
   const { data: doctor, isLoading } = useQuery({
     queryKey: ['tele-doctor', id],
     queryFn:  () => getDoctor(String(id)),
-    placeholderData: DEMO_DOCTORS.find((d) => d.id === id),
+    placeholderData: PLACEHOLDER_DOCTORS?.find((d) => d.id === id),
+  });
+
+  // Reviews come from the server: a profile that showed invented praise would be
+  // a claim about a real doctor nobody made.
+  const { data: reviews = [] } = useQuery({
+    queryKey: ['tele-doctor-reviews', id],
+    queryFn:  () => getDoctorReviews(String(id)),
   });
 
   if (isLoading && !doctor) {
@@ -65,33 +66,43 @@ export default function DoctorProfileScreen() {
           <Stat icon={<Languages size={18} color={Colors.teal} strokeWidth={2} />} value={String(doctor.languages.length)} label="Languages" />
         </View>
 
-        <Section title="About">
-          <Text style={styles.bio}>{doctor.bio}</Text>
-        </Section>
+        {doctor.bio ? (
+          <Section title="About">
+            <Text style={styles.bio}>{doctor.bio}</Text>
+          </Section>
+        ) : null}
 
-        <Section title="Languages">
-          <View style={styles.tagWrap}>
-            {doctor.languages.map((l) => (
-              <View key={l} style={styles.tag}><Text style={styles.tagText}>{l}</Text></View>
-            ))}
-          </View>
-        </Section>
+        {/* No languages column on the live doctor row yet, so the section only
+            appears when there is something true to say in it. */}
+        {doctor.languages.length > 0 && (
+          <Section title="Languages">
+            <View style={styles.tagWrap}>
+              {doctor.languages.map((l) => (
+                <View key={l} style={styles.tag}><Text style={styles.tagText}>{l}</Text></View>
+              ))}
+            </View>
+          </Section>
+        )}
 
         <Section title={`Reviews (${doctor.reviewCount})`}>
           <View style={{ gap: Spacing.md }}>
-            {DEMO_REVIEWS.map((r) => (
+            {reviews.map((r) => (
               <View key={r.id} style={styles.review}>
                 <View style={styles.reviewHead}>
                   <View style={styles.reviewIcon}>
                     <MessageSquareQuote size={14} color={Colors.primary} strokeWidth={2} />
                   </View>
-                  <Text style={styles.reviewName}>{r.name}</Text>
+                  {/* The review row carries an opaque patient id, not a name. */}
+                  <Text style={styles.reviewName}>Patient</Text>
                   <View style={{ flex: 1 }} />
                   <RatingStars rating={r.rating} size={13} />
                 </View>
                 <Text style={styles.reviewText}>{r.comment}</Text>
               </View>
             ))}
+            {reviews.length === 0 && (
+              <Text style={styles.noReviews}>No reviews yet for this doctor.</Text>
+            )}
           </View>
         </Section>
       </ScrollView>
@@ -159,6 +170,7 @@ const styles = StyleSheet.create({
   reviewIcon:  { width: 28, height: 28, borderRadius: Radius.full, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
   reviewName:  { ...Typography.labelMd, color: Colors.onSurface },
   reviewText:  { ...Typography.bodySm, color: Colors.onSurfaceVariant, lineHeight: 20 },
+  noReviews:   { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   footer:      { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Platform.OS === 'ios' ? 32 : Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh },
   feeLabel:    { ...Typography.caption, color: Colors.onSurfaceVariant },
   fee:         { ...Typography.titleLg, color: Colors.primary, fontWeight: '800' },

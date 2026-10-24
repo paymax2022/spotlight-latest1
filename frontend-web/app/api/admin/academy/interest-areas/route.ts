@@ -1,16 +1,32 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
+import {
+  attachPricingOptions,
+  defaultPricingRows,
+  isPricingKey,
+  pricingDefinition,
+  type AcademyPricingKey,
+  type AreaPricingOptionRow,
+} from '@/src/server/services/academy/pricing';
 
-// Each area carries a NAIRA fee that is ADDED to academy_settings.application_fee
-// when an applicant selects it. The applicant-facing total is computed
-// server-side in /api/academy/apply from these same rows, so editing a fee here
-// changes what the next applicant pays — nothing is cached client-side.
+// Each area is priced by the composite structure in
+// academy_area_pricing_options — five training formats (weekend/weekday, each
+// with and without boarding, plus 30-day full-time boarding), one row per
+// area × format, NAIRA. GET returns every area with its pricing_options; PUT
+// accepts a `pricing` array to reprice formats. The legacy single `fee_ngn`
+// is no longer what applicants are priced on: it survives only for historic
+// rows, and editing it here changes nothing an applicant sees.
 // `slug` is written into academy_applications.areas_of_interest, so it must stay
 // changing its slug orphans historic rows, which is why slug is only accepted on
 // create and ignored on update.
 
 const PERMISSION = 'programs:manage';
+
+interface PricingPatchItem {
+  key?: unknown;
+  price_ngn?: unknown;
+}
 
 interface AreaBody {
   id?: string;
@@ -20,6 +36,7 @@ interface AreaBody {
   fee_ngn?: number | string;
   is_active?: boolean;
   sort_order?: number | string;
+  pricing?: PricingPatchItem[];
 }
 
 /** Naira, non-negative, at most 2dp — the column is numeric(12,2). */
@@ -81,7 +98,18 @@ export async function GET(request: Request) {
       logDbError('GET', error);
       return errorResponse('Failed to load areas of interest', 500);
     }
-    return successResponse({ success: true, areas: data ?? [] });
+    const { data: optionRows, error: optionsError } = await supabase
+      .from('academy_area_pricing_options')
+      .select('area_id, key, label, note, price_ngn, sort_order');
+    if (optionsError) {
+      logDbError('GET options', optionsError);
+      return errorResponse('Failed to load area pricing', 500);
+    }
+    const areas = attachPricingOptions(
+      (data ?? []) as Array<{ id: string } & Record<string, unknown>>,
+      (optionRows ?? []) as AreaPricingOptionRow[],
+    );
+    return successResponse({ success: true, areas });
   } catch (error) {
     return handleApiError(error, 'Failed to load areas of interest');
   }
@@ -123,6 +151,16 @@ export async function POST(request: Request) {
       logDbError('POST', error);
       return errorResponse('Failed to create the area of interest', 500);
     }
+
+    // A new area is offerable immediately, so it must carry the five formats —
+    // priced at the launch structure. An area with no option rows would fall
+    // back to those same defaults when an applicant picks a format, so a
+    // failure here is logged, not fatal.
+    const { error: seedError } = await supabase
+      .from('academy_area_pricing_options')
+      .insert(defaultPricingRows(data.id));
+    if (seedError) logDbError('POST pricing', seedError);
+
     return successResponse({ success: true, area: data });
   } catch (error) {
     return handleApiError(error, 'Failed to create the area of interest');
@@ -154,6 +192,25 @@ export async function PUT(request: Request) {
       patch.fee_ngn = fee;
     }
 
+    // Composite pricing: `{ key, price_ngn }` per format, upserted against the
+    // (area_id, key) unique. Labels/notes/sort stay whatever the structure
+    // says — the admin edits the PRICE of a format, not its identity.
+    const pricing = Array.isArray(body.pricing) ? body.pricing : null;
+    if (body.pricing !== undefined && !pricing) {
+      return errorResponse('pricing must be an array of { key, price_ngn }', 400);
+    }
+    const validatedPricing: Array<{ key: AcademyPricingKey; price_ngn: number }> = [];
+    for (const item of pricing ?? []) {
+      if (!isPricingKey(item?.key)) {
+        return errorResponse(`Unknown pricing format: ${String(item?.key)}`, 400);
+      }
+      const price = parseFee(item.price_ngn);
+      if (price === null) {
+        return errorResponse(`Price for ${item.key} must be a number of naira, zero or more`, 400);
+      }
+      validatedPricing.push({ key: item.key, price_ngn: price });
+    }
+
     const supabase = createAdminClient();
     const { data, error } = await supabase
       .from('academy_interest_areas')
@@ -166,6 +223,29 @@ export async function PUT(request: Request) {
       return errorResponse('Failed to update the area of interest', 500);
     }
     if (!data) return errorResponse('Area of interest not found', 404);
+
+    if (validatedPricing.length > 0) {
+      const rows = validatedPricing.map(({ key, price_ngn }) => {
+        const def = pricingDefinition(key);
+        return {
+          area_id: id,
+          key,
+          label: def.label,
+          note: def.note,
+          price_ngn,
+          sort_order: def.sort_order,
+          updated_at: new Date().toISOString(),
+        };
+      });
+      const { error: pricingError } = await supabase
+        .from('academy_area_pricing_options')
+        .upsert(rows, { onConflict: 'area_id,key' });
+      if (pricingError) {
+        logDbError('PUT pricing', pricingError);
+        return errorResponse('Failed to save the area pricing', 500);
+      }
+    }
+
     return successResponse({ success: true, area: data });
   } catch (error) {
     return handleApiError(error, 'Failed to update the area of interest');

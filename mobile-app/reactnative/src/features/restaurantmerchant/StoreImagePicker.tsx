@@ -6,8 +6,87 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { useUpdateStore } from './hooks';
 import { StoreImageUploadsUnavailableError } from './api';
-import { pickStoreImage, uploadStoreImage, StoreImageError } from './storeImageUpload';
-import type { StoreImageKind } from './storeImages';
+import { pickStoreImage, uploadStoreImage, StoreImageError, type PickedStoreImage } from './storeImageUpload';
+
+/** The two storefront pictures — the same layout serves both an existing outlet (upload
+ *  straight away) and set-up (hold the pick until the outlet exists). */
+type FacadeKind = 'logo' | 'banner';
+
+/**
+ * The banner and logo themselves: two tap targets over one picture of the storefront,
+ * the wide banner with the square logo sitting on its corner, plus the hint about sizes
+ * and the error line. Shared so the two pickers below cannot drift apart in look.
+ */
+function StorefrontFacade({
+  bannerUri, logoUri, busy, error, onPressKind, onBroken,
+}: {
+  bannerUri?: string | null;
+  logoUri?: string | null;
+  busy: FacadeKind | null;
+  error: string | null;
+  onPressKind: (kind: FacadeKind) => void;
+  onBroken?: (kind: FacadeKind) => void;
+}) {
+  const showBanner = !!bannerUri;
+  const showLogo = !!logoUri;
+  return (
+    <View style={styles.wrap}>
+      <View>
+        <Pressable
+          onPress={() => onPressKind('banner')}
+          style={styles.banner}
+          accessibilityRole="button"
+          accessibilityLabel={showBanner ? 'Change banner picture' : 'Add a banner picture'}
+        >
+          {showBanner ? (
+            <Image
+              source={{ uri: bannerUri! }}
+              style={styles.bannerImg}
+              resizeMode="cover"
+              onError={() => onBroken?.('banner')}
+            />
+          ) : (
+            <View style={styles.bannerEmpty}>
+              <Camera size={22} color={Colors.primary} />
+              <Text style={styles.emptyText}>Add a banner</Text>
+            </View>
+          )}
+          <View style={styles.badge}>
+            {busy === 'banner'
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Camera size={14} color="#fff" />}
+          </View>
+        </Pressable>
+
+        <Pressable
+          onPress={() => onPressKind('logo')}
+          style={styles.logo}
+          accessibilityRole="button"
+          accessibilityLabel={showLogo ? 'Change logo' : 'Add a logo'}
+        >
+          {showLogo ? (
+            <Image
+              source={{ uri: logoUri! }}
+              style={styles.logoImg}
+              resizeMode="cover"
+              onError={() => onBroken?.('logo')}
+            />
+          ) : (
+            <Store size={26} color={Colors.primary} />
+          )}
+          <View style={[styles.badge, styles.logoBadge]}>
+            {busy === 'logo'
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Camera size={12} color="#fff" />}
+          </View>
+        </Pressable>
+      </View>
+
+      <Text style={styles.hint}>Banner is wide (16:9), logo is square. PNG, JPG or WEBP, up to 8 MB.</Text>
+      {error ? <Text style={styles.error} accessibilityRole="alert">{error}</Text> : null}
+    </View>
+  );
+}
 
 /**
  * The store's banner and logo, with a way to change each. Tapping either opens the photo
@@ -23,11 +102,13 @@ export default function StoreImagePicker({
   bannerUrl?: string | null;
 }) {
   const update = useUpdateStore(storeId);
-  const [busy, setBusy] = useState<StoreImageKind | null>(null);
+  const [busy, setBusy] = useState<FacadeKind | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [broken, setBroken] = useState<Record<StoreImageKind, boolean>>({ logo: false, banner: false });
+  // A signed URL that has lapsed renders nothing; hide that picture and show the
+  // placeholder until the store is re-read.
+  const [broken, setBroken] = useState<Record<FacadeKind, boolean>>({ logo: false, banner: false });
 
-  const change = async (kind: StoreImageKind) => {
+  const change = async (kind: FacadeKind) => {
     if (busy) return;
     setError(null);
     try {
@@ -48,65 +129,65 @@ export default function StoreImagePicker({
     }
   };
 
-  const showBanner = !!bannerUrl && !broken.banner;
-  const showLogo = !!logoUrl && !broken.logo;
+  return (
+    <StorefrontFacade
+      bannerUri={broken.banner ? null : bannerUrl}
+      logoUri={broken.logo ? null : logoUrl}
+      busy={busy}
+      error={error}
+      onPressKind={change}
+      onBroken={(kind) => setBroken((b) => ({ ...b, [kind]: true }))}
+    />
+  );
+}
+
+export interface StorefrontDraft {
+  logo: PickedStoreImage | null;
+  banner: PickedStoreImage | null;
+}
+
+export const emptyStorefrontDraft = (): StorefrontDraft => ({ logo: null, banner: null });
+
+/**
+ * The same banner + logo pickers for a store that DOESN'T EXIST YET (restaurant set-up,
+ * "new outlet").
+ *
+ * The upload cannot happen here: the backend mints the presigned URL under the outlet's
+ * id, so there is nothing to sign against until the outlet is created. So the pick is
+ * held locally — shown from the phone's own file — and handed to the caller, which
+ * uploads both right after creating the outlet (see useCreateStoreWithImages).
+ */
+export function StorefrontDraftPicker({
+  value, onChange,
+}: {
+  value: StorefrontDraft;
+  onChange: (next: StorefrontDraft) => void;
+}) {
+  const [busy, setBusy] = useState<FacadeKind | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const pick = async (kind: FacadeKind) => {
+    if (busy) return;
+    setError(null);
+    setBusy(kind);
+    try {
+      const file = await pickStoreImage(kind);
+      if (file) onChange({ ...value, [kind]: file });
+    } catch (e) {
+      setError(e instanceof StoreImageError ? e.message : 'Couldn’t choose that picture. Try another one.');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
-    <View style={styles.wrap}>
-      <View>
-        <Pressable
-          onPress={() => change('banner')}
-          style={styles.banner}
-          accessibilityRole="button"
-          accessibilityLabel={showBanner ? 'Change banner picture' : 'Add a banner picture'}
-        >
-          {showBanner ? (
-            <Image
-              source={{ uri: bannerUrl! }}
-              style={styles.bannerImg}
-              resizeMode="cover"
-              onError={() => setBroken((b) => ({ ...b, banner: true }))}
-            />
-          ) : (
-            <View style={styles.bannerEmpty}>
-              <Camera size={22} color={Colors.primary} />
-              <Text style={styles.emptyText}>Add a banner</Text>
-            </View>
-          )}
-          <View style={styles.badge}>
-            {busy === 'banner'
-              ? <ActivityIndicator size="small" color="#fff" />
-              : <Camera size={14} color="#fff" />}
-          </View>
-        </Pressable>
-
-        <Pressable
-          onPress={() => change('logo')}
-          style={styles.logo}
-          accessibilityRole="button"
-          accessibilityLabel={showLogo ? 'Change logo' : 'Add a logo'}
-        >
-          {showLogo ? (
-            <Image
-              source={{ uri: logoUrl! }}
-              style={styles.logoImg}
-              resizeMode="cover"
-              onError={() => setBroken((b) => ({ ...b, logo: true }))}
-            />
-          ) : (
-            <Store size={26} color={Colors.primary} />
-          )}
-          <View style={[styles.badge, styles.logoBadge]}>
-            {busy === 'logo'
-              ? <ActivityIndicator size="small" color="#fff" />
-              : <Camera size={12} color="#fff" />}
-          </View>
-        </Pressable>
-      </View>
-
-      <Text style={styles.hint}>Banner is wide (16:9), logo is square. PNG, JPG or WEBP, up to 8 MB.</Text>
-      {error ? <Text style={styles.error} accessibilityRole="alert">{error}</Text> : null}
-    </View>
+    <StorefrontFacade
+      bannerUri={value.banner?.uri}
+      logoUri={value.logo?.uri}
+      busy={busy}
+      error={error}
+      onPressKind={pick}
+    />
   );
 }
 

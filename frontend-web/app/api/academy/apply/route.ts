@@ -5,6 +5,18 @@ import { ApiError, errorResponse, handleApiError, successResponse } from '@/src/
 import { requireRequestUser, type RequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getActiveAcademySettings, getBatchAreaSlugs } from '@/src/server/services/academy';
+import {
+  ACADEMY_DELIVERABLES,
+  ACADEMY_FEE_EXCLUSIONS,
+  ACADEMY_PRICING_FALLBACK_KEY,
+  ACADEMY_PRICING_STRUCTURE,
+  attachPricingOptions,
+  isPricingKey,
+  pricingDefinition,
+  tuitionForFormat,
+  type AcademyPricingKey,
+  type AreaPricingOptionRow,
+} from '@/src/server/services/academy/pricing';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
 import { verifyPaystackTransaction } from '@/src/lib/payments';
 import {
@@ -207,6 +219,37 @@ async function getOptionalRequestUser(request: Request) {
  */
 const MAX_INTEREST_AREAS_PER_APPLICATION = 2;
 
+/**
+ * Parse `area_selections: [{slug, key}]` into {slug: key}, or null when the
+ * client used the legacy flat shape. 'invalid' rejects unknown formats or a
+ * duplicated area before anything is priced.
+ */
+function parseAreaSelections(value: unknown): Record<string, AcademyPricingKey> | 'invalid' | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const out: Record<string, AcademyPricingKey> = {};
+  for (const item of value) {
+    const slug = getString((item as { slug?: unknown })?.slug);
+    const key = getString((item as { key?: unknown })?.key);
+    if (!slug || !isPricingKey(key)) return 'invalid';
+    if (out[slug]) return 'invalid';
+    out[slug] = key;
+  }
+  return out;
+}
+
+/** Tuition when each area carries its own format — the sum of the chosen subs. */
+function tuitionForSelections(
+  areas: Array<{ id: string; slug: string }>,
+  selections: Record<string, AcademyPricingKey>,
+  rows: AreaPricingOptionRow[],
+): number {
+  return areas.reduce((sum, a) => {
+    const key = selections[a.slug] ?? ACADEMY_PRICING_FALLBACK_KEY;
+    const row = rows.find((r) => r.area_id === a.id && r.key === key);
+    return sum + (row ? Number(row.price_ngn) : pricingDefinition(key).price_ngn);
+  }, 0);
+}
+
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -225,7 +268,23 @@ export async function POST(request: Request) {
     // Session-derived, never client-supplied — see getApplicantIdentity.
     const email = identity.email || getString(body.email);
     const phone = identity.phone || getString(body.phone);
-    const areasOfInterest = getStringArray(body.areas_of_interest);
+    // Accordion selection: the client may send each area WITH its own format —
+    // {"areas_of_interest": ["acting"], "area_selections": [{slug, key}]}.
+    // When present, the selections are authoritative and define the areas.
+    const areaSelections = parseAreaSelections(body.area_selections);
+    if (areaSelections === 'invalid') {
+      return errorResponse('Each selection needs a known area and a valid training format', 400);
+    }
+    const areasOfInterest = areaSelections
+      ? Object.keys(areaSelections)
+      : getStringArray(body.areas_of_interest);
+    // Which training format the tuition is priced in. Optional: a client from
+    // before this structure sends nothing, and is priced in the cheapest
+    // (weekend, no boarding) format rather than the retired per-area fee.
+    const pricingOptionKey = getString(body.pricing_option_key);
+    if (pricingOptionKey && !isPricingKey(pricingOptionKey)) {
+      return errorResponse('Unknown training format', 400);
+    }
     const motivation = getString(body.motivation);
     const experience = getString(body.experience);
     const now = new Date().toISOString();
@@ -250,19 +309,19 @@ export async function POST(request: Request) {
     }
     if (!motivation) return errorResponse('Motivation is required', 400);
 
-    // The fee is the BASE application fee plus the fee of every area the
-    // applicant selected. Computed HERE from the admin-managed rows: the client
-    // renders a running total for the user's benefit, but it could claim any
-    // number, so nothing it sends is used in this sum.
+    // TUITION is priced from the admin-managed rows: the chosen format's price
+    // for every area the applicant selected. Computed HERE — the client renders
+    // a running total for the user's benefit, but it could claim any number, so
+    // nothing it sends is used in this sum.
     const { data: areaRows, error: areaError } = await supabase
       .from('academy_interest_areas')
-      .select('slug, fee_ngn, is_active')
+      .select('id, slug, fee_ngn, is_active')
       .in('slug', areasOfInterest);
     if (areaError) throw areaError;
 
     const activeAreas = (areaRows ?? []).filter(
       (a) => (a as { is_active: boolean }).is_active,
-    );
+    ) as Array<{ id: string; slug: string; fee_ngn: number | null }>;
 
     // An unknown or retired slug must not silently price at zero — that would
     // let a crafted request buy a cheaper application. Reject it instead.
@@ -272,31 +331,45 @@ export async function POST(request: Request) {
       return errorResponse(`Unknown area of interest: ${bad.join(', ')}`, 400);
     }
 
-    // A batch may offer only a subset. Selecting one it does not offer is
-    // rejected here rather than quietly charged — the client filters the list,
-    // but the client is not what decides.
+    // A batch offers EXACTLY the trainings linked to it. Selecting one it does
+    // not offer is rejected here rather than quietly charged — the client
+    // filters the list, but the client is not what decides. A batch with no
+    // trainings linked yet offers nothing and accepts no application; the admin
+    // console requires at least one training before a batch can be saved.
     const offered = await getBatchAreaSlugs(supabase, batchId);
-    if (offered.length > 0) {
-      const notOffered = areasOfInterest.filter((a) => !offered.includes(a));
-      if (notOffered.length > 0) {
-        return errorResponse(
-          `This batch does not offer: ${notOffered.join(', ')}`,
-          400,
-        );
-      }
+    if (offered.length === 0) {
+      return errorResponse(
+        'This batch has no trainings configured yet — please choose another batch.',
+        409,
+      );
+    }
+    const notOffered = areasOfInterest.filter((a) => !offered.includes(a));
+    if (notOffered.length > 0) {
+      return errorResponse(
+        `This batch does not offer: ${notOffered.join(', ')}`,
+        400,
+      );
     }
 
-    // TUITION, not an application fee. academy_interest_areas.fee_ngn is the
-    // cost of TAKING that area — payable on acceptance and refundable. It is
-    // recorded against the application for later billing and is deliberately
-    // NOT part of what is charged now.
+    // TUITION, not an application fee. The composite format table prices each
+    // selected area — payable on acceptance and refundable. It is recorded
+    // against the application for later billing and is deliberately NOT part
+    // of what is charged now.
     // This was previously added to the amount collected at submit, which would
     // have taken ~₦255,000 up front, non-refundably, for a Film Directing
     // application nobody had reviewed yet.
-    const tuitionTotal = activeAreas.reduce(
-      (sum, a) => sum + Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
-      0,
-    );
+    const effectivePricingKey: AcademyPricingKey = isPricingKey(pricingOptionKey)
+      ? pricingOptionKey
+      : ACADEMY_PRICING_FALLBACK_KEY;
+    const { data: tuitionOptionRows, error: tuitionOptionsError } = await supabase
+      .from('academy_area_pricing_options')
+      .select('area_id, key, label, note, price_ngn, sort_order')
+      .in('area_id', activeAreas.map((a) => a.id));
+    if (tuitionOptionsError) throw tuitionOptionsError;
+    const optionRows = (tuitionOptionRows ?? []) as AreaPricingOptionRow[];
+    const tuitionTotal = areaSelections
+      ? tuitionForSelections(activeAreas, areaSelections, optionRows)
+      : tuitionForFormat(activeAreas, effectivePricingKey, optionRows);
 
     // The only thing payable at APPLICATION time. Non-refundable per
     // academy_settings.application_fee_refundable.
@@ -514,6 +587,15 @@ export async function POST(request: Request) {
       // Frozen at application time: repricing an area later must not change what
       // a past applicant appears to owe.
       tuition_total_ngn: tuitionTotal,
+      // The format the tuition above was priced in. With per-area selections it
+      // is recorded only when every area shares one format, for readers of the
+      // single-key column; pricing_selections then carries the full map.
+      pricing_option_key: areaSelections
+        ? (Object.values(areaSelections).every((k) => k === Object.values(areaSelections)[0])
+            ? Object.values(areaSelections)[0]
+            : null)
+        : (pricingOptionKey || null),
+      pricing_selections: areaSelections ?? null,
       terms_accepted: true,
       terms_accepted_at: now,
     };
@@ -632,32 +714,53 @@ export async function GET(request: Request) {
 
     const settings = await getActiveAcademySettings();
 
-    // Admin-managed areas of interest, each carrying a NAIRA fee added to the
-    // base application_fee. Returned so the client can show a running total —
-    // same rows.
+    // Admin-managed areas of interest. Applicants are priced by the composite
+    // format structure (academy_area_pricing_options) — five formats per area,
+    // delivered alongside each area so the form can show the real price for
+    // the format chosen. fee_ngn travels only so an older client still renders.
     const { data: areaRows } = await supabase
       .from('academy_interest_areas')
-      .select('slug, label, description, fee_ngn')
+      .select('id, slug, label, description, fee_ngn')
       .eq('is_active', true)
       .order('sort_order', { ascending: true });
 
-    // from this map offers everything — that is how batches created before the
-    // feature keep working.
+    const { data: areaOptionRows } = await supabase
+      .from('academy_area_pricing_options')
+      .select('area_id, key, label, note, price_ngn, sort_order');
+
+    // Every batch carries an entry here, possibly empty: a batch offers
+    // EXACTLY the trainings linked to it, and an empty entry means it offers
+    // nothing yet. Only a COMPLETELY absent map (an older server) still means
+    // "unrestricted" to the clients.
     const { data: batchAreaRows } = await supabase
       .from('academy_batch_interest_areas')
       .select('batch_id, area_slug')
       .in('batch_id', batches.map((b) => b.id));
 
     const batchAreas: Record<string, string[]> = {};
+    for (const b of batches) batchAreas[b.id] = [];
     for (const row of (batchAreaRows ?? []) as Array<{ batch_id: string; area_slug: string }>) {
       (batchAreas[row.batch_id] ??= []).push(row.area_slug);
     }
 
-    const interestAreas = (areaRows ?? []).map((a) => ({
-      slug: String((a as { slug: string }).slug),
-      label: String((a as { label: string }).label),
-      description: (a as { description: string | null }).description ?? null,
-      fee_ngn: Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
+    const pricedAreas = attachPricingOptions(
+      ((areaRows ?? []) as Array<{ id: string; slug: string; label: string;
+        description: string | null; fee_ngn: number | null }>).map((a) => ({
+        id: a.id,
+        slug: String(a.slug),
+        label: String(a.label),
+        description: a.description ?? null,
+        fee_ngn: Number(a.fee_ngn ?? 0),
+      })),
+      (areaOptionRows ?? []) as AreaPricingOptionRow[],
+    );
+    // The uuid keyed the pricing rows — it is not part of the client contract.
+    const interestAreas = pricedAreas.map((a) => ({
+      slug: a.slug,
+      label: a.label,
+      description: a.description,
+      fee_ngn: a.fee_ngn,
+      pricing_options: a.pricing_options,
     }));
 
     // The cap travels WITH the catalogue so the client never hardcodes its own
@@ -666,6 +769,15 @@ export async function GET(request: Request) {
       success: true, batches, appliedBatchIds, settings, interestAreas, batchAreas,
       maxInterestAreas: MAX_INTEREST_AREAS_PER_APPLICATION,
       applicant,
+      // Format identity only — the prices live in each area's pricing_options,
+      // so the structure can never drift from what an area is actually priced
+      // at. Deliverables and fee exclusions travel the same way: no client
+      // hardcodes this copy.
+      pricingStructure: ACADEMY_PRICING_STRUCTURE.map(({ key, label, note, sort_order }) => ({
+        key, label, note, sort_order,
+      })),
+      deliverables: ACADEMY_DELIVERABLES,
+      feeExclusions: ACADEMY_FEE_EXCLUSIONS,
     });
   } catch (error) {
     return handleApiError(error, 'Failed to load batches');

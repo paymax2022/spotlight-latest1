@@ -4089,13 +4089,33 @@ components:
         reason_code: { type: string }
         notes: { type: string, nullable: true }
 
-    MktBoostTier:
+    MktBoostPricing:
       type: object
+      description: >
+        The public boost price catalog. One number sets everything — the admin's
+        ₦/day rate (mkt_boost_daily_rate, editable at any time in the marketplace
+        pricing console) — and every duration, preset or custom, is priced by it.
       properties:
-        tier: { type: string, description: "A preset package tier, or 'custom' for a date-range boost." }
-        duration_days: { type: integer }
-        price_kobo: { type: integer, format: int64 }
-        weight: { type: number, description: "Additive search-rank weight (ES function_score boost_mode:sum)." }
+        daily_rate_kobo: { type: integer, format: int64, description: "Seeded at 10000 (₦100/day)." }
+        preset_duration_days: { type: array, items: { type: integer }, description: "Durations the purchase screen offers as one tap." }
+        min_duration_days: { type: integer }
+        max_duration_days: { type: integer }
+
+    MktBoostedListing:
+      allOf:
+        - $ref: '#/components/schemas/MktListing'
+        - type: object
+          properties:
+            boosted: { type: boolean }
+            boost_remaining_kobo:
+              type: integer
+              format: int64
+              description: >
+                UNSPENT value of this listing's live boosts, pro-rated the same
+                way CancelBoost refunds (never rounded up in the seller's
+                favour) and summed across them. This is what orders the promoted
+                section — most money left promotes first.
+            boost_ends_at: { type: string, format: date-time }
 
     MktBoost:
       type: object
@@ -4118,23 +4138,22 @@ components:
       type: object
       required: [listing_id]
       description: >
-        Exactly ONE of `tier` (a preset package) or `ends_at` (a custom
-        date-range boost, priced by the admin-set ₦/day rate — starts
-        immediately at purchase time, ends_at rounds UP to the next whole day)
-        is expected. GET /boosts/quote resolves either into the same price
-        before the caller commits to this request.
+        Exactly ONE of `duration_days` (a whole-day boost starting now) or
+        `ends_at` (a boost ending at a chosen moment, billed in whole days
+        rounded UP) is expected. There is no price in this request: the server
+        prices every boost as duration × the admin's ₦/day rate.
+        GET /boosts/quote resolves the same price before the caller commits.
       properties:
         listing_id: { type: string, format: uuid }
-        tier: { type: string, description: "A preset package tier from GET /boosts/tiers. Omit for a custom date-range boost." }
-        ends_at: { type: string, format: date-time, description: "Custom-boost end date+time. Omit tier when set." }
+        duration_days: { type: integer, description: "Whole days, between min_duration_days and max_duration_days from GET /boosts/pricing." }
+        ends_at: { type: string, format: date-time, description: "End date+time. Omit duration_days when set." }
 
     MktBoostQuote:
       type: object
       description: Server-authoritative price preview for a would-be boost purchase (GET /boosts/quote).
       properties:
-        mode: { type: string, enum: [package, custom] }
-        tier: { type: string, nullable: true }
         duration_days: { type: integer }
+        daily_rate_kobo: { type: integer, format: int64, description: "The admin rate this price was computed from, so the client can show the arithmetic." }
         price_kobo: { type: integer, format: int64 }
         weight: { type: number }
         starts_at: { type: string, format: date-time }
@@ -16565,30 +16584,51 @@ paths:
   # via any path.
 
   # ── Boosts ─────────────────────────────────────────────────────────────
-  /v1/marketplace/boosts/tiers:
+  /v1/marketplace/boosted:
     get:
-      operationId: mktListBoostTiers
-      summary: List boost tiers/pricing (backend-owned)
+      operationId: mktListBoostedListings
+      summary: The promoted section — listings with a live boost, most unspent value first
+      description: >
+        Public. Returns active listings carrying at least one active, unexpired
+        boost, ordered by the boost value still undelivered (money left), and
+        flagged `boosted`. Buyer-facing fields only — never the seller's
+        recorded coordinates.
       tags: [Marketplace]
-      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 20 } }
       responses:
         '200':
-          description: Boost tier list
+          description: Promoted listings
           content:
             application/json:
-              schema: { type: array, items: { $ref: '#/components/schemas/MktBoostTier' } }
+              schema:
+                type: object
+                properties:
+                  results: { type: array, items: { $ref: '#/components/schemas/MktBoostedListing' } }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+  /v1/marketplace/boosts/pricing:
+    get:
+      operationId: mktGetBoostPricing
+      summary: The boost price catalog — the admin's ₦/day rate and the durations it prices
+      tags: [Marketplace]
+      responses:
+        '200':
+          description: Boost pricing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostPricing' }
   /v1/marketplace/boosts/quote:
     get:
       operationId: mktGetBoostQuote
       summary: Preview a boost's authoritative price before purchasing
       description: >
-        Pass EITHER `tier` (a preset package) OR `ends_at` (a custom
-        date-range boost, RFC3339). Public — no auth required, pricing info
-        only. PurchaseBoost resolves the SAME quote server-side, so the price
-        shown here and what is actually charged can never drift.
+        Pass EITHER `duration_days` OR `ends_at` (RFC3339). Public — no auth
+        required, pricing info only. PurchaseBoost resolves the SAME quote
+        server-side, so the price shown here and what is actually charged can
+        never drift.
       tags: [Marketplace]
       parameters:
-        - { name: tier, in: query, required: false, schema: { type: string } }
+        - { name: duration_days, in: query, required: false, schema: { type: integer } }
         - { name: ends_at, in: query, required: false, schema: { type: string, format: date-time } }
       responses:
         '200':

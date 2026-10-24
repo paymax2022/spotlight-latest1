@@ -21,21 +21,44 @@ type Repository struct {
 // NewRepository builds a voting repository.
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
+// The slug is COALESCEd to '' because connect_contests.slug is nullable: rows
+// inserted straight into connect_contests (fixtures, mirrors with no contest
+// record) have none, and the admin console needs to distinguish "no slug" from
+// an unreadable row rather than scanning a NULL into a string.
 const contestColumns = `id, title, description, status, paid_vote_kobo,
-	free_votes_per_user, velocity_per_minute, opens_at, closes_at, created_at, rules_text, banner_image_url, logo_url`
+	free_votes_per_user, velocity_per_minute, opens_at, closes_at, created_at, rules_text, banner_image_url, logo_url,
+	COALESCE(slug, '') AS slug`
 
 // ListContests returns open/closed contests, newest first.
 func (r *Repository) ListContests(ctx context.Context, limit int) ([]Contest, error) {
 	return r.ListContestsByStatus(ctx, limit, []string{"open", "closed"})
 }
 
+// A caller that names no limit gets contestListDefaultLimit; contestListMaxLimit
+// is a ceiling the request is CLAMPED to, not a tripwire back to the default.
+// Sending 500 used to silently return 50, which reads as "these are all the
+// contests" to an admin console with no pager.
+const (
+	contestListDefaultLimit = 50
+	contestListMaxLimit     = 500
+)
+
+// contestListLimit resolves a requested page size to what the query will use.
+func contestListLimit(limit int) int {
+	if limit <= 0 {
+		return contestListDefaultLimit
+	}
+	if limit > contestListMaxLimit {
+		return contestListMaxLimit
+	}
+	return limit
+}
+
 // ListContestsByStatus is ListContests narrowed to the given stored statuses.
 // statuses must come from contestStatusFilter (an allowlist); it is bound as a
 // parameter, never concatenated.
 func (r *Repository) ListContestsByStatus(ctx context.Context, limit int, statuses []string) ([]Contest, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
+	limit = contestListLimit(limit)
 	const q = `SELECT ` + contestColumns + `,
 			(SELECT COUNT(*) FROM contestants ct
 			  WHERE ct.connect_contest_id = connect_contests.id AND ct.is_active) AS contestant_count,
@@ -75,7 +98,7 @@ func scanContest(s rowScanner) (*Contest, error) {
 	if err := s.Scan(
 		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
 		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
-		&c.RulesText, &c.BannerImageURL, &c.LogoURL,
+		&c.RulesText, &c.BannerImageURL, &c.LogoURL, &c.Slug,
 	); err != nil {
 		return nil, err
 	}
@@ -89,7 +112,7 @@ func scanContestWithCounts(s rowScanner) (*Contest, error) {
 	if err := s.Scan(
 		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
 		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
-		&c.RulesText, &c.BannerImageURL, &c.LogoURL, &c.ContestantCount, &c.TotalVotes,
+		&c.RulesText, &c.BannerImageURL, &c.LogoURL, &c.Slug, &c.ContestantCount, &c.TotalVotes,
 	); err != nil {
 		return nil, err
 	}

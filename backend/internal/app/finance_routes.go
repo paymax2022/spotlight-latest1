@@ -72,6 +72,7 @@ import (
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
+	"spotlight/backend/internal/provider/dojah"
 	"spotlight/backend/internal/provider/monnify"
 	"spotlight/backend/internal/provider/paystack"
 	"spotlight/backend/internal/realtor"
@@ -1747,8 +1748,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
 		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
 		restGroup.POST("/:id/kyb/documents/presign", restaurantHandler.PresignKYBDocument)
-		// Logo / banner uploads: same private-bucket presign flow as the KYB documents, scoped to
-		// the store and gated on the store-management permission inside the service.
+		// Store / menu picture uploads: same private-bucket presign flow as the KYB
+		// documents, scoped to the store and gated inside the service (logo+banner on the
+		// store-management permission, a dish photo on the menu one). kind is logo|banner|menu.
 		restGroup.POST("/:id/images/presign", restaurantHandler.PresignStoreImage)
 		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
 		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
@@ -3258,6 +3260,34 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		docGroup.POST("/profile/photo", doctorHandler.SetProfilePhoto)
 		docGroup.PUT("/profile/tax-info", doctorHandler.UpdateTaxInfo)
 
+		// Nigerian geography for the doctor profile address pickers
+		// (affiliations state/city). Proxies Dojah's Wallet Utilities —
+		// GET /api/v1/general/states and /states/lgas. Read-only reference
+		// data; returns 503 when Dojah is unconfigured so the app can fall
+		// back to a static list.
+		dojahGeo := dojah.New(cfg.DojahAppID, cfg.DojahSecretKey, cfg.DojahProd)
+		docGroup.GET("/geo/states", func(c *gin.Context) {
+			states, err := dojahGeo.ListStates(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{keyError: err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"states": states})
+		})
+		docGroup.GET("/geo/lgas", func(c *gin.Context) {
+			state := c.Query("state")
+			if state == "" {
+				c.JSON(http.StatusBadRequest, gin.H{keyError: "state query param is required"})
+				return
+			}
+			lgas, err := dojahGeo.ListLgas(c.Request.Context(), state)
+			if err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{keyError: err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"lgas": lgas})
+		})
+
 		// Payouts reads + account + dispute (doctor_payouts / _bank_accounts / settlement_disputes).
 		// :id keeps a single gin wildcard tree position under /payouts.
 		docGroup.GET("/payouts", doctorHandler.ListPayouts)
@@ -3435,13 +3465,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			if cfg.IsProd() {
 				quidaxKey, quidaxBase = cfg.CryptoQuidaxLiveKey, cfg.CryptoQuidaxLiveBaseURL
 			}
+			// Money-IN settler, built before Wire so the deposit reconciler starts over the
+			// SAME once-only settler the webhook uses. It re-queries the provider and credits
+			// the resolved owner's holdings exactly once, confirmation-gated; the recipient
+			// comes from crypto_accounts, never the payload.
+			depositSettler := newCryptoDepositSettler(pool, cfg.CryptoDepositConfirmations)
 			wired, werr := cryptosvc.Wire(ctx, cryptosvc.WireConfig{
 				Provider: cfg.CryptoProvider, QuidaxKey: quidaxKey, QuidaxBaseURL: quidaxBase,
 				WebhookSecret: cfg.CryptoWebhookSecret, DatabaseURL: cfg.DatabaseURL,
-				LockPoolConns:     cfg.CryptoLockPoolConns,
-				ReconcileInterval: time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
-				Fees:              cryptosvc.DefaultFeeSchedule(),
-			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc})
+				LockPoolConns:            cfg.CryptoLockPoolConns,
+				ReconcileInterval:        time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
+				DepositReconcileInterval: time.Duration(cfg.CryptoDepositReconcileSeconds) * time.Second,
+				Fees:                     cryptosvc.DefaultFeeSchedule(),
+			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc, DepositSettler: depositSettler})
 			if werr != nil {
 				log.Printf("[crypto] swap pipeline NOT mounted: %v", werr)
 			} else {
@@ -3460,7 +3496,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				swapAdmin := cryptoV1.Group("/admin/crypto")
 				swapAdmin.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermAdmin))
 				cryptosvc.RegisterAdminRoutes(swapAdmin, wired.Deps)
-				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, reconciler running)")
+				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, swap + deposit reconcilers running)")
 			}
 		}
 	} else {

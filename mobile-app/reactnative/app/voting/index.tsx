@@ -17,6 +17,7 @@ import { useContestants } from '@/features/voting/hooks/useContestants';
 import { useLeaderboard } from '@/features/voting/hooks/useLeaderboard';
 import { useFreeVoteAllocation } from '@/features/voting/hooks/useVote';
 import ContestCard from '@/features/voting/components/ContestCard';
+import NoContestsState from '@/features/voting/components/NoContestsState';
 import ContestStatusBadge from '@/features/voting/components/ContestStatusBadge';
 import FreeVoteBadge from '@/features/voting/components/FreeVoteBadge';
 import LeaderboardRow from '@/features/voting/components/LeaderboardRow';
@@ -31,7 +32,10 @@ export default function VotingHomeScreen() {
   const { user } = useAuthStore();
   const firstName = user?.fullName?.split(' ')[0] ?? 'there';
 
-  const { data: contests, isLoading: loadingContests, refetch, isRefetching } = useContests({ status: 'LIVE' });
+  // 'active', not 'LIVE': the Go connect handler allowlists active|closed|all
+  // and answers anything else with 400 "invalid status: use active, closed or
+  // all", which used to blank this whole screen.
+  const { data: contests, isLoading: loadingContests, refetch, isRefetching } = useContests({ status: 'active' });
 
   // The featured contest is whichever live contest comes first — NOT a
   // hardcoded id. Pointing these at a fixed mock id ('c1') meant the leaderboard
@@ -115,27 +119,28 @@ export default function VotingHomeScreen() {
           </View>
         )}
 
-        {/* Active contests carousel */}
-        <SectionHeader
-          title="Active Contests"
-          actionLabel="View All"
-          onAction={() => router.push('/voting/contests')}
-        />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.carousel}>
-          {liveContests.map((contest) => (
-            <ContestCard
-              key={contest.id}
-              contest={contest}
-              onPress={() => router.push(`/voting/contest-details?contestId=${contest.id}`)}
-              style={styles.contestCardH}
+        {/* Active contests carousel — or the island, when there are none */}
+        {loadingContests ? null : liveContests.length === 0 ? (
+          <NoContestsState />
+        ) : (
+          <>
+            <SectionHeader
+              title="Active Contests"
+              actionLabel="View All"
+              onAction={() => router.push('/voting/contests')}
             />
-          ))}
-          {liveContests.length === 0 && !loadingContests && (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyText}>No active contests right now.</Text>
-            </View>
-          )}
-        </ScrollView>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.carousel}>
+              {liveContests.map((contest) => (
+                <ContestCard
+                  key={contest.id}
+                  contest={contest}
+                  onPress={() => router.push(`/voting/contest-details?contestId=${contest.id}`)}
+                  style={styles.contestCardH}
+                />
+              ))}
+            </ScrollView>
+          </>
+        )}
 
         {/* Leaderboard preview — hidden when the organiser disables it */}
         {featuredContest?.showLeaderboard !== false && topEntries.length > 0 && (
@@ -214,8 +219,6 @@ const styles = StyleSheet.create({
   loader:       { paddingVertical: Spacing.xl, alignItems: 'center' },
   carousel:     { paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, paddingBottom: Spacing.sm },
   contestCardH: { width: 240 },
-  emptyCard:    { padding: Spacing.xl, alignItems: 'center' },
-  emptyText:    { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   leaderCard: {
     backgroundColor:  Colors.surfaceContainerLowest,
     borderRadius:     Radius.xl,

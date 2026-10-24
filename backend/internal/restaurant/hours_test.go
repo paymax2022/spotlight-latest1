@@ -1,6 +1,7 @@
 package restaurant
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -136,5 +137,47 @@ func TestEffectiveOpen(t *testing.T) {
 	}
 	if effectiveOpen(true, hours, outside, time.UTC) {
 		t.Error("on + outside hours ⇒ closed")
+	}
+}
+
+// The refusal a customer gets has to say when the kitchen takes the order, in terms they
+// can act on — "today at 18:00", "tomorrow at 10:00", "Friday at 09:30".
+func TestDescribeNextOpen(t *testing.T) {
+	mon := at(2026, 7, 27, 20, 0) // Monday 20:00
+	for _, c := range []struct {
+		next time.Time
+		want string
+	}{
+		{at(2026, 7, 27, 22, 30), "at 22:30"},
+		{at(2026, 7, 28, 10, 0), "tomorrow at 10:00"},
+		{at(2026, 7, 31, 9, 30), "Friday at 09:30"},
+	} {
+		if got := describeNextOpen(mon, c.next, time.UTC); got != c.want {
+			t.Errorf("describeNextOpen(mon 20:00 → %s) = %q, want %q", c.next.Format("Mon 15:04"), got, c.want)
+		}
+	}
+}
+
+// A window the owner cannot have meant is refused rather than stored: 24:00 as an opening
+// time, and an open==close zero-length window would make the store permanently closed
+// while looking scheduled.
+func TestValidateAndNormalizeRejectsImpossibleWindows(t *testing.T) {
+	mon := int(time.Monday)
+	for _, bad := range [][]BusinessHourInput{
+		{{DayOfWeek: mon, Open: "24:00", Close: "23:00"}},
+		{{DayOfWeek: mon, Open: "09:00", Close: "09:00"}},
+		{{DayOfWeek: 7, Open: "09:00", Close: "17:00"}},
+		{{DayOfWeek: mon, Open: "9am", Close: "17:00"}},
+	} {
+		if _, err := validateAndNormalize(bad); !errors.Is(err, ErrBusinessHourInvalid) {
+			t.Errorf("validateAndNormalize(%+v) = %v, want ErrBusinessHourInvalid", bad, err)
+		}
+	}
+	out, err := validateAndNormalize([]BusinessHourInput{{DayOfWeek: mon, Open: "20:00", Close: "02:00"}})
+	if err != nil {
+		t.Fatalf("overnight window should be accepted: %v", err)
+	}
+	if out[0].OpenMinute != 1200 || out[0].CloseMinute != 120 {
+		t.Errorf("overnight window normalized to %d–%d, want 1200–120", out[0].OpenMinute, out[0].CloseMinute)
 	}
 }

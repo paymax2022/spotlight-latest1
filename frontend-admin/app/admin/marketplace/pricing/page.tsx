@@ -62,7 +62,7 @@ export default function PricingPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="Marketplace — Pricing & Monetisation"
-        subtitle="Boost packages, platform commission, discount codes, and featured-slot inventory."
+        subtitle="Boost pricing, platform commission, discount codes, and featured-slot inventory."
         action={<button onClick={() => void load()} style={btn()}>Refresh</button>}
       />
       <MarketplaceTabs active="pricing" />
@@ -82,7 +82,7 @@ export default function PricingPage() {
           />
           {dailyRate && (
             <DailyRateCard rate={dailyRate} canEdit={canEdit} busy={busy === 'daily-rate'}
-              onSave={(kobo, reason) => run('daily-rate', async () => { const r = await setBoostDailyRate(kobo, reason); setDailyRateState(r); setMsg(`Custom-boost daily rate set to ${formatKobo(r.daily_rate_kobo)}/day. Audit entry recorded.`); })}
+              onSave={(kobo, reason) => run('daily-rate', async () => { const r = await setBoostDailyRate(kobo, reason); setDailyRateState(r); setMsg(`Boost daily rate set to ${formatKobo(r.daily_rate_kobo)}/day. Audit entry recorded.`); })}
             />
           )}
           {commission && (
@@ -109,7 +109,12 @@ function BoostPackagesCard({ packages, canEdit, busy, onSave }: { packages: MktB
   const patch = (tier: string, base: MktBoostPackage, k: string, v: string | boolean) => setDraft((d) => ({ ...d, [tier]: { ...rowOf(base), [k]: v } }));
 
   return (
-    <Card title="Boost packages (MO-002)">
+    <Card title="Boost packages (no longer sold)">
+      <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 0, marginBottom: '0.75rem' }}>
+        These fixed bundles were retired as a purchase option: boosts are now priced by the
+        <strong> ₦ per day</strong> card above (duration × rate), which is what the mobile Boost
+        screen charges. The rows remain editable for history and for boosts already purchased.
+      </p>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead><tr><th style={th()}>Tier</th><th style={th()}>Price (₦)</th><th style={th()}>Duration (days)</th><th style={th()}>Search weight</th><th style={th()}>Active</th><th style={th()}>reason</th><th style={th()}></th></tr></thead>
         <tbody>
@@ -143,14 +148,17 @@ function DailyRateCard({ rate, canEdit, busy, onSave }: { rate: MktBoostDailyRat
   const [naira, setNaira] = useState(String(rate.daily_rate_kobo / 100));
   const [reason, setReason] = useState('');
   return (
-    <Card title="Custom boost daily rate (MO-002)">
+    <Card title="Boost price — ₦ per day (MO-002)">
       <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 0, marginBottom: '0.75rem' }}>
-        Prices a buyer&apos;s own start-date+time / end-date+time boost on the mobile Boost screen — duration (rounded up to whole days) × this rate.
+        The single number that prices every boost. A seller picking 7 days pays 7 × this rate;
+        a buyer picking an exact end date is billed in whole days rounded up. Change it here and
+        the mobile Boost screen reprices on the next load — already-purchased boosts keep the
+        price frozen on their row.
       </p>
       <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div>
           <label style={lbl()}>₦ per day</label>
-          <input style={{ ...input(), width: 120 }} value={naira} onChange={(e) => setNaira(e.target.value)} placeholder="e.g. 100" />
+          <input style={{ ...input(), width: 120 }} type="number" min={1} step="any" value={naira} onChange={(e) => setNaira(e.target.value)} placeholder="e.g. 100" />
         </div>
         <div style={{ flex: 1, minWidth: 180 }}>
           <label style={lbl()}>reason_code</label>

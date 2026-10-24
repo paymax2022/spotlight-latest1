@@ -11,48 +11,78 @@ import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, WizardProgress, InfoRow } from '@/features/doctor/components';
-import { useProfileDraft, useSaveBankAccount, useSaveProfileDraft } from '@/features/doctor/hooks';
+import { useProfileDraft, useSaveBankAccount, useSaveProfileDraft, useVerifyBankAccount } from '@/features/doctor/hooks';
 import { BANK_LIST } from '@/features/doctor/constants';
 import type { BankAccount } from '@/types/doctor.profile';
+
+interface VerifiedAccount {
+  accountName: string;
+  accountNumberMasked: string;
+}
 
 export default function BankAccountScreen() {
   const { data: draft, isLoading, isError, refetch } = useProfileDraft();
   const saveBank = useSaveBankAccount();
+  const verify = useVerifyBankAccount();
   const saveDraft = useSaveProfileDraft();
 
   const [bankName, setBankName] = useState<string | undefined>();
   const [accountNumber, setAccountNumber] = useState('');
-  const [resolved, setResolved] = useState<BankAccount | undefined>();
+  // The account-holder name RETURNED by the provider (Monnify name enquiry).
+  // Continue saves the account — that click is the user's affirmation.
+  const [verified, setVerified] = useState<VerifiedAccount | undefined>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    if (draft?.bankAccount && !resolved && !bankName) {
+    if (draft?.bankAccount && !bankName) {
       setBankName(draft.bankAccount.bankName);
       setAccountNumber(draft.bankAccount.accountNumber);
-      setResolved(draft.bankAccount);
+      if (draft.bankAccount.isVerified && draft.bankAccount.accountName) {
+        setVerified({
+          accountName: draft.bankAccount.accountName,
+          accountNumberMasked: `****${draft.bankAccount.accountNumber.slice(-4)}`,
+        });
+      }
     }
-  }, [draft, resolved, bankName]);
+  }, [draft, bankName]);
 
   const canResolve = !!bankName && accountNumber.trim().length === 10;
 
   const resolve = async () => {
-    if (!bankName) return;
-    setError(undefined);
     const code = BANK_LIST.find((b) => b.name === bankName)?.code;
+    if (!code || !bankName) {
+      setError('Invalid bank selected. Please choose a bank from the list.');
+      return;
+    }
+    setError(undefined);
+    setVerified(undefined);
     try {
-      const res = await saveBank.mutateAsync({ bankName, bankCode: code, accountNumber: accountNumber.trim() });
-      setResolved(res.account);
+      const res = await verify.mutateAsync({ bankName, bankCode: code, accountNumber: accountNumber.trim() });
+      if (!res.accountName) {
+        setError('The bank could not confirm an account name for these details.');
+        return;
+      }
+      setVerified({ accountName: res.accountName, accountNumberMasked: res.accountNumberMasked });
     } catch {
-      setError('Could not resolve account. Check the details and try again.');
+      setError('Could not verify account. Check the details and try again.');
     }
   };
 
   const handleNext = async () => {
-    if (!draft) return;
+    if (!draft || !bankName || !verified) return;
+    const bankCode = BANK_LIST.find((b) => b.name === bankName)?.code;
     try {
-      await saveDraft.mutateAsync({ draft: { bankAccount: resolved, completedSteps: [...new Set([...draft.completedSteps, 'bank_account' as const])] } });
-      router.push('/(doctor)/profile/setup/tax-info');
-    } catch { /* surfaced */ }
+      // Persist the payout account (the server re-resolves the name and marks
+      // it verified), then record it on the wizard draft.
+      const res = await saveBank.mutateAsync({ bankName, bankCode, accountNumber: accountNumber.trim() });
+      const account: BankAccount = res.account
+        ? res.account
+        : { bankName, bankCode, accountNumber: accountNumber.trim(), accountName: verified.accountName, isVerified: true };
+      await saveDraft.mutateAsync({ draft: { bankAccount: account, completedSteps: [...new Set([...draft.completedSteps, 'bank_account' as const])] } });
+      router.push('/(doctor)/profile/setup/preview');
+    } catch {
+      setError('Could not save the verified account. Please try again.');
+    }
   };
 
   if (isLoading && !draft) {
@@ -78,29 +108,37 @@ export default function BankAccountScreen() {
       <TeleHeader title="Bank account" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <WizardProgress current={18} total={19} label="Bank account" />
+          <WizardProgress current={18} total={18} label="Bank account" />
 
           <SectionCard title="Payout account" style={styles.card}>
-            <Text style={styles.hint}>Where your consultation earnings are paid.</Text>
-            <SelectField label="Bank" placeholder="Select bank" value={bankName} options={BANK_LIST.map((b) => b.name)} onChange={(name) => { setBankName(name); setResolved(undefined); }} />
-            <TextInputField label="Account number (NUBAN)" placeholder="10-digit account number" value={accountNumber} onChangeText={(v) => { setAccountNumber(v.replace(/[^0-9]/g, '')); setResolved(undefined); }} keyboardType="number-pad" maxLength={10} />
+            <Text style={styles.hint}>We ask the bank network who holds this account number, then show you the returned name. Continue confirms it is yours.</Text>
+            <SelectField label="Bank" placeholder="Select bank" value={bankName} options={BANK_LIST.map((b) => b.name)} onChange={(name) => { setBankName(name); setVerified(undefined); }} />
+            <TextInputField label="Account number (NUBAN)" placeholder="10-digit account number" value={accountNumber} onChangeText={(v) => { setAccountNumber(v.replace(/[^0-9]/g, '')); setVerified(undefined); }} keyboardType="number-pad" maxLength={10} />
             {!!error && <Text style={styles.error}>{error}</Text>}
-            <PrimaryButton label={resolved ? 'Re-verify account' : 'Verify account'} onPress={resolve} loading={saveBank.isPending} disabled={!canResolve} variant="secondary" style={styles.verifyBtn} />
+            <PrimaryButton
+              label={verified ? 'Re-verify account' : 'Verify account'}
+              onPress={resolve}
+              loading={verify.isPending}
+              disabled={!canResolve}
+              variant="secondary"
+              style={styles.verifyBtn}
+            />
           </SectionCard>
 
-          {!!resolved && (
-            <SectionCard title="Verified account" style={styles.card}>
+          {!!verified && (
+            <SectionCard title="Returned account details" style={styles.card}>
               <View style={styles.verifiedRow}>
                 <CheckCircle2 size={18} color={Colors.teal} strokeWidth={2} />
-                <Text style={styles.verifiedText}>Account name resolved</Text>
+                <Text style={styles.verifiedText}>Name returned by the bank network</Text>
               </View>
-              <InfoRow label="Account name" value={resolved.accountName} />
-              <InfoRow label="Bank" value={resolved.bankName} />
-              <InfoRow label="Account" value={resolved.accountNumber} />
+              <InfoRow label="Account name" value={verified.accountName} />
+              <InfoRow label="Bank" value={bankName ?? '—'} />
+              <InfoRow label="Account" value={verified.accountNumberMasked} />
+              <Text style={styles.hint}>If this is your account, tap Continue to confirm and save it.</Text>
             </SectionCard>
           )}
 
-          <PrimaryButton label="Continue" onPress={handleNext} loading={saveDraft.isPending} disabled={!resolved} style={styles.btn} />
+          <PrimaryButton label="Continue" onPress={handleNext} loading={saveBank.isPending || saveDraft.isPending} disabled={!verified} style={styles.btn} />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

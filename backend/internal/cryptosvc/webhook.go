@@ -36,14 +36,28 @@ type SwapSettler interface {
 	Fail(ctx context.Context, rec SwapRecord) error
 }
 
+// DepositSettler settles a money-IN transfer the provider has finalised. It receives the
+// authoritative re-queried cryptoprov.Deposit (never the webhook payload) and returns the
+// outcome this delivery produced. The provider name is passed so the journal records it.
+// It is implemented outside this package (the app wiring bridges it to the deposit engine),
+// keeping the webhook layer free of the deposit package's types.
+type DepositSettler interface {
+	SettleDeposit(ctx context.Context, provider string, d cryptoprov.Deposit) (Outcome, error)
+}
+
 // Ingest authenticates, dedupes and applies provider webhooks.
 type Ingest struct {
 	reg     *cryptoprov.Registry
 	store   Store
 	now     func() time.Time
 	settler SwapSettler
+	deposit DepositSettler
 	audit   Auditor
 }
+
+// WithDepositSettler enables money-IN settlement for deposit events. Without it deposit
+// events are recorded and ignored (the pre-deposit behaviour) so wiring is additive.
+func (i *Ingest) WithDepositSettler(s DepositSettler) *Ingest { i.deposit = s; return i }
 
 // WithAuditor records completed and failed settlements.
 func (i *Ingest) WithAuditor(a Auditor) *Ingest { i.audit = a; return i }
@@ -79,6 +93,14 @@ func NewIngest(reg *cryptoprov.Registry, store Store) *Ingest {
 // still has to confirm the real name (swap_transaction.* per the spec vs trade.*).
 func isSwapEvent(t string) bool {
 	return strings.HasPrefix(t, "swap_transaction.") || strings.HasPrefix(t, "trade.")
+}
+
+// isDepositEvent routes an inbound (money-IN) event to the deposit path. Like the swap
+// routing it uses the event type ONLY to choose a re-query; the credit always comes from a
+// provider GetDeposit, never the payload. The exact name is UNVERIFIED against the sandbox
+// (deposit.* vs transaction.*), so the checklist must settle it before go-live.
+func isDepositEvent(t string) bool {
+	return strings.HasPrefix(t, "deposit.") || strings.HasPrefix(t, "transaction.")
 }
 
 // Handle processes one delivery (spec 8.3): verify, dedupe, re-query, apply with a
@@ -126,6 +148,9 @@ func (i *Ingest) Handle(ctx context.Context, providerName string, headers map[st
 }
 
 func (i *Ingest) process(ctx context.Context, p cryptoprov.Provider, providerName string, ev cryptoprov.Event) (Outcome, error) {
+	if isDepositEvent(ev.Type) {
+		return i.processDeposit(ctx, p, providerName, ev)
+	}
 	if !isSwapEvent(ev.Type) {
 		return OutcomeIgnored, nil
 	}
@@ -140,6 +165,30 @@ func (i *Ingest) process(ctx context.Context, p cryptoprov.Provider, providerNam
 		return OutcomeAlreadyFinal, nil
 	}
 	return i.resolve(ctx, p, providerName, rec)
+}
+
+// processDeposit settles a money-IN delivery. The payload only names the transfer (its id
+// and the sub-account); the authoritative amount, confirmation count and status come from a
+// provider re-query. If the deposit engine is not wired, the delivery is recorded and ignored
+// — a deposit is never credited without the engine. A re-query or settle error is returned so
+// Handle releases the dedupe row and the provider redelivers.
+func (i *Ingest) processDeposit(ctx context.Context, p cryptoprov.Provider, providerName string, ev cryptoprov.Event) (Outcome, error) {
+	if i.deposit == nil {
+		return OutcomeIgnored, nil
+	}
+	dp, err := cryptoprov.As[cryptoprov.DepositProvider](p)
+	if err != nil {
+		return "", fmt.Errorf("cryptosvc: provider %q cannot be re-queried for deposits: %w", providerName, err)
+	}
+	dep, err := dp.GetDeposit(ctx, ev.Account, ev.Ref)
+	if err != nil {
+		return "", fmt.Errorf("cryptosvc: re-query deposit: %w", err)
+	}
+	out, err := i.deposit.SettleDeposit(ctx, providerName, dep)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 // ResolveSwap re-reads the provider's authoritative state for one swap and applies it

@@ -91,7 +91,7 @@ export default function CertificatesScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Certificates" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <WizardProgress current={11} total={19} label="Certificates" />
+        <WizardProgress current={11} total={18} label="Certificates" />
 
         <SectionCard title="Professional certificates" style={styles.card}>
           <Text style={styles.hint}>Add any additional certificates or fellowships (optional).</Text>

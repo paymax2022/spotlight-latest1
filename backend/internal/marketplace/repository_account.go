@@ -366,10 +366,64 @@ func (r *Repository) UpsertNotificationPrefs(ctx context.Context, userID string,
 // ILIKE title match plus category/condition/state/price filters, newest-first,
 // LIMIT-bounded. Used by GET /search when no Elasticsearch searcher is wired, so
 // the mobile search screen still returns real results instead of a 501 dead-end.
+// When the buyer sends coordinates it also becomes the proximity path: real
+// PostGIS distances, an optional radius filter, and a nearest-first sort.
 func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbackFilter) ([]Listing, error) {
+	q, args := searchFallbackQuery(f)
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, wrapInternal("search fallback", err)
+	}
+	defer rows.Close()
+	// The geo column the query appends exists exactly when it also bound an
+	// origin, which is the same condition — so the scan mirrors it.
+	if f.Lat == nil || f.Lng == nil {
+		return collectListings(rows)
+	}
+	// listingCols plus distance_km. A scan of its own because listingCols cannot
+	// carry that expression at all (it is prefixCols-fed and must stay bare
+	// column names) — it reuses listingScan instead of duplicating the
+	// 22-field mapping.
+	out := make([]Listing, 0, clampLimit(f.Limit))
+	for rows.Next() {
+		s := &listingScan{}
+		var dist *float64
+		if err := rows.Scan(s.targets(&dist)...); err != nil {
+			return nil, wrapInternal("search fallback scan", err)
+		}
+		l := s.finish()
+		l.DistanceKm = dist
+		out = append(out, *l)
+	}
+	return out, rows.Err()
+}
+
+// searchFallbackQuery assembles the statement and arguments for
+// SearchListingsFallback. Split out from execution so the placeholder
+// arithmetic is testable without a database: the buyer's position is bound once
+// and then referenced three times (select list, radius filter, ORDER BY), while
+// LIMIT/OFFSET keep counting up from there.
+func searchFallbackQuery(f SearchFallbackFilter) (string, []any) {
 	limit := clampLimit(f.Limit)
-	q := `SELECT ` + listingCols + ` FROM public.mkt_listings WHERE status='active'`
 	args := []any{}
+	// The buyer's position, bound ONCE and referenced by every geo clause below
+	// (a query may repeat the same $n). Empty means the client sent no usable
+	// coordinates — and then no geo column, filter or ordering is added at all,
+	// so a locationless client gets exactly the search it always got.
+	var origin string
+	if f.Lat != nil && f.Lng != nil {
+		args = append(args, *f.Lng, *f.Lat)
+		origin = "ST_SetSRID(ST_MakePoint($" + strconv.Itoa(len(args)-1) + ", $" + strconv.Itoa(len(args)) + "), 4326)::geography"
+	}
+	cols := listingCols
+	if origin != "" {
+		// Only the DISTANCE comes back, never the seller's coordinates: a GPS
+		// point on a listing is the seller's home, and the buyer's card promises
+		// "3.6 km away", not an address. Geography distance is metres; this app
+		// speaks kilometres everywhere (see meetupSpots' `${distanceKm.toFixed(1)} km`).
+		cols += ", ST_Distance(geo, " + origin + ")/1000.0"
+	}
+	q := `SELECT ` + cols + ` FROM public.mkt_listings WHERE status='active'`
 	add := func(cond string, val any) {
 		args = append(args, val)
 		q += cond + "$" + strconv.Itoa(len(args))
@@ -412,6 +466,14 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 	if f.LGA != "" {
 		add(" AND lga = ", f.LGA)
 	}
+	// Radius. ST_DWithin on the geography column is the indexable form (the
+	// mkt_listings_geo GiST index exists for exactly this) and, because a NULL
+	// geo can never satisfy it, it encodes the product rule directly: a listing
+	// whose seller never set a location is never "Near you".
+	if origin != "" && f.RadiusKm != nil && *f.RadiusKm > 0 {
+		add(" AND ST_DWithin(geo, "+origin+", ", *f.RadiusKm*1000)
+		q += ")"
+	}
 	if f.PriceMin != nil {
 		add(" AND price_kobo >= ", *f.PriceMin)
 	}
@@ -429,7 +491,18 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 	// overlap. Proven live: before this, id 6dc32e34... and fa061aab...
 	// (tied created_at) appeared on both page 2 (offset 5) and page 4
 	// (offset 15) of the same result set.
-	q += " ORDER BY created_at DESC, id DESC LIMIT $" + strconv.Itoa(len(args))
+	// nearby keeps both as final tiebreakers: distances tie constantly (two
+	// listings from the same seller, same GPS fix), so without them a radius
+	// search paged by OFFSET would repeat and skip rows the same way. NULLS LAST
+	// matters only when a caller asks for nearest-first without a radius — those
+	// rows have no distance to order by, so they go to the end instead of being
+	// silently dropped from a list the buyer did ask for.
+	if origin != "" && f.Sort == "nearby" {
+		q += " ORDER BY ST_Distance(geo, " + origin + ") ASC NULLS LAST, created_at DESC, id DESC"
+	} else {
+		q += " ORDER BY created_at DESC, id DESC"
+	}
+	q += " LIMIT $" + strconv.Itoa(len(args))
 	// Offset-based paging. Previously absent entirely — the fallback had no
 	// OFFSET clause and service.go always returned next_cursor: nil, so the
 	// degraded (no-ES) search path could serve page 1 only; there was no way
@@ -439,13 +512,7 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 		args = append(args, f.Offset)
 		q += " OFFSET $" + strconv.Itoa(len(args))
 	}
-
-	rows, err := r.db.Query(ctx, q, args...)
-	if err != nil {
-		return nil, wrapInternal("search fallback", err)
-	}
-	defer rows.Close()
-	return collectListings(rows)
+	return q, args
 }
 
 // SearchFallbackFilter is the parsed filter set for the Postgres search fallback.
@@ -464,6 +531,17 @@ type SearchFallbackFilter struct {
 	// Offset is the SQL OFFSET for page 2+, parsed from the same opaque
 	// (plain base-10 integer) cursor the ES client uses.
 	Offset int
+	// Lat/Lng is the buyer's position. Both must be set for any proximity
+	// behaviour: distance_km on the results, the RadiusKm filter, sort=nearby.
+	// parseSearchFallback range-checks them, because PostGIS raises a 500 for a
+	// latitude outside +/-90 rather than treating it as absent.
+	Lat *float64
+	Lng *float64
+	// RadiusKm keeps only listings within this many kilometres of Lat/Lng.
+	RadiusKm *float64
+	// Sort is the raw sort token; only "nearby" changes the ORDER BY here, since
+	// the other values all reduce to the existing newest-first ordering.
+	Sort string
 }
 
 // prefixCols rewrites a comma+newline column list ("a, b, c") into "alias.a, ...".

@@ -101,8 +101,13 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
       body,
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    const text = await upstream.text();
-    return new NextResponse(text, {
+    // BYTE-FOR-BYTE passthrough, mirroring the request body above. Reading the
+    // response as text corrupted every binary payload exactly the way it
+    // corrupted a multipart request: a contest banner served through this proxy
+    // came back as replacement characters and the <img> silently refused to
+    // decode. JSON is valid UTF-8, so every existing caller gets identical bytes.
+    const buffer = await upstream.arrayBuffer();
+    return new NextResponse(buffer, {
       status: upstream.status,
       headers: { 'Content-Type': upstream.headers.get('content-type') || 'application/json' },
     });

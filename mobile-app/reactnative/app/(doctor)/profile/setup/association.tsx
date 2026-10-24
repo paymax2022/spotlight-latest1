@@ -88,7 +88,7 @@ export default function AssociationScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Association" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <WizardProgress current={12} total={19} label="Association membership" />
+        <WizardProgress current={12} total={18} label="Association membership" />
 
         <SectionCard title="Professional association" style={styles.card}>
           <Text style={styles.hint}>Add proof of membership of a professional association (optional).</Text>

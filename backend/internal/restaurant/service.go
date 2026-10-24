@@ -544,6 +544,15 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		if !secondOpen && scheduledFor == nil {
 			return nil, fmt.Errorf("%w (%s)", ErrRestaurantClosed, rid)
 		}
+		if scheduledFor == nil {
+			openNow, oerr := s.IsOpenNow(ctx, rid, time.Now())
+			if oerr != nil {
+				return nil, oerr
+			}
+			if !openNow {
+				return nil, fmt.Errorf("%w (%s)", ErrRestaurantClosed, rid)
+			}
+		}
 	}
 
 	var itemsWithRest []itemWithRest

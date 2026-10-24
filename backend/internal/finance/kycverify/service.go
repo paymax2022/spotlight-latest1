@@ -453,10 +453,16 @@ type Check struct {
 	Match           bool                    `json:"match"`
 	Confidence      float64                 `json:"confidence"`
 	ExtractedFields map[string]string       `json:"extracted_fields"`
-	Reason          string                  `json:"reason"`
-	RawPayloadRef   string                  `json:"raw_payload_ref,omitempty"`
-	CreatedAt       time.Time               `json:"created_at"`
-	UpdatedAt       time.Time               `json:"updated_at"`
+	// MatchedName/MatchedDob are the provider-verified identity fields echoed to
+	// the member on an ID-number data-match so the app can DISPLAY them and the
+	// user's Continue affirms the returned value. The raw extracted_fields map
+	// stays withheld.
+	MatchedName   string    `json:"matched_name,omitempty"`
+	MatchedDob    string    `json:"matched_dob,omitempty"`
+	Reason        string    `json:"reason"`
+	RawPayloadRef string    `json:"raw_payload_ref,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Consent is an NDPA/CBN consent record captured before any check.
@@ -540,11 +546,11 @@ type RoutingTable map[provider.KycCheckType]RoutingRule
 // no env override is present).
 func DefaultRoutingTable() RoutingTable {
 	return RoutingTable{
-		provider.KycIDNumber: {CheckType: provider.KycIDNumber, OrderedProviders: []string{"dojah", "youverify"}, Threshold: 70, Enabled: true},
-		provider.KycIDFacial: {CheckType: provider.KycIDFacial, OrderedProviders: []string{"dojah", "smileid"}, Threshold: 70, Enabled: true},
-		provider.KycLiveness: {CheckType: provider.KycLiveness, OrderedProviders: []string{"dojah", "smileid"}, Threshold: 70, Enabled: true},
-		provider.KycDocument: {CheckType: provider.KycDocument, OrderedProviders: []string{"dojah", "smileid"}, Threshold: 70, Enabled: true},
-		provider.KycAML:      {CheckType: provider.KycAML, OrderedProviders: []string{"dojah", "youverify"}, Threshold: 70, Enabled: true},
+		provider.KycIDNumber: {CheckType: provider.KycIDNumber, OrderedProviders: []string{"dojah", "youverify", "mock"}, Threshold: 70, Enabled: true},
+		provider.KycIDFacial: {CheckType: provider.KycIDFacial, OrderedProviders: []string{"dojah", "smileid", "mock"}, Threshold: 70, Enabled: true},
+		provider.KycLiveness: {CheckType: provider.KycLiveness, OrderedProviders: []string{"dojah", "smileid", "mock"}, Threshold: 70, Enabled: true},
+		provider.KycDocument: {CheckType: provider.KycDocument, OrderedProviders: []string{"dojah", "smileid", "mock"}, Threshold: 70, Enabled: true},
+		provider.KycAML:      {CheckType: provider.KycAML, OrderedProviders: []string{"dojah", "youverify", "mock"}, Threshold: 70, Enabled: true},
 	}
 }
 

@@ -8,7 +8,7 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { ClipboardList, ShieldCheck, CheckCircle2 } from 'lucide-react-native';
-import { getDoctor, getDoctorAvailability, DEMO_DOCTORS } from '@/api/telemedicine.api';
+import { getDoctor, getDoctorAvailability, PLACEHOLDER_DOCTORS } from '@/api/telemedicine.api';
 import { TeleHeader, SlotPicker, ConsultTypePicker } from '@/features/telemedicine/components';
 import type { ConsultType, Slot } from '@/types/telemedicine';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -29,7 +29,7 @@ export default function BookSlotScreen() {
   const { data: doctor } = useQuery({
     queryKey: ['tele-doctor', id],
     queryFn:  () => getDoctor(String(id)),
-    placeholderData: DEMO_DOCTORS.find((d) => d.id === id),
+    placeholderData: PLACEHOLDER_DOCTORS?.find((d) => d.id === id),
   });
 
   const { data: slots = [], isLoading } = useQuery({

@@ -24,6 +24,8 @@ export interface ItemDraft {
   priceNaira: string;
   /** Optional override, whole minutes 5 to 180. Empty uses the restaurant default. */
   prepMinutes?: string;
+  /** Optional dish photo: the object key once it has been uploaded. Empty is not a mistake. */
+  imageUrl?: string;
 }
 
 export type ItemDraftErrors = Partial<Record<'category' | 'subcategory' | 'name' | 'price' | 'prep', string>>;
@@ -34,6 +36,7 @@ export interface TaxonomyItemPayload {
   name: string;
   priceKobo: number;
   prepTimeMinutes?: number;
+  imageUrl?: string;
 }
 
 // Active only, and only the categories an owner may pick: inactive rows are hidden
@@ -106,6 +109,7 @@ export function validateItemDraft(
       taxonomySubcategoryId: d.subcategoryId ?? null,
       name,
       priceKobo,
+      ...(d.imageUrl ? { imageUrl: d.imageUrl } : {}),
       ...(prep !== undefined && prep !== null ? { prepTimeMinutes: prep } : {}),
     },
   };

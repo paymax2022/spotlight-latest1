@@ -269,6 +269,13 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 
 		member.GET("/deposit-address", rp(PermView), h.DepositAddress)
 
+		// Money-IN history (GAP-DEP-01 Slice 3): the customer's own settled crypto credits.
+		// A row exists only once a transfer is confirmation-gated and credited exactly once,
+		// so this is the source the mobile pending→credited screen polls. Owner-scoped in the
+		// query; crypto.view, like the rest of the member read surface.
+		member.GET("/deposits", rp(PermView), h.Deposits)
+		member.GET("/deposits/:id", rp(PermView), h.Deposit)
+
 		// Static preview routes declared before the /:id param to avoid collision.
 		member.GET("/withdrawals/eligibility", rp(PermView), h.WithdrawalEligibility)
 		member.POST("/withdrawals/quote", rp(PermView), h.WithdrawalQuote) // fee preview
@@ -298,6 +305,7 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		admin.GET("/addresses", rp(PermAdmin), h.AdminListAddresses)
 		admin.POST("/addresses/:id/decision", rp(PermAdmin), h.AdminDecideAddress)
 		admin.GET("/reconciliation", rp(PermAdmin), h.AdminReconciliation)
+		admin.GET("/deposits", rp(PermAdmin), h.AdminListDeposits)
 	}
 
 	log.Println("[crypto] routes registered at /api/v1/crypto and /api/v1/admin/crypto (price=" + svc.price.Name() + ")")

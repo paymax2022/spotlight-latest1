@@ -32,7 +32,9 @@ import { aiPrefill, estimateFairPriceBand, uploadListingImage, isEscrowEligibleC
 import type { AiPrefillResult } from '@/features/marketplace/api/sell.api';
 import { useSellCategories, useSellCategory, useCreateListing, useSubmitListing } from '@/features/marketplace/sell.hooks';
 import { mainCategories, subcategoriesOf, breadcrumb } from '@/features/marketplace/categoryTree';
+import { useDeviceCoords } from '@/features/location/useDeviceCoords';
 import PhotoStrip, { type ComposerPhoto, extensionForMime } from '@/features/marketplace/components/sell/PhotoStrip';
+import SellerLocationField from '@/features/marketplace/components/sell/SellerLocationField';
 import AiPrefillCard from '@/features/marketplace/components/sell/AiPrefillCard';
 import ComposerValidation, { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
 import AttributeFields, { normalizeSchema, missingRequired } from '@/features/marketplace/components/sell/AttributeFields';
@@ -79,6 +81,9 @@ export default function SellWizard() {
   const [aiResult, setAiResult] = useState<AiPrefillResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiDismissed, setAiDismissed] = useState(false);
+
+  // The seller's own fix, recorded on the listing so buyers can measure against it.
+  const loc = useDeviceCoords();
 
   const categoriesQuery = useSellCategories();
   // Two-step picker. One flat row of every category was 84 chips deep once the
@@ -244,9 +249,13 @@ export default function SellWizard() {
         mediaIds: photos.map((p) => p.fileUrl ?? p.id),
         state: 'Lagos',
         escrowEligible: escrowReady,
+        // Both or neither: the backend rejects a half pair, and an absent pair
+        // is a valid listing that simply never surfaces in a distance sort.
+        lat: loc.coords?.lat,
+        lng: loc.coords?.lng,
       });
       const live = await submitListing.mutateAsync(created.id);
-      track('listing_published', { listing_id: created.id, category_id: categoryId, status: live.status, escrow: escrowReady });
+      track('listing_published', { listing_id: created.id, category_id: categoryId, status: live.status, escrow: escrowReady, has_location: !!loc.coords });
       const autoApproved = live.status === 'active';
       await alertAsync({
         title: autoApproved ? "You're live!" : 'Submitted for review',
@@ -410,6 +419,15 @@ export default function SellWizard() {
                   );
                 })}
               </View>
+
+              <SellerLocationField
+                coords={loc.coords}
+                loading={loc.loading}
+                error={loc.error}
+                available={loc.available}
+                onAsk={() => void loc.request()}
+                onClear={loc.clear}
+              />
             </>
           ) : null}
 
@@ -425,6 +443,7 @@ export default function SellWizard() {
               schema={schema}
               escrowReady={escrowReady}
               delivery={Array.from(delivery)}
+              hasLocation={!!loc.coords}
             />
           ) : null}
 
@@ -497,8 +516,9 @@ function ListingPreview(props: {
   schema: ReturnType<typeof normalizeSchema>;
   escrowReady: boolean;
   delivery: string[];
+  hasLocation: boolean;
 }) {
-  const { photos, title, categoryName, condition, priceKobo, description, attrs, schema, escrowReady } = props;
+  const { photos, title, categoryName, condition, priceKobo, description, attrs, schema, escrowReady, hasLocation } = props;
   const cover = photos[0];
   const attrRows = schema.fields
     .map((f) => ({ label: f.label, value: attrs[f.key] }))
@@ -524,6 +544,17 @@ function ListingPreview(props: {
           <Text style={styles.escrowStripText}>Buyer-protected with Paymax escrow.</Text>
         </View>
       ) : null}
+
+      {/* The preview promises "exactly how buyers will see your listing", so the
+          distance row appears or not exactly as the card will. */}
+      <View style={hasLocation ? styles.locationStripOn : styles.locationStripOff}>
+        <MapPin size={16} color={hasLocation ? MarketColors.brand : MarketColors.muted} />
+        <Text style={hasLocation ? styles.locationTextOn : styles.locationTextOff}>
+          {hasLocation
+            ? 'Nearby buyers will see the distance from them.'
+            : 'No location attached — this listing won’t appear in distance sorts or “Near you”.'}
+        </Text>
+      </View>
 
       {attrRows.length > 0 ? (
         <View style={styles.attrTable}>
@@ -594,6 +625,10 @@ const styles = StyleSheet.create({
   previewDot: { color: MarketColors.muted },
   escrowStrip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: MarketColors.okBg, borderRadius: Radius.md, padding: Spacing.sm, marginTop: 4 },
   escrowStripText: { ...Typography.labelSm, color: MarketColors.ok, fontWeight: '600' },
+  locationStripOn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: MarketColors.surfaceAlt, borderRadius: Radius.md, padding: Spacing.sm, marginTop: 4 },
+  locationStripOff: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: Radius.md, borderWidth: 1, borderColor: MarketColors.border, padding: Spacing.sm, marginTop: 4 },
+  locationTextOn: { ...Typography.labelSm, color: MarketColors.text, fontWeight: '600', flex: 1 },
+  locationTextOff: { ...Typography.labelSm, color: MarketColors.muted, flex: 1 },
   attrTable: { borderRadius: Radius.lg, borderWidth: 1, borderColor: MarketColors.border, overflow: 'hidden', marginTop: Spacing.sm },
   attrTableRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: Spacing.md, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: MarketColors.border },
   attrKey: { ...Typography.labelMd, color: MarketColors.muted },

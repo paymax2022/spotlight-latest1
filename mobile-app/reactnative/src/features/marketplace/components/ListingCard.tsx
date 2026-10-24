@@ -7,6 +7,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import { MarketColors, formatNaira, fairPriceVerdict, FAIR_PRICE_LABEL } from '../constants';
+import { formatDistanceKm } from '../proximity';
 import type { ListingSummary } from '../types';
 import { useCategories } from '../hooks';
 import CategoryIcon from './CategoryIcon';
@@ -22,6 +23,7 @@ interface Props {
  *  badge, and a fair-price chip computed from the listing's band. */
 export default function ListingCard({ item, onPress, horizontal }: Props) {
   const verdict = fairPriceVerdict(item.priceKobo, item.fairPriceBand);
+  const distance = formatDistanceKm(item.distanceKm);
   // Not one listing in the live data carries a thumbnail, so EVERY card rendered
   // an identical blank rectangle — the same failure the category grid had, in the
   // place a shopper actually looks. The category puck says what the thing is
@@ -75,7 +77,16 @@ export default function ListingCard({ item, onPress, horizontal }: Props) {
       <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
       <Text style={styles.price}>{formatNaira(item.priceKobo)}</Text>
       <View style={styles.metaRow}>
-        <Text style={styles.meta} numberOfLines={1}>{item.lga ? `${item.lga}, ${item.state}` : item.state}</Text>
+        {/* Distance leads the line because on a proximity search it is the whole
+            reason the card is here, and numberOfLines={1} truncates the tail —
+            state and LGA are the part that can be lost. No distance (the seller
+            never set one, or this buyer has no fix) says nothing about distance
+            rather than implying zero. */}
+        <Text style={styles.meta} numberOfLines={1}>
+          {distance ? `${distance} away` : ''}
+          {distance ? ' · ' : ''}
+          {item.lga ? `${item.lga}, ${item.state}` : item.state}
+        </Text>
         {verdict !== 'unknown' && verdict !== 'above' ? (
           <View style={[styles.fairChip, verdict === 'below' && styles.fairChipBelow]}>
             <Text style={styles.fairChipText}>{FAIR_PRICE_LABEL[verdict]}</Text>

@@ -48,6 +48,9 @@ type HandlerDeps struct {
 	// Recon is this replica's reconciler, read by the admin status view. Nil leaves that
 	// endpoint answering 503.
 	Recon *Reconciler
+	// DepositRecon is this replica's deposit safety-net reconciler (GAP-DEP-01 Slice 2b),
+	// read by its own admin status view. Nil when money-IN settlement is not wired.
+	DepositRecon *DepositReconciler
 	// FeeAdmin is the editable fee-schedule history behind the admin API; nil answers 503.
 	FeeAdmin FeeStore
 }

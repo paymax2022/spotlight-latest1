@@ -545,6 +545,10 @@ type Config struct {
 	CryptoLockPoolConns int
 	// CryptoReconcileSeconds is the reconciler interval.
 	CryptoReconcileSeconds int
+	// CryptoDepositReconcileSeconds is the money-IN deposit reconciler interval (GAP-DEP-01
+	// Slice 2b): how often the safety net sweeps provider ListDeposits and re-submits each
+	// transfer into the once-only settler. 0 falls back to CryptoReconcileSeconds.
+	CryptoDepositReconcileSeconds int
 	// AuthSlowLogMs: an authenticated request whose authentication stage (token check + status,
 	// roles and permissions lookups) takes at least this long is logged with per-step timings.
 	// 0 turns it off. See internal/middleware/auth_timing.go.
@@ -554,6 +558,12 @@ type Config struct {
 	// PIN attempt and moves money. Validated 1..600 when the swap pipeline is on.
 	CryptoQuoteRatePerMin   int
 	CryptoConfirmRatePerMin int
+	// CryptoDepositConfirmations is the minimum network confirmation count a money-IN
+	// transfer must reach before the deposit engine credits a balance (CRYPTO_DEPOSIT_CONFIRMATIONS).
+	// A provider re-query below it parks the transfer as awaiting and credits nothing. It is a
+	// risk decision, so it fails closed to a safe default and must be confirmed against the
+	// Quidax sandbox and the risk owner before go-live. Validated 1..144 when the swap pipeline is on.
+	CryptoDepositConfirmations int
 
 	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
 	// charged on top of a doctor's consultation fee (ADR-044). Default OFF: it is a
@@ -891,6 +901,13 @@ type Config struct {
 	// AdminAppBaseURL: origin of frontend-admin, used to build links inside
 	// transactional emails (e.g. the hotelier staff invite accept link).
 	AdminAppBaseURL string
+	// WebAppBaseURL: origin of frontend-web, which serves uploaded contest media
+	// (banners/logos) under /api/admin/contests/banner/. Contest rows store only
+	// the PATH, so this is what turns it back into a URL for clients that cannot
+	// resolve a relative one — the mobile app above all. Defaulted to the same
+	// production origin frontend-web defaults to, so an unconfigured deployment
+	// still emits working URLs.
+	WebAppBaseURL string
 	// Termii: SMS delivery. Key from termii.com dashboard.
 	TermiiAPIKey   string
 	TermiiSenderID string // approved sender ID
@@ -1140,9 +1157,11 @@ func Load() Config {
 		CryptoWebhookSecret:                          getEnv("QUIDAX_WEBHOOK_SECRET", ""),
 		CryptoLockPoolConns:                          getEnvInt("CRYPTO_LOCK_POOL_CONNS", 40),
 		CryptoReconcileSeconds:                       getEnvInt("CRYPTO_RECONCILE_SECONDS", 30),
+		CryptoDepositReconcileSeconds:                getEnvInt("CRYPTO_DEPOSIT_RECONCILE_SECONDS", 60),
 		AuthSlowLogMs:                                getEnvInt("AUTH_SLOW_LOG_MS", 750),
 		CryptoQuoteRatePerMin:                        getEnvInt("CRYPTO_QUOTE_RATE_PER_MIN", 20),
 		CryptoConfirmRatePerMin:                      getEnvInt("CRYPTO_CONFIRM_RATE_PER_MIN", 5),
+		CryptoDepositConfirmations:                   getEnvInt("CRYPTO_DEPOSIT_CONFIRMATIONS", 3),
 		FeatureTelemedicinePlatformFeeEnabled:        getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
 		FeatureCheckoutTopupTier0:                    getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
 		FeatureBusinessRegistryEnabled:               getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
@@ -1290,6 +1309,7 @@ func Load() Config {
 		OTPMaxVerifyPerIPPerHour: getEnvInt("OTP_MAX_VERIFY_PER_IP_PER_HOUR", 20),
 		SignupRateLimitPer5Min:   getEnvInt("AUTH_SIGNUP_RATE_LIMIT_PER_5MIN", 30),
 		AdminAppBaseURL:          getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
+		WebAppBaseURL:            getEnv("WEB_APP_BASE_URL", "https://www.spotlightng.com"),
 		TermiiAPIKey:             getEnv("TERMII_API_KEY", getEnv("TERMIL_LIVE_API_KEY", "")), // TERMIL_LIVE_API_KEY: legacy misspelled var on Railway
 		TermiiSenderID:           getEnv("TERMII_SENDER_ID", "Paymax"),
 		ExpoPushToken:            getEnv("EXPO_PUSH_TOKEN", ""),
@@ -1513,6 +1533,9 @@ func (c Config) Validate() error {
 			}
 			if c.CryptoConfirmRatePerMin < 1 || c.CryptoConfirmRatePerMin > 600 {
 				strict = append(strict, "CRYPTO_CONFIRM_RATE_PER_MIN must be between 1 and 600 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
+			}
+			if c.CryptoDepositConfirmations < 1 || c.CryptoDepositConfirmations > 144 {
+				strict = append(strict, "CRYPTO_DEPOSIT_CONFIRMATIONS must be between 1 and 144 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
 			}
 		}
 		problems = append(problems, strict...)

@@ -22,18 +22,33 @@ export interface FilmAcademySettings {
   registration_type?: string;
   /** Naira. Charged at APPLICATION time, separate from tuition. */
   application_fee?: number;
-  /** Naira. The programme-wide tuition, used when a batch carries no fee of its own. */
+  /** Naira. Programme-wide reference figure only — never billed; tuition comes from each training's fee. */
   tuition_fee?: number;
   [key: string]: unknown;
 }
 
-/** An admin-managed area of interest. `fee_ngn` is NAIRA and is added to the base fee. */
+/**
+ * One composite tuition item: a training format priced for one area (NAIRA).
+ * Every area carries the same five formats — weekend with/without boarding,
+ * weekdays with/without boarding, and full-time 30 days with boarding.
+ */
+export interface FilmAcademyPricingOption {
+  key: string;
+  label: string;
+  note: string | null;
+  price_ngn: number;
+  sort_order: number;
+}
+
+/** An area of interest. `pricing_options` is what tuition is priced on now. */
 export interface FilmAcademyInterestArea {
   /** Written to academy_applications.areas_of_interest; stable once in use. */
   slug: string;
   label: string;
   description: string | null;
+  /** @deprecated Legacy single fee — the composite format table prices tuition now. */
   fee_ngn: number;
+  pricing_options?: FilmAcademyPricingOption[];
 }
 
 /**
@@ -68,6 +83,14 @@ export interface FilmAcademyOverview {
   maxInterestAreas: number;
   /** Signed-in applicant's known details, or null when signed out. */
   applicant: FilmAcademyApplicant | null;
+  /**
+   * The five training formats (identity only — prices live on each area's
+   * pricing_options). Empty on an older server, which priced on fee_ngn.
+   */
+  pricingStructure: Array<{ key: string; label: string; note: string | null; sort_order: number }>;
+  /** What the tuition buys, and what it does not cover — server-owned copy. */
+  deliverables: string[];
+  feeExclusions: string[];
 }
 
 export interface FilmAcademyApplicationInput {
@@ -81,9 +104,20 @@ export interface FilmAcademyApplicationInput {
   email?: string;
   phone?: string;
   areas_of_interest: string[];
+  /**
+   * Accordion selection: each chosen area WITH the format (sub) the applicant
+   * tapped. When present the server prices tuition per area from these pairs.
+   */
+  area_selections?: Array<{ slug: string; key: string }>;
   motivation: string;
   experience?: string;
   payment_preference: 'one_off' | 'installment';
+  /**
+   * Which training format the tuition is priced in — one of the
+   * pricingStructure keys. Omitted on an older server, which then falls back
+   * to the cheapest format rather than the retired per-area fee.
+   */
+  pricing_option_key?: string;
   /**
    * Paystack transaction reference for the APPLICATION fee, required when
    * settings.registration_type is 'paid'. The server re-verifies it with

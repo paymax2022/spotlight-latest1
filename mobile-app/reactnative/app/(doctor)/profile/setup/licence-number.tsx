@@ -56,7 +56,7 @@ export default function LicenceNumberScreen() {
       <TeleHeader title="Medical licence" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <WizardProgress current={8} total={19} label="Medical licence number" />
+          <WizardProgress current={8} total={18} label="Medical licence number" />
 
           <SectionCard title="Licence details" style={styles.card}>
             <Text style={styles.hint}>Enter your MDCN registration details exactly as on your licence.</Text>

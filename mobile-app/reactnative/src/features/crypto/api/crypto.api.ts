@@ -18,6 +18,7 @@ import type {
   ChartRange,
   CryptoAddress,
   CryptoAsset,
+  CryptoDepositRecord,
   DepositAddress,
   CryptoEligibility,
   CryptoOrder,
@@ -354,6 +355,45 @@ export async function getDepositAddress(symbol: string, networkId: string): Prom
     };
   }
   return unwrap<DepositAddress>(await api.get('/api/v1/crypto/deposit-address', { params: { symbol, network: networkId } }));
+}
+
+// Money-IN history (GAP-DEP-01 Slice 3). The backend journals a crypto_deposits row only once a
+// transfer clears its confirmation floor and is credited exactly once, so any record returned here
+// is already settled — the screen's job is to notice one appearing for the address it is watching.
+// The Go wire shape is snake_case; normalise to the screen's camelCase record.
+
+type DepositWire = {
+  id: string; provider: string; provider_op_id: string; symbol: string; network: string;
+  address?: string; units: number; minor_unit_scale: number; confirmations: number;
+  required_confs: number; tx_hash?: string; created_at: string; credited_at: string;
+};
+
+function mapDeposit(d: DepositWire): CryptoDepositRecord {
+  return {
+    id: d.id, provider: d.provider, providerOpId: d.provider_op_id, symbol: d.symbol, network: d.network,
+    address: d.address, units: Number(d.units), minorUnitScale: Number(d.minor_unit_scale) || 1,
+    confirmations: Number(d.confirmations), requiredConfs: Number(d.required_confs),
+    txHash: d.tx_hash, createdAt: d.created_at, creditedAt: d.credited_at,
+    credited: Number(d.confirmations) >= Number(d.required_confs),
+  };
+}
+
+export async function getDeposits(symbol?: string): Promise<CryptoDepositRecord[]> {
+  if (USE_MOCK) {
+    await delay();
+    return []; // no inbound transfer has landed in mock mode — the screen stays "watching".
+  }
+  const res = await api.get('/api/v1/crypto/deposits', { params: symbol ? { symbol } : undefined });
+  const list = unwrap<DepositWire[]>(res);
+  return (Array.isArray(list) ? list : []).map(mapDeposit);
+}
+
+export async function getDeposit(id: string): Promise<CryptoDepositRecord> {
+  if (USE_MOCK) {
+    await delay();
+    throw new Error('Deposit not found');
+  }
+  return mapDeposit(unwrap<DepositWire>(await api.get(`/api/v1/crypto/deposits/${id}`)));
 }
 
 // resolved assets so the screens can render rows without a second round-trip.

@@ -88,14 +88,21 @@ export async function getBasemap(surface = 'default'): Promise<MapStyleConfig> {
 
 export async function autocomplete(
   query: string,
-  opts?: { sessionToken?: string; surface?: string; near?: MapPoint },
+  opts?: { sessionToken?: string; surface?: string; near?: MapPoint; signal?: AbortSignal },
 ): Promise<MapSuggestion[]> {
-  const { data } = await api.post(`${MAPS_BASE}/autocomplete`, {
-    query,
-    session_token: opts?.sessionToken,
-    surface: opts?.surface,
-    near: opts?.near,
-  });
+  const { data } = await api.post(
+    `${MAPS_BASE}/autocomplete`,
+    {
+      query,
+      session_token: opts?.sessionToken,
+      surface: opts?.surface,
+      near: opts?.near,
+    },
+    // Keystroke-by-keystroke lookups: a superseded query must be cancelled, not just
+    // ignored, or every character typed costs a round-trip that keeps competing with
+    // the next one. axios rejects with an AbortError, which callers treat as "no answer".
+    opts?.signal ? { signal: opts.signal } : undefined,
+  );
   return data.suggestions ?? [];
 }
 

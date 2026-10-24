@@ -1,21 +1,24 @@
 // tile must never hand the user to a browser. This calls the same
 // /api/academy/* endpoints the web console uses — sharing an API is fine.
-// Money note: academy_batches stores training_fee_ngn in NAIRA, not kobo. It
-// predates the kobo convention used across finance, so it is formatted as-is.
+// Money note: academy amounts are NAIRA, not kobo — these tables predate the
+// kobo convention used across finance. Tuition is the composite format
+// structure served per training (academy_area_pricing_options): weekend /
+// weekdays, each with and without boarding, plus a 30-day full-time boarding
+// format. The settings.tuition_fee programme figure is never charged.
 
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Clapperboard, CalendarDays, Clock, FileText, GraduationCap, ClipboardList } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, ChevronDown, Clapperboard, CalendarDays, Check, Clock, FileText, GraduationCap, ClipboardList } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { getOverview } from '@/features/filmAcademy/api';
-import type { FilmAcademyBatch } from '@/features/filmAcademy/types';
+import type { FilmAcademyBatch, FilmAcademyInterestArea, FilmAcademyOverview } from '@/features/filmAcademy/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { RemoteBanner } from '@/features/media/banners';
 
@@ -33,16 +36,97 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function BatchCard({ batch, applied, fallbackFee }: {
-  batch: FilmAcademyBatch; applied: boolean; fallbackFee: number | null;
+/** Cheapest format price for a training — the composite structure, not the retired fee_ngn. */
+function fromPrice(area: FilmAcademyInterestArea): number {
+  const opts = area.pricing_options ?? [];
+  if (opts.length > 0) return Math.min(...opts.map((o) => Number(o.price_ngn)));
+  return Number(area.fee_ngn ?? 0); // older server without the format table
+}
+
+function TuitionStructureCard({ data }: { data: FilmAcademyOverview }) {
+  const structure = data.pricingStructure;
+  if (structure.length === 0) return null;
+  // Deliberately no area list here: every training is shown inside its own
+  // batch below, with its five price lines in the accordion. A standalone
+  // catalogue outside the batches went stale whenever a batch stopped offering
+  // one of these trainings.
+  return (
+    <View style={styles.card}>
+      {data.deliverables.length > 0 && (
+        <>
+          <Text style={styles.trainingsTitle}>Your tuition includes</Text>
+          {data.deliverables.map((d) => (
+            <Text key={d} style={styles.trainingMeta}>• {d}</Text>
+          ))}
+        </>
+      )}
+      {data.feeExclusions.length > 0 && (
+        <>
+          <Text style={styles.trainingsTitle}>Fees exclude</Text>
+          {data.feeExclusions.map((d) => (
+            <Text key={d} style={styles.trainingMeta}>• {d}</Text>
+          ))}
+        </>
+      )}
+      <Text style={styles.feeNote}>
+        Tuition is payable only if you are offered a place. Open a training in a
+        cohort below and tap its price line to choose, then continue to apply.
+      </Text>
+    </View>
+  );
+}
+
+function BatchCard({ batch, areas, applied }: {
+  batch: FilmAcademyBatch; areas: FilmAcademyInterestArea[]; applied: boolean;
 }) {
-  // A batch may carry no fee of its own — every cohort on staging has
-  // training_fee_ngn = 0 while the real tuition sits in settings.tuition_fee.
-  // Rendering the batch value verbatim showed "Training fee ₦0", which is worse
-  // than showing nothing because it reads as free.
-  const fee = batch.training_fee_ngn && batch.training_fee_ngn > 0
-    ? batch.training_fee_ngn
-    : fallbackFee;
+  // Accordion selection: { areaSlug: formatKey }. Tapping a training opens it;
+  // tapping one of its price lines selects the training IN that format (the
+  // tuition the apply form and the server then carry). A legacy area with no
+  // format table is selected by its header directly, under the empty key.
+  const [selections, setSelections] = useState<Record<string, string>>({});
+  const [openSlug, setOpenSlug] = useState<string | null>(null);
+  const selectedSlugs = Object.keys(selections);
+  const selected = areas.filter((area) => area.slug in selections);
+
+  const chosenFee = (area: FilmAcademyInterestArea) => {
+    const key = selections[area.slug];
+    const opt = (area.pricing_options ?? []).find((o) => o.key === key);
+    return opt ? Number(opt.price_ngn) : fromPrice(area);
+  };
+  const totalSelectedFee = selected.reduce((sum, area) => sum + chosenFee(area), 0);
+
+  const pickSub = (area: FilmAcademyInterestArea, key: string) =>
+    setSelections((prev) => {
+      if (prev[area.slug] === key) {
+        const next = { ...prev };
+        delete next[area.slug];
+        return next;
+      }
+      if (!(area.slug in prev) && Object.keys(prev).length >= 2) return prev;
+      return { ...prev, [area.slug]: key };
+    });
+
+  const toggleArea = (area: FilmAcademyInterestArea) =>
+    setSelections((prev) => {
+      if (area.slug in prev) {
+        const next = { ...prev };
+        delete next[area.slug];
+        return next;
+      }
+      if (Object.keys(prev).length >= 2) return prev;
+      return { ...prev, [area.slug]: '' };
+    });
+
+  const apply = () => {
+    const query = new URLSearchParams({ batchId: batch.id });
+    if (selectedSlugs.length > 0) {
+      query.set('area', selectedSlugs.join(','));
+      const pairs = selectedSlugs.filter((s) => selections[s]).map((s) => `${s}:${selections[s]}`);
+      if (pairs.length > 0) query.set('formats', pairs.join(','));
+    }
+    router.push(`/film-academy/apply?${query.toString()}` as never);
+  };
+
   return (
     <View style={styles.card}>
       <View style={styles.cardHead}>
@@ -69,24 +153,134 @@ function BatchCard({ batch, applied, fallbackFee }: {
         </View>
       )}
 
-      <View style={styles.feeRow}>
-        <Text style={styles.feeLabel}>Training fee</Text>
-        <Text style={styles.feeValue}>{formatNaira(fee)}</Text>
-      </View>
-      {!!batch.installments_count && batch.installments_count > 1 && (
+      <Text style={styles.trainingsTitle}>Choose a training</Text>
+      {areas.length === 0 ? (
+        <Text style={styles.feeNote}>
+          This cohort has no trainings configured yet — applications are closed
+          until the academy team sets them. Check back soon.
+        </Text>
+      ) : (
+        <View style={styles.trainings}>
+          {areas.map((area) => {
+            const chosenKey = selections[area.slug];
+            const on = chosenKey !== undefined;
+            const hasFormats = (area.pricing_options?.length ?? 0) > 0;
+            const isOpen = openSlug === area.slug;
+            const chosenOpt = hasFormats
+              ? (area.pricing_options ?? []).find((o) => o.key === chosenKey)
+              : undefined;
+            return (
+              <View key={area.slug} style={[styles.trainingGroup, on && styles.trainingRowOn]}>
+                <Pressable
+                  onPress={() => (hasFormats
+                    ? setOpenSlug(isOpen ? null : area.slug)
+                    : toggleArea(area))}
+                  disabled={applied || (!hasFormats && !on && selectedSlugs.length >= 2)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: hasFormats && isOpen, selected: on, disabled: applied }}
+                  accessibilityLabel={chosenOpt
+                    ? `${area.label}, ${chosenOpt.label} selected`
+                    : `${area.label}${on ? ', selected' : ', tap to open its price lines'}`}
+                  style={styles.trainingRow}
+                >
+                  {!hasFormats && (
+                    <View style={[styles.trainingCheck, on && styles.trainingCheckOn]}>
+                      {on && <Check size={13} color={Colors.black} />}
+                    </View>
+                  )}
+                  <View style={styles.trainingBody}>
+                    <Text style={[styles.trainingLabel, on && styles.trainingLabelOn]}>{area.label}</Text>
+                    {chosenOpt ? (
+                      <Text style={styles.trainingMeta}>
+                        {chosenOpt.label} — {formatNaira(Number(chosenOpt.price_ngn))}
+                      </Text>
+                    ) : (
+                      <>
+                        {!!area.description && (
+                          <Text style={styles.trainingMeta} numberOfLines={2}>{area.description}</Text>
+                        )}
+                        {hasFormats && (
+                          <Text style={styles.trainingMeta}>Tap to see the price options</Text>
+                        )}
+                      </>
+                    )}
+                  </View>
+                  {hasFormats ? (
+                    <ChevronDown
+                      size={18}
+                      color={Colors.onSurfaceVariant}
+                      style={{ transform: [{ rotate: isOpen ? '180deg' : '0deg' }] }}
+                    />
+                  ) : (
+                    <Text style={[styles.trainingFee, on && styles.trainingFeeOn]}>
+                      {fromPrice(area) > 0 ? formatNaira(fromPrice(area)) : 'No tuition'}
+                    </Text>
+                  )}
+                </Pressable>
+                {isOpen && hasFormats && (
+                  <View style={styles.subs}>
+                    {(area.pricing_options ?? []).map((o) => {
+                      const subOn = chosenKey === o.key;
+                      const blocked = !subOn && !on && selectedSlugs.length >= 2;
+                      return (
+                        <Pressable
+                          key={o.key}
+                          onPress={() => pickSub(area, o.key)}
+                          disabled={applied || blocked}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: subOn, disabled: applied || blocked }}
+                          accessibilityLabel={`${o.label}${o.note ? `, ${o.note}` : ''}, ₦${Number(o.price_ngn).toLocaleString('en-NG')}`}
+                          style={[styles.subRow, subOn && styles.trainingRowOn, blocked && styles.chipBlocked]}
+                        >
+                          {subOn
+                            ? <Check size={14} color={Colors.primary} />
+                            : <View style={styles.subSpacer} />}
+                          <Text style={[styles.trainingLabel, subOn && styles.trainingLabelOn]}>
+                            {o.label}{o.note ? ` (${o.note})` : ''}
+                          </Text>
+                          <Text style={[styles.trainingFee, subOn && styles.trainingFeeOn]}>
+                            = {formatNaira(Number(o.price_ngn))}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {!!batch.installments_count && batch.installments_count > 1 && totalSelectedFee > 0 && (
         <Text style={styles.feeNote}>
           Payable in {batch.installments_count} instalments
           {batch.fee_frequency ? ` (${batch.fee_frequency})` : ''}
         </Text>
       )}
 
+      {selected.length > 0 && (
+        <View style={styles.selectedRow}>
+          <Text style={styles.selectedLabel}>Selected training</Text>
+          <Text style={styles.selectedValue}>
+            {selected.map(s => s.label).join(', ')} · {totalSelectedFee > 0 ? `tuition ${formatNaira(totalSelectedFee)}` : 'No tuition'}
+          </Text>
+        </View>
+      )}
+
       <Pressable
-        style={[styles.applyBtn, applied && styles.applyBtnDone]}
-        disabled={applied}
-        onPress={() => router.push(`/film-academy/apply?batchId=${batch.id}` as never)}
+        style={[styles.applyBtn, (applied || (areas.length > 0 && selected.length === 0)) && styles.applyBtnDone]}
+        disabled={applied || (areas.length > 0 && selected.length === 0)}
+        onPress={apply}
       >
-        <Text style={[styles.applyText, applied && styles.applyTextDone]}>
-          {applied ? 'Application submitted' : 'Apply to this cohort'}
+        <Text style={[styles.applyText, (applied || (areas.length > 0 && selected.length === 0)) && styles.applyTextDone]}>
+          {applied
+            ? 'Application submitted'
+            : areas.length === 0
+              ? 'Apply to this cohort'
+              : selected.length > 0
+                ? `Apply for ${selected.length} training${selected.length > 1 ? 's' : ''}`
+                : 'Select a training above'}
         </Text>
       </Pressable>
     </View>
@@ -101,6 +295,17 @@ export default function FilmAcademyScreen() {
 
   const batches = data?.batches ?? [];
   const applied = new Set(data?.appliedBatchIds ?? []);
+  const catalogue = data?.interestAreas ?? [];
+
+  // A batch offers EXACTLY its linked trainings — an empty entry means it has
+  // none set yet. Only a batchAreas map without this batch's key at all (an
+  // older server) falls back to the full catalogue.
+  const areasFor = (batchId: string): FilmAcademyInterestArea[] => {
+    const offered = data?.batchAreas?.[batchId];
+    return offered === undefined
+      ? catalogue
+      : catalogue.filter((area) => offered.includes(area.slug));
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -195,12 +400,18 @@ export default function FilmAcademyScreen() {
           </>
         )}
 
+        {/* Same five formats price every training — shown once, here, so the
+            cohort cards below can stay about choosing one. */}
+        {!!data && !isLoading && !error && data.interestAreas.length > 0 && (
+          <TuitionStructureCard data={data} />
+        )}
+
         {batches.map((b) => (
           <BatchCard
             key={b.id}
             batch={b}
+            areas={areasFor(b.id)}
             applied={applied.has(b.id)}
-            fallbackFee={typeof data?.settings?.tuition_fee === 'number' ? data.settings.tuition_fee : null}
           />
         ))}
       </ScrollView>
@@ -235,10 +446,31 @@ const styles = StyleSheet.create({
   cardDesc:    { ...Typography.bodyMd, color: Colors.onSurfaceVariant, marginBottom: Spacing.xs },
   metaRow:     { flexDirection: 'row', alignItems: 'center', gap: 6 },
   metaText:    { ...Typography.caption, color: Colors.onSurfaceVariant },
-  feeRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-                 marginTop: Spacing.sm },
-  feeLabel:    { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
-  feeValue:    { ...Typography.titleMd, color: Colors.onSurface },
+  trainingsTitle: { ...Typography.labelMd, color: Colors.onSurfaceVariant, marginTop: Spacing.sm },
+  trainingGroup: { gap: 0 },
+  subs: { paddingLeft: Spacing.sm, paddingBottom: Spacing.xs, gap: 2 },
+  subRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+            paddingHorizontal: Spacing.sm, paddingVertical: 10, borderRadius: Radius.md },
+  subSpacer: { width: 14 },
+  chipBlocked: { opacity: 0.35 },
+  trainings:   { gap: 6 },
+  trainingRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+                 borderWidth: 1, borderColor: Colors.surfaceContainerHigh,
+                 borderRadius: Radius.md, paddingHorizontal: Spacing.sm, paddingVertical: 10 },
+  trainingRowOn: { borderColor: Colors.gold, backgroundColor: Colors.iconBgGold },
+  trainingCheck: { width: 18, height: 18, borderRadius: 9, borderWidth: 1,
+                   borderColor: Colors.onSurfaceVariant, alignItems: 'center', justifyContent: 'center' },
+  trainingCheckOn: { backgroundColor: Colors.gold, borderColor: Colors.gold },
+  trainingBody: { flex: 1, gap: 1 },
+  trainingLabel: { ...Typography.labelMd, color: Colors.onSurface },
+  trainingLabelOn: { color: Colors.onSurface },
+  trainingMeta: { ...Typography.caption, color: Colors.onSurfaceVariant },
+  trainingFee: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
+  trainingFeeOn: { color: Colors.onSurface },
+  selectedRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                 gap: Spacing.sm, marginTop: Spacing.xs },
+  selectedLabel: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  selectedValue: { ...Typography.labelMd, color: Colors.onSurface, flexShrink: 1, textAlign: 'right' },
   feeNote:     { ...Typography.caption, color: Colors.onSurfaceVariant },
   applyBtn:    { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 12,
                  alignItems: 'center', marginTop: Spacing.sm },

@@ -82,6 +82,11 @@ function makeApplyBody(overrides: Record<string, unknown> = {}) {
  * `.in('slug', …)`. The shared fixture keeps `in` chainable because other
  * suites chain onto it, so this overrides it locally to resolve like a real
  * terminal query. Defaults to the areas used by makeApplyBody(), fee 0.
+ *
+ * It also answers the batch-offered lookup: a batch accepts EXACTLY its linked
+ * trainings (an empty set now accepts nothing), so the default catalogue is
+ * the slugs passed here. Tests needing a different offering re-override
+ * `from` afterwards — the last assignment wins.
  */
 function mockInterestAreas(
   mock: Record<string, unknown>,
@@ -92,6 +97,20 @@ function mockInterestAreas(
     data: rows.map((r) => ({ is_active: true, ...r })),
     error: null,
   });
+
+  const offered = rows
+    .filter((r) => r.is_active !== false)
+    .map((r) => ({ area_slug: r.slug }));
+  const batchAreaStub = {
+    // POST reads via .eq('batch_id', …), GET via .in('batch_id', […]).
+    select: () => ({
+      eq: () => Promise.resolve({ data: offered, error: null }),
+      in: () => Promise.resolve({ data: offered, error: null }),
+    }),
+  };
+  (mock as { from: unknown }).from = vi.fn((table: string) =>
+    table === 'academy_batch_interest_areas' ? batchAreaStub : mock,
+  ) as never;
 }
 
 function setupHappyPathMock() {

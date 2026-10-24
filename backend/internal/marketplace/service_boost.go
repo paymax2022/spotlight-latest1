@@ -12,14 +12,12 @@ import (
 	"time"
 )
 
-// minCustomBoostDays/maxCustomBoostDays bound a "custom" date-range boost.
-// Min 1 prevents a same-minute end from pricing at ₦0; max 90 caps how much a
-// single fat-fingered end date can charge a wallet (the largest preset
-// package, "enterprise", is 60 days — 90 gives custom headroom above every
-// preset without being unbounded).
+// minBoostDays/maxBoostDays bound how long a boost can run. Min 1 prevents a
+// same-minute end from pricing at ₦0; max 90 caps how much a single fat-fingered
+// end date can charge a wallet (at the seeded ₦100/day rate that is ₦9,000).
 const (
-	minCustomBoostDays = 1
-	maxCustomBoostDays = 90
+	minBoostDays = 1
+	maxBoostDays = 90
 )
 
 // boostSellerCancelReason is the rejection_reason_code CancelBoost stamps when
@@ -37,25 +35,28 @@ const boostSellerCancelReason = "seller_cancelled"
 // The boost charge is a wallet debit → ledger.AccountCommission (ad revenue). The
 // auto-refund reverses it back to the seller wallet.
 
-// ListBoostTiers returns the boost catalog (§3.3 GET /boosts/tiers) —
-// admin-editable packages (ADM-002), active only (an admin-disabled package
-// must disappear from what a buyer can pick, even though it stays in the
-// admin console for re-enabling). Falls back to nothing gracefully; the
-// migration seed guarantees the table is never actually empty.
-func (s *Service) ListBoostTiers(ctx context.Context) ([]BoostTier, error) {
-	pkgs, err := s.repo.ListBoostPackages(ctx)
+// BoostPricing returns the public boost price catalog (§3.3 GET /boosts/pricing)
+// — the admin's ₦/day rate plus the durations the app offers. The rate lives in
+// mkt_boost_daily_rate and the admin pricing console can change it at any moment,
+// so this is read live on every request rather than cached in the binary: an
+// admin repricing today is what a seller sees opening the boost screen now.
+func (s *Service) BoostPricing(ctx context.Context) (*BoostPricing, error) {
+	rate, err := s.repo.GetBoostDailyRate(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]BoostTier, 0, len(pkgs))
-	for _, p := range pkgs {
-		if !p.IsActive {
-			continue
-		}
-		out = append(out, BoostTier{Tier: p.Tier, DurationDays: p.DurationDays, PriceKobo: p.PriceKobo, Weight: p.Weight})
-	}
-	return out, nil
+	return &BoostPricing{
+		DailyRateKobo:      rate.DailyRateKobo,
+		PresetDurationDays: boostPresetDays,
+		MinDurationDays:    minBoostDays,
+		MaxDurationDays:    maxBoostDays,
+	}, nil
 }
+
+// boostPresetDays are the durations the purchase screen offers as one tap. Each
+// is priced exactly like a custom range — duration × the ₦/day rate — so the
+// list is a shortcut, not a second price list.
+var boostPresetDays = []int{1, 3, 7, 14, 30}
 
 // GetBoost returns a boost (OLA enforced in the handler for member reads).
 func (s *Service) GetBoost(ctx context.Context, id string) (*Boost, error) {
@@ -66,81 +67,93 @@ func (s *Service) GetBoost(ctx context.Context, id string) (*Boost, error) {
 // by both the read-only GET /boosts/quote preview and PurchaseBoost itself, so
 // a quote shown to a buyer and what they're actually charged can never drift.
 // Never trusts a client-sent price.
-// Package mode (tier set, and not "custom"): tier must name an ACTIVE row in
-// mkt_boost_packages; price/duration/weight come from that row.
-// Custom mode (tier empty or "custom", endsAt set): starts now (a boost always
-// activates immediately on purchase — there is no scheduler to promote a
-// future-dated "purchased" boost to "active" later), duration rounds UP to the
-// next full day (a part-day still costs a full day — CLAUDE.md money rule:
-// integers, never fractional kobo), price = days × the admin-set ₦/day rate
-// (mkt_boost_daily_rate). Custom boosts get the base/"start" package's search
-// weight (1.0) regardless of chosen duration — deliberately flat rather than a
-// guessed formula, so a longer custom range cannot buy outsized search rank.
-func (s *Service) ComputeBoostQuote(ctx context.Context, tier string, endsAt *time.Time) (*BoostQuote, error) {
+//
+// One formula for every boost: duration × the admin-set ₦/day rate
+// (mkt_boost_daily_rate). Pass either duration_days (a whole-day boost starting
+// now) or ends_at (a boost ending at a chosen moment). A boost always activates
+// immediately on purchase — there is no scheduler to promote a future-dated
+// "purchased" boost to "active" later — and an ends_at range is billed in whole
+// days rounded UP (a part-day still costs a full day; CLAUDE.md money rule:
+// integers, never fractional kobo).
+//
+// Weight is flat (baseBoostWeight) regardless of duration: deliberately not a
+// formula, so a longer range cannot buy outsized search rank.
+func (s *Service) ComputeBoostQuote(ctx context.Context, durationDays int, endsAt *time.Time) (*BoostQuote, error) {
+	if durationDays > 0 && endsAt != nil {
+		return nil, fieldErr(CodeValidation, "send duration_days or ends_at, not both", "duration_days")
+	}
 	now := time.Now()
 
-	if tier != "" && tier != "custom" {
-		pkg, err := s.repo.GetBoostPackage(ctx, tier)
+	days := durationDays
+	ends := now.Add(time.Duration(days) * 24 * time.Hour)
+	switch {
+	case days > 0:
+		if days < minBoostDays || days > maxBoostDays {
+			return nil, fieldErr(CodeInvalidBoostRange,
+				fmt.Sprintf("duration_days must be between %d and %d", minBoostDays, maxBoostDays), "duration_days")
+		}
+	case endsAt != nil:
+		var err error
+		days, err = boostDaysFromRange(now, *endsAt)
 		if err != nil {
-			return nil, err // ErrBoostPackageNotFound is already the right 400
+			return nil, err
 		}
-		if !pkg.IsActive {
-			return nil, newErr(400, CodeInvalidBoostTier, "this boost package is no longer available")
-		}
-		ends := now.Add(time.Duration(pkg.DurationDays) * 24 * time.Hour)
-		return &BoostQuote{
-			Mode: "package", Tier: pkg.Tier, DurationDays: pkg.DurationDays,
-			PriceKobo: pkg.PriceKobo, Weight: pkg.Weight, StartsAt: now, EndsAt: ends,
-		}, nil
+		ends = *endsAt
+	default:
+		return nil, fieldErr(CodeValidation, "duration_days or ends_at is required", "duration_days")
 	}
 
-	if endsAt == nil {
-		return nil, fieldErr(CodeValidation, "tier or ends_at is required", "ends_at")
-	}
-	days, err := customBoostDuration(now, *endsAt)
-	if err != nil {
-		return nil, err
-	}
 	rate, err := s.repo.GetBoostDailyRate(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return &BoostQuote{
-		Mode: "custom", DurationDays: days, PriceKobo: int64(days) * rate.DailyRateKobo,
-		Weight: baseBoostWeight, StartsAt: now, EndsAt: *endsAt,
+		DurationDays: days, DailyRateKobo: rate.DailyRateKobo,
+		PriceKobo: int64(days) * rate.DailyRateKobo, Weight: baseBoostWeight,
+		StartsAt: now, EndsAt: ends,
 	}, nil
 }
 
-// customBoostDuration validates a custom boost's [now, endsAt) range and
-// returns its billed duration in whole days, rounded UP — a part-day still
-// costs a full day (CLAUDE.md money rule: integers, never fractional kobo).
-// Pure and DB-free so the rounding/bounds math has an executed unit test
-// independent of ComputeBoostQuote's repo dependency (service_boost_test.go).
-func customBoostDuration(now, endsAt time.Time) (int, error) {
+// boostDaysFromRange validates a chosen end moment and returns its billed
+// duration in whole days, rounded UP — a part-day still costs a full day
+// (CLAUDE.md money rule: integers, never fractional kobo). Pure and DB-free so
+// the rounding/bounds math has an executed unit test independent of
+// ComputeBoostQuote's repo dependency (service_boost_test.go).
+func boostDaysFromRange(now, endsAt time.Time) (int, error) {
 	if !endsAt.After(now) {
 		return 0, fieldErr(CodeInvalidBoostRange, "ends_at must be in the future", "ends_at")
 	}
-	days := max(int(math.Ceil(endsAt.Sub(now).Hours()/24)), minCustomBoostDays)
-	if days > maxCustomBoostDays {
-		return 0, fieldErr(CodeInvalidBoostRange, fmt.Sprintf("a custom boost cannot exceed %d days", maxCustomBoostDays), "ends_at")
+	days := max(int(math.Ceil(endsAt.Sub(now).Hours()/24)), minBoostDays)
+	if days > maxBoostDays {
+		return 0, fieldErr(CodeInvalidBoostRange, fmt.Sprintf("a boost cannot exceed %d days", maxBoostDays), "ends_at")
 	}
 	return days, nil
 }
 
-// baseBoostWeight is the flat search-rank weight a custom-range boost gets,
-// matching the cheapest preset package ("start") — see ComputeBoostQuote.
+// baseBoostWeight is the flat search-rank weight every boost gets — see
+// ComputeBoostQuote.
 const baseBoostWeight = 1.0
 
-// boostChargeTierKey derives the string PurchaseBoost's postBoostCharge keys
-// its idempotent charge on: the package tier verbatim (unchanged from before
-// custom boosts existed, so already-issued idempotency keys keep meaning the
-// same thing), or a deterministic per-request key for a custom range so two
-// DIFFERENT custom purchases never collide while a RETRY of the same one does.
+// boostRowTier is what mkt_boosts.tier records for a day-rate purchase. The
+// column predates the pricing model (it named package tiers, and the admin
+// boost console still reads it); every boost bought now costs duration × the
+// ₦/day rate, so they all carry this one label and duration_days/price_kobo on
+// the row say what was actually bought.
+const boostRowTier = "daily-rate"
+
+// boostChargeTierKey derives the string PurchaseBoost's postBoostCharge keys its
+// idempotent charge on: deterministic per request, so two DIFFERENT purchases
+// never collide while a RETRY of the same one does. The billed END DATE identifies
+// the purchase — at ₦/day pricing, same listing + same end date = the same buy.
+//
+// The DATE, not the instant, is load-bearing: the segment is computed from a
+// quote whose ends_at comes from time.Now(), so a per-second format would give two
+// genuinely concurrent calls (a double-tap carrying two different Idempotency-Keys,
+// racing inside Redis' non-atomic check-then-set) two different keys and debit the
+// wallet twice. The ledger's unique idempotency key is the durable backstop behind
+// the 24h Redis window, and a backstop only holds if it is reproducible.
 func boostChargeTierKey(q *BoostQuote) string {
-	if q.Mode == "package" {
-		return q.Tier
-	}
-	return "custom:" + q.EndsAt.UTC().Format(time.RFC3339)
+	return "until:" + q.EndsAt.UTC().Format("2006-01-02")
 }
 
 // PurchaseBoost charges the seller wallet directly (§2.4 purchase) and creates an
@@ -166,7 +179,7 @@ func (s *Service) PurchaseBoost(ctx context.Context, sellerID, idemKey string, i
 	if err := requireUUIDField(in.ListingID, "listing_id"); err != nil {
 		return nil, err
 	}
-	quote, err := s.ComputeBoostQuote(ctx, in.Tier, in.EndsAt)
+	quote, err := s.ComputeBoostQuote(ctx, in.DurationDays, in.EndsAt)
 	if err != nil {
 		return nil, err
 	}
@@ -205,10 +218,7 @@ func (s *Service) PurchaseBoost(ctx context.Context, sellerID, idemKey string, i
 		return nil, err
 	}
 
-	rowTier := quote.Tier
-	if rowTier == "" {
-		rowTier = "custom"
-	}
+	rowTier := boostRowTier
 	startsAt, endsAt := quote.StartsAt, quote.EndsAt
 	b := &Boost{
 		ListingID:       in.ListingID,
@@ -458,8 +468,11 @@ func (s *Service) SetBoostDailyRate(ctx context.Context, adminID string, dailyRa
 	if err := requireReason(reasonCode); err != nil {
 		return nil, err
 	}
-	if dailyRateKobo < 0 {
-		return nil, fieldErr(CodeValidation, "daily_rate_kobo must be >= 0", "daily_rate_kobo")
+	if dailyRateKobo <= 0 {
+		// Zero is rejected, not just negative: the rate prices EVERY boost, so a
+		// 0 row would sell unlimited promotion for nothing and post a 0-kobo
+		// charge to the ad-revenue ledger.
+		return nil, fieldErr(CodeValidation, "daily_rate_kobo must be greater than 0", "daily_rate_kobo")
 	}
 	before, err := s.repo.GetBoostDailyRate(ctx)
 	if err != nil {
@@ -579,11 +592,9 @@ func guardBoostTransition(from, to BoostStatus) error {
 	return nil
 }
 
-// BoostTier is one resolved, purchasable boost — either a preset package
-// (mkt_boost_packages, admin-editable via ADM-002) or a synthesized "custom"
-// entry priced by the admin-set ₦/day rate (ComputeBoostQuote in
-// service_boost.go resolves either shape into this same struct so
-// postBoostCharge/postBoostRefund need not know which).
+// BoostTier is the resolved, priced purchase handed to postBoostCharge —
+// duration, kobo and the search weight that froze onto the mkt_boosts row at
+// purchase time. ComputeBoostQuote is the only producer.
 type BoostTier struct {
 	Tier         string  `json:"tier"`
 	DurationDays int     `json:"duration_days"`

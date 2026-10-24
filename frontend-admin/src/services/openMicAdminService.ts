@@ -328,11 +328,9 @@ export type CreateOpenMicContestInput = {
  * by assertOpenMicAdmin), reached through the web proxy like every other read
  * above.
  *
- * NOT ported: the "upload a beat file" control. The web proxy forwards the
- * request body as text (see frontend-admin/app/api/web-proxy/[...path]/route.ts),
- * which corrupts a binary multipart upload — it only works for JSON bodies.
- * This form keeps the "paste a beat URL" path (already the primary path in
- * the original UI) and drops the file-picker; paste a pre-hosted URL instead.
+ * NOT ported: the "upload a beat file" control. This form keeps the "paste a
+ * beat URL" path (already the primary path in the original UI) and drops the
+ * file-picker; paste a pre-hosted URL instead.
  */
 export async function createOpenMicContest(
   input: CreateOpenMicContestInput,

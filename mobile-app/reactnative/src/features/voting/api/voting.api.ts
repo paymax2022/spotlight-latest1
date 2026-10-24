@@ -588,6 +588,8 @@ function toVoteTransaction(r: ConnectVoteRow): VoteTransaction {
     contestantId: r.contestant_id,
     contestantName: r.contestant_name,
     contestTitle: r.contest_title,
+    /** Already a renderable URL: the server signs the stored object key at read. */
+    contestantPhoto: r.photo_url || undefined,
     voteType: r.paid ? 'PAID' : 'FREE',
     votes: r.quantity,
     amount: r.paid ? r.amount_kobo / 100 : undefined,
