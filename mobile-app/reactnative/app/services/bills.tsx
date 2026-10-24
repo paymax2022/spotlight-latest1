@@ -3,17 +3,19 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Icons from 'lucide-react-native';
 import SearchBar from '@/components/SearchBar';
 import { BILL_CATEGORIES } from '@/data/billPayment';
-import { useBillerStore } from '@/features/services/billerStore';
+import { useRecentBillers } from '@/features/services/useRecentBillers';
+import type { ServiceType } from '@/types/transaction';
+import { formatNaira } from '@/utils/money';
 import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1, shadow2 } from '@/constants/tokens';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import ProviderLogo from '@/components/ProviderLogo';
 import { RemoteBanner } from '@/features/media/banners';
 
 function DynamicIcon({ name, size = 24, color }: { name: string; size?: number; color: string }) {
@@ -21,8 +23,17 @@ function DynamicIcon({ name, size = 24, color }: { name: string; size?: number; 
   return <IconComponent size={size} color={color} strokeWidth={2} />;
 }
 
+// Used only when a purchase recorded no provider name (rare): the category icon.
+const CATEGORY_ICON: Record<ServiceType, { icon: string; accent: string; bg: string }> = {
+  AIRTIME:     { icon: 'Smartphone',    accent: Colors.primary,   bg: Colors.iconBgPurple },
+  DATA:        { icon: 'Wifi',          accent: Colors.secondary, bg: Colors.iconBgBlue },
+  ELECTRICITY: { icon: 'Zap',           accent: Colors.onWarning, bg: Colors.iconBgGold },
+  CABLE_TV:    { icon: 'Tv',            accent: Colors.teal,      bg: Colors.iconBgTeal },
+  EDUCATION:   { icon: 'GraduationCap', accent: Colors.primary,   bg: Colors.iconBgPurple },
+};
+
 export default function BillsScreen() {
-  const recentBillers = useBillerStore((s) => s.billers);
+  const recent = useRecentBillers();
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
@@ -40,17 +51,6 @@ export default function BillsScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <RemoteBanner slug="utility-bills" priority style={styles.banner} />
-
-        <LinearGradient
-          colors={[Colors.primary, Colors.secondaryContainer]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.hero, shadow2]}
-        >
-          <Text style={styles.heroEyebrow}>Paymax Bills Hub</Text>
-          <Text style={styles.heroTitle}>Pay bills instantly</Text>
-          <Text style={styles.heroSubtitle}>Airtime, data, electricity, cable TV, and education payments in one secure flow.</Text>
-        </LinearGradient>
 
         <SearchBar placeholder="Search biller or service" />
 
@@ -83,21 +83,38 @@ export default function BillsScreen() {
         </View>
 
         <View style={[styles.recentCard, shadow1]}>
-          {recentBillers.map((biller, index) => (
-            <View key={biller.id}>
-              <View style={styles.recentRow}>
-                <View style={[styles.recentIcon, { backgroundColor: biller.bg }]}>
-                  <DynamicIcon name={biller.icon} color={biller.accent} size={20} />
+          {recent.isLoading ? (
+            <Text style={styles.recentEmpty}>Loading your recent purchases…</Text>
+          ) : recent.rows.length === 0 ? (
+            <Text style={styles.recentEmpty}>
+              Your recent purchases will appear here, each with its provider's logo.
+            </Text>
+          ) : (
+            recent.rows.map((biller, index) => {
+              const fallback = CATEGORY_ICON[biller.serviceType];
+              return (
+                <View key={biller.id}>
+                  <View style={styles.recentRow}>
+                    {biller.providerName ? (
+                      // Any provider that was purchased from: a bundled logo when we have one,
+                      // else the logo the billing API returned, else a branded initials badge.
+                      <ProviderLogo code="" name={biller.providerName} size={42} logoUri={biller.logoUri} />
+                    ) : (
+                      <View style={[styles.recentIcon, { backgroundColor: fallback.bg }]}>
+                        <DynamicIcon name={fallback.icon} color={fallback.accent} size={20} />
+                      </View>
+                    )}
+                    <View style={styles.recentCopy}>
+                      <Text style={styles.recentTitle}>{biller.title}</Text>
+                      <Text style={styles.recentSubtitle}>{biller.subtitle}</Text>
+                    </View>
+                    <Text style={styles.recentAmount}>{formatNaira(biller.amountKobo, { decimals: false })}</Text>
+                  </View>
+                  {index < recent.rows.length - 1 && <View style={styles.divider} />}
                 </View>
-                <View style={styles.recentCopy}>
-                  <Text style={styles.recentTitle}>{biller.title}</Text>
-                  <Text style={styles.recentSubtitle}>{biller.subtitle}</Text>
-                </View>
-                {biller.amount ? <Text style={styles.recentAmount}>{biller.amount}</Text> : null}
-              </View>
-              {index < recentBillers.length - 1 && <View style={styles.divider} />}
-            </View>
-          ))}
+              );
+            })
+          )}
         </View>
 
         <Pressable
@@ -144,17 +161,6 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 120 : 96,
   },
   banner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
-  hero: {
-    minHeight: 172,
-    borderRadius: Radius.xl,
-    padding: Spacing.cardPadding,
-    justifyContent: 'flex-end',
-    marginHorizontal: Spacing.containerMargin,
-    marginBottom: Spacing.lg,
-  },
-  heroEyebrow: { ...Typography.labelSm, color: Colors.inverseOnSurface, opacity: 0.9 },
-  heroTitle: { ...Typography.headlineLgMobile, color: Colors.onPrimary, marginTop: Spacing.xs },
-  heroSubtitle: { ...Typography.bodySm, color: Colors.inverseOnSurface, marginTop: Spacing.xs },
   sectionHeader: {
     paddingHorizontal: Spacing.containerMargin,
     marginTop: Spacing.lg,
@@ -229,4 +235,5 @@ const styles = StyleSheet.create({
   recentSubtitle: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
   recentAmount: { ...Typography.labelMd, color: Colors.primary },
   divider: { height: 1, backgroundColor: Colors.surfaceContainerHigh },
+  recentEmpty: { ...Typography.bodySm, color: Colors.onSurfaceVariant, padding: Spacing.lg, textAlign: 'center' },
 });

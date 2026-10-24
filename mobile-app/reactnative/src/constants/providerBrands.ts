@@ -13,7 +13,7 @@ export type ProviderBrand = {
 };
 
 const BRANDS: { match: string[]; brand: ProviderBrand }[] = [
-  { match: ['eko'],                                   brand: { abbr: 'EKO',  color: '#5B2A86', domain: 'ekedp.com' } },
+  { match: ['eko', 'ekedc'],                          brand: { abbr: 'EKO',  color: '#5B2A86', domain: 'ekedp.com' } },
   { match: ['ikeja'],                                 brand: { abbr: 'IKE',  color: '#C81E2D', domain: 'ikejaelectric.com' } },
   { match: ['abuja'],                                 brand: { abbr: 'ABJ',  color: '#0F5BA8', domain: 'abujaelectricity.com' } },
   { match: ['portharcourt', 'port-harcourt', 'phed'], brand: { abbr: 'PH',   color: '#008751', domain: 'phed.com.ng' } },
