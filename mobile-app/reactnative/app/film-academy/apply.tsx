@@ -12,17 +12,26 @@
 
 import React from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Alert,
+  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, Check } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Check, BedDouble, Trash2 } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
+import { shadow2 } from '@/constants/tokens';
+import PrimaryButton from '@/components/PrimaryButton';
+import AreaOptionSheet from '@/features/filmAcademy/components/AreaOptionSheet';
+import { fromPrice, optionPrice, summarise } from '@/features/filmAcademy/optionPricing';
+import {
+  canAddArea, hasOptions, reconcilePicks, removePick, toSelections, upsertPick, type AreaPick,
+} from '@/features/filmAcademy/picks';
+import type { FilmAcademyAreaOption, FilmAcademyInterestArea } from '@/features/filmAcademy/types';
 import { getOverview, applyToBatch } from '@/features/filmAcademy/api';
 import { useAuthStore } from '@/store/authStore';
 import { normalizeAccountName } from '@/features/account/name';
@@ -55,6 +64,7 @@ export default function FilmAcademyApplyScreen() {
     : (data?.interestAreas ?? []);
 
   const gateway = usePaystackGateway();
+  const insets = useSafeAreaInsets();
   // Without a publishable key the gateway cannot open at all, so say that
   // rather than letting the user tap Pay into a dead sheet.
   const payReady = Boolean(PAYSTACK_PUBLIC_KEY);
@@ -73,34 +83,41 @@ export default function FilmAcademyApplyScreen() {
   // not editable here — changing it belongs in the profile, not in one form.
   const [fullName, setFullName]     = React.useState('');
   const [phone, setPhone]           = React.useState('');
-  const [areas, setAreas]           = React.useState<string[]>([]);
+  // One pick per area, keyed by area slug. Held raw; `picks` below is the
+  // version re-bound to the batch's CURRENT areas (see reconcilePicks).
+  const [rawPicks, setRawPicks]     = React.useState<AreaPick[]>([]);
+  const [sheetArea, setSheetArea]   = React.useState<FilmAcademyInterestArea | null>(null);
   const [motivation, setMotivation] = React.useState('');
   const [experience, setExperience] = React.useState('');
   const [pref, setPref]             = React.useState<'one_off' | 'installment'>('installment');
   const [busy, setBusy]             = React.useState(false);
   const [error, setError]           = React.useState<string | null>(null);
 
-  // zone until its declaration runs — computing the total above the useState
-  // threw "Cannot access 'areas' before initialization" on every render.
-  // The SERVER recomputes this total from the same admin-managed rows when the
-  // application is submitted, so it is a display convenience and cannot be used
-  // to pay less.
-  // TUITION for the chosen areas — payable on ACCEPTANCE and refundable. It is
-  // shown so the applicant knows the commitment, but it is NOT collected here:
-  // charging it at submit would take hundreds of thousands of naira, before
-  // anyone had read the application, under a fee the settings mark
-  // non-refundable.
-  const tuitionTotal = interestAreas
-    .filter((a) => areas.includes(a.slug))
-    .reduce((sum, a) => sum + Number(a.fee_ngn ?? 0), 0);
-
-  // The only amount charged at submit. Non-refundable.
-  const applicationFee = baseFee;
-
   // The cap is served by the API, not hardcoded here: it is a commercial rule and
   // the server is what enforces it. This only stops the user reaching a rejection.
   const maxAreas = data?.maxInterestAreas ?? 2;
-  const atLimit = areas.length >= maxAreas;
+
+  // Picks re-bound to what this batch offers NOW: a pick whose area, option or
+  // boarding is no longer offered is dropped rather than submitted into a 400,
+  // and prices always reflect the latest overview.
+  const picks = React.useMemo(
+    () => reconcilePicks(rawPicks, interestAreas, maxAreas),
+    // interestAreas is re-derived every render from `data` + `batchId`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawPicks, data, batchId, maxAreas],
+  );
+  const atLimit = picks.length >= maxAreas;
+
+  // TUITION for the chosen options — payable on ACCEPTANCE and refundable. It is
+  // shown so the applicant knows the commitment, but it is NOT collected here:
+  // charging it at submit would take tuition before anyone had read the
+  // application, under a fee the settings mark non-refundable. The SERVER
+  // re-prices every selection from the database at submit, so this total is a
+  // display convenience and cannot be used to pay less.
+  const summary = summarise(picks);
+
+  // The only amount charged at submit. Non-refundable.
+  const applicationFee = baseFee;
 
   // What actually gets submitted: the account's value, or — only where the
   // account had none — what the user typed into the one input we still show.
@@ -108,14 +125,16 @@ export default function FilmAcademyApplyScreen() {
   const applicantEmail = known.email;
   const applicantPhone = known.phone || phone.trim();
 
-  const toggleArea = (a: string) =>
-    setAreas((prev) => {
-      if (prev.includes(a)) return prev.filter((x) => x !== a);
-      // Silently ignoring the tap would look like a broken button, so the chip is
-      // disabled and labelled instead — see `atLimit` below.
-      if (prev.length >= maxAreas) return prev;
-      return [...prev, a];
-    });
+  const pickFor = (slug: string) => picks.find((p) => p.area.slug === slug);
+
+  const onPicked = (
+    area: FilmAcademyInterestArea,
+    choice: { option: FilmAcademyAreaOption; boarding: boolean },
+  ) => {
+    setRawPicks(upsertPick(picks, { area, option: choice.option, boarding: choice.boarding }, maxAreas));
+    setSheetArea(null);
+    setError(null);
+  };
 
   /**
    * Posts the application. `reference` is the paid application-fee reference,
@@ -131,7 +150,9 @@ export default function FilmAcademyApplyScreen() {
         full_name: applicantName,
         email: applicantEmail,
         phone: applicantPhone,
-        areas_of_interest: areas,
+        // The server derives areas_of_interest from these and prices each one
+        // itself from the database; no amount is ever sent.
+        selections: toSelections(picks),
         motivation: motivation.trim(),
         experience: experience.trim() || undefined,
         payment_preference: pref,
@@ -156,8 +177,8 @@ export default function FilmAcademyApplyScreen() {
     if (!applicantEmail)     return setError('Please sign in to apply.');
     if (!applicantName)      return setError('Enter your full name.');
     if (!applicantPhone)     return setError('Enter your phone number.');
-    if (areas.length === 0)  return setError('Choose at least one area of interest.');
-    if (areas.length > maxAreas) {
+    if (picks.length === 0)  return setError('Choose at least one area of interest.');
+    if (picks.length > maxAreas) {
       return setError(`Choose at most ${maxAreas} areas of interest for this batch.`);
     }
     if (!motivation.trim())  return setError('Tell us why you want to join.');
@@ -238,81 +259,42 @@ export default function FilmAcademyApplyScreen() {
                  keyboardType="phone-pad" />
         )}
 
-        <Text style={styles.label}>Areas of interest</Text>
-        <Text style={styles.totalNote}>
-          Amounts shown are tuition, payable only if you are offered a place.
-        </Text>
-        <Text style={[styles.noticeText, atLimit && styles.limitReached]}>
-          {atLimit
-            ? `You have chosen ${maxAreas} of ${maxAreas}. Deselect one to swap it.`
-            : `Choose up to ${maxAreas} for this batch — ${areas.length} of ${maxAreas} selected.`}
-        </Text>
+        <View style={styles.areasHead}>
+          <Text style={styles.label}>Areas of interest</Text>
+          <Text
+            style={[styles.noticeText, atLimit && styles.limitReached]}
+            accessibilityLiveRegion="polite"
+          >
+            {atLimit
+              ? `${picks.length} of ${maxAreas} chosen — remove one to swap it.`
+              : `${picks.length} of ${maxAreas} chosen. Tap an area to pick a course option.`}
+          </Text>
+          <Text style={styles.totalNote}>
+            Amounts shown are tuition, payable only if you are offered a place.
+          </Text>
+        </View>
         {interestAreas.length === 0 ? (
           <Text style={styles.noticeText}>
             No areas are available to choose right now. Please try again later.
           </Text>
         ) : (
-          <View style={styles.chips}>
+          <View style={styles.areaList}>
             {interestAreas.map((a) => {
-              const on = areas.includes(a.slug);
-              const fee = Number(a.fee_ngn ?? 0);
-              const blocked = !on && atLimit;
+              const pick = pickFor(a.slug);
               return (
-                <Pressable
+                <AreaCard
                   key={a.slug}
-                  onPress={() => toggleArea(a.slug)}
-                  disabled={blocked}
-                  style={[styles.chip, on && styles.chipOn, blocked && styles.chipBlocked]}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: on, disabled: blocked }}
-                  accessibilityLabel={fee > 0 ? `${a.label}, tuition ₦${fee.toLocaleString('en-NG')}` : `${a.label}, no tuition`}
-                >
-                  {on && <Check size={13} color={Colors.primary} />}
-                  <Text style={[styles.chipText, on && styles.chipTextOn]}>{a.label}</Text>
-                  {/* No '+' prefix: this is TUITION if accepted, not an amount
-                      added to today's payment. */}
-                  <Text style={[styles.chipFee, on && styles.chipTextOn]}>
-                    {fee > 0 ? `₦${fee.toLocaleString('en-NG')}` : 'No tuition'}
-                  </Text>
-                </Pressable>
+                  area={a}
+                  pick={pick}
+                  blocked={!pick && !canAddArea(picks, a, maxAreas)}
+                  onOpen={() => setSheetArea(a)}
+                  onRemove={() => setRawPicks(removePick(picks, a.slug))}
+                />
               );
             })}
           </View>
         )}
 
-        {/* Running total. Tapping a chip adds or removes its line immediately. */}
-        <View style={styles.totalBox}>
-          <View style={[styles.totalRow, styles.totalRowGrand, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
-            <Text style={styles.totalGrandLabel}>Pay now</Text>
-            <Text style={styles.totalGrandValue}>₦{baseFee.toLocaleString('en-NG')}</Text>
-          </View>
-          <Text style={styles.totalNote}>
-            Application fee. Non-refundable, and charged whether or not you are offered a place.
-          </Text>
-
-          {tuitionTotal > 0 && (
-            <>
-              <View style={[styles.totalRow, styles.totalRowGrand]}>
-                <Text style={styles.totalLabel}>Tuition if accepted</Text>
-                <Text style={styles.totalValue}>₦{tuitionTotal.toLocaleString('en-NG')}</Text>
-              </View>
-              {interestAreas
-                .filter((a) => areas.includes(a.slug) && Number(a.fee_ngn ?? 0) > 0)
-                .map((a) => (
-                  <View key={a.slug} style={styles.totalRow}>
-                    <Text style={styles.totalSubLabel}>{a.label}</Text>
-                    <Text style={styles.totalSubValue}>
-                      ₦{Number(a.fee_ngn).toLocaleString('en-NG')}
-                    </Text>
-                  </View>
-                ))}
-              <Text style={styles.totalNote}>
-                Payable only if you are offered a place, and refundable. Nothing for
-                tuition is taken today.
-              </Text>
-            </>
-          )}
-        </View>
 
         <Field label="Why do you want to join?" value={motivation} onChange={setMotivation}
                placeholder="A few sentences" multiline />
@@ -330,21 +312,189 @@ export default function FilmAcademyApplyScreen() {
           ))}
         </View>
 
-        {!!error && <Text style={styles.error}>{error}</Text>}
-
-        <Pressable style={[styles.submit, busy && styles.submitBusy]} onPress={onSubmit} disabled={busy}>
-          {busy ? <ActivityIndicator color="#FFFFFF" />
-                : <Text style={styles.submitText}>
-                    {feeRequired
-                      ? `Pay ₦${applicationFee.toLocaleString('en-NG')} & submit`
-                      : 'Submit application'}
-                  </Text>}
-        </Pressable>
-
         {/* Hosts the Paystack checkout WebView on native; renders nothing on web. */}
         <gateway.Sheet />
       </ScrollView>
+
+      {/* Sticky summary: always visible above the submit action, so the
+          applicant sees exactly what they are committing to before paying. */}
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>
+        {picks.length > 0 ? (
+          <View style={styles.footerLines}>
+            {picks.map((p) => {
+              const price = optionPrice(p.option, p.boarding);
+              const priceText = price === null ? '—' : naira(price);
+              return (
+                <View
+                  key={p.area.slug}
+                  style={styles.footerLine}
+                  accessible
+                  accessibilityLabel={`${p.area.label}, ${p.option.label}, ${
+                    p.boarding ? 'with boarding' : 'without boarding'
+                  }, ${priceText}`}
+                >
+                  <Text style={styles.footerLineLabel} numberOfLines={2}>
+                    {p.area.label} — {p.option.label}
+                  </Text>
+                  {p.boarding && <BoardingBadge />}
+                  <Text style={styles.footerLineValue}>{priceText}</Text>
+                </View>
+              );
+            })}
+            <View style={styles.footerRow}>
+              <Text style={styles.footerLabel}>Tuition if accepted</Text>
+              <Text style={styles.footerValue}>{naira(summary.total)}</Text>
+            </View>
+            <Text style={styles.totalNote}>
+              Payable only if you are offered a place, and refundable. Nothing for
+              tuition is taken today.
+            </Text>
+          </View>
+        ) : (
+          <Text style={styles.totalNote}>No areas chosen yet.</Text>
+        )}
+
+        <View style={[styles.footerRow, styles.footerPayRow]}>
+          <View style={styles.footerPayText}>
+            <Text style={styles.totalGrandLabel}>Pay now</Text>
+            <Text style={styles.totalNote}>Application fee · non-refundable</Text>
+          </View>
+          <Text style={styles.totalGrandValue}>{naira(baseFee)}</Text>
+        </View>
+
+        {!!error && (
+          <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text>
+        )}
+
+        <PrimaryButton
+          label={feeRequired
+            ? `Pay ${naira(applicationFee)} & submit`
+            : 'Submit application'}
+          onPress={onSubmit}
+          loading={busy}
+        />
+      </View>
+
+      {!!sheetArea && (
+        <AreaOptionSheet
+          area={sheetArea}
+          initial={(() => {
+            const p = pickFor(sheetArea.slug);
+            return p ? { option_id: p.option.id, boarding: p.boarding } : undefined;
+          })()}
+          onSelect={(choice) => onPicked(sheetArea, choice)}
+          onClose={() => setSheetArea(null)}
+        />
+      )}
     </SafeAreaView>
+  );
+}
+
+const naira = (n: number) => `₦${n.toLocaleString('en-NG')}`;
+
+function BoardingBadge() {
+  return (
+    <View style={styles.badge}>
+      <BedDouble size={12} color={Colors.primary} />
+      <Text style={styles.badgeText}>Boarding</Text>
+    </View>
+  );
+}
+
+/**
+ * One area of interest. Tapping opens the option sheet (re-opening it with the
+ * current choice when already picked). Areas with no active options cannot be
+ * applied for and are shown disabled; at the cap, unpicked areas are disabled.
+ */
+function AreaCard({ area, pick, blocked, onOpen, onRemove }: {
+  area: FilmAcademyInterestArea;
+  pick: AreaPick | undefined;
+  blocked: boolean;
+  onOpen: () => void;
+  onRemove: () => void;
+}) {
+  const priced = hasOptions(area);
+  const from = fromPrice(area);
+  const disabled = !priced || blocked;
+  const price = pick ? optionPrice(pick.option, pick.boarding) : null;
+
+  const a11y = pick
+    ? `${area.label}, chosen: ${pick.option.label}${
+        pick.option.duration_label ? `, ${pick.option.duration_label}` : ''
+      }, ${pick.boarding ? 'with boarding' : 'without boarding'}${
+        price !== null ? `, ${naira(price)}` : ''
+      }. Tap to change.`
+    : !priced
+      ? `${area.label}, pricing coming soon, unavailable`
+      : blocked
+        ? `${area.label}, from ${naira(from ?? 0)}, unavailable — limit reached`
+        : `${area.label}, from ${naira(from ?? 0)}. Tap to choose an option.`;
+
+  return (
+    <View style={[styles.areaCard, pick && styles.areaCardOn, disabled && styles.areaCardOff]}>
+      <Pressable
+        onPress={onOpen}
+        disabled={disabled}
+        style={({ pressed }) => [styles.areaMain, pressed && styles.areaPressed]}
+        accessibilityRole="button"
+        accessibilityState={{ selected: !!pick, disabled }}
+        accessibilityLabel={a11y}
+      >
+        <View style={[styles.areaTick, pick && styles.areaTickOn]}>
+          {pick && <Check size={14} color={Colors.onPrimary} strokeWidth={3} />}
+        </View>
+        <View style={styles.areaBody}>
+          <Text style={styles.areaLabel}>{area.label}</Text>
+          {pick ? (
+            <>
+              <Text style={styles.areaChoice}>
+                {pick.option.label}
+                {pick.option.duration_label ? ` · ${pick.option.duration_label}` : ''}
+              </Text>
+              <View style={styles.areaChoiceRow}>
+                {pick.boarding
+                  ? <BoardingBadge />
+                  : <Text style={styles.areaMeta}>Without boarding</Text>}
+              </View>
+            </>
+          ) : !priced ? (
+            <Text style={styles.areaMeta}>Pricing coming soon</Text>
+          ) : (
+            <Text style={styles.areaFrom}>
+              from {naira(from ?? 0)}
+              {blocked ? <Text style={styles.areaMeta}>  ·  limit reached</Text> : null}
+            </Text>
+          )}
+        </View>
+        {pick && price !== null ? (
+          <Text style={styles.areaPrice}>{naira(price)}</Text>
+        ) : priced && !blocked ? (
+          <ChevronRight size={20} color={Colors.onSurfaceVariant} />
+        ) : null}
+      </Pressable>
+
+      {pick && (
+        <View style={styles.areaActions}>
+          <Pressable
+            onPress={onOpen}
+            style={styles.areaAction}
+            accessibilityRole="button"
+            accessibilityLabel={`Change option for ${area.label}`}
+          >
+            <Text style={styles.areaActionText}>Change</Text>
+          </Pressable>
+          <Pressable
+            onPress={onRemove}
+            style={styles.areaAction}
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${area.label}`}
+          >
+            <Trash2 size={16} color={Colors.error} />
+            <Text style={[styles.areaActionText, styles.areaRemoveText]}>Remove</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -389,28 +539,59 @@ const styles = StyleSheet.create({
   chip:        { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8,
                  borderRadius: Radius.md, backgroundColor: Colors.surface },
   chipOn:      { backgroundColor: Colors.iconBgPurple },
-  chipBlocked: { opacity: 0.35 },
   chipText:    { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   chipTextOn:  { color: Colors.primary },
-  chipFee:     { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-  totalBox:    { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, gap: 6 },
-  totalRow:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  totalRowGrand: { borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh,
-                   paddingTop: 8, marginTop: 4 },
-  totalLabel:  { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
-  totalValue:  { ...Typography.bodyMd, color: Colors.onSurface },
   totalGrandLabel: { ...Typography.labelLg, color: Colors.onSurface },
   totalGrandValue: { ...Typography.titleMd, color: Colors.onSurface },
-  totalSubLabel: { ...Typography.caption, color: Colors.onSurfaceVariant, paddingLeft: 10 },
-  totalSubValue: { ...Typography.caption, color: Colors.onSurfaceVariant },
   totalNote:     { ...Typography.caption, color: Colors.onSurfaceVariant, marginTop: 2 },
   error:       { ...Typography.bodyMd, color: Colors.error },
   noticeBox:   { backgroundColor: Colors.iconBgGold, borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
   noticeTitle: { ...Typography.labelLg, color: Colors.onSurface },
   noticeText:  { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   limitReached: { color: Colors.onWarning },
-  submit:      { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 14,
-                 alignItems: 'center', marginTop: Spacing.sm },
-  submitBusy:  { opacity: 0.7 },
-  submitText:  { ...Typography.labelLg, color: '#FFFFFF' },
+
+  // Area cards (open the option sheet).
+  areasHead:   { gap: Spacing.xs },
+  areaList:    { gap: Spacing.sm },
+  areaCard:    { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg,
+                 borderWidth: 1.5, borderColor: Colors.outlineVariant, overflow: 'hidden' },
+  areaCardOn:  { borderColor: Colors.primary, backgroundColor: Colors.iconBgPurple },
+  areaCardOff: { opacity: 0.5, backgroundColor: Colors.surfaceContainerLow },
+  areaMain:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, minHeight: 64,
+                 paddingVertical: Spacing.md, paddingHorizontal: Spacing.md },
+  areaPressed: { opacity: 0.85 },
+  areaTick:    { width: 24, height: 24, borderRadius: Radius.full, borderWidth: 2,
+                 borderColor: Colors.outline, alignItems: 'center', justifyContent: 'center' },
+  areaTickOn:  { borderColor: Colors.primary, backgroundColor: Colors.primary },
+  areaBody:    { flex: 1, gap: 2 },
+  areaLabel:   { ...Typography.labelLg, color: Colors.onSurface },
+  areaFrom:    { ...Typography.bodySm, color: Colors.secondary },
+  areaMeta:    { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  areaChoice:  { ...Typography.bodySm, color: Colors.onSurface },
+  areaChoiceRow: { flexDirection: 'row', marginTop: 2 },
+  areaPrice:   { ...Typography.titleMd, color: Colors.onSurface },
+  areaActions: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
+  areaAction:  { flex: 1, minHeight: 48, flexDirection: 'row', gap: Spacing.xs,
+                 alignItems: 'center', justifyContent: 'center' },
+  areaActionText: { ...Typography.labelMd, color: Colors.primary },
+  areaRemoveText: { color: Colors.error },
+
+  badge:       { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
+                 backgroundColor: Colors.iconBgPurple, borderRadius: Radius.sm,
+                 paddingHorizontal: Spacing.sm, paddingVertical: 2 },
+  badgeText:   { ...Typography.labelSm, color: Colors.primary },
+
+  // Sticky summary + submit.
+  footer:      { backgroundColor: Colors.surfaceContainerLowest, borderTopLeftRadius: Radius.xl,
+                 borderTopRightRadius: Radius.xl, paddingHorizontal: Spacing.containerMargin,
+                 paddingTop: Spacing.md, gap: Spacing.sm, ...shadow2 },
+  footerLines: { gap: Spacing.xs },
+  footerLine:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  footerLineLabel: { ...Typography.bodySm, color: Colors.onSurfaceVariant, flex: 1 },
+  footerLineValue: { ...Typography.bodySm, color: Colors.onSurface },
+  footerRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.sm },
+  footerLabel: { ...Typography.labelLg, color: Colors.onSurface },
+  footerValue: { ...Typography.labelLg, color: Colors.onSurface },
+  footerPayRow: { borderTopWidth: 1, borderTopColor: Colors.outlineVariant, paddingTop: Spacing.sm },
+  footerPayText: { flex: 1 },
 });

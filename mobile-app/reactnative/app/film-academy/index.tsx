@@ -16,6 +16,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { getOverview } from '@/features/filmAcademy/api';
 import type { FilmAcademyBatch, FilmAcademyInterestArea } from '@/features/filmAcademy/types';
+import { fromPrice } from '@/features/filmAcademy/optionPricing';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { RemoteBanner } from '@/features/media/banners';
 
@@ -37,7 +38,6 @@ function BatchCard({ batch, applied, areas, maxAreas, applicationFee }: {
   batch: FilmAcademyBatch; applied: boolean;
   areas: FilmAcademyInterestArea[]; maxAreas: number; applicationFee: number;
 }) {
-  const areaPriced = areas.some((a) => Number(a.fee_ngn ?? 0) > 0);
   return (
     <View style={styles.card}>
       <View style={styles.cardHead}>
@@ -67,14 +67,26 @@ function BatchCard({ batch, applied, areas, maxAreas, applicationFee }: {
       {areas.length > 0 && (
         <View style={styles.areasBlock}>
           <Text style={styles.areasLabel}>Areas of interest · choose up to {maxAreas}</Text>
-          <View style={styles.chipWrap}>
-            {areas.map((a) => (
-              <View key={a.slug} style={styles.chip}>
-                <Text style={styles.chipText}>
-                  {a.label}{a.fee_ngn > 0 ? ` · ${formatNaira(a.fee_ngn)}` : ''}
-                </Text>
-              </View>
-            ))}
+          {/* Informational here: options are chosen on the apply screen. */}
+          <View style={styles.areaGrid}>
+            {areas.map((a) => {
+              const from = fromPrice(a);
+              return (
+                <View
+                  key={a.slug}
+                  style={[styles.areaCard, from === null && styles.areaCardOff]}
+                  accessible
+                  accessibilityLabel={from === null
+                    ? `${a.label}, pricing coming soon`
+                    : `${a.label}, from ${formatNaira(from)}`}
+                >
+                  <Text style={styles.areaLabel}>{a.label}</Text>
+                  {from === null
+                    ? <Text style={styles.areaSoon}>Pricing coming soon</Text>
+                    : <Text style={styles.areaFrom}>from {formatNaira(from)}</Text>}
+                </View>
+              );
+            })}
           </View>
         </View>
       )}
@@ -85,13 +97,8 @@ function BatchCard({ batch, applied, areas, maxAreas, applicationFee }: {
           <Text style={styles.feeValue}>{formatNaira(applicationFee)}</Text>
         </View>
       )}
-      {/* A batch carries no tuition of its own: tuition is the sum of the fees on the
-          areas the applicant picks, so there is deliberately no batch fee row. */}
-      <Text style={styles.feeNote}>
-        {areaPriced
-          ? `Tuition is the total of the areas you choose (up to ${maxAreas}), payable only if you are offered a place.`
-          : 'Tuition is set per area of interest and shown when you apply.'}
-      </Text>
+      {/* No tuition total here: tuition depends on the option and boarding chosen
+          per area, which happens on the apply screen. */}
       {!!batch.installments_count && batch.installments_count > 1 && (
         <Text style={styles.feeNote}>
           Payable in {batch.installments_count} instalments
@@ -270,9 +277,16 @@ const styles = StyleSheet.create({
   feeValue:    { ...Typography.titleMd, color: Colors.onSurface },
   areasBlock:  { marginTop: Spacing.sm, gap: Spacing.xs },
   areasLabel:  { ...Typography.labelLg, color: Colors.onSurface },
-  chipWrap:    { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip:        { backgroundColor: Colors.surfaceContainerHigh, borderRadius: Radius.sm, paddingHorizontal: 8, paddingVertical: 4 },
-  chipText:    { ...Typography.caption, color: Colors.onSurface },
+  areaGrid:    { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  // Two per row from 360dp; long labels wrap inside the card rather than clip.
+  areaCard:    { flexGrow: 1, flexBasis: '45%', minHeight: 56, gap: 2, justifyContent: 'center',
+                 backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.md,
+                 borderWidth: 1, borderColor: Colors.outlineVariant,
+                 paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
+  areaCardOff: { backgroundColor: Colors.surfaceContainerLow },
+  areaLabel:   { ...Typography.labelMd, color: Colors.onSurface },
+  areaFrom:    { ...Typography.bodySm, color: Colors.secondary },
+  areaSoon:    { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   feeNote:     { ...Typography.caption, color: Colors.onSurfaceVariant },
   applyBtn:    { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 12,
                  alignItems: 'center', marginTop: Spacing.sm },

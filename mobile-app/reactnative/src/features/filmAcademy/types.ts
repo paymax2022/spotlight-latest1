@@ -45,6 +45,20 @@ export interface FilmAcademySelection {
   boarding: boolean;
 }
 
+/**
+ * One entry of an application's `selected_options` snapshot, priced by the
+ * server at apply time and never re-priced. NAIRA. `price_ngn` is null only if
+ * the stored snapshot is malformed.
+ */
+export interface FilmAcademySelectedOption {
+  area_slug: string;
+  option_id: string;
+  label: string;
+  duration_label: string | null;
+  boarding: boolean;
+  price_ngn: number | null;
+}
+
 /** An admin-managed area of interest. `fee_ngn` is NAIRA and is added to the base fee. */
 export interface FilmAcademyInterestArea {
   /** Written to academy_applications.areas_of_interest; stable once in use. */
@@ -167,6 +181,8 @@ export interface FilmAcademyApplicationStatus {
     batch_id: string | null;
     created_at: string | null;
     academy_batches?: { batch_name?: string | null; start_date?: string | null } | null;
+    /** Server-priced snapshot of the chosen options. Absent/null on older applications. */
+    selected_options?: unknown;
   } | null;
   timeline: FilmAcademyTimelineEntry[];
   /**
