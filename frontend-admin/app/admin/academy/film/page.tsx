@@ -1769,6 +1769,7 @@ function ExamsTab({ onNotice }: NoticeProp) {
     program_id: '', title: '', description: '', kind: 'stage_exam',
     draw_stage: 'L1', draw_module_codes: '', draw_count: '10',
     pass_mark: '70', time_limit_minutes: '30', max_attempts: '1',
+    opens_at: '', closes_at: '', // <input type="datetime-local"> values (admin's local time)
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1789,6 +1790,8 @@ function ExamsTab({ onNotice }: NoticeProp) {
         pass_mark: Number(form.pass_mark),
         time_limit_minutes: Number(form.time_limit_minutes) || 30,
         max_attempts: Number(form.max_attempts) || 1,
+        opens_at: form.opens_at ? new Date(form.opens_at).toISOString() : null,
+        closes_at: form.closes_at ? new Date(form.closes_at).toISOString() : null,
       });
       setForm((f) => ({ ...f, title: '', description: '' }));
       setReloadKey((k) => k + 1);
@@ -1836,6 +1839,8 @@ function ExamsTab({ onNotice }: NoticeProp) {
           <Field label="Pass mark (%)"><input type="number" min={0} max={100} style={input()} value={form.pass_mark} onChange={(e) => setForm({ ...form, pass_mark: e.target.value })} /></Field>
           <Field label="Time limit (min)"><input type="number" min={1} style={input()} value={form.time_limit_minutes} onChange={(e) => setForm({ ...form, time_limit_minutes: e.target.value })} /></Field>
           <Field label="Max attempts"><input type="number" min={1} style={input()} value={form.max_attempts} onChange={(e) => setForm({ ...form, max_attempts: e.target.value })} /></Field>
+          <Field label="Starts (required to publish)"><input type="datetime-local" style={input()} value={form.opens_at} onChange={(e) => setForm({ ...form, opens_at: e.target.value })} /></Field>
+          <Field label="Ends (required to publish)"><input type="datetime-local" style={input()} value={form.closes_at} onChange={(e) => setForm({ ...form, closes_at: e.target.value })} /></Field>
         </div>
         <Field label="Description">
           <textarea style={{ ...input(), minHeight: 50 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
@@ -1861,7 +1866,12 @@ function ExamsTab({ onNotice }: NoticeProp) {
                     <td style={td()}>{x.kind}</td>
                     <td style={td()}>{x.draw_stage ?? '—'}{x.draw_module_codes?.length ? ` · ${x.draw_module_codes.join(', ')}` : ''} · {x.draw_count ?? 0}q</td>
                     <td style={td()}>{x.pass_mark}%</td>
-                    <td style={td()}>{x.time_limit_minutes}m · {x.max_attempts}×</td>
+                    <td style={td()}>
+                      {x.time_limit_minutes}m · {x.max_attempts}×
+                      <div style={{ fontSize: 11, opacity: 0.75 }}>
+                        {x.opens_at ? new Date(x.opens_at).toLocaleString() : 'no start'} → {x.closes_at ? new Date(x.closes_at).toLocaleString() : 'no end'}
+                      </div>
+                    </td>
                     <td style={td()}><Badge status={x.is_published ? 'approved' : 'draft'} label={x.is_published ? 'published' : 'unpublished'} /></td>
                     <td style={{ ...td(), whiteSpace: 'nowrap' }}>
                       {x.is_published ? (

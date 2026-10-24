@@ -19,13 +19,16 @@ export interface ExamInput {
   pass_mark?: number;
   time_limit_minutes?: number;
   max_attempts?: number;
+  /** ISO timestamps; the exam is only reachable inside [opens_at, closes_at). */
+  opens_at?: string | null;
+  closes_at?: string | null;
   draw_stage?: string | null;
   draw_module_codes?: string[];
   draw_count?: number;
 }
 
 const SELECT =
-  'id, program_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, draw_stage, draw_module_codes, draw_count';
+  'id, program_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, opens_at, closes_at, draw_stage, draw_module_codes, draw_count';
 
 /** Every exam for a programme (admin sees unpublished ones too). */
 export async function listAllExams(db: Db, programId: string | null): Promise<ExamRow[]> {
@@ -47,6 +50,8 @@ export async function createExam(db: Db, input: ExamInput, createdBy: string | n
       pass_mark: clampInt(input.pass_mark ?? 70, 0, 100),
       time_limit_minutes: Math.max(1, Math.floor(input.time_limit_minutes ?? 30)),
       max_attempts: Math.max(1, Math.floor(input.max_attempts ?? 1)),
+      opens_at: toIso(input.opens_at),
+      closes_at: toIso(input.closes_at),
       draw_stage: input.draw_stage ?? null,
       draw_module_codes: input.draw_module_codes ?? [],
       draw_count: clampInt(input.draw_count ?? 10, 1, 200),
@@ -67,6 +72,8 @@ export async function updateExam(db: Db, id: string, input: Partial<ExamInput>, 
   if (input.pass_mark !== undefined) patch.pass_mark = clampInt(input.pass_mark, 0, 100);
   if (input.time_limit_minutes !== undefined) patch.time_limit_minutes = Math.max(1, Math.floor(input.time_limit_minutes));
   if (input.max_attempts !== undefined) patch.max_attempts = Math.max(1, Math.floor(input.max_attempts));
+  if (input.opens_at !== undefined) patch.opens_at = toIso(input.opens_at);
+  if (input.closes_at !== undefined) patch.closes_at = toIso(input.closes_at);
   if (input.draw_stage !== undefined) patch.draw_stage = input.draw_stage;
   if (input.draw_module_codes !== undefined) patch.draw_module_codes = input.draw_module_codes;
   if (input.draw_count !== undefined) patch.draw_count = clampInt(input.draw_count, 1, 200);
@@ -93,6 +100,12 @@ export async function publishExam(db: Db, id: string): Promise<PublishPreflight>
   const exam = data as unknown as ExamRow | null;
   if (!exam) return { published: false, reason: 'Exam not found' };
   if (!exam.draw_stage) return { published: false, reason: 'Set a content stage before publishing.' };
+  if (!exam.opens_at || !exam.closes_at) {
+    return { published: false, reason: 'Set a start time and an end time before publishing.' };
+  }
+  if (new Date(exam.closes_at).getTime() <= new Date(exam.opens_at).getTime()) {
+    return { published: false, reason: 'The end time must be after the start time.' };
+  }
   const required = exam.draw_count ?? 10;
 
   const pool = await poolCount(db, { stage: exam.draw_stage, moduleCodes: exam.draw_module_codes ?? [] });
@@ -111,6 +124,13 @@ export async function publishExam(db: Db, id: string): Promise<PublishPreflight>
 export async function unpublishExam(db: Db, id: string): Promise<boolean> {
   const { error } = await db.from('academy_exams').update({ is_published: false, updated_at: new Date().toISOString() }).eq('id', id);
   return !error;
+}
+
+/** A valid ISO instant, or null (unbounded). Garbage is rejected as null rather than stored. */
+function toIso(v: string | null | undefined): string | null {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 function clampInt(v: number, lo: number, hi: number): number {

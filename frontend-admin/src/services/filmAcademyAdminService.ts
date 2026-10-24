@@ -545,6 +545,9 @@ export type FilmExam = {
   time_limit_minutes: number;
   max_attempts: number;
   is_published: boolean;
+  /** ISO instants bounding when learners can start the exam; both required to publish. */
+  opens_at: string | null;
+  closes_at: string | null;
   draw_stage: string | null;
   draw_module_codes: string[] | null;
   draw_count: number | null;

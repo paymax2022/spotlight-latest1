@@ -322,7 +322,9 @@ export type ExamBlockerCode =
   | 'NOT_FOR_YOUR_PROGRAMME'
   | 'EXAM_MISCONFIGURED'
   | 'ATTEMPT_LIMIT_REACHED'
-  | 'EXAM_UNPUBLISHED';
+  | 'EXAM_UNPUBLISHED'
+  | 'EXAM_NOT_OPEN_YET'
+  | 'EXAM_CLOSED';
 
 /** One exam on the learner's list. No draw config, no questions, no key. */
 export interface FilmAcademyExamSummary {
@@ -334,6 +336,9 @@ export interface FilmAcademyExamSummary {
   timeLimitMinutes: number;
   maxAttempts: number;
   attemptsUsed: number;
+  /** ISO instants bounding when the exam can be started; null = unbounded. */
+  opensAt?: string | null;
+  closesAt?: string | null;
   canStart: boolean;
   blockerCode: ExamBlockerCode | null;
   blockerMessage: string | null;
