@@ -44,7 +44,17 @@ export async function getOverview(): Promise<FilmAcademyOverview> {
     // Empty rather than a hardcoded fallback list: the areas are admin-owned,
     // and inventing client-side ones is exactly how the app came to offer
     // 'Screenwriting' while the database held 'script_writing'.
-    interestAreas: body?.interestAreas ?? [],
+    interestAreas: (body?.interestAreas ?? []).map((a) => ({
+      ...a,
+      // Older servers omit options; coerce numerics that may arrive as strings.
+      options: (a.options ?? []).map((o) => ({
+        ...o,
+        duration_label: o.duration_label ?? null,
+        price_no_boarding_ngn: Number(o.price_no_boarding_ngn),
+        price_with_boarding_ngn:
+          o.price_with_boarding_ngn == null ? null : Number(o.price_with_boarding_ngn),
+      })),
+    })),
     // Absent = every batch unrestricted, which is the pre-feature behaviour.
     batchAreas: body?.batchAreas ?? {},
     // Fall back to 2 only if an older server omits it — the server still enforces.

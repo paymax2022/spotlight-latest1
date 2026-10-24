@@ -27,6 +27,24 @@ export interface FilmAcademySettings {
   [key: string]: unknown;
 }
 
+/** A priced option within an area (e.g. a course length). NAIRA. Returned active-only. */
+export interface FilmAcademyAreaOption {
+  id: string;
+  label: string;
+  duration_label: string | null;
+  price_no_boarding_ngn: number;
+  /** null = boarding is not offered for this option. */
+  price_with_boarding_ngn: number | null;
+}
+
+/** One chosen option. Prices are never sent; the server prices from the DB. */
+export interface FilmAcademySelection {
+  /** Area slug. */
+  area: string;
+  option_id: string;
+  boarding: boolean;
+}
+
 /** An admin-managed area of interest. `fee_ngn` is NAIRA and is added to the base fee. */
 export interface FilmAcademyInterestArea {
   /** Written to academy_applications.areas_of_interest; stable once in use. */
@@ -34,6 +52,8 @@ export interface FilmAcademyInterestArea {
   label: string;
   description: string | null;
   fee_ngn: number;
+  /** Empty on an older server, or for an area with no options (legacy fee_ngn pricing). */
+  options: FilmAcademyAreaOption[];
 }
 
 /**
@@ -80,7 +100,10 @@ export interface FilmAcademyApplicationInput {
   full_name?: string;
   email?: string;
   phone?: string;
-  areas_of_interest: string[];
+  /** Legacy list; the server derives it from `selections` when those are sent. */
+  areas_of_interest?: string[];
+  /** Required for any area that has options. */
+  selections?: FilmAcademySelection[];
   motivation: string;
   experience?: string;
   payment_preference: 'one_off' | 'installment';
