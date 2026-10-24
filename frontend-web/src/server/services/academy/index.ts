@@ -492,7 +492,9 @@ export async function autoCreateInstallmentPlan(
   // fallback for batches that predate per-area pricing, or that price the whole
   // programme as one number. Billing the batch fee to someone who selected areas would
   // charge them a figure they were never shown.
-  const tuitionFee = Number(app?.tuition_total_ngn ?? 0);
+  const areaTuition  = Number(app?.tuition_total_ngn ?? 0);
+  const batchTuition = Number(batch.training_fee_ngn ?? 0);
+  const tuitionFee   = areaTuition > 0 ? areaTuition : batchTuition;
   if (tuitionFee <= 0) {
     console.info('[academy/installments] no tuition owed — no plan created', { applicationId });
     return; // genuinely free batch
