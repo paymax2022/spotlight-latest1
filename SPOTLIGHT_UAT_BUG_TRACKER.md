@@ -2,6 +2,25 @@
 
 Living record for the full go-live UAT engagement. Never delete rows. Status is only `Open` or `Closed`, updated the moment reality changes.
 
+## S1 remediation wave (2026-10-24)
+
+The open S1 product gaps from the Oct-2026 Estate/Events/Stays/Platform packs were remediated by six lanes, each squash-merged to `main`, lint-clean (`golangci-lint --new-from-rev HEAD` = 0 on every lane commit), unit-tested (live-DB suites present but skip without `TEST_DATABASE_URL`):
+
+| Commit | Lane | Closes |
+|---|---|---|
+| `caef65516` | estate-lifecycle | ESTD-D025 (estate lifecycle states + platform verify/suspend/reactivate/close + legal hold + write gate), ESTD-D034 (legacy import: dry-run/commit/exception report, delta re-apply), ESTA-D010; estates `status` default `active`, `FEATURE_ESTATE_VERIFICATION_REQUIRED` creates `pending` |
+| `4414580da` | estate-makerchecker | ESTD-D027 (dual-control maker-checker on vendor payouts, resident bans, role grants, threshold config; `FEATURE_ESTATE_DUAL_CONTROL_ENABLED`) |
+| `59cc298b2` | events-payouts | EVTC-D003 (organiser settlement rail: earnings statements, per-event payout request/approve/reject, escrow→organiser/paymax_revenue legs, stuck-PROCESSING reconciler; `FEATURE_EVENTS_ORGANISER_PAYOUTS`) |
+| `e3cf63980` | events-card-rail | EVTB-D013 (Paystack card/bank-transfer checkout for tickets: FOR UPDATE seat hold, server-verified charge into the same escrow, webhook confirmer + status poll + sweep live whenever Paystack is configured; `FEATURE_EVENTS_CARD_CHECKOUT`) |
+| `2d698d689` | events-organiser-upgrade | EVTA-D001 (organiser capability gate on create/duplicate/submit/go-live; `/events/organiser/eligibility`; `FEATURE_EVENTS_ORGANISER_GATE`, grandfather migration for existing organisers) |
+| `648d33098` | platform-mfa-impersonation | ESTD-D014 (step-up MFA enforced for high-risk roles/actions, `backend/internal/stepup` + `middleware/step_up.go`), ESTD-D028 (audited, time-boxed support impersonation, `backend/internal/supportimpersonation`); ADR `docs/adr/ADR-PR<pr-number>-step-up-and-support-impersonation.md` |
+
+Also landed in the same window: `dc9c4163d` promoted 6 of the lane `*.pending.sql` drafts into `supabase/migrations` (unit/receipt uniqueness, booking overlap, grant dedupe, realtor RPC hardening, stays supplier refs) — replay-verified from zero on postgis 17.
+
+Notable merge-time find: upstream #833 (events-social) silently dropped `validateEventInput` from `CreateEvent` — restored during the origin/main merge (`6d4d6578b`); upstream #876 independently built the same atomic gate-admit the estate-a lane fixed (EST-UAT-0094), plus delegated roles / host-approved arrivals that partially cover recorded gaps ESTA-D011/D021/D022 (re-verification still owed).
+
+Still open after this wave: stays S2s (STYA-D005/D010/D011, STYB-D001/D002), the estate S2 governance/procurement/documents/incidents/assets/reports cluster (ESTC-D010..017, ESTD-D009, ESTA-D017, ESTB-D011), 6 un-promoted `*.pending.sql` drafts, and all `NOT_RUN`/`BLOCKED` rows pending a live environment (Supabase down locally).
+
 ## Module Sign-off Summaries
 
 ### Module 12 — Food — ✅ READY FOR PRODUCTION (2026-10-21, 6 accepted exceptions)
