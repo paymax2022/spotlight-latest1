@@ -2548,27 +2548,62 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: object, additionalProperties: true } } } } } }
         default: { $ref: '#/components/responses/Error' }
 
+  /api/academy/apply:
+    get:
+      tags: [FilmAcademy]
+      summary: Open batches, interest areas (with active tuition options when enabled), settings and the per-application area cap
+      description: >-
+        When FEATURE_FILM_ACADEMY_AREA_OPTIONS_ENABLED is off, every area is returned with `options: []`
+        and `areaOptionsEnabled: false`; clients then use legacy area selection (`areas_of_interest`).
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AcademyApplyCatalogue' } } } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [FilmAcademy]
+      summary: Submit an application (signed-in); tuition is priced server-side
+      description: >-
+        Send `selections` (one option per area; requires area options enabled, 400 otherwise) or the legacy
+        `areas_of_interest` (slugs). With area options enabled, a legacy payload naming an area that has active
+        options is rejected 400. Client-supplied prices and totals are ignored.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AcademyApplyRequest' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { type: object, required: [success, applicationId], properties: { success: { type: boolean }, applicationId: { type: string, format: uuid } } } } } }
+        default: { $ref: '#/components/responses/Error' }
+
+  /api/academy/application:
+    get:
+      tags: [FilmAcademy]
+      summary: The signed-in applicant's latest application, timeline, plan and required actions
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, application: { oneOf: [ { $ref: '#/components/schemas/AcademyApplication' }, { type: 'null' } ] } }, additionalProperties: true } } } }
+        default: { $ref: '#/components/responses/Error' }
+
   /api/admin/academy/area-options:
     get:
       tags: [FilmAcademy]
-      summary: Admin list tuition options per interest area (permission programs:manage)
-      parameters: [ { name: area_id, in: query, required: false, schema: { type: string, format: uuid } } ]
+      summary: Admin list every tuition option (incl. inactive) for one interest area (permission programs:manage)
+      description: 404 when FEATURE_FILM_ACADEMY_AREA_OPTIONS_ENABLED is off. 400 when area_id is missing or not a UUID.
+      parameters: [ { name: area_id, in: query, required: true, schema: { type: string, format: uuid } } ]
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/AcademyAreaOption' } } } } } } }
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [success, options], properties: { success: { type: boolean }, options: { type: array, items: { $ref: '#/components/schemas/AcademyAreaOption' } } } } } } }
         default: { $ref: '#/components/responses/Error' }
     post:
       tags: [FilmAcademy]
       summary: Admin create a tuition option under an interest area (permission programs:manage)
+      description: 404 when the feature flag is off. Prices are whole naira > 0; price_with_boarding_ngn is null or >= price_no_boarding_ngn.
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AcademyAreaOptionInput' } } } }
       responses:
-        '201': { description: Created, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/AcademyAreaOption' } } } } } }
+        '200': { description: Created, content: { application/json: { schema: { type: object, required: [success, option], properties: { success: { type: boolean }, option: { $ref: '#/components/schemas/AcademyAreaOption' } } } } } }
         default: { $ref: '#/components/responses/Error' }
     put:
       tags: [FilmAcademy]
-      summary: Admin update a tuition option; id is required in the body (permission programs:manage)
-      requestBody: { required: true, content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/AcademyAreaOptionInput' }, { type: object, required: [id], properties: { id: { type: string, format: uuid } } } ] } } } }
+      summary: Admin partially update a tuition option (permission programs:manage)
+      description: >-
+        404 when the feature flag is off. Partial; only the sent fields change and area_id cannot be changed. The price
+        rules are checked against the EFFECTIVE pair (sent values over stored ones).
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AcademyAreaOptionUpdate' } } } }
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/AcademyAreaOption' } } } } } }
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [success, option], properties: { success: { type: boolean }, option: { $ref: '#/components/schemas/AcademyAreaOption' } } } } } }
         default: { $ref: '#/components/responses/Error' }
 
   # PATHS_END
@@ -5111,66 +5146,110 @@ components:
         area_id: { type: string, format: uuid }
         label: { type: string }
         duration_label: { type: [string, 'null'] }
-        price_no_boarding_ngn: { type: integer, format: int64, minimum: 0, description: Whole naira (not kobo) }
-        price_with_boarding_ngn: { type: [integer, 'null'], format: int64, minimum: 0, description: Whole naira (not kobo); null = boarding not offered }
+        price_no_boarding_ngn: { type: integer, format: int64, minimum: 1, description: Whole naira (not kobo); always > 0 }
+        price_with_boarding_ngn: { type: [integer, 'null'], format: int64, minimum: 1, description: Whole naira (not kobo); null = boarding not offered, otherwise >= price_no_boarding_ngn }
         is_active: { type: boolean }
-        sort_order: { type: integer }
+        sort_order: { type: integer, format: int32 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     AcademyAreaOptionInput:
       type: object
       required: [area_id, label, price_no_boarding_ngn]
       properties:
         area_id: { type: string, format: uuid }
-        label: { type: string }
-        duration_label: { type: [string, 'null'] }
-        price_no_boarding_ngn: { type: integer, format: int64, minimum: 0 }
-        price_with_boarding_ngn: { type: [integer, 'null'], format: int64, minimum: 0 }
-        is_active: { type: boolean }
-        sort_order: { type: integer }
-    AcademyInterestArea:
+        label: { type: string, minLength: 1 }
+        duration_label: { type: [string, 'null'], description: Trimmed; empty = null }
+        price_no_boarding_ngn: { type: integer, format: int64, minimum: 1 }
+        price_with_boarding_ngn: { type: [integer, 'null'], format: int64, minimum: 1, description: null or >= price_no_boarding_ngn }
+        is_active: { type: boolean, default: true }
+        sort_order: { type: integer, format: int32, default: 0 }
+    AcademyAreaOptionUpdate:
       type: object
-      required: [id, slug, label, options]
+      description: Partial update. area_id is not updatable (applications snapshot the area/option pair) and is ignored if sent.
+      required: [id]
       properties:
         id: { type: string, format: uuid }
+        label: { type: string, minLength: 1 }
+        duration_label: { type: [string, 'null'] }
+        price_no_boarding_ngn: { type: integer, format: int64, minimum: 1 }
+        price_with_boarding_ngn: { type: [integer, 'null'], format: int64, minimum: 1 }
+        is_active: { type: boolean }
+        sort_order: { type: integer, format: int32 }
+    AcademyPublicAreaOption:
+      type: object
+      description: An active option as offered to applicants by GET /api/academy/apply.
+      required: [id, label, duration_label, price_no_boarding_ngn, price_with_boarding_ngn]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string }
+        duration_label: { type: [string, 'null'] }
+        price_no_boarding_ngn: { type: integer, format: int64, minimum: 1, description: Whole naira }
+        price_with_boarding_ngn: { type: [integer, 'null'], format: int64, minimum: 1, description: Whole naira; null = boarding not offered }
+      additionalProperties: false
+    AcademyInterestArea:
+      type: object
+      description: An active interest area as offered by GET /api/academy/apply.
+      required: [slug, label, fee_ngn, options]
+      properties:
         slug: { type: string }
         label: { type: string }
         description: { type: [string, 'null'] }
-        fee_ngn: { type: number, description: Naira }
-        is_active: { type: boolean }
-        sort_order: { type: integer }
+        fee_ngn: { type: number, description: Legacy tuition in naira; used only for areas without options (or when area options are disabled) }
         options:
           type: array
-          description: Active tuition options for this area, in display order
-          items: { $ref: '#/components/schemas/AcademyAreaOption' }
+          description: Active tuition options in display order; always [] when area options are disabled
+          items: { $ref: '#/components/schemas/AcademyPublicAreaOption' }
+    AcademyApplyCatalogue:
+      type: object
+      required: [success, batches, interestAreas, batchAreas, maxInterestAreas, areaOptionsEnabled]
+      properties:
+        success: { type: boolean }
+        batches: { type: array, items: { type: object, additionalProperties: true } }
+        appliedBatchIds: { type: array, items: { type: string, format: uuid } }
+        settings: { type: object, additionalProperties: true }
+        interestAreas: { type: array, items: { $ref: '#/components/schemas/AcademyInterestArea' } }
+        batchAreas: { type: object, additionalProperties: { type: array, items: { type: string } } }
+        maxInterestAreas: { type: integer }
+        areaOptionsEnabled: { type: boolean, description: Mirrors FEATURE_FILM_ACADEMY_AREA_OPTIONS_ENABLED; clients must assume false when absent }
+        applicant: { type: [object, 'null'], additionalProperties: true }
     AcademyApplySelection:
       type: object
       required: [area, option_id, boarding]
       properties:
         area: { type: string, description: Interest-area slug }
         option_id: { type: string, format: uuid }
-        boarding: { type: boolean, description: true = with boarding (only valid when the option has price_with_boarding_ngn) }
+        boarding: { type: boolean, description: true = with boarding (only valid when the option has price_with_boarding_ngn); non-boolean is rejected 400 }
     AcademyApplyRequest:
       type: object
-      description: Applicant submission. The total is always recomputed server-side from selections; client amounts are never trusted.
+      description: Applicant submission. Tuition is always recomputed server-side; client amounts are never trusted.
       properties:
+        batch_id: { type: string, format: uuid }
         selections:
           type: array
+          description: Priced path (area options enabled only). At most maxInterestAreas, one per area.
           items: { $ref: '#/components/schemas/AcademyApplySelection' }
+        areas_of_interest: { type: array, items: { type: string }, description: Legacy path (slugs); ignored when selections is sent }
+        application_fee_reference: { type: string }
       additionalProperties: true
+    AcademySelectedOption:
+      type: object
+      required: [area_slug, option_id, label, duration_label, boarding, price_ngn]
+      properties:
+        area_slug: { type: string }
+        option_id: { type: string, format: uuid }
+        label: { type: string }
+        duration_label: { type: [string, 'null'] }
+        boarding: { type: boolean }
+        price_ngn: { type: integer, format: int64, minimum: 1, description: Whole naira snapshot at apply time }
     AcademyApplication:
       type: object
       properties:
         id: { type: string, format: uuid }
         areas_of_interest: { type: array, items: { type: string } }
+        tuition_total_ngn: { type: number, description: Naira, frozen at apply time }
         selected_options:
           type: [array, 'null']
-          description: Server-resolved snapshot of chosen options; null on pre-options applications
-          items:
-            type: object
-            properties:
-              area: { type: string }
-              option_id: { type: string, format: uuid }
-              boarding: { type: boolean }
-              price_ngn: { type: integer, format: int64, description: Whole naira snapshot at apply time }
-            additionalProperties: true
+          description: Server-resolved snapshot of chosen options; null on pre-options applications (absent before the migration)
+          items: { $ref: '#/components/schemas/AcademySelectedOption' }
       additionalProperties: true
     # SCHEMAS_END
