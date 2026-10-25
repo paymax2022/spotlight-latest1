@@ -51,6 +51,8 @@ function db(rows: Record<string, Rows | null>) {
         select: () => chain,
         eq: () => chain,
         maybeSingle: async () => ({ data: rows[table] ?? null, error: null }),
+        // The module-gate read: the lesson's module is the programme's first, so open.
+        order: async () => ({ data: [{ id: 'mod-1' }], error: null }),
         upsert: async (payload: Rows) => {
           writes.push({ table, op: 'upsert', payload });
           return { error: null };
@@ -87,7 +89,7 @@ describe('POST /api/academy/learning/progress', () => {
   });
 
   it('records progress against the session enrolment, never a client-supplied one', async () => {
-    const d = db({ academy_lessons: { id: 'lesson-1', academy_modules: { program_id: 'prog-1' } } });
+    const d = db({ academy_lessons: { id: 'lesson-1', module_id: 'mod-1', academy_modules: { program_id: 'prog-1' } } });
     vi.mocked(createAdminClient).mockReturnValue(d);
 
     const res = await PROGRESS(
