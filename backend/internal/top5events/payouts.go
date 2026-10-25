@@ -495,18 +495,59 @@ func (s *Service) RejectOrganiserPayout(ctx context.Context, actorID, payoutID, 
 	return p, nil
 }
 
+// payoutLockAttempts × payoutLockBackoff bounds how long a re-driver waits for
+// a peer that holds the payout row lock (~5s) before reporting it in flight.
+const (
+	payoutLockAttempts = 50
+	payoutLockBackoff  = 100 * time.Millisecond
+)
+
+// lockPayoutForExec opens a tx holding the payout's row lock. It takes the lock
+// with NOWAIT and backs off with the connection released, never blocking on
+// it: the lock holder's ledger legs need further pool connections
+// (postPayoutLegs goes through s.led), so N waiters each parked on a pooled
+// connection inside FOR UPDATE would starve it and deadlock the pool (seen on
+// 4-connection CI pools with 8 concurrent approvers). When the peer still
+// holds the lock after the last attempt, it returns the current row with
+// ErrPayoutInFlight.
+func (s *Service) lockPayoutForExec(ctx context.Context, payoutID string) (pgx.Tx, *OrganiserPayout, error) {
+	for attempt := 1; ; attempt++ {
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("events: payout exec begin: %w", err)
+		}
+		p, err := scanPayout(tx.QueryRow(ctx, `SELECT `+payoutCols+` FROM event_organiser_payouts WHERE id::text=$1 FOR UPDATE NOWAIT`, payoutID))
+		if err == nil {
+			return tx, p, nil
+		}
+		_ = tx.Rollback(ctx)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "55P03" { // lock_not_available
+			return nil, nil, err
+		}
+		if attempt >= payoutLockAttempts {
+			cur, gerr := s.payoutByID(ctx, s.db, payoutID)
+			if gerr != nil {
+				return nil, nil, gerr
+			}
+			return nil, cur, ErrPayoutInFlight
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(payoutLockBackoff):
+		}
+	}
+}
+
 // executePayout posts the legs of a PROCESSING payout under its row lock and
 // finalises it paid, or failed when the ledger shows no leg posted.
 func (s *Service) executePayout(ctx context.Context, payoutID string) (*OrganiserPayout, error) {
-	tx, err := s.db.Begin(ctx)
+	tx, p, err := s.lockPayoutForExec(ctx, payoutID)
 	if err != nil {
-		return nil, fmt.Errorf("events: payout exec begin: %w", err)
+		return p, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	p, err := scanPayout(tx.QueryRow(ctx, `SELECT `+payoutCols+` FROM event_organiser_payouts WHERE id::text=$1 FOR UPDATE`, payoutID))
-	if err != nil {
-		return nil, err
-	}
 	if p.Status != PayoutProcessing {
 		// A concurrent driver finished it while we waited for the lock.
 		_ = tx.Commit(ctx)
