@@ -149,7 +149,11 @@ export default function SellWizard() {
     !!categoryId;
 
   const requiredMissing = missingRequired(schema, attrs);
-  const attributesValid = requiredMissing.length === 0;
+  // An empty schema reads as "nothing required", so until the category's details
+  // have loaded the attribute check would pass vacuously and the server would reject
+  // the publish. Hold the attribute step and Publish until the schema is in hand.
+  const schemaReady = !categoryId || categoryQuery.isSuccess;
+  const attributesValid = schemaReady && requiredMissing.length === 0;
   const priceValid = priceKobo > 0;
 
   const addPhotos = async (fromCamera: boolean) => {
@@ -466,7 +470,7 @@ export default function SellWizard() {
           ) : step === 'price' ? (
             <PrimaryButton label="Preview listing" onPress={() => setStep('preview')} disabled={!priceValid} />
           ) : (
-            <PrimaryButton label="Publish" onPress={handlePublish} loading={publishing} disabled={publishing} />
+            <PrimaryButton label="Publish" onPress={handlePublish} loading={publishing} disabled={publishing || !attributesValid} />
           )}
         </View>
       ) : null}
@@ -536,6 +540,22 @@ function ListingPreview(props: {
         {cover ? <Image source={{ uri: cover.uri }} style={styles.previewImage} /> : <View style={styles.previewImage} />}
         {photos.length > 1 ? <View style={styles.galleryCount}><Text style={styles.galleryCountText}>1 / {photos.length}</Text></View> : null}
       </View>
+
+      {photos.length > 1 ? (
+        <View style={styles.allPhotosSection}>
+          <Text style={styles.allPhotosLabel}>All photos ({photos.length})</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.allPhotosGrid}>
+            {photos.map((photo, idx) => (
+              <View key={photo.phash} style={styles.thumbnailContainer}>
+                <Image source={{ uri: photo.uri }} style={styles.thumbnail} />
+                <View style={styles.thumbnailNumber}>
+                  <Text style={styles.thumbnailNumberText}>{idx + 1}</Text>
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
       <Text style={styles.previewPrice}>{formatNaira(priceKobo)}</Text>
       <Text style={styles.previewTitle}>{title || 'Untitled listing'}</Text>
       <View style={styles.previewMetaRow}>
@@ -643,4 +663,11 @@ const styles = StyleSheet.create({
   previewDesc: { ...Typography.bodyMd, color: MarketColors.text },
   previewNote: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: Spacing.md },
   previewNoteText: { ...Typography.labelSm, color: MarketColors.muted },
+  allPhotosSection: { marginTop: Spacing.md },
+  allPhotosLabel: { ...Typography.labelMd, color: MarketColors.text, fontWeight: '700', marginBottom: Spacing.sm },
+  allPhotosGrid: { gap: Spacing.sm, paddingRight: Spacing.containerMargin },
+  thumbnailContainer: { position: 'relative', width: 100, height: 100 },
+  thumbnail: { width: '100%', height: '100%', borderRadius: Radius.md, backgroundColor: MarketColors.surfaceAlt },
+  thumbnailNumber: { position: 'absolute', bottom: 4, right: 4, backgroundColor: 'rgba(11,28,48,0.85)', borderRadius: 12, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+  thumbnailNumberText: { ...Typography.labelSm, color: '#FFFFFF', fontWeight: '700' },
 });
