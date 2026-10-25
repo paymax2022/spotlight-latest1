@@ -7,7 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X, Contacts as ContactsIcon } from 'lucide-react-native';
+import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X, Contact as ContactsIcon } from 'lucide-react-native';
 import * as Contacts from 'expo-contacts';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, Controller } from 'react-hook-form';
