@@ -3,6 +3,12 @@
 // console can show exactly what a commit would do. Nothing becomes exam-eligible
 // here — even a "good" row lands as DRAFT only on commit, and only SME review can
 // promote it. Permission: programs:manage.
+//
+// Accepted CSV headers (auto-detected, see csv.ts):
+//   legacy bank — Question ID, Stage, Module ID, Module, Question, Option A-D,
+//                 Correct Option, Points (+ optional Answer Text, Explanation, …)
+//   TMFA pack   — question_id, topic_id, stage, question_type, stem, option_a-d,
+//                 correct_option, rationale, points (+ optional course_id, correct_answer, …)
 import { createHash } from 'node:crypto';
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
@@ -26,7 +32,10 @@ export async function POST(request: Request) {
     const grid = parseCsv(csv);
     const header = checkHeaders(grid[0]);
     if (!header.ok) {
-      return errorResponse(`CSV is missing required columns: ${header.missing.join(', ')}`, 400);
+      return errorResponse(
+        `CSV is missing required ${header.format === 'tmfa' ? 'TMFA pack' : 'question bank'} columns: ${header.missing.join(', ')}`,
+        400,
+      );
     }
 
     const report = parseAndValidate(csv);
@@ -43,6 +52,7 @@ export async function POST(request: Request) {
     return successResponse({
       success: true,
       preview: true,
+      format: header.format,
       batchId,
       totals: {
         rows: report.totalRows,

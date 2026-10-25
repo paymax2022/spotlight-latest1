@@ -16,8 +16,10 @@ export {
   parseCsv,
   checkHeaders,
   parseAndValidate,
+  detectFormat,
   draftContentHash,
   type HeaderCheck,
+  type ImportFormat,
 } from './csv';
 export {
   shuffle,

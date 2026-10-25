@@ -4,10 +4,11 @@
 // a DRAFT item, and it is what the PRD's import-validation checklist (§7.2) and QA
 // rows (QA-01) test.
 //
-// The supplied bank is 256 rows, but this validator does NOT hard-fail a batch for
-// not being 256: the 256 is the initial SEED expectation, while admins will import
-// corrections and SME-approved additions later. Instead the count is surfaced as a
-// warning so the preview is honest about an unexpected size without blocking work.
+// Two header formats are auto-detected: the legacy Title Case 256-row bank and the
+// snake_case TMFA curriculum-pack bank (336 rows). Neither row count hard-fails a
+// batch: it is the initial SEED expectation, while admins will import corrections
+// and SME-approved additions later. Instead the count is surfaced as a warning so
+// the preview is honest about an unexpected size without blocking work.
 
 import {
   OPTION_IDS,
@@ -52,11 +53,68 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => !(r.length === 1 && r[0].trim() === ''));
 }
 
-const REQUIRED_HEADERS = [
-  'Question ID', 'Stage', 'Module ID', 'Module', 'Question',
-  'Option A', 'Option B', 'Option C', 'Option D', 'Correct Option',
-  'Points',
-] as const;
+export type ImportFormat = 'legacy' | 'tmfa';
+
+/**
+ * Column names per supported format. `legacy` is the Title Case 256-row bank;
+ * `tmfa` is the snake_case TMFA curriculum-pack bank (TMFA_QUESTION_BANK_DRAFT.csv).
+ * A TMFA row maps verbatim: question_id -> external_code, topic_id ->
+ * film_module_code, stage -> film_stage, rationale -> answer.explanation.
+ */
+interface FormatSpec {
+  required: readonly string[];
+  expectedRows: number;
+  code: string; stage: string; moduleCode: string; moduleLabel: string;
+  department: string; learningOutcome: string; cognitive: string; difficulty: string;
+  stem: string; option: (letter: string) => string; correct: string; answerText: string;
+  explanation: string; points: string; type: string; status: string; language: string;
+  keywords: string; version: string; owner: string; reviewNotes: string;
+  /** TMFA rules (GATE-009): rationale mandatory, question_type must be known. */
+  strict: boolean;
+}
+
+const FORMATS: Record<ImportFormat, FormatSpec> = {
+  legacy: {
+    required: [
+      'Question ID', 'Stage', 'Module ID', 'Module', 'Question',
+      'Option A', 'Option B', 'Option C', 'Option D', 'Correct Option',
+      'Points',
+    ],
+    expectedRows: 256,
+    code: 'Question ID', stage: 'Stage', moduleCode: 'Module ID', moduleLabel: 'Module',
+    department: 'Department', learningOutcome: 'Learning Outcome', cognitive: 'Cognitive Level',
+    difficulty: 'Difficulty', stem: 'Question', option: (l) => `Option ${l.toUpperCase()}`,
+    correct: 'Correct Option', answerText: 'Answer Text', explanation: 'Explanation',
+    points: 'Points', type: 'Question Type', status: 'Status', language: 'Language',
+    keywords: 'Keywords', version: 'Version', owner: 'Owner', reviewNotes: 'Review Notes',
+    strict: false,
+  },
+  tmfa: {
+    required: [
+      'question_id', 'topic_id', 'stage', 'question_type', 'stem',
+      'option_a', 'option_b', 'option_c', 'option_d', 'correct_option',
+      'rationale', 'points',
+    ],
+    expectedRows: 336,
+    code: 'question_id', stage: 'stage', moduleCode: 'topic_id', moduleLabel: 'topic_title',
+    department: 'course_id', learningOutcome: 'objective_id', cognitive: 'cognitive_level',
+    difficulty: 'difficulty', stem: 'stem', option: (l) => `option_${l.toLowerCase()}`,
+    correct: 'correct_option', answerText: 'correct_answer', explanation: 'rationale',
+    points: 'points', type: 'question_type', status: 'status', language: 'language',
+    keywords: 'keywords', version: 'version', owner: 'reviewer', reviewNotes: 'source_note',
+    strict: true,
+  },
+};
+
+const TMFA_QUESTION_TYPES = new Set(['single_select']);
+// Option columns past D (option_e / Option E …) are a wrong option count.
+const EXTRA_OPTION_RE = /^option[ _]?[e-z]$/i;
+
+/** The pack is recognised by its snake_case key columns; anything else is legacy. */
+export function detectFormat(headerRow: string[] | undefined): ImportFormat {
+  const have = new Set((headerRow ?? []).map((h) => h.trim().toLowerCase()));
+  return have.has('question_id') && have.has('topic_id') ? 'tmfa' : 'legacy';
+}
 
 function buildIndex(header: string[]): Record<string, number> {
   const idx: Record<string, number> = {};
@@ -84,26 +142,33 @@ function splitKeywords(raw: string): string[] {
 export interface HeaderCheck {
   ok: boolean;
   missing: string[];
+  format: ImportFormat;
 }
 
 export function checkHeaders(headerRow: string[] | undefined): HeaderCheck {
-  if (!headerRow) return { ok: false, missing: [...REQUIRED_HEADERS] };
+  const format = detectFormat(headerRow);
+  const required = FORMATS[format].required;
+  if (!headerRow) return { ok: false, missing: [...required], format };
   const have = new Set(headerRow.map((h) => h.trim().toLowerCase()));
-  const missing = REQUIRED_HEADERS.filter((h) => !have.has(h.trim().toLowerCase()));
-  return { ok: missing.length === 0, missing };
+  const missing = required.filter((h) => !have.has(h.trim().toLowerCase()));
+  return { ok: missing.length === 0, missing, format };
 }
 
 /**
  * Parse + validate a full CSV into an ImportReport.
- * `rows[0]` is treated as the header. A row that cannot become a draft is rejected
- * with a reason; a valid-but-notable row is warned. Rejected rows never block the
- * accepted ones — a partially valid batch stays in staging (§7.2).
+ * `rows[0]` is treated as the header and selects the format (legacy / TMFA pack).
+ * A row that cannot become a draft is rejected with a reason; a valid-but-notable
+ * row is warned. Rejected rows never block the accepted ones — a partially valid
+ * batch stays in staging (§7.2). Whatever a row's status column says, it can only
+ * ever become a DRAFT (commitDrafts hard-codes it).
  */
 export function parseAndValidate(text: string): ImportReport {
   const grid = parseCsv(text);
   const header = grid[0] ?? [];
   const idx = buildIndex(header);
   const dataRows = grid.slice(1);
+  const f = FORMATS[detectFormat(header)];
+  const extraOptionCols = header.filter((h) => EXTRA_OPTION_RE.test(h.trim()));
 
   const accepted: FilmQuestionDraft[] = [];
   const rejected: RowProblem[] = [];
@@ -113,57 +178,66 @@ export function parseAndValidate(text: string): ImportReport {
 
   dataRows.forEach((row, r) => {
     const rowNum = r + 1;
-    const code = cell(row, idx, 'Question ID');
+    const code = cell(row, idx, f.code);
     const problems: string[] = [];
 
-    if (!code) problems.push('Question ID is blank');
+    if (!code) problems.push(`${f.code} is blank`);
 
-    const stage = cell(row, idx, 'Stage');
-    if (stage && !isFilmStage(stage)) problems.push(`Stage "${stage}" is not L0-L5`);
+    const stage = cell(row, idx, f.stage);
+    if (f.strict && !stage) problems.push(`${f.stage} is blank`);
+    if (stage && !isFilmStage(stage)) problems.push(`${f.stage} "${stage}" is not L0-L5 or survey`);
 
-    const moduleCode = cell(row, idx, 'Module ID');
+    const moduleCode = cell(row, idx, f.moduleCode);
+    if (f.strict && !moduleCode) problems.push(`${f.moduleCode} is blank`);
     if (moduleCode && !isFilmModuleCode(moduleCode)) {
-      problems.push(`Module ID "${moduleCode}" is not FM01-FM32`);
+      problems.push(`${f.moduleCode} "${moduleCode}" is not FM01-FM32, A01-A24 or C01-T1..C12-T4`);
     }
 
-    const stem = cell(row, idx, 'Question');
+    const stem = cell(row, idx, f.stem);
     if (!stem) problems.push('Question stem is blank');
 
     // Exactly four distinct, non-blank options.
-    const options = OPTION_IDS.map((id) => ({
-      id,
-      text: cell(row, idx, `Option ${id.toUpperCase()}`),
-    }));
+    const options = OPTION_IDS.map((id) => ({ id, text: cell(row, idx, f.option(id)) }));
     if (options.some((o) => !o.text)) problems.push('All four options (A-D) are required');
+    if (extraOptionCols.some((h) => cell(row, idx, h))) problems.push('Exactly four options (A-D) are allowed');
     const texts = options.map((o) => normalise(o.text));
     if (new Set(texts).size !== 4) problems.push('Options must be four distinct answers');
 
     // Correct option in {A,B,C,D}.
-    const correctRaw = cell(row, idx, 'Correct Option').toUpperCase().charAt(0);
-    const correctId = correctRaw.toLowerCase();
+    // Legacy keeps its first-letter read ("A)" → a); the pack must be exactly one letter.
+    const correctCell = cell(row, idx, f.correct).toUpperCase();
+    const correctId = (f.strict && correctCell.length !== 1 ? '' : correctCell.charAt(0)).toLowerCase();
     if (!OPTION_IDS.includes(correctId as (typeof OPTION_IDS)[number])) {
-      problems.push('Correct Option must be A, B, C or D');
+      problems.push(`${f.correct} must be A, B, C or D`);
     }
 
     // Answer Text must match the referenced choice (after normalisation).
-    const answerText = cell(row, idx, 'Answer Text');
+    const answerText = cell(row, idx, f.answerText);
     if (correctId && answerText) {
       const chosen = options.find((o) => o.id === correctId);
       if (chosen && normalise(chosen.text) !== normalise(answerText)) {
-        problems.push('Answer Text does not match the Correct Option');
+        problems.push(`${f.answerText} does not match the ${f.correct}`);
       }
     }
 
     // Points: positive finite.
-    const pointsRaw = cell(row, idx, 'Points');
+    const pointsRaw = cell(row, idx, f.points);
     const points = Number(pointsRaw);
     if (!pointsRaw || !Number.isFinite(points) || points <= 0) {
       problems.push('Points must be a positive number');
     }
 
+    // TMFA pack (GATE-009): a rationale is mandatory and the item type must be known.
+    const explanation = cell(row, idx, f.explanation);
+    const type = cell(row, idx, f.type);
+    if (f.strict) {
+      if (!explanation) problems.push(`${f.explanation} is blank`);
+      if (!TMFA_QUESTION_TYPES.has(type)) problems.push(`${f.type} "${type}" is not single_select`);
+    }
+
     // Duplicate external_code within the file.
     if (code && seenCodes.has(code)) {
-      problems.push(`Duplicate Question ID (also on row ${seenCodes.get(code)})`);
+      problems.push(`Duplicate ${f.code} (also on row ${seenCodes.get(code)})`);
     }
 
     if (problems.length > 0) {
@@ -182,41 +256,42 @@ export function parseAndValidate(text: string): ImportReport {
     if (stem && stem.length > 600) {
       warned.push({ row: rowNum, externalCode: code, message: 'Unusually long question text' });
     }
-    const type = cell(row, idx, 'Question Type');
-    if (type && !/single[-\s]?select/i.test(type)) {
+    if (!f.strict && type && !/single[-\s]?select/i.test(type)) {
       warned.push({ row: rowNum, externalCode: code, message: `Question Type "${type}" mapped as single-select` });
     }
-    const status = cell(row, idx, 'Status');
+    const status = cell(row, idx, f.status);
     if (status && !/draft/i.test(status)) {
       warned.push({ row: rowNum, externalCode: code, message: `Status "${status}" will still be imported as draft (never auto-published)` });
+    } else if (/rewrite/i.test(status)) {
+      warned.push({ row: rowNum, externalCode: code, message: `Status "${status}": rewrite before SME approval` });
     }
 
     accepted.push({
       externalCode: code,
       stage,
-      department: cell(row, idx, 'Department'),
+      department: cell(row, idx, f.department),
       moduleCode,
-      moduleLabel: cell(row, idx, 'Module'),
-      learningOutcome: cell(row, idx, 'Learning Outcome'),
-      cognitive: cell(row, idx, 'Cognitive Level'),
-      difficulty: cell(row, idx, 'Difficulty'),
+      moduleLabel: cell(row, idx, f.moduleLabel),
+      learningOutcome: cell(row, idx, f.learningOutcome),
+      cognitive: cell(row, idx, f.cognitive),
+      difficulty: cell(row, idx, f.difficulty),
       stem,
       options,
-      answer: { correct: [correctId], explanation: cell(row, idx, 'Explanation') || undefined },
+      answer: { correct: [correctId], explanation: explanation || undefined },
       points: Math.max(1, Math.round(points)),
-      locale: cell(row, idx, 'Language') || 'en-NG',
-      keywords: splitKeywords(cell(row, idx, 'Keywords')),
-      sourceVersion: cell(row, idx, 'Version') || '1.0',
-      owner: cell(row, idx, 'Owner'),
-      reviewNotes: cell(row, idx, 'Review Notes'),
+      locale: cell(row, idx, f.language) || 'en-NG',
+      keywords: splitKeywords(cell(row, idx, f.keywords)),
+      sourceVersion: cell(row, idx, f.version) || '1.0',
+      owner: cell(row, idx, f.owner),
+      reviewNotes: cell(row, idx, f.reviewNotes),
     });
   });
 
   // Seed-size reconciliation: warn, never block (§7.1 "initial seed expectation").
-  if (dataRows.length > 0 && dataRows.length !== 256) {
+  if (dataRows.length > 0 && dataRows.length !== f.expectedRows) {
     warned.unshift({
       row: 0,
-      message: `Expected the 256-row starter bank but the file has ${dataRows.length} data rows`,
+      message: `Expected the ${f.expectedRows}-row starter bank but the file has ${dataRows.length} data rows`,
     });
   }
 
@@ -230,6 +305,7 @@ export function draftContentHash(d: FilmQuestionDraft): string {
     stem: normalise(d.stem),
     options: d.options.map((o) => normalise(o.text)),
     answer: [...d.answer.correct].sort(),
+    explanation: normalise(d.answer.explanation ?? ''),
     points: d.points, locale: d.locale,
   });
   return fnv1a(canon);
