@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
+import { View, Text, Image, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -15,6 +15,8 @@ import { Typography } from '@/constants/tokens';
 import { shadow1, shadow2 } from '@/constants/tokens';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { RemoteBanner } from '@/features/media/banners';
+
+const HERO_BANNER_URL = 'https://res.cloudinary.com/paymax/image/upload/v1792925219/Utility_payments_made_easy_omlar0.png';
 
 function DynamicIcon({ name, size = 24, color }: { name: string; size?: number; color: string }) {
   const IconComponent = (Icons as unknown as Record<string, Icons.LucideIcon>)[name] ?? Icons.Circle;
@@ -41,16 +43,18 @@ export default function BillsScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <RemoteBanner slug="utility-bills" priority style={styles.banner} />
 
-        <LinearGradient
-          colors={[Colors.primary, Colors.secondaryContainer]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.hero, shadow2]}
-        >
+        <View style={[styles.hero, shadow2]}>
+          <Image source={{ uri: HERO_BANNER_URL }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <LinearGradient
+            colors={[Colors.primary, Colors.secondaryContainer]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[StyleSheet.absoluteFill, styles.heroScrim]}
+          />
           <Text style={styles.heroEyebrow}>Paymax Bills Hub</Text>
           <Text style={styles.heroTitle}>Pay bills instantly</Text>
           <Text style={styles.heroSubtitle}>Airtime, data, electricity, cable TV, and education payments in one secure flow.</Text>
-        </LinearGradient>
+        </View>
 
         <SearchBar placeholder="Search biller or service" />
 
@@ -151,7 +155,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     marginHorizontal: Spacing.containerMargin,
     marginBottom: Spacing.lg,
+    overflow: 'hidden',
+    backgroundColor: Colors.primary,
   },
+  // Brand tint over the photo so the white copy keeps its contrast.
+  heroScrim: { opacity: 0.9 },
   heroEyebrow: { ...Typography.labelSm, color: Colors.inverseOnSurface, opacity: 0.9 },
   heroTitle: { ...Typography.headlineLgMobile, color: Colors.onPrimary, marginTop: Spacing.xs },
   heroSubtitle: { ...Typography.bodySm, color: Colors.inverseOnSurface, marginTop: Spacing.xs },

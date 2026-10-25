@@ -198,6 +198,15 @@ const (
 	CheckoutAllowanceKobo int64 = 2_000_000 // ₦20,000 per rolling 24h
 )
 
+// Small transaction limits: transactions below SmallTransactionMaxKobo do not
+// require KYC (Tier 0 allowed). Daily limit across all Tier 0 transactions is
+// SmallTransactionDailyLimitKobo. Transactions >= SmallTransactionMaxKobo require
+// Tier 1+. This applies to all payment methods (wallet, paystack, etc.).
+const (
+	SmallTransactionMaxKobo    int64 = 2_000_000  // ₦20,000 per transaction
+	SmallTransactionDailyLimit int64 = 5_000_000  // ₦50,000 per day for Tier 0
+)
+
 // checkoutWindow matches the top-up gate's rolling window, so the amount a
 // customer may be funded and the amount they may spend are measured the same way.
 const checkoutWindow = 24 * time.Hour
@@ -326,6 +335,70 @@ var ErrWalletDisabled = errors.New("tiers: wallet disabled for tier 0 — comple
 
 // ErrDailyLimitExceeded is returned when the daily debit limit is hit.
 var ErrDailyLimitExceeded = errors.New("tiers: daily debit limit exceeded")
+
+// ErrKYCRequiredForAmount is returned when a transaction amount exceeds the
+// small transaction limit (₦20k) and the user is not KYC-verified.
+var ErrKYCRequiredForAmount = errors.New("tiers: transaction amount requires KYC — complete KYC verification to proceed")
+
+// EnforceSmallTransactionLimit checks if a transaction is allowed based on amount.
+// Transactions below SmallTransactionMaxKobo (₦20k) are allowed for any user (Tier 0+).
+// Transactions >= SmallTransactionMaxKobo require KYC (Tier 1+).
+// Additionally, enforces a daily limit of SmallTransactionDailyLimit (₦50k) for Tier 0.
+// This applies to all payment methods (wallet, paystack, etc.).
+func (s *Service) EnforceSmallTransactionLimit(ctx context.Context, userID string, amountKobo int64) error {
+	return s.enforceSmallTransactionLimit(ctx, s.db, userID, amountKobo)
+}
+
+// EnforceSmallTransactionLimitTx is EnforceSmallTransactionLimit evaluated inside a
+// transaction. The caller MUST already hold pg_advisory_xact_lock(hashtext("wallet:"+userID)).
+func (s *Service) EnforceSmallTransactionLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error {
+	return s.enforceSmallTransactionLimit(ctx, tx, userID, amountKobo)
+}
+
+func (s *Service) enforceSmallTransactionLimit(ctx context.Context, q Querier, userID string, amountKobo int64) error {
+	// Small transactions (< 20k) are always allowed
+	if amountKobo < SmallTransactionMaxKobo {
+		// For very small transactions, still check daily limit for Tier 0
+		tier, err := s.getUserTier(ctx, q, userID)
+		if err != nil {
+			return fmt.Errorf("tiers: get tier (fail closed): %w", err)
+		}
+		if tier == Tier0 {
+			debited, err := s.getDailyDebited(ctx, q, userID)
+			if err != nil {
+				return fmt.Errorf("tiers: get daily debited (fail closed): %w", err)
+			}
+			if debited+amountKobo > SmallTransactionDailyLimit {
+				return fmt.Errorf("%w: Tier 0 daily limit is ₦50,000", ErrDailyLimitExceeded)
+			}
+		}
+		return nil
+	}
+
+	// Large transactions (>= 20k) require KYC (Tier 1+)
+	tier, err := s.getUserTier(ctx, q, userID)
+	if err != nil {
+		return fmt.Errorf("tiers: get tier (fail closed): %w", err)
+	}
+	if tier == Tier0 {
+		return ErrKYCRequiredForAmount
+	}
+
+	// Tier 1+ still must respect their daily limits
+	cfg := GetConfig(tier)
+	if cfg.DailyDebitLimitKobo == 0 {
+		return nil // Tier 3 unlimited
+	}
+
+	debited, err := s.getDailyDebited(ctx, q, userID)
+	if err != nil {
+		return fmt.Errorf("tiers: get daily debited (fail closed): %w", err)
+	}
+	if debited+amountKobo > cfg.DailyDebitLimitKobo {
+		return ErrDailyLimitExceeded
+	}
+	return nil
+}
 
 // GetConfig returns the TierConfig for a given tier level.
 func GetConfig(t Tier) TierConfig {
