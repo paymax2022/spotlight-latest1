@@ -130,7 +130,8 @@ export async function GET(request: Request) {
           maxAttempts: exam.max_attempts,
           canStart: !isLocked,
           lastResult: attempt ? {
-            scorePercent: Math.round(attempt.percentage),
+            // Floored from points so a just-under score never displays as the pass mark.
+            scorePercent: attempt.totalPoints > 0 ? Math.floor((attempt.score * 100) / attempt.totalPoints) : 0,
             passed: quizIsPassed,
             earnedPoints: attempt.score,
             maxPoints: attempt.totalPoints,
