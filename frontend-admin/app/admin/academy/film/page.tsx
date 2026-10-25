@@ -1183,6 +1183,7 @@ function SettingsTab({ onNotice }: NoticeProp) {
         registration_type: form.registration_type,
         application_fee: Number(form.application_fee) || 0,
         application_fee_refundable: !!form.application_fee_refundable,
+        tuition_fee: Number(form.tuition_fee) || 0,
       });
       await settings.reload();
       onNotice('Settings saved — the apply form on the phone uses these immediately.');
