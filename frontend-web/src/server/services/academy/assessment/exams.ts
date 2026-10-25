@@ -4,6 +4,10 @@
 // an exam only publishes when its draw scope (stage + optional modules) has at
 // least draw_count APPROVED items. Importing can never reach here on its own, so
 // the 256 starter questions are exam-ineligible until SME review promotes them.
+//
+// A checkpoint scoped to topics (draw_module_codes) also needs a per-topic pool:
+// the TMFA mastery spec requires at least 20 approved items per topic before a
+// 10-item form goes live, so no single topic can be carried by its neighbours.
 
 import { createAdminClient } from '@/lib/supabase/server';
 import { poolCount } from './bank';
@@ -88,6 +92,41 @@ export interface PublishPreflight {
   reason?: string;
   poolSize?: number;
   required?: number;
+  /** Topics whose approved pool is below the per-topic minimum. */
+  shortTopics?: Array<{ code: string; approved: number }>;
+}
+
+/** Per-topic approved-item floor for a checkpoint form (TMFA mastery spec §4). */
+export const MIN_APPROVED_PER_TOPIC = 20;
+
+const LEGACY_MODULE_CODE = /^FM\d\d$/;
+
+/**
+ * The FM01..FM06 foundation quizzes were seeded live (ADR-PR883) on a 4-item
+ * pool per module, before the per-topic floor existed. One that learners have
+ * already sat may be re-published under the old whole-pool rule so taking it
+ * down for an edit cannot strand the curriculum behind it. Any other checkpoint,
+ * including a new FM-coded one nobody has sat, must meet the floor.
+ */
+async function isLegacyLiveCheckpoint(db: Db, exam: ExamRow, codes: string[]): Promise<boolean> {
+  if (!codes.every((c) => LEGACY_MODULE_CODE.test(c))) return false;
+  if (exam.is_published) return true;
+  const { count, error } = await db
+    .from('academy_exam_attempts')
+    .select('id', { count: 'exact', head: true })
+    .eq('exam_id', exam.id);
+  // Unknown history is treated as new: the stricter rule applies.
+  return !error && (count ?? 0) > 0;
+}
+
+/** Topics of a checkpoint below max(20, 2 x draw_count) approved items at its stage. */
+async function shortTopics(db: Db, stage: string, codes: string[], drawCount: number) {
+  const floor = Math.max(MIN_APPROVED_PER_TOPIC, 2 * drawCount);
+  const counts = await Promise.all(codes.map((code) => poolCount(db, { stage, moduleCodes: [code] })));
+  return {
+    floor,
+    short: codes.map((code, i) => ({ code, approved: counts[i] })).filter((t) => t.approved < floor),
+  };
 }
 
 /**
@@ -114,6 +153,17 @@ export async function publishExam(db: Db, id: string): Promise<PublishPreflight>
       published: false, poolSize: pool, required,
       reason: `Only ${pool} approved question${pool === 1 ? '' : 's'} cover this scope; at least ${required} are needed. Review more questions or lower the draw count.`,
     };
+  }
+
+  const codes = [...new Set(exam.draw_module_codes ?? [])];
+  if (exam.kind === 'checkpoint' && codes.length > 0 && !(await isLegacyLiveCheckpoint(db, exam, codes))) {
+    const { floor, short } = await shortTopics(db, exam.draw_stage, codes, required);
+    if (short.length > 0) {
+      return {
+        published: false, poolSize: pool, required: floor, shortTopics: short,
+        reason: `Each topic needs at least ${floor} approved questions at stage ${exam.draw_stage}. Short: ${short.map((t) => `${t.code} (${t.approved})`).join(', ')}.`,
+      };
+    }
   }
 
   const { error } = await db.from('academy_exams').update({ is_published: true, updated_at: new Date().toISOString() }).eq('id', id);
