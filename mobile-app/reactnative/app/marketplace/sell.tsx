@@ -83,7 +83,6 @@ function SellEntry() {
           />
         </View>
         <View style={styles.entryWrap}>
-          <View style={styles.entryIcon}><Camera size={36} color={MarketColors.brand} /></View>
           <Text style={styles.entryTitle}>Sell on Paymax</Text>
           <Text style={styles.entryBody}>List an item in minutes — snap a few photos and our composer does the rest. Escrow-ready by default, so buyers trust you faster.</Text>
           <View style={styles.entryCta}>
@@ -452,8 +451,8 @@ const styles = StyleSheet.create({
   actionText: { ...Typography.labelSm, fontWeight: '600' },
   // entry
   sellEntryScroll: { flexGrow: 1 },
-  bannerWrap: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.lg, paddingBottom: Spacing.md },
-  entryWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl, gap: Spacing.md },
+  bannerWrap: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.lg, paddingBottom: Spacing.sm },
+  entryWrap: { alignItems: 'center', paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.lg, gap: Spacing.sm },
   entryIcon: { width: 80, height: 80, borderRadius: 22, backgroundColor: MarketColors.okBg, alignItems: 'center', justifyContent: 'center' },
   entryTitle: { ...Typography.headlineMd, color: Colors.onSurface },
   entryBody: { ...Typography.bodyMd, color: MarketColors.muted, textAlign: 'center' },
