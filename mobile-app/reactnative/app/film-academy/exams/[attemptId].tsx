@@ -34,6 +34,7 @@ import {
   FILM_ACADEMY_EXAMS_KEY,
 } from '@/features/filmAcademy/api';
 import { getErrorMessage } from '@/utils/errorMapper';
+import { displayPercent } from '@/features/filmAcademy/moduleGate';
 import type {
   FilmAcademyExamResult,
   FilmAcademyAttemptView,
@@ -67,6 +68,9 @@ function useCountdown(deadlineAt: string | null): { text: string; remainingMs: n
 function ResultView({ result }: { result: FilmAcademyExamResult }) {
   const bg = result.passed ? Colors.iconBgGreen : Colors.errorContainer;
   const fg = result.passed ? Colors.teal : Colors.error;
+  // Shown from points and rounded down, so 84.6% never reads as 85%. The verdict
+  // above is the server's `passed`, never derived from this number.
+  const pct = displayPercent(result.earnedPoints, result.maxPoints) ?? Math.floor(result.scorePercent);
   return (
     <View style={styles.resultWrap}>
       <View style={[styles.resultBadge, { backgroundColor: bg }]}>
@@ -78,7 +82,7 @@ function ResultView({ result }: { result: FilmAcademyExamResult }) {
         </Text>
       </View>
 
-      <Text style={styles.resultScore}>{result.scorePercent}%</Text>
+      <Text style={styles.resultScore}>{pct}%</Text>
       <Text style={styles.meta}>
         {result.earnedPoints} of {result.maxPoints} points · {result.answeredCount} of {result.totalCount} answered
       </Text>
@@ -224,6 +228,8 @@ export default function FilmAcademyAttemptScreen() {
                           key={o.presentationOptionId}
                           onPress={() => tapOption(q.attemptQuestionId, o.presentationOptionId)}
                           disabled={data.expired}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: active, disabled: data.expired }}
                           style={[styles.option, active && styles.optionActive, data.expired && styles.optionFrozen]}
                         >
                           <View style={[styles.radio, active && styles.radioActive]} />

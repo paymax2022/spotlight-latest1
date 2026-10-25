@@ -9,7 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, CircleCheck, Circle, Clock, Home } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, CircleCheck, Circle, Clock, Home, Lock } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -18,6 +18,7 @@ import { getCurriculum, setLessonProgress, FILM_ACADEMY_LEARN_KEY } from '@/feat
 import { Lecture } from '@/features/filmAcademy/Lecture';
 import { InlineVideo } from '@/features/filmAcademy/InlineVideo';
 import { getErrorMessage } from '@/utils/errorMapper';
+import { gateRefusal, gateRefusalMessage, lockedModuleMessage } from '@/features/filmAcademy/moduleGate';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function FilmAcademyLessonScreen() {
@@ -36,7 +37,13 @@ export default function FilmAcademyLessonScreen() {
   const lessonIndex = flatLessons.findIndex((l) => l.id === lessonId);
   const lesson = lessonIndex >= 0 ? flatLessons[lessonIndex] : null;
   const nextLesson = lessonIndex >= 0 ? flatLessons[lessonIndex + 1] ?? null : null;
-  const moduleTitle = modules.find((m) => m.lessons.some((l) => l.id === lessonId))?.title ?? '';
+  const moduleIndex = modules.findIndex((m) => m.lessons.some((l) => l.id === lessonId));
+  const moduleTitle = moduleIndex >= 0 ? modules[moduleIndex].title : '';
+  // A locked module's lessons arrive as outlines (content blanked by the server),
+  // so show why instead of empty panes and a Mark-complete the server refuses.
+  const lockMessage = moduleIndex >= 0 && modules[moduleIndex].isLocked
+    ? lockedModuleMessage(modules, moduleIndex)
+    : null;
 
   const toggle = async () => {
     if (!lesson) return;
@@ -46,7 +53,10 @@ export default function FilmAcademyLessonScreen() {
       await setLessonProgress(lesson.id, !lesson.completed);
       await queryClient.invalidateQueries({ queryKey: FILM_ACADEMY_LEARN_KEY });
     } catch (e) {
-      setError(getErrorMessage(e));
+      const refusal = gateRefusal(e);
+      setError(refusal ? gateRefusalMessage(refusal, lockMessage ?? undefined) : getErrorMessage(e));
+      // The module was locked after this screen loaded: refresh so it shows that.
+      if (refusal) void queryClient.invalidateQueries({ queryKey: FILM_ACADEMY_LEARN_KEY });
     } finally {
       setBusy(false);
     }
@@ -91,9 +101,19 @@ export default function FilmAcademyLessonScreen() {
 
             {!!lesson.description && <Text style={styles.body}>{lesson.description}</Text>}
 
+            {!!lockMessage && (
+              <View style={styles.lockedBanner} accessible accessibilityLabel={`This lesson is locked. ${lockMessage}`}>
+                <Lock size={18} color={Colors.onSurfaceVariant} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.lockedText}>This lesson is locked</Text>
+                  <Text style={styles.lockedDetail}>{lockMessage}</Text>
+                </View>
+              </View>
+            )}
+
             {/* The lecture itself. Rendered above the video links, because the
                 reading is the lesson and the video supports it. */}
-            {!!lesson.content_markdown && (
+            {!lockMessage && !!lesson.content_markdown && (
               <View style={styles.lecture}>
                 <Lecture markdown={lesson.content_markdown} />
               </View>
@@ -102,37 +122,41 @@ export default function FilmAcademyLessonScreen() {
             {/* Played in place. These used to call Linking.openURL, which handed
                 the learner to the YouTube app or a new tab and lost their place
                 in the course. */}
-            {!!lesson.video_url && (
+            {!lockMessage && !!lesson.video_url && (
               <InlineVideo url={lesson.video_url} label="Watch the lesson" />
             )}
 
-            {!!lesson.resource_url && (
+            {!lockMessage && !!lesson.resource_url && (
               <InlineVideo
                 url={lesson.resource_url}
                 label={lesson.resource_label || 'Further material'}
               />
             )}
 
-            {!!error && <Text style={styles.error}>{error}</Text>}
+            {!!error && (
+              <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">{error}</Text>
+            )}
 
-            <Pressable
-              onPress={toggle}
-              disabled={busy}
-              style={[styles.markBtn, lesson.completed && styles.markBtnDone, busy && styles.markBtnBusy]}
-            >
-              {busy ? (
-                <ActivityIndicator color={Colors.onSurface} />
-              ) : (
-                <>
-                  {lesson.completed
-                    ? <CircleCheck size={18} color={Colors.teal} />
-                    : <Circle size={18} color={Colors.onSurface} />}
-                  <Text style={styles.markBtnText}>
-                    {lesson.completed ? 'Completed — tap to undo' : 'Mark as complete'}
-                  </Text>
-                </>
-              )}
-            </Pressable>
+            {!lockMessage && (
+              <Pressable
+                onPress={toggle}
+                disabled={busy}
+                style={[styles.markBtn, lesson.completed && styles.markBtnDone, busy && styles.markBtnBusy]}
+              >
+                {busy ? (
+                  <ActivityIndicator color={Colors.onSurface} />
+                ) : (
+                  <>
+                    {lesson.completed
+                      ? <CircleCheck size={18} color={Colors.teal} />
+                      : <Circle size={18} color={Colors.onSurface} />}
+                    <Text style={styles.markBtnText}>
+                      {lesson.completed ? 'Completed — tap to undo' : 'Mark as complete'}
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            )}
 
             {/* Continue to the next lesson (which may be in the next module —
                 flatLessons is flattened across modules in curriculum order), or
@@ -181,6 +205,10 @@ const styles = StyleSheet.create({
   body:        { ...Typography.bodyMd, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   lecture:     { marginTop: Spacing.sm, marginBottom: Spacing.sm },
   error:       { ...Typography.bodySm, color: Colors.error, marginTop: Spacing.xs },
+  lockedBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.sm,
+                  padding: Spacing.md, borderRadius: Radius.md, backgroundColor: Colors.surfaceVariant },
+  lockedText:  { ...Typography.labelLg, color: Colors.onSurface },
+  lockedDetail: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
 
   markBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm,
                  backgroundColor: Colors.surface, borderRadius: Radius.md, paddingVertical: Spacing.md,

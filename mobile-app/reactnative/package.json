@@ -58,6 +58,7 @@
     "env:which": "node scripts/use-env.mjs --which",
     "test:lib": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/lib/*.spec.ts\"",
     "test:academy-live": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/academy/live/__tests__/*.test.ts\"",
+    "test:film-academy": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/filmAcademy/*.spec.ts\"",
     "test:crypto": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/crypto/utils/__tests__/*.test.ts\""
   },
   "dependencies": {

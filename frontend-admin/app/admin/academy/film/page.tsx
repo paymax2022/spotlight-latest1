@@ -1800,10 +1800,13 @@ function ExamsTab({ onNotice }: NoticeProp) {
     finally { setSaving(false); }
   };
 
+  // A refused publish (the pool preflight) can list several short topics, so it
+  // is shown inline and wrapped in full rather than in a truncating alert().
+  const [publishError, setPublishError] = useState<string | null>(null);
   const publish = async (id: string) => {
-    setBusy(id);
+    setBusy(id); setPublishError(null);
     try { await svc.publishExam(id); onNotice('Published.'); setReloadKey((k) => k + 1); }
-    catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    catch (e) { setPublishError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
   };
 
@@ -1851,6 +1854,11 @@ function ExamsTab({ onNotice }: NoticeProp) {
       </Card>
 
       <Card title="Exams">
+        {publishError ? (
+          <p role="alert" style={{ color: colors.danger, fontSize: '0.85rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            Could not publish: {publishError}
+          </p>
+        ) : null}
         <StateBlock loading={exams.loading} error={exams.error} empty={rows.length === 0}
           emptyText="No exams yet. Author one above — it starts unpublished.">
           <div style={{ overflowX: 'auto' }}>
