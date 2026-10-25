@@ -13,8 +13,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { presentQuestion, scoreAttempt } from './scoring';
 import { drawApproved, keysForItems, type DrawnItem } from './bank';
 import type { PresentedQuestion, SnapshotItem } from './types';
-import { bestAttemptsByExam, type AttemptRow as GradedAttemptRow } from '../bestAttempt';
-import { quizPassed } from '../moduleGate';
+import { ModuleGateUnavailableError, moduleLockedFor } from '../moduleGate';
 
 type Db = ReturnType<typeof createAdminClient>;
 
@@ -110,52 +109,20 @@ export async function examEligibility(
  */
 async function moduleLockBlocker(db: Db, exam: ExamRow, enrollmentId: string): Promise<ExamBlocker> {
   if (!exam.module_id) return { ok: true };
-
-  const { data: mods, error: modErr } = await db
-    .from('academy_modules')
-    .select('id')
-    .eq('program_id', exam.program_id)
-    .eq('is_published', true)
-    .order('order_index', { ascending: true });
-  if (modErr) {
-    console.error('[film/assessment] module gate: modules read failed', modErr);
+  let lock: Awaited<ReturnType<typeof moduleLockedFor>>;
+  try {
+    lock = await moduleLockedFor(db, exam.program_id, exam.module_id, enrollmentId);
+  } catch (err) {
+    if (!(err instanceof ModuleGateUnavailableError)) throw err;
     throw new ExamError(500, 'MODULE_GATE_UNAVAILABLE', 'Could not check your module progress. Please try again.');
   }
-  const ids = ((mods ?? []) as Array<{ id: string }>).map((m) => m.id);
-  const idx = ids.indexOf(exam.module_id);
-  if (idx < 0) {
+  if (lock === 'unavailable') {
     return { ok: false, code: 'MODULE_UNAVAILABLE', message: 'This module is not open yet.' };
   }
-  if (idx === 0) return { ok: true };
-
-  const { data: prevExams, error: examErr } = await db
-    .from('academy_exams')
-    .select('id, pass_mark')
-    .eq('program_id', exam.program_id)
-    .eq('module_id', ids[idx - 1]);
-  if (examErr) {
-    console.error('[film/assessment] module gate: previous quiz read failed', examErr);
-    throw new ExamError(500, 'MODULE_GATE_UNAVAILABLE', 'Could not check your module progress. Please try again.');
+  if (lock === 'locked') {
+    return { ok: false, code: 'MODULE_LOCKED', message: 'Pass the previous module quiz first to unlock this one.' };
   }
-  const gates = (prevExams ?? []) as Array<{ id: string; pass_mark: number }>;
-  if (gates.length === 0) return { ok: true };
-
-  const { data: attempts, error: attErr } = await db
-    .from('academy_exam_attempts')
-    .select('exam_id, status, score, total_points, percentage, passed')
-    .eq('enrollment_id', enrollmentId)
-    .in('exam_id', gates.map((g) => g.id));
-  if (attErr) {
-    console.error('[film/assessment] module gate: attempts read failed', attErr);
-    throw new ExamError(500, 'MODULE_GATE_UNAVAILABLE', 'Could not check your module progress. Please try again.');
-  }
-  const best = bestAttemptsByExam((attempts ?? []) as GradedAttemptRow[]);
-  if (gates.every((g) => quizPassed(g, best.get(g.id)))) return { ok: true };
-  return {
-    ok: false,
-    code: 'MODULE_LOCKED',
-    message: 'Pass the previous module quiz first to unlock this one.',
-  };
+  return { ok: true };
 }
 
 async function attemptCount(db: Db, examId: string, enrollmentId: string): Promise<number> {
