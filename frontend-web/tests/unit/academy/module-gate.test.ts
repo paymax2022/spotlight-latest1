@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { meetsPassMark, moduleLockStates, quizPassed } from '@/src/server/services/academy/moduleGate';
+import {
+  meetsPassMark, ModuleGateUnavailableError, moduleLockedFor, moduleLockStates, quizPassed,
+} from '@/src/server/services/academy/moduleGate';
 import { bestAttemptsByExam, type AttemptRow } from '@/src/server/services/academy/bestAttempt';
 import { scoreAttempt } from '@/src/server/services/academy/assessment/scoring';
 import { examEligibility, type ExamRow } from '@/src/server/services/academy/assessment/attempts';
 import type { SnapshotItem } from '@/src/server/services/academy/assessment/types';
+import { fakeDb, type Row } from './fakeDb';
 
 describe('meetsPassMark — exact 85% boundary', () => {
   it.each([
@@ -77,33 +80,6 @@ describe('moduleLockStates', () => {
   });
 });
 
-// A minimal chainable stand-in for the Supabase client: enough for examEligibility.
-type Row = Record<string, unknown>;
-function fakeDb(tables: Record<string, Row[]>) {
-  return {
-    from(table: string) {
-      let rows = [...(tables[table] ?? [])];
-      let countOnly = false;
-      const builder = {
-        select(_cols: string, opts?: { count?: string; head?: boolean }) {
-          countOnly = !!opts?.head;
-          return builder;
-        },
-        eq(col: string, val: unknown) { rows = rows.filter((r) => r[col] === val); return builder; },
-        in(col: string, vals: unknown[]) { rows = rows.filter((r) => vals.includes(r[col])); return builder; },
-        order(col: string) {
-          rows.sort((a, b) => Number(a[col] ?? 0) - Number(b[col] ?? 0));
-          return builder;
-        },
-        then(resolve: (v: unknown) => void) {
-          resolve(countOnly ? { count: rows.length, error: null } : { data: rows, error: null });
-        },
-      };
-      return builder;
-    },
-  } as unknown as Parameters<typeof examEligibility>[0];
-}
-
 describe('examEligibility enforces the module gate at start', () => {
   const exam = (over: Partial<ExamRow>): ExamRow => ({
     id: 'q2', program_id: 'p', module_id: 'm2', title: 'Quiz 2', description: null, kind: 'checkpoint',
@@ -146,8 +122,46 @@ describe('examEligibility enforces the module gate at start', () => {
     expect(await examEligibility(db, exam({ module_id: 'm9' }), learner)).toMatchObject({ ok: false, code: 'MODULE_UNAVAILABLE' });
   });
 
+  it('fails closed with MODULE_GATE_UNAVAILABLE when attempts cannot be read', async () => {
+    const db = fakeDb({ academy_modules: modules, academy_exams: exams, academy_exam_attempts: [] }, ['academy_exam_attempts']);
+    await expect(examEligibility(db, exam({}), learner)).rejects.toMatchObject({ code: 'MODULE_GATE_UNAVAILABLE', status: 500 });
+  });
+
   it('does not apply the module gate to a stage exam with no module', async () => {
     const db = fakeDb({ academy_modules: modules, academy_exams: exams, academy_exam_attempts: [] });
     expect(await examEligibility(db, exam({ module_id: null, kind: 'stage_exam' }), learner)).toEqual({ ok: true });
+  });
+});
+
+describe('moduleLockedFor — the one DB-backed lock rule', () => {
+  const modules = [
+    { id: 'm1', program_id: 'p', is_published: true, order_index: 0 },
+    { id: 'm2', program_id: 'p', is_published: true, order_index: 1 },
+    { id: 'm3', program_id: 'p', is_published: false, order_index: 2 },
+  ];
+  const exams = [{ id: 'q1', program_id: 'p', module_id: 'm1', pass_mark: 85 }];
+  const attempt = (score: number) => ({
+    exam_id: 'q1', enrollment_id: 'e1', status: 'graded', score, total_points: 10, percentage: score * 10, passed: false,
+  });
+  const tables = (attempts: Row[]) => ({ academy_modules: modules, academy_exams: exams, academy_exam_attempts: attempts });
+
+  it('is locked after 8/10 and open after 9/10', async () => {
+    expect(await moduleLockedFor(fakeDb(tables([attempt(8)])), 'p', 'm2', 'e1')).toBe('locked');
+    expect(await moduleLockedFor(fakeDb(tables([attempt(8), attempt(9)])), 'p', 'm2', 'e1')).toBe('open');
+  });
+
+  it('ignores another enrolment\'s pass', async () => {
+    const db = fakeDb(tables([{ ...attempt(10), enrollment_id: 'e2' }]));
+    expect(await moduleLockedFor(db, 'p', 'm2', 'e1')).toBe('locked');
+  });
+
+  it('first module is open; unpublished module is unavailable', async () => {
+    expect(await moduleLockedFor(fakeDb(tables([])), 'p', 'm1', 'e1')).toBe('open');
+    expect(await moduleLockedFor(fakeDb(tables([])), 'p', 'm3', 'e1')).toBe('unavailable');
+  });
+
+  it.each(['academy_modules', 'academy_exams', 'academy_exam_attempts'])('fails closed when %s cannot be read', async (t) => {
+    await expect(moduleLockedFor(fakeDb(tables([attempt(10)]), [t]), 'p', 'm2', 'e1'))
+      .rejects.toBeInstanceOf(ModuleGateUnavailableError);
   });
 });

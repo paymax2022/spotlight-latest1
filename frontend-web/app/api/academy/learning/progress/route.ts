@@ -1,8 +1,10 @@
 // Learner: mark a lesson complete (or undo it).
+import { NextResponse } from 'next/server';
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { resolveLearner } from '@/src/server/services/academy';
+import { ModuleGateUnavailableError, moduleLockedFor } from '@/src/server/services/academy/moduleGate';
 
 export async function POST(request: Request) {
   try {
@@ -19,14 +21,26 @@ export async function POST(request: Request) {
     // could mark progress against any lesson id in the database.
     const { data: lesson } = await supabase
       .from('academy_lessons')
-      .select('id, academy_modules!inner(program_id)')
+      .select('id, module_id, academy_modules!inner(program_id)')
       .eq('id', body.lessonId)
       .maybeSingle();
 
-    const owningProgram = (lesson as { academy_modules?: { program_id?: string } } | null)
-      ?.academy_modules?.program_id;
-    if (!lesson || owningProgram !== learner.programId) {
+    const row = lesson as { module_id?: string; academy_modules?: { program_id?: string } } | null;
+    const owningProgram = row?.academy_modules?.program_id;
+    if (!row || !row.module_id || !learner.programId || owningProgram !== learner.programId) {
       return errorResponse('Lesson not found in your curriculum', 404);
+    }
+
+    // A locked module shows only its outline in /api/academy/learning, so its
+    // lessons cannot be completed either — same rule (moduleGate.ts), enforced
+    // here so a direct call cannot skip a module. A failed gate read refuses.
+    const lock = await moduleLockedFor(supabase, learner.programId, row.module_id, learner.enrollmentId);
+    if (lock === 'unavailable') return errorResponse('Lesson not found in your curriculum', 404);
+    if (lock === 'locked') {
+      return NextResponse.json(
+        { success: false, code: 'MODULE_LOCKED', error: 'Pass the previous module quiz first to unlock this lesson.' },
+        { status: 403 },
+      );
     }
 
     const completed = body.completed !== false;
@@ -52,6 +66,12 @@ export async function POST(request: Request) {
 
     return successResponse({ success: true, lessonId: body.lessonId, completed });
   } catch (error) {
+    if (error instanceof ModuleGateUnavailableError) {
+      return NextResponse.json(
+        { success: false, code: 'MODULE_GATE_UNAVAILABLE', error: 'Could not check your module progress. Please try again.' },
+        { status: 500 },
+      );
+    }
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
