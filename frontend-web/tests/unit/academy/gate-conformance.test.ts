@@ -135,3 +135,18 @@ describe('GATE-012 — grade changes need the review permission', () => {
     expect(from).not.toHaveBeenCalled();
   });
 });
+
+describe('gate refusals carry a machine-readable code', () => {
+  it('returns the ExamError code alongside the message', async () => {
+    const { ExamError } = await import('@/src/server/services/academy/assessment');
+    vi.mocked(saveResponse).mockRejectedValue(
+      new ExamError(403, 'MODULE_LOCKED', 'Pass the previous module quiz first to unlock this one.'),
+    );
+    const res = await ANSWER(makeRequest('/api/academy/attempts/att-1/answer', {
+      body: { attemptQuestionId: 'aq1', presentationOptionId: 'aq1_po1' },
+      headers: withAuth(),
+    }), params('att-1'));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ success: false, code: 'MODULE_LOCKED' });
+  });
+});

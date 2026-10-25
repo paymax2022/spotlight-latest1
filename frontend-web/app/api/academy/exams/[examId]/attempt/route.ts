@@ -46,7 +46,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ examId: st
     const started = await startAttempt(supabase, exam, learnerRef, user.id, readKey(request, body));
     return successResponse({ success: true, attempt: started });
   } catch (error) {
-    if (error instanceof ExamError) return errorResponse(error.message, error.status);
+    if (error instanceof ExamError) return errorResponse(error.message, error.status, error.code);
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
