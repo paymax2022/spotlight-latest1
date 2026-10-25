@@ -1122,7 +1122,7 @@ paths:
       responses:
         '200': { description: Executed (or replay), content: { application/json: { schema: { type: object, properties: { approval: { $ref: '#/components/schemas/ApprovalRequest' }, replayed: { type: boolean } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '403': { description: Self-approval refused, or admin role required }
+        '403': { description: 'Self-approval refused, or admin role required' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Request is not pending (rejected/expired) }
         '503': { description: Dual control not enabled }
@@ -1137,7 +1137,7 @@ paths:
         content: { application/json: { schema: { type: object, properties: { note: { type: string } } } } }
       responses:
         '200': { description: Rejected, content: { application/json: { schema: { $ref: '#/components/schemas/ApprovalRequest' } } } }
-        '403': { description: Self-rejection refused, or admin role required }
+        '403': { description: 'Self-rejection refused, or admin role required' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Request is not pending }
         '503': { description: Dual control not enabled }
