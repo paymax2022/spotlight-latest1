@@ -224,7 +224,10 @@ export interface FilmAcademyModuleQuiz {
   timeLimitMinutes: number;
   maxAttempts: number;
   canStart: boolean;
-  /** Null = not attempted, else the learner's last result (scorePercent >= 85 = passed) */
+  /**
+   * Null = not attempted, else the learner's best result. `passed` is the server's
+   * verdict on exact points; never re-derive it from the rounded scorePercent.
+   */
   lastResult: { scorePercent: number; passed: boolean; earnedPoints: number; maxPoints: number } | null;
 }
 

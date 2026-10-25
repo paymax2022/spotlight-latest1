@@ -33,6 +33,7 @@ import {
 } from '@/features/filmAcademy/api';
 import { lockCopy } from '@/features/filmAcademy/lockCopy';
 import { getErrorMessage } from '@/utils/errorMapper';
+import { gateRefusal, gateRefusalMessage } from '@/features/filmAcademy/moduleGate';
 import { secureRandomId } from '@/lib/secureRandom';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import type { FilmAcademyExamSummary } from '@/features/filmAcademy/types';
@@ -55,7 +56,11 @@ function ExamCard({ exam }: { exam: FilmAcademyExamSummary }) {
       await queryClient.invalidateQueries({ queryKey: FILM_ACADEMY_EXAMS_KEY });
       router.push(`/film-academy/exams/${attempt.attemptId}` as never);
     } catch (e) {
-      setError(getErrorMessage(e));
+      // A module checkpoint quiz refused by the module gate gets plain copy, and
+      // the list is refreshed so the card shows the server's blocker instead.
+      const refusal = gateRefusal(e);
+      setError(refusal ? gateRefusalMessage(refusal) : getErrorMessage(e));
+      if (refusal) void queryClient.invalidateQueries({ queryKey: FILM_ACADEMY_EXAMS_KEY });
     } finally {
       setBusy(false);
     }
@@ -99,7 +104,9 @@ function ExamCard({ exam }: { exam: FilmAcademyExamSummary }) {
         </View>
       ) : null}
 
-      {!!error && <Text style={styles.error}>{error}</Text>}
+      {!!error && (
+        <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">{error}</Text>
+      )}
 
       {exam.canStart ? (
         <Pressable onPress={start} disabled={busy} style={[styles.startBtn, busy && styles.startBtnDisabled]}>
