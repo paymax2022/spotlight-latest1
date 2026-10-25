@@ -27,10 +27,11 @@ import {
 import * as svc from '@/services/filmAcademyAdminService';
 import { TopicsTab } from './TopicsTab';
 
-type TabKey = 'batches' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'assessment' | 'bank' | 'exams' | 'topics' | 'settings';
+type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'assessment' | 'bank' | 'exams' | 'topics' | 'settings';
 
 const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'batches',     label: 'Batches',      hint: 'Cohorts the app offers on /film-academy' },
+  { key: 'applications',label: 'Applications', hint: 'View applicants and their interest areas' },
   { key: 'tuition',     label: 'Tuition',      hint: 'Plans shown on /film-academy/tuition' },
   { key: 'curriculum',  label: 'Curriculum',   hint: 'Modules, lessons and the week 1-4 assignment timeline' },
   { key: 'progress',    label: 'Progress',     hint: 'Who has sent which part, and who is behind' },
@@ -105,6 +106,7 @@ export default function FilmAcademyAdminPage() {
       </div>
 
       {tab === 'batches'      ? <BatchesTab onNotice={setNotice} /> : null}
+      {tab === 'applications' ? <ApplicationsTab /> : null}
       {tab === 'tuition'      ? <TuitionTab onNotice={setNotice} /> : null}
       {tab === 'curriculum'   ? <CurriculumTab onNotice={setNotice} /> : null}
       {tab === 'progress'     ? <ProgressTab onNotice={setNotice} /> : null}
@@ -132,6 +134,59 @@ const EMPTY_BATCH: svc.BatchInput = {
   installments_count: 1, fee_frequency: 'monthly',
   one_off_discount_pct: 0, fee_start_offset_days: 0, interest_area_slugs: [],
 };
+
+function ApplicationsTab() {
+  const batches = useAsync(() => svc.listBatches(), []);
+  const [batchId, setBatchId] = useState('');
+  const apps = useAsync(() => svc.listApplications({ batchId: batchId || undefined }), [batchId]);
+
+  const list = apps.data ?? [];
+
+  return (
+    <Card title="Applications">
+      <FilterBar>
+        <div style={{ minWidth: 200 }}>
+          <span style={label()}>Batch</span>
+          <select style={select()} value={batchId} onChange={(e) => setBatchId(e.target.value)}>
+            <option value="">All batches</option>
+            {(batches.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.batch_name}</option>)}
+          </select>
+        </div>
+        <button style={btn()} onClick={() => void apps.reload()}>Refresh</button>
+      </FilterBar>
+
+      <StateBlock loading={apps.loading} error={apps.error} empty={list.length === 0}
+        emptyText="No applications found.">
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+            <thead><tr>
+              <th style={th()}>Applicant</th><th style={th()}>Batch</th><th style={th()}>Areas</th>
+              <th style={th()}>App. fee paid</th><th style={th()}>Applied</th>
+            </tr></thead>
+            <tbody>
+              {list.map((a) => (
+                <tr key={a.id}>
+                  <td style={td()}>
+                    <div style={{ fontWeight: 600 }}>{a.full_name || '—'}</div>
+                    <div style={{ fontSize: '0.75rem', color: colors.muted }}>{a.email}</div>
+                    {a.phone ? <div style={{ fontSize: '0.75rem', color: colors.muted }}>{a.phone}</div> : null}
+                  </td>
+                  <td style={td()}>{a.academy_batches?.batch_name || '—'}</td>
+                  <td style={td()}>{(a.areas_of_interest ?? []).join(', ') || '—'}</td>
+                  <td style={td()}>{naira(a.application_fee_paid)}</td>
+                  <td style={td()}>{fmtDate(a.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </StateBlock>
+      <AuditNote>
+        Applicants gain immediate access to learning materials after payment. No admin approval needed.
+      </AuditNote>
+    </Card>
+  );
+}
 
 function BatchesTab({ onNotice }: NoticeProp) {
   const batches = useAsync(() => svc.listBatches(), []);
