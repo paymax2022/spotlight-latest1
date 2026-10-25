@@ -56,6 +56,7 @@ type Service struct {
 	audit    *auditLogger
 	withdraw WithdrawalProvider // pluggable on-chain broadcast seam (mock default)
 	tiers    walletDebitLimiter
+	stepUp   StepUpFunc // withdrawal second factor (WithStepUp); nil = withdrawals refused
 }
 
 // NewService builds the crypto service. If price is nil the deterministic

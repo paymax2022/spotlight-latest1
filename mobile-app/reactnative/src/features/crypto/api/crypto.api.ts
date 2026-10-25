@@ -59,11 +59,12 @@ const unwrap = <T>(res: { data: unknown }): T => unwrapEnvelope<T>(res?.data);
  * 'quote_expired') on `cryptoType` so the special-case path still works.
  */
 function toCryptoError(err: unknown): Error {
-  const e = err as { response?: { data?: { type?: string; message?: string } }; message?: string };
+  const e = err as { response?: { data?: { type?: string; code?: string; message?: string } }; message?: string };
   const data = e?.response?.data;
   const msg = data?.message ?? e?.message ?? 'Something went wrong. Please try again.';
-  const out = new Error(msg) as Error & { cryptoType?: string };
+  const out = new Error(msg) as Error & { cryptoType?: string; cryptoCode?: string };
   if (data?.type) out.cryptoType = data.type;       // e.g. 'quote_expired'
+  if (data?.code) out.cryptoCode = data.code;       // e.g. 'pin_invalid' (withdraw step-up)
   return out;
 }
 
@@ -618,7 +619,7 @@ export async function quoteWithdrawal(draft: WithdrawalDraft): Promise<Withdrawa
 export async function initiateWithdrawal(
   draft: WithdrawalDraft,
   quote: WithdrawalQuote,
-  otp: string,
+  pin: string,
   idempotencyKey: string,
 ): Promise<WithdrawalResult> {
   if (USE_MOCK) {
@@ -644,8 +645,8 @@ export async function initiateWithdrawal(
   // validates the address is a saved, active, whitelisted destination (allow-list),
   // debits+parks the holding units (no mint), charges the fiat fee to revenue, and
   // drives the state machine requested→pending→broadcast via the provider seam.
-  // Idempotency-Key makes the POST retry-safe. (otp is a client-side confirmation
-  void otp;
+  // Idempotency-Key makes the POST retry-safe. The transaction PIN is verified by
+  // the SERVER before anything moves (403 pin_invalid / pin_not_set).
   try {
     return unwrap<WithdrawalResult>(
       await api.post(
@@ -655,6 +656,7 @@ export async function initiateWithdrawal(
           address_id: draft.addressId,
           units: draft.amount,
           fee_kobo: quote.paymaxFee.amount,
+          pin,
         },
         { headers: { 'Idempotency-Key': idempotencyKey } },
       ),

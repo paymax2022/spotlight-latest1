@@ -3455,7 +3455,23 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			LiveBaseURL: cfg.CryptoQuidaxLiveBaseURL,
 		})
 		log.Printf("[crypto] price/withdrawal provider mode: %s", cryptoMode)
-		crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw)
+		cryptoLegacy := crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw)
+		// Customer withdrawals require the transaction PIN, verified server-side
+		// (the app's OTP step was client-only). Without this wiring they fail closed.
+		if cryptoLegacy != nil {
+			cryptoLegacy.WithStepUp(func(ctx context.Context, userID, pin string) error {
+				err := xferSvc.VerifyPin(ctx, userID, pin)
+				switch {
+				case err == nil:
+					return nil
+				case errors.Is(err, transfers.ErrPinNotSet):
+					return crypto.ErrPinNotSet
+				case errors.Is(err, transfers.ErrPinInvalid), errors.Is(err, transfers.ErrPinLocked):
+					return fmt.Errorf("%w: %v", crypto.ErrStepUpRejected, err)
+				}
+				return err
+			})
+		}
 
 		// Provider-driven swap pipeline (quote -> confirm -> webhook/reconciler settle). Its own
 		// flag, and it fails closed: any missing piece skips the routes instead of mounting a
