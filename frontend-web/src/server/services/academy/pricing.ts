@@ -131,3 +131,54 @@ export function tuitionForFormat(
     return sum + (row ? Number(row.price_ngn) : def);
   }, 0);
 }
+
+const PLAN_CADENCES = new Set(['weekly', 'biweekly', 'monthly']);
+
+/**
+ * The shape of an applicant's tuition plan: how many instalments, the amount
+ * after any one-off discount, and what the FIRST instalment costs. This is the
+ * single source for the plan rows, the quote and the amount verified at submit.
+ */
+export function tuitionPlanShape(input: {
+  tuition: number;
+  preference: 'one_off' | 'installment';
+  installmentsCount: number | null;
+  feeFrequency: string | null;
+  oneOffDiscountPct: number | null;
+}) {
+  const payUpfront =
+    input.preference === 'one_off' || !PLAN_CADENCES.has(String(input.feeFrequency ?? 'monthly'));
+  const count = payUpfront ? 1 : Math.min(12, Math.max(1, Number(input.installmentsCount ?? 1)));
+  const discountPct = input.preference === 'one_off' ? Number(input.oneOffDiscountPct ?? 0) : 0;
+  const discounted = Math.round(input.tuition * (1 - discountPct / 100) * 100) / 100;
+  const unit = Math.round((discounted / count) * 100) / 100;
+  const first = count === 1 ? discounted : unit;
+  return { count, discountPct, discounted, unit, firstDueNgn: input.tuition > 0 ? first : 0 };
+}
+
+/** Parse `area_selections: [{slug, key}]` into {slug: key}; 'invalid' on a bad or duplicate entry. */
+export function parseAreaSelections(value: unknown): Record<string, AcademyPricingKey> | 'invalid' | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const out: Record<string, AcademyPricingKey> = {};
+  for (const item of value) {
+    const slug = String((item as { slug?: unknown })?.slug ?? '').trim();
+    const key = String((item as { key?: unknown })?.key ?? '').trim();
+    if (!slug || !isPricingKey(key)) return 'invalid';
+    if (out[slug]) return 'invalid';
+    out[slug] = key;
+  }
+  return out;
+}
+
+/** Tuition when each area carries its own format — the sum of the chosen subs. */
+export function tuitionForSelections(
+  areas: Array<{ id: string; slug: string }>,
+  selections: Record<string, AcademyPricingKey>,
+  rows: AreaPricingOptionRow[],
+): number {
+  return areas.reduce((sum, a) => {
+    const key = selections[a.slug] ?? ACADEMY_PRICING_FALLBACK_KEY;
+    const row = rows.find((r) => r.area_id === a.id && r.key === key);
+    return sum + (row ? Number(row.price_ngn) : pricingDefinition(key).price_ngn);
+  }, 0);
+}

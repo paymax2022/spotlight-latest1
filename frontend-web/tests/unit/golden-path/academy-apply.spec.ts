@@ -39,11 +39,16 @@ vi.mock('@/src/lib/payments', () => ({
   verifyPaystackTransaction: vi.fn(),
 }));
 
+vi.mock('@/src/server/services/academy/service', () => ({
+  approveAfterPayment: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { POST, GET } from '../../../app/api/academy/apply/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyPaystackTransaction } from '@/src/lib/payments';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
+import { approveAfterPayment } from '@/src/server/services/academy/service';
 
 const TEST_USER = { id: 'user-001', email: 'student@example.com' };
 
@@ -88,15 +93,39 @@ function makeApplyBody(overrides: Record<string, unknown> = {}) {
  * the slugs passed here. Tests needing a different offering re-override
  * `from` afterwards — the last assignment wins.
  */
+/**
+ * Answers the two `.in(...)` lookups the route makes: the chosen areas by slug,
+ * and their tuition price rows by area_id. An area's `fee_ngn` doubles as its
+ * weekend_day tuition price here, so `fee_ngn: 0` means a free area and a
+ * positive one is real tuition (first instalment due at submit). Without option
+ * rows the route falls back to the 50,000 launch price.
+ */
+function areaAndOptionLookup(
+  rows: Array<{ slug: string; fee_ngn: number; is_active?: boolean }>,
+) {
+  return vi.fn().mockImplementation((column: string) => {
+    if (column === 'area_id') {
+      return Promise.resolve({
+        data: rows.map((r) => ({
+          area_id: r.slug, key: 'weekend_day', label: 'Weekend', note: null,
+          price_ngn: r.fee_ngn, sort_order: 1,
+        })),
+        error: null,
+      });
+    }
+    return Promise.resolve({
+      data: rows.map((r) => ({ is_active: true, id: r.slug, ...r })),
+      error: null,
+    });
+  });
+}
+
 function mockInterestAreas(
   mock: Record<string, unknown>,
   rows: Array<{ slug: string; fee_ngn: number; is_active?: boolean }> =
     [{ slug: 'acting', fee_ngn: 0, is_active: true }],
 ) {
-  (mock as { in: unknown }).in = vi.fn().mockResolvedValue({
-    data: rows.map((r) => ({ is_active: true, ...r })),
-    error: null,
-  });
+  (mock as { in: unknown }).in = areaAndOptionLookup(rows);
 
   const offered = rows
     .filter((r) => r.is_active !== false)
@@ -243,6 +272,7 @@ describe('POST /api/academy/apply', () => {
   function setupPaidMock(
     applicationFee: number,
     areaRows: Array<{ slug: string; fee_ngn: number; is_active?: boolean }>,
+    batchRow: Record<string, unknown> = {},
   ) {
     const { mock, maybySingle, insertFn } = makeSupabaseMock();
     mockInterestAreas(mock, areaRows);
@@ -251,7 +281,7 @@ describe('POST /api/academy/apply', () => {
         data: { registration_type: 'paid', application_fee: applicationFee, tuition_fee: 0 },
         error: null,
       })
-      .mockResolvedValueOnce({ data: { id: 'batch-001' }, error: null })
+      .mockResolvedValueOnce({ data: { id: 'batch-001', ...batchRow }, error: null })
       .mockResolvedValueOnce({ data: null, error: null })
       .mockResolvedValueOnce({ data: null, error: null });
     insertFn.mockResolvedValue({ error: null });
@@ -268,30 +298,71 @@ describe('POST /api/academy/apply', () => {
     } as any);
   }
 
-  // Area fees are TUITION — payable on acceptance and refundable. Only the
-  // application fee is taken at submit. Charging tuition here would have taken
-  // hundreds of thousands of naira before anyone read the application, under a
-  // fee the settings mark non-refundable.
-  it('charges ONLY the application fee, never the tuition of chosen areas', async () => {
-    const { insertFn } = setupPaidMock(5000, [
-      { slug: 'acting', fee_ngn: 250000 },
-      { slug: 'editing', fee_ngn: 35000 },
-    ]);
-    // Pays the application fee alone while selecting ₦285,000 of tuition.
-    paystackPaid(5000);
+  // ONE payment at submit: the application fee PLUS the first tuition
+  // instalment. Tuition is no longer deferred to an admin decision — paying
+  // approves, records instalment 1 as paid and enrols.
+  it('charges the application fee plus the FIRST tuition instalment', async () => {
+    // 285,000 tuition over 3 monthly instalments -> 95,000 now + 5,000 fee.
+    const { insertFn } = setupPaidMock(
+      5000,
+      [{ slug: 'acting', fee_ngn: 250000 }, { slug: 'editing', fee_ngn: 35000 }],
+      { installments_count: 3, fee_frequency: 'monthly' },
+    );
+    paystackPaid(100000);
 
     const res = await POST(makeRequest('/api/academy/apply', {
       body: makeApplyBody({
         areas_of_interest: ['acting', 'editing'],
-        application_fee_reference: 'ref-app-fee-only',
+        application_fee_reference: 'ref-fee-plus-first',
       }),
     }));
 
     expect(res.status).toBe(201);
-    expect(insertFn).toHaveBeenCalled();
+    expect(insertFn).toHaveBeenCalledWith(expect.objectContaining({
+      payment_status: 'paid',
+      // Only the application-fee portion is recorded as the fee paid.
+      application_fee_paid: 5000,
+      tuition_total_ngn: 285000,
+    }));
   });
 
-  it('rejects a payment below the application fee', async () => {
+  it('approves immediately and records the first instalment as paid against the reference', async () => {
+    setupPaidMock(
+      5000,
+      [{ slug: 'acting', fee_ngn: 90000 }],
+      { installments_count: 3, fee_frequency: 'monthly' },
+    );
+    paystackPaid(35000); // 5,000 + 90,000 / 3
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ application_fee_reference: 'ref-approve-now' }),
+    }));
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(approveAfterPayment).toHaveBeenCalledWith(body.applicationId, {
+      reference: 'ref-approve-now',
+      firstInstalmentPaid: true,
+    });
+  });
+
+  it('rejects a payment that covers only the application fee, not the first instalment', async () => {
+    const { insertFn } = setupPaidMock(5000, [{ slug: 'acting', fee_ngn: 250000 }]);
+    paystackPaid(5000);
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ application_fee_reference: 'ref-fee-only' }),
+    }));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/payment is lower/i);
+    expect(body.error).toContain('255,000');
+    expect(insertFn).not.toHaveBeenCalled();
+    expect(approveAfterPayment).not.toHaveBeenCalled();
+  });
+
+  it('rejects a payment below the required total', async () => {
     setupPaidMock(5000, [{ slug: 'acting', fee_ngn: 250000 }]);
     paystackPaid(2000);
 
@@ -301,10 +372,43 @@ describe('POST /api/academy/apply', () => {
     const body = await res.json();
 
     expect(res.status).toBe(400);
-    expect(body.error).toMatch(/application fee payment is lower/i);
-    expect(body.error).toContain('5,000');
-    // The tuition figure must NOT appear — it is not what was being collected.
-    expect(body.error).not.toContain('250,000');
+    expect(body.error).toMatch(/payment is lower/i);
+    // Single-instalment batch: fee 5,000 + full tuition 250,000.
+    expect(body.error).toContain('255,000');
+  });
+
+  it('one-off payment applies the batch discount to the single charge', async () => {
+    // 100,000 less 10% = 90,000, plus the 5,000 fee.
+    setupPaidMock(
+      5000,
+      [{ slug: 'acting', fee_ngn: 100000 }],
+      { installments_count: 4, fee_frequency: 'monthly', one_off_discount_pct: 10 },
+    );
+    paystackPaid(95000);
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ payment_preference: 'one_off', application_fee_reference: 'ref-one-off' }),
+    }));
+
+    expect(res.status).toBe(201);
+  });
+
+  it('a batch whose cadence is not weekly/biweekly/monthly is paid upfront in full', async () => {
+    setupPaidMock(
+      0,
+      [{ slug: 'acting', fee_ngn: 60000 }],
+      { installments_count: 3, fee_frequency: 'upfront' },
+    );
+    paystackPaid(59000);
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ application_fee_reference: 'ref-upfront' }),
+    }));
+    const body = await res.json();
+
+    // Fee is 0, so only tuition is due — and all of it (60,000), not a third.
+    expect(res.status).toBe(400);
+    expect(body.error).toContain('60,000');
   });
 
   it('accepts a payment covering base plus the selected areas', async () => {
@@ -384,7 +488,8 @@ describe('POST /api/academy/apply', () => {
     const body = await res.json();
 
     expect(res.status).toBe(400);
-    expect(body.error).toContain('5,000');
+    // Required total comes from settings + tuition rows (5,000 + 250,000).
+    expect(body.error).toContain('255,000');
   });
 
   it('rejects an area the chosen batch does not offer', async () => {
@@ -509,10 +614,7 @@ describe('POST /api/academy/apply', () => {
       if (column === 'status') {
         return Promise.resolve({ count: seatsTaken, data: null, error: null });
       }
-      return Promise.resolve({
-        data: [{ slug: 'acting', fee_ngn: 0, is_active: true }],
-        error: null,
-      });
+      return areaAndOptionLookup([{ slug: 'acting', fee_ngn: 0 }])(column);
     });
 
     insertFn.mockResolvedValue({ error: null });

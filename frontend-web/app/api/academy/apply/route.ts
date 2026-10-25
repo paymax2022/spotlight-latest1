@@ -15,6 +15,9 @@ import {
   isPricingKey,
   pricingDefinition,
   tuitionForFormat,
+  tuitionForSelections,
+  tuitionPlanShape,
+  parseAreaSelections,
   type AcademyPricingKey,
   type AreaPricingOptionRow,
 } from '@/src/server/services/academy/pricing';
@@ -220,36 +223,6 @@ async function getOptionalRequestUser(request: Request) {
  */
 const MAX_INTEREST_AREAS_PER_APPLICATION = 2;
 
-/**
- * Parse `area_selections: [{slug, key}]` into {slug: key}, or null when the
- * client used the legacy flat shape. 'invalid' rejects unknown formats or a
- * duplicated area before anything is priced.
- */
-function parseAreaSelections(value: unknown): Record<string, AcademyPricingKey> | 'invalid' | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const out: Record<string, AcademyPricingKey> = {};
-  for (const item of value) {
-    const slug = getString((item as { slug?: unknown })?.slug);
-    const key = getString((item as { key?: unknown })?.key);
-    if (!slug || !isPricingKey(key)) return 'invalid';
-    if (out[slug]) return 'invalid';
-    out[slug] = key;
-  }
-  return out;
-}
-
-/** Tuition when each area carries its own format — the sum of the chosen subs. */
-function tuitionForSelections(
-  areas: Array<{ id: string; slug: string }>,
-  selections: Record<string, AcademyPricingKey>,
-  rows: AreaPricingOptionRow[],
-): number {
-  return areas.reduce((sum, a) => {
-    const key = selections[a.slug] ?? ACADEMY_PRICING_FALLBACK_KEY;
-    const row = rows.find((r) => r.area_id === a.id && r.key === key);
-    return sum + (row ? Number(row.price_ngn) : pricingDefinition(key).price_ngn);
-  }, 0);
-}
 
 export async function POST(request: Request) {
   try {
@@ -387,7 +360,7 @@ export async function POST(request: Request) {
 
     const { data: batch, error: batchError } = await supabase
       .from('academy_batches')
-      .select('id, max_students')
+      .select('id, max_students, training_fee_ngn, installments_count, fee_frequency, one_off_discount_pct')
       .eq('id', batchId)
       .maybeSingle();
 
@@ -435,19 +408,24 @@ export async function POST(request: Request) {
       }
     }
 
-    // Calculate expected payment: application fee + first tuition installment
-    // Tuition is now collected at application time, not after approval
-    const areasTotal = selectedAreas.reduce((sum, area) => {
-      const selection = (body.area_selections ?? []).find((s: any) => s.slug === area.slug);
-      const key = selection?.key ?? '';
-      return sum + ((area.pricing_options ?? []).find((o: any) => o.key === key)?.price_ngn ?? area.fee_ngn ?? 0);
-    }, 0);
-    const calculatedTuition = areasTotal > 0 ? areasTotal : Number(batch?.training_fee_ngn ?? 0);
-    const paymentPref = String(body.payment_preference ?? 'installment').toLowerCase();
-    const firstTuitionPayment = paymentPref === 'one_off' ? calculatedTuition : (calculatedTuition / 3);
-    const expectedTotalPayment = requiredFee + firstTuitionPayment;
+    // ONE payment at submit: the application fee plus the first tuition
+    // instalment, derived from the same plan shape the plan rows are built from.
+    const batchRow = batch as {
+      training_fee_ngn: number | null; installments_count: number | null;
+      fee_frequency: string | null; one_off_discount_pct: number | null;
+    };
+    const billedTuition = tuitionTotal > 0 ? tuitionTotal : Number(batchRow.training_fee_ngn ?? 0);
+    const planShape = tuitionPlanShape({
+      tuition: billedTuition,
+      preference: paymentPreference,
+      installmentsCount: batchRow.installments_count,
+      feeFrequency: batchRow.fee_frequency,
+      oneOffDiscountPct: batchRow.one_off_discount_pct,
+    });
+    const applicationFeeDue = registrationFeeRequired ? requiredFee : 0;
+    const expectedTotalPayment = applicationFeeDue + planShape.firstDueNgn;
 
-    if (requiredFee > 0 || calculatedTuition > 0) {
+    if (expectedTotalPayment > 0) {
       registrationFeeReference = String(body.application_fee_reference ?? '').trim();
       if (!registrationFeeReference) {
         return errorResponse('Payment is required before submitting this application.', 402);
@@ -555,7 +533,7 @@ export async function POST(request: Request) {
         return errorResponse('This payment reference has already been used for an application.', 409);
       }
     }
-    const paymentStatus = registrationFeeRequired ? 'paid' : 'not_required';
+    const paymentStatus = expectedTotalPayment > 0 ? 'paid' : 'not_required';
     const talentCategory = deriveTalentCategory(areasOfInterest);
     const careerGoals = getString(body.career_goals) || motivation;
     const relevantTraining = getString(body.relevant_training) || experience;
@@ -578,7 +556,7 @@ export async function POST(request: Request) {
       batch_id: batchId,
       payment_reference: registrationFeeReference || null,
       payment_status: paymentStatus,
-      application_fee_paid: paidRegistrationFee,
+      application_fee_paid: Math.min(paidRegistrationFee, applicationFeeDue),
       talent_category: talentCategory,
       motivation: legacyMotivation || motivation,
     };
@@ -641,12 +619,14 @@ export async function POST(request: Request) {
       throw new ApiError('Failed to submit application', 500);
     }
 
-    // A paid application is approved now; admin review is only for unpaid ones.
-    if (paymentStatus === 'paid') {
-      await approveAfterPayment(applicationId).catch((e) => {
-        console.error('[academy/apply] auto-approval after payment failed; admin can still approve', e);
-      });
-    }
+    // There is no admin approval step: submitting settles the payment, which
+    // approves, creates the plan with its first instalment paid, and enrols.
+    await approveAfterPayment(applicationId, {
+      reference: registrationFeeReference || null,
+      firstInstalmentPaid: planShape.firstDueNgn > 0 && Boolean(registrationFeeReference),
+    }).catch((e) => {
+      console.error('[academy/apply] auto-approval after payment failed', e);
+    });
 
     return successResponse({ success: true, applicationId }, 201);
   } catch (error) {

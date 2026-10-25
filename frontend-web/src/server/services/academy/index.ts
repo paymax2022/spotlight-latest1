@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/server';
+import { tuitionPlanShape } from './pricing';
 
 /**
  * The single server-side read of the admin-managed application fee.
@@ -458,6 +459,8 @@ export async function autoCreateInstallmentPlan(
   applicationId: string,
   batchId: string,
   approvedAt?: string,
+  /** Set when the first instalment was collected together with the application. */
+  firstPaid?: { reference: string | null },
 ): Promise<void> {
   const supabase = createAdminClient();
 
@@ -512,24 +515,21 @@ export async function autoCreateInstallmentPlan(
   }
 
   const preference: 'one_off' | 'installment' = app?.payment_preference === 'one_off' ? 'one_off' : 'installment';
-  const discountPct = preference === 'one_off' ? Number(batch.one_off_discount_pct ?? 0) : 0;
-  const discountedAmount = Math.round(tuitionFee * (1 - discountPct / 100) * 100) / 100;
+  const { count, discountPct, discounted: discountedAmount } = tuitionPlanShape({
+    tuition: tuitionFee,
+    preference,
+    installmentsCount: batch.installments_count,
+    feeFrequency: batch.fee_frequency,
+    oneOffDiscountPct: batch.one_off_discount_pct,
+  });
 
   // academy_installment_plans.frequency is CONSTRAINED to weekly|biweekly|monthly.
-  // "Upfront" is not a cadence — it is a single payment, expressed as
-  // academy_installment_plans_frequency_check, so a one-off plan could never be
-  // created at all, nor any plan for a batch whose fee_frequency is 'upfront'.
-  const PLAN_CADENCES = new Set(['weekly', 'biweekly', 'monthly']);
+  // "Upfront" is not a cadence — it is a single payment, so a one-off plan (or a
+  // batch whose fee_frequency is 'upfront') is stored as monthly with count 1.
   const batchCadence  = String(batch.fee_frequency ?? 'monthly');
-  const payUpfront    = preference === 'one_off' || !PLAN_CADENCES.has(batchCadence);
-
-  const frequency = payUpfront ? 'monthly' : batchCadence;
-  // A single instalment on any cadence falls due on the start date, so the stored
-  // cadence is immaterial for an upfront plan — only the count is.
-  // fail the insert the same silent way the cadence did.
-  const count = payUpfront
-    ? 1
-    : Math.min(12, Math.max(1, Number(batch.installments_count ?? 1)));
+  const frequency = count === 1 || !['weekly', 'biweekly', 'monthly'].includes(batchCadence)
+    ? 'monthly'
+    : batchCadence;
   const offset = Number(batch.fee_start_offset_days ?? 0);
 
   // 3. Create the plan
@@ -569,7 +569,15 @@ export async function autoCreateInstallmentPlan(
       ? Math.round((discountedAmount - unitAmt * (count - 1)) * 100) / 100
       : unitAmt,
     due_date: nextDueDate(base, i, frequency).toISOString().slice(0, 10),
-    status: 'pending',
+    // Instalment 1 was paid with the application itself.
+    ...(i === 0 && firstPaid
+      ? {
+          status: 'paid',
+          paid_at: new Date().toISOString(),
+          payment_reference: firstPaid.reference,
+          payment_provider: 'paystack',
+        }
+      : { status: 'pending' }),
   }));
 
   const { error: paymentsErr } = await supabase

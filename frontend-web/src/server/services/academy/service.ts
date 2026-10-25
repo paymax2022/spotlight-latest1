@@ -199,7 +199,10 @@ export async function sendAcademyApplicationApprovedEmail(input: {
  * approval email). It only moves `pending` rows, so an application an admin has
  * already decided is left as it is.
  */
-export async function approveAfterPayment(applicationId: string): Promise<void> {
+export async function approveAfterPayment(
+  applicationId: string,
+  opts: { reference?: string | null; firstInstalmentPaid?: boolean } = {},
+): Promise<void> {
   const supabase = createAdminClient();
   const { data: app, error } = await supabase
     .from('academy_applications')
@@ -218,7 +221,12 @@ export async function approveAfterPayment(applicationId: string): Promise<void> 
   if (!app) return;
 
   if (app.batch_id) {
-    await autoCreateInstallmentPlan(applicationId, app.batch_id, new Date().toISOString());
+    await autoCreateInstallmentPlan(
+      applicationId,
+      app.batch_id,
+      new Date().toISOString(),
+      opts.firstInstalmentPaid ? { reference: opts.reference ?? null } : undefined,
+    );
   }
 
   await ensureEnrollment(supabase, applicationId).catch((e) => {
