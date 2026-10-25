@@ -142,13 +142,8 @@ export default function MarketplaceHome() {
         <HomeMenuButton />
       </View>
 
-      {/* Hero above the search bar: the first thing on the tab says what the
-          Marketplace is for and hands the seller straight to the composer. */}
+      {/* Hero banner - link to seller onboarding */}
       <PromoBanner
-        badge="MARKETPLACE"
-        title="Buy and sell near you"
-        subtitle="List an item in minutes, get paid with escrow protection"
-        cta="Start selling"
         imageUri="https://res.cloudinary.com/paymax/image/upload/v1792917802/Premium_purple_marketplace_seller_banner_1_tomt8d.png"
         onPress={() => router.push('/marketplace/sell' as never)}
       />
