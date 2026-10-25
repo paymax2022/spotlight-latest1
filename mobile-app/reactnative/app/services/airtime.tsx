@@ -278,7 +278,7 @@ export default function AirtimeScreen() {
                   >
                     <ProviderLogo code={net.code} name={net.name} logoUri={resolveProviderImage(providerLogos, net.code, net.name)} />
                     <Text style={[styles.providerName, active && styles.providerNameActive]} numberOfLines={1}>
-                      {net.name}
+                      {net.name.replace(/ Airtime$/, '')}
                     </Text>
                     {active && <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />}
                   </Pressable>
@@ -314,7 +314,7 @@ export default function AirtimeScreen() {
             </Pressable>
           </View>
 
-          <Text style={[styles.sectionTitle, { marginTop: Spacing.md }]}>Amount</Text>
+          <Text style={[styles.sectionTitle, { marginTop: Spacing.md }]}>Airtime Amount</Text>
           <View style={styles.amountGrid}>
             {AMOUNTS.map((amt) => (
               <Pressable
@@ -356,7 +356,7 @@ export default function AirtimeScreen() {
           <View style={styles.summaryDivider} />
           <SummaryRow label="Network"  value={selectedNetwork?.name ?? '—'} />
           <SummaryRow label="Phone"    value={livePhone || '—'} />
-          <SummaryRow label="Amount"   value={liveAmount ? `₦${liveAmount.toLocaleString()}` : '—'} />
+          <SummaryRow label="Airtime Amount"   value={liveAmount ? `₦${liveAmount.toLocaleString()}` : '—'} />
           <SummaryRow label="Fee"      value={formatNaira(0)} />
           <SummaryRow label="Total"    value={liveAmount ? formatNaira(liveAmount) : '—'} highlight />
           <SummaryRow label="Delivery" value="Instant" />
@@ -419,7 +419,7 @@ export default function AirtimeScreen() {
               <SummaryRow label="Service"  value="Airtime" />
               <SummaryRow label="Network"  value={selectedNetwork?.name ?? '—'} />
               <SummaryRow label="Phone"    value={pendingPayload?.phoneNumber ?? '—'} />
-              <SummaryRow label="Amount"   value={pendingPayload?.amount ? `₦${pendingPayload.amount.toLocaleString()}` : '—'} />
+              <SummaryRow label="Airtime Amount"   value={pendingPayload?.amount ? `₦${pendingPayload.amount.toLocaleString()}` : '—'} />
               <SummaryRow label="Fee"      value={formatNaira(0)} />
               <SummaryRow label="Total"    value={pendingPayload?.amount ? formatNaira(pendingPayload.amount) : '—'} highlight />
               <SummaryRow label="Payment"  value={paymentMethod === 'WALLET' ? 'Wallet' : 'Paystack'} />
