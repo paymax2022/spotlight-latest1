@@ -13,6 +13,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
+import PromoBanner from '@/components/PromoBanner';
 import { MarketColors, formatNaira, conditionLabel } from '@/features/marketplace';
 import type { Listing, ListingStatus } from '@/features/marketplace';
 import { confirmAsync } from '@/lib/confirm';
@@ -74,6 +75,10 @@ export default function SellTab() {
 function SellEntry() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      <PromoBanner
+        imageUri="https://res.cloudinary.com/paymax/image/upload/v1792939131/Nigerian_marketplace_seller_hero_banner_1_fwem0k.png"
+        onPress={() => {}}
+      />
       <View style={styles.entryWrap}>
         <View style={styles.entryIcon}><Camera size={36} color={MarketColors.brand} /></View>
         <Text style={styles.entryTitle}>Sell on Paymax</Text>
