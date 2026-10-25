@@ -5,12 +5,12 @@ import { toE164, toNsn } from '@/lib/phone/phone';
 import {
   View, Text, Image, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator,
 } from 'react-native';
-
-const DATA_BANNER_URL = 'https://res.cloudinary.com/paymax/image/upload/v1792924527/Purple_fintech_data_bundle_banner_pyoorm.png';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X } from 'lucide-react-native';
+import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X, Clock } from 'lucide-react-native';
+
+const DATA_BANNER_URL = 'https://res.cloudinary.com/paymax/image/upload/v1792924527/Purple_fintech_data_bundle_banner_pyoorm.png';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
@@ -26,6 +26,7 @@ import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1, shadow2 } from '@/constants/tokens';
 import { getDataNetworks, getDataPlans, initiateDataPaystack, purchaseData, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
+import { getWalletTransactions } from '@/api/wallet.api';
 import { useGatewayCheckout } from '@/features/payments';
 import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
 import ProviderLogo from '@/components/ProviderLogo';
@@ -81,6 +82,14 @@ export default function DataScreen() {
     queryKey: ['wallet'],
     queryFn:  getWallet,
   });
+
+  const { data: dataTxPage } = useQuery({
+    queryKey: ['utility-transactions', 'recent', 5, 'DATA'],
+    queryFn:  () => getWalletTransactions({ serviceType: 'DATA', page: 1, limit: 5 }),
+    staleTime: 30_000,
+  });
+
+  const dataTransactions = dataTxPage?.items ?? [];
 
   // Build the dropdown options from the provider adapter's plans. SelectField
   // keys options by their label string, so labels must be unique — de-dupe by
@@ -320,6 +329,24 @@ export default function DataScreen() {
 
         {purchaseError ? <Text style={styles.apiError}>{getErrorMessage(purchaseError)}</Text> : null}
 
+        {dataTransactions.length > 0 && (
+          <View style={[styles.card, shadow1]}>
+            <Text style={styles.sectionTitle}>Recent Data Purchases</Text>
+            {dataTransactions.map((tx) => (
+              <View key={tx.id} style={styles.transactionRow}>
+                <View style={styles.transactionIcon}>
+                  <Clock size={16} color={Colors.primary} />
+                </View>
+                <View style={styles.transactionBody}>
+                  <Text style={styles.transactionLabel} numberOfLines={1}>{tx.productName || tx.providerName || 'Data Purchase'}</Text>
+                  <Text style={styles.transactionMeta}>{new Date(tx.createdAt || '').toLocaleDateString('en-NG')}</Text>
+                </View>
+                <Text style={styles.transactionAmount}>₦{Math.abs(tx.totalAmount).toLocaleString()}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
         <View style={styles.actionWrap}>
           <PrimaryButton label="Review Purchase" onPress={onPressReview} />
         </View>
@@ -460,4 +487,10 @@ const styles = StyleSheet.create({
   modalActions:    { gap: Spacing.sm, marginTop: Spacing.lg },
   paystackInfoPanel: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.md, padding: Spacing.md, borderLeftWidth: 3, borderLeftColor: Colors.secondary, marginTop: Spacing.md },
   paystackInfoText:  { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },
+  transactionRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.surfaceContainerHigh },
+  transactionIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.iconBgBlue, alignItems: 'center', justifyContent: 'center' },
+  transactionBody: { flex: 1 },
+  transactionLabel: { ...Typography.labelMd, color: Colors.onSurface },
+  transactionMeta: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
+  transactionAmount: { ...Typography.labelMd, color: Colors.onSurface, fontWeight: '600' },
 });

@@ -25,6 +25,7 @@ import { shadow1, shadow2 } from '@/constants/tokens';
 import { getCableProviders, getCablePackages, initiateCablePaystack, validateSmartCard, payCable, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
 import { useGatewayCheckout } from '@/features/payments';
 import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
+import RecentUtilityTransactions from '@/features/services/RecentUtilityTransactions';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
@@ -341,6 +342,8 @@ export default function CableTvScreen() {
         <View style={styles.actionWrap}>
           <PrimaryButton label="Review Subscription" onPress={onPressReview} disabled={!validation || !selectedPackage} />
         </View>
+
+        <RecentUtilityTransactions serviceType="CABLE_TV" heading="Recent cable TV" />
       </ScrollView>
 
       <Modal visible={showConfirm} transparent animationType="slide">

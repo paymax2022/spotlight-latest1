@@ -96,7 +96,7 @@ Enhanced the admin commission/profit dashboard and backend to track and display 
 - Updated `RegisterCommission()` to instantiate and wire `PaymentMethodResolver`
 - Payment enricher is automatically initialized with the database pool
 
-**File:** `supabase/migrations/20261025000000_expand_payment_sources.sql` (NEW)
+**File:** `supabase/migrations/20271099000002_expand_payment_sources.sql` (NEW)
 
 #### Database Changes
 1. Expanded `utility_transactions.payment_source` check constraint to accept:
@@ -202,7 +202,7 @@ Dashboard displays breakdown with referral commission linking
 - `backend/internal/finance/commission/handler.go`
 
 ### Database
-- `supabase/migrations/20261025000000_expand_payment_sources.sql` (NEW)
+- `supabase/migrations/20271099000002_expand_payment_sources.sql` (NEW)
 
 ## Notes
 

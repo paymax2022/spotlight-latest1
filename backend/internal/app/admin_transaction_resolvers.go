@@ -210,6 +210,7 @@ func (r *UtilityBillResolver) Resolve(ctx context.Context, reference string) (*l
 		PaymentMethod: paymentSource, // the ONE module with a real, non-wallet-only payment_source column
 		Status:        status,
 		Provider:      providerName,
+		Biller:        billerName,
 		Merchant:      nil,
 	}, true, nil
 }

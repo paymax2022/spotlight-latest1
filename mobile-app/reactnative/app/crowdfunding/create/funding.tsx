@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Check } from 'lucide-react-native';
+import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -14,6 +15,8 @@ import { useCampaignDraft } from '@/features/crowdfunding/store/campaignDraftSto
 import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import { sanitizeMoneyInput } from '@/utils/money';
 import type { DisbursementModel } from '@/features/crowdfunding/types/crowdfunding.types';
+import { getKycProfile } from '@/api/kyc.api';
+import { checkCampaignAmountAllowed, tierLimitMessage } from '@/features/crowdfunding/utils/tierLimits';
 
 const DEADLINES = [
   { label: '30 days', days: 30 },
@@ -31,6 +34,7 @@ const MODELS: { value: DisbursementModel; label: string; desc: string }[] = [
 export default function CreateFundingScreen() {
   const { draft, patch } = useCampaignDraft();
   const goalText = draft.goalKobo > 0 ? String(Math.round(draft.goalKobo / 100)) : '';
+  const kyc = useQuery({ queryKey: ['kyc', 'profile'], queryFn: getKycProfile, staleTime: 60_000 });
 
   const onGoal = (t: string) => {
     const digits = t.replace(/[^0-9]/g, '');
@@ -42,6 +46,10 @@ export default function CreateFundingScreen() {
   const selectedDays = draft.deadline ? Math.round((+new Date(draft.deadline) - Date.now()) / 86_400_000) : 0;
 
   const valid = draft.goalKobo >= 100_000 && draft.location.trim().length > 1 && draft.disbursementModel != null;
+
+  // Check if the goal amount is allowed for the current KYC tier
+  const tierCheck = kyc.data ? checkCampaignAmountAllowed(kyc.data.tier, draft.goalKobo) : { allowed: true };
+  const tierWarning = !tierCheck.allowed && draft.goalKobo > 0 ? tierLimitMessage(kyc.data?.tier ?? 0, draft.goalKobo) : '';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -55,6 +63,7 @@ export default function CreateFundingScreen() {
             <View style={styles.currency}><Text style={styles.currencyText}>NGN</Text></View>
           </View>
           {draft.goalKobo > 0 && draft.goalKobo < 100_000 && <Text style={styles.err}>Minimum goal is ₦1,000.</Text>}
+          {tierWarning && <Text style={styles.tierWarning}>{tierWarning}</Text>}
 
           <Text style={[styles.label, { marginTop: Spacing.lg }]}>Campaign duration</Text>
           <View style={styles.chipRow}>
@@ -110,6 +119,7 @@ const styles = StyleSheet.create({
   currency: { backgroundColor: Colors.surfaceContainerHigh, borderRadius: Radius.md, paddingHorizontal: Spacing.sm, paddingVertical: 6 },
   currencyText: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   err: { ...Typography.labelSm, color: Colors.error, marginTop: 6 },
+  tierWarning: { ...Typography.labelSm, color: Colors.secondary, marginTop: 6 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   chip: { borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLow, paddingHorizontal: Spacing.md, paddingVertical: 9 },
   chipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },

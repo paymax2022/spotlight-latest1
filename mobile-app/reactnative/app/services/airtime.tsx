@@ -32,6 +32,7 @@ import { generateIdempotencyKey } from '@/utils/idempotency';
 import { sanitizeMoneyInput } from '@/utils/money';
 import { Network } from '@/types/billing';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import RecentUtilityTransactions from '@/features/services/RecentUtilityTransactions';
 
 const AMOUNTS = [1000, 2000, 5000];
 
@@ -377,6 +378,8 @@ export default function AirtimeScreen() {
         <View style={styles.actionWrap}>
           <PrimaryButton label="Review Purchase" onPress={onPressReview} />
         </View>
+
+        <RecentUtilityTransactions serviceType="AIRTIME" heading="Recent airtime" />
       </ScrollView>
 
       {/* ── Confirmation Bottom Sheet ─────────────────────────────── */}

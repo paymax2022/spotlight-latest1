@@ -14,6 +14,7 @@ import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { RemoteBanner } from '@/features/media/banners';
+import RecentUtilityTransactions from '@/features/services/RecentUtilityTransactions';
 
 const HERO_BANNER_URL = 'https://res.cloudinary.com/paymax/image/upload/v1792925219/Utility_payments_made_easy_omlar0.png';
 
@@ -207,6 +208,8 @@ export default function BillsScreen() {
             </Pressable>
           ))}
         </View>
+
+        {!q && <RecentUtilityTransactions />}
       </ScrollView>
     </SafeAreaView>
   );
