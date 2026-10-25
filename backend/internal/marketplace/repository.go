@@ -196,7 +196,7 @@ func (r *Repository) ThumbKeysFor(ctx context.Context, listingIDs []string) (map
 	rows, err := r.db.Query(ctx, `
 		SELECT DISTINCT ON (listing_id) listing_id, url_thumb
 		FROM public.mkt_listing_media
-		WHERE listing_id = ANY($1)
+		WHERE listing_id = ANY($1::uuid[])
 		ORDER BY listing_id, sort_order, created_at`, listingIDs)
 	if err != nil {
 		return nil, wrapInternal("list listing media", err)
