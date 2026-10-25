@@ -155,6 +155,9 @@ export function AdminDashboard() {
       { key: 'academy', label: 'Academy', group: 'Programs', href: '/admin/academy',
         volume: { label: 'Applications', value: counts.academy ?? null },
         attention: { label: '', value: 0, href: '/admin/academy', severity: 'warn' } },
+      { key: 'film-academy', label: 'Film Academy', group: 'Programs', href: '/admin/film-academy',
+        volume: { label: 'Applications', value: counts.film_academy ?? null },
+        attention: { label: 'Awaiting review', value: null, href: '', severity: 'warn', note: 'No review screen yet' } },
     ];
     return [...live, ...programme];
   }, [overview, counts]);
