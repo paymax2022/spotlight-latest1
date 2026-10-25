@@ -47,6 +47,19 @@ type Service struct {
 	hub          *platformWS.Hub               // optional; nil disables realtime WS push (best-effort)
 	commission   CommissionRecorder            // optional; nil ⇒ realized-profit recording is a no-op
 	disbursement provider.DisbursementProvider // optional; nil ⇒ no account verification on bank-account add
+	// tele mirrors appointment lifecycle transitions onto the linked
+	// telemedicine appointment for bookings bridged into the console
+	// (telemedicine/bridge.go). Optional: nil disables the sync entirely.
+	tele TelemedicineSync
+}
+
+// TelemedicineSync is the slice of the telemedicine service the console needs
+// to keep a bridged booking consistent. Satisfied by *telemedicine.Service.
+type TelemedicineSync interface {
+	SyncFromDoctorConsole(ctx context.Context, appointmentID, status, doctorUserID string) error
+	// ConsultSettled reports whether the id is a bridged telemedicine booking and,
+	// if so, whether its escrow settled. End records commission only once it has.
+	ConsultSettled(ctx context.Context, appointmentID string) (bridged, settled bool, err error)
 }
 
 // NewService wires the doctor service. redis may be nil (lock falls back to the
@@ -61,6 +74,14 @@ func NewService(db *pgxpool.Pool, ledgerSvc *ledger.Service, tiersSvc *tiers.Ser
 func (s *Service) WithRealtime(issuer *rtc.Issuer, hub *platformWS.Hub) *Service {
 	s.rtc = issuer
 	s.hub = hub
+	return s
+}
+
+// WithTelemedicineSync attaches the telemedicine service used to mirror
+// lifecycle transitions of bridged bookings (see transitionAppointment).
+// Additive and optional: unwired, the console is standalone as before.
+func (s *Service) WithTelemedicineSync(t TelemedicineSync) *Service {
+	s.tele = t
 	return s
 }
 
@@ -218,12 +239,72 @@ func (s *Service) UpdateAvailability(ctx context.Context, userID string, req Upd
 }
 
 func (s *Service) UpdateAppointmentStatus(ctx context.Context, userID, id string, req UpdateAppointmentStatusRequest) (*Appointment, error) {
-	return s.repo.UpdateAppointmentStatus(ctx, userID, id, req.Status)
+	appt, err := s.repo.UpdateAppointmentStatus(ctx, userID, id, req.Status)
+	if err != nil {
+		return nil, err
+	}
+	s.syncTelemedicine(ctx, userID, id, req.Status)
+	return appt, nil
+}
+
+// transitionAppointment is the single choke point for appointment lifecycle
+// moves: perform the console transition, then best-effort mirror it onto a
+// bridged telemedicine appointment. A sync failure is logged and swallowed —
+// it must NEVER fail or reverse the console transition (same policy as
+// commission recording in EndAppointment).
+func (s *Service) transitionAppointment(ctx context.Context, userID, appointmentID, status string, requestedSlot *string, raw json.RawMessage) (*Appointment, error) {
+	appt, err := s.repo.TransitionAppointment(ctx, userID, appointmentID, status, requestedSlot, raw)
+	if err != nil {
+		return nil, err
+	}
+	s.syncTelemedicine(ctx, userID, appointmentID, status)
+	return appt, nil
+}
+
+func (s *Service) syncTelemedicine(ctx context.Context, doctorUserID, appointmentID, status string) {
+	if s.tele == nil {
+		return
+	}
+	// The sync moves money on 'completed'/'cancelled', so it must not stop
+	// halfway because the console's HTTP request was dropped: run it detached
+	// from the request, with its own deadline. Transient failures are retried a
+	// few times; a permanent refusal (wrong actor, closed appointment) is not.
+	// Anything still failing is finished later by the telemedicine reconciler
+	// (every path is idempotent), so the console transition itself never fails.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+	defer cancel()
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err = s.tele.SyncFromDoctorConsole(ctx, appointmentID, status, doctorUserID); err == nil {
+			return
+		}
+		var p interface{ Permanent() bool }
+		if (errors.As(err, &p) && p.Permanent()) || ctx.Err() != nil {
+			break
+		}
+		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
+	}
+	log.Printf("[doctor][tele-sync] appointment %s → %s failed after retries: %v", appointmentID, status, err)
+}
+
+// assertOwnAppointment refuses a console write that names an appointment the
+// caller does not own: the telemedicine bridge reads console notes and
+// prescriptions back to the patient, so a row attached to someone else's
+// appointment would be shown as that doctor's (ADR-PR879).
+func (s *Service) assertOwnAppointment(ctx context.Context, userID, appointmentID string) error {
+	if appointmentID == "" {
+		return nil
+	}
+	_, err := s.repo.GetAppointment(ctx, userID, appointmentID)
+	return err
 }
 
 func (s *Service) SaveNote(ctx context.Context, userID, appointmentID, idemKey string, req SaveNoteRequest) (*ClinicalNote, error) {
 	if idemKey == "" {
 		return nil, ErrIdempotencyRequired
+	}
+	if err := s.assertOwnAppointment(ctx, userID, appointmentID); err != nil {
+		return nil, err
 	}
 	return s.repo.InsertNote(ctx, userID, appointmentID, idemKey, req)
 }
@@ -231,6 +312,11 @@ func (s *Service) SaveNote(ctx context.Context, userID, appointmentID, idemKey s
 func (s *Service) CreatePrescription(ctx context.Context, userID, idemKey string, req CreatePrescriptionRequest) (*Prescription, error) {
 	if idemKey == "" {
 		return nil, ErrIdempotencyRequired
+	}
+	if req.AppointmentID != nil {
+		if err := s.assertOwnAppointment(ctx, userID, *req.AppointmentID); err != nil {
+			return nil, err
+		}
 	}
 	return s.repo.InsertPrescription(ctx, userID, idemKey, req)
 }

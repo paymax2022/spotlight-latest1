@@ -73,18 +73,24 @@ const (
 // MVP (HL-4) by a DB CHECK and validated again at write. rx_required (HL-3) is
 // config-driven per product; POM items require a verified e-Rx before fulfilment.
 type Product struct {
-	ID                 string    `json:"id"`
-	PharmacyProviderID string    `json:"pharmacy_provider_id"`
-	PharmacyName       string    `json:"pharmacy_name"` // owning pharmacy's display name (join)
-	Name               string    `json:"name"`
-	NAFDACRef          string    `json:"nafdac_ref"` // HL-5: required, registered reference
-	NAFDACStatus       string    `json:"nafdac_status"`
-	RxRequired         bool      `json:"rx_required"`   // HL-3 config-driven POM flag
-	IsControlled       bool      `json:"is_controlled"` // HL-4: must be false at MVP
-	PriceKobo          int64     `json:"price_kobo"`
-	StockQty           int       `json:"stock_qty"`
-	Active             bool      `json:"active"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                 string `json:"id"`
+	PharmacyProviderID string `json:"pharmacy_provider_id"`
+	PharmacyName       string `json:"pharmacy_name"` // owning pharmacy's display name (join)
+	Name               string `json:"name"`
+	NAFDACRef          string `json:"nafdac_ref"` // HL-5: required, registered reference
+	NAFDACStatus       string `json:"nafdac_status"`
+	RxRequired         bool   `json:"rx_required"`   // HL-3 config-driven POM flag
+	IsControlled       bool   `json:"is_controlled"` // HL-4: must be false at MVP
+	PriceKobo          int64  `json:"price_kobo"`
+	StockQty           int    `json:"stock_qty"`
+	// InStock is the server's durable sellable signal. It is NOT "stock_qty > 0":
+	// stock_qty 0 means the owner never opted the product into inventory tracking,
+	// which is unlimited, not empty (see CreateOrder's decrement step). A client
+	// that inferred availability from StockQty therefore shows an available product
+	// as sold out, so the column rides with the read.
+	InStock   bool      `json:"in_stock"`
+	Active    bool      `json:"active"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // OrderLine is a requested product + quantity, priced in kobo at order time.

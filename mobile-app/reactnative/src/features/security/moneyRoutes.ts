@@ -66,6 +66,9 @@ const MONEY_ROUTES: string[][] = [
   ['services', 'electricity'],
   ['services', 'cable-tv'],
   ['services', 'education'],
+
+  // Telemedicine escrows the consultation fee from the wallet on this screen.
+  ['services', 'telemedicine', 'book'],
 ];
 
 // Longest-first so a specific payment step is considered before any shorter

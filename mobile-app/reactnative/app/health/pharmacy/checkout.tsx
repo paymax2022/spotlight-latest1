@@ -31,7 +31,12 @@ export default function CheckoutScreen() {
   const pay = usePurchasePayment<PharmacyOrder>();
 
   const pharmacy = useMemo(() => (pharmacies ?? []).find((p) => p.id === pharmacyId), [pharmacies, pharmacyId]);
-  const verifiedRx = (prescriptions ?? []).find((r) => r.status === 'verified');
+  // HL-3: any Rx-required order must carry a prescription reference, and the server
+  // then routes it through the pharmacist (RX_PENDING_VERIFICATION). An e-Rx that is
+  // still being verified is therefore a valid attachment — accept either state — but
+  // one that has not been sent to a pharmacy at all is not, because there would be
+  // nothing for the pharmacist to confirm against.
+  const attachableRx = (prescriptions ?? []).find((r) => r.status === 'verified' || r.status === 'verifying');
 
   const [fulfilment, setFulfilment] = useState<FulfilmentType>(
     pharmacy?.supportsDelivery ? 'delivery' : 'pickup',
@@ -44,8 +49,12 @@ export default function CheckoutScreen() {
   const [deliveryAddr, setDeliveryAddr] = useState<SelectedAddress | null>(null);
   const addressResolved = fulfilment !== 'delivery' || Boolean(deliveryAddr);
 
-  const deliveryFeeKobo = fulfilment === 'delivery' ? pharmacy?.deliveryFeeKobo ?? 0 : 0;
-  const totalKobo = cart.subtotalKobo + deliveryFeeKobo;
+  // The courier's fare is NOT part of this hold. CreateOrder prices the order at
+  // Σ(price × qty) and escrow holds exactly that; delivery_fee_kobo is the pharmacy's
+  // own transport setting, settled as a separate money event. Adding it here made the
+  // checkout promise (and charge, on the card rail) more than the order ever holds.
+  const totalKobo = cart.subtotalKobo;
+  const riderFareKobo = fulfilment === 'delivery' ? pharmacy?.deliveryFeeKobo ?? 0 : 0;
 
   if (lines.length === 0 || !pharmacy) {
     return (
@@ -54,8 +63,12 @@ export default function CheckoutScreen() {
         <StateView
           kind="empty"
           icon="ShoppingCart"
-          title="Nothing to check out"
-          message="Add items and pick a pharmacy first."
+          title={lines.length === 0 ? 'Nothing to check out' : 'This pharmacy isn’t available'}
+          message={
+            lines.length === 0
+              ? 'Add items and pick a pharmacy first.'
+              : 'The pharmacy selling your items is not accepting orders right now. Remove its items and choose another.'
+          }
           actionLabel="Browse medicines"
           onAction={() => router.replace('/health/pharmacy/search')}
         />
@@ -64,7 +77,7 @@ export default function CheckoutScreen() {
   }
 
   const onPay = () => {
-    if (!addressResolved) return;
+    if (!addressResolved || (cart.requiresRx && !attachableRx)) return;
     const idempotencyKey = newIdempotencyKey('order');
     pay.start({
       amountKobo: totalKobo,
@@ -77,7 +90,7 @@ export default function CheckoutScreen() {
           pharmacyId: pharmacy.id,
           fulfilment,
           lines,
-          rxId: cart.requiresRx ? verifiedRx?.id : undefined,
+          rxId: cart.requiresRx ? attachableRx?.id : undefined,
           idempotencyKey,
           searchEventId: useSymptomSearchStore.getState().searchEventId ?? undefined,
           deliveryAddress: fulfilment === 'delivery' ? deliveryAddr?.label : undefined,
@@ -160,12 +173,19 @@ export default function CheckoutScreen() {
         {/* Rx attachment (HL-3) */}
         {cart.requiresRx ? (
           <View style={styles.rxAttach}>
-            <ShieldCheck size={16} color={Colors.teal} strokeWidth={2} />
+            <ShieldCheck size={16} color={attachableRx ? Colors.teal : Colors.onWarning} strokeWidth={2} />
             <Text style={styles.rxAttachText}>
-              {verifiedRx
+              {attachableRx?.status === 'verified'
                 ? 'Verified prescription attached to this order.'
-                : 'A verified prescription is required before dispensing.'}
+                : attachableRx
+                ? 'Your e-Rx is with a pharmacist — the order confirms once they verify it.'
+                : 'This order needs a prescription that has been sent to a pharmacy.'}
             </Text>
+            {!attachableRx ? (
+              <Pressable onPress={() => router.push('/health/pharmacy/send-rx')}>
+                <Text style={styles.rxAttachLink}>Send an e-Rx</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
 
@@ -186,12 +206,12 @@ export default function CheckoutScreen() {
             <Text style={styles.sumVal}>{formatNaira(cart.subtotalKobo)}</Text>
           </View>
           <View style={styles.sumRow}>
-            <Text style={styles.sumLabel}>Delivery</Text>
-            <Text style={styles.sumVal}>{deliveryFeeKobo ? formatNaira(deliveryFeeKobo) : 'Free'}</Text>
+            <Text style={styles.sumLabel}>Rider’s fare</Text>
+            <Text style={styles.sumVal}>{riderFareKobo ? `${formatNaira(riderFareKobo)} separately` : 'Free'}</Text>
           </View>
           <View style={styles.divider} />
           <View style={styles.sumRow}>
-            <Text style={styles.totalLabel}>Total</Text>
+            <Text style={styles.totalLabel}>Held with this order</Text>
             <Text style={styles.totalVal}>{formatNaira(totalKobo)}</Text>
           </View>
         </View>
@@ -205,10 +225,16 @@ export default function CheckoutScreen() {
 
       <View style={styles.footer}>
         <PrimaryButton
-          label={addressResolved ? `Pay & hold ${formatNaira(totalKobo)}` : 'Select a delivery address'}
+          label={
+            !addressResolved
+              ? 'Select a delivery address'
+              : cart.requiresRx && !attachableRx
+              ? 'A prescription is required'
+              : `Pay & hold ${formatNaira(totalKobo)}`
+          }
           onPress={onPay}
           loading={createOrder.isPending}
-          disabled={!addressResolved}
+          disabled={!addressResolved || (cart.requiresRx && !attachableRx)}
         />
       </View>
 
@@ -255,6 +281,7 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
   },
   rxAttachText: { ...Typography.bodySm, color: Colors.tertiaryContainer, flex: 1, lineHeight: 18 },
+  rxAttachLink: { ...Typography.labelMd, color: Colors.secondary },
   summary: {
     backgroundColor: Colors.surfaceContainerLowest,
     borderWidth: 1,

@@ -53,8 +53,10 @@ export interface SymptomClassGroup {
   skus_url?: string;
 }
 
-// NOTE: UPLOAD_RX is NOT in the openapi enum (PHARMACIST_CHAT | TELEHEALTH_CONSULT |
-// types are rendered as plain links routed by `target`.
+// The server's action enum is PHARMACIST_CHAT | TELEHEALTH_CONSULT |
+// EMERGENCY_GUIDANCE | NEAREST_FACILITY; actions are rendered as plain links routed
+// by `target`. UPLOAD_RX is mock-only: the patient has no document-upload surface
+// (an e-Rx is a clinician's document), so it routes to "send an issued e-Rx".
 export type EscalationActionType =
   | 'PHARMACIST_CHAT'
   | 'TELEHEALTH_CONSULT'
@@ -100,6 +102,10 @@ export interface PharmacySkuOption {
   /** pharmacy_products.id */
   product_id: string;
   name: string;
+  /** The selling pharmacy. CreateOrder prices every line against one
+   *  pharmacy_provider_id, so a SKU can only be ordered from this one. */
+  pharmacy_provider_id: string;
+  pharmacy_name: string;
   brand: string;
   pack_size: string;
   price_kobo: number;
@@ -114,7 +120,7 @@ export interface PharmacySkuOption {
 
 export const SYMPTOM_DISCLAIMER_COPY =
   'These are general options for your symptoms, not a diagnosis.';
-export const SYMPTOM_PHARMACIST_LINK_COPY = 'Speak to a pharmacist free — tap here.';
+export const SYMPTOM_PHARMACIST_LINK_COPY = 'Ask a pharmacist about these options.';
 export const NO_DOSING_COPY = 'Use as directed on pack / by your pharmacist.';
 
 export const SYMPTOM_CHIPS = [
@@ -197,31 +203,39 @@ const CLASS_META: Record<string, { name: string; usage_note?: string }> = {
   [CLS.mens]: { name: 'Menstrual pain relief', usage_note: 'Not on an empty stomach.' },
 };
 
+// A SKU is sold by exactly one pharmacy (CreateOrder prices a whole cart against
+// one provider), so even the fixtures have to attribute each option to a seller.
+const SELLER = {
+  health: { pharmacy_provider_id: 'ph_health', pharmacy_name: 'HealthPlus Pharmacy' },
+  medplus: { pharmacy_provider_id: 'ph_medplus', pharmacy_name: 'MedPlus' },
+  alpha: { pharmacy_provider_id: 'ph_alpha', pharmacy_name: 'Alpha Pharmacy' },
+} as const;
+
 const MOCK_CLASS_SKUS: Record<string, PharmacySkuOption[]> = {
   [CLS.para]: [
-    { id: 'sku_para_mb', product_id: 'prod_para', name: 'Paracetamol', brand: 'M&B', pack_size: '500mg · 24 tablets', price_kobo: 65000, nafdac_reg_no: 'A4-0991', classification: 'OTC', therapeutic_class_id: CLS.para, in_stock: true, max_qty_per_window: 3 },
-    { id: 'sku_para_emzor', product_id: 'prod_para_emzor', name: 'Paracetamol', brand: 'Emzor', pack_size: '500mg · 96 tablets', price_kobo: 120000, nafdac_reg_no: 'A4-1002', classification: 'OTC', therapeutic_class_id: CLS.para, in_stock: true, max_qty_per_window: 2 },
-    { id: 'sku_panadol_x', product_id: 'prod_panadol_x', name: 'Panadol Extra', brand: 'GSK', pack_size: '500mg/65mg · 24 caplets', price_kobo: 185000, nafdac_reg_no: 'A4-3355', classification: 'OTC', therapeutic_class_id: CLS.para, in_stock: false, max_qty_per_window: 2 },
+    { ...SELLER.health, id: 'sku_para_mb', product_id: 'prod_para', name: 'Paracetamol', brand: 'M&B', pack_size: '500mg · 24 tablets', price_kobo: 65000, nafdac_reg_no: 'A4-0991', classification: 'OTC', therapeutic_class_id: CLS.para, in_stock: true, max_qty_per_window: 3 },
+    { ...SELLER.medplus, id: 'sku_para_emzor', product_id: 'prod_para_emzor', name: 'Paracetamol', brand: 'Emzor', pack_size: '500mg · 96 tablets', price_kobo: 120000, nafdac_reg_no: 'A4-1002', classification: 'OTC', therapeutic_class_id: CLS.para, in_stock: true, max_qty_per_window: 2 },
+    { ...SELLER.alpha, id: 'sku_panadol_x', product_id: 'prod_panadol_x', name: 'Panadol Extra', brand: 'GSK', pack_size: '500mg/65mg · 24 caplets', price_kobo: 185000, nafdac_reg_no: 'A4-3355', classification: 'OTC', therapeutic_class_id: CLS.para, in_stock: false, max_qty_per_window: 2 },
   ],
   [CLS.ibu]: [
-    { id: 'sku_ibu_advil', product_id: 'prod_ibu_advil', name: 'Ibuprofen', brand: 'Advil', pack_size: '200mg · 24 tablets', price_kobo: 145000, nafdac_reg_no: 'A4-2210', classification: 'OTC', therapeutic_class_id: CLS.ibu, in_stock: true, max_qty_per_window: 2 },
-    { id: 'sku_ibucap', product_id: 'prod_ibucap', name: 'Ibucap', brand: 'Fidson', pack_size: '200mg/325mg · 20 capsules', price_kobo: 98000, nafdac_reg_no: 'A4-4471', classification: 'OTC', therapeutic_class_id: CLS.ibu, in_stock: true, max_qty_per_window: 2 },
+    { ...SELLER.medplus, id: 'sku_ibu_advil', product_id: 'prod_ibu_advil', name: 'Ibuprofen', brand: 'Advil', pack_size: '200mg · 24 tablets', price_kobo: 145000, nafdac_reg_no: 'A4-2210', classification: 'OTC', therapeutic_class_id: CLS.ibu, in_stock: true, max_qty_per_window: 2 },
+    { ...SELLER.health, id: 'sku_ibucap', product_id: 'prod_ibucap', name: 'Ibucap', brand: 'Fidson', pack_size: '200mg/325mg · 20 capsules', price_kobo: 98000, nafdac_reg_no: 'A4-4471', classification: 'OTC', therapeutic_class_id: CLS.ibu, in_stock: true, max_qty_per_window: 2 },
   ],
   [CLS.cold]: [
-    { id: 'sku_procold', product_id: 'prod_procold', name: 'Procold', brand: 'Afrab-Chem', pack_size: '10 tablets', price_kobo: 55000, nafdac_reg_no: 'A4-5120', classification: 'OTC', therapeutic_class_id: CLS.cold, in_stock: true, max_qty_per_window: 2 },
-    { id: 'sku_tuxil', product_id: 'prod_tuxil', name: 'Tuxil-D Syrup', brand: 'Dana Pharma', pack_size: '100ml', price_kobo: 130000, nafdac_reg_no: 'A4-6019', classification: 'PHARMACY_ONLY', therapeutic_class_id: CLS.cold, in_stock: true, max_qty_per_window: 1 },
+    { ...SELLER.health, id: 'sku_procold', product_id: 'prod_procold', name: 'Procold', brand: 'Afrab-Chem', pack_size: '10 tablets', price_kobo: 55000, nafdac_reg_no: 'A4-5120', classification: 'OTC', therapeutic_class_id: CLS.cold, in_stock: true, max_qty_per_window: 2 },
+    { ...SELLER.alpha, id: 'sku_tuxil', product_id: 'prod_tuxil', name: 'Tuxil-D Syrup', brand: 'Dana Pharma', pack_size: '100ml', price_kobo: 130000, nafdac_reg_no: 'A4-6019', classification: 'PHARMACY_ONLY', therapeutic_class_id: CLS.cold, in_stock: true, max_qty_per_window: 1 },
   ],
   [CLS.antacid]: [
-    { id: 'sku_gestid', product_id: 'prod_gestid', name: 'Gestid Suspension', brand: 'Ranbaxy', pack_size: '200ml', price_kobo: 165000, nafdac_reg_no: 'A4-7712', classification: 'OTC', therapeutic_class_id: CLS.antacid, in_stock: true, max_qty_per_window: 2 },
-    { id: 'sku_ors', product_id: 'prod_oral', name: 'ORS Sachets', brand: 'Emzor', pack_size: '10 sachets', price_kobo: 90000, nafdac_reg_no: 'A4-3310', classification: 'OTC', therapeutic_class_id: CLS.antacid, in_stock: true, max_qty_per_window: null },
+    { ...SELLER.medplus, id: 'sku_gestid', product_id: 'prod_gestid', name: 'Gestid Suspension', brand: 'Ranbaxy', pack_size: '200ml', price_kobo: 165000, nafdac_reg_no: 'A4-7712', classification: 'OTC', therapeutic_class_id: CLS.antacid, in_stock: true, max_qty_per_window: 2 },
+    { ...SELLER.health, id: 'sku_ors', product_id: 'prod_oral', name: 'ORS Sachets', brand: 'Emzor', pack_size: '10 sachets', price_kobo: 90000, nafdac_reg_no: 'A4-3310', classification: 'OTC', therapeutic_class_id: CLS.antacid, in_stock: true, max_qty_per_window: null },
   ],
   [CLS.allergy]: [
-    { id: 'sku_lora', product_id: 'prod_lora', name: 'Loratadine', brand: 'Emzor', pack_size: '10mg · 10 tablets', price_kobo: 60000, nafdac_reg_no: 'A4-8823', classification: 'OTC', therapeutic_class_id: CLS.allergy, in_stock: true, max_qty_per_window: 2 },
-    { id: 'sku_cetri', product_id: 'prod_cetri', name: 'Cetirizine', brand: 'M&B', pack_size: '10mg · 10 tablets', price_kobo: 52000, nafdac_reg_no: 'A4-9034', classification: 'OTC', therapeutic_class_id: CLS.allergy, in_stock: true, max_qty_per_window: 2 },
+    { ...SELLER.health, id: 'sku_lora', product_id: 'prod_lora', name: 'Loratadine', brand: 'Emzor', pack_size: '10mg · 10 tablets', price_kobo: 60000, nafdac_reg_no: 'A4-8823', classification: 'OTC', therapeutic_class_id: CLS.allergy, in_stock: true, max_qty_per_window: 2 },
+    { ...SELLER.alpha, id: 'sku_cetri', product_id: 'prod_cetri', name: 'Cetirizine', brand: 'M&B', pack_size: '10mg · 10 tablets', price_kobo: 52000, nafdac_reg_no: 'A4-9034', classification: 'OTC', therapeutic_class_id: CLS.allergy, in_stock: true, max_qty_per_window: 2 },
   ],
   [CLS.mens]: [
-    { id: 'sku_buscopan', product_id: 'prod_buscopan', name: 'Buscopan', brand: 'Sanofi', pack_size: '10mg · 20 tablets', price_kobo: 210000, nafdac_reg_no: 'A4-1140', classification: 'PHARMACY_ONLY', therapeutic_class_id: CLS.mens, in_stock: true, max_qty_per_window: 1 },
-    { id: 'sku_felvin', product_id: 'prod_felvin', name: 'Felvin', brand: 'Fidson', pack_size: '20mg · 10 capsules', price_kobo: 115000, nafdac_reg_no: 'A4-2288', classification: 'OTC', therapeutic_class_id: CLS.mens, in_stock: true, max_qty_per_window: 2 },
+    { ...SELLER.medplus, id: 'sku_buscopan', product_id: 'prod_buscopan', name: 'Buscopan', brand: 'Sanofi', pack_size: '10mg · 20 tablets', price_kobo: 210000, nafdac_reg_no: 'A4-1140', classification: 'PHARMACY_ONLY', therapeutic_class_id: CLS.mens, in_stock: true, max_qty_per_window: 1 },
+    { ...SELLER.health, id: 'sku_felvin', product_id: 'prod_felvin', name: 'Felvin', brand: 'Fidson', pack_size: '20mg · 10 capsules', price_kobo: 115000, nafdac_reg_no: 'A4-2288', classification: 'OTC', therapeutic_class_id: CLS.mens, in_stock: true, max_qty_per_window: 2 },
   ],
 };
 

@@ -184,9 +184,14 @@ type ClassMapEntry struct {
 
 // Sku is a pharmacy_skus row joined with its pharmacy_products parent.
 type Sku struct {
-	ID                 string
-	ProductID          string
-	Name               string // pharmacy_products.name
+	ID        string
+	ProductID string
+	Name      string // pharmacy_products.name
+	// The selling pharmacy, from the product row. CreateOrder prices every line
+	// against the order's pharmacy_provider_id, so a SKU without one can never be
+	// ordered — the read therefore only returns SKUs whose product has a provider.
+	PharmacyProviderID string
+	PharmacyName       string
 	Brand              string
 	PackSize           string
 	PriceKobo          int64 // minor units, never floats
@@ -262,6 +267,8 @@ type PharmacySkuOption struct {
 	ID                 string `json:"id"`
 	ProductID          string `json:"product_id"`
 	Name               string `json:"name"`
+	PharmacyProviderID string `json:"pharmacy_provider_id"`
+	PharmacyName       string `json:"pharmacy_name"`
 	Brand              string `json:"brand"`
 	PackSize           string `json:"pack_size"`
 	PriceKobo          int64  `json:"price_kobo"`

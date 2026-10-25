@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"time"
 
 	"spotlight/backend/internal/integrations/rtc"
@@ -94,11 +95,11 @@ type HMOEligibilityProjection struct {
 }
 
 func (s *Service) StartAppointment(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
-	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "in_progress", nil, raw)
+	return s.transitionAppointment(ctx, userID, appointmentID, "in_progress", nil, raw)
 }
 
 func (s *Service) EndAppointment(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
-	appt, err := s.repo.TransitionAppointment(ctx, userID, appointmentID, "completed", nil, raw)
+	appt, err := s.transitionAppointment(ctx, userID, appointmentID, "completed", nil, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -109,17 +110,31 @@ func (s *Service) EndAppointment(ctx context.Context, userID, appointmentID stri
 	// appointment is billed at (the same basis the doctor's own per-consult commission
 	// is withheld on). A recorder failure is logged and swallowed — it must NEVER fail
 	// or reverse the consult completion. Nil recorder ⇒ no-op (commission feature off).
+	// A consult bridged from a telemedicine booking realizes commission only once
+	// its escrow actually settled. If the sync could not settle it (or it was
+	// refunded), recording here would book profit on money that never moved.
+	if s.tele != nil {
+		bridged, settled, terr := s.tele.ConsultSettled(context.WithoutCancel(ctx), appointmentID)
+		if terr != nil {
+			log.Printf("[doctor][commission] appointment %s: settlement check: %v (commission not recorded)", appointmentID, terr)
+			return appt, nil
+		}
+		if bridged && !settled {
+			log.Printf("[doctor][commission] appointment %s: telemedicine escrow not settled; commission not recorded", appointmentID)
+			return appt, nil
+		}
+	}
 	uid := userID
 	s.recordCommissionSafe(ctx, "Health", "Doctor", "", appt.FeeKobo, appointmentID, &uid)
 	return appt, nil
 }
 
 func (s *Service) CancelAppointment(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
-	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "cancelled", nil, raw)
+	return s.transitionAppointment(ctx, userID, appointmentID, "cancelled", nil, raw)
 }
 
 func (s *Service) MarkNoShow(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
-	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "no_show", nil, raw)
+	return s.transitionAppointment(ctx, userID, appointmentID, "no_show", nil, raw)
 }
 
 // GetClinicalNote returns the latest clinical note for an appointment, or nil (not an
@@ -143,6 +158,9 @@ func (s *Service) SaveClinicalNote(ctx context.Context, userID, appointmentID, i
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.assertOwnAppointment(ctx, userID, appointmentID); err != nil {
+		return nil, err
 	}
 	return s.repo.InsertNote(ctx, userID, appointmentID, idemKey, req)
 }

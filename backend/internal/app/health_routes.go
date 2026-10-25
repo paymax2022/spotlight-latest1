@@ -139,6 +139,11 @@ func RegisterHealth(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpo
 	hg.POST("/prescriptions/:id/send", rxH.Send)
 	hg.POST("/prescriptions/:id/verify", rxH.Verify)
 	hg.POST("/prescriptions/:id/dispense", rxH.Dispense)
+	// DP-004 refills: the prescriber authorizes the count, the pharmacist dispenses
+	// each additional fill. Both service methods existed unmounted, so the refill
+	// half of the e-Rx lifecycle was unreachable.
+	hg.POST("/prescriptions/:id/refills", rxH.AuthorizeRefills)
+	hg.POST("/prescriptions/:id/refills/dispense", rxH.DispenseRefill)
 
 	// Scheduling: appointment booking + guarded lifecycle.
 	hg.POST("/appointments", schedH.Request)

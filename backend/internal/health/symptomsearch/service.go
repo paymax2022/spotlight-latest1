@@ -500,6 +500,8 @@ func (s *Service) ListClassSkus(ctx context.Context, classID, region, who string
 			ID:                 sku.ID,
 			ProductID:          sku.ProductID,
 			Name:               sku.Name,
+			PharmacyProviderID: sku.PharmacyProviderID,
+			PharmacyName:       sku.PharmacyName,
 			Brand:              sku.Brand,
 			PackSize:           sku.PackSize,
 			PriceKobo:          sku.PriceKobo,

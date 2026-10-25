@@ -31,8 +31,18 @@ export default function PharmacySelectScreen() {
     return () => clearTimeout(t);
   }, [search]);
   const { data, isLoading, isError, refetch } = usePharmacies({ lat: coords?.lat, lng: coords?.lng, sort, q: q || undefined });
-  const [selected, setSelected] = useState<string | null>(null);
+  const cart = useCartStore((s) => s.cart());
+  // One order is one pharmacy: CreateOrder re-checks every line against the order's
+  // pharmacy_provider_id, so the only pharmacy that can take this cart is the one
+  // selling it. Offering the rest would be a choice the patient can't win.
+  const options = (data ?? []).filter((p) => !cart.pharmacyId || p.id === cart.pharmacyId);
+  const [selected, setSelected] = useState<string | null>(cart.pharmacyId || null);
   const setPharmacy = useCartStore((s) => s.setPharmacy);
+
+  useEffect(() => {
+    if (options.length === 1 && selected !== options[0].id) setSelected(options[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options.length, data]);
 
   // degrades to rating sort (server-resolved) if denied/unavailable.
   useEffect(() => {
@@ -45,7 +55,7 @@ export default function PharmacySelectScreen() {
   }, [locAvailable]);
 
   const onContinue = () => {
-    const ph = (data ?? []).find((p) => p.id === selected);
+    const ph = options.find((p) => p.id === selected);
     if (!ph) return;
     setPharmacy(ph.id, ph.deliveryFeeKobo);
     router.push('/health/pharmacy/checkout');
@@ -53,7 +63,10 @@ export default function PharmacySelectScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Choose a pharmacy" subtitle="Verified, near you" />
+      <ScreenHeader
+        title="Choose a pharmacy"
+        subtitle={cart.pharmacyName ? `Your items are sold by ${cart.pharmacyName}` : 'Verified, near you'}
+      />
 
       <SearchBar
         placeholder="Search by pharmacy name…"
@@ -65,12 +78,17 @@ export default function PharmacySelectScreen() {
         <StateView kind="loading" message="Finding pharmacies…" />
       ) : isError ? (
         <StateView kind="error" title="Couldn't load pharmacies" message="Please try again." actionLabel="Retry" onAction={refetch} />
-      ) : (data ?? []).length === 0 ? (
-        q ? (
-          <StateView kind="empty" icon="Store" title="No matches" message={`No pharmacies found for “${q}”. Try a different name.`} />
-        ) : (
-          <StateView kind="empty" icon="Store" title="No pharmacies nearby" message="Try again later or change your location." />
-        )
+      ) : options.length === 0 ? (
+        <StateView
+          kind="empty"
+          icon="Store"
+          title="This pharmacy isn’t available"
+          message={
+            cart.pharmacyId
+              ? `${cart.pharmacyName || 'The pharmacy selling your items'} isn’t discoverable right now. Remove its items and order from one that is.`
+              : 'No verified pharmacies are listed yet.'
+          }
+        />
       ) : (
         <>
           {/* Location / sort strip */}
@@ -108,7 +126,7 @@ export default function PharmacySelectScreen() {
           </View>
 
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-            {(data ?? []).map((p) => {
+            {options.map((p) => {
               const isSel = p.id === selected;
               return (
                 <Pressable

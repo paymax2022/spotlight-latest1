@@ -32,6 +32,13 @@ var ErrTierGateUnwired = errors.New("telemedicine: money path requires a tier ga
 
 // Service manages doctors, appointments, prescriptions, SOAP notes, and pharmacy.
 type Service struct {
+	// consoleBridge (FEATURE_TELEMEDICINE_CONSOLE_BRIDGE_ENABLED, ADR-PR879)
+	// turns on the doctor-console bridge: mirroring bookings into the console,
+	// console readbacks, the shared chat, and console → telemedicine status sync
+	// (which can settle or refund). Off (default): none of it runs, so booking,
+	// completion and refunds behave exactly as before the bridge existed.
+	consoleBridge bool
+
 	db         *pgxpool.Pool
 	settlement *settlement.Service
 	// tiers is the checkout daily-cap gate evaluated inside the escrow debit
@@ -48,6 +55,10 @@ type Service struct {
 	// applies the decision but skips the audit row rather than failing the
 	// request over a logging concern.
 	audit AuditWriter
+	// livekit mints consult-room join tokens (doctor-console bridge, see
+	// bridge.go). Wired via WithLiveKit; nil means "no media server configured"
+	// and the token endpoint reports configured:false instead of failing.
+	livekit liveKitTokens
 }
 
 // NewService builds the service with the platform booking fee OFF. The fee is a
@@ -441,6 +452,11 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 		if existing, err := s.appointmentByIdempotencyKey(ctx, patientID, req.IdempotencyKey); err != nil {
 			return nil, fmt.Errorf("telemedicine: check idempotency key: %w", err)
 		} else if existing != nil {
+			// Heal-on-replay: if the first attempt crashed after writing the
+			// appointment but before bridging doctor-console rows, the retry
+			// re-attempts the (idempotent) bridge instead of returning a
+			// booking the doctor can never see.
+			s.bridgeToDoctorConsole(ctx, existing)
 			return existing, nil
 		}
 	}
@@ -552,6 +568,12 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	); err != nil {
 		return nil, fmt.Errorf("telemedicine: insert appointment: %w", err)
 	}
+	// Doctor-console bridge (best-effort, idempotent): create the mirrored
+	// appointment + chat thread so the rich consult screens light up for the
+	// owning doctor. Money has moved and the appointment row is committed by
+	// this point — a bridge failure is logged, never turned back into a
+	// booking error, and the idempotent replay path re-attempts it.
+	s.bridgeToDoctorConsole(ctx, appt)
 	return appt, nil
 }
 
@@ -633,83 +655,9 @@ func (s *Service) GetAppointment(ctx context.Context, id, userID string) (*Appoi
 		return nil, err
 	}
 	if len(appts) == 0 {
-		return nil, errors.New("telemedicine: appointment not found")
+		return nil, ErrAppointmentNotFound
 	}
 	return &appts[0], nil
-}
-
-// CompleteAppointment marks an appointment as completed and settles the fee (85/15).
-func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctorUserID string) error {
-	var appt Appointment
-	const q = `SELECT id, doctor_id, status, COALESCE(settlement_id::text,''), COALESCE(platform_fee_kobo,0)
-	            FROM appointments WHERE id=$1`
-	if err := s.db.QueryRow(ctx, q, appointmentID).
-		Scan(&appt.ID, &appt.DoctorID, &appt.Status, &appt.SettlementID, &appt.PlatformFeeKobo); err != nil {
-		return errors.New("telemedicine: appointment not found")
-	}
-	if appt.Status != ApptBooked && appt.Status != ApptConfirmed {
-		return errors.New("telemedicine: appointment is not in a completable state")
-	}
-	var dbDoctorUserID string
-	if err := s.db.QueryRow(ctx, `SELECT user_id FROM doctors WHERE id=$1`, appt.DoctorID).
-		Scan(&dbDoctorUserID); err != nil {
-		return errors.New("telemedicine: doctor record not found")
-	}
-	if dbDoctorUserID != doctorUserID {
-		return errors.New("telemedicine: only the assigned doctor can complete this appointment")
-	}
-	// The platform booking fee rides on TOP of the 85/15 split as a 100%-platform
-	// leg (ServiceFeeKobo — the mirror of a rider tip), so it does not dilute the
-	// doctor. Working Settle's algebra through with total = consult + fee:
-	//	base     = total − tip − serviceFee = consult
-	//	platform = base×0.15 + serviceFee   = 0.15·consult + fee
-	//	provider = total − platform         = 0.85·consult   ← unchanged
-	// Appointments escrowed before ADR-044 carry platform_fee_kobo = 0, which
-	// reproduces the old pure 85/15 split exactly — they settle unchanged.
-	split := settlement.Split{
-		ProviderID:     doctorUserID,
-		ProviderPct:    0.85,
-		PlatformPct:    0.15,
-		ServiceFeeKobo: appt.PlatformFeeKobo,
-	}
-	if err := s.settlement.Settle(ctx, appt.SettlementID, split); err != nil {
-		return fmt.Errorf("telemedicine: settle fee: %w", err)
-	}
-	_, err := s.db.Exec(ctx, `UPDATE appointments SET status='completed' WHERE id=$1`, appointmentID)
-	return err
-}
-
-// CancelAppointment refunds the patient if the appointment has not been completed.
-// Only the patient who booked it or the assigned doctor may cancel.
-func (s *Service) CancelAppointment(ctx context.Context, appointmentID, actorID string) error {
-	var patientID, status, settlementID, doctorID string
-	if err := s.db.QueryRow(ctx,
-		`SELECT patient_id, doctor_id, status, COALESCE(settlement_id::text,'') FROM appointments WHERE id=$1`,
-		appointmentID).Scan(&patientID, &doctorID, &status, &settlementID); err != nil {
-		return errors.New("telemedicine: appointment not found")
-	}
-	// Object-level authZ. `actorID` was previously accepted and never compared, so
-	// any authenticated user could cancel any appointment by id — forcing a full
-	// refund of a stranger's booking and denying the doctor their fee. Fail closed:
-	// an unresolvable doctor record denies rather than falls through.
-	if actorID != patientID {
-		var doctorUserID string
-		if err := s.db.QueryRow(ctx, `SELECT user_id FROM doctors WHERE id=$1`, doctorID).
-			Scan(&doctorUserID); err != nil {
-			return errors.New("telemedicine: not permitted to cancel this appointment")
-		}
-		if actorID != doctorUserID {
-			return errors.New("telemedicine: not permitted to cancel this appointment")
-		}
-	}
-	if status == string(ApptCompleted) {
-		return errors.New("telemedicine: cannot cancel a completed appointment")
-	}
-	if err := s.settlement.Refund(ctx, settlementID, "appointment_cancelled"); err != nil {
-		return fmt.Errorf("telemedicine: refund fee: %w", err)
-	}
-	_, err := s.db.Exec(ctx, `UPDATE appointments SET status='cancelled' WHERE id=$1`, appointmentID)
-	return err
 }
 
 // IssuePrescription creates a prescription for a completed appointment.
@@ -749,10 +697,10 @@ func (s *Service) IssuePrescription(ctx context.Context, appointmentID, doctorUs
 // Object-level authZ: only the patient or the assigned doctor of that
 // appointment may read it back.
 func (s *Service) GetPrescription(ctx context.Context, appointmentID, callerUserID string) (*Prescription, error) {
-	var patientID, doctorID string
+	var patientID, doctorID, doctorName string
 	if err := s.db.QueryRow(ctx,
-		`SELECT patient_id, doctor_id FROM appointments WHERE id=$1`,
-		appointmentID).Scan(&patientID, &doctorID); err != nil {
+		`SELECT patient_id, doctor_id, COALESCE(doctor_name,'') FROM appointments WHERE id=$1`,
+		appointmentID).Scan(&patientID, &doctorID, &doctorName); err != nil {
 		return nil, errors.New("telemedicine: appointment not found")
 	}
 	var dbDoctorUserID string
@@ -765,10 +713,22 @@ func (s *Service) GetPrescription(ctx context.Context, appointmentID, callerUser
 	p := &Prescription{}
 	const q = `SELECT id, appointment_id, doctor_id, patient_id, medications, instructions, issued_at
 	            FROM prescriptions WHERE appointment_id=$1 ORDER BY issued_at DESC LIMIT 1`
-	if err := s.db.QueryRow(ctx, q, appointmentID).Scan(
+	err := s.db.QueryRow(ctx, q, appointmentID).Scan(
 		&p.ID, &p.AppointmentID, &p.DoctorID, &p.PatientID, &p.Medications, &p.Instructions, &p.IssuedAt,
-	); err != nil {
-		return nil, errors.New("telemedicine: prescription not found")
+	)
+	if err != nil {
+		// No telemedicine-side prescription: fall back to the doctor console,
+		// where the rich consult screen issues into doctor_prescriptions keyed
+		// by the bridged appointment id (identical to this appointment's id).
+		return s.prescriptionFromDoctorConsole(ctx, appointmentID, patientID, doctorID, doctorName)
+	}
+	p.DoctorName = doctorName
+	// Split the free-text list line-wise so clients render one shape:
+	// items[] with a name, regardless of who issued the prescription.
+	for _, line := range strings.FieldsFunc(p.Medications, func(r rune) bool { return r == '\n' || r == ';' }) {
+		if name := strings.TrimSpace(line); name != "" {
+			p.Items = append(p.Items, RxItem{Name: name})
+		}
 	}
 	return p, nil
 }
