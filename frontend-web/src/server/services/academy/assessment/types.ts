@@ -9,9 +9,15 @@
 // `FilmQuestionDraft` is the normalised CSV row BEFORE it becomes a DB row; it is
 // what the import preview surfaces and what the validator rejects/warns on.
 
-export type FilmStage = 'L0' | 'L1' | 'L2' | 'L3' | 'L4' | 'L5';
-const FILM_STAGES: ReadonlySet<string> = new Set(['L0', 'L1', 'L2', 'L3', 'L4', 'L5']);
+// Two module/stage vocabularies share the bank:
+//   legacy 256 bank  — stages L0-L5, modules FM01..FM32
+//   TMFA pack bank   — stages L1-L4 + 'survey', modules = the pack topic_id verbatim
+//                      (A01..A24 acting topics, C01-T1..C12-T4 course topics)
+// Both are stored as-is in film_stage / film_module_code; nothing is translated.
+export type FilmStage = 'L0' | 'L1' | 'L2' | 'L3' | 'L4' | 'L5' | 'survey';
+const FILM_STAGES: ReadonlySet<string> = new Set(['L0', 'L1', 'L2', 'L3', 'L4', 'L5', 'survey']);
 const FILM_MODULE_RE = /^FM(0[1-9]|[12][0-9]|3[0-2])$/; // FM01..FM32
+const TMFA_TOPIC_RE = /^(A(0[1-9]|1[0-9]|2[0-4])|C(0[1-9]|1[0-2])-T[1-4])$/; // A01..A24, C01-T1..C12-T4
 
 export const OPTION_IDS = ['a', 'b', 'c', 'd'] as const;
 export type OptionId = (typeof OPTION_IDS)[number];
@@ -102,6 +108,12 @@ export function isFilmStage(s: string): s is FilmStage {
   return FILM_STAGES.has(s);
 }
 
+/** A TMFA pack topic_id (A01..A24, C01-T1..C12-T4). */
+export function isTmfaTopicCode(s: string): boolean {
+  return TMFA_TOPIC_RE.test(s);
+}
+
+/** Any valid film_module_code: a legacy FM code or a TMFA topic_id. */
 export function isFilmModuleCode(s: string): boolean {
-  return FILM_MODULE_RE.test(s);
+  return FILM_MODULE_RE.test(s) || TMFA_TOPIC_RE.test(s);
 }

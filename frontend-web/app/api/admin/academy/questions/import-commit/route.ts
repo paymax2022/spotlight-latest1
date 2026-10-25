@@ -28,7 +28,10 @@ export async function POST(request: Request) {
     const grid = parseCsv(csv);
     const header = checkHeaders(grid[0]);
     if (!header.ok) {
-      return errorResponse(`CSV is missing required columns: ${header.missing.join(', ')}`, 400);
+      return errorResponse(
+        `CSV is missing required ${header.format === 'tmfa' ? 'TMFA pack' : 'question bank'} columns: ${header.missing.join(', ')}`,
+        400,
+      );
     }
 
     const report = parseAndValidate(csv);
