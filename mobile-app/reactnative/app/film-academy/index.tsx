@@ -7,7 +7,7 @@
 // format. The settings.tuition_fee programme figure is never charged.
 
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -320,15 +320,13 @@ export default function FilmAcademyScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         <RemoteBanner slug="film-academy" priority />
 
-        <View style={styles.hero}>
-          <View style={styles.heroIcon}>
-            <Clapperboard size={26} color={Colors.gold} />
-          </View>
-          <Text style={styles.heroTitle}>Learn filmmaking, hands on</Text>
-          <Text style={styles.heroSub}>
-            Structured cohorts covering production craft, taught on a fixed schedule.
-            Choose a cohort below to apply.
-          </Text>
+        <View style={styles.heroBanner}>
+          <Image
+            source={{ uri: 'https://res.cloudinary.com/paymax/image/upload/v1792924527/Royal_Purple_Film_Academy_Hero_Banner_eahntm.png' }}
+            style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
+            resizeMode="cover"
+            accessibilityLabel="Film Academy"
+          />
         </View>
 
         {isLoading && (
@@ -426,11 +424,7 @@ const styles = StyleSheet.create({
   back:        { width: 32, height: 32, justifyContent: 'center' },
   headerTitle: { ...Typography.headlineMd, color: Colors.onSurface },
   scroll:      { padding: Spacing.containerMargin, paddingBottom: Spacing.xl * 2, gap: Spacing.md },
-  hero:        { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, gap: Spacing.xs },
-  heroIcon:    { width: 48, height: 48, borderRadius: Radius.md, backgroundColor: Colors.iconBgGold,
-                 alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xs },
-  heroTitle:   { ...Typography.headlineMd, color: Colors.onSurface },
-  heroSub:     { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
+  heroBanner:  { aspectRatio: 2, borderRadius: Radius.lg, overflow: 'hidden', marginBottom: Spacing.md },
   trackRow:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
                  backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg },
   trackIcon:   { width: 32, height: 32, borderRadius: Radius.sm, alignItems: 'center',

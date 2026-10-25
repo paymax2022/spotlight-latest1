@@ -149,16 +149,14 @@ export default function MarketplaceHome() {
         title="Buy and sell near you"
         subtitle="List an item in minutes, get paid with escrow protection"
         cta="Start selling"
+        imageUri="https://res.cloudinary.com/paymax/image/upload/v1792917802/Premium_purple_marketplace_seller_banner_1_tomt8d.png"
         onPress={() => router.push('/marketplace/sell' as never)}
       />
 
-      {/* SearchBar owns its own tap target — an outer Pressable never fires,
-          because the readonly TextInput claims the touch and only the bar's
-          own onPress reaches it. */}
+      {/* SearchBar is now editable and opens on the same page */}
       <SearchBar
-        editable={false}
+        editable={true}
         placeholder="Search phones, cars, furniture…"
-        onPress={() => router.push('/marketplace/search' as never)}
       />
 
       <View style={styles.proximity}>

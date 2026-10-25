@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Image, ImageBackground } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -7,14 +7,41 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 
 interface Props {
-  title:    string;
-  subtitle: string;
-  cta:      string;
-  badge?:   string;
-  onPress:  () => void;
+  title:       string;
+  subtitle:    string;
+  cta:         string;
+  badge?:      string;
+  imageUri?:   string;
+  onPress:     () => void;
 }
 
-export default function PromoBanner({ title, subtitle, cta, badge, onPress }: Props) {
+export default function PromoBanner({ title, subtitle, cta, badge, imageUri, onPress }: Props) {
+  if (imageUri) {
+    return (
+      <Pressable onPress={onPress} style={({ pressed }) => [styles.wrapper, pressed && { opacity: 0.9 }]}>
+        <ImageBackground source={{ uri: imageUri }} style={styles.card} imageStyle={styles.cardImage}>
+          <LinearGradient
+            colors={['rgba(0,0,0,0.3)', 'rgba(0,0,0,0.4)']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.overlay}
+          >
+            {badge && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{badge}</Text>
+              </View>
+            )}
+            <Text style={styles.title}>{title}</Text>
+            <Text style={styles.subtitle}>{subtitle}</Text>
+            <View style={styles.ctaBtn}>
+              <Text style={styles.ctaText}>{cta}</Text>
+            </View>
+          </LinearGradient>
+        </ImageBackground>
+      </Pressable>
+    );
+  }
+
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.wrapper, pressed && { opacity: 0.9 }]}>
       <LinearGradient
@@ -48,6 +75,14 @@ const styles = StyleSheet.create({
     padding:      Spacing.cardPadding,
     overflow:     'hidden',
     minHeight:    120,
+    justifyContent: 'center',
+  },
+  cardImage: {
+    borderRadius: Radius.xl,
+  },
+  overlay: {
+    flex: 1,
+    padding: Spacing.cardPadding,
     justifyContent: 'center',
   },
   badge: {

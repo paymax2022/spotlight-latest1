@@ -5,6 +5,7 @@ import { ApiError, errorResponse, handleApiError, successResponse } from '@/src/
 import { requireRequestUser, type RequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getActiveAcademySettings, getBatchAreaSlugs } from '@/src/server/services/academy';
+import { approveAfterPayment } from '@/src/server/services/academy/service';
 import {
   ACADEMY_DELIVERABLES,
   ACADEMY_FEE_EXCLUSIONS,
@@ -624,6 +625,13 @@ export async function POST(request: Request) {
 
       console.error('Academy application insert failed:', insertError);
       throw new ApiError('Failed to submit application', 500);
+    }
+
+    // A paid application is approved now; admin review is only for unpaid ones.
+    if (paymentStatus === 'paid') {
+      await approveAfterPayment(applicationId).catch((e) => {
+        console.error('[academy/apply] auto-approval after payment failed; admin can still approve', e);
+      });
     }
 
     return successResponse({ success: true, applicationId }, 201);
