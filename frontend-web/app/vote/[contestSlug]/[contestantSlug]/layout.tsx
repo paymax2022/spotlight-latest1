@@ -10,6 +10,7 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { createAdminClient } from '@/lib/supabase/server';
+import { resolveContestantPhotoUrl } from '@/src/lib/storage/contestant-photo';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -101,7 +102,11 @@ export async function generateMetadata({
         ? `${bio.slice(0, 157)}…`
         : bio
       : `Vote for ${name} in ${contestName} on Spotlight. Every vote counts — support your favourite talent now.`;
-    const image = absoluteUrl(contestant.photo_url ?? (contest as any).banner_image_url ?? DEFAULT_OG_IMAGE);
+    // Signed here: a stored photo is an R2 key (or a route only its uploader may
+    // open), which no crawler can render. Null when there is nothing renderable,
+    // so the contest banner takes over.
+    const photo = await resolveContestantPhotoUrl(contestant.photo_url);
+    const image = absoluteUrl(photo ?? (contest as any).banner_image_url ?? DEFAULT_OG_IMAGE);
 
     return {
       title,

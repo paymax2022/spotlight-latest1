@@ -1,7 +1,8 @@
 // Registered href:null in the marketplace tabs layout. Two modes on one route so
 // no new tab-level route is added (screen 17 is "reuse: transaction-status"):
-//   • no ?boostId  → Boost purchase: tiered options, Naira prices, inline wallet
-//     balance, select → confirm → POST /boosts (Idempotency-Key) via the shared
+//   • no ?boostId  → Boost purchase: pick a length (preset day chips or a custom
+//     end moment), priced by the admin's live ₦/day rate, inline wallet balance,
+//     select → confirm → POST /boosts (Idempotency-Key) via the shared
 //     PaymentSheet/usePurchasePayment. Insufficient balance → top-up link.
 //     reason-coded rejection with instant auto-refund state.
 // just-completed purchase (status, via ?boostId).
@@ -23,8 +24,8 @@ import DatePickerField from '@/components/DatePickerField';
 import TimePickerField from '@/components/TimePickerField';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { MarketColors, formatNaira } from '@/features/marketplace';
-import type { Boost, BoostTier } from '@/features/marketplace';
-import { useBoostTiers, useBoost, useBoostQuote, usePurchaseBoost, useCancelBoost } from '@/features/marketplace/sell.hooks';
+import type { Boost } from '@/features/marketplace';
+import { useBoostPricing, useBoost, useBoostQuote, usePurchaseBoost, useCancelBoost } from '@/features/marketplace/sell.hooks';
 
 function track(event: string, props: Record<string, unknown>) {
   if (__DEV__) console.log(`[analytics] ${event}`, props);
@@ -40,22 +41,23 @@ export default function BoostRoute() {
   return <BoostPurchase listingId={listingId ?? ''} onPurchased={setLocalBoostId} />;
 }
 
-// Two ways to buy a boost, picked via the segmented control below:
-//   • Package — a preset tier (unchanged from before: fixed duration/price).
-//     the admin-set ₦/day rate, previewed live via useBoostQuote before the
-//     user commits (GET /boosts/quote — the SAME computation the purchase
-//     itself uses server-side, so the price shown here is authoritative, not
-//     a client-side guess).
+// One number prices every boost: the admin's ₦/day rate, read live from the
+// server (GET /boosts/pricing). Pick a length — the presets are one-tap shortcuts,
+// a custom end moment is billed in whole days rounded UP — and the screen shows
+// the arithmetic ("7 days × ₦100/day = ₦700") before the seller commits. This is
+// the same ComputeBoostQuote the purchase itself runs server-side, so the price
+// here and what the wallet is charged can never drift.
 function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurchased: (id: string) => void }) {
-  const tiersQuery = useBoostTiers();
+  const pricingQuery = useBoostPricing();
   const purchaseBoost = usePurchaseBoost(listingId);
   const pay = usePurchasePayment<Boost>();
-  const [mode, setMode] = useState<'package' | 'custom'>('package');
-  const [selectedTier, setSelectedTier] = useState<string | null>(null);
+  const [mode, setMode] = useState<'duration' | 'custom'>('duration');
+  const [selectedDays, setSelectedDays] = useState<number | null>(null);
   const [endDate, setEndDate] = useState<string | undefined>(); // YYYY-MM-DD
   const [endTime, setEndTime] = useState<string | undefined>();
 
-  const tier = tiersQuery.data?.find((t) => t.tier === selectedTier);
+  const dailyRateKobo = pricingQuery.data?.dailyRateKobo ?? 0;
+  const presetDays = pricingQuery.data?.presetDurationDays ?? [];
 
   // Combine the date+time pickers into an ISO timestamp once both are set.
   // Local time is what the user actually picked ("6pm on the 12th"), so this
@@ -68,16 +70,22 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
     return Number.isNaN(dt.getTime()) ? undefined : dt.toISOString();
   }, [endDate, endTime]);
 
+  // A whole-day boost is priced by plain multiplication the server repeats
+  // identically, so a preset tap needs no round trip. Only a custom end moment
+  // needs the quote — to learn how many whole days it rounds UP to.
   const customQuote = useBoostQuote(mode === 'custom' ? { endsAt: customEndsAt } : {});
-  const priceKobo = mode === 'package' ? tier?.priceKobo : customQuote.data?.priceKobo;
-  const durationDays = mode === 'package' ? tier?.durationDays : customQuote.data?.durationDays;
-  const canConfirm = mode === 'package' ? !!selectedTier : !!customQuote.data && !customQuote.isError;
+
+  const durationDays = mode === 'duration' ? selectedDays ?? undefined : customQuote.data?.durationDays;
+  const priceKobo = mode === 'duration'
+    ? (selectedDays == null ? undefined : selectedDays * dailyRateKobo)
+    : customQuote.data?.priceKobo;
+  const canConfirm = mode === 'duration' ? selectedDays != null : !!customQuote.data && !customQuote.isError;
 
   // NO pre-flight affordability gate here, deliberately.
   // usePurchasePayment fetches the wallet balance with `enabled: visible`, so it
   // only runs once the payment sheet opens. A disabled React Query reports
   // isLoading === false, so a `!walletLoading && walletKobo < price` check read a
-  // balance of 0 that had never been fetched and declared EVERY tier unaffordable
+  // balance of 0 that had never been fetched and declared EVERY option unaffordable
   // — the button was permanently disabled no matter how much was in the wallet.
   // wallet OR card, and blocking on the wallet balance alone denied a user who
   // intended to pay by card. The sheet knows the real balance, offers both rails,
@@ -86,10 +94,10 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
 
   const handleConfirm = () => {
     if (!canConfirm || !listingId || !priceKobo) return;
-    const selection = mode === 'package' ? { tier: tier!.tier } : { endsAt: customEndsAt! };
+    const selection = mode === 'duration' ? { durationDays: selectedDays as number } : { endsAt: customEndsAt as string };
     pay.start({
       amountKobo: priceKobo,
-      title: mode === 'package' ? `Boost — ${tier!.label}` : `Boost — ${durationDays} custom days`,
+      title: `Boost — ${durationDays} day${durationDays === 1 ? '' : 's'}`,
       domain: 'marketplace_boost',
       // The boost is created (wallet debit + Idempotency-Key) only after the
       // payment rail confirms; the resulting Boost flows into onPaid.
@@ -110,10 +118,10 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
         </Pressable>
       </View>
 
-      {tiersQuery.isLoading ? (
+      {pricingQuery.isLoading ? (
         <View style={styles.scroll}>{[0, 1, 2].map((i) => <View key={i} style={styles.tierSkeleton} />)}</View>
-      ) : tiersQuery.isError ? (
-        <StateView kind="error" title="Couldn't load boost tiers" actionLabel="Retry" onAction={() => tiersQuery.refetch()} />
+      ) : pricingQuery.isError ? (
+        <StateView kind="error" title="Couldn't load boost pricing" actionLabel="Retry" onAction={() => pricingQuery.refetch()} />
       ) : (
         <>
           {/* Only state a balance once one has actually been fetched — the query is
@@ -133,30 +141,42 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
           </View>
 
           <View style={styles.segmentRow}>
-            <Pressable style={[styles.segment, mode === 'package' && styles.segmentActive]} onPress={() => setMode('package')}>
-              <Text style={[styles.segmentText, mode === 'package' && styles.segmentTextActive]}>Packages</Text>
+            <Pressable style={[styles.segment, mode === 'duration' && styles.segmentActive]} onPress={() => setMode('duration')}>
+              <Text style={[styles.segmentText, mode === 'duration' && styles.segmentTextActive]}>How long</Text>
             </Pressable>
             <Pressable style={[styles.segment, mode === 'custom' && styles.segmentActive]} onPress={() => setMode('custom')}>
-              <Text style={[styles.segmentText, mode === 'custom' && styles.segmentTextActive]}>Custom dates</Text>
+              <Text style={[styles.segmentText, mode === 'custom' && styles.segmentTextActive]}>Until a date</Text>
             </Pressable>
           </View>
 
           <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-            {mode === 'package' ? (
-              (tiersQuery.data ?? []).map((t: BoostTier) => {
-                const active = selectedTier === t.tier;
-                return (
-                  <Pressable key={t.tier} style={[styles.card, active && styles.cardActive]} onPress={() => setSelectedTier(t.tier)}>
-                    <View style={styles.cardHead}>
-                      <Zap size={18} color={active ? MarketColors.brand : MarketColors.muted} />
-                      <Text style={[styles.tierLabel, active && styles.tierLabelActive]}>{t.label}</Text>
-                      <Text style={styles.tierPrice}>{formatNaira(t.priceKobo)}</Text>
-                    </View>
-                    <Text style={styles.tierDesc}>{t.description}</Text>
-                    <Text style={styles.tierDuration}>{t.durationDays} days of premium placement</Text>
-                  </Pressable>
-                );
-              })
+            <Text style={styles.rateNote}>
+              Every boost costs <Text style={styles.rateStrong}>{formatNaira(dailyRateKobo)} a day</Text> — the{' '}
+              {mode === 'duration' ? 'length you pick below sets the price' : 'end date you pick, rounded up to whole days, sets it'}.
+            </Text>
+
+            {mode === 'duration' ? (
+              <>
+                <View style={styles.daysRow}>
+                  {presetDays.map((d) => {
+                    const active = selectedDays === d;
+                    return (
+                      <Pressable key={d} style={[styles.dayChip, active && styles.dayChipActive]} onPress={() => setSelectedDays(d)}>
+                        <Text style={[styles.dayChipDays, active && styles.dayChipDaysActive]}>{d} day{d === 1 ? '' : 's'}</Text>
+                        <Text style={styles.dayChipPrice}>{formatNaira(d * dailyRateKobo)}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {selectedDays != null && (
+                  <View style={styles.quoteBox}>
+                    <Text style={styles.quoteText}>
+                      {selectedDays} day{selectedDays === 1 ? '' : 's'} × {formatNaira(dailyRateKobo)}/day = <Text style={styles.quoteAmount}>{formatNaira(selectedDays * dailyRateKobo)}</Text>
+                    </Text>
+                  </View>
+                )}
+              </>
             ) : (
               <View style={styles.customCard}>
                 <View style={styles.customRow}>
@@ -173,7 +193,7 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
                 ) : customQuote.data ? (
                   <View style={styles.quoteBox}>
                     <Text style={styles.quoteText}>
-                      {customQuote.data.durationDays} day{customQuote.data.durationDays === 1 ? '' : 's'} × boost rate = <Text style={styles.quoteAmount}>{formatNaira(customQuote.data.priceKobo)}</Text>
+                      {customQuote.data.durationDays} day{customQuote.data.durationDays === 1 ? '' : 's'} × {formatNaira(customQuote.data.dailyRateKobo)}/day = <Text style={styles.quoteAmount}>{formatNaira(customQuote.data.priceKobo)}</Text>
                     </Text>
                   </View>
                 ) : (
@@ -190,7 +210,7 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
 
           <View style={styles.footer}>
             <PrimaryButton
-              label={priceKobo ? `Boost for ${formatNaira(priceKobo)}` : mode === 'package' ? 'Select a tier' : 'Pick an end date'}
+              label={priceKobo ? `Boost for ${formatNaira(priceKobo)}` : mode === 'duration' ? 'Select a length' : 'Pick an end date'}
               onPress={handleConfirm}
               disabled={!canConfirm || pay.phase === 'charging' || pay.phase === 'awaiting'}
               loading={pay.phase === 'charging' || pay.phase === 'awaiting' || purchaseBoost.isPending}
@@ -334,7 +354,6 @@ function ActiveState({ boost, remaining, onStop, stopping }: { boost: Boost; rem
         <Text style={styles.deltaHint}>We'll show views lifted vs. your baseline here as they come in.</Text>
       </View>
 
-      <InfoRow label="Tier" value={boost.tier} />
       <InfoRow label="Duration" value={`${boost.durationDays} days`} />
       <InfoRow label="Amount paid" value={formatNaira(boost.priceKobo)} />
       <InfoRow label="Started" value={boost.startsAt ? formatDateTime(boost.startsAt) : '—'} />
@@ -374,7 +393,7 @@ function CancelledState({ boost }: { boost: Boost }) {
         </Text>
       </View>
 
-      <InfoRow label="Tier" value={boost.tier} />
+      <InfoRow label="Duration" value={`${boost.durationDays} days`} />
       <InfoRow label="Amount paid" value={formatNaira(boost.priceKobo)} />
       <InfoRow label="Amount refunded" value={formatNaira(refunded)} />
     </>
@@ -441,14 +460,14 @@ const styles = StyleSheet.create({
   quoteBox: { backgroundColor: MarketColors.okBg, borderRadius: Radius.md, padding: Spacing.sm, marginTop: Spacing.xs },
   quoteText: { ...Typography.bodySm, color: MarketColors.text },
   quoteAmount: { ...Typography.titleMd, color: MarketColors.brand, fontWeight: '800' },
-  card: { borderWidth: 1.5, borderColor: MarketColors.border, borderRadius: Radius.lg, padding: Spacing.cardPadding, backgroundColor: MarketColors.surface, ...shadow1 },
-  cardActive: { borderColor: MarketColors.brand, backgroundColor: MarketColors.okBg },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
-  tierLabel: { ...Typography.titleMd, color: MarketColors.text, flex: 1 },
-  tierLabelActive: { color: MarketColors.brand },
-  tierPrice: { ...Typography.titleMd, color: MarketColors.brand },
-  tierDesc: { ...Typography.bodySm, color: MarketColors.muted, marginTop: 4 },
-  tierDuration: { ...Typography.labelSm, color: MarketColors.muted, marginTop: 4 },
+  rateNote: { ...Typography.labelMd, color: MarketColors.muted },
+  rateStrong: { color: MarketColors.text, fontWeight: '800' },
+  daysRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  dayChip: { flexBasis: '30%', flexGrow: 1, minWidth: 96, alignItems: 'center', gap: 2, paddingVertical: Spacing.md, paddingHorizontal: Spacing.sm, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: MarketColors.border, backgroundColor: MarketColors.surface, ...shadow1 },
+  dayChipActive: { borderColor: MarketColors.brand, backgroundColor: MarketColors.okBg },
+  dayChipDays: { ...Typography.titleMd, color: MarketColors.text, fontWeight: '700' },
+  dayChipDaysActive: { color: MarketColors.brand },
+  dayChipPrice: { ...Typography.labelSm, color: MarketColors.muted },
   tierSkeleton: { height: 104, borderRadius: Radius.lg, backgroundColor: MarketColors.surfaceAlt, marginBottom: Spacing.sm },
   statusSkeleton: { height: 180, borderRadius: Radius.lg, backgroundColor: MarketColors.surfaceAlt },
   topupBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: MarketColors.warnBg, borderRadius: Radius.md, padding: Spacing.md },

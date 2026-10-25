@@ -6,6 +6,7 @@ import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdC
 import { listVotingContests } from '@/services/competitionsService';
 import { getContestStageCounts } from '@/services/contestsAdminService';
 import { listVotePackages } from '@/services/votePackagesService';
+import { applySort, nextSort, SortHeaderButton, type SortState } from '@/components/rbac/DataControls';
 import type { VotingContest } from '@/types/competitions';
 
 // Real contests as seen by the mobile app — GET /api/v1/connect/contests, the
@@ -30,9 +31,20 @@ function fmtDate(v: string | null | undefined): string {
   return v ? new Date(v).toLocaleDateString('en-NG') : '—';
 }
 
+// Creation is a timestamp, and two contests created in the same day is exactly
+// the case the sort has to resolve — so this column shows the time too.
+function fmtDateTime(v: string | null | undefined): string {
+  return v ? new Date(v).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+}
+
+type SortKey = 'created_at' | 'status' | 'contestant_count' | 'total_votes' | 'opens_at' | 'closes_at';
+
 export default function CompetitionsListPage() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('');
+  // Newest first by default: the list is where an admin checks that the contest
+  // they just published actually landed.
+  const [sort, setSort] = useState<SortState<SortKey>>({ key: 'created_at', dir: 'desc' });
   const [contests, setContests] = useState<VotingContest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,13 +88,19 @@ export default function CompetitionsListPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Sort the filtered rows, not the raw list, so a header click reorders what is
+  // actually on screen.
   const filtered = useMemo(() => {
-    return contests.filter((c) => {
+    const rows = contests.filter((c) => {
       const matchSearch = c.title.toLowerCase().includes(search.toLowerCase());
       const matchStatus = !filterStatus || c.status === filterStatus;
       return matchSearch && matchStatus;
     });
-  }, [search, filterStatus, contests]);
+    return applySort(rows, sort, (row, key) => (row as unknown as Record<string, unknown>)[key]);
+  }, [search, filterStatus, contests, sort]);
+
+  const sortBy = (key: SortKey) => setSort((s) => nextSort(s, key));
+  const sortDir = (key: SortKey) => (sort?.key === key ? sort.dir : 'asc');
 
   return (
     <Page>
@@ -119,21 +137,34 @@ export default function CompetitionsListPage() {
           <thead>
             <tr>
               <th style={thCell}>Title</th>
-              <th style={thCell}>Status</th>
+              <th style={thCell}>
+                <SortHeaderButton label="Status" active={sort?.key === 'status'} dir={sortDir('status')} onClick={() => sortBy('status')} />
+              </th>
               <th style={thCell}>Stages</th>
-              <th style={thCell}>Contestants</th>
-              <th style={thCell}>Total Votes</th>
+              <th style={thCell}>
+                <SortHeaderButton label="Contestants" active={sort?.key === 'contestant_count'} dir={sortDir('contestant_count')} onClick={() => sortBy('contestant_count')} />
+              </th>
+              <th style={thCell}>
+                <SortHeaderButton label="Total Votes" active={sort?.key === 'total_votes'} dir={sortDir('total_votes')} onClick={() => sortBy('total_votes')} />
+              </th>
               <th style={thCell}>Paid Vote Price</th>
               <th style={thCell}>Votable</th>
-              <th style={thCell}>Opens / Closes</th>
+              <th style={thCell}>
+                <SortHeaderButton label="Opens" active={sort?.key === 'opens_at'} dir={sortDir('opens_at')} onClick={() => sortBy('opens_at')} />
+                {' / '}
+                <SortHeaderButton label="Closes" active={sort?.key === 'closes_at'} dir={sortDir('closes_at')} onClick={() => sortBy('closes_at')} />
+              </th>
+              <th style={thCell}>
+                <SortHeaderButton label="Created" active={sort?.key === 'created_at'} dir={sortDir('created_at')} onClick={() => sortBy('created_at')} />
+              </th>
               <th style={thCell}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={9}>Loading…</td></tr>
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={10}>Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={9}>No contests found.</td></tr>
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={10}>No contests found.</td></tr>
             ) : (
               filtered.map((c) => {
                 const stageCount = stageCounts[c.id] ?? 0;
@@ -169,10 +200,25 @@ export default function CompetitionsListPage() {
                     )}
                   </td>
                   <td style={tdCell}>{fmtDate(c.opens_at)} – {fmtDate(c.closes_at)}</td>
+                  <td style={tdCell}>{fmtDateTime(c.created_at)}</td>
                   <td style={tdCell}>
-                    <Link href={`/admin/competitions/results?contestId=${c.id}`}>
-                      <Button variant="outline" sm>Leaderboard</Button>
-                    </Link>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {c.slug ? (
+                        <Link href={`/admin/competitions/create?id=${encodeURIComponent(c.slug)}`}>
+                          <Button variant="primary" sm>Edit</Button>
+                        </Link>
+                      ) : (
+                        // A connect_contests row with no slug was never a public.contests
+                        // record, so the editor — which patches by slug — has nothing to
+                        // load. Say why the button is inert instead of hiding it.
+                        <span title="This row has no contest record (no slug), so there is nothing to edit. Contests created here always get one.">
+                          <Button variant="outline" sm disabled>Edit</Button>
+                        </span>
+                      )}
+                      <Link href={`/admin/competitions/results?contestId=${c.id}`}>
+                        <Button variant="outline" sm>Leaderboard</Button>
+                      </Link>
+                    </div>
                   </td>
                 </tr>
                 );

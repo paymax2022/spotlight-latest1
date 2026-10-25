@@ -23,7 +23,11 @@ export async function GET(request: Request) {
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) return NextResponse.json([]);
-    const { data: rows, error } = await supabase.from('estate_repair_requests').select(COLS).eq('estate_id', ctx.estateId).order('created_at', { ascending: false });
+    // Non-admin residents see only their own tickets (mirrors the Go
+    // ListRepairs scoping); admins see the estate-wide queue.
+    let query = supabase.from('estate_repair_requests').select(COLS).eq('estate_id', ctx.estateId);
+    if (ctx.role !== 'estate_admin') query = query.eq('reporter_id', user.id);
+    const { data: rows, error } = await query.order('created_at', { ascending: false });
     if (error) throw error;
     const names = await resolveNames(supabase, (rows ?? []).map((r: any) => r.reporter_id));
     return NextResponse.json((rows ?? []).map((r) => mapRepair(r, names)));
@@ -34,7 +38,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
-    const ctx = await getResidentContext(supabase, user.id);
+    const ctx = await getResidentContext(supabase, user.id, { forWrite: true });
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
     const body = await request.json().catch(() => null);
     if (!body) throw new ApiError('Invalid JSON body', 400);

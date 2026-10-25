@@ -43,6 +43,12 @@ type Service struct {
 	kyc      KYCVerifier  // optional; required only when an election requires KYC
 	notifier Notifier     // optional; push delivery (in-app feed works without it)
 	llm      LLMGenerator // optional; required only for AI note-taking (Block 33)
+	// dualControl gates the ESTD-D027 maker-checker flow (dual_control.go).
+	dualControl bool
+
+	// verificationRequired creates new estates in 'pending' (platform review
+	// queue, EST-UAT-0418) instead of 'active'. FEATURE_ESTATE_VERIFICATION_REQUIRED.
+	verificationRequired bool
 
 	// merchantGate authorises estate creation. When nil (the default, and
 	// whenever FEATURE_ESTATE_MERCHANT_GATE is off) CreateEstate keeps its
@@ -63,6 +69,14 @@ func (s *Service) WithGeocoder(g AddressGeocoder) *Service {
 	return s
 }
 
+// WithVerificationRequired makes CreateEstate open new estates as 'pending'
+// applications that a platform operator must verify before any estate write
+// is accepted (see lifecycle.go). Off = estates are created 'active'.
+func (s *Service) WithVerificationRequired(on bool) *Service {
+	s.verificationRequired = on
+	return s
+}
+
 // CreateEstate creates a new estate and assigns the creator as estate_admin.
 func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEstateRequest) (*Estate, error) {
 	// SP-01: an approved estate-management merchant may create estates. When a
@@ -77,11 +91,16 @@ func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEs
 			return nil, ErrEstateManagerApprovalRequired
 		}
 	}
+	status := EstateStatusActive
+	if s.verificationRequired {
+		status = EstateStatusPending
+	}
 	e := &Estate{
 		ID:        uuid.New().String(),
 		Name:      req.Name,
 		Address:   req.Address,
 		AdminID:   adminID,
+		Status:    status,
 		CreatedAt: time.Now(),
 	}
 	tx, err := s.db.Begin(ctx)
@@ -90,8 +109,8 @@ func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEs
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	const insertEstate = `INSERT INTO estates (id, name, address, admin_id) VALUES ($1,$2,$3,$4)`
-	if _, err := tx.Exec(ctx, insertEstate, e.ID, e.Name, e.Address, e.AdminID); err != nil {
+	const insertEstate = `INSERT INTO estates (id, name, address, admin_id, status) VALUES ($1,$2,$3,$4,$5)`
+	if _, err := tx.Exec(ctx, insertEstate, e.ID, e.Name, e.Address, e.AdminID, e.Status); err != nil {
 		return nil, fmt.Errorf("estate: insert estate: %w", err)
 	}
 	const insertResident = `INSERT INTO estate_residents (estate_id, user_id, unit, role) VALUES ($1,$2,'',  'estate_admin')`
@@ -165,6 +184,10 @@ func (s *Service) IssueVisitorPass(ctx context.Context, estateID, issuerID strin
 }
 
 // ScanVisitorPass marks a pass as used. Only estate security (admin) can scan.
+// On a successful scan the issuing resident is alerted (Block 43
+// visitor_arrived) so a gate check-in requiring live resident awareness reaches
+// them (EST-UAT-0348). Fire-and-forget: a notification failure never fails the
+// gate scan itself.
 func (s *Service) ScanVisitorPass(ctx context.Context, estateID, scannerID, qrCode string) (*VisitorPass, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, scannerID); err != nil {
 		return nil, err
@@ -181,6 +204,10 @@ func (s *Service) ScanVisitorPass(ctx context.Context, estateID, scannerID, qrCo
 	); err != nil {
 		return nil, errors.New("estate: pass not found, already used, or expired")
 	}
+	s.notify(ctx, estateID, p.IssuedBy, NotifVisitorArrived,
+		"Visitor arrived: "+p.VisitorName,
+		fmt.Sprintf("%s has been checked in at the gate (%s).", p.VisitorName, p.Purpose),
+		map[string]any{"pass_id": p.ID, "visitor_name": p.VisitorName})
 	return p, nil
 }
 
@@ -330,6 +357,50 @@ func (s *Service) GetResults(ctx context.Context, estateID, electionID, userID s
 	return out, rows.Err()
 }
 
+// SendElectionReminders notifies residents who have NOT yet voted in an open
+// election (EST-UAT-0352). Ballot privacy is preserved by construction: the
+// query selects only voter ids (never candidate_id / vote content), and the
+// notification body contains no ballot data. Estate admin only. Returns the
+// number of reminders delivered to the feed.
+func (s *Service) SendElectionReminders(ctx context.Context, estateID, adminID, electionID string) (int, error) {
+	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
+		return 0, err
+	}
+	var title, status string
+	var endsAt time.Time
+	if err := s.db.QueryRow(ctx,
+		`SELECT title, status, ends_at FROM elections WHERE id=$1 AND estate_id=$2`,
+		electionID, estateID).Scan(&title, &status, &endsAt); err != nil {
+		return 0, errors.New("estate: election not found")
+	}
+	if status != "open" {
+		return 0, fmt.Errorf("estate: cannot send reminders for a %s election", status)
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT r.user_id FROM estate_residents r
+		WHERE r.estate_id=$1 AND r.deleted_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM election_votes v WHERE v.election_id=$2 AND v.voter_id=r.user_id)`,
+		estateID, electionID)
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		s.notify(ctx, estateID, id, NotifElectionReminder, "Election open: "+title,
+			"Voting is open and you have not cast a ballot yet.",
+			map[string]any{"election_id": electionID, "ends_at": endsAt})
+	}
+	_ = s.audit(ctx, estateID, adminID, "ELECTION_REMIND", "election", electionID, map[string]any{keyReminded: len(ids)})
+	return len(ids), nil
+}
+
 // ListGates — Block 28: Security gate / guard app
 // ListGates returns all active gates for an estate.
 // ESTATE-AUTHZ: member-only — the gate layout is estate security posture.
@@ -450,17 +521,17 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 			             FOR UPDATE SKIP LOCKED)
 			 RETURNING id`, payload.Code.ID, arrivalApprovalTTL.Seconds()).Scan(&approvalID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return payload, fmt.Errorf("entry denied: awaiting host approval")
+			return payload, errors.New("entry denied: awaiting host approval")
 		}
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// Atomic consume: the guard re-checks every admission condition inside the
-	// UPDATE so concurrent admits of the same code cannot overshoot max_uses or
-	// admit an expired/blacklisted/revoked code. RowsAffected==0 means a racing
-	// request already consumed the use (or state changed) — deny rather than double-credit.
+	// Atomic consumption claim (EST-UAT-0094): the UPDATE re-asserts every
+	// admission predicate in the same statement that increments used_count, so
+	// two guards scanning one code concurrently cannot both win — the loser's
+	// UPDATE matches zero rows. The earlier read-then-write admitted both.
 	tag, err := tx.Exec(ctx,
 		`UPDATE visitor_access_codes SET used_count=used_count+1,
 		status=CASE WHEN used_count+1 >= max_uses THEN 'used' ELSE status END
@@ -472,7 +543,12 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 		return nil, err
 	}
 	if tag.RowsAffected() == 0 {
-		return payload, fmt.Errorf("entry denied: code already consumed or no longer valid")
+		// State moved under us — re-read for an accurate deny reason.
+		payload, lerr := s.lookupCode(ctx, estateID, req.NumericCode, req.QRCode)
+		if lerr != nil || payload == nil {
+			return nil, errors.New("entry denied: code no longer valid")
+		}
+		return payload, fmt.Errorf("entry denied: %s", denyReason(payload.Code))
 	}
 
 	checkinID := uuid.New().String()
@@ -495,6 +571,13 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+
+	// Alert the issuing resident that their visitor is at the gate
+	// (EST-UAT-0348). Fire-and-forget — never fails the check-in.
+	s.notify(ctx, estateID, payload.Code.IssuedBy, NotifVisitorArrived,
+		"Visitor arrived: "+payload.Code.VisitorName,
+		payload.Code.VisitorName+" has arrived at the gate.",
+		map[string]any{"code_id": payload.Code.ID, "checkin_id": checkinID, "gate_id": req.GateID})
 
 	payload.CheckinID = checkinID
 	return payload, nil
@@ -1092,6 +1175,9 @@ func (s *Service) DeleteHouseholdMember(ctx context.Context, estateID, userID, m
 	if err != nil {
 		return err
 	}
+	if err := s.assertNoLegalHold(ctx, estateID); err != nil {
+		return err
+	}
 	_, err = s.db.Exec(ctx, `DELETE FROM household_members WHERE id=$1 AND resident_id=$2`, memberID, resID)
 	return err
 }
@@ -1276,6 +1362,11 @@ func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (
 	if ic.UsedCount >= ic.MaxUses {
 		return nil, errors.New("estate: invite code has reached maximum uses")
 	}
+	// Lifecycle gate (ESTD-D025): this route has no :id, so LifecycleGate cannot
+	// see the estate — a suspended/pending/closed estate takes no new members.
+	if err := s.AssertEstateWritable(ctx, ic.EstateID); err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(ctx, `UPDATE estate_invite_codes SET used_count=used_count+1 WHERE id=$1`, ic.ID); err != nil {
 		return nil, fmt.Errorf("estate: update invite code: %w", err)
@@ -1441,12 +1532,15 @@ func (s *Service) ListEstates(ctx context.Context, callerID, search string) ([]E
 }
 
 // listAllEstates is ListEstates before PR #876 (every estate, for discovery). It
-// stays the behaviour while FEATURE_ESTATE_GUARD_GRANTS is off. The only change is
-// COALESCE(address): the old query failed the whole list on one NULL address.
+// stays the behaviour while FEATURE_ESTATE_GUARD_GRANTS is off. Two changes:
+// COALESCE(address) — the old query failed the whole list on one NULL address —
+// and status='active' — pending/suspended/closed estates are not publicly
+// discoverable (ESTD-D025; members still see their own via ListEstates).
 func (s *Service) listAllEstates(ctx context.Context, search string) ([]Estate, error) {
 	const q = `
 		SELECT id, name, COALESCE(address,''), admin_id, created_at FROM estates
-		WHERE ($1='' OR name ILIKE '%' || $1 || '%' OR address ILIKE '%' || $1 || '%')
+		WHERE status = 'active'
+		  AND ($1='' OR name ILIKE '%' || $1 || '%' OR address ILIKE '%' || $1 || '%')
 		ORDER BY name LIMIT 50`
 	rows, err := s.db.Query(ctx, q, search)
 	if err != nil {
@@ -1469,6 +1563,22 @@ func (s *Service) AddProperty(ctx context.Context, estateID, adminID string, req
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
+	// Unit keys must be unique within an estate (EST-UAT-0038). There is no DB
+	// unique constraint yet (pending migration — see
+	// docs/qa/estate-uat-443/migrations-estate-a/), so enforce in code.
+	var dupID string
+	err := s.db.QueryRow(ctx,
+		`SELECT id FROM estate_properties
+		 WHERE estate_id=$1 AND unit_label=$2 AND COALESCE(block,'')=COALESCE($3,'') AND archived=FALSE
+		 LIMIT 1`,
+		estateID, req.UnitLabel, req.Block,
+	).Scan(&dupID)
+	if err == nil {
+		return nil, fmt.Errorf("estate: unit %q already exists in this estate", req.UnitLabel)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("estate: check duplicate unit: %w", err)
+	}
 	p := &EstateProperty{
 		ID:              uuid.New().String(),
 		EstateID:        estateID,
@@ -1482,7 +1592,7 @@ func (s *Service) AddProperty(ctx context.Context, estateID, adminID string, req
 	const q = `
 		INSERT INTO estate_properties (id, estate_id, unit_label, property_type, floor, block, occupancy_status)
 		VALUES ($1,$2,$3,$4,$5,$6,'vacant')`
-	_, err := s.db.Exec(ctx, q, p.ID, p.EstateID, p.UnitLabel, p.PropertyType, p.Floor, p.Block)
+	_, err = s.db.Exec(ctx, q, p.ID, p.EstateID, p.UnitLabel, p.PropertyType, p.Floor, p.Block)
 	return p, err
 }
 

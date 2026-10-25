@@ -29,6 +29,14 @@ export const EVENTS_TEAM_ROLES_ENABLED =
 export const EVENTS_COMPS_ENABLED =
   process.env.EXPO_PUBLIC_EVENTS_COMPS?.trim().toLowerCase() === 'true';
 
+// Paystack card / bank-transfer checkout for tickets (server rail, EVTB-D013).
+// OFF unless explicitly 'true' — mirrors the server's FEATURE_EVENTS_CARD_CHECKOUT
+// gate (the initiate route is unmounted there when off). The status resolver
+// screen stays reachable: a customer mid-checkout when the flag flips must
+// still be able to resolve the payment they already made.
+export const EVENTS_CARD_CHECKOUT_ENABLED =
+  process.env.EXPO_PUBLIC_EVENTS_CARD_CHECKOUT?.trim().toLowerCase() === 'true';
+
 // Events REST namespace — Go backend `top5events` module, mounted directly
 // under /api/finance/events/* (see backend/internal/top5events). Composed
 // with the shared axios client's baseURL (EXPO_PUBLIC_API_BASE_URL) in api.ts.

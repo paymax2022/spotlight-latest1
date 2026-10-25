@@ -97,6 +97,17 @@ func toSearchRequest(req any) search.SearchRequest {
 		}
 		return nil
 	}
+	// Same guard the Postgres fallback applies (marketplace.parseSearchFallback):
+	// ParseFloat happily accepts "NaN" and "+Inf", and an out-of-range lat/lng
+	// makes ES reject the whole geo clause — so an impossible coordinate is
+	// dropped as "no position" rather than forwarded.
+	coord := func(k string, limit float64) *float64 {
+		v := getFloat(k)
+		if v == nil || !(*v >= -limit && *v <= limit) {
+			return nil
+		}
+		return v
+	}
 
 	sr.Q = getStr("q")
 	sr.CategoryID = getStr("category_id")
@@ -107,9 +118,13 @@ func toSearchRequest(req any) search.SearchRequest {
 	sr.Cursor = getStr("cursor")
 	sr.PriceMin = getKobo("price_min")
 	sr.PriceMax = getKobo("price_max")
-	sr.Lat = getFloat("lat")
-	sr.Lng = getFloat("lng")
-	sr.RadiusKm = getFloat("radius_km")
+	sr.Lat, sr.Lng = coord("lat", 90), coord("lng", 180)
+	if sr.Lat == nil || sr.Lng == nil {
+		sr.Lat, sr.Lng = nil, nil
+	}
+	if r := getFloat("radius_km"); r != nil && *r > 0 {
+		sr.RadiusKm = r
+	}
 	if mkt := getStr("market_id"); mkt != "" {
 		sr.Market = mkt
 	}
@@ -284,7 +299,8 @@ func RegisterMarketplace(
 	base.GET("/sellers/:id/profile", h.SellerProfile)
 	base.GET("/sellers/:id/listings", h.SellerListings)
 	base.GET("/sellers/:id/reviews", h.SellerReviews)
-	base.GET("/boosts/tiers", h.BoostTiers)
+	base.GET("/boosted", h.BoostedListings)
+	base.GET("/boosts/pricing", h.BoostPricing)
 	base.GET("/boosts/quote", h.GetBoostQuote)
 
 	m := base.Group("")

@@ -1,0 +1,117 @@
+case_id,module,title,priority,classification,implementation,code_locations,result,evidence,defect_ids,notes
+EST-UAT-0116,M07,Create dues type,P0,APPLICABLE,PARTIAL,"backend/internal/estate/service_dues.go:CreateInvoice;model_modules.go",NOT_RUN,E3,,Category enum exists;no dues-type entity w/ freq+GL+eligible-payer rules
+EST-UAT-0117,M07,Generate monthly dues,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No batch assessment run exists
+EST-UAT-0118,M07,Generate annual dues,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No cycle-scoped assessment;no once-per-cycle guard
+EST-UAT-0119,M07,Dues rate by unit type,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No tariffs per unit type
+EST-UAT-0120,M07,Vacant unit discount,P1,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No occupancy-based discount rule
+EST-UAT-0121,M07,Effective-dated rate change,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No effective-dated tariff table
+EST-UAT-0122,M07,Custom levy one-off,P0,APPLICABLE,PARTIAL,service_dues.go:CreateInvoice,NOT_RUN,E3,,Ad-hoc single invoice only;no eligible-unit batch levy
+EST-UAT-0123,M07,One-off levy duplicate run,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No batch job to be idempotent
+EST-UAT-0124,M07,Dues penalty grace period,P0,APPLICABLE,MISSING,model_modules.go(penalty cat),NOT_RUN,E3,,penalty category exists;no auto-post/grace engine
+EST-UAT-0125,M07,Grace period boundary,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No penalty engine to bound
+EST-UAT-0126,M07,Dues waiver approval,P0,APPLICABLE,MISSING,estate_dues_invoices.status='waived',NOT_RUN,E3,,Status exists;no waiver request/approve path
+EST-UAT-0127,M07,Unauthorized waiver,P0,APPLICABLE,IMPLEMENTED,service_dues.go(no waive fn),BLOCKED,E3,,Vacuous:no waiver endpoint exists to abuse
+EST-UAT-0128,M07,Split unit liability,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No owner/tenant liability split
+EST-UAT-0129,M07,Partial dues payment,P0,APPLICABLE,MISSING,"service_dues.go:240;dues.ts:payInvoice",FAILED,E3,ESTB-D012,Both paths enforce amount==invoice;no residual tracking
+EST-UAT-0130,M07,Overpayment handling,P0,APPLICABLE,MISSING,service_dues.go:240,FAILED,E3,ESTB-D012,Overpay rejected;no credit/refund policy
+EST-UAT-0131,M07,Dues dispute,P1,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No dispute entity/status
+EST-UAT-0132,M07,Dues arrears aging,P0,APPLICABLE,PARTIAL,"admin.go:ListResidents arrears;estate-admin/dues/reconciliation",BLOCKED,E3,ESTB-D007,Per-resident arrears total only;no buckets;join bug fixed
+EST-UAT-0133,M07,Bulk import balances,P1,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No import path
+EST-UAT-0134,M07,Dues reminders,P1,APPLICABLE,PARTIAL,"service_extras.go:MarkOverdueInvoices;notify",NOT_RUN,E3,,Invoice-created notif only;no scheduled reminder keys
+EST-UAT-0135,M07,Dues statement,P0,APPLICABLE,MISSING,src/server/estate,NOT_RUN,E3,,No statement endpoint
+EST-UAT-0136,M07,Approved write-off,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No write-off journal path
+EST-UAT-0137,M07,Locked period,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No accounting-period entity
+EST-UAT-0138,M08,Register lease,P0,APPLICABLE,PARTIAL,"realtor_leases;realtorLease.api",NOT_RUN,E3,,Lease only via rental-application funnel;no direct create
+EST-UAT-0139,M08,Tenant lease acceptance,P0,APPLICABLE,IMPLEMENTED,migrations:realtor_sign_lease,PASSED,E3,,Signature+signed_at recorded;terms-version not snapshotted
+EST-UAT-0140,M08,Reject unsigned lease,P0,APPLICABLE,IMPLEMENTED,"realtor_sign_lease;realtor_pay_invoice",PASSED,E3,,No invoice until sign;no activation until verified pay
+EST-UAT-0141,M08,Lease overlaps,P0,APPLICABLE,MISSING,realtor_leases,NOT_RUN,E3,,No period-conflict check
+EST-UAT-0142,M08,Monthly rent invoices,P0,APPLICABLE,MISSING,realtor_sign_lease(single invoice),NOT_RUN,E3,,One invoice at signing;no recurring cycle
+EST-UAT-0143,M08,Annual rent invoice,P0,APPLICABLE,IMPLEMENTED,realtor_sign_lease lines,PASSED,E3,,Annual rent+caution+svc charge in one invoice
+EST-UAT-0144,M08,Rent proration on move in,P0,APPLICABLE,MISSING,realtor_leases,NOT_RUN,E3,,No proration formula
+EST-UAT-0145,M08,Rent due date and grace,P0,APPLICABLE,MISSING,realtor_invoices.due_date,NOT_RUN,E3,,due_date col only;no grace/late engine
+EST-UAT-0146,M08,Late fee ceiling,P0,APPLICABLE,MISSING,backend/internal/realtor,NOT_RUN,E3,,No late fee logic
+EST-UAT-0147,M08,Rent partial payment,P0,APPLICABLE,MISSING,realtor/invoices.ts(total_kobo),FAILED,E3,ESTB-D012,Full total_kobo required
+EST-UAT-0148,M08,Rent split payment,P1,APPLICABLE,MISSING,realtor_invoices,NOT_RUN,E3,,No multi-transaction allocation
+EST-UAT-0149,M08,Rent adjustment with approval,P0,APPLICABLE,MISSING,realtor_leases,NOT_RUN,E3,,No effective-dated rent change
+EST-UAT-0150,M08,Renew lease,P0,APPLICABLE,MISSING,realtor_leases,NOT_RUN,E3,,No renewal versioning
+EST-UAT-0151,M08,Expiry notification,P1,APPLICABLE,MISSING,realtor_leases,NOT_RUN,E3,,No reminder thresholds
+EST-UAT-0152,M08,Terminate lease early,P0,APPLICABLE,MISSING,realtor_leases.status='ended',NOT_RUN,E3,,Status exists;no termination flow/proration
+EST-UAT-0153,M08,Refund security deposit,P0,APPLICABLE,PARTIAL,"realtor/repository.go:ResolveEscrow;escrow_release.sql",BLOCKED,E3,,Inspection-gated all-or-nothing release;no partial deductions
+EST-UAT-0154,M08,Deposit exceeds deductions,P0,APPLICABLE,IMPLEMENTED,ResolveEscrow(fixed full amount),PASSED,E3,,Deduction amount not expressible;bounded by deposit
+EST-UAT-0155,M08,Owner changes mid-lease,P0,APPLICABLE,PARTIAL,"property_mgmt.go:RequestPropertyTransfer;ReviewPropertyTransfer",NOT_RUN,E3,,Transfer workflow exists;settlement beneficiary effective-dating absent
+EST-UAT-0156,M08,Resident rent privacy,P0,APPLICABLE,IMPLEMENTED,"RLS tenant policies;invoices.ts tenant_id check",PASSED,E3,,"Tenant-scoped RLS+BFF ownership checks"
+EST-UAT-0157,M08,Rent receipt download,P0,APPLICABLE,PARTIAL,"realtor_payments;realtor/admin payments view",NOT_RUN,E3,,Payment record exists;no tenant receipt endpoint
+EST-UAT-0158,M08,Rental arrears follow-up,P1,APPLICABLE,MISSING,backend/internal/realtor,NOT_RUN,E3,,No arrears list/reminders
+EST-UAT-0159,M08,Rent vs dues separation,P0,APPLICABLE,IMPLEMENTED,"realtor_* vs estate_dues_* tables+ledger refs",PASSED,E3,,Separate invoices/payments/escrow;no cross-allocation
+EST-UAT-0160,M09,Card dues payment success,P0,APPLICABLE,IMPLEMENTED,"paystackcheckout/service.go;service_dues.go:PayDuesPaystackFunded",PASSED,"E1,E4",,Verify-then-pay;one receipt+balanced journal
+EST-UAT-0161,M09,Transfer rent payment,P0,APPLICABLE,MISSING,realtor/invoices.ts:147(501),FAILED,E3,ESTB-D009,PAYSTACK channel refused;wallet only
+EST-UAT-0162,M09,Failed transaction,P0,APPLICABLE,IMPLEMENTED,paystackcheckout ErrChargeNotSuccessful,PASSED,E4,,"Intent stays pending;no receipt (test PaymentFailureRefunds)"
+EST-UAT-0163,M09,Pending payment,P0,APPLICABLE,IMPLEMENTED,paystackcheckout CheckStatus,PASSED,E4,,Pending until verified outcome
+EST-UAT-0164,M09,Webhook duplicate delivery,P0,APPLICABLE,IMPLEMENTED,"ClaimForProcessing+intent dedup;webhooks.go(platform)",PASSED,E4,,ConcurrentDeliveriesActOnce test;platform seam shared
+EST-UAT-0165,M09,Webhook forged signature,P0,APPLICABLE,PARTIAL,internal/webhooks(platform),BLOCKED,E3,ESTB-D010,HMAC verify is platform-owned;not lane-fixable
+EST-UAT-0166,M09,Out-of-order webhook,P0,APPLICABLE,IMPLEMENTED,paystackcheckout status machine,PASSED,E3,,Non-pending intents return current status;terminal not reversed
+EST-UAT-0167,M09,Mismatch currency or amount,P0,APPLICABLE,IMPLEMENTED,OnChargeSuccess:154 refundAndMark,PASSED,E4,,Mismatch auto-refunded+marked;test covers
+EST-UAT-0168,M09,Cross-user payment reference,P0,APPLICABLE,IMPLEMENTED,"intent binds payer;PayDues owner check",PASSED,E4,,ForeignIdempotencyKeyIsRejected+invoice owner scope
+EST-UAT-0169,M09,Gateway timeout retry,P0,APPLICABLE,IMPLEMENTED,PutIntent idempotent,PASSED,E4,,Same key→same intent
+EST-UAT-0170,M09,Double click pay button,P0,APPLICABLE,IMPLEMENTED,"PutIntent dedup+ClaimForProcessing",PASSED,E4,,One intent;one capture
+EST-UAT-0171,M09,Partial allocation,P0,APPLICABLE,MISSING,"dues.ts;service_dues.go",FAILED,E3,ESTB-D012,Exact-amount only
+EST-UAT-0172,M09,Mixed dues/rent allocation,P0,APPLICABLE,PARTIAL,"estate vs realtor payment paths",NOT_RUN,E3,,Separate ledgers;no combined checkout
+EST-UAT-0173,M09,Transaction fee visibility,P0,APPLICABLE,MISSING,dues/paystackcheckout,NOT_RUN,E3,,No fee computation/disclosure
+EST-UAT-0174,M09,Zero/negative amount rejected,P0,APPLICABLE,IMPLEMENTED,"CreateInvoice<=0;dues.ts:87;ledger validate",PASSED,"E2,E4",,Validated invoice+primitive level
+EST-UAT-0175,M09,Refund request,P0,APPLICABLE,MISSING,estate endpoints,NOT_RUN,E3,,No resident refund-request flow
+EST-UAT-0176,M09,Approved refund,P0,APPLICABLE,MISSING,paystackcheckout.refundAndMark(failure only),NOT_RUN,E3,,Refunds exist only on failure paths;no approval flow
+EST-UAT-0177,M09,Duplicate refund prevention,P0,APPLICABLE,PARTIAL,intent status early-return,NOT_RUN,E3,,One refund per intent by construction;unproven vs retries
+EST-UAT-0178,M09,Merchant estate settlement,P0,APPLICABLE,PARTIAL,"settlement standing acct;estate-admin recon",BLOCKED,E3,ESTB-D010,Payout batching is platform-owned
+EST-UAT-0179,M09,Vendor settlement,P0,APPLICABLE,IMPLEMENTED,"vendor.go:RequestPayout wallet credit",PASSED,E1,,Job-completed gate;idempotent;separate from rent escrow
+EST-UAT-0180,M09,Invalid payout destination,P0,APPLICABLE,PARTIAL,vendor bank_account(unused),NOT_RUN,E3,,Payouts are wallet credits;no bank-diversion path modeled
+EST-UAT-0181,M09,Failed payout retry,P0,APPLICABLE,IMPLEMENTED,RequestPayout replay idempotent,PASSED,E1,,Deterministic keys;ErrDuplicate tolerated
+EST-UAT-0182,M09,Reconciliation gap report,P0,APPLICABLE,PARTIAL,estate_admin_routes.go:DuesReconciliation,PASSED,E3,,Billed/collected/outstanding+variance;no per-exception listing
+EST-UAT-0183,M09,Daily cash ledger,P0,APPLICABLE,MISSING,finance.ts dashboard,NOT_RUN,E3,,Aggregates only;no open+receipts-refunds-disb close-out
+EST-UAT-0184,M09,Rounding and minor units,P0,APPLICABLE,IMPLEMENTED,BIGINT kobo throughout,PASSED,"E1,E4",,Integer minor units enforced in code+schema
+EST-UAT-0185,M09,Accounting reversal audit,P0,APPLICABLE,PARTIAL,"ResolveEscrow PostReversal;estate_audit_log",NOT_RUN,E3,,Escrow reversal+audit only;no general reversal flow
+EST-UAT-0186,M10,Schedule residents meeting,P0,APPLICABLE,IMPLEMENTED,"meetings.go:CreateMeeting;bff meetings route",PASSED,E1,ESTB-D008,BFF allows any resident;Go admin-only(inconsistent)
+EST-UAT-0187,M10,Schedule committee only,P0,APPLICABLE,MISSING,estate_meetings(no audience),NOT_RUN,E3,,No audience/segment field
+EST-UAT-0188,M10,Invite participants,P0,APPLICABLE,PARTIAL,"CreateMeeting notifyMembers broadcast",NOT_RUN,E3,,All-members notify;no invitee list
+EST-UAT-0189,M10,Accept/decline RSVP,P0,APPLICABLE,IMPLEMENTED,meeting_rsvps upsert+counts;BFF rsvp route,PASSED,E3,,"Unique per (meeting,user);valid responses"
+EST-UAT-0190,M10,Change date,P0,APPLICABLE,IMPLEMENTED,RescheduleMeeting+notify,PASSED,E1,,Admin;audited;members notified
+EST-UAT-0191,M10,Cancel meeting,P0,APPLICABLE,IMPLEMENTED,CancelMeeting FSM,PASSED,E1,,scheduled|live→cancelled;notify
+EST-UAT-0192,M10,Meeting timezone,P1,APPLICABLE,PARTIAL,timestamptz canonical,NOT_RUN,E3,,UTC storage correct;no tz UI policy
+EST-UAT-0193,M10,Agenda attachments,P1,APPLICABLE,PARTIAL,"meeting_documents+presign;docs restricted flag",NOT_RUN,E3,,Attach exists;participant-scoped read partial
+EST-UAT-0194,M10,Meeting attendance check in,P0,APPLICABLE,IMPLEMENTED,CheckInAttendee ON CONFLICT unique,PASSED,E1,,"Unique per (meeting,user);qr|manual"
+EST-UAT-0195,M10,Meeting quorum,P0,APPLICABLE,MISSING,estate_meetings,NOT_RUN,E3,,No quorum config/gate
+EST-UAT-0196,M10,Minute creation and approval,P0,APPLICABLE,IMPLEMENTED,"UploadMinutes upsert;ApproveMinutes",PASSED,E3,,Re-upload resets approval;approver+timestamp recorded
+EST-UAT-0197,M10,Action items,P1,APPLICABLE,PARTIAL,meeting_minutes.action_items JSONB,NOT_RUN,E3,,Stored only;no task link/owner notify
+EST-UAT-0198,M10,Follow-up overdue tasks,P1,APPLICABLE,MISSING,estate_tasks(unlinked),NOT_RUN,E3,,No meeting-action overdue engine
+EST-UAT-0199,M10,Unauthorized minutes edit,P0,APPLICABLE,IMPLEMENTED,"UploadMinutes admin-gated;BFF minutes read-only",PASSED,E3,,Residents cannot write minutes on either surface
+EST-UAT-0200,M10,Meeting export,P1,APPLICABLE,MISSING,estate meetings,NOT_RUN,E3,,No export endpoint
+EST-UAT-0201,M10,In-app/virtual link control,P0,APPLICABLE,IMPLEMENTED,"resident ctx gate on get/list;404 for foreign",PASSED,E3,,Nonmember gets 403/404;no per-invitee gate(0187)
+EST-UAT-0202,M11,Create draft election,P0,APPLICABLE,PARTIAL,"service.go:CreateElection(draft);BFF POST elections",NOT_RUN,E3,,Go drafts;BFF sets open immediately(no approval step)
+EST-UAT-0203,M11,Election rule approval,P0,APPLICABLE,PARTIAL,SetEligibilityRules(admin),NOT_RUN,E3,,Rules settable;no publish/lock approval workflow
+EST-UAT-0204,M11,Build electoral roll,P0,APPLICABLE,PARTIAL,"election_eligibility_rules;resident count",NOT_RUN,E3,,Rules-based gate;no roll entity/freeze/versioning
+EST-UAT-0205,M11,Multiple-unit owner eligibility,P0,APPLICABLE,MISSING,"UNIQUE(election_id,voter_id)",NOT_RUN,E3,,One-person-one-vote only;no per-unit weighting
+EST-UAT-0206,M11,Tenant vs owner eligibility,P0,APPLICABLE,IMPLEMENTED,"checkVoteEligibility resident_types;Go evaluateEligibility",PASSED,"E4,E5",ESTB-D001,BFF bypass FIXED this lane
+EST-UAT-0207,M11,Past resident eligibility,P0,APPLICABLE,IMPLEMENTED,"getResidentContext banned/deleted filters",PASSED,E4,ESTB-D002,Banned/deleted members now fail closed on BFF
+EST-UAT-0208,M11,Electoral roll challenge,P1,APPLICABLE,MISSING,election tables,NOT_RUN,E3,,No challenge workflow
+EST-UAT-0209,M11,Candidate nomination,P0,APPLICABLE,MISSING,"CreateElection candidates-at-create",NOT_RUN,E3,,No nomination/support flow
+EST-UAT-0210,M11,Invalid nomination,P0,APPLICABLE,MISSING,election_candidates,NOT_RUN,E3,,No nomination entity to reject
+EST-UAT-0211,M11,Candidate acceptance,P0,APPLICABLE,MISSING,election_candidates,NOT_RUN,E3,,No accept/vet lifecycle
+EST-UAT-0212,M11,Election timeline boundaries,P0,APPLICABLE,IMPLEMENTED,"vote route status+window;Go CastVote window",PASSED,E3,,Server-side window on both paths
+EST-UAT-0213,M11,Cast valid secret ballot,P0,APPLICABLE,PARTIAL,"vote route;election_votes schema",FAILED,E4,ESTB-D003,Counts once+sealed receipt;schema still links voter→choice
+EST-UAT-0214,M11,Duplicate vote attempt,P0,APPLICABLE,IMPLEMENTED,23505→409 both paths,PASSED,E4,,"One vote per (election,voter)"
+EST-UAT-0215,M11,Concurrent double vote,P0,APPLICABLE,IMPLEMENTED,"UNIQUE constraint+Redlock(Go)",PASSED,E1,,Atomic uniqueness at DB
+EST-UAT-0216,M11,Voting receipt anonymity,P0,APPLICABLE,PARTIAL,"ballot route sealed;mobile receipt",FAILED,E4,ESTB-D003,API sealed now;schema link remains(pending migration)
+EST-UAT-0217,M11,Ballot modification,P0,APPLICABLE,IMPLEMENTED,no update path exists,PASSED,E3,,Immutable by absence of mutation API
+EST-UAT-0218,M11,Unauthorized tally access,P0,APPLICABLE,IMPLEMENTED,"mapElection withholds pre-publish;Go results-gate",PASSED,E4,ESTB-D006,Live-tally leak FIXED this lane
+EST-UAT-0219,M11,Revoke vote eligibility mid-poll,P0,APPLICABLE,PARTIAL,eligibility rules mutable,NOT_RUN,E3,,No frozen-roll/exception procedure
+EST-UAT-0220,M11,One-choice poll validation,P0,APPLICABLE,IMPLEMENTED,"candidateId required+election-scoped",PASSED,E4,,Zero/invalid candidate rejected
+EST-UAT-0221,M11,Abstain/blank ballot,P1,APPLICABLE,MISSING,vote route requires candidateId,NOT_RUN,E3,,No abstain concept
+EST-UAT-0222,M11,Ranked/multiple-choice ballot,P1,APPLICABLE,MISSING,single-position schema,NOT_RUN,E3,,Documented schema limitation
+EST-UAT-0223,M11,Election quorum/turnout,P0,APPLICABLE,MISSING,elections table,NOT_RUN,E3,,No quorum config
+EST-UAT-0224,M11,Tally accuracy,P0,APPLICABLE,IMPLEMENTED,candidate LEFT JOIN vote count,PASSED,E1,,Counts reconcile;invalid impossible
+EST-UAT-0225,M11,Tie-break rule,P0,APPLICABLE,MISSING,results query ORDER BY votes,NOT_RUN,E3,,No configured tie-break
+EST-UAT-0226,M11,Publish certified results,P0,APPLICABLE,IMPLEMENTED,"publish route→tallied;results only then",PASSED,E4,,Admin-only;post-close;tally released
+EST-UAT-0227,M11,Election complaint or recount,P0,APPLICABLE,MISSING,estate elections,NOT_RUN,E3,,No challenge/recount entity
+EST-UAT-0228,M11,Election audit export,P0,APPLICABLE,PARTIAL,estate_admin ElectionAudit,PASSED,E3,ESTB-D003,Aggregates only(no per-voter choice);export missing
+EST-UAT-0229,M11,Election cancellation,P0,APPLICABLE,MISSING,elections status,NOT_RUN,E3,,No cancel endpoint
+EST-UAT-0230,M11,Informal estate poll,P1,APPLICABLE,MISSING,estate elections,NOT_RUN,E3,,No nonbinding poll type
+EST-UAT-0231,M11,Result cross-estate isolation,P0,APPLICABLE,IMPLEMENTED,"estate_id scoping on all reads;isolation_test",PASSED,E1,,Cross-estate reads 404 everywhere

@@ -99,6 +99,11 @@ export async function payInvoice(input: PayInvoiceInput): Promise<PayInvoiceResu
     if ((priorPayment as any).user_id !== userId) {
       throw new ApiError('Idempotency-Key conflicts with an existing payment.', 409);
     }
+    // Same user, different invoice: a foreign-key replay must not return the
+    // other invoice's receipt as though this one were settled.
+    if ((priorPayment as any).invoice_id !== invoiceId) {
+      throw new ApiError('Idempotency-Key conflicts with a payment for a different invoice.', 409);
+    }
     const { data: invoiceRow } = await supabase
       .from('realtor_invoices')
       .select(INVOICE_COLS)
@@ -147,9 +152,33 @@ export async function payInvoice(input: PayInvoiceInput): Promise<PayInvoiceResu
     throw new ApiError('This payment method is not yet supported for realtor invoices.', 501);
   }
 
-  // Money mutation: debit the tenant's wallet via the shared ledger primitive.
-  // Fail-closed tier check + balanced double-entry posting happen inside.
-  const debitResult = await debitWallet(userId, {
+  // Atomic claim before any money moves: pending|failed -> processing. The
+  // status check above is advisory only — two requests with DIFFERENT
+  // Idempotency-Keys could both pass it and double-debit the wallet (the RPC
+  // FOR UPDATE serializes finalization but has no unpaid-status guard, so it
+  // would happily insert a second 'paid' receipt).
+  const { data: claimed, error: claimErr } = await supabase
+    .from('realtor_invoices')
+    .update({ status: 'processing' })
+    .eq('id', invoiceId)
+    .in('status', ['pending', 'failed'])
+    .select('id')
+    .maybeSingle();
+  if (claimErr) {
+    console.error('[realtor/invoices] invoice claim failed:', claimErr);
+    throw new ApiError('Failed to claim invoice', 500);
+  }
+  if (!claimed) {
+    throw new ApiError('Payment already in progress for this invoice. Please retry.', 409);
+  }
+
+  const priorStatus: string = (invoice as any).status;
+  let debitResult: Awaited<ReturnType<typeof debitWallet>>;
+  let rpcResult: any;
+  try {
+    // Money mutation: debit the tenant's wallet via the shared ledger primitive.
+    // Fail-closed tier check + balanced double-entry posting happen inside.
+    debitResult = await debitWallet(userId, {
     amountKobo,
     reference: idempotencyKey,
     idempotencyKey,
@@ -163,26 +192,39 @@ export async function payInvoice(input: PayInvoiceInput): Promise<PayInvoiceResu
     },
   });
 
-  // Only NOW — after a confirmed (new or already-processed) debit — finalize
-  // via the hardened SQL RPC. Use the service-role client (SECURITY DEFINER
-  // RPC is now GRANTed to service_role only) and pass p_user_id explicitly
-  // since there is no auth.uid() session on this server-side call.
-  const { data: rpcResult, error: rpcErr } = await supabase.rpc('realtor_pay_invoice', {
-    p_invoice_id: invoiceId,
-    p_channel: channel,
-    p_idempotency_key: idempotencyKey,
-    p_user_id: userId,
-  });
+    // Only NOW — after a confirmed (new or already-processed) debit — finalize
+    // via the hardened SQL RPC. Use the service-role client (SECURITY DEFINER
+    // RPC is now GRANTed to service_role only) and pass p_user_id explicitly
+    // since there is no auth.uid() session on this server-side call.
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('realtor_pay_invoice', {
+      p_invoice_id: invoiceId,
+      p_channel: channel,
+      p_idempotency_key: idempotencyKey,
+      p_user_id: userId,
+    });
 
-  if (rpcErr) {
-    // The wallet has already been debited (or was already debited on a prior
-    // attempt) — a finalization failure here must be surfaced loudly for
-    // reconciliation, never swallowed.
-    console.error('[realtor/invoices] realtor_pay_invoice failed after wallet debit:', rpcErr);
-    throw new ApiError(
-      `Wallet debited but realtor invoice finalization failed (reconcile invoice ${invoiceId})`,
-      500,
-    );
+    if (rpcErr) {
+      // The wallet has already been debited (or was already debited on a prior
+      // attempt) — a finalization failure here must be surfaced loudly for
+      // reconciliation, never swallowed.
+      console.error('[realtor/invoices] realtor_pay_invoice failed after wallet debit:', rpcErr);
+      throw new ApiError(
+        `Wallet debited but realtor invoice finalization failed (reconcile invoice ${invoiceId})`,
+        500,
+      );
+    }
+    rpcResult = rpcData;
+  } catch (err) {
+    // Release the claim so a retry can settle (the wallet debit is idempotent
+    // on the same Idempotency-Key, so a retry never double-charges). If the
+    // invoice already reached 'paid' the RPC committed — leave it.
+    const { error: revertErr } = await supabase
+      .from('realtor_invoices')
+      .update({ status: priorStatus })
+      .eq('id', invoiceId)
+      .eq('status', 'processing');
+    if (revertErr) console.error('[realtor/invoices] invoice claim revert failed:', revertErr);
+    throw err;
   }
 
   const { data: paymentRow } = await supabase

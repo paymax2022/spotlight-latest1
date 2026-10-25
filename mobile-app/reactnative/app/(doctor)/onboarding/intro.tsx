@@ -43,7 +43,11 @@ export default function OnboardingIntroScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <TeleHeader title="Welcome" right={<Pressable onPress={finish} accessibilityRole="button"><Text style={styles.skip}>Skip</Text></Pressable>} />
+      <TeleHeader
+        title="Welcome"
+        showBack={false}
+        right={<Pressable onPress={finish} accessibilityRole="button"><Text style={styles.skip}>Skip</Text></Pressable>}
+      />
 
       {isLoading && !slides ? (
         <StateView variant="loading" label="Loading" />

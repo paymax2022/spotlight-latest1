@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
-    const ctx = await getResidentContext(supabase, user.id);
+    const ctx = await getResidentContext(supabase, user.id, { forWrite: true });
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
     if (ctx.role !== 'estate_admin') throw new ApiError('Only an estate admin can create elections', 403);
 

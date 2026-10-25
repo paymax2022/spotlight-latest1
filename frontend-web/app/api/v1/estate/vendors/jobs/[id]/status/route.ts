@@ -20,7 +20,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
-    const ctx = await getResidentContext(supabase, user.id);
+    const ctx = await getResidentContext(supabase, user.id, { forWrite: true });
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
     // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
     if (!UUID_RE.test(params.id)) throw new ApiError('Invalid job ID', 400);
@@ -29,9 +29,21 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const status = STATUSES.includes(body?.status) ? body.status : null;
     if (!status) throw new ApiError('A valid status is required', 400);
 
-    const { data: existing, error: getErr } = await supabase.from('vendor_jobs').select('id, estate_id').eq('id', params.id).maybeSingle();
+    const { data: existing, error: getErr } = await supabase.from('vendor_jobs').select('id, estate_id, vendor_id').eq('id', params.id).maybeSingle();
     if (getErr) throw getErr;
     if (!existing || (existing as any).estate_id !== ctx.estateId) throw new ApiError('Job not found', 404);
+
+    // EST-UAT-0285: only the estate admin or the vendor this job is assigned to
+    // may move its lifecycle. Previously any resident could flip any job.
+    if (ctx.role !== 'estate_admin') {
+      const { data: vendor, error: vErr } = await supabase
+        .from('estate_vendors').select('id').eq('estate_id', ctx.estateId).eq('user_id', user.id)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (vErr) throw vErr;
+      if (!vendor || (vendor as any).id !== (existing as any).vendor_id) {
+        throw new ApiError('Only the assigned vendor or estate admin can update this job', 403);
+      }
+    }
 
     const { data: row, error } = await supabase.from('vendor_jobs').update({ status }).eq('id', params.id).select(COLS).single();
     if (error) throw error;

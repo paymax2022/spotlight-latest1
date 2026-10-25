@@ -115,28 +115,43 @@ const EvidenceWindow = 72 * time.Hour
 
 // Listing mirrors mkt_listings.
 type Listing struct {
-	ID                   string         `json:"id"`
-	MarketID             string         `json:"market_id"`
-	SellerID             string         `json:"seller_id"`
-	CategoryID           string         `json:"category_id"`
-	Title                string         `json:"title"`
-	Description          string         `json:"description"`
-	PriceKobo            int64          `json:"price_kobo"`
-	Currency             string         `json:"currency"`
-	Condition            string         `json:"condition"`
-	Attrs                map[string]any `json:"attrs"`
-	Status               ListingStatus  `json:"status"`
-	QualityScore         float64        `json:"quality_score"`
-	EscrowEligible       bool           `json:"escrow_eligible"`
-	State                string         `json:"state"`
-	LGA                  string         `json:"lga"`
-	ModerationReasonCode *string        `json:"moderation_reason_code,omitempty"`
-	ViewCount            int64          `json:"view_count"`
-	SaveCount            int64          `json:"save_count"`
-	CreatedAt            time.Time      `json:"created_at"`
-	UpdatedAt            time.Time      `json:"updated_at"`
-	ExpiresAt            time.Time      `json:"expires_at"`
-	SoldAt               *time.Time     `json:"sold_at,omitempty"`
+	ID             string         `json:"id"`
+	MarketID       string         `json:"market_id"`
+	SellerID       string         `json:"seller_id"`
+	CategoryID     string         `json:"category_id"`
+	Title          string         `json:"title"`
+	Description    string         `json:"description"`
+	PriceKobo      int64          `json:"price_kobo"`
+	Currency       string         `json:"currency"`
+	Condition      string         `json:"condition"`
+	Attrs          map[string]any `json:"attrs"`
+	Status         ListingStatus  `json:"status"`
+	QualityScore   float64        `json:"quality_score"`
+	EscrowEligible bool           `json:"escrow_eligible"`
+	State          string         `json:"state"`
+	LGA            string         `json:"lga"`
+	// Lat/Lng echo the mkt_listings.geo point (WGS84) the seller recorded, when
+	// they recorded one. Deliberately NOT part of what a buyer's search gets —
+	// see DistanceKm — these are filled on the create echo (the seller's own
+	// numbers) and on the admin moderation read, which is where a reviewer can
+	// see that a listing has no location at all. Other listing reads leave them
+	// nil because listingCols cannot carry them (it is prefixCols-fed and must
+	// stay bare column names).
+	Lat *float64 `json:"lat,omitempty"`
+	Lng *float64 `json:"lng,omitempty"`
+	// DistanceKm is what a buyer's search gets instead of the seller's position:
+	// the great-circle distance from the buyer, in kilometres, measured by the
+	// server (PostGIS in the fallback, a painless arcDistance script in
+	// Elasticsearch) whenever the request carried the buyer's own coordinates.
+	// Never a stored column.
+	DistanceKm           *float64   `json:"distance_km,omitempty"`
+	ModerationReasonCode *string    `json:"moderation_reason_code,omitempty"`
+	ViewCount            int64      `json:"view_count"`
+	SaveCount            int64      `json:"save_count"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	ExpiresAt            time.Time  `json:"expires_at"`
+	SoldAt               *time.Time `json:"sold_at,omitempty"`
 	// ThumbURL is a short-lived presigned GET for the listing's first photo, or
 	// "" when it has none. The mobile ListingCard reads `thumbUrl` and has always
 	// expected it; nothing ever populated it, which is why every card fell back to
@@ -301,15 +316,42 @@ type BoostDailyRate struct {
 // BoostQuote is the authoritative, server-computed price for a would-be boost
 // purchase — returned by both GET /boosts/quote (preview) and internally by
 // PurchaseBoost, from the SAME ComputeBoostQuote call, so the two can never
-// price the same request differently.
+// price the same request differently. Price is always duration_days × the
+// admin's ₦/day rate; DailyRateKobo travels with the quote so a client can show
+// the buyer the arithmetic ("7 days × ₦100 = ₦700") instead of a bare total.
 type BoostQuote struct {
-	Mode         string    `json:"mode"` // "package" | "custom"
-	Tier         string    `json:"tier,omitempty"`
-	DurationDays int       `json:"duration_days"`
-	PriceKobo    int64     `json:"price_kobo"`
-	Weight       float64   `json:"weight"`
-	StartsAt     time.Time `json:"starts_at"`
-	EndsAt       time.Time `json:"ends_at"`
+	DurationDays  int       `json:"duration_days"`
+	DailyRateKobo int64     `json:"daily_rate_kobo"`
+	PriceKobo     int64     `json:"price_kobo"`
+	Weight        float64   `json:"weight"`
+	StartsAt      time.Time `json:"starts_at"`
+	EndsAt        time.Time `json:"ends_at"`
+}
+
+// BoostPricing is the public boost price catalog (GET /boosts/pricing): one
+// number — the admin's ₦/day rate — plus the durations the app offers and the
+// bounds a custom range must respect. Repricing is a single admin edit; every
+// preset and custom duration follows it because all of them are priced
+// duration × rate.
+type BoostPricing struct {
+	DailyRateKobo      int64 `json:"daily_rate_kobo"`
+	PresetDurationDays []int `json:"preset_duration_days"`
+	MinDurationDays    int   `json:"min_duration_days"`
+	MaxDurationDays    int   `json:"max_duration_days"`
+}
+
+// BoostedListing is one row of the promoted section (GET /marketplace/boosted):
+// the listing exactly as a buyer's search would return it, plus what the boost
+// currently means. BoostRemainingKobo is the UNSPENT value of the seller's live
+// boosts on this listing — the same pro-rating CancelBoost refunds by — and is
+// what orders the section: the most money left promotes hardest.
+type BoostedListing struct {
+	Listing
+	// Boosted is the flag the buyer's listing card renders its "Boosted" badge
+	// from. Always true here — this type only exists for the promoted section.
+	Boosted            bool      `json:"boosted"`
+	BoostRemainingKobo int64     `json:"boost_remaining_kobo"`
+	BoostEndsAt        time.Time `json:"boost_ends_at"`
 }
 
 // Offer mirrors mkt_offers. RESPONSE JSON is camelCase, which is harmless: the
@@ -460,6 +502,11 @@ type CreateListingInput struct {
 	State          string         `json:"state"`
 	LGA            string         `json:"lga"`
 	EscrowEligible *bool          `json:"escrow_eligible,omitempty"`
+	// Lat/Lng are the seller's chosen meetup position (device GPS, or a pin on
+	// the map). Optional: a listing without them is still sellable, it simply
+	// never appears in proximity results. Both must be present to be stored.
+	Lat *float64 `json:"lat,omitempty"`
+	Lng *float64 `json:"lng,omitempty"`
 }
 
 // UpdateListingInput is the mutable subset of a listing.
@@ -471,13 +518,14 @@ type UpdateListingInput struct {
 }
 
 // CreateBoostInput is the purchase-boost request body (§2.4). Exactly ONE of
-// Tier (a preset package) or EndsAt (a custom date-range boost, priced by the
-// admin-set ₦/day rate) is expected — ComputeBoostQuote is the single place
-// that resolves and validates which.
+// DurationDays (a whole-day boost starting now) or EndsAt (a boost ending at a
+// chosen moment, billed in whole days rounded up) is expected — ComputeBoostQuote
+// is the single place that resolves and validates which. There is no price in
+// the body: the server prices it from the admin's ₦/day rate.
 type CreateBoostInput struct {
-	ListingID string     `json:"listing_id"`
-	Tier      string     `json:"tier,omitempty"`
-	EndsAt    *time.Time `json:"ends_at,omitempty"`
+	ListingID    string     `json:"listing_id"`
+	DurationDays int        `json:"duration_days,omitempty"`
+	EndsAt       *time.Time `json:"ends_at,omitempty"`
 }
 
 // DecideDisputeInput is the admin dispute-decision body (§6.3).

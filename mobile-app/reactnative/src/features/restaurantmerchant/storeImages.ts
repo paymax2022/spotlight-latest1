@@ -1,5 +1,7 @@
-// ── Store logo / banner images — pure rules ──────────────────────────────────
-// What a store image may be, and how a picked photo gets the file name the server needs.
+// ── Store pictures — pure rules ──────────────────────────────────────────────
+// What an uploaded image may be, and how a picked photo gets the file name the server
+// needs. Kinds: the storefront's logo and banner, and a menu item's dish photo — all three
+// ride the same presign rail (backend/internal/restaurant/store_images.go).
 // Kept free of react-native / expo imports so it runs under `node --test`, and kept in
 // step with the Go side (backend/internal/restaurant/store_images.go,
 // storeImageContentTypeByExt): the backend only signs an upload whose Content-Type
@@ -7,7 +9,7 @@
 // taken from the picker's reported mime type. SVG is deliberately absent — it can carry
 // script, and these images are shown to customers.
 
-export type StoreImageKind = 'logo' | 'banner';
+export type StoreImageKind = 'logo' | 'banner' | 'menu';
 
 const CONTENT_TYPE_BY_EXT: Record<string, string> = {
   png: 'image/png',

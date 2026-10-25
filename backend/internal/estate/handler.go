@@ -16,7 +16,10 @@ import (
 	"spotlight/backend/internal/platform/r2"
 )
 
-const keyError = "error"
+const (
+	keyError = "error"
+	keyData  = "data"
+)
 
 // isMembershipErr reports whether err is an estate-membership/authorization
 // failure from assertResident/assertEstateAdmin/assertRoles. Those errors
@@ -48,6 +51,7 @@ type Handler struct {
 	svc           *Service
 	presigner     *r2.Presigner // optional; nil/unconfigured disables presigned uploads
 	presignBucket string
+	can           PermissionChecker // optional; platform RBAC for the import routes
 }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
@@ -496,7 +500,7 @@ func (h *Handler) CreateAccessCode(c *gin.Context) {
 
 func (h *Handler) ListAccessCodes(c *gin.Context) {
 	userID := ginutil.UserID(c)
-	codes, err := h.svc.ListAccessCodes(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
+	codes, err := h.svc.ListAccessCodes(c.Request.Context(), c.Param("id"), userID, c.Query(keyStatus))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
@@ -520,7 +524,7 @@ func (h *Handler) RevokeCode(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "revoked"})
+	c.JSON(http.StatusOK, gin.H{keyStatus: "revoked"})
 }
 
 func (h *Handler) ExtendCode(c *gin.Context) {
@@ -619,6 +623,9 @@ func (h *Handler) AddHouseholdMember(c *gin.Context) {
 func (h *Handler) DeleteHouseholdMember(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.DeleteHouseholdMember(c.Request.Context(), c.Param("id"), userID, c.Param("mid")); err != nil {
+		if writeIfLifecycleBlocked(c, err) {
+			return
+		}
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
@@ -663,7 +670,7 @@ func (h *Handler) UpdateStaffStatus(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": body.Status})
+	c.JSON(http.StatusOK, gin.H{keyStatus: body.Status})
 }
 
 func (h *Handler) ListVehicles(c *gin.Context) {
@@ -744,6 +751,9 @@ func (h *Handler) JoinWithInviteCode(c *gin.Context) {
 	}
 	r, err := h.svc.JoinWithInviteCode(c.Request.Context(), userID, req.Code)
 	if err != nil {
+		if writeIfLifecycleBlocked(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
@@ -774,7 +784,7 @@ func (h *Handler) GetMyJoinRequest(c *gin.Context) {
 
 func (h *Handler) ListJoinRequests(c *gin.Context) {
 	adminID := ginutil.UserID(c)
-	status := c.Query("status")
+	status := c.Query(keyStatus)
 	reqs, err := h.svc.ListJoinRequests(c.Request.Context(), c.Param("id"), adminID, status)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
@@ -984,7 +994,7 @@ func (h *Handler) RequestPropertyTransfer(c *gin.Context) {
 }
 
 func (h *Handler) ListTransferRequests(c *gin.Context) {
-	rs, err := h.svc.ListTransferRequests(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Query("status"))
+	rs, err := h.svc.ListTransferRequests(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Query(keyStatus))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
@@ -1084,7 +1094,7 @@ func (h *Handler) StartMeeting(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "live"})
+	c.JSON(http.StatusOK, gin.H{keyStatus: "live"})
 }
 
 func (h *Handler) EndMeeting(c *gin.Context) {
@@ -1092,7 +1102,7 @@ func (h *Handler) EndMeeting(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "ended"})
+	c.JSON(http.StatusOK, gin.H{keyStatus: "ended"})
 }
 
 func (h *Handler) CancelMeeting(c *gin.Context) {
@@ -1100,7 +1110,7 @@ func (h *Handler) CancelMeeting(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
+	c.JSON(http.StatusOK, gin.H{keyStatus: "cancelled"})
 }
 
 func (h *Handler) RescheduleMeeting(c *gin.Context) {
@@ -1205,6 +1215,9 @@ func (h *Handler) UpdateMemberSettings(c *gin.Context) {
 
 func (h *Handler) DeleteAccount(c *gin.Context) {
 	if err := h.svc.SoftDeleteAccount(c.Request.Context(), c.Param("id"), ginutil.UserID(c)); err != nil {
+		if writeIfLifecycleBlocked(c, err) {
+			return
+		}
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
@@ -1244,7 +1257,7 @@ func (h *Handler) GetVendorEarnings(c *gin.Context) {
 }
 
 func (h *Handler) ListVendorJobs(c *gin.Context) {
-	js, err := h.svc.GetAssignedJobs(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Query("status"))
+	js, err := h.svc.GetAssignedJobs(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Query(keyStatus))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
@@ -1276,8 +1289,19 @@ func (h *Handler) vendorJobAction(c *gin.Context, fn func(ctx context.Context, e
 	c.JSON(http.StatusOK, j)
 }
 
-func (h *Handler) AcceptVendorJob(c *gin.Context)   { h.vendorJobAction(c, h.svc.AcceptJob) }
-func (h *Handler) RejectVendorJob(c *gin.Context)   { h.vendorJobAction(c, h.svc.RejectJob) }
+func (h *Handler) AcceptVendorJob(c *gin.Context) { h.vendorJobAction(c, h.svc.AcceptJob) }
+func (h *Handler) RejectVendorJob(c *gin.Context) {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&body) // reason is optional; an empty body is a plain decline
+	j, err := h.svc.RejectJobWithReason(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("jid"), body.Reason)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, j)
+}
 func (h *Handler) CheckInVendorJob(c *gin.Context)  { h.vendorJobAction(c, h.svc.CheckInAtGate) }
 func (h *Handler) StartVendorJob(c *gin.Context)    { h.vendorJobAction(c, h.svc.StartJob) }
 func (h *Handler) CompleteVendorJob(c *gin.Context) { h.vendorJobAction(c, h.svc.MarkJobComplete) }
@@ -1339,6 +1363,8 @@ func (h *Handler) RequestVendorPayout(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		case errors.Is(err, ErrLedgerUnavailable):
 			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
+		case errors.Is(err, ErrDualControlRequired):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		}
@@ -1371,6 +1397,9 @@ func (h *Handler) BanResident(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&body)
 	if err := h.svc.BanResident(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("uid"), body.Reason); err != nil {
+		if writePendingApproval(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}

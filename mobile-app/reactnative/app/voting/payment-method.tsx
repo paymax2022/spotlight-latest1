@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, ShieldCheck, Lock, Wallet, CreditCard } from 'lucide-react-native';
+import { ArrowLeft, ShieldCheck, Lock, Wallet, CreditCard, AlertCircle } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -18,7 +18,7 @@ import { getPaidVotingAvailability } from '@/features/voting/utils/paidVoting';
 import { formatAmount } from '@/features/voting/utils/voteFormatters';
 import type { VotePaidInitiateResult } from '@/features/voting/types/voting.types';
 import { useAuthStore } from '@/store/authStore';
-import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function PaymentMethodScreen() {
@@ -26,6 +26,12 @@ export default function PaymentMethodScreen() {
     useLocalSearchParams<{ contestantId: string; contestId: string; votes: string; amount: string; packageId: string }>();
   const initiate = useInitiatePaidVote();
   const checkout = usePurchasePayment<VotePaidInitiateResult>();
+  // Card rail: a DIRECT Paystack charge for the package, not a wallet top-up.
+  const paystackCheckout = useGatewayCheckout();
+  const [cardError, setCardError] = useState<string | null>(null);
+  useEffect(() => {
+    if (paystackCheckout.error) setCardError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
   const user = useAuthStore((s) => s.user);
   const { data: contest } = useContestDetails(contestId ?? '');
   const { data: packages } = useVotePackages(contestId);
@@ -60,33 +66,59 @@ export default function PaymentMethodScreen() {
     router.push(`/voting/payment-processing?${params}`);
   };
 
+  // One initiate call, told which rail is paying. `email` is the address typed at
+  // checkout after a server asked for one; otherwise the account email.
+  const initiateVote = (paymentMethod: 'WALLET' | 'CARD', email?: string) =>
+    initiate.mutateAsync({
+      contestantId: contestantId ?? '',
+      contestId: contestId ?? '',
+      votes: totalVotes,
+      amount: totalAmount,
+      packageId: packageId || undefined,
+      paymentMethod,
+      voterEmail: email ?? user?.email ?? '',
+      voterName:  user?.fullName ?? '',
+    });
+
   const handlePay = () => {
     if (votingClosed) return;
-    // on the Paystack gateway. Either way the votes are credited on confirmation.
+    setCardError(null);
     checkout.start({
       amountKobo: totalAmount,
       title: `${totalVotes} votes`,
       domain: 'vote_purchase',
-      // BOTH rails spend the wallet. The card rail does not charge the card for
-      // this purchase: it opens a wallet TOP-UP, waits for the webhook to credit
-      // it, and only then calls charge() — so by the time we get here the money
-      // is already in the wallet (same shape as ADR-041's card rail).
-      // This used to pass 'CARD', which opened a SECOND Paystack transaction that
-      // nobody ever paid — no authorizationUrl is opened anywhere in the app — and
-      // then sent the voter to payment-processing to poll it. Paystack reported it
-      // answered 400 "This payment was not successful". The voter had paid, their
-      // wallet was funded, and they got no votes.
-      charge: () => initiate.mutateAsync({
-        contestantId: contestantId ?? '',
-        contestId: contestId ?? '',
-        votes: totalVotes,
-        amount: totalAmount,
-        packageId: packageId || undefined,
-        paymentMethod: 'WALLET',
-        voterEmail: user?.email ?? '',
-        voterName:  user?.fullName ?? '',
-      }),
+      email: user?.email,
+      // Wallet rail: debit the wallet and credit the votes in the same call.
+      charge: () => initiateVote('WALLET'),
       onPaid: goToProcessing,
+      // Card rail: /api/votes/paid/initiate creates the pending transaction and a
+      // Paystack charge for the exact package price; this resumes that charge in
+      // the in-app SDK. The money buys votes directly — it never becomes a wallet
+      // top-up, so there is no second transaction to pay and no wallet balance to
+      // wait on. Card-funded votes never touch the wallet ledger, which is why
+      // this is wired through onCard (and skips the KYC spend pre-check).
+      onCard: async () => {
+        await paystackCheckout.start({
+          domain: 'vote_purchase',
+          email: user?.email,
+          initialize: async ({ email }) => {
+            const result = await initiateVote('CARD', email);
+            if (!result.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+            return {
+              authorizationUrl: result.authorizationUrl,
+              reference: result.reference,
+              transactionId: result.transactionId,
+            };
+          },
+          // The SDK callback is not proof of payment — hand off to the processing
+          // screen, which verifies against the server before crediting votes.
+          onResolved: (res) => goToProcessing({
+            transactionId: res.transactionId ?? '',
+            reference: res.reference,
+            status: 'PROCESSING',
+          }),
+        });
+      },
     });
   };
 
@@ -129,11 +161,18 @@ export default function PaymentMethodScreen() {
         </View>
 
         {votingClosed && (
-          <View style={styles.closedBanner}>
+          <View style={styles.alertBanner}>
             <Lock size={16} color={Colors.error} strokeWidth={2} />
-            <Text style={styles.closedText}>
+            <Text style={styles.alertText}>
               {votingWindow.message ?? 'No vote packages are on sale for this contest yet.'} Payments are unavailable.
             </Text>
+          </View>
+        )}
+
+        {cardError && (
+          <View style={styles.alertBanner}>
+            <AlertCircle size={16} color={Colors.error} strokeWidth={2} />
+            <Text style={styles.alertText}>{cardError}</Text>
           </View>
         )}
 
@@ -152,8 +191,10 @@ export default function PaymentMethodScreen() {
           disabled={votingClosed}
         />
       </View>
-      {/* Two-option payment modal (wallet / card-transfer via Paystack). */}
+      {/* Two-option payment modal (wallet / direct card-transfer via Paystack). */}
       <PaymentSheet controller={checkout} />
+      {/* Hosts the in-app Paystack checkout for the card rail on native. */}
+      <paystackCheckout.Sheet />
     </SafeAreaView>
   );
 }
@@ -179,7 +220,7 @@ const styles = StyleSheet.create({
   methodHintNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   secureRow:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   secureText:   { ...Typography.labelSm, color: Colors.onSurfaceVariant, flex: 1 },
-  closedBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.errorContainer, borderRadius: Radius.lg, padding: Spacing.md },
-  closedText:   { ...Typography.labelSm, color: Colors.error, flex: 1, lineHeight: 18 },
+  alertBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.errorContainer, borderRadius: Radius.lg, padding: Spacing.md },
+  alertText:   { ...Typography.labelSm, color: Colors.error, flex: 1, lineHeight: 18 },
   footer:       { position: 'absolute', bottom: 0, left: 0, right: 0, padding: Spacing.containerMargin, paddingBottom: Platform.OS === 'ios' ? 34 : Spacing.lg, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh },
 });

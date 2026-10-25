@@ -142,7 +142,7 @@ export default function DepositScreen() {
       <SafeAreaView edges={['bottom']} style={styles.footer}>
         <PrimaryButton
           label="I've sent the deposit"
-          onPress={() => router.push({ pathname: '/crypto/deposit/pending', params: { symbol: selected.symbol, networkName: activeNetwork.name, confirmations: String(activeNetwork.confirmations) } })}
+          onPress={() => router.push({ pathname: '/crypto/deposit/pending', params: { symbol: selected.symbol, networkName: activeNetwork.name, confirmations: String(activeNetwork.confirmations), address: d?.address } })}
           disabled={!d}
         />
       </SafeAreaView>

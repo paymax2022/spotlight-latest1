@@ -30,6 +30,7 @@ func TestValidate_SwapRateLimitsAreBounded(t *testing.T) {
 		c.CryptoQuidaxTestKey, c.CryptoQuidaxTestBaseURL = "qk_real", "https://openapi.quidax.io/exchange-open-api/api/v1"
 		c.FeatureCryptoSwapsEnabled, c.CryptoWebhookSecret, c.CryptoLockPoolConns = true, "whsec_real", 40
 		c.CryptoQuoteRatePerMin, c.CryptoConfirmRatePerMin = 20, 5
+		c.CryptoDepositConfirmations = 3
 		return c
 	}
 	if err := good().Validate(); err != nil {
@@ -61,6 +62,7 @@ func TestValidate_SwapRateLimitBoundaries(t *testing.T) {
 		c.CryptoQuidaxTestKey, c.CryptoQuidaxTestBaseURL = "qk_real", "https://openapi.quidax.io/exchange-open-api/api/v1"
 		c.FeatureCryptoSwapsEnabled, c.CryptoWebhookSecret, c.CryptoLockPoolConns = true, "whsec_real", 40
 		c.CryptoQuoteRatePerMin, c.CryptoConfirmRatePerMin = 20, 5
+		c.CryptoDepositConfirmations = 3
 		return c
 	}
 	for _, tc := range []struct {

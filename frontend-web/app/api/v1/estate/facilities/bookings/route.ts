@@ -40,7 +40,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
-    const ctx = await getResidentContext(supabase, user.id);
+    const ctx = await getResidentContext(supabase, user.id, { forWrite: true });
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
     const idemKey = request.headers.get('Idempotency-Key');
@@ -55,9 +55,23 @@ export async function POST(request: Request) {
     if (!startsAt || !endsAt || isNaN(+startsAt) || isNaN(+endsAt) || endsAt <= startsAt) throw new ApiError('A valid time window is required', 400);
     if (+startsAt < Date.now()) throw new ApiError('Booking must be in the future', 400);
 
-    const { data: facility, error: fErr } = await supabase.from('estate_facilities').select('id, estate_id, name, fee_kobo').eq('id', facilityId).maybeSingle();
+    const { data: facility, error: fErr } = await supabase.from('estate_facilities').select('id, estate_id, name, fee_kobo, capacity').eq('id', facilityId).maybeSingle();
     if (fErr) throw fErr;
     if (!facility || (facility as any).estate_id !== ctx.estateId) throw new ApiError('Facility not found', 404);
+
+    // Slot guard: active (pending/confirmed) bookings overlapping the window may
+    // not exceed capacity; unset capacity means exclusive use. EST-UAT-0248.
+    const maxConcurrent = Math.max(1, Number((facility as any).capacity ?? 1));
+    const { data: overlapping, error: oErr } = await supabase
+      .from('facility_bookings')
+      .select('id')
+      .eq('estate_id', ctx.estateId)
+      .eq('facility_id', facilityId)
+      .in('status', ['pending', 'confirmed'])
+      .lt('starts_at', endsAt.toISOString())
+      .gt('ends_at', startsAt.toISOString());
+    if (oErr) throw oErr;
+    if ((overlapping ?? []).length >= maxConcurrent) throw new ApiError('Facility is already booked for that window', 409);
 
     const feeKobo: number = (facility as any).fee_kobo ?? 0;
     const { data: row, error } = await supabase.from('facility_bookings').insert({

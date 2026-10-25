@@ -181,13 +181,24 @@ func (r *Repository) ListRoomTypes(ctx context.Context, propertyID string) ([]Ro
 	return out, rows.Err()
 }
 
-// CreateRoomType inserts a room type for the property.
+// CreateRoomType inserts a room type for the property. The
+// supplier_room_type_ref is stamped to the new row id so guest-facing search
+// offers can address THIS room type distinctly — an empty ref (the column
+// default) collapses every self-listed room type into one unaddressable offer
+// and makes prebook pick an arbitrary rate plan.
 func (r *Repository) CreateRoomType(ctx context.Context, propertyID, name string, occupancy int, bedding string) (string, error) {
 	var id string
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO public.stays_room_type (property_id, name, occupancy, bedding)
 		VALUES ($1,$2,$3,$4) RETURNING id`, propertyID, name, occupancy, bedding).Scan(&id)
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	if _, err := r.db.Exec(ctx, `
+		UPDATE public.stays_room_type SET supplier_room_type_ref = id::text WHERE id = $1`, id); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // RatePlan is the rate-plan view.
@@ -243,7 +254,16 @@ func (r *Repository) CreateRatePlan(ctx context.Context, propertyID, roomTypeID,
 			(room_type_id, rate_plan_type, board, refundable, base_sell_rate_kobo, currency)
 		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
 		roomTypeID, strutil.FirstNonEmpty(planType, "BAR"), strutil.FirstNonEmpty(board, "room_only"), refundable, baseKobo, strutil.FirstNonEmpty(currency, "NGN")).Scan(&id)
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	// Stamp supplier_rate_plan_ref (same reason as supplier_room_type_ref in
+	// CreateRoomType) so prebook resolves the exact plan the guest selected.
+	if _, err := r.db.Exec(ctx, `
+		UPDATE public.stays_rate_plan SET supplier_rate_plan_ref = id::text WHERE id = $1`, id); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // ReservationRow is a compact reservation view for the dashboard.
@@ -390,12 +410,13 @@ func (r *Repository) MarkNoShow(ctx context.Context, reservationID, propertyID s
 	ct, err := tx.Exec(ctx, `
 		UPDATE public.stays_reservation
 		SET state = 'NO_SHOW', version = version + 1, updated_at = now()
-		WHERE id = $1 AND property_id = $2 AND state = 'CONFIRMED'`, reservationID, propertyID)
+		WHERE id = $1 AND property_id = $2 AND state = 'CONFIRMED'
+		  AND check_in <= CURRENT_DATE`, reservationID, propertyID)
 	if err != nil {
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return errors.New("extranet: reservation not CONFIRMED or not in property")
+		return errors.New("extranet: reservation not CONFIRMED, not in property, or check-in day not reached")
 	}
 	return tx.Commit(ctx)
 }
@@ -534,6 +555,19 @@ type Message struct {
 	Body          string     `json:"body"`
 	CreatedAt     time.Time  `json:"created_at"`
 	ReadAt        *time.Time `json:"read_at"`
+}
+
+// ReservationOwnedByGuest confirms a reservation belongs to the guest (member-side
+// object scope for the messaging thread — COM-003/004/005).
+func (r *Repository) ReservationOwnedByGuest(ctx context.Context, reservationID, userID string) (string, bool, error) {
+	var propertyID string
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(property_id::text,'') FROM public.stays_reservation
+		WHERE id = $1 AND guest_user_id = $2`, reservationID, userID).Scan(&propertyID)
+	if err != nil {
+		return "", false, err
+	}
+	return propertyID, true, nil
 }
 
 // InsertMessage persists one message on a reservation's thread and returns the row.

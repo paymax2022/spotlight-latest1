@@ -39,7 +39,9 @@ export type AcademyBatch = {
   start_date: string | null;
   end_date: string | null;
   application_deadline: string | null;
-  capacity: number | null;
+  max_students: number | null;
+  training_schedule: string | null;
+  duration_weeks: number | null;
   training_fee_ngn: number | null;
   installments_count: number | null;
   fee_frequency: string | null;
@@ -120,14 +122,33 @@ export type AcademySettings = {
   is_active: boolean;
 };
 
+export type AcademyPricingKey =
+  | 'weekend_day'
+  | 'weekend_boarding'
+  | 'weekday_day'
+  | 'weekday_boarding'
+  | 'full_time_boarding';
+
+/** One composite tuition item: a training format priced for one area (NAIRA). */
+export type AcademyPricingOption = {
+  key: AcademyPricingKey;
+  label: string;
+  note: string | null;
+  price_ngn: number;
+  sort_order: number;
+};
+
 export type AcademyInterestArea = {
   id: string;
   slug: string;
   label: string;
   description: string | null;
+  /** Legacy single fee — retired as what applicants are priced on. */
   fee_ngn: number | null;
   is_active: boolean | null;
   sort_order: number | null;
+  /** The five-format tuition structure. Served by GET since the composite pricing change. */
+  pricing_options?: AcademyPricingOption[];
 };
 
 function authHeaders(): Record<string, string> {
@@ -387,7 +408,13 @@ export async function createInterestArea(input: Partial<AcademyInterestArea>): P
   })).area;
 }
 
-export async function updateInterestArea(input: Partial<AcademyInterestArea> & { id: string }): Promise<AcademyInterestArea> {
+export async function updateInterestArea(
+  input: Partial<AcademyInterestArea> & {
+    id: string;
+    /** Composite tuition repricing; the BFF upserts one row per format. */
+    pricing?: Array<{ key: AcademyPricingKey; price_ngn: number }>;
+  },
+): Promise<AcademyInterestArea> {
   return (await call<{ area: AcademyInterestArea }>(`${B}/interest-areas`, {
     method: 'PUT', body: JSON.stringify(input),
   })).area;
@@ -518,6 +545,9 @@ export type FilmExam = {
   time_limit_minutes: number;
   max_attempts: number;
   is_published: boolean;
+  /** ISO instants bounding when learners can start the exam; both required to publish. */
+  opens_at: string | null;
+  closes_at: string | null;
   draw_stage: string | null;
   draw_module_codes: string[] | null;
   draw_count: number | null;

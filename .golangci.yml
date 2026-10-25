@@ -101,7 +101,7 @@ linters:
       # from c.Request.Context() at request time; the analyzer wants a
       # context.Context parameter that does not fit the gin idiom. runRedis is
       # a hub-lifetime goroutine — no request ctx exists for it.
-      - text: "Function `(Middleware|StemRateLimit|RequireAuthContext|RequireAuthContextWithSessions|RequireAdminConsoleRole|RequireVerifiedIdentity|RequireStemRoles|PerUserDeviceRateLimit|NewHub)[^`]*` should pass the context parameter"
+      - text: "Function `(Middleware|StemRateLimit|RequireAuthContext|RequireAuthContextWithSessions|RequireAdminConsoleRole|RequireVerifiedIdentity|RequireStemRoles|PerUserDeviceRateLimit|NewHub|RequireStepUp|GuardSupportImpersonation|ApplySupportImpersonation|RequireExplicitPermission|stepUp|stepUpWith|stepUpAlways|guardEngine|applyImpersonation)[^`]*` should pass the context parameter"
         linters:
           - contextcheck
       - text: "Function `[^`]*(requireAuth|resolveVerifiedIdentity|runRedis)[^`]*` should pass the context parameter"

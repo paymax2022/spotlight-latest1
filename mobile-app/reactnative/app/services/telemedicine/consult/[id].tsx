@@ -11,7 +11,7 @@ import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
-import { getAppointment, DEMO_APPOINTMENTS } from '@/api/telemedicine.api';
+import { getAppointment, PLACEHOLDER_APPOINTMENTS } from '@/api/telemedicine.api';
 import { DoctorAvatar } from '@/features/telemedicine/components';
 import { useLocalMedia } from '@/features/telemedicine/useLocalMedia';
 import SelfVideo from '@/features/telemedicine/SelfVideo';
@@ -44,7 +44,7 @@ export default function ConsultRoomScreen() {
   const { data: appt } = useQuery({
     queryKey: ['tele-appointment', id],
     queryFn:  () => getAppointment(String(id)),
-    placeholderData: DEMO_APPOINTMENTS.find((a) => a.id === id) ?? DEMO_APPOINTMENTS[0],
+    placeholderData: PLACEHOLDER_APPOINTMENTS?.find((a) => a.id === id) ?? PLACEHOLDER_APPOINTMENTS?.[0],
   });
 
   // PRD §1 structural gate: the consult cannot start until intake is SUBMITTED.

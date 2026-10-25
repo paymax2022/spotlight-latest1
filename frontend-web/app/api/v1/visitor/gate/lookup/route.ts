@@ -4,11 +4,16 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext } from '@/src/server/visitor/gate.service';
 import { ACCESS_CODE_COLUMNS, mapAccessCode } from '@/src/server/visitor/visitor.service';
+import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 
 // Find an access code by numeric_code or id prefix.
+// Rate-limited per guard: the 6-digit code space is small enough to brute
+// force (EST-UAT-0095), so repeated probing trips a 429.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
+    const rl = checkRateLimit(`gate-lookup:${user.id}`, 30, 60_000);
+    if (!rl.allowed) throw new ApiError('Too many lookups — slow down and retry', 429);
     const supabase = createAdminClient();
     const guard = await getGuardContext(supabase, user.id);
     if (!guard) throw new ApiError('No active gate session', 403);
@@ -37,15 +42,20 @@ export async function GET(request: Request) {
 
     if (!row) return NextResponse.json({ found: false, code: null, blacklisted: false });
 
-    let blacklisted = false;
-    const plate = (row as any).vehicle_plate;
-    if (plate) {
+    let blacklisted = Boolean((row as any).blacklisted);
+    // Watchlist match on every identity the code carries — plate-only matching
+    // let a blacklisted visitor through whenever the plate field was blank.
+    const watchMatches: Array<{ kind: string; value: string }> = [];
+    if ((row as any).vehicle_plate) watchMatches.push({ kind: 'plate', value: (row as any).vehicle_plate });
+    if ((row as any).visitor_phone) watchMatches.push({ kind: 'phone', value: (row as any).visitor_phone });
+    for (const m of watchMatches) {
+      if (blacklisted) break;
       const { data: bl } = await supabase
         .from('visitor_blacklist')
         .select('id')
         .eq('estate_id', guard.estateId)
-        .eq('match_kind', 'plate')
-        .eq('match_value', plate)
+        .eq('match_kind', m.kind)
+        .eq('match_value', m.value)
         .maybeSingle();
       if (bl) blacklisted = true;
     }

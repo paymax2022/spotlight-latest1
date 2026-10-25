@@ -74,6 +74,7 @@ func RegisterAdminRoutes(admin *gin.RouterGroup, d HandlerDeps) {
 	admin.GET("/swaps/review", h.reviewQueue)
 	admin.POST("/swaps/:id/resolve", h.resolve)
 	admin.GET("/reconciler", h.reconcilerStatus)
+	admin.GET("/deposits/reconciler", h.depositReconcilerStatus)
 	admin.GET("/fee-schedule", h.feeSchedule)
 	admin.PUT("/fee-schedule", h.updateFeeSchedule)
 }
@@ -133,6 +134,43 @@ func (h *adminHandler) reconcilerStatus(c *gin.Context) {
 			"recent_alerts": alerts,
 		},
 		"backlog": rows,
+	})
+}
+
+// depositReconcilerStatus GET /admin/crypto/deposits/reconciler — the money-IN safety net
+// (GAP-DEP-01 Slice 2b): what the deposit sweep has done and what it is waiting on. Counts and
+// alert text only — no account, user or provider identifiers. "replica" is this replica's
+// in-process state; only the elected leader sweeps, so a follower mostly shows skipped passes.
+// Read-only. Answers 503 when money-IN settlement is not wired.
+func (h *adminHandler) depositReconcilerStatus(c *gin.Context) {
+	if h.d.DepositRecon == nil {
+		fail(c, http.StatusServiceUnavailable, "deposit_reconciler_not_running")
+		return
+	}
+	snap := h.d.DepositRecon.Snapshot()
+	alerts := make([]gin.H, 0, len(snap.RecentAlerts))
+	for _, a := range snap.RecentAlerts {
+		alerts = append(alerts, gin.H{"at": ts(a.At), "kind": a.Kind, "message": a.Message})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"note":    "the deposit reconciler sweeps provider ListDeposits and re-submits each transfer to the once-only settler; it can never double-credit. replica is this process's state; only the elected leader sweeps.",
+		"replica": gin.H{
+			"started_at": ts(snap.StartedAt), "runs": snap.Runs, "led_runs": snap.LedRuns, "skipped_runs": snap.SkippedRuns,
+			"last_run_at": ts(snap.LastRunAt), "last_led_at": ts(snap.LastLedAt), "last_led": snap.LastLed,
+			"last_error": snap.LastError,
+			"last_result": gin.H{
+				"accounts": snap.LastResult.Accounts, "scanned": snap.LastResult.Scanned,
+				"settled": snap.LastResult.Settled, "duplicates": snap.LastResult.Duplicates,
+				"awaiting": snap.LastResult.Awaiting, "ignored": snap.LastResult.Ignored,
+				"truncated": snap.LastResult.Truncated, "errors": snap.LastResult.Errors,
+			},
+			"totals": gin.H{
+				"settled": snap.Totals.Settled, "duplicates": snap.Totals.Duplicates, "awaiting": snap.Totals.Awaiting,
+				"ignored": snap.Totals.Ignored, "errors": snap.Totals.Errors,
+			},
+			"recent_alerts": alerts,
+		},
 	})
 }
 

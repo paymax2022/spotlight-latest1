@@ -67,7 +67,9 @@ export default function VoteReceiptScreen() {
             return (
               <View key={p.id} style={[styles.choiceRow, i > 0 && styles.divider]}>
                 <Text style={styles.choicePos}>{p.title}</Text>
-                <Text style={styles.choiceCand}>{candidate ? candidate.name : 'Not voted'}</Text>
+                <Text style={styles.choiceCand}>
+                  {choices[p.id] === 'sealed' ? 'Sealed ballot' : candidate ? candidate.name : 'Not voted'}
+                </Text>
               </View>
             );
           })}

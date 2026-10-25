@@ -577,6 +577,144 @@ func readWithdrawal(data json.RawMessage) (cryptoprov.Withdrawal, error) {
 	return cryptoprov.Withdrawal{ID: d.ID, Status: st, TxID: d.TxID}, nil
 }
 
+// ---- deposits (money-IN) ---------------------------------------------------
+//
+// UNVERIFIED against the live sandbox: the deposit endpoint paths, whether a deposit
+// object exposes a per-transfer `confirmations` count, and the exact status vocabulary.
+// This adapter maps conservatively — anything not clearly final is reported as pending
+// so the deposit service never credits on an under-known state (fail closed). A real
+// number here requires the sandbox contract run (a standing blocked gate).
+
+// GetDeposit implements cryptoprov.DepositProvider. It is the authoritative re-query
+// behind a deposit webhook; the service settles from its result, never the payload.
+func (c *Client) GetDeposit(ctx context.Context, accountID, depositID string) (cryptoprov.Deposit, error) {
+	if accountID == "" || depositID == "" {
+		return cryptoprov.Deposit{}, errors.New("quidax: account id and deposit id are required")
+	}
+	data, err := c.do(ctx, http.MethodGet, "/users/"+pathID(accountID)+"/deposits/"+pathID(depositID), "", nil)
+	if err != nil {
+		return cryptoprov.Deposit{}, err
+	}
+	d, err := readDeposit(data)
+	if err != nil {
+		return cryptoprov.Deposit{}, err
+	}
+	// The re-query is scoped to this sub-account, so its id belongs on the result: the
+	// deposit engine resolves the recipient from it (crypto_accounts), never from the payload.
+	d.AccountID = accountID
+	return d, nil
+}
+
+// ListDeposits implements cryptoprov.DepositProvider.
+func (c *Client) ListDeposits(ctx context.Context, accountID string) ([]cryptoprov.Deposit, error) {
+	if accountID == "" {
+		return nil, errors.New("quidax: account id is required")
+	}
+	data, err := c.do(ctx, http.MethodGet, "/users/"+pathID(accountID)+"/deposits", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	var rows []json.RawMessage
+	if err := json.Unmarshal(data, &rows); err != nil {
+		// Some feeds wrap the list in an object; accept a {data:[...]} or {transactions:[...]} shape.
+		var wrapped struct {
+			Data         []json.RawMessage `json:"data"`
+			Transactions []json.RawMessage `json:"transactions"`
+		}
+		if werr := json.Unmarshal(data, &wrapped); werr != nil {
+			return nil, errors.New("quidax: malformed deposits")
+		}
+		rows = wrapped.Data
+		if len(rows) == 0 {
+			rows = wrapped.Transactions
+		}
+	}
+	out := make([]cryptoprov.Deposit, 0, len(rows))
+	for _, raw := range rows {
+		d, derr := readDeposit(raw)
+		if derr != nil {
+			return nil, derr
+		}
+		d.AccountID = accountID
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+func readDeposit(data json.RawMessage) (cryptoprov.Deposit, error) {
+	var d struct {
+		ID            any    `json:"id"`
+		Currency      string `json:"currency"`
+		Amount        string `json:"amount"`
+		Status        string `json:"status"`
+		TxURL         string `json:"tx_url"`
+		TxHash        string `json:"txid"`
+		Confirmations any    `json:"confirmations"`
+	}
+	if err := json.Unmarshal(data, &d); err != nil {
+		return cryptoprov.Deposit{}, errors.New("quidax: deposit response unreadable")
+	}
+	id := idToString(d.ID)
+	if id == "" {
+		return cryptoprov.Deposit{}, errors.New("quidax: deposit has no id")
+	}
+	amt, err := optionalDecimal(d.Amount)
+	if err != nil {
+		return cryptoprov.Deposit{}, errors.New("quidax: deposit amount unreadable")
+	}
+	hash := d.TxHash
+	if hash == "" {
+		hash = d.TxURL
+	}
+	return cryptoprov.Deposit{
+		ID:            id,
+		Currency:      upper(d.Currency),
+		Amount:        amt,
+		Status:        mapDepositStatus(d.Status),
+		Confirmations: toInt(d.Confirmations),
+		TxHash:        hash,
+	}, nil
+}
+
+// mapDepositStatus is conservative: only an explicitly successful status is final. An
+// unknown or in-flight state stays pending so it can never trigger a credit.
+func mapDepositStatus(s string) cryptoprov.DepositStatus {
+	switch lower(s) {
+	case "confirmed", "completed", "successful", "success", "done", "credited":
+		return cryptoprov.DepositConfirmed
+	case "failed", "rejected", "cancelled", "canceled", "expired":
+		return cryptoprov.DepositFailed
+	default:
+		return cryptoprov.DepositPending
+	}
+}
+
+func idToString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		return decimal.NewFromFloat(t).String()
+	default:
+		return ""
+	}
+}
+
+func toInt(v any) int {
+	switch t := v.(type) {
+	case float64:
+		return int(decimal.NewFromFloat(t).IntPart())
+	case string:
+		n, err := decimal.NewFromString(strings.TrimSpace(t))
+		if err != nil {
+			return 0
+		}
+		return int(n.IntPart())
+	default:
+		return 0
+	}
+}
+
 // ---- webhooks --------------------------------------------------------------
 
 // VerifyWebhook implements cryptoprov.WebhookProvider. It fails closed when no
@@ -606,26 +744,24 @@ func (c *Client) ParseWebhook(body []byte) (cryptoprov.Event, error) {
 		return cryptoprov.Event{}, errors.New("quidax: webhook missing event or data")
 	}
 	var d struct {
-		ID any `json:"id"`
+		ID     any `json:"id"`
+		UserID any `json:"user_id"`
 	}
 	if err := json.Unmarshal(env.Data, &d); err != nil {
 		return cryptoprov.Event{}, errors.New("quidax: webhook data unreadable")
 	}
-	var id string
-	switch v := d.ID.(type) {
-	case string:
-		id = v
-	case float64:
-		id = decimal.NewFromFloat(v).String()
-	}
+	id := idToString(d.ID)
 	if id == "" {
 		return cryptoprov.Event{}, errors.New("quidax: webhook data has no id")
 	}
+	// The sub-account is carried only to LOCATE the deposit re-query; swaps and other
+	// events never rely on it. Absent or non-string forms simply leave it empty.
 	return cryptoprov.Event{
-		Key:  "quidax:" + env.Event + ":" + id,
-		Type: env.Event,
-		Ref:  id,
-		Raw:  []byte(env.Data),
+		Key:     "quidax:" + env.Event + ":" + id,
+		Type:    env.Event,
+		Ref:     id,
+		Account: idToString(d.UserID),
+		Raw:     []byte(env.Data),
 	}, nil
 }
 

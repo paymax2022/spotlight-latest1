@@ -53,7 +53,7 @@ export default function LanguagesScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Languages spoken" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <WizardProgress current={7} total={19} label="Languages spoken" />
+        <WizardProgress current={7} total={18} label="Languages spoken" />
 
         <SectionCard title="Languages" style={styles.card}>
           <Text style={styles.hint}>Select all languages you can consult in.</Text>

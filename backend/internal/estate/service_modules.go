@@ -173,9 +173,12 @@ func (s *Service) AddRepairUpdate(ctx context.Context, estateID, userID, repairI
 	if err := s.assertEstateAdmin(ctx, estateID, userID); err != nil {
 		return nil, err
 	}
-	// Verify the repair belongs to this estate (cross-estate isolation).
-	var cnt int
-	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM estate_repair_requests WHERE id=$1 AND estate_id=$2`, repairID, estateID).Scan(&cnt); err != nil || cnt == 0 {
+	// Verify the repair belongs to this estate (cross-estate isolation) and
+	// grab the reporter for the status-change alert (EST-UAT-0353).
+	var reporterID string
+	if err := s.db.QueryRow(ctx,
+		`SELECT reporter_id FROM estate_repair_requests WHERE id=$1 AND estate_id=$2`, repairID, estateID,
+	).Scan(&reporterID); err != nil {
 		return nil, errors.New("estate: repair not found in this estate")
 	}
 	tx, err := s.db.Begin(ctx)
@@ -194,7 +197,15 @@ func (s *Service) AddRepairUpdate(ctx context.Context, estateID, userID, repairI
 	if _, err := tx.Exec(ctx, `UPDATE estate_repair_requests SET status=$1 WHERE id=$2 AND estate_id=$3`, req.Status, repairID, estateID); err != nil {
 		return nil, fmt.Errorf("estate: update repair status: %w", err)
 	}
-	return u, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	// EST-UAT-0353: the requester gets a progress/status update for their own
+	// request only (fire-and-forget; prefs + dedupe apply inside notify).
+	s.notify(ctx, estateID, reporterID, NotifRepairUpdate, "Repair update",
+		fmt.Sprintf("Your repair request status changed to %s.", req.Status),
+		map[string]any{"repair_id": repairID, keyStatus: req.Status})
+	return u, nil
 }
 
 func (s *Service) ListRepairUpdates(ctx context.Context, estateID, userID, repairID string) ([]RepairUpdate, error) {
@@ -276,8 +287,21 @@ func (s *Service) ListFacilities(ctx context.Context, estateID, userID string) (
 	return out, rows.Err()
 }
 
+// maxConcurrentBookings returns how many overlapping active bookings a facility
+// accepts: its capacity when set, else exclusive use (one booking at a time).
+func maxConcurrentBookings(capacity *int) int {
+	if capacity == nil || *capacity < 1 {
+		return 1
+	}
+	return *capacity
+}
+
 // BookFacility reserves a facility. A soft or hard dues restriction blocks
-// booking (Block 30 matrix).
+// booking (Block 30 matrix), and the slot must be free: overlapping
+// pending/confirmed bookings may not exceed the facility's capacity
+// (default: exclusive use). The DB-level exclusion constraint is the durable
+// race guard; see docs/qa/estate-uat-443/migrations-estate-c/; this check
+// rejects the conflict cleanly ahead of it.
 func (s *Service) BookFacility(ctx context.Context, estateID, residentID, facilityID string, req BookFacilityRequest) (*FacilityBooking, error) {
 	if err := s.assertResident(ctx, estateID, residentID); err != nil {
 		return nil, err
@@ -289,10 +313,22 @@ func (s *Service) BookFacility(ctx context.Context, estateID, residentID, facili
 	if err := s.enforceNotRestricted(ctx, estateID, residentID, ActionFacility); err != nil {
 		return nil, err
 	}
-	// Load fee (estate-scoped).
+	// Load fee + capacity (estate-scoped).
 	var fee int64
-	if err := s.db.QueryRow(ctx, `SELECT fee_kobo FROM estate_facilities WHERE id=$1 AND estate_id=$2`, facilityID, estateID).Scan(&fee); err != nil {
+	var capacity *int
+	if err := s.db.QueryRow(ctx, `SELECT fee_kobo, capacity FROM estate_facilities WHERE id=$1 AND estate_id=$2`, facilityID, estateID).Scan(&fee, &capacity); err != nil {
 		return nil, errors.New("estate: facility not found in this estate")
+	}
+	var overlapping int
+	if err := s.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM facility_bookings
+		 WHERE facility_id=$1 AND estate_id=$2 AND status IN ('pending','confirmed')
+		   AND starts_at < $3 AND ends_at > $4`,
+		facilityID, estateID, req.EndsAt, req.StartsAt).Scan(&overlapping); err != nil {
+		return nil, fmt.Errorf("estate: check booking conflicts: %w", err)
+	}
+	if overlapping >= maxConcurrentBookings(capacity) {
+		return nil, errors.New("estate: facility is already booked for that window")
 	}
 	b := &FacilityBooking{
 		ID: uuid.New().String(), EstateID: estateID, FacilityID: facilityID, ResidentID: residentID,
@@ -409,14 +445,22 @@ func (s *Service) RaiseEmergency(ctx context.Context, estateID, reporterID strin
 }
 
 func (s *Service) ListEmergencies(ctx context.Context, estateID, userID, status string) ([]EmergencyAlert, error) {
-	if err := s.assertResident(ctx, estateID, userID); err != nil {
+	role, err := s.roleIn(ctx, estateID, userID)
+	if err != nil {
 		return nil, err
 	}
 	q := `SELECT id, estate_id, reporter_id, kind, COALESCE(description,''), COALESCE(location,''), status, created_at
 		FROM estate_emergency_alerts WHERE estate_id=$1`
 	args := []any{estateID}
+	// EST-UAT-0327: incident details (medical, domestic, reporter identity of
+	// another unit) are sensitive; only responders see the estate-wide feed;
+	// ordinary residents see their own alerts. Mirrors ListRepairs scoping.
+	if role != "estate_admin" && role != "estate_security" {
+		q += fmt.Sprintf(" AND reporter_id=$%d", len(args)+1)
+		args = append(args, userID)
+	}
 	if status != "" {
-		q += " AND status=$2"
+		q += fmt.Sprintf(" AND status=$%d", len(args)+1)
 		args = append(args, status)
 	}
 	q += " ORDER BY created_at DESC LIMIT 100"
@@ -569,14 +613,20 @@ func (s *Service) CreateVendor(ctx context.Context, estateID, adminID string, re
 }
 
 func (s *Service) ListVendors(ctx context.Context, estateID, userID, status string) ([]Vendor, error) {
-	if err := s.assertResident(ctx, estateID, userID); err != nil {
+	role, err := s.roleIn(ctx, estateID, userID)
+	if err != nil {
 		return nil, err
 	}
 	q := `SELECT id, estate_id, user_id, name, category, COALESCE(phone,''), status, rating, created_at
 		FROM estate_vendors WHERE estate_id=$1`
 	args := []any{estateID}
+	// EST-UAT-0273/0274: the marketplace shows verified vendors only; pending or
+	// suspended vendors are visible to admins for review, not to residents.
+	if role != "estate_admin" {
+		q += " AND status='verified'"
+	}
 	if status != "" {
-		q += " AND status=$2"
+		q += fmt.Sprintf(" AND status=$%d", len(args)+1)
 		args = append(args, status)
 	}
 	q += " ORDER BY rating DESC, name LIMIT 200"

@@ -50,6 +50,9 @@ const (
 	EventTokenReuse       = "token_reuse"
 	EventForcedReset      = "forced_reset"
 	EventSessionsRevoked  = "sessions_revoked"
+	// EventSupportAccess notifies a user that support opened a read-only
+	// view-as session on their account (ESTD-D028, internal/supportimpersonation).
+	EventSupportAccess = "support_access"
 
 	PolicyNotify        = "notify"
 	PolicyForceReverify = "force_reverify"
@@ -576,6 +579,8 @@ func humanizeEvent(eventType string) string {
 		return "a session security violation"
 	case EventForcedReset:
 		return "a required password reset"
+	case EventSupportAccess:
+		return "a support team member opening a read-only view of your account; the reason and ticket reference are recorded in your account support-access history"
 	default:
 		return "unusual account activity"
 	}

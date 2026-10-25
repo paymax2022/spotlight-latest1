@@ -31,6 +31,10 @@ interface Cfg {
   insertError?: any;
   refetchAfterConflict?: any;
   updateError?: any;
+  // Receipt found by invoice_id (heal-path + lost-claim lookups). Default: a
+  // successful receipt exists iff the invoice is already 'paid'.
+  invoiceReceipt?: any;
+  claimResult?: any; // row returned by the unpaid->paid atomic claim (or null)
 }
 function makeSupabase(cfg: Cfg) {
   const calls: any = { insertPayload: null, updatePayload: null, updatedTable: null };
@@ -40,16 +44,31 @@ function makeSupabase(cfg: Cfg) {
   // call can return its own configured row.
   let paymentMaybeSingleCalls = 0;
   function builder(table: string) {
-    const ctx = { table, op: 'select' as 'select' | 'insert' | 'update' };
+    const ctx = { table, op: 'select' as 'select' | 'insert' | 'update', lastEq: '', claim: false, updatePayload: null as any };
     const chain: any = {
       select: () => chain,
-      eq: () => chain,
+      eq: (c: string) => { ctx.lastEq = c; return chain; },
       is: () => chain,
+      in: (c: string) => { if (c === 'status') ctx.claim = true; return chain; },
       insert: (payload: any) => { ctx.op = 'insert'; calls.insertPayload = payload; return chain; },
-      update: (payload: any) => { ctx.op = 'update'; calls.updatePayload = payload; calls.updatedTable = table; return chain; },
+      update: (payload: any) => { ctx.op = 'update'; ctx.updatePayload = payload; calls.updatePayload = payload; calls.updatedTable = table; return chain; },
       maybeSingle: async () => {
-        if (table === 'estate_dues_invoices') return { data: cfg.invoice, error: null };
+        if (table === 'estate_dues_invoices') {
+          // The atomic claim is the update filtered `.in('status', unpaid)`:
+          // it only wins when the invoice is still unpaid.
+          if (ctx.op === 'update' && ctx.claim) {
+            if (cfg.claimResult !== undefined) return { data: cfg.claimResult, error: null };
+            const unpaid = cfg.invoice && cfg.invoice.status !== 'paid' && cfg.invoice.status !== 'waived';
+            return { data: unpaid ? { id: cfg.invoice.id } : null, error: null };
+          }
+          return { data: cfg.invoice, error: null };
+        }
         if (table === 'estate_payments') {
+          // Lookups by invoice_id are the heal-path and lost-claim receipt
+          // probes, not the reference-keyed replay probe.
+          if (ctx.lastEq === 'invoice_id') {
+            return { data: cfg.invoiceReceipt !== undefined ? cfg.invoiceReceipt : (cfg.invoice?.status === 'paid' ? paymentRow() : null), error: null };
+          }
           paymentMaybeSingleCalls += 1;
           if (paymentMaybeSingleCalls === 1) return { data: cfg.priorPayment ?? null, error: null };
           return { data: cfg.refetchAfterConflict ?? null, error: null };

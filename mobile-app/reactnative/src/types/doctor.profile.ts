@@ -155,14 +155,6 @@ export interface BankAccount {
   isVerified:      boolean;      // name-enquiry resolved
 }
 
-export interface TaxInfo {
-  hasTin:      boolean;          // doctor has a Tax Identification Number
-  tin?:        string;           // TIN when hasTin
-  vatRegistered: boolean;        // registered for VAT
-  vatNumber?:  string;
-  businessName?: string;         // registered business / practice name
-}
-
 // All editable fields collected across the wizard. A partial draft is saved as
 // the doctor progresses; `step`/`completedSteps` drive the hub (screen 1).
 
@@ -185,8 +177,7 @@ export type ProfileBuilderStep =
   | 'pricing'              // 17
   | 'free_follow_up'       // 18
   | 'availability'         // 19 (handled by existing useAvailability)
-  | 'bank_account'         // 20
-  | 'tax_info';            // 21
+  | 'bank_account';        // 20 — final wizard step
 
 export interface DoctorProfileDraft {
   id:               string;             // draft id
@@ -208,7 +199,6 @@ export interface DoctorProfileDraft {
   pricing:          ConsultationPricing;   // screen 17
   freeFollowUp:     FreeFollowUpPolicy;    // screen 18
   bankAccount?:     BankAccount;           // screen 20
-  taxInfo?:         TaxInfo;               // screen 21
   completedSteps:   ProfileBuilderStep[];  // drives the hub checklist (screen 1)
   status:           VerificationStatus;    // mirrors the submission lifecycle
   updatedAt:        string;                // ISO datetime
@@ -282,13 +272,16 @@ export interface SaveBankAccountResult {
   account: BankAccount;          // includes resolved name + isVerified
 }
 
-export interface SaveTaxInfoInput {
-  taxInfo:        TaxInfo;
-  idempotencyKey: string;
+/** POST /profile/bank-account/verify — name enquiry WITHOUT saving. */
+export interface VerifyBankAccountInput {
+  bankName:      string;
+  bankCode:      string;
+  accountNumber: string;
 }
 
-export interface SaveTaxInfoResult {
-  taxInfo: TaxInfo;
+export interface VerifyBankAccountResult {
+  accountName:         string;   // the provider-resolved holder name to affirm
+  accountNumberMasked: string;   // ****1234 — never the full PAN
 }
 
 // Section B's submit reuses Phase 1's result shape but accepts the richer draft

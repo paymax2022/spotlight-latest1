@@ -11,7 +11,7 @@ import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1, shadow2 } from '@/constants/tokens';
 import {
-  getSpecialties, getDoctors, DEMO_SPECIALTIES, DEMO_DOCTORS,
+  getSpecialties, getDoctors, PLACEHOLDER_SPECIALTIES, PLACEHOLDER_DOCTORS,
 } from '@/api/telemedicine.api';
 import { TeleHeader, SpecialtyChip, DoctorCard } from '@/features/telemedicine/components';
 import { ProviderOnboardingCard } from '@/features/health/components';
@@ -20,13 +20,13 @@ export default function TelemedicineHome() {
   const { data: specialties = [] } = useQuery({
     queryKey: ['tele-specialties'],
     queryFn:  getSpecialties,
-    placeholderData: DEMO_SPECIALTIES,
+    placeholderData: PLACEHOLDER_SPECIALTIES,
   });
 
   const { data: doctors = [] } = useQuery({
     queryKey: ['tele-doctors', 'featured'],
     queryFn:  () => getDoctors(),
-    placeholderData: DEMO_DOCTORS,
+    placeholderData: PLACEHOLDER_DOCTORS,
   });
 
   const online = doctors.filter((d) => d.isOnline);

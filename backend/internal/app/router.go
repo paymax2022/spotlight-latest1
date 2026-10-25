@@ -14,6 +14,7 @@ import (
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/services"
+	"spotlight/backend/internal/stepup"
 	"spotlight/backend/internal/telemetry/navigation"
 	"strings"
 	"time"
@@ -60,6 +61,12 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	}
 	r.Use(middleware.RequestID())
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
+	// ESTD-D028 / ADR-PR<pr-number>: support view-as is read-only by
+	// construction — any request naming an impersonation session is refused
+	// here unless it is a GET on the explicit read allow-list. Must precede
+	// every route registration (gin applies Use only to later routes).
+	guards := newPlatformGuards(cfg)
+	guards.guardEngine(r)
 
 	// JSON 404 for unmatched paths. Gin's default NoRoute answers the plain
 	// text "404 page not found"; the BFF catch-all proxies forward that body
@@ -396,24 +403,24 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		rbacAdmin := r.Group("/api/admin")
 		rbacAdmin.Use(middleware.RequireAuthContext(supabase, rbacService))
 		rbacAdmin.GET("/roles", middleware.RequirePermission(rbacService, "roles.view"), rbacHandler.ListRoles)
-		rbacAdmin.POST("/roles", middleware.RequirePermission(rbacService, "roles.create"), rbacHandler.CreateRole)
-		rbacAdmin.PATCH("/roles/:id", middleware.RequirePermission(rbacService, "roles.update"), rbacHandler.UpdateRole)
-		rbacAdmin.POST("/roles/:id/clone", middleware.RequirePermission(rbacService, "roles.create"), rbacHandler.CloneRole)
-		rbacAdmin.DELETE("/roles/:id", middleware.RequirePermission(rbacService, "roles.delete"), rbacHandler.DeleteRole)
+		rbacAdmin.POST("/roles", middleware.RequirePermission(rbacService, "roles.create"), guards.stepUp("admin.roles.create"), rbacHandler.CreateRole)
+		rbacAdmin.PATCH("/roles/:id", middleware.RequirePermission(rbacService, "roles.update"), guards.stepUp("admin.roles.update"), rbacHandler.UpdateRole)
+		rbacAdmin.POST("/roles/:id/clone", middleware.RequirePermission(rbacService, "roles.create"), guards.stepUp("admin.roles.clone"), rbacHandler.CloneRole)
+		rbacAdmin.DELETE("/roles/:id", middleware.RequirePermission(rbacService, "roles.delete"), guards.stepUp("admin.roles.delete"), rbacHandler.DeleteRole)
 		rbacAdmin.GET("/permissions", middleware.RequirePermission(rbacService, "permissions.view"), rbacHandler.ListPermissions)
-		rbacAdmin.POST("/permissions", middleware.RequirePermission(rbacService, "permissions.assign"), rbacHandler.CreatePermission)
-		rbacAdmin.PATCH("/permissions/:permissionId", middleware.RequirePermission(rbacService, "permissions.assign"), rbacHandler.UpdatePermission)
+		rbacAdmin.POST("/permissions", middleware.RequirePermission(rbacService, "permissions.assign"), guards.stepUp("admin.permissions.create"), rbacHandler.CreatePermission)
+		rbacAdmin.PATCH("/permissions/:permissionId", middleware.RequirePermission(rbacService, "permissions.assign"), guards.stepUp("admin.permissions.update"), rbacHandler.UpdatePermission)
 		rbacAdmin.GET("/permissions/matrix", middleware.RequirePermission(rbacService, "permissions.view"), rbacHandler.PermissionMatrix)
-		rbacAdmin.DELETE("/permissions/:permissionId", middleware.RequirePermission(rbacService, "permissions.delete"), rbacHandler.DeletePermission)
-		rbacAdmin.POST("/roles/:id/permissions", middleware.RequirePermission(rbacService, "permissions.assign"), rbacHandler.AssignPermissionToRole)
-		rbacAdmin.DELETE("/roles/:id/permissions/:permissionId", middleware.RequirePermission(rbacService, "permissions.assign"), rbacHandler.RemovePermissionFromRole)
+		rbacAdmin.DELETE("/permissions/:permissionId", middleware.RequirePermission(rbacService, "permissions.delete"), guards.stepUp("admin.permissions.delete"), rbacHandler.DeletePermission)
+		rbacAdmin.POST("/roles/:id/permissions", middleware.RequirePermission(rbacService, "permissions.assign"), guards.stepUp("admin.role_permissions.assign"), rbacHandler.AssignPermissionToRole)
+		rbacAdmin.DELETE("/roles/:id/permissions/:permissionId", middleware.RequirePermission(rbacService, "permissions.assign"), guards.stepUp("admin.role_permissions.remove"), rbacHandler.RemovePermissionFromRole)
 		rbacAdmin.GET("/users/:id/roles", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Roles)
-		rbacAdmin.POST("/users/:id/roles", middleware.RequirePermission(rbacService, "users.roles.assign"), rbacHandler.AssignRoleToUser)
-		rbacAdmin.DELETE("/users/:id/roles/:roleId", middleware.RequirePermission(rbacService, "users.roles.assign"), rbacHandler.RemoveRoleFromUser)
-		rbacAdmin.PATCH("/users/:id/suspend", middleware.RequirePermission(rbacService, "users.suspend"), rbacHandler.SuspendUser)
-		rbacAdmin.PATCH("/users/:id/unsuspend", middleware.RequirePermission(rbacService, "users.suspend"), rbacHandler.UnsuspendUser)
-		rbacAdmin.PATCH("/users/:id/lock", middleware.RequirePermission(rbacService, "users.update"), rbacHandler.LockUser)
-		rbacAdmin.PATCH("/users/:id/unlock", middleware.RequirePermission(rbacService, "users.update"), rbacHandler.UnlockUser)
+		rbacAdmin.POST("/users/:id/roles", middleware.RequirePermission(rbacService, "users.roles.assign"), guards.stepUp("admin.user_roles.assign"), rbacHandler.AssignRoleToUser)
+		rbacAdmin.DELETE("/users/:id/roles/:roleId", middleware.RequirePermission(rbacService, "users.roles.assign"), guards.stepUp("admin.user_roles.remove"), rbacHandler.RemoveRoleFromUser)
+		rbacAdmin.PATCH("/users/:id/suspend", middleware.RequirePermission(rbacService, "users.suspend"), guards.stepUp("admin.users.suspend"), rbacHandler.SuspendUser)
+		rbacAdmin.PATCH("/users/:id/unsuspend", middleware.RequirePermission(rbacService, "users.suspend"), guards.stepUp("admin.users.unsuspend"), rbacHandler.UnsuspendUser)
+		rbacAdmin.PATCH("/users/:id/lock", middleware.RequirePermission(rbacService, "users.update"), guards.stepUp("admin.users.lock"), rbacHandler.LockUser)
+		rbacAdmin.PATCH("/users/:id/unlock", middleware.RequirePermission(rbacService, "users.update"), guards.stepUp("admin.users.unlock"), rbacHandler.UnlockUser)
 		rbacAdmin.GET("/audit-logs", middleware.RequirePermission(rbacService, "audit.logs.view"), auditHandler.AuditLogs)
 		rbacAdmin.GET("/audit-logs/export", middleware.RequirePermission(rbacService, "audit.logs.export"), auditHandler.ExportAuditLogs)
 		rbacAdmin.GET("/login-activity", middleware.RequirePermission(rbacService, "audit.logs.view"), auditHandler.LoginActivity)
@@ -422,19 +429,19 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		rbacAdmin.GET("/users/export", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Export)
 		// Bulk role assignment (one role → many users). Distinct static path placed
 		// BEFORE the /users/:id param routes to avoid wildcard capture.
-		rbacAdmin.POST("/users/bulk-roles", middleware.RequirePermission(rbacService, "users.roles.assign"), adminUsersHandler.BulkAssignRoleToUsers)
+		rbacAdmin.POST("/users/bulk-roles", middleware.RequirePermission(rbacService, "users.roles.assign"), guards.stepUp("admin.user_roles.bulk_assign"), adminUsersHandler.BulkAssignRoleToUsers)
 		rbacAdmin.GET("/users/:id", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Get)
-		rbacAdmin.PATCH("/users/:id", middleware.RequirePermission(rbacService, "users.update"), adminUsersHandler.Update)
+		rbacAdmin.PATCH("/users/:id", middleware.RequirePermission(rbacService, "users.update"), guards.stepUp("admin.users.update"), adminUsersHandler.Update)
 		// Read-only per-user session/security view (composes #19 session surface).
 		rbacAdmin.GET("/users/:id/sessions", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Sessions)
 		// Bulk role assignment (many roles → one user).
-		rbacAdmin.POST("/users/:id/roles/bulk", middleware.RequirePermission(rbacService, "users.roles.assign"), adminUsersHandler.BulkAssignRoles)
+		rbacAdmin.POST("/users/:id/roles/bulk", middleware.RequirePermission(rbacService, "users.roles.assign"), guards.stepUp("admin.user_roles.bulk"), adminUsersHandler.BulkAssignRoles)
 		// Bulk permission assignment (many permissions → one role).
-		rbacAdmin.POST("/roles/:id/permissions/bulk", middleware.RequirePermission(rbacService, "permissions.assign"), rbacHandler.BulkAssignPermissionsToRole)
+		rbacAdmin.POST("/roles/:id/permissions/bulk", middleware.RequirePermission(rbacService, "permissions.assign"), guards.stepUp("admin.role_permissions.bulk"), rbacHandler.BulkAssignPermissionsToRole)
 		// Admin session controls (#19, feature-flagged). High-impact actions are
 		// gated on users.suspend (a strong, super-admin-restricted-ish permission).
-		rbacAdmin.POST("/users/:id/force-logout", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForceLogout)
-		rbacAdmin.POST("/users/:id/force-password-reset", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForcePasswordReset)
+		rbacAdmin.POST("/users/:id/force-logout", middleware.RequirePermission(rbacService, "users.suspend"), guards.stepUp("admin.users.force_logout"), sessionHandler.AdminForceLogout)
+		rbacAdmin.POST("/users/:id/force-password-reset", middleware.RequirePermission(rbacService, "users.suspend"), guards.stepUp("admin.users.force_password_reset"), sessionHandler.AdminForcePasswordReset)
 
 		// Admin console routes will be registered after pool is created (see below)
 
@@ -523,7 +530,17 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	// The returned issuer is what makes Register send a code. It is nil when the
 	// feature is closed, and WithOTPIssuer(nil) leaves Register exactly as it
 	// shipped — verification stays entirely with Supabase Auth.
-	if issuer, verifier, setter, signupGate, resetWiring := registerOTPRoutes(r, cfg, sharedPool, supabase, authService, sessionService); issuer != nil {
+	issuer, verifier, setter, signupGate, resetWiring := registerOTPRoutes(r, cfg, sharedPool, supabase, authService, sessionService)
+	// ESTD-D014 step-up reuses the SAME otp.Service (store, limits, attempt
+	// ceiling) through these funcs; nil when OTP is closed → gate fails closed.
+	var stepUpIssue stepup.CodeIssuer
+	var stepUpVerify stepup.CodeVerifier
+	if issuer != nil && verifier != nil {
+		stepUpIssue, stepUpVerify = stepup.CodeIssuer(issuer), stepup.CodeVerifier(verifier)
+	}
+	registerStepUpRoutes(r, guards, supabase, rbacService, sharedPool, stepUpIssue, stepUpVerify, auditService)
+	registerSupportImpersonationRoutes(r, guards, supabase, rbacService, sharedPool, auditService, securityNotifier)
+	if issuer != nil {
 		authHandler.
 			WithOTPIssuer(issuer).
 			WithOTPVerifier(verifier).
@@ -547,7 +564,7 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	// modules wired below (Marketplace) can emit purchase events (PRD §2.5/§7.1),
 	// and the KYC verification gateway (nil unless FEATURE_KYC_VERIFY_ENABLED) so
 	// registerConnectWalletRoutes below can run a real check for tier1 submissions.
-	referralRewardsSvc, kycVerifySvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool, rtHub)
+	referralRewardsSvc, kycVerifySvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool, rtHub, guards)
 
 	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
 	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool, sharedRedis)
@@ -612,23 +629,23 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		adminConsole.GET("/users", adminConsoleHandler.GetUsers)
 		adminConsole.GET("/users/:id", adminConsoleHandler.GetUser)
 		adminConsole.GET("/kyc", adminConsoleHandler.GetKycQueue)
-		adminConsole.POST("/kyc/:id/review", adminConsoleHandler.ReviewKyc)
+		adminConsole.POST("/kyc/:id/review", guards.stepUp("console.kyc.review"), adminConsoleHandler.ReviewKyc)
 		adminConsole.GET("/assets", adminConsoleHandler.GetAssetControls)
-		adminConsole.PATCH("/assets/:id", adminConsoleHandler.UpdateAssetControl)
+		adminConsole.PATCH("/assets/:id", guards.stepUp("console.assets.update"), adminConsoleHandler.UpdateAssetControl)
 		adminConsole.GET("/orders", adminConsoleHandler.GetOrders)
 		adminConsole.GET("/withdrawals", adminConsoleHandler.GetWithdrawalQueue)
-		adminConsole.POST("/withdrawals/:ref/review", adminConsoleHandler.ReviewWithdrawal)
+		adminConsole.POST("/withdrawals/:ref/review", guards.stepUp("console.withdrawals.review"), adminConsoleHandler.ReviewWithdrawal)
 		adminConsole.GET("/reconciliation", adminConsoleHandler.GetReconciliation)
 		adminConsole.GET("/providers", adminConsoleHandler.GetProviders)
 		adminConsole.GET("/risk-limits", adminConsoleHandler.GetRiskLimits)
-		adminConsole.PATCH("/risk-limits/:id", adminConsoleHandler.UpdateRiskLimit)
+		adminConsole.PATCH("/risk-limits/:id", guards.stepUp("console.risk_limits.update"), adminConsoleHandler.UpdateRiskLimit)
 		adminConsole.GET("/fees", adminConsoleHandler.GetFees)
-		adminConsole.PATCH("/fees/:id", adminConsoleHandler.UpdateFee)
+		adminConsole.PATCH("/fees/:id", guards.stepUp("console.fees.update"), adminConsoleHandler.UpdateFee)
 		adminConsole.GET("/feature-flags", adminConsoleHandler.GetFeatureFlags)
-		adminConsole.PATCH("/feature-flags/:key", adminConsoleHandler.SetFeatureFlag)
+		adminConsole.PATCH("/feature-flags/:key", guards.stepUp("console.feature_flags.set"), adminConsoleHandler.SetFeatureFlag)
 		adminConsole.GET("/approvals", adminConsoleHandler.GetApprovals)
-		adminConsole.POST("/approvals/:id/approve", adminConsoleHandler.Approve)
-		adminConsole.POST("/approvals/:id/reject", adminConsoleHandler.RejectApproval)
+		adminConsole.POST("/approvals/:id/approve", guards.stepUp("console.approvals.approve"), adminConsoleHandler.Approve)
+		adminConsole.POST("/approvals/:id/reject", guards.stepUp("console.approvals.reject"), adminConsoleHandler.RejectApproval)
 		adminConsole.GET("/audit", adminConsoleHandler.GetAudit)
 		adminConsole.GET("/admins", adminConsoleHandler.GetAdmins)
 

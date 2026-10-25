@@ -7,9 +7,15 @@ import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import {
   mapAppointmentMoney,
-  mapDoctorMoney,
   withDemoQuote,
 } from '@/features/telemedicine/pricing';
+import {
+  mapLiveAppointment,
+  mapLiveBookingResult,
+  mapLiveDoctor,
+  mapLiveReview,
+  mapLiveSpecialty,
+} from '@/features/telemedicine/mapping';
 import type {
   Specialty,
   Doctor,
@@ -146,6 +152,20 @@ export const DEMO_APPOINTMENTS: Appointment[] = [
   },
 ];
 
+/**
+ * react-query `placeholderData` for the live queries below. A placeholder is only
+ * ever a placeholder when the module is allowed to fake data at all: in a live
+ * build a fixture row is a lie the UI then acts on — the appointments list
+ * rendered demo rows `apt-1`/`apt-2` and fired a real intake request for each,
+ * which the backend answered with 404.
+ */
+export const PLACEHOLDER_SPECIALTIES: Specialty[] | undefined =
+  TELEMEDICINE_USE_MOCK ? DEMO_SPECIALTIES : undefined;
+export const PLACEHOLDER_DOCTORS: Doctor[] | undefined =
+  TELEMEDICINE_USE_MOCK ? DEMO_DOCTORS : undefined;
+export const PLACEHOLDER_APPOINTMENTS: Appointment[] | undefined =
+  TELEMEDICINE_USE_MOCK ? DEMO_APPOINTMENTS : undefined;
+
 const DEMO_PRESCRIPTION: Prescription = {
   id: 'rx-1', appointmentId: 'apt-3', doctorName: 'Dr. Ngozi Eze', issuedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
   items: [
@@ -163,7 +183,7 @@ const DEMO_SUMMARY: VisitSummary = {
 
 export async function getSpecialties(): Promise<Specialty[]> {
   if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_SPECIALTIES); }
-  return unwrap<Specialty[]>(await api.get(`${BASE}/specialties`));
+  return (unwrap<unknown[]>(await api.get(`${BASE}/specialties`)) ?? []).map(mapLiveSpecialty);
 }
 
 export interface DoctorFilters {
@@ -218,7 +238,7 @@ export async function getDoctors(filters?: DoctorFilters | string): Promise<Doct
   const raw = unwrap<unknown[]>(await api.get(`${BASE}/doctors`, {
     params: Object.keys(params).length ? params : undefined,
   }));
-  return (raw ?? []).map(mapDoctorMoney);
+  return (raw ?? []).map(mapLiveDoctor);
 }
 
 export async function getDoctor(id: string): Promise<Doctor | undefined> {
@@ -226,7 +246,7 @@ export async function getDoctor(id: string): Promise<Doctor | undefined> {
     return wait(DEMO_DOCTORS.find((d) => d.id === id));
   }
   const raw = unwrap<unknown>(await api.get(`${BASE}/doctors/${id}`));
-  return raw ? mapDoctorMoney(raw) : undefined;
+  return raw ? mapLiveDoctor(raw) : undefined;
 }
 
 export async function getDoctorAvailability(doctorId: string): Promise<Slot[]> {
@@ -237,13 +257,14 @@ export async function getDoctorAvailability(doctorId: string): Promise<Slot[]> {
 export async function getDoctorReviews(doctorId: string): Promise<Review[]> {
   // so callers can adopt this without needing new demo fixtures.
   if (TELEMEDICINE_USE_MOCK) { return wait([]); }
-  return unwrap<Review[]>(await api.get(`${BASE}/doctors/${doctorId}/reviews`));
+  const raw = unwrap<unknown[]>(await api.get(`${BASE}/doctors/${doctorId}/reviews`));
+  return (raw ?? []).map(mapLiveReview);
 }
 
 export async function getAppointments(): Promise<Appointment[]> {
   if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_APPOINTMENTS.map(mapAppointmentMoney)); }
   const raw = unwrap<unknown[]>(await api.get(`${BASE}/appointments`));
-  return (raw ?? []).map(mapAppointmentMoney);
+  return (raw ?? []).map(mapLiveAppointment);
 }
 
 export async function getAppointment(id: string): Promise<Appointment | undefined> {
@@ -252,7 +273,7 @@ export async function getAppointment(id: string): Promise<Appointment | undefine
     return wait(found ? mapAppointmentMoney(found) : undefined);
   }
   const raw = unwrap<unknown>(await api.get(`${BASE}/appointments/${id}`));
-  return raw ? mapAppointmentMoney(raw) : undefined;
+  return raw ? mapLiveAppointment(raw) : undefined;
 }
 
 export async function getPrescription(appointmentId: string): Promise<Prescription> {
@@ -288,8 +309,13 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Book
     idempotency_key:     idempotencyKey,
     expected_total_kobo: input.expectedTotalKobo ?? 0,
   };
-  return unwrap<BookAppointmentResult>(
-    await api.post(`${BASE}/appointments`, body, { headers: { 'Idempotency-Key': idempotencyKey } }),
+  // The live route answers the created appointment row, not a `{ appointmentId,
+  // ref }` envelope — mapping it is what keeps the success screen from carrying
+  // `undefined` into the next route's params.
+  return mapLiveBookingResult(
+    unwrap<unknown>(
+      await api.post(`${BASE}/appointments`, body, { headers: { 'Idempotency-Key': idempotencyKey } }),
+    ),
   );
 }
 
@@ -307,7 +333,9 @@ export async function rescheduleAppointment(
     const updated: Appointment = { ...(found as Appointment), slotDate: input.slotDate, slotTime: input.slotTime };
     return wait(updated, 500);
   }
-  return unwrap<Appointment>(await api.post(`${BASE}/appointments/${appointmentId}/reschedule`, input));
+  return mapLiveAppointment(
+    unwrap<unknown>(await api.post(`${BASE}/appointments/${appointmentId}/reschedule`, input)),
+  );
 }
 
 export async function completeAppointment(appointmentId: string): Promise<{ status: ConsultStatus }> {

@@ -3,23 +3,13 @@
 // raw shapes the app expects. Service-role client (createAdminClient) is used by
 // the route handlers, so estate scoping is enforced in code.
 
+import { randomInt } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-export type ResidentContext = { estateId: string; unit: string; role: string };
-
-export async function getResidentContext(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<ResidentContext | null> {
-  const { data, error } = await supabase
-    .from('estate_residents')
-    .select('estate_id, unit, role')
-    .eq('user_id', userId)
-    .limit(1)
-    .maybeSingle();
-  if (error || !data) return null;
-  return { estateId: (data as any).estate_id, unit: (data as any).unit ?? '', role: (data as any).role ?? 'resident' };
-}
+export type { ResidentContext } from '@/src/server/estate/resident';
+// One canonical membership resolver (estate/resident.ts) — mutating visitor
+// routes pass { forWrite: true } for the lifecycle gate (ESTD-D025).
+export { getResidentContext } from '@/src/server/estate/resident';
 
 // code_type enum reconciliation (DB has a narrower set than the client).
 const DB_TO_CLIENT: Record<string, string> = { ridehailing: 'ride_hailing', staff: 'domestic_staff', family: 'family_permanent' };
@@ -101,9 +91,20 @@ export async function mapAccessCode(supabase: SupabaseClient, row: any): Promise
 }
 
 export function genNumericCode(): string {
+  // CSPRNG digits — Math.random is predictable and this value is a bearer
+  // credential at the gate.
   let s = '';
-  for (let i = 0; i < 6; i++) s += Math.floor(Math.random() * 10);
+  for (let i = 0; i < 6; i++) s += randomInt(0, 10);
   return s;
+}
+
+const PHONE_RE = /^\+?[0-9][0-9\s\-()]{4,19}$/;
+export function isValidVisitorPhone(phone: string): boolean {
+  return PHONE_RE.test(phone.trim());
+}
+
+export function isUniqueViolation(error: any): boolean {
+  return error?.code === '23505';
 }
 
 export const ACCESS_CODE_COLUMNS =

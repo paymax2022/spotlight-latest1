@@ -9,6 +9,7 @@ import ShareToolkit from '@/components/voting/ShareToolkit';
 import CountdownTimer from '@/components/voting/CountdownTimer';
 import type { VotingSettings, VotePackage, LeaderboardEntry, ContestantShareLink } from '@/src/features/voting/types';
 import { FORMAT_NAIRA } from '@/src/features/voting/types';
+import { authHeaders } from '@/src/lib/auth/client';
 
 interface ContestantProfile {
   id: string;
@@ -85,8 +86,12 @@ export default function PublicVotingPage() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
+      // The route resolves the caller's free-vote allowance, so it needs the
+      // session: without the bearer header every signed-in visitor got a 401
+      // here and this page rendered "Failed to load contestant profile".
       const res = await fetch(
         `/api/vote-page?contestSlug=${contestSlug}&contestantSlug=${contestantSlug}${shareCode ? `&ref=${shareCode}` : ''}`,
+        { headers: await authHeaders() },
       );
       if (!res.ok) throw new Error('Failed to load contestant profile');
       const json = await res.json();

@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
-    const ctx = await getResidentContext(supabase, user.id);
+    const ctx = await getResidentContext(supabase, user.id, { forWrite: true });
     if (!ctx) {
       throw new ApiError(
         "You're not registered as a resident of any estate yet. Ask your estate manager to add you before you can invite visitors.",

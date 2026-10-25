@@ -443,8 +443,20 @@ func (r *Repository) ListActiveApplications(ctx context.Context, userID string) 
 }
 
 // grantRole idempotently assigns the role identified by slug to the user at global
-// scope by inserting into the existing public.user_roles table. A retry is a no-op
-// thanks to the table's UNIQUE(user_id, role_id, scope_type, scope_id) constraint.
+// scope by inserting into the existing public.user_roles table.
+//
+// The table's UNIQUE(user_id, role_id, scope_type, scope_id) constraint can NOT
+// be trusted to dedupe this insert: scope_id is NULL for global grants, Postgres
+// unique indexes treat NULLs as distinct, and an ON CONFLICT clause that names
+// scope_id therefore never matches. Every replay inserted a fresh duplicate row
+// (proved live: two identical ACTIVE marketplace_seller rows 82ms apart). The
+// upsert below matches the NULL-scoped row explicitly instead — a replay
+// reactivates the SAME row rather than adding a twin.
+//
+// A residual race remains: two concurrent FIRST grants can both see no existing
+// row and both insert. Closing that needs a NULLS NOT DISTINCT unique index,
+// which is schema work — see
+// docs/qa/platform-uat/migrations-platform/user_roles_nulls_not_distinct.pending.sql.
 // Returns false if the role slug is unknown.
 func (r *Repository) grantRole(ctx context.Context, userID, roleSlug string) (bool, error) {
 	var roleID string
@@ -457,10 +469,22 @@ func (r *Repository) grantRole(ctx context.Context, userID, roleSlug string) (bo
 		return false, err
 	}
 	const q = `
+		WITH existing AS (
+			SELECT ctid FROM public.user_roles
+			 WHERE user_id = $1 AND role_id = $2
+			   AND scope_type = 'global' AND scope_id IS NULL
+			 LIMIT 1
+		),
+		reactivate AS (
+			UPDATE public.user_roles u
+			   SET is_active = true, updated_at = NOW()
+			  FROM existing e
+			 WHERE u.ctid = e.ctid
+			RETURNING 1
+		)
 		INSERT INTO public.user_roles (user_id, role_id, scope_type, scope_id, is_active)
-		VALUES ($1, $2, 'global', NULL, true)
-		ON CONFLICT (user_id, role_id, scope_type, scope_id)
-		DO UPDATE SET is_active = true, updated_at = NOW()`
+		SELECT $1, $2, 'global', NULL, true
+		WHERE NOT EXISTS (SELECT 1 FROM existing)`
 	_, err = r.db.Exec(ctx, q, userID, roleID)
 	return true, err
 }

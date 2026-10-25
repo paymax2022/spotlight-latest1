@@ -1,7 +1,7 @@
 // Scan + filter a candidate set fast. List/grid toggle, inline facet bar (price,
 // condition, verified-only, escrow-only), "Trusted first" default sort, map
 // suggests loosening the tightest filter rather than dead-ending.
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ScrollView } from 'react-native';
 import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -13,21 +13,36 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
+import { useDeviceCoords } from '@/features/location/useDeviceCoords';
 import { MarketColors, formatNaira, conditionLabel } from '@/features/marketplace';
-import type { SearchParams, SearchSort } from '@/features/marketplace';
+import { formatDistanceKm } from '@/features/marketplace/proximity';
+import type { ListingSummary, SearchParams, SearchSort } from '@/features/marketplace';
 import { useSearch, useCreateSavedSearch } from '@/features/marketplace/hooks';
 import ListingCard from '@/features/marketplace/components/ListingCard';
+import ProximityBar from '@/features/marketplace/components/ProximityBar';
 import { GridSkeleton } from '@/features/marketplace/components/Skeletons';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 const SORTS: { value: SearchSort; label: string }[] = [
   { value: 'trusted_first', label: 'Trusted first' },
+  // Distance is only a sort once there is a position to measure from, so the
+  // chip appears with the fix rather than promising an order it cannot give.
+  { value: 'nearby', label: 'Nearest first' },
   { value: 'newest', label: 'Newest' },
   { value: 'price_asc', label: 'Price ↑' },
   { value: 'price_desc', label: 'Price ↓' },
 ];
 
 type FacetToggle = 'escrowEligibleOnly' | 'verifiedSellerOnly' | 'deliveryAvailable';
+
+/** `Used · 3.6 km away · Lekki`. The distance piece only exists when there is a
+ *  measured one, so locationless rows keep their old shape. */
+function rowMeta(item: ListingSummary): string {
+  const distance = formatDistanceKm(item.distanceKm);
+  return [conditionLabel(item.condition), distance && `${distance} away`, item.state]
+    .filter(Boolean)
+    .join(' · ');
+}
 
 export default function MarketplaceResults() {
   const raw = useLocalSearchParams<{ q?: string; categoryId?: string; sort?: string }>();
@@ -38,18 +53,32 @@ export default function MarketplaceResults() {
     verifiedSellerOnly: false,
     deliveryAvailable: false,
   });
+  const loc = useDeviceCoords();
+  // null until the buyer picks a chip. Turning location on is a request to see
+  // distances, not to hide everything beyond 25 km — a search that empties itself
+  // on opt-in reads as broken, so the radius stays opt-in on this screen.
+  const [radiusKm, setRadiusKm] = useState<number | null>(null);
+
+  // Leaving 'nearby' selected with no fix would keep sending a sort the backend
+  // has nothing to apply, and the list would look sorted by nothing.
+  useEffect(() => {
+    if (!loc.coords && sort === 'nearby') setSort('trusted_first');
+  }, [loc.coords, sort]);
 
   const params: SearchParams = useMemo(
     () => ({
       q: raw.q || undefined,
       categoryId: raw.categoryId || undefined,
       sort,
+      lat: loc.coords?.lat,
+      lng: loc.coords?.lng,
+      radiusKm: loc.coords ? radiusKm ?? undefined : undefined,
       escrowEligibleOnly: facets.escrowEligibleOnly || undefined,
       verifiedSellerOnly: facets.verifiedSellerOnly || undefined,
       deliveryAvailable: facets.deliveryAvailable || undefined,
       limit: 30,
     }),
-    [raw.q, raw.categoryId, sort, facets],
+    [raw.q, raw.categoryId, sort, facets, loc.coords, radiusKm],
   );
 
   const search = useSearch(params);
@@ -58,6 +87,15 @@ export default function MarketplaceResults() {
 
   const toggle = (key: FacetToggle) => setFacets((f) => ({ ...f, [key]: !f[key] }));
   const anyFacetOn = Object.values(facets).some(Boolean);
+
+  // A radius is a filter the buyer chose, so an empty page below it says which
+  // lever to move — "try another search" is useless when the range was the whole
+  // reason nothing came back. Without a chosen radius nothing was filtered away.
+  const emptyMessage = loc.coords && radiusKm !== null
+    ? `Nothing within ${radiusKm} km of you${anyFacetOn ? ' with these filters on' : ''}. Try a wider radius above.`
+    : anyFacetOn
+      ? 'Try removing a filter to widen your search.'
+      : 'Try a different search or category.';
 
   const onSaveSearch = () => {
     if (saveSearch.isPending || saveSearch.isSuccess) return;
@@ -92,12 +130,29 @@ export default function MarketplaceResults() {
         </View>
       </View>
 
+      <ProximityBar
+        surface="results"
+        coords={loc.coords}
+        loading={loc.loading}
+        error={loc.error}
+        available={loc.available}
+        onAsk={() => void loc.request().then((fix) => {
+          // Asking for location on a results screen means "show me what's closest",
+          // so the ordering follows the fix. Turning it off reverts (effect above).
+          if (fix) setSort('nearby');
+        })}
+        onClear={loc.clear}
+        radiusKm={radiusKm}
+        onRadius={setRadiusKm}
+        sortByDistance={sort === 'nearby'}
+      />
+
       {/* Facet bar (inline, no full-screen modal for common facets) */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.facetBar}>
         <View style={styles.facetSortWrap}>
           <SlidersHorizontal size={14} color={MarketColors.muted} />
         </View>
-        {SORTS.map((s) => (
+        {(loc.coords ? SORTS : SORTS.filter((s) => s.value !== 'nearby')).map((s) => (
           <Pressable key={s.value} style={[styles.facet, sort === s.value && styles.facetActive]} onPress={() => setSort(s.value)}>
             <Text style={[styles.facetText, sort === s.value && styles.facetTextActive]}>{s.label}</Text>
           </Pressable>
@@ -120,7 +175,7 @@ export default function MarketplaceResults() {
           kind="empty"
           icon="SearchX"
           title="No matches"
-          message={anyFacetOn ? 'Try removing a filter to widen your search.' : 'Try a different search or category.'}
+          message={emptyMessage}
           actionLabel={anyFacetOn ? 'Clear filters' : undefined}
           onAction={anyFacetOn ? () => setFacets({ escrowEligibleOnly: false, verifiedSellerOnly: false, deliveryAvailable: false }) : undefined}
         />
@@ -146,7 +201,7 @@ export default function MarketplaceResults() {
               <View style={styles.listBody}>
                 <Text style={styles.listTitle} numberOfLines={2}>{item.title}</Text>
                 <Text style={styles.listPrice}>{formatNaira(item.priceKobo)}</Text>
-                <Text style={styles.listMeta}>{conditionLabel(item.condition)} · {item.state}</Text>
+                <Text style={styles.listMeta}>{rowMeta(item)}</Text>
               </View>
             </Pressable>
           )}

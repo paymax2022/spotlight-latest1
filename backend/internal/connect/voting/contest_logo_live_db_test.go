@@ -58,6 +58,9 @@ func TestLiveDB_ContestLogo_MirrorsAndFilters(t *testing.T) {
 	if got.LogoURL != "https://cdn.test/logo-a.png" {
 		t.Errorf("mirror dropped the logo: %q", got.LogoURL)
 	}
+	if want := "zz-logo-" + activeID[:8]; got.Slug != want {
+		t.Errorf("GetContest lost the slug: got %q, want %q", got.Slug, want)
+	}
 	if got.BannerImageURL != "https://cdn.test/banner-a.jpg" {
 		t.Errorf("logo migration clobbered the banner: %q", got.BannerImageURL)
 	}
@@ -107,5 +110,18 @@ func TestLiveDB_ContestLogo_MirrorsAndFilters(t *testing.T) {
 	}
 	if !has(both, activeID) || !has(both, closedID) {
 		t.Errorf("the unfiltered list must still return open and closed, as before")
+	}
+
+	// 4. Slug is the last column of the shared scan list, so a misordered SELECT
+	//    or a NULL that fails to coalesce shows up here and nowhere else — no
+	//    DB-free test can see it, and the admin console builds its Edit link
+	//    from this value.
+	for _, c := range both {
+		if c.ID != activeID {
+			continue
+		}
+		if want := "zz-logo-" + activeID[:8]; c.Slug != want {
+			t.Errorf("the list lost the slug: got %q, want %q", c.Slug, want)
+		}
 	}
 }

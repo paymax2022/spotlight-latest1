@@ -12,6 +12,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { useContests } from '@/features/voting/hooks/useContests';
 import ContestCard from '@/features/voting/components/ContestCard';
+import NoContestsState from '@/features/voting/components/NoContestsState';
 import SelectField from '@/components/SelectField';
 import {
   CONTEST_FILTER_OPTIONS,
@@ -103,14 +104,22 @@ export default function ContestListScreen() {
           onRefresh={refetch}
           refreshing={isRefetching}
           ListEmptyComponent={
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>
-                {statusFilter === 'closed' ? 'No closed contests yet' : 'No active contests right now'}
-              </Text>
-              <Text style={styles.emptySub}>
-                {search ? 'Try a different search.' : 'Check back soon for new Spotlight competitions.'}
-              </Text>
-            </View>
+            search.trim() ? (
+              <View style={styles.empty}>
+                <Text style={styles.emptyTitle}>No matches</Text>
+                <Text style={styles.emptySub}>Try a different search.</Text>
+              </View>
+            ) : (
+              <NoContestsState
+                compact
+                title={statusFilter === 'closed' ? 'No closed contests yet…' : 'No live contests right now…'}
+                message={
+                  statusFilter === 'closed'
+                    ? 'Nothing has finished voting yet. Pull down to refresh once a contest wraps up.'
+                    : 'Keep calm, light a fire and pull down to refresh. New Spotlight contests open here.'
+                }
+              />
+            )
           }
         />
       )}

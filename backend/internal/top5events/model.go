@@ -46,6 +46,11 @@ type Event struct {
 	FeeBps      int        `json:"fee_bps"` // platform fee in basis points on vendor settlement
 	CreatedAt   time.Time  `json:"created_at"`
 
+	// Tiers is populated by GetEvent only (buyer-facing tier discovery — the
+	// mobile checkout renders it). Never set from a request body; AddTier is
+	// the only write path.
+	Tiers []TicketTier `json:"tiers,omitempty"`
+
 	// Social fields (events-social). The four venue/banner fields are nullable in
 	// the contract, so they are pointers WITHOUT omitempty: an unset value is sent as
 	// null and a client with no coordinates renders no map. LikeCount is the stored
@@ -66,6 +71,13 @@ type EventListFilter struct {
 	State    string
 	Limit    int
 	Offset   int
+
+	// Discovery extensions (UAT EVT-048/049/050): free-text search over
+	// title+venue, a starts_at date window, and a deterministic sort order.
+	Q    string
+	From *time.Time
+	To   *time.Time
+	Sort string // date_asc (default) | date_desc | price_asc | price_desc
 }
 
 // EventSummary is the lightweight discovery-feed projection of an Event: no

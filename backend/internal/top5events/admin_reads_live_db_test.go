@@ -111,6 +111,28 @@ func TestLiveDB_AdminGetEvent_RealAggregatesAndNoFabricatedTimeline(t *testing.T
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM event_ticket_tiers WHERE id=$1`, tierID)
 	})
 
+	// GMV is order-derived now (PAID event_orders), not tiers.sold*price: seed
+	// 20 PAID orders of 100000 + the issued tickets they correspond to.
+	for range 20 {
+		orderID := uuid.New().String()
+		if _, err := pool.Exec(context.WithoutCancel(ctx),
+			`INSERT INTO event_orders (id, event_id, buyer_id, tier_id, total_kobo, status, idempotency_key)
+			 VALUES ($1,$2,$3,$4,100000,'PAID',$5)`,
+			orderID, eventID, organiser, tierID, "adm-reads-"+orderID); err != nil {
+			t.Fatalf("seed order: %v", err)
+		}
+		if _, err := pool.Exec(context.WithoutCancel(ctx),
+			`INSERT INTO event_tickets (id, event_id, tier_id, order_id, owner_id, state, price_paid_kobo)
+			 VALUES ($1,$2,$3,$4,$5,'ISSUED',100000)`,
+			uuid.New().String(), eventID, tierID, orderID, organiser); err != nil {
+			t.Fatalf("seed ticket: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()),
+			`DELETE FROM event_tickets WHERE event_id=$1; DELETE FROM event_orders WHERE event_id=$1`, eventID)
+	})
+
 	got, err := svc.AdminGetEvent(ctx, eventID)
 	if err != nil {
 		t.Fatalf("AdminGetEvent: %v", err)

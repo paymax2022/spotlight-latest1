@@ -22,7 +22,13 @@ export async function GET(request: Request) {
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) return NextResponse.json([]);
-    const { data: rows, error } = await supabase.from('estate_emergency_alerts').select(COLS).eq('estate_id', ctx.estateId).order('created_at', { ascending: false });
+    // EST-UAT-0327: alert details (medical, domestic, another unit's reporter
+    // identity) are sensitive; only responders see the estate-wide feed;
+    // ordinary residents see their own alerts.
+    const responder = ctx.role === 'estate_admin' || ctx.role === 'estate_security';
+    let query = supabase.from('estate_emergency_alerts').select(COLS).eq('estate_id', ctx.estateId);
+    if (!responder) query = query.eq('reporter_id', user.id);
+    const { data: rows, error } = await query.order('created_at', { ascending: false });
     if (error) throw error;
     const names = await resolveNames(supabase, (rows ?? []).map((r: any) => r.reporter_id));
     return NextResponse.json((rows ?? []).map((r) => mapAlert(r, names)));

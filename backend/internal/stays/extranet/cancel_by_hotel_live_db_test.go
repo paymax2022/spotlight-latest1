@@ -118,7 +118,9 @@ func newHotelCancelFixture(t *testing.T) *hotelCancelFixture {
 		        $7::date, $8::date, 1, 'NGN', $9, $10, $11,
 		        'WALLET', '{"refundable":true}'::jsonb, $12, 'tok', 'vch')`,
 		f.resID, f.guest, f.propID, uuid.NewString(), uuid.NewString(), "DIR-"+uuid.NewString()[:12],
-		time.Now().Add(72*time.Hour).Format("2006-01-02"),
+		// check_in yesterday so the no-show cutoff (check_in <= CURRENT_DATE)
+		// admits the mark — the OPS-009 guard refuses future arrivals.
+		time.Now().Add(-24*time.Hour).Format("2006-01-02"),
 		time.Now().Add(96*time.Hour).Format("2006-01-02"),
 		f.gross, 1_000_000, f.comm, "hc-"+uuid.NewString()); err != nil {
 		t.Fatalf("seed reservation: %v", err)

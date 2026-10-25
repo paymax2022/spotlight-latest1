@@ -9,18 +9,18 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getProfileDraft,
   getDocumentSlots,
+  getNigerianStates,
+  getLgasByState,
   getLicenceExpiryWarning,
   getVerificationDecision,
   saveProfileDraft,
   uploadProfilePhoto,
   uploadDocument,
   saveBankAccount,
-  saveTaxInfo,
+  verifyBankAccount,
   submitProfileVerification,
   renewLicence,
   publishProfile,
-  DEMO_PROFILE_DRAFT,
-  DEMO_DOCUMENT_SLOTS,
   DEMO_LICENCE_EXPIRY_WARNING,
   DEMO_VERIFICATION_DECISION,
 } from '@/api/doctor.profile.api';
@@ -30,7 +30,7 @@ import type {
   UploadProfilePhotoInput,
   UploadDocumentInput,
   SaveBankAccountInput,
-  SaveTaxInfoInput,
+  VerifyBankAccountInput,
   SubmitProfileVerificationInput,
   RenewLicenceInput,
   PublishProfileInput,
@@ -40,7 +40,10 @@ export function useProfileDraft(draftId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'profile', 'draft', draftId],
     queryFn:         () => getProfileDraft(draftId),
-    placeholderData: DEMO_PROFILE_DRAFT,
+    // No DEMO placeholder: every setup screen initializes its form with a
+    // one-shot `if (draft && !form)` effect, so placeholder data would latch
+    // the demo profile into a fresh user's form and get saved as real input.
+    // Screens already render a loading StateView while !draft.
     staleTime:       30_000,
   });
 }
@@ -49,8 +52,30 @@ export function useDocumentSlots() {
   return useQuery({
     queryKey:        ['doctor', 'profile', 'documents'],
     queryFn:         getDocumentSlots,
-    placeholderData: DEMO_DOCUMENT_SLOTS,
+    // No DEMO placeholder: the licence screen seeds its upload state from the
+    // slot's file on first render, so placeholder slots would latch the demo
+    // "license.pdf" onto a real doctor's licence step and get saved to the draft.
     staleTime:       30_000,
+  });
+}
+
+// Dojah-backed Nigerian geography for the affiliations address pickers. Cached
+// hard (states/LGAs are static); the screen falls back to a static list / free
+// text if these fail to load.
+export function useNigerianStates() {
+  return useQuery({
+    queryKey:  ['doctor', 'geo', 'states'],
+    queryFn:   getNigerianStates,
+    staleTime: 1000 * 60 * 60 * 24,
+  });
+}
+
+export function useLgasForState(state?: string) {
+  return useQuery({
+    queryKey:  ['doctor', 'geo', 'lgas', state ?? ''],
+    queryFn:   () => getLgasByState(state as string),
+    enabled:   !!state,
+    staleTime: 1000 * 60 * 60 * 24,
   });
 }
 
@@ -117,14 +142,9 @@ export function useSaveBankAccount() {
   });
 }
 
-export function useSaveTaxInfo() {
-  const qc = useQueryClient();
+export function useVerifyBankAccount() {
   return useMutation({
-    mutationFn: (input: Omit<SaveTaxInfoInput, 'idempotencyKey'>) =>
-      saveTaxInfo({ ...input, idempotencyKey: generateIdempotencyKey() }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['doctor', 'profile', 'draft'] });
-    },
+    mutationFn: (input: VerifyBankAccountInput) => verifyBankAccount(input),
   });
 }
 

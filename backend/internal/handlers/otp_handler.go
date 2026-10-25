@@ -113,7 +113,9 @@ func (h *OTPHandler) RequestOTP(c *gin.Context) {
 	// it is issued from there and nowhere else.
 	// The cost is that "resend my login code" means submitting the password
 	// again. That is the correct trade.
-	if purpose == otp.PurposeLogin {
+	// Step-up codes (ESTD-D014) are likewise issued only to an authenticated
+	// session by /api/auth/step-up/challenge; IsPublicPurpose excludes both.
+	if !otp.IsPublicPurpose(purpose) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid request"})
 		return
 	}
@@ -162,6 +164,14 @@ func (h *OTPHandler) VerifyOTP(c *gin.Context) {
 	code := strings.TrimSpace(body.Code)
 	purpose := strings.TrimSpace(body.Purpose)
 	if email == "" || code == "" || purpose == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid request"})
+		return
+	}
+	// A step-up code is redeemable only by /api/auth/step-up/verify, which binds
+	// the grant to the caller's session. Redeeming it here would let an
+	// unauthenticated caller burn (or brute-force attempts against) another
+	// user's live step-up code (ESTD-D014).
+	if purpose == otp.PurposeStepUp {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid request"})
 		return
 	}

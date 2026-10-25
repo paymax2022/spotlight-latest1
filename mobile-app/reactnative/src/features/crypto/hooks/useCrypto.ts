@@ -123,6 +123,25 @@ export function useDepositAddress(symbol?: string, networkId?: string) {
   });
 }
 
+// Money-IN history (GAP-DEP-01 Slice 3). Polls while the caller is watching for a deposit to
+// land: a credited row appears in crypto_deposits only once the network clears the confirmation
+// floor, so the pending→credited screen re-fetches on an interval until one shows up.
+export function useDeposits(symbol?: string, pollMs = 10_000) {
+  return useQuery({
+    queryKey: [KEY, 'deposits', symbol ?? 'all'],
+    queryFn: () => crypto.getDeposits(symbol),
+    refetchInterval: pollMs,
+  });
+}
+
+export function useDeposit(id?: string) {
+  return useQuery({
+    queryKey: [KEY, 'deposit', id],
+    queryFn: () => crypto.getDeposit(id as string),
+    enabled: Boolean(id),
+  });
+}
+
 export function useWatchlist() {
   return useQuery({ queryKey: [KEY, 'watchlist'], queryFn: crypto.getWatchlist, staleTime: 20_000 });
 }

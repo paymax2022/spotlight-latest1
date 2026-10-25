@@ -1,4 +1,4 @@
-// Package monnify implements provider.DisbursementProvider for Monnify
+// Package monnify implements provider.DisbursementProvider and provider.IdNumberPort for Monnify
 // (https://docs.monnify.com). Auth is a two-step OAuth: base64(apiKey:secretKey)
 // is exchanged for a short-lived bearer token used on all subsequent calls.
 // Money is integer kobo internally; Monnify's API is naira-major, so amounts are
@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,7 +27,7 @@ import (
 const sandboxURL = "https://sandbox.monnify.com"
 const prodURL = "https://api.monnify.com"
 
-// Client implements provider.DisbursementProvider for Monnify.
+// Client implements provider.DisbursementProvider and provider.IdNumberPort for Monnify.
 type Client struct {
 	apiKey        string
 	secretKey     string
@@ -93,6 +94,87 @@ func (c *Client) authToken(ctx context.Context) (string, error) {
 	return c.token, nil
 }
 
+// VerifyIDNumber performs a Monnify KYC data-match (BVN/NIN).
+func (c *Client) VerifyIDNumber(ctx context.Context, req provider.KycVerifyRequest) (provider.KycCheckResult, error) {
+	var path string
+	var body map[string]any
+
+	switch strings.ToUpper(req.IDType) {
+	case "BVN":
+		path = "/api/v1/vas/bvn-details-match"
+		body = map[string]any{
+			"bvn":  req.IDNumber,
+			"name": fmt.Sprintf("%s %s", req.FirstName, req.LastName),
+		}
+		if req.DOB != "" {
+			if t, err := time.Parse("2006-01-02", req.DOB); err == nil {
+				body["dateOfBirth"] = t.Format("02-Jan-2006")
+			}
+		}
+	case "NIN":
+		path = "/api/v1/vas/nin-details-match"
+		body = map[string]any{
+			"nin":  req.IDNumber,
+			"name": fmt.Sprintf("%s %s", req.FirstName, req.LastName),
+		}
+		if req.DOB != "" {
+			if t, err := time.Parse("2006-01-02", req.DOB); err == nil {
+				body["dateOfBirth"] = t.Format("02-Jan-2006")
+			}
+		}
+	default:
+		return provider.KycCheckResult{
+			Status: provider.KycFailed,
+			Reason: "monnify: unsupported id_type " + req.IDType,
+		}, nil
+	}
+
+	var resp struct {
+		RequestSuccessful bool `json:"requestSuccessful"`
+		ResponseBody      struct {
+			BvnMatch bool `json:"bvnInformationMatch"`
+			NinMatch bool `json:"ninInformationMatch"`
+			Name     struct {
+				MatchStatus     string  `json:"matchStatus"`
+				MatchPercentage float64 `json:"matchPercentage"`
+			} `json:"name"`
+		} `json:"responseBody"`
+		ResponseMessage string `json:"responseMessage"`
+	}
+
+	if err := c.post(ctx, path, body, &resp); err != nil {
+		return provider.KycCheckResult{}, err
+	}
+	if !resp.RequestSuccessful {
+		return provider.KycCheckResult{
+			Status: provider.KycFailed,
+			Reason: "monnify: verification failed: " + resp.ResponseMessage,
+		}, nil
+	}
+
+	match := false
+	confidence := 0.0
+	if strings.ToUpper(req.IDType) == "BVN" {
+		match = resp.ResponseBody.BvnMatch || resp.ResponseBody.Name.MatchStatus == "FULL_MATCH"
+		confidence = resp.ResponseBody.Name.MatchPercentage
+	} else {
+		match = resp.ResponseBody.NinMatch
+		confidence = 100.0
+	}
+
+	status := provider.KycFailed
+	if match {
+		status = provider.KycPassed
+	}
+
+	return provider.KycCheckResult{
+		Status:     status,
+		Match:      match,
+		Confidence: confidence,
+		Reason:     resp.ResponseMessage,
+	}, nil
+}
+
 func (c *Client) ListBanks(ctx context.Context) ([]provider.Bank, error) {
 	var resp struct {
 		RequestSuccessful bool `json:"requestSuccessful"`
@@ -124,7 +206,8 @@ func (c *Client) ResolveAccount(ctx context.Context, bankCode, accountNumber str
 		} `json:"responseBody"`
 		ResponseMessage string `json:"responseMessage"`
 	}
-	path := fmt.Sprintf("/api/v1/disbursements/account/validate?accountNumber=%s&bankCode=%s", accountNumber, bankCode)
+	// v1 validate is deprecated by Monnify; v2 is the same GET contract.
+	path := fmt.Sprintf("/api/v2/disbursements/account/validate?accountNumber=%s&bankCode=%s", accountNumber, bankCode)
 	if err := c.get(ctx, path, &resp); err != nil {
 		return nil, err
 	}
@@ -138,15 +221,11 @@ func (c *Client) ResolveAccount(ctx context.Context, bankCode, accountNumber str
 	}, nil
 }
 
-// CreateTransferRecipient — Monnify has no persistent recipient object; the
-// destination is supplied inline on each disbursement. We return a deterministic
-// pseudo-code so the caller can cache it uniformly with Paystack.
 func (c *Client) CreateTransferRecipient(ctx context.Context, req provider.RecipientRequest) (*provider.Recipient, error) {
 	return &provider.Recipient{Code: "monnify:" + req.BankCode + ":" + req.AccountNumber}, nil
 }
 
 func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest) (*provider.PayoutResponse, error) {
-	// RecipientCode encodes "monnify:<bankCode>:<accountNumber>" (see above).
 	bankCode, accountNumber := parseRecipientCode(req.RecipientCode)
 	body := map[string]any{
 		"amount":                   nairaFromKobo(req.AmountKobo),
@@ -155,7 +234,7 @@ func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest)
 		"destinationBankCode":      bankCode,
 		"destinationAccountNumber": accountNumber,
 		"currency":                 "NGN",
-		"sourceAccountNumber":      c.contractCode, // wallet/contract-funded disbursement
+		"sourceAccountNumber":      c.contractCode,
 	}
 	var resp struct {
 		RequestSuccessful bool `json:"requestSuccessful"`
@@ -175,7 +254,7 @@ func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest)
 		TransferCode: resp.ResponseBody.Reference,
 		Status:       normalizeStatus(resp.ResponseBody.Status),
 		Reference:    resp.ResponseBody.Reference,
-		ProviderRef:  resp.ResponseBody.Reference, // Monnify routes webhooks by reference
+		ProviderRef:  resp.ResponseBody.Reference,
 	}, nil
 }
 
@@ -197,8 +276,6 @@ func (c *Client) GetTransferStatus(ctx context.Context, providerRef string) (*pr
 	return &provider.PayoutStatus{Status: normalizeStatus(resp.ResponseBody.Status)}, nil
 }
 
-// VerifyWebhookSignature validates Monnify's HMAC-SHA512 of the raw body with the
-// client (webhook) secret, hex-encoded (monnify-signature header).
 func (c *Client) VerifyWebhookSignature(payload []byte, signature string) bool {
 	if c.webhookSecret == "" || signature == "" {
 		return false
@@ -206,7 +283,6 @@ func (c *Client) VerifyWebhookSignature(payload []byte, signature string) bool {
 	return cryptox.VerifyHMACSHA512(c.webhookSecret, payload, signature)
 }
 
-// ParseWebhook normalizes a Monnify disbursement / collection webhook.
 func (c *Client) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {
 	var env struct {
 		EventType string `json:"eventType"`
@@ -239,7 +315,6 @@ func (c *Client) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {
 	default:
 		ev.Type = ""
 	}
-	// EventType is authoritative for disbursement terminal state.
 	switch env.EventType {
 	case "SUCCESSFUL_DISBURSEMENT", "SUCCESSFUL_TRANSACTION":
 		ev.Status = "successful"
@@ -251,7 +326,6 @@ func (c *Client) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {
 	return ev, nil
 }
 
-// normalizeStatus maps Monnify status strings to our internal vocabulary.
 func normalizeStatus(s string) string {
 	switch s {
 	case "SUCCESS", "SUCCESSFUL", "PAID", "COMPLETED":
@@ -267,12 +341,10 @@ func normalizeStatus(s string) string {
 
 func nairaFromKobo(kobo int64) int64 { return kobo / 100 }
 func koboFromNaira(naira float64) int64 {
-	// Round to the nearest kobo without importing math; +0.5 then truncate.
 	return int64(naira*100 + 0.5)
 }
 
 func parseRecipientCode(code string) (bankCode, accountNumber string) {
-	// "monnify:<bankCode>:<accountNumber>"
 	const prefix = "monnify:"
 	if len(code) > len(prefix) && code[:len(prefix)] == prefix {
 		rest := code[len(prefix):]

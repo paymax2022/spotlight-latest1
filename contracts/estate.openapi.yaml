@@ -15,6 +15,12 @@ info:
       - Auth: Bearer JWT issued by Supabase Auth. Estate scope is derived
         server-side from estate_residents; admin-only routes also require
         role = estate_admin.
+      - Estate lifecycle (ESTD-D025): every mutating operation below returns
+        423 while the estate is pending/suspended/closed — writes are refused,
+        records retained, reads unaffected. Exempt: emergencies (raise +
+        resolve) and access-reduction (blacklist, revoke, checkout, deny,
+        gate sync). Platform review/suspend/reactivate/close lives on the Go
+        API at /api/finance/estate-admin/estates/* (see contracts/openapi.yaml).
     Module spec — mirrors contracts/visitor.openapi.yaml. Served under /api/v1.
 
 servers:
@@ -446,6 +452,61 @@ components:
             pendingInvoices: { type: integer }
             pendingBookings: { type: integer }
 
+    # ── Maker-checker approvals (ESTD-D027) ──
+    ApprovalAction:
+      type: string
+      enum: [vendor_payout, resident_ban, role_grant, threshold_change]
+      description: >
+        vendor_payout — release a completed vendor job's payout (needs a checker
+        at/above the estate's vendor_payout_kobo threshold; below it executes
+        immediately). resident_ban, role_grant (escalate to estate_admin) and
+        threshold_change always need a second estate admin.
+    ApprovalRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estate_id: { type: string, format: uuid }
+        action: { $ref: '#/components/schemas/ApprovalAction' }
+        subject_id: { type: string, description: "vendor job id / resident user id / estate id (threshold_change)" }
+        amount_kobo: { type: integer, format: int64, description: "Server-resolved (vendor job amount); 0 for non-money actions" }
+        payload: { type: object, additionalProperties: true }
+        status: { type: string, enum: [pending, approved, rejected, executed, expired] }
+        requires_checker: { type: boolean }
+        threshold_version: { type: integer, description: "Threshold version in force when filed (0 = built-in default)" }
+        threshold_kobo: { type: integer, format: int64, nullable: true }
+        initiated_by: { type: string, format: uuid }
+        initiator_note: { type: string }
+        decided_by: { type: string, format: uuid, nullable: true }
+        decided_at: { type: string, format: date-time, nullable: true }
+        decision_note: { type: string }
+        executed_at: { type: string, format: date-time, nullable: true }
+        execution_result: { type: object, nullable: true, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    CreateApprovalBody:
+      type: object
+      required: [action]
+      properties:
+        action: { $ref: '#/components/schemas/ApprovalAction' }
+        subject_id: { type: string, description: "Required except for threshold_change" }
+        payload:
+          type: object
+          additionalProperties: true
+          description: >
+            resident_ban: {reason}. role_grant: {role: estate_admin}.
+            threshold_change: {vendor_payout_kobo: integer kobo >= 0}.
+            Ignored for vendor_payout (amount comes from the job).
+        note: { type: string }
+    ApprovalThresholds:
+      type: object
+      properties:
+        estate_id: { type: string, format: uuid }
+        version: { type: integer }
+        vendor_payout_kobo: { type: integer, format: int64 }
+        approval_request_id: { type: string, format: uuid, nullable: true }
+        created_by: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time, nullable: true }
+
     # ── Notifications (Block 43) ──
     Notification:
       type: object
@@ -696,6 +757,27 @@ paths:
       responses:
         '200': { description: Request, content: { application/json: { schema: { $ref: '#/components/schemas/RepairRequest' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: signOffRepair
+      summary: Reporter sign-off — accept the work (completed) or reject it (reopened for rework)
+      tags: [Maintenance]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [accept, reject] }
+                note: { type: string }
+      responses:
+        '200': { description: Signed off, content: { application/json: { schema: { $ref: '#/components/schemas/RepairRequest' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Caller is not the reporter of this request }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Request is not in a status that allows this action }
   /estate/repairs/{id}/updates:
     post:
       operationId: addRepairUpdate
@@ -993,6 +1075,81 @@ paths:
       responses:
         '200': { description: Summary, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSummary' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Maker-checker approvals (ESTD-D027; FEATURE_ESTATE_DUAL_CONTROL_ENABLED) ──
+  /estate/admin/approvals:
+    get:
+      operationId: listEstateApprovals
+      summary: List the estate's maker-checker approval requests (admin only)
+      tags: [EstateAdmin]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [pending, approved, rejected, executed, expired] } }
+      responses:
+        '200': { description: Requests, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/ApprovalRequest' } } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { description: Dual control not enabled }
+    post:
+      operationId: createEstateApproval
+      summary: File a high-risk admin action for second-admin approval (maker step)
+      description: >
+        Returns 201 with status=pending when a different estate admin must
+        approve, or status=executed when the action is below threshold and ran
+        immediately. Replaying the same Idempotency-Key returns the same request.
+      tags: [EstateAdmin]
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateApprovalBody' } } }
+      responses:
+        '201': { description: Filed (or executed below threshold), content: { application/json: { schema: { $ref: '#/components/schemas/ApprovalRequest' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: An open request already exists for this action and subject }
+        '503': { description: Dual control not enabled }
+  /estate/admin/approvals/{id}/approve:
+    post:
+      operationId: approveEstateApproval
+      summary: Approve and execute a pending request (checker step — must differ from the maker)
+      description: >
+        The action executes exactly once. A replay (same or another admin)
+        returns 200 with replayed=true and executes nothing. The initiator, or
+        the user the action benefits/targets, gets 403.
+      tags: [EstateAdmin]
+      parameters: [ { $ref: '#/components/parameters/PathId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { type: object, properties: { note: { type: string } } } } }
+      responses:
+        '200': { description: Executed (or replay), content: { application/json: { schema: { type: object, properties: { approval: { $ref: '#/components/schemas/ApprovalRequest' }, replayed: { type: boolean } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Self-approval refused, or admin role required }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Request is not pending (rejected/expired) }
+        '503': { description: Dual control not enabled }
+  /estate/admin/approvals/{id}/reject:
+    post:
+      operationId: rejectEstateApproval
+      summary: Reject a pending request (checker — must differ from the maker)
+      tags: [EstateAdmin]
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { type: object, properties: { note: { type: string } } } } }
+      responses:
+        '200': { description: Rejected, content: { application/json: { schema: { $ref: '#/components/schemas/ApprovalRequest' } } } }
+        '403': { description: Self-rejection refused, or admin role required }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Request is not pending }
+        '503': { description: Dual control not enabled }
+  /estate/admin/approval-thresholds:
+    get:
+      operationId: getEstateApprovalThresholds
+      summary: Active approval-threshold version and its append-only history (admin only)
+      tags: [EstateAdmin]
+      responses:
+        '200': { description: Thresholds, content: { application/json: { schema: { type: object, properties: { current: { $ref: '#/components/schemas/ApprovalThresholds' }, history: { type: array, items: { $ref: '#/components/schemas/ApprovalThresholds' } } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { description: Dual control not enabled }
 
   # ── Notifications (Block 43) ──
   /estate/notifications:

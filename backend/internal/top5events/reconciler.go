@@ -49,6 +49,17 @@ func StartPendingOrderReconciler(ctx context.Context, svc *Service, interval, ol
 		} else if n > 0 {
 			log.Printf("[top5events] cancelled-event refund sweep: events=%d", n)
 		}
+		// Card-rail sweep — a no-op until EnableCardCheckout wires the rail
+		// (EVTB-D013). Settles paid charges whose webhook never arrived, takes
+		// over settle claims a crashed worker abandoned, releases expired unpaid
+		// holds (verified unpaid first) and finishes refunds whose gateway call
+		// failed. 2 min keeps it off intents the live webhook/poll is handling.
+		if st, cerr := svc.ReconcileCardCheckouts(cctx, 2*time.Minute); cerr != nil {
+			log.Printf("[top5events] card checkout sweep error: %v", cerr)
+		} else if st.Confirmed+st.Expired+st.Refunded > 0 {
+			log.Printf("[top5events] card checkout sweep: confirmed=%d expired=%d refunded=%d errors=%d",
+				st.Confirmed, st.Expired, st.Refunded, st.Errors)
+		}
 	}
 	go func() {
 		run()

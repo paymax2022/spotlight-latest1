@@ -184,6 +184,31 @@ const (
 	AddressReviewRejected = "rejected"
 )
 
+// CryptoDeposit is one settled money-IN credit journaled in crypto_deposits by the deposit
+// engine (GAP-DEP-01). A row exists ONLY for a confirmation-gated, once-only credit — the
+// engine persists nothing while a transfer is awaiting confirmations or unmapped — so a row's
+// very presence IS the "credited" fact. That is what the mobile pending→credited screen polls
+// for and what the admin money-IN view surfaces. Units are integer asset minor units; the
+// minor_unit_scale is carried so a client renders the whole-unit figure without a second read.
+// The exception queue for not-yet-creditable transfers is a separate, undecided design (needs a
+// persisted pending/unmapped representation); it is NOT what this read exposes. See ADR-PR727.
+type CryptoDeposit struct {
+	ID             string    `json:"id"`
+	Provider       string    `json:"provider"`
+	ProviderOpID   string    `json:"provider_op_id"`
+	UserID         string    `json:"user_id,omitempty"` // admin view only
+	Symbol         string    `json:"symbol"`
+	Network        string    `json:"network"`
+	Address        string    `json:"address,omitempty"`
+	Units          int64     `json:"units"`
+	MinorUnitScale int64     `json:"minor_unit_scale"`
+	Confirmations  int       `json:"confirmations"`
+	RequiredConfs  int       `json:"required_confs"`
+	TxHash         string    `json:"tx_hash,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	CreditedAt     time.Time `json:"credited_at"`
+}
+
 // deriveAddressReview maps (is_active, verified_at) → a review verdict.
 func deriveAddressReview(isActive bool, verifiedAt *time.Time) string {
 	if isActive {

@@ -89,6 +89,16 @@ function ExamCard({ exam }: { exam: FilmAcademyExamSummary }) {
         </Text>
       </View>
 
+      {(exam.opensAt || exam.closesAt) ? (
+        <View style={styles.metaRow}>
+          <Clock size={12} color={Colors.onSurfaceVariant} />
+          <Text style={styles.meta}>
+            {exam.opensAt ? `Opens ${new Date(exam.opensAt).toLocaleString()}` : 'Open now'}
+            {exam.closesAt ? ` · Closes ${new Date(exam.closesAt).toLocaleString()}` : ''}
+          </Text>
+        </View>
+      ) : null}
+
       {!!error && <Text style={styles.error}>{error}</Text>}
 
       {exam.canStart ? (

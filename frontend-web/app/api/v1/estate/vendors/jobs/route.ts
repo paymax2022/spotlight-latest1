@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { handleApiError } from '@/src/lib/api/responses';
+import { ApiError, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/estate/resident';
@@ -14,13 +14,26 @@ export function mapJob(row: any, vendorName?: string) {
   };
 }
 
+// EST-UAT-0285: job access is scoped to awarded work: the estate admin sees
+// the full board, a vendor sees only its own jobs, other residents see none.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
-    if (!ctx) return NextResponse.json([]);
-    const { data: rows, error } = await supabase.from('vendor_jobs').select(COLS).eq('estate_id', ctx.estateId).order('created_at', { ascending: false });
+    if (!ctx) throw new ApiError('Not a resident of any estate', 403);
+
+    let query = supabase.from('vendor_jobs').select(COLS).eq('estate_id', ctx.estateId);
+    if (ctx.role !== 'estate_admin') {
+      const { data: vendor, error: vErr } = await supabase
+        .from('estate_vendors').select('id').eq('estate_id', ctx.estateId).eq('user_id', user.id)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (vErr) throw vErr;
+      if (!vendor) throw new ApiError('Vendor jobs are restricted to the assigned vendor and estate admin', 403);
+      query = query.eq('vendor_id', (vendor as any).id);
+    }
+
+    const { data: rows, error } = await query.order('created_at', { ascending: false });
     if (error) throw error;
     const ids = Array.from(new Set((rows ?? []).map((r: any) => r.vendor_id)));
     const names: Record<string, string> = {};

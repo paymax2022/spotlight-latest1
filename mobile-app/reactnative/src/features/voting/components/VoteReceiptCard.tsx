@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, Image, StyleSheet } from 'react-native';
 import { Receipt } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -36,10 +36,14 @@ export default function VoteReceiptCard({ transaction: tx }: Props) {
         <View style={styles.iconWrap}>
           <Receipt size={22} color={Colors.primary} strokeWidth={1.5} />
         </View>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.title}>Vote Receipt</Text>
           <Text style={styles.ref}>{tx.reference}</Text>
         </View>
+        {/* Absent when the server could not sign the stored photo key. */}
+        {tx.contestantPhoto ? (
+          <Image source={{ uri: tx.contestantPhoto }} style={styles.avatar} />
+        ) : null}
       </View>
 
       <View style={styles.divider} />
@@ -77,6 +81,7 @@ const styles = StyleSheet.create({
   iconWrap: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
   title:    { ...Typography.titleMd, color: Colors.onSurface },
   ref:      { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  avatar:   { width: 44, height: 44, borderRadius: Radius.full },
   divider:  { height: 1, backgroundColor: Colors.surfaceContainerHigh, marginVertical: 4 },
   row:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowLabel: { ...Typography.bodySm, color: Colors.onSurfaceVariant },

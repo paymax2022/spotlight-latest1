@@ -14,10 +14,11 @@ import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, InfoRow } from '@/features/doctor/components';
-import { useVerification } from '@/features/doctor/hooks';
+import { useVerification, useDocumentSlots } from '@/features/doctor/hooks';
 
 export default function VerificationSubmittedScreen() {
   const { data: submission, isLoading, isError, refetch } = useVerification();
+  const { data: slots } = useDocumentSlots();
 
   if (isLoading && !submission) {
     return (
@@ -51,7 +52,7 @@ export default function VerificationSubmittedScreen() {
 
         <SectionCard title="Submission details" style={styles.card}>
           {submission.submittedAt && <InfoRow label="Submitted" value={new Date(submission.submittedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' })} />}
-          <InfoRow label="Documents" value={`${submission.documents.length} uploaded`} />
+          <InfoRow label="Documents" value={`${slots?.filter((s) => s.file).length ?? submission.documents.length} uploaded`} />
           <InfoRow label="Status" value="In review" valueColor={Colors.secondary} />
         </SectionCard>
 

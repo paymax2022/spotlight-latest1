@@ -72,6 +72,7 @@ import (
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
+	"spotlight/backend/internal/provider/dojah"
 	"spotlight/backend/internal/provider/monnify"
 	"spotlight/backend/internal/provider/paystack"
 	"spotlight/backend/internal/realtor"
@@ -81,6 +82,7 @@ import (
 	"spotlight/backend/internal/restaurant/paystackcheckout"
 	"spotlight/backend/internal/restaurant/taxonomy"
 	"spotlight/backend/internal/services"
+	staysreservation "spotlight/backend/internal/stays/reservation"
 	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
@@ -102,7 +104,10 @@ import (
 // into registerConnectWalletRoutes — the /api/v1/kyc/tier1 handler needs it to
 // run a real Dojah/Smile ID/Youverify check instead of writing an unverified
 // pending status.
-func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub) (*referrals.RewardService, *kycverify.Service) {
+// the guards parameter merely surfaced the metric on this line.
+//
+//nolint:gocognit,gocyclo // monolith route registrar was already far over the threshold;
+func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub, guards platformGuards) (*referrals.RewardService, *kycverify.Service) {
 	if cfg.DatabaseURL == "" {
 		log.Println("[finance] DATABASE_URL not set — skipping financial routes")
 		return nil, nil
@@ -315,6 +320,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	finance := r.Group("/api/finance")
 	finance.Use(middleware.RequireAuthContext(supabase, rbac))
 	finance.Use(requireUserID())
+	// ESTD-D028: the only group hosting the support view-as read allow-list
+	// (middleware.supportImpersonationReadRoutes). Validates the session, audits
+	// the request (fail closed) and swaps the identity to the target user.
+	finance.Use(guards.applyImpersonation())
 
 	// The registry decides which modules an environment publishes — without these
 	// routes mounted, GET /api/v1/modules/visibility 404s and every client falls
@@ -388,8 +397,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	transfersAdmin.GET("", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.List)
 	transfersAdmin.GET("/provider-health", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.ProviderHealth)
 	transfersAdmin.GET("/:id", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Get)
-	transfersAdmin.POST("/:id/retry", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Retry)
-	transfersAdmin.POST("/:id/reverse", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Reverse)
+	transfersAdmin.POST("/:id/retry", middleware.RequirePermission(rbac, "finance.admin.transfers"), guards.stepUp("finance.admin.transfers.retry"), transfersAdminHandler.Retry)
+	transfersAdmin.POST("/:id/reverse", middleware.RequirePermission(rbac, "finance.admin.transfers"), guards.stepUp("finance.admin.transfers.reverse"), transfersAdminHandler.Reverse)
 
 	// READ-ONLY reporting over ledger_entries — the only source of truth for money
 	// movement across every module (there is no per-module transactions table).
@@ -596,7 +605,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureEventsEnabled && pool != nil {
 		// adminGroupTop5 applies authMW BEFORE requireUserID — RequireAuthContext
 		// populates ginutil.UserID(c); without it every admin route 401s.
-		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin", mapsAuth()), cfg, pool, rbac, rtHub, auditSink)
+		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin", mapsAuth()), cfg, pool, rbac, rtHub, auditSink, paystackClient, webhookHandler)
 	}
 	if cfg.FeatureLoyaltyEnabled && pool != nil {
 		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin", mapsAuth()), pool, rbac, auditSink)
@@ -1066,6 +1075,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estateSvc := estate.NewService(pool, redisClient).
 			WithLedger(ledgerSvc). // Block 29 dues money path: balanced double-entry
 			WithTiers(tiersSvc).   // fail-closed tier-limit check on wallet debit
+			// ESTD-D027 maker-checker on high-risk admin actions (default OFF).
+			WithDualControl(cfg.FeatureEstateDualControlEnabled).
 			// Block 31: KYC-gated elections. Adapts *kyc.Service to the estate
 			// KYCVerifier interface; a voter is "verified" at KYC status=verified.
 			WithKYC(estate.KYCVerifierFunc(func(ctx context.Context, userID string) (bool, error) {
@@ -1151,9 +1162,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			SecretAccessKey: cfg.R2SecretAccessKey,
 			Region:          cfg.R2Region,
 		})
+		estateSvc = estateSvc.WithVerificationRequired(cfg.FeatureEstateVerificationRequired)
 		estateHandler := estate.NewHandler(estateSvc).
-			WithPresigner(estatePresigner, cfg.R2Bucket)
+			WithPresigner(estatePresigner, cfg.R2Bucket).
+			WithPermissionChecker(func(userID, perm string) bool {
+				ok, err := rbac.CheckPermission(userID, perm, "global", "")
+				return err == nil && ok
+			})
 		estGroup := finance.Group("/estate")
+		// ESTD-D025: refuse mutating /estate/:id/... requests while the estate is
+		// pending/suspended/closed. Must stay ABOVE every route registration —
+		// Gin only applies group middleware to routes registered after Use.
+		estGroup.Use(estateHandler.LifecycleGate())
 
 		// SP-01/SP-02: rate-limit the code-space brute-force surface (guard lookup /
 		// admit) and code creation. Estate routes previously carried no rate limit at
@@ -1172,6 +1192,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.POST("/:id/passes/scan", estateHandler.ScanPass)
 		estGroup.POST("/:id/elections", estateHandler.CreateElection)
 		estGroup.POST("/:id/elections/:electionId/vote", estateHandler.CastVote)
+		estGroup.POST("/:id/elections/:electionId/remind", estateHandler.RemindElection)
 		estGroup.GET("/:id/elections/:electionId/results", estateHandler.GetResults)
 		// Block 31: per-election voter eligibility (KYC / payment / resident type)
 		estGroup.GET("/:id/elections/:electionId/eligibility", estateHandler.GetVoterEligibility)
@@ -1215,13 +1236,23 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Block 41: Admin panel & configuration
 		estGroup.GET("/:id/admin/dashboard", estateHandler.GetAdminDashboard)
 		estGroup.GET("/:id/admin/residents", estateHandler.AdminListResidents)
-		estGroup.POST("/:id/admin/residents/:uid/ban", estateHandler.BanResident)
-		estGroup.POST("/:id/admin/residents/:uid/restore", estateHandler.RestoreResident)
+		estGroup.POST("/:id/admin/residents/:uid/ban", guards.stepUp("estate.admin.residents.ban"), estateHandler.BanResident)
+		estGroup.POST("/:id/admin/residents/:uid/restore", guards.stepUp("estate.admin.residents.restore"), estateHandler.RestoreResident)
 		estGroup.GET("/:id/admin/config", estateHandler.GetEstateConfig)
 		estGroup.PUT("/:id/admin/rules", estateHandler.SetEstateRules)
-		estGroup.PUT("/:id/admin/subscription-plan", estateHandler.ConfigureSubscriptionPlan)
+		estGroup.PUT("/:id/admin/subscription-plan", guards.stepUp("estate.admin.subscription_plan"), estateHandler.ConfigureSubscriptionPlan)
 		estGroup.GET("/:id/admin/audit-log", estateHandler.GetAuditLog)
 		estGroup.POST("/:id/admin/run-maintenance", estateHandler.RunMaintenance) // Block 47
+		// ESTD-D027: maker-checker approvals + versioned thresholds. Not mounted
+		// with the flag off (today's single-actor behaviour).
+		if cfg.FeatureEstateDualControlEnabled {
+			estGroup.GET("/:id/admin/approvals", estateHandler.ListApprovals)
+			estGroup.POST("/:id/admin/approvals", estateHandler.CreateApproval)
+			estGroup.GET("/:id/admin/approvals/:rid", estateHandler.GetApproval)
+			estGroup.POST("/:id/admin/approvals/:rid/approve", estateHandler.ApproveApproval)
+			estGroup.POST("/:id/admin/approvals/:rid/reject", estateHandler.RejectApproval)
+			estGroup.GET("/:id/admin/approval-thresholds", estateHandler.GetApprovalThresholds)
+		}
 
 		// Block 45: Settings & account
 		estGroup.GET("/:id/settings", estateHandler.GetMemberSettings)
@@ -1233,7 +1264,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.GET("/:id/vendor/profile", estateHandler.GetVendorProfile)
 		estGroup.GET("/:id/vendor/earnings", estateHandler.GetVendorEarnings)
 		estGroup.GET("/:id/vendor/jobs", estateHandler.ListVendorJobs)
-		estGroup.POST("/:id/vendor/assign-job", estateHandler.AssignVendorJob)
+		estGroup.POST("/:id/vendor/assign-job", guards.stepUp("estate.admin.vendor.assign_job"), estateHandler.AssignVendorJob)
 		estGroup.POST("/:id/vendor/jobs/:jid/accept", estateHandler.AcceptVendorJob)
 		estGroup.POST("/:id/vendor/jobs/:jid/reject", estateHandler.RejectVendorJob)
 		estGroup.POST("/:id/vendor/jobs/:jid/checkin", estateHandler.CheckInVendorJob)
@@ -1249,6 +1280,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.GET("/:id/meetings", estateHandler.ListMeetings)
 		estGroup.GET("/:id/meetings/:mid", estateHandler.GetMeeting)
 		estGroup.POST("/:id/meetings/:mid/rsvp", estateHandler.RSVPMeeting)
+		estGroup.POST("/:id/meetings/:mid/remind", estateHandler.RemindMeeting)
 		estGroup.POST("/:id/meetings/:mid/checkin", estateHandler.CheckInMeeting)
 		estGroup.POST("/:id/meetings/:mid/start", estateHandler.StartMeeting)
 		estGroup.POST("/:id/meetings/:mid/end", estateHandler.EndMeeting)
@@ -1308,10 +1340,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Block 29: Dues / Rent (money path — Idempotency-Key required on pay)
 		estGroup.GET("/:id/dues/invoices", estateHandler.ListInvoices)
-		estGroup.POST("/:id/dues/invoices", estateHandler.CreateInvoice)
+		estGroup.POST("/:id/dues/invoices", guards.stepUp("estate.admin.dues.invoice"), estateHandler.CreateInvoice)
 		estGroup.POST("/:id/dues/invoices/:invoiceId/pay", estateHandler.PayDues)
-		estGroup.POST("/:id/dues/restrictions", estateHandler.ApplyRestriction)
-		estGroup.POST("/:id/dues/restrictions/:residentId/lift", estateHandler.LiftRestriction)
+		estGroup.POST("/:id/dues/restrictions", guards.stepUp("estate.admin.dues.restrict"), estateHandler.ApplyRestriction)
+		estGroup.POST("/:id/dues/restrictions/:residentId/lift", guards.stepUp("estate.admin.dues.lift_restriction"), estateHandler.LiftRestriction)
 
 		// Paystack-funded dues payment (card / bank-transfer, no wallet, no
 		// KYC-tier gate — see estate/paystackcheckout package doc comment).
@@ -1351,7 +1383,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Block 35: Emergencies / Incidents
 		estGroup.GET("/:id/emergencies", estateHandler.ListEmergencies)
-		estGroup.POST("/:id/emergencies", estateHandler.RaiseEmergency)
+		// EST-UAT-0395: per-user SOS abuse guard. 12/min bounds scripted floods
+		// while staying far above any real emergency cadence — it meters a
+		// single resident hammering the endpoint, not the estate's right to
+		// raise an alert (the budget is per user, per minute, never shared).
+		estGroup.POST("/:id/emergencies",
+			middleware.PerUserRateLimit(redisClient, "estate-sos", 12), estateHandler.RaiseEmergency)
 		estGroup.PATCH("/:id/emergencies/:alertId/status", estateHandler.UpdateEmergencyStatus)
 
 		// Block 36/39: Documents (upload via presigned R2; type/size validated;
@@ -1375,6 +1412,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Gin radix conflict with the /estate/:id/... param routes above. See
 		// estate_admin_routes.go for the full rationale.
 		RegisterEstateAdmin(finance, pool, rbac, middleware.RequireAuthContext(supabase, rbac))
+		RegisterEstatePlatformLifecycle(finance, estateHandler, rbac, cfg.FeatureEstateLifecycleEnabled, cfg.FeatureEstateImportEnabled)
 	}
 
 	// Property role registration rollout order, enforced in code: the flag only
@@ -1710,8 +1748,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
 		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
 		restGroup.POST("/:id/kyb/documents/presign", restaurantHandler.PresignKYBDocument)
-		// Logo / banner uploads: same private-bucket presign flow as the KYB documents, scoped to
-		// the store and gated on the store-management permission inside the service.
+		// Store / menu picture uploads: same private-bucket presign flow as the KYB
+		// documents, scoped to the store and gated inside the service (logo+banner on the
+		// store-management permission, a dish photo on the menu one). kind is logo|banner|menu.
 		restGroup.POST("/:id/images/presign", restaurantHandler.PresignStoreImage)
 		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
 		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
@@ -2624,6 +2663,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if restaurantSvc != nil {
 			disputesSvc = disputesSvc.WithFoodResolver(foodDisputeResolverAdapter{svc: restaurantSvc})
 		}
+		// STAYS counterpart of the FOOD-004 fix: module_type=="stays" disputes
+		// resolve through the stays refund machinery (real refund legs on
+		// resolution=refunded, capped at the captured residual), not a bare
+		// status flip. Fails closed when the stays module is off.
+		if cfg.FeatureStaysEnabled {
+			disputesSvc = disputesSvc.WithStaysResolver(staysreservation.NewDisputeResolver(pool))
+		}
 		disputesHandler := disputes.NewHandler(disputesSvc)
 		dpGroup := finance.Group("/disputes")
 		dpGroup.POST("", disputesHandler.Open)
@@ -3214,6 +3260,34 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		docGroup.POST("/profile/photo", doctorHandler.SetProfilePhoto)
 		docGroup.PUT("/profile/tax-info", doctorHandler.UpdateTaxInfo)
 
+		// Nigerian geography for the doctor profile address pickers
+		// (affiliations state/city). Proxies Dojah's Wallet Utilities —
+		// GET /api/v1/general/states and /states/lgas. Read-only reference
+		// data; returns 503 when Dojah is unconfigured so the app can fall
+		// back to a static list.
+		dojahGeo := dojah.New(cfg.DojahAppID, cfg.DojahSecretKey, cfg.DojahProd)
+		docGroup.GET("/geo/states", func(c *gin.Context) {
+			states, err := dojahGeo.ListStates(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{keyError: err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"states": states})
+		})
+		docGroup.GET("/geo/lgas", func(c *gin.Context) {
+			state := c.Query("state")
+			if state == "" {
+				c.JSON(http.StatusBadRequest, gin.H{keyError: "state query param is required"})
+				return
+			}
+			lgas, err := dojahGeo.ListLgas(c.Request.Context(), state)
+			if err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{keyError: err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"lgas": lgas})
+		})
+
 		// Payouts reads + account + dispute (doctor_payouts / _bank_accounts / settlement_disputes).
 		// :id keeps a single gin wildcard tree position under /payouts.
 		docGroup.GET("/payouts", doctorHandler.ListPayouts)
@@ -3391,13 +3465,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			if cfg.IsProd() {
 				quidaxKey, quidaxBase = cfg.CryptoQuidaxLiveKey, cfg.CryptoQuidaxLiveBaseURL
 			}
+			// Money-IN settler, built before Wire so the deposit reconciler starts over the
+			// SAME once-only settler the webhook uses. It re-queries the provider and credits
+			// the resolved owner's holdings exactly once, confirmation-gated; the recipient
+			// comes from crypto_accounts, never the payload.
+			depositSettler := newCryptoDepositSettler(pool, cfg.CryptoDepositConfirmations)
 			wired, werr := cryptosvc.Wire(ctx, cryptosvc.WireConfig{
 				Provider: cfg.CryptoProvider, QuidaxKey: quidaxKey, QuidaxBaseURL: quidaxBase,
 				WebhookSecret: cfg.CryptoWebhookSecret, DatabaseURL: cfg.DatabaseURL,
-				LockPoolConns:     cfg.CryptoLockPoolConns,
-				ReconcileInterval: time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
-				Fees:              cryptosvc.DefaultFeeSchedule(),
-			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc})
+				LockPoolConns:            cfg.CryptoLockPoolConns,
+				ReconcileInterval:        time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
+				DepositReconcileInterval: time.Duration(cfg.CryptoDepositReconcileSeconds) * time.Second,
+				Fees:                     cryptosvc.DefaultFeeSchedule(),
+			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc, DepositSettler: depositSettler})
 			if werr != nil {
 				log.Printf("[crypto] swap pipeline NOT mounted: %v", werr)
 			} else {
@@ -3416,7 +3496,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				swapAdmin := cryptoV1.Group("/admin/crypto")
 				swapAdmin.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermAdmin))
 				cryptosvc.RegisterAdminRoutes(swapAdmin, wired.Deps)
-				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, reconciler running)")
+				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, swap + deposit reconcilers running)")
 			}
 		}
 	} else {

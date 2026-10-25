@@ -26,6 +26,9 @@ export interface ExamRow {
   time_limit_minutes: number;
   max_attempts: number;
   is_published: boolean;
+  /** The exam is reachable from opens_at (inclusive) to closes_at (exclusive). NULL = unbounded on that side. */
+  opens_at: string | null;
+  closes_at: string | null;
   draw_stage: string | null;
   draw_module_codes: string[] | null;
   draw_count: number | null;
@@ -60,6 +63,18 @@ export class ExamError extends Error {
   }
 }
 
+/** An exam outside its start/end window is not reachable, whatever else is true. */
+export function examWindowBlocker(exam: Pick<ExamRow, 'opens_at' | 'closes_at'>, now: Date = new Date()): ExamBlocker {
+  const t = now.getTime();
+  if (exam.opens_at && t < new Date(exam.opens_at).getTime()) {
+    return { ok: false, code: 'EXAM_NOT_OPEN_YET', message: `This exam opens on ${new Date(exam.opens_at).toUTCString()}.` };
+  }
+  if (exam.closes_at && t >= new Date(exam.closes_at).getTime()) {
+    return { ok: false, code: 'EXAM_CLOSED', message: 'This exam has closed.' };
+  }
+  return { ok: true };
+}
+
 /** Why a learner cannot take this exam right now — specific and human-readable. */
 export async function examEligibility(
   db: Db,
@@ -67,6 +82,8 @@ export async function examEligibility(
   learner: LearnerRef,
 ): Promise<ExamBlocker> {
   if (!exam.is_published) return { ok: false, code: 'EXAM_UNPUBLISHED', message: 'This exam is not open yet.' };
+  const inWindow = examWindowBlocker(exam);
+  if (!inWindow.ok) return inWindow;
   if (!learner.programId || exam.program_id !== learner.programId) {
     return { ok: false, code: 'NOT_FOR_YOUR_PROGRAMME', message: 'This exam is not part of your programme.' };
   }
@@ -102,6 +119,9 @@ export interface LearnerExamSummary {
   timeLimitMinutes: number;
   maxAttempts: number;
   attemptsUsed: number;
+  /** ISO timestamps bounding when the exam can be started; null = unbounded. */
+  opensAt: string | null;
+  closesAt: string | null;
   canStart: boolean;
   blockerCode: string | null;
   blockerMessage: string | null;
@@ -111,7 +131,7 @@ export async function listLearnerExams(db: Db, learner: LearnerRef): Promise<Lea
   if (!learner.programId) return [];
   const { data, error } = await db
     .from('academy_exams')
-    .select('id, program_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, draw_stage, draw_module_codes, draw_count')
+    .select('id, program_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, opens_at, closes_at, draw_stage, draw_module_codes, draw_count')
     .eq('program_id', learner.programId)
     .eq('is_published', true)
     .order('created_at', { ascending: true });
@@ -134,6 +154,8 @@ export async function listLearnerExams(db: Db, learner: LearnerRef): Promise<Lea
       timeLimitMinutes: exam.time_limit_minutes,
       maxAttempts: exam.max_attempts,
       attemptsUsed: used,
+      opensAt: exam.opens_at,
+      closesAt: exam.closes_at,
       canStart: gate.ok,
       blockerCode: gate.ok ? null : gate.code,
       blockerMessage: gate.ok ? null : gate.message,
@@ -149,6 +171,8 @@ async function examEligibilityFromCount(
   learner: LearnerRef,
   used: number,
 ): Promise<ExamBlocker> {
+  const inWindow = examWindowBlocker(exam);
+  if (!inWindow.ok) return inWindow;
   if (!learner.programId || exam.program_id !== learner.programId) {
     return { ok: false, code: 'NOT_FOR_YOUR_PROGRAMME', message: 'This exam is not part of your programme.' };
   }
@@ -488,7 +512,7 @@ function snapshotToQuestions(snapshot: SnapshotItem[]): PresentedQuestion[] {
 export async function loadPublishedExam(db: Db, examId: string): Promise<ExamRow | null> {
   const { data } = await db
     .from('academy_exams')
-    .select('id, program_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, draw_stage, draw_module_codes, draw_count')
+    .select('id, program_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, opens_at, closes_at, draw_stage, draw_module_codes, draw_count')
     .eq('id', examId)
     .maybeSingle();
   return (data as unknown as ExamRow | null) ?? null;

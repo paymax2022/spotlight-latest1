@@ -17,7 +17,8 @@ The Marketplace is Nigeria's "listings-and-connect" classifieds surface: sellers
 | Search | `GET /v1/marketplace/search` | public | no |
 | Categories / one category | `GET /v1/marketplace/categories`, `/categories/:id` | public | no |
 | Seller profile / listings / reviews | `GET /v1/marketplace/sellers/:id/{profile,listings,reviews}` | public | no |
-| Boost tiers catalog | `GET /v1/marketplace/boosts/tiers` | public | no |
+| Boost price catalog (₦/day rate + durations) | `GET /v1/marketplace/boosts/pricing` | public | no |
+| Promoted listings (boosted, money-left first) | `GET /v1/marketplace/boosted` | public | no |
 | Create listing (DRAFT) | `POST /v1/marketplace/listings` | auth + owner | no |
 | Update listing | `PUT /v1/marketplace/listings/:id` | auth + OLA owner | no |
 | Submit listing | `POST /v1/marketplace/listings/:id/submit` | auth + OLA owner | no |
@@ -70,11 +71,11 @@ The Marketplace is Nigeria's "listings-and-connect" classifieds surface: sellers
 |---|---|---|---|---|---|---|
 | `MKT-E2E-001` | Happy path: create → submit → auto-approve → live | P1 | Seller authed; category `risk_tier=0`; seller `trust_score ≥ 0.6` | POST /listings (draft) → POST /listings/:id/submit | title 10–100 chars, description ≥ 8 words, `price_kobo=250000000` | 201 draft; submit returns `status=active`; outbox `upsert` emitted |
 | `MKT-E2E-002` | Submit routes to review when not auto-approvable | P1 | Seller authed; category `risk_tier>0` OR trust `<0.6` | POST /listings → POST /listings/:id/submit | valid listing | `status=pending_review`; no search upsert; seller notified "under review" |
-| `MKT-INT-001` | Boost purchase debits wallet, activates boost | P0 | Seller owns active listing; wallet balance ≥ tier price | POST /boosts with `Idempotency-Key: k1` | `{listing_id, tier:"vip"}`; price `200000` kobo | 201; `status=active`, `ledger_charge_ref="mkt:boost:<seller>:<listing>:vip:charge"`; ledger debit `200000` into `AccountCommission`; commission earning row appended |
-| `MKT-CON-001` | Boost tiers catalog is kobo-exact | P2 | none | GET /boosts/tiers | — | start=50000, vip=200000, vip_gold=500000, diamond=1500000, enterprise=5000000 kobo; all integers |
+| `MKT-INT-001` | Boost purchase debits wallet, activates boost | P0 | Seller owns active listing; wallet balance ≥ duration × ₦/day rate | POST /boosts with `Idempotency-Key: k1` | `{listing_id, duration_days:14}` at the seeded ₦100/day rate = price `140000` kobo | 201; `status=active`, `ledger_charge_ref="mkt:boost:<seller>:<listing>:rate:<ends-at>:charge"`; ledger debit `140000` into `AccountCommission`; commission earning row appended |
+| `MKT-CON-001` | Boost pricing is kobo-exact and rate-driven | P2 | none | GET /boosts/pricing, GET /boosts/quote?duration_days=7 | — | `daily_rate_kobo` integer (seeded 10000 = ₦100/day); every quote `price_kobo = duration_days × daily_rate_kobo`; all integers |
 | `MKT-UNIT-001` | Create-listing validation: title/description/category/state | P1 | Seller authed | POST /listings with each invalid field | title <10 or >100; description <8 words; missing category_id/state; `price_kobo=-1` | 400 `SCHEMA_VALIDATION_FAILED` (title/category/state/price) or 422 `DESCRIPTION_TOO_SHORT` |
 | `MKT-UNIT-002` | Offer on own / inactive listing rejected | P1 | Seller authed | POST /offers on own listing; POST /offers on paused listing | `priceKobo=100000` | 422 `SELF_PURCHASE_NOT_ALLOWED`; 422 `LISTING_NOT_ACTIVE` |
-| `MKT-UNIT-003` | Boost with unknown tier rejected | P1 | Seller owns listing | POST /boosts | `tier:"platinum"` | 400 `INVALID_BOOST_TIER`; no ledger posting |
+| `MKT-UNIT-003` | Boost with neither or both of duration_days/ends_at, or an out-of-range duration | P1 | Seller owns listing | POST /boosts | `{listing_id}` alone; `{listing_id, duration_days:91}` | 400 `SCHEMA_VALIDATION_FAILED` (duration_days or ends_at required); 400 `INVALID_BOOST_RANGE`; no ledger posting |
 | `MKT-AUTHZ-001` | Update/pause/delete listing you don't own | P0 | Caller ≠ listing owner | PUT /listings/:id (foreign) | any body | 403 `FORBIDDEN`; no mutation |
 | `MKT-AUTHZ-002` | GET /boosts/:id for another seller's boost (IDOR) | P0 | Boost owned by seller B | Seller A calls GET /boosts/:B-boost | — | 403 `FORBIDDEN` |
 | `MKT-AUTHZ-003` | Offer history participant scoping | P1 | Listing has offers from buyers B and C | Seller sees all; buyer B sees only own | GET /offers?listingId= | seller: all offers; buyer B: only B's offers |

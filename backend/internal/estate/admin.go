@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -95,7 +96,7 @@ func (s *Service) ListResidents(ctx context.Context, estateID, adminID, role str
 			COALESCE(r.unit,''), r.role, COALESCE(pu.phone,''),
 			r.banned_at IS NOT NULL, r.deleted_at IS NOT NULL,
 			COALESCE((SELECT SUM(amount_kobo) FROM estate_dues_invoices di
-				WHERE di.resident_id=r.id AND di.status IN ('pending','overdue')), 0),
+				WHERE di.resident_id=r.user_id AND di.status IN ('pending','overdue')), 0),
 			r.created_at
 		FROM estate_residents r
 		LEFT JOIN public.platform_users pu ON pu.id = r.user_id
@@ -136,6 +137,27 @@ func (s *Service) BanResident(ctx context.Context, estateID, adminID, targetUser
 	if targetUserID == adminID {
 		return errors.New("estate: cannot ban yourself")
 	}
+	if s.dualControl {
+		// ESTD-D027: a ban is dual-controlled — file it for a second admin.
+		a, err := s.CreateApproval(ctx, estateID, adminID, CreateApprovalInput{
+			Action: ApprovalResidentBan, SubjectID: targetUserID,
+			Payload:        mustJSON(map[string]string{auditKeyReason: reason}),
+			IdempotencyKey: "direct-ban:" + uuid.New().String(),
+		})
+		if errors.Is(err, ErrApprovalOpen) {
+			a, err = s.openApproval(ctx, estateID, ApprovalResidentBan, targetUserID)
+		}
+		if err != nil {
+			return err
+		}
+		return &PendingApprovalError{Request: a}
+	}
+	return s.banResident(ctx, estateID, adminID, targetUserID, reason)
+}
+
+// banResident is the ban side effect (direct path with dual control off, or
+// an approved resident_ban request).
+func (s *Service) banResident(ctx context.Context, estateID, adminID, targetUserID, reason string) error {
 	ct, err := s.db.Exec(ctx,
 		`UPDATE estate_residents SET banned_at=NOW(), ban_reason=$3 WHERE estate_id=$1 AND user_id=$2 AND deleted_at IS NULL`,
 		estateID, targetUserID, reason)
@@ -145,9 +167,9 @@ func (s *Service) BanResident(ctx context.Context, estateID, adminID, targetUser
 	if ct.RowsAffected() == 0 {
 		return errors.New("estate: resident not found in this estate")
 	}
-	_ = s.audit(ctx, estateID, adminID, "RESIDENT_BAN", "resident", targetUserID, map[string]any{"reason": reason})
+	_ = s.audit(ctx, estateID, adminID, "RESIDENT_BAN", "resident", targetUserID, map[string]any{auditKeyReason: reason})
 	s.notify(ctx, estateID, targetUserID, NotifAdminApprovalRequired, "Account banned",
-		"Your access to this estate has been suspended by an administrator.", map[string]any{"reason": reason})
+		"Your access to this estate has been suspended by an administrator.", map[string]any{auditKeyReason: reason})
 	return nil
 }
 

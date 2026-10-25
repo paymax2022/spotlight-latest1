@@ -306,7 +306,7 @@ func (h *Handler) PresignPhoto(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{
 		"upload_url": uploadURL, "storage_key": key, "method": "PUT",
 		"expires_in": int(photoPresignTTL.Seconds()),
 	}})
@@ -329,7 +329,7 @@ func (h *Handler) CreatePhoto(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": photo})
+	c.JSON(http.StatusCreated, gin.H{keyData: photo})
 }
 
 // ListPhotos: GET /properties/:propertyId/photos
@@ -339,7 +339,7 @@ func (h *Handler) ListPhotos(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // UpdatePhoto: PATCH /properties/:propertyId/photos/:photoId {caption?, sort_order?, is_cover?}
@@ -368,7 +368,7 @@ func (h *Handler) UpdatePhoto(c *gin.Context) {
 			return
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"ok": true}})
 }
 
 // DeletePhoto: DELETE /properties/:propertyId/photos/:photoId
@@ -377,5 +377,5 @@ func (h *Handler) DeletePhoto(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"ok": true}})
 }

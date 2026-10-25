@@ -12,13 +12,15 @@ import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, ToggleRow, StateView } from '@/features/doctor/components';
-import { useAvailability, useUpdateAvailability } from '@/features/doctor/hooks';
+import { useAvailability, useUpdateAvailability, useProfileDraft, useSaveProfileDraft } from '@/features/doctor/hooks';
 import { WEEKDAYS, CONSULT_DURATION_OPTIONS, BUFFER_OPTIONS } from '@/features/doctor/constants';
 import type { AvailabilitySchedule, Weekday } from '@/types/doctor';
 
 export default function AvailabilityScreen() {
   const { data: remote, isLoading, isError, refetch } = useAvailability();
   const update = useUpdateAvailability();
+  const { data: draft } = useProfileDraft();
+  const saveDraft = useSaveProfileDraft();
   const [schedule, setSchedule] = useState<AvailabilitySchedule | null>(null);
 
   useEffect(() => {
@@ -33,6 +35,13 @@ export default function AvailabilityScreen() {
     if (!schedule) return;
     try {
       await update.mutateAsync({ schedule });
+      // This screen also backs the profile-builder "availability" step, so
+      // saving a schedule must tick it off or the setup hub re-prompts forever.
+      if (draft) {
+        try {
+          await saveDraft.mutateAsync({ draft: { completedSteps: [...new Set([...draft.completedSteps, 'availability' as const])] } });
+        } catch { /* non-blocking */ }
+      }
       Alert.alert('Saved', 'Your availability has been updated.');
       goBack('/');
     } catch {

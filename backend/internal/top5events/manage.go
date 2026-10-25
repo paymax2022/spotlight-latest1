@@ -168,9 +168,15 @@ func rawNullable[T any](raw json.RawMessage, name string) (v *T, set bool, err e
 	return &x, true, nil
 }
 
+// hardTimePatch reports whether a patch touches an entitlement-affecting field
+// (schedule or venue) — the fields the tiered lock protects once tickets sell.
+func hardTimePatch(p EventPatch) bool {
+	return p.StartsAt != nil || p.EndsAt != nil || p.Venue != nil
+}
+
 // UpdateEvent applies a patch under the tiered-lock rules. The owner or a
-// MANAGER may edit. Time changes are refused (ErrEditLocked) once tickets are
-// sold, except in DRAFT; nothing is written on any refusal.
+// MANAGER may edit. Time and venue changes are refused (ErrEditLocked) once
+// tickets are sold, except in DRAFT; nothing is written on any refusal.
 func (s *Service) UpdateEvent(ctx context.Context, callerID, eventID string, patch EventPatch) (*Event, error) {
 	// Venue coordinates are range-checked before any database access, and only
 	// when the social flag is on (with it off they are ignored).
@@ -205,7 +211,11 @@ func (s *Service) UpdateEvent(ctx context.Context, callerID, eventID string, pat
 	if !dec.AllowSoft {
 		return nil, fmt.Errorf("%w: %s", ErrEditLocked, dec.Reason)
 	}
-	if (patch.StartsAt != nil || patch.EndsAt != nil) && !dec.AllowHardTime {
+	// Venue rides with the hard-time guard: the lock reason already promises
+	// "date, time and venue are locked because tickets have been sold", and a
+	// silent venue change rewrites the purchased entitlement just as much as a
+	// date change (UAT EVT-194).
+	if hardTimePatch(patch) && !dec.AllowHardTime {
 		return nil, fmt.Errorf("%w: %s", ErrEditLocked, dec.Reason)
 	}
 	if patch.StartsAt != nil {
@@ -289,6 +299,9 @@ func nullableValue[T any](v *T) any {
 func (s *Service) DuplicateEvent(ctx context.Context, callerID, eventID string) (*Event, error) {
 	if callerID == "" {
 		return nil, errors.New("events: caller required")
+	}
+	if err := s.requireOrganiser(ctx, callerID); err != nil {
+		return nil, err
 	}
 	// Visibility gate: owner/manager, or the source is publicly discoverable
 	// (same states ListEvents exposes to strangers). Else a stranger could

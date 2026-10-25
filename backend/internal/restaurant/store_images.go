@@ -17,19 +17,21 @@ import (
 	"spotlight/backend/go-common/httperr"
 )
 
-// store_images.go — backend-owned presigned uploads for a restaurant's logo and
-// banner. It follows kyb_documents.go step for step, because the constraints are the
-// same: the bucket is private and has no public domain.
+// store_images.go — backend-owned presigned uploads for a restaurant's pictures: its
+// logo, its banner, and the photo on each menu item. It follows kyb_documents.go step
+// for step, because the constraints are the same: the bucket is private and has no
+// public domain.
 //
 //  1. The owner asks POST /restaurant/:id/images/presign for an upload URL. The
 //     backend checks the caller may manage the store, CHOOSES the object key
-//     (restaurant/<id>/store/<kind>/<rand><ext>) and binds the Content-Type into the
-//     signature, so the client cannot pick where an image lands or smuggle another type.
-//  2. The client PUTs straight to R2, then saves the returned key as logo_url or
-//     banner_url through the normal store update. That update accepts only a key under
-//     THIS restaurant's prefix for THAT kind, so one outlet cannot point at another's
-//     object and a banner cannot be saved as a logo.
-//  3. Every read that returns a store signs a stored key into a short-lived GET URL
+//     (restaurant/<id>/<store|menu>/<kind>/<rand><ext>) and binds the Content-Type into
+//     the signature, so the client cannot pick where an image lands or smuggle another
+//     type.
+//  2. The client PUTs straight to R2, then saves the returned key as logo_url,
+//     banner_url or image_url through the normal update. Each update accepts only a key
+//     under THIS restaurant's prefix for THAT kind, so one outlet cannot point at
+//     another's object and a banner cannot be saved as a logo.
+//  3. Every read that returns one of these signs a stored key into a short-lived GET URL
 //     (viewStoreImage). The columns keep holding both shapes, like association.logo_url:
 //     an http(s) link is a link, a restaurant/… value is a key we minted.
 //
@@ -43,12 +45,15 @@ const (
 	storeImageViewTTL = 60 * time.Minute
 )
 
-// StoreImageKind is which of a store's two images an upload is for.
+// StoreImageKind is which of a store's pictures an upload is for. Menu items share the
+// same rail: their photos are the store's own content, minted under the same restaurant
+// prefix, so one route, one validation and one signing path cover all three.
 type StoreImageKind string
 
 const (
 	StoreImageLogo   StoreImageKind = "logo"
 	StoreImageBanner StoreImageKind = "banner"
+	StoreImageMenu   StoreImageKind = "menu"
 )
 
 // ErrStoreImageUploadsUnavailable means R2 is unset or failed its write probe.
@@ -68,25 +73,44 @@ var storeImageContentTypeByExt = map[string]string{
 	".webp": "image/webp",
 }
 
-// parseStoreImageKind accepts exactly "logo" or "banner" — it ends up in an object key.
+// parseStoreImageKind accepts exactly "logo", "banner" or "menu" — it ends up in an
+// object key.
 func parseStoreImageKind(s string) (StoreImageKind, bool) {
 	switch StoreImageKind(s) {
 	case StoreImageLogo:
 		return StoreImageLogo, true
 	case StoreImageBanner:
 		return StoreImageBanner, true
+	case StoreImageMenu:
+		return StoreImageMenu, true
 	}
 	return "", false
 }
 
-// storeImageKeyPrefix is the object-key prefix every store image of a restaurant starts with.
+// storeImageGroup is the folder a kind's keys live in: the storefront's own two pictures
+// under "store", the food photos under "menu".
+func storeImageGroup(kind StoreImageKind) string {
+	if kind == StoreImageMenu {
+		return "menu"
+	}
+	return "store"
+}
+
+// storeImageKeyPrefix is the object-key prefix every STOREFRONT image of a restaurant
+// starts with (logo and banner).
 func storeImageKeyPrefix(restaurantID string) string {
 	return "restaurant/" + restaurantID + "/store/"
 }
 
+// storeImageKindPrefix is the prefix for ONE kind. A saved reference must start with it,
+// so an upload minted for another kind — or another restaurant — is refused.
+func storeImageKindPrefix(restaurantID string, kind StoreImageKind) string {
+	return "restaurant/" + restaurantID + "/" + storeImageGroup(kind) + "/" + string(kind) + "/"
+}
+
 // storeImageKey builds the server-controlled object key for an upload.
 func storeImageKey(restaurantID string, kind StoreImageKind, ext string) string {
-	return storeImageKeyPrefix(restaurantID) + string(kind) + "/" + cryptox.RandHex(16) + ext
+	return storeImageKindPrefix(restaurantID, kind) + cryptox.RandHex(16) + ext
 }
 
 // classifyStoreImageRef validates a submitted image reference for restaurantID and kind,
@@ -105,7 +129,7 @@ func classifyStoreImageRef(restaurantID string, kind StoreImageKind, ref string)
 		}
 		return false, errStoreImageBadRef
 	}
-	prefix := storeImageKeyPrefix(restaurantID) + string(kind) + "/"
+	prefix := storeImageKindPrefix(restaurantID, kind)
 	if !strings.HasPrefix(ref, prefix) || strings.Contains(ref, "..") {
 		return false, errStoreImageBadRef
 	}
@@ -123,7 +147,10 @@ func isOwnStoreImageKey(v string) bool {
 	if u, err := url.Parse(v); err == nil && u.Scheme != "" {
 		return false
 	}
-	return strings.HasPrefix(v, "restaurant/") && strings.Contains(v, "/store/")
+	if !strings.HasPrefix(v, "restaurant/") {
+		return false
+	}
+	return strings.Contains(v, "/store/") || strings.Contains(v, "/menu/")
 }
 
 // viewStoreImage turns a stored value into something a client can render.
@@ -169,14 +196,21 @@ type StoreImagePresign struct {
 	Method      string `json:"method"`       // always "PUT"
 }
 
-// PresignStoreImage mints a presigned upload URL for the store's logo or banner.
+// PresignStoreImage mints a presigned upload URL for a store picture: its logo, its
+// banner, or the photo on a menu item.
 func (s *Service) PresignStoreImage(ctx context.Context, restaurantID, userID, kindStr, fileName, contentType string) (*StoreImagePresign, error) {
-	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
-		return nil, err
-	}
 	kind, ok := parseStoreImageKind(strings.TrimSpace(kindStr))
 	if !ok {
-		return nil, errors.New("restaurant: kind must be logo or banner")
+		return nil, errors.New("restaurant: kind must be logo, banner or menu")
+	}
+	// A storefront picture is a store-management decision; a dish photo is part of the
+	// menu, so staff who can edit the menu can photograph it without owning the storefront.
+	perm := PermManageStore
+	if kind == StoreImageMenu {
+		perm = PermManageMenu
+	}
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, perm); err != nil {
+		return nil, err
 	}
 	ext := strings.ToLower(path.Ext(strings.TrimSpace(fileName)))
 	want, ok := storeImageContentTypeByExt[ext]
@@ -263,6 +297,37 @@ func (s *Service) validateStoreImageRefs(restaurantID string, logo, banner *stri
 		}
 	}
 	return nil
+}
+
+// validateItemImageRef checks a submitted menu-item picture: an http(s) link, or a key
+// THIS restaurant's menu uploads minted. A nil reference means "unchanged" and an empty
+// one means "clear the picture"; both pass.
+func (s *Service) validateItemImageRef(restaurantID string, ref *string) error {
+	if ref == nil {
+		return nil
+	}
+	rid, err := canonicalRestaurantID(restaurantID)
+	if err != nil {
+		return err
+	}
+	_, err = classifyStoreImageRef(rid, StoreImageMenu, *ref)
+	return err
+}
+
+// viewMenuItem turns a stored menu-item picture into a viewable URL, hiding a key this
+// server cannot sign (the app would show a broken image, and the raw key is an internal
+// storage path).
+func (s *Service) viewMenuItem(it *MenuItem) {
+	if it != nil {
+		it.ImageURL = s.viewStoreImage(it.ImageURL)
+	}
+}
+
+// viewMenuItems does the same for a slice of items read from the menu.
+func (s *Service) viewMenuItems(items []MenuItem) {
+	for i := range items {
+		s.viewMenuItem(&items[i])
+	}
 }
 
 // loadBanners fills BannerURL (raw, unresolved) for every restaurant in rs with ONE query.

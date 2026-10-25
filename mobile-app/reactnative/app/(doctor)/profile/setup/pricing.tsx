@@ -62,7 +62,7 @@ export default function PricingScreen() {
       <TeleHeader title="Consultation pricing" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <WizardProgress current={16} total={19} label="Consultation pricing" />
+          <WizardProgress current={16} total={18} label="Consultation pricing" />
 
           <SectionCard title="Quick presets (video fee)" style={styles.card}>
             <View style={styles.grid}>

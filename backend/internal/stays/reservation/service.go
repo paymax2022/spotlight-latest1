@@ -239,7 +239,7 @@ func (s *Service) Prebook(ctx context.Context, userID string, in PrebookInput) (
 		CheckIn:             in.CheckIn,
 		CheckOut:            in.CheckOut,
 		Rooms:               res.Rooms,
-		Occupancy:           gateway.Occupancy{},
+		Occupancy:           toGatewayOccupancy(in.Occupancy),
 		Currency:            res.Currency,
 	})
 	if err != nil || pre.SoldOut || pre.BookToken == "" {
@@ -249,6 +249,10 @@ func (s *Service) Prebook(ctx context.Context, userID string, in PrebookInput) (
 	}
 
 	// (2) Price the VALIDATED rate (markup/commission, taxes, FX — never silent).
+	// Discounts are resolved SERVER-SIDE from the property's own stays_promotion
+	// rules — the request's promo_bps / loyalty_tier fields are accepted for API
+	// compatibility but NEVER trusted (a client could otherwise claim an
+	// arbitrary discount on every booking).
 	offer := gateway.PropertyOffer{
 		Rail:         in.Rail,
 		SupplierCode: in.SupplierCode,
@@ -256,7 +260,11 @@ func (s *Service) Prebook(ctx context.Context, userID string, in PrebookInput) (
 		TaxKobo:      pre.TaxKobo,
 		Currency:     pre.Currency,
 	}
-	bd, err := s.pricing.Price(offer, in.LoyaltyTier, in.PromoBps)
+	promoBps, promoErr := s.repo.BestPromotionBps(ctx, in.SupplierPropertyRef, in.SupplierRatePlanRef, in.CheckIn, in.CheckOut)
+	if promoErr != nil {
+		return nil, promoErr
+	}
+	bd, err := s.pricing.Price(offer, "", promoBps)
 	if err != nil {
 		// An FX failure is fail-closed: VOID the prebook rather than book at an
 		// unknown price (FX-never-silent invariant).
@@ -554,6 +562,16 @@ func (s *Service) Cancel(ctx context.Context, userID, reservationID, reason stri
 	if res, err = s.repo.Get(ctx, res.ID); err != nil {
 		return nil, err
 	}
+	// Unpaid pre-book states hold NO money and NO allotment — "cancel" is just the
+	// VOID edge (MOD-013). No supplier call, no refund legs, no cancellation row.
+	if res.State == StateSearching || res.State == StateOfferSelected ||
+		res.State == StatePrebookOK || res.State == StatePrebookFailed {
+		if err := s.transition(ctx, res, StateVoid); err != nil {
+			return nil, err
+		}
+		s.auditSafe(ctx, userID, "stays.prebook_abandoned", map[string]any{"reservation_id": res.ID})
+		return s.repo.Get(ctx, res.ID)
+	}
 	if !canTransition(res.State, StateCancelledByGuest) {
 		return nil, fmt.Errorf("%w: cannot cancel from %s", ErrBadState, res.State)
 	}
@@ -680,7 +698,7 @@ func (s *Service) Modify(ctx context.Context, userID, reservationID, idempotency
 		CheckIn:             newCheckIn,
 		CheckOut:            newCheckOut,
 		Rooms:               res.Rooms,
-		Occupancy:           gateway.Occupancy{},
+		Occupancy:           toGatewayOccupancy(res.Occupancy),
 		Currency:            res.Currency,
 	})
 	if pErr != nil {
@@ -865,6 +883,39 @@ func orEmpty(m map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return m
+}
+
+// toGatewayOccupancy maps the loosely-typed client occupancy payload
+// ({"adults":n,"children":n,"child_ages":[...]}) onto the gateway's typed
+// Occupancy so adapters can enforce room-capacity limits.
+func toGatewayOccupancy(m map[string]any) gateway.Occupancy {
+	var o gateway.Occupancy
+	if m == nil {
+		return o
+	}
+	toInt := func(v any) int {
+		switch t := v.(type) {
+		case float64:
+			return int(t)
+		case int:
+			return t
+		case int64:
+			return int(t)
+		}
+		return 0
+	}
+	if v, ok := m["adults"]; ok {
+		o.Adults = toInt(v)
+	}
+	if v, ok := m["children"]; ok {
+		o.Children = toInt(v)
+	}
+	if v, ok := m["child_ages"].([]any); ok {
+		for _, a := range v {
+			o.ChildAges = append(o.ChildAges, toInt(a))
+		}
+	}
+	return o
 }
 
 func orMethod(m, def gateway.PaymentMethod) gateway.PaymentMethod {

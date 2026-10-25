@@ -38,16 +38,31 @@ const (
 	PurposeVerifyEmail   = "verify_email"
 	PurposePasswordReset = "password_reset"
 	PurposePhoneVerify   = "phone_verify"
+	// PurposeStepUp is the re-verification challenge for privileged actions
+	// (ESTD-D014, internal/stepup). Like PurposeLogin it is NOT self-issuable
+	// through the public /api/auth/otp/* surface: it is issued and redeemed only
+	// by the authenticated /api/auth/step-up/* endpoints, which bind the result
+	// to the caller's session. See IsPublicPurpose.
+	PurposeStepUp = "step_up"
 )
 
 // IsAllowedPurpose reports whether p is one this service will issue for.
 func IsAllowedPurpose(p string) bool {
 	switch p {
-	case PurposeLogin, PurposeVerifyEmail, PurposePasswordReset, PurposePhoneVerify:
+	case PurposeLogin, PurposeVerifyEmail, PurposePasswordReset, PurposePhoneVerify, PurposeStepUp:
 		return true
 	default:
 		return false
 	}
+}
+
+// IsPublicPurpose reports whether p may be requested or redeemed through the
+// unauthenticated /api/auth/otp/* endpoints. Login codes are issued only after
+// a password (handlers.AuthHandler.Login) and step-up codes only to an
+// authenticated session (internal/stepup); letting the public surface touch
+// either would let anyone mint or burn them for an arbitrary address.
+func IsPublicPurpose(p string) bool {
+	return IsAllowedPurpose(p) && p != PurposeLogin && p != PurposeStepUp
 }
 
 // Config carries the tunables. Pepper is required; see NewService.
