@@ -41,6 +41,7 @@ import AttributeFields, { normalizeSchema, missingRequired } from '@/features/ma
 import FairPriceMeter from '@/features/marketplace/components/sell/FairPriceMeter';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import PromoBanner from '@/components/PromoBanner';
 
 function track(event: string, props: Record<string, unknown>) {
   if (__DEV__) console.log(`[analytics] ${event}`, props);
@@ -294,6 +295,11 @@ export default function SellWizard() {
         <CaptureScreen onCamera={() => addPhotos(true)} onGallery={() => addPhotos(false)} />
       ) : (
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <PromoBanner
+            imageUri="https://res.cloudinary.com/paymax/image/upload/v1792939131/Nigerian_marketplace_seller_hero_banner_1_fwem0k.png"
+            onPress={() => {}}
+          />
+
           {step === 'composer' ? (
             <>
               <PhotoStrip
