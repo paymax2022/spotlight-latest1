@@ -243,6 +243,12 @@ export default function SellWizard() {
       alertAsync({ title: 'Photos still uploading', message: 'Give it a second for your photos to finish uploading.' });
       return;
     }
+    // Only send successfully uploaded file URLs, not local photo IDs
+    const mediaIds = photos.filter((p) => p.fileUrl).map((p) => p.fileUrl!);
+    if (mediaIds.length === 0) {
+      alertAsync({ title: 'Photo upload failed', message: 'One or more photos failed to upload. Please try again.' });
+      return;
+    }
     try {
       const created = await createListing.mutateAsync({
         categoryId,
@@ -251,7 +257,7 @@ export default function SellWizard() {
         priceKobo,
         condition,
         attrs,
-        mediaIds: photos.map((p) => p.fileUrl ?? p.id),
+        mediaIds,
         state: 'Lagos',
         escrowEligible: escrowReady,
         // Both or neither: the backend rejects a half pair, and an absent pair
