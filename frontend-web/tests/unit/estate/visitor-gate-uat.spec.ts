@@ -75,7 +75,12 @@ const params = (o: Record<string, string>) => ({ params: Promise.resolve(o) }) a
 // Per-table canned results; maybeSingle/single -> cfg.single, awaited chain -> cfg.rows,
 // update()/insert()/upsert() record the payload in cfg.writes.
 interface TableCfg { single?: any; singleErr?: any; rows?: any[]; writes?: any[] }
+// Mutating visitor/gate routes run the estate lifecycle gate (ESTD-D025,
+// assertEstateWritable), which reads estates.status and 423s anything not
+// 'active'. These suites exercise an active estate, so default the row.
+const ACTIVE_ESTATE = { status: 'active' };
 function makeSupabase(tables: Record<string, TableCfg>) {
+  tables.estates ??= { single: ACTIVE_ESTATE };
   function builder(table: string) {
     const cfg = (tables[table] ??= {});
     cfg.writes = cfg.writes ?? [];
@@ -161,7 +166,7 @@ describe('POST /api/v1/visitor/gate/session — shift sign-in (ESTA-D001)', () =
 });
 
 describe('POST /api/v1/visitor/codes — validity window + phone (ESTA-D002)', () => {
-  const residentCtx = { estate_residents: { single: { estate_id: ESTATE, unit: 'A1', role: 'resident' } }, visitor_access_codes: { single: futureCode() }, visitor_blacklist: { single: null }, estates: { single: null }, user_profiles: { single: null } };
+  const residentCtx = { estate_residents: { single: { estate_id: ESTATE, unit: 'A1', role: 'resident' } }, visitor_access_codes: { single: futureCode() }, visitor_blacklist: { single: null }, estates: { single: ACTIVE_ESTATE }, user_profiles: { single: null } };
   const body = { visitorName: 'V', validityStart: new Date(NOW + 60_000).toISOString(), validityEnd: new Date(NOW + 3_600_000).toISOString() };
 
   it('rejects an inverted window (end before start)', async () => {
@@ -275,7 +280,7 @@ describe('POST /api/v1/visitor/gate/sync — offline upload + dedup (ESTA-D006)'
 
 describe('POST /api/v1/visitor/codes/[id]/regenerate — compromised share (ESTA-D007)', () => {
   it('revokes the old code and issues a replacement preserving validity', async () => {
-    const tables = { visitor_access_codes: { single: futureCode({ issued_by: USER.id }), rows: [{ id: CODE_ID }] }, estates: { single: null }, user_profiles: { single: null }, estate_residents: { single: null } };
+    const tables = { visitor_access_codes: { single: futureCode({ issued_by: USER.id }), rows: [{ id: CODE_ID }] }, estates: { single: ACTIVE_ESTATE }, user_profiles: { single: null }, estate_residents: { single: null } };
     vi.mocked(createAdminClient).mockReturnValue(makeSupabase(tables) as any);
     const res = await postRegenerate(req('POST', 'http://x'), params({ id: CODE_ID }));
     expect(res.status).toBe(201);
