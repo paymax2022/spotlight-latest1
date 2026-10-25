@@ -8,11 +8,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, waitFor } from '@testing-library/react';
 import type { AdminOverview, OverviewModule } from '@/types/adminOverview';
 
-const mockGetAdminOverview = vi.fn();
+const mockGetAdminOverviewResult = vi.fn();
 const mockGetAdminMenuCounts = vi.fn();
 
 vi.mock('@/services/adminApiClient', () => ({
-  getAdminOverview: (...a: unknown[]) => mockGetAdminOverview(...a),
+  getAdminOverviewResult: (...a: unknown[]) => mockGetAdminOverviewResult(...a),
   getAdminMenuCounts: (...a: unknown[]) => mockGetAdminMenuCounts(...a),
 }));
 vi.mock('@/config/stemAccess', () => ({
@@ -43,7 +43,7 @@ const queue = (
 
 const serve = (modules: OverviewModule[]) => {
   const overview: AdminOverview = { generated_at: '2026-10-08T09:00:00Z', modules };
-  mockGetAdminOverview.mockResolvedValue(overview);
+  mockGetAdminOverviewResult.mockResolvedValue({ ok: true, overview });
   mockGetAdminMenuCounts.mockResolvedValue(null);
 };
 
@@ -114,5 +114,57 @@ describe('AdminDashboard — awaiting approval', () => {
     expect(section.queryByText('Marketplace seller verification')).toBeNull();
     // ...but it is named, so an admin can tell "could not look" from "nothing to do".
     expect(screen.getAllByText(/could not be read|—/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('AdminDashboard — why the overview could not be read', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const fail = (reason: 'unauthorized' | 'forbidden' | 'unreachable') => {
+    mockGetAdminOverviewResult.mockResolvedValue({ ok: false, reason });
+    mockGetAdminMenuCounts.mockResolvedValue(null);
+  };
+
+  it('tells an expired session to sign in again, not to check the backend', async () => {
+    fail('unauthorized');
+    render(<AdminDashboard />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/session has expired/i);
+    expect(alert.textContent).toMatch(/not an all-clear/i);
+    expect(alert.textContent).not.toMatch(/check the backend/i);
+    const link = within(alert).getByRole('link', { name: /sign in again/i });
+    expect(link.getAttribute('href')).toBe('/admin/login?next=%2Fadmin');
+    expect(screen.getByText('session expired')).toBeTruthy();
+  });
+
+  it('tells a signed-in account without access to ask for it, not to check the backend', async () => {
+    fail('forbidden');
+    render(<AdminDashboard />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/not allowed to read the operations overview/i);
+    expect(alert.textContent).not.toMatch(/check the backend/i);
+    expect(screen.getByText('access denied')).toBeTruthy();
+  });
+
+  it('still says to check the backend when the API itself did not answer', async () => {
+    fail('unreachable');
+    render(<AdminDashboard />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/did not answer/i);
+    expect(alert.textContent).toMatch(/check the backend is running/i);
+    expect(within(alert).queryByRole('link')).toBeNull();
+    expect(screen.getByText('unreachable')).toBeTruthy();
+  });
+
+  it('treats a rejected call as unreachable rather than crashing', async () => {
+    mockGetAdminOverviewResult.mockRejectedValue(new Error('boom'));
+    mockGetAdminMenuCounts.mockResolvedValue(null);
+    render(<AdminDashboard />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/check the backend is running/i);
   });
 });
