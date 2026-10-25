@@ -23,7 +23,9 @@ import {
   passesTopicQuiz,
   displayPercent,
   buildTopicQuizResult,
+  evaluateArticleDepth,
   evaluateTopicPublication,
+  ARTICLE_DEPTH_STANDARD,
   MEDIA_FILE_TYPES,
   MANDATORY_TOPIC_PASS_PERCENT,
   MIN_APPROVED_ITEMS_PER_TOPIC,
@@ -103,11 +105,29 @@ function media(over: Partial<MediaPublicationInput> = {}): MediaPublicationInput
   };
 }
 
+/**
+ * Synthetic text that clears the mechanical depth floor. It is not curriculum
+ * content; it exists so gate tests isolate the rule under test.
+ */
+function deepArticle(): string {
+  return [
+    '# Synthetic topic',
+    '## Foundations',
+    'word '.repeat(300),
+    '## Worked example',
+    'word '.repeat(250),
+    '## Practical exercise',
+    'word '.repeat(250),
+    '## Self-check before the quiz',
+    'word '.repeat(250),
+  ].join('\n\n');
+}
+
 function publication(over: Partial<PublicationInput> = {}): PublicationInput {
   return {
     topicId: 'A01',
     contentStatus: 'approved',
-    lessonMarkdown: 'x'.repeat(200),
+    lessonMarkdown: deepArticle(),
     approvedQuestionCount: 20,
     drawCount: 10,
     quizMinimumPercent: 85,
@@ -134,6 +154,52 @@ describe('topic publication gate', () => {
     expect(codes(publication({ contentStatus: 'in_review' }))).toContain('CONTENT_NOT_APPROVED');
     expect(codes(publication({ lessonMarkdown: 'x'.repeat(199) }))).toContain('ARTICLE_NOT_TEACHABLE');
     expect(codes(publication({ lessonMarkdown: '   ' }))).toContain('ARTICLE_NOT_TEACHABLE');
+  });
+
+  it('requires the article depth standard, not merely 200 characters', () => {
+    const shallow = 'The lesson is here. '.repeat(20);
+    expect(shallow.trim().length).toBeGreaterThan(200);
+    const depth = evaluateArticleDepth(shallow);
+    expect(depth.words).toBe(80);
+    expect(depth.meetsStandard).toBe(false);
+    expect(depth.blockers.map((b) => b.code)).toEqual(expect.arrayContaining([
+      'ARTICLE_TOO_SHORT',
+      'ARTICLE_NOT_STRUCTURED',
+      'ARTICLE_PRACTICAL_MISSING',
+      'ARTICLE_SELF_CHECK_MISSING',
+    ]));
+
+    const verdictCodes = codes(publication({ lessonMarkdown: 'x'.repeat(200) }));
+    expect(verdictCodes).toEqual(expect.arrayContaining([
+      'ARTICLE_TOO_SHORT',
+      'ARTICLE_NOT_STRUCTURED',
+      'ARTICLE_PRACTICAL_MISSING',
+      'ARTICLE_SELF_CHECK_MISSING',
+    ]));
+  });
+
+  it('requires a practical/application heading and a self-check/assessment heading', () => {
+    expect(evaluateArticleDepth(deepArticle()).meetsStandard).toBe(true);
+
+    const noPractical = evaluateArticleDepth(deepArticle().replace('## Practical exercise', '## Additional notes'));
+    expect(noPractical.blockers.map((b) => b.code)).toContain('ARTICLE_PRACTICAL_MISSING');
+
+    const noSelfCheck = evaluateArticleDepth(deepArticle().replace('## Self-check before the quiz', '## Closing'));
+    expect(noSelfCheck.blockers.map((b) => b.code)).toContain('ARTICLE_SELF_CHECK_MISSING');
+
+    const threeSections = [
+      '# Synthetic topic',
+      '## Foundations',
+      'word '.repeat(600),
+      '## Practical exercise',
+      'word '.repeat(250),
+      '## Self-check before the quiz',
+      'word '.repeat(250),
+    ].join('\n\n');
+    const unstructured = evaluateArticleDepth(threeSections);
+    expect(unstructured.words).toBeGreaterThanOrEqual(ARTICLE_DEPTH_STANDARD.minWords);
+    expect(unstructured.sections).toBe(3);
+    expect(unstructured.blockers.map((b) => b.code)).toContain('ARTICLE_NOT_STRUCTURED');
   });
 
   it('requires at least 20 approved questions, or the draw count if larger', () => {
@@ -478,6 +544,13 @@ describe('curriculum import plan', () => {
     expect(plan.media.every((m) => m.accessibilityStatus !== 'PASSED')).toBe(true);
     expect(plan.warnings.join(' ')).toContain('20-approved-item publication gate');
     expect(plan.warnings.join(' ')).toContain('No topic is auto-published');
+
+    // Content depth is not software readiness: only the model A04 lesson meets
+    // the enforced floor, and none of the 72 is approved.
+    const atDepth = plan.topics.filter((t) => evaluateArticleDepth(t.lessonMarkdown).meetsStandard);
+    expect(atDepth.map((t) => t.topicId)).toEqual(['A04']);
+    expect(evaluateArticleDepth(plan.topics.find((t) => t.topicId === 'A04')!.lessonMarkdown).meetsStandard)
+      .toBe(true);
   });
 
   it('uses the supplied A04 lesson article and leaves every other topic on its pack copy', () => {

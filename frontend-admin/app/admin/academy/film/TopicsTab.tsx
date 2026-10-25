@@ -25,7 +25,7 @@ import {
 import * as svc from '@/services/filmAcademyAdminService';
 
 type NoticeProp = { onNotice: (s: string | null) => void };
-type SubTab = 'gates' | 'import' | 'media' | 'holds' | 'mastery';
+type SubTab = 'gates' | 'import' | 'pool' | 'media' | 'holds' | 'practical' | 'mastery';
 
 const PRODUCTION_STATES = [
   'PLANNED', 'SCRIPTED', 'CAPTURED', 'EDITED',
@@ -58,8 +58,10 @@ function useAsync<T>(fn: () => Promise<T>, deps: unknown[], enabled = true) {
 const SUB_TABS: Array<{ key: SubTab; label: string; hint: string }> = [
   { key: 'gates', label: 'Publication gates', hint: 'Every topic with the gates the server evaluates' },
   { key: 'import', label: 'Curriculum import', hint: 'Preview and apply the bundled TMFA pack as drafts' },
+  { key: 'pool', label: 'Question pool', hint: 'Topic-targeted draft import and every topic’s approved gap' },
   { key: 'media', label: 'Media production', hint: 'Files, rights and accessibility — a record is not a produced asset' },
   { key: 'holds', label: 'Academic holds', hint: 'Practical/safety/review holds that block mastery' },
+  { key: 'practical', label: 'Practical assessments', hint: 'Author the rubric and grade submitted practical work' },
   { key: 'mastery', label: 'Candidate mastery', hint: 'Mastered, passed-with-hold and remediation counts per learner' },
 ];
 
@@ -76,8 +78,10 @@ export function TopicsTab({ onNotice }: NoticeProp) {
       </div>
       {sub === 'gates' ? <GatesPanel onNotice={onNotice} onOpenMedia={(id) => { setMediaTopic(id); setSub('media'); }} /> : null}
       {sub === 'import' ? <ImportPanel onNotice={onNotice} /> : null}
+      {sub === 'pool' ? <QuestionPoolPanel onNotice={onNotice} /> : null}
       {sub === 'media' ? <MediaPanel onNotice={onNotice} initialTopicId={mediaTopic} /> : null}
       {sub === 'holds' ? <HoldsPanel onNotice={onNotice} /> : null}
+      {sub === 'practical' ? <PracticalPanel onNotice={onNotice} /> : null}
       {sub === 'mastery' ? <MasteryPanel onNotice={onNotice} /> : null}
     </>
   );
@@ -92,6 +96,7 @@ function GatesPanel({ onNotice, onOpenMedia }: NoticeProp & { onOpenMedia: (topi
   const [published, setPublished] = useState('');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const list = useAsync(
     () => svc.listAdminTopics({
@@ -102,6 +107,19 @@ function GatesPanel({ onNotice, onOpenMedia }: NoticeProp & { onOpenMedia: (topi
     }),
     [q, ready, published, page],
   );
+
+  const exportReadiness = async () => {
+    setExporting(true);
+    try {
+      const file = await svc.exportTopicReadiness();
+      downloadCsvFile(file.filename, file.csv);
+      onNotice('Readiness CSV downloaded — one row per topic with the server-evaluated gate.');
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const rows = list.data?.topics ?? [];
   const s = list.data?.summary;
@@ -134,6 +152,9 @@ function GatesPanel({ onNotice, onOpenMedia }: NoticeProp & { onOpenMedia: (topi
           </div>
           <button style={btnPrimary()} onClick={() => { setPage(1); setQ(qInput.trim()); }}>Search</button>
           <button style={btn()} onClick={() => { setQInput(''); setQ(''); setReady(''); setPublished(''); setPage(1); }}>Clear</button>
+          <button style={btn()} disabled={exporting} onClick={() => void exportReadiness()}>
+            {exporting ? 'Exporting…' : 'Download readiness CSV'}
+          </button>
         </div>
 
         {s ? (
@@ -142,7 +163,13 @@ function GatesPanel({ onNotice, onOpenMedia }: NoticeProp & { onOpenMedia: (topi
             <Kpi label="Ready" value={String(s.ready)} accent={colors.success} />
             <Kpi label="Blocked" value={String(s.blocked)} accent={s.blocked ? colors.warning : colors.muted} />
             <Kpi label="Published" value={String(s.published)} />
-            <Kpi label="Approved articles" value={String(s.approved)} />
+            <Kpi label="Articles at depth" value={`${s.articlesAtDepth}/${s.total}`}
+              accent={s.articlesAtDepth === s.total ? colors.success : colors.warning} />
+            <Kpi label="Approved questions" value={`${s.approvedQuestionTotal}/${s.requiredQuestionTotal}`}
+              accent={s.approvedQuestionTotal >= s.requiredQuestionTotal ? colors.success : colors.warning} />
+            <Kpi label="Media ready" value={`${s.publishedMediaTotal}/${s.requiredMediaTotal}`}
+              accent={s.publishedMediaTotal >= s.requiredMediaTotal ? colors.success : colors.warning} />
+            <Kpi label="Signed waivers" value={String(s.waivedTopics)} />
             <Kpi label="In review" value={String(s.inReview)} />
           </div>
         ) : null}
@@ -166,7 +193,12 @@ function GatesPanel({ onNotice, onOpenMedia }: NoticeProp & { onOpenMedia: (topi
                       </div>
                     </td>
                     <td style={td()}>{t.stage}</td>
-                    <td style={td()}><Badge status={t.contentStatus} /></td>
+                    <td style={td()}>
+                      <Badge status={t.contentStatus} />
+                      <div style={{ fontSize: '0.72rem', color: t.article.meetsDepthStandard ? colors.success : colors.danger }}>
+                        {t.article.words.toLocaleString()} words · {t.article.meetsDepthStandard ? 'depth met' : 'below depth'}
+                      </div>
+                    </td>
                     <td style={td()}>
                       <span style={{ color: t.questionCounts.approved >= Math.max(20, t.drawCount) ? colors.success : colors.danger, fontWeight: 600 }}>
                         {t.questionCounts.approved}
@@ -202,15 +234,17 @@ function GatesPanel({ onNotice, onOpenMedia }: NoticeProp & { onOpenMedia: (topi
         </StateBlock>
 
         <AuditNote>
-          The import creates drafts only. A topic becomes publishable when its article is approved, every required
-          asset is PUBLISHED with rights CLEARED and accessibility PASSED (or a signed text-equivalent waiver
-          exists), and at least 20 approved questions cover the draw. Saving changes to approved content returns
-          it to review and unpublishes it.
+          The import creates drafts only. Approval and publication require an article that meets the article
+          depth standard — at least 1,000 words and four sections, including a practical/application heading
+          and a self-check/assessment heading — as well as every required asset being PUBLISHED with rights
+          CLEARED and accessibility PASSED (or a signed text-equivalent waiver), and at least 20 approved
+          questions covering the draw. Saving changes to approved content returns it to review and unpublishes it.
         </AuditNote>
       </Card>
 
       {selected ? (
         <TopicDetailPanel
+          key={selected}
           topicId={selected}
           onNotice={onNotice}
           onOpenMedia={onOpenMedia}
@@ -221,6 +255,63 @@ function GatesPanel({ onNotice, onOpenMedia }: NoticeProp & { onOpenMedia: (topi
   );
 }
 
+type TopicDraft = {
+  title: string;
+  stage: string;
+  stageLabel: string;
+  article: string;
+  outcomes: Array<{ objective_id: string; description: string }>;
+  requiredMedia: string;
+  prerequisites: string;
+  quizMinimumPercent: string;
+  drawCount: string;
+  timeLimitMinutes: string;
+};
+
+const STAGE_OPTIONS = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'];
+
+function splitList(value: string): string[] {
+  return Array.from(new Set(value.split(/[\n,]/).map((v) => v.trim()).filter(Boolean)));
+}
+
+function integerField(raw: string, min: number, max: number, field: string): number {
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${field} must be a whole number between ${min} and ${max}.`);
+  }
+  return value;
+}
+
+/** Advisory live count only; the server re-measures the saved article. */
+function articleWordCount(value: string): number {
+  return value
+    .replace(/[#>*_`~]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((token) => /[A-Za-z0-9]/.test(token)).length;
+}
+
+function downloadCsvFile(filename: string, csv: string) {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function readTextFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(new Error('Could not read that file.'));
+    reader.readAsText(file);
+  });
+}
+
 function TopicDetailPanel({
   topicId, onNotice, onOpenMedia, onChanged,
 }: NoticeProp & { topicId: string; onOpenMedia: (topicId: string) => void; onChanged: () => void }) {
@@ -229,11 +320,38 @@ function TopicDetailPanel({
   const [error, setError] = useState<string | null>(null);
   const [waiverApproved, setWaiverApproved] = useState(false);
   const [waiverNote, setWaiverNote] = useState('');
+  const [draft, setDraft] = useState<TopicDraft | null>(null);
 
   useEffect(() => {
     setWaiverApproved(detail.data?.accessibleEquivalent.approved ?? false);
     setWaiverNote(detail.data?.accessibleEquivalent.note ?? '');
   }, [detail.data]);
+
+  useEffect(() => {
+    if (!detail.data) return;
+    setDraft({
+      title: detail.data.topic.title,
+      stage: detail.data.topic.stage,
+      stageLabel: detail.data.topic.stageLabel,
+      article: detail.data.article,
+      outcomes: detail.data.outcomes.map((o) => ({ ...o })),
+      requiredMedia: detail.data.requiredMedia.join('\n'),
+      prerequisites: detail.data.prerequisites.join('\n'),
+      quizMinimumPercent: String(detail.data.topic.quizMinimumPercent),
+      drawCount: String(detail.data.topic.drawCount),
+      timeLimitMinutes: String(detail.data.topic.timeLimitMinutes),
+    });
+  }, [detail.data]);
+
+  const patchDraft = (patch: Partial<TopicDraft>) => {
+    setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
+
+  const updateOutcome = (index: number, patch: Partial<TopicDraft['outcomes'][number]>) => {
+    setDraft((prev) => (prev
+      ? { ...prev, outcomes: prev.outcomes.map((o, i) => (i === index ? { ...o, ...patch } : o)) }
+      : prev));
+  };
 
   const act = async (action: svc.AdminTopicAction, extra?: Record<string, unknown>) => {
     setBusy(action); setError(null);
@@ -244,6 +362,32 @@ function TopicDetailPanel({
       onChanged();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
+  };
+
+  const saveDraft = async () => {
+    if (!draft) return;
+    setError(null);
+    const outcomes = draft.outcomes
+      .map((o) => ({ objective_id: o.objective_id.trim(), description: o.description.trim() }))
+      .filter((o) => o.objective_id || o.description);
+    if (outcomes.some((o) => !o.objective_id || !o.description)) {
+      setError('Each learning outcome needs both an ID and a description (or remove the empty row).');
+      return;
+    }
+    try {
+      await act('save', {
+        title: draft.title.trim(),
+        stage: draft.stage,
+        stageLabel: draft.stageLabel.trim(),
+        lessonMarkdown: draft.article,
+        learningOutcomes: outcomes,
+        requiredMedia: splitList(draft.requiredMedia),
+        prerequisites: splitList(draft.prerequisites),
+        quizMinimumPercent: integerField(draft.quizMinimumPercent, 85, 100, 'Pass mark'),
+        quizDrawCount: integerField(draft.drawCount, 1, 50, 'Questions to draw'),
+        quizTimeLimitMinutes: integerField(draft.timeLimitMinutes, 1, 180, 'Time limit'),
+      });
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
 
   const t = detail.data?.topic;
@@ -300,6 +444,8 @@ function TopicDetailPanel({
             ) : null}
 
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              <Kpi label="Article depth" value={`${t.article.words.toLocaleString()} / 1,000 words`}
+                accent={t.article.meetsDepthStandard ? colors.success : colors.danger} />
               <Kpi label="Approved questions" value={`${detail.data.topic.questionCounts.approved} / ${Math.max(20, t.drawCount)}`} />
               <Kpi label="Required media live" value={`${detail.data.topic.media.published} / ${detail.data.topic.media.required}`} />
               <Kpi label="Learners mastered" value={String(detail.data.mastery.mastered)} accent={colors.success} />
@@ -307,9 +453,21 @@ function TopicDetailPanel({
               <Kpi label="Attempts" value={`${detail.data.attempts.scored} scored / ${detail.data.attempts.inProgress} open`} />
             </div>
 
+            <div style={{ fontSize: '0.75rem', color: t.article.meetsDepthStandard ? colors.success : colors.danger, marginBottom: '0.75rem' }}>
+              {t.article.sections} section heading{t.article.sections === 1 ? '' : 's'} · practical{' '}
+              {t.article.hasPractical ? 'present' : 'missing'} · self-check {t.article.hasSelfCheck ? 'present' : 'missing'}.
+              {' '}The server requires at least 1,000 words, four headings, a practical/application heading and a
+              self-check/assessment heading before review or approval.
+            </div>
+
+            <div style={{ fontSize: '0.75rem', color: colors.muted, marginBottom: '0.75rem' }}>
+              Approve this topic&apos;s pool in <strong>Question Bank</strong>, filtered by topic ID <code>{t.topicId}</code>.
+              Publication needs at least <strong>{Math.max(20, t.drawCount)}</strong> approved items.
+            </div>
+
             <details style={{ marginBottom: '0.75rem' }}>
               <summary style={{ cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
-                Teaching article ({detail.data.article.length.toLocaleString()} characters)
+                Teaching article ({detail.data.article.length.toLocaleString()} characters · {t.article.words.toLocaleString()} words)
               </summary>
               <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.82rem', background: colors.bg,
                 borderRadius: '0.5rem', padding: '0.75rem', marginTop: '0.4rem', maxHeight: 320, overflow: 'auto' }}>
@@ -333,6 +491,113 @@ function TopicDetailPanel({
                 )}
               </div>
             </div>
+
+            {draft ? (
+              <details style={{ marginBottom: '0.75rem' }}>
+                <summary style={{ cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
+                  Edit teaching content and quiz settings (programs:manage)
+                </summary>
+                <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.75rem', marginTop: '0.5rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: '0.75rem' }}>
+                    <div>
+                      <label style={label()}>Title</label>
+                      <input style={input()} value={draft.title} onChange={(e) => patchDraft({ title: e.target.value })} />
+                    </div>
+                    <div>
+                      <label style={label()}>Stage</label>
+                      <select style={select()} value={draft.stage} onChange={(e) => patchDraft({ stage: e.target.value })}>
+                        {STAGE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={label()}>Stage label</label>
+                      <input style={input()} value={draft.stageLabel} onChange={(e) => patchDraft({ stageLabel: e.target.value })} />
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '0.6rem' }}>
+                    <label style={label()}>Teaching article (markdown)</label>
+                    <textarea style={{ ...input(), minHeight: 220, fontFamily: 'monospace' }} value={draft.article}
+                      onChange={(e) => patchDraft({ article: e.target.value })} />
+                    <div style={{ fontSize: '0.72rem', color: articleWordCount(draft.article) < 1000 ? colors.danger : colors.muted }}>
+                      {draft.article.trim().length.toLocaleString()} characters · {articleWordCount(draft.article).toLocaleString()} words (live count).
+                      The server requires at least 1,000 words and four headings, including a practical/application
+                      heading and a self-check/assessment heading before review or approval. Drafts can be saved below
+                      that floor.
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '0.6rem' }}>
+                    <label style={label()}>Learning outcomes</label>
+                    {draft.outcomes.length === 0 ? (
+                      <p style={{ fontSize: '0.78rem', color: colors.muted, margin: '0.2rem 0' }}>
+                        No outcomes yet — at least one is required before review.
+                      </p>
+                    ) : null}
+                    {draft.outcomes.map((o, index) => (
+                      <div key={index} style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
+                        <input style={{ ...input(), maxWidth: 150 }} value={o.objective_id} placeholder="OBJ-ID"
+                          onChange={(e) => updateOutcome(index, { objective_id: e.target.value })} />
+                        <input style={{ ...input(), flex: 1, minWidth: 220 }} value={o.description} placeholder="What the learner can do"
+                          onChange={(e) => updateOutcome(index, { description: e.target.value })} />
+                        <button style={btn()}
+                          onClick={() => patchDraft({ outcomes: draft.outcomes.filter((_, i) => i !== index) })}>
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                    <button style={btn()}
+                      onClick={() => patchDraft({ outcomes: [...draft.outcomes, { objective_id: '', description: '' }] })}>
+                      Add outcome
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: '0.75rem', marginTop: '0.6rem' }}>
+                    <div>
+                      <label style={label()}>Required media (one type per line)</label>
+                      <textarea style={{ ...input(), minHeight: 80 }} value={draft.requiredMedia}
+                        onChange={(e) => patchDraft({ requiredMedia: e.target.value })}
+                        placeholder={'teaching_video\nphoto_or_diagram'} />
+                    </div>
+                    <div>
+                      <label style={label()}>Prerequisites (one topic ID per line)</label>
+                      <textarea style={{ ...input(), minHeight: 80 }} value={draft.prerequisites}
+                        onChange={(e) => patchDraft({ prerequisites: e.target.value })}
+                        placeholder="e.g. A01-T2" />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '0.75rem', marginTop: '0.6rem' }}>
+                    <div>
+                      <label style={label()}>Pass mark (%)</label>
+                      <input style={input()} type="number" min={85} max={100} value={draft.quizMinimumPercent}
+                        onChange={(e) => patchDraft({ quizMinimumPercent: e.target.value })} />
+                    </div>
+                    <div>
+                      <label style={label()}>Questions to draw</label>
+                      <input style={input()} type="number" min={1} max={50} value={draft.drawCount}
+                        onChange={(e) => patchDraft({ drawCount: e.target.value })} />
+                    </div>
+                    <div>
+                      <label style={label()}>Time limit (minutes)</label>
+                      <input style={input()} type="number" min={1} max={180} value={draft.timeLimitMinutes}
+                        onChange={(e) => patchDraft({ timeLimitMinutes: e.target.value })} />
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button style={btnPrimary()} disabled={busy !== null} onClick={() => void saveDraft()}>
+                      {busy === 'save' ? 'Saving…' : 'Save topic content'}
+                    </button>
+                    {t.contentStatus !== 'draft' ? (
+                      <span style={{ fontSize: '0.75rem', color: colors.warning }}>
+                        Saving content returns this topic to review and unpublishes it.
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </details>
+            ) : null}
 
             {t.contentStatus === 'approved' ? (
               <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.75rem', marginBottom: '0.75rem' }}>
@@ -520,6 +785,292 @@ function ImportPanel({ onNotice }: NoticeProp) {
         Media records import as PLANNED with rights NOT_REVIEWED — a row is not evidence that a file exists.
       </AuditNote>
     </Card>
+  );
+}
+
+// ── Topic question authoring ────────────────────────────────────────────────
+
+function QuestionPoolPanel({ onNotice }: NoticeProp) {
+  const context = useAsync(() => svc.getTopicQuestionAuthoringContext(), []);
+  const [filename, setFilename] = useState('tmfa-topic-questions.csv');
+  const [csv, setCsv] = useState('');
+  const [preview, setPreview] = useState<svc.TopicQuestionPreview | null>(null);
+  const [busy, setBusy] = useState<null | 'preview' | 'commit'>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const topics = context.data?.topics ?? [];
+  const approvedTotal = topics.reduce((sum, t) => sum + t.approved, 0);
+  const requiredTotal = topics.reduce((sum, t) => sum + t.required, 0);
+  const draftTotal = topics.reduce((sum, t) => sum + t.draft, 0);
+  const belowGate = topics.filter((t) => t.shortfall > 0).length;
+  const impactedTopics = (preview?.topics ?? []).filter((t) => t.submitted > 0);
+  const previewBelowGate = (preview?.topics ?? []).filter((t) => t.shortfall > 0).length;
+
+  const onPick = async (file: File | undefined) => {
+    if (!file) return;
+    setFilename(file.name);
+    setError(null);
+    try {
+      setCsv(await readTextFile(file));
+      setPreview(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const runPreview = async () => {
+    if (!csv.trim()) {
+      setError('Choose a CSV file (or paste its text) first.');
+      return;
+    }
+    setBusy('preview');
+    setError(null);
+    try {
+      setPreview(await svc.previewTopicQuestionImport(csv));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPreview(null);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runCommit = async () => {
+    if (!csv.trim() || !preview) return;
+    if (!window.confirm(
+      `Import ${preview.totals.accepted} valid row(s) as DRAFT topic questions?\n\n`
+      + 'This never approves a question and never publishes a topic. Reviewed, module-coded or '
+      + 'differently-assigned items are left untouched. Every imported row still needs SME approval '
+      + 'before it can be drawn.',
+    )) return;
+    setBusy('commit');
+    setError(null);
+    try {
+      const r = await svc.commitTopicQuestionImport(filename, csv);
+      onNotice(
+        `Imported ${r.inserted} new draft(s), updated ${r.updated}, unchanged ${r.unchanged}; `
+        + `${r.locked} locked and ${r.rejected.length} rejected. Drafts still require SME approval.`,
+      );
+      setPreview(null);
+      await context.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const downloadTemplate = () => {
+    if (!context.data) return;
+    downloadCsvFile(context.data.templateFilename, `${context.data.headers.join(',')}\r\n`);
+  };
+
+  return (
+    <>
+      <Card title="Topic question pool" right={
+        <span style={{ fontSize: '0.75rem', color: colors.muted }}>
+          A draft is not an approved question; only SME review makes an item drawable.
+        </span>
+      }>
+        <StateBlock loading={context.loading} error={context.error} empty={topics.length === 0}
+          emptyText="Import the curriculum pack first — there are no topics to attach questions to.">
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+            <Kpi label="Topics" value={String(topics.length)} />
+            <Kpi label="Approved items" value={`${approvedTotal}/${requiredTotal}`}
+              accent={approvedTotal >= requiredTotal ? colors.success : colors.warning} />
+            <Kpi label="Drafts waiting review" value={String(draftTotal)}
+              accent={draftTotal > 0 ? colors.warning : colors.muted} />
+            <Kpi label="Topics below gate" value={String(belowGate)}
+              accent={belowGate > 0 ? colors.danger : colors.success} />
+          </div>
+
+          <details>
+            <summary style={{ cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
+              Per-topic approved gap ({belowGate} below the gate)
+            </summary>
+            <div style={{ maxHeight: 360, overflow: 'auto', marginTop: '0.4rem' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+                <thead><tr>
+                  <th style={th()}>Topic</th><th style={th()}>Stage</th>
+                  <th style={th()}>Approved / required</th><th style={th()}>Draft</th>
+                  <th style={th()}>Review</th><th style={th()}>Shortfall</th>
+                </tr></thead>
+                <tbody>
+                  {[...topics]
+                    .sort((a, b) => b.shortfall - a.shortfall || a.topicId.localeCompare(b.topicId))
+                    .map((t) => (
+                      <tr key={t.topicId}>
+                        <td style={td()}>
+                          {t.title}
+                          <div style={{ fontSize: '0.72rem', color: colors.muted }}>{t.topicId}</div>
+                        </td>
+                        <td style={td()}>{t.stage}</td>
+                        <td style={td()}>
+                          <strong style={{ color: t.approved >= t.required ? colors.success : colors.danger }}>
+                            {t.approved}
+                          </strong>
+                          {' / '}{t.required}
+                        </td>
+                        <td style={td()}>{t.draft}</td>
+                        <td style={td()}>{t.review}</td>
+                        <td style={{ ...td(), color: t.shortfall > 0 ? colors.danger : colors.success }}>
+                          {t.shortfall}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </StateBlock>
+        <AuditNote>
+          The required target is the larger of 20 and the topic&apos;s quiz draw. Imported rows are drafts and
+          do not reduce the shortfall until an SME approves them in Question Bank. A topic cannot publish while
+          its approved pool is below the target, regardless of how many drafts exist.
+        </AuditNote>
+      </Card>
+
+      <Card title="Import topic-targeted drafts" right={
+        <span style={{ fontSize: '0.75rem', color: colors.muted }}>CSV · drafts only · never auto-approves</span>
+      }>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <input type="file" accept=".csv,text/csv" onChange={(e) => void onPick(e.target.files?.[0])} />
+          <input style={{ ...input(), maxWidth: 280 }} value={filename} aria-label="filename"
+            onChange={(e) => setFilename(e.target.value)} />
+          <button style={btn()} disabled={!context.data} onClick={downloadTemplate}>Download headers</button>
+        </div>
+        {context.data ? (
+          <div style={{ fontSize: '0.72rem', color: colors.muted, marginBottom: '0.5rem' }}>
+            Required columns: <code>{context.data.headers.join(', ')}</code>
+          </div>
+        ) : null}
+        <textarea
+          style={{ ...input(), minHeight: 120, fontFamily: 'ui-monospace, monospace', fontSize: '0.75rem', whiteSpace: 'pre' }}
+          value={csv}
+          onChange={(e) => { setCsv(e.target.value); setPreview(null); }}
+          placeholder="…or paste the CSV text here"
+        />
+        {error ? <p style={{ color: colors.danger, fontSize: '0.85rem' }}>{error}</p> : null}
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+          <button style={btn()} disabled={busy !== null || !csv.trim()} onClick={() => void runPreview()}>
+            {busy === 'preview' ? 'Previewing…' : 'Preview'}
+          </button>
+          <button style={btnPrimary()}
+            disabled={busy !== null || !preview || preview.totals.accepted === 0}
+            onClick={() => void runCommit()}>
+            {busy === 'commit' ? 'Importing…' : 'Commit as drafts'}
+          </button>
+        </div>
+        <AuditNote>
+          The preview is read-only. Commit re-validates the CSV on the server: accepted rows are inserted or
+          updated as DRAFT with their topic and objective binding. Reviewed items, module-coded items and items
+          already bound to another topic are locked and reported, never rewritten. Import cannot approve,
+          retire or publish a question.
+        </AuditNote>
+      </Card>
+
+      {preview ? (
+        <Card title="Import preview" right={
+          <span style={{ fontSize: '0.75rem', color: colors.muted }}>
+            {previewBelowGate} topic(s) remain below the approved gate.
+          </span>
+        }>
+          <div style={{ display: 'flex', gap: '0.9rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+            <Kpi label="Rows" value={String(preview.totals.rows)} />
+            <Kpi label="Valid" value={String(preview.totals.accepted)} accent={colors.success} />
+            <Kpi label="Would insert" value={String(preview.totals.wouldInsert)} accent={colors.success} />
+            <Kpi label="Would update" value={String(preview.totals.wouldUpdate)} />
+            <Kpi label="Unchanged" value={String(preview.totals.unchanged)} accent={colors.muted} />
+            <Kpi label="Locked" value={String(preview.totals.locked)}
+              accent={preview.totals.locked ? colors.warning : colors.muted} />
+            <Kpi label="Rejected" value={String(preview.totals.rejected)}
+              accent={preview.totals.rejected ? colors.danger : colors.muted} />
+          </div>
+
+          {impactedTopics.length > 0 ? (
+            <div style={{ overflowX: 'auto', marginBottom: '0.75rem' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 680 }}>
+                <thead><tr>
+                  <th style={th()}>Topic</th><th style={th()}>Rows in file</th>
+                  <th style={th()}>Approved / required</th><th style={th()}>Drafts before → after</th>
+                  <th style={th()}>Shortfall after</th>
+                </tr></thead>
+                <tbody>
+                  {impactedTopics.map((t) => (
+                    <tr key={t.topicId}>
+                      <td style={td()}>
+                        {t.title}
+                        <div style={{ fontSize: '0.72rem', color: colors.muted }}>{t.topicId}</div>
+                      </td>
+                      <td style={td()}>{t.submitted}</td>
+                      <td style={td()}>
+                        <span style={{ color: t.approved >= t.required ? colors.success : colors.danger, fontWeight: 600 }}>
+                          {t.approved}
+                        </span>
+                        {' / '}{t.required}
+                      </td>
+                      <td style={td()}>{t.draft} → {t.draftAfter}</td>
+                      <td style={{ ...td(), color: t.shortfall > 0 ? colors.danger : colors.success }}>
+                        {t.shortfall}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          {preview.rejected.length > 0 ? (
+            <>
+              <h3 style={{ fontSize: '0.85rem', margin: '0.5rem 0' }}>Rejected rows (fix &amp; re-import)</h3>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
+                  <thead><tr><th style={th()}>Row</th><th style={th()}>Question ID</th><th style={th()}>Problem</th></tr></thead>
+                  <tbody>
+                    {preview.rejected.map((p, i) => (
+                      <tr key={i}>
+                        <td style={td()}>{p.row}</td>
+                        <td style={td()}>{p.externalCode ?? '—'}</td>
+                        <td style={td()}>{p.code} — {p.message}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+
+          {preview.blocked.length > 0 ? (
+            <>
+              <h3 style={{ fontSize: '0.85rem', margin: '0.75rem 0 0.5rem' }}>Locked rows (not imported)</h3>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
+                  <thead><tr><th style={th()}>Row</th><th style={th()}>Question ID</th><th style={th()}>Why it is locked</th></tr></thead>
+                  <tbody>
+                    {preview.blocked.map((p, i) => (
+                      <tr key={i}>
+                        <td style={td()}>{p.row}</td>
+                        <td style={td()}>{p.externalCode ?? '—'}</td>
+                        <td style={td()}>{p.code} — {p.message}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+
+          {preview.warnings.length > 0 ? (
+            <details style={{ marginTop: '0.75rem' }}>
+              <summary style={{ fontSize: '0.82rem', cursor: 'pointer' }}>{preview.warnings.length} warning(s)</summary>
+              <ul style={{ fontSize: '0.78rem', color: colors.muted }}>
+                {preview.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </details>
+          ) : null}
+        </Card>
+      ) : null}
+    </>
   );
 }
 
@@ -1029,5 +1580,747 @@ function MasteryPanel({ onNotice }: NoticeProp) {
         Revocation keeps the registry entry resolvable and is fully audited.
       </AuditNote>
     </Card>
+  );
+}
+
+// ── Practical assessments ───────────────────────────────────────────────────
+
+type PracticalDraft = {
+  title: string;
+  briefMarkdown: string;
+  submissionInstructions: string;
+  rubric: svc.AdminPracticalRubricCriterion[];
+  passPercent: number;
+  maxAttempts: number;
+  active: boolean;
+};
+
+function newCriterionId(): string {
+  return `criterion-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function emptyPracticalDraft(): PracticalDraft {
+  return {
+    title: '',
+    briefMarkdown: '',
+    submissionInstructions: '',
+    rubric: [
+      { id: newCriterionId(), label: 'Craft and execution', description: '', maxPoints: 50 },
+      { id: newCriterionId(), label: 'Story and intent', description: '', maxPoints: 50 },
+    ],
+    passPercent: 85,
+    maxAttempts: 3,
+    active: false,
+  };
+}
+
+function PracticalPanel({ onNotice }: NoticeProp) {
+  const [assessments, setAssessments] = useState<svc.AdminPracticalAssessment[]>([]);
+  const [totals, setTotals] = useState({ draft: 0, submitted: 0, graded: 0, passed: 0 });
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
+
+  const reloadList = useCallback(async () => {
+    setListLoading(true);
+    setListError(null);
+    try {
+      const r = await svc.listPracticalAssessments();
+      setAssessments(r.assessments);
+      setTotals(r.totals);
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setListLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void reloadList(); }, [reloadList]);
+
+  const [topicLookup, setTopicLookup] = useState('');
+  const [context, setContext] = useState<Awaited<ReturnType<typeof svc.getPracticalAssessment>> | null>(null);
+  const [form, setForm] = useState<PracticalDraft>(emptyPracticalDraft);
+  const [loadingTopic, setLoadingTopic] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const load = useCallback(async (rawId: string) => {
+    const topicId = rawId.trim();
+    if (!topicId) return;
+    setLoadingTopic(true);
+    setFormError(null);
+    try {
+      const r = await svc.getPracticalAssessment(topicId);
+      setContext(r);
+      setTopicLookup(topicId);
+      setForm(r.assessment
+        ? {
+            title: r.assessment.title,
+            briefMarkdown: r.assessment.briefMarkdown,
+            submissionInstructions: r.assessment.submissionInstructions,
+            rubric: r.assessment.rubric.map((criterion) => ({ ...criterion })),
+            passPercent: r.assessment.passPercent,
+            maxAttempts: r.assessment.maxAttempts,
+            active: r.assessment.active,
+          }
+        : emptyPracticalDraft());
+    } catch (e) {
+      setContext(null);
+      setFormError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingTopic(false);
+    }
+  }, []);
+
+  const updateCriterion = (index: number, patch: Partial<svc.AdminPracticalRubricCriterion>) => {
+    setForm((current) => ({
+      ...current,
+      rubric: current.rubric.map((criterion, i) => (i === index ? { ...criterion, ...patch } : criterion)),
+    }));
+  };
+
+  const addCriterion = () => {
+    setForm((current) => current.rubric.length >= 10
+      ? current
+      : {
+          ...current,
+          rubric: [
+            ...current.rubric,
+            { id: newCriterionId(), label: '', description: '', maxPoints: 20 },
+          ],
+        });
+  };
+
+  const removeCriterion = (index: number) => {
+    setForm((current) => ({
+      ...current,
+      rubric: current.rubric.filter((_, i) => i !== index),
+    }));
+  };
+
+  const save = async () => {
+    if (!context) return;
+    if (form.active && context.assessment?.active !== true) {
+      const ok = window.confirm(
+        'Opening the practical gate immediately opens a PRACTICAL_PENDING hold for every learner who has passed this quiz but not the practical. Their state moves from MASTERED to PASSED until they pass. Continue?',
+      );
+      if (!ok) return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      const r = await svc.savePracticalAssessment(context.topic.topicId, form);
+      const gate = r.gateChanged === 'activated'
+        ? ` Gate opened — ${r.holdsOpened} practical hold(s) opened for learners who already passed the quiz.`
+        : r.gateChanged === 'deactivated'
+          ? ` Gate withdrawn — ${r.holdsCleared} practical hold(s) cleared and earned mastery restored.`
+          : '';
+      onNotice(`Practical assessment saved.${gate}`);
+      setContext({ ...context, assessment: r.assessment });
+      setForm((current) => ({ ...current, active: r.assessment.active }));
+      await reloadList();
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const [queueStatus, setQueueStatus] = useState('submitted');
+  const [queueTopic, setQueueTopic] = useState('');
+  const [topicFilterInput, setTopicFilterInput] = useState('');
+  const [queuePage, setQueuePage] = useState(1);
+  const [reviewId, setReviewId] = useState<string | null>(null);
+
+  const queue = useAsync(
+    () => svc.listPracticalQueue({
+      status: queueStatus || undefined,
+      topicId: queueTopic || undefined,
+      page: queuePage,
+      pageSize: 20,
+    }),
+    [queueStatus, queueTopic, queuePage],
+  );
+  const queueRows = queue.data?.submissions ?? [];
+
+  const focusQueue = (topicId: string) => {
+    setQueueStatus('submitted');
+    setQueueTopic(topicId);
+    setTopicFilterInput(topicId);
+    setQueuePage(1);
+  };
+
+  const afterGrade = async () => {
+    await queue.reload();
+    await reloadList();
+  };
+
+  const rubricTotal = form.rubric.reduce((sum, criterion) => sum + (Number(criterion.maxPoints) || 0), 0);
+
+  return (
+    <>
+      <Card title="Configured practical assessments" right={
+        <span style={{ fontSize: '0.75rem', color: colors.muted }}>
+          {totals.submitted} awaiting review · {totals.passed} passed
+        </span>
+      }>
+        <StateBlock
+          loading={listLoading}
+          error={listError}
+          empty={assessments.length === 0}
+          emptyText="No practical assessment is configured yet. Load a topic below to author the first one."
+        >
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+              <thead><tr>
+                <th style={th()}>Topic</th><th style={th()}>Assessment</th><th style={th()}>Gate</th>
+                <th style={th()}>Pass</th><th style={th()}>Attempts</th><th style={th()}>Queue</th>
+                <th style={th()}>Updated</th><th style={th()} />
+              </tr></thead>
+              <tbody>
+                {assessments.map((assessment) => (
+                  <tr key={assessment.id}>
+                    <td style={td()}>
+                      {assessment.topicTitle}
+                      <div style={{ fontSize: '0.72rem', color: colors.muted }}>{assessment.topicId}</div>
+                      {!assessment.topicPublished && (
+                        <div style={{ fontSize: '0.68rem', color: colors.warning }}>topic not published</div>
+                      )}
+                    </td>
+                    <td style={td()}>{assessment.title}</td>
+                    <td style={td()}>
+                      <Badge
+                        status={assessment.active ? 'active' : 'draft'}
+                        label={assessment.active ? 'Open' : 'Draft'}
+                      />
+                    </td>
+                    <td style={td()}>{assessment.passPercent}%</td>
+                    <td style={td()}>{assessment.maxAttempts}</td>
+                    <td style={td()}>
+                      {assessment.counts.submitted} to mark
+                      <div style={{ fontSize: '0.72rem', color: colors.muted }}>
+                        {assessment.counts.graded} graded · {assessment.counts.passed} passed
+                      </div>
+                    </td>
+                    <td style={td()}>{assessment.updatedAt ? fmtDate(assessment.updatedAt) : '—'}</td>
+                    <td style={{ ...td(), whiteSpace: 'nowrap' }}>
+                      <button style={btn()} onClick={() => void load(assessment.topicId)}>Configure</button>{' '}
+                      <button style={btn()} onClick={() => focusQueue(assessment.topicId)}>Review</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </StateBlock>
+      </Card>
+
+      <Card title="Author an assessment" right={
+        <span style={{ fontSize: '0.75rem', color: colors.muted }}>programs:manage</span>
+      }>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <label style={label()}>Topic ID</label>
+            <input
+              style={input()}
+              value={topicLookup}
+              onChange={(e) => setTopicLookup(e.target.value)}
+              placeholder="e.g. A01-T3"
+            />
+          </div>
+          <button style={btn()} disabled={loadingTopic} onClick={() => void load(topicLookup)}>
+            {loadingTopic ? 'Loading…' : 'Load topic'}
+          </button>
+        </div>
+
+        {!context ? (
+          <p style={{ fontSize: '0.85rem', color: colors.muted }}>
+            Load a topic to author or edit its practical assessment.
+          </p>
+        ) : (
+          <>
+            <p style={{ fontSize: '0.85rem', marginTop: 0 }}>
+              <strong>{context.topic.title}</strong> · {context.topic.topicId} ·{' '}
+              {context.topic.published ? 'published' : 'not published'}
+            </p>
+            {!context.topic.published && (
+              <p style={{ color: colors.warning, fontSize: '0.82rem' }}>
+                The topic is not published. Learners cannot see or submit this practical until the topic
+                passes publication review; saving the assessment is still allowed.
+              </p>
+            )}
+            {formError ? <p style={{ color: colors.danger, fontSize: '0.85rem' }}>{formError}</p> : null}
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '0.75rem' }}>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={label()}>Title</label>
+                <input
+                  style={input()}
+                  value={form.title}
+                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                  placeholder="e.g. Direct a two-minute dialogue scene"
+                />
+              </div>
+              <div>
+                <label style={label()}>Pass mark (%)</label>
+                <input
+                  style={input()}
+                  type="number"
+                  min={85}
+                  max={100}
+                  value={form.passPercent}
+                  onChange={(e) => setForm({ ...form, passPercent: Number(e.target.value) })}
+                />
+              </div>
+              <div>
+                <label style={label()}>Attempts allowed</label>
+                <input
+                  style={input()}
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={form.maxAttempts}
+                  onChange={(e) => setForm({ ...form, maxAttempts: Number(e.target.value) })}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: '0.4rem' }}>
+                <label style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', fontSize: '0.85rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={form.active}
+                    onChange={(e) => setForm({ ...form, active: e.target.checked })}
+                  />
+                  Open this practical to learners
+                </label>
+              </div>
+            </div>
+
+            <div style={{ marginTop: '0.75rem' }}>
+              <label style={label()}>Brief (markdown, at least 20 characters)</label>
+              <textarea
+                style={{ ...input(), minHeight: 140, resize: 'vertical' }}
+                value={form.briefMarkdown}
+                onChange={(e) => setForm({ ...form, briefMarkdown: e.target.value })}
+                placeholder="What the learner must produce, the constraints they must work within, and how to submit."
+              />
+            </div>
+
+            <div style={{ marginTop: '0.75rem' }}>
+              <label style={label()}>Submission instructions</label>
+              <textarea
+                style={{ ...input(), minHeight: 70, resize: 'vertical' }}
+                value={form.submissionInstructions}
+                onChange={(e) => setForm({ ...form, submissionInstructions: e.target.value })}
+                placeholder="e.g. Paste an https link to your uploaded clip and name everyone in the credits."
+              />
+            </div>
+
+            <div style={{ marginTop: '0.75rem' }}>
+              <label style={label()}>Rubric · {form.rubric.length} criteria · {rubricTotal} points possible</label>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+                  <thead><tr>
+                    <th style={th()}>Criterion</th><th style={th()}>What good looks like</th>
+                    <th style={th()}>Max points</th><th style={th()} />
+                  </tr></thead>
+                  <tbody>
+                    {form.rubric.map((criterion, index) => (
+                      <tr key={criterion.id}>
+                        <td style={td()}>
+                          <input
+                            style={input()}
+                            value={criterion.label}
+                            onChange={(e) => updateCriterion(index, { label: e.target.value })}
+                            placeholder="e.g. Camera coverage"
+                          />
+                        </td>
+                        <td style={td()}>
+                          <input
+                            style={input()}
+                            value={criterion.description}
+                            onChange={(e) => updateCriterion(index, { description: e.target.value })}
+                            placeholder="What the reviewer should look for"
+                          />
+                        </td>
+                        <td style={td()}>
+                          <input
+                            style={{ ...input(), width: 90 }}
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={criterion.maxPoints}
+                            onChange={(e) => updateCriterion(index, { maxPoints: Number(e.target.value) })}
+                          />
+                        </td>
+                        <td style={td()}>
+                          <button
+                            style={btnDanger()}
+                            disabled={form.rubric.length <= 1}
+                            onClick={() => removeCriterion(index)}
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ marginTop: '0.5rem' }}>
+                <button style={btn()} disabled={form.rubric.length >= 10} onClick={addCriterion}>
+                  Add criterion
+                </button>
+              </div>
+            </div>
+
+            <div style={{ marginTop: '0.75rem' }}>
+              <button style={btnPrimary()} disabled={saving} onClick={() => void save()}>
+                {saving ? 'Saving…' : context.assessment ? 'Save assessment' : 'Create assessment'}
+              </button>
+            </div>
+            <AuditNote>
+              The rubric and pass mark are frozen onto each submission at submit time, so editing this
+              rubric never re-grades history. Opening the gate is a learner-visible change: it opens
+              PRACTICAL_PENDING holds for learners who already passed the quiz. Withdrawing it clears only
+              holds created by this workflow and restores mastery that was already earned.
+            </AuditNote>
+          </>
+        )}
+      </Card>
+
+      <Card title="Review queue" right={
+        <span style={{ fontSize: '0.75rem', color: colors.muted }}>scores:manage</span>
+      }>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '0.75rem' }}>
+          <div>
+            <label style={label()}>Status</label>
+            <select
+              style={select()}
+              value={queueStatus}
+              onChange={(e) => { setQueuePage(1); setReviewId(null); setQueueStatus(e.target.value); }}
+            >
+              <option value="submitted">Submitted — awaiting review</option>
+              <option value="graded">Graded</option>
+              <option value="draft">Drafts (not submitted)</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <label style={label()}>Topic filter</label>
+            <input
+              style={input()}
+              value={topicFilterInput}
+              onChange={(e) => setTopicFilterInput(e.target.value)}
+              placeholder="e.g. A01-T3 (blank = every topic)"
+            />
+          </div>
+          <button
+            style={btn()}
+            onClick={() => { setQueuePage(1); setQueueTopic(topicFilterInput.trim()); }}
+          >
+            Apply
+          </button>
+          {queueTopic ? (
+            <button
+              style={btn()}
+              onClick={() => { setQueuePage(1); setQueueTopic(''); setTopicFilterInput(''); }}
+            >
+              Clear topic
+            </button>
+          ) : null}
+          <span style={{ fontSize: '0.78rem', color: colors.muted, alignSelf: 'center' }}>
+            {queue.data?.pending ?? 0} awaiting review in total
+          </span>
+        </div>
+
+        <StateBlock
+          loading={queue.loading}
+          error={queue.error}
+          empty={queueRows.length === 0}
+          emptyText="Nothing matches this queue filter."
+        >
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+              <thead><tr>
+                <th style={th()}>Learner</th><th style={th()}>Topic</th><th style={th()}>Attempt</th>
+                <th style={th()}>Submitted</th><th style={th()}>Status</th><th style={th()}>Score</th>
+                <th style={th()} />
+              </tr></thead>
+              <tbody>
+                {queueRows.map((row) => (
+                  <tr key={row.id}>
+                    <td style={td()}>
+                      {row.learnerName || '—'}
+                      <div style={{ fontSize: '0.72rem', color: colors.muted }}>{row.learnerEmail}</div>
+                    </td>
+                    <td style={td()}>
+                      {row.topicTitle}
+                      <div style={{ fontSize: '0.72rem', color: colors.muted }}>{row.topicId}</div>
+                    </td>
+                    <td style={td()}>#{row.attemptNumber}</td>
+                    <td style={td()}>{row.submittedAt ? fmtDate(row.submittedAt) : '—'}</td>
+                    <td style={td()}>
+                      <Badge
+                        status={row.passed === true ? 'approved' : row.passed === false ? 'blocked' : row.status}
+                        label={row.passed === true ? 'passed' : row.passed === false ? 'not passed' : row.status}
+                      />
+                    </td>
+                    <td style={td()}>
+                      {row.percentage === null ? '—' : `${Math.round(row.percentage)}%`}
+                    </td>
+                    <td style={td()}>
+                      <button
+                        style={row.status === 'submitted' ? btnPrimary() : btn()}
+                        onClick={() => setReviewId(row.id)}
+                      >
+                        {row.status === 'submitted' ? 'Review' : 'Open'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.6rem' }}>
+            <button style={btn()} disabled={queuePage <= 1} onClick={() => setQueuePage((p) => Math.max(1, p - 1))}>
+              Previous
+            </button>
+            <span style={{ fontSize: '0.78rem', color: colors.muted, alignSelf: 'center' }}>Page {queuePage}</span>
+            <button style={btn()} disabled={!queue.data?.hasMore} onClick={() => setQueuePage((p) => p + 1)}>
+              Next
+            </button>
+          </div>
+        </StateBlock>
+
+        {reviewId ? (
+          <PracticalReview
+            submissionId={reviewId}
+            onNotice={onNotice}
+            onGraded={afterGrade}
+          />
+        ) : null}
+      </Card>
+    </>
+  );
+}
+
+function PracticalReview({
+  submissionId,
+  onNotice,
+  onGraded,
+}: {
+  submissionId: string;
+  onNotice: NoticeProp['onNotice'];
+  onGraded: () => Promise<void>;
+}) {
+  const detail = useAsync(() => svc.getPracticalSubmission(submissionId), [submissionId]);
+  const submission = detail.data;
+  const [scores, setScores] = useState<Record<string, { points: string; comment: string }>>({});
+  const [feedback, setFeedback] = useState('');
+  const [hydrated, setHydrated] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!submission || hydrated === submission.id) return;
+    setHydrated(submission.id);
+    const next: Record<string, { points: string; comment: string }> = {};
+    for (const criterion of submission.rubricSnapshot) {
+      const committed = submission.rubricScores.find((score) => score.criterionId === criterion.id);
+      next[criterion.id] = {
+        points: committed ? String(committed.points) : '',
+        comment: committed?.comment ?? '',
+      };
+    }
+    setScores(next);
+    setFeedback(submission.feedback ?? '');
+  }, [submission, hydrated]);
+
+  if (detail.loading) return <p style={{ color: colors.muted }}>Loading submission…</p>;
+  if (detail.error) return <p style={{ color: colors.danger }}>{detail.error}</p>;
+  if (!submission) return null;
+
+  const rubric = submission.rubricSnapshot;
+  const possible = rubric.reduce((sum, criterion) => sum + criterion.maxPoints, 0);
+  const earned = rubric.reduce(
+    (sum, criterion) => sum + (Number(scores[criterion.id]?.points) || 0),
+    0,
+  );
+  const allScored = rubric.every((criterion) => {
+    const value = scores[criterion.id]?.points ?? '';
+    return value !== '' && Number.isFinite(Number(value));
+  });
+  const previewPassed = possible > 0 && earned * 100 >= possible * submission.passThreshold;
+  const editable = submission.status === 'submitted';
+
+  const grade = async () => {
+    if (!editable) return;
+    if (!allScored) {
+      setError('Score every rubric criterion before saving the grade.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await svc.gradePracticalSubmission(submission.id, {
+        scores: rubric.map((criterion) => ({
+          criterionId: criterion.id,
+          points: Number(scores[criterion.id]?.points ?? 0),
+          comment: scores[criterion.id]?.comment ?? '',
+        })),
+        feedback,
+      });
+      onNotice(
+        `Practical graded as ${r.submission.passed ? 'passed' : 'not passed'}. Mastery: ${r.masteryState ?? 'unchanged'}.`
+        + (r.holdEffect === 'skipped_inactive' ? ' The assessment is inactive, so the hold ledger was left untouched.' : ''),
+      );
+      setError(null);
+      await detail.reload();
+      await onGraded();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem', marginTop: '0.85rem', background: colors.card }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div>
+          <strong>{submission.learnerName || submission.learnerEmail || 'Learner'}</strong>
+          <div style={{ fontSize: '0.78rem', color: colors.muted }}>
+            {submission.topicTitle} · {submission.topicId} · attempt #{submission.attemptNumber} ·{' '}
+            {submission.submittedAt ? `submitted ${fmtDate(submission.submittedAt)}` : 'not submitted'}
+          </div>
+        </div>
+        <Badge
+          status={submission.passed === true ? 'approved' : submission.passed === false ? 'blocked' : submission.status}
+          label={submission.passed === true ? 'passed' : submission.passed === false ? 'not passed' : submission.status}
+        />
+      </div>
+
+      {!submission.assessmentActive && (
+        <p style={{ color: colors.warning, fontSize: '0.8rem' }}>
+          This assessment is inactive. Grading is kept for the record, but it will not open or clear holds.
+        </p>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: '0.75rem', marginTop: '0.6rem' }}>
+        <div>
+          <label style={label()}>Written work</label>
+          <pre style={{
+            whiteSpace: 'pre-wrap', margin: 0, padding: '0.6rem', borderRadius: '0.375rem',
+            border: `1px solid ${colors.border}`, background: colors.card, fontSize: '0.82rem',
+            maxHeight: 280, overflow: 'auto',
+          }}>
+            {submission.submissionText || '— none —'}
+          </pre>
+        </div>
+        <div>
+          <label style={label()}>Media link</label>
+          {submission.mediaUrl && /^https?:\/\//i.test(submission.mediaUrl) ? (
+            <p style={{ margin: '0 0 0.5rem', fontSize: '0.82rem' }}>
+              <a href={submission.mediaUrl} target="_blank" rel="noopener noreferrer">Open submitted media</a>
+            </p>
+          ) : (
+            <p style={{ margin: '0 0 0.5rem', fontSize: '0.82rem', color: colors.muted }}>No media link.</p>
+          )}
+          <label style={label()}>Learner's note</label>
+          <p style={{ margin: 0, fontSize: '0.82rem' }}>{submission.mediaNote || '— none —'}</p>
+        </div>
+      </div>
+
+      <div style={{ marginTop: '0.75rem' }}>
+        <label style={label()}>
+          Rubric · {earned} of {possible} points · pass mark {submission.passThreshold}%
+        </label>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+            <thead><tr>
+              <th style={th()}>Criterion</th><th style={th()}>Max</th><th style={th()}>Points</th>
+              <th style={th()}>Comment</th>
+            </tr></thead>
+            <tbody>
+              {rubric.map((criterion) => (
+                <tr key={criterion.id}>
+                  <td style={td()}>
+                    {criterion.label}
+                    {!!criterion.description && (
+                      <div style={{ fontSize: '0.72rem', color: colors.muted }}>{criterion.description}</div>
+                    )}
+                  </td>
+                  <td style={td()}>{criterion.maxPoints}</td>
+                  <td style={td()}>
+                    <input
+                      style={{ ...input(), width: 90 }}
+                      type="number"
+                      min={0}
+                      max={criterion.maxPoints}
+                      disabled={!editable}
+                      value={scores[criterion.id]?.points ?? ''}
+                      onChange={(e) => setScores((current) => ({
+                        ...current,
+                        [criterion.id]: {
+                          points: e.target.value,
+                          comment: current[criterion.id]?.comment ?? '',
+                        },
+                      }))}
+                    />
+                  </td>
+                  <td style={td()}>
+                    <input
+                      style={input()}
+                      disabled={!editable}
+                      value={scores[criterion.id]?.comment ?? ''}
+                      onChange={(e) => setScores((current) => ({
+                        ...current,
+                        [criterion.id]: {
+                          points: current[criterion.id]?.points ?? '',
+                          comment: e.target.value,
+                        },
+                      }))}
+                      placeholder="Optional note on this criterion"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0.5rem 0 0' }}>
+          Preview: {earned}/{possible} points — {previewPassed ? 'meets' : 'is below'} the{' '}
+          {submission.passThreshold}% gate. The server recomputes the result from your criterion points.
+        </p>
+      </div>
+
+      <div style={{ marginTop: '0.75rem' }}>
+        <label style={label()}>Feedback to the learner</label>
+        <textarea
+          style={{ ...input(), minHeight: 90, resize: 'vertical' }}
+          disabled={!editable}
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          placeholder="What worked, what to change, and what to do differently on the next attempt."
+        />
+        <p style={{ fontSize: '0.75rem', color: colors.muted, margin: '0.25rem 0 0' }}>
+          A failed practical needs at least 10 characters of actionable feedback.
+        </p>
+      </div>
+
+      {error ? <p style={{ color: colors.danger, fontSize: '0.85rem' }}>{error}</p> : null}
+
+      {editable ? (
+        <div style={{ marginTop: '0.6rem' }}>
+          <button style={btnPrimary()} disabled={saving} onClick={() => void grade()}>
+            {saving ? 'Saving grade…' : 'Save grade'}
+          </button>
+        </div>
+      ) : (
+        <p style={{ fontSize: '0.78rem', color: colors.muted, marginBottom: 0 }}>
+          Graded {submission.gradedAt ? fmtDate(submission.gradedAt) : ''} · this record is final;
+          a new learner attempt starts a new submission.
+        </p>
+      )}
+    </div>
   );
 }

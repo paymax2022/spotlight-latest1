@@ -6,23 +6,27 @@
 // curriculum is still draft, the honest answer is "not eligible yet" — the
 // screen says so with the counts rather than promising a certificate.
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl,
-  Alert,
+  Alert, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ChevronLeft, Award, ShieldCheck, ShieldAlert, CircleCheck, Lock, Copy,
+  ChevronLeft, Award, ShieldCheck, ShieldAlert, CircleCheck, Lock, Copy, Download,
 } from 'lucide-react-native';
+import * as Clipboard from 'expo-clipboard';
+import QRCode from 'react-native-qrcode-svg';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import {
+  certificateVerificationUrl,
+  downloadCertificatePdf,
   getCertificate,
   requestCertificate,
   FILM_ACADEMY_CERTIFICATE_KEY,
@@ -82,6 +86,45 @@ function ReadinessCard({ readiness }: { readiness: FilmCertificateReadiness }) {
 
 function IssuedCard({ certificate }: { certificate: FilmCertificate }) {
   const revoked = !!certificate.revokedAt || certificate.status === 'revoked';
+  const [downloading, setDownloading] = useState(false);
+  const verifyUrl = certificate.verificationCode
+    ? certificateVerificationUrl(certificate.verificationCode)
+    : '';
+
+  const copyCode = async () => {
+    try {
+      await Clipboard.setStringAsync(certificate.verificationCode);
+      Alert.alert('Copied', 'Verification code copied to your clipboard.');
+    } catch {
+      Alert.alert('Could not copy', 'Long-press the code to copy it manually.');
+    }
+  };
+
+  const download = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const { uri } = await downloadCertificatePdf(certificate.certificateNumber);
+      if (Platform.OS === 'web') return; // the browser download has already started
+      if (!uri) throw new Error('The PDF could not be saved. Please try again.');
+      // Lazily required so the web bundle never pulls in the native module.
+      const Sharing = require('expo-sharing') as typeof import('expo-sharing');
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Certificate saved', 'The PDF was saved to the app cache on this device.');
+        return;
+      }
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/pdf',
+        UTI: 'com.adobe.pdf',
+        dialogTitle: 'Save or share your certificate',
+      });
+    } catch (e) {
+      Alert.alert('Download failed', getErrorMessage(e));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <View style={[styles.card, styles.certificateCard, revoked && styles.revokedCard]}>
       <View style={styles.certHead}>
@@ -113,14 +156,60 @@ function IssuedCard({ certificate }: { certificate: FilmCertificate }) {
           </Text></View>
       </View>
 
+      {!revoked && !!verifyUrl && (
+        <View style={styles.qrPanel}>
+          <View style={styles.qrBox}>
+            <QRCode
+              value={verifyUrl}
+              size={124}
+              color={Colors.black}
+              backgroundColor={Colors.white}
+            />
+          </View>
+          <View style={styles.qrCopy}>
+            <Text style={styles.qrTitle}>Scan to verify</Text>
+            <Text style={styles.qrText}>
+              Any camera opens the public registry — no account needed. The same QR is
+              printed on your PDF.
+            </Text>
+            <Text style={styles.qrLink} numberOfLines={2}>
+              {verifyUrl.replace(/^https?:\/\//, '')}
+            </Text>
+          </View>
+        </View>
+      )}
+
       {!revoked && !!certificate.verificationCode && (
-        <View style={styles.verifyBox}>
+        <Pressable
+          onPress={() => { void copyCode(); }}
+          style={styles.verifyBox}
+          accessibilityRole="button"
+          accessibilityLabel="Copy verification code"
+        >
           <View style={{ flex: 1 }}>
             <Text style={styles.verifyLabel}>Public verification code</Text>
             <Text style={styles.verifyCode}>{certificate.verificationCode}</Text>
           </View>
           <Copy size={16} color={Colors.onSurfaceVariant} />
-        </View>
+        </Pressable>
+      )}
+
+      {!revoked && !!certificate.verificationCode && (
+        <Pressable
+          onPress={() => { void download(); }}
+          disabled={downloading}
+          style={[styles.downloadBtn, downloading && styles.downloadBtnBusy]}
+          accessibilityRole="button"
+          accessibilityLabel="Download certificate as PDF"
+          accessibilityState={{ disabled: downloading, busy: downloading }}
+        >
+          {downloading
+            ? <ActivityIndicator color={Colors.gold} size="small" />
+            : <Download size={16} color={Colors.gold} />}
+          <Text style={styles.downloadText}>
+            {downloading ? 'Preparing your PDF…' : 'Download certificate (PDF)'}
+          </Text>
+        </Pressable>
       )}
       <Text style={styles.certFoot}>
         {revoked
@@ -160,8 +249,11 @@ export default function FilmAcademyCertificateScreen() {
 
   const certificate = data?.certificate ?? null;
   const readiness = data?.readiness;
-  const active = certificate && certificate.status === 'issued' && !certificate.revokedAt;
-  const canIssue = !!readiness?.eligible && !active;
+  const active = !!certificate && certificate.status === 'issued' && !certificate.revokedAt;
+  const revoked = !!certificate && (!!certificate.revokedAt || certificate.status === 'revoked');
+  // A revoked credential is replaced by an academy administrator only. The
+  // server refuses a learner self-issue with 409, so the button must not fire.
+  const canRequestIssue = !!readiness?.eligible && !active && !revoked;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -200,8 +292,8 @@ export default function FilmAcademyCertificateScreen() {
 
             <Pressable
               onPress={() => issue.mutate()}
-              disabled={!canIssue || issue.isPending}
-              style={[styles.issueBtn, (!canIssue || issue.isPending) && styles.issueBtnDisabled]}
+              disabled={!canRequestIssue || issue.isPending}
+              style={[styles.issueBtn, (!canRequestIssue || issue.isPending) && styles.issueBtnDisabled]}
             >
               {issue.isPending
                 ? <ActivityIndicator color={Colors.black} />
@@ -209,13 +301,20 @@ export default function FilmAcademyCertificateScreen() {
                   <>
                     <Award size={18} color={Colors.black} />
                     <Text style={styles.issueText}>
-                      {active ? 'Credential already issued' : certificate?.revokedAt ? 'Ask your academy to reissue' : 'Issue my certificate'}
+                      {active ? 'Credential already issued' : revoked ? 'Ask your academy to reissue' : 'Issue my certificate'}
                     </Text>
                   </>
                 )}
             </Pressable>
 
-            {!canIssue && !active && (
+            {revoked && (
+              <Text style={styles.helper}>
+                This credential was revoked. Only an academy administrator can issue a
+                replacement, so contact your academy — this page cannot reissue it.
+              </Text>
+            )}
+
+            {!revoked && !canRequestIssue && !active && (
               <Text style={styles.helper}>
                 The issue button unlocks only when the server reports every topic published and
                 mastered at 85% or higher, with no open hold. Until then this page shows exactly
@@ -277,6 +376,18 @@ const styles = StyleSheet.create({
                  padding: Spacing.md, marginTop: Spacing.xs },
   verifyLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   verifyCode:  { ...Typography.titleMd, color: Colors.onSurface, letterSpacing: 1.5 },
+  qrPanel:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+                 marginTop: Spacing.sm },
+  qrBox:       { backgroundColor: Colors.white, borderRadius: Radius.md, padding: Spacing.sm },
+  qrCopy:      { flex: 1, gap: 2 },
+  qrTitle:     { ...Typography.titleMd, color: Colors.onSurface },
+  qrText:      { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  qrLink:      { ...Typography.labelSm, color: Colors.teal, marginTop: 2 },
+  downloadBtn: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'center', justifyContent: 'center',
+                 borderWidth: 1, borderColor: Colors.gold, borderRadius: Radius.md,
+                 paddingVertical: Spacing.sm, marginTop: Spacing.xs },
+  downloadBtnBusy: { opacity: 0.6 },
+  downloadText:{ ...Typography.labelLg, color: Colors.gold },
   certFoot:    { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
 
   issueBtn:    { flexDirection: 'row', gap: Spacing.sm, alignItems: 'center', justifyContent: 'center',

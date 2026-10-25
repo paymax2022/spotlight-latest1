@@ -13,6 +13,7 @@ import {
   FILM_ACADEMY_PATH_KEY,
   FILM_ACADEMY_CERTIFICATE_KEY,
   filmAcademyTopicKey,
+  filmAcademyPracticalKey,
 } from './api';
 
 const POLL_MS = 15_000;
@@ -53,6 +54,7 @@ export function useMasteryEvents(enabled: boolean, initialCursor = 0): void {
         );
         for (const topicId of touched) {
           void queryClient.invalidateQueries({ queryKey: filmAcademyTopicKey(topicId) });
+          void queryClient.invalidateQueries({ queryKey: filmAcademyPracticalKey(topicId) });
         }
       } catch {
         // Notification only. The path/topic queries remain authoritative.

@@ -9,7 +9,15 @@
 //   - holds block MASTERED independently of the quiz score.
 
 import { createAdminClient } from '@/lib/supabase/server';
-import { MEDIA_FILE_TYPES, evaluateTopicPublication, type PublicationBlocker, type PublicationVerdict, type TopicOutcome } from './types';
+import {
+  MEDIA_FILE_TYPES,
+  MIN_APPROVED_ITEMS_PER_TOPIC,
+  evaluateArticleDepth,
+  evaluateTopicPublication,
+  type PublicationBlocker,
+  type PublicationVerdict,
+  type TopicOutcome,
+} from './types';
 
 type Db = ReturnType<typeof createAdminClient>;
 
@@ -159,6 +167,14 @@ export interface AdminTopicRow {
   approvedQuestions: number;
   questionCounts: TopicQuestionCounts;
   media: TopicMediaCounts;
+  article: {
+    words: number;
+    sections: number;
+    hasPractical: boolean;
+    hasSelfCheck: boolean;
+    meetsDepthStandard: boolean;
+  };
+  waiverSigned: boolean;
   ready: boolean;
   blockers: PublicationBlocker[];
   updatedAt: string;
@@ -184,6 +200,13 @@ export interface AdminTopicList {
     published: number;
     approved: number;
     inReview: number;
+    /** Content-production totals, so operators can track the 72/1,440/864 targets. */
+    articlesAtDepth: number;
+    approvedQuestionTotal: number;
+    requiredQuestionTotal: number;
+    publishedMediaTotal: number;
+    requiredMediaTotal: number;
+    waivedTopics: number;
   };
 }
 
@@ -282,6 +305,7 @@ async function loadSnapshot(db: Db, topicId: string): Promise<Snapshot> {
 
 function topicRowFrom(snapshot: Snapshot): AdminTopicRow {
   const { topic, courseTitle, media, questions, verdict } = snapshot;
+  const depth = evaluateArticleDepth(topic.lesson_markdown);
   return {
     topicId: topic.topic_id,
     courseId: topic.course_id,
@@ -297,6 +321,15 @@ function topicRowFrom(snapshot: Snapshot): AdminTopicRow {
     approvedQuestions: questions.approved,
     questionCounts: questions,
     media: mediaCounts(media),
+    article: {
+      words: depth.words,
+      sections: depth.sections,
+      hasPractical: depth.hasPractical,
+      hasSelfCheck: depth.hasSelfCheck,
+      meetsDepthStandard: depth.meetsStandard,
+    },
+    waiverSigned:
+      topic.accessible_equivalent_approved && topic.accessible_equivalent_note.trim().length >= 20,
     ready: verdict.ready,
     blockers: verdict.blockers,
     updatedAt: topic.updated_at,
@@ -377,6 +410,15 @@ export async function listAdminTopics(db: Db, filter: AdminTopicListFilter): Pro
     published: rows.filter((r) => r.published).length,
     approved: rows.filter((r) => r.contentStatus === 'approved').length,
     inReview: rows.filter((r) => r.contentStatus === 'review').length,
+    articlesAtDepth: rows.filter((r) => r.article.meetsDepthStandard).length,
+    approvedQuestionTotal: rows.reduce((sum, r) => sum + r.approvedQuestions, 0),
+    requiredQuestionTotal: rows.reduce(
+      (sum, r) => sum + Math.max(MIN_APPROVED_ITEMS_PER_TOPIC, r.drawCount),
+      0,
+    ),
+    publishedMediaTotal: rows.reduce((sum, r) => sum + r.media.published, 0),
+    requiredMediaTotal: rows.reduce((sum, r) => sum + r.media.required, 0),
+    waivedTopics: rows.filter((r) => r.waiverSigned).length,
   };
 
   if (filter.ready !== undefined) rows = rows.filter((r) => r.ready === filter.ready);
@@ -553,6 +595,17 @@ function normalizeStringArray(value: string[] | undefined, field: string): strin
   return Array.from(new Set(out));
 }
 
+function assertArticleDepth(markdown: string): void {
+  const depth = evaluateArticleDepth(markdown);
+  if (depth.meetsStandard) return;
+  throw new TopicAdminError(
+    422,
+    depth.blockers[0].code,
+    depth.blockers.map((blocker) => blocker.message).join(' '),
+    depth.blockers,
+  );
+}
+
 function normalizeOutcomes(value: TopicOutcome[] | undefined): TopicOutcome[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
@@ -708,9 +761,7 @@ export async function mutateAdminTopic(
     if (topic.content_status !== 'draft') {
       throw new TopicAdminError(409, 'INVALID_STATE', 'Only a draft topic can be submitted for review.');
     }
-    if (topic.lesson_markdown.trim().length < 200) {
-      throw new TopicAdminError(422, 'ARTICLE_NOT_TEACHABLE', 'Write a teachable article (at least 200 characters) before review.');
-    }
+    assertArticleDepth(topic.lesson_markdown);
     if ((topic.learning_outcomes ?? []).length === 0) {
       throw new TopicAdminError(422, 'OUTCOMES_MISSING', 'Add at least one learning outcome before review.');
     }
@@ -728,9 +779,7 @@ export async function mutateAdminTopic(
     if (topic.content_status !== 'review') {
       throw new TopicAdminError(409, 'INVALID_STATE', 'Only a topic in review can be approved.');
     }
-    if (topic.lesson_markdown.trim().length < 200) {
-      throw new TopicAdminError(422, 'ARTICLE_NOT_TEACHABLE', 'The article is a brief; a teachable article is required before approval.');
-    }
+    assertArticleDepth(topic.lesson_markdown);
     if ((topic.learning_outcomes ?? []).length === 0) {
       throw new TopicAdminError(422, 'OUTCOMES_MISSING', 'At least one learning outcome is required before approval.');
     }

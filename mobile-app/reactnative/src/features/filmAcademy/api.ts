@@ -5,7 +5,9 @@
 // NOTE ON MONEY: academy_batches stores training_fee_ngn in NAIRA, not kobo.
 // It predates the kobo convention used across finance. Do not multiply by 100.
 
+import { Platform } from 'react-native';
 import { api } from '@/api/client';
+import { createSupabaseClient } from '@/lib/supabase';
 import type {
   FilmAcademyOverview,
   FilmAcademyApplicationInput,
@@ -20,6 +22,8 @@ import type {
   FilmTopicDetail,
   FilmTopicAttemptView,
   FilmTopicQuizReceipt,
+  FilmPracticalView,
+  FilmPracticalSubmission,
   FilmMasteryEventPage,
   FilmCertificateView,
   FilmCertificateIssueResult,
@@ -381,6 +385,48 @@ export async function submitTopicAttempt(attemptId: string): Promise<FilmTopicQu
   return result;
 }
 
+export const filmAcademyPracticalKey = (topicId: string) =>
+  ['film-academy', 'practical', topicId];
+
+/**
+ * The practical brief, this learner's own submission history and the server's
+ * eligibility decision. `assessment` is null while the academy is drafting it.
+ */
+export async function getPractical(topicId: string): Promise<FilmPracticalView> {
+  const res = await api.get(`/api/academy/topics/${encodeURIComponent(topicId)}/practical`);
+  const practical = unwrap<{ practical?: FilmPracticalView }>(res).practical;
+  if (!practical) throw new Error('This practical assessment is not available.');
+  return practical;
+}
+
+/** Create or update the one editable draft. Repeated saves update the same row. */
+export async function savePracticalDraft(
+  topicId: string,
+  input: { submissionText: string; mediaUrl: string; mediaNote: string },
+): Promise<FilmPracticalSubmission> {
+  const res = await api.put(
+    `/api/academy/topics/${encodeURIComponent(topicId)}/practical`,
+    input,
+  );
+  const submission = unwrap<{ submission?: FilmPracticalSubmission }>(res).submission;
+  if (!submission) throw new Error('The draft was not saved. Please try again.');
+  return submission;
+}
+
+/** Hand the draft to a reviewer. The server freezes the rubric and pass mark. */
+export async function submitPractical(
+  topicId: string,
+  submissionId: string,
+): Promise<FilmPracticalSubmission> {
+  const res = await api.post(
+    `/api/academy/topics/${encodeURIComponent(topicId)}/practical/submit`,
+    { submissionId },
+  );
+  const submission = unwrap<{ submission?: FilmPracticalSubmission }>(res).submission;
+  if (!submission) throw new Error('The practical was submitted, but no receipt came back.');
+  return submission;
+}
+
 /**
  * One page of the append-only mastery event stream, after `since`.
  *
@@ -434,4 +480,131 @@ export async function requestCertificate(): Promise<FilmCertificateIssueResult> 
     certificate: body.certificate ?? null,
     created: body.created ?? false,
   };
+}
+
+// ── Certificate delivery ─────────────────────────────────────────────────────
+// The print/download surface. Unlike every other academy call this one is not
+// JSON: the PDF route streams a file, so the shared axios client cannot carry it
+// (it would buffer the body and lose the download). The public verification page
+// lives on the marketing site, NOT the API host, so its origin is configured
+// separately and falls back to production.
+
+const DEFAULT_PUBLIC_SITE_URL = 'https://www.spotlightng.com';
+
+/** Origin of the public site that hosts /verify/certificate. */
+export function resolvePublicSiteUrl(): string {
+  const configured = (process.env.EXPO_PUBLIC_SITE_URL ?? '').trim();
+  return (configured || DEFAULT_PUBLIC_SITE_URL).replace(/\/+$/, '');
+}
+
+/** The human verification page a verifier reaches from the printed QR/code. */
+export function certificateVerificationUrl(code: string): string {
+  return `${resolvePublicSiteUrl()}/verify/certificate/${encodeURIComponent(code.trim())}`;
+}
+
+function certificateFilename(certificateNumber: string): string {
+  const safe = certificateNumber
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `${safe || 'TMFA-certificate'}.pdf`;
+}
+
+async function sessionToken(refresh = false): Promise<string | null> {
+  const supabase = createSupabaseClient();
+  if (refresh) {
+    const { data, error } = await supabase.auth.refreshSession();
+    return error ? null : data.session?.access_token ?? null;
+  }
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
+}
+
+export interface CertificateDownload {
+  /** file:// URI on native; null on web, where the browser download has begun. */
+  uri: string | null;
+  filename: string;
+}
+
+/**
+ * Download the issued PDF. Ownership is resolved by the server from the bearer
+ * token — no enrollment or certificate id is sent. A revoked credential 409s
+ * with the server's own explanation, which is rethrown verbatim.
+ */
+export async function downloadCertificatePdf(
+  certificateNumber: string,
+): Promise<CertificateDownload> {
+  const filename = certificateFilename(certificateNumber);
+  const endpoint = `${(api.defaults.baseURL ?? '').replace(/\/+$/, '')}/api/academy/certificate/pdf`;
+  let token = await sessionToken();
+  if (!token) throw new Error('Sign in to download your certificate.');
+
+  if (Platform.OS === 'web') {
+    let response = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+    if (response.status === 401) {
+      token = await sessionToken(true);
+      if (token) {
+        response = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+      }
+    }
+    if (response.status === 401) {
+      throw new Error('Your session expired. Sign in again to download your certificate.');
+    }
+    if (!response.ok) {
+      let message = 'Could not download your certificate.';
+      try {
+        const body = (await response.json()) as { error?: unknown };
+        if (typeof body.error === 'string' && body.error.trim()) message = body.error;
+      } catch { /* keep the generic message */ }
+      throw new Error(message);
+    }
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+    return { uri: null, filename };
+  }
+
+  // Lazily required so a web bundle never pulls in the native module.
+  const FileSystem = require('expo-file-system/legacy') as typeof import('expo-file-system/legacy');
+  if (!FileSystem.cacheDirectory) {
+    throw new Error('This device cannot store the certificate PDF. Please try again.');
+  }
+  const target = `${FileSystem.cacheDirectory}${filename}`;
+  try {
+    await FileSystem.deleteAsync(target, { idempotent: true });
+  } catch { /* a stale file must not block the download */ }
+
+  let result = await FileSystem.downloadAsync(endpoint, target, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (result.status === 401) {
+    token = await sessionToken(true);
+    if (token) {
+      result = await FileSystem.downloadAsync(endpoint, target, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+  }
+  if (result.status === 401) {
+    throw new Error('Your session expired. Sign in again to download your certificate.');
+  }
+  if (result.status !== 200) {
+    let message = 'Could not download your certificate.';
+    try {
+      const raw = await FileSystem.readAsStringAsync(result.uri);
+      const body = JSON.parse(raw) as { error?: unknown };
+      if (typeof body.error === 'string' && body.error.trim()) message = body.error;
+    } catch { /* keep the generic message */ }
+    try {
+      await FileSystem.deleteAsync(result.uri, { idempotent: true });
+    } catch { /* the error body is disposable */ }
+    throw new Error(message);
+  }
+
+  return { uri: result.uri, filename };
 }

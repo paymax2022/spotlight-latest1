@@ -20,7 +20,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft, ChevronRight, Lock, CircleCheck, AlertTriangle, Award, Play,
-  ExternalLink, Layers, Target, BookOpen,
+  ExternalLink, Layers, Target, BookOpen, ClipboardCheck,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -28,8 +28,10 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import {
   getTopic,
+  getPractical,
   startTopicQuiz,
   filmAcademyTopicKey,
+  filmAcademyPracticalKey,
   FILM_ACADEMY_PATH_KEY,
 } from '@/features/filmAcademy/api';
 import { useMasteryEvents } from '@/features/filmAcademy/useMasteryEvents';
@@ -43,7 +45,7 @@ import { InlineVideo } from '@/features/filmAcademy/InlineVideo';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { secureRandomId } from '@/lib/secureRandom';
 import { HomeMenuButton } from '@/components/HomeMenu';
-import type { FilmTopicDetail, FilmTopicMediaAsset } from '@/features/filmAcademy/types';
+import type { FilmTopicDetail, FilmTopicMediaAsset, FilmPracticalView } from '@/features/filmAcademy/types';
 
 function formatDate(iso: string | null): string {
   if (!iso) return '—';
@@ -225,12 +227,79 @@ function QuizSection({ topic }: { topic: FilmTopicDetail }) {
   );
 }
 
+function PracticalSection({ practical }: { practical: FilmPracticalView }) {
+  const assessment = practical.assessment;
+  if (!assessment) return null;
+  const { eligibility } = practical;
+  const status = eligibility.passed
+    ? { label: 'Passed', color: Colors.teal, bg: Colors.iconBgGreen }
+    : eligibility.inReview
+      ? { label: 'In review', color: Colors.onWarning, bg: Colors.iconBgGold }
+      : assessment.active
+        ? { label: 'Required', color: Colors.onSurfaceVariant, bg: Colors.surfaceVariant }
+        : { label: 'Not open', color: Colors.onSurfaceVariant, bg: Colors.surfaceVariant };
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.quizHead}>
+        <View style={styles.quizIcon}>
+          <ClipboardCheck size={18} color={Colors.gold} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardTitle}>Practical assessment</Text>
+          <Text style={styles.cardMeta}>{assessment.title}</Text>
+        </View>
+        <View style={[styles.statePill, { backgroundColor: status.bg }]}>
+          <Text style={[styles.statePillText, { color: status.color }]}>{status.label}</Text>
+        </View>
+      </View>
+
+      <Text style={styles.cardMeta}>
+        {eligibility.passed
+          ? 'Your practical is passed. The topic completes once the quiz is also passed and no hold remains.'
+          : eligibility.inReview
+            ? 'Your work is with a reviewer. The grade and feedback will appear here.'
+            : `A reviewer marks your work against a published rubric. Pass mark ${assessment.passPercent}% · ${eligibility.attemptsUsed} of ${assessment.maxAttempts} attempts used.`}
+      </Text>
+
+      <Pressable
+        onPress={() => router.push(`/film-academy/practical/${practical.topicId}` as never)}
+        accessibilityRole="button"
+        style={eligibility.passed ? styles.practicalSecondary : styles.quizBtn}
+      >
+        <Text style={eligibility.passed ? styles.practicalSecondaryText : styles.quizBtnText}>
+          {eligibility.passed
+            ? 'View grade and feedback'
+            : eligibility.inReview
+              ? 'View submission'
+              : eligibility.draftSubmissionId
+                ? 'Continue practical'
+                : 'Open practical'}
+        </Text>
+        <ChevronRight
+          size={18}
+          color={eligibility.passed ? Colors.onSurface : Colors.black}
+        />
+      </Pressable>
+    </View>
+  );
+}
+
 export default function FilmAcademyTopicScreen() {
   const { topicId } = useLocalSearchParams<{ topicId: string }>();
   const { data, isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: filmAcademyTopicKey(topicId ?? ''),
     queryFn: () => getTopic(topicId!),
     enabled: !!topicId,
+  });
+
+  // The practical is optional per topic: when none is configured, or the
+  // assessment feature is off, the card is simply absent.
+  const practicalQuery = useQuery({
+    queryKey: filmAcademyPracticalKey(topicId ?? ''),
+    queryFn: () => getPractical(topicId!),
+    enabled: !!topicId && !!data,
+    retry: false,
   });
 
   useMasteryEvents(!!data);
@@ -356,6 +425,8 @@ export default function FilmAcademyTopicScreen() {
 
             <QuizSection topic={data} />
 
+            {practicalQuery.data && <PracticalSection practical={practicalQuery.data} />}
+
             {scoredAttempts.length > 0 && (
               <View style={styles.card}>
                 <View style={styles.cardHead}>
@@ -386,7 +457,7 @@ export default function FilmAcademyTopicScreen() {
               </View>
             )}
 
-            {data.nextTopicId && topicStateQuizPassed(data.state) && (
+            {data.nextTopicId && data.state === 'MASTERED' && (
               <Pressable
                 onPress={() => router.push(`/film-academy/topic/${data.nextTopicId}` as never)}
                 style={styles.nextBtn}
@@ -467,6 +538,10 @@ const styles = StyleSheet.create({
                  backgroundColor: Colors.gold, borderRadius: Radius.md, paddingVertical: Spacing.md },
   quizBtnDisabled: { opacity: 0.6 },
   quizBtnText: { ...Typography.labelLg, color: Colors.black, fontWeight: '700' },
+  practicalSecondary: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                 gap: Spacing.xs, backgroundColor: Colors.surfaceVariant, borderRadius: Radius.md,
+                 paddingVertical: Spacing.md },
+  practicalSecondaryText: { ...Typography.labelLg, color: Colors.onSurface },
 
   blockerBox:  { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm,
                  backgroundColor: Colors.surfaceVariant, borderRadius: Radius.md, padding: Spacing.md },

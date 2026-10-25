@@ -51,6 +51,7 @@ function useCountdown(deadlineAt: string | null): { text: string; remainingMs: n
 
   useEffect(() => {
     if (!target) return undefined;
+    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [target]);
@@ -131,7 +132,7 @@ function ResultView({
         </View>
       )}
 
-      {result.nextTopic && passed && (
+      {result.nextTopic && result.masteryState === 'MASTERED' && result.nextTopic.canStartQuiz && (
         <Pressable
           onPress={() => router.replace(`/film-academy/topic/${result.nextTopic!.topicId}` as never)}
           style={styles.primaryBtn}
@@ -182,8 +183,12 @@ export default function FilmAcademyTopicAttemptScreen() {
     [questions, localPicks, answered],
   );
 
-  const { text: timeText } = useCountdown(data?.deadlineAt ?? null);
-  const timeUp = data?.state === 'in_progress' && data.expired;
+  const { text: timeText, remainingMs } = useCountdown(data?.deadlineAt ?? null);
+  // Freeze the form the moment the SERVER deadline passes on this device, not
+  // only when a fetch happens to report `expired`. The server still enforces
+  // the deadline on every save and submit.
+  const timeUp = data?.state === 'in_progress' && !!data.deadlineAt
+    && (data.expired || remainingMs <= 0);
 
   const save = useMutation({
     mutationFn: saveTopicAnswer,
@@ -210,13 +215,13 @@ export default function FilmAcademyTopicAttemptScreen() {
   });
 
   const tapOption = (attemptQuestionId: string, presentationOptionId: string) => {
-    if (data?.expired) return;
+    if (timeUp) return;
     setLocalPicks((m) => ({ ...m, [attemptQuestionId]: presentationOptionId }));
     save.mutate({ attemptId: attemptId!, attemptQuestionId, presentationOptionId });
   };
 
   const confirmSubmit = async () => {
-    if (data?.expired) { submit.mutate(); return; }
+    if (timeUp) { submit.mutate(); return; }
     const unanswered = questions.length - answeredCount;
     const ok = await confirmAsync({
       title: 'Submit your quiz?',
@@ -276,7 +281,7 @@ export default function FilmAcademyTopicAttemptScreen() {
       {!isLoading && !error && data?.state === 'in_progress' && questions.length > 0 && (
         <>
           <ScrollView contentContainerStyle={styles.scroll}>
-            {data.expired && (
+            {timeUp && (
               <View style={styles.expiredBanner}>
                 <Text style={styles.expiredText}>
                   Time is up — your answers are frozen. Submit to record your result.
@@ -299,10 +304,10 @@ export default function FilmAcademyTopicAttemptScreen() {
                         <Pressable
                           key={o.presentationOptionId}
                           onPress={() => tapOption(q.attemptQuestionId, o.presentationOptionId)}
-                          disabled={data.expired}
+                          disabled={timeUp}
                           accessibilityRole="radio"
-                          accessibilityState={{ selected: active, disabled: data.expired }}
-                          style={[styles.option, active && styles.optionActive, data.expired && styles.optionFrozen]}
+                          accessibilityState={{ selected: active, disabled: timeUp }}
+                          style={[styles.option, active && styles.optionActive, timeUp && styles.optionFrozen]}
                         >
                           <View style={[styles.radio, active && styles.radioActive]} />
                           <Text style={[styles.optionText, active && styles.optionTextActive]}>{o.text}</Text>
@@ -320,7 +325,7 @@ export default function FilmAcademyTopicAttemptScreen() {
               <Clock size={12} color={Colors.onSurfaceVariant} />
               <Text style={styles.meta}>
                 {answeredCount} of {questions.length} answered
-                {data.expired ? ' · time up' : ''}
+                {timeUp ? ' · time up' : ''}
               </Text>
             </View>
             <Pressable

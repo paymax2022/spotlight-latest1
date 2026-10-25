@@ -238,6 +238,40 @@ export async function readLearnerCertificate(
   return { readiness, certificate };
 }
 
+/**
+ * The artifact download path. Unlike issuance this does NOT re-check eligibility:
+ * a credential that was earned stays downloadable even if the curriculum later
+ * changes. It refuses missing, unissued and revoked credentials, and a revoked
+ * credential is never rendered as valid.
+ */
+export async function readCertificateForDownload(
+  db: Db,
+  enrollmentId: string,
+): Promise<CertificateView> {
+  const certificate = await latestCertificate(db, enrollmentId);
+  if (!certificate) {
+    throw new CertificateError(404, 'CERTIFICATE_NOT_FOUND', 'No credential has been issued for this enrollment.');
+  }
+  if (certificate.revokedAt || certificate.status === 'revoked') {
+    throw new CertificateError(
+      409,
+      'CERTIFICATE_REVOKED',
+      'This credential was revoked and cannot be downloaded as a valid certificate.',
+    );
+  }
+  if (certificate.status !== 'issued') {
+    throw new CertificateError(409, 'CERTIFICATE_NOT_ISSUED', 'This credential has not been issued.');
+  }
+  if (!certificate.verificationCode.trim()) {
+    throw new CertificateError(
+      409,
+      'VERIFICATION_CODE_MISSING',
+      'This credential has no public verification code, so a verifiable PDF cannot be produced.',
+    );
+  }
+  return certificate;
+}
+
 function certificateNumber(): string {
   return `TMFA-${new Date().getUTCFullYear()}-${randomBytes(4).toString('hex').toUpperCase()}`;
 }

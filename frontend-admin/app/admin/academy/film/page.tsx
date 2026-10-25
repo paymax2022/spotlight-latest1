@@ -1559,6 +1559,7 @@ function ImportTab({ onNotice }: NoticeProp) {
 function QuestionBankTab({ onNotice }: NoticeProp) {
   const [status, setStatus] = useState('');
   const [stage, setStage] = useState('');
+  const [topicId, setTopicId] = useState('');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
@@ -1566,8 +1567,15 @@ function QuestionBankTab({ onNotice }: NoticeProp) {
   const [busy, setBusy] = useState<string | null>(null);
 
   const list = useAsync(
-    () => svc.listQuestions({ status: status || undefined, stage: stage || undefined, q: q || undefined, page, pageSize: 25 }),
-    [status, stage, q, page, reloadKey],
+    () => svc.listQuestions({
+      status: status || undefined,
+      stage: stage || undefined,
+      topicId: topicId.trim() || undefined,
+      q: q || undefined,
+      page,
+      pageSize: 25,
+    }),
+    [status, stage, topicId, q, page, reloadKey],
   );
 
   const act = async (id: string, decision: string, done: string) => {
@@ -1599,6 +1607,8 @@ function QuestionBankTab({ onNotice }: NoticeProp) {
             <option value="">Any stage</option>
             {FILM_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+          <input style={input()} placeholder="Topic ID (e.g. A01)" value={topicId}
+            onChange={(e) => { setTopicId(e.target.value); setPage(1); }} />
           <input style={input()} placeholder="Search stem or Question ID" value={q}
             onChange={(e) => { setQ(e.target.value); setPage(1); }} />
         </FilterBar>
@@ -1620,7 +1630,15 @@ function QuestionBankTab({ onNotice }: NoticeProp) {
                       <tr style={{ cursor: 'pointer' }} onClick={() => setOpenId(isOpen ? null : row.id)}>
                         <td style={td()}><code style={{ fontSize: '0.75rem' }}>{row.external_code}</code></td>
                         <td style={td()}>{row.film_stage}</td>
-                        <td style={td()}>{row.film_module_code}</td>
+                        <td style={td()}>
+                          {row.film_module_code || '—'}
+                          {row.film_topic_id ? (
+                            <div style={{ fontSize: '0.72rem', color: colors.muted }}>
+                              topic {row.film_topic_id}
+                              {row.film_objective_id ? ` · ${row.film_objective_id}` : ''}
+                            </div>
+                          ) : null}
+                        </td>
                         <td style={{ ...td(), maxWidth: 360 }}>{row.stem}</td>
                         <td style={td()}><Badge status={row.status} /></td>
                         <td style={{ ...td(), whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>

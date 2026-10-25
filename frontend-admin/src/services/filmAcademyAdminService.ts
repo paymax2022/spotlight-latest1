@@ -165,7 +165,7 @@ function authHeaders(): Record<string, string> {
  * (programs:manage / applications:review), and 404 means the web app is not
  * serving the route — usually WEB_API_BASE_URL pointing at the wrong place.
  */
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+async function request(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(`${webProxyBase()}${path}`, {
     cache: 'no-store',
     headers: authHeaders(),
@@ -183,7 +183,11 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     } catch { /* non-JSON error body */ }
     throw new Error(`Film Academy: ${res.status}${detail}`);
   }
-  return (await res.json()) as T;
+  return res;
+}
+
+async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await request(path, init)).json() as Promise<T>;
 }
 
 const B = '/api/admin/academy';
@@ -436,6 +440,8 @@ export type FilmQuestion = {
   external_code: string | null;
   film_stage: string | null;
   film_module_code: string | null;
+  film_topic_id: string | null;
+  film_objective_id: string | null;
   film_department: string | null;
   film_learning_outcome: string | null;
   film_cognitive: string | null;
@@ -497,12 +503,13 @@ export async function commitQuestionImport(filename: string, csv: string): Promi
 }
 
 export async function listQuestions(filter?: {
-  status?: string; stage?: string; moduleCode?: string; q?: string; page?: number; pageSize?: number;
+  status?: string; stage?: string; moduleCode?: string; topicId?: string; q?: string; page?: number; pageSize?: number;
 }): Promise<{ questions: FilmQuestion[]; total: number; page: number; pageSize: number; hasMore: boolean }> {
   const qs = new URLSearchParams();
   if (filter?.status) qs.set('status', filter.status);
   if (filter?.stage) qs.set('stage', filter.stage);
   if (filter?.moduleCode) qs.set('moduleCode', filter.moduleCode);
+  if (filter?.topicId) qs.set('topicId', filter.topicId);
   if (filter?.q) qs.set('q', filter.q);
   if (filter?.page) qs.set('page', String(filter.page));
   if (filter?.pageSize) qs.set('pageSize', String(filter.pageSize));
@@ -599,6 +606,11 @@ export type AdminTopicMediaCounts = {
   total: number; required: number; published: number; missingFile: number;
 };
 
+export type AdminTopicArticleDepth = {
+  words: number; sections: number; hasPractical: boolean; hasSelfCheck: boolean;
+  meetsDepthStandard: boolean;
+};
+
 export type AdminTopicRow = {
   topicId: string;
   courseId: string;
@@ -614,6 +626,8 @@ export type AdminTopicRow = {
   approvedQuestions: number;
   questionCounts: AdminTopicQuestionCounts;
   media: AdminTopicMediaCounts;
+  article: AdminTopicArticleDepth;
+  waiverSigned: boolean;
   ready: boolean;
   blockers: Array<{ code: string; message: string }>;
   updatedAt: string;
@@ -621,6 +635,10 @@ export type AdminTopicRow = {
 
 export type AdminTopicSummary = {
   total: number; ready: number; blocked: number; published: number; approved: number; inReview: number;
+  articlesAtDepth: number;
+  approvedQuestionTotal: number; requiredQuestionTotal: number;
+  publishedMediaTotal: number; requiredMediaTotal: number;
+  waivedTopics: number;
 };
 
 export type AdminTopicList = {
@@ -696,7 +714,11 @@ export async function listAdminTopics(filter?: {
   const r = await call<Partial<AdminTopicList>>(`${B}/topics${suffix}`);
   return {
     topics: r.topics ?? [],
-    summary: r.summary ?? { total: 0, ready: 0, blocked: 0, published: 0, approved: 0, inReview: 0 },
+    summary: r.summary ?? {
+      total: 0, ready: 0, blocked: 0, published: 0, approved: 0, inReview: 0,
+      articlesAtDepth: 0, approvedQuestionTotal: 0, requiredQuestionTotal: 0,
+      publishedMediaTotal: 0, requiredMediaTotal: 0, waivedTopics: 0,
+    },
     total: r.total ?? 0,
     page: r.page ?? 1,
     pageSize: r.pageSize ?? 25,
@@ -758,6 +780,102 @@ export async function importCurriculumPack(): Promise<CurriculumImportResult> {
   });
   if (!r.result) throw new Error('Film Academy: the import returned no result.');
   return r.result;
+}
+
+// ── Topic question authoring (drafts only) ─────────────────────────────────
+
+export type TopicQuestionPoolRow = {
+  topicId: string;
+  courseId: string;
+  stage: string;
+  title: string;
+  contentStatus: string;
+  published: boolean;
+  required: number;
+  approved: number;
+  draft: number;
+  review: number;
+  retired: number;
+  submitted: number;
+  draftAfter: number;
+  shortfall: number;
+};
+
+export type TopicQuestionProblem = {
+  row: number;
+  externalCode?: string;
+  code: string;
+  message: string;
+};
+
+export type TopicQuestionPreview = {
+  headers: string[];
+  sourceHash: string;
+  totals: {
+    rows: number;
+    accepted: number;
+    rejected: number;
+    wouldInsert: number;
+    wouldUpdate: number;
+    unchanged: number;
+    locked: number;
+  };
+  topics: TopicQuestionPoolRow[];
+  rejected: TopicQuestionProblem[];
+  blocked: TopicQuestionProblem[];
+  warnings: string[];
+};
+
+export type TopicQuestionCommitResult = {
+  batchId: string;
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  locked: number;
+  rejected: TopicQuestionProblem[];
+  blocked: TopicQuestionProblem[];
+  warnings: string[];
+  topics: TopicQuestionPoolRow[];
+};
+
+export type TopicQuestionAuthoringContext = {
+  headers: string[];
+  templateFilename: string;
+  topics: TopicQuestionPoolRow[];
+};
+
+export async function getTopicQuestionAuthoringContext(): Promise<TopicQuestionAuthoringContext> {
+  const r = await call<{ context?: TopicQuestionAuthoringContext }>(
+    `${B}/topics/questions/import-preview`,
+  );
+  if (!r.context) throw new Error('Film Academy: the question authoring context was empty.');
+  return r.context;
+}
+
+export async function previewTopicQuestionImport(csv: string): Promise<TopicQuestionPreview> {
+  const r = await call<{ preview?: TopicQuestionPreview }>(
+    `${B}/topics/questions/import-preview`,
+    { method: 'POST', body: JSON.stringify({ csv }) },
+  );
+  if (!r.preview) throw new Error('Film Academy: the question import preview was empty.');
+  return r.preview;
+}
+
+export async function commitTopicQuestionImport(
+  filename: string,
+  csv: string,
+): Promise<TopicQuestionCommitResult> {
+  const r = await call<{ result?: TopicQuestionCommitResult }>(
+    `${B}/topics/questions/import-commit`,
+    { method: 'POST', body: JSON.stringify({ filename, csv }) },
+  );
+  if (!r.result) throw new Error('Film Academy: the question import returned no result.');
+  return r.result;
+}
+
+export async function exportTopicReadiness(): Promise<{ filename: string; csv: string }> {
+  const res = await request(`${B}/topics/readiness`);
+  return { filename: 'tmfa-topic-readiness.csv', csv: await res.text() };
 }
 
 // ── Media production queue ──────────────────────────────────────────────────
@@ -947,4 +1065,196 @@ export async function mutateCertificate(input:
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+// ── Practical assessments ───────────────────────────────────────────────────
+// One assessment per topic. Opening it backfills PRACTICAL_PENDING holds for
+// learners who already passed the quiz; grading uses the rubric snapshot frozen
+// at submit. The console can never send a percentage — it scores criteria and
+// the server applies the exact pass gate.
+
+export type AdminPracticalRubricCriterion = {
+  id: string;
+  label: string;
+  description: string;
+  maxPoints: number;
+};
+
+export type AdminPracticalAssessment = {
+  id: string;
+  topicId: string;
+  title: string;
+  briefMarkdown: string;
+  submissionInstructions: string;
+  rubric: AdminPracticalRubricCriterion[];
+  passPercent: number;
+  maxAttempts: number;
+  active: boolean;
+  topicTitle: string;
+  topicPublished: boolean;
+  updatedAt: string | null;
+  counts: { draft: number; submitted: number; graded: number; passed: number };
+};
+
+export type AdminPracticalAssessmentInput = {
+  title: string;
+  briefMarkdown: string;
+  submissionInstructions: string;
+  rubric: AdminPracticalRubricCriterion[];
+  passPercent: number;
+  maxAttempts: number;
+  active: boolean;
+};
+
+export type AdminPracticalSaveResult = {
+  created: boolean;
+  assessment: AdminPracticalAssessment;
+  gateChanged: 'activated' | 'deactivated' | 'unchanged';
+  holdsOpened: number;
+  holdsCleared: number;
+};
+
+export async function listPracticalAssessments(): Promise<{
+  assessments: AdminPracticalAssessment[];
+  totals: { draft: number; submitted: number; graded: number; passed: number };
+}> {
+  const r = await call<{
+    assessments?: AdminPracticalAssessment[];
+    totals?: { draft: number; submitted: number; graded: number; passed: number };
+  }>(`${B}/practical`);
+  return {
+    assessments: r.assessments ?? [],
+    totals: r.totals ?? { draft: 0, submitted: 0, graded: 0, passed: 0 },
+  };
+}
+
+export async function getPracticalAssessment(topicId: string): Promise<{
+  topic: { topicId: string; title: string; published: boolean; prerequisites: string[] };
+  assessment: AdminPracticalAssessment | null;
+}> {
+  return call<{
+    topic: { topicId: string; title: string; published: boolean; prerequisites: string[] };
+    assessment: AdminPracticalAssessment | null;
+  }>(`${B}/practical/${encodeURIComponent(topicId)}`);
+}
+
+export async function savePracticalAssessment(
+  topicId: string,
+  input: AdminPracticalAssessmentInput,
+): Promise<AdminPracticalSaveResult> {
+  const r = await call<{ result?: AdminPracticalSaveResult }>(
+    `${B}/practical/${encodeURIComponent(topicId)}`,
+    { method: 'PUT', body: JSON.stringify(input) },
+  );
+  if (!r.result) throw new Error('Film Academy: the assessment was saved but no result came back.');
+  return r.result;
+}
+
+export type AdminPracticalQueueRow = {
+  id: string;
+  submissionId: string;
+  topicId: string;
+  topicTitle: string;
+  enrollmentId: string;
+  learnerName: string;
+  learnerEmail: string;
+  assessmentId: string;
+  assessmentTitle: string;
+  attemptNumber: number;
+  status: string;
+  submittedAt: string | null;
+  gradedAt: string | null;
+  percentage: number | null;
+  passed: boolean | null;
+  hasText: boolean;
+  hasMediaUrl: boolean;
+};
+
+export async function listPracticalQueue(filter?: {
+  status?: string; topicId?: string; page?: number; pageSize?: number;
+}): Promise<{
+  submissions: AdminPracticalQueueRow[];
+  pending: number;
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}> {
+  const qs = new URLSearchParams();
+  if (filter?.status) qs.set('status', filter.status);
+  if (filter?.topicId) qs.set('topicId', filter.topicId);
+  if (filter?.page) qs.set('page', String(filter.page));
+  if (filter?.pageSize) qs.set('pageSize', String(filter.pageSize));
+  const suffix = qs.toString() ? `?${qs}` : '';
+  const r = await call<{
+    submissions?: AdminPracticalQueueRow[];
+    pending?: number;
+    total?: number;
+    page?: number;
+    pageSize?: number;
+    hasMore?: boolean;
+  }>(`${B}/practical/queue${suffix}`);
+  return {
+    submissions: r.submissions ?? [],
+    pending: r.pending ?? 0,
+    total: r.total ?? 0,
+    page: r.page ?? 1,
+    pageSize: r.pageSize ?? 25,
+    hasMore: r.hasMore ?? false,
+  };
+}
+
+export type AdminPracticalSubmission = {
+  id: string;
+  attemptNumber: number;
+  status: string;
+  submissionText: string;
+  mediaUrl: string;
+  mediaNote: string;
+  submittedAt: string | null;
+  gradedAt: string | null;
+  earnedPoints: number | null;
+  possiblePoints: number | null;
+  percentage: number | null;
+  passed: boolean | null;
+  feedback: string;
+  rubricScores: Array<{ criterionId: string; points: number; comment: string }>;
+  rubricSnapshot: AdminPracticalRubricCriterion[];
+  topicId: string;
+  topicTitle: string;
+  enrollmentId: string;
+  learnerName: string;
+  learnerEmail: string;
+  assessmentId: string;
+  assessmentTitle: string;
+  assessmentActive: boolean;
+  passThreshold: number;
+  gradedBy: string | null;
+};
+
+export async function getPracticalSubmission(submissionId: string): Promise<AdminPracticalSubmission> {
+  const r = await call<{ submission?: AdminPracticalSubmission }>(
+    `${B}/practical/submissions/${encodeURIComponent(submissionId)}`,
+  );
+  if (!r.submission) throw new Error('Film Academy: the practical submission was not found.');
+  return r.submission;
+}
+
+export type AdminPracticalGradeResult = {
+  reconciled: boolean;
+  submission: AdminPracticalSubmission;
+  masteryState: string | null;
+  holdEffect: 'applied' | 'skipped_inactive';
+};
+
+export async function gradePracticalSubmission(
+  submissionId: string,
+  input: { scores: Array<{ criterionId: string; points: number; comment: string }>; feedback: string },
+): Promise<AdminPracticalGradeResult> {
+  const r = await call<{ result?: AdminPracticalGradeResult }>(
+    `${B}/practical/submissions/${encodeURIComponent(submissionId)}/grade`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  if (!r.result) throw new Error('Film Academy: the grade was saved but no result came back.');
+  return r.result;
 }

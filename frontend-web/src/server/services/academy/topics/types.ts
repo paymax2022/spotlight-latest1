@@ -68,6 +68,106 @@ export const MEDIA_FILE_TYPES = new Set([
   'photo_or_diagram',
 ]);
 
+/**
+ * Mechanical depth floor for a topic article, enforced in addition to the
+ * 200-character "not a brief" check. It is not a substitute for faculty review:
+ * it only prevents a brief or skeleton from being approved or published.
+ *
+ * The model A04 lesson is 1,599 words with ten sections, a practical assignment
+ * and a self-check, so it clears this floor comfortably. The academy may raise
+ * these values; lowering them needs an explicit policy decision, because the
+ * bundled 72 topics are 53–106-word briefs.
+ */
+export const ARTICLE_DEPTH_STANDARD = {
+  minWords: 1000,
+  minSections: 4,
+  practicalHeading: /\b(practical|practice|exercise|assignment|application|drill|studio task|lab|your turn|try it)\b/i,
+  selfCheckHeading: /\b(self[- ]?check|quiz|assessment|check your understanding|knowledge check|review questions|reflection|test yourself)\b/i,
+} as const;
+
+export interface ArticleDepth {
+  words: number;
+  sections: number;
+  hasPractical: boolean;
+  hasSelfCheck: boolean;
+  meetsStandard: boolean;
+  blockers: PublicationBlocker[];
+}
+
+/** Word count for the depth gate; markdown punctuation is not a word. */
+export function countArticleWords(markdown: string): number {
+  return markdown
+    .replace(/[#>*_`~]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((token) => /[A-Za-z0-9]/.test(token)).length;
+}
+
+function articleHeadings(markdown: string): string[] {
+  return markdown
+    .split('\n')
+    .map((line) => line.match(/^#{2,4}\s+(.+)$/))
+    .filter((match): match is RegExpMatchArray => match !== null)
+    .map((match) => match[1].trim());
+}
+
+/**
+ * Measures an article against the depth standard. `ARTICLE_NOT_TEACHABLE`
+ * covers the original 200-character floor; the remaining blockers describe the
+ * structural standard so a reviewer sees every missing element at once.
+ */
+export function evaluateArticleDepth(markdown: string): ArticleDepth {
+  const text = markdown.trim();
+  const words = countArticleWords(text);
+  const headings = articleHeadings(text);
+  const sections = headings.length;
+  const hasPractical = headings.some((heading) => ARTICLE_DEPTH_STANDARD.practicalHeading.test(heading));
+  const hasSelfCheck = headings.some((heading) => ARTICLE_DEPTH_STANDARD.selfCheckHeading.test(heading));
+  const blockers: PublicationBlocker[] = [];
+
+  if (text.length < 200) {
+    blockers.push({
+      code: 'ARTICLE_NOT_TEACHABLE',
+      message: 'The lesson article is a brief or empty; publishable teaching content is required.',
+    });
+  } else {
+    if (words < ARTICLE_DEPTH_STANDARD.minWords) {
+      blockers.push({
+        code: 'ARTICLE_TOO_SHORT',
+        message: `The article has ${words} words; the depth standard requires at least ${ARTICLE_DEPTH_STANDARD.minWords}.`,
+      });
+    }
+    if (sections < ARTICLE_DEPTH_STANDARD.minSections) {
+      blockers.push({
+        code: 'ARTICLE_NOT_STRUCTURED',
+        message: `The article has ${sections} section heading${sections === 1 ? '' : 's'}; at least ${ARTICLE_DEPTH_STANDARD.minSections} are required.`,
+      });
+    }
+    if (!hasPractical) {
+      blockers.push({
+        code: 'ARTICLE_PRACTICAL_MISSING',
+        message: 'Add a practical exercise or application section with its own heading.',
+      });
+    }
+    if (!hasSelfCheck) {
+      blockers.push({
+        code: 'ARTICLE_SELF_CHECK_MISSING',
+        message: 'Add a self-check or assessment section with its own heading.',
+      });
+    }
+  }
+
+  return {
+    words,
+    sections,
+    hasPractical,
+    hasSelfCheck,
+    meetsStandard: blockers.length === 0,
+    blockers,
+  };
+}
+
+
 export interface MediaPublicationInput {
   assetId: string;
   mediaType: string;
@@ -112,12 +212,9 @@ export function evaluateTopicPublication(input: PublicationInput): PublicationVe
       message: 'The lesson article and learning outcomes have not completed faculty review.',
     });
   }
-  if (input.lessonMarkdown.trim().length < 200) {
-    blockers.push({
-      code: 'ARTICLE_NOT_TEACHABLE',
-      message: 'The lesson article is a brief or empty; publishable teaching content is required.',
-    });
-  }
+  // Depth is re-evaluated from the persisted article, never a client flag, so
+  // an old approval cannot carry a brief past the publication gate.
+  blockers.push(...evaluateArticleDepth(input.lessonMarkdown).blockers);
   if (input.quizMinimumPercent < MANDATORY_TOPIC_PASS_PERCENT) {
     blockers.push({
       code: 'PASS_THRESHOLD_BELOW_POLICY',

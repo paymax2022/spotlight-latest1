@@ -18,6 +18,7 @@ import { keysForItems } from '../assessment/bank';
 import { presentQuestion, scoreAttempt, shuffle } from '../assessment/scoring';
 import type { FilmQuestionOption, PresentedQuestion, SnapshotItem } from '../assessment/types';
 import { loadTopicPath, type LearnerIdentity, type TopicPathItem } from './progress';
+import { ensurePracticalPendingHold } from './practical';
 import {
   buildTopicQuizResult,
   type TopicLearnerState,
@@ -376,6 +377,26 @@ async function reconcileMastery(
       }
     | null;
 
+  const passed = attempt.passed === true;
+  const alreadyPassed =
+    existing?.passed_at != null || existing?.state === 'PASSED' || existing?.state === 'MASTERED';
+
+  // Passing the quiz is necessary but no longer sufficient: an active practical
+  // assessment opens its workflow hold before the state is decided, so this
+  // same reconciliation cannot mark the topic MASTERED without the practical.
+  if (passed || alreadyPassed) {
+    try {
+      await ensurePracticalPendingHold(db, learner, attempt.topic_id);
+    } catch (error) {
+      console.error('[film/topics] practical gate failed', error);
+      throw new TopicQuizError(
+        500,
+        'MASTERY_WRITE_FAILED',
+        'Your score was saved, but progression could not be updated. Please submit again.',
+      );
+    }
+  }
+
   const { count: openHoldCount } = await db
     .from('film_mastery_holds')
     .select('id', { count: 'exact', head: true })
@@ -384,9 +405,6 @@ async function reconcileMastery(
     .eq('status', 'open');
   const hasOpenHold = (openHoldCount ?? 0) > 0;
 
-  const passed = attempt.passed === true;
-  const alreadyPassed =
-    existing?.passed_at != null || existing?.state === 'PASSED' || existing?.state === 'MASTERED';
   const state: TopicLearnerState = passed || alreadyPassed
     ? hasOpenHold
       ? 'PASSED'

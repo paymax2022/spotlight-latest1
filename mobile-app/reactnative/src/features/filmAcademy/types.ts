@@ -520,6 +520,76 @@ export interface FilmTopicDetail extends FilmTopicPathItem {
   previousTopicId: string | null;
 }
 
+/** One rubric line on a practical assessment, authored by the academy. */
+export interface FilmPracticalRubricCriterion {
+  id: string;
+  label: string;
+  description: string;
+  maxPoints: number;
+}
+
+/** A reviewer's score for one rubric line of one submission. */
+export interface FilmPracticalRubricScore {
+  criterionId: string;
+  points: number;
+  comment: string;
+}
+
+/**
+ * A per-topic practical brief. `active` is false while the academy is still
+ * drafting it; an inactive assessment accepts nothing and gates nothing.
+ */
+export interface FilmPracticalAssessment {
+  id: string;
+  topicId: string;
+  title: string;
+  briefMarkdown: string;
+  submissionInstructions: string;
+  rubric: FilmPracticalRubricCriterion[];
+  passPercent: number;
+  maxAttempts: number;
+  active: boolean;
+}
+
+/** One attempt at the practical. `passed` is null until a reviewer grades it. */
+export interface FilmPracticalSubmission {
+  id: string;
+  attemptNumber: number;
+  status: 'draft' | 'submitted' | 'graded';
+  submissionText: string;
+  mediaUrl: string;
+  mediaNote: string;
+  submittedAt: string | null;
+  gradedAt: string | null;
+  earnedPoints: number | null;
+  possiblePoints: number | null;
+  percentage: number | null;
+  passed: boolean | null;
+  feedback: string;
+  rubricScores: FilmPracticalRubricScore[];
+  rubricSnapshot: FilmPracticalRubricCriterion[];
+}
+
+/** Why the learner can or cannot submit right now, decided by the server. */
+export interface FilmPracticalEligibility {
+  canSubmit: boolean;
+  reason: string | null;
+  attemptsUsed: number;
+  maxAttempts: number;
+  passed: boolean;
+  inReview: boolean;
+  draftSubmissionId: string | null;
+}
+
+/** GET /topics/:id/practical. History survives deactivation. */
+export interface FilmPracticalView {
+  topicId: string;
+  topicTitle: string;
+  assessment: FilmPracticalAssessment | null;
+  submissions: FilmPracticalSubmission[];
+  eligibility: FilmPracticalEligibility;
+}
+
 /** One presented option in a topic quiz — an opaque id, never a bank id. */
 export interface TopicPresentedOption {
   presentationOptionId: string;

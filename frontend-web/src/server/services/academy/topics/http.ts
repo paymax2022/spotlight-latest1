@@ -4,9 +4,17 @@ import { handleApiError } from '@/src/lib/api/responses';
 import { TopicAdminError } from './admin';
 import { TopicQuizError } from './quiz';
 import { CertificateError } from './certificates';
+import { PracticalError } from './practical';
+import { TopicQuestionImportError } from './question-import';
 
 /** Shared route error shape: keeps codes and publication blockers visible. */
 export function topicErrorResponse(error: unknown, fallback: string) {
+  if (error instanceof TopicQuestionImportError) {
+    return NextResponse.json(
+      { success: false, error: error.message, code: error.code },
+      { status: error.status },
+    );
+  }
   if (error instanceof CertificateError) {
     return NextResponse.json(
       { success: false, error: error.message, code: error.code },
@@ -25,6 +33,12 @@ export function topicErrorResponse(error: unknown, fallback: string) {
     );
   }
   if (error instanceof TopicQuizError) {
+    return NextResponse.json(
+      { success: false, error: error.message, code: error.code },
+      { status: error.status },
+    );
+  }
+  if (error instanceof PracticalError) {
     return NextResponse.json(
       { success: false, error: error.message, code: error.code },
       { status: error.status },
