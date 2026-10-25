@@ -27,11 +27,10 @@ import {
 import * as svc from '@/services/filmAcademyAdminService';
 import { TopicsTab } from './TopicsTab';
 
-type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'assessment' | 'bank' | 'exams' | 'topics' | 'settings';
+type TabKey = 'batches' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'assessment' | 'bank' | 'exams' | 'topics' | 'settings';
 
 const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'batches',     label: 'Batches',      hint: 'Cohorts the app offers on /film-academy' },
-  { key: 'applications',label: 'Applications', hint: 'Decisions drive /film-academy/status' },
   { key: 'tuition',     label: 'Tuition',      hint: 'Plans shown on /film-academy/tuition' },
   { key: 'curriculum',  label: 'Curriculum',   hint: 'Modules, lessons and the week 1-4 assignment timeline' },
   { key: 'progress',    label: 'Progress',     hint: 'Who has sent which part, and who is behind' },
@@ -106,7 +105,6 @@ export default function FilmAcademyAdminPage() {
       </div>
 
       {tab === 'batches'      ? <BatchesTab onNotice={setNotice} /> : null}
-      {tab === 'applications' ? <ApplicationsTab onNotice={setNotice} /> : null}
       {tab === 'tuition'      ? <TuitionTab onNotice={setNotice} /> : null}
       {tab === 'curriculum'   ? <CurriculumTab onNotice={setNotice} /> : null}
       {tab === 'progress'     ? <ProgressTab onNotice={setNotice} /> : null}
@@ -458,110 +456,6 @@ function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
   );
 }
 
-const APP_STATUSES = ['submitted', 'under_review', 'approved', 'rejected', 'waitlisted'];
-
-function ApplicationsTab({ onNotice }: NoticeProp) {
-  const batches = useAsync(() => svc.listBatches(), []);
-  const [batchId, setBatchId] = useState('');
-  const [status, setStatus] = useState('');
-  const apps = useAsync(() => svc.listApplications({ batchId: batchId || undefined, status: status || undefined }), [batchId, status]);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [notes, setNotes] = useState<Record<string, string>>({});
-
-  const decide = async (id: string, next: string) => {
-    const verb = next === 'approved' ? 'Approve' : next === 'rejected' ? 'Reject' : 'Update';
-    if (!window.confirm(
-      next === 'approved'
-        ? 'Approve this application? This creates the instalment plan and starts the enrolment — the applicant sees it immediately on their phone.'
-        : `${verb} this application?`,
-    )) return;
-    setBusy(id);
-    try {
-      await svc.decideApplication(id, { status: next, review_notes: notes[id] || undefined });
-      await apps.reload();
-      onNotice(next === 'approved'
-        ? 'Approved. The instalment plan is created and /film-academy/status now shows the decision.'
-        : 'Application updated — the applicant sees the new status on their phone.');
-    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(null); }
-  };
-
-  const list = apps.data ?? [];
-
-  return (
-    <Card title="Applications">
-      <FilterBar>
-        <div style={{ minWidth: 200 }}>
-          <span style={label()}>Batch</span>
-          <select style={select()} value={batchId} onChange={(e) => setBatchId(e.target.value)}>
-            <option value="">All batches</option>
-            {(batches.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.batch_name}</option>)}
-          </select>
-        </div>
-        <div style={{ minWidth: 180 }}>
-          <span style={label()}>Status</span>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">Any status</option>
-            {APP_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
-        <button style={btn()} onClick={() => void apps.reload()}>Refresh</button>
-      </FilterBar>
-
-      <StateBlock loading={apps.loading} error={apps.error} empty={list.length === 0}
-        emptyText="No applications match this filter.">
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
-            <thead><tr>
-              <th style={th()}>Applicant</th><th style={th()}>Batch</th><th style={th()}>Areas</th>
-              <th style={th()}>Status</th><th style={th()}>App. fee paid</th>
-              <th style={th()}>Applied</th><th style={th()}>Decision</th>
-            </tr></thead>
-            <tbody>
-              {list.map((a) => (
-                <tr key={a.id}>
-                  <td style={td()}>
-                    <div style={{ fontWeight: 600 }}>{a.full_name || '—'}</div>
-                    <div style={{ fontSize: '0.75rem', color: colors.muted }}>{a.email}</div>
-                    {a.phone ? <div style={{ fontSize: '0.75rem', color: colors.muted }}>{a.phone}</div> : null}
-                  </td>
-                  <td style={td()}>{a.academy_batches?.batch_name || '—'}</td>
-                  <td style={td()}>{(a.areas_of_interest ?? []).join(', ') || '—'}</td>
-                  <td style={td()}><Badge status={a.status ?? 'submitted'} /></td>
-                  {/* application_fee_paid is NUMERIC (the amount), not a boolean. */}
-                  <td style={td()}>{naira(a.application_fee_paid)}</td>
-                  <td style={td()}>{fmtDate(a.created_at)}</td>
-                  <td style={{ ...td(), minWidth: 260 }}>
-                    <input
-                      style={{ ...input(), marginBottom: 6 }}
-                      placeholder="Review note (optional)"
-                      value={notes[a.id] ?? ''}
-                      onChange={(e) => setNotes({ ...notes, [a.id]: e.target.value })}
-                    />
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <button style={btnPrimary()} disabled={busy === a.id || a.status === 'approved'}
-                        onClick={() => void decide(a.id, 'approved')}>
-                        {busy === a.id ? '…' : 'Approve'}
-                      </button>
-                      <button style={btnDanger()} disabled={busy === a.id || a.status === 'rejected'}
-                        onClick={() => void decide(a.id, 'rejected')}>Reject</button>
-                      <button style={btn()} disabled={busy === a.id}
-                        onClick={() => void decide(a.id, 'under_review')}>Review</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </StateBlock>
-      <AuditNote>
-        Approving creates the instalment plan and calls enrolment. Where tuition is due, the enrolment
-        completes on the FIRST instalment — not the full amount.
-      </AuditNote>
-    </Card>
-  );
-}
 
 function TuitionTab({ onNotice }: NoticeProp) {
   const batches = useAsync(() => svc.listBatches(), []);
