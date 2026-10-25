@@ -25,6 +25,7 @@ import { useGatewayCheckout } from '@/features/payments';
 import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
+import { getTransactions } from '@/api/transactions.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { Disco, MeterValidation, MeterType } from '@/types/billing';
@@ -90,6 +91,11 @@ export default function ElectricityScreen() {
   const { data: wallet } = useQuery({
     queryKey: ['wallet'],
     queryFn:  getWallet,
+  });
+
+  const { data: transactionsData } = useQuery({
+    queryKey: ['electricity-transactions'],
+    queryFn:  () => getTransactions({ serviceType: 'ELECTRICITY', limit: 5 }),
   });
 
   const { control, handleSubmit, watch, setValue, formState: { errors } } = useForm<Form>({
@@ -357,6 +363,27 @@ export default function ElectricityScreen() {
         <View style={styles.actionWrap}>
           <PrimaryButton label="Review Payment" onPress={onPressReview} disabled={!validation} />
         </View>
+
+        {/* Latest Transactions */}
+        {transactionsData && transactionsData.items.length > 0 && (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Latest Transactions</Text>
+            {transactionsData.items.map((tx) => (
+              <View key={tx.id} style={styles.transactionRow}>
+                <View style={styles.transactionInfo}>
+                  <Text style={styles.transactionTitle}>{tx.biller_name}</Text>
+                  <Text style={styles.transactionDate}>{new Date(tx.created_at).toLocaleDateString('en-NG')}</Text>
+                </View>
+                <View style={styles.transactionAmount}>
+                  <Text style={[styles.transactionValue, { color: tx.status === 'successful' ? Colors.green : Colors.muted }]}>
+                    ₦{Number(tx.amount).toLocaleString('en-NG')}
+                  </Text>
+                  <Text style={styles.transactionStatus}>{tx.status}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
       </ScrollView>
 
       <Modal visible={showConfirm} transparent animationType="slide">
@@ -512,4 +539,11 @@ const styles = StyleSheet.create({
   processingText:  { ...Typography.labelSm, color: Colors.secondary, lineHeight: 18, marginTop: Spacing.sm },
   paystackInfoPanel: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.md, padding: Spacing.md, borderLeftWidth: 3, borderLeftColor: Colors.secondary, marginTop: Spacing.md },
   paystackInfoText:  { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },
+  transactionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.surfaceContainerHigh },
+  transactionInfo: { flex: 1 },
+  transactionTitle: { ...Typography.labelMd, color: Colors.onSurface },
+  transactionDate: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 4 },
+  transactionAmount: { alignItems: 'flex-end' },
+  transactionValue: { ...Typography.labelMd, color: Colors.onSurface },
+  transactionStatus: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2, textTransform: 'capitalize' },
 });
