@@ -68,6 +68,8 @@ function fakeSupabase(tables: Record<string, Row[]>) {
 
 function seed(role: string) {
   const tables: Record<string, Row[]> = {
+    // Writes pass the estate lifecycle gate (ESTD-D025): only an active estate is writable.
+    estates: [{ id: ESTATE, status: 'active' }],
     estate_residents: [{ user_id: 'caller', estate_id: ESTATE, unit: '1', role }],
     estate_vendors: [
       { id: 'v-mine', estate_id: ESTATE, user_id: 'caller', name: 'My Plumbing Co', status: 'verified' },
