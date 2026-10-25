@@ -5,6 +5,7 @@
 // optionMap, then compares against the immutable answer key of the drawn question
 // version. Display order can never change the mark (QA-02).
 
+import { meetsPassMark } from '../moduleGate';
 import type { ExamScore, FilmQuestionOption, PresentedOption, SnapshotItem } from './types';
 
 export interface AnswerKeyEntry {
@@ -83,7 +84,8 @@ export function scoreAttempt(
 
   // Zero eligible points is NOT_READY, never 0% pass and never a divide-by-zero.
   const percentage = max > 0 ? (100 * earned) / max : 0;
-  const passed = max > 0 && percentage >= passMark;
+  // Pass on exact points, never on the (display-rounded) percentage.
+  const passed = meetsPassMark(earned, max, passMark);
 
   return {
     earnedPoints: earned,
