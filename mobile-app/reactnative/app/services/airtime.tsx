@@ -24,6 +24,7 @@ import { Typography } from '@/constants/tokens';
 import { shadow1, shadow2 } from '@/constants/tokens';
 import { getAirtimeNetworks, initiateAirtimePaystack, purchaseAirtime, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
 import { useGatewayCheckout } from '@/features/payments';
+import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
@@ -86,6 +87,7 @@ export default function AirtimeScreen() {
   const liveAmount = watch('amount');
   const livePhone = watch('phoneNumber');
 
+  const promptKyc = useBillKycPrompt();
   const { mutate: purchase, isPending, error: purchaseError } = useMutation({
     mutationFn: purchaseAirtime,
     onSuccess: (result) => {
@@ -97,7 +99,7 @@ export default function AirtimeScreen() {
       const txId = String((result as Record<string, unknown>).transactionId ?? '');
       router.push(`/services/receipt/${txId}` as never);
     },
-    onError: () => { confirmInFlightRef.current = false; },
+    onError: (err) => { confirmInFlightRef.current = false; void promptKyc(err); },
   });
 
   const handleQuickAmount = (amt: number) => {
@@ -177,8 +179,8 @@ export default function AirtimeScreen() {
           router.replace(`/services/paystack/${res.reference}` as never);
         },
       });
-    } catch (err) {
-      setPaystackError(getErrorMessage(err));
+    } catch (err: unknown) {
+      if (!(await promptKyc(err))) setPaystackError(getErrorMessage(err));
     } finally {
       setPaystackLoading(false);
     }

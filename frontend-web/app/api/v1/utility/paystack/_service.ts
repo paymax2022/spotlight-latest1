@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { initializePaystackPayment, verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
 import { payUtility, quoteUtilityPayment } from '@/src/server/utility/service';
+import { enforceUtilityPaymentGate } from '@/src/server/utility/payment-gate';
 import { creditWallet } from '@/src/server/wallet/service';
 import type { UtilityCategory } from '@/src/server/utility/types';
 import { isReturnableOrigin, resolveReturnOrigin } from '@/src/server/registration/return-origin';
@@ -99,6 +100,11 @@ export async function initiateUtilityPaystackPayment(input: {
     productId: input.productId,
     amountKobo: input.amountKobo,
   });
+
+  // Per-bill and per-day gateway caps are checked here, BEFORE the intent is
+  // written and before Paystack is initialised: a refused payment never gets a
+  // checkout URL, so there is nothing to refund and nothing to reconcile.
+  await enforceUtilityPaymentGate(input.userId, 'paystack', quote.pricing.retailAmountKobo);
 
   const paymentReference = reference();
   const intentId = crypto.randomUUID();

@@ -16,6 +16,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { getEducationProducts, getEducationProviders, initiateEducationPaystack, payEducation, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
 import { useGatewayCheckout } from '@/features/payments';
+import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { Colors } from '@/constants/tokens';
@@ -79,6 +80,7 @@ export default function EducationScreen() {
     resolver: zodResolver(schema),
   });
 
+  const promptKyc = useBillKycPrompt();
   const { mutate: pay, isPending: paying, error: payError } = useMutation({
     mutationFn: payEducation,
     onSuccess: (result) => {
@@ -90,8 +92,9 @@ export default function EducationScreen() {
       const txId = String((result as Record<string, unknown>).transactionId ?? '');
       router.push(`/services/receipt/${txId}` as never);
     },
-    onError: () => {
+    onError: (err) => {
       confirmInFlightRef.current = false;
+      void promptKyc(err);
     },
   });
 
@@ -170,8 +173,8 @@ export default function EducationScreen() {
         },
         onResolved: (res) => { setShowConfirm(false); router.replace(`/services/paystack/${res.reference}` as never); },
       });
-    } catch (err) {
-      setPaystackError(getErrorMessage(err));
+    } catch (err: unknown) {
+      if (!(await promptKyc(err))) setPaystackError(getErrorMessage(err));
     } finally {
       setPaystackLoading(false);
     }

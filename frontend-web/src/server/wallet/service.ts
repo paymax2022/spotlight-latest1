@@ -11,7 +11,7 @@ import {
   DEFAULT_DEBIT_COUNTER,
   type StandingAccountType,
 } from './journal';
-import { enforceWalletLimit } from '@/src/server/tiers/service';
+import { enforceWalletLimit, type Tier0Allowance } from '@/src/server/tiers/service';
 import { paystackApiBase } from '@/src/server/payments/paystack-base';
 import { WALLET_ACCOUNT_TYPE, SPENDABLE_WALLET_TYPES } from './account-type';
 
@@ -195,6 +195,12 @@ export interface WalletMutationInput {
    * correction drains the pot it filled.
    */
   counterAccount?: StandingAccountType;
+  /**
+   * Debits only. Lets a Tier 0 (unverified) wallet pay for a purchase under a
+   * capped allowance instead of being refused as disabled. Only a module that
+   * owns a purchase flow (bills) passes this; transfers and withdrawals never do.
+   */
+  tier0Allowance?: Tier0Allowance;
 }
 
 export interface WalletMutationResult {
@@ -266,7 +272,7 @@ export async function debitWallet(
 
   // Block 7: get the user's tier daily limit before touching the DB.
   // enforceWalletLimit throws 403 for Tier 0 or exceeded daily cap.
-  const { dailyLimitKobo } = await enforceWalletLimit(userId, input.amountKobo);
+  const { dailyLimitKobo } = await enforceWalletLimit(userId, input.amountKobo, input.tier0Allowance);
 
   const accountId = await getOrCreateAccount(userId);
   await migrateLegacyMobileBalanceIfNeeded(userId, accountId);

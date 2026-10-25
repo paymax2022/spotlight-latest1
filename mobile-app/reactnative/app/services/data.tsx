@@ -25,6 +25,7 @@ import { shadow1, shadow2 } from '@/constants/tokens';
 import { getDataNetworks, getDataPlans, initiateDataPaystack, purchaseData, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
 import { useGatewayCheckout } from '@/features/payments';
 import ProviderLogo from '@/components/ProviderLogo';
+import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -101,6 +102,7 @@ export default function DataScreen() {
   const { control, handleSubmit, formState: { errors } } = useForm<Form>({ resolver: zodResolver(schema) });
 
   const { mutate: purchase, isPending, error: purchaseError } = useMutation({
+  const promptKyc = useBillKycPrompt();
     mutationFn: purchaseData,
     onSuccess: (result) => {
       confirmInFlightRef.current = false;
@@ -111,9 +113,10 @@ export default function DataScreen() {
       const txId = String((result as Record<string, unknown>).transactionId ?? '');
       router.push(`/services/receipt/${txId}` as never);
     },
-    onError: () => {
+    onError: (err) => {
       confirmInFlightRef.current = false;
     },
+      void promptKyc(err);
   });
 
   const onPressReview = handleSubmit((values) => {
@@ -182,7 +185,7 @@ export default function DataScreen() {
         onResolved: (res) => { setShowConfirm(false); router.replace(`/services/paystack/${res.reference}` as never); },
       });
     } catch (err: unknown) {
-      setPaystackError(getErrorMessage(err));
+      if (!(await promptKyc(err))) setPaystackError(getErrorMessage(err));
     } finally {
       setPaystackLoading(false);
     }

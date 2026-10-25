@@ -23,6 +23,7 @@ import { Typography } from '@/constants/tokens';
 import { shadow1, shadow2 } from '@/constants/tokens';
 import { getCableProviders, getCablePackages, initiateCablePaystack, validateSmartCard, payCable, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
 import { useGatewayCheckout } from '@/features/payments';
+import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
@@ -92,6 +93,7 @@ export default function CableTvScreen() {
     onError:   () => { setValidation(null); setValidateError('Smart card number not found. Please check and try again.'); },
   });
 
+  const promptKyc = useBillKycPrompt();
   const { mutate: pay, isPending: paying, error: payError } = useMutation({
     mutationFn: payCable,
     onSuccess: (result) => {
@@ -103,8 +105,9 @@ export default function CableTvScreen() {
       const txId = String((result as Record<string, unknown>).transactionId ?? '');
       router.push(`/services/receipt/${txId}` as never);
     },
-    onError: () => {
+    onError: (err) => {
       confirmInFlightRef.current = false;
+      void promptKyc(err);
     },
   });
 
@@ -183,7 +186,7 @@ export default function CableTvScreen() {
         onResolved: (res) => { setShowConfirm(false); router.replace(`/services/paystack/${res.reference}` as never); },
       });
     } catch (err: unknown) {
-      setPaystackError(getErrorMessage(err));
+      if (!(await promptKyc(err))) setPaystackError(getErrorMessage(err));
     } finally {
       setPaystackLoading(false);
     }
