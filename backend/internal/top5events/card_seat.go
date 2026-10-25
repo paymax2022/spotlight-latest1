@@ -10,21 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// MaxTicketsPerOrder caps the number of seats a single card checkout can hold.
-const MaxTicketsPerOrder = 10
-
-// railCard is the payment_rail column value for card-checkout orders.
-const railCard = "card"
-
-// seatReservation captures the inputs for reserving one seat inside a
-// transaction (used by the card checkout's holdCardSeats loop).
-type seatReservation struct {
-	buyerID, eventID, tierID, promo string
-	idemKey                         string
-	rail                            string
-	cardRef                         string
-}
-
 // reserveSeatTx reserves one seat of a tier inside tx: locks the tier row,
 // checks capacity / active / sales window, applies a promo if present,
 // increments sold, inserts a PENDING order row (with payment_rail and
