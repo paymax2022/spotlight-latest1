@@ -65,14 +65,24 @@ func (s *Service) Credit(ctx context.Context, userID, reference, idempotencyKey 
 // in-tx replay verification even when today's usage is over the cap — refusing
 // at the pooled gate would tell the caller the charge never happened and
 // invite a fresh-key retry that double-debits.
+//
+// IMPORTANT: Small transactions (< ₦20k) skip the wallet tier check since they
+// don't require KYC verification. Large transactions (>= ₦20k) are checked by
+// the calling module before this debit is invoked, so the tier gate is enforced
+// there. This debit should only be called AFTER the transaction amount check passes.
 func (s *Service) Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
 	posted, err := s.ledger.Posted(ctx, idempotencyKey)
 	if err != nil {
 		return fmt.Errorf("wallet: replay probe: %w", err)
 	}
 	if !posted {
-		if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo); err != nil {
-			return err
+		// Skip tier check for small transactions (< ₦20k) — they are allowed for Tier 0.
+		// Large transactions (>= ₦20k) must have been pre-checked by the calling module.
+		const smallTransactionMaxKobo = 2_000_000 // ₦20k
+		if amountKobo >= smallTransactionMaxKobo {
+			if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo); err != nil {
+				return err
+			}
 		}
 	}
 	return s.ledger.DebitGated(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo)
