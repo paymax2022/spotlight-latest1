@@ -9,7 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, CircleCheck, Circle, Lock, Clock, BookOpen, CheckCircle2, AlertCircle } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, CircleCheck, Circle, Lock, Clock, BookOpen, CheckCircle2, AlertCircle, Layers } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -187,6 +187,18 @@ export default function FilmAcademyLearnScreen() {
                 <View style={[styles.barFill, { width: `${pct}%` }]} />
               </View>
               <Pressable
+                onPress={() => router.push('/film-academy/path' as never)}
+                style={styles.pathLink}
+              >
+                <Layers size={16} color={Colors.gold} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.assignLinkText}>Topic path</Text>
+                  <Text style={styles.cardMeta}>Master each topic at 85% to unlock the next</Text>
+                </View>
+                <ChevronRight size={16} color={Colors.gold} />
+              </Pressable>
+
+              <Pressable
                 onPress={() => router.push('/film-academy/assignments' as never)}
                 style={styles.assignLink}
               >
@@ -251,6 +263,9 @@ const styles = StyleSheet.create({
   assignLink:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
                  marginTop: Spacing.sm },
   assignLinkText: { ...Typography.labelLg, color: Colors.onWarning },
+  pathLink:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+                 marginTop: Spacing.sm, padding: Spacing.sm, borderRadius: Radius.sm,
+                 backgroundColor: Colors.iconBgGold },
 
   moduleTitle: { ...Typography.titleMd, color: Colors.onSurface },
   moduleMeta:  { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginBottom: Spacing.xs },

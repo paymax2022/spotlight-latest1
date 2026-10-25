@@ -578,3 +578,373 @@ export async function publishExam(id: string): Promise<void> {
 export async function unpublishExam(id: string): Promise<void> {
   await call(`${B}/exams/${encodeURIComponent(id)}/publish`, { method: 'POST', body: JSON.stringify({ action: 'unpublish' }) });
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// TOPIC MASTERY PATH (TMFA curriculum pack) — /api/admin/academy/topics*,
+// /media*, /holds* and /mastery*.
+//
+// The import NEVER approves or publishes: every topic lands as a draft, every
+// question as a draft. Publication is a separate, server-evaluated gate (approved
+// article + reviewed media + >=20 approved questions); the server returns the
+// blockers, so the console can never show a Publish button it would refuse.
+// Holds and candidate mastery require scores:manage; authoring/import/media
+// require programs:manage.
+// ────────────────────────────────────────────────────────────────────────────
+
+export type AdminTopicQuestionCounts = {
+  draft: number; review: number; approved: number; retired: number; total: number;
+};
+
+export type AdminTopicMediaCounts = {
+  total: number; required: number; published: number; missingFile: number;
+};
+
+export type AdminTopicRow = {
+  topicId: string;
+  courseId: string;
+  courseTitle: string;
+  stage: string;
+  stageLabel: string;
+  title: string;
+  contentStatus: string;
+  published: boolean;
+  quizMinimumPercent: number;
+  drawCount: number;
+  timeLimitMinutes: number;
+  approvedQuestions: number;
+  questionCounts: AdminTopicQuestionCounts;
+  media: AdminTopicMediaCounts;
+  ready: boolean;
+  blockers: Array<{ code: string; message: string }>;
+  updatedAt: string;
+};
+
+export type AdminTopicSummary = {
+  total: number; ready: number; blocked: number; published: number; approved: number; inReview: number;
+};
+
+export type AdminTopicList = {
+  topics: AdminTopicRow[]; summary: AdminTopicSummary; total: number;
+  page: number; pageSize: number; hasMore: boolean;
+};
+
+export type AdminTopicMediaRow = {
+  asset_id: string;
+  topic_id: string;
+  course_id: string;
+  media_type: string;
+  required: boolean;
+  language: string;
+  production_state: string;
+  rights_status: string;
+  accessibility_status: string;
+  instructions: string;
+  owner: string;
+  media_url: string;
+  thumbnail_url: string;
+  captions_url: string;
+  transcript: string;
+  alt_text: string;
+  published: boolean;
+  blockers: string[];
+};
+
+export type AdminTopicHold = {
+  id: string; holdType: string; reason: string; status: string;
+  createdAt: string; clearedAt: string | null; clearanceNote: string;
+};
+
+export type AdminTopicDetail = {
+  topic: AdminTopicRow;
+  article: string;
+  outcomes: Array<{ objective_id: string; description: string }>;
+  requiredMedia: string[];
+  prerequisites: string[];
+  media: AdminTopicMediaRow[];
+  accessibleEquivalent: { approved: boolean; note: string };
+  holds: AdminTopicHold[];
+  mastery: { passed: number; mastered: number; remediation: number; total: number };
+  attempts: { total: number; scored: number; inProgress: number };
+  audit: Array<{ action: string; actorRole: string; reason: string; createdAt: string }>;
+};
+
+export type AdminTopicAction =
+  | 'save' | 'submit_review' | 'approve' | 'publish' | 'unpublish' | 'set_accessible_equivalent';
+
+export type AdminTopicMutation = {
+  ok: true;
+  action: AdminTopicAction;
+  published: boolean;
+  contentStatus: string;
+  returnedToReview: boolean;
+  message: string;
+};
+
+export async function listAdminTopics(filter?: {
+  courseId?: string; status?: string; published?: boolean; ready?: boolean;
+  q?: string; page?: number; pageSize?: number;
+}): Promise<AdminTopicList> {
+  const qs = new URLSearchParams();
+  if (filter?.courseId) qs.set('courseId', filter.courseId);
+  if (filter?.status) qs.set('status', filter.status);
+  if (filter?.published !== undefined) qs.set('published', String(filter.published));
+  if (filter?.ready !== undefined) qs.set('ready', String(filter.ready));
+  if (filter?.q) qs.set('q', filter.q);
+  if (filter?.page) qs.set('page', String(filter.page));
+  if (filter?.pageSize) qs.set('pageSize', String(filter.pageSize));
+  const suffix = qs.toString() ? `?${qs}` : '';
+  const r = await call<Partial<AdminTopicList>>(`${B}/topics${suffix}`);
+  return {
+    topics: r.topics ?? [],
+    summary: r.summary ?? { total: 0, ready: 0, blocked: 0, published: 0, approved: 0, inReview: 0 },
+    total: r.total ?? 0,
+    page: r.page ?? 1,
+    pageSize: r.pageSize ?? 25,
+    hasMore: r.hasMore ?? false,
+  };
+}
+
+export async function getAdminTopic(topicId: string): Promise<AdminTopicDetail> {
+  const r = await call<{ topic?: AdminTopicDetail }>(`${B}/topics/${encodeURIComponent(topicId)}`);
+  if (!r.topic) throw new Error('Film Academy: the topic detail was empty.');
+  return r.topic;
+}
+
+export async function mutateAdminTopic(
+  topicId: string,
+  input: { action: AdminTopicAction; [key: string]: unknown },
+): Promise<AdminTopicMutation> {
+  const r = await call<{ result?: AdminTopicMutation }>(`${B}/topics/${encodeURIComponent(topicId)}`, {
+    method: 'PATCH', body: JSON.stringify(input),
+  });
+  if (!r.result) throw new Error('Film Academy: the topic action returned no result.');
+  return r.result;
+}
+
+// ── Bundled TMFA curriculum pack import ─────────────────────────────────────
+
+export type CurriculumImportPreview = {
+  version: string;
+  sourceHash: string;
+  courseCount: number;
+  topicCount: number;
+  mediaCount: number;
+  questionCount: number;
+  rejectedQuestionCount: number;
+  rejectedQuestions: Array<{ row: number; code: string; message: string }>;
+  warnings: string[];
+  courses: Array<{ courseId: string; title: string; kind: string; stageLabel: string; topicCount: number }>;
+};
+
+export type CurriculumImportResult = {
+  version: string;
+  courses: { inserted: number; updated: number };
+  topics: { inserted: number; updated: number; unchanged: number; returnedToReview: number };
+  media: { inserted: number; refreshed: number };
+  questions: { inserted: number; updated: number; unchanged: number; locked: number; rejected: number };
+  warnings: string[];
+  rejectedQuestions: Array<{ row: number; code: string; message: string }>;
+};
+
+export async function previewCurriculumPack(): Promise<CurriculumImportPreview> {
+  const r = await call<{ preview?: CurriculumImportPreview }>(`${B}/topics/import`);
+  if (!r.preview) throw new Error('Film Academy: the import preview was empty.');
+  return r.preview;
+}
+
+export async function importCurriculumPack(): Promise<CurriculumImportResult> {
+  const r = await call<{ result?: CurriculumImportResult }>(`${B}/topics/import`, {
+    method: 'POST', body: '{}',
+  });
+  if (!r.result) throw new Error('Film Academy: the import returned no result.');
+  return r.result;
+}
+
+// ── Media production queue ──────────────────────────────────────────────────
+
+export type AdminMediaRow = {
+  asset_id: string;
+  topic_id: string;
+  course_id: string;
+  topicTitle: string;
+  courseTitle: string;
+  media_type: string;
+  required: boolean;
+  language: string;
+  production_state: string;
+  rights_status: string;
+  accessibility_status: string;
+  instructions: string;
+  owner: string;
+  media_url: string;
+  thumbnail_url: string;
+  captions_url: string;
+  transcript: string;
+  alt_text: string;
+  blockers: string[];
+};
+
+export type AdminMediaList = {
+  media: AdminMediaRow[]; summary: Record<string, number>; total: number;
+  page: number; pageSize: number; hasMore: boolean;
+};
+
+export async function listAdminMedia(filter?: {
+  courseId?: string; topicId?: string; productionState?: string; rightsStatus?: string;
+  accessibilityStatus?: string; q?: string; page?: number; pageSize?: number;
+}): Promise<AdminMediaList> {
+  const qs = new URLSearchParams();
+  if (filter?.courseId) qs.set('courseId', filter.courseId);
+  if (filter?.topicId) qs.set('topicId', filter.topicId);
+  if (filter?.productionState) qs.set('productionState', filter.productionState);
+  if (filter?.rightsStatus) qs.set('rightsStatus', filter.rightsStatus);
+  if (filter?.accessibilityStatus) qs.set('accessibilityStatus', filter.accessibilityStatus);
+  if (filter?.q) qs.set('q', filter.q);
+  if (filter?.page) qs.set('page', String(filter.page));
+  if (filter?.pageSize) qs.set('pageSize', String(filter.pageSize));
+  const suffix = qs.toString() ? `?${qs}` : '';
+  const r = await call<Partial<AdminMediaList>>(`${B}/media${suffix}`);
+  return {
+    media: r.media ?? [], summary: r.summary ?? { total: 0 }, total: r.total ?? 0,
+    page: r.page ?? 1, pageSize: r.pageSize ?? 50, hasMore: r.hasMore ?? false,
+  };
+}
+
+export async function updateAdminMedia(
+  assetId: string,
+  input: {
+    productionState?: string; rightsStatus?: string; accessibilityStatus?: string;
+    instructions?: string; owner?: string; mediaUrl?: string; thumbnailUrl?: string;
+    captionsUrl?: string; transcript?: string; altText?: string;
+    expiresAt?: string | null; replacementAssetId?: string | null;
+    language?: string; required?: boolean;
+  },
+): Promise<{ assetId: string; published: boolean; topicUnpublished: boolean; blockers: string[] }> {
+  return await call(`${B}/media/${encodeURIComponent(assetId)}`, {
+    method: 'PATCH', body: JSON.stringify(input),
+  });
+}
+
+// ── Academic holds and candidate mastery ────────────────────────────────────
+
+export type AdminHoldRow = {
+  id: string;
+  enrollmentId: string;
+  topicId: string;
+  topicTitle: string;
+  holdType: string;
+  reason: string;
+  status: string;
+  createdAt: string;
+  clearedAt: string | null;
+  clearanceNote: string;
+  learnerName: string;
+  learnerEmail: string;
+};
+
+export async function listAdminHolds(filter?: {
+  status?: string; topicId?: string; enrollmentId?: string; page?: number; pageSize?: number;
+}): Promise<{ holds: AdminHoldRow[]; open: number; total: number; page: number; pageSize: number; hasMore: boolean }> {
+  const qs = new URLSearchParams();
+  if (filter?.status) qs.set('status', filter.status);
+  if (filter?.topicId) qs.set('topicId', filter.topicId);
+  if (filter?.enrollmentId) qs.set('enrollmentId', filter.enrollmentId);
+  if (filter?.page) qs.set('page', String(filter.page));
+  if (filter?.pageSize) qs.set('pageSize', String(filter.pageSize));
+  const suffix = qs.toString() ? `?${qs}` : '';
+  const r = await call<{ holds?: AdminHoldRow[]; open?: number; total?: number; page?: number; pageSize?: number; hasMore?: boolean }>(
+    `${B}/holds${suffix}`,
+  );
+  return {
+    holds: r.holds ?? [], open: r.open ?? 0, total: r.total ?? 0,
+    page: r.page ?? 1, pageSize: r.pageSize ?? 25, hasMore: r.hasMore ?? false,
+  };
+}
+
+export async function createAdminHold(input: {
+  enrollmentId: string; topicId: string; holdType: string; reason: string;
+}): Promise<{ holdId?: string; masteryState?: string }> {
+  const r = await call<{ result?: { holdId?: string; masteryState?: string } }>(`${B}/holds`, {
+    method: 'POST', body: JSON.stringify(input),
+  });
+  return r.result ?? {};
+}
+
+export async function clearAdminHold(holdId: string, note = ''): Promise<{ cleared: boolean; masteryState: string }> {
+  const r = await call<{ result?: { cleared?: boolean; masteryState?: string } }>(
+    `${B}/holds/${encodeURIComponent(holdId)}`,
+    { method: 'PATCH', body: JSON.stringify({ note }) },
+  );
+  return { cleared: r.result?.cleared ?? false, masteryState: r.result?.masteryState ?? '' };
+}
+
+export type CandidateMasteryRow = {
+  enrollmentId: string;
+  userId: string;
+  learnerName: string;
+  learnerEmail: string;
+  batchName: string;
+  currentStage: string;
+  topicsTouched: number;
+  topicsRequired: number;
+  topicsPublished: number;
+  mastered: number;
+  passedWithHold: number;
+  remediation: number;
+  openHolds: number;
+  certificate: {
+    id: string;
+    certificateNumber: string;
+    status: string;
+    revokedAt: string | null;
+  } | null;
+};
+
+export async function listCandidateMastery(filter?: {
+  q?: string; page?: number; pageSize?: number;
+}): Promise<{ candidates: CandidateMasteryRow[]; total: number; page: number; pageSize: number; hasMore: boolean }> {
+  const qs = new URLSearchParams();
+  if (filter?.q) qs.set('q', filter.q);
+  if (filter?.page) qs.set('page', String(filter.page));
+  if (filter?.pageSize) qs.set('pageSize', String(filter.pageSize));
+  const suffix = qs.toString() ? `?${qs}` : '';
+  const r = await call<{ candidates?: CandidateMasteryRow[]; total?: number; page?: number; pageSize?: number; hasMore?: boolean }>(
+    `${B}/mastery${suffix}`,
+  );
+  return {
+    candidates: r.candidates ?? [], total: r.total ?? 0,
+    page: r.page ?? 1, pageSize: r.pageSize ?? 25, hasMore: r.hasMore ?? false,
+  };
+}
+
+// ── Credentials ─────────────────────────────────────────────────────────────
+// Issuance is server-recomputed, never a manual override: the route refuses a
+// certificate unless every curriculum topic is published, mastered and hold-free.
+// A revoked credential stays in the public registry so a verifier sees the
+// revocation rather than a dead code.
+
+export type AdminCertificate = {
+  id: string;
+  certificateNumber: string;
+  studentName: string;
+  programName: string;
+  batchName: string;
+  completionDate: string | null;
+  status: string;
+  verificationCode: string;
+  issuedAt: string | null;
+  revokedAt: string | null;
+  revocationReason: string;
+  topicsRequired: number | null;
+  topicsMastered: number | null;
+};
+
+export async function mutateCertificate(input:
+  | { action: 'issue'; enrollmentId: string }
+  | { action: 'revoke'; certificateId: string; reason: string }
+): Promise<{ certificate: AdminCertificate; created?: boolean }> {
+  return call<{ certificate: AdminCertificate; created?: boolean }>(`${B}/certificates`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}

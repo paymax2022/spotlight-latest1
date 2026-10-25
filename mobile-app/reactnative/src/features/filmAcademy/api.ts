@@ -16,6 +16,13 @@ import type {
   FilmAcademyStartedAttempt,
   FilmAcademyAttemptView,
   FilmAcademyExamResult,
+  FilmTopicPath,
+  FilmTopicDetail,
+  FilmTopicAttemptView,
+  FilmTopicQuizReceipt,
+  FilmMasteryEventPage,
+  FilmCertificateView,
+  FilmCertificateIssueResult,
 } from './types';
 
 type Envelope = { data?: unknown };
@@ -270,4 +277,161 @@ export async function submitExamAttempt(attemptId: string): Promise<FilmAcademyE
   // rendering an empty "scored" screen.
   if (!result) throw new Error('The exam was submitted, but no result came back. Please reload.');
   return result;
+}
+
+// ── Topic mastery path (TMFA curriculum pack) ───────────────────────────────
+// The whole plane is gated behind FEATURE_FILM_ACADEMY_TOPICS (and the quiz
+// routes additionally behind FEATURE_FILM_ACADEMY_ASSESSMENT). An unset flag
+// 503s cleanly; nothing here assumes the module is live.
+//
+// Sequence is server-authoritative: a topic returns canStartQuiz=false with a
+// blockerMessage until its article is approved, its media are published, its
+// prerequisites are MASTERED and at least 20 reviewed questions exist. This file
+// only relays that decision.
+
+/** Shared path cache — invalidated by the mastery event poller after a submit. */
+export const FILM_ACADEMY_PATH_KEY = ['film-academy', 'path'];
+export const filmAcademyTopicKey = (topicId: string) => ['film-academy', 'topic', topicId];
+export const filmAcademyTopicAttemptKey = (attemptId: string) =>
+  ['film-academy', 'topic-attempt', attemptId];
+
+const EMPTY_TOPIC_SUMMARY: FilmTopicPath['summary'] = {
+  totalTopics: 0,
+  publishedTopics: 0,
+  masteredTopics: 0,
+  inProgressTopics: 0,
+  remediationTopics: 0,
+  percentMastered: 0,
+};
+
+/** The learner's derived topic path, grouped by course. Locked is a state, not an error. */
+export async function getTopicPath(): Promise<FilmTopicPath> {
+  const res = await api.get('/api/academy/topics');
+  const path = unwrap<{ path?: Partial<FilmTopicPath> }>(res).path;
+  return {
+    courses: path?.courses ?? [],
+    summary: path?.summary ?? EMPTY_TOPIC_SUMMARY,
+    eventsCursor: path?.eventsCursor ?? 0,
+  };
+}
+
+/** One topic: the article when published, otherwise the reason it is withheld. */
+export async function getTopic(topicId: string): Promise<FilmTopicDetail> {
+  const res = await api.get(`/api/academy/topics/${encodeURIComponent(topicId)}`);
+  const topic = unwrap<{ topic?: FilmTopicDetail }>(res).topic;
+  if (!topic) throw new Error('This topic is not available.');
+  return topic;
+}
+
+/**
+ * Start — or resume — a topic quiz. The server applies resume precedence before
+ * drawing: the same idempotency key, then an already-open attempt, then a fresh
+ * draw. A double tap therefore cannot spend two attempts.
+ */
+export async function startTopicQuiz(
+  topicId: string,
+  idempotencyKey: string,
+): Promise<FilmTopicAttemptView> {
+  const res = await api.post(`/api/academy/topics/${encodeURIComponent(topicId)}/quiz`, {
+    idempotencyKey,
+  });
+  const attempt = unwrap<{ attempt?: FilmTopicAttemptView }>(res).attempt;
+  if (!attempt) throw new Error('The quiz did not open. Please try again.');
+  return attempt;
+}
+
+/** Load an attempt: questions + saved picks while in progress, or the receipt. */
+export async function getTopicAttempt(attemptId: string): Promise<FilmTopicAttemptView> {
+  const res = await api.get(`/api/academy/topic-attempts/${encodeURIComponent(attemptId)}`);
+  const view = unwrap<{ attempt?: Partial<FilmTopicAttemptView> }>(res).attempt;
+  return {
+    attemptId: view?.attemptId ?? attemptId,
+    topicId: view?.topicId ?? '',
+    attemptNumber: view?.attemptNumber ?? 1,
+    state: view?.state ?? 'in_progress',
+    startedAt: view?.startedAt ?? '',
+    deadlineAt: view?.deadlineAt ?? '',
+    expired: view?.expired ?? false,
+    questions: view?.questions ?? [],
+    answered: view?.answered ?? {},
+    result: view?.result ?? null,
+  };
+}
+
+/** Autosave one pick. The server owns the deadline and refuses a late save with 409. */
+export async function saveTopicAnswer(input: {
+  attemptId: string;
+  attemptQuestionId: string;
+  presentationOptionId: string;
+}): Promise<void> {
+  await api.post(`/api/academy/topic-attempts/${encodeURIComponent(input.attemptId)}/answer`, {
+    attemptQuestionId: input.attemptQuestionId,
+    presentationOptionId: input.presentationOptionId,
+  });
+}
+
+/** Submit + finalize at most once. The exact >=85% gate is applied server-side. */
+export async function submitTopicAttempt(attemptId: string): Promise<FilmTopicQuizReceipt> {
+  const res = await api.post(
+    `/api/academy/topic-attempts/${encodeURIComponent(attemptId)}/submit`,
+    {},
+  );
+  const { result } = unwrap<{ result?: FilmTopicQuizReceipt }>(res);
+  if (!result) throw new Error('The quiz was submitted, but no result came back. Please reload.');
+  return result;
+}
+
+/**
+ * One page of the append-only mastery event stream, after `since`.
+ *
+ * This is a NOTIFICATION aid: the mastery ledger read by getTopicPath remains
+ * the truth. A failed poll is therefore swallowed by the caller rather than
+ * surfaced as a learning error.
+ */
+export async function getProgressEvents(
+  since = 0,
+  limit = 50,
+): Promise<FilmMasteryEventPage> {
+  const res = await api.get('/api/academy/progress/events', { params: { since, limit } });
+  const body = unwrap<Partial<FilmMasteryEventPage>>(res);
+  return {
+    events: body?.events ?? [],
+    cursor: body?.cursor ?? since,
+  };
+}
+
+export const FILM_ACADEMY_CERTIFICATE_KEY = ['film-academy', 'certificate'];
+
+/** The programme credential plus the exact server blockers still in the way. */
+export async function getCertificate(): Promise<FilmCertificateView> {
+  const res = await api.get('/api/academy/certificate');
+  const body = unwrap<Partial<FilmCertificateView>>(res);
+  return {
+    readiness: body?.readiness ?? {
+      topicsRequired: 0,
+      topicsPublished: 0,
+      topicsMastered: 0,
+      openHolds: 0,
+      eligible: false,
+      blockers: [],
+    },
+    certificate: body?.certificate ?? null,
+  };
+}
+
+/**
+ * Ask the server to issue the credential. Eligibility is recomputed there; a
+ * refusal (409) is shown verbatim because it names the next real requirement.
+ */
+export async function requestCertificate(): Promise<FilmCertificateIssueResult> {
+  const res = await api.post('/api/academy/certificate', {});
+  const body = unwrap<Partial<FilmCertificateIssueResult>>(res);
+  if (!body?.readiness) {
+    throw new Error('The certificate request did not return an eligibility check. Please reload.');
+  }
+  return {
+    readiness: body.readiness,
+    certificate: body.certificate ?? null,
+    created: body.created ?? false,
+  };
 }

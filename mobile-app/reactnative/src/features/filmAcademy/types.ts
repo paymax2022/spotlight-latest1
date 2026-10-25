@@ -397,3 +397,248 @@ export interface FilmAcademyAttemptView {
   answered: Record<string, string>;
   result: FilmAcademyExamResult | null;
 }
+
+// ── Topic mastery path (TMFA curriculum pack) ───────────────────────────────
+// These mirror /api/academy/topics, /api/academy/topics/:id,
+// /api/academy/topics/:id/quiz, /api/academy/topic-attempts/:id* and
+// /api/academy/progress/events in frontend-web.
+//
+// The server owns progression. `state`, `canStartQuiz` and `blockerMessage`
+// come from deriveTopicState against persisted mastery/holds/publication — the
+// app never decides that a topic is unlocked. The exact pass rule is integer
+// arithmetic (earned * 100 >= possible * 85); `percentage` is display only.
+
+export type TopicLearnerState =
+  | 'LOCKED'
+  | 'AVAILABLE'
+  | 'IN_PROGRESS'
+  | 'REMEDIATION_REQUIRED'
+  | 'PASSED'
+  | 'MASTERED'
+  | 'UNDER_REVIEW';
+
+export interface TopicOutcome {
+  objective_id: string;
+  description: string;
+}
+
+export interface TopicResultSummary {
+  attemptId: string;
+  percentage: number;
+  earnedPoints: number;
+  possiblePoints: number;
+  passed: boolean;
+  threshold: number;
+  submittedAt: string | null;
+}
+
+export interface TopicMediaCounts {
+  total: number;
+  required: number;
+  published: number;
+  pending: number;
+}
+
+/** One topic on the learner's path. Locked topics carry a title but no article. */
+export interface FilmTopicPathItem {
+  topicId: string;
+  courseId: string;
+  courseTitle: string;
+  stage: string;
+  stageLabel: string;
+  title: string;
+  outcomes: TopicOutcome[];
+  orderIndex: number;
+  prerequisites: string[];
+  state: TopicLearnerState;
+  published: boolean;
+  contentStatus: string;
+  quizMinimumPercent: number;
+  drawCount: number;
+  approvedQuestionCount: number;
+  poolReady: boolean;
+  canStartQuiz: boolean;
+  blockerCode: string | null;
+  blockerMessage: string | null;
+  bestScore: number | null;
+  attemptsCount: number;
+  passedAt: string | null;
+  masteredAt: string | null;
+  lastResult: TopicResultSummary | null;
+  openHolds: Array<{ type: string; reason: string }>;
+  media: TopicMediaCounts;
+}
+
+export interface FilmTopicPathCourse {
+  courseId: string;
+  title: string;
+  kind: 'acting' | 'craft';
+  stageLabel: string;
+  topics: FilmTopicPathItem[];
+}
+
+export interface FilmTopicPath {
+  courses: FilmTopicPathCourse[];
+  summary: {
+    totalTopics: number;
+    publishedTopics: number;
+    masteredTopics: number;
+    inProgressTopics: number;
+    remediationTopics: number;
+    percentMastered: number;
+  };
+  eventsCursor: number;
+}
+
+/** One teaching asset attached to a topic. URLs are empty unless published. */
+export interface FilmTopicMediaAsset {
+  assetId: string;
+  mediaType: string;
+  required: boolean;
+  language: string;
+  productionState: string;
+  rightsStatus: string;
+  accessibilityStatus: string;
+  published: boolean;
+  instructions: string;
+  url: string;
+  thumbnailUrl: string;
+  captionsUrl: string;
+  transcript: string;
+  altText: string;
+}
+
+/** A topic opened in detail — the path item plus article, media and blockers. */
+export interface FilmTopicDetail extends FilmTopicPathItem {
+  article: string | null;
+  articleLocked: boolean;
+  mediaAssets: FilmTopicMediaAsset[];
+  publicationBlockers: Array<{ code: string; message: string }>;
+  holds: Array<{ type: string; reason: string }>;
+  attempts: TopicResultSummary[];
+  nextTopicId: string | null;
+  previousTopicId: string | null;
+}
+
+/** One presented option in a topic quiz — an opaque id, never a bank id. */
+export interface TopicPresentedOption {
+  presentationOptionId: string;
+  text: string;
+}
+
+export interface TopicPresentedQuestion {
+  attemptQuestionId: string;
+  stem: string;
+  points: number;
+  options: TopicPresentedOption[];
+  objectiveId: string | null;
+}
+
+/** The score arithmetic the server applied. `percentage` never decides the gate. */
+export interface TopicQuizResult {
+  earnedPoints: number;
+  possiblePoints: number;
+  percentage: number;
+  passed: boolean;
+  threshold: number;
+}
+
+export interface TopicObjectiveBreakdown {
+  objectiveId: string;
+  earnedPoints: number;
+  possiblePoints: number;
+  percentage: number;
+}
+
+/** The committed topic receipt: score + what it unlocked. */
+export interface FilmTopicQuizReceipt extends TopicQuizResult {
+  attemptId: string;
+  topicId: string;
+  state: 'scored';
+  answeredCount: number;
+  totalCount: number;
+  objectives: TopicObjectiveBreakdown[];
+  masteryState: TopicLearnerState;
+  nextTopic: {
+    topicId: string;
+    title: string;
+    state: TopicLearnerState;
+    canStartQuiz: boolean;
+  } | null;
+}
+
+/** What POST /topics/:id/quiz returns: the same resumable view as GET. */
+export interface FilmTopicAttemptView {
+  attemptId: string;
+  topicId: string;
+  attemptNumber: number;
+  state: string;
+  startedAt: string;
+  deadlineAt: string;
+  expired: boolean;
+  questions: TopicPresentedQuestion[];
+  /** attemptQuestionId -> the learner's own last saved presentationOptionId. */
+  answered: Record<string, string>;
+  result: FilmTopicQuizReceipt | null;
+}
+
+/** One cursor entry from the append-only mastery event stream. */
+export interface FilmMasteryEvent {
+  id: number;
+  topicId: string | null;
+  eventType: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface FilmMasteryEventPage {
+  events: FilmMasteryEvent[];
+  cursor: number;
+}
+
+/** Why a credential cannot be issued yet — mirror of the server's own blockers. */
+export interface FilmCertificateBlocker {
+  code: string;
+  message: string;
+}
+
+/**
+ * Server-derived eligibility. `topicsPublished` matters as much as mastery: a
+ * credential is never issued while the curriculum is incomplete or withdrawn.
+ */
+export interface FilmCertificateReadiness {
+  topicsRequired: number;
+  topicsPublished: number;
+  topicsMastered: number;
+  openHolds: number;
+  eligible: boolean;
+  blockers: FilmCertificateBlocker[];
+}
+
+/** The credential exactly as the server holds it. */
+export interface FilmCertificate {
+  id: string;
+  certificateNumber: string;
+  studentName: string;
+  programName: string;
+  batchName: string;
+  completionDate: string | null;
+  grade: string | null;
+  status: string;
+  verificationCode: string;
+  issuedAt: string | null;
+  revokedAt: string | null;
+  revocationReason: string;
+  curriculumLabel: string;
+  topicsRequired: number | null;
+  topicsMastered: number | null;
+}
+
+export interface FilmCertificateView {
+  readiness: FilmCertificateReadiness;
+  certificate: FilmCertificate | null;
+}
+
+export interface FilmCertificateIssueResult extends FilmCertificateView {
+  created: boolean;
+}

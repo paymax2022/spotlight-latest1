@@ -82,13 +82,20 @@ export function scoreAttempt(
   }
 
   // Zero eligible points is NOT_READY, never 0% pass and never a divide-by-zero.
-  const percentage = max > 0 ? (100 * earned) / max : 0;
-  const passed = max > 0 && percentage >= passMark;
+  //
+  // The gate is exact integer arithmetic, never a float percentage:
+  //     earned * 100 >= max * passMark
+  // A displayed 85.0 from rounding 16.99/20 must not open a gate that the raw
+  // points did not earn (TMFA: 16/20 and 8/10 fail; 17/20 and 9/10 pass).
+  const threshold = Number.isFinite(passMark) ? Math.round(passMark) : 100;
+  const exactInputs = Number.isInteger(earned) && Number.isInteger(max) && max > 0;
+  const passed = exactInputs && earned * 100 >= max * threshold;
+  const percentage = max > 0 ? Math.round((earned * 10000) / max) / 100 : 0;
 
   return {
     earnedPoints: earned,
     maxPoints: max,
-    percentage: Math.round(percentage * 100) / 100,
+    percentage,
     passed,
     answeredCount: answered,
     totalCount: snapshot.length,

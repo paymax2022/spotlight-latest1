@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, ChevronDown, Clapperboard, CalendarDays, Check, Clock, FileText, GraduationCap, ClipboardList } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, ChevronDown, Clapperboard, CalendarDays, Check, Clock, FileText, GraduationCap, ClipboardList, Layers, Award } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -385,6 +385,17 @@ export default function FilmAcademyScreen() {
               <ChevronRight size={18} color={Colors.onSurfaceVariant} />
             </Pressable>
 
+            <Pressable onPress={() => router.push('/film-academy/path')} style={styles.trackRow}>
+              <View style={styles.trackIcon}>
+                <Layers size={18} color={Colors.gold} />
+              </View>
+              <View style={styles.trackBody}>
+                <Text style={styles.trackLabel}>Topic path</Text>
+                <Text style={styles.trackMeta}>Master each topic at 85% to unlock the next</Text>
+              </View>
+              <ChevronRight size={18} color={Colors.onSurfaceVariant} />
+            </Pressable>
+
             <Pressable onPress={() => router.push('/film-academy/assignments')} style={styles.trackRow}>
               <View style={styles.trackIcon}>
                 <ClipboardList size={18} color={Colors.gold} />
@@ -392,6 +403,17 @@ export default function FilmAcademyScreen() {
               <View style={styles.trackBody}>
                 <Text style={styles.trackLabel}>Assignments</Text>
                 <Text style={styles.trackMeta}>Submit your work and see your grades</Text>
+              </View>
+              <ChevronRight size={18} color={Colors.onSurfaceVariant} />
+            </Pressable>
+
+            <Pressable onPress={() => router.push('/film-academy/certificate')} style={styles.trackRow}>
+              <View style={styles.trackIcon}>
+                <Award size={18} color={Colors.gold} />
+              </View>
+              <View style={styles.trackBody}>
+                <Text style={styles.trackLabel}>Certificate</Text>
+                <Text style={styles.trackMeta}>Your verifiable TMFA credential and what still blocks it</Text>
               </View>
               <ChevronRight size={18} color={Colors.onSurfaceVariant} />
             </Pressable>

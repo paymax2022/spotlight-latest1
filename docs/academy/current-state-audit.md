@@ -274,3 +274,92 @@ Not yet run (needs a live/preview environment, tracked as follow-up):
 - **No ADR recorded yet** for the two-academy / shared-bank decision. Recommend
   **ADR-061** to capture the scoped-idempotency + separation rationale (referenced
   in §4–§5).
+
+---
+
+## 11. Addendum — TMFA topic mastery slice (2026-10-25)
+
+This addendum records the state **after** the topic-mastery implementation. The
+architecture decision is now written up as **ADR-061**
+(`docs/adr/ADR-061-film-academy-topic-mastery-on-bff-plane.md`): the film academy
+stays on the frontend-web BFF over Supabase; the Go K-12 engine is untouched.
+
+### 11.1 New persistence (additive only)
+
+Migration `supabase/migrations/20271099000000_film_academy_topic_mastery.sql`
+creates ten new `film_*` tables — `film_curriculum_versions`, `film_courses`,
+`film_topics`, `film_topic_media`, `film_topic_attempts`,
+`film_topic_attempt_responses`, `film_topic_mastery`, `film_mastery_holds`,
+`film_mastery_events`, `film_academic_audit`. Migration
+`20271099000001_film_academy_credentials.sql` adds certificate columns and a
+unique partial index on `qr_verification_code`. Neither contains a `DROP` or a
+`DELETE`, so the migration-guard rules hold.
+
+> **Warning:** an untracked, unreferenced migration
+> `20271025001000_purge_film_academy.sql` exists in the working tree. It contains
+> nine `DELETE FROM` statements against film programs, lessons, exams, attempts,
+> questions and reviews. It is **not** part of this slice, it violates the
+> additive-only iron rule, and it must not be applied. It has been left untouched
+> for its owner to resolve.
+
+### 11.2 New API surface
+
+Feature flag: `FEATURE_FILM_ACADEMY_TOPICS_ENABLED` (default off → 503).
+Separate from the assessment flag.
+
+| Surface | Routes | Auth |
+|---|---|---|
+| Learner path | `GET /api/academy/topics`, `GET /api/academy/topics/[topicId]` | Bearer + `resolveLearner` |
+| Topic quiz | `POST /api/academy/topics/[topicId]/quiz`, `GET/POST /api/academy/topic-attempts/[attemptId]{,/answer,/submit}` | Bearer + `resolveLearner` |
+| Article progress | `POST /api/academy/learning/progress`, `GET /api/academy/progress/events` | Bearer + `resolveLearner` |
+| Credential | `GET/POST /api/academy/certificate`, public `GET /api/academy/certificates/verify/[identifier]` | Bearer for issue; public verification exposes no PII |
+| Admin curriculum | `GET /api/admin/academy/topics`, `GET/PATCH /api/admin/academy/topics/[topicId]`, `GET/POST /api/admin/academy/topics/import` | `programs:manage`; approve/publish actions require `scores:manage` |
+| Admin production | `GET /api/admin/academy/media`, `PATCH /api/admin/academy/media/[assetId]` | `programs:manage` |
+| Admin mastery | `GET /api/admin/academy/mastery`, `GET/POST /api/admin/academy/holds`, `PATCH /api/admin/academy/holds/[holdId]` | `scores:manage` |
+| Admin credentials | `POST /api/admin/academy/certificates` (issue/revoke) | `scores:manage` |
+
+The answer key remains only in `academy_question_items.answer`. Topic attempt
+payloads carry presentation option IDs and the learner's own picks; the score,
+the immutable draw snapshot and the mastery row are server-derived.
+
+### 11.3 Gate rules now enforced
+
+- **Mastery:** `earned_points * 100 >= possible_points * 85`, integer-only.
+- **Publication:** approved article ≥200 chars + ≥20 approved items (or draw
+  size if larger) + every mandatory asset published / rights-cleared /
+  accessibility-passed / file-backed, unless a signed accessible equivalent with
+  a ≥20-character rationale waives media.
+- **Sequential unlock:** a topic is `AVAILABLE` only when every prerequisite is
+  `MASTERED`; locked topics never render questions.
+- **Holds:** open practical/safety/review holds block `MASTERED` independently of
+  the quiz score.
+- **Credentials:** every topic published, every topic mastered, zero open holds;
+  re-checked at issuance; public verification and revocation are audited.
+
+### 11.4 Current content reality (unchanged by the software)
+
+The bundled pack (`frontend-web/src/server/services/academy/topics/data/`) is
+13 courses / 72 topics. All of it imports as **draft**:
+
+- 864 media records, all `required`, **0 produced files**, all rights and
+  accessibility `NOT REVIEWED` (24 text drafts, 840 "to produce").
+- 336 questions, all draft (240 SME review, 96 rewrite-before-use). That is
+  ~4.7 per topic; the gate needs ≥20, i.e. ≥1,440 approved items.
+- 24 acting topics are faculty-review drafts (442–756 characters each); 48 craft
+  topics are "expansion required" briefs with 2 questions each.
+- 0 topics published; consequently 0 certificates can issue.
+
+### 11.5 Verification baseline for this addendum
+
+| Check | Result |
+|---|---|
+| `frontend-web` `tsc --noEmit` | exit 0 |
+| `frontend-admin` `tsc --noEmit` | exit 0 |
+| Mobile `npm run typecheck` | **exit 2 — 7 errors in unrelated screens/components; 0 in `film-academy`** (see testing report §4) |
+| `npx vitest run tests/unit/academy` | 96 passed, 1 skipped (41 new topic-mastery tests) |
+| Targeted `eslint` on changed web academy files | exit 0 |
+| Admin ESLint | not run — the package has no ESLint config or dependency |
+
+Not run: live migration application, live Supabase import, browser E2E and any
+mobile device test. The reports under `docs/academy/TMFA-*.md` repeat these
+limits rather than implying live verification.

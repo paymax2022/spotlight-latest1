@@ -264,6 +264,7 @@ export interface QuestionListFilter {
   status?: string;
   stage?: string;
   moduleCode?: string;
+  topicId?: string;
   q?: string;
   page: number;
   pageSize: number;
@@ -274,6 +275,9 @@ export interface AdminQuestionRow {
   external_code: string | null;
   film_stage: string | null;
   film_module_code: string | null;
+  film_topic_id: string | null;
+  film_objective_id: string | null;
+  film_review_notes: string | null;
   film_department: string | null;
   film_learning_outcome: string | null;
   film_cognitive: string | null;
@@ -300,13 +304,14 @@ export async function listQuestions(
   let q = db
     .from('academy_question_items')
     .select(
-      'id, external_code, film_stage, film_module_code, film_department, film_learning_outcome, film_cognitive, film_difficulty, film_points, source_version, status, stem, options, answer',
+      'id, external_code, film_stage, film_module_code, film_department, film_learning_outcome, film_cognitive, film_difficulty, film_points, source_version, status, stem, options, answer, film_topic_id, film_objective_id, film_review_notes',
       { count: 'exact' },
     )
     .eq('academy_scope', FILM_SCOPE);
   if (f.status) q = q.eq('status', f.status);
   if (f.stage) q = q.eq('film_stage', f.stage);
   if (f.moduleCode) q = q.eq('film_module_code', f.moduleCode);
+  if (f.topicId) q = q.eq('film_topic_id', f.topicId);
   if (f.q) q = q.or(`stem.ilike.%${f.q}%,external_code.ilike.%${f.q}%`);
   const { data, count, error } = await q.order('external_code', { ascending: true }).range(from, to);
   if (error) { console.error('[film/assessment] list failed', error); throw new Error('Could not load questions'); }
@@ -318,7 +323,7 @@ export async function getQuestion(db: Db, id: string): Promise<AdminQuestionRow 
   const { data } = await db
     .from('academy_question_items')
     .select(
-      'id, external_code, film_stage, film_module_code, film_department, film_learning_outcome, film_cognitive, film_difficulty, film_points, source_version, status, stem, options, answer',
+      'id, external_code, film_stage, film_module_code, film_department, film_learning_outcome, film_cognitive, film_difficulty, film_points, source_version, status, stem, options, answer, film_topic_id, film_objective_id, film_review_notes',
     )
     .eq('id', id)
     .eq('academy_scope', FILM_SCOPE)
