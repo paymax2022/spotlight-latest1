@@ -33,7 +33,7 @@ import { sanitizeMoneyInput } from '@/utils/money';
 import { Network } from '@/types/billing';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
-const AMOUNTS = [100, 200, 500, 1000, 2000, 5000];
+const AMOUNTS = [1000, 2000, 5000];
 
 const schema = z.object({
   phoneNumber: z
@@ -327,17 +327,17 @@ export default function AirtimeScreen() {
                 </Text>
               </Pressable>
             ))}
+            <TextInput
+              style={[styles.customPill, errors.amount && styles.customInputError]}
+              placeholder="Custom"
+              placeholderTextColor={Colors.outline}
+              keyboardType="decimal-pad"
+              inputMode="decimal"
+              maxLength={13}
+              value={customAmount}
+              onChangeText={handleCustomChange}
+            />
           </View>
-          <TextInput
-            style={[styles.customInput, errors.amount && styles.customInputError]}
-            placeholder="Or enter custom amount"
-            placeholderTextColor={Colors.outline}
-            keyboardType="decimal-pad"
-            inputMode="decimal"
-            maxLength={13}
-            value={customAmount}
-            onChangeText={handleCustomChange}
-          />
           {errors.amount && <Text style={styles.fieldError}>{errors.amount.message}</Text>}
         </View>
 
@@ -561,12 +561,13 @@ const styles = StyleSheet.create({
   providerInitial:{ ...Typography.labelLg, fontWeight: '800' },
   providerName:{ ...Typography.labelMd, color: Colors.onSurface },
   providerNameActive:{ color: Colors.onPrimaryFixed },
-  amountGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginVertical: Spacing.md },
-  amountPill: { minWidth: 88, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: Radius.full, alignItems: 'center', borderWidth: 1, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLow },
+  amountGrid: { flexDirection: 'row', flexWrap: 'nowrap', gap: Spacing.sm, marginVertical: Spacing.md },
+  amountPill: { flex: 1, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: Radius.full, alignItems: 'center', borderWidth: 1, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLow },
   amountPillActive:{ backgroundColor: Colors.primaryContainer, borderColor: Colors.primaryContainer },
   amountText: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   amountTextActive:{ color: Colors.onSecondaryContainer },
   customInput:{ height: 52, borderWidth: 1.5, borderColor: Colors.outlineVariant, borderRadius: Radius.md, paddingHorizontal: Spacing.md, ...Typography.bodyMd, color: Colors.onSurface, backgroundColor: Colors.surfaceContainerLow, marginTop: Spacing.sm },
+  customPill:{ flex: 1, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLow, ...Typography.bodyMd, color: Colors.onSurface },
   customInputError:{ borderColor: Colors.error },
   fieldError: { ...Typography.labelSm, color: Colors.error, marginTop: 4 },
   apiError:   { ...Typography.labelSm, color: Colors.error, textAlign: 'center', marginBottom: Spacing.md },
