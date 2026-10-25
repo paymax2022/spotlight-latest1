@@ -8,8 +8,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  getReport, listEarnings, getReferralSummary, formatNaira,
-  type ReportRow, type Earning, type GroupBy, type ReferralSummary, type ReferralReward,
+  getReport, listEarnings, getReferralSummary, buildCategoryPaymentBreakdown, formatNaira,
+  type ReportRow, type Earning, type GroupBy, type ReferralSummary, type ReferralReward, type CategoryPaymentBreakdown,
 } from '@/services/commissionService';
 import { PageHeader, Card, Kpi, Badge, CommissionTabs, StateBlock, th, td, label, input, btn } from '../_ui';
 
@@ -24,6 +24,8 @@ export default function CommissionProfitPage() {
   const [earnings, setEarnings] = useState<Earning[]>([]);
   const [referral, setReferral] = useState<ReferralSummary | null>(null);
   const [referralRewards, setReferralRewards] = useState<ReferralReward[]>([]);
+  const [categoryPaymentBreakdown, setCategoryPaymentBreakdown] = useState<CategoryPaymentBreakdown[]>([]);
+  const [breakdownView, setBreakdownView] = useState<'category' | 'payment'>('payment');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +39,7 @@ export default function CommissionProfitPage() {
       ]);
       setRows(r); setEarnings(e);
       setReferral(ref.summary); setReferralRewards(ref.rewards);
+      setCategoryPaymentBreakdown(buildCategoryPaymentBreakdown(e, ref.rewards));
     } catch (err) { setError(String(err)); }
     finally { setLoading(false); }
   }
@@ -126,37 +129,81 @@ export default function CommissionProfitPage() {
         </Card>
       )}
 
-      <Card title={`Breakdown by ${groupBy}`}>
-        <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No revenue in this range.">
+      <Card title={breakdownView === 'category' ? `Breakdown by ${groupBy}` : 'Breakdown by service & payment method'}>
+        <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem' }}>
+          <button
+            onClick={() => setBreakdownView('category')}
+            style={btn(breakdownView === 'category' ? 'primary' : 'ghost')}
+          >
+            By Category
+          </button>
+          <button
+            onClick={() => setBreakdownView('payment')}
+            style={btn(breakdownView === 'payment' ? 'primary' : 'ghost')}
+          >
+            By Service & Payment
+          </button>
+        </div>
+
+        <StateBlock loading={loading} error={error} empty={breakdownView === 'category' ? rows.length === 0 : categoryPaymentBreakdown.length === 0} emptyText="No transactions in this range.">
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={th()}>{isDay ? 'Day' : groupBy === 'service' ? 'Category / service' : 'Category'}</th>
-                  <th style={th()}>Txns</th>
-                  <th style={th()}>Gross</th>
-                  <th style={th()}>Commission</th>
-                  <th style={th()}>Platform</th>
-                  <th style={th()}>Convenience</th>
-                  <th style={th()}>Fixed</th>
-                  <th style={th()}>Spotlight revenue</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.groupKey}>
-                    <td style={{ ...td(), fontWeight: 600 }}>{r.groupKey.replace(/_/g, ' ')}</td>
-                    <td style={td()}>{r.count.toLocaleString('en-NG')}</td>
-                    <td style={td()}>{formatNaira(r.grossAmountKobo)}</td>
-                    <td style={td()}>{formatNaira(r.commissionKobo)}</td>
-                    <td style={td()}>{formatNaira(r.platformChargeKobo)}</td>
-                    <td style={td()}>{formatNaira(r.convenienceFeeKobo)}</td>
-                    <td style={td()}>{formatNaira(r.fixedFeeKobo)}</td>
-                    <td style={{ ...td(), fontWeight: 700, color: '#15803d' }}>{formatNaira(r.spotlightRevenueKobo)}</td>
+            {breakdownView === 'category' ? (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={th()}>{isDay ? 'Day' : groupBy === 'service' ? 'Category / service' : 'Category'}</th>
+                    <th style={th()}>Txns</th>
+                    <th style={th()}>Gross</th>
+                    <th style={th()}>Commission</th>
+                    <th style={th()}>Platform</th>
+                    <th style={th()}>Convenience</th>
+                    <th style={th()}>Fixed</th>
+                    <th style={th()}>Spotlight revenue</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.groupKey}>
+                      <td style={{ ...td(), fontWeight: 600 }}>{r.groupKey.replace(/_/g, ' ')}</td>
+                      <td style={td()}>{r.count.toLocaleString('en-NG')}</td>
+                      <td style={td()}>{formatNaira(r.grossAmountKobo)}</td>
+                      <td style={td()}>{formatNaira(r.commissionKobo)}</td>
+                      <td style={td()}>{formatNaira(r.platformChargeKobo)}</td>
+                      <td style={td()}>{formatNaira(r.convenienceFeeKobo)}</td>
+                      <td style={td()}>{formatNaira(r.fixedFeeKobo)}</td>
+                      <td style={{ ...td(), fontWeight: 700, color: '#15803d' }}>{formatNaira(r.spotlightRevenueKobo)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={th()}>Service</th>
+                    <th style={th()}>Payment method</th>
+                    <th style={th()}>Txns</th>
+                    <th style={th()}>Gross</th>
+                    <th style={th()}>Commission</th>
+                    <th style={th()}>Spotlight revenue</th>
+                    <th style={th()}>Referral commission</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {categoryPaymentBreakdown.map((b) => (
+                    <tr key={`${b.category}|${b.service}|${b.paymentMethod}`}>
+                      <td style={{ ...td(), fontWeight: 600 }}>{b.service || b.category}</td>
+                      <td style={td()}><Badge label={b.paymentMethod} tone={b.paymentMethod === 'card' ? 'neutral' : b.paymentMethod === 'wallet' ? 'ok' : 'neutral'} /></td>
+                      <td style={td()}>{b.count.toLocaleString('en-NG')}</td>
+                      <td style={td()}>{formatNaira(b.grossAmountKobo)}</td>
+                      <td style={td()}>{formatNaira(b.commissionKobo)}</td>
+                      <td style={{ ...td(), fontWeight: 700, color: '#15803d' }}>{formatNaira(b.spotlightRevenueKobo)}</td>
+                      <td style={{ ...td(), fontWeight: 600, color: b.referralCommissionKobo ? '#15803d' : '#999' }}>{b.referralCommissionKobo ? formatNaira(b.referralCommissionKobo) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </StateBlock>
       </Card>
@@ -201,10 +248,10 @@ export default function CommissionProfitPage() {
               <thead>
                 <tr>
                   <th style={th()}>When</th>
-                  <th style={th()}>Category</th>
                   <th style={th()}>Service</th>
-                  <th style={th()}>Source</th>
+                  <th style={th()}>Payment method</th>
                   <th style={th()}>Gross</th>
+                  <th style={th()}>Commission</th>
                   <th style={th()}>Spotlight revenue</th>
                 </tr>
               </thead>
@@ -212,10 +259,10 @@ export default function CommissionProfitPage() {
                 {earnings.map((e) => (
                   <tr key={e.id}>
                     <td style={td()}>{new Date(e.createdAt).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' })}</td>
-                    <td style={td()}><Badge label={e.serviceCategory.replace(/_/g, ' ')} tone="neutral" /></td>
                     <td style={td()}>{e.service}{e.serviceSubtype ? ` / ${e.serviceSubtype}` : ''}</td>
-                    <td style={td()}><code style={{ fontSize: '0.78rem' }}>{e.sourceModule}:{e.sourceRef}</code></td>
+                    <td style={td()}><Badge label={e.paymentMethod || 'unknown'} tone={e.paymentMethod === 'card' ? 'neutral' : e.paymentMethod === 'wallet' ? 'ok' : 'neutral'} /></td>
                     <td style={td()}>{formatNaira(e.grossAmountKobo)}</td>
+                    <td style={td()}>{formatNaira(e.commissionKobo)}</td>
                     <td style={{ ...td(), fontWeight: 600, color: '#15803d' }}>{formatNaira(e.spotlightRevenueKobo)}</td>
                   </tr>
                 ))}
