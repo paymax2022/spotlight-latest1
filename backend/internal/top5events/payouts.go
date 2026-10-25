@@ -438,7 +438,10 @@ func (s *Service) ApproveOrganiserPayout(ctx context.Context, approverID, payout
 	case PayoutFailed:
 		return nil, ErrPayoutNotPayable
 	case PayoutProcessing:
-		return nil, ErrPayoutInFlight
+		// Already approved by a checker: re-drive it (below) instead of
+		// refusing. executePayout serialises on the row lock and its legs are
+		// idempotent, so a concurrent approver that lost the pending→processing
+		// claim waits for the winner and returns the paid payout.
 	case PayoutPending:
 		if p.RequestedBy == approverID {
 			return nil, ErrPayoutSameActor
