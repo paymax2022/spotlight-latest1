@@ -470,7 +470,7 @@ export default function SellWizard() {
           ) : step === 'price' ? (
             <PrimaryButton label="Preview listing" onPress={() => setStep('preview')} disabled={!priceValid} />
           ) : (
-            <PrimaryButton label="Publish" onPress={handlePublish} loading={publishing} disabled={publishing || !attributesValid} />
+            <PrimaryButton label="Publish" onPress={handlePublish} loading={publishing} disabled={publishing || (schemaReady && requiredMissing.length > 0)} />
           )}
         </View>
       ) : null}
