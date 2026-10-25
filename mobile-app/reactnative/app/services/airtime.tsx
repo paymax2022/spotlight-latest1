@@ -2,13 +2,13 @@ import React, { useRef, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
   View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal,
-  ActivityIndicator, TextInput,
+  ActivityIndicator, TextInput, Image, FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { LinearGradient } from 'expo-linear-gradient';
-import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X } from 'lucide-react-native';
+import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X, Contacts as ContactsIcon } from 'lucide-react-native';
+import * as Contacts from 'expo-contacts';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
@@ -58,6 +58,10 @@ export default function AirtimeScreen() {
   const [paymentMethod,     setPaymentMethod]      = useState<PaymentMethod>('WALLET');
   const [paystackLoading,   setPaystackLoading]    = useState(false);
   const [paystackError,     setPaystackError]      = useState('');
+  const [showContactPicker, setShowContactPicker]  = useState(false);
+  const [contactsList,      setContactsList]       = useState<Contacts.Contact[]>([]);
+  const [contactsLoading,   setContactsLoading]    = useState(false);
+  const [contactsError,     setContactsError]      = useState('');
 
   const idemKeyRef         = useRef('');
   const confirmInFlightRef = useRef(false);
@@ -114,6 +118,37 @@ export default function AirtimeScreen() {
     setQuickAmount(null);
     const n = parseFloat(clean);
     setValue('amount', isNaN(n) ? 0 : n);
+  };
+
+  const openContactPicker = async () => {
+    const { status } = await Contacts.requestPermissionsAsync();
+    if (status !== 'granted') {
+      setContactsError('Permission to access contacts was denied');
+      return;
+    }
+    setContactsLoading(true);
+    setContactsError('');
+    try {
+      const { data } = await Contacts.getContactsAsync({
+        fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.FirstName, Contacts.Fields.LastName],
+      });
+      const filteredContacts = data.filter((c) => c.phoneNumbers && c.phoneNumbers.length > 0);
+      setContactsList(filteredContacts);
+      setShowContactPicker(true);
+    } catch (err: unknown) {
+      setContactsError('Failed to load contacts');
+    } finally {
+      setContactsLoading(false);
+    }
+  };
+
+  const selectContact = (contact: Contacts.Contact) => {
+    if (!contact.phoneNumbers || contact.phoneNumbers.length === 0) return;
+    const firstPhone = contact.phoneNumbers[0].number;
+    if (firstPhone) {
+      setValue('phoneNumber', firstPhone);
+      setShowContactPicker(false);
+    }
   };
 
   const onPressReview = handleSubmit((values) => {
@@ -213,20 +248,14 @@ export default function AirtimeScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         {/* Hero */}
-        <LinearGradient
-          colors={[Colors.primary, Colors.primaryContainer]}
-          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-          style={[styles.hero, shadow2]}
-        >
-          <View style={styles.heroIcon}>
-            <Text style={{ fontSize: 26 }}>📱</Text>
-          </View>
-          <View style={{ flex: 1, gap: Spacing.xs }}>
-            <Text style={styles.heroEyebrow}>SECURE SERVICE</Text>
-            <Text style={styles.heroTitle}>Buy Airtime</Text>
-            <Text style={styles.heroSub}>Top up any Nigerian mobile line instantly.</Text>
-          </View>
-        </LinearGradient>
+        <View style={styles.heroBanner}>
+          <Image
+            source={{ uri: 'https://res.cloudinary.com/paymax/image/upload/v1792924522/Premium_Purple_Airtime_Purchase_Banner_vcm6wh.png' }}
+            style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
+            resizeMode="cover"
+            accessibilityLabel="Buy Airtime"
+          />
+        </View>
 
         {/* Network + details card */}
         <View style={[styles.card, shadow1]}>
@@ -261,13 +290,29 @@ export default function AirtimeScreen() {
             <Text style={styles.fieldError}>{networkError}</Text>
           )}
 
-          <Controller
-            name="phoneNumber"
-            control={control}
-            render={({ field }) => (
-              <PhoneNumberInput label="Phone Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} error={errors.phoneNumber?.message} />
-            )}
-          />
+          <View style={styles.phoneNumberRow}>
+            <View style={{ flex: 1 }}>
+              <Controller
+                name="phoneNumber"
+                control={control}
+                render={({ field }) => (
+                  <PhoneNumberInput label="Phone Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} error={errors.phoneNumber?.message} />
+                )}
+              />
+            </View>
+            <Pressable
+              style={[styles.contactPickerBtn, contactsLoading && styles.contactPickerBtnLoading]}
+              onPress={openContactPicker}
+              disabled={contactsLoading}
+              accessibilityLabel="Pick from contacts"
+            >
+              {contactsLoading ? (
+                <ActivityIndicator size="small" color={Colors.primary} />
+              ) : (
+                <ContactsIcon size={20} color={Colors.primary} strokeWidth={2} />
+              )}
+            </Pressable>
+          </View>
 
           <Text style={[styles.sectionTitle, { marginTop: Spacing.md }]}>Amount</Text>
           <View style={styles.amountGrid}>
@@ -428,6 +473,53 @@ export default function AirtimeScreen() {
         </View>
       </Modal>
 
+      {/* ── Contact Picker Modal ─────────────────────────────────── */}
+      <Modal visible={showContactPicker} transparent animationType="slide">
+        <View style={styles.contactModalOverlay}>
+          <View style={styles.contactModalSheet}>
+            <View style={styles.modalHandle} />
+            <View style={styles.contactModalHeader}>
+              <Text style={styles.modalTitle}>Select Contact</Text>
+              <Pressable onPress={() => setShowContactPicker(false)}>
+                <X size={22} color={Colors.onSurface} />
+              </Pressable>
+            </View>
+
+            {contactsError ? (
+              <View style={styles.contactErrorContainer}>
+                <Text style={styles.apiError}>{contactsError}</Text>
+              </View>
+            ) : contactsList.length === 0 ? (
+              <View style={styles.contactEmptyContainer}>
+                <Text style={styles.contactEmptyText}>No contacts with phone numbers</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={contactsList}
+                keyExtractor={(c) => c.id || `${c.firstName}${c.phoneNumbers?.[0]?.number}`}
+                renderItem={({ item }) => {
+                  const name = [item.firstName, item.lastName].filter(Boolean).join(' ').trim() || 'Unknown';
+                  const phone = item.phoneNumbers?.[0]?.number || '';
+                  return (
+                    <Pressable
+                      style={styles.contactItem}
+                      onPress={() => selectContact(item)}
+                    >
+                      <View style={styles.contactItemContent}>
+                        <Text style={styles.contactName} numberOfLines={1}>{name}</Text>
+                        <Text style={styles.contactPhone} numberOfLines={1}>{phone}</Text>
+                      </View>
+                    </Pressable>
+                  );
+                }}
+                style={styles.contactList}
+                scrollEnabled
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {/* Hosts the in-app Paystack checkout WebView on native (nothing on web). */}
       <paystackCheckout.Sheet />
     </SafeAreaView>
@@ -459,11 +551,7 @@ const styles = StyleSheet.create({
   iconBtn:    { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   topTitle:   { ...Typography.titleLg, color: Colors.primary },
   content:    { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.lg, paddingBottom: Platform.OS === 'ios' ? 120 : 96 },
-  hero:       { minHeight: 120, borderRadius: Radius.xl, padding: Spacing.cardPadding, flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.lg, overflow: 'hidden' },
-  heroIcon:   { width: 56, height: 56, borderRadius: Radius.lg, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
-  heroEyebrow:{ ...Typography.labelSm, color: 'rgba(255,255,255,0.75)' },
-  heroTitle:  { ...Typography.headlineMd, color: Colors.onPrimary },
-  heroSub:    { ...Typography.bodySm, color: 'rgba(255,255,255,0.75)' },
+  heroBanner: { aspectRatio: 2, borderRadius: Radius.xl, overflow: 'hidden', marginBottom: Spacing.lg },
   card:       { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
   sectionTitle:{ ...Typography.titleMd, color: Colors.onSurface },
   providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
@@ -506,4 +594,18 @@ const styles = StyleSheet.create({
   modalActions:{ gap: Spacing.sm, marginTop: Spacing.lg },
   paystackPanel:{ marginTop: Spacing.md, gap: Spacing.sm },
   paystackInfo:{ ...Typography.bodySm, color: Colors.onSurfaceVariant, lineHeight: 20, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.md, borderRadius: Radius.md, borderLeftWidth: 3, borderLeftColor: Colors.secondary },
+  phoneNumberRow:{ flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.sm },
+  contactPickerBtn:{ width: 56, height: 56, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow, borderWidth: 1.5, borderColor: Colors.outlineVariant, marginBottom: Spacing.md },
+  contactPickerBtnLoading:{ opacity: 0.6 },
+  contactModalOverlay:{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  contactModalSheet:{ backgroundColor: Colors.surfaceContainerLowest, borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, padding: Spacing.cardPadding, paddingBottom: Platform.OS === 'ios' ? 40 : Spacing.xl, maxHeight: '85%' },
+  contactModalHeader:{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.lg },
+  contactErrorContainer:{ paddingVertical: Spacing.lg, paddingHorizontal: Spacing.md },
+  contactEmptyContainer:{ paddingVertical: Spacing.xl, alignItems: 'center' },
+  contactEmptyText:{ ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  contactList:{ maxHeight: '75%' },
+  contactItem:{ paddingVertical: Spacing.md, paddingHorizontal: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.surfaceContainerHigh },
+  contactItemContent:{ gap: 2 },
+  contactName:{ ...Typography.bodyMd, color: Colors.onSurface, fontWeight: '500' },
+  contactPhone:{ ...Typography.bodySm, color: Colors.onSurfaceVariant },
 });

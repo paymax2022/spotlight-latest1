@@ -1,12 +1,11 @@
 import React, { useRef, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
-  View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator,
+  View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X, CheckCircle } from 'lucide-react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, Controller } from 'react-hook-form';
@@ -232,14 +231,14 @@ export default function ElectricityScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <LinearGradient colors={['#D97706', Colors.primaryContainer]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.hero, shadow2]}>
-          <View style={styles.heroIcon}><Text style={{ fontSize: 26 }}>⚡</Text></View>
-          <View style={{ flex: 1, gap: Spacing.xs }}>
-            <Text style={styles.heroEyebrow}>SECURE SERVICE</Text>
-            <Text style={styles.heroTitle}>Electricity Payment</Text>
-            <Text style={styles.heroSub}>Prepaid & postpaid utility payments.</Text>
-          </View>
-        </LinearGradient>
+        <View style={styles.heroBanner}>
+          <Image
+            source={{ uri: 'https://res.cloudinary.com/paymax/image/upload/v1792924522/Purple_electricity_payment_hero_banner_amdysf.png' }}
+            style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
+            resizeMode="cover"
+            accessibilityLabel="Electricity Payment"
+          />
+        </View>
 
         <View style={[styles.card, shadow1]}>
           <Text style={styles.sectionTitle}>Select DISCO</Text>
@@ -461,15 +460,11 @@ const styles = StyleSheet.create({
   iconBtn:     { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   topTitle:    { ...Typography.titleLg, color: Colors.primary },
   content:     { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.lg, paddingBottom: Platform.OS === 'ios' ? 120 : 96 },
-  hero:        { minHeight: 120, borderRadius: Radius.xl, padding: Spacing.cardPadding, flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.lg, overflow: 'hidden' },
-  heroIcon:    { width: 56, height: 56, borderRadius: Radius.lg, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
-  heroEyebrow: { ...Typography.labelSm, color: 'rgba(255,255,255,0.75)' },
-  heroTitle:   { ...Typography.headlineMd, color: Colors.onPrimary },
-  heroSub:     { ...Typography.bodySm, color: 'rgba(255,255,255,0.75)' },
+  heroBanner:  { aspectRatio: 2, borderRadius: Radius.xl, overflow: 'hidden', marginBottom: Spacing.lg },
   card:        { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
   sectionTitle:{ ...Typography.titleMd, color: Colors.onSurface },
-  providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
-  providerCard:{ width: '48%', minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.md, gap: Spacing.sm },
+  providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
+  providerCard:{ width: '31%', minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.sm, gap: Spacing.sm, alignItems: 'center' },
   providerCardActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
   providerIcon:{ width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   providerLogoWrap:{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: Colors.surfaceContainerHigh, overflow: 'hidden' },

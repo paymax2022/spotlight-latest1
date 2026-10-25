@@ -1,11 +1,10 @@
 import React, { useRef, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
-import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { LinearGradient } from 'expo-linear-gradient';
-import { ArrowLeft, CheckCircle2, CircleHelp, GraduationCap, ShieldCheck, X } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle2, CircleHelp, ShieldCheck, X } from 'lucide-react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -38,6 +37,8 @@ const schema = z.object({
 });
 
 type Form = z.infer<typeof schema>;
+
+const EDUCATION_BANNER_URL = 'https://res.cloudinary.com/paymax/image/upload/v1792924522/Premium_purple_education_payments_banner_mtqodg.png';
 
 export default function EducationScreen() {
   const qc = useQueryClient();
@@ -204,21 +205,12 @@ export default function EducationScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <LinearGradient
-          colors={['#7C3AED', Colors.primaryContainer]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.hero, shadow2]}
-        >
-          <View style={styles.heroIcon}>
-            <GraduationCap size={28} color={Colors.onPrimary} strokeWidth={2.2} />
-          </View>
-          <View style={styles.heroCopy}>
-            <Text style={styles.heroEyebrow}>SECURE SERVICE</Text>
-            <Text style={styles.heroTitle}>Education Payment</Text>
-            <Text style={styles.heroSub}>Buy exam PINs and education vouchers through approved providers.</Text>
-          </View>
-        </LinearGradient>
+        <Image
+          source={{ uri: EDUCATION_BANNER_URL }}
+          accessibilityLabel="Education payment"
+          style={[styles.heroBanner, shadow2]}
+          resizeMode="cover"
+        />
 
         <View style={[styles.card, shadow1]}>
           <Text style={styles.sectionTitle}>Select Provider</Text>
@@ -475,27 +467,15 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.lg,
     paddingBottom: Platform.OS === 'ios' ? 120 : 96,
   },
-  hero: {
-    minHeight: 156,
+  // Banner is 1774×887 — keep its ratio so the whole artwork shows, not a cropped band.
+  heroBanner: {
+    width: '100%',
+    aspectRatio: 1774 / 887,
     borderRadius: Radius.xl,
-    padding: Spacing.cardPadding,
-    flexDirection: 'row',
-    gap: Spacing.md,
     marginBottom: Spacing.lg,
     overflow: 'hidden',
+    backgroundColor: Colors.primaryContainer,
   },
-  heroIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: Radius.lg,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroCopy: { flex: 1, gap: Spacing.xs },
-  heroEyebrow: { ...Typography.labelSm, color: Colors.inverseOnSurface, opacity: 0.9 },
-  heroTitle: { ...Typography.headlineMd, color: Colors.onPrimary },
-  heroSub: { ...Typography.bodySm, color: Colors.inverseOnSurface },
   card: {
     backgroundColor: Colors.surfaceContainerLowest,
     borderRadius: Radius.xl,

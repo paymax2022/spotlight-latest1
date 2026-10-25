@@ -1,12 +1,15 @@
 import React, { useMemo, useRef, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
+import ContactPickerModal from '@/features/visitor/components/ContactPickerModal';
+import { toE164, toNsn } from '@/lib/phone/phone';
 import {
-  View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator,
+  View, Text, Image, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator,
 } from 'react-native';
+
+const DATA_BANNER_URL = 'https://res.cloudinary.com/paymax/image/upload/v1792924527/Purple_fintech_data_bundle_banner_pyoorm.png';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X } from 'lucide-react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, Controller } from 'react-hook-form';
@@ -24,8 +27,8 @@ import { Typography } from '@/constants/tokens';
 import { shadow1, shadow2 } from '@/constants/tokens';
 import { getDataNetworks, getDataPlans, initiateDataPaystack, purchaseData, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
 import { useGatewayCheckout } from '@/features/payments';
-import ProviderLogo from '@/components/ProviderLogo';
 import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
+import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -52,6 +55,7 @@ export default function DataScreen() {
   const [saveBeneficiary, setSaveBeneficiary] = useState(false);
   const [paymentMethod,   setPaymentMethod]   = useState<PaymentMethod>('WALLET');
   const [paystackLoading, setPaystackLoading] = useState(false);
+  const [contactsOpen, setContactsOpen]       = useState(false);
   const [paystackError,   setPaystackError]   = useState('');
   const idemKeyRef = useRef('');
   const confirmInFlightRef = useRef(false);
@@ -99,10 +103,10 @@ export default function DataScreen() {
     ? planOptions.find((o) => o.plan.id === selectedPlan.id)?.label ?? ''
     : '';
 
-  const { control, handleSubmit, formState: { errors } } = useForm<Form>({ resolver: zodResolver(schema) });
+  const { control, handleSubmit, setValue, formState: { errors } } = useForm<Form>({ resolver: zodResolver(schema) });
 
-  const { mutate: purchase, isPending, error: purchaseError } = useMutation({
   const promptKyc = useBillKycPrompt();
+  const { mutate: purchase, isPending, error: purchaseError } = useMutation({
     mutationFn: purchaseData,
     onSuccess: (result) => {
       confirmInFlightRef.current = false;
@@ -115,8 +119,8 @@ export default function DataScreen() {
     },
     onError: (err) => {
       confirmInFlightRef.current = false;
-    },
       void promptKyc(err);
+    },
   });
 
   const onPressReview = handleSubmit((values) => {
@@ -212,14 +216,12 @@ export default function DataScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <LinearGradient colors={[Colors.secondary, Colors.primaryContainer]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.hero, shadow2]}>
-          <View style={styles.heroIcon}><Text style={{ fontSize: 26 }}>📶</Text></View>
-          <View style={{ flex: 1, gap: Spacing.xs }}>
-            <Text style={styles.heroEyebrow}>SECURE SERVICE</Text>
-            <Text style={styles.heroTitle}>Buy Data Bundle</Text>
-            <Text style={styles.heroSub}>Mobile data for all major Nigerian networks.</Text>
-          </View>
-        </LinearGradient>
+        <Image
+          source={{ uri: DATA_BANNER_URL }}
+          accessibilityLabel="Buy data bundle"
+          style={[styles.heroBanner, shadow2]}
+          resizeMode="cover"
+        />
 
         <View style={[styles.card, shadow1]}>
           <Text style={styles.sectionTitle}>Select Network</Text>
@@ -244,8 +246,19 @@ export default function DataScreen() {
             name="phoneNumber"
             control={control}
             render={({ field }) => (
-              <PhoneNumberInput label="Phone / Router Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} error={errors.phoneNumber?.message} />
+              <PhoneNumberInput label="Phone / Router Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} onPickContact={() => setContactsOpen(true)} error={errors.phoneNumber?.message} />
             )}
+          />
+
+          <ContactPickerModal
+            visible={contactsOpen}
+            onClose={() => setContactsOpen(false)}
+            onSelect={(contact) => {
+              // Device numbers arrive as "+234 801…", "0801…" or "0801-…"; toNsn strips
+              // the country code, trunk zero and separators before the form sees them.
+              const nsn = toNsn(contact.phone);
+              setValue('phoneNumber', toE164(nsn) || nsn, { shouldValidate: true });
+            }}
           />
         </View>
 
@@ -406,15 +419,12 @@ const styles = StyleSheet.create({
   iconBtn:     { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   topTitle:    { ...Typography.titleLg, color: Colors.primary },
   content:     { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.lg, paddingBottom: Platform.OS === 'ios' ? 120 : 96 },
-  hero:        { minHeight: 120, borderRadius: Radius.xl, padding: Spacing.cardPadding, flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.lg, overflow: 'hidden' },
-  heroIcon:    { width: 56, height: 56, borderRadius: Radius.lg, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
-  heroEyebrow: { ...Typography.labelSm, color: 'rgba(255,255,255,0.75)' },
-  heroTitle:   { ...Typography.headlineMd, color: Colors.onPrimary },
-  heroSub:     { ...Typography.bodySm, color: 'rgba(255,255,255,0.75)' },
+  // Banner is 1774×887 — keep its ratio so the whole artwork shows, not a cropped band.
+  heroBanner:  { width: '100%', aspectRatio: 1774 / 887, borderRadius: Radius.xl, marginBottom: Spacing.lg, overflow: 'hidden', backgroundColor: Colors.primaryContainer },
   card:        { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
   sectionTitle:{ ...Typography.titleMd, color: Colors.onSurface },
-  providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
-  providerCard:{ width: '48%', minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.md, gap: Spacing.sm },
+  providerGrid:{ flexDirection: 'row', flexWrap: 'nowrap', justifyContent: 'space-between', gap: Spacing.xs, marginTop: Spacing.md, marginBottom: Spacing.lg },
+  providerCard:{ flex: 1, minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.sm, gap: Spacing.sm, alignItems: 'center' },
   providerCardActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
   providerIcon:{ width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   providerInitial:{ ...Typography.labelLg, fontWeight: '800' },

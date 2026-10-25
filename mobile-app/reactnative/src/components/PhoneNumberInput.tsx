@@ -26,6 +26,8 @@ export interface PhoneNumberInputProps {
   onChange: (next: { nsn: string; e164: string; valid: boolean; country: Country }) => void;
   error?: string;
   editable?: boolean;
+  /** When set, the trailing phone icon opens the device phonebook. */
+  onPickContact?: () => void;
   defaultIso2?: string;
   /**
    * Restrict to countries usable as a SIGN-IN identifier. The backend reduces
@@ -39,7 +41,7 @@ export interface PhoneNumberInputProps {
 }
 
 export default function PhoneNumberInput({
-  label, value, onChange, error, editable = true,
+  label, value, onChange, error, editable = true, onPickContact,
   defaultIso2 = DEFAULT_COUNTRY.iso2, identityOnly = true, testID,
 }: PhoneNumberInputProps) {
   const options = useMemo(
@@ -116,7 +118,20 @@ export default function PhoneNumberInput({
           testID={testID}
         />
 
-        <Smartphone size={18} color={Colors.outline} strokeWidth={1.8} />
+        {onPickContact ? (
+          <Pressable
+            onPress={onPickContact}
+            disabled={!editable}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Choose phone number from contacts"
+            testID={testID ? `${testID}-contacts` : undefined}
+          >
+            <Smartphone size={18} color={Colors.primary} strokeWidth={1.8} />
+          </Pressable>
+        ) : (
+          <Smartphone size={18} color={Colors.outline} strokeWidth={1.8} />
+        )}
       </Pressable>
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
