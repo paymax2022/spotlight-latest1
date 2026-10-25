@@ -2,7 +2,7 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { resolveLearner } from '@/src/server/services/academy';
+import { getDefaultProgramId, resolveLearner } from '@/src/server/services/academy';
 import { bestAttemptsByExam, type AttemptRow } from '@/src/server/services/academy/bestAttempt';
 
 export async function GET(request: Request) {
@@ -24,13 +24,31 @@ export async function GET(request: Request) {
       });
     }
 
-    const [modulesRes, progressRes, examsRes, attemptsRes] = await Promise.all([
+    const modulesFor = (programId: string) =>
       supabase
         .from('academy_modules')
         .select('id, title, description, order_index, academy_lessons(id, title, description, content_markdown, video_url, resource_url, resource_label, order_index, estimated_minutes, is_required, is_published)')
-        .eq('program_id', learner.programId)
+        .eq('program_id', programId)
         .eq('is_published', true)
-        .order('order_index', { ascending: true }),
+        .order('order_index', { ascending: true });
+
+    // Learning opens on payment with no admin release step: when the batch's own
+    // programme has nothing published yet, serve the default curriculum rather
+    // than an empty "being prepared" page.
+    let programId = learner.programId;
+    let modulesQuery = await modulesFor(programId);
+    if (!modulesQuery.error && (modulesQuery.data ?? []).length === 0) {
+      const fallbackId = await getDefaultProgramId(supabase);
+      if (fallbackId && fallbackId !== programId) {
+        const fallback = await modulesFor(fallbackId);
+        if (!fallback.error && (fallback.data ?? []).length > 0) {
+          programId = fallbackId;
+          modulesQuery = fallback;
+        }
+      }
+    }
+
+    const [progressRes, examsRes, attemptsRes] = await Promise.all([
       supabase
         .from('academy_lesson_progress')
         .select('lesson_id, completed, completed_at')
@@ -38,7 +56,7 @@ export async function GET(request: Request) {
       supabase
         .from('academy_exams')
         .select('id, module_id, title, pass_mark, time_limit_minutes, max_attempts')
-        .eq('program_id', learner.programId)
+        .eq('program_id', programId)
         .not('module_id', 'is', null),
       supabase
         .from('academy_exam_attempts')
@@ -46,6 +64,7 @@ export async function GET(request: Request) {
         .eq('enrollment_id', learner.enrollmentId),
     ]);
 
+    const modulesRes = modulesQuery;
     if (modulesRes.error) {
       console.error('[academy/learning] modules failed', modulesRes.error);
       return errorResponse('Failed to load your curriculum', 500);
