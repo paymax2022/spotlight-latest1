@@ -59,6 +59,7 @@ export default function VoteReceiptScreen() {
           visible={shareOpen}
           onClose={() => setShareOpen(false)}
           contestantName={tx.contestantName ?? 'Contestant'}
+          contestantId={tx.contestantId}
           shareText={`I voted ${tx.votes} times for ${tx.contestantName} in ${tx.contestTitle}! 🎤 Ref: ${tx.reference}`}
         />
       )}
