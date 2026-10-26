@@ -7,6 +7,7 @@ import { REGISTRATION_TABS } from '@/constants/moduleTabs';
 // The status screen's path carries the application id, which the tab bar's
 // exact-match rule cannot list — opt that one path in. The wizard, submit and
 // payment screens have their own bottom CTAs and stay bar-free.
+// Regex: matches /registration/{id}/status or /registration/{id}/status/
 const STATUS_PATH = /^\/registration\/[^/]+\/status\/?$/;
 
 export default function RegistrationLayout() {
