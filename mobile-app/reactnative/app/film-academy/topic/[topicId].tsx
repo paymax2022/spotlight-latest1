@@ -347,6 +347,15 @@ export default function FilmAcademyTopicScreen() {
           <>
             <Text style={styles.eyebrow}>{data.stageLabel} · {data.courseTitle}</Text>
             <Text style={styles.title}>{data.title}</Text>
+            {data.pilot && (
+              <View style={styles.pilotNote}>
+                <Text style={styles.pilotNoteText}>
+                  Pilot delivery — this lesson and its questions have not completed faculty or SME
+                  review yet. Your work counts toward unlocking the next topic, but it cannot earn a
+                  certificate.
+                </Text>
+              </View>
+            )}
             <View style={styles.metaRow}>
               <View style={[styles.statePill, { backgroundColor: color + '20' }]}>
                 <Text style={[styles.statePillText, { color }]}>{topicStateLabel(data.state)}</Text>
@@ -497,6 +506,9 @@ const styles = StyleSheet.create({
   eyebrow:     { ...Typography.labelSm, color: Colors.onSurfaceVariant, textTransform: 'uppercase',
                  letterSpacing: 0.5 },
   title:       { ...Typography.headlineMd, color: Colors.onSurface },
+  pilotNote:   { backgroundColor: Colors.gold + '20', borderRadius: Radius.md, padding: Spacing.md,
+                 marginTop: Spacing.sm },
+  pilotNoteText: { ...Typography.bodySm, color: Colors.onWarning },
   metaRow:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flexWrap: 'wrap' },
   metaText:    { ...Typography.labelSm, color: Colors.onSurfaceVariant },
 

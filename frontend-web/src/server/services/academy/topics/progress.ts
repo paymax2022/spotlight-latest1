@@ -4,6 +4,12 @@
 // mastery ledger, holds, and the approved question pool. Nothing is inferred
 // from a client flag. A locked topic reveals its title and outcomes only; the
 // teaching article is withheld until the server says the topic is published.
+//
+// One exception is honoured, and it is server-side and audited: a course opened
+// for pilot delivery stands in for "published" and "reviewed pool" so the
+// sequence can be taught before review. Prerequisites, the 85% rule and holds
+// still apply unchanged, and every such topic reports pilot: true so no screen
+// can present it as published curriculum.
 
 import { createAdminClient } from '@/lib/supabase/server';
 import {
@@ -14,6 +20,7 @@ import {
   type TopicOutcome,
   type PublicationBlocker,
 } from './types';
+import { loadActivePilotCourseIds, loadPilotUsableQuestionCounts } from './pilot';
 
 type Db = ReturnType<typeof createAdminClient>;
 
@@ -139,6 +146,8 @@ export interface TopicPathItem {
   prerequisites: string[];
   state: TopicLearnerState;
   published: boolean;
+  /** True when this topic is only reachable because its course is in pilot delivery. */
+  pilot: boolean;
   contentStatus: string;
   quizMinimumPercent: number;
   drawCount: number;
@@ -196,6 +205,10 @@ export interface TopicDetail extends TopicPathItem {
 interface TopicStateContext {
   published: boolean;
   poolReady: boolean;
+  /** The topic's course is open for audited pilot delivery. Never true in production. */
+  pilotDelivery: boolean;
+  /** Under pilot, enough unreviewed items exist to build a form of quiz_draw_count. */
+  pilotPoolReady: boolean;
   prerequisitesMastered: boolean;
   masteryState: string | null;
   passed: boolean;
@@ -215,8 +228,14 @@ export interface TopicStateDecision {
  * Pure progression rule. The server — not the mobile navigation — decides
  * whether a topic is reachable. A PASSED topic with an open hold is deliberately
  * not MASTERED, so the next topic stays locked until the hold is cleared.
+ *
+ * `pilotDelivery` relaxes only the delivery preconditions (published, reviewed
+ * pool). The prerequisite chain, holds, remediation and the pass threshold are
+ * identical either way, so a pilot course still unlocks topic by topic.
  */
 export function deriveTopicState(ctx: TopicStateContext): TopicStateDecision {
+  const openForDelivery = ctx.published || ctx.pilotDelivery;
+  const poolForDelivery = ctx.poolReady || (ctx.pilotDelivery && ctx.pilotPoolReady);
   if (ctx.masteryState === 'MASTERED' && !ctx.hasOpenHold) {
     return { state: 'MASTERED', canStartQuiz: false, blockerCode: null, blockerMessage: null };
   }
@@ -237,12 +256,12 @@ export function deriveTopicState(ctx: TopicStateContext): TopicStateDecision {
   if (ctx.lastAttemptFailed) {
     return {
       state: 'REMEDIATION_REQUIRED',
-      canStartQuiz: ctx.published && ctx.poolReady,
-      blockerCode: ctx.poolReady ? null : 'QUIZ_POOL_INSUFFICIENT',
-      blockerMessage: ctx.poolReady ? null : 'A reviewed question form is not available yet.',
+      canStartQuiz: openForDelivery && poolForDelivery,
+      blockerCode: poolForDelivery ? null : 'QUIZ_POOL_INSUFFICIENT',
+      blockerMessage: poolForDelivery ? null : poolMessage(ctx),
     };
   }
-  if (!ctx.published) {
+  if (!openForDelivery) {
     return {
       state: 'LOCKED',
       canStartQuiz: false,
@@ -266,15 +285,22 @@ export function deriveTopicState(ctx: TopicStateContext): TopicStateDecision {
       blockerMessage: 'A practical, safety or review hold must be cleared before this topic opens.',
     };
   }
-  if (!ctx.poolReady) {
+  if (!poolForDelivery) {
     return {
       state: 'LOCKED',
       canStartQuiz: false,
       blockerCode: 'QUIZ_POOL_INSUFFICIENT',
-      blockerMessage: 'At least 20 approved questions are required before this topic quiz can run.',
+      blockerMessage: poolMessage(ctx),
     };
   }
   return { state: 'AVAILABLE', canStartQuiz: true, blockerCode: null, blockerMessage: null };
+}
+
+/** The pool shortfall, described as it actually is under a pilot exception. */
+function poolMessage(ctx: TopicStateContext): string {
+  return ctx.pilotDelivery
+    ? 'This pilot topic does not have enough questions to build a quiz form yet.'
+    : `At least ${MIN_APPROVED_ITEMS_PER_TOPIC} approved questions are required before this topic quiz can run.`;
 }
 
 function numeric(value: number | string | null | undefined): number | null {
@@ -312,8 +338,18 @@ function isFuture(iso: string, now: number): boolean {
 }
 
 export async function loadTopicPath(db: Db, learner: LearnerIdentity): Promise<TopicPath> {
-  const [coursesRes, topicsRes, masteryRes, holdsRes, attemptsRes, questionsRes, mediaRes, cursorRes] =
-    await Promise.all([
+  const [
+    coursesRes,
+    topicsRes,
+    masteryRes,
+    holdsRes,
+    attemptsRes,
+    questionsRes,
+    mediaRes,
+    cursorRes,
+    pilotCourseIds,
+    pilotPoolCounts,
+  ] = await Promise.all([
       db.from('film_courses').select('course_id, title, kind, stage_label, order_index').order('order_index'),
       db
         .from('film_topics')
@@ -353,6 +389,8 @@ export async function loadTopicPath(db: Db, learner: LearnerIdentity): Promise<T
         .order('id', { ascending: false })
         .limit(1)
         .maybeSingle(),
+      loadActivePilotCourseIds(db),
+      loadPilotUsableQuestionCounts(db),
     ]);
 
   if (coursesRes.error) throw new Error('Could not load the academy courses.');
@@ -428,6 +466,10 @@ export async function loadTopicPath(db: Db, learner: LearnerIdentity): Promise<T
       const topicMedia = mediaByTopic.get(topic.topic_id) ?? [];
       const approvedQuestionCount = approvedByTopic.get(topic.topic_id) ?? 0;
       const poolReady = approvedQuestionCount >= Math.max(MIN_APPROVED_ITEMS_PER_TOPIC, topic.quiz_draw_count);
+      // A pilot stands in for publication and for a reviewed pool — nothing else.
+      const pilotDelivery = pilotCourseIds.has(topic.course_id);
+      const pilotPoolReady =
+        pilotDelivery && (pilotPoolCounts.get(topic.topic_id) ?? 0) >= Math.max(1, topic.quiz_draw_count);
       // A prerequisite is satisfied only when its own resolved state is MASTERED.
       // Checking against the mastery row alone would let a hold-blocked PASSED
       // topic unlock the next one.
@@ -443,6 +485,8 @@ export async function loadTopicPath(db: Db, learner: LearnerIdentity): Promise<T
       const decision = deriveTopicState({
         published: topic.published,
         poolReady,
+        pilotDelivery,
+        pilotPoolReady,
         prerequisitesMastered,
         masteryState: rowMastery?.state ?? null,
         passed,
@@ -474,6 +518,7 @@ export async function loadTopicPath(db: Db, learner: LearnerIdentity): Promise<T
         prerequisites: topic.prerequisites ?? [],
         state: decision.state,
         published: topic.published,
+        pilot: pilotDelivery && !topic.published,
         contentStatus: topic.content_status,
         quizMinimumPercent: Math.max(85, Number(topic.quiz_minimum_percent ?? 85)),
         drawCount: Number(topic.quiz_draw_count ?? 10),
@@ -603,7 +648,10 @@ export async function loadTopicForLearner(
   const next = ordered.slice(index + 1).find((t) => t.courseId === topic.course_id) ?? null;
   const previous = [...ordered].slice(0, index).reverse().find((t) => t.courseId === topic.course_id) ?? null;
 
-  const articleUnlocked = topic.published;
+  // A pilot topic is taught from unreviewed material by design; the screen says
+  // so via `pilot`, and the publication blockers below stay visible so nobody
+  // can mistake the exception for a signed-off lesson.
+  const articleUnlocked = topic.published || pathItem.pilot;
   return {
     ...pathItem,
     article: articleUnlocked ? topic.lesson_markdown : null,

@@ -264,6 +264,8 @@ describe('topic publication gate', () => {
 const readyContext = {
   published: true,
   poolReady: true,
+  pilotDelivery: false,
+  pilotPoolReady: false,
   prerequisitesMastered: true,
   masteryState: null as string | null,
   passed: false,
@@ -332,6 +334,55 @@ describe('server-owned learner state machine', () => {
     expect(d.state).toBe('AVAILABLE');
     expect(d.canStartQuiz).toBe(true);
     expect(d.blockerCode).toBeNull();
+  });
+});
+
+// A pilot unlock stands in for publication and the reviewed pool ONLY. Every
+// other rule has to behave exactly as it would for published curriculum,
+// otherwise the exception would quietly become a progression bypass.
+describe('pilot delivery exception', () => {
+  const pilotContext = {
+    ...readyContext,
+    published: false,
+    poolReady: false,
+    pilotDelivery: true,
+    pilotPoolReady: true,
+  };
+
+  it('opens an unpublished entry topic whose course is in pilot delivery', () => {
+    const d = deriveTopicState(pilotContext);
+    expect(d.state).toBe('AVAILABLE');
+    expect(d.canStartQuiz).toBe(true);
+  });
+
+  it('still locks the next topic until the earlier one is mastered', () => {
+    const d = deriveTopicState({ ...pilotContext, prerequisitesMastered: false });
+    expect(d.state).toBe('LOCKED');
+    expect(d.blockerCode).toBe('PREREQUISITE_INCOMPLETE');
+  });
+
+  it('still locks a pilot topic while an academic hold is open', () => {
+    const d = deriveTopicState({ ...pilotContext, hasOpenHold: true });
+    expect(d.state).toBe('LOCKED');
+    expect(d.blockerCode).toBe('HOLD_OPEN');
+  });
+
+  it('locks a pilot topic that cannot fill a quiz form, and says so honestly', () => {
+    const d = deriveTopicState({ ...pilotContext, pilotPoolReady: false });
+    expect(d.state).toBe('LOCKED');
+    expect(d.blockerCode).toBe('QUIZ_POOL_INSUFFICIENT');
+    expect(d.blockerMessage).toContain('pilot');
+  });
+
+  it('still requires a pass before the pilot topic counts as mastered', () => {
+    expect(deriveTopicState({ ...pilotContext, passed: true }).state).toBe('MASTERED');
+    expect(deriveTopicState(pilotContext).state).not.toBe('MASTERED');
+  });
+
+  it('changes nothing when pilot delivery is off', () => {
+    const d = deriveTopicState({ ...pilotContext, pilotDelivery: false, pilotPoolReady: false });
+    expect(d.state).toBe('LOCKED');
+    expect(d.blockerCode).toBe('TOPIC_NOT_PUBLISHED');
   });
 });
 

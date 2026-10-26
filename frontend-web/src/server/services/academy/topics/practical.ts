@@ -17,6 +17,7 @@
 
 import { createAdminClient } from '@/lib/supabase/server';
 import { displayPercent, passesTopicQuiz } from './types';
+import { loadActivePilotCourseIds } from './pilot';
 import type { LearnerIdentity } from './progress';
 
 type Db = ReturnType<typeof createAdminClient>;
@@ -396,15 +397,26 @@ export function practicalSubmissionView(row: SubmissionRow): PracticalSubmission
 
 interface PracticalTopic {
   topic_id: string;
+  course_id: string;
   title: string;
   published: boolean;
   prerequisites: string[];
 }
 
+/**
+ * True when the topic's course is open for audited pilot delivery. Mirrors the
+ * quiz path: the exception replaces the publication precondition only, and is
+ * inert in production.
+ */
+async function isPilotCourse(db: Db, courseId: string): Promise<boolean> {
+  const pilotCourses = await loadActivePilotCourseIds(db);
+  return pilotCourses.has(courseId);
+}
+
 async function loadPracticalTopic(db: Db, topicId: string): Promise<PracticalTopic | null> {
   const { data, error } = await db
     .from('film_topics')
-    .select('topic_id, title, published, prerequisites')
+    .select('topic_id, course_id, title, published, prerequisites')
     .eq('topic_id', topicId)
     .maybeSingle();
   if (error) {
@@ -428,7 +440,7 @@ async function assertTopicOpenForPractical(
 ): Promise<PracticalTopic> {
   const topic = await loadPracticalTopic(db, topicId);
   if (!topic) throw new PracticalError(404, 'TOPIC_NOT_FOUND', 'Topic not found.');
-  if (!topic.published) {
+  if (!topic.published && !(await isPilotCourse(db, topic.course_id))) {
     throw new PracticalError(409, 'TOPIC_NOT_PUBLISHED', 'This topic has not completed academic publication review.');
   }
 
@@ -560,7 +572,8 @@ export async function loadPracticalForLearner(
   ]);
 
   let topicOpenReason: string | null = null;
-  if (!topic.published) {
+  const pilotCourse = topic.published ? false : await isPilotCourse(db, topic.course_id);
+  if (!topic.published && !pilotCourse) {
     topicOpenReason = 'This topic has not completed academic publication review.';
   } else if (assessment?.active && topic.prerequisites.length > 0) {
     try {

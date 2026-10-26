@@ -8,7 +8,7 @@ This report separates three different claims, because they are not the same:
 |---|---|
 | **Software implemented** — gates, APIs, screens, practical workflow, PDF/QR credentials | Yes, web/admin typechecks green and unit-tested; mobile repo tsc is red on unrelated files, with 0 film-academy errors |
 | **Content ready for publication** | **No** — 0 of 72 topics publishable (see `TMFA-CONTENT-READINESS.md`) |
-| **Live-verified** — migrations applied, import run, E2E on a real DB/device | **No** (see `TMFA-TESTING-REPORT.md`) |
+| **Live-verified** — migrations applied, import run, E2E on a real DB/device | **Local only** — the four academy migrations are applied and ledger-recorded on the local Supabase, the pack import ran there, and learner routes were exercised over authenticated HTTP (see `TMFA-TESTING-REPORT.md`). No staging/production environment has been touched, and no physical device run has been made. |
 
 The honest one-line summary: the LMS mechanics are built and enforced in code;
 the curriculum pack that would feed them is an unapproved, unproduced draft.
@@ -38,10 +38,22 @@ tables:
 `supabase/migrations/20271099000001_film_academy_credentials.sql` — additive
 credential columns on the pre-existing `academy_certificates`, a unique partial
 index on `qr_verification_code`, and an enrollment lookup index. No existing row
-is rewritten. The legacy `academy_modules`/`academy_lessons` pathway and all
-K-12 Go tables are untouched.
+is rewritten. The legacy `academy_modules`/`academy_lessons` tables and data are
+preserved (no deletes), as are all K-12 Go tables.
 
-`supabase/migrations/20271099000002_film_academy_practical_assessments.sql` — two
+**Legacy course retirement (learner + admin surfaces).** TMFA is now the only
+Film Academy course in the product. The legacy learner screens (`learn`, `lesson`,
+`assignments`, `exams`) and their client API/types were deleted, and every course
+entry point — home tile, post-payment redirect, application status action, tuition
+button and module tabs — now routes to `/film-academy/path`. The admin console
+dropped its Curriculum, Submissions, Progress, Import, Question Bank and Exams
+tabs; Course now means the TMFA `TopicsTab`. Historical enrollment, grade,
+submission and certificate rows are untouched, and the legacy `/api/academy/*`
+routes still exist so that data remains readable. Because the fallback course is
+gone, **both feature flags must be on** for learners to have any course at all
+(see §4).
+
+`supabase/migrations/20271099000004_film_academy_practical_assessments.sql` — two
 new tables: `film_practical_assessments` (one per topic, rubric JSONB, pass mark,
 attempt cap, open/draft state) and `film_practical_submissions` (attempt history,
 frozen rubric snapshot, server-computed score, reviewer feedback). `film_mastery_holds`
@@ -49,9 +61,28 @@ gains `source`/`source_ref` (default `manual`, so existing rows are unchanged) a
 a partial unique index that permits one open practical-workflow hold per
 learner/topic. No existing row is rewritten.
 
+> **Renumbered 2026-10-26 (was `20271099000002_…`).** That version was already
+> taken by `20271099000002_expand_payment_sources.sql`, and `supabase db push`
+> keys on the 14-digit version alone: it applied the payment file, recorded the
+> version, and skipped this one with no error. The practical tables therefore never
+> existed in the local database and `GET /api/academy/topics/[topicId]/practical`
+> 500ed. The file keeps its name and moves to a free version, per the rule the
+> repo's own `_reusable-migration-guard.yml` states. Any environment that already
+> applied the colliding version needs this migration applied — the content is
+> fully `IF NOT EXISTS`, so re-running it is safe.
+
 > **Unrelated destructive file in the tree:** `20271025001000_purge_film_academy.sql`
 > is untracked, contains nine `DELETE FROM` statements and is **not** part of this
 > work. It must not be applied. It was left in place for its owner.
+
+`supabase/migrations/20271099000005_film_academy_pilot_unlocks.sql` — one new
+table, `film_pilot_unlocks`: at most one row per course, holding a mandatory
+≥10-character `note`, `enabled_by/enabled_at`, and `revoked_by/revoked_at` (a
+pilot is active only while `revoked_at IS NULL`). RLS is enabled with the table
+revoked from `anon`/`authenticated` and granted to `service_role` only, so it is
+readable exclusively through the BFF. Applying it changes no existing row and sets
+no publication flag. **This is a dev/staging rehearsal escape hatch, not a
+publication route** — see §2.11.
 
 ### 1.2 Domain services (`frontend-web/src/server/services/academy/topics/`)
 
@@ -69,12 +100,15 @@ learner/topic. No existing row is rewritten.
 | `practical-admin.ts` | Assessment authoring, gate backfill/withdrawal, review queue, snapshot grading |
 | `certificates.ts` | Eligibility, issuance, revocation, public verification, download guard |
 | `certificate-artifact.ts` | Server-built PDF certificate and PNG QR; font-safe text folding |
+| `pilot.ts` | Dev/staging-only pilot delivery: active-unlock lookup, unreviewed pool sizing, audited enable/revoke, console state |
 | `http.ts` | Shared error mapping and admin action permission split |
 | `index.ts` | Public service exports |
 
 ### 1.3 API routes
 
-All gated by `FEATURE_FILM_ACADEMY_TOPICS_ENABLED` (default off → 503).
+All gated by `FEATURE_FILM_ACADEMY_TOPICS_ENABLED` (503 when unset). The env
+examples now default it, and `FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED`, to true:
+the legacy course is retired, so there is no fallback course.
 
 **Learner** (Bearer + `resolveLearner`):
 
@@ -117,13 +151,14 @@ All gated by `FEATURE_FILM_ACADEMY_TOPICS_ENABLED` (default off → 503).
 | `PUT /admin/academy/practical/[topicId]` (create/update, open/withdraw the gate) | `programs:manage` |
 | `POST /admin/academy/practical/submissions/[id]/grade` | `scores:manage` |
 | `POST /admin/academy/certificates` (issue/revoke) | `scores:manage` |
+| `GET /admin/academy/pilot` (pilot console state), `POST /admin/academy/pilot/[courseId]` (enable/revoke) | `scores:manage` |
 
 ### 1.4 Learner mobile screens (Expo Router)
 
 | Screen | Purpose |
 |---|---|
-| `app/film-academy/path.tsx` | Course → topic path with server-derived lock states; cursor polling |
-| `app/film-academy/topic/[topicId].tsx` | Article (locked until media gate is cleared), outcomes, holds, attempt history, quiz entry, practical entry card |
+| `app/film-academy/path.tsx` | Course → topic path with server-derived lock states; cursor polling; `Pilot · not yet reviewed` tag on pilot topics |
+| `app/film-academy/topic/[topicId].tsx` | Article (locked until media gate is cleared), outcomes, holds, attempt history, quiz entry, practical entry card, pilot-delivery notice |
 | `app/film-academy/practical/[topicId].tsx` | Practical brief and rubric, draft save, written/https-link evidence, submit, graded attempts and reviewer feedback |
 | `app/film-academy/topic-attempt/[attemptId].tsx` | Server-timed quiz, per-pick autosave, submit, exact result and remediation copy |
 | `app/film-academy/certificate.tsx` | Readiness blockers, earned credential, QR, copyable code, PDF download/share |
@@ -196,6 +231,24 @@ query), certificate and practical types and API functions in `api.ts`/`types.ts`
     failed practical requires ≥10 characters of feedback. A graded result is
     replayable only with identical scores and feedback; history remains readable
     after the assessment is withdrawn.
+11. **Audited pilot delivery (dev/staging only).** `pilotDeliveryEnabled()` returns
+    false whenever `NODE_ENV=production`, *and* otherwise requires
+    `FEATURE_FILM_ACADEMY_PILOT_DELIVERY_ENABLED` plus an active
+    `film_pilot_unlocks` row for that course. A pilot substitutes for exactly two
+    preconditions — `film_topics.published` and an approved question pool — and it
+    substitutes by reading, never by writing: no topic gets `published`/
+    `content_status` changed and no question gets its `status` changed. The draw
+    filter relaxes from `status = 'approved'` to `status <> 'retired'`, and the
+    learner UI marks the topic `Pilot · not yet reviewed` /
+    `Pilot delivery — … cannot earn a certificate`. Everything else is unchanged:
+    the prerequisite chain still requires `MASTERED` at the exact 85% gate, holds
+    still block, and `certificates.ts` counts `film_topics.published`, so a fully
+    completed pilot still yields `CURRICULUM_INCOMPLETE` and no credential. Enabling
+    and revoking both write a `film_academic_audit` row (`FILM_PILOT_UNLOCKED` /
+    `FILM_PILOT_REVOKED`, target type `film_course`) carrying the note, the actor
+    role/id and before/after state; the note is required at the database level
+    (`char_length(btrim(note)) >= 10`). If the unlock lookup fails, the pilot is
+    treated as inactive — the failure mode is locked, never open.
 
 ---
 
@@ -221,18 +274,31 @@ query), certificate and practical types and API functions in `api.ts`/`types.ts`
   (no writable environment was used). See the testing report.
 - **Full WCAG audit.** Accessibility is a per-asset review state plus a signed
   text-equivalent waiver, not an automated compliance certification.
+- **Any way for a pilot unlock to approve, review or publish content.** It opens a
+  sequence for rehearsal only. Faculty article review, SME question approval, media
+  production/rights and practical authoring remain human work that no flag,
+  console control or script in this repo performs on anyone's behalf.
 
 ---
 
 ## 4. Deployment sequence (not yet performed)
 
-1. Review and apply the three additive migrations to the target Supabase project
-   (topic mastery, credentials, practical assessments).
+1. Review and apply the four additive migrations to the target Supabase project
+   (topic mastery, credentials, practical assessments, pilot unlocks). Locally, all
+   four are applied and recorded in `supabase_migrations.schema_migrations`; the
+   pilot table was created with `psql -v ON_ERROR_STOP=1` and booked with
+   `supabase migration repair --local --status applied 20271099000005` rather than
+   `supabase db push`, which would also apply unrelated pending migrations.
 2. Do **not** apply `20271025001000_purge_film_academy.sql`.
 3. Set `FEATURE_FILM_ACADEMY_TOPICS_ENABLED=true` and
-   `FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED=true` in frontend-web. The second flag
-   controls only the learner practical routes; admin authoring is available with
-   the topics flag and its permissions.
+   `FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED=true` in frontend-web. Both are
+   required: with the legacy course retired there is no fallback, and the course
+   path plus topic quizzes/practicals live behind them. The second flag also gates
+   the learner practical routes; admin authoring is available with the topics flag
+   and its permissions. Neither flag publishes content — publication is still
+   gated per topic server-side.
+   `FEATURE_FILM_ACADEMY_PILOT_DELIVERY_ENABLED` stays **off** in production; it is
+   only meaningful in dev/staging, and the service ignores it under `NODE_ENV=production`.
 4. Sign in to the admin console as `programs:manage`, run **Curriculum import →
    preview**, then apply.
 5. SME review: approve ≥20 items per topic (the bundled bank cannot reach this;

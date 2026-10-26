@@ -9,6 +9,12 @@
 >
 > Audit date: 2026-10-21 · Auditor slice: question bank + SME review + server-scored
 > exams (PRD BK-06/07 + BK-10).
+>
+> **Superseded in part (2026-10-25):** the legacy modules/lessons course and the
+> admin Import/Question Bank/Exams tabs described here have been retired from the
+> learner app and console; TMFA is now the only course. This audit is retained as
+> the historical baseline. See TMFA-IMPLEMENTATION-REPORT.md §1.1 for the
+> retirement scope and what was preserved.
 
 ---
 

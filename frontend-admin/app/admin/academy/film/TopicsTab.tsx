@@ -25,7 +25,7 @@ import {
 import * as svc from '@/services/filmAcademyAdminService';
 
 type NoticeProp = { onNotice: (s: string | null) => void };
-type SubTab = 'gates' | 'import' | 'pool' | 'media' | 'holds' | 'practical' | 'mastery';
+type SubTab = 'gates' | 'import' | 'pool' | 'media' | 'holds' | 'practical' | 'mastery' | 'pilot';
 
 const PRODUCTION_STATES = [
   'PLANNED', 'SCRIPTED', 'CAPTURED', 'EDITED',
@@ -63,6 +63,7 @@ const SUB_TABS: Array<{ key: SubTab; label: string; hint: string }> = [
   { key: 'holds', label: 'Academic holds', hint: 'Practical/safety/review holds that block mastery' },
   { key: 'practical', label: 'Practical assessments', hint: 'Author the rubric and grade submitted practical work' },
   { key: 'mastery', label: 'Candidate mastery', hint: 'Mastered, passed-with-hold and remediation counts per learner' },
+  { key: 'pilot', label: 'Pilot delivery', hint: 'Open one unreviewed course for real learners — audited, never available in production' },
 ];
 
 export function TopicsTab({ onNotice }: NoticeProp) {
@@ -83,6 +84,7 @@ export function TopicsTab({ onNotice }: NoticeProp) {
       {sub === 'holds' ? <HoldsPanel onNotice={onNotice} /> : null}
       {sub === 'practical' ? <PracticalPanel onNotice={onNotice} /> : null}
       {sub === 'mastery' ? <MasteryPanel onNotice={onNotice} /> : null}
+      {sub === 'pilot' ? <PilotPanel onNotice={onNotice} /> : null}
     </>
   );
 }
@@ -2322,5 +2324,147 @@ function PracticalReview({
         </p>
       )}
     </div>
+  );
+}
+
+// ── Pilot delivery ───────────────────────────────────────────────────────────
+// The one sanctioned way to teach this curriculum before review. It is an audit
+// trail, not a publish button: the server keeps every topic unpublished, keeps
+// the prerequisite chain, the 85% threshold and holds intact, refuses this
+// outright in production, and the learner app labels every such topic as pilot.
+
+function PilotPanel({ onNotice }: NoticeProp) {
+  const state = useAsync(() => svc.getPilotState(), []);
+  const [target, setTarget] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const courses = state.data?.courses ?? [];
+  const available = state.data?.available ?? false;
+  const production = state.data?.production ?? false;
+  const row = courses.find((c) => c.courseId === target) ?? null;
+
+  const submit = async (action: 'enable' | 'revoke') => {
+    if (!target) return;
+    if (note.trim().length < 10) {
+      setError('Give a reason of at least 10 characters — it is written to the academic audit trail.');
+      return;
+    }
+    if (action === 'enable' && !window.confirm(
+      `Open ${target} for pilot delivery?\n\nLearners will be taught from content that has NOT completed faculty or SME review. Nothing is published or approved, every screen says "Pilot delivery", and no certificate can be issued from it.`,
+    )) return;
+
+    setBusy(true); setError(null);
+    try {
+      const result = await svc.setCoursePilot(target, action, note.trim());
+      onNotice(result.active
+        ? `${result.courseId} is open for pilot delivery — ${result.entryTopicIds.length} entry topic(s) reachable for a new learner, the rest unlock at 85%.`
+        : `${result.courseId} is back to its real publication state.`);
+      setTarget(null); setNote('');
+      await state.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Pilot delivery" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>scores:manage</span>}>
+      <p style={{ fontSize: '0.85rem', color: colors.muted, marginTop: 0 }}>
+        Opens one course for real learners while its content is still unreviewed. It stands in for the
+        published and reviewed-pool preconditions ONLY — prerequisites, the exact 85% pass threshold,
+        academic holds and remediation keep working, so a learner still advances one topic at a time.
+        Topics stay <strong>unpublished and unapproved</strong>, the learner app labels them, and a
+        certificate cannot be issued from pilot work.
+      </p>
+
+      {!state.loading && !state.error && !available ? (
+        <AuditNote>
+          {production
+            ? 'Disabled: pilot delivery is never available in production. Publish through faculty and SME review instead.'
+            : 'Disabled: set FEATURE_FILM_ACADEMY_PILOT_DELIVERY_ENABLED=true on the API server to use it outside production.'}
+        </AuditNote>
+      ) : null}
+
+      <StateBlock
+        loading={state.loading}
+        error={state.error}
+        empty={courses.length === 0}
+        emptyText="No courses yet. Import the curriculum pack first."
+      >
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={th()}>Course</th>
+              <th style={th()}>Topics</th>
+              <th style={th()}>Published</th>
+              <th style={th()}>Entry topics</th>
+              <th style={th()}>Pilot</th>
+              <th style={th()} />
+            </tr>
+          </thead>
+          <tbody>
+            {courses.map((c) => (
+              <tr key={c.courseId}>
+                <td style={td()}>
+                  <div style={{ fontWeight: 600 }}>{c.title}</div>
+                  <div style={{ fontSize: '0.72rem', color: colors.muted }}>{c.courseId}</div>
+                </td>
+                <td style={td()}>{c.topicCount}</td>
+                <td style={td()}>{c.publishedCount} / {c.topicCount}</td>
+                <td style={td()}>
+                  <div style={{ fontSize: '0.75rem' }}>{c.entryTopicIds.join(', ') || '—'}</div>
+                </td>
+                <td style={td()}>
+                  {c.active
+                    ? <Badge status="pending" label={`open · ${c.note ?? ''}`} />
+                    : <Badge status="closed" label="closed" />}
+                </td>
+                <td style={td()}>
+                  <button
+                    style={available ? btn() : { ...btn(), opacity: 0.5, cursor: 'not-allowed' }}
+                    disabled={!available}
+                    onClick={() => { setTarget(c.courseId); setNote(c.note ?? ''); setError(null); }}
+                  >
+                    {c.active ? 'Close pilot' : 'Open for pilot'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </StateBlock>
+
+      {row ? (
+        <div style={{ marginTop: '1rem', borderTop: `1px solid ${colors.border}`, paddingTop: '0.75rem' }}>
+          <label style={label()}>Reason for {row.courseId} ({row.active ? 'closing' : 'opening'}) the pilot</label>
+          <textarea
+            style={{ ...input(), minHeight: '4rem' }}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="e.g. Cohort 3 rehearsal pilot with two enrolled learners; faculty review scheduled for November."
+          />
+          {error ? <p style={{ color: colors.danger, fontSize: '0.8rem' }}>{error}</p> : null}
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+            <button
+              style={row.active ? btnDanger() : btnPrimary()}
+              disabled={busy}
+              onClick={() => void submit(row.active ? 'revoke' : 'enable')}
+            >
+              {busy ? 'Saving…' : row.active ? 'Record close' : 'Record open'}
+            </button>
+            <button style={btn()} disabled={busy} onClick={() => { setTarget(null); setNote(''); setError(null); }}>
+              Cancel
+            </button>
+          </div>
+          <AuditNote>
+            Both actions write a FILM_PILOT_UNLOCKED / FILM_PILOT_REVOKED row to film_academic_audit with your
+            ID and this reason. They change no content status.
+          </AuditNote>
+        </div>
+      ) : null}
+    </Card>
   );
 }

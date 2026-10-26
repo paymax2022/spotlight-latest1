@@ -239,7 +239,7 @@ export default function FilmAcademyApplyScreen() {
       await qc.invalidateQueries({ queryKey: FILM_ACADEMY_KEY });
       await qc.invalidateQueries({ queryKey: FILM_ACADEMY_STATUS_KEY });
       await alertAsync({ title: 'You are in', message: 'Your payment was received and your place is secured. You can start learning now.' });
-      router.replace('/film-academy/learn');
+      router.replace('/film-academy/path');
     } catch (e) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
       setError(msg || 'Could not submit your application. Please try again.');

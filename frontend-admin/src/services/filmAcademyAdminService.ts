@@ -2,11 +2,10 @@
  * Film Academy admin data — PATH A (web proxy).
  *
  * Film Academy has no Go module: its tables (academy_batches,
- * academy_applications, academy_installment_plans, academy_programs/modules/
- * lessons, academy_assignment_submissions, academy_settings,
- * academy_interest_areas) live in frontend-web and are served by
- * /api/admin/academy/*. So this goes through /api/web-proxy, exactly like
- * contests / scoring / open-mic (ADR-047).
+ * academy_applications, academy_installment_plans, academy_settings,
+ * academy_interest_areas and the TMFA film_* tables) live in frontend-web and
+ * are served by /api/admin/academy/*. So this goes through /api/web-proxy,
+ * exactly like contests / scoring / open-mic (ADR-047).
  *
  * WHY THIS FILE EXISTS: the console page at /admin/academy/film used to be a
  * BRIDGE — four links to /admin/film-academy on the web app. Those pages were
@@ -23,8 +22,14 @@
  *     settings
  *   application decision           →  /api/academy/application  (status)
  *   installment plans              →  /api/academy/installments (tuition)
- *   programs/modules/lessons       →  /api/academy/learning     (learn)
- *   submission grading             →  /api/academy/assignments  (assignments)
+ *   topics, media, holds, mastery  →  /api/academy/topics*      (course path)
+ *   practicals and certificates    →  /api/academy/topics/:id/practical,
+ *                                     /api/academy/certificate  (course path)
+ *
+ * The legacy programmes/modules/lessons course is retired: its learner screens
+ * are gone, and the console no longer manages it. Historical academy_programs/
+ * lessons/submission rows are preserved server-side; the backend routes remain
+ * for that data, but nothing in this console or the app reads them.
  *
  * MONEY: academy tables store NAIRA, not kobo — training_fee_ngn, fee_ngn,
  * application_fee, tuition_fee, total_amount_ngn are all whole naira. They
@@ -86,31 +91,6 @@ export type AcademyInstallmentPlan = {
   academy_installment_payments?: AcademyInstallmentPayment[];
   academy_applications?: { full_name?: string; email?: string; batch_id?: string } | null;
   compliance?: Record<string, unknown>;
-};
-
-export type AcademyProgram = { id: string; title: string; batch_id: string | null; is_published: boolean | null };
-export type AcademyModule  = { id: string; program_id: string; title: string; description: string | null; order_index: number | null; is_published: boolean | null };
-export type AcademyLesson  = { id: string; module_id: string; title: string; estimated_minutes: number | null; order_index: number | null; is_published: boolean | null };
-export type AcademyAssignment = { id: string; program_id: string | null; batch_id: string | null; title: string; due_date: string | null; max_score: number | null; status: string | null };
-
-export type AcademyCurriculum = {
-  programs: AcademyProgram[];
-  modules: AcademyModule[];
-  lessons: AcademyLesson[];
-  assignments: AcademyAssignment[];
-  batches: Array<{ id: string; batch_name: string }>;
-};
-
-export type AcademySubmission = {
-  id: string;
-  status: string | null;
-  score: number | null;
-  grade: string | null;
-  feedback: string | null;
-  submitted_at: string | null;
-  submission_link?: string | null;
-  submission_text?: string | null;
-  [k: string]: unknown;
 };
 
 export type AcademySettings = {
@@ -231,7 +211,7 @@ export async function listApplications(filter?: { batchId?: string; status?: str
  *
  * Approving is not just a label: the route auto-creates the instalment plan and
  * calls ensureEnrollment, which is what unlocks /film-academy/tuition and
- * /film-academy/learn on the phone. A batch with no tuition enrols on approval
+ * /film-academy/path on the phone. A batch with no tuition enrols on approval
  * alone; where tuition IS due, enrolment waits for the FIRST instalment.
  */
 export async function decideApplication(
@@ -251,145 +231,6 @@ export async function listInstallmentPlans(filter?: { batchId?: string; applicat
 
 export async function remindInstallmentPlan(planId: string): Promise<void> {
   await call(`${B}/installments/${encodeURIComponent(planId)}/remind`, { method: 'POST', body: '{}' });
-}
-
-export async function getCurriculum(): Promise<AcademyCurriculum> {
-  const r = await call<Partial<AcademyCurriculum>>(`${B}/curriculum`);
-  return {
-    programs: r.programs ?? [], modules: r.modules ?? [], lessons: r.lessons ?? [],
-    assignments: r.assignments ?? [], batches: r.batches ?? [],
-  };
-}
-
-/** Create/update a curriculum entity. The route dispatches on `kind`. */
-export async function saveCurriculum(body: Record<string, unknown>): Promise<unknown> {
-  return call(`${B}/curriculum`, { method: 'POST', body: JSON.stringify(body) });
-}
-
-/** Seed a starter curriculum for a batch, so `learn` has something to show. */
-export async function seedCurriculum(batchId: string): Promise<unknown> {
-  return call(`${B}/curriculum/seed`, { method: 'POST', body: JSON.stringify({ batchId }) });
-}
-
-export async function listSubmissions(status?: string): Promise<AcademySubmission[]> {
-  const suffix = status ? `?status=${encodeURIComponent(status)}` : '';
-  return (await call<{ submissions?: AcademySubmission[] }>(`${B}/submissions${suffix}`)).submissions ?? [];
-}
-
-/** Grade a submission — the grade the learner then sees on their phone. */
-export async function gradeSubmission(input: {
-  submissionId: string; score?: number; grade?: string; feedback?: string;
-}): Promise<void> {
-  await call(`${B}/submissions`, { method: 'PATCH', body: JSON.stringify(input) });
-}
-
-// A part is one week's deliverable inside a larger brief. Defining parts turns a
-// its original whole-submission behaviour on the phone.
-
-export type AcademyAssignmentPart = {
-  id: string;
-  assignment_id: string;
-  part_number: number;
-  week_number: number;
-  title: string;
-  description: string | null;
-  due_date: string | null;
-  /** null = progress only, not separately scored. */
-  max_score: number | null;
-  is_required: boolean;
-};
-
-export async function listAssignmentParts(assignmentId: string): Promise<AcademyAssignmentPart[]> {
-  const r = await call<{ parts?: AcademyAssignmentPart[] }>(
-    `${B}/assignment-parts?assignmentId=${encodeURIComponent(assignmentId)}`,
-  );
-  return r.parts ?? [];
-}
-
-export async function createAssignmentPart(input: {
-  assignment_id: string; title: string; week_number: number;
-  description?: string; due_date?: string | null; max_score?: number | null; is_required?: boolean;
-}): Promise<AcademyAssignmentPart> {
-  const r = await call<{ part: AcademyAssignmentPart }>(`${B}/assignment-parts`, {
-    method: 'POST', body: JSON.stringify(input),
-  });
-  return r.part;
-}
-
-export async function updateAssignmentPart(
-  input: Partial<AcademyAssignmentPart> & { id: string },
-): Promise<AcademyAssignmentPart> {
-  const r = await call<{ part: AcademyAssignmentPart }>(`${B}/assignment-parts`, {
-    method: 'PATCH', body: JSON.stringify(input),
-  });
-  return r.part;
-}
-
-/** Deleting a part also removes every learner's submission of it — the count is returned. */
-export async function deleteAssignmentPart(id: string): Promise<number> {
-  const r = await call<{ deletedSubmissions?: number }>(
-    `${B}/assignment-parts?id=${encodeURIComponent(id)}`, { method: 'DELETE' },
-  );
-  return r.deletedSubmissions ?? 0;
-}
-
-/** Grade one learner's submission of one part. */
-export async function gradeAssignmentPart(input: {
-  partSubmissionId: string; score: number; grade?: string; feedback?: string;
-}): Promise<void> {
-  await call(`${B}/assignment-parts`, { method: 'PATCH', body: JSON.stringify(input) });
-}
-
-export type ProgressPart = {
-  partId: string; partNumber: number; weekNumber: number; title: string;
-  dueDate: string | null; submitted: boolean; graded: boolean;
-  score: number | null; submittedAt: string | null; submissionId: string | null; overdue: boolean;
-};
-
-export type ProgressItem = {
-  assignmentId: string; title: string; weekNumber: number | null;
-  staged: boolean; expected: number; submitted: number; graded: number; overdue: number;
-  parts: ProgressPart[];
-  submissionId?: string | null; score?: number | null; submittedAt?: string | null;
-};
-
-export type ProgressLearner = {
-  enrollmentId: string; applicationId: string; name: string | null; email: string | null;
-  expected: number; submitted: number; graded: number; overdue: number;
-  completionPct: number; items: ProgressItem[];
-};
-
-export type ProgressTotals = {
-  learners: number; expected: number; submitted: number;
-  graded: number; overdue: number; completionPct: number;
-};
-
-export type AssignmentProgress = {
-  learners: ProgressLearner[];
-  assignments: Array<{
-    id: string; title: string; weekNumber: number | null; dueDate: string | null;
-    parts: Array<{ id: string; partNumber: number; weekNumber: number; title: string; dueDate: string | null; isRequired: boolean }>;
-  }>;
-  totals: ProgressTotals;
-};
-
-/**
- * Who has sent what, across a cohort.
- *
- * Distinct from listSubmissions: a submission list only shows what ARRIVED, so
- * it cannot answer the question a tutor actually has in week 3 — who has not
- * sent part 2. This returns every learner against every required part, missing
- * ones included, sorted furthest-behind first.
- */
-export async function getAssignmentProgress(batchId: string): Promise<AssignmentProgress> {
-  const r = await call<Partial<AssignmentProgress>>(
-    `${B}/progress?batchId=${encodeURIComponent(batchId)}`,
-  );
-  return {
-    learners: r.learners ?? [],
-    assignments: r.assignments ?? [],
-    totals: r.totals ?? { learners: 0, expected: 0, submitted: 0, graded: 0, overdue: 0, completionPct: 0 },
-  };
 }
 
 export async function getSettings(): Promise<AcademySettings> {
@@ -422,168 +263,6 @@ export async function updateInterestArea(
   return (await call<{ area: AcademyInterestArea }>(`${B}/interest-areas`, {
     method: 'PUT', body: JSON.stringify(input),
   })).area;
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// ASSESSMENT slice (PRD BK-06/07 + BK-10): question bank, SME review, exams.
-// These drive /api/admin/academy/questions* and /api/admin/academy/exams*.
-// Import commits DRAFTS only; approve (scores:manage) is the sole path that makes
-// a question exam-eligible; publish preflights that the approved pool covers the
-// exam's draw. Nothing here is reachable without FEATURE_FILM_ACADEMY_ASSESSMENT.
-// ────────────────────────────────────────────────────────────────────────────
-
-export type FilmQuestionOption = { id: string; text: string };
-export type FilmQuestionAnswer = { correct: string[]; explanation?: string | null };
-
-export type FilmQuestion = {
-  id: string;
-  external_code: string | null;
-  film_stage: string | null;
-  film_module_code: string | null;
-  film_topic_id: string | null;
-  film_objective_id: string | null;
-  film_department: string | null;
-  film_learning_outcome: string | null;
-  film_cognitive: string | null;
-  film_difficulty: string | null;
-  film_points: number | string | null;
-  source_version: string | null;
-  status: string;
-  stem: string;
-  options: FilmQuestionOption[];
-  answer: FilmQuestionAnswer;
-};
-
-export type FilmReview = {
-  id: string;
-  reviewer_id: string | null;
-  decision: string;
-  note: string;
-  from_status: string | null;
-  to_status: string | null;
-  created_at: string;
-};
-
-export type FilmImportRowProblem = { row: number; externalCode?: string; message: string };
-
-export type FilmImportPreview = {
-  batchId: string;
-  totals: { rows: number; accepted: number; rejected: number; warned: number };
-  rejected: FilmImportRowProblem[];
-  warned: FilmImportRowProblem[];
-};
-
-export type FilmImportCommit = {
-  batchId: string;
-  committed: { inserted: number; updated: number; unchanged: number; locked: number; batchId: string | null };
-  rejected: FilmImportRowProblem[];
-};
-
-export async function previewQuestionImport(filename: string, csv: string): Promise<FilmImportPreview> {
-  const r = await call<FilmImportPreview>(`${B}/questions/import-preview`, {
-    method: 'POST', body: JSON.stringify({ filename, csv }),
-  });
-  return {
-    batchId: r.batchId,
-    totals: r.totals ?? { rows: 0, accepted: 0, rejected: 0, warned: 0 },
-    rejected: r.rejected ?? [],
-    warned: r.warned ?? [],
-  };
-}
-
-export async function commitQuestionImport(filename: string, csv: string): Promise<FilmImportCommit> {
-  const r = await call<FilmImportCommit>(`${B}/questions/import-commit`, {
-    method: 'POST', body: JSON.stringify({ filename, csv }),
-  });
-  return {
-    batchId: r.batchId,
-    committed: r.committed ?? { inserted: 0, updated: 0, unchanged: 0, locked: 0, batchId: null },
-    rejected: r.rejected ?? [],
-  };
-}
-
-export async function listQuestions(filter?: {
-  status?: string; stage?: string; moduleCode?: string; topicId?: string; q?: string; page?: number; pageSize?: number;
-}): Promise<{ questions: FilmQuestion[]; total: number; page: number; pageSize: number; hasMore: boolean }> {
-  const qs = new URLSearchParams();
-  if (filter?.status) qs.set('status', filter.status);
-  if (filter?.stage) qs.set('stage', filter.stage);
-  if (filter?.moduleCode) qs.set('moduleCode', filter.moduleCode);
-  if (filter?.topicId) qs.set('topicId', filter.topicId);
-  if (filter?.q) qs.set('q', filter.q);
-  if (filter?.page) qs.set('page', String(filter.page));
-  if (filter?.pageSize) qs.set('pageSize', String(filter.pageSize));
-  const suffix = qs.toString() ? `?${qs}` : '';
-  const r = await call<{ questions?: FilmQuestion[]; total?: number; page?: number; pageSize?: number; hasMore?: boolean }>(
-    `${B}/questions${suffix}`,
-  );
-  return {
-    questions: r.questions ?? [], total: r.total ?? 0, page: r.page ?? 1,
-    pageSize: r.pageSize ?? 25, hasMore: r.hasMore ?? false,
-  };
-}
-
-export async function getQuestion(id: string): Promise<{ question: FilmQuestion; reviews: FilmReview[] }> {
-  return await call<{ question: FilmQuestion; reviews: FilmReview[] }>(`${B}/questions/${encodeURIComponent(id)}`);
-}
-
-export async function editQuestion(input: {
-  id: string; stem?: string; options?: FilmQuestionOption[];
-  correctOptionIds?: string[]; explanation?: string; points?: number;
-  filmStage?: string; filmModuleCode?: string;
-}): Promise<void> {
-  await call(`${B}/questions`, { method: 'PATCH', body: JSON.stringify(input) });
-}
-
-export async function reviewQuestion(id: string, decision: string, note: string): Promise<string | undefined> {
-  const r = await call<{ status?: string }>(`${B}/questions/${encodeURIComponent(id)}/review`, {
-    method: 'POST', body: JSON.stringify({ decision, note }),
-  });
-  return r.status;
-}
-
-export type FilmExam = {
-  id: string;
-  program_id: string;
-  title: string;
-  description: string | null;
-  kind: string;
-  pass_mark: number;
-  time_limit_minutes: number;
-  max_attempts: number;
-  is_published: boolean;
-  /** ISO instants bounding when learners can start the exam; both required to publish. */
-  opens_at: string | null;
-  closes_at: string | null;
-  draw_stage: string | null;
-  draw_module_codes: string[] | null;
-  draw_count: number | null;
-};
-
-export async function listExams(programId?: string): Promise<FilmExam[]> {
-  const suffix = programId ? `?programId=${encodeURIComponent(programId)}` : '';
-  return (await call<{ exams?: FilmExam[] }>(`${B}/exams${suffix}`)).exams ?? [];
-}
-
-export async function createExam(input: Partial<FilmExam> & { program_id: string; title: string }): Promise<FilmExam> {
-  const r = await call<{ exam: FilmExam }>(`${B}/exams`, { method: 'POST', body: JSON.stringify(input) });
-  return r.exam;
-}
-
-export async function updateExam(id: string, input: Partial<FilmExam>): Promise<FilmExam> {
-  const r = await call<{ exam: FilmExam }>(`${B}/exams/${encodeURIComponent(id)}`, {
-    method: 'PATCH', body: JSON.stringify(input),
-  });
-  return r.exam;
-}
-
-/** Publish runs the pool preflight on the server; a shortfall throws with the reason. */
-export async function publishExam(id: string): Promise<void> {
-  await call(`${B}/exams/${encodeURIComponent(id)}/publish`, { method: 'POST', body: JSON.stringify({ action: 'publish' }) });
-}
-
-export async function unpublishExam(id: string): Promise<void> {
-  await call(`${B}/exams/${encodeURIComponent(id)}/publish`, { method: 'POST', body: JSON.stringify({ action: 'unpublish' }) });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1257,4 +936,52 @@ export async function gradePracticalSubmission(
   );
   if (!r.result) throw new Error('Film Academy: the grade was saved but no result came back.');
   return r.result;
+}
+
+// ── PILOT DELIVERY ───────────────────────────────────────────────────────────
+// An audited, non-production exception that lets one course be taught while its
+// content is still unreviewed. It does not approve or publish anything, and the
+// server refuses it entirely under NODE_ENV=production.
+
+export type PilotCourseState = {
+  courseId: string;
+  title: string;
+  topicCount: number;
+  publishedCount: number;
+  entryTopicIds: string[];
+  active: boolean;
+  note: string | null;
+  enabledAt: string | null;
+};
+
+export type PilotConsoleState = {
+  available: boolean;
+  production: boolean;
+  courses: PilotCourseState[];
+};
+
+export type PilotActionResult = {
+  courseId: string;
+  active: boolean;
+  note: string;
+  topicCount: number;
+  entryTopicIds: string[];
+};
+
+export async function getPilotState(): Promise<PilotConsoleState> {
+  const r = await call<{ pilot?: PilotConsoleState }>(`${B}/pilot`);
+  return r.pilot ?? { available: false, production: false, courses: [] };
+}
+
+export async function setCoursePilot(
+  courseId: string,
+  action: 'enable' | 'revoke',
+  note: string,
+): Promise<PilotActionResult> {
+  const r = await call<{ pilot?: PilotActionResult }>(`${B}/pilot/${encodeURIComponent(courseId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ action, note }),
+  });
+  if (!r.pilot) throw new Error('Film Academy: the pilot change was recorded but no state came back.');
+  return r.pilot;
 }

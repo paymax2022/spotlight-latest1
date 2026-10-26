@@ -245,6 +245,16 @@ export const featureFlags = {
    * every endpoint 503s while unset.
    */
   filmAcademyTopics: () => envFlag('FEATURE_FILM_ACADEMY_TOPICS_ENABLED'),
+
+  /**
+   * Film Academy pilot delivery — an audited exception that opens ONE course's
+   * sequence for real learners while the curriculum is still unreviewed, so the
+   * path, quizzes and holds can be exercised before faculty sign-off. It is not
+   * a publication shortcut: it only substitutes for the "topic published" and
+   * "reviewed question pool" preconditions, and the service ignores it entirely
+   * under NODE_ENV=production. Off by default.
+   */
+  filmAcademyPilotDelivery: () => envFlag('FEATURE_FILM_ACADEMY_PILOT_DELIVERY_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;

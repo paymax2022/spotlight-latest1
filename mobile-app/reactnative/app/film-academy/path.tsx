@@ -58,6 +58,9 @@ function TopicRow({ topic }: { topic: FilmTopicPathItem }) {
         </Text>
         <View style={styles.topicMetaRow}>
           <Text style={[styles.stateLabel, { color }]}>{topicStateLabel(topic.state)}</Text>
+          {topic.pilot ? (
+            <Text style={styles.pilotTag}>Pilot · not yet reviewed</Text>
+          ) : null}
           <Text style={styles.topicMeta}>
             · {topic.approvedQuestionCount}/{Math.max(20, topic.drawCount)} questions approved
           </Text>
@@ -235,6 +238,7 @@ const styles = StyleSheet.create({
   topicTitleLocked: { color: Colors.onSurfaceVariant },
   topicMetaRow:{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
   stateLabel:  { ...Typography.labelSm, fontWeight: '600' },
+  pilotTag:    { ...Typography.labelSm, color: Colors.onWarning, fontWeight: '700' },
   topicMeta:   { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   blocker:     { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   hold:        { ...Typography.labelSm, color: Colors.error },

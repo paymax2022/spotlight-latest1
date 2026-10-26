@@ -5,6 +5,8 @@
 //   progress.ts — derived learner path/detail; the only lock-state authority.
 //   quiz.ts     — server-authoritative attempt lifecycle and mastery writes.
 //   certificates.ts — earned, verifiable programme credentials.
+//   pilot.ts        — the narrow, audited exception that delivers one unreviewed
+//                     course outside production. Never publishes anything.
 
 export * from './types';
 export {
@@ -185,3 +187,15 @@ export {
   buildCertificatePdf,
   type CertificateArtifactInput,
 } from './certificate-artifact';
+export {
+  PILOT_NOTE_MIN_LENGTH,
+  pilotDeliveryEnabled,
+  loadActivePilotCourseIds,
+  loadPilotUsableQuestionCounts,
+  setCoursePilotUnlock,
+  revokeCoursePilotUnlock,
+  loadPilotConsoleState,
+  type PilotCourseState,
+  type PilotConsoleState,
+  type PilotUnlockView,
+} from './pilot';

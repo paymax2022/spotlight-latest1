@@ -487,17 +487,19 @@ export async function startTopicAttempt(
 ): Promise<TopicAttemptView> {
   const topic = await loadTopicConfig(db, topicId);
   if (!topic) throw new TopicQuizError(404, 'TOPIC_NOT_FOUND', 'Topic not found.');
-  if (!topic.published) {
+
+  const path = await loadTopicPath(db, learner);
+  const gate = pathItem(path, topicId);
+  if (!gate) throw new TopicQuizError(404, 'TOPIC_NOT_FOUND', 'Topic not found.');
+  // Publication is the rule; an audited pilot course is the one server-side
+  // exception, and it is resolved by the path rather than trusted from here.
+  if (!topic.published && !gate.pilot) {
     throw new TopicQuizError(
       403,
       'TOPIC_NOT_PUBLISHED',
       'This topic has not completed academic publication review.',
     );
   }
-
-  const path = await loadTopicPath(db, learner);
-  const gate = pathItem(path, topicId);
-  if (!gate) throw new TopicQuizError(404, 'TOPIC_NOT_FOUND', 'Topic not found.');
   if (gate.state === 'MASTERED' || gate.state === 'PASSED') {
     throw new TopicQuizError(
       409,
@@ -519,12 +521,18 @@ export async function startTopicAttempt(
   const open = await loadOpenAttempt(db, learner, topicId);
   if (open) return readAttemptRow(db, learner, open);
 
-  const { data: questionData, error: questionError } = await db
+  // A published topic draws from the reviewed pool only. A pilot topic has no
+  // reviewed pool yet, so it draws from anything that has not been retired —
+  // still never the answer key, which stays server-side either way.
+  const pilotDraw = !topic.published && gate.pilot;
+  const questionQuery = db
     .from('academy_question_items')
     .select('id, film_objective_id, film_points, stem, options')
     .eq('academy_scope', 'film')
-    .eq('film_topic_id', topicId)
-    .eq('status', 'approved');
+    .eq('film_topic_id', topicId);
+  const { data: questionData, error: questionError } = pilotDraw
+    ? await questionQuery.neq('status', 'retired')
+    : await questionQuery.eq('status', 'approved');
   if (questionError) {
     console.error('[film/topics] question draw failed', questionError);
     throw new TopicQuizError(500, 'DRAW_FAILED', 'Could not prepare the quiz. Please try again.');
@@ -537,7 +545,9 @@ export async function startTopicAttempt(
     throw new TopicQuizError(
       422,
       'QUIZ_POOL_INSUFFICIENT',
-      'This topic quiz cannot run until reviewed questions are available.',
+      pilotDraw
+        ? `This pilot topic has ${usable.length} usable question${usable.length === 1 ? '' : 's'}; the quiz needs ${drawCount}.`
+        : 'This topic quiz cannot run until reviewed questions are available.',
     );
   }
 
@@ -598,7 +608,14 @@ export async function startTopicAttempt(
       topic_id: topicId,
       event_type: 'TOPIC_QUIZ_STARTED',
       dedupe_key: `topic-quiz:${(created as { id: string }).id}:started`,
-      payload: { attemptId: (created as { id: string }).id, questionCount: snapshot.length, threshold },
+      payload: {
+        attemptId: (created as { id: string }).id,
+        questionCount: snapshot.length,
+        threshold,
+        // Provenance: scores earned from unreviewed pilot material are marked as
+        // such in the ledger, so a later review can tell them apart.
+        pilotDelivery: pilotDraw,
+      },
     },
     { onConflict: 'dedupe_key', ignoreDuplicates: true },
   );

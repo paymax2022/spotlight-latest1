@@ -5,10 +5,10 @@
 import {
   Compass, Users, Receipt, CalendarDays,
   Heart, Bookmark, HandCoins,
-  GraduationCap, BookOpen, ClipboardList, Wallet,
+  GraduationCap, Award, Wallet,
   Trophy, Vote, BarChart3,
   Smartphone, Wifi, Zap, Tv, FileText,
-  ReceiptText, TrendingUp, Settings,
+  ReceiptText, TrendingUp, Settings, ClipboardList,
 } from 'lucide-react-native';
 import type { ModuleTab } from '@/components/ModuleTabBar';
 
@@ -28,12 +28,18 @@ export const CROWDFUNDING_TABS: readonly ModuleTab[] = [
   { href: '/crowdfunding/contributions',  label: 'Backed',   icon: HandCoins },
 ] as const;
 
-/** Film academy — the applicant/student journey. */
+/** Contest registration — entering a contest and following its applications. */
+export const REGISTRATION_TABS: readonly ModuleTab[] = [
+  { href: '/voting',                    label: 'Contests',     icon: Trophy },
+  { href: '/registration',              label: 'Register',     icon: ClipboardList },
+  { href: '/registration/applications', label: 'Applications', icon: FileText },
+] as const;
+
+/** Film academy — the applicant/student journey. The course is the TMFA path. */
 export const FILM_ACADEMY_TABS: readonly ModuleTab[] = [
   { href: '/film-academy',             label: 'Overview',    icon: GraduationCap },
-  { href: '/film-academy/learn',       label: 'Learn',       icon: BookOpen },
-  { href: '/film-academy/assignments', label: 'Assignments', icon: ClipboardList },
-  { href: '/film-academy/exams',       label: 'Exams',       icon: FileText },
+  { href: '/film-academy/path',        label: 'Course',      icon: GraduationCap },
+  { href: '/film-academy/certificate', label: 'Certificate', icon: Award },
   { href: '/film-academy/tuition',     label: 'Tuition',     icon: Wallet },
 ] as const;
 
