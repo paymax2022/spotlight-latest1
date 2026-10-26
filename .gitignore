@@ -97,6 +97,9 @@ launch/master.env
 # `go build -o bin/server` puts a ~74MB binary here. Not ignored until now:
 # a stashed snapshot was carrying one, one `git add -A` from being committed.
 /backend/bin/
+# `go build -o spotlight-backend` output (114MB). GitHub rejects any push whose
+# history carries a blob over 100MB, so this must never be staged.
+/backend/spotlight-backend
 
 # Python bytecode (scripts/ci/*.py are run directly by CI)
 __pycache__/
