@@ -76,10 +76,12 @@ export default function ConnectTabsLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    position: 'absolute',
+    // In normal flow, NOT absolute: an absolute bar floats over the screen and
+    // hides whatever sits at the bottom of every tab. In flow, the navigator
+    // reserves its height and each screen ends exactly above it.
     // height + paddingBottom are set at runtime from the safe-area inset.
     paddingTop: 8,
-    backgroundColor: 'rgba(255,255,255,0.92)',
+    backgroundColor: Colors.surface,
     borderTopWidth: 1,
     borderTopColor: Colors.surfaceContainerHigh,
     shadowColor: Colors.primary,
