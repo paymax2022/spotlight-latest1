@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Image } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Image, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CheckCircle } from 'lucide-react-native';
@@ -11,6 +11,7 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
+import { resolveUploadUrl } from '@/features/registration/api/registration.client';
 import { useDraft, useSubmitApplication } from '@/features/registration/hooks/useRegistration';
 import type { RegistrationField, RegistrationStep, UploadedFileValue } from '@/features/registration/types/registration.types';
 
@@ -134,20 +135,49 @@ function SummaryRow({ field, value }: { field: RegistrationField; value: unknown
   // Image uploads: show the actual picture as a thumbnail, not just the filename.
   const file = field.type === 'file' && value && typeof value === 'object' ? (value as UploadedFileValue) : undefined;
   if (file?.previewUrl && isImageUpload(field, file)) {
-    return (
-      <View style={styles.fileRow}>
-        <Text style={styles.rowLabel}>{field.label}</Text>
-        <View style={styles.previewWrap}>
-          <Image source={{ uri: file.previewUrl }} style={styles.preview} resizeMode="cover" accessibilityLabel={`${field.label} preview`} />
-          {file.fileName ? <Text style={styles.previewName} numberOfLines={1}>{file.fileName}</Text> : null}
-        </View>
-      </View>
-    );
+    return <ImageSummaryRow field={field} file={file} />;
   }
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{field.label}</Text>
       <Text style={styles.rowValue}>{displayValue(field, value)}</Text>
+    </View>
+  );
+}
+
+function ImageSummaryRow({ field, file }: { field: RegistrationField; file: UploadedFileValue }) {
+  const [uri, setUri] = React.useState<string | undefined>();
+  const [failed, setFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setUri(undefined);
+    setFailed(false);
+    resolveUploadUrl(file.previewUrl)
+      .then((u) => { if (!cancelled) setUri(u); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [file.previewUrl]);
+
+  return (
+    <View style={styles.fileRow}>
+      <Text style={styles.rowLabel}>{field.label}</Text>
+      <View style={styles.previewWrap}>
+        {uri && !failed ? (
+          <Image
+            source={{ uri }}
+            style={styles.preview}
+            resizeMode="cover"
+            onError={() => setFailed(true)}
+            accessibilityLabel={`${field.label} preview`}
+          />
+        ) : (
+          <View style={[styles.preview, styles.previewPlaceholder]}>
+            {failed ? <Text style={styles.previewName}>📎</Text> : <ActivityIndicator size="small" color={Colors.primary} />}
+          </View>
+        )}
+        {file.fileName ? <Text style={styles.previewName} numberOfLines={1}>{file.fileName}</Text> : null}
+      </View>
     </View>
   );
 }
@@ -203,6 +233,7 @@ const styles = StyleSheet.create({
   fileRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: Spacing.md, paddingVertical: 4 },
   previewWrap: { alignItems: 'flex-end', gap: 4, flexShrink: 1 },
   preview:     { width: 96, height: 96, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerHigh, borderWidth: 1, borderColor: Colors.outlineVariant },
+  previewPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   previewName: { ...Typography.labelSm, color: Colors.onSurfaceVariant, maxWidth: 140, textAlign: 'right' },
 
   errorBox:  { backgroundColor: Colors.errorContainer, borderRadius: Radius.md, padding: Spacing.md },
