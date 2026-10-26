@@ -16,6 +16,8 @@ import { alertAsync } from '@/lib/confirm';
 import { useQuery } from '@tanstack/react-query';
 import { getKycProfile } from '@/api/kyc.api';
 import { checkCampaignAmountAllowed, tierLimitMessage } from '@/features/crowdfunding/utils/tierLimits';
+import { kycGrant } from '@/features/kycverify/draft';
+import { rememberResume } from '@/lib/resume';
 
 const MODEL_LABEL: Record<string, string> = {
   ALL_OR_NOTHING: 'All-or-nothing', FLEXIBLE: 'Flexible funding', MILESTONE: 'Milestone-based', IMMEDIATE: 'Immediate', ESCROW: 'Escrow',
@@ -67,17 +69,18 @@ export default function CreatePreviewScreen() {
       }
 
       // Check if the campaign amount is allowed for the creator's tier
-      const { allowed, requiredTier } = checkCampaignAmountAllowed(profile.tier, draft.goalKobo);
+      const effectiveTier = Math.max(profile.tier, kycGrant.tier);
+      const { allowed, requiredTier } = checkCampaignAmountAllowed(effectiveTier, draft.goalKobo);
       if (!allowed) {
-        const message = tierLimitMessage(profile.tier, draft.goalKobo);
+        const message = tierLimitMessage(effectiveTier, draft.goalKobo);
         await alertAsync({
           title: 'KYC required',
           message,
           buttonLabel: 'Complete KYC',
         });
-        // Store the campaign amount so we can resume after KYC
-        sessionStorage.setItem('crowdfunding_campaign_goal', String(draft.goalKobo));
-        router.push('/kyc?returnTo=/crowdfunding/create/preview');
+        // The draft is persisted; KYC success resumes this screen.
+        rememberResume({ pathname: '/crowdfunding/create/preview' });
+        router.push(`/kyc?target=${requiredTier ?? 1}` as never);
         return;
       }
     } finally {

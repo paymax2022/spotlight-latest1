@@ -25,6 +25,7 @@ export default function KycSuccessScreen() {
   useEffect(() => {
     grantKycTier(newTier);
     qc.invalidateQueries({ queryKey: ['kyc', 'me'] });
+    qc.invalidateQueries({ queryKey: ['kyc', 'profile'] });
   }, [qc, newTier]);
 
   const done = () => {
