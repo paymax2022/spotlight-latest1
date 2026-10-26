@@ -7,7 +7,7 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import CaptureStub from '@/features/kycverify/components/CaptureStub';
+import SelfieCapture from '@/features/kycverify/components/SelfieCapture';
 import PrivacyNote from '@/features/kycverify/components/PrivacyNote';
 import {
   useSdkToken,
@@ -44,7 +44,12 @@ export default function KycSelfieScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const captured = !!draft.selfieB64;
+  // Always start from a fresh photo: a previous (failed or placeholder) capture
+  // left in the draft must never be resubmitted without the user retaking it.
+  const [captured, setCaptured] = useState(false);
+  useEffect(() => {
+    kycVerifyDraft.current.selfieB64 = null;
+  }, []);
 
   const handleTerminal = (check: VerificationCheck): boolean => {
     if (check.status === 'PENDING' || check.status === 'REVIEW') {
@@ -97,7 +102,7 @@ export default function KycSelfieScreen() {
           Why: we match your face to your verified ID and confirm you're a real, live person (anti-spoof).
         </Text>
         <Text style={styles.how}>
-          How: hold your phone at eye level, stay in a well-lit spot, and blink when prompted. Remove hats and glasses.
+          How: face the camera at eye level in a well-lit spot, look straight ahead, and keep your face fully in the circle. Remove hats and glasses.
         </Text>
 
         {sdkToken.isPending ? (
@@ -107,16 +112,18 @@ export default function KycSelfieScreen() {
           </View>
         ) : null}
 
-        <CaptureStub
-          round
-          label="Tap to start liveness capture"
-          hint="Face capture (sandbox)"
-          captureKind="selfie"
-          captured={captured}
-          onCaptured={(b64) => {
-            kycVerifyDraft.current.selfieB64 = b64;
-          }}
-        />
+        <View style={styles.captureWrap}>
+          <SelfieCapture
+            onCaptured={(b64) => {
+              kycVerifyDraft.current.selfieB64 = b64;
+              setCaptured(true);
+            }}
+            onReset={() => {
+              kycVerifyDraft.current.selfieB64 = null;
+              setCaptured(false);
+            }}
+          />
+        </View>
 
         <PrivacyNote>
           Your selfie is sent securely to our verification partner for liveness and face-match, and is used only for
@@ -138,6 +145,7 @@ export default function KycSelfieScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
+  captureWrap: { alignItems: 'center', marginVertical: Spacing.md },
   content: { padding: Spacing.containerMargin, gap: Spacing.md },
   title: { ...Typography.headlineMd, color: Colors.onSurface },
   sub: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
