@@ -131,8 +131,11 @@ Every estate this lane created is `closed` (teardown section 10). `psql` after t
 `UAT Gate Estate Alpha` (`0a1e5701-…-0001`), which other lanes use. Child rows accumulate and are
 local test data only: `estate_config_revisions=4`, `estate_owner_transfers=6` (2 accepted / 2
 declined / 2 cancelled), `estate_invite_codes=4` (2 with `role='estate_admin'`) — counts cover both
-probe runs. The `estate.admin.lifecycle` grant is still in place; `02-grant-reviewer.sql` carries the
-undo `DELETE`.
+probe runs. Teardown afterwards: the `estate.admin.lifecycle` grant was removed with the undo
+`DELETE` in `02-grant-reviewer.sql` (`DELETE 1`, and `user_has_permission` returns `f` again), the
+scratch backend on `:8095` was stopped and its binary deleted, and the `:8091`/`:8093`/`:8094`
+instances from other sessions were left running. Re-applying the grant for a later flag-on lane is
+one `psql -f -` command.
 
 ## Boundaries of this evidence (read before re-marking anything)
 
