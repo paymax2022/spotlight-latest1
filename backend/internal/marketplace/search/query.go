@@ -142,8 +142,26 @@ func BuildQuery(req SearchRequest) map[string]any {
 		"from": parseCursor(req.Cursor),
 	}
 
-	if sortClause := buildSort(req.Sort); sortClause != nil {
+	if sortClause := buildSort(req); sortClause != nil {
 		query["sort"] = sortClause
+	}
+
+	// A buyer who sent their position gets a distance on every row, whichever
+	// sort they picked — the same promise the Postgres fallback makes with its
+	// ST_Distance column. Note what is NOT returned: the seller's coordinates
+	// themselves. A GPS point on a listing is in practice their home address,
+	// while the card promises "3.6 km away".
+	if req.Lat != nil && req.Lng != nil {
+		query["script_fields"] = map[string]any{
+			"distance_km": map[string]any{"script": map[string]any{
+				"lang": "painless",
+				// arcDistance is metres; the app labels kilometres. A listing
+				// with no recorded position has no value to measure against,
+				// so it reports null and the card says nothing about distance.
+				"source": "doc['geo'].size() == 0 ? null : doc['geo'].arcDistance(params.lat, params.lng) / 1000.0",
+				"params": map[string]any{"lat": *req.Lat, "lng": *req.Lng},
+			}},
+		}
 	}
 
 	return query
@@ -164,11 +182,14 @@ func parseCursor(cursor string) int {
 	return n
 }
 
-// buildSort maps the frozen `sort` enum (relevance|price_asc|price_desc|
-// newest|trusted_first) to an ES sort clause. relevance (default) omits an
+// buildSort maps the `sort` enum (relevance|price_asc|price_desc|newest|
+// trusted_first|nearby) to an ES sort clause. relevance (default) omits an
 // explicit sort so ES falls back to _score from the function_score query.
-func buildSort(sort string) []map[string]any {
-	switch sort {
+// nearby is the one clause that needs the buyer's position, hence the whole
+// request rather than just the token; without coordinates it degrades to
+// relevance instead of erroring, because "nearest" has no meaning there.
+func buildSort(req SearchRequest) []map[string]any {
+	switch req.Sort {
 	case "price_asc":
 		return []map[string]any{{"price_kobo": map[string]any{"order": "asc"}}}
 	case "price_desc":
@@ -177,6 +198,21 @@ func buildSort(sort string) []map[string]any {
 		return []map[string]any{{"created_at": map[string]any{"order": "desc"}}}
 	case "trusted_first":
 		return []map[string]any{{"seller_trust_score": map[string]any{"order": "desc"}}}
+	case "nearby":
+		if req.Lat == nil || req.Lng == nil {
+			return nil
+		}
+		return []map[string]any{{"_geo_distance": map[string]any{
+			// "lng", matching the geo_distance filter and gauss clauses above,
+			// rather than ES's other accepted spelling.
+			"geo":   []map[string]any{{"lat": *req.Lat, "lng": *req.Lng}},
+			"order": "asc",
+			"unit":  "km",
+			// The Postgres fallback orders the same case with NULLS LAST: a
+			// listing with no recorded position stays visible, it just never
+			// leads. Without this ES has nothing to measure and errors.
+			"missing": "_last",
+		}}}
 	default:
 		return nil
 	}
@@ -216,7 +252,7 @@ type SearchRequest struct {
 	RadiusKm   *float64 `json:"radius_km,omitempty"`
 	State      string   `json:"state,omitempty"`
 	LGA        string   `json:"lga,omitempty"`
-	// Sort: relevance|price_asc|price_desc|newest|trusted_first (default relevance).
+	// Sort: relevance|price_asc|price_desc|newest|trusted_first|nearby (default relevance).
 	Sort   string `json:"sort,omitempty"`
 	Cursor string `json:"cursor,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
@@ -242,6 +278,10 @@ type ListingSummary struct {
 	EscrowEligible   bool      `json:"escrow_eligible"`
 	CreatedAt        time.Time `json:"created_at"`
 	Score            float64   `json:"score,omitempty"`
+	// DistanceKm is the great-circle distance from the buyer, in kilometres,
+	// measured by ES. The seller's own coordinates are deliberately absent —
+	// see BuildQuery's script_fields comment.
+	DistanceKm *float64 `json:"distance_km,omitempty"`
 }
 
 // Facet is one bucket in a facet list (categories/conditions/price_ranges).

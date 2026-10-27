@@ -392,6 +392,25 @@ func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	}, nil
 }
 
+// BoostedListings is the promoted section the buyer's home screen shows above
+// "Near you": active listings with a live boost, strongest-unspent-value first
+// (see Repository.BoostedListings for the money-left rule). Thumbnails are
+// attached exactly as a search attaches them, so a boosted card looks like
+// every other card, and the seller's coordinates stay unselected.
+func (s *Service) BoostedListings(ctx context.Context, limit int) ([]BoostedListing, error) {
+	rows, err := s.repo.BoostedListings(ctx, DefaultMarketID, limit)
+	if err != nil {
+		return nil, err
+	}
+	ptrs := make([]*Listing, len(rows))
+	for i := range rows {
+		rows[i].Boosted = true
+		ptrs[i] = &rows[i].Listing
+	}
+	s.attachThumbs(ctx, ptrs)
+	return rows, nil
+}
+
 // parseSearchFallback extracts the Postgres-fallback filter set from the handler's
 // provider-agnostic request map (values are the raw query-param strings).
 func parseSearchFallback(req any) SearchFallbackFilter {
@@ -421,6 +440,16 @@ func parseSearchFallback(req any) SearchFallbackFilter {
 		}
 		return nil
 	}
+	getNum := func(k string) *float64 {
+		s := getStr(k)
+		if s == "" {
+			return nil
+		}
+		if v, err := strconv.ParseFloat(s, 64); err == nil {
+			return &v
+		}
+		return nil
+	}
 	// The handler has always put market_id in this map; nothing read it, so the
 	// Postgres fallback searched every market. Default rather than leave it empty:
 	// an unscoped search is the bug, so a caller that forgets the key gets the
@@ -436,6 +465,34 @@ func parseSearchFallback(req any) SearchFallbackFilter {
 	f.LGA = getStr("lga")
 	f.PriceMin = getKobo("price_min")
 	f.PriceMax = getKobo("price_max")
+	// Proximity, from the same lat/lng/radius_km the ES adapter reads. Range is
+	// checked here rather than left to PostGIS: a latitude outside +/-90 raises
+	// "Latitude 520 is out of range" inside ST_MakePoint and surfaces as a 500,
+	// where dropping the coordinate is the caller-correctable answer — and NaN
+	// fails the comparison too, so an unparseable value can never reach the SQL.
+	// An out-of-range coordinate is dropped rather than rejected, matching the
+	// adapter's "unparseable numeric params are simply omitted".
+	coord := func(k string, limit float64) *float64 {
+		v := getNum(k)
+		// Written as the negation of the accept test on purpose: NaN compares
+		// false against every bound, so `*v < -limit || *v > limit` would let it
+		// through and PostGIS would raise on it.
+		if v == nil || !(*v >= -limit && *v <= limit) {
+			return nil
+		}
+		return v
+	}
+	f.Lat, f.Lng = coord("lat", 90), coord("lng", 180)
+	// Both or neither: one coordinate alone defines no position, and a half-set
+	// pair reaching ST_MakePoint(lng, 0) would quietly measure distances from the
+	// equator.
+	if f.Lat == nil || f.Lng == nil {
+		f.Lat, f.Lng = nil, nil
+	}
+	if r := getNum("radius_km"); r != nil && *r > 0 {
+		f.RadiusKm = r
+	}
+	f.Sort = getStr("sort")
 	if v, ok := m["limit"]; ok {
 		switch n := v.(type) {
 		case int:

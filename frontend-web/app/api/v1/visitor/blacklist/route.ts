@@ -42,6 +42,8 @@ export async function POST(request: Request) {
 
     if (!matchKind || !matchValue) throw new ApiError('matchKind and matchValue are required', 400);
     if (!['phone', 'id', 'plate'].includes(matchKind)) throw new ApiError('Invalid matchKind', 400);
+    // visitor_blacklist.reason is NOT NULL — a missing reason 500'd the insert.
+    const finalReason = String(body?.reason ?? '').trim() || 'Flagged at estate security review';
 
     const { data: row, error } = await supabase
       .from('visitor_blacklist')
@@ -50,7 +52,7 @@ export async function POST(request: Request) {
         match_kind: matchKind,
         match_value: matchValue,
         name,
-        reason,
+        reason: finalReason,
         created_by: user.id,
       })
       .select('*')

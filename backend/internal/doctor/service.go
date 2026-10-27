@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -127,7 +128,30 @@ func (s *Service) GetVerification(ctx context.Context, userID string) (*Verifica
 }
 
 func (s *Service) GetAvailability(ctx context.Context, userID string) (*Availability, error) {
-	return s.repo.GetAvailability(ctx, userID)
+	a, err := s.repo.GetAvailability(ctx, userID)
+	if err == nil {
+		return a, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	// Same pattern as GetProfileDraft: before the first save there is no
+	// doctor_availability row, and a 404 broke the availability screen (and
+	// with it the profile-builder availability step) for every fresh doctor.
+	now := time.Now().UTC()
+	return &Availability{
+		UserID:              userID,
+		WorkingDays:         json.RawMessage(`[{"day":"mon","enabled":true,"startTime":"09:00","endTime":"17:00"},{"day":"tue","enabled":true,"startTime":"09:00","endTime":"17:00"},{"day":"wed","enabled":true,"startTime":"09:00","endTime":"17:00"},{"day":"thu","enabled":true,"startTime":"09:00","endTime":"17:00"},{"day":"fri","enabled":true,"startTime":"09:00","endTime":"15:00"},{"day":"sat","enabled":false,"startTime":"09:00","endTime":"17:00"},{"day":"sun","enabled":false,"startTime":"09:00","endTime":"17:00"}]`),
+		Breaks:              json.RawMessage("[]"),
+		Rules:               json.RawMessage("[]"),
+		ConsultDurationMins: 30,
+		BufferMins:          5,
+		AcceptsInstant:      true,
+		Timezone:            "Africa/Lagos",
+		ReminderSettings:    json.RawMessage("{}"),
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}, nil
 }
 
 func (s *Service) ListAppointments(ctx context.Context, userID, status string) ([]Appointment, error) {

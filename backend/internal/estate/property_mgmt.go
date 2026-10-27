@@ -124,14 +124,37 @@ func (s *Service) SetOccupancyStatus(ctx context.Context, estateID, adminID, pro
 	if err != nil {
 		return nil, errors.New("estate: property not found in this estate")
 	}
-	_ = s.audit(ctx, estateID, adminID, "PROPERTY_OCCUPANCY", "property", propertyID, map[string]any{"status": status})
+	_ = s.audit(ctx, estateID, adminID, "PROPERTY_OCCUPANCY", "property", propertyID, map[string]any{keyStatus: status})
 	return p, nil
 }
 
 // ArchiveProperty soft-retires a property (estate admin only). History is kept.
+// Dependency gate (EST-UAT-0052): a unit with an occupant or an open dues
+// invoice cannot be archived — archiving would orphan the liability.
 func (s *Service) ArchiveProperty(ctx context.Context, estateID, adminID, propertyID string) error {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return err
+	}
+	var occupancy string
+	var tenantID *string
+	if err := s.db.QueryRow(ctx,
+		`SELECT occupancy_status, tenant_id::TEXT FROM estate_properties WHERE id=$1 AND estate_id=$2 AND archived=FALSE`,
+		propertyID, estateID,
+	).Scan(&occupancy, &tenantID); err != nil {
+		return errors.New("estate: property not found in this estate")
+	}
+	if occupancy == "occupied" || tenantID != nil {
+		return errors.New("estate: cannot archive a unit with an active occupant — end the tenancy first")
+	}
+	var openInvoices int
+	if err := s.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM estate_dues_invoices WHERE property_id=$1 AND estate_id=$2 AND status IN ('pending','overdue')`,
+		propertyID, estateID,
+	).Scan(&openInvoices); err != nil {
+		return fmt.Errorf("estate: check property liabilities: %w", err)
+	}
+	if openInvoices > 0 {
+		return fmt.Errorf("estate: cannot archive a unit with %d open invoice(s) — settle or waive them first", openInvoices)
 	}
 	ct, err := s.db.Exec(ctx, `UPDATE estate_properties SET archived=TRUE WHERE id=$1 AND estate_id=$2`, propertyID, estateID)
 	if err != nil {

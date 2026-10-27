@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
+import { FixtureBanner } from '../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/marketplaceAdminService';
 import type { MktListingStatus, MktOrderStatus, MktDisputeStatus, MktBoostStatus, MktFlagStatus } from '@/types/marketplaceAdmin';
 import { colors, tint } from '@/components/ui/vuexy';
 
@@ -35,11 +37,16 @@ export function MarketplaceTabs({ active }: { active: string }) {
     { href: '/admin/marketplace/audit-log', label: 'Audit Log', key: 'audit-log' },
   ];
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>
-      {tabs.map((t) => (
-        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.text, background: active === t.key ? colors.primary : colors.bg }}>{t.label}</Link>
-      ))}
-    </div>
+    <>
+      {/* Every marketplace page renders the tabs, so this is the one place the
+          console can admit it is showing fixtures instead of the database. */}
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
+      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>
+        {tabs.map((t) => (
+          <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.text, background: active === t.key ? colors.primary : colors.bg }}>{t.label}</Link>
+        ))}
+      </div>
+    </>
   );
 }
 

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { ApiError, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { getResidentContext, MAIN_POSITION_SUFFIX } from '@/src/server/elections/elections.service';
+import { getResidentContext, MAIN_POSITION_SUFFIX, SEALED_BALLOT } from '@/src/server/elections/elections.service';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -32,9 +32,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       throw new ApiError('Election not found', 404);
     }
 
+    // Participation only — candidate_id is deliberately not selected. A
+    // secret-ballot receipt must prove the vote was counted without revealing
+    // the selection (EST-UAT-0216).
     const { data: vote, error } = await supabase
       .from('election_votes')
-      .select('candidate_id, cast_at')
+      .select('id, cast_at')
       .eq('election_id', id)
       .eq('voter_id', user.id)
       .maybeSingle();
@@ -44,7 +47,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 
     return NextResponse.json({
       electionId: id,
-      choices: { [`${id}${MAIN_POSITION_SUFFIX}`]: (vote as any).candidate_id },
+      choices: { [`${id}${MAIN_POSITION_SUFFIX}`]: SEALED_BALLOT },
       submittedAt: (vote as any).cast_at,
     });
   } catch (error) {

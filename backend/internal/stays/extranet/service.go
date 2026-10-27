@@ -267,6 +267,23 @@ func (s *Service) CancelByHotel(ctx context.Context, userID, propertyID, reserva
 	return nil
 }
 
+// AdminCancelReservation force-cancels a reservation on the admin side (safety /
+// fraud takedown) — identical money semantics to a hotel cancel (full refund,
+// queued payouts killed, allotment re-opened) via the shared RefundOps path, but
+// WITHOUT the property-grant guard: the RBAC stays.admin.reservation route guard
+// is the authorization layer here. The reason is required so the cancellation
+// row + audit trail carry the admin's justification.
+func (s *Service) AdminCancelReservation(ctx context.Context, reservationID, reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("%w: admin cancel requires a reason", ErrValidation)
+	}
+	if _, err := s.refund.CancelByHotel(ctx, reservationID, "admin: "+reason); err != nil {
+		return err
+	}
+	s.releaseAllotment(ctx, reservationID)
+	return nil
+}
+
 // releaseAllotment best-effort re-opens inventory for a cancelled/no-show stay.
 func (s *Service) releaseAllotment(ctx context.Context, reservationID string) {
 	if s.allot == nil {
@@ -315,6 +332,28 @@ func (s *Service) ListMessages(ctx context.Context, userID, propertyID, reservat
 	}
 	if !ok {
 		return nil, ErrNotFound
+	}
+	return s.repo.ListMessages(ctx, reservationID, 200)
+}
+
+// PostGuestMessage persists a GUEST message on the caller's own reservation
+// thread (COM-003/004). Object scope: the caller must own the reservation —
+// a guessed foreign reservation id is a hard error, never a silent 404 leak.
+func (s *Service) PostGuestMessage(ctx context.Context, userID, reservationID, body string) (Message, error) {
+	if body == "" {
+		return Message{}, errors.New("extranet: message body required")
+	}
+	propertyID, ok, err := s.repo.ReservationOwnedByGuest(ctx, reservationID, userID)
+	if err != nil || !ok {
+		return Message{}, ErrForbidden
+	}
+	return s.repo.InsertMessage(ctx, reservationID, propertyID, "guest", userID, body)
+}
+
+// ListGuestMessages returns the caller's own reservation thread (COM-005).
+func (s *Service) ListGuestMessages(ctx context.Context, userID, reservationID string) ([]Message, error) {
+	if _, ok, err := s.repo.ReservationOwnedByGuest(ctx, reservationID, userID); err != nil || !ok {
+		return nil, ErrForbidden
 	}
 	return s.repo.ListMessages(ctx, reservationID, 200)
 }

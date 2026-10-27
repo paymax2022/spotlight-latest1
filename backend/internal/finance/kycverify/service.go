@@ -274,6 +274,7 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 	// result to FAILED with a user-facing reason (masked last-4 hint on a
 	// mismatch). Exempt ID types and non-PASS results are untouched. A read error
 	// fails CLOSED (we never let a PASS stand when ownership could not be checked).
+	ownershipProved := false
 	if s.ownershipGate && ct == provider.KycIDNumber &&
 		gr.Result.Status == provider.KycPassed && isPhoneBearingIDType(req.IDType) {
 		phone, verified := "", false
@@ -290,6 +291,7 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 			s.audit(ctx, "kycverify.ownership.blocked", userID, stored.ID,
 				fmt.Sprintf("type=%s id_type=%s", ct, req.IDType))
 		}
+		ownershipProved = gr.Result.Status == provider.KycPassed
 	}
 
 	if err := applyCheckTransition(stored.Status, gr.Result.Status); err != nil {
@@ -301,6 +303,20 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 	stored.Match = gr.Result.Match
 	stored.Confidence = gr.Result.Confidence
 	stored.ExtractedFields = gr.Result.ExtractedFields
+	if ct == provider.KycIDNumber && req.IDType != "" {
+		// Record which ID the name came from (VerifiedLegalName only trusts names
+		// from ownership-checkable ID types).
+		if stored.ExtractedFields == nil {
+			stored.ExtractedFields = map[string]string{}
+		}
+		stored.ExtractedFields[idTypeField] = strings.ToLower(req.IDType)
+		// Written after the provider's fields, so a provider can never set it.
+		if ownershipProved {
+			stored.ExtractedFields[ownershipVerifiedField] = "true"
+		} else {
+			delete(stored.ExtractedFields, ownershipVerifiedField)
+		}
+	}
 	stored.Reason = gr.Result.Reason
 	stored.RawPayloadRef = rawRef
 	if err := s.repo.UpdateCheckResult(ctx, stored); err != nil {
@@ -375,7 +391,7 @@ func (s *Service) audit(_ context.Context, event, userID, id, detail string) {
 }
 
 // Domain errors for the KYC verification gateway. The handler maps these to HTTP
-// status codes (handler.go). Mirrors the maplerad model.go error vocabulary.
+// status codes (handler.go).
 var (
 	// ErrForbidden — object-level authz: caller does not own the resource. 403.
 	ErrForbidden = errors.New("kycverify: not authorized for this resource")
@@ -437,10 +453,16 @@ type Check struct {
 	Match           bool                    `json:"match"`
 	Confidence      float64                 `json:"confidence"`
 	ExtractedFields map[string]string       `json:"extracted_fields"`
-	Reason          string                  `json:"reason"`
-	RawPayloadRef   string                  `json:"raw_payload_ref,omitempty"`
-	CreatedAt       time.Time               `json:"created_at"`
-	UpdatedAt       time.Time               `json:"updated_at"`
+	// MatchedName/MatchedDob are the provider-verified identity fields echoed to
+	// the member on an ID-number data-match so the app can DISPLAY them and the
+	// user's Continue affirms the returned value. The raw extracted_fields map
+	// stays withheld.
+	MatchedName   string    `json:"matched_name,omitempty"`
+	MatchedDob    string    `json:"matched_dob,omitempty"`
+	Reason        string    `json:"reason"`
+	RawPayloadRef string    `json:"raw_payload_ref,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Consent is an NDPA/CBN consent record captured before any check.
@@ -455,7 +477,7 @@ type Consent struct {
 
 // Pure webhook-pipeline decision logic (no DB, no network). The webhook handler
 // applies these decisions; keeping them pure makes the dedupe rule + terminal
-// mapping independently unit-testable (mirrors maplerad/service.go).
+// mapping independently unit-testable (pure, no I/O).
 
 // DedupeDecision is the pure outcome of the dedupe step. The handler INSERTs into
 // webhook_event ON CONFLICT (provider,event_id) DO NOTHING; rowsInserted reports
@@ -524,11 +546,11 @@ type RoutingTable map[provider.KycCheckType]RoutingRule
 // no env override is present).
 func DefaultRoutingTable() RoutingTable {
 	return RoutingTable{
-		provider.KycIDNumber: {CheckType: provider.KycIDNumber, OrderedProviders: []string{"dojah", "youverify"}, Threshold: 70, Enabled: true},
-		provider.KycIDFacial: {CheckType: provider.KycIDFacial, OrderedProviders: []string{"dojah", "smileid"}, Threshold: 70, Enabled: true},
-		provider.KycLiveness: {CheckType: provider.KycLiveness, OrderedProviders: []string{"dojah", "smileid"}, Threshold: 70, Enabled: true},
-		provider.KycDocument: {CheckType: provider.KycDocument, OrderedProviders: []string{"dojah", "smileid"}, Threshold: 70, Enabled: true},
-		provider.KycAML:      {CheckType: provider.KycAML, OrderedProviders: []string{"dojah", "youverify"}, Threshold: 70, Enabled: true},
+		provider.KycIDNumber: {CheckType: provider.KycIDNumber, OrderedProviders: []string{"dojah", "youverify", "mock"}, Threshold: 70, Enabled: true},
+		provider.KycIDFacial: {CheckType: provider.KycIDFacial, OrderedProviders: []string{"dojah", "smileid", "mock"}, Threshold: 70, Enabled: true},
+		provider.KycLiveness: {CheckType: provider.KycLiveness, OrderedProviders: []string{"dojah", "smileid", "mock"}, Threshold: 70, Enabled: true},
+		provider.KycDocument: {CheckType: provider.KycDocument, OrderedProviders: []string{"dojah", "smileid", "mock"}, Threshold: 70, Enabled: true},
+		provider.KycAML:      {CheckType: provider.KycAML, OrderedProviders: []string{"dojah", "youverify", "mock"}, Threshold: 70, Enabled: true},
 	}
 }
 

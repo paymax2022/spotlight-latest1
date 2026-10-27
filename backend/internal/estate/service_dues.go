@@ -95,7 +95,7 @@ func (s *Service) CreateInvoice(ctx context.Context, estateID, adminID string, r
 	// Block 30/43: notify the billed resident. Fire-and-forget.
 	s.notify(ctx, estateID, req.ResidentID, NotifPaymentDue, "New invoice",
 		fmt.Sprintf("You have a new %s invoice of ₦%.2f", inv.Category, float64(inv.AmountKobo)/100),
-		map[string]any{"invoice_id": inv.ID, "amount_kobo": inv.AmountKobo})
+		map[string]any{"invoice_id": inv.ID, keyAmountKobo: inv.AmountKobo})
 	return inv, nil
 }
 
@@ -418,7 +418,7 @@ func (s *Service) payDues(ctx context.Context, estateID, payerID string, req Pay
 		return nil, fmt.Errorf("estate: lift restriction: %w", err)
 	}
 	if err := s.auditTx(ctx, tx, estateID, payerID, "DUES_PAY", "invoice", req.InvoiceID, map[string]any{
-		"amount_kobo": amount, "method": method, "reference": ref,
+		keyAmountKobo: amount, keyMethod: method, "reference": ref,
 	}); err != nil {
 		return nil, err
 	}

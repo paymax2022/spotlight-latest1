@@ -22,18 +22,33 @@ export interface FilmAcademySettings {
   registration_type?: string;
   /** Naira. Charged at APPLICATION time, separate from tuition. */
   application_fee?: number;
-  /** Naira. The programme-wide tuition, used when a batch carries no fee of its own. */
+  /** Naira. Programme-wide reference figure only — never billed; tuition comes from each training's fee. */
   tuition_fee?: number;
   [key: string]: unknown;
 }
 
-/** An admin-managed area of interest. `fee_ngn` is NAIRA and is added to the base fee. */
+/**
+ * One composite tuition item: a training format priced for one area (NAIRA).
+ * Every area carries the same five formats — weekend with/without boarding,
+ * weekdays with/without boarding, and full-time 30 days with boarding.
+ */
+export interface FilmAcademyPricingOption {
+  key: string;
+  label: string;
+  note: string | null;
+  price_ngn: number;
+  sort_order: number;
+}
+
+/** An area of interest. `pricing_options` is what tuition is priced on now. */
 export interface FilmAcademyInterestArea {
   /** Written to academy_applications.areas_of_interest; stable once in use. */
   slug: string;
   label: string;
   description: string | null;
+  /** @deprecated Legacy single fee — the composite format table prices tuition now. */
   fee_ngn: number;
+  pricing_options?: FilmAcademyPricingOption[];
 }
 
 /**
@@ -68,6 +83,14 @@ export interface FilmAcademyOverview {
   maxInterestAreas: number;
   /** Signed-in applicant's known details, or null when signed out. */
   applicant: FilmAcademyApplicant | null;
+  /**
+   * The five training formats (identity only — prices live on each area's
+   * pricing_options). Empty on an older server, which priced on fee_ngn.
+   */
+  pricingStructure: Array<{ key: string; label: string; note: string | null; sort_order: number }>;
+  /** What the tuition buys, and what it does not cover — server-owned copy. */
+  deliverables: string[];
+  feeExclusions: string[];
 }
 
 export interface FilmAcademyApplicationInput {
@@ -81,9 +104,20 @@ export interface FilmAcademyApplicationInput {
   email?: string;
   phone?: string;
   areas_of_interest: string[];
+  /**
+   * Accordion selection: each chosen area WITH the format (sub) the applicant
+   * tapped. When present the server prices tuition per area from these pairs.
+   */
+  area_selections?: Array<{ slug: string; key: string }>;
   motivation: string;
   experience?: string;
   payment_preference: 'one_off' | 'installment';
+  /**
+   * Which training format the tuition is priced in — one of the
+   * pricingStructure keys. Omitted on an older server, which then falls back
+   * to the cheapest format rather than the retired per-area fee.
+   */
+  pricing_option_key?: string;
   /**
    * Paystack transaction reference for the APPLICATION fee, required when
    * settings.registration_type is 'paid'. The server re-verifies it with
@@ -121,6 +155,15 @@ export interface FilmAcademyInstalment {
   status: string | null;
 }
 
+/** One interest area the applicant chose, with the priced option they picked. NAIRA. */
+export interface FilmAcademyAppliedArea {
+  slug: string;
+  label: string;
+  optionKey: string | null;
+  optionLabel: string | null;
+  priceNgn: number;
+}
+
 export interface FilmAcademyApplicationStatus {
   application: {
     id: string;
@@ -146,6 +189,10 @@ export interface FilmAcademyApplicationStatus {
   plan: { id: string; total_amount_ngn: number; discounted_amount_ngn: number | null; installments_count: number } | null;
   payments: FilmAcademyInstalment[];
   actions: FilmAcademyAction[];
+  /** Interest areas applied for. Empty on an older server. */
+  areas: FilmAcademyAppliedArea[];
+  /** Naira. Sum of the priced areas; 0 when unknown. */
+  tuitionTotalNgn: number;
 }
 
 /** Why the learning area is not open yet. Decided server-side. */
@@ -170,12 +217,30 @@ export interface FilmAcademyLesson {
   completed_at: string | null;
 }
 
+export interface FilmAcademyModuleQuiz {
+  id: string;
+  title: string;
+  passMark: number; /** 85 for module quizzes */
+  timeLimitMinutes: number;
+  maxAttempts: number;
+  canStart: boolean;
+  /**
+   * Null = not attempted, else the learner's best result. `passed` is the server's
+   * verdict on exact points; never re-derive it from the rounded scorePercent.
+   */
+  lastResult: { scorePercent: number; passed: boolean; earnedPoints: number; maxPoints: number } | null;
+}
+
 export interface FilmAcademyModule {
   id: string;
   title: string;
   description: string | null;
   lessons: FilmAcademyLesson[];
   completedCount: number;
+  /** Module-level quiz (tiered learning: 85% required to unlock next module) */
+  quiz?: FilmAcademyModuleQuiz;
+  /** True if this module is locked (previous module's quiz not passed at 85%) */
+  isLocked?: boolean;
 }
 
 export interface FilmAcademyCurriculum {
@@ -247,4 +312,91 @@ export interface FilmAcademyAssignments {
   pageSize: number;
   total: number;
   hasMore: boolean;
+}
+
+// ── Exams (PRD BK-10) ────────────────────────────────────────────────────────
+// These mirror /api/academy/exams* and /api/academy/attempts* in frontend-web.
+// Server-authoritative: the draw, option shuffle, deadline and score all happen
+// there. Nothing here carries a correct answer — a learner sees only their own
+// picked option, never which one was right.
+
+/** Why an exam cannot be started — set by the server, mirrors examEligibility. */
+export type ExamBlockerCode =
+  | 'NOT_FOR_YOUR_PROGRAMME'
+  | 'EXAM_MISCONFIGURED'
+  | 'ATTEMPT_LIMIT_REACHED'
+  | 'EXAM_UNPUBLISHED'
+  | 'EXAM_NOT_OPEN_YET'
+  | 'EXAM_CLOSED';
+
+/** One exam on the learner's list. No draw config, no questions, no key. */
+export interface FilmAcademyExamSummary {
+  id: string;
+  title: string;
+  description: string | null;
+  kind: string;
+  passMark: number;
+  timeLimitMinutes: number;
+  maxAttempts: number;
+  attemptsUsed: number;
+  /** ISO instants bounding when the exam can be started; null = unbounded. */
+  opensAt?: string | null;
+  closesAt?: string | null;
+  canStart: boolean;
+  blockerCode: ExamBlockerCode | null;
+  blockerMessage: string | null;
+}
+
+export interface FilmAcademyExamList {
+  locked: boolean;
+  reason?: LearningLockReason;
+  exams: FilmAcademyExamSummary[];
+}
+
+/** One option as presented to the learner — an opaque id, not a bank id. */
+export interface ExamPresentedOption {
+  presentationOptionId: string;
+  text: string;
+}
+
+export interface ExamPresentedQuestion {
+  attemptQuestionId: string;
+  stem: string;
+  points: number;
+  options: ExamPresentedOption[];
+}
+
+/** The started attempt: the immutable draw, already shuffled, plus the timer. */
+export interface FilmAcademyStartedAttempt {
+  attemptId: string;
+  state: 'in_progress';
+  startedAt: string;
+  deadlineAt: string;
+  questionCount: number;
+  questions: ExamPresentedQuestion[];
+}
+
+/** The committed score. `scorePercent` is 0-100; points are the raw sums. */
+export interface FilmAcademyExamResult {
+  attemptId: string;
+  state: 'scored';
+  scorePercent: number;
+  earnedPoints: number;
+  maxPoints: number;
+  passed: boolean;
+  answeredCount: number;
+  totalCount: number;
+}
+
+/** A loaded attempt — replayable while in progress, or the result once scored. */
+export interface FilmAcademyAttemptView {
+  attemptId: string;
+  state: string;
+  startedAt: string | null;
+  deadlineAt: string | null;
+  expired: boolean;
+  questions: ExamPresentedQuestion[];
+  /** attemptQuestionId -> the learner's own last saved presentationOptionId. */
+  answered: Record<string, string>;
+  result: FilmAcademyExamResult | null;
 }

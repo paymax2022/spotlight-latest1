@@ -16,7 +16,11 @@ export async function GET(request: Request) {
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) return NextResponse.json([]);
-    const { data: rows, error } = await supabase.from('estate_vendors').select(COLS).eq('estate_id', ctx.estateId).order('rating', { ascending: false });
+    // EST-UAT-0273/0274: residents browse verified vendors only; pending or
+    // suspended vendors are admin-review records, not marketplace listings.
+    let query = supabase.from('estate_vendors').select(COLS).eq('estate_id', ctx.estateId);
+    if (ctx.role !== 'estate_admin') query = query.eq('status', 'verified');
+    const { data: rows, error } = await query.order('rating', { ascending: false });
     if (error) throw error;
     return NextResponse.json((rows ?? []).map(mapVendor));
   } catch (error) { return handleApiError(error, 'Failed to list vendors'); }

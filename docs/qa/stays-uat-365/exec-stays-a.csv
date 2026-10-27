@@ -1,0 +1,26 @@
+execution_id,case_id,method,command_or_procedure,env,result,evidence_path,executed_at_utc
+EX-001,ALL,UNIT_TEST,cd backend && go test ./internal/stays/... ./internal/realtor/... -count=1,"worktree, no TEST_DATABASE_URL",PASSED,all pkgs ok (adapters/admin/extranet/reservation/settlement/supplierwebhooks/realtor),2026-10-21T20:05:00Z
+EX-002,ALL,INTEGRATION_TEST,TEST_DATABASE_URL=postgres://...@127.0.0.1:54322 go test ./internal/stays/... ./internal/realtor/...,local supabase (restored volume),PASSED,adapters/extranet(338s)/reservation(347s)/settlement/supplierwebhooks/realtor ok; admin dashboard FAIL=fixture pollution on shared volume (bookings_30d 5!=2),2026-10-21T20:05:00Z
+EX-003,env,MANUAL,supabase start; go run ./cmd/server APP_PORT=18421; ensure-dev-login.sh admin@spotlight.internal,local,PASSED,API live on :18421; admin fixture login 200,2026-10-21T20:05:00Z
+EX-004,STY-SRH-001,API_LIVE,GET /api/finance/stays/search?check_in&check_out&city=Lagos,live :18421,PASSED,priced deduped offers returned,2026-10-21T20:05:00Z
+EX-005,STY-SRH-003,API_LIVE,GET /search (no dates),live,PASSED,400 invalid check_in/check_out,2026-10-21T20:05:00Z
+EX-006,STY-SHT-001/STY-HTL-001,API_LIVE,POST /api/stays/extranet/properties {UAT Probe Hotel} + 3 room-types + 3 rate-plans,live,PASSED,201; property+OWNER grant; DRAFT,2026-10-21T20:05:00Z
+EX-007,STY-HTL-016,API_LIVE,inspect supplier refs on extranet-created rows,live+psql,FAILED->FIXED,"refs were """" pre-fix; post-fix stamped id::text (verified c3057c6b..)",2026-10-21T20:05:00Z
+EX-008,STY-SRH-015,API_LIVE,"GET /search shows UAT Probe Hotel offer with rt_ref="""" rp_ref=""""",live (pre-fix),FAILED->FIXED,post-fix dated EXISTS filter + stamped refs,2026-10-21T20:05:00Z
+EX-009,STY-RAT-006,API_LIVE,"POST /prebook {""promo_bps"":9000}",live (post-fix),PASSED,discount_kobo=0 — client claim ignored,2026-10-21T20:05:00Z
+EX-010,STY-RAT-004/005/018,API_LIVE,rate_day 11M override + base 7M -> prebook gross 18000000,live (post-fix),PASSED,per-night rate applied,2026-10-21T20:05:00Z
+EX-011,STY-RAT-006,API_LIVE,stays_promotion 10% PERCENT -> prebook gross 16200000/discount 1800000,live (post-fix),PASSED,server-side promo resolved,2026-10-21T20:05:00Z
+EX-012,STY-BKH-010/STY-HTL-006,API_LIVE,POST /prebook adults=9 vs occupancy=2,live (post-fix),PASSED,409 PREBOOK_FAILED (sold out),2026-10-21T20:05:00Z
+EX-013,STY-RAT-015,UNIT_TEST,go test ./internal/stays/adapters -run TestBookTokenTTL,worktree,PASSED,v2 TTL enforced; stale/future -> ErrHoldExpired; v1 legacy ok,2026-10-21T20:05:00Z
+EX-014,STY-BKS-016,API_LIVE,POST /book without Idempotency-Key,live,PASSED,400 Idempotency-Key header required,2026-10-21T20:05:00Z
+EX-015,STY-ACC-014/STY-BKS-013/014,API_LIVE,GET /reservations,live,PASSED,own rows only; states PREBOOK_OK/PREBOOK_FAILED distinct,2026-10-21T20:05:00Z
+EX-016,STY-ACC-012,API_LIVE,POST /consent,live,PASSED,200 consent record stays-ndpa-v1,2026-10-21T20:05:00Z
+EX-017,STY-MRB-011/012,API_LIVE,GET /extranet/me/properties + owner prebooks own listing,live,PASSED,same JWT OWNER + guest booking OK,2026-10-21T20:05:00Z
+EX-018,STY-MRB-010,CODE_REVIEW,search/prebook require p.status=ACTIVE; moderation gates publish,repo,PASSED,DRAFT invisible in search,2026-10-21T20:05:00Z
+EX-019,STY-RAT-001/013/014/017,CODE_REVIEW+UNIT_TEST,"nightsBetween [ci,co); commitDecrement FOR UPDATE + CHECK; realtor EXCLUDE gist",repo,PASSED,oversell-impossible invariant holds both rails,2026-10-21T20:05:00Z
+EX-020,STY-BKS-002..006,CODE_REVIEW,grep request-to-book/pending-approval states,repo,FAILED,no request lifecycle — STYA-D010,2026-10-21T20:05:00Z
+EX-021,STY-HTL-015/STY-BKH-003/005,CODE_REVIEW,reservation schema single room_type_id,repo,FAILED,single-line only — STYA-D011,2026-10-21T20:05:00Z
+EX-022,STY-BKS-016(realtor)/BKH-010,CODE_REVIEW,realtor_*_booking RPCs,repo,FAILED,no dedup/capacity/date guards — STYA-D005 pending sql,2026-10-21T20:05:00Z
+EX-023,STY-MRB-001..003,CODE_REVIEW,onb_merchant_type seeds: doctor/pharmacy/seller/restaurant only,repo,FAILED,no hotel/shortlet merchant type,2026-10-21T20:05:00Z
+EX-024,ALL-UI,MANUAL,"mobile stays/realtor screens reviewed (api.ts filters, desk board, addons)",repo,BLOCKED,no device run; source-level only,2026-10-21T20:05:00Z
+EX-025,ALL,API_LIVE,POST /reservations/:id/cancel on PREBOOK_OK,live,PASSED,409 illegal state transition (FSM guard),2026-10-21T20:05:00Z

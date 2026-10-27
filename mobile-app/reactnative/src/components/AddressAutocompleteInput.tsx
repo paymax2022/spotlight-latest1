@@ -52,6 +52,8 @@ export interface SelectedAddress {
   source?: string;
   /** True when the coordinate came from a confirmed map pin / GPS reverse. */
   precise?: boolean;
+  /** True when the coordinate was INVENTED by the offline geocoder (demo builds). */
+  estimated?: boolean;
 }
 
 interface Props {
@@ -85,6 +87,16 @@ interface Props {
    * screens were built around.
    */
   inlineDropdown?: boolean;
+  /**
+   * Refuse to save a coordinate the offline geocoder invented (see AddressHit.estimated).
+   *
+   * A customer's DROP-OFF can tolerate a plausible point — the courier calls, and a demo
+   * build needs SOME coordinate to quote a fee from. A business's own location cannot:
+   * the pin decides which customers see the shop in "near me", and a rider drives to it.
+   * So a store owner who picks an unverified suggestion keeps their typed text (the
+   * server geocodes that itself) and is asked to drop the pin on the map instead.
+   */
+  requireVerifiedPin?: boolean;
 }
 
 /**
@@ -112,6 +124,7 @@ export default function AddressAutocompleteInput({
   enableCurrentLocation = true,
   enableRecents = true,
   inlineDropdown = false,
+  requireVerifiedPin = false,
 }: Props) {
   const [suggestions, setSuggestions] = useState<AddressHit[]>([]);
   const [recents, setRecents] = useState<RecentAddress[]>([]);
@@ -119,6 +132,12 @@ export default function AddressAutocompleteInput({
   const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [resolving, setResolving] = useState(false);
+  // The text a finished lookup found NOTHING for, so the dropdown can say so instead of
+  // just collapsing — a box that goes quiet looks identical to a box that is broken.
+  const [noMatch, setNoMatch] = useState<string | null>(null);
+  // Shown when an address was kept as TEXT because its coordinate couldn't be trusted
+  // (see requireVerifiedPin) — the owner should know no pin was saved.
+  const [pinHint, setPinHint] = useState<string | null>(null);
 
   // The confirmed coordinate + Plus Code for the current selection.
   const [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
@@ -132,11 +151,16 @@ export default function AddressAutocompleteInput({
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Which keystroke's lookup is the current one. An aborted request is only half the
+  // story — the offline fallback answers instantly and a slow proxy answer can still land
+  // after it — so results are also dropped by number, never by hope.
+  const reqSeq = useRef(0);
   const gps = useCurrentLocation();
 
   useEffect(() => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      reqSeq.current += 1;
       abortRef.current?.abort();
     };
   }, []);
@@ -148,6 +172,7 @@ export default function AddressAutocompleteInput({
 
   const closeDropdown = () => {
     setSuggestions([]);
+    setNoMatch(null);
     setOpen(false);
     setLoading(false);
   };
@@ -155,15 +180,34 @@ export default function AddressAutocompleteInput({
   /** Apply a fully-resolved address: update field + pin + notify parent + remember. */
   const applyResolved = useCallback(
     (r: ResolvedAddress, { openMap }: { openMap?: boolean } = {}) => {
+      // A surface that needs a REAL pin never accepts an invented one: keep the words the
+      // owner typed (the server geocodes the text itself), and offer the map.
+      if (requireVerifiedPin && r.estimated) {
+        onChangeText(r.label);
+        setPin(null);
+        setPlusCode('');
+        setPinHint(
+          MapLibreGL && enableMapConfirm
+            ? 'That spot wasn’t found on a map. Drop the pin on your exact location, or save the address as written.'
+            : 'That spot wasn’t found on a map. The address will be saved as written.',
+        );
+        closeDropdown();
+        if (enableMapConfirm && MapLibreGL) setMapOpen(true);
+        return;
+      }
       onChangeText(r.label);
+      setPinHint(null);
       setPin({ lat: r.lat, lng: r.lng });
       setPlusCode(r.plusCode ?? '');
-      onSelect({ label: r.label, lat: r.lat, lng: r.lng, plusCode: r.plusCode, source: r.source, precise: r.precise });
+      onSelect({
+        label: r.label, lat: r.lat, lng: r.lng, plusCode: r.plusCode,
+        source: r.source, precise: r.precise, estimated: r.estimated,
+      });
       void addRecentAddress(r).then(() => getRecentAddresses().then(setRecents).catch(() => {}));
       closeDropdown();
       if (enableMapConfirm && openMap && MapLibreGL) setMapOpen(true);
     },
-    [onChangeText, onSelect, enableMapConfirm],
+    [onChangeText, onSelect, enableMapConfirm, requireVerifiedPin],
   );
 
   const handleChange = (text: string) => {
@@ -172,11 +216,14 @@ export default function AddressAutocompleteInput({
     setPin(null);
     setPlusCode('');
     setMapOpen(false);
+    setNoMatch(null);
+    setPinHint(null);
 
     if (!addressLookupEnabled()) return; // plain text field fallback
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
     abortRef.current?.abort();
+    reqSeq.current += 1;
 
     if (text.trim().length < 3) {
       setSuggestions([]);
@@ -187,17 +234,26 @@ export default function AddressAutocompleteInput({
 
     setLoading(true);
     setOpen(true);
+    const seq = reqSeq.current;
     debounceRef.current = setTimeout(async () => {
       const controller = new AbortController();
       abortRef.current = controller;
+      const query = text.trim();
       try {
         const hits = await searchAddress(text, { near, surface, sessionToken, signal: controller.signal });
+        if (seq !== reqSeq.current) return; // a later keystroke already answered
         setSuggestions(hits);
-        setOpen(hits.length > 0 || (enableRecents && recents.length > 0));
+        setNoMatch(hits.length === 0 ? query : null);
+        // A finished lookup always has something to say — results, or that there were
+        // none. The visibility formula below decides whether that is a dropdown.
+        setOpen(true);
       } catch {
+        if (seq !== reqSeq.current) return;
         setSuggestions([]);
+        setNoMatch(query);
+        setOpen(true);
       } finally {
-        setLoading(false);
+        if (seq === reqSeq.current) setLoading(false);
       }
     }, 300);
   };
@@ -248,7 +304,7 @@ export default function AddressAutocompleteInput({
   };
 
   const showRecents = enableRecents && focused && value.trim().length < 3 && recents.length > 0;
-  const dropdownVisible = open && (suggestions.length > 0 || showRecents);
+  const dropdownVisible = open && (suggestions.length > 0 || showRecents || Boolean(noMatch));
 
   // Saved addresses as a standing row of chips, not only as a dropdown the user
   // has to know to summon by focusing an empty field. See recentAddressChips.ts
@@ -312,10 +368,28 @@ export default function AddressAutocompleteInput({
               <Navigation size={15} color={Colors.outline} strokeWidth={2} />
               <View style={styles.rowText}>
                 <Text style={styles.rowPrimary} numberOfLines={1}>{s.primary}</Text>
-                {s.secondary ? <Text style={styles.rowSecondary} numberOfLines={1}>{s.secondary}</Text> : null}
+                <Text style={styles.rowSecondary} numberOfLines={1}>
+                  {s.estimated && requireVerifiedPin
+                    ? `${s.secondary ? `${s.secondary} · ` : ''}not verified on a map`
+                    : s.secondary}
+                </Text>
               </View>
             </Pressable>
           ))}
+
+          {noMatch ? (
+            <View style={styles.row}>
+              <MapPin size={15} color={Colors.outline} strokeWidth={2} />
+              <View style={styles.rowText}>
+                <Text style={styles.rowPrimary} numberOfLines={1}>No match for “{noMatch}”</Text>
+                <Text style={styles.rowSecondary}>
+                  {enableMapConfirm && MapLibreGL
+                    ? 'Keep typing for more of the address, or choose the exact spot on the map.'
+                    : 'Keep typing for more of the address — the full text can be saved as written.'}
+                </Text>
+              </View>
+            </View>
+          ) : null}
 
           {gps.error ? <Text style={styles.errorHint}>{gps.error}</Text> : null}
 
@@ -323,6 +397,11 @@ export default function AddressAutocompleteInput({
               Google map (these render on the MapLibre basemap). */}
           {suggestions.some((s) => s.source === 'proxy') ? (
             <Text style={styles.attribution}>Powered by Google</Text>
+          ) : suggestions.some((s) => s.source === 'mock') ? (
+            // Say so when the list came from the offline geocoder rather than a real
+            // provider: the names are area guesses, and a user who believes they are
+            // verified will trust a coordinate that was invented.
+            <Text style={styles.attribution}>Offline suggestions — not checked against a map</Text>
           ) : null}
         </View>
       )}
@@ -373,6 +452,12 @@ export default function AddressAutocompleteInput({
           ) : null}
         </Pressable>
       )}
+
+      {/* When a pick was refused as unverified, say what the field now holds: text, not a
+          pin. Without this the owner believes the map location was saved too. */}
+      {!pin && pinHint && !dropdownVisible ? (
+        <Text style={styles.pinHint} accessibilityRole="alert">{pinHint}</Text>
+      ) : null}
 
       {mapOpen && enableMapConfirm && (
         <View style={styles.mapWrap}>
@@ -437,7 +522,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     zIndex: 20,
   },
-  dropdownInline: { position: 'relative', top: undefined, left: undefined, right: undefined },
+  // Zero the offsets rather than passing `undefined`: react-native-web skips
+  // undefined style values, so the base `top: '100%'` survived and pushed the
+  // in-flow list a full container height below the input (rendered, but off-screen).
+  dropdownInline: { position: 'relative', top: 0, left: 0, right: 0 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -477,6 +565,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xs,
   },
   pinSummaryText: { ...Typography.caption, color: Colors.onSurfaceVariant, flex: 1 },
+  pinHint: { ...Typography.caption, color: Colors.onSurfaceVariant, marginTop: 6, paddingHorizontal: Spacing.xs },
   adjust: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   adjustText: { ...Typography.labelSm, color: Colors.primary },
   mapWrap: { marginTop: Spacing.sm, gap: 4 },

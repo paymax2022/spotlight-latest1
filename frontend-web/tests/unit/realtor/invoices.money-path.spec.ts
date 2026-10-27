@@ -37,6 +37,7 @@ interface Cfg {
   rpcError?: any;
   postFinalizePayment?: any;  // payment row AFTER a successful rpc call (defaults to rpcResult shape)
   postFinalizeInvoice?: any;  // invoice row AFTER a successful rpc call
+  claimLost?: boolean;        // atomic pending|failed -> processing claim matched no row
 }
 
 function makeSupabase(cfg: Cfg) {
@@ -44,11 +45,26 @@ function makeSupabase(cfg: Cfg) {
   let paymentLookupCount = 0;
   let invoiceLookupCount = 0;
 
+  const updates: { table: string; patch: any }[] = [];
+
   function builder(table: string) {
+    let patch: any = null;
     const chain: any = {
       select: () => chain,
       eq: () => chain,
+      in: () => chain,
+      update: (p: any) => {
+        patch = p;
+        updates.push({ table, patch: p });
+        return chain;
+      },
+      // Awaiting the chain itself (the claim-revert update) resolves cleanly.
+      then: (resolve: (v: any) => void) => resolve({ data: null, error: null }),
       maybeSingle: async () => {
+        if (patch) {
+          // The atomic claim: update ... .select('id').maybeSingle().
+          return { data: cfg.claimLost ? null : { id: INVOICE }, error: null };
+        }
         if (table === 'realtor_payments') {
           paymentLookupCount += 1;
           // First lookup = idempotent fast-path (before any debit/rpc).
@@ -78,7 +94,7 @@ function makeSupabase(cfg: Cfg) {
       return { data: cfg.rpcResult ?? paymentRow(), error: null };
     },
   };
-  return { client, rpcCalls };
+  return { client, rpcCalls, updates };
 }
 
 function invoiceRow(over: Partial<Record<string, any>> = {}) {
@@ -226,5 +242,25 @@ describe('payInvoice — idempotent replay (no double-charge)', () => {
 
     expect(debitWallet).toHaveBeenCalledTimes(1);
     expect(res.alreadyProcessed).toBe(true);
+  });
+});
+
+describe('payInvoice — atomic claim (no double-debit across different keys)', () => {
+  it('returns 409 without debiting when a concurrent request already claimed the invoice', async () => {
+    const { client, rpcCalls } = makeSupabase({ invoice: invoiceRow(), lease: leaseRow(), claimLost: true });
+    vi.mocked(createAdminClient).mockReturnValue(client as any);
+    await expect(payInvoice({ userId: USER, invoiceId: INVOICE, channel: 'WALLET', idempotencyKey: KEY }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(debitWallet).not.toHaveBeenCalled();
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it('releases the claim back to the prior status when finalization fails', async () => {
+    vi.mocked(debitWallet).mockResolvedValue({ alreadyProcessed: false } as any);
+    const { client, updates } = makeSupabase({ invoice: invoiceRow(), lease: leaseRow(), rpcError: { message: 'boom' } });
+    vi.mocked(createAdminClient).mockReturnValue(client as any);
+    await expect(payInvoice({ userId: USER, invoiceId: INVOICE, channel: 'WALLET', idempotencyKey: KEY }))
+      .rejects.toMatchObject({ status: 500 });
+    expect(updates.map((u) => u.patch.status)).toEqual(['processing', 'pending']);
   });
 });

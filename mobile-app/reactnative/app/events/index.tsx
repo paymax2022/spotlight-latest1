@@ -15,6 +15,7 @@ import EventCard from '@/features/events/components/EventCard';
 import { useEvents } from '@/features/events/hooks';
 import { EVENT_CATEGORIES } from '@/features/events/constants/events.constants';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import EventsTabBar from '@/features/events/components/EventsTabBar';
 
 export default function EventsDiscovery() {
   const [query, setQuery] = useState('');
@@ -71,6 +72,7 @@ export default function EventsDiscovery() {
           <View style={{ height: Spacing.xxl }} />
         </ScrollView>
       )}
+      <EventsTabBar />
     </SafeAreaView>
   );
 }

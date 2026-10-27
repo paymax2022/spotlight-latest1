@@ -36,8 +36,9 @@ export interface EventSummary {
   sold_out:       boolean;
 }
 
-// Full detail — GET /api/finance/events/:id.
-export interface EventDetail {
+// The backend Event object (top5events model.go Event): what the organiser
+// profile returns for each upcoming event. EventDetail adds the ticket tiers.
+export interface Event {
   id:            string;
   organiser_id:  string;
   title:         string;
@@ -49,7 +50,62 @@ export interface EventDetail {
   fee_bps:       number;
   category:      EventCategory;
   created_at:    string;
-  tiers:         TicketTier[];
+  // Social fields (events-social). The four nullable fields are sent as null,
+  // never omitted; a null coordinate pair means no map. `liked` is per-caller.
+  banner_url:     string | null;
+  venue_lat:      number | null;
+  venue_lng:      number | null;
+  venue_place_id: string | null;
+  like_count:     number;
+  liked:          boolean;
+}
+
+// Full detail — GET /api/finance/events/:id.
+export interface EventDetail extends Event {
+  tiers: TicketTier[];
+}
+
+// POST/DELETE /events/:id/like.
+export interface LikeState {
+  liked:      boolean;
+  like_count: number;
+}
+
+// POST/DELETE /events/organisers/:id/follow.
+export interface FollowState {
+  following:      boolean;
+  follower_count: number;
+}
+
+// GET /events/organisers/:id — public organiser page. `events` is the
+// organiser's upcoming public events.
+export interface OrganiserProfile {
+  organiser_id:   string;
+  display_name:   string;
+  bio:            string;
+  banner_url:     string | null;
+  follower_count: number;
+  following:      boolean;
+  events:         Event[];
+}
+
+// PUT /events/organisers/me — every field optional. Omitted = unchanged;
+// banner_url: null clears the banner.
+export interface OrganiserPatch {
+  display_name?: string;
+  bio?:          string;
+  banner_url?:   string | null;
+}
+
+// POST /events/organisers/me/banner/presign — PUT the image bytes to upload_url
+// with this exact content_type header, then send object_key as banner_url in
+// PUT /events/organisers/me.
+export interface BannerPresign {
+  upload_url:   string;
+  object_key:   string;
+  content_type: string;
+  expires_in:   number;   // seconds
+  method:       'PUT';
 }
 
 // PATCH /api/finance/events/:id — every field optional; omitted = unchanged.
@@ -57,6 +113,11 @@ export interface EventPatch {
   title?:       string;
   description?: string;
   venue?:       string;
+  // Set together with the venue when an address is picked (FEATURE_EVENTS_SOCIAL).
+  // null clears a stored pin; omit to leave it untouched.
+  venue_lat?:      number | null;
+  venue_lng?:      number | null;
+  venue_place_id?: string | null;
   category?:    EventCategory;
   starts_at?:   string;
   ends_at?:     string;
@@ -162,6 +223,9 @@ export interface CreateEventInput {
   title:        string;
   description:  string;
   venue:        string;
+  venue_lat?:      number | null;
+  venue_lng?:      number | null;
+  venue_place_id?: string | null;
   category:     EventCategory;
   starts_at:    string;
   ends_at:      string;

@@ -88,6 +88,29 @@ func TestForbidOwnerCategoryWrite_Answers403WithTheContractCode(t *testing.T) {
 	}
 }
 
+// The customer browse reads live under their own prefix so they can be switched off
+// independently of the merchant /menu-taxonomy reads.
+func TestRegisterBrowse_MountsOnlyBrowseReads(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	RegisterBrowse(r.Group("/api/restaurant"), NewHandler(nil))
+	routes := map[string]bool{}
+	for _, rt := range r.Routes() {
+		routes[rt.Method+" "+rt.Path] = true
+	}
+	for _, want := range []string{
+		"GET /api/restaurant/menu-taxonomy/browse/categories",
+		"GET /api/restaurant/menu-taxonomy/browse/cuisines",
+	} {
+		if !routes[want] {
+			t.Errorf("route not mounted: %s", want)
+		}
+	}
+	if len(routes) != 2 {
+		t.Errorf("RegisterBrowse mounted %d routes, want exactly 2: %v", len(routes), routes)
+	}
+}
+
 // The admin group mounts both /categories/reorder (static) and /categories/:id (param)
 // under PATCH. Building the router proves gin accepts that pair without a panic.
 func TestRegister_MountsWithoutRouteConflicts(t *testing.T) {

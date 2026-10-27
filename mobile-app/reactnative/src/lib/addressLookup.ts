@@ -36,6 +36,14 @@ export interface AddressHit {
   plusCode?: string;
   /** Which stack answered, for diagnostics/attribution. */
   source: AddressSource;
+  /**
+   * True when the coordinate was MADE UP rather than found: the offline geocoder
+   * invents a plausible point near the bias so a form can still be filled in a demo
+   * build. Nothing may treat such a hit as the location of a real building — a
+   * delivery fee computed from one is a guess, and a restaurant pinned on one is in
+   * the wrong street. Consumers use this to insist on a confirmed map pin instead.
+   */
+  estimated?: boolean;
 }
 
 /** A fully-resolved address — guaranteed to carry a coordinate. */
@@ -47,6 +55,8 @@ export interface ResolvedAddress {
   source: AddressSource;
   /** True when the coordinate came from a confirmed map pin / reverse geocode. */
   precise: boolean;
+  /** True when the coordinate was invented by the offline geocoder — see AddressHit. */
+  estimated?: boolean;
 }
 
 interface LookupOpts {
@@ -277,6 +287,9 @@ function offlineSearch(query: string, near?: { lat: number; lng: number }): Addr
       lat: c.lat,
       lng: c.lng,
       source: 'mock',
+      // The point is invented from the text, not looked up. Honest flag, because a
+      // caller that saves it as the location of a real building would be wrong.
+      estimated: true,
     },
   ];
 }
@@ -310,6 +323,7 @@ export async function searchAddress(query: string, opts: LookupOpts = {}): Promi
         sessionToken: opts.sessionToken,
         surface: opts.surface ?? 'checkout',
         near: opts.near,
+        signal: opts.signal,
       });
       markProxyUp();
       if (suggestions.length > 0) return suggestions.map(fromProxy);
@@ -349,7 +363,10 @@ export async function resolveCoordinate(
   opts: Pick<LookupOpts, 'surface' | 'signal'> = {},
 ): Promise<ResolvedAddress | null> {
   if (typeof hit.lat === 'number' && typeof hit.lng === 'number') {
-    return { label: hit.label, lat: hit.lat, lng: hit.lng, plusCode: hit.plusCode, source: hit.source, precise: false };
+    return {
+      label: hit.label, lat: hit.lat, lng: hit.lng, plusCode: hit.plusCode,
+      source: hit.source, precise: false, estimated: hit.estimated,
+    };
   }
   // Text-only suggestion → geocode it via the proxy (Google).
   if (proxyEnabled() && proxyLikelyUp()) {
@@ -382,7 +399,10 @@ export async function resolveCoordinate(
   if (offlineEnabled()) {
     const [hit2] = offlineSearch(hit.label);
     if (hit2 && typeof hit2.lat === 'number' && typeof hit2.lng === 'number') {
-      return { label: hit.label, lat: hit2.lat, lng: hit2.lng, source: 'mock', precise: false };
+      return {
+        label: hit.label, lat: hit2.lat, lng: hit2.lng, source: 'mock',
+        precise: false, estimated: hit2.estimated,
+      };
     }
   }
   return null;

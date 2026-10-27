@@ -38,7 +38,6 @@ import (
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/kycverify"
 	"spotlight/backend/internal/finance/ledger"
-	mapleraddomain "spotlight/backend/internal/finance/maplerad"
 	"spotlight/backend/internal/finance/ratings"
 	"spotlight/backend/internal/finance/referrals"
 	"spotlight/backend/internal/finance/settlement"
@@ -73,7 +72,7 @@ import (
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
-	"spotlight/backend/internal/provider/maplerad"
+	"spotlight/backend/internal/provider/dojah"
 	"spotlight/backend/internal/provider/monnify"
 	"spotlight/backend/internal/provider/paystack"
 	"spotlight/backend/internal/realtor"
@@ -83,6 +82,7 @@ import (
 	"spotlight/backend/internal/restaurant/paystackcheckout"
 	"spotlight/backend/internal/restaurant/taxonomy"
 	"spotlight/backend/internal/services"
+	staysreservation "spotlight/backend/internal/stays/reservation"
 	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
@@ -97,14 +97,17 @@ import (
 // It RETURNS the *referrals.RewardService built by the Direct Referral Rewards engine
 // (nil when the engine is flag-off or the pool is nil) so router.go can thread the
 // emitter into Phase-1 revenue modules wired OUTSIDE this function — currently the
-// Marketplace (RegisterMarketplace). Modules built INSIDE this function (the Maplerad
+// Marketplace (RegisterMarketplace). Modules built INSIDE this function (the utility
 // bills domain) are wired with it directly here.
 // Also returns the KYC verification gateway (*kycverify.Service, nil when
 // FEATURE_KYC_VERIFY_ENABLED is off or pool is nil) so router.go can thread it
 // into registerConnectWalletRoutes — the /api/v1/kyc/tier1 handler needs it to
 // run a real Dojah/Smile ID/Youverify check instead of writing an unverified
 // pending status.
-func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub) (*referrals.RewardService, *kycverify.Service) {
+// the guards parameter merely surfaced the metric on this line.
+//
+//nolint:gocognit,gocyclo // monolith route registrar was already far over the threshold;
+func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub, guards platformGuards) (*referrals.RewardService, *kycverify.Service) {
 	if cfg.DatabaseURL == "" {
 		log.Println("[finance] DATABASE_URL not set — skipping financial routes")
 		return nil, nil
@@ -236,10 +239,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// paystackClient is the CONCRETE Paystack client, kept alongside the
 	// paymentProvider interface var above for callers that need a
 	// Paystack-specific capability not on provider.PaymentProvider (namely
-	// RefundPayment — see restaurant/paystackcheckout.Gateway). paymentProvider
-	// may later be overridden to Maplerad below; paystackClient never is, so a
-	// feature that specifically needs Paystack (not "whichever provider is
-	// configured") reads this instead of paymentProvider.
+	// RefundPayment — see restaurant/paystackcheckout.Gateway).
 	var paystackClient *paystack.Client
 
 	if cfg.PaystackSecretKey != "" {
@@ -247,19 +247,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		paymentProvider = ps
 		vaProvider = ps
 		paystackClient = ps
-	}
-
-	// Maplerad overrides VA provider when its key is set (preferred for NGN DVAs + FX).
-	mapleradKey := cfg.MapleradSecretKey
-	var mapleradClient *maplerad.Client
-	// cardIssuer is the card-LIFECYCLE seam for the FX virtual cards store; nil when
-	// no issuer is configured (store then keeps synthesized card material).
-	var cardIssuer providerInterfaces.CardIssuer
-	if mapleradKey != "" {
-		mapleradClient = maplerad.New(mapleradKey, cfg.MapleradProd).WithBaseURL(cfg.MapleradBaseURL)
-		vaProvider = mapleradClient
-		paymentProvider = mapleradClient // use Maplerad as payment provider too when available
-		cardIssuer = mapleradClient
 	}
 
 	// Each real client is wrapped with a deterministic mock fallback (mock-first
@@ -304,33 +291,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// the provider (idempotent; also self-heals via GET /finance/va/me).
 	kycSvc.WithVAProvisioner(vaSvc)
 
-	var fxHandler *fx.Handler
-	var fxMarkupHandler *fx.MarkupHandler
-	if mapleradClient != nil {
-		fxSvc := fx.NewService(pool, ledgerSvc, mapleradClient, redisClient)
-		// Operator-tunable Paymax FX markup (ADR-030). Maplerad returns no fee —
-		// it prices its margin into the rate — so the customer-facing fee is ours,
-		// and it lives in fx_markup_rates where an admin can change it at runtime
-		// (no restart, no cache: resolved per quote). Seeded at 1%.
-		fxMarkupStore := fx.NewMarkupStore(pool)
-		fxSvc.SetMarkup(fxMarkupStore)
-		fxMarkupHandler = fx.NewMarkupHandler(fxMarkupStore)
-		// Commission recording under Finance/Currency Exchange (nil-safe, flag-gated,
-		// ledger-less — the conversion's own legs already move money). RATE NOTE:
-		// this module computes no isolated Spotlight margin (provider rate +
-		// passthrough fee), so the central 10% of principal is an attributed figure
-		// that likely OVER-states the true margin (see docs/commission).
-		if cfg.FeatureCommissionEnabled {
-			fxSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
-			log.Println("[fx] commission recording wired → Finance/Currency Exchange (earning-row only; no ledger re-post)")
-		}
-		fxHandler = fx.NewHandler(fxSvc)
-	}
+	// Operator-tunable Paymax FX markup (ADR-030): the customer-facing fee lives in
+	// fx_markup_rates where an admin can change it at runtime (no restart, no
+	// cache: resolved per quote). Seeded at 1%. The legacy wallet quote/convert
+	// service has no FX provider wired, so only the markup admin surface mounts.
+	fxMarkupHandler := fx.NewMarkupHandler(fx.NewMarkupStore(pool))
 
-	// Webhook handler. Signature verification must use the PAYSTACK client — not
-	// paymentProvider, which Maplerad overrides above (its HMAC secret is the
-	// Maplerad key, so every Paystack delivery would 401 and its fulfilments
-	// (DVA credits, transfer settle, dues/fees/food orders) would never land).
+	// Webhook handler. Signature verification uses the PAYSTACK client directly
+	// (its HMAC secret is the Paystack key), so DVA credits, transfer settle and
+	// dues/fees/food order fulfilments land.
 	var webhookHandler *webhooks.PaystackHandler
 	if paystackClient != nil {
 		webhookHandler = webhooks.NewPaystackHandler(paystackClient, vaSvc, xferSvc, walletSvc)
@@ -351,6 +320,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	finance := r.Group("/api/finance")
 	finance.Use(middleware.RequireAuthContext(supabase, rbac))
 	finance.Use(requireUserID())
+	// ESTD-D028: the only group hosting the support view-as read allow-list
+	// (middleware.supportImpersonationReadRoutes). Validates the session, audits
+	// the request (fail closed) and swaps the identity to the target user.
+	finance.Use(guards.applyImpersonation())
 
 	// The registry decides which modules an environment publishes — without these
 	// routes mounted, GET /api/v1/modules/visibility 404s and every client falls
@@ -424,8 +397,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	transfersAdmin.GET("", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.List)
 	transfersAdmin.GET("/provider-health", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.ProviderHealth)
 	transfersAdmin.GET("/:id", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Get)
-	transfersAdmin.POST("/:id/retry", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Retry)
-	transfersAdmin.POST("/:id/reverse", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Reverse)
+	transfersAdmin.POST("/:id/retry", middleware.RequirePermission(rbac, "finance.admin.transfers"), guards.stepUp("finance.admin.transfers.retry"), transfersAdminHandler.Retry)
+	transfersAdmin.POST("/:id/reverse", middleware.RequirePermission(rbac, "finance.admin.transfers"), guards.stepUp("finance.admin.transfers.reverse"), transfersAdminHandler.Reverse)
 
 	// READ-ONLY reporting over ledger_entries — the only source of truth for money
 	// movement across every module (there is no per-module transactions table).
@@ -632,7 +605,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureEventsEnabled && pool != nil {
 		// adminGroupTop5 applies authMW BEFORE requireUserID — RequireAuthContext
 		// populates ginutil.UserID(c); without it every admin route 401s.
-		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin", mapsAuth()), cfg, pool, rbac, rtHub, auditSink)
+		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin", mapsAuth()), cfg, pool, rbac, rtHub, auditSink, paystackClient, webhookHandler)
 	}
 	if cfg.FeatureLoyaltyEnabled && pool != nil {
 		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin", mapsAuth()), pool, rbac, auditSink)
@@ -750,21 +723,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 	}
 
-	if cfg.FeatureFXEnabled && fxHandler != nil {
-		fxGroup := finance.Group("/fx")
-		fxGroup.POST("/quote", fxHandler.GetQuote)
-		// convert is a money mutation — same budget as the transfer initiates.
-		fxGroup.POST("/convert", transferRate, fxHandler.Convert)
-		fxGroup.GET("/history", fxHandler.ListHistory)
-		fxGroup.GET("/wallets/:currency", fxHandler.GetWallet)
-	}
-
-	// Mounted on the root engine with mapsAuth() so the permission middleware can
-	// read the caller, matching the transfers/KYC admin consoles. Deliberately a
-	// SEPARATE grant from finance.admin.transfers: changing what every customer
-	// pays on FX has a wider blast radius than working a queue. Registered
-	// independently of FeatureFXEnabled so the rate stays readable and correctable
-	// even while the customer-facing FX surface is switched off.
 	if fxMarkupHandler != nil {
 		fxAdmin := r.Group("/api/finance/admin/fx")
 		fxAdmin.Use(mapsAuth()) // RequireAuthContext + mirror user_id
@@ -773,7 +731,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		fxAdmin.GET("/markup/audit", middleware.RequirePermission(rbac, "finance.admin.fx_markup"), fxMarkupHandler.ListAudit)
 	}
 
-	// Smart order routing across Eversend + Maplerad, spread engine, treasury,
+	// Smart order routing across Eversend + VertoFX, spread engine, treasury,
 	// unified multi-currency ledger, quote->lock->execute with idempotency.
 	if cfg.FeatureFXOrchestrationEnabled {
 		orchStore := orchestration.NewSQLStore(pool)
@@ -794,9 +752,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		floatBuckets := []orchestration.FloatBucket{
 			{Provider: "eversend", Currency: "USD", BalanceMinor: 820_000_00, LowWaterMinor: 200_000_00, HighWaterMinor: 1_000_000_00, ExposureLimitMinor: 5_000_000_00},
 			{Provider: "eversend", Currency: "NGN", BalanceMinor: 1_800_000_000_00, LowWaterMinor: 250_000_000_00, HighWaterMinor: 9_000_000_000_00, ExposureLimitMinor: 50_000_000_000_00},
-			{Provider: "maplerad", Currency: "NGN", BalanceMinor: 2_400_000_000_00, LowWaterMinor: 250_000_000_00, HighWaterMinor: 9_000_000_000_00, ExposureLimitMinor: 50_000_000_000_00},
-			{Provider: "maplerad", Currency: "USD", BalanceMinor: 600_000_00, LowWaterMinor: 150_000_00, HighWaterMinor: 800_000_00, ExposureLimitMinor: 4_000_000_00},
-			{Provider: "maplerad", Currency: "XAF", BalanceMinor: 420_000_000_00, LowWaterMinor: 100_000_000_00, HighWaterMinor: 500_000_000_00, ExposureLimitMinor: 5_000_000_000_00},
 		}
 		if cfg.FeatureVertoFXEnabled {
 			// Seed VertoFX float so it is not scored 0-liquidity / failing CanCover.
@@ -849,7 +804,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		orchHandler := orchestration.NewHandler(orchSvc).
 			WithSecondary(orchestration.NewSecondaryStore(pool)).
 			WithBusiness(orchestration.NewBusinessStore(pool)).
-			WithCards(orchestration.NewCardStore(pool, cardIssuer)).
 			WithCollections(orchestration.NewCollectionStore(pool)).
 			WithVerification(orchestration.NewVerificationStore(pool))
 
@@ -919,17 +873,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		og.GET("/notifications", orchHandler.ListNotifications)
 		og.PATCH("/notifications/:id", orchHandler.MarkNotificationRead)
 		og.POST("/notifications/read-all", orchHandler.MarkAllNotificationsRead)
-		// Consistent :id param across all card sub-routes (gin requires it).
-		og.GET("/cards", orchHandler.ListCards)
-		og.POST("/cards", orchHandler.CreateCard)
-		og.GET("/cards/:id", orchHandler.GetCard)
-		og.GET("/cards/:id/transactions", orchHandler.ListCardTransactions)
-		og.POST("/cards/:id/reveal", orchHandler.RevealCard)
-		og.POST("/cards/:id/fund", transferRate, orchHandler.FundCard)
-		og.POST("/cards/:id/freeze", orchHandler.FreezeCard)
-		og.POST("/cards/:id/unfreeze", orchHandler.UnfreezeCard)
-		og.POST("/cards/:id/terminate", orchHandler.TerminateCard)
-		og.PATCH("/cards/:id/controls", orchHandler.UpdateCardControls)
+		// FX virtual cards are disabled: no card-issuing provider is configured, so
+		// the /cards routes are intentionally not mounted.
 		// Inbound provider webhooks (no auth; provider-signed).
 		r.POST("/api/v1/fx/webhooks/:provider", orchHandler.InboundWebhook)
 		log.Println("[finance] FX orchestration routes registered at /api/v1/fx")
@@ -951,65 +896,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 	}
 
-	// --- Maplerad WaaS DOMAIN money path (ADR-012, NGN v1) ---
-	// Gated by FEATURE_MAPLERAD_ENABLED (no flag, no money path). The domain
-	// service depends ONLY on the provider GATEWAY PORTS — the concrete Maplerad
-	// client (built with its webhook secret) is injected as all five ports. Member
-	// routes are auth'd via the finance group's requireUserID; the webhook is
-	// mounted UNAUTHENTICATED (signature verified inside the handler); the
-	// reconcile + orphan-sweep jobs run as ctx-scoped goroutines.
-	if cfg.FeatureMapleradEnabled && pool != nil {
-		mplClient := maplerad.New(cfg.MapleradSecretKey, cfg.MapleradProd).
-			WithBaseURL(cfg.MapleradBaseURL).
-			WithWebhookSecret(cfg.MapleradWebhookSecret)
-		mplSvc := mapleraddomain.NewService(mapleraddomain.Deps{
-			Pool:         pool,
-			Ledger:       ledgerSvc,
-			Tiers:        tiersSvc,
-			VA:           vaSvc,
-			Identity:     mplClient,
-			Wallet:       mplClient,
-			Bills:        mplClient,
-			Disbursement: mplClient,
-			VAPort:       mplClient,
-		})
-		// Thread the Direct Referral Rewards emitter into the bills path (PRD §2.5/§7.1).
-		// OPTIONAL + nil-safe: only wire a NON-nil concrete service. Passing a typed-nil
-		// *referrals.RewardService through the interface setter would produce a non-nil
-		// interface wrapping a nil pointer (the classic Go nil-interface trap) and the
-		// `!= nil` guard would then call a method on nil — so we gate on rewardSvc here.
-		// When FEATURE_REFERRAL_REWARDS_ENABLED is off the emitter stays nil and a
-		// settled bill simply skips the emit. On success the domain calls
-		// emitter.OnPurchaseSettled{Module:"bills", ...} post-commit.
-		if rewardSvc != nil {
-			mplSvc.WithReferralEmitter(rewardSvc)
-		}
-		mplHandler := mapleraddomain.NewHandler(mplSvc)
-
-		mplGroup := finance.Group("/maplerad")
-		mplGroup.POST("/customer", mplHandler.CreateCustomer)
-		mplGroup.POST("/virtual-account", mplHandler.OpenVirtualAccount)
-		mplGroup.POST("/transfers", mplHandler.InitiateTransfer)
-		mplGroup.GET("/transfers/:ref", mplHandler.GetTransfer)
-		mplGroup.POST("/bills", mplHandler.PurchaseBill)
-
-		// Unauthenticated webhook (body-signed; verified inside the handler).
-		mplWH := webhooks.NewMapleradHandler(mplClient, mplSvc)
-		r.POST("/api/webhooks/maplerad/go", mplWH.Handle)
-
-		// Background reconciliation: daily full recon + hourly orphan sweep.
-		mapleraddomain.StartReconcile(ctx, mplSvc, 24*time.Hour)
-		mapleraddomain.StartOrphanSweep(ctx, mplSvc, time.Hour)
-		log.Println("[finance] Maplerad WaaS domain routes + webhook + jobs registered")
-	}
-
 	// Gated by FEATURE_UTILITY_BILLS_ENABLED inside RegisterUtilityBills (no flag,
 	// no money path). Member routes at /api/finance/utilitybills/*; the
 	// money-affecting admin actions at /api/finance/admin/utilitybills/* behind
 	// RBAC finance.admin.utilitybills. Reuses wallet/ledger/commission — the debit
 	// goes through walletSvc, so the tier/daily-limit check fires exactly as it
 	// does for every other module rather than being reimplemented here. The
-	// hourly requery-sweep job (Phase 3) runs on the same ctx as Maplerad's jobs.
+	// hourly requery-sweep job (Phase 3) runs on the same ctx as the other finance jobs.
 	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, auditSink)
 
 	// --- Multi-provider KYC verification gateway (ADR-013) ---
@@ -1182,6 +1075,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estateSvc := estate.NewService(pool, redisClient).
 			WithLedger(ledgerSvc). // Block 29 dues money path: balanced double-entry
 			WithTiers(tiersSvc).   // fail-closed tier-limit check on wallet debit
+			// ESTD-D027 maker-checker on high-risk admin actions (default OFF).
+			WithDualControl(cfg.FeatureEstateDualControlEnabled).
 			// Block 31: KYC-gated elections. Adapts *kyc.Service to the estate
 			// KYCVerifier interface; a voter is "verified" at KYC status=verified.
 			WithKYC(estate.KYCVerifierFunc(func(ctx context.Context, userID string) (bool, error) {
@@ -1196,6 +1091,25 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			WithLLM(llm.NewAnthropicClient(cfg.AnthropicAPIKey).WithModel("claude-sonnet-4-6"))
 		if mapSvc != nil {
 			estateSvc = estateSvc.WithGeocoder(maps.NewLocationGeocoder(mapSvc))
+		}
+		// SP-01: gate estate creation behind an approved estate-management merchant.
+		// Flag-off (default) preserves historical behaviour: the gate stays nil and
+		// CreateEstate is unchanged. When on, a creator without an ACTIVE
+		// onb_merchant_profile for the estate_management type is refused (fail closed).
+		// Grant-based guard authz (FEATURE_ESTATE_GUARD_GRANTS, default off): off keeps
+		// the previous "any resident" gate rule so existing guards are not locked out.
+		estateSvc = estateSvc.WithGuardGrants(cfg.FeatureEstateGuardGrants)
+		if cfg.FeatureEstateMerchantGate {
+			estateSvc = estateSvc.WithEstateMerchantGate(estate.EstateMerchantGateFunc(func(ctx context.Context, userID string) (bool, error) {
+				var ok bool
+				err := pool.QueryRow(ctx,
+					`SELECT EXISTS (SELECT 1 FROM onb_merchant_profile
+					 WHERE user_id=$1 AND merchant_type_id='estate_management' AND status='ACTIVE')`,
+					userID,
+				).Scan(&ok)
+				return ok, err
+			}))
+			log.Println("[estate] FEATURE_ESTATE_MERCHANT_GATE on: CreateEstate requires an approved estate manager")
 		}
 		// Block 37/43: push delivery. The adapter resolves the recipient's device
 		// push tokens and enqueues via the platform notifications queue (asynq).
@@ -1248,9 +1162,24 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			SecretAccessKey: cfg.R2SecretAccessKey,
 			Region:          cfg.R2Region,
 		})
+		estateSvc = estateSvc.WithVerificationRequired(cfg.FeatureEstateVerificationRequired)
 		estateHandler := estate.NewHandler(estateSvc).
-			WithPresigner(estatePresigner, cfg.R2Bucket)
+			WithPresigner(estatePresigner, cfg.R2Bucket).
+			WithPermissionChecker(func(userID, perm string) bool {
+				ok, err := rbac.CheckPermission(userID, perm, "global", "")
+				return err == nil && ok
+			})
 		estGroup := finance.Group("/estate")
+		// ESTD-D025: refuse mutating /estate/:id/... requests while the estate is
+		// pending/suspended/closed. Must stay ABOVE every route registration —
+		// Gin only applies group middleware to routes registered after Use.
+		estGroup.Use(estateHandler.LifecycleGate())
+
+		// SP-01/SP-02: rate-limit the code-space brute-force surface (guard lookup /
+		// admit) and code creation. Estate routes previously carried no rate limit at
+		// all, including the SOS/guard endpoints (gap-analysis theme 5).
+		estateGuardLimit := middleware.PerUserRateLimit(redisClient, "estate-guard", max(cfg.EstateGuardRatePerMin, 1))
+		estateCodeLimit := middleware.PerUserRateLimit(redisClient, "estate-code", max(cfg.EstateCodeRatePerMin, 1))
 
 		// Presigned uploads (Blocks 25/28/35/39)
 		estGroup.POST("/:id/uploads/presign", estateHandler.PresignUpload)
@@ -1263,6 +1192,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.POST("/:id/passes/scan", estateHandler.ScanPass)
 		estGroup.POST("/:id/elections", estateHandler.CreateElection)
 		estGroup.POST("/:id/elections/:electionId/vote", estateHandler.CastVote)
+		estGroup.POST("/:id/elections/:electionId/remind", estateHandler.RemindElection)
 		estGroup.GET("/:id/elections/:electionId/results", estateHandler.GetResults)
 		// Block 31: per-election voter eligibility (KYC / payment / resident type)
 		estGroup.GET("/:id/elections/:electionId/eligibility", estateHandler.GetVoterEligibility)
@@ -1306,13 +1236,23 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Block 41: Admin panel & configuration
 		estGroup.GET("/:id/admin/dashboard", estateHandler.GetAdminDashboard)
 		estGroup.GET("/:id/admin/residents", estateHandler.AdminListResidents)
-		estGroup.POST("/:id/admin/residents/:uid/ban", estateHandler.BanResident)
-		estGroup.POST("/:id/admin/residents/:uid/restore", estateHandler.RestoreResident)
+		estGroup.POST("/:id/admin/residents/:uid/ban", guards.stepUp("estate.admin.residents.ban"), estateHandler.BanResident)
+		estGroup.POST("/:id/admin/residents/:uid/restore", guards.stepUp("estate.admin.residents.restore"), estateHandler.RestoreResident)
 		estGroup.GET("/:id/admin/config", estateHandler.GetEstateConfig)
 		estGroup.PUT("/:id/admin/rules", estateHandler.SetEstateRules)
-		estGroup.PUT("/:id/admin/subscription-plan", estateHandler.ConfigureSubscriptionPlan)
+		estGroup.PUT("/:id/admin/subscription-plan", guards.stepUp("estate.admin.subscription_plan"), estateHandler.ConfigureSubscriptionPlan)
 		estGroup.GET("/:id/admin/audit-log", estateHandler.GetAuditLog)
 		estGroup.POST("/:id/admin/run-maintenance", estateHandler.RunMaintenance) // Block 47
+		// ESTD-D027: maker-checker approvals + versioned thresholds. Not mounted
+		// with the flag off (today's single-actor behaviour).
+		if cfg.FeatureEstateDualControlEnabled {
+			estGroup.GET("/:id/admin/approvals", estateHandler.ListApprovals)
+			estGroup.POST("/:id/admin/approvals", estateHandler.CreateApproval)
+			estGroup.GET("/:id/admin/approvals/:rid", estateHandler.GetApproval)
+			estGroup.POST("/:id/admin/approvals/:rid/approve", estateHandler.ApproveApproval)
+			estGroup.POST("/:id/admin/approvals/:rid/reject", estateHandler.RejectApproval)
+			estGroup.GET("/:id/admin/approval-thresholds", estateHandler.GetApprovalThresholds)
+		}
 
 		// Block 45: Settings & account
 		estGroup.GET("/:id/settings", estateHandler.GetMemberSettings)
@@ -1324,7 +1264,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.GET("/:id/vendor/profile", estateHandler.GetVendorProfile)
 		estGroup.GET("/:id/vendor/earnings", estateHandler.GetVendorEarnings)
 		estGroup.GET("/:id/vendor/jobs", estateHandler.ListVendorJobs)
-		estGroup.POST("/:id/vendor/assign-job", estateHandler.AssignVendorJob)
+		estGroup.POST("/:id/vendor/assign-job", guards.stepUp("estate.admin.vendor.assign_job"), estateHandler.AssignVendorJob)
 		estGroup.POST("/:id/vendor/jobs/:jid/accept", estateHandler.AcceptVendorJob)
 		estGroup.POST("/:id/vendor/jobs/:jid/reject", estateHandler.RejectVendorJob)
 		estGroup.POST("/:id/vendor/jobs/:jid/checkin", estateHandler.CheckInVendorJob)
@@ -1340,6 +1280,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.GET("/:id/meetings", estateHandler.ListMeetings)
 		estGroup.GET("/:id/meetings/:mid", estateHandler.GetMeeting)
 		estGroup.POST("/:id/meetings/:mid/rsvp", estateHandler.RSVPMeeting)
+		estGroup.POST("/:id/meetings/:mid/remind", estateHandler.RemindMeeting)
 		estGroup.POST("/:id/meetings/:mid/checkin", estateHandler.CheckInMeeting)
 		estGroup.POST("/:id/meetings/:mid/start", estateHandler.StartMeeting)
 		estGroup.POST("/:id/meetings/:mid/end", estateHandler.EndMeeting)
@@ -1353,23 +1294,32 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Block 28: Guard app
 		estGroup.GET("/:id/gates", estateHandler.ListGates)
-		estGroup.GET("/:id/guard/expected-visitors", estateHandler.GetExpectedVisitors)
-		estGroup.GET("/:id/guard/lookup", estateHandler.LookupCode)
-		estGroup.POST("/:id/guard/checkin", estateHandler.GuardCheckin)
-		estGroup.POST("/:id/guard/checkout", estateHandler.GuardCheckout)
+		estGroup.GET("/:id/guard/expected-visitors", estateGuardLimit, estateHandler.GetExpectedVisitors)
+		estGroup.GET("/:id/guard/lookup", estateGuardLimit, estateHandler.LookupCode)
+		estGroup.POST("/:id/guard/checkin", estateGuardLimit, estateHandler.GuardCheckin)
+		estGroup.POST("/:id/guard/checkout", estateGuardLimit, estateHandler.GuardCheckout)
+		// SP-02: guard raises a host-approval request for a gated code.
+		estGroup.POST("/:id/guard/arrival-request", estateGuardLimit, estateHandler.RequestArrival)
 		estGroup.POST("/:id/guard/incident", estateHandler.SubmitIncident)
 		estGroup.GET("/:id/guard/incidents", estateHandler.ListIncidents)
 		estGroup.POST("/:id/guard/shift-handover", estateHandler.HandoverShift)
 		estGroup.POST("/:id/guard/sync", estateHandler.SyncOfflineLogs)
 
 		// Block 27: Extended visitor access codes
-		estGroup.POST("/:id/access-codes", estateHandler.CreateAccessCode)
+		estGroup.POST("/:id/access-codes", estateCodeLimit, estateHandler.CreateAccessCode)
 		estGroup.GET("/:id/access-codes", estateHandler.ListAccessCodes)
 		estGroup.GET("/:id/access-codes/:cid", estateHandler.GetAccessCode)
 		estGroup.POST("/:id/access-codes/:cid/revoke", estateHandler.RevokeCode)
 		estGroup.POST("/:id/access-codes/:cid/extend", estateHandler.ExtendCode)
 		estGroup.POST("/:id/access-codes/:cid/blacklist", estateHandler.BlacklistVisitor)
 		estGroup.GET("/:id/access-codes/:cid/history", estateHandler.GetCheckinHistory)
+		// SP-02: the issuing host accepts/declines a pending arrival for their code.
+		estGroup.POST("/:id/arrival-requests/:rid/decision", estateHandler.DecideArrival)
+
+		// SP-01: delegated officer roles (estate_admin manages; guards act on grants).
+		estGroup.GET("/:id/staff-grants", estateHandler.ListGrants)
+		estGroup.POST("/:id/staff-grants", estateHandler.GrantRole)
+		estGroup.DELETE("/:id/staff-grants/:uid/:role", estateHandler.RevokeRole)
 
 		// Block 26: Dashboard
 		estGroup.GET("/:id/dashboard", estateHandler.GetDashboard)
@@ -1390,10 +1340,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Block 29: Dues / Rent (money path — Idempotency-Key required on pay)
 		estGroup.GET("/:id/dues/invoices", estateHandler.ListInvoices)
-		estGroup.POST("/:id/dues/invoices", estateHandler.CreateInvoice)
+		estGroup.POST("/:id/dues/invoices", guards.stepUp("estate.admin.dues.invoice"), estateHandler.CreateInvoice)
 		estGroup.POST("/:id/dues/invoices/:invoiceId/pay", estateHandler.PayDues)
-		estGroup.POST("/:id/dues/restrictions", estateHandler.ApplyRestriction)
-		estGroup.POST("/:id/dues/restrictions/:residentId/lift", estateHandler.LiftRestriction)
+		estGroup.POST("/:id/dues/restrictions", guards.stepUp("estate.admin.dues.restrict"), estateHandler.ApplyRestriction)
+		estGroup.POST("/:id/dues/restrictions/:residentId/lift", guards.stepUp("estate.admin.dues.lift_restriction"), estateHandler.LiftRestriction)
 
 		// Paystack-funded dues payment (card / bank-transfer, no wallet, no
 		// KYC-tier gate — see estate/paystackcheckout package doc comment).
@@ -1433,7 +1383,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Block 35: Emergencies / Incidents
 		estGroup.GET("/:id/emergencies", estateHandler.ListEmergencies)
-		estGroup.POST("/:id/emergencies", estateHandler.RaiseEmergency)
+		// EST-UAT-0395: per-user SOS abuse guard. 12/min bounds scripted floods
+		// while staying far above any real emergency cadence — it meters a
+		// single resident hammering the endpoint, not the estate's right to
+		// raise an alert (the budget is per user, per minute, never shared).
+		estGroup.POST("/:id/emergencies",
+			middleware.PerUserRateLimit(redisClient, "estate-sos", 12), estateHandler.RaiseEmergency)
 		estGroup.PATCH("/:id/emergencies/:alertId/status", estateHandler.UpdateEmergencyStatus)
 
 		// Block 36/39: Documents (upload via presigned R2; type/size validated;
@@ -1457,6 +1412,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Gin radix conflict with the /estate/:id/... param routes above. See
 		// estate_admin_routes.go for the full rationale.
 		RegisterEstateAdmin(finance, pool, rbac, middleware.RequireAuthContext(supabase, rbac))
+		RegisterEstatePlatformLifecycle(finance, estateHandler, rbac, cfg.FeatureEstateLifecycleEnabled, cfg.FeatureEstateImportEnabled)
 	}
 
 	// Property role registration rollout order, enforced in code: the flag only
@@ -1630,11 +1586,26 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// until that gap is closed.
 			WithWithdrawals(cfg.FeatureRestaurantWithdrawalsEnabled)
 
-		// Wire the Paystack disbursement provider for real-time bank account
-		// verification on AddBankAccount (soft-fail if provider unavailable).
-		if paystackDisb != nil {
+		// Real-time bank account verification on AddBankAccount (soft-fail if no
+		// provider answers). With FEATURE_BANK_ACCOUNT_NAME_MATCH on, name-enquiry
+		// is Monnify first with Paystack as the fallback (only configured clients —
+		// see nameEnquiryResolver); off, it is Paystack alone, exactly as before.
+		if cfg.FeatureBankAccountNameMatch {
+			if nameEnquiry := newNameEnquiryResolver(monnifyDisb, paystackDisb); nameEnquiry != nil {
+				restaurantSvc = restaurantSvc.WithDisbursementProvider(nameEnquiry)
+			}
+		} else if paystackDisb != nil {
 			restaurantSvc = restaurantSvc.WithDisbursementProvider(paystackDisb)
 		}
+		// Payout-account holder name must match the owner's verified identity
+		// (FEATURE_BANK_ACCOUNT_NAME_MATCH, default off). A match only verifies the
+		// account automatically while the KYC ownership gate is on — without it a
+		// passed BVN/NIN need not be the caller's own — so with the gate off every
+		// new account is held for admin review instead.
+		if cfg.FeatureBankAccountNameMatch && !cfg.FeatureKYCOwnershipGate {
+			log.Println("[restaurant] bank-account name match ON but FEATURE_KYC_OWNERSHIP_GATE off — every new payout account will be held for review")
+		}
+		restaurantSvc = restaurantSvc.WithBankNameMatch(cfg.FeatureBankAccountNameMatch, cfg.FeatureKYCOwnershipGate, kycverify.NewRepository(pool))
 
 		// Backend-owned presigned R2 uploads for KYB documents, attached to the
 		// service so it both mints owner upload URLs and signs stored keys back into
@@ -1711,6 +1682,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restaurantSvc = restaurantSvc.WithRealtime(restaurantRT)
 
 		restaurantSvc = restaurantSvc.WithDiscounts(cfg.FeatureRestaurantDiscounts)
+		// Customer taxonomy browsing needs the taxonomy itself (admin-categories) AND its
+		// own switch, so it can be turned off without touching merchant/admin surfaces.
+		taxonomyBrowse := cfg.FeatureRestaurantAdminCategories && cfg.FeatureRestaurantTaxonomyBrowse
+		restaurantSvc = restaurantSvc.WithTaxonomy(taxonomyBrowse)
 		restaurantHandler := restaurant.NewHandler(restaurantSvc).WithRealtime(restaurantHub)
 		restGroup := finance.Group("/restaurant")
 
@@ -1773,8 +1748,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
 		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
 		restGroup.POST("/:id/kyb/documents/presign", restaurantHandler.PresignKYBDocument)
-		// Logo / banner uploads: same private-bucket presign flow as the KYB documents, scoped to
-		// the store and gated on the store-management permission inside the service.
+		// Store / menu picture uploads: same private-bucket presign flow as the KYB
+		// documents, scoped to the store and gated inside the service (logo+banner on the
+		// store-management permission, a dish photo on the menu one). kind is logo|banner|menu.
 		restGroup.POST("/:id/images/presign", restaurantHandler.PresignStoreImage)
 		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
 		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
@@ -1905,6 +1881,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if cfg.FeatureRestaurantAdminCategories && pool != nil {
 			taxonomy.Register(restAdmin, restGroup, taxonomy.NewHandler(taxonomy.NewService(pool)),
 				func(permission string) gin.HandlerFunc { return middleware.RequirePermission(rbac, permission) })
+			if cfg.FeatureRestaurantTaxonomyBrowse {
+				taxonomy.RegisterBrowse(restGroup, taxonomy.NewHandler(taxonomy.NewService(pool)))
+			}
 		}
 		restAdmin.GET("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.GetDeliveryConfig)
 		restAdmin.PUT("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.PutDeliveryConfigValidated)
@@ -1993,6 +1972,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Same idempotent DispatchOrder underneath; RBAC is the boundary.
 		restAdmin.POST("/orders/:id/dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminRedispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
+		// Payout accounts held because the holder name did not match (FEATURE_BANK_ACCOUNT_NAME_MATCH).
+		// Mounted only with the flag on: both read name_match_* columns, which a DB
+		// that has not had migration 20271088000000 yet does not have.
+		if cfg.FeatureBankAccountNameMatch {
+			restAdmin.GET("/bank-accounts/held", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListHeldBankAccounts)
+			restAdmin.POST("/bank-accounts/:id/name-match", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideBankAccountName)
+		}
 		// Review moderation (FOOD-UAT-G-003).
 		restAdmin.GET("/reviews", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminListReviews)
 		restAdmin.POST("/reviews/:id/hide", middleware.RequirePermission(rbac, "restaurant.admin.reviews"), restaurantHandler.AdminHideReview)
@@ -2677,6 +2663,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if restaurantSvc != nil {
 			disputesSvc = disputesSvc.WithFoodResolver(foodDisputeResolverAdapter{svc: restaurantSvc})
 		}
+		// STAYS counterpart of the FOOD-004 fix: module_type=="stays" disputes
+		// resolve through the stays refund machinery (real refund legs on
+		// resolution=refunded, capped at the captured residual), not a bare
+		// status flip. Fails closed when the stays module is off.
+		if cfg.FeatureStaysEnabled {
+			disputesSvc = disputesSvc.WithStaysResolver(staysreservation.NewDisputeResolver(pool))
+		}
 		disputesHandler := disputes.NewHandler(disputesSvc)
 		dpGroup := finance.Group("/disputes")
 		dpGroup.POST("", disputesHandler.Open)
@@ -2872,6 +2865,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Wire the Paystack disbursement provider for real-time bank account
 		// verification on CreateBankAccount (soft-fail if provider unavailable).
+		// Doctors get no name matching, so they stay on the provider that pays them.
 		if paystackDisb != nil {
 			doctorSvc = doctorSvc.WithDisbursementProvider(paystackDisb)
 		}
@@ -3266,6 +3260,34 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		docGroup.POST("/profile/photo", doctorHandler.SetProfilePhoto)
 		docGroup.PUT("/profile/tax-info", doctorHandler.UpdateTaxInfo)
 
+		// Nigerian geography for the doctor profile address pickers
+		// (affiliations state/city). Proxies Dojah's Wallet Utilities —
+		// GET /api/v1/general/states and /states/lgas. Read-only reference
+		// data; returns 503 when Dojah is unconfigured so the app can fall
+		// back to a static list.
+		dojahGeo := dojah.New(cfg.DojahAppID, cfg.DojahSecretKey, cfg.DojahProd)
+		docGroup.GET("/geo/states", func(c *gin.Context) {
+			states, err := dojahGeo.ListStates(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{keyError: err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"states": states})
+		})
+		docGroup.GET("/geo/lgas", func(c *gin.Context) {
+			state := c.Query("state")
+			if state == "" {
+				c.JSON(http.StatusBadRequest, gin.H{keyError: "state query param is required"})
+				return
+			}
+			lgas, err := dojahGeo.ListLgas(c.Request.Context(), state)
+			if err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{keyError: err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"lgas": lgas})
+		})
+
 		// Payouts reads + account + dispute (doctor_payouts / _bank_accounts / settlement_disputes).
 		// :id keeps a single gin wildcard tree position under /payouts.
 		docGroup.GET("/payouts", doctorHandler.ListPayouts)
@@ -3443,13 +3465,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			if cfg.IsProd() {
 				quidaxKey, quidaxBase = cfg.CryptoQuidaxLiveKey, cfg.CryptoQuidaxLiveBaseURL
 			}
+			// Money-IN settler, built before Wire so the deposit reconciler starts over the
+			// SAME once-only settler the webhook uses. It re-queries the provider and credits
+			// the resolved owner's holdings exactly once, confirmation-gated; the recipient
+			// comes from crypto_accounts, never the payload.
+			depositSettler := newCryptoDepositSettler(pool, cfg.CryptoDepositConfirmations)
 			wired, werr := cryptosvc.Wire(ctx, cryptosvc.WireConfig{
 				Provider: cfg.CryptoProvider, QuidaxKey: quidaxKey, QuidaxBaseURL: quidaxBase,
 				WebhookSecret: cfg.CryptoWebhookSecret, DatabaseURL: cfg.DatabaseURL,
-				LockPoolConns:     cfg.CryptoLockPoolConns,
-				ReconcileInterval: time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
-				Fees:              cryptosvc.DefaultFeeSchedule(),
-			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc})
+				LockPoolConns:            cfg.CryptoLockPoolConns,
+				ReconcileInterval:        time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
+				DepositReconcileInterval: time.Duration(cfg.CryptoDepositReconcileSeconds) * time.Second,
+				Fees:                     cryptosvc.DefaultFeeSchedule(),
+			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc, DepositSettler: depositSettler})
 			if werr != nil {
 				log.Printf("[crypto] swap pipeline NOT mounted: %v", werr)
 			} else {
@@ -3468,7 +3496,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				swapAdmin := cryptoV1.Group("/admin/crypto")
 				swapAdmin.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermAdmin))
 				cryptosvc.RegisterAdminRoutes(swapAdmin, wired.Deps)
-				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, reconciler running)")
+				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, swap + deposit reconcilers running)")
 			}
 		}
 	} else {

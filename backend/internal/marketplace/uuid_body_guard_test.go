@@ -58,9 +58,9 @@ func TestPurchaseBoost_AbsentOrMalformedListingID_Is400(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 	// An absent listing_id would reach GetListing's uuid compare as "" and 500
 	// on the pg driver's empty-string cast — it must be a named field error.
-	_, err := svc.PurchaseBoost(context.Background(), "seller", "idem-1", CreateBoostInput{ListingID: "", Tier: "vip"})
+	_, err := svc.PurchaseBoost(context.Background(), "seller", "idem-1", CreateBoostInput{ListingID: "", DurationDays: 7})
 	assertFieldErr(t, err, "listing_id")
-	_, err = svc.PurchaseBoost(context.Background(), "seller", "idem-2", CreateBoostInput{ListingID: "not-a-uuid", Tier: "vip"})
+	_, err = svc.PurchaseBoost(context.Background(), "seller", "idem-2", CreateBoostInput{ListingID: "not-a-uuid", DurationDays: 7})
 	assertFieldErr(t, err, "listing_id")
 }
 

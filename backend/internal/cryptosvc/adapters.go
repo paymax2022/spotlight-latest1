@@ -79,6 +79,34 @@ func (d *PGUserDirectory) UserRef(ctx context.Context, userID string) (cryptopro
 	return ref, nil
 }
 
+// PgDepositAccountSource lists the provider sub-accounts the platform holds crypto for, so
+// the deposit reconciler knows whose deposit list to poll. It reads the same crypto_accounts
+// rows the deposit resolver maps a sub-account back to an owner from. The DISTINCT keeps the
+// sweep to one visit per sub-account even if history ever held duplicates.
+type PgDepositAccountSource struct{ Pool *pgxpool.Pool }
+
+var _ DepositAccountSource = (*PgDepositAccountSource)(nil)
+
+// ListProviderAccounts implements DepositAccountSource.
+func (s *PgDepositAccountSource) ListProviderAccounts(ctx context.Context, provider string) ([]string, error) {
+	rows, err := s.Pool.Query(ctx,
+		`SELECT DISTINCT provider_account_id FROM public.crypto_accounts WHERE provider = $1 AND provider_account_id <> '' ORDER BY provider_account_id`,
+		provider)
+	if err != nil {
+		return nil, fmt.Errorf("cryptosvc: list provider accounts: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("cryptosvc: scan provider account: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // TransfersStepUp adapts the wallet's transaction-PIN service as the swap confirm second factor.
 type TransfersStepUp struct{ Svc *transfers.Service }
 

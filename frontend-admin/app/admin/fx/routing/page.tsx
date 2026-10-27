@@ -46,7 +46,7 @@ export default function FxRoutingPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
               <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
-                <th style={thCell}>Corridor</th><th style={thCell}>Cost</th><th style={thCell}>Coverage</th><th style={thCell}>Liquidity</th><th style={thCell}>Reliability</th><th style={thCell}>Eversend</th><th style={thCell}>Maplerad</th><th style={thCell}>Bias</th>
+                <th style={thCell}>Corridor</th><th style={thCell}>Cost</th><th style={thCell}>Coverage</th><th style={thCell}>Liquidity</th><th style={thCell}>Reliability</th><th style={thCell}>Eversend</th><th style={thCell}>VertoFX</th><th style={thCell}>Bias</th>
               </tr>
             </thead>
             <tbody>
@@ -59,10 +59,10 @@ export default function FxRoutingPage() {
                     </td>
                   ))}
                   <td style={tdCell}><input type="checkbox" checked={r.enabled.eversend} onChange={() => toggleProv(i, 'eversend')} /></td>
-                  <td style={tdCell}><input type="checkbox" checked={r.enabled.maplerad} onChange={() => toggleProv(i, 'maplerad')} /></td>
+                  <td style={tdCell}><input type="checkbox" checked={r.enabled.vertofx} onChange={() => toggleProv(i, 'vertofx')} /></td>
                   <td style={tdCell}>
                     <select value={r.bias} onChange={(e) => patch(i, { bias: e.target.value as RoutingWeights['bias'] })} style={{ ...numInput(), width: 110, textTransform: 'capitalize' }}>
-                      <option value="auto">auto</option><option value="eversend">eversend</option><option value="maplerad">maplerad</option>
+                      <option value="auto">auto</option><option value="eversend">eversend</option><option value="vertofx">vertofx</option>
                     </select>
                   </td>
                 </tr>

@@ -50,6 +50,7 @@
     "test:outlets": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/outlets/*.spec.ts\"",
     "test:pharmacymerchant": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/pharmacymerchant/*.spec.ts\"",
     "test:wallet": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/wallet/*.spec.ts\"",
+    "test:events": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/events/*.spec.ts\"",
     "check:env-mocks": "node scripts/check-env-mocks.mjs",
     "check:env-mocks:staging": "node scripts/check-env-mocks.mjs .env.staging",
     "env:staging": "node scripts/use-env.mjs staging",
@@ -57,6 +58,7 @@
     "env:which": "node scripts/use-env.mjs --which",
     "test:lib": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/lib/*.spec.ts\"",
     "test:academy-live": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/academy/live/__tests__/*.test.ts\"",
+    "test:film-academy": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/filmAcademy/*.spec.ts\"",
     "test:crypto": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/crypto/utils/__tests__/*.test.ts\""
   },
   "dependencies": {
@@ -113,7 +115,7 @@
     "react-native-view-shot": "6.1.1",
     "react-native-web": "^0.21.4",
     "react-native-webview": "13.15.0",
-    "zod": "^3.24.2",
+    "zod": "^4.6.7",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

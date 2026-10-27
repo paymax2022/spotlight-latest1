@@ -15,6 +15,7 @@
 | Var | Surface | Sensitivity | Module | Notes |
 |---|---|---|---|---|
 | `NEXT_PUBLIC_SITE_URL` | frontend-web | public | all | |
+| `WEB_APP_BASE_URL` | backend | config | connect/voting | Origin the Go API prefixes stored contest media paths with, so the mobile app gets a loadable absolute URL. Must equal frontend-web's real origin per environment (dev `http://localhost:3000`); default `https://www.spotlightng.com` |
 | `NEXT_PUBLIC_API_BASE_URL` | frontend-web | public | all | browser → Go API |
 | `GO_BACKEND_URL` / `GO_API_BASE_URL` | frontend-web | config | proxy | server-side only |
 | `NEXT_PUBLIC_SUPABASE_URL` | web/admin | public | auth/data | |
@@ -35,7 +36,7 @@
 | `SPOTLIGHT_ADMIN_API_KEY` | frontend-web | **SECRET (HIGH)** | admin | `openssl rand -hex 32` |
 | `ADMIN_API_KEY` | backend | **SECRET (HIGH)** | admin/finance | set strong in prod; empty = open (dev only) |
 | `NEXT_PUBLIC_ADMIN_API_BASE_URL` | frontend-admin | public | admin | |
-| `NEXT_PUBLIC_*_USE_MOCK` | frontend-admin | config | admin | set to live (`false`) at go-live |
+| `NEXT_PUBLIC_*_USE_MOCK` | frontend-admin | config | admin | set to live (`false`) at go-live. `resolveUseMock` resolves UNSET as MOCK in dev / LIVE in prod, so every console needs its own explicit `false` in `.env.local` or it renders fixtures silently |
 
 ## Payments / wallet / transfers / payouts / VA
 
@@ -52,10 +53,10 @@
 
 | Var | Surface | Sensitivity | Module | Notes |
 |---|---|---|---|---|
-| `MAPLERAD_SECRET_KEY` | web + backend | **SECRET** | FX/VA | |
-| `MAPLERAD_PUBLIC_KEY` | backend | config | FX/VA | |
-| `MAPLERAD_WEBHOOK_SECRET` | backend | **SECRET** | FX/VA | |
-| `MAPLERAD_PROD` | web + backend | config | FX/VA | flag: live vs sandbox |
+| `VERTOFX_CLIENT_ID` | backend | config | FX/VA | |
+| `VERTOFX_API_KEY` | backend | **SECRET** | FX/VA | |
+| `VERTOFX_WEBHOOK_SECRET` | backend | **SECRET** | FX/VA | |
+| `VERTOFX_PROD` | backend | config | FX/VA | flag: live vs sandbox |
 | `EVERSEND_CLIENT_ID` | backend | config | FX | |
 | `EVERSEND_CLIENT_SECRET` | backend | **SECRET** | FX | |
 | `EVERSEND_WEBHOOK_SECRET` | backend | **SECRET** | FX | |

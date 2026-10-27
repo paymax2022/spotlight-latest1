@@ -325,14 +325,64 @@ export const DEMO_DASHBOARD: DoctorDashboardData = {
   satisfactionPct: 96,
 };
 
+// Live GET /dashboard returns the flat DashboardSummary projection
+// ({appointmentCounts, unreadNotifications, walletBalanceKobo, currency}) — not
+// the rich DoctorDashboardData the screens render. Normalize here: seed the
+// concrete tiles/lists from the wire and neutral-default the rest, so an empty
+// account shows zeroed tiles instead of crashing on missing `earnings`.
+interface DashboardWire {
+  appointmentCounts?:   Record<string, number>;
+  unreadNotifications?: number;
+  walletBalanceKobo?:   number;
+  currency?:            string;
+}
+
 export async function getDashboard(): Promise<DoctorDashboardData> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_DASHBOARD);
-  return doctorGet<DoctorDashboardData>('/dashboard');
+  const wire = await doctorGet<DashboardWire>('/dashboard');
+  const balance = wire.walletBalanceKobo ?? 0;
+  const counts = wire.appointmentCounts ?? {};
+  const pending = counts.pending ?? 0;
+  return {
+    presence: 'offline',
+    acceptsInstant: false,
+    counts: {
+      todaysAppointments: 0,
+      upcomingAppointments: 0,
+      pendingRequests: pending,
+      waitingRoom: 0,
+      followUpRequests: 0,
+      unreadMessages: wire.unreadNotifications ?? 0,
+      newLabResults: 0,
+      pendingPrescriptions: 0,
+      refillRequests: 0,
+      hmoApprovals: 0,
+    },
+    todaysAppointments: [],
+    pendingRequests: [],
+    waitingRoom: [],
+    messages: [],
+    alerts: [],
+    earnings: {
+      availableKobo: balance,
+      pendingKobo: 0,
+      lifetimeKobo: balance,
+      thisMonthKobo: 0,
+      consultsThisMonth: 0,
+      payouts: [],
+    },
+    satisfactionPct: 0,
+  };
 }
 
 export async function getAnnouncement(): Promise<PlatformAnnouncement | undefined> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_ANNOUNCEMENT);
-  return doctorGet<PlatformAnnouncement | undefined>('/announcements/latest');
+  // GET /announcements/latest wraps the payload as `{announcement: …|null}`;
+  // the shared unwrap only strips a `data` envelope, so read the inner field
+  // here — otherwise a null announcement surfaces as a truthy object with an
+  // undefined `tone`, crashing the banner's TONE lookup.
+  const wire = await doctorGet<{ announcement?: PlatformAnnouncement | null }>('/announcements/latest');
+  return wire.announcement ?? undefined;
 }
 
 export async function setPresence(input: SetPresenceInput): Promise<SetPresenceResult> {

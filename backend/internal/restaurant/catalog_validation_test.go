@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -29,5 +30,22 @@ func TestEmptyMenuShape(t *testing.T) {
 	b, _ = json.Marshal(MenuItem{})
 	if !json.Valid(b) || string(b) == "" {
 		t.Fatal("bad json")
+	}
+}
+
+func TestWithEmptyMenuShape_NormalisesSectionItems(t *testing.T) {
+	d := &RestaurantDetail{
+		Categories: []MenuCategory{{Items: []MenuItem{{}}}},
+		Sections:   []MenuSection{{Items: []MenuItem{{}}}, {}},
+	}
+	b, _ := json.Marshal(withEmptyMenuShape(d))
+	s := string(b)
+	if strings.Contains(s, `"modifier_groups":null`) || strings.Contains(s, `"dietary_tags":null`) || strings.Contains(s, `"items":null`) {
+		t.Errorf("null leaked: %s", s)
+	}
+	si := d.Sections[0].Items[0]
+	ci := d.Categories[0].Items[0]
+	if si.ModifierGroups == nil || si.DietaryTags == nil || ci.ModifierGroups == nil || ci.DietaryTags == nil {
+		t.Errorf("section and category items must both read []")
 	}
 }

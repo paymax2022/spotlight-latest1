@@ -136,6 +136,11 @@ export function useApptIntake(appointmentId?: string) {
     queryFn: () => getIntake(appointmentId as string),
     enabled: Boolean(appointmentId),
     staleTime: 0,
+    // Advisory enrichment on an appointment card. Either outcome is final — an
+    // intake that does not exist yet, or a Pre-Consult feature this environment has
+    // not mounted (the route is behind FEATURE_HEALTH_INTAKE_ENABLED) — so the
+    // default retry only multiplies 404s per row.
+    retry: false,
   });
 }
 

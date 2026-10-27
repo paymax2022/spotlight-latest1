@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { getResidentContext } from '@/src/server/elections/elections.service';
+import { checkVoteEligibility, getResidentContext } from '@/src/server/elections/elections.service';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -26,7 +26,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     if (!row || (row as any).estate_id !== ctx.estateId) {
       return NextResponse.json({ eligible: false, reason: 'This election is not for your estate.' });
     }
-    return NextResponse.json({ eligible: true });
+    const elig = await checkVoteEligibility(supabase, ctx.estateId, user.id, id);
+    return NextResponse.json({
+      eligible: elig.eligible,
+      reason: elig.eligible ? undefined : elig.reasons.join(', '),
+      reasons: elig.reasons,
+    });
   } catch (error) {
     return handleApiError(error, 'Failed to check eligibility');
   }

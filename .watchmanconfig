@@ -1,0 +1,10 @@
+{
+  "ignore_dirs": [
+    ".claude/worktrees",
+    "mobile-app/reactnative/.claude/worktrees",
+    "frontend-web/.next",
+    "frontend-admin/.next",
+    "mobile-app/reactnative/android/app/build",
+    "mobile-app/reactnative/ios/build"
+  ]
+}

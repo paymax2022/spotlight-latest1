@@ -325,7 +325,7 @@ export async function createVirtualAccount(
     const created: VirtualAccount = {
       id: `va_${Date.now()}`,
       currency, type, status: 'active',
-      provider: type === 'iban' ? 'eversend' : 'maplerad',
+      provider: type === 'iban' ? 'eversend' : 'vertofx',
       createdAt: new Date().toISOString(),
       details: type === 'iban'
         ? { accountName: 'Paymax / Spotlight User', iban: 'GB29NWBK60161331926819', bic: 'NWBKGB2L', rails: currency === 'EUR' ? ['SEPA'] : ['ACH'], reference: `PMX-COL-${currency}` }

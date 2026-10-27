@@ -29,6 +29,29 @@ function authHeaders(): Record<string, string> {
   return { 'Content-Type': 'application/json' };
 }
 
+// Uploads return a ROOT-RELATIVE path so the stored row carries no environment's
+// host; the mobile app gets its origin prefixed by the Go API (WEB_APP_BASE_URL).
+// This console runs on its own port, so a bare path would resolve against :3001
+// and 404 — point it at frontend-web through the same proxy the reads use.
+// Legacy rows hold an absolute URL from whichever environment wrote them: ours is
+// re-based the same way, a genuinely external URL is left alone.
+const MEDIA_PATH = '/api/admin/contests/banner/';
+
+/** Resolve a stored banner/logo value into a URL this console can display. */
+export function adminMediaUrl(stored?: string | null): string {
+  const value = (stored ?? '').trim();
+  if (!value) return '';
+  const path = value.startsWith('/') ? value : newPathOf(value);
+  if (!path.startsWith(MEDIA_PATH)) return value;
+  return `${webBase()}${path}`;
+}
+
+// Scheme + host stripped from an absolute URL ('' when it has no path).
+function newPathOf(absolute: string): string {
+  const withoutAuthority = absolute.replace(/^[a-zA-Z][a-zA-Z\d+.-]*:\/\/[^/]+/, '');
+  return withoutAuthority.startsWith('/') ? withoutAuthority : '';
+}
+
 export async function listAdminContests(type?: string): Promise<AdminContest[]> {
   const qs = type ? `?type=${encodeURIComponent(type)}` : '';
   const res = await fetch(`${webBase()}/api/v1/admin/contests${qs}`, {
@@ -258,7 +281,8 @@ export async function advanceStageSurvivors(slug: string, stageNumber: number): 
 }
 
 /**
- * Upload a contest banner and return the URL to store in `bannerImageUrl`.
+ * Upload a contest banner and return the path to store in `bannerImageUrl`.
+ * Pass the stored value back through adminMediaUrl() to display it here.
  *
  * Deliberately does NOT go through authHeaders(): that sets
  * `Content-Type: application/json`, and a multipart body must carry the
@@ -270,7 +294,7 @@ export async function uploadContestBanner(file: File): Promise<string> {
   return uploadContestImage(file, 'banner');
 }
 
-/** Upload a contest logo and return the URL to store in `logoUrl`. */
+/** Upload a contest logo and return the path to store in `logoUrl`. */
 export async function uploadContestLogo(file: File): Promise<string> {
   return uploadContestImage(file, 'logo');
 }

@@ -35,6 +35,9 @@ func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error)
 type RestaurantDetail struct {
 	Restaurant Restaurant     `json:"restaurant"`
 	Categories []MenuCategory `json:"categories"`
+	// Sections is the taxonomy-ordered menu, additive beside Categories. Present
+	// only when taxonomy browsing is on (WithTaxonomy).
+	Sections []MenuSection `json:"sections,omitempty"`
 }
 
 // GetRestaurantDetail returns a restaurant and its menu (categories + items).
@@ -84,6 +87,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 			return nil, err
 		}
 	}
+	var allItems []MenuItem // every item, for taxonomy sections (taxonomy on only)
 	irows, err := s.db.Query(ctx, qi, restaurantID)
 	if err != nil {
 		return nil, err
@@ -95,6 +99,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 		if err := irows.Scan(&it.ID, &catID, &it.RestaurantID, &it.Name, &it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags, &it.PrepTimeOverride, &it.PrepMinutes, &it.Version, &it.MaxQtyPerOrder); err != nil {
 			return nil, err
 		}
+		s.viewMenuItem(&it)
 		if s.discountsOn {
 			tx := taxonomy[it.ID]
 			p := PriceItem(it.PriceKobo, it.ID, tx[0], tx[1], live, time.Now())
@@ -105,6 +110,9 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 			if c, ok := cats[*catID]; ok {
 				c.Items = append(c.Items, it)
 			}
+		}
+		if s.taxonomyOn {
+			allItems = append(allItems, it)
 		}
 	}
 	if err := irows.Err(); err != nil {
@@ -125,6 +133,19 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	detail := &RestaurantDetail{Restaurant: r}
 	for _, id := range order {
 		detail.Categories = append(detail.Categories, *cats[id])
+	}
+	if s.taxonomyOn {
+		for j := range allItems {
+			allItems[j].ModifierGroups = mods[allItems[j].ID]
+		}
+		if detail.Sections, err = s.menuSections(ctx, restaurantID, allItems); err != nil {
+			return nil, err
+		}
+		cu := []Restaurant{detail.Restaurant}
+		if err := s.attachCuisines(ctx, cu); err != nil {
+			return nil, err
+		}
+		detail.Restaurant = cu[0]
 	}
 	return detail, nil
 }
@@ -326,10 +347,12 @@ func (s *Service) CreateCategory(ctx context.Context, restaurantID, userID, name
 
 // CreateItemRequest is the body for adding a menu item.
 type CreateItemRequest struct {
-	CategoryID  string   `json:"category_id" binding:"required"`
-	Name        string   `json:"name" binding:"required,min=1,max=200"`
-	Description string   `json:"description"`
-	PriceKobo   int64    `json:"price_kobo" binding:"required,min=0"`
+	CategoryID  string `json:"category_id" binding:"required"`
+	Name        string `json:"name" binding:"required,min=1,max=200"`
+	Description string `json:"description"`
+	PriceKobo   int64  `json:"price_kobo" binding:"required,min=0"`
+	// ImageURL is the dish photo: an http(s) link, or the object key returned by this
+	// restaurant's menu image upload. Optional — a dish with no photo still sells.
 	ImageURL    *string  `json:"image_url,omitempty"`
 	DietaryTags []string `json:"dietary_tags,omitempty"`
 }
@@ -340,6 +363,9 @@ func (s *Service) CreateItem(ctx context.Context, restaurantID, userID string, r
 		return nil, err
 	}
 	if err := validateItemPriceKobo(req.PriceKobo); err != nil {
+		return nil, err
+	}
+	if err := s.validateItemImageRef(restaurantID, req.ImageURL); err != nil {
 		return nil, err
 	}
 	it := &MenuItem{
@@ -359,6 +385,8 @@ func (s *Service) CreateItem(ctx context.Context, restaurantID, userID string, r
 		it.ID, it.RestaurantID, it.CategoryID, it.Name, it.Description, it.PriceKobo, it.ImageURL, it.DietaryTags); err != nil {
 		return nil, err
 	}
+	// The caller gets back what a customer would see, so the stored key becomes a URL.
+	s.viewMenuItem(it)
 	return it, nil
 }
 
@@ -373,6 +401,9 @@ type UpdateItemRequest struct {
 	// PrepTimeMinutes sets the item's own prep time (5 to 180); 0 clears it back to the
 	// restaurant default.
 	PrepTimeMinutes *int `json:"prep_time_minutes,omitempty"`
+	// ImageURL replaces the dish photo (a link or this restaurant's own uploaded key).
+	// Sending "" removes it; absent leaves it alone.
+	ImageURL *string `json:"image_url,omitempty"`
 	// MaxQtyPerOrder is the seller's per-line quantity cap (FOOD-UAT-B-008): 1..maxLineQuantity;
 	// 0 clears it back to the global cap.
 	MaxQtyPerOrder *int `json:"max_qty_per_order,omitempty"`
@@ -475,6 +506,20 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 			return nil, err
 		}
 	}
+	if req.ImageURL != nil {
+		if err := s.validateItemImageRef(restaurantID, req.ImageURL); err != nil {
+			return nil, err
+		}
+		// An empty reference clears the picture rather than storing a blank string.
+		var img *string
+		if v := strings.TrimSpace(*req.ImageURL); v != "" {
+			img = &v
+		}
+		if _, err := tx.Exec(ctx, `UPDATE menu_items SET image_url=$1 WHERE id=$2 AND restaurant_id=$3`,
+			img, itemID, restaurantID); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -493,6 +538,7 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 	if catID != nil {
 		it.CategoryID = *catID
 	}
+	s.viewMenuItem(&it)
 	return &it, nil
 }
 

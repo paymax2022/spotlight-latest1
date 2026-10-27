@@ -23,6 +23,20 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 }
 const AV = (s: string) => `https://i.pravatar.cc/160?u=${s}`;
 
+// Mirrors the backend's flat XP ladder (internal/connect/gamification xpPerLevel)
+// so the "XP to next level" bar agrees with the server's own `level`. Display only
+// — the server owns the level, this never decides progression.
+const XP_PER_LEVEL = 1000;
+
+type ServerHome = {
+  user_id: string;
+  total_xp: number;
+  level: number;
+  coins: number;
+  streak_days: number;
+  season_code?: string;
+};
+
 const MOCK_PROFILE: GamificationProfile = {
   level: 14, xp: 2350, xpToNextLevel: 4000, totalXp: 86_400, coins: 1240,
   rank: 'Rising Star', streakDays: 5,
@@ -33,8 +47,21 @@ export async function getGamificationProfile(): Promise<GamificationProfile> {
     await delay();
     return { ...MOCK_PROFILE };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/gamification/profile`);
-  return unwrap<GamificationProfile>(res);
+  // GET /connect/gamification/home is the route the Go backend actually serves
+  // (there is no /gamification/profile). It sends lifetime XP, level, coins and the
+  // current streak; the per-level split is derived from the same flat ladder the
+  // server uses (internal/connect/gamification: level = totalXP / 1000 + 1).
+  const res = await api.get(`${CONNECT_API_BASE}/gamification/home`);
+  const d = unwrap<ServerHome>(res);
+  const intoLevel = d.total_xp % XP_PER_LEVEL;
+  return {
+    level: d.level,
+    xp: intoLevel,
+    xpToNextLevel: XP_PER_LEVEL - intoLevel,
+    totalXp: d.total_xp,
+    coins: d.coins,
+    streakDays: d.streak_days,
+  };
 }
 
 const MOCK_MISSIONS: Mission[] = [

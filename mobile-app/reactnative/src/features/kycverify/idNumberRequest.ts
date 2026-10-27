@@ -18,10 +18,18 @@ export function idNumberRequestBody(input: IdNumberCheckInput): {
   session_id: string;
   id_type: IdType;
   id_number: string;
+  consent: {
+    value: boolean;
+    description: string;
+  };
 } {
   return {
     session_id: input.sessionId,
     id_type: input.idType,
     id_number: input.idNumber,
+    consent: {
+      value: true,
+      description: 'The user has consented to this verification check.',
+    },
   };
 }

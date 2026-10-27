@@ -820,6 +820,9 @@ func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup
 	matchHandler := connectmatching.NewHandler(matchSvc)
 
 	discoverySvc := connectdiscovery.NewService(pool)
+	// The same presigner that signs the owner's own photos signs the photos we
+	// return on another member's public profile-detail card (bucket is private).
+	discoverySvc.WithPresigner(profilePresigner)
 	discoveryHandler := connectdiscovery.NewHandler(discoverySvc)
 
 	// rewind/boosts). Reuses the SAME discovery ranking + the SAME matching
@@ -877,6 +880,7 @@ func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup
 	// every route, IN ADDITION to the inherited member auth; the boost POST adds
 	// connect.boost.purchase). ---
 	discoveryGate := middleware.RequirePermission(rbac, permDiscoveryAccess)
+	member.GET("/discovery/profiles/:id", discoveryGate, memberDiscovery.ProfileDetail)
 	member.GET("/discovery/stack", discoveryGate, memberDiscovery.Stack)
 	member.POST("/discovery/swipe", discoveryGate, memberDiscovery.Swipe)
 	member.GET("/discovery/likes-you", discoveryGate, memberDiscovery.LikesYou)
@@ -897,7 +901,7 @@ func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup
 			verifHandler.Status)
 	}
 
-	log.Println("[connect:phase1] routes registered — profile/modes/media, verification, discovery, likes, matches, search, discovery stack/swipe/likes-you/nearby/rewind/boosts")
+	log.Println("[connect:phase1] routes registered — profile/modes/media, verification, discovery, likes, matches, search, discovery profiles/:id/stack/swipe/likes-you/nearby/rewind/boosts")
 }
 
 // connectLikeRecorderAdapter adapts connectmatching.Service.Like (which returns
@@ -1017,6 +1021,21 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, publi
 
 	voteSvc := connectvoting.NewService(
 		connectvoting.NewRepository(pool), walletSvc, revenue, audit, amlSvc)
+	// Contest banners/logos are stored as a path under frontend-web's media route;
+	// this is the origin the mobile app is handed instead. WEB_APP_BASE_URL.
+	voteSvc.SetMediaBaseURL(cfg.WebAppBaseURL)
+	log.Printf("[connect-voting] contest media base = %q (WEB_APP_BASE_URL)", cfg.WebAppBaseURL)
+	// Contestant photos are stored as R2 object keys under registration/<userId>/,
+	// which frontend-web serves only to their owner. Voters need the picture, so the
+	// voting service signs those keys at read time, exactly as connect/profile does
+	// for member photos. Same bucket, same credentials.
+	voteSvc.SetPhotoSigner(r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	}))
 	// Commission recording for realized paid-vote profit. Ledger-less recorder —
 	// the vote debit already posts into paymax_revenue, so RecordFor appends the
 	// earning ROW only; best-effort, never fails a vote (recordCommissionSafe).

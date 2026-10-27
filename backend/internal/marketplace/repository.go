@@ -43,29 +43,53 @@ const listingCols = `id, market_id, seller_id, category_id, title, description,
 	state, lga, moderation_reason_code, view_count, save_count,
 	created_at, updated_at, expires_at, sold_at`
 
+// listingScan holds the scan destinations for listingCols in column order.
+// Split out from scanListing because the search fallback appends its own geo
+// columns to that same select list (distance_km, lat, lng) and needs to scan
+// them too — the alternative was a second copy of this 22-field mapping, which
+// drifts the moment a column is added.
+type listingScan struct {
+	l        Listing
+	status   string
+	attrsRaw []byte
+	lga      *string // nullable column — see listingCols comment
+}
+
+func (s *listingScan) targets(extra ...any) []any {
+	return append([]any{
+		&s.l.ID, &s.l.MarketID, &s.l.SellerID, &s.l.CategoryID, &s.l.Title, &s.l.Description,
+		&s.l.PriceKobo, &s.l.Currency, &s.l.Condition, &s.attrsRaw, &s.status, &s.l.QualityScore, &s.l.EscrowEligible,
+		&s.l.State, &s.lga, &s.l.ModerationReasonCode, &s.l.ViewCount, &s.l.SaveCount,
+		&s.l.CreatedAt, &s.l.UpdatedAt, &s.l.ExpiresAt, &s.l.SoldAt,
+	}, extra...)
+}
+
+func (s *listingScan) finish() *Listing {
+	s.l.LGA = dbutil.DerefString(s.lga)
+	s.l.Status = ListingStatus(s.status)
+	if len(s.attrsRaw) > 0 {
+		_ = json.Unmarshal(s.attrsRaw, &s.l.Attrs)
+	}
+	if s.l.Attrs == nil {
+		s.l.Attrs = map[string]any{}
+	}
+	return &s.l
+}
+
 func scanListing(row pgx.Row) (*Listing, error) {
-	var l Listing
-	var status string
-	var attrsRaw []byte
-	var lga *string // nullable column — see listingCols comment
-	if err := row.Scan(
-		&l.ID, &l.MarketID, &l.SellerID, &l.CategoryID, &l.Title, &l.Description,
-		&l.PriceKobo, &l.Currency, &l.Condition, &attrsRaw, &status, &l.QualityScore, &l.EscrowEligible,
-		&l.State, &lga, &l.ModerationReasonCode, &l.ViewCount, &l.SaveCount,
-		&l.CreatedAt, &l.UpdatedAt, &l.ExpiresAt, &l.SoldAt,
-	); err != nil {
+	s := &listingScan{}
+	if err := row.Scan(s.targets()...); err != nil {
 		return nil, err
 	}
-	l.LGA = dbutil.DerefString(lga)
-	l.Status = ListingStatus(status)
-	if len(attrsRaw) > 0 {
-		_ = json.Unmarshal(attrsRaw, &l.Attrs)
-	}
-	if l.Attrs == nil {
-		l.Attrs = map[string]any{}
-	}
-	return &l, nil
+	return s.finish(), nil
 }
+
+// geoCase writes mkt_listings.geo from a lat/lng pair bound as $14/$15: NULL
+// when either is absent (a listing with no recorded location must stay NULL, not
+// become a point at 0,0 in the Gulf of Guinea), a geography POINT otherwise.
+// ST_MakePoint takes (lng, lat) — the reverse of every caller's mental model.
+const geoCase = `CASE WHEN $14::float8 IS NULL OR $15::float8 IS NULL THEN NULL
+			ELSE ST_SetSRID(ST_MakePoint($15::float8, $14::float8), 4326)::geography END`
 
 // InsertListing creates a listing row (status supplied by the service after guard).
 func (r *Repository) InsertListing(ctx context.Context, l *Listing) (*Listing, error) {
@@ -76,11 +100,12 @@ func (r *Repository) InsertListing(ctx context.Context, l *Listing) (*Listing, e
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO public.mkt_listings
 			(market_id, seller_id, category_id, title, description, price_kobo, currency,
-			 condition, attrs, status, escrow_eligible, state, lga)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			 condition, attrs, status, escrow_eligible, state, lga, geo)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,`+geoCase+`)
 		RETURNING `+listingCols,
 		l.MarketID, l.SellerID, l.CategoryID, l.Title, l.Description, l.PriceKobo, strutil.Or(l.Currency, "NGN"),
 		strutil.Or(l.Condition, "used"), attrs, string(l.Status), l.EscrowEligible, l.State, dbutil.NullStrP(&l.LGA),
+		l.Lat, l.Lng,
 	)
 	out, err := scanListing(row)
 	if err != nil {
@@ -94,7 +119,34 @@ func (r *Repository) InsertListing(ctx context.Context, l *Listing) (*Listing, e
 		}
 		return nil, wrapInternal("insert listing", err)
 	}
+	// listingCols has no geo (see its comment), so echo the input back rather
+	// than re-reading the row for two numbers the caller just sent.
+	out.Lat, out.Lng = l.Lat, l.Lng
 	return out, nil
+}
+
+// ListingCoords reads back one listing's recorded position from its geo column,
+// or (nil, nil) when it has none.
+// Needed by the search-CDC payload: every ordinary listing read uses listingCols,
+// which cannot carry a geo expression (it is prefixCols-fed), so without this
+// lookup the Elasticsearch document never gains a geo point and the ES path's
+// geo_distance filter + 25 km decay silently match nothing — the exact
+// "a filter was accepted and ignored" failure the Postgres fallback was fixed
+// for. A missing row is (nil, nil) too: the outbox must not fail a status
+// transition over a coordinate lookup.
+func (r *Repository) ListingCoords(ctx context.Context, listingID string) (lat *float64, lng *float64, err error) {
+	var la, lo float64
+	row := r.db.QueryRow(ctx,
+		`SELECT ST_Y(geo::geometry), ST_X(geo::geometry) FROM public.mkt_listings WHERE id=$1 AND geo IS NOT NULL`,
+		listingID,
+	)
+	if serr := row.Scan(&la, &lo); serr != nil {
+		if errors.Is(serr, pgx.ErrNoRows) {
+			return nil, nil, nil
+		}
+		return nil, nil, wrapInternal("listing coords", serr)
+	}
+	return &la, &lo, nil
 }
 
 // InsertListingMedia persists the photos a seller uploaded for a listing.
@@ -429,14 +481,17 @@ func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, li
 // report: listings sat in pending_review with no surface that showed them.
 func (r *Repository) ModerationQueue(ctx context.Context, limit, offset int) ([]Listing, error) {
 	limit = clampLimit(limit)
-	rows, err := r.db.Query(ctx, `SELECT `+listingCols+`
+	// geo rides along as lat/lng so the queue can flag a listing that will never
+	// surface in a buyer's "Near you" — the reviewer is the only person who can
+	// tell the seller to attach a location, and only before it goes live.
+	rows, err := r.db.Query(ctx, `SELECT `+listingCols+`, ST_Y(geo::geometry), ST_X(geo::geometry)
 		FROM public.mkt_listings WHERE status='pending_review' ORDER BY created_at ASC LIMIT $1 OFFSET $2`,
 		limit, offset)
 	if err != nil {
 		return nil, wrapInternal("moderation queue", err)
 	}
 	defer rows.Close()
-	return collectListings(rows)
+	return collectListingsWithGeo(rows)
 }
 
 // ExpiredActiveListings returns active listings past expires_at (cron sweep).
@@ -511,6 +566,24 @@ func collectListings(rows pgx.Rows) ([]Listing, error) {
 		if err != nil {
 			return nil, err
 		}
+		out = append(out, *l)
+	}
+	return out, rows.Err()
+}
+
+// collectListingsWithGeo reads listingCols plus the two columns a query must
+// append itself (ST_Y/ST_X of geo) — listingCols cannot carry them, being
+// prefixCols-fed and required to stay bare column names.
+func collectListingsWithGeo(rows pgx.Rows) ([]Listing, error) {
+	out := make([]Listing, 0)
+	for rows.Next() {
+		s := &listingScan{}
+		var lat, lng *float64
+		if err := rows.Scan(s.targets(&lat, &lng)...); err != nil {
+			return nil, wrapInternal("listing geo scan", err)
+		}
+		l := s.finish()
+		l.Lat, l.Lng = lat, lng
 		out = append(out, *l)
 	}
 	return out, rows.Err()
@@ -1170,6 +1243,59 @@ func (r *Repository) ListBoosts(ctx context.Context, status string, limit, offse
 			return nil, serr
 		}
 		out = append(out, *b)
+	}
+	return out, rows.Err()
+}
+
+// BoostedListings returns the buyer-facing promoted section: active listings in
+// this market that carry at least one live boost right now, the one with the
+// most UNSPENT boost value first.
+//
+// "Money left" is the same pro-rating CancelBoost refunds by — the fraction of
+// the price whose days have not been delivered yet — summed over a listing's
+// live boosts, floored to whole kobo (never rounded up in the payer's favour).
+// A seller who bought ₦1,000 of boost yesterday and a seller who bought
+// ₦1,000 five days ago therefore do not tie: the earlier one has spent more of
+// what it paid for, and the fresher money promotes.
+//
+// listingCols carries no geo, so this read cannot leak a seller's coordinates
+// any more than a search can; boostedness is the only thing added.
+func (r *Repository) BoostedListings(ctx context.Context, marketID string, limit int) ([]BoostedListing, error) {
+	limit = clampLimit(limit)
+	rows, err := r.db.Query(ctx, `
+		WITH live AS (
+			SELECT b.listing_id,
+			       SUM(GREATEST(0, LEAST(b.price_kobo,
+			           COALESCE(FLOOR(b.price_kobo::numeric *
+			               GREATEST(0, EXTRACT(EPOCH FROM (b.ends_at - now()))) /
+			               NULLIF(EXTRACT(EPOCH FROM (b.ends_at - b.starts_at)), 0)
+			           )::bigint, 0))))::bigint AS remaining_kobo,
+			       MAX(b.ends_at) AS ends_at
+			FROM public.mkt_boosts b
+			WHERE b.status = 'active'
+			  AND b.starts_at IS NOT NULL AND b.ends_at IS NOT NULL
+			  AND b.starts_at <= now() AND b.ends_at > now()
+			GROUP BY b.listing_id
+		)
+		SELECT `+prefixCols("l", listingCols)+`, live.remaining_kobo, live.ends_at
+		FROM live
+		JOIN public.mkt_listings l ON l.id = live.listing_id
+		WHERE l.status = 'active' AND l.market_id = $2
+		ORDER BY live.remaining_kobo DESC, live.ends_at ASC, l.created_at DESC
+		LIMIT $1`, limit, marketID)
+	if err != nil {
+		return nil, wrapInternal("boosted listings", err)
+	}
+	defer rows.Close()
+	out := make([]BoostedListing, 0, limit)
+	for rows.Next() {
+		s := &listingScan{}
+		var b BoostedListing
+		if err := rows.Scan(s.targets(&b.BoostRemainingKobo, &b.BoostEndsAt)...); err != nil {
+			return nil, wrapInternal("boosted listings scan", err)
+		}
+		b.Listing = *s.finish()
+		out = append(out, b)
 	}
 	return out, rows.Err()
 }

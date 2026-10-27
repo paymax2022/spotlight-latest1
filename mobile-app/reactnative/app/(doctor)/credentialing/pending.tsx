@@ -14,7 +14,7 @@ import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView } from '@/features/doctor/components';
-import { useVerification } from '@/features/doctor/hooks';
+import { useVerification, useDocumentSlots } from '@/features/doctor/hooks';
 import type { VerificationStatus } from '@/types/doctor';
 
 const STATUS_CONFIG: Record<VerificationStatus, { icon: LucideIcon; color: string; bg: string; title: string; sub: string }> = {
@@ -28,6 +28,10 @@ const STATUS_CONFIG: Record<VerificationStatus, { icon: LucideIcon; color: strin
 
 export default function VerificationPendingScreen() {
   const { data: submission, isLoading, isError, refetch } = useVerification();
+  // GET /verification carries no documents array; the real files live in the
+  // documents table, surfaced through the (merged) document slots.
+  const { data: slots } = useDocumentSlots();
+  const uploadedDocs = (slots ?? []).filter((s) => s.file);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -62,16 +66,16 @@ export default function VerificationPendingScreen() {
           <SectionCard title="Submission details" style={styles.card}>
             {submission.submittedAt && <InfoRow label="Submitted" value={new Date(submission.submittedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' })} />}
             {submission.reviewedAt && <InfoRow label="Reviewed" value={new Date(submission.reviewedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' })} />}
-            <InfoRow label="Documents" value={`${submission.documents.length} uploaded`} />
+            <InfoRow label="Documents" value={`${slots ? uploadedDocs.length : submission.documents.length} uploaded`} />
           </SectionCard>
 
-          {submission.documents.length > 0 && (
+          {uploadedDocs.length > 0 && (
             <SectionCard title="Documents" style={styles.card}>
-              {submission.documents.map((doc, i) => (
+              {uploadedDocs.map((doc, i) => (
                 <View key={doc.type} style={[styles.docRow, i > 0 && styles.docBorder]}>
                   <FileCheck2 size={18} color={Colors.teal} strokeWidth={2} />
                   <Text style={styles.docLabel} numberOfLines={1}>{doc.label}</Text>
-                  <Text style={styles.docFile} numberOfLines={1}>{doc.fileName}</Text>
+                  <Text style={styles.docFile} numberOfLines={1}>{doc.file?.fileName}</Text>
                 </View>
               ))}
             </SectionCard>

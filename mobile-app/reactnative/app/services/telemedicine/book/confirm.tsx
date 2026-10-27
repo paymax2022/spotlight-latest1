@@ -9,7 +9,7 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
-import { getDoctor, bookAppointment, formatKobo, DEMO_DOCTORS } from '@/api/telemedicine.api';
+import { getDoctor, bookAppointment, formatKobo, PLACEHOLDER_DOCTORS } from '@/api/telemedicine.api';
 import { getWallet } from '@/api/wallet.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { TeleHeader } from '@/features/telemedicine/components';
@@ -46,7 +46,7 @@ export default function ConfirmBookingScreen() {
   const { data: doctor } = useQuery({
     queryKey: ['tele-doctor', params.doctorId],
     queryFn:  () => getDoctor(String(params.doctorId)),
-    placeholderData: DEMO_DOCTORS.find((d) => d.id === params.doctorId),
+    placeholderData: PLACEHOLDER_DOCTORS?.find((d) => d.id === params.doctorId),
   });
 
   const { data: wallet } = useQuery({ queryKey: ['wallet'], queryFn: getWallet });

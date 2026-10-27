@@ -44,6 +44,29 @@ type Config struct {
 	// no-op (existing behaviour preserved). When ON, refresh rotation + reuse
 	// detection, revocation enforcement, and suspicious-login response are active.
 	FeatureSessionHardeningEnabled bool
+
+	// FeatureStepUpEnforced (ESTD-D014, ADR-PR<pr-number>) makes high-risk
+	// privileged routes (estate-admin money/role/ban actions, the /api/admin RBAC
+	// and user-control mutations, finance-admin transfer actions, admin-console
+	// money/limit approvals) refuse with 403 step_up_required until the caller
+	// completes POST /api/auth/step-up/verify in the same session. DEFAULT TRUE —
+	// a compliance rail, same precedent as FEATURE_TIER_LIMITS_ENABLED /
+	// FEATURE_INSURANCE_NIN_REQUIRED: skipping it must be an explicit
+	// per-environment opt-out, never the forgotten default. It fails CLOSED: with
+	// the OTP email service unwired (FEATURE_OTP_EMAIL_ENABLED off or Brevo
+	// unconfigured) those routes answer 503 step_up_unavailable. Set
+	// FEATURE_STEP_UP_ENFORCED=false to restore the previous behaviour.
+	// Unlike FEATURE_OTP_LOGIN_MFA_ENABLED (default off) it cannot lock anyone
+	// out of signing in — only out of the gated privileged actions.
+	FeatureStepUpEnforced bool
+	// StepUpTTLSeconds is how long a step-up grant lasts (clamped 60..900).
+	StepUpTTLSeconds int
+	// FeatureSupportImpersonationEnabled (ESTD-D028) mounts the read-only,
+	// audited support view-as surface. DEFAULT OFF — a new capability ships dark.
+	// While off, any request carrying X-Support-Impersonation is refused 403.
+	FeatureSupportImpersonationEnabled bool
+	// SupportImpersonationMaxMinutes caps a view-as session (clamped 1..60).
+	SupportImpersonationMaxMinutes int
 	// FeatureAdminUserModulesEnabled gates GET /api/admin/users/:id/modules (admin
 	// User 360 module membership). Default OFF: the route answers 404 when off.
 	FeatureAdminUserModulesEnabled bool
@@ -100,19 +123,6 @@ type Config struct {
 	CryptoQuidaxLiveKey     string
 	CryptoQuidaxLiveBaseURL string
 
-	// Maplerad credentials (FX + alternative VA provider).
-	MapleradSecretKey     string
-	MapleradPublicKey     string
-	MapleradProd          bool
-	MapleradWebhookSecret string
-	// MapleradBaseURL overrides the provider API root (regional endpoint, or a
-	// provider fake for e2e). Empty ⇒ the sandbox/prod default selected by
-	// MAPLERAD_PROD. WithBaseURL ignores "", so wiring it unconditionally is safe.
-	MapleradBaseURL string
-	// FeatureMapleradEnabled gates the Maplerad WaaS DOMAIN money path (ADR-012):
-	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
-	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
-	FeatureMapleradEnabled bool
 	// FeatureUtilityBillsEnabled gates the Utility Bills DOMAIN money path:
 	// member /api/finance/utilitybills/* routes, admin routes, and background
 	// jobs (pending-transaction requery sweep). DEFAULT OFF — no flag, no
@@ -252,8 +262,38 @@ type Config struct {
 	// FeatureEventsTeamRoles (FEATURE_EVENTS_TEAM_ROLES) exposes per-event team (MANAGER) grant routes.
 	FeatureEventsTeamRoles bool
 	// FeatureEventsComps (FEATURE_EVENTS_COMPS) exposes comp tickets, attendee CSV export and organiser announcements.
-	FeatureEventsComps   bool
+	FeatureEventsComps bool
+	// FeatureEventsOrganiserGate (FEATURE_EVENTS_ORGANISER_GATE) requires onboarding-approved
+	// organisers (RBAC events.manage) to create/duplicate/submit/publish events (EVTA-D001).
+	FeatureEventsOrganiserGate bool
+	// FeatureEventsOrganiserPayouts (FEATURE_EVENTS_ORGANISER_PAYOUTS) exposes the
+	// organiser settlement rail: per-event payout request/approve/reject, earnings
+	// statements and the admin settlement queue (EVTC-D003). Default OFF.
+	FeatureEventsOrganiserPayouts bool
+	// FeatureEventsSocial (FEATURE_EVENTS_SOCIAL) exposes event likes and organiser follows.
+	FeatureEventsSocial  bool
 	FeatureEstateEnabled bool
+	// FeatureEventsCardCheckoutEnabled (FEATURE_EVENTS_CARD_CHECKOUT) gates NEW
+	// Paystack card/bank-transfer checkouts for ticket orders (EVTB-D013): seats
+	// are held under the same tier FOR UPDATE lock as the wallet rail and settled
+	// ONLY on a server-verified charge into the same escrow. Default OFF. The
+	// webhook confirmer, owner status poll and reconciliation sweep stay live
+	// whenever a Paystack client is configured, so the flag can never strand a
+	// customer who already paid.
+	FeatureEventsCardCheckoutEnabled bool
+	// FeatureEstateMerchantGate (SP-01) enforces that a user holds an approved
+	// estate-management merchant identity before creating an estate. Default off:
+	// CreateEstate keeps its historical behaviour until the gate is ratified.
+	FeatureEstateMerchantGate bool
+	// FeatureEstateGuardGrants (FEATURE_ESTATE_GUARD_GRANTS) makes guard/gate
+	// operations require estate_admin or a live staff grant, and narrows estate
+	// listing to the caller's estates. Default off: any resident keeps gate access
+	// (the previous rule) until grants have been issued (ADR-PR876).
+	FeatureEstateGuardGrants bool
+	// EstateGuardRatePerMin / EstateCodeRatePerMin cap per-user guard admit/lookup
+	// and access-code creation requests (SP-02; estate routes previously unlimitted).
+	EstateGuardRatePerMin int
+	EstateCodeRatePerMin  int
 	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) estate dues path (estate/paystackcheckout): direct
 	// Paystack payment posted DR provider-clearing / CR settlement, never
@@ -261,12 +301,36 @@ type Config struct {
 	// audited design as FeatureRestaurantPaystackCheckoutEnabled, minus the
 	// escrow/hold-release step (dues settle immediately).
 	FeatureEstateDuesPaystackCheckoutEnabled bool
-	FeatureCrowdfundingEnabled               bool
-	FeatureRestaurantEnabled                 bool
+	// FeatureEstateDualControlEnabled (FEATURE_ESTATE_DUAL_CONTROL_ENABLED)
+	// turns on maker-checker for high-risk estate admin actions (ESTD-D027):
+	// above-threshold vendor payouts, resident bans, role grants and threshold
+	// changes need a second estate admin. Default OFF = single-actor behaviour.
+	FeatureEstateDualControlEnabled bool
+	// FeatureEstateLifecycleEnabled (FEATURE_ESTATE_LIFECYCLE_ENABLED) mounts the
+	// platform estate lifecycle routes (review queue, verify/reject/suspend/
+	// reactivate/close, legal hold — ESTD-D025). The write gate that refuses
+	// mutations on a non-active estate is always on: it is inert while every
+	// estate is 'active' (the migration default).
+	FeatureEstateLifecycleEnabled bool
+	// FeatureEstateVerificationRequired (FEATURE_ESTATE_VERIFICATION_REQUIRED)
+	// creates new estates 'pending' until a platform operator verifies them.
+	FeatureEstateVerificationRequired bool
+	// FeatureEstateImportEnabled (FEATURE_ESTATE_IMPORT_ENABLED) mounts the
+	// legacy-data import routes (dry-run / commit / exception report — ESTD-D034).
+	FeatureEstateImportEnabled bool
+	FeatureCrowdfundingEnabled bool
+	FeatureRestaurantEnabled   bool
 
 	// FeatureRestaurantAdminCategories moves menu-category ownership to the platform:
 	// owners get 403 on category create/delete, and the admin taxonomy routes mount.
 	FeatureRestaurantAdminCategories bool
+
+	// FeatureRestaurantTaxonomyBrowse is the customer-facing kill switch for taxonomy
+	// browsing: the /menu-taxonomy/browse reads, `cuisines` on restaurants and
+	// `sections` on restaurant detail. It is ANDed with FeatureRestaurantAdminCategories
+	// (the taxonomy must exist before it can be browsed); off leaves the merchant and
+	// admin taxonomy surfaces untouched. Default OFF.
+	FeatureRestaurantTaxonomyBrowse bool
 
 	// FeatureRestaurantDiscounts turns on owner discounts (automatic, item or category
 	// or whole-restaurant). Off means no discount routes and no discounted prices.
@@ -297,6 +361,10 @@ type Config struct {
 	FeatureVoteBridgeEnabled     bool
 	FeatureTransportEnabled      bool
 	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
+	// FeatureBankAccountNameMatch: a restaurant payout account is verified only when
+	// the bank holder name matches the owner's KYC-verified name or an approved KYB
+	// legal name; mismatches are held for admin review. Off = name-enquiry only.
+	FeatureBankAccountNameMatch bool
 	// FeatureParcelRateCardEnabled prices parcels from transport_parcel_rate_card
 	// (size × speed multiplier + minimum fare per cell). Off = legacy multipliers.
 	FeatureParcelRateCardEnabled bool
@@ -477,6 +545,10 @@ type Config struct {
 	CryptoLockPoolConns int
 	// CryptoReconcileSeconds is the reconciler interval.
 	CryptoReconcileSeconds int
+	// CryptoDepositReconcileSeconds is the money-IN deposit reconciler interval (GAP-DEP-01
+	// Slice 2b): how often the safety net sweeps provider ListDeposits and re-submits each
+	// transfer into the once-only settler. 0 falls back to CryptoReconcileSeconds.
+	CryptoDepositReconcileSeconds int
 	// AuthSlowLogMs: an authenticated request whose authentication stage (token check + status,
 	// roles and permissions lookups) takes at least this long is logged with per-step timings.
 	// 0 turns it off. See internal/middleware/auth_timing.go.
@@ -486,6 +558,12 @@ type Config struct {
 	// PIN attempt and moves money. Validated 1..600 when the swap pipeline is on.
 	CryptoQuoteRatePerMin   int
 	CryptoConfirmRatePerMin int
+	// CryptoDepositConfirmations is the minimum network confirmation count a money-IN
+	// transfer must reach before the deposit engine credits a balance (CRYPTO_DEPOSIT_CONFIRMATIONS).
+	// A provider re-query below it parks the transfer as awaiting and credits nothing. It is a
+	// risk decision, so it fails closed to a safe default and must be confirmed against the
+	// Quidax sandbox and the risk owner before go-live. Validated 1..144 when the swap pipeline is on.
+	CryptoDepositConfirmations int
 
 	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
 	// charged on top of a doctor's consultation fee (ADR-044). Default OFF: it is a
@@ -823,6 +901,13 @@ type Config struct {
 	// AdminAppBaseURL: origin of frontend-admin, used to build links inside
 	// transactional emails (e.g. the hotelier staff invite accept link).
 	AdminAppBaseURL string
+	// WebAppBaseURL: origin of frontend-web, which serves uploaded contest media
+	// (banners/logos) under /api/admin/contests/banner/. Contest rows store only
+	// the PATH, so this is what turns it back into a URL for clients that cannot
+	// resolve a relative one — the mobile app above all. Defaulted to the same
+	// production origin frontend-web defaults to, so an unconfigured deployment
+	// still emits working URLs.
+	WebAppBaseURL string
 	// Termii: SMS delivery. Key from termii.com dashboard.
 	TermiiAPIKey   string
 	TermiiSenderID string // approved sender ID
@@ -881,10 +966,15 @@ func Load() Config {
 		AccountLockMinutes:          getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
 
 		FeatureSessionHardeningEnabled: getEnvBool("FEATURE_SESSION_HARDENING_ENABLED", false),
-		FeatureAdminUserModulesEnabled: getEnvBool("FEATURE_ADMIN_USER_MODULES_ENABLED", false),
-		SuspiciousFailedLoginSpike:     getEnvInt("AUTH_SUSPICIOUS_FAILED_LOGIN_SPIKE", 3),
-		SuspiciousImpossibleKmH:        getEnvInt("AUTH_SUSPICIOUS_IMPOSSIBLE_KMH", 800),
-		SuspiciousEscalationPolicy:     getEnv("AUTH_SUSPICIOUS_ESCALATION_POLICY", "notify"),
+		FeatureStepUpEnforced:          getEnvBool("FEATURE_STEP_UP_ENFORCED", true),
+		StepUpTTLSeconds:               getEnvInt("STEP_UP_TTL_SECONDS", 300),
+
+		FeatureSupportImpersonationEnabled: getEnvBool("FEATURE_SUPPORT_IMPERSONATION_ENABLED", false),
+		SupportImpersonationMaxMinutes:     getEnvInt("SUPPORT_IMPERSONATION_MAX_MINUTES", 30),
+		FeatureAdminUserModulesEnabled:     getEnvBool("FEATURE_ADMIN_USER_MODULES_ENABLED", false),
+		SuspiciousFailedLoginSpike:         getEnvInt("AUTH_SUSPICIOUS_FAILED_LOGIN_SPIKE", 3),
+		SuspiciousImpossibleKmH:            getEnvInt("AUTH_SUSPICIOUS_IMPOSSIBLE_KMH", 800),
+		SuspiciousEscalationPolicy:         getEnv("AUTH_SUSPICIOUS_ESCALATION_POLICY", "notify"),
 
 		DatabaseURL:   getEnv("DATABASE_URL", ""),
 		RedisURL:      getEnv("REDIS_URL", "redis://localhost:6379"),
@@ -903,12 +993,6 @@ func Load() Config {
 		CryptoQuidaxLiveKey:     getEnv("QUIDAX_LIVE_API_KEY", ""),
 		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://openapi.quidax.io/exchange-open-api/api/v1"),
 
-		MapleradSecretKey:          getEnv("MAPLERAD_SECRET_KEY", ""),
-		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
-		MapleradProd:               getEnvBool("MAPLERAD_PROD", false),
-		MapleradWebhookSecret:      getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
-		MapleradBaseURL:            getEnv("MAPLERAD_BASE_URL", ""),
-		FeatureMapleradEnabled:     getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
 		FeatureUtilityBillsEnabled: getEnvBool("FEATURE_UTILITY_BILLS_ENABLED", false),
 
 		EversendClientID:      getEnv("EVERSEND_CLIENT_ID", ""),
@@ -990,11 +1074,22 @@ func Load() Config {
 		FeatureEventsTicketingDepth:                  getEnvBool("FEATURE_EVENTS_TICKETING_DEPTH", false),
 		FeatureEventsTeamRoles:                       getEnvBool("FEATURE_EVENTS_TEAM_ROLES", false),
 		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
+		FeatureEventsOrganiserGate:                   getEnvBool("FEATURE_EVENTS_ORGANISER_GATE", false),
+		FeatureEventsCardCheckoutEnabled:             getEnvBool("FEATURE_EVENTS_CARD_CHECKOUT", false),
+		FeatureEventsOrganiserPayouts:                getEnvBool("FEATURE_EVENTS_ORGANISER_PAYOUTS", false),
+		FeatureEventsSocial:                          getEnvBool("FEATURE_EVENTS_SOCIAL", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
+		FeatureEstateMerchantGate:                    getEnvBool("FEATURE_ESTATE_MERCHANT_GATE", false),
+		FeatureEstateGuardGrants:                     getEnvBool("FEATURE_ESTATE_GUARD_GRANTS", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureEstateDualControlEnabled:              getEnvBool("FEATURE_ESTATE_DUAL_CONTROL_ENABLED", false),
+		FeatureEstateLifecycleEnabled:                getEnvBool("FEATURE_ESTATE_LIFECYCLE_ENABLED", false),
+		FeatureEstateVerificationRequired:            getEnvBool("FEATURE_ESTATE_VERIFICATION_REQUIRED", false),
+		FeatureEstateImportEnabled:                   getEnvBool("FEATURE_ESTATE_IMPORT_ENABLED", false),
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:                     getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
 		FeatureRestaurantAdminCategories:             getEnvBool("FEATURE_RESTAURANT_ADMIN_CATEGORIES", false),
+		FeatureRestaurantTaxonomyBrowse:              getEnvBool("FEATURE_RESTAURANT_TAXONOMY_BROWSE", false),
 		FeatureRestaurantDiscounts:                   getEnvBool("FEATURE_RESTAURANT_DISCOUNTS", false),
 		FeatureRestaurantWithdrawalsEnabled:          getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
 		FeatureRestaurantPaystackCheckoutEnabled:     getEnvBool("FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED", false),
@@ -1004,6 +1099,7 @@ func Load() Config {
 		FeatureVoteBridgeEnabled:                     getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
+		FeatureBankAccountNameMatch:                  getEnvBool("FEATURE_BANK_ACCOUNT_NAME_MATCH", false),
 		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
 		FeatureParcelPrepaidInsuranceEnabled:         getEnvBool("FEATURE_PARCEL_PREPAID_INSURANCE", false),
 		FeatureParcelReceiverPinSMSEnabled:           getEnvBool("FEATURE_PARCEL_RECEIVER_PIN_SMS", false),
@@ -1061,9 +1157,11 @@ func Load() Config {
 		CryptoWebhookSecret:                          getEnv("QUIDAX_WEBHOOK_SECRET", ""),
 		CryptoLockPoolConns:                          getEnvInt("CRYPTO_LOCK_POOL_CONNS", 40),
 		CryptoReconcileSeconds:                       getEnvInt("CRYPTO_RECONCILE_SECONDS", 30),
+		CryptoDepositReconcileSeconds:                getEnvInt("CRYPTO_DEPOSIT_RECONCILE_SECONDS", 60),
 		AuthSlowLogMs:                                getEnvInt("AUTH_SLOW_LOG_MS", 750),
 		CryptoQuoteRatePerMin:                        getEnvInt("CRYPTO_QUOTE_RATE_PER_MIN", 20),
 		CryptoConfirmRatePerMin:                      getEnvInt("CRYPTO_CONFIRM_RATE_PER_MIN", 5),
+		CryptoDepositConfirmations:                   getEnvInt("CRYPTO_DEPOSIT_CONFIRMATIONS", 3),
 		FeatureTelemedicinePlatformFeeEnabled:        getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
 		FeatureCheckoutTopupTier0:                    getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
 		FeatureBusinessRegistryEnabled:               getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
@@ -1127,6 +1225,9 @@ func Load() Config {
 		FinanceTransferRatePerMin: getEnvInt("FINANCE_TRANSFER_RATE_PER_MIN", 30),
 		FinancePinRatePerMin:      getEnvInt("FINANCE_PIN_RATE_PER_MIN", 10),
 		MapsBudgetAlertWebhook:    getEnv("MAPS_BUDGET_ALERT_WEBHOOK", ""),
+
+		EstateGuardRatePerMin: getEnvInt("ESTATE_GUARD_RATE_PER_MIN", 30),
+		EstateCodeRatePerMin:  getEnvInt("ESTATE_CODE_RATE_PER_MIN", 10),
 
 		ConnectFreeVoteRatePerMin: getEnvInt("CONNECT_FREE_VOTE_RATE_PER_MIN", 30),
 		ConnectPaidVoteRatePerMin: getEnvInt("CONNECT_PAID_VOTE_RATE_PER_MIN", 10),
@@ -1208,6 +1309,7 @@ func Load() Config {
 		OTPMaxVerifyPerIPPerHour: getEnvInt("OTP_MAX_VERIFY_PER_IP_PER_HOUR", 20),
 		SignupRateLimitPer5Min:   getEnvInt("AUTH_SIGNUP_RATE_LIMIT_PER_5MIN", 30),
 		AdminAppBaseURL:          getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
+		WebAppBaseURL:            getEnv("WEB_APP_BASE_URL", "https://www.spotlightng.com"),
 		TermiiAPIKey:             getEnv("TERMII_API_KEY", getEnv("TERMIL_LIVE_API_KEY", "")), // TERMIL_LIVE_API_KEY: legacy misspelled var on Railway
 		TermiiSenderID:           getEnv("TERMII_SENDER_ID", "Paymax"),
 		ExpoPushToken:            getEnv("EXPO_PUSH_TOKEN", ""),
@@ -1285,13 +1387,8 @@ func (c Config) Validate() error {
 	require(c.FeatureBankTransfersEnabled && strings.EqualFold(strings.TrimSpace(c.TransferProviderDefault), "monnify"),
 		"MONNIFY_SECRET_KEY", c.MonnifySecretKey)
 
-	require(c.FeatureMapleradEnabled, "MAPLERAD_SECRET_KEY", c.MapleradSecretKey)
-	prefix(c.MapleradSecretKey, "mpr_", "MAPLERAD_SECRET_KEY")
 	if c.VertoFXProd && c.VertoFXBaseURL != "" {
 		problems = append(problems, "VERTOFX_BASE_URL must not be set when VERTOFX_PROD=true — it reroutes every VertoFX call away from the real provider")
-	}
-	if c.IsProd() && c.FeatureMapleradEnabled && c.MapleradProd && strings.Contains(c.MapleradSecretKey, "sandbox") {
-		problems = append(problems, "MAPLERAD_SECRET_KEY is a sandbox key but MAPLERAD_PROD=true")
 	}
 
 	// Multi-provider KYC verification (ADR-013): when enabled, at least one
@@ -1378,9 +1475,6 @@ func (c Config) Validate() error {
 		if c.FeatureTransportEnabled && !c.FeatureMapsEnabled {
 			strict = append(strict, "FEATURE_TRANSPORT_ENABLED=true requires FEATURE_MAPS_ENABLED=true (no MapService means MockMaps)")
 		}
-		if c.MapleradBaseURL != "" {
-			strict = append(strict, "MAPLERAD_BASE_URL must not be set outside development — it reroutes every Maplerad call away from the real provider")
-		}
 		if c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled {
 			if isPlaceholder(c.PaystackSecretKey) {
 				strict = append(strict, "PAYSTACK_SECRET_KEY is required when Wallet or Bank transfers is enabled")
@@ -1439,6 +1533,9 @@ func (c Config) Validate() error {
 			}
 			if c.CryptoConfirmRatePerMin < 1 || c.CryptoConfirmRatePerMin > 600 {
 				strict = append(strict, "CRYPTO_CONFIRM_RATE_PER_MIN must be between 1 and 600 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
+			}
+			if c.CryptoDepositConfirmations < 1 || c.CryptoDepositConfirmations > 144 {
+				strict = append(strict, "CRYPTO_DEPOSIT_CONFIRMATIONS must be between 1 and 144 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
 			}
 		}
 		problems = append(problems, strict...)

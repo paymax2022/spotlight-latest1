@@ -1,0 +1,23 @@
+execution_id,case_id,method,command_or_procedure,env,result,evidence_path,executed_at_utc
+EVTB-X001,EVT-UAT-128,UNIT_TEST,"cd backend && go test ./internal/top5events -count=1",worktree (no DB),PASS,"go test output ok spotlight/backend/internal/top5events 0.73s",2026-10-21
+EVTB-X002,EVT-UAT-105,UNIT_TEST,"cd backend && go test ./internal/top5events -run 'TestPurchaseRequest|TestGiftRequest|TestUnitIdemKey|TestPurchaseTickets|TestHardTimePatch' -v",worktree,PASS,"6/6 new contract tests PASS (checkout_contract_test.go)",2026-10-21
+EVTB-X003,EVT-UAT-170,UNIT_TEST,"cd backend && go test ./internal/credential -count=1",worktree,PASS,"ok spotlight/backend/internal/credential 1.15s (sign/verify/window/replay logic)",2026-10-21
+EVTB-X004,EVT-UAT-099,CODE_REVIEW,"read service.go AddTier + model.go TicketTier",worktree,FAIL,"no per-buyer/per-order limit field; unknown JSON fields dropped (EVTB-D006)",2026-10-21
+EVTB-X005,EVT-UAT-135,CODE_REVIEW,"grep paystack/card in top5events; read Purchase money path",worktree,CONFIRMED_MISSING,"wallet.Debit into escrow only; no gateway intent (EVTB-D013)",2026-10-21
+EVTB-X006,EVT-UAT-105,CODE_REVIEW,"diff mobile api.ts purchaseTickets body vs purchaseRequest struct",worktree,FAIL->FIXED,"quantity+promo_code were unbound; now bound+batched (EVTB-D001)",2026-10-21
+EVTB-X007,EVT-UAT-161,CODE_REVIEW,"diff mobile giftTicket body vs giftRequest struct",worktree,FAIL->FIXED,"cashtag field unbound -> 400; now accepted (EVTB-D002)",2026-10-21
+EVTB-X008,EVT-UAT-123,CODE_REVIEW,"read GetEvent + mobile checkout/tiers.tsx",worktree,FAIL->FIXED,"tiers absent from event detail -> live checkout crash; GetEvent now returns tiers (EVTB-D003)",2026-10-21
+EVTB-X009,EVT-UAT-119,CODE_REVIEW,"read app/events/checkout/review.tsx fee line vs service payable",worktree,FAIL->FIXED,"client invented 1.5% fee never charged; removed (EVTB-D004)",2026-10-21
+EVTB-X010,EVT-UAT-194,CODE_REVIEW,"read editability + UpdateEvent field classes",worktree,FAIL->FIXED,"venue editable post-sale despite documented lock; hardTimePatch added (EVTB-D005)",2026-10-21
+EVTB-X011,EVT-UAT-125,CODE_REVIEW,"read reconciler.go + ReconcilePendingOrders + expireOrder",worktree,CONFIRMED_PARTIAL,"funded PENDING auto-completes (charged); only refused-debit expires (EVTB-D007)",2026-10-21
+EVTB-X012,EVT-UAT-179,CODE_REVIEW,"grep callers of credential.EnqueueOffline/Reconcile; read validateScan offline branch",worktree,CONFIRMED_PARTIAL,"no route/ticker invokes reconcile; client optimistic-accepts (EVTB-D009)",2026-10-21
+EVTB-X013,EVT-UAT-198,CODE_REVIEW,"grep notifier/notification in Purchase/Cancel/updateEvent paths",worktree,CONFIRMED_MISSING,"no lifecycle notifications (EVTB-D010)",2026-10-21
+EVTB-X014,EVT-UAT-185,CODE_REVIEW,"grep refund endpoints in handler.go/Register",worktree,CONFIRMED_MISSING,"only whole-event owner Cancel exists (EVTB-D011)",2026-10-21
+EVTB-X015,EVT-UAT-191,CODE_REVIEW,"read cancelRefundOneTicket revoke/mark ordering vs credential consume",worktree,CONFIRMED_PARTIAL,"USED ticket still refunded + overwritten (EVTB-D015)",2026-10-21
+EVTB-X016,EVT-UAT-119,UNIT_TEST,"cd mobile-app/reactnative && node typescript/bin/tsc --noEmit -p tsconfig.json (symlinked node_modules)",worktree,PASS,"clean typecheck incl. edited review.tsx",2026-10-21
+EVTB-X017,EVT-UAT-127,API_LIVE,"curl http://localhost:8080/readyz; docker ps",local env probe,BLOCKED,"port 8080 serves unrelated rx-api-gateway container; no Spotlight backend/Supabase running; no TEST_DATABASE_URL",2026-10-21
+EVTB-X018,EVT-UAT-139,UNIT_TEST,"cd backend && go test ./internal/top5events (durability suite)",worktree,PASS,"TestPurchase_PendingResume_NeverFreeTicket_NeverDoubleCharge + UnfundedBuyer PASS",2026-10-21
+EVTB-X019,EVT-UAT-169,CODE_REVIEW,"read ScanTicket authz + Validate + ticket USED flip + publishCheckinSafe",worktree,CONFIRMED_IMPLEMENTED,"steward/organiser gate, atomic consume, checked_in_at, validations row",2026-10-21
+EVTB-X020,EVT-UAT-178,CODE_REVIEW,"read AttendeesForEvent + route table for manual check-in",worktree,FAIL,"roster exists; no manual check-in mutation (EVTB-D008)",2026-10-21
+EVTB-X021,EVT-UAT-137,UNIT_TEST,"go test -run TestPurchase_UnfundedBuyer_ExpiresAndReleasesSeat_NeverCharges",worktree,PASS,"refused debit -> EXPIRED + seat released + no ticket",2026-10-21
+EVTB-X022,EVT-UAT-150,UNIT_TEST,"go test -run service_money_test suite",worktree,PASS,"refund+fee==paid invariant; balanced PostJournal",2026-10-21

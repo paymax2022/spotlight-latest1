@@ -1,0 +1,17 @@
+execution_id,case_id,method,command_or_procedure,env,result,evidence_path,executed_at_utc
+E0,ALL,CODE_REVIEW,"env probe: curl localhost:8080/readyz (401 rx-api-gateway,unrelated);supabase status (down);lsof :54322 (none);TEST_DATABASE_URL unset",local,env-limited,docs/qa/estate-uat-443/cluster-estate-b.md,2026-10-21T11:33Z
+E1,ALL,UNIT_TEST,"cd backend && go test ./internal/estate/... ./internal/realtor/... -count=1",local(no TEST_DATABASE_URL),PASS,"ok estate 0.97s;ok paystackcheckout 0.88s;ok realtor 1.62s;live-db tests SKIP",2026-10-21T12:30Z
+E2,ALL,UNIT_TEST,"cd backend && go build ./... && go vet ./internal/estate ./internal/realtor",local,PASS,clean,2026-10-21T12:20Z
+E3,ALL,CODE_REVIEW,"module mapping: service_dues.go;meetings.go;election_eligibility.go;admin.go;vendor.go;realtor/*;paystackcheckout/*;estate_admin_routes.go;frontend-web/src/server/{estate,elections,meetings,realtor};app/api/v1/{estate,elections,realtor};frontend-admin estate pages;mobile features/{dues,election,meetings,realtor}",local,done,code review,2026-10-21T13:00Z
+E4,EST-UAT-0160,UNIT_TEST,"go test ./internal/estate/paystackcheckout -run 'InitiateCheckout|OnChargeSuccess|OwnerCustomerID' -v",local,PASS,"8 tests:freeze quote,idem-required,pay+confirm,amount-mismatch refund,failure refund,concurrent-once,owner resolve,foreign-key reject",2026-10-21T12:30Z
+E5,EST-UAT-0206,UNIT_TEST,"npx vitest run tests/unit/estate/uat-estate-b.spec.ts",local,PASS,"12/12:dues claim+heal+foreign-key+revert;checkVoteEligibility x5;mapElection secrecy x2",2026-10-21T19:50Z
+E6,ALL,UNIT_TEST,"npx vitest run tests/unit/estate/",local,PASS,"5 files,48 tests",2026-10-21T19:50Z
+E7,ALL,UNIT_TEST,"cd frontend-web && npx tsc --noEmit",local,PASS,clean,2026-10-21T19:52Z
+E8,EST-UAT-0164,UNIT_TEST,"npx vitest run tests/unit/estate/dues.money-path.spec.ts",local,PASS,"13/13 incl.23505 reconcile,error-surfacing",2026-10-21T19:50Z
+E9,EST-UAT-0129,CODE_REVIEW,"service_dues.go:240 amount==invoice enforced;dues.ts amount from invoice row",local,confirms-missing,ESTB-D012,2026-10-21T13:00Z
+E10,EST-UAT-0165,CODE_REVIEW,"internal/webhooks/webhooks.go duespay- prefix dispatch;HMAC in platform seam",local,shared-platform,ESTB-D010,2026-10-21T13:00Z
+E11,EST-UAT-0139,CODE_REVIEW,"realtor_sign_lease RPC:tenant-signed+signed_at+invoice creation idempotent",local,implemented,review,2026-10-21T13:00Z
+E12,EST-UAT-0153,CODE_REVIEW,"realtor/repository.go ResolveEscrow:move-out gate,terminal released,deterministic idem keys,audit",local,partial,review,2026-10-21T13:00Z
+E13,EST-UAT-0214,UNIT_TEST,"vote route 23505->409;Go CastVote UNIQUE(election_id,voter_id)+Redlock",local,PASS,review+model_test OneVotePerResident,2026-10-21T13:00Z
+E14,EST-UAT-0194,UNIT_TEST,"meetings.go CheckInAttendee ON CONFLICT(meeting_id,user_id);TestValidCheckinMethod",local,PASS,go test,2026-10-21T12:30Z
+E15,ALL,UNIT_TEST,"live-DB suites skipped (no TEST_DATABASE_URL):PayDues happy/concurrent,meetings FSM,vote concurrency,escrow resolve,putIntent",local,BLOCKED,skip log,2026-10-21T12:30Z

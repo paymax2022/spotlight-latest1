@@ -48,7 +48,7 @@ All 51 packages pass `go test ./...`. `go vet ./...` and `go build ./...` are cl
 | Settlement lifecycle | `finance/settlement` | ✅ |
 | Referrals | `finance/referrals` | ✅ |
 | Virtual accounts (DVA) | `finance/va` | ✅ |
-| FX / Maplerad | `finance/fx` | ✅ |
+| FX (Eversend / VertoFX) | `finance/fx` | ✅ |
 | Dispute management | `finance/disputes` | ✅ (handler + migration + routes) |
 | Ratings | `finance/ratings` | ✅ (handler + migration + routes) |
 | Vote bridge adapter | `votebridge` | ✅ |
@@ -61,7 +61,7 @@ All 51 packages pass `go test ./...`. `go vet ./...` and `go build ./...` are cl
 | Group savings | `groups` | ✅ |
 | AI Care | `aicare` | ✅ |
 | Notifications (queue) | `notifications` | ✅ |
-| Payment providers | `provider`, `provider/paystack`, `provider/maplerad` | ✅ |
+| Payment providers | `provider`, `provider/paystack`, `provider/eversend`, `provider/vertofx` | ✅ |
 | Webhooks | `webhooks` | ✅ |
 | Association / Group Membership | `association` | ✅ (37 routes, ledger posting, real RBAC, bulk import, committee members) |
 
@@ -1268,7 +1268,7 @@ All flags default to `false`. Set in environment to enable.
 | Queue | Redis via asynq (`backend/internal/platform/queue/`) |
 | Cache / Redlock | Redis (`backend/internal/platform/redis/`) |
 | Payments | Paystack (HMAC-SHA512 webhook) |
-| FX | Maplerad |
+| FX | Eversend, VertoFX |
 | Frontend web | Next.js 14.2, TypeScript, Supabase SSR |
 | Frontend admin | Next.js 15.1, port 4030 |
 | Mobile | Expo Router (React Native) |

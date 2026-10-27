@@ -11,16 +11,19 @@ interface Props {
   title:  string;
   right?: React.ReactNode;
   onBack?: () => void;
+  showBack?: boolean;
 }
 
-export default function TeleHeader({ title, right, onBack }: Props) {
+export default function TeleHeader({ title, right, onBack, showBack = true }: Props) {
   return (
     <View style={styles.bar}>
-      <Pressable onPress={onBack ?? (() => router.back())} style={styles.iconBtn}>
-        <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
-      </Pressable>
+      {showBack && (
+        <Pressable onPress={onBack ?? (() => router.back())} style={styles.iconBtn}>
+          <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
+        </Pressable>
+      )}
       <Text style={styles.title} numberOfLines={1}>{title}</Text>
-      <View style={styles.right}>{right ?? <View style={styles.iconBtn} />}</View>
+      <View style={styles.right}>{right ?? (showBack ? <View style={styles.iconBtn} /> : null)}</View>
     </View>
   );
 }

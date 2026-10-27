@@ -7,7 +7,9 @@ package restaurant
 
 import (
 	"context"
+	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,5 +103,64 @@ func TestLiveDB_BusinessHours(t *testing.T) {
 	}
 	if cleared, _ := svc.loadBusinessHours(ctx, restID); len(cleared) != 0 {
 		t.Fatalf("schedule should be cleared, got %d rows", len(cleared))
+	}
+}
+
+// The owner-approved blocking semantics: a store whose switch says open but whose clock is
+// outside the hours it set must refuse an IMMEDIATE order, and say when it opens again.
+// An outlet that never set hours keeps behaving exactly as before — switch only.
+func TestLiveDB_ImmediateOrderGateHonoursHours(t *testing.T) {
+	pool := hoursLivePool(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+	svc := NewService(pool, nil)
+
+	owner := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	testsupport.CleanupUser(t, pool, owner)
+	restID := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Gate Kitchen','1 St',TRUE)`, restID, owner); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+
+	if _, err := svc.SetBusinessHours(ctx, restID, owner, []BusinessHourInput{
+		{DayOfWeek: int(time.Tuesday), Open: "09:00", Close: "17:00"},
+	}); err != nil {
+		t.Fatalf("set hours: %v", err)
+	}
+
+	lagos := func(day, hour int) time.Time {
+		return time.Date(2026, 7, day, hour, 0, 0, 0, lagosTZ) // 2026-07-27 is a Monday
+	}
+	if err := svc.assertOpenForImmediateOrder(ctx, restID, true, lagos(28, 12)); err != nil {
+		t.Errorf("Tuesday noon is inside the window: %v", err)
+	}
+
+	err := svc.assertOpenForImmediateOrder(ctx, restID, true, lagos(29, 12));
+	if err == nil {
+		t.Fatal("Wednesday noon must be refused: only Tuesday is scheduled")
+	}
+	if !errors.Is(err, ErrRestaurantClosed) {
+		t.Fatalf("refusal must stay ErrRestaurantClosed so the handler maps it the same way, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "opens again Tuesday at 09:00") {
+		t.Errorf("refusal should name the next opening, got %q", err.Error())
+	}
+
+	// The manual switch still wins: closed is closed, with no promise about reopening.
+	if err := svc.assertOpenForImmediateOrder(ctx, restID, false, lagos(28, 12)); !errors.Is(err, ErrRestaurantClosed) {
+		t.Errorf("switch off must refuse, got %v", err)
+	} else if strings.Contains(err.Error(), "opens again") {
+		t.Errorf("an owner-closed store has not said when it returns, got %q", err.Error())
+	}
+
+	// No schedule ⇒ the switch alone governs, at any hour.
+	if _, err := svc.SetBusinessHours(ctx, restID, owner, nil); err != nil {
+		t.Fatalf("clear hours: %v", err)
+	}
+	if err := svc.assertOpenForImmediateOrder(ctx, restID, true, lagos(29, 12)); err != nil {
+		t.Errorf("a store with no hours must not gain a schedule it never set: %v", err)
 	}
 }

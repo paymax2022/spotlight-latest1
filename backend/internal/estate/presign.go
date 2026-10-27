@@ -190,10 +190,11 @@ func (h *Handler) DocumentDownloadURL(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "document has no downloadable file"})
 			return
 		}
+		_ = h.svc.audit(c.Request.Context(), estateID, userID, "DOCUMENT_DOWNLOAD", "document", docID, nil)
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{
 			"downloadUrl": fileURL,
 			"expiresIn":   0,
-			"method":      "GET",
+			keyMethod:     "GET",
 			"legacy":      true,
 		}})
 		return
@@ -212,10 +213,13 @@ func (h *Handler) DocumentDownloadURL(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not issue download url"})
 		return
 	}
+	// EST-UAT-0272: document retrievals are privileged events; audit who
+	// fetched which document before issuing the URL.
+	_ = h.svc.audit(c.Request.Context(), estateID, userID, "DOCUMENT_DOWNLOAD", "document", docID, nil)
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"downloadUrl": url,
 		"expiresIn":   int(documentDownloadTTL.Seconds()),
-		"method":      "GET",
+		keyMethod:     "GET",
 	}})
 }
 

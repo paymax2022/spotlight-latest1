@@ -69,14 +69,23 @@ var ErrOversellBlocked = errors.New("direct: OVERSELL_BLOCKED")
 
 // bookTokenPrefix and bookTokenVersion frame the availability context the direct
 // adapter encodes into the book_token at Prebook time (room_type_id, stay dates,
-// rooms) so Book — whose normalised BookRequest carries no dates/room ref — can
-// perform the row-locked decrement without any signature change. Format:
+// rooms, minted expiry) so Book — whose normalised BookRequest carries no
+// dates/room ref — can perform the row-locked decrement without any signature
+// change. Format:
 //
-//	direct:v1:<room_type_id>:<check_in>:<check_out>:<rooms>:<nonce>
+//	direct:v2:<room_type_id>:<check_in>:<check_out>:<rooms>:<expires_unix>:<nonce>
+//
+// v2 binds the advertised ExpiresAt INTO the token: v1 minted no timestamp, so
+// the 10-minute TTL was display-only and a stale quote could be consumed days
+// later at the old price. decodeBookToken refuses expired or pre-v2 tokens —
+// the saga auto-releases the hold and VOIDs, never a stale-price capture.
 const (
 	bookTokenPrefix  = "direct"
-	bookTokenVersion = "v1"
+	bookTokenVersion = "v2"
 	dateLayout       = "2006-01-02"
+	// bookTokenTTL is how long a prebook hold stays bookable. Matches the
+	// ExpiresAt reported to the client in PrebookResult.
+	bookTokenTTL = 10 * time.Minute
 )
 
 // NewDirect constructs a Rail-B adapter over the financial DB pool.
@@ -88,13 +97,24 @@ func NewDirect(db *pgxpool.Pool) *DirectInventoryAdapter {
 func (a *DirectInventoryAdapter) Name() string { return "direct" }
 
 // Search reads ACTIVE direct properties (geo/city filtered) joined to their room
-// types + rate plans. The price is the hotel sell rate; SB1's per-date rate table
-// refines it. Until then this returns the rate-plan base sell rate.
+// types + rate plans. The price is the hotel sell rate; per-date rates refine the
+// quote at prebook (the search display rate is the rate-plan base sell rate).
+// When the request carries stay dates, offers are filtered to room types that can
+// actually be sold for EVERY night of the stay (allotment - sold >= rooms, not
+// stop-sell) and that fit the requested per-room adult count — an unavailable
+// listing must never be advertised as bookable.
 func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchRequest) ([]gateway.PropertyOffer, error) {
 	if a.db == nil {
 		return nil, errors.New("direct: nil pool")
 	}
+	rooms := req.Rooms
+	if rooms <= 0 {
+		rooms = 1
+	}
+	adults := req.Occupancy.Adults
 	// Parameterized query. City filter when provided; otherwise all ACTIVE.
+	// $4/$5 are stay dates (handler requires them); when unset the availability
+	// leg is skipped so undated callers (content probes) are unaffected.
 	const q = `
 		SELECT p.supplier_code, p.supplier_property_ref, p.name, p.city, p.address,
 		       COALESCE(ST_Y(p.geo::geometry),0), COALESCE(ST_X(p.geo::geometry),0),
@@ -107,9 +127,20 @@ func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchR
 		JOIN public.stays_rate_plan rp ON rp.room_type_id = rt.id
 		WHERE p.source_rail = 'DIRECT' AND p.status = 'ACTIVE'
 		  AND ($1 = '' OR p.city ILIKE $1)
+		  AND ($5 <= 0 OR rt.occupancy >= $5)
+		  AND ($3::date IS NULL OR NOT EXISTS (
+		    SELECT 1 FROM generate_series($3::date, ($4::date - 1), interval '1 day') AS n
+		    WHERE NOT EXISTS (
+		      SELECT 1 FROM public.stays_availability_day ad
+		      WHERE ad.room_type_id = rt.id AND ad.date = n
+		        AND ad.allotment - ad.sold >= $2 AND NOT ad.stop_sell)))
 		ORDER BY rp.base_sell_rate_kobo ASC
 		LIMIT 200`
-	rows, err := a.db.Query(ctx, q, req.City)
+	var ci, co any
+	if !req.CheckIn.IsZero() && !req.CheckOut.IsZero() {
+		ci, co = req.CheckIn.Format(dateLayout), req.CheckOut.Format(dateLayout)
+	}
+	rows, err := a.db.Query(ctx, q, req.City, rooms, ci, co, adults)
 	if err != nil {
 		return nil, fmt.Errorf("direct: search: %w", err)
 	}
@@ -225,21 +256,24 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 	if a.db == nil {
 		return gateway.PrebookResult{}, errors.New("direct: nil pool")
 	}
-	// Resolve the rate plan (price/policy) AND the owning room_type_id (the
-	// availability-calendar key) in one query.
+	// Resolve the rate plan (price/policy), the owning room_type_id (the
+	// availability-calendar key), its occupancy ceiling, and the internal
+	// rate_plan_id (the rate_day key) in one query.
 	const q = `
-		SELECT rp.base_sell_rate_kobo, rp.tax_kobo, rp.currency, rp.cancellation_policy, rt.id
+		SELECT rp.id, rp.base_sell_rate_kobo, rp.tax_kobo, rp.currency, rp.cancellation_policy,
+		       rt.id, rt.occupancy
 		FROM public.stays_rate_plan rp
 		JOIN public.stays_room_type rt ON rt.id = rp.room_type_id
 		JOIN public.stays_property p ON p.id = rt.property_id
 		WHERE p.supplier_property_ref = $1 AND rt.supplier_room_type_ref = $2
 		  AND rp.supplier_rate_plan_ref = $3 AND p.status = 'ACTIVE'`
+	var ratePlanID, roomTypeID string
 	var sellKobo, taxKobo int64
 	var currency string
 	var policy map[string]any
-	var roomTypeID string
+	var occupancy int
 	err := a.db.QueryRow(ctx, q, req.SupplierPropertyRef, req.SupplierRoomTypeRef, req.SupplierRatePlanRef).
-		Scan(&sellKobo, &taxKobo, &currency, &policy, &roomTypeID)
+		Scan(&ratePlanID, &sellKobo, &taxKobo, &currency, &policy, &roomTypeID, &occupancy)
 	if err != nil {
 		// Treat a missing/unavailable rate plan as sold out (PREBOOK_SOLD_OUT).
 		return gateway.PrebookResult{SoldOut: true}, nil
@@ -248,6 +282,14 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 	rooms := req.Rooms
 	if rooms <= 0 {
 		rooms = 1
+	}
+
+	// Occupancy guard: the requested party must fit the room-type ceiling.
+	// Guests-per-room semantics — adults (+ children, which count as guests)
+	// ride each room, so the party per room may not exceed occupancy.
+	party := req.Occupancy.Adults + req.Occupancy.Children
+	if occupancy > 0 && party > 0 && party > occupancy {
+		return gateway.PrebookResult{SoldOut: true}, nil
 	}
 
 	// Availability HOLD check: row-lock every stay night and confirm sellable
@@ -262,17 +304,110 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 		return gateway.PrebookResult{SoldOut: true}, nil
 	}
 
-	bookToken := encodeBookToken(roomTypeID, req.CheckIn, req.CheckOut, rooms)
+	// Rate + restriction evaluation over the stay nights: the rate plan's
+	// per-date calendar (stays_rate_day) is authoritative where a cell exists —
+	// a missing cell falls back to the plan base rate with default (unrestricted)
+	// semantics. Restrictions: stop_sell on any occupied night, CTA at arrival,
+	// CTD at departure, and LOS bounds evaluated at arrival (hotel convention).
+	price, ok, priceErr := a.priceStay(ctx, ratePlanID, sellKobo, req.CheckIn, req.CheckOut)
+	if priceErr != nil {
+		return gateway.PrebookResult{}, priceErr
+	}
+	if !ok {
+		return gateway.PrebookResult{SoldOut: true}, nil
+	}
+
+	// Snapshot the refundable flag INTO the policy map the reservation persists —
+	// computePolicyRefund lets the snapshot override the live plan flag, so the
+	// booked terms must carry it explicitly or a later plan edit would silently
+	// rewrite an existing booking's refundability (MOD-020).
+	if policy == nil {
+		policy = map[string]any{}
+	}
+	if _, ok := policy["refundable"]; !ok {
+		rpRefundable, _ := a.ratePlanRefundable(ctx, req.SupplierRatePlanRef)
+		policy["refundable"] = rpRefundable
+	}
+
+	expiresAt := time.Now().Add(bookTokenTTL)
+	bookToken := encodeBookToken(roomTypeID, req.CheckIn, req.CheckOut, rooms, expiresAt)
 	return gateway.PrebookResult{
 		BookToken:          bookToken,
-		NetRateKobo:        sellKobo,
+		NetRateKobo:        price,
 		TaxKobo:            taxKobo,
 		Currency:           currency,
-		Changed:            false,
+		Changed:            price != sellKobo,
 		SoldOut:            false,
 		CancellationPolicy: policy,
-		ExpiresAt:          time.Now().Add(10 * time.Minute),
+		ExpiresAt:          expiresAt,
 	}, nil
+}
+
+// ratePlanRefundable reads the plan's refundable flag for the snapshot inject
+// above. A lookup miss fails closed to false (non-refundable) — the cancel path
+// then treats the booking conservatively rather than refunding on an unknown plan.
+func (a *DirectInventoryAdapter) ratePlanRefundable(ctx context.Context, supplierRatePlanRef string) (bool, error) {
+	var refundable bool
+	err := a.db.QueryRow(ctx, `
+		SELECT refundable FROM public.stays_rate_plan WHERE supplier_rate_plan_ref = $1`,
+		supplierRatePlanRef).Scan(&refundable)
+	return refundable, err
+}
+
+// priceStay sums the per-night sell rate over [checkIn, checkOut) and enforces
+// the rate calendar's restrictions. Per-night cells come from stays_rate_day;
+// a missing cell prices at the plan base rate with min_los=1 and no flags.
+// Returns ok=false when the stay is not bookable under the restrictions
+// (stop_sell / closed-to-arrival / closed-to-departure / LOS bounds).
+func (a *DirectInventoryAdapter) priceStay(ctx context.Context, ratePlanID string, baseKobo int64, checkIn, checkOut time.Time) (int64, bool, error) {
+	nights := nightsBetween(checkIn, checkOut)
+	if len(nights) == 0 {
+		return 0, false, nil
+	}
+	var total int64
+	for i, n := range nights {
+		var priceKobo, minLOS, maxLOS int64
+		var cta, ctd, stopSell bool
+		err := a.db.QueryRow(ctx, `
+			SELECT price_kobo, min_los, max_los, cta, ctd, stop_sell
+			FROM public.stays_rate_day
+			WHERE rate_plan_id = $1 AND date = $2::date`, ratePlanID, n).
+			Scan(&priceKobo, &minLOS, &maxLOS, &cta, &ctd, &stopSell)
+		if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return 0, false, fmt.Errorf("direct: rate day %s: %w", n, err)
+			}
+			priceKobo, minLOS, maxLOS = baseKobo, 1, 0
+		}
+		if stopSell {
+			return 0, false, nil
+		}
+		if i == 0 {
+			if cta {
+				return 0, false, nil // closed to arrival
+			}
+			if minLOS > 0 && int64(len(nights)) < minLOS {
+				return 0, false, nil // stay shorter than arrival-date minimum LOS
+			}
+			if maxLOS > 0 && int64(len(nights)) > maxLOS {
+				return 0, false, nil // stay longer than arrival-date maximum LOS
+			}
+		}
+		total += priceKobo
+	}
+	// Closed-to-departure is evaluated on the check-out DATE cell (the night
+	// grid ends at check_out-1).
+	var ctd bool
+	if err := a.db.QueryRow(ctx, `
+		SELECT ctd FROM public.stays_rate_day
+		WHERE rate_plan_id = $1 AND date = $2::date`, ratePlanID, checkOut.Format(dateLayout)).Scan(&ctd); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, fmt.Errorf("direct: rate day %s (ctd): %w", checkOut.Format(dateLayout), err)
+		}
+	} else if ctd {
+		return 0, false, nil
+	}
+	return total, true, nil
 }
 
 // Book confirms a direct reservation, decrementing allotment under a row lock. It
@@ -352,8 +487,9 @@ func (a *DirectInventoryAdapter) policyRefund(ctx context.Context, supplierRef s
 	var gross int64
 	var policy map[string]any
 	var refundable bool
+	var checkIn time.Time
 	err := a.db.QueryRow(ctx, `
-		SELECT r.gross_amount_kobo, r.cancellation_policy_snapshot, COALESCE(rp.refundable, false)
+		SELECT r.gross_amount_kobo, r.cancellation_policy_snapshot, COALESCE(rp.refundable, false), r.check_in
 		FROM public.stays_reservation r
 		LEFT JOIN public.stays_rate_plan rp
 		  ON rp.id::text = r.rate_plan_id::text
@@ -361,19 +497,31 @@ func (a *DirectInventoryAdapter) policyRefund(ctx context.Context, supplierRef s
 		WHERE r.source_rail = 'DIRECT' AND r.supplier_ref = $1
 		ORDER BY (rp.id::text = r.rate_plan_id::text) DESC NULLS LAST
 		LIMIT 1`, supplierRef).
-		Scan(&gross, &policy, &refundable)
+		Scan(&gross, &policy, &refundable, &checkIn)
 	if err != nil {
 		log.Printf("[stays:direct] cancel refund lookup for %s failed — refunding 0 (fail-closed): %v", supplierRef, err)
 		return 0, 0
 	}
-	return computePolicyRefund(gross, refundable, policy)
+	return computePolicyRefund(gross, refundable, policy, checkIn, time.Now())
 }
 
 // computePolicyRefund derives (refund, penalty) from the booking's policy
 // snapshot + the plan's refundable flag. Precedence: non-refundable → (0,
 // gross); explicit penalty_* keys (kobo > bps > percent) → gross − penalty
 // clamped to [0, gross]; otherwise → (gross, 0).
-func computePolicyRefund(grossKobo int64, refundable bool, policy map[string]any) (int64, int64) {
+//
+// Free-cancel cutoff (MOD-002): when the snapshot carries a deadline the
+// boundary is evaluated deterministically BEFORE the penalty math — inside the
+// window the refundable path runs unpenalised (no penalty keys read); past it,
+// the penalty_* schedule applies. Recognised keys, first match wins:
+//   - free_cancel_deadline_at: RFC3339 absolute deadline (property-authored).
+//   - free_cancel_hours_before_checkin: relative deadline — check_in 00:00 UTC
+//     minus N hours (property TZ is not modelled; UTC midnight is the floor).
+//
+// A snapshot without either key behaves exactly as before — the penalty_*
+// schedule is always in effect (backward compatible). Only a snapshot that
+// explicitly declares a window gets "inside = free" semantics.
+func computePolicyRefund(grossKobo int64, refundable bool, policy map[string]any, checkIn, now time.Time) (int64, int64) {
 	if grossKobo <= 0 {
 		return 0, 0
 	}
@@ -382,6 +530,9 @@ func computePolicyRefund(grossKobo int64, refundable bool, policy map[string]any
 	}
 	if !refundable {
 		return 0, grossKobo
+	}
+	if dl, hasDeadline := freeCancelDeadline(policy, checkIn); hasDeadline && !now.After(dl) {
+		return grossKobo, 0 // inside the declared free-cancel window
 	}
 	penalty := policyKobo(policy, "penalty_kobo")
 	if penalty == 0 {
@@ -401,6 +552,25 @@ func computePolicyRefund(grossKobo int64, refundable bool, policy map[string]any
 		penalty = grossKobo
 	}
 	return grossKobo - penalty, penalty
+}
+
+// freeCancelDeadline resolves the free-cancel cutoff the snapshot declares, if
+// any. Returns (deadline, true) when a key is present; malformed values count
+// as no deadline (fail-open to the pre-existing always-inside behaviour).
+func freeCancelDeadline(policy map[string]any, checkIn time.Time) (time.Time, bool) {
+	if policy == nil {
+		return time.Time{}, false
+	}
+	if v, ok := policy["free_cancel_deadline_at"].(string); ok && v != "" {
+		if dl, err := time.Parse(time.RFC3339, v); err == nil {
+			return dl, true
+		}
+	}
+	if h := policyKobo(policy, "free_cancel_hours_before_checkin"); h > 0 && !checkIn.IsZero() {
+		midnight := time.Date(checkIn.Year(), checkIn.Month(), checkIn.Day(), 0, 0, 0, 0, time.UTC)
+		return midnight.Add(-time.Duration(h) * time.Hour), true
+	}
+	return time.Time{}, false
 }
 
 // policyKobo reads a numeric policy key tolerating the JSON number shapes
@@ -675,22 +845,39 @@ func (a *DirectInventoryAdapter) releaseDecrement(ctx context.Context, supplierR
 }
 
 // encodeBookToken packs the availability context into the opaque book_token so Book
-// (whose BookRequest carries no dates/room ref) can commit the decrement.
-func encodeBookToken(roomTypeID string, checkIn, checkOut time.Time, rooms int) string {
+// (whose BookRequest carries no dates/room ref) can commit the decrement. The
+// minted expiry is embedded so the TTL is enforceable, not just advertised.
+func encodeBookToken(roomTypeID string, checkIn, checkOut time.Time, rooms int, expiresAt time.Time) string {
 	return strings.Join([]string{
 		bookTokenPrefix, bookTokenVersion, roomTypeID,
 		checkIn.Format(dateLayout), checkOut.Format(dateLayout),
-		strconv.Itoa(rooms), uuid.NewString(),
+		strconv.Itoa(rooms), strconv.FormatInt(expiresAt.Unix(), 10), uuid.NewString(),
 	}, ":")
 }
 
-// decodeBookToken parses a direct book_token minted by encodeBookToken.
+// ErrBookTokenExpired is returned by decodeBookToken for a well-formed token whose
+// embedded expiry has passed — the client must re-quote. Distinct from malformed
+// input so the saga/log can tell a stale offer from a corrupt one.
+var ErrBookTokenExpired = errors.New("direct: book_token expired — re-quote")
+
+// decodeBookToken parses a direct book_token minted by encodeBookToken and
+// enforces its embedded TTL. Pre-v2 tokens carry no expiry and are refused as
+// malformed — they were only ever minted seconds before Book in the same flow.
 func decodeBookToken(token string) (roomTypeID string, checkIn, checkOut time.Time, rooms int, err error) {
+	return decodeBookTokenAt(token, time.Now())
+}
+
+func decodeBookTokenAt(token string, now time.Time) (string, time.Time, time.Time, int, error) {
+	var (
+		checkIn, checkOut time.Time
+		rooms             int
+		err               error
+	)
 	parts := strings.Split(token, ":")
-	if len(parts) < 7 || parts[0] != bookTokenPrefix || parts[1] != bookTokenVersion {
+	if len(parts) < 8 || parts[0] != bookTokenPrefix || parts[1] != bookTokenVersion {
 		return "", time.Time{}, time.Time{}, 0, errors.New("direct: malformed book_token")
 	}
-	roomTypeID = parts[2]
+	roomTypeID := parts[2]
 	if checkIn, err = time.Parse(dateLayout, parts[3]); err != nil {
 		return "", time.Time{}, time.Time{}, 0, fmt.Errorf("direct: bad check_in in book_token: %w", err)
 	}
@@ -699,6 +886,13 @@ func decodeBookToken(token string) (roomTypeID string, checkIn, checkOut time.Ti
 	}
 	if rooms, err = strconv.Atoi(parts[5]); err != nil || rooms <= 0 {
 		return "", time.Time{}, time.Time{}, 0, errors.New("direct: bad rooms in book_token")
+	}
+	expUnix, pErr := strconv.ParseInt(parts[6], 10, 64)
+	if pErr != nil {
+		return "", time.Time{}, time.Time{}, 0, errors.New("direct: bad expiry in book_token")
+	}
+	if !now.Before(time.Unix(expUnix, 0)) {
+		return "", time.Time{}, time.Time{}, 0, ErrBookTokenExpired
 	}
 	return roomTypeID, checkIn, checkOut, rooms, nil
 }

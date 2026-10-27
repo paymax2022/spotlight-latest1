@@ -74,6 +74,8 @@ export interface CreateStoreInput {
   address: string;
   logoUrl?: string;
   geo?: StoreGeoPoint;
+  // No banner here on purpose: the POST cannot mint a presign URL (it has no store id
+  // yet), so a banner is uploaded and PATCHed right after the outlet is created.
 }
 
 export interface UpdateStoreInput {
@@ -88,6 +90,25 @@ export interface UpdateStoreInput {
    *  when the owner is not changing the price. */
   packagingFeeKobo?: Kobo;
   geo?: StoreGeoPoint;
+}
+
+/**
+ * One opening window on one weekday, in 24-hour "HH:MM" strings.
+ *
+ * `dayOfWeek` is 0 = Sunday … 6 = Saturday, matching Go's time.Weekday on the server.
+ * A close earlier than the open is an OVERNIGHT window (22:00 → 02:00 spans midnight),
+ * and "00:00" as a close means up to midnight.
+ */
+export interface StoreHourWindow {
+  dayOfWeek: number;
+  open: string;
+  close: string;
+}
+
+/** GET /restaurant/:id/hours. `openNow` is the server's own verdict, switch included. */
+export interface StoreHours {
+  openNow: boolean;
+  windows: StoreHourWindow[];
 }
 
 export interface EarningsRun {

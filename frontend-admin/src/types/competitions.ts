@@ -21,6 +21,10 @@ export type OpenMicCompetition = {
 export type VotingContest = {
   id: string;
   title: string;
+  // The public.contests slug this row was mirrored from — the key the contest
+  // editor patches. Absent on rows inserted straight into connect_contests,
+  // which have no admin record to edit.
+  slug?: string;
   description?: string | null;
   status: 'draft' | 'open' | 'closed' | string;
   paid_vote_kobo: number;

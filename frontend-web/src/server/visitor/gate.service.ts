@@ -2,6 +2,7 @@
 // All helpers accept a Supabase service-role client (createAdminClient) so RLS is bypassed.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { assertEstateWritable } from '@/src/server/estate/resident';
 
 export type GuardContext = { estateId: string; gateId: string; guardName: string };
 
@@ -9,6 +10,7 @@ export type GuardContext = { estateId: string; gateId: string; guardName: string
 export async function getGuardContext(
   supabase: SupabaseClient,
   userId: string,
+  opts?: { forWrite?: boolean },
 ): Promise<GuardContext | null> {
   const { data, error } = await supabase
     .from('gate_sessions')
@@ -19,11 +21,15 @@ export async function getGuardContext(
     .limit(1)
     .maybeSingle();
   if (error || !data) return null;
-  return {
+  const ctx = {
     estateId: (data as any).estate_id,
     gateId: (data as any).gate_id,
     guardName: (data as any).guard_name ?? '',
   };
+  // Lifecycle gate (ESTD-D025): guards take no new mutating gate actions on a
+  // suspended estate; event-recording routes (sync/checkout/deny) stay open.
+  if (opts?.forWrite) await assertEstateWritable(supabase, ctx.estateId);
+  return ctx;
 }
 
 /** Map a visitor_gate_events row to the API shape. */

@@ -7,7 +7,6 @@ import {
   submitVerification,
   updateAvailability,
   DEMO_DOCTOR_PROFILE,
-  DEMO_VERIFICATION,
   DEMO_AVAILABILITY,
 } from '@/api/doctor.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -29,7 +28,9 @@ export function useVerification() {
   return useQuery({
     queryKey:        ['doctor', 'verification'],
     queryFn:         getVerification,
-    placeholderData: DEMO_VERIFICATION,
+    // No DEMO placeholder: the submitted/pending screens render this data as
+    // the doctor's real submission, so demo rows would show fake submitted
+    // dates and document counts. They already handle !submission states.
     staleTime:       30_000,
   });
 }

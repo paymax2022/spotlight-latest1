@@ -401,6 +401,50 @@ func (s *Service) ListMeetingDocuments(ctx context.Context, estateID, userID, me
 	return out, rows.Err()
 }
 
+// SendMeetingReminder notifies members who have NOT RSVP'd to an upcoming
+// meeting (EST-UAT-0351: only targeted nonresponders receive the reminder —
+// anyone who already answered yes/no/maybe is excluded). Estate admin only.
+// Returns the number of reminders delivered to the feed.
+func (s *Service) SendMeetingReminder(ctx context.Context, estateID, adminID, meetingID string) (int, error) {
+	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
+		return 0, err
+	}
+	var title string
+	var startsAt time.Time
+	var status string
+	if err := s.db.QueryRow(ctx,
+		`SELECT title, starts_at, status FROM estate_meetings WHERE id=$1 AND estate_id=$2`,
+		meetingID, estateID).Scan(&title, &startsAt, &status); err != nil {
+		return 0, errors.New("estate: meeting not found in this estate")
+	}
+	if status == "ended" || status == "cancelled" {
+		return 0, fmt.Errorf("estate: cannot remind for a %s meeting", status)
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT r.user_id FROM estate_residents r
+		WHERE r.estate_id=$1 AND r.deleted_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM meeting_rsvps v WHERE v.meeting_id=$2 AND v.user_id=r.user_id)`,
+		estateID, meetingID)
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		s.notify(ctx, estateID, id, NotifMeetingReminder, "RSVP needed: "+title,
+			"This meeting is coming up and you have not responded yet.",
+			map[string]any{"meeting_id": meetingID, "starts_at": startsAt})
+	}
+	_ = s.audit(ctx, estateID, adminID, "MEETING_REMIND", "meeting", meetingID, map[string]any{keyReminded: len(ids)})
+	return len(ids), nil
+}
+
 // assertMeetingInEstate verifies a meeting belongs to the estate.
 func (s *Service) assertMeetingInEstate(ctx context.Context, estateID, meetingID string) error {
 	var exists bool

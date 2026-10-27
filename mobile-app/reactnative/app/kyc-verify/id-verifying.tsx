@@ -17,7 +17,7 @@ import type { VerificationCheck } from '@/features/kycverify/types';
 /**
  * K6 — ID verifying. Runs POST /checks/id-number (with Idempotency-Key), shows a
  * progress spinner, then:
- *   PASSED → confirm the match (matched PII is withheld server-side), continue
+ *   PASSED → show the provider-returned name/DOB; Continue affirms them
  *   PENDING/REVIEW → K11 (pending review, polled)
  *   FAILED → K13 (failed, retry)
  */

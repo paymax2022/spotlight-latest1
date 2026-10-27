@@ -43,7 +43,7 @@ func (e *Eversend) Supports(corridor string, rail orch.Rail) bool {
 	if !eversendCurrencies[parts[0]] || !eversendCurrencies[parts[1]] {
 		return false
 	}
-	// Eversend does not issue NGN virtual accounts (Maplerad's strength).
+	// Eversend does not issue NGN virtual accounts.
 	return true
 }
 

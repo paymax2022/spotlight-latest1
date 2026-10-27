@@ -89,6 +89,21 @@ func withEmptyMenuShape(d *RestaurantDetail) *RestaurantDetail {
 			}
 		}
 	}
+	// Sections hold copies of the same items; normalise them identically so an
+	// item reads [] (not null) in both views.
+	for i := range d.Sections {
+		if d.Sections[i].Items == nil {
+			d.Sections[i].Items = []MenuItem{}
+		}
+		for j := range d.Sections[i].Items {
+			if d.Sections[i].Items[j].ModifierGroups == nil {
+				d.Sections[i].Items[j].ModifierGroups = []ModifierGroupWire{}
+			}
+			if d.Sections[i].Items[j].DietaryTags == nil {
+				d.Sections[i].Items[j].DietaryTags = []string{}
+			}
+		}
+	}
 	return d
 }
 

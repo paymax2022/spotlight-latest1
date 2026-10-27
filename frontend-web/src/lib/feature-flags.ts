@@ -160,6 +160,12 @@ export const featureFlags = {
   /** P3 Lane D — Estate access control and private elections */
   estate: () => envFlag('FEATURE_ESTATE_ENABLED'),
 
+  /** ESTD-D027 — maker-checker (two-admin approval) on high-risk estate admin
+   * actions + versioned approval thresholds. Mirrors the Go backend's
+   * FEATURE_ESTATE_DUAL_CONTROL_ENABLED; with it off the approval routes 503
+   * (and the Go routes are not mounted). */
+  estateDualControl: () => envFlag('FEATURE_ESTATE_DUAL_CONTROL_ENABLED'),
+
   /** P3 Lane E — Crowdfunding campaigns with escrow and goal tracking */
   crowdfunding: () => envFlag('FEATURE_CROWDFUNDING_ENABLED'),
 
@@ -220,6 +226,16 @@ export const featureFlags = {
    * envs in step when enabling.
    */
   otpEmail: () => envFlag('FEATURE_OTP_EMAIL_ENABLED'),
+
+  /**
+   * Film Academy assessment slice (PRD BK-06/07 + BK-10) — the shared question
+   * bank, SME review queue, and server-scored exams. Gates the learner
+   * /api/academy/exams* surface and the admin /api/admin/academy/questions* +
+   * exam-authoring routes. Off by default: the 256 starter questions import as
+   * DRAFT and stay non-exam-eligible until SME approval, so an unset flag is
+   * strictly safe and the whole plane stays reversible until the bank is reviewed.
+   */
+  filmAcademyAssessment: () => envFlag('FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;

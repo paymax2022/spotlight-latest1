@@ -8,8 +8,9 @@ import (
 
 func TestDefaultRouting(t *testing.T) {
 	tbl := DefaultRoutingTable()
-	// Dojah is the default primary for every check type.
-	if got := tbl.Resolve(provider.KycIDNumber); len(got) != 2 || got[0] != "dojah" || got[1] != "youverify" {
+	// Dojah is the default primary for every check type; mock is the dev-only
+	// last-resort fallback registered only when APP_ENV=development.
+	if got := tbl.Resolve(provider.KycIDNumber); len(got) != 3 || got[0] != "dojah" || got[1] != "youverify" || got[2] != "mock" {
 		t.Fatalf("ID_NUMBER default chain wrong: %v", got)
 	}
 	if got := tbl.Resolve(provider.KycLiveness); got[0] != "dojah" {

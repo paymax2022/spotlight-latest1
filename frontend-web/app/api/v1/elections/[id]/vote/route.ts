@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { ApiError, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { getResidentContext, isWithinWindow, MAIN_POSITION_SUFFIX } from '@/src/server/elections/elections.service';
+import { checkVoteEligibility, getResidentContext, isWithinWindow, MAIN_POSITION_SUFFIX, SEALED_BALLOT } from '@/src/server/elections/elections.service';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -20,7 +20,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!UUID_RE.test(id)) return errorResponse('Invalid election ID', 400);
     const supabase = createAdminClient();
 
-    const ctx = await getResidentContext(supabase, user.id);
+    const ctx = await getResidentContext(supabase, user.id, { forWrite: true });
     if (!ctx) throw new ApiError('You are not eligible to vote in this election', 403);
     // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
     if (!UUID_RE.test(id)) throw new ApiError('Invalid election ID', 400);
@@ -42,6 +42,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       throw new ApiError('Voting is not open for this election', 409);
     }
 
+    // Same gate the Go CastVote enforces: election_eligibility_rules
+    // (KYC/dues/resident-type) + active dues restrictions. Skipping it let
+    // ineligible residents vote through the BFF while the Go API refused them.
+    const elig = await checkVoteEligibility(supabase, ctx.estateId, user.id, id);
+    if (!elig.eligible) {
+      throw new ApiError(`You are not eligible to vote in this election (${elig.reasons.join(', ')})`, 403);
+    }
+
     const { data: cand } = await supabase
       .from('election_candidates')
       .select('id')
@@ -61,7 +69,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     return NextResponse.json({
       electionId: id,
-      choices: { [`${id}${MAIN_POSITION_SUFFIX}`]: candidateId },
+      // Participation is confirmed; the selection is sealed (secret ballot).
+      choices: { [`${id}${MAIN_POSITION_SUFFIX}`]: SEALED_BALLOT },
       submittedAt: new Date().toISOString(),
     });
   } catch (error) {

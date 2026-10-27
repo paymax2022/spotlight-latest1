@@ -14,18 +14,25 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CONNECT_USE_MOCK, tr
 // absolute URL as-is, ignoring the client's :3000 baseURL. The backend allows the
 // Expo web origin (:8083) via CORS_ALLOW_ORIGINS.
 // Host resolution, in order:
+//   0. the Local server override (non-production builds) — beats all three, so the
+//      app's two backends never end up pointed at different servers.
 //   1. EXPO_PUBLIC_CONNECT_API_HOST — explicit override when the Connect backend
 //      runs somewhere other than the main one.
 //   2. EXPO_PUBLIC_API_BASE_URL — the main backend. Connect ships live in
 //      real backend by default.
-//   3. localhost:8091 — dev-only last resort (matches backend/.env APP_PORT).
+//   3. localhost:8190 — dev-only last resort (backend/.env APP_PORT=8190, the port
+//      `expose:8190:8190` in the default dev profile and docs/onboarding/MOBILE_SETUP.md
+//      both agree on; 8090/8091 are dead leftovers).
 // Step 2 was missing until 2026-09-11: CONNECT_API_HOST is set in no env file,
 // so release APKs resolved to `http://localhost:8091/api/v1/connect` — the
 // device's OWN loopback — and every Connect call failed as "no connection".
 // so the loopback host is never rewritten in a release build.
-// A Local server override (non-production builds) takes precedence over all three.
-const CONNECT_API_HOST = resolveConnectHost(__DEV__ ? 'http://localhost:8091' : undefined);
-export const CONNECT_API_BASE = getDevUrl(`${CONNECT_API_HOST}/api/v1/connect`);
+const CONNECT_API_HOST = resolveConnectHost(__DEV__ ? 'http://localhost:8190' : undefined);
+// Some Connect routes Go mounts on the v1 group rather than under /connect —
+// GET /api/v1/wallet/summary and GET /api/v1/me/tier (registerConnectWalletRoutes).
+// API_V1_BASE is their base; CONNECT_API_BASE stays the /connect prefix.
+export const API_V1_BASE = getDevUrl(`${CONNECT_API_HOST}/api/v1`);
+export const CONNECT_API_BASE = `${API_V1_BASE}/connect`;
 
 // Module-scoped colors built on the base design tokens (never hardcode hex).
 export const ConnectColors = {

@@ -274,7 +274,11 @@ export async function getDoctorProfile(): Promise<DoctorProfile> {
 
 export async function getVerification(): Promise<VerificationSubmission> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VERIFICATION);
-  return doctorGet<VerificationSubmission>('/verification');
+  // GET /verification returns the doctor_verifications row (internal/doctor
+  // model.Verification), which carries no documents array — default it so
+  // screens like verification/submitted can count safely.
+  const wire = await doctorGet<VerificationSubmission>('/verification');
+  return { ...wire, documents: wire?.documents ?? [] };
 }
 
 export async function getAvailability(doctorId?: string): Promise<AvailabilitySchedule> {

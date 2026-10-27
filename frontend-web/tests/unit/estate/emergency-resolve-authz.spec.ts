@@ -38,11 +38,14 @@ function fakeSupabase(tables: Record<string, Row[]>) {
   const updates: Array<{ table: string; patch: Row }> = [];
   const from = (table: string) => {
     const filters: Array<[string, any]> = [];
+    const isFilters: Array<[string, any]> = [];
     let patch: Row | null = null;
     let inFilter: [string, any[]] | null = null;
     const matches = () =>
       (tables[table] ?? []).filter(
-        (r) => filters.every(([c, v]) => r[c] === v) && (!inFilter || inFilter[1].includes(r[inFilter[0]])),
+        (r) => filters.every(([c, v]) => r[c] === v) &&
+          isFilters.every(([c, v]) => r[c] == v) && // loose: undefined == null
+          (!inFilter || inFilter[1].includes(r[inFilter[0]])),
       );
     const q: any = {
       select: () => q,
@@ -52,6 +55,7 @@ function fakeSupabase(tables: Record<string, Row[]>) {
         return q;
       },
       eq: (c: string, v: any) => (filters.push([c, v]), q),
+      is: (c: string, v: any) => (isFilters.push([c, v]), q),
       in: (c: string, v: any[]) => ((inFilter = [c, v]), q),
       limit: () => q,
       maybeSingle: async () => ({ data: matches()[0] ?? null, error: null }),

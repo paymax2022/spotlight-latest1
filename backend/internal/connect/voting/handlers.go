@@ -73,12 +73,28 @@ func contestStatusFilter(raw string) ([]string, error) {
 	}
 }
 
-// ListContests — GET /api/v1/connect/contests (member).
-// Optional ?status=active|closed|all narrows the list (default: open + closed).
-func (h *Handler) ListContests(c *gin.Context) {
-	statuses, err := contestStatusFilter(c.Query("status"))
+// contestStatusFilterAdmin is the admin console's allowlist. It differs from the
+// member one in a single way: draft is reachable. Contests are created as drafts
+// and only go public when they're opened, so a member asking for "all" gets the
+// published pair — otherwise an unpublished contest would be readable by voters.
+func contestStatusFilterAdmin(raw string) ([]string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "all":
+		return []string{"draft", "open", "closed"}, nil
+	case "draft", "upcoming":
+		return []string{"draft"}, nil
+	default:
+		return contestStatusFilter(raw)
+	}
+}
+
+// listContests is the shared body of the member and admin list endpoints. The
+// filter decides which statuses a given ?status= maps to, and allowed is the
+// hint that goes back with a 400 so the message matches what that route accepts.
+func (h *Handler) listContests(c *gin.Context, filter func(string) ([]string, error), allowed string) {
+	statuses, err := filter(c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status: use active, closed or all"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status: use " + allowed})
 		return
 	}
 	limit := 0
@@ -91,6 +107,20 @@ func (h *Handler) ListContests(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// ListContests — GET /api/v1/connect/contests (member).
+// Optional ?status=active|closed|all narrows the list (default: open + closed).
+// Optional ?limit= caps the page; it defaults to 50 and is clamped to 500, so an
+// admin console can ask for the whole set in one call.
+func (h *Handler) ListContests(c *gin.Context) {
+	h.listContests(c, contestStatusFilter, "active, closed or all")
+}
+
+// ListContestsAdmin — GET /api/connect/admin/contests (guarded by
+// connect.contests.view). Same shape as the member list but drafts included.
+func (h *Handler) ListContestsAdmin(c *gin.Context) {
+	h.listContests(c, contestStatusFilterAdmin, "active, closed, draft or all")
 }
 
 // GetContest — GET /api/v1/connect/contests/:id (member).
@@ -391,18 +421,23 @@ func Register(member gin.IRouter, svc *Service, cfg config.Config, redis *platfo
 	member.GET("/contests/:id/evictions", h.GetEvictions)
 }
 
-// RegisterAdmin wires admin eviction routes with RBAC permission guards.
+// RegisterAdmin wires admin routes with RBAC permission guards.
 // The caller passes a guard factory (built from middleware.RequirePermission + the RBAC
 // service) so each route enforces its connect.contests.* permission.
-// Gated behind FEATURE_CONTEST_STAGE_EVICTION_ENABLED.
+// The contest list is always registered; the eviction routes below it are gated
+// behind FEATURE_CONTEST_STAGE_EVICTION_ENABLED.
 func RegisterAdmin(admin gin.IRouter, svc *Service, guard PermissionGuard, cfg config.Config) {
+	h := NewHandler(svc)
+	g := admin.Group("/contests")
+
+	// The admin console lists contests including drafts, which the member
+	// endpoint deliberately never returns.
+	g.GET("", guard("connect.contests.view"), h.ListContestsAdmin)
+
 	if !cfg.FeatureContestStageEvictionEnabled {
 		log.Println("[connect-voting-admin] FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off — skipping admin eviction routes")
 		return
 	}
-
-	h := NewHandler(svc)
-	g := admin.Group("/contests")
 
 	// Admin-only eviction management
 	g.POST("/:id/stages/:stageNum/evict",

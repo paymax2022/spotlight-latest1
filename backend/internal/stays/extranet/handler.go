@@ -91,6 +91,41 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 	g.POST("/staff/invite/accept", h.AcceptStaffInvite)
 }
 
+// RegisterMember wires the GUEST-side reservation messaging routes onto the
+// member group (/api/finance/stays). Object scope = caller owns the reservation
+// (checked in the service) — COM-003/004/005.
+func (h *Handler) RegisterMember(g *gin.RouterGroup) {
+	g.GET("/reservations/:id/messages", h.GuestListMessages)
+	g.POST("/reservations/:id/messages", h.GuestSendMessage)
+}
+
+// GuestSendMessage: POST /reservations/:id/messages {body} (member).
+func (h *Handler) GuestSendMessage(c *gin.Context) {
+	var b struct {
+		Body string `json:"body" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	msg, err := h.svc.PostGuestMessage(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Body)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keyData: msg})
+}
+
+// GuestListMessages: GET /reservations/:id/messages (member).
+func (h *Handler) GuestListMessages(c *gin.Context) {
+	out, err := h.svc.ListGuestMessages(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: out})
+}
+
 // MyProperties: GET /me/properties
 func (h *Handler) MyProperties(c *gin.Context) {
 	out, err := h.svc.MyProperties(c.Request.Context(), ginutil.UserID(c))
@@ -98,7 +133,7 @@ func (h *Handler) MyProperties(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 func (h *Handler) CreateProperty(c *gin.Context) {
@@ -121,7 +156,7 @@ func (h *Handler) CreateProperty(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"id": id}})
+	c.JSON(http.StatusCreated, gin.H{keyData: gin.H{"id": id}})
 }
 
 // GetProperty: GET /properties/:propertyId
@@ -131,7 +166,7 @@ func (h *Handler) GetProperty(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": p})
+	c.JSON(http.StatusOK, gin.H{keyData: p})
 }
 
 // UpdateContent: PATCH /properties/:propertyId
@@ -153,7 +188,7 @@ func (h *Handler) UpdateContent(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"ok": true}})
 }
 
 // UpdateDetails: PATCH /properties/:propertyId/details {lat?, lng?, amenities?,
@@ -186,7 +221,7 @@ func (h *Handler) UpdateDetails(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"ok": true}})
 }
 
 // ListRoomTypes: GET /properties/:propertyId/room-types
@@ -196,7 +231,7 @@ func (h *Handler) ListRoomTypes(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // CreateRoomType: POST /properties/:propertyId/room-types
@@ -218,7 +253,7 @@ func (h *Handler) CreateRoomType(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": id}})
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"id": id}})
 }
 
 // ListRatePlans: GET /properties/:propertyId/rate-plans
@@ -228,7 +263,7 @@ func (h *Handler) ListRatePlans(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // CreateRatePlan: POST /properties/:propertyId/rate-plans
@@ -251,7 +286,7 @@ func (h *Handler) CreateRatePlan(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": id}})
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"id": id}})
 }
 
 // ListReservations: GET /properties/:propertyId/reservations?state&limit&offset
@@ -263,7 +298,7 @@ func (h *Handler) ListReservations(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // Arrivals: GET /properties/:propertyId/arrivals?date
@@ -273,7 +308,7 @@ func (h *Handler) Arrivals(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // Departures: GET /properties/:propertyId/departures?date
@@ -283,7 +318,7 @@ func (h *Handler) Departures(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // InHouse: GET /properties/:propertyId/in-house?date
@@ -293,7 +328,7 @@ func (h *Handler) InHouse(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // ReservationDetail: GET /properties/:propertyId/reservations/:reservationId
@@ -303,7 +338,7 @@ func (h *Handler) ReservationDetail(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": d})
+	c.JSON(http.StatusOK, gin.H{keyData: d})
 }
 
 // MarkNoShow: POST /properties/:propertyId/reservations/:reservationId/no-show
@@ -312,7 +347,7 @@ func (h *Handler) MarkNoShow(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"ok": true}})
 }
 
 // CancelByHotel: POST /properties/:propertyId/reservations/:reservationId/cancel
@@ -325,7 +360,26 @@ func (h *Handler) CancelByHotel(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"ok": true}})
+}
+
+// AdminCancelReservation: POST /reservations/:id/cancel (admin) — MOD-011/ADM-012.
+// Force-cancel with guest protection: full refund through RefundOps, payouts
+// killed, allotment re-opened. Authorization = the stays.admin.reservation RBAC
+// guard mounted on the route.
+func (h *Handler) AdminCancelReservation(c *gin.Context) {
+	var b struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if err := h.svc.AdminCancelReservation(c.Request.Context(), c.Param("id"), b.Reason); err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"ok": true}})
 }
 
 // SendMessage: POST .../messages {body} — persists a HOST message on the guest<->
@@ -344,7 +398,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": msg})
+	c.JSON(http.StatusCreated, gin.H{keyData: msg})
 }
 
 // ListMessages: GET .../messages — the reservation's persisted thread, oldest-first.
@@ -354,7 +408,7 @@ func (h *Handler) ListMessages(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // Payouts: GET /properties/:propertyId/payouts
@@ -364,7 +418,7 @@ func (h *Handler) Payouts(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // Commission: GET /properties/:propertyId/commission
@@ -374,7 +428,7 @@ func (h *Handler) Commission(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // Analytics: GET /properties/:propertyId/analytics?from&to
@@ -384,7 +438,7 @@ func (h *Handler) Analytics(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": a})
+	c.JSON(http.StatusOK, gin.H{keyData: a})
 }
 
 // ListStaff: GET /properties/:propertyId/staff
@@ -394,7 +448,7 @@ func (h *Handler) ListStaff(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // UpsertStaff: POST /properties/:propertyId/staff {user_id, role, status}
@@ -412,7 +466,7 @@ func (h *Handler) UpsertStaff(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"ok": true}})
 }
 
 // InviteStaffByEmail: POST /properties/:propertyId/staff/invite {name, email, role}
@@ -433,7 +487,7 @@ func (h *Handler) InviteStaffByEmail(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // The invitee must already be signed in — the invite's email is matched
@@ -450,5 +504,5 @@ func (h *Handler) AcceptStaffInvite(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"ok": true}})
 }

@@ -29,23 +29,29 @@ type BusinessHour struct {
 	CloseMinute int `json:"close_minute"`
 }
 
+// ErrBusinessHourInvalid reports a malformed opening window in a SetBusinessHours body: a
+// day outside 0–6, a time that is not HH:MM or out of range, 24:00 as an opening time, or a
+// zero-length window. It exists so the handler answers 400 — the caller's body is wrong —
+// instead of the 403 a permission failure earns.
+var ErrBusinessHourInvalid = errors.New("restaurant: invalid opening window")
+
 // parseHHMM parses "H:MM"/"HH:MM" (24-hour) into minutes from midnight. "24:00" maps
 // to 1440 so a window can close exactly at end of day. Fail-closed on anything else.
 func parseHHMM(s string) (int, error) {
 	parts := strings.Split(strings.TrimSpace(s), ":")
 	if len(parts) != 2 {
-		return 0, fmt.Errorf("restaurant: time %q must be HH:MM", s)
+		return 0, fmt.Errorf("%w: time %q must be HH:MM", ErrBusinessHourInvalid, s)
 	}
 	h, err1 := strconv.Atoi(parts[0])
 	m, err2 := strconv.Atoi(parts[1])
 	if err1 != nil || err2 != nil {
-		return 0, fmt.Errorf("restaurant: time %q must be HH:MM", s)
+		return 0, fmt.Errorf("%w: time %q must be HH:MM", ErrBusinessHourInvalid, s)
 	}
 	if m < 0 || m > 59 {
-		return 0, fmt.Errorf("restaurant: minutes in %q out of range", s)
+		return 0, fmt.Errorf("%w: minutes in %q out of range", ErrBusinessHourInvalid, s)
 	}
 	if h < 0 || h > 24 || (h == 24 && m != 0) {
-		return 0, fmt.Errorf("restaurant: hour in %q out of range (00:00–24:00)", s)
+		return 0, fmt.Errorf("%w: hour in %q out of range (00:00–24:00)", ErrBusinessHourInvalid, s)
 	}
 	return h*60 + m, nil
 }
@@ -121,6 +127,111 @@ func (s *Service) loadBusinessHours(ctx context.Context, restaurantID string) ([
 	return out, rows.Err()
 }
 
+// assertOpenForImmediateOrder refuses an order placed RIGHT NOW when the store's manual
+// switch is off or the clock falls outside the hours the owner set. A store that has never
+// set windows stays governed by the switch alone, exactly as before this feature, so no
+// existing restaurant gains a schedule it never asked for.
+//
+// Scheduled orders never come through here: their slot is validated by resolveScheduledFor
+// and settled at the slot by ActivateScheduledOrders, which cancels and refunds a closed
+// one. People schedule precisely when the kitchen is shut, so refusing that at placement
+// would delete the feature.
+//
+// The refusal names when the kitchen next opens, because "closed" on its own leaves the
+// customer guessing.
+func (s *Service) assertOpenForImmediateOrder(ctx context.Context, restaurantID string, isOpen bool, now time.Time) error {
+	if !isOpen {
+		return fmt.Errorf("%w (%s)", ErrRestaurantClosed, restaurantID)
+	}
+	weekly, err := s.loadBusinessHours(ctx, restaurantID)
+	if err != nil {
+		return err
+	}
+	holiday, err := s.loadHolidayForDate(ctx, restaurantID, now, lagosTZ)
+	if err != nil {
+		return err
+	}
+	if effectiveOpenWithHoliday(isOpen, weekly, holiday, now, lagosTZ) {
+		return nil
+	}
+	if next, ok := s.nextOpenAt(ctx, restaurantID, weekly, now, lagosTZ); ok {
+		return fmt.Errorf("%w — it opens again %s", ErrRestaurantClosed, describeNextOpen(now, next, lagosTZ))
+	}
+	return fmt.Errorf("%w (%s)", ErrRestaurantClosed, restaurantID)
+}
+
+// nextOpenAt walks the coming week minute by minute and returns the first instant the
+// store would take an order: a dated override for that day replaces its weekly windows, and
+// with none the weekly windows decide. Stepping the clock rather than reasoning about
+// window arithmetic keeps the overnight and split-shift rules in isOpenAt alone. ok=false
+// means no opening exists in the next seven days (or the lookups failed), so the caller
+// says "closed" with no promise it cannot keep.
+func (s *Service) nextOpenAt(ctx context.Context, restaurantID string, weekly []BusinessHour, from time.Time, loc *time.Location) (time.Time, bool) {
+	overrides, err := s.loadHolidayRange(ctx, restaurantID, from, from.AddDate(0, 0, 7), loc)
+	if err != nil {
+		return time.Time{}, false
+	}
+	t := from.Truncate(time.Minute).Add(time.Minute)
+	limit := t.AddDate(0, 0, 7)
+	for t.Before(limit) {
+		if h, dated := overrides[t.In(loc).Format("2006-01-02")]; dated {
+			if holidayOpenAt(h, t, loc) {
+				return t, true
+			}
+		} else if isOpenAt(weekly, t, loc) {
+			return t, true
+		}
+		t = t.Add(time.Minute)
+	}
+	return time.Time{}, false
+}
+
+// describeNextOpen renders the wait in the terms a customer acts on: "at 18:00" for the
+// rest of today, "tomorrow at 10:00", and the weekday from there.
+func describeNextOpen(now, next time.Time, loc *time.Location) string {
+	n, o := now.In(loc), next.In(loc)
+	at := o.Format("15:04")
+	switch o.Format("2006-01-02") {
+	case n.Format("2006-01-02"):
+		return "at " + at
+	case n.AddDate(0, 0, 1).Format("2006-01-02"):
+		return "tomorrow at " + at
+	default:
+		return o.Weekday().String() + " at " + at
+	}
+}
+
+// loadHolidayRange returns the dated overrides for a restaurant between two local dates,
+// keyed YYYY-MM-DD. The order gate needs the whole coming week to answer "when do we open
+// again" — loadHolidayForDate only covers today.
+func (s *Service) loadHolidayRange(ctx context.Context, restaurantID string, from, to time.Time, loc *time.Location) (map[string]HolidayHour, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT holiday_date::text, is_closed, open_minute, close_minute
+		 FROM restaurant_holiday_hours
+		 WHERE restaurant_id=$1 AND holiday_date BETWEEN $2::date AND $3::date`,
+		restaurantID, from.In(loc).Format("2006-01-02"), to.In(loc).Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]HolidayHour{}
+	for rows.Next() {
+		var h HolidayHour
+		var open, close *int
+		if err := rows.Scan(&h.Date, &h.IsClosed, &open, &close); err != nil {
+			return nil, err
+		}
+		if open != nil {
+			h.OpenMinute = *open
+		}
+		if close != nil {
+			h.CloseMinute = *close
+		}
+		out[h.Date] = h
+	}
+	return out, rows.Err()
+}
+
 // BusinessHourInput is one window in a SetBusinessHours request, using friendly
 // "HH:MM" strings (24-hour). close "24:00" is allowed (end of day).
 type BusinessHourInput struct {
@@ -135,7 +246,7 @@ func validateAndNormalize(in []BusinessHourInput) ([]BusinessHour, error) {
 	out := make([]BusinessHour, 0, len(in))
 	for i, w := range in {
 		if w.DayOfWeek < 0 || w.DayOfWeek > 6 {
-			return nil, fmt.Errorf("restaurant: window %d has day_of_week %d (want 0–6)", i, w.DayOfWeek)
+			return nil, fmt.Errorf("%w: window %d has day_of_week %d (want 0–6)", ErrBusinessHourInvalid, i, w.DayOfWeek)
 		}
 		open, err := parseHHMM(w.Open)
 		if err != nil {
@@ -146,10 +257,10 @@ func validateAndNormalize(in []BusinessHourInput) ([]BusinessHour, error) {
 			return nil, err
 		}
 		if open == 1440 {
-			return nil, fmt.Errorf("restaurant: window %d open time cannot be 24:00", i)
+			return nil, fmt.Errorf("%w: window %d open time cannot be 24:00", ErrBusinessHourInvalid, i)
 		}
 		if open == closeM {
-			return nil, fmt.Errorf("restaurant: window %d open and close are equal (zero-length)", i)
+			return nil, fmt.Errorf("%w: window %d open and close are equal (zero-length)", ErrBusinessHourInvalid, i)
 		}
 		out = append(out, BusinessHour{DayOfWeek: w.DayOfWeek, OpenMinute: open, CloseMinute: closeM})
 	}
@@ -218,7 +329,7 @@ func (s *Service) GetBusinessHours(ctx context.Context, restaurantID string) (*B
 	}
 	var isOpen bool
 	if err := s.db.QueryRow(ctx, `SELECT is_open FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen); err != nil {
-		return nil, errors.New("restaurant: not found")
+		return nil, ErrRestaurantNotFound
 	}
 	views := make([]BusinessHourView, 0, len(hours))
 	for _, h := range hours {

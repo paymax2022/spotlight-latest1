@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 
 	"spotlight/backend/go-common/httperr"
 )
@@ -99,6 +101,35 @@ func TestWrite_Body(t *testing.T) {
 	}
 	if body := w.Body.String(); body == "" {
 		t.Fatal("empty body")
+	}
+}
+
+// A gin request-binding failure surfaces as validator.ValidationErrors, whose
+// raw Error() leaks the Go struct/field names and reads as an unparseable dump.
+// Msg must rewrite it into a short, snake_case, struct-name-free sentence.
+func TestMsg_FormatsValidationErrors(t *testing.T) {
+	type ResolveAccountRequest struct {
+		AccountNumber string `validate:"required"`
+		BankCode      string `validate:"required"`
+	}
+	err := validator.New().Struct(ResolveAccountRequest{})
+	if err == nil {
+		t.Fatal("expected validation to fail")
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	msg := httperr.Msg(c, http.StatusBadRequest, err)
+
+	if strings.Contains(msg, "ResolveAccountRequest") || strings.Contains(msg, "Key:") || strings.Contains(msg, "Error:Field") {
+		t.Fatalf("leaked raw validator output: %q", msg)
+	}
+	if !strings.Contains(msg, "account_number is required") {
+		t.Fatalf("missing account_number message: %q", msg)
+	}
+	if !strings.Contains(msg, "bank_code is required") {
+		t.Fatalf("missing bank_code message: %q", msg)
 	}
 }
 

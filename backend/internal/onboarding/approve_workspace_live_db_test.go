@@ -220,4 +220,21 @@ func TestLiveDB_ApprovalIsIdempotent(t *testing.T) {
 	if route != "/merchant/seller" {
 		t.Errorf("workspace_route = %q, want /merchant/seller", route)
 	}
+
+	// The role grant must dedupe too. public.user_roles' UNIQUE constraint does
+	// not fire on NULL scope_id, so the old ON CONFLICT upsert inserted a fresh
+	// global-scope row on every approval replay (live-proved during UAT: two
+	// identical ACTIVE rows 82ms apart). grantRole now matches the NULL-scoped
+	// row explicitly; a replay must converge on exactly one grant.
+	var grants int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM public.user_roles
+		  WHERE user_id=$1 AND scope_type='global' AND scope_id IS NULL
+		    AND role_id = (SELECT id FROM public.roles WHERE slug='marketplace_seller')`,
+		userID).Scan(&grants); err != nil {
+		t.Fatalf("count role grants: %v", err)
+	}
+	if grants != 1 {
+		t.Errorf("global user_roles grants = %d, want exactly 1 after a repeated approval", grants)
+	}
 }

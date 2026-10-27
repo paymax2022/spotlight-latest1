@@ -29,7 +29,7 @@ export async function getActiveAcademySettings() {
     registration_type: (data?.registration_type ?? 'free') as 'free' | 'paid',
     application_fee: Number(data?.application_fee ?? 0),
     application_fee_refundable: data?.application_fee_refundable === true,
-    tuition_fee: Number(data?.tuition_fee ?? 0),
+    tuition_fee: 0,
   };
 }
 
@@ -52,6 +52,21 @@ export type EnrollmentGate =
  * Idempotent: academy_enrollments has UNIQUE(application_id), so a concurrent or
  * repeated call collapses onto the existing row instead of double-enrolling.
  */
+// The published default curriculum, served to any enrolment whose batch has no
+// program of its own. Seeded by migration 20271089000000 (academy_programs.is_default).
+// Without it a learner whose intake batch was never wired to a program sees "your
+// course is being prepared" forever, with no action an admin could take to change it.
+export async function getDefaultProgramId(supabase: Db): Promise<string | null> {
+  const { data } = await supabase
+    .from('academy_programs')
+    .select('id')
+    .eq('is_default', true)
+    .eq('is_published', true)
+    .limit(1)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
 export async function ensureEnrollment(
   supabase: Db,
   applicationId: string,
@@ -64,6 +79,17 @@ export async function ensureEnrollment(
 
   if (existing) {
     const row = existing as { id: string; program_id: string | null };
+    // Backfill: an enrolment created while its batch had no program was stored
+    // with a null program_id and would render as no_curriculum forever. Resolve
+    // the default curriculum and persist it, so every downstream read (dashboard,
+    // lesson completion, assignments) agrees without a per-call fallback.
+    if (!row.program_id) {
+      const defaultId = await getDefaultProgramId(supabase);
+      if (defaultId) {
+        await supabase.from('academy_enrollments').update({ program_id: defaultId }).eq('id', row.id);
+        return { enrolled: true, enrollmentId: row.id, programId: defaultId };
+      }
+    }
     return { enrolled: true, enrollmentId: row.id, programId: row.program_id };
   }
 
@@ -129,6 +155,9 @@ export async function ensureEnrollment(
       .maybeSingle();
     programId = (program as { id: string } | null)?.id ?? null;
   }
+  // No program on the batch → fall back to the default curriculum so the learner
+  // has lessons from day one rather than an empty "being prepared" screen.
+  if (!programId) programId = await getDefaultProgramId(supabase);
 
   const { data: created, error } = await supabase
     .from('academy_enrollments')
@@ -214,7 +243,8 @@ type SupabaseLike = {
   from: (table: string) => any;
 };
 
-/** The slugs a batch offers. Empty array = unrestricted, NOT "offers nothing". */
+/** The slugs a batch offers. Empty array = offers NOTHING — the batch carries
+ *  exactly the trainings ticked for it in the admin console. */
 export async function getBatchAreaSlugs(
   supabase: SupabaseLike,
   batchId: string,

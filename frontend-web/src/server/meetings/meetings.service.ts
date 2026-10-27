@@ -4,22 +4,12 @@
 // raw shapes the app expects.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { getResidentContext } from '@/src/server/estate/resident';
 
-export type ResidentContext = { estateId: string; unit: string; role: string };
-
-export async function getResidentContext(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<ResidentContext | null> {
-  const { data, error } = await supabase
-    .from('estate_residents')
-    .select('estate_id, unit, role')
-    .eq('user_id', userId)
-    .limit(1)
-    .maybeSingle();
-  if (error || !data) return null;
-  return { estateId: (data as any).estate_id, unit: (data as any).unit ?? '', role: (data as any).role ?? 'resident' };
-}
+export type { ResidentContext } from '@/src/server/estate/resident';
+// One canonical membership resolver (estate/resident.ts) — this file used to
+// carry a third copy that skipped the banned_at/deleted_at fail-closed filter.
+export { getResidentContext };
 
 export const MEETING_COLUMNS =
   'id, estate_id, title, agenda, mode, location, starts_at, ends_at, status, created_by, created_at';

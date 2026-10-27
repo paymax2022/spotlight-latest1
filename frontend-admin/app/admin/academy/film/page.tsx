@@ -26,7 +26,7 @@ import {
 } from '../_ui';
 import * as svc from '@/services/filmAcademyAdminService';
 
-type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'settings';
+type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'assessment' | 'bank' | 'exams' | 'settings';
 
 const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'batches',     label: 'Batches',      hint: 'Cohorts the app offers on /film-academy' },
@@ -35,6 +35,9 @@ const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'curriculum',  label: 'Curriculum',   hint: 'Modules, lessons and the week 1-4 assignment timeline' },
   { key: 'progress',    label: 'Progress',     hint: 'Who has sent which part, and who is behind' },
   { key: 'submissions', label: 'Submissions',  hint: 'Grades appear on /film-academy/assignments' },
+  { key: 'assessment',  label: 'Import',       hint: 'Stage the 256 MCQ bank (preview → commit as drafts)' },
+  { key: 'bank',        label: 'Question Bank',hint: 'SME review queue — approve to make a question exam-eligible' },
+  { key: 'exams',       label: 'Exams',        hint: 'Author exams and publish them once the approved pool covers the draw' },
   { key: 'settings',    label: 'Settings',     hint: 'Fees and areas used by the apply form' },
 ];
 
@@ -106,6 +109,9 @@ export default function FilmAcademyAdminPage() {
       {tab === 'curriculum'   ? <CurriculumTab onNotice={setNotice} /> : null}
       {tab === 'progress'     ? <ProgressTab onNotice={setNotice} /> : null}
       {tab === 'submissions'  ? <SubmissionsTab onNotice={setNotice} /> : null}
+      {tab === 'assessment'   ? <ImportTab onNotice={setNotice} /> : null}
+      {tab === 'bank'         ? <QuestionBankTab onNotice={setNotice} /> : null}
+      {tab === 'exams'        ? <ExamsTab onNotice={setNotice} /> : null}
       {tab === 'settings'     ? <SettingsTab onNotice={setNotice} /> : null}
     </Page>
   );
@@ -113,9 +119,16 @@ export default function FilmAcademyAdminPage() {
 
 type NoticeProp = { onNotice: (s: string | null) => void };
 
+/** The values academy_batches.status actually accepts (a Postgres enum). */
+const BATCH_STATUSES = ['upcoming', 'ongoing', 'completed', 'cancelled'];
+
+/** The values academy_batches.training_schedule actually accepts. */
+const TRAINING_SCHEDULES = ['weekdays', 'weekends', 'accelerated'];
+
 const EMPTY_BATCH: svc.BatchInput = {
-  batch_name: '', status: 'draft', start_date: '', end_date: '', application_deadline: '',
-  capacity: 0, training_fee_ngn: 0, installments_count: 1, fee_frequency: 'monthly',
+  batch_name: '', status: 'upcoming', start_date: '', end_date: '', application_deadline: '',
+  max_students: null, training_schedule: 'weekdays', duration_weeks: 12,
+  installments_count: 1, fee_frequency: 'monthly',
   one_off_discount_pct: 0, fee_start_offset_days: 0, interest_area_slugs: [],
 };
 
@@ -125,7 +138,23 @@ function BatchesTab({ onNotice }: NoticeProp) {
   const [editing, setEditing] = useState<svc.BatchInput | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pricingBusy, setPricingBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // The batch editor prices in place: the five lines belong to the training's
+  // own catalogue rows, shared by every batch that offers it — the same rows
+  // the Settings tab edits and the server charges from.
+  const saveBatchAreaPricing = async (
+    a: svc.AcademyInterestArea,
+    pricing: Array<{ key: svc.AcademyPricingKey; price_ngn: number }>,
+  ) => {
+    setPricingBusy(true);
+    try {
+      await svc.updateInterestArea({ id: a.id, pricing });
+      await areas.reload();
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setPricingBusy(false); }
+  };
 
   const openNew = () => { setEditingId(null); setEditing({ ...EMPTY_BATCH }); setFormError(null); };
 
@@ -138,10 +167,12 @@ function BatchesTab({ onNotice }: NoticeProp) {
       if (!b) { setFormError('Batch not found.'); return; }
       setEditingId(id);
       setEditing({
-        batch_name: b.batch_name ?? '', status: b.status ?? 'draft',
+        batch_name: b.batch_name ?? '', status: b.status ?? 'upcoming',
         start_date: b.start_date ?? '', end_date: b.end_date ?? '',
         application_deadline: b.application_deadline ?? '',
-        capacity: b.capacity ?? 0, training_fee_ngn: b.training_fee_ngn ?? 0,
+        max_students: b.max_students ?? null,
+        training_schedule: b.training_schedule ?? 'weekdays',
+        duration_weeks: b.duration_weeks ?? 12,
         installments_count: b.installments_count ?? 1, fee_frequency: b.fee_frequency ?? 'monthly',
         one_off_discount_pct: b.one_off_discount_pct ?? 0,
         fee_start_offset_days: b.fee_start_offset_days ?? 0,
@@ -153,6 +184,13 @@ function BatchesTab({ onNotice }: NoticeProp) {
   const save = async () => {
     if (!editing) return;
     if (!editing.batch_name.trim()) { setFormError('A batch name is required.'); return; }
+    // A batch carries exactly the trainings ticked for it — with the old
+    // "empty means unrestricted" rule gone, a batch saved with none would be
+    // unappliable, so the console refuses it here as well as on the server.
+    if ((editing.interest_area_slugs ?? []).length === 0) {
+      setFormError('Tick at least one training this batch will offer.');
+      return;
+    }
     setSaving(true); setFormError(null);
     try {
       // Dates are optional; send null rather than '' so Postgres stores a real NULL.
@@ -161,6 +199,9 @@ function BatchesTab({ onNotice }: NoticeProp) {
         start_date: editing.start_date || null,
         end_date: editing.end_date || null,
         application_deadline: editing.application_deadline || null,
+        // A cleared number input arrives as 0; the column has no guard, and a
+        // zero-week batch is not something the app should ever show.
+        duration_weeks: Math.max(1, Number(editing.duration_weeks) || 12),
       };
       if (editingId) await svc.updateBatch(editingId, payload);
       else await svc.createBatch(payload);
@@ -191,22 +232,25 @@ function BatchesTab({ onNotice }: NoticeProp) {
         <StateBlock loading={batches.loading} error={batches.error} empty={list.length === 0}
           emptyText="No cohorts yet. Create one — until then the app's Film Academy hub has nothing to offer.">
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 860 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 940 }}>
               <thead><tr>
                 <th style={th()}>Batch</th><th style={th()}>Status</th><th style={th()}>Starts</th>
-                <th style={th()}>Deadline</th><th style={th()}>Capacity</th>
-                <th style={th()}>Training fee</th><th style={th()}>Instalments</th>
+                <th style={th()}>Deadline</th><th style={th()}>Duration</th><th style={th()}>Capacity</th>
+                <th style={th()}>Instalments</th>
                 <th style={th()}>Applications</th><th style={th()} />
               </tr></thead>
               <tbody>
                 {list.map((b) => (
                   <tr key={b.id}>
                     <td style={td()}>{b.batch_name}</td>
-                    <td style={td()}><Badge status={b.status ?? 'draft'} /></td>
+                    <td style={td()}><Badge status={b.status ?? 'upcoming'} /></td>
                     <td style={td()}>{fmtDate(b.start_date)}</td>
                     <td style={td()}>{fmtDate(b.application_deadline)}</td>
-                    <td style={td()}>{b.capacity ?? '—'}</td>
-                    <td style={td()}>{naira(b.training_fee_ngn)}</td>
+                    <td style={td()}>
+                      {b.duration_weeks ? `${b.duration_weeks} weeks` : '—'}
+                      {b.training_schedule ? <div style={{ fontSize: '0.72rem', color: colors.muted }}>{b.training_schedule}</div> : null}
+                    </td>
+                    <td style={td()}>{b.max_students ?? '—'}</td>
                     <td style={td()}>{b.installments_count ?? 1} × {b.fee_frequency ?? 'monthly'}</td>
                     <td style={td()}>{b.academy_applications?.[0]?.count ?? 0}</td>
                     <td style={{ ...td(), whiteSpace: 'nowrap' }}>
@@ -230,9 +274,9 @@ function BatchesTab({ onNotice }: NoticeProp) {
                 onChange={(e) => setEditing({ ...editing, batch_name: e.target.value })} />
             </Field>
             <Field label="Status">
-              <select style={select()} value={editing.status ?? 'draft'}
+              <select style={select()} value={editing.status ?? 'upcoming'}
                 onChange={(e) => setEditing({ ...editing, status: e.target.value })}>
-                {['draft', 'open', 'closed', 'active', 'completed'].map((s) => <option key={s} value={s}>{s}</option>)}
+                {BATCH_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </Field>
             <Field label="Starts"><input type="date" style={input()} value={editing.start_date ?? ''}
@@ -241,11 +285,21 @@ function BatchesTab({ onNotice }: NoticeProp) {
               onChange={(e) => setEditing({ ...editing, end_date: e.target.value })} /></Field>
             <Field label="Application deadline"><input type="date" style={input()} value={editing.application_deadline ?? ''}
               onChange={(e) => setEditing({ ...editing, application_deadline: e.target.value })} /></Field>
-            <Field label="Capacity"><input type="number" min={0} style={input()} value={editing.capacity ?? 0}
-              onChange={(e) => setEditing({ ...editing, capacity: Number(e.target.value) })} /></Field>
-            <Field label="Training fee (₦, whole naira)">
-              <input type="number" min={0} style={input()} value={editing.training_fee_ngn ?? 0}
-                onChange={(e) => setEditing({ ...editing, training_fee_ngn: Number(e.target.value) })} />
+            {/* Both are shown to the applicant on the phone, so they have to be
+                editable here — the mobile card renders "N weeks · schedule". */}
+            <Field label="Duration (weeks)">
+              <input type="number" min={1} style={input()} value={editing.duration_weeks ?? 12}
+                onChange={(e) => setEditing({ ...editing, duration_weeks: Number(e.target.value) })} />
+            </Field>
+            <Field label="Training schedule">
+              <select style={select()} value={editing.training_schedule ?? 'weekdays'}
+                onChange={(e) => setEditing({ ...editing, training_schedule: e.target.value })}>
+                {TRAINING_SCHEDULES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+            <Field label="Capacity (blank = unlimited)">
+              <input type="number" min={0} style={input()} value={editing.max_students ?? ''}
+                onChange={(e) => setEditing({ ...editing, max_students: e.target.value === '' ? null : Number(e.target.value) })} />
             </Field>
             <Field label="Instalments"><input type="number" min={1} style={input()} value={editing.installments_count ?? 1}
               onChange={(e) => setEditing({ ...editing, installments_count: Number(e.target.value) })} /></Field>
@@ -264,21 +318,27 @@ function BatchesTab({ onNotice }: NoticeProp) {
           <div style={{ marginTop: '0.9rem' }}>
             <span style={label()}>Areas of interest offered by this batch</span>
             <p style={{ fontSize: '0.75rem', color: colors.muted, marginTop: 0 }}>
-              Leave every box clear to offer <strong>all</strong> active areas — empty means unrestricted, not
-              &ldquo;offers nothing&rdquo;. These are the choices the apply form shows on the phone.
+              This batch offers <strong>only</strong> the trainings you tick — at least one is
+              required, and a ticked training is what the phone shows inside this cohort. Open a
+              training&rsquo;s accordion to see and edit its five tuition lines; prices belong to
+              the training and are shared by every batch that offers it.
             </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div style={{ display: 'grid', gap: '0.4rem', marginTop: '0.4rem' }}>
               {(areas.data ?? []).filter((a) => a.is_active !== false).map((a) => {
                 const on = (editing.interest_area_slugs ?? []).includes(a.slug);
                 return (
-                  <label key={a.id} style={{ ...btn(), display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer', borderColor: on ? colors.primary : undefined }}>
-                    <input type="checkbox" checked={on} onChange={(e) => {
+                  <BatchAreaAccordion
+                    key={a.id}
+                    area={a}
+                    busy={pricingBusy}
+                    checked={on}
+                    onCheck={(next) => {
                       const cur = new Set(editing.interest_area_slugs ?? []);
-                      if (e.target.checked) cur.add(a.slug); else cur.delete(a.slug);
+                      if (next) cur.add(a.slug); else cur.delete(a.slug);
                       setEditing({ ...editing, interest_area_slugs: [...cur] });
-                    }} />
-                    {a.label}{a.fee_ngn ? ` (+${naira(a.fee_ngn)})` : ''}
-                  </label>
+                    }}
+                    onSavePricing={(pricing) => void saveBatchAreaPricing(a, pricing)}
+                  />
                 );
               })}
               {(areas.data ?? []).length === 0 ? (
@@ -302,6 +362,97 @@ function BatchesTab({ onNotice }: NoticeProp) {
 
 function Field({ label: l, children }: { label: string; children: React.ReactNode }) {
   return <div><span style={label()}>{l}</span>{children}</div>;
+}
+
+/**
+ * One training inside the batch editor, on the same accordion contract as the
+ * applicant screens: the header carries no fee text, and opening it reveals
+ * the five tuition subs — each with its price, editable in place. Saving
+ * writes the training's own catalogue rows (shared by every batch), which is
+ * what the applicant accordions render and the server charges from.
+ */
+function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
+  area: svc.AcademyInterestArea;
+  busy: boolean;
+  checked: boolean;
+  onCheck: (next: boolean) => void;
+  onSavePricing: (
+    pricing: Array<{ key: svc.AcademyPricingKey; price_ngn: number }>,
+  ) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const options = area.pricing_options ?? [];
+  const [prices, setPrices] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setPrices(Object.fromEntries(options.map((o) => [o.key, String(o.price_ngn)])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [area.pricing_options]);
+
+  const dirty = options.some((o) => Number(prices[o.key]) !== Number(o.price_ngn));
+
+  return (
+    <div style={{
+      border: `1px solid ${checked ? colors.primary : 'rgba(128,128,128,0.35)'}`,
+      borderRadius: 10,
+      overflow: 'hidden',
+    }}>
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.55rem 0.75rem', cursor: 'pointer' }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <input type="checkbox" checked={checked}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onCheck(e.target.checked)} />
+        <strong style={{ fontSize: '0.85rem', flex: 1 }}>{area.label}</strong>
+        {dirty ? (
+          <span style={{ fontSize: '0.7rem', color: colors.primary }}>prices edited</span>
+        ) : null}
+        <span style={{ fontSize: '0.65rem', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.12s' }}>▶</span>
+      </div>
+      {open && (
+        <div style={{ padding: '0.2rem 0.75rem 0.6rem 2.3rem', display: 'grid', gap: '0.4rem' }}>
+          {options.map((o) => (
+            <div key={o.key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 220, flex: 1, fontSize: '0.78rem' }}>
+                {o.label}{o.note ? ` (${o.note})` : ''}
+              </div>
+              <span style={{ fontSize: '0.75rem', color: colors.muted, whiteSpace: 'nowrap' }}>
+                = {naira(Math.max(0, Number(prices[o.key]) || 0))}
+              </span>
+              <span style={{ fontSize: '0.75rem', color: colors.muted }}>₦</span>
+              <input type="number" min={0} style={{ ...input(), width: 130 }}
+                value={prices[o.key] ?? ''}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => setPrices((prev) => ({ ...prev, [o.key]: e.target.value }))} />
+            </div>
+          ))}
+          {options.length === 0 ? (
+            <span style={{ fontSize: '0.75rem', color: colors.muted }}>
+              No tuition lines yet — open this training under Settings and save its five prices.
+            </span>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.15rem' }}>
+              <button
+                style={btnPrimary()}
+                disabled={busy || !dirty}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void onSavePricing(
+                    options.map((o) => ({ key: o.key, price_ngn: Math.max(0, Number(prices[o.key]) || 0) })),
+                  );
+                }}
+              >
+                {dirty ? (busy ? 'Saving…' : 'Save prices') : 'Prices saved'}
+              </button>
+              <span style={{ fontSize: '0.7rem', color: colors.muted }}>
+                Applies to {area.label} in every batch.
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const APP_STATUSES = ['submitted', 'under_review', 'approved', 'rejected', 'waitlisted'];
@@ -1017,7 +1168,7 @@ function SettingsTab({ onNotice }: NoticeProp) {
   const areas = useAsync(() => svc.listInterestAreas(), []);
   const [form, setForm] = useState<svc.AcademySettings | null>(null);
   const [busy, setBusy] = useState(false);
-  const [newArea, setNewArea] = useState({ label: '', fee_ngn: '0' });
+  const [newArea, setNewArea] = useState('');
 
   useEffect(() => { if (settings.data) setForm(settings.data); }, [settings.data]);
 
@@ -1029,7 +1180,6 @@ function SettingsTab({ onNotice }: NoticeProp) {
         registration_type: form.registration_type,
         application_fee: Number(form.application_fee) || 0,
         application_fee_refundable: !!form.application_fee_refundable,
-        tuition_fee: Number(form.tuition_fee) || 0,
       });
       await settings.reload();
       onNotice('Settings saved — the apply form on the phone uses these immediately.');
@@ -1038,13 +1188,15 @@ function SettingsTab({ onNotice }: NoticeProp) {
   };
 
   const addArea = async () => {
-    if (!newArea.label.trim()) return;
+    if (!newArea.trim()) return;
     setBusy(true);
     try {
-      await svc.createInterestArea({ label: newArea.label.trim(), fee_ngn: Number(newArea.fee_ngn) || 0 });
-      setNewArea({ label: '', fee_ngn: '0' });
+      // The server gives a new training the five standard tuition formats —
+      // there is no single fee to ask for any more.
+      await svc.createInterestArea({ label: newArea.trim() });
+      setNewArea('');
       await areas.reload();
-      onNotice('Area added — it now appears in the app’s apply form.');
+      onNotice('Area added — it now appears in the app’s apply form with the standard tuition structure.');
     } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
@@ -1054,6 +1206,30 @@ function SettingsTab({ onNotice }: NoticeProp) {
     try {
       await svc.updateInterestArea({ id: a.id, is_active: !a.is_active });
       await areas.reload();
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const saveAreaPricing = async (
+    a: svc.AcademyInterestArea,
+    pricing: Array<{ key: svc.AcademyPricingKey; price_ngn: number }>,
+    applyAll: boolean,
+  ) => {
+    setBusy(true);
+    try {
+      await svc.updateInterestArea({ id: a.id, pricing });
+      if (applyAll) {
+        // The structure applies to every area, so the console offers setting it
+        // once. Each area keeps its own rows — an area can still be repriced
+        // alone later.
+        for (const other of (areas.data ?? []).filter((x) => x.id !== a.id)) {
+          await svc.updateInterestArea({ id: other.id, pricing });
+        }
+      }
+      await areas.reload();
+      onNotice(applyAll
+        ? 'Tuition updated for every training.'
+        : `Tuition updated for ${a.label}.`);
     } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
@@ -1075,10 +1251,6 @@ function SettingsTab({ onNotice }: NoticeProp) {
                   <input type="number" min={0} style={input()} value={form.application_fee}
                     onChange={(e) => setForm({ ...form, application_fee: Number(e.target.value) })} />
                 </Field>
-                <Field label="Tuition fee (₦)">
-                  <input type="number" min={0} style={input()} value={form.tuition_fee}
-                    onChange={(e) => setForm({ ...form, tuition_fee: Number(e.target.value) })} />
-                </Field>
                 <Field label="Application fee refundable">
                   <select style={select()} value={form.application_fee_refundable ? 'yes' : 'no'}
                     onChange={(e) => setForm({ ...form, application_fee_refundable: e.target.value === 'yes' })}>
@@ -1097,49 +1269,639 @@ function SettingsTab({ onNotice }: NoticeProp) {
         </StateBlock>
       </Card>
 
-      <Card title="Areas of interest">
+      <Card title="Trainings and their tuition structure">
         <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 0 }}>
-          These are the specialisations the apply form offers. The slug is what the application row
-          stores, so renaming a label is safe but the slug is the contract.
+          Every training is priced by the same composite structure: Weekend -
+          Saturday &amp; Sunday (No Boarding / With Boarding), Week days -
+          Mondays - Fridays (No Boarding / Boarding), and 1 month (30 days)
+          with Boarding for non Lagos residents. These prices are the
+          tuition shown on the phone — payable after approval, not at application. The single legacy
+          training fee is retired; the slug is what the application row stores, so renaming a label
+          is safe but the slug is the contract.
         </p>
         <FilterBar>
           <div style={{ minWidth: 240 }}>
-            <span style={label()}>New area</span>
-            <input style={input()} placeholder="e.g. Cinematography" value={newArea.label}
-              onChange={(e) => setNewArea({ ...newArea, label: e.target.value })} />
+            <span style={label()}>New training</span>
+            <input style={input()} placeholder="e.g. Cinematography" value={newArea}
+              onChange={(e) => setNewArea(e.target.value)} />
           </div>
-          <div style={{ width: 160 }}>
-            <span style={label()}>Extra fee (₦)</span>
-            <input type="number" min={0} style={input()} value={newArea.fee_ngn}
-              onChange={(e) => setNewArea({ ...newArea, fee_ngn: e.target.value })} />
-          </div>
-          <button style={btnPrimary()} disabled={busy || !newArea.label.trim()} onClick={() => void addArea()}>Add</button>
+          <button style={btnPrimary()} disabled={busy || !newArea.trim()} onClick={() => void addArea()}>Add</button>
         </FilterBar>
 
         <StateBlock loading={areas.loading} error={areas.error} empty={(areas.data ?? []).length === 0}
-          emptyText="No areas yet — the apply form will show none until you add them.">
+          emptyText="No trainings yet — the apply form will show none until you add them.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
-              <th style={th()}>Label</th><th style={th()}>Slug</th>
-              <th style={th()}>Extra fee</th><th style={th()}>Active</th><th style={th()} />
+              <th style={th()}>Training</th><th style={th()}>Slug</th>
+              <th style={th()}>Active</th><th style={th()} />
             </tr></thead>
             <tbody>
               {(areas.data ?? []).map((a) => (
-                <tr key={a.id}>
-                  <td style={td()}>{a.label}</td>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{a.slug}</code></td>
-                  <td style={td()}>{naira(a.fee_ngn)}</td>
-                  <td style={td()}><Badge status={a.is_active ? 'active' : 'draft'} label={a.is_active ? 'active' : 'inactive'} /></td>
-                  <td style={td()}>
-                    <button style={btn()} disabled={busy} onClick={() => void toggleArea(a)}>
-                      {a.is_active ? 'Deactivate' : 'Activate'}
-                    </button>
-                  </td>
-                </tr>
+                <InterestAreaPricingRow
+                  key={a.id}
+                  area={a}
+                  busy={busy}
+                  onSavePricing={(pricing, applyAll) => saveAreaPricing(a, pricing, applyAll)}
+                  onToggle={() => toggleArea(a)}
+                />
               ))}
             </tbody>
           </table>
         </StateBlock>
+
+        <AuditNote>
+          What every tuition buys: 2 movie projects; a potential talent management contract and
+          signing into Timeless Movies Production; assistance to produce your own movie and to set
+          up &amp; manage a YouTube channel. Tuition excludes feeding and project fees (script
+          print-out, make-up, props &amp; set design, location — ₦20,000 per movie project). This is
+          the copy the applicant-facing screens show.
+        </AuditNote>
+      </Card>
+    </>
+  );
+}
+
+/**
+ * One training as an accordion row. The header carries no fee text — the same
+ * rule the applicant-facing accordions follow — and opening it reveals the five
+ * composite tuition lines, each editable in place. GET always serves all five
+ * formats per area (the server fills any missing row with the launch
+ * structure), so the editor never has to invent formats.
+ */
+function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
+  area: svc.AcademyInterestArea;
+  busy: boolean;
+  onSavePricing: (
+    pricing: Array<{ key: svc.AcademyPricingKey; price_ngn: number }>,
+    applyAll: boolean,
+  ) => Promise<void>;
+  onToggle: () => Promise<void>;
+}) {
+  const options = area.pricing_options ?? [];
+  const [open, setOpen] = useState(false);
+  const [applyAll, setApplyAll] = useState(false);
+  const [prices, setPrices] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setPrices(Object.fromEntries(options.map((o) => [o.key, String(o.price_ngn)])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [area.pricing_options]);
+
+  const dirty = options.some((o) => Number(prices[o.key]) !== Number(o.price_ngn));
+
+  return (
+    <>
+      <tr
+        style={{ opacity: area.is_active ? 1 : 0.55, cursor: 'pointer' }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <td style={td()}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+            <span
+              style={{
+                fontSize: '0.65rem',
+                transform: open ? 'rotate(90deg)' : 'none',
+                transition: 'transform 0.12s',
+              }}
+            >
+              ▶
+            </span>
+            <strong>{area.label}</strong>
+            <span style={{ fontSize: '0.72rem', color: colors.muted }}>
+              {open ? '' : '— open to edit its five tuition lines'}
+            </span>
+          </span>
+        </td>
+        <td style={td()}><code style={{ fontSize: '0.78rem' }}>{area.slug}</code></td>
+        <td style={td()}>
+          <Badge status={area.is_active ? 'active' : 'draft'} label={area.is_active ? 'active' : 'inactive'} />
+        </td>
+        <td style={{ ...td(), whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+          <button style={btn()} disabled={busy} onClick={() => void onToggle()}>
+            {area.is_active ? 'Deactivate' : 'Activate'}
+          </button>
+        </td>
+      </tr>
+      {open && (
+        <tr>
+          <td colSpan={4} style={{ ...td(), backgroundColor: 'rgba(128,128,128,0.06)' }}>
+            <div style={{ display: 'grid', gap: '0.5rem', padding: '0.35rem 0' }}>
+              {options.map((o) => (
+                <div key={o.key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <div style={{ minWidth: 260, flex: 1 }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{o.label}</div>
+                    {o.note ? <div style={{ fontSize: '0.72rem', color: colors.muted }}>{o.note}</div> : null}
+                  </div>
+                  <span style={{ fontSize: '0.78rem', color: colors.muted, whiteSpace: 'nowrap' }}>
+                    = {naira(Math.max(0, Number(prices[o.key]) || 0))}
+                  </span>
+                  <span style={{ fontSize: '0.78rem', color: colors.muted }}>₦</span>
+                  <input type="number" min={0} style={{ ...input(), width: 140 }}
+                    value={prices[o.key] ?? ''}
+                    onChange={(e) => setPrices((prev) => ({ ...prev, [o.key]: e.target.value }))} />
+                </div>
+              ))}
+              {options.length === 0 && (
+                <div style={{ fontSize: '0.78rem', color: colors.muted }}>
+                  No pricing loaded — reload this tab; the server should serve all five formats.
+                </div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.25rem' }}>
+                <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: '0.78rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={applyAll} onChange={(e) => setApplyAll(e.target.checked)} />
+                  Apply these prices to <strong>all</strong> trainings
+                </label>
+                <button style={btnPrimary()} disabled={busy || !dirty || options.length === 0}
+                  onClick={() => void onSavePricing(
+                    options.map((o) => ({ key: o.key, price_ngn: Math.max(0, Number(prices[o.key]) || 0) })),
+                    applyAll,
+                  )}>
+                  {dirty ? 'Save tuition' : 'Saved'}
+                </button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// ── ASSESSMENT: question-bank import, SME review, exams ─────────────────────
+// The whole plane is behind FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED on the web
+// app; with it off every call here 503s, which the call() helper surfaces as a
+// plain error message. Import stages drafts only — a question becomes exam-
+// eligible ONLY via an approve here (scores:manage), so the 256 starter MCQs
+// never reach a learner unreviewed.
+
+const FILM_STAGES = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'];
+
+/** Read a picked .csv file into text. */
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result ?? ''));
+    r.onerror = () => rej(new Error('Could not read that file'));
+    r.readAsText(file);
+  });
+}
+
+function ImportTab({ onNotice }: NoticeProp) {
+  const [filename, setFilename] = useState('assessment-bank.csv');
+  const [csv, setCsv] = useState('');
+  const [preview, setPreview] = useState<svc.FilmImportPreview | null>(null);
+  const [busy, setBusy] = useState<null | 'preview' | 'commit'>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const onPick = async (f: File | undefined) => {
+    if (!f) return;
+    setFilename(f.name); setError(null);
+    try { setCsv(await readFileAsText(f)); setPreview(null); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const runPreview = async () => {
+    if (!csv.trim()) { setError('Choose a CSV file (or paste its text) first.'); return; }
+    setBusy('preview'); setError(null);
+    try { setPreview(await svc.previewQuestionImport(filename, csv)); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); setPreview(null); }
+    finally { setBusy(null); }
+  };
+
+  const runCommit = async () => {
+    if (!csv.trim()) return;
+    if (!window.confirm(
+      'Commit these rows as DRAFT questions?\n\nImporting NEVER approves a question and NEVER auto-publishes — every row lands as a draft in the review queue.',
+    )) return;
+    setBusy('commit'); setError(null);
+    try {
+      const r = await svc.commitQuestionImport(filename, csv);
+      const c = r.committed;
+      onNotice(`Imported ${c.inserted} new, updated ${c.updated}, unchanged ${c.unchanged}; ${c.locked} approved item(s) left untouched.`);
+      setPreview(null);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  };
+
+  return (
+    <>
+      <Card title="Import the question bank" right={
+        <span style={{ fontSize: '0.75rem', color: colors.muted }}>CSV · one row per MCQ</span>
+      }>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <input type="file" accept=".csv,text/csv" onChange={(e) => void onPick(e.target.files?.[0])} />
+          <input style={{ ...input(), maxWidth: 260 }} value={filename}
+            onChange={(e) => setFilename(e.target.value)} aria-label="filename" />
+        </div>
+        <textarea
+          style={{ ...input(), minHeight: 120, fontFamily: 'ui-monospace, monospace', fontSize: '0.75rem', whiteSpace: 'pre' }}
+          value={csv}
+          onChange={(e) => { setCsv(e.target.value); setPreview(null); }}
+          placeholder="…or paste the CSV text here"
+        />
+        {error ? <p style={{ color: colors.danger, fontSize: '0.85rem' }}>{error}</p> : null}
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+          <button style={btn()} disabled={busy !== null || !csv.trim()} onClick={() => void runPreview()}>
+            {busy === 'preview' ? 'Previewing…' : 'Preview'}
+          </button>
+          <button style={btnPrimary()} disabled={busy !== null || !csv.trim() || !preview} onClick={() => void runCommit()}>
+            {busy === 'commit' ? 'Committing…' : 'Commit as drafts'}
+          </button>
+        </div>
+        <AuditNote>
+          A preview records an uncommitted batch and changes nothing. Commit re-validates the CSV on the server
+          (it never trusts this browser’s counts) and is idempotent: a repeat import of identical rows updates
+          matching drafts and leaves any approved/retired question untouched.
+        </AuditNote>
+      </Card>
+
+      {preview ? (
+        <Card title="Preview">
+          <div style={{ display: 'flex', gap: '0.9rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+            <Kpi label="Rows" value={String(preview.totals.rows)} />
+            <Kpi label="Valid" value={String(preview.totals.accepted)} accent={colors.success} />
+            <Kpi label="Rejected" value={String(preview.totals.rejected)} accent={preview.totals.rejected ? colors.danger : colors.muted} />
+            <Kpi label="Warnings" value={String(preview.totals.warned)} accent={colors.muted} />
+          </div>
+
+          {preview.rejected.length > 0 ? (
+            <>
+              <h3 style={{ fontSize: '0.85rem', margin: '0.5rem 0' }}>Rejected rows (fix &amp; re-import)</h3>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={th()}>Row</th><th style={th()}>Question ID</th><th style={th()}>Problem</th></tr></thead>
+                  <tbody>
+                    {preview.rejected.map((p, i) => (
+                      <tr key={i}><td style={td()}>{p.row}</td><td style={td()}>{p.externalCode ?? '—'}</td><td style={td()}>{p.message}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+
+          {preview.warned.length > 0 ? (
+            <details style={{ marginTop: '0.75rem' }}>
+              <summary style={{ fontSize: '0.82rem', cursor: 'pointer' }}>{preview.warned.length} warning(s)</summary>
+              <ul style={{ fontSize: '0.78rem', color: colors.muted }}>
+                {preview.warned.map((p, i) => <li key={i}>Row {p.row}: {p.message}</li>)}
+              </ul>
+            </details>
+          ) : null}
+        </Card>
+      ) : null}
+    </>
+  );
+}
+
+function QuestionBankTab({ onNotice }: NoticeProp) {
+  const [status, setStatus] = useState('');
+  const [stage, setStage] = useState('');
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const list = useAsync(
+    () => svc.listQuestions({ status: status || undefined, stage: stage || undefined, q: q || undefined, page, pageSize: 25 }),
+    [status, stage, q, page, reloadKey],
+  );
+
+  const act = async (id: string, decision: string, done: string) => {
+    setBusy(id);
+    try {
+      await svc.reviewQuestion(id, decision, '');
+      onNotice(done);
+      setReloadKey((k) => k + 1);
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  };
+
+  const rows = list.data?.questions ?? [];
+  const total = list.data?.total ?? 0;
+  const hasMore = list.data?.hasMore ?? false;
+
+  return (
+    <>
+      <Card title="Question bank &amp; SME review">
+        <FilterBar>
+          <select style={select()} value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+            <option value="">Any status</option>
+            <option value="draft">draft</option>
+            <option value="review">review</option>
+            <option value="approved">approved</option>
+            <option value="retired">retired</option>
+          </select>
+          <select style={select()} value={stage} onChange={(e) => { setStage(e.target.value); setPage(1); }}>
+            <option value="">Any stage</option>
+            {FILM_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <input style={input()} placeholder="Search stem or Question ID" value={q}
+            onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+        </FilterBar>
+
+        <StateBlock loading={list.loading} error={list.error} empty={rows.length === 0}
+          emptyText="No questions match. Import the bank first (Import tab).">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+              <thead><tr>
+                <th style={th()}>Question ID</th><th style={th()}>Stage</th><th style={th()}>Module</th>
+                <th style={th()}>Stem</th><th style={th()}>Status</th><th style={th()} />
+              </tr></thead>
+              <tbody>
+                {rows.map((row) => {
+                  const isOpen = openId === row.id;
+                  const editable = row.status === 'draft' || row.status === 'review';
+                  return (
+                    <React.Fragment key={row.id}>
+                      <tr style={{ cursor: 'pointer' }} onClick={() => setOpenId(isOpen ? null : row.id)}>
+                        <td style={td()}><code style={{ fontSize: '0.75rem' }}>{row.external_code}</code></td>
+                        <td style={td()}>{row.film_stage}</td>
+                        <td style={td()}>{row.film_module_code}</td>
+                        <td style={{ ...td(), maxWidth: 360 }}>{row.stem}</td>
+                        <td style={td()}><Badge status={row.status} /></td>
+                        <td style={{ ...td(), whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+                          {editable ? (
+                            <button style={btnPrimary()} disabled={busy === row.id}
+                              onClick={() => void act(row.id, 'approve', 'Approved — the question is now exam-eligible.')}>
+                              Approve
+                            </button>
+                          ) : null}
+                          {row.status === 'approved' ? (
+                            <button style={btnDanger()} disabled={busy === row.id}
+                              onClick={() => void act(row.id, 'suspend', 'Suspended — withdrawn from future draws.')}>
+                              Suspend
+                            </button>
+                          ) : null}
+                          {row.status === 'retired' ? (
+                            <button style={btn()} disabled={busy === row.id}
+                              onClick={() => void act(row.id, 'reactivate', 'Reactivated — approved again.')}>
+                              Reactivate
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                      {isOpen ? (
+                        <tr><td colSpan={6} style={{ ...td(), backgroundColor: 'rgba(128,128,128,0.06)' }}>
+                          <QuestionDetail row={row} onNotice={onNotice} onSaved={() => setReloadKey((k) => k + 1)} />
+                        </td></tr>
+                      ) : null}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.6rem', fontSize: '0.8rem', color: colors.muted }}>
+            <span>Page {page} · {total} matching</span>
+            <span>
+              <button style={btn()} disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Prev</button>{' '}
+              <button style={btn()} disabled={!hasMore} onClick={() => setPage((p) => p + 1)}>Next</button>
+            </span>
+          </div>
+        </StateBlock>
+        <AuditNote>
+          Approving requires the reviewer capability (scores:manage), separate from the import/authoring
+          capability (programs:manage) — separation of duties. An approved question is content-locked; to
+          change it, reimport a corrected row (which creates a new version rather than mutating an examined one).
+        </AuditNote>
+      </Card>
+    </>
+  );
+}
+
+/** Expanded view of one bank row: content, the correct answer, review history, and
+ * (for a draft) an in-place editor. */
+function QuestionDetail({ row, onNotice, onSaved }: { row: svc.FilmQuestion; onNotice: (s: string | null) => void; onSaved: () => void }) {
+  const [detail, setDetail] = useState<{ question: svc.FilmQuestion; reviews: svc.FilmReview[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const editable = row.status === 'draft' || row.status === 'review';
+  const [stem, setStem] = useState(row.stem);
+  const [opts, setOpts] = useState(row.options);
+  const [correct, setCorrect] = useState(row.answer?.correct?.[0] ?? '');
+  const [points, setPoints] = useState(String(row.film_points ?? 1));
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    svc.getQuestion(row.id).then((d) => { if (alive) setDetail(d); })
+      .catch(() => { if (alive) setDetail(null); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [row.id]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await svc.editQuestion({ id: row.id, stem, options: opts, correctOptionIds: correct ? [correct] : [], points: Number(points) || 1 });
+      onNotice('Draft updated.');
+      onSaved();
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: '0.5rem' }}>
+      <div style={{ fontSize: '0.75rem', color: colors.muted }}>
+        Dept {row.film_department ?? '—'} · Outcome {row.film_learning_outcome ?? '—'} · Cognitive {row.film_cognitive ?? '—'} · Difficulty {row.film_difficulty ?? '—'} · v{row.source_version ?? '—'}
+      </div>
+
+      {editable ? (
+        <>
+          <Field label="Stem">
+            <textarea style={{ ...input(), minHeight: 60 }} value={stem} onChange={(e) => setStem(e.target.value)} />
+          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+            {opts.map((o, i) => (
+              <div key={o.id} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input type="radio" name={`correct-${row.id}`} checked={correct === o.id} onChange={() => setCorrect(o.id)} />
+                <span style={{ width: 14, fontWeight: 700 }}>{String.fromCharCode(65 + i)}</span>
+                <input style={input()} value={o.text}
+                  onChange={(e) => setOpts((prev) => prev.map((p, j) => (j === i ? { ...p, text: e.target.value } : p)))} />
+              </div>
+            ))}
+          </div>
+          <Field label="Points">
+            <input type="number" min={1} style={{ ...input(), width: 100 }} value={points} onChange={(e) => setPoints(e.target.value)} />
+          </Field>
+          <div><button style={btnPrimary()} disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save draft'}</button></div>
+        </>
+      ) : (
+        <>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.82rem' }}>
+            {opts.map((o) => (
+              <li key={o.id} style={{ fontWeight: correct === o.id ? 700 : 400 }}>
+                {o.text}{detail?.question.answer?.correct?.includes(o.id) ? '  ✓ correct' : ''}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {detail?.question?.answer?.explanation ? (
+        <div style={{ fontSize: '0.78rem', color: colors.muted }}><strong>Explanation:</strong> {detail.question.answer.explanation}</div>
+      ) : null}
+
+      {loading ? <div style={{ fontSize: '0.8rem', color: colors.muted }}>Loading review history…</div> : null}
+      {detail && detail.reviews.length > 0 ? (
+        <div style={{ fontSize: '0.76rem' }}>
+          <strong>Review history</strong>
+          <ul style={{ margin: '0.2rem 0 0', paddingLeft: '1.1rem', color: colors.muted }}>
+            {detail.reviews.map((rv) => (
+              <li key={rv.id}>{rv.decision}: {rv.from_status ?? '—'} → {rv.to_status ?? '—'} · {fmtDate(rv.created_at)}{rv.note ? ` · ${rv.note}` : ''}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ExamsTab({ onNotice }: NoticeProp) {
+  const curriculum = useAsync(() => svc.getCurriculum(), []);
+  const exams = useAsync(() => svc.listExams(), [], true);
+  const programs = curriculum.data?.programs ?? [];
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { void exams.reload(); /* re-run when reloadKey changes */ }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [form, setForm] = useState({
+    program_id: '', title: '', description: '', kind: 'stage_exam',
+    draw_stage: 'L1', draw_module_codes: '', draw_count: '10',
+    pass_mark: '70', time_limit_minutes: '30', max_attempts: '1',
+    opens_at: '', closes_at: '', // <input type="datetime-local"> values (admin's local time)
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const create = async () => {
+    if (!form.program_id || !form.title.trim()) { setError('Choose a programme and give the exam a title.'); return; }
+    setSaving(true); setError(null);
+    try {
+      await svc.createExam({
+        program_id: form.program_id,
+        title: form.title.trim(),
+        description: form.description || null,
+        kind: form.kind,
+        draw_stage: form.draw_stage || null,
+        draw_module_codes: form.draw_module_codes.split(',').map((s) => s.trim()).filter(Boolean),
+        draw_count: Number(form.draw_count) || 10,
+        pass_mark: Number(form.pass_mark),
+        time_limit_minutes: Number(form.time_limit_minutes) || 30,
+        max_attempts: Number(form.max_attempts) || 1,
+        opens_at: form.opens_at ? new Date(form.opens_at).toISOString() : null,
+        closes_at: form.closes_at ? new Date(form.closes_at).toISOString() : null,
+      });
+      setForm((f) => ({ ...f, title: '', description: '' }));
+      setReloadKey((k) => k + 1);
+      onNotice('Exam created (unpublished). Publish it once its approved pool covers the draw.');
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
+
+  // A refused publish (the pool preflight) can list several short topics, so it
+  // is shown inline and wrapped in full rather than in a truncating alert().
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const publish = async (id: string) => {
+    setBusy(id); setPublishError(null);
+    try { await svc.publishExam(id); onNotice('Published.'); setReloadKey((k) => k + 1); }
+    catch (e) { setPublishError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  };
+
+  const rows = exams.data ?? [];
+
+  return (
+    <>
+      <Card title="Author an exam">
+        {error ? <p style={{ color: colors.danger, fontSize: '0.85rem' }}>{error}</p> : null}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: '0.8rem' }}>
+          <Field label="Programme">
+            <select style={select()} value={form.program_id} onChange={(e) => setForm({ ...form, program_id: e.target.value })}>
+              <option value="">Choose…</option>
+              {programs.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+            </select>
+          </Field>
+          <Field label="Title"><input style={input()} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+          <Field label="Kind">
+            <select style={select()} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+              <option value="practice">practice</option>
+              <option value="checkpoint">checkpoint</option>
+              <option value="stage_exam">stage exam</option>
+            </select>
+          </Field>
+          <Field label="Draw stage">
+            <select style={select()} value={form.draw_stage} onChange={(e) => setForm({ ...form, draw_stage: e.target.value })}>
+              {FILM_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="Module codes (comma, optional)"><input style={input()} value={form.draw_module_codes}
+            placeholder="FM01, FM02" onChange={(e) => setForm({ ...form, draw_module_codes: e.target.value })} /></Field>
+          <Field label="Questions to draw"><input type="number" min={1} style={input()} value={form.draw_count} onChange={(e) => setForm({ ...form, draw_count: e.target.value })} /></Field>
+          <Field label="Pass mark (%)"><input type="number" min={0} max={100} style={input()} value={form.pass_mark} onChange={(e) => setForm({ ...form, pass_mark: e.target.value })} /></Field>
+          <Field label="Time limit (min)"><input type="number" min={1} style={input()} value={form.time_limit_minutes} onChange={(e) => setForm({ ...form, time_limit_minutes: e.target.value })} /></Field>
+          <Field label="Max attempts"><input type="number" min={1} style={input()} value={form.max_attempts} onChange={(e) => setForm({ ...form, max_attempts: e.target.value })} /></Field>
+          <Field label="Starts (required to publish)"><input type="datetime-local" style={input()} value={form.opens_at} onChange={(e) => setForm({ ...form, opens_at: e.target.value })} /></Field>
+          <Field label="Ends (required to publish)"><input type="datetime-local" style={input()} value={form.closes_at} onChange={(e) => setForm({ ...form, closes_at: e.target.value })} /></Field>
+        </div>
+        <Field label="Description">
+          <textarea style={{ ...input(), minHeight: 50 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        </Field>
+        <div style={{ marginTop: '0.75rem' }}>
+          <button style={btnPrimary()} disabled={saving} onClick={() => void create()}>{saving ? 'Creating…' : 'Create exam'}</button>
+        </div>
+      </Card>
+
+      <Card title="Exams">
+        {publishError ? (
+          <p role="alert" style={{ color: colors.danger, fontSize: '0.85rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            Could not publish: {publishError}
+          </p>
+        ) : null}
+        <StateBlock loading={exams.loading} error={exams.error} empty={rows.length === 0}
+          emptyText="No exams yet. Author one above — it starts unpublished.">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 860 }}>
+              <thead><tr>
+                <th style={th()}>Title</th><th style={th()}>Kind</th><th style={th()}>Draw</th>
+                <th style={th()}>Pass</th><th style={th()}>Limit</th><th style={th()}>State</th><th style={th()} />
+              </tr></thead>
+              <tbody>
+                {rows.map((x) => (
+                  <tr key={x.id}>
+                    <td style={td()}>{x.title}</td>
+                    <td style={td()}>{x.kind}</td>
+                    <td style={td()}>{x.draw_stage ?? '—'}{x.draw_module_codes?.length ? ` · ${x.draw_module_codes.join(', ')}` : ''} · {x.draw_count ?? 0}q</td>
+                    <td style={td()}>{x.pass_mark}%</td>
+                    <td style={td()}>
+                      {x.time_limit_minutes}m · {x.max_attempts}×
+                      <div style={{ fontSize: 11, opacity: 0.75 }}>
+                        {x.opens_at ? new Date(x.opens_at).toLocaleString() : 'no start'} → {x.closes_at ? new Date(x.closes_at).toLocaleString() : 'no end'}
+                      </div>
+                    </td>
+                    <td style={td()}><Badge status={x.is_published ? 'approved' : 'draft'} label={x.is_published ? 'published' : 'unpublished'} /></td>
+                    <td style={{ ...td(), whiteSpace: 'nowrap' }}>
+                      {x.is_published ? (
+                        <button style={btn()} disabled={busy === x.id} onClick={() => void (async () => {
+                          setBusy(x.id); try { await svc.unpublishExam(x.id); setReloadKey((k) => k + 1); }
+                          catch (e) { alert(e instanceof Error ? e.message : String(e)); } finally { setBusy(null); }
+                        })()}>Unpublish</button>
+                      ) : (
+                        <button style={btnPrimary()} disabled={busy === x.id} onClick={() => void publish(x.id)}>Publish</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </StateBlock>
+        <AuditNote>
+          Publishing runs a server-side pool preflight: an exam only goes live when its draw stage (and optional
+          module restriction) has at least as many APPROVED questions as its draw count. If it fails, the reason —
+          the exact shortfall — is shown; approve more questions or lower the count.
+        </AuditNote>
       </Card>
     </>
   );

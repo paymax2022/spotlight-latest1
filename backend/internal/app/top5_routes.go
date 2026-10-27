@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log"
+	"os"
 	"spotlight/backend/internal/cashtag"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/creators"
@@ -19,14 +20,18 @@ import (
 	"spotlight/backend/internal/notifications"
 	"spotlight/backend/internal/p2pmarket"
 	"spotlight/backend/internal/platform/queue"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/platform/realtime"
 	"spotlight/backend/internal/points"
+	"spotlight/backend/internal/provider/paystack"
 	"spotlight/backend/internal/savings"
 	"spotlight/backend/internal/scheduler"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/social"
 	"spotlight/backend/internal/spray"
 	"spotlight/backend/internal/top5events"
+	"spotlight/backend/internal/webhooks"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -202,7 +207,7 @@ func (a eventAnnounceNotifier) Send(ctx context.Context, userID, title, body str
 // MAIN wallet on close (NL-3); points/event-wallet never cash out (NL-4); vendor
 // payouts are KYC-gated (NL-10) and run net of fees through the ledger. Auditing is
 // nil-safe (the orchestrator may inject a sink).
-func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService, rtHub *realtime.Hub, audit services.AuditService) {
+func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService, rtHub *realtime.Hub, audit services.AuditService, paystackClient *paystack.Client, webhookHandler *webhooks.PaystackHandler) {
 	if pool == nil {
 		log.Println("[top5events] nil pool — skipping events routes")
 		return
@@ -255,8 +260,22 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 		return middleware.RequirePermission(rbac, permission)
 	}
 
+	// Organiser-upgrade gate (EVTA-D001): create/duplicate/submit/go-live need an
+	// onboarding-approved organiser (RBAC events.manage). Flag off = legacy.
+	// Grandfathering re-runs at boot so events created between migration
+	// 20271068004010 and the flag flip never lock their owners out.
+	if cfg.FeatureEventsOrganiserGate {
+		svc.SetOrganiserGate(true)
+		if n, gerr := svc.GrandfatherOrganisers(context.Background()); gerr != nil {
+			log.Printf("[top5events] organiser grandfathering failed (gate stays on, fail-closed): %v", gerr)
+		} else {
+			log.Printf("[top5events] organiser gate ON — grandfathered %d existing organiser(s)", n)
+		}
+	}
+
 	handler := top5events.NewHandler(svc)
 	handler.Register(member, admin, guard)
+	handler.RegisterOrganiserGate(member)
 	if cfg.FeatureEventsEditLifecycle {
 		handler.RegisterLifecycle(member)
 	}
@@ -269,6 +288,45 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 	if cfg.FeatureEventsComps {
 		handler.RegisterComps(member)
 	}
+	if cfg.FeatureEventsOrganiserPayouts {
+		// EVTC-D003: organiser settlement rail. The policy is ops-tunable; the
+		// defaults mirror top5events.DefaultPayoutPolicy (72h hold, 5% reserve
+		// released 30d after the event, KYC tier 1 — the NL-10 bar).
+		svc.SetPayoutPolicy(top5events.PayoutPolicy{
+			HoldWindow:     time.Duration(envInt("EVENTS_PAYOUT_HOLD_HOURS", 72)) * time.Hour,
+			ReserveBps:     envInt("EVENTS_PAYOUT_RESERVE_BPS", 500),
+			ReserveRelease: time.Duration(envInt("EVENTS_PAYOUT_RESERVE_RELEASE_DAYS", 30)) * 24 * time.Hour,
+			MinKYCTier:     envInt("EVENTS_PAYOUT_MIN_KYC_TIER", 1),
+		})
+		handler.RegisterPayouts(member, admin, guard)
+		// Re-drive payouts stuck PROCESSING (crash between the ledger legs and
+		// the paid flip). Row-locked + idempotent legs ⇒ safe on every instance.
+		top5events.StartPayoutReconciler(
+			context.Background(), svc,
+			time.Duration(envInt("EVENTS_PAYOUT_RECONCILE_INTERVAL_MINUTES", 5))*time.Minute,
+			time.Duration(envInt("EVENTS_PAYOUT_STUCK_MINUTES", 10))*time.Minute,
+		)
+	}
+	if cfg.FeatureEventsSocial {
+		// Event reads and writes use the social columns (banner, venue
+		// coordinates, like_count, the caller's like) only with the flag on: they
+		// exist only after migration 20271094000000. Deploy gate: apply that
+		// migration before turning FEATURE_EVENTS_SOCIAL on in any environment.
+		svc.EnableSocialReads()
+		// Organiser banner uploads: backend-owned presigned R2 PUTs, the same
+		// bucket config as the restaurant store images (R2_BUCKET, no default).
+		// Unconfigured or failing creds make the presign endpoint answer 503.
+		bannerPresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		bannerPresigner.EnableHealthCheck(nil)
+		svc.WithStorage(bannerPresigner)
+		handler.RegisterSocial(member)
+	}
 
 	// Money-path durability: sweep ticket checkouts left PENDING by a crash between
 	// reservation and payment, charging/ticketing buyers who can pay and expiring
@@ -279,6 +337,33 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 		time.Duration(envInt("EVENTS_RECONCILE_INTERVAL_MINUTES", 5))*time.Minute,
 		time.Duration(envInt("EVENTS_PENDING_GRACE_MINUTES", 15))*time.Minute,
 	)
+
+	// Paystack card / bank-transfer checkout for ticket orders (EVTB-D013).
+	// Seats are HELD under the same tier FOR UPDATE lock as the wallet rail and
+	// settled ONLY on a server-verified charge into the same escrow, so
+	// organiser settlement treats both rails identically. The flag gates NEW
+	// checkouts only; the webhook confirmer, the owner status poll (self-heal)
+	// and the sweep (driven inside StartPendingOrderReconciler's tick) stay live
+	// whenever a Paystack client exists, so flipping it can never strand a
+	// customer who already paid.
+	if paystackClient != nil {
+		var hosts []string
+		for h := range strings.SplitSeq(os.Getenv("EVENTS_CARD_CALLBACK_HOSTS"), ",") {
+			if h = strings.TrimSpace(h); h != "" {
+				hosts = append(hosts, h)
+			}
+		}
+		svc.EnableCardCheckout(paystackClient, top5events.CardCheckoutOptions{
+			InitiateEnabled: cfg.FeatureEventsCardCheckoutEnabled,
+			HoldTTL:         time.Duration(envInt("EVENTS_CARD_HOLD_MINUTES", 15)) * time.Minute,
+			CallbackHosts:   hosts,
+		})
+		handler.RegisterCardCheckout(member, cfg.FeatureEventsCardCheckoutEnabled)
+		if webhookHandler != nil {
+			webhookHandler.RegisterPrefixConfirmer(top5events.CardReferencePrefix, svc.CardWebhookConfirmer())
+		}
+		log.Printf("[top5events] card checkout wired (prefix %s, initiate=%t)", top5events.CardReferencePrefix, cfg.FeatureEventsCardCheckoutEnabled)
+	}
 
 	log.Println("[top5events] routes registered — event CMS / tickets / cashless wallet / vendor settlement live")
 }

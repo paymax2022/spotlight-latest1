@@ -62,7 +62,7 @@ func TestFXConversionRateConsistency(t *testing.T) {
 }
 
 // TestQuoteRequestMinAmount verifies the minimum quote amount enforced by Gin binding.
-// Maplerad rejects quotes below a threshold; binding:min=100 guards against dust requests.
+// Providers reject quotes below a threshold; binding:min=100 guards against dust requests.
 func TestQuoteRequestMinAmount(t *testing.T) {
 	req := fx.QuoteRequest{
 		SourceCurrency: "NGN",

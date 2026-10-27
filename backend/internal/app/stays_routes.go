@@ -244,6 +244,9 @@ func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extr
 
 	if member != nil {
 		reviewsHandler.RegisterMember(member)
+		// Guest-side reservation messaging (COM-003/004/005): the stays_message
+		// thread the extranet host routes already persist to.
+		extranetHandler.RegisterMember(member)
 	}
 
 	if extranetGroup != nil {

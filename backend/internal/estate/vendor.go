@@ -65,6 +65,8 @@ type AssignJobRequest struct {
 	AmountKobo int64  `json:"amount_kobo"`
 }
 
+const auditKeyReason = "reason"
+
 const vendorJobCols = `id, estate_id, vendor_id, repair_request_id, COALESCE(title,''), status, amount_kobo,
 	quote_kobo, COALESCE(invoice_url,''), COALESCE(completion_url,''), accepted_at, completed_at, paid_at, COALESCE(payout_ref,''), created_at`
 
@@ -218,7 +220,21 @@ func (s *Service) AcceptJob(ctx context.Context, estateID, userID, jobID string)
 	return s.jobTransition(ctx, estateID, userID, jobID, "accepted", []string{"available"}, "accepted_at")
 }
 func (s *Service) RejectJob(ctx context.Context, estateID, userID, jobID string) (*VendorJob, error) {
-	return s.jobTransition(ctx, estateID, userID, jobID, "rejected", []string{"available"}, "")
+	return s.RejectJobWithReason(ctx, estateID, userID, jobID, "")
+}
+
+// RejectJobWithReason declines an offered job. EST-UAT-0238: the decline reason
+// is captured on the audit trail so the facility officer can reassign with
+// context; it does not alter the transition itself.
+func (s *Service) RejectJobWithReason(ctx context.Context, estateID, userID, jobID, reason string) (*VendorJob, error) {
+	j, err := s.jobTransition(ctx, estateID, userID, jobID, "rejected", []string{"available"}, "")
+	if err != nil {
+		return nil, err
+	}
+	if reason != "" {
+		_ = s.audit(ctx, estateID, userID, "VENDOR_JOB_REJECT_REASON", "vendor_job", jobID, map[string]any{auditKeyReason: reason})
+	}
+	return j, nil
 }
 func (s *Service) CheckInAtGate(ctx context.Context, estateID, userID, jobID string) (*VendorJob, error) {
 	return s.jobTransition(ctx, estateID, userID, jobID, "en_route", []string{"accepted"}, "")
@@ -280,6 +296,10 @@ func (s *Service) UploadCompletionEvidence(ctx context.Context, estateID, userID
 // Iron rules: Idempotency-Key required (fail-closed); balanced double-entry
 // (DEBIT estate settlement → CREDIT vendor wallet) via the ledger; idempotent on
 // the key (ledger + payout_idempotency_key unique index); audited.
+//
+// ESTD-D027: with dual control on, a job at/above the estate's vendor payout
+// threshold cannot be self-released by the vendor — it must go through an
+// approved vendor_payout request (dual_control.go), which calls payVendorJob.
 func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, idempotencyKey string) (*VendorJob, error) {
 	if idempotencyKey == "" {
 		return nil, ErrIdempotencyRequired
@@ -287,16 +307,53 @@ func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, id
 	if s.ledger == nil {
 		return nil, ErrLedgerUnavailable
 	}
-	vendorID, err := s.resolveVendorID(ctx, estateID, userID)
+	if _, err := s.resolveVendorID(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
+	if s.dualControl {
+		var amount int64
+		var status string
+		// Only a completed job can pay out; other states fall through to
+		// payVendorJob for the real FSM error instead of a misleading 409.
+		if err := s.db.QueryRow(ctx, `SELECT amount_kobo, status FROM vendor_jobs WHERE id=$1 AND estate_id=$2`, jobID, estateID).Scan(&amount, &status); err == nil && status == vendorJobDone {
+			th, err := s.CurrentThresholds(ctx, estateID)
+			if err != nil {
+				return nil, err // fail closed
+			}
+			if requiresChecker(ApprovalVendorPayout, amount, th) {
+				return nil, ErrDualControlRequired
+			}
+		}
+	}
+	return s.payVendorJob(ctx, estateID, userID, userID, jobID, idempotencyKey)
+}
+
+// payVendorJob is the payout side effect: credits vendorUserID's wallet from
+// estate settlement for a completed job. actorID is recorded on the audit row
+// (the vendor on the direct path, the checker on an approved request).
+func (s *Service) payVendorJob(ctx context.Context, estateID, actorID, vendorUserID, jobID, idempotencyKey string) (*VendorJob, error) {
+	if s.ledger == nil {
+		return nil, ErrLedgerUnavailable
+	}
+	vendorID, err := s.resolveVendorID(ctx, estateID, vendorUserID)
 	if err != nil {
 		return nil, err
 	}
+	// Row-lock the job for the whole payout so two concurrent releases (the
+	// vendor's direct request and an approved request, each with its own
+	// idempotency key) serialise: the loser waits, then sees 'paid'.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var amount int64
 	var status string
-	if err := s.db.QueryRow(ctx, `SELECT amount_kobo, status FROM vendor_jobs WHERE id=$1 AND estate_id=$2 AND vendor_id=$3`, jobID, estateID, vendorID).Scan(&amount, &status); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT amount_kobo, status FROM vendor_jobs WHERE id=$1 AND estate_id=$2 AND vendor_id=$3 FOR UPDATE`, jobID, estateID, vendorID).Scan(&amount, &status); err != nil {
 		return nil, errors.New("estate: job not found for this vendor")
 	}
-	if status == "paid" {
+	if status == vendorJobPaid {
+		_ = tx.Rollback(ctx)
 		return s.getJob(ctx, estateID, jobID) // idempotent: already paid
 	}
 	if status != "completed" {
@@ -310,14 +367,9 @@ func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, id
 		return nil, fmt.Errorf("estate: settlement account: %w", err)
 	}
 	ref := "estate_vendor_payout:" + estateID + ":" + jobID
-	if err := s.ledger.Credit(ctx, userID, ref, idempotencyKey, settle.ID, amount); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if err := s.ledger.Credit(ctx, vendorUserID, ref, idempotencyKey, settle.ID, amount); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, fmt.Errorf("estate: vendor payout credit: %w", err)
 	}
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	ct, err := tx.Exec(ctx,
 		`UPDATE vendor_jobs SET status='paid', paid_at=NOW(), payout_ref=$1, payout_idempotency_key=$2
 		 WHERE id=$3 AND estate_id=$4 AND status='completed'`,
@@ -329,7 +381,7 @@ func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, id
 		// Lost a race; return the canonical row.
 		return s.getJob(ctx, estateID, jobID)
 	}
-	if err := s.auditTx(ctx, tx, estateID, userID, "VENDOR_PAYOUT", "vendor_job", jobID, map[string]any{"amount_kobo": amount, "reference": ref}); err != nil {
+	if err := s.auditTx(ctx, tx, estateID, actorID, "VENDOR_PAYOUT", "vendor_job", jobID, map[string]any{keyAmountKobo: amount, "reference": ref}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

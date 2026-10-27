@@ -187,7 +187,7 @@ func (s *Service) emit(ctx context.Context, eventType string, data any) {
 	}
 }
 
-// This is the last link of the Maplerad/Eversend collections rail. Everything
+// This is the last link of the VertoFX/Eversend collections rail. Everything
 // ahead of it already existed — live adapters, credential-gated wiring,
 // Service.CreateCollection provisioning the account, the mobile Receive screen,
 // and the signature-checked webhook endpoint — but HandleProviderEvent only
@@ -203,8 +203,8 @@ func eventName(event, typ string) string {
 }
 
 // isCollectionEvent recognises an inbound credit. The vocabulary is exactly the
-// set the Maplerad client already maps to Type="collection"
-// (internal/provider/maplerad/maplerad.go ParseWebhook) — kept in sync
+// set the provider clients map to Type="collection"
+// in their ParseWebhook — kept in sync
 // deliberately rather than invented here.
 func isCollectionEvent(name string) bool {
 	switch name {

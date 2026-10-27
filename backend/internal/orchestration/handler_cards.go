@@ -57,7 +57,7 @@ func cardJSON(id, label, brand, currency, color, status string, balanceMinor int
 		"color":          color,
 		"spentThisMonth": 0,
 		"controls":       controls,
-		"provider":       "maplerad",
+		"provider":       "internal",
 		"createdAt":      timeutil.RFC3339(time.Now()),
 	}
 }

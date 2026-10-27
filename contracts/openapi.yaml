@@ -50,6 +50,89 @@ components:
       properties:
         success: { type: boolean }
 
+    # ── Estate platform lifecycle + legacy import ─────────────────────────────
+    EstateLifecycle:
+      type: object
+      required: [estate_id, status, legal_hold]
+      properties:
+        estate_id: { type: string, format: uuid }
+        name: { type: string }
+        address: { type: string }
+        admin_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, active, suspended, closed] }
+        status_reason: { type: string }
+        status_changed_at: { type: string, format: date-time }
+        status_changed_by: { type: string, format: uuid }
+        legal_hold: { type: boolean, description: Blocks deletion/purge paths (account PII scrub, household delete, hard estate delete) }
+        legal_hold_reason: { type: string }
+        created_at: { type: string, format: date-time }
+    EstateImportRequest:
+      type: object
+      properties:
+        source_ref: { type: string, description: Operator reference for the source export }
+        control_total_kobo: { type: integer, format: int64, description: Expected sum of importable opening balances; a mismatch at commit refuses the batch }
+        units:
+          type: array
+          items:
+            type: object
+            required: [external_ref, unit_label]
+            properties:
+              external_ref: { type: string, maxLength: 200 }
+              unit_label: { type: string, maxLength: 100 }
+              block: { type: string, maxLength: 50 }
+              floor: { type: string, maxLength: 20 }
+              property_type: { type: string, enum: [apartment, house, commercial, land, other], default: apartment }
+              occupancy_status: { type: string, enum: [vacant, occupied, reserved], default: vacant }
+        residents:
+          type: array
+          items:
+            type: object
+            required: [external_ref]
+            properties:
+              external_ref: { type: string, maxLength: 200 }
+              email: { type: string, description: Maps to an existing platform account (email or phone required — the importer never creates auth accounts) }
+              phone: { type: string }
+              unit_ref: { type: string, description: external_ref of a unit row in this batch or a previous import }
+              relationship: { type: string, enum: [occupant, owner, tenant], default: occupant }
+              residency_start: { type: string, format: date }
+              residency_end: { type: string, format: date }
+        opening_balances:
+          type: array
+          items:
+            type: object
+            required: [external_ref, resident_ref, amount_kobo, due_date]
+            properties:
+              external_ref: { type: string, maxLength: 200 }
+              resident_ref: { type: string }
+              unit_ref: { type: string }
+              category: { type: string, enum: [service_charge, security_levy, waste, water, electricity, rent, facility, penalty, other], default: other }
+              amount_kobo: { type: integer, format: int64, minimum: 1, description: Positive outstanding balance; credit (prepaid) balances are out of scope and reported as exceptions }
+              due_date: { type: string, format: date }
+    EstateImportBatch:
+      type: object
+      required: [id, estate_id, status, summary, exceptions]
+      properties:
+        id: { type: string, format: uuid }
+        estate_id: { type: string, format: uuid }
+        source_ref: { type: string }
+        status: { type: string, enum: [dry_run, committed] }
+        summary: { type: object, description: Per-entity counts (received/insert/update/link/unchanged/error), opening_balance_total_kobo, control-total verdict, destination aggregates }
+        exceptions:
+          type: array
+          items:
+            type: object
+            properties:
+              entity: { type: string, enum: [unit, resident, opening_balance] }
+              row: { type: integer, description: 0-based index within its entity array; -1 = batch level }
+              external_ref: { type: string }
+              code: { type: string }
+              message: { type: string }
+        commit_result: { type: object }
+        replayed: { type: boolean, description: True when a commit retry returned the stored result }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        committed_at: { type: string, format: date-time }
+
     # ── Property Management Suite ─────────────────────────────────────────────
     PropertyContextRef:
       type: object
@@ -1781,9 +1864,19 @@ components:
         ends_at: { type: string, format: date-time }
         fee_bps: { type: integer, description: "Platform fee in basis points on vendor settlement (0-10000)" }
         created_at: { type: string, format: date-time }
+        banner_url: { type: string, nullable: true, description: "Event banner as a viewable URL; null when none is set (clients fall back to a colour block)" }
+        venue_lat: { type: number, format: double, nullable: true, description: "Venue latitude; null when the venue has no coordinates (clients render no map)" }
+        venue_lng: { type: number, format: double, nullable: true, description: "Venue longitude; null when the venue has no coordinates" }
+        venue_place_id: { type: string, nullable: true, description: "Geocoder place id for the venue, when known" }
+        like_count: { type: integer, description: "Stored counter of likes on this event (not counted on read)" }
+        liked: { type: boolean, description: "Whether the calling user has liked this event" }
 
     EventPatch:
-      description: Partial organiser edit (PATCH /events/{id}); every field optional, snake_case.
+      description: >-
+        Partial organiser edit (PATCH /events/{id}); every field optional, snake_case.
+        The venue coordinate fields are applied only when FEATURE_EVENTS_SOCIAL is on
+        (ignored otherwise). For each of them an absent key leaves the value
+        unchanged and an explicit null clears it.
       type: object
       properties:
         title: { type: string }
@@ -1792,6 +1885,9 @@ components:
         category: { type: string }
         starts_at: { type: string, format: date-time }
         ends_at: { type: string, format: date-time }
+        venue_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90, description: "Venue latitude; null clears it" }
+        venue_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180, description: "Venue longitude; null clears it" }
+        venue_place_id: { type: string, nullable: true, description: "Geocoder place id; null or an empty string clears it" }
 
     EventSummary:
       description: Lightweight discovery-feed projection returned by GET /events.
@@ -1808,6 +1904,140 @@ components:
         ends_at: { type: string, format: date-time }
         min_price_kobo: { type: integer, format: int64, description: "MIN(price_kobo) across active tiers; 0 if free/no active tiers" }
         sold_out: { type: boolean }
+
+    # ── Events social (FEATURE_EVENTS_SOCIAL) — likes, organiser follows, organiser profiles ──
+    LikeState:
+      description: Result of a like or unlike. Both operations are idempotent and always return the current state.
+      type: object
+      properties:
+        liked: { type: boolean }
+        like_count: { type: integer }
+
+    FollowState:
+      description: Result of a follow or unfollow. Both operations are idempotent and always return the current state.
+      type: object
+      properties:
+        following: { type: boolean }
+        follower_count: { type: integer }
+
+    OrganiserProfile:
+      type: object
+      properties:
+        organiser_id: { type: string, format: uuid }
+        display_name: { type: string, description: "Falls back to the organiser's account full name when no profile row exists" }
+        bio: { type: string }
+        banner_url: { type: string, nullable: true }
+        follower_count: { type: integer }
+        following: { type: boolean, description: "Whether the calling user follows this organiser" }
+        events:
+          type: array
+          description: The organiser's upcoming public events
+          items: { $ref: '#/components/schemas/Event' }
+
+    OrganiserPatch:
+      description: Partial edit of the caller's own organiser profile (PUT /events/organisers/me); every field optional, snake_case.
+      type: object
+      properties:
+        display_name: { type: string }
+        bio: { type: string }
+        banner_url: { type: string, description: "http(s) link or a banner object_key from the presign endpoint; a key outside the caller's prefix is rejected" }
+
+    OrganiserBannerPresign:
+      type: object
+      properties:
+        upload_url: { type: string, description: Short-lived presigned PUT URL }
+        object_key: { type: string, description: 'Server-chosen key under organiser/<id>/banner/; send back as banner_url when saving the profile' }
+        content_type: { type: string, description: The client MUST send exactly this Content-Type on the PUT }
+        expires_in: { type: integer, description: Seconds }
+        method: { type: string, enum: [PUT] }
+
+    OrganiserPayout:
+      description: >
+        One organiser settlement payout (EVTC-D003). State machine:
+        pending -> processing -> paid | failed ; pending -> failed (checker
+        reject). Amounts are the INCREMENT covered by this payout: each new
+        payout pays the eligible total minus every non-failed earlier payout,
+        so a failed payout's amount is re-offered and a paid one is never
+        re-offered.
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        organiser_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, processing, paid, failed] }
+        gross_kobo: { type: integer, format: int64, description: "Incremental eligible gross covered by this payout" }
+        fee_kobo: { type: integer, format: int64, description: "Platform fee collected by this payout" }
+        net_kobo: { type: integer, format: int64, description: "Paid to the organiser's wallet by this payout" }
+        reserve_held_kobo: { type: integer, format: int64, description: "Reserve still held for the event after this payout" }
+        fee_bps: { type: integer }
+        reserve_bps: { type: integer }
+        refunds_kobo: { type: integer, format: int64, description: "Refunded orders snapshot at request time" }
+        disputed_kobo: { type: integer, format: int64, description: "Dispute-held orders snapshot at request time" }
+        destination: { type: string, enum: [wallet], description: "Funds land in the organiser's Paymax wallet; bank withdrawal uses the shared transfers rail" }
+        idempotency_key: { type: string }
+        requested_by: { type: string, format: uuid }
+        approved_by: { type: string, format: uuid, nullable: true }
+        failure_reason: { type: string, nullable: true }
+        ledger_reference: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        processing_at: { type: string, format: date-time, nullable: true }
+        paid_at: { type: string, format: date-time, nullable: true }
+        failed_at: { type: string, format: date-time, nullable: true }
+
+    EventPayoutStatement:
+      description: >
+        Per-event organiser earnings statement. Reconciles to the ledger:
+        gross_sales = refunds + disputed_held + eligible_gross;
+        eligible_gross = fees + reserve + net_earnings;
+        net_earnings = paid + pending + balance (a negative balance means the
+        organiser owes the platform, e.g. a dispute opened after a payout).
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        event_title: { type: string }
+        event_state: { type: string, enum: [DRAFT, SUBMITTED, APPROVED, LIVE, PAUSED, CLOSED, CANCELLED, SUSPENDED] }
+        ends_at: { type: string, format: date-time }
+        organiser_id: { type: string, format: uuid }
+        fee_bps: { type: integer }
+        reserve_bps: { type: integer }
+        gross_sales_kobo: { type: integer, format: int64 }
+        refunds_kobo: { type: integer, format: int64 }
+        disputed_held_kobo: { type: integer, format: int64 }
+        eligible_gross_kobo: { type: integer, format: int64 }
+        fees_kobo: { type: integer, format: int64 }
+        reserve_kobo: { type: integer, format: int64 }
+        net_earnings_kobo: { type: integer, format: int64 }
+        paid_kobo: { type: integer, format: int64 }
+        fees_collected_kobo: { type: integer, format: int64 }
+        pending_kobo: { type: integer, format: int64 }
+        balance_kobo: { type: integer, format: int64 }
+        available_kobo: { type: integer, format: int64, description: "Amount a new payout request would cover right now" }
+        eligible: { type: boolean }
+        reason: { type: string, nullable: true, description: "event_not_closed | hold_window when eligible is false" }
+        eligible_at: { type: string, format: date-time }
+        reserve_active: { type: boolean }
+        reserve_release_at: { type: string, format: date-time }
+        payouts:
+          type: array
+          items: { $ref: '#/components/schemas/OrganiserPayout' }
+
+    EventPayoutQueueLine:
+      description: One CLOSED event's settlement position in the admin payout queue.
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        event_title: { type: string }
+        organiser_id: { type: string, format: uuid }
+        ends_at: { type: string, format: date-time }
+        eligible: { type: boolean }
+        reason: { type: string, nullable: true }
+        eligible_at: { type: string, format: date-time }
+        available_kobo: { type: integer, format: int64 }
+        pending_kobo: { type: integer, format: int64 }
+        paid_kobo: { type: integer, format: int64 }
+        reserve_kobo: { type: integer, format: int64 }
+        in_flight_payout_id: { type: string, format: uuid, nullable: true }
+        last_payout_at: { type: string, format: date-time, nullable: true }
 
     TicketTier:
       type: object
@@ -3859,13 +4089,33 @@ components:
         reason_code: { type: string }
         notes: { type: string, nullable: true }
 
-    MktBoostTier:
+    MktBoostPricing:
       type: object
+      description: >
+        The public boost price catalog. One number sets everything — the admin's
+        ₦/day rate (mkt_boost_daily_rate, editable at any time in the marketplace
+        pricing console) — and every duration, preset or custom, is priced by it.
       properties:
-        tier: { type: string, description: "A preset package tier, or 'custom' for a date-range boost." }
-        duration_days: { type: integer }
-        price_kobo: { type: integer, format: int64 }
-        weight: { type: number, description: "Additive search-rank weight (ES function_score boost_mode:sum)." }
+        daily_rate_kobo: { type: integer, format: int64, description: "Seeded at 10000 (₦100/day)." }
+        preset_duration_days: { type: array, items: { type: integer }, description: "Durations the purchase screen offers as one tap." }
+        min_duration_days: { type: integer }
+        max_duration_days: { type: integer }
+
+    MktBoostedListing:
+      allOf:
+        - $ref: '#/components/schemas/MktListing'
+        - type: object
+          properties:
+            boosted: { type: boolean }
+            boost_remaining_kobo:
+              type: integer
+              format: int64
+              description: >
+                UNSPENT value of this listing's live boosts, pro-rated the same
+                way CancelBoost refunds (never rounded up in the seller's
+                favour) and summed across them. This is what orders the promoted
+                section — most money left promotes first.
+            boost_ends_at: { type: string, format: date-time }
 
     MktBoost:
       type: object
@@ -3888,23 +4138,22 @@ components:
       type: object
       required: [listing_id]
       description: >
-        Exactly ONE of `tier` (a preset package) or `ends_at` (a custom
-        date-range boost, priced by the admin-set ₦/day rate — starts
-        immediately at purchase time, ends_at rounds UP to the next whole day)
-        is expected. GET /boosts/quote resolves either into the same price
-        before the caller commits to this request.
+        Exactly ONE of `duration_days` (a whole-day boost starting now) or
+        `ends_at` (a boost ending at a chosen moment, billed in whole days
+        rounded UP) is expected. There is no price in this request: the server
+        prices every boost as duration × the admin's ₦/day rate.
+        GET /boosts/quote resolves the same price before the caller commits.
       properties:
         listing_id: { type: string, format: uuid }
-        tier: { type: string, description: "A preset package tier from GET /boosts/tiers. Omit for a custom date-range boost." }
-        ends_at: { type: string, format: date-time, description: "Custom-boost end date+time. Omit tier when set." }
+        duration_days: { type: integer, description: "Whole days, between min_duration_days and max_duration_days from GET /boosts/pricing." }
+        ends_at: { type: string, format: date-time, description: "End date+time. Omit duration_days when set." }
 
     MktBoostQuote:
       type: object
       description: Server-authoritative price preview for a would-be boost purchase (GET /boosts/quote).
       properties:
-        mode: { type: string, enum: [package, custom] }
-        tier: { type: string, nullable: true }
         duration_days: { type: integer }
+        daily_rate_kobo: { type: integer, format: int64, description: "The admin rate this price was computed from, so the client can show the arithmetic." }
         price_kobo: { type: integer, format: int64 }
         weight: { type: number }
         starts_at: { type: string, format: date-time }
@@ -4539,7 +4788,9 @@ paths:
                     Scopes the code; a code for one purpose cannot complete another.
                     `login` is deliberately absent — a login code mints a session, so
                     it is issued only by POST /api/auth/login after the password, never
-                    on request. Asking for one here returns 400.
+                    on request. `step_up` is likewise absent — it is issued only by
+                    POST /api/auth/step-up/challenge to an authenticated session.
+                    Asking for either here returns 400.
 
                 name:
                   type: string
@@ -4590,6 +4841,10 @@ paths:
                 purpose:
                   type: string
                   enum: [login, verify_email, password_reset]
+                  description: >
+                    `step_up` is deliberately absent — a step-up code is redeemable
+                    only by POST /api/auth/step-up/verify, which binds the grant to
+                    the caller's session; submitting one here returns 400.
       responses:
         '200':
           description: >
@@ -4719,6 +4974,235 @@ paths:
         '200': { description: Reset enforced; sessions revoked }
         '403': { description: Missing users.suspend permission }
         '503': { description: Feature disabled (flag off) }
+  # ╔══════════════════════════════════════════════════════════════════════╗
+  # ║ STEP-UP VERIFICATION — ESTD-D014 (EST-UAT-0385)                        ║
+  # ║ estate_member_settings.two_factor_enabled was advisory. This is the   ║
+  # ║ enforcement: a short-lived grant bound to (user, bearer token), minted║
+  # ║ by /verify below, required by the privileged routes listed in the ADR ║
+  # ║ (estate admin money/ban actions, /api/admin RBAC + user mutations,    ║
+  # ║ finance transfer retry/reverse, admin-console approvals).             ║
+  # ║ FEATURE_STEP_UP_ENFORCED defaults ON; gated routes fail closed —      ║
+  # ║ 403 step_up_required / step_up_expired, 503 step_up_unavailable.      ║
+  # ║ purpose=step_up codes are NOT issuable/redeemable via /api/auth/otp/*.║
+  # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/auth/step-up/challenge:
+    post:
+      operationId: stepUpChallenge
+      summary: Send a step-up verification code to the caller's account email
+      description: >
+        Authenticated only — the identity is taken from the bearer token, never
+        the body. Issues an email OTP with purpose step_up through the same
+        store, send budget and attempt ceiling as every other code.
+      tags: [StepUp]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '202':
+          description: Code sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  channel: { type: string, example: email }
+        '400': { description: "step_up_no_channel — the account has no email" }
+        '401': { description: Unauthenticated }
+        '429': { description: Send budget or resend cooldown exceeded }
+        '503': { description: "step_up_unavailable — OTP email service not wired" }
+  /api/auth/step-up/verify:
+    post:
+      operationId: stepUpVerify
+      summary: Redeem a step-up code, issuing a session-bound grant
+      description: >
+        On success a grant is written to auth_step_up_grants bound to the
+        caller's user id AND the sha256 of the exact bearer token presented —
+        a different login does not inherit it. TTL STEP_UP_TTL_SECONDS
+        (default 300, clamped 60..900).
+      tags: [StepUp]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, example: "482913" }
+      responses:
+        '200':
+          description: Grant issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  step_up:
+                    type: object
+                    properties:
+                      active: { type: boolean, example: true }
+                      expires_at: { type: string, format: date-time }
+                      ttl_seconds: { type: integer, example: 300 }
+        '400': { description: "invalid_code / code_expired / missing code" }
+        '401': { description: Unauthenticated }
+        '429': { description: Attempt ceiling or verify budget exceeded }
+        '503': { description: step_up_unavailable }
+  /api/auth/step-up/status:
+    get:
+      operationId: stepUpStatus
+      summary: Whether this session holds a live step-up grant
+      tags: [StepUp]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Grant state for the current bearer token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  step_up:
+                    type: object
+                    properties:
+                      active: { type: boolean }
+                      expires_at: { type: string, format: date-time, nullable: true }
+        '401': { description: Unauthenticated }
+        '503': { description: step_up_unavailable }
+  # ╔══════════════════════════════════════════════════════════════════════╗
+  # ║ SUPPORT VIEW-AS — ESTD-D028 (EST-UAT-0422)                             ║
+  # ║ No forged tokens: the agent keeps their own bearer token and names a  ║
+  # ║ backend-issued session via the X-Support-Impersonation header.        ║
+  # ║ Start requires the explicit support.impersonate permission (never     ║
+  # ║ conferred by super-admin) plus a completed step-up grant, a reason    ║
+  # ║ and a ticket ref. Sessions are time-boxed (<=60m) and READ-ONLY: any  ║
+  # ║ request carrying the header is refused unless it is a GET on the      ║
+  # ║ allow-list (see Start's read_routes). Start/stop/every request/every  ║
+  # ║ refusal is an append-only event in support_impersonation_events; the  ║
+  # ║ impersonated user sees the access at GET /api/auth/support-access and ║
+  # ║ is emailed a security notice. FEATURE_SUPPORT_IMPERSONATION_ENABLED   ║
+  # ║ defaults OFF; while off the header is refused, never ignored.         ║
+  # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/support/impersonation:
+    post:
+      operationId: startSupportImpersonation
+      summary: Open a read-only, audited support view-as session
+      description: >
+        Requires the explicit `support.impersonate` permission in the caller's
+        effective permission set (the super-admin bypass does not apply) and a
+        live step-up grant — always enforced, independent of
+        FEATURE_STEP_UP_ENFORCED, because this capability has no prior
+        behaviour to preserve. The target must exist, must not be the caller,
+        and must not hold a privileged role (super-admin, system-admin or
+        support-impersonation-agent).
+      tags: [SupportImpersonation]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_user_id, reason, ticket_ref]
+              properties:
+                target_user_id: { type: string, format: uuid }
+                reason: { type: string, minLength: 10, maxLength: 500 }
+                ticket_ref: { type: string, minLength: 3, maxLength: 64 }
+                duration_minutes: { type: integer, description: "defaults 15, capped by SUPPORT_IMPERSONATION_MAX_MINUTES (hard max 60)" }
+      responses:
+        '201':
+          description: Session opened
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  session:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      actor_user_id: { type: string, format: uuid }
+                      target_user_id: { type: string, format: uuid }
+                      reason: { type: string }
+                      ticket_ref: { type: string }
+                      mode: { type: string, example: read_only }
+                      started_at: { type: string, format: date-time }
+                      expires_at: { type: string, format: date-time }
+                  usage:
+                    type: object
+                    properties:
+                      header: { type: string, example: X-Support-Impersonation }
+                      read_only: { type: boolean, example: true }
+                      read_routes:
+                        type: array
+                        items: { type: string }
+                        example: ["GET /api/finance/estate/:id/dashboard", "GET /api/finance/estate/:id/profile"]
+        '400': { description: "invalid_target / reason_required / ticket_ref_required / invalid_duration" }
+        '401': { description: Unauthenticated }
+        '403': { description: "permission_required (missing support.impersonate) / step_up_required / target_protected / cannot_impersonate_self" }
+        '404': { description: target_not_found }
+        '503': { description: "feature_disabled (flag off) or unavailable" }
+  /api/support/impersonation/active:
+    get:
+      operationId: activeSupportImpersonation
+      summary: The caller's live view-as session, if any
+      tags: [SupportImpersonation]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The open session, or session=null
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  session: { type: object, nullable: true }
+        '401': { description: Unauthenticated }
+        '503': { description: "feature_disabled (flag off) or unavailable" }
+  /api/support/impersonation/{id}/stop:
+    post:
+      operationId: stopSupportImpersonation
+      summary: End the caller's own view-as session
+      description: >
+        Only the agent who opened the session can stop it (actor match, not
+        permission) so a de-provisioned agent can still close what they opened.
+      tags: [SupportImpersonation]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Session ended }
+        '401': { description: Unauthenticated }
+        '404': { description: session_not_found }
+        '503': { description: "feature_disabled (flag off) or unavailable" }
+  /api/auth/support-access:
+    get:
+      operationId: mySupportAccess
+      summary: The caller's support-access notice — every view-as of their account
+      description: >
+        The impersonated user's audit-visible notice: who opened a support
+        session on their account, why, under which ticket, and until when.
+        Readable regardless of FEATURE_SUPPORT_IMPERSONATION_ENABLED — history
+        is never hidden.
+      tags: [SupportImpersonation]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Support sessions targeting the caller, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  support_access:
+                    type: array
+                    items: { type: object }
+        '401': { description: Unauthenticated }
+        '503': { description: unavailable }
   # ╔══════════════════════════════════════════════════════════════════════╗
   # ║ ADMIN USER / RBAC ENDPOINT PARITY — #23 (Backend remainder)            ║
   # ║ Base: /api/admin/...  ·  bearerAuth  ·  deny-by-default permissions.   ║
@@ -5497,6 +5981,157 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses: { '200': { description: Report snapshot } }
+  # ── Estate platform lifecycle + legacy import (ESTD-D025 / ESTD-D034) ─────
+  # Platform routes under /api/finance/estate-admin/estates — sibling of the
+  # per-estate /estate/{id}/... surface (Gin radix, see estate_admin_routes.go).
+  # Lifecycle: RBAC estate.admin.lifecycle (super-admin / system-admin), flag
+  # FEATURE_ESTATE_LIFECYCLE_ENABLED. Import: RBAC estate.admin.import OR
+  # estate_admin membership of the target estate, flag
+  # FEATURE_ESTATE_IMPORT_ENABLED. Independently of both flags, every mutating
+  # /api/finance/estate/{id}/... route returns 423 ESTATE_NOT_ACTIVE while the
+  # estate is pending/suspended/closed (reads pass; emergencies, guard
+  # incident/checkout/sync and access-reduction revoke/blacklist exempt).
+  /api/finance/estate-admin/estates:
+    get:
+      operationId: estatePlatformListEstates
+      summary: List estates by lifecycle status (review queue when status=pending)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [pending, active, suspended, closed] } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 100, maximum: 500 } }
+      responses:
+        '200': { description: Estates, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/EstateLifecycle' } } } } } } }
+        '400': { description: Invalid status filter }
+        '403': { description: Missing estate.admin.lifecycle }
+  /api/finance/estate-admin/estates/{estateId}:
+    get:
+      operationId: estatePlatformGetEstate
+      summary: One estate's lifecycle state (status, reason, legal hold)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Lifecycle state, content: { application/json: { schema: { $ref: '#/components/schemas/EstateLifecycle' } } } }
+        '403': { description: Missing estate.admin.lifecycle }
+        '404': { description: Estate not found }
+  /api/finance/estate-admin/estates/{estateId}/lifecycle:
+    post:
+      operationId: estatePlatformTransitionEstate
+      summary: Apply a lifecycle transition — verify, reject, suspend, reactivate, close (reason required, audited)
+      description: >
+        pending → active (verify) | closed (reject); active ⇄ suspended
+        (suspend/reactivate); active|suspended → closed. Suspension refuses
+        mutating estate actions with 423 without deleting any record. The
+        estate admin is notified (rejections carry the reason).
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, reason]
+              properties:
+                action: { type: string, enum: [verify, reject, suspend, reactivate, close] }
+                reason: { type: string, minLength: 5, maxLength: 1000 }
+      responses:
+        '200': { description: New lifecycle state, content: { application/json: { schema: { $ref: '#/components/schemas/EstateLifecycle' } } } }
+        '400': { description: Invalid action or missing reason }
+        '403': { description: Missing estate.admin.lifecycle }
+        '404': { description: Estate not found }
+        '409': { description: Transition not allowed from the current status }
+  /api/finance/estate-admin/estates/{estateId}/legal-hold:
+    post:
+      operationId: estatePlatformSetLegalHold
+      summary: Place or lift a legal hold — blocks deletion/purge paths (reason required, audited)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled, reason]
+              properties:
+                enabled: { type: boolean }
+                reason: { type: string, minLength: 5, maxLength: 1000 }
+      responses:
+        '200': { description: New lifecycle state, content: { application/json: { schema: { $ref: '#/components/schemas/EstateLifecycle' } } } }
+        '400': { description: enabled or reason missing }
+        '403': { description: Missing estate.admin.lifecycle }
+        '404': { description: Estate not found }
+  /api/finance/estate-admin/estates/{estateId}/imports:
+    post:
+      operationId: estateImportDryRun
+      summary: Dry-run a legacy-data import — validates rows, dedupes on natural keys + external refs, writes only a dry_run batch
+      description: >
+        Validates units, resident memberships (mapped to EXISTING platform
+        accounts by email/phone — no auth accounts are created) and positive
+        opening dues balances (imported as ordinary pending dues invoices — a
+        receivable, not a money movement). Per-row problems land in the
+        exception report without blocking valid rows. Credit balances,
+        leases/deposits, payment history, visitor logs and election history
+        are out of scope (reported as exceptions or excluded).
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EstateImportRequest' }
+      responses:
+        '201': { description: Dry-run batch with counts + exception report, content: { application/json: { schema: { $ref: '#/components/schemas/EstateImportBatch' } } } }
+        '400': { description: Empty or oversized payload (max 5000 rows) }
+        '403': { description: Not a platform import operator or estate admin }
+        '404': { description: Estate not found }
+        '423': { description: Estate is suspended/closed — imports require pending|active }
+  /api/finance/estate-admin/estates/{estateId}/imports/{batchId}:
+    get:
+      operationId: estateImportGetBatch
+      summary: Import batch detail — dry-run or committed counts, exception report, destination aggregates
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Batch, content: { application/json: { schema: { $ref: '#/components/schemas/EstateImportBatch' } } } }
+        '403': { description: Not a platform import operator or estate admin }
+        '404': { description: Batch not found }
+  /api/finance/estate-admin/estates/{estateId}/imports/{batchId}/commit:
+    post:
+      operationId: estateImportCommit
+      summary: Commit a dry-run batch — Idempotency-Key required; re-plans the stored payload under an estate row lock, then applies it in one transaction
+      description: >
+        A retried commit with the same Idempotency-Key replays the stored
+        result (replayed: true); a different key on a committed batch is 409.
+        A failed opening-balance control total refuses the whole commit.
+        Re-importing a changed export is the delta re-apply: unchanged
+        external refs skip, changed refs update, new refs insert.
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: estateId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { description: Committed batch (or idempotent replay), content: { application/json: { schema: { $ref: '#/components/schemas/EstateImportBatch' } } } }
+        '400': { description: Idempotency-Key missing }
+        '403': { description: Not a platform import operator or estate admin }
+        '404': { description: Batch not found }
+        '409': { description: Batch already committed under a different Idempotency-Key }
+        '422': { description: Opening-balance control total mismatch — commit refused }
+        '423': { description: Estate is suspended/closed — imports require pending|active }
   # ── END ESTATE SUPER-APP block ────────────────────────────────────────────
   # ── Property Management Suite (unification umbrella; behind
   #    FEATURE_PROPERTY_SUITE_ENABLED) ──────────────────────────────────────
@@ -6902,7 +7537,7 @@ paths:
       summary: Provider async callback — status updates and inbound collections
       description: >-
         Signature-verified (HMAC-SHA256 over the raw body, `Webhook-Signature`;
-        Maplerad may send `X-Maplerad-Signature`). Verification FAILS CLOSED — an
+        Verification FAILS CLOSED — an
         unconfigured `*_WEBHOOK_SECRET` rejects every delivery rather than
         accepting unsigned ones.
 
@@ -6918,9 +7553,8 @@ paths:
       tags: [FX Orchestration]
       security: []
       parameters:
-        - { name: provider, in: path, required: true, schema: { type: string, enum: [maplerad, eversend] } }
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [vertofx, eversend] } }
         - { name: Webhook-Signature, in: header, required: false, schema: { type: string }, description: "HMAC-SHA256 of the raw body, hex-encoded." }
-        - { name: X-Maplerad-Signature, in: header, required: false, schema: { type: string }, description: Alternate header name used by Maplerad. }
       requestBody:
         required: true
         description: Raw provider event payload.
@@ -8517,9 +9151,14 @@ paths:
                 starts_at: { type: string, format: date-time }
                 ends_at: { type: string, format: date-time }
                 fee_bps: { type: integer, minimum: 0, maximum: 10000 }
+                venue_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90, description: "Stored only when FEATURE_EVENTS_SOCIAL is on" }
+                venue_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180, description: "Stored only when FEATURE_EVENTS_SOCIAL is on" }
+                venue_place_id: { type: string, nullable: true, description: "Stored only when FEATURE_EVENTS_SOCIAL is on" }
       responses:
         '200':
-          description: Event created (state DRAFT)
+          description: >-
+            Event created (state DRAFT). banner_url, like_count and liked in the request
+            are ignored: the response always has banner_url null, like_count 0 and liked false.
           content:
             application/json:
               schema:
@@ -8527,6 +9166,36 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/Event' }
+        '400': { description: "Invalid body, or venue_lat outside [-90, 90] / venue_lng outside [-180, 180]" }
+        '403': { description: "Organiser gate on and caller has not been approved as an event organiser (apply via POST /api/v1/onboarding/applications, merchant type mt-event-organiser)" }
+
+  /events/organiser/eligibility:
+    get:
+      operationId: organiserEligibility
+      summary: Organiser capability for the caller — gate state, may-create flag, and the onboarding merchant type to apply for
+      description: >
+        Mounted regardless of the FEATURE_EVENTS_ORGANISER_GATE flag: with the flag off it
+        reports gate_enabled=false and can_organise=true (legacy behaviour — any authenticated
+        user may organise). With the flag on, can_organise reflects the RBAC events.manage
+        permission granted by an approved event-organiser onboarding application.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Organiser eligibility
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      gate_enabled: { type: boolean }
+                      can_organise: { type: boolean }
+                      merchant_type_id: { type: string, example: mt-event-organiser }
+        '401': { description: Unauthenticated }
 
   /events/{id}:
     get:
@@ -8570,7 +9239,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/Event' }
-        '400': { description: Invalid body or invalid times (ends_at must be after starts_at) }
+        '400': { description: "Invalid body, invalid times (ends_at must be after starts_at), or venue_lat outside [-90, 90] / venue_lng outside [-180, 180]" }
         '403': { description: Caller is not the organiser }
         '404': { description: Event not found }
         '409': { description: Event is edit-locked in its current state }
@@ -9108,6 +9777,92 @@ paths:
         '400': { description: "Missing Idempotency-Key or invalid body" }
         '404': { description: Event or tier not found }
 
+  /events/{id}/purchase/card:
+    post:
+      operationId: initiateEventCardCheckout
+      summary: >-
+        Hold seats and open a Paystack card/bank-transfer checkout for a ticket
+        order (FEATURE_EVENTS_CARD_CHECKOUT — 404 while off). The seats are held
+        under the same tier lock as the wallet purchase for a bounded window
+        (hold_expires_at); the charge settles ONLY on a server-verified
+        transaction (signed webhook or server-side verify — never the client
+        redirect). The amount is always server-computed; there is no amount
+        field in the request.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tier_id]
+              properties:
+                tier_id: { type: string, format: uuid }
+                quantity: { type: integer, minimum: 1, maximum: 10, default: 1 }
+                promo: { type: string, description: "Optional promo code" }
+                promo_code: { type: string, description: "Alias of promo" }
+                email: { type: string, format: email, description: "Billing email; falls back to the account's registered email" }
+                callback_url: { type: string, format: uri, description: "Optional https post-payment redirect; dropped unless its host is allowlisted server-side" }
+      responses:
+        '201':
+          description: Seats held; Paystack checkout initialised for the frozen server-computed amount
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      reference: { type: string, description: "evtorder-<Idempotency-Key>" }
+                      authorizationUrl: { type: string }
+                      accessCode: { type: string }
+                      amountKobo: { type: integer, format: int64 }
+                      currency: { type: string, enum: [NGN] }
+                      quantity: { type: integer }
+                      status: { type: string, enum: [pending] }
+                      holdExpiresAt: { type: string, format: date-time }
+        '400': { description: "Missing/invalid Idempotency-Key or invalid body" }
+        '404': { description: "Card checkout unavailable (flag off), or event/tier not found" }
+        '409': { description: "Idempotency-Key reused for a different checkout, or sold out" }
+        '422': { description: "Not purchasable (state, sales window, invite-only, promo) or nothing to charge (free ticket — use the wallet checkout)" }
+
+  /events/card/{reference}/status:
+    get:
+      operationId: eventCardCheckoutStatus
+      summary: >-
+        Owner-only poll of a card checkout. A still-open intent is re-verified
+        server-side against Paystack (self-heal where webhooks cannot reach).
+        Never settles on a client claim alone.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: reference, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Checkout status; tickets are present once status is confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      reference: { type: string }
+                      status: { type: string, enum: [pending, processing, confirmed, expired, refunding, refunded] }
+                      amountKobo: { type: integer, format: int64 }
+                      tickets:
+                        type: array
+                        items: { $ref: '#/components/schemas/Ticket' }
+        '404': { description: "Unknown reference (also returned for another user's reference)" }
+
   /events/tickets/{ticketId}/gift:
     post:
       operationId: giftEventTicket
@@ -9308,6 +10063,287 @@ paths:
         '400': { description: "Missing Idempotency-Key or invalid body" }
         '404': { description: Vendor or wallet not found }
 
+  /events/{id}/payouts:
+    post:
+      operationId: requestOrganiserPayout
+      summary: Request settlement of the event's payable ticket proceeds (maker step — a checker must approve)
+      description: >-
+        Organiser payout rail (EVTC-D003), gated by FEATURE_EVENTS_ORGANISER_PAYOUTS
+        (flag off => 404). Eligible once the event is CLOSED and ends_at + the
+        configured hold window has passed. Payable = PAID orders net of
+        refunded/disputed orders, the event's fee_bps platform fee and the
+        configured reserve. Creates a PENDING payout; an admin checker must
+        approve it before the escrow -> organiser wallet / escrow ->
+        paymax_revenue legs post. The payee is always the event's organiser_id
+        and funds land in their Paymax wallet — bank withdrawal then runs
+        through the shared transfers rail (which owns bank-change controls), so
+        an in-flight payout can never be redirected by a bank-account change.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Payout created (status pending); a replay of the same Idempotency-Key returns the same payout
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserPayout' }
+        '400': { description: "Missing Idempotency-Key, or nothing is due to the organiser" }
+        '403': { description: "Caller is not the event's organiser, or the organiser is below the minimum KYC tier (fail-closed)" }
+        '404': { description: Event not found }
+        '409': { description: "Event not yet eligible (not CLOSED / inside hold window), a payout is already in flight, or the key was used for a different payout" }
+
+  /events/{id}/payout-statement:
+    get:
+      operationId: organiserPayoutStatement
+      summary: Per-event earnings statement for the owning organiser (gross, refunds, fees, reserve, paid, pending)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Earnings statement — reconciles to the ledger (gross = refunds + disputed + eligible; eligible = fees + reserve + net; net = paid + pending + balance)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/EventPayoutStatement' }
+        '403': { description: "Caller is not the event's organiser" }
+        '404': { description: Event not found }
+
+  /events/payouts/mine:
+    get:
+      operationId: myOrganiserPayouts
+      summary: List the caller's own payouts across all their events (per-merchant segregation)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Payout list (newest first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  payouts:
+                    type: array
+                    items: { $ref: '#/components/schemas/OrganiserPayout' }
+
+  /events/payouts/{payoutId}:
+    get:
+      operationId: getOrganiserPayout
+      summary: Read one of the caller's own payouts (404 for anyone else — existence/amounts are never disclosed)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: payoutId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Payout
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserPayout' }
+        '404': { description: Payout not found, or owned by a different organiser }
+
+  # ── Events social (FEATURE_EVENTS_SOCIAL) — likes, organiser follows and profiles ──
+  # Moves no money: no ledger posting, no Idempotency-Key. Like/follow are idempotent
+  # by construction (primary keys); a repeat returns the current state, not an error.
+  # Routing: /events/organisers/... and /events/following MUST be registered before any
+  # /events/{id} param route (radix-router conflict, as with marketplace /listings/media).
+  /events/{id}/like:
+    post:
+      operationId: likeEvent
+      summary: Like an event (idempotent; a repeat returns the current state)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Current like state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/LikeState' }
+        '404': { description: Event not found }
+    delete:
+      operationId: unlikeEvent
+      summary: Remove the caller's like from an event (idempotent; a repeat returns the current state)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Current like state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/LikeState' }
+        '404': { description: Event not found }
+
+  /events/organisers/{id}/follow:
+    post:
+      operationId: followOrganiser
+      summary: Follow an organiser (idempotent; a repeat returns the current state)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: Organiser (user) id }
+      responses:
+        '200':
+          description: Current follow state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/FollowState' }
+        '404': { description: Organiser not found }
+    delete:
+      operationId: unfollowOrganiser
+      summary: Unfollow an organiser (idempotent; a repeat returns the current state)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: Organiser (user) id }
+      responses:
+        '200':
+          description: Current follow state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/FollowState' }
+        '404': { description: Organiser not found }
+
+  /events/organisers/me:
+    put:
+      operationId: updateMyOrganiser
+      summary: Edit the caller's own organiser profile (display name, bio, banner URL)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrganiserPatch' }
+      responses:
+        '200':
+          description: The updated organiser profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserProfile' }
+        '400': { description: "Invalid body, or banner_url is not an http(s) link or a key under the caller's own banner prefix" }
+
+  /events/organisers/me/banner/presign:
+    post:
+      operationId: presignOrganiserBanner
+      summary: Get a presigned upload URL for the caller's organiser banner
+      description: >
+        Step 1 of a banner upload, same flow as the restaurant store-image presign. The backend chooses
+        the object key (organiser/<id>/banner/<random><ext>) and binds the Content-Type into the signature.
+        Step 2 is a direct PUT of the image to `upload_url` (no Authorization header); step 3 saves the
+        returned `object_key` as `banner_url` through PUT /events/organisers/me. Allowed: .png image/png,
+        .jpg/.jpeg image/jpeg, .webp image/webp (no SVG). The bucket comes from R2_BUCKET with no default;
+        503 means the server has no usable object storage.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_name, content_type]
+              properties:
+                file_name: { type: string, description: Used only for its extension, example: banner.jpg }
+                content_type: { type: string, example: image/jpeg }
+      responses:
+        '200':
+          description: Upload URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserBannerPresign' }
+        '400': { description: "Unsupported extension, non-image content type, or type/extension mismatch" }
+        '503': { description: Image uploads are not configured on this server }
+
+  /events/organisers/{id}:
+    get:
+      operationId: getOrganiser
+      summary: Organiser profile - display name, bio, banner, follower count, the caller's follow state and upcoming events
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: Organiser (user) id }
+      responses:
+        '200':
+          description: Organiser profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserProfile' }
+        '404': { description: Organiser not found }
+
+  /events/following:
+    get:
+      operationId: listFollowingEvents
+      summary: Following tab feed - upcoming events from organisers the caller follows
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0, minimum: 0 }
+      responses:
+        '200':
+          description: Events, soonest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Event' }
+
   # ── Events admin (RBAC events.*) — mounted at /api/events/admin/*, OUTSIDE the
   # /api/finance server base (see `servers:` above). Documented here as full
   # absolute paths, matching this spec's existing convention for admin routes
@@ -9367,6 +10403,157 @@ paths:
         '403':
           description: Vendor has not completed KYC (fail-closed, NL-10)
         '404': { description: Event or vendor not found }
+
+  /api/events/admin/payouts:
+    get:
+      operationId: adminListEventPayouts
+      summary: Organiser payout register, optionally filtered by status (events.admin.view)
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, processing, paid, failed] }
+      responses:
+        '200':
+          description: Payouts (newest first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  payouts:
+                    type: array
+                    items: { $ref: '#/components/schemas/OrganiserPayout' }
+        '400': { description: Unknown status filter }
+
+  /api/events/admin/payouts/queue:
+    get:
+      operationId: adminEventPayoutQueue
+      summary: Settlement queue — CLOSED events with their payable / pending / paid / reserve positions (events.admin.view)
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Queue lines, most recently ended events first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  queue:
+                    type: array
+                    items: { $ref: '#/components/schemas/EventPayoutQueueLine' }
+
+  /api/events/admin/events/{id}/payout-statement:
+    get:
+      operationId: adminEventPayoutStatement
+      summary: Any event's settlement statement (events.admin.view)
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Earnings statement (same shape the organiser sees)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/EventPayoutStatement' }
+        '404': { description: Event not found }
+
+  /api/events/admin/{id}/payouts:
+    post:
+      operationId: adminRequestEventPayout
+      summary: Admin trigger — create a PENDING organiser payout for an eligible event (maker step, events.settle)
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Payout created (status pending); a different checker must approve it
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserPayout' }
+        '400': { description: "Missing Idempotency-Key, or nothing is due" }
+        '403': { description: Organiser below the minimum KYC tier (fail-closed) }
+        '404': { description: Event not found }
+        '409': { description: "Event not eligible yet, or a payout is already in flight" }
+
+  /api/events/admin/payouts/{payoutId}/approve:
+    post:
+      operationId: adminApproveEventPayout
+      summary: Checker approval — pending -> processing and the escrow legs post; retry-safe, never double-pays (events.settle)
+      description: >-
+        Approver must differ from the requester (maker-checker). On approval the
+        payout posts DR escrow / CR organiser wallet (net) and DR escrow / CR
+        paymax_revenue (fee) under keys derived from the payout id, then flips
+        paid. Re-approving or the payout reconciler re-drives a stuck PROCESSING
+        payout idempotently. A failed transfer marks the payout failed only when
+        the ledger of record shows no leg posted; a partially-posted payout stays
+        processing and is re-driven — money can never be lost or double-moved.
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: payoutId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Payout after approval (paid, or processing when a partial retry is still settling)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserPayout' }
+        '400': { description: Missing Idempotency-Key }
+        '403': { description: Organiser below the minimum KYC tier (fail-closed) }
+        '404': { description: Payout not found }
+        '409': { description: "Payout is not approvable (failed), or the approver is the requester" }
+        '422': { description: "Payout execution failed; row is marked failed and its amount is re-offered to the next request" }
+
+  /api/events/admin/payouts/{payoutId}/reject:
+    post:
+      operationId: adminRejectEventPayout
+      summary: Checker rejection — pending -> failed without moving money (events.settle)
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: payoutId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Payout failed; its amount is re-offered to the next request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/OrganiserPayout' }
+        '400': { description: Reason required }
+        '404': { description: Payout not found }
+        '409': { description: Payout is not pending }
 
   # ── Crowdfunding ──────────────────────────────────────────────────────────────
   /crowdfunding/campaigns:
@@ -15397,30 +16584,51 @@ paths:
   # via any path.
 
   # ── Boosts ─────────────────────────────────────────────────────────────
-  /v1/marketplace/boosts/tiers:
+  /v1/marketplace/boosted:
     get:
-      operationId: mktListBoostTiers
-      summary: List boost tiers/pricing (backend-owned)
+      operationId: mktListBoostedListings
+      summary: The promoted section — listings with a live boost, most unspent value first
+      description: >
+        Public. Returns active listings carrying at least one active, unexpired
+        boost, ordered by the boost value still undelivered (money left), and
+        flagged `boosted`. Buyer-facing fields only — never the seller's
+        recorded coordinates.
       tags: [Marketplace]
-      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 20 } }
       responses:
         '200':
-          description: Boost tier list
+          description: Promoted listings
           content:
             application/json:
-              schema: { type: array, items: { $ref: '#/components/schemas/MktBoostTier' } }
+              schema:
+                type: object
+                properties:
+                  results: { type: array, items: { $ref: '#/components/schemas/MktBoostedListing' } }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+  /v1/marketplace/boosts/pricing:
+    get:
+      operationId: mktGetBoostPricing
+      summary: The boost price catalog — the admin's ₦/day rate and the durations it prices
+      tags: [Marketplace]
+      responses:
+        '200':
+          description: Boost pricing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostPricing' }
   /v1/marketplace/boosts/quote:
     get:
       operationId: mktGetBoostQuote
       summary: Preview a boost's authoritative price before purchasing
       description: >
-        Pass EITHER `tier` (a preset package) OR `ends_at` (a custom
-        date-range boost, RFC3339). Public — no auth required, pricing info
-        only. PurchaseBoost resolves the SAME quote server-side, so the price
-        shown here and what is actually charged can never drift.
+        Pass EITHER `duration_days` OR `ends_at` (RFC3339). Public — no auth
+        required, pricing info only. PurchaseBoost resolves the SAME quote
+        server-side, so the price shown here and what is actually charged can
+        never drift.
       tags: [Marketplace]
       parameters:
-        - { name: tier, in: query, required: false, schema: { type: string } }
+        - { name: duration_days, in: query, required: false, schema: { type: integer } }
         - { name: ends_at, in: query, required: false, schema: { type: string, format: date-time } }
       responses:
         '200':
@@ -16634,6 +17842,110 @@ paths:
         '400': { description: Missing Idempotency-Key header }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Verified KYC tier below the withdrawal floor }
+  /api/finance/restaurant/bank-accounts:
+    post:
+      operationId: restaurantAddBankAccount
+      summary: Save a restaurant payout bank account (transaction PIN required)
+      description: >
+        Runs bank name-enquiry. With FEATURE_BANK_ACCOUNT_NAME_MATCH on, the account is verified only
+        when the holder name the bank returns matches the owner's provider-verified legal name, that
+        identity is anchored on a BVN/NIN/vNIN check with no conflicting check, and the KYC ownership
+        gate is on. Otherwise it is saved with is_verified=false and name_match_status=review, and
+        withdrawals to it are refused until an admin decides. Re-adding an account saved before
+        matching existed re-runs the check on the same row. An owner with no verified identity
+        cannot add an account (422).
+      tags: [Restaurant]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bank_code, account_number, pin]
+              properties:
+                bank_name: { type: string }
+                bank_code: { type: string }
+                account_number: { type: string, pattern: '^[0-9]{10}$' }
+                account_name: { type: string, description: Ignored when name-enquiry succeeds }
+                pin: { type: string, description: Transaction PIN (step-up) }
+      responses:
+        '201':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  bank_name: { type: string }
+                  bank_code: { type: string }
+                  account_number_masked: { type: string }
+                  account_name: { type: string }
+                  is_verified: { type: boolean }
+                  is_default: { type: boolean }
+                  name_match_status: { type: string, enum: [matched, review, admin_approved, admin_rejected], description: Absent when name matching did not run }
+                  created_at: { type: string, format: date-time }
+        '400': { description: "Invalid account number, or transaction PIN missing" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Transaction PIN verification failed }
+        '422': { description: The owner has no verified identity (BVN or NIN) yet }
+        '503': { description: Step-up or name check unavailable (fail closed) }
+  /api/restaurant/admin/bank-accounts/held:
+    get:
+      operationId: adminListHeldRestaurantBankAccounts
+      summary: Payout accounts held because the holder name did not match
+      description: Oldest first, at most 200. Account numbers are masked.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Held accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        owner_id: { type: string, format: uuid }
+                        bank_name: { type: string }
+                        account_number_masked: { type: string }
+                        account_name: { type: string }
+                        name_match_score: { type: integer, minimum: 0, maximum: 100 }
+                        verified_name: { type: string, description: "Owner's provider-verified legal name, to compare with account_name" }
+                        verified_name_strong: { type: boolean, description: "Anchored on a BVN/NIN/vNIN check with no conflicting check" }
+                        kyb_legal_names: { type: array, items: { type: string }, description: Owner's approved KYB legal names (owner-typed; context only) }
+                        created_at: { type: string, format: date-time }
+        '403': { description: Missing restaurant.admin.onboarding }
+  /api/restaurant/admin/bank-accounts/{id}/name-match:
+    post:
+      operationId: adminDecideRestaurantBankAccountName
+      summary: Approve (account becomes verified) or reject a held payout account
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, reason]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                reason: { type: string, minLength: 1 }
+      responses:
+        '200': { description: Decided }
+        '400': { description: Missing reason }
+        '403': { description: Missing restaurant.admin.onboarding }
+        '404': { description: No account awaiting a name decision with that id }
+        '422': { description: Unknown decision }
   /api/restaurant/admin/menu-taxonomy/categories:
     get:
       operationId: adminListMenuTaxonomy

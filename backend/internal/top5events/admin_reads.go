@@ -95,18 +95,23 @@ type AdminDashboard struct {
 func (s *Service) AdminGetDashboard(ctx context.Context) (*AdminDashboard, error) {
 	d := &AdminDashboard{TicketMix: []map[string]any{}, GMVTrend: []map[string]any{}, Activity: []AdminDashboardActivity{}}
 
+	// GMV/sold are order-derived (event_orders.total_kobo, promo-net, PAID only):
+	// the previous tiers.sold*price derivation counted refunded tickets at full
+	// list price, treated comp issues as revenue, and ignored promo discounts —
+	// and it windowed on events.created_at, so today's sales on an older event
+	// never showed. Order created_at is the sale timestamp (EVT-UAT-208/234).
 	const totals = `
 		SELECT
-			COALESCE((SELECT SUM(t.sold * t.price_kobo) FROM event_ticket_tiers t
-			          JOIN events e ON e.id = t.event_id WHERE e.created_at::date = current_date), 0),
-			COALESCE((SELECT SUM(t.sold * t.price_kobo) FROM event_ticket_tiers t
-			          JOIN events e ON e.id = t.event_id WHERE e.created_at >= now() - interval '30 days'), 0),
-			COALESCE((SELECT SUM(t.sold) FROM event_ticket_tiers t
-			          JOIN events e ON e.id = t.event_id WHERE e.created_at::date = current_date), 0),
-			COALESCE((SELECT SUM(t.sold) FROM event_ticket_tiers t
-			          JOIN events e ON e.id = t.event_id WHERE e.created_at >= now() - interval '30 days'), 0),
-			COALESCE((SELECT SUM(t.sold * t.price_kobo) FROM event_ticket_tiers t), 0),
-			COALESCE((SELECT SUM(t.sold) FROM event_ticket_tiers t), 0),
+			COALESCE((SELECT SUM(o.total_kobo) FROM event_orders o
+			          WHERE o.status='PAID' AND o.created_at::date = current_date), 0),
+			COALESCE((SELECT SUM(o.total_kobo) FROM event_orders o
+			          WHERE o.status='PAID' AND o.created_at >= now() - interval '30 days'), 0),
+			COALESCE((SELECT COUNT(*) FROM event_orders o
+			          WHERE o.status='PAID' AND o.created_at::date = current_date), 0),
+			COALESCE((SELECT COUNT(*) FROM event_orders o
+			          WHERE o.status='PAID' AND o.created_at >= now() - interval '30 days'), 0),
+			COALESCE((SELECT SUM(o.total_kobo) FROM event_orders o WHERE o.status='PAID'), 0),
+			COALESCE((SELECT COUNT(*) FROM event_orders o WHERE o.status='PAID'), 0),
 			(SELECT COUNT(*) FROM events WHERE state = 'LIVE'),
 			(SELECT COUNT(*) FROM events WHERE state = 'SUBMITTED'),
 			(SELECT COUNT(*) FROM event_vendors WHERE active = true)`
@@ -127,9 +132,9 @@ func (s *Service) AdminGetDashboard(ctx context.Context) (*AdminDashboard, error
 	// take_rate / net_revenue_30d: platform's fee_bps varies per event, so this
 	// is a GMV-weighted average over the same 30-day window, not a flat rate.
 	const rev = `
-		SELECT COALESCE(SUM(t.sold * t.price_kobo * e.fee_bps / 10000), 0)
-		FROM event_ticket_tiers t JOIN events e ON e.id = t.event_id
-		WHERE e.created_at >= now() - interval '30 days'`
+		SELECT COALESCE(SUM(o.total_kobo * e.fee_bps / 10000), 0)
+		FROM event_orders o JOIN events e ON e.id = o.event_id
+		WHERE o.status='PAID' AND o.created_at >= now() - interval '30 days'`
 	if err := s.db.QueryRow(ctx, rev).Scan(&d.NetRevenue30dKobo); err != nil {
 		return nil, fmt.Errorf("events: admin dashboard revenue: %w", err)
 	}
@@ -200,12 +205,15 @@ type AdminEventSummary struct {
 	CreatedAt       string `json:"created_at"`
 }
 
+// tickets_sold = issued entitlements never refunded (comps count — they consume
+// capacity); gmv_kobo = money actually collected (PAID orders, promo-net). The
+// previous tiers.sold*price derivation overstated both — see AdminGetDashboard.
 const adminEventSummaryQuery = `
 	SELECT e.id, e.title, COALESCE(up.full_name,''), COALESCE(e.category,''),
 	       e.state, e.starts_at, e.created_at,
 	       COALESCE((SELECT SUM(t.capacity) FROM event_ticket_tiers t WHERE t.event_id=e.id), 0),
-	       COALESCE((SELECT SUM(t.sold) FROM event_ticket_tiers t WHERE t.event_id=e.id), 0),
-	       COALESCE((SELECT SUM(t.sold * t.price_kobo) FROM event_ticket_tiers t WHERE t.event_id=e.id), 0),
+	       COALESCE((SELECT COUNT(*) FROM event_tickets tk WHERE tk.event_id=e.id AND tk.state<>'REFUNDED'), 0),
+	       COALESCE((SELECT SUM(o.total_kobo) FROM event_orders o WHERE o.event_id=e.id AND o.status='PAID'), 0),
 	       EXISTS(SELECT 1 FROM event_wallets w WHERE w.event_id=e.id)
 	FROM events e
 	LEFT JOIN user_profiles up ON up.id = e.organiser_id`

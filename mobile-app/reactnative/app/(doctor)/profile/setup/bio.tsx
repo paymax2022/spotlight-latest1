@@ -57,7 +57,7 @@ export default function BioScreen() {
       <TeleHeader title="Professional bio" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <WizardProgress current={3} total={19} label="Professional bio" />
+          <WizardProgress current={3} total={18} label="Professional bio" />
 
           <SectionCard title="About you" style={styles.card}>
             <Text style={styles.hint}>Tell patients about your experience, focus areas and approach to care.</Text>
