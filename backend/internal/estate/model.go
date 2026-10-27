@@ -2,7 +2,9 @@ package estate
 
 import "time"
 
-// Estate is a gated community or building complex.
+// Estate is a gated community or building complex. The profile columns (timezone) and
+// duplicate_suspected come from the M02 governance work; both default to the platform's historical
+// implicit behaviour, so an estate created before it reads unchanged.
 type Estate struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -10,6 +12,9 @@ type Estate struct {
 	AdminID   string    `json:"admin_id"`
 	Status    string    `json:"status,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+
+	Timezone           string `json:"timezone,omitempty"`
+	DuplicateSuspected bool   `json:"duplicate_suspected,omitempty"`
 }
 
 // Resident is a verified occupant of an estate.
@@ -419,12 +424,20 @@ type EstateDashboard struct {
 	HouseholdCount     int                      `json:"household_count"`
 }
 
+// Estate membership roles. These are the only two values estate_residents.role accepts, so they are
+// also the only two an invite code may grant.
+const (
+	RoleResident    = "resident"
+	RoleEstateAdmin = "estate_admin"
+)
+
 // InviteCode is a shareable code to join an estate.
 type InviteCode struct {
 	ID        string    `json:"id"`
 	EstateID  string    `json:"estate_id"`
 	CreatedBy string    `json:"created_by"`
 	Code      string    `json:"code"`
+	Role      string    `json:"role"`
 	MaxUses   int       `json:"max_uses"`
 	UsedCount int       `json:"used_count"`
 	ExpiresAt time.Time `json:"expires_at"`
@@ -528,10 +541,13 @@ type TenancyRequest struct {
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
-// GenerateInviteCodeRequest is the body for POST /estate/:id/invite-codes.
+// GenerateInviteCodeRequest is the body for POST /estate/:id/invite-codes. Role is optional and
+// defaults to a plain resident; "estate_admin" mints a manager code (EST-UAT-0028), which is why
+// only an estate admin may create one.
 type GenerateInviteCodeRequest struct {
 	MaxUses   int       `json:"max_uses" binding:"required,min=1,max=500"`
 	ExpiresAt time.Time `json:"expires_at" binding:"required"`
+	Role      string    `json:"role" binding:"omitempty,oneof=resident estate_admin"`
 }
 
 // JoinWithCodeRequest is the body for POST /estate/join/invite.
@@ -565,10 +581,12 @@ type TenancyRequestBody struct {
 	AgreementURL string `json:"agreement_url"`
 }
 
-// CreateEstateRequest is the body for POST /estate.
+// CreateEstateRequest is the body for POST /estate. Timezone is optional and defaults to the
+// platform zone; an unknown zone name is refused rather than stored.
 type CreateEstateRequest struct {
-	Name    string `json:"name" binding:"required,min=2,max=200"`
-	Address string `json:"address"`
+	Name     string `json:"name" binding:"required,min=2,max=200"`
+	Address  string `json:"address"`
+	Timezone string `json:"timezone"`
 }
 
 // IssuePassRequest is the body for POST /estate/:id/passes.

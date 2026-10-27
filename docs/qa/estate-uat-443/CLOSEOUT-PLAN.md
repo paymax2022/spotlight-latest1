@@ -141,7 +141,8 @@ rows had to be *built* rather than re-matched. Delivered end to end:
 Rows: `0213`, `0216` → `PASSED`; `0221` → implementation `PARTIAL` (abstain API/UI still 2.2),
 which 2.2 below closes.
 Remaining wave-2 sub-slices: ~~**2.2** estate-b M11 governance (15 rows)~~ **done 2026-10-27**,
-**2.3** estate-a M02 lifecycle (13), **2.4** estate-a M03 occupancy (4), **2.5** lane-d
+~~**2.3** estate-a M02 lifecycle (planned 13, actually **14** rows)~~ **done 2026-10-27**,
+**2.4** estate-a M03 occupancy (4), **2.5** lane-d
 config/import (4) + the last pending draft. The flag-on/flag-off HTTP lanes (item 2) close the phase.
 
 ### Phase 2.2 — status: done 2026-10-27 (election governance workflow, estate-b M11, 15 rows) — committed `c4c69e0cd`
@@ -183,6 +184,43 @@ Rows: `0202`/`0203`/`0204`/`0205`/`0208`/`0209`/`0210`/`0211`/`0219`/`0221`/`022
 `0229`/`0230` → `IMPLEMENTED` / `PASSED`; `ESTB-D014` → `FIXED`; `0222` stays `NOT_RUN` by decision;
 `0228` stays `PARTIAL` (aggregates complete, export still absent — Phase 5 reporting cluster).
 Estate-b is now 57 PASSED / 5 FAILED / 6 BLOCKED / 48 NOT_RUN.
+
+### Phase 2.3 — status: done 2026-10-27 (estate profile, invitations and ownership governance, estate-a M02, 14 rows)
+
+The plan budgeted 13 rows; the RTM held 14 in scope (0021–0032, 0035, 0036), because 0030 was
+already `IMPLEMENTED` and only lacked an executed check rather than a build. Like 2.2 this is a
+**build plus a live lane**: `ESTA-D010` listed timezone, branding, revision history, duplicate
+review and ownership transfer as absent, so no executed check could have settled those rows.
+
+- `supabase/migrations/20271099000040_estate_profile_governance.sql` — additive: `estates.timezone`
+  (DB-checked against `pg_timezone_names` by trigger and constraint), `estates.branding`,
+  `estates.notice`, `estates.duplicate_suspected`, `estate_config_revisions` written by an AFTER
+  trigger under `pg_advisory_xact_lock`, `estate_owner_transfers` with a one-pending partial unique,
+  and the single `SECURITY DEFINER` writer `estate_owner_transfer_decide`.
+  `20271099000050_estate_invite_roles.sql` — additive: `estate_invite_codes.role`, CHECK-bounded to
+  the two roles `estate_residents` accepts, defaulting to `resident` so existing codes behave
+  unchanged. Both **re-applied verbatim** to prove idempotency (`EXEC-ESTA-024`). Never `supabase db reset`.
+- `backend/internal/estate/profile.go` + `profile_handler.go` + `internal/app/estate_profile_routes.go`
+  — six governance routes, every one scoped by `(estate, actor)` from the path; ownership moves only
+  on the incoming owner's accept, and the demoted former owner keeps membership but loses admin scope.
+- Live lanes: `live-2026-10-27/` — HTTP probe **140 PASS / 0 FAIL** (`EXEC-ESTA-026`), profile/invite/
+  transfer live-DB suite **10 PASS / 0 FAIL** (`EXEC-ESTA-025`), whole estate package
+  **173 + 50 subtests PASS / 0 FAIL / 0 SKIP** (`EXEC-ESTA-028`). The platform-queue cases needed a
+  reviewer, and no local user held any `estate.%` permission, so the lane applied a documented,
+  reversible `estate.admin.lifecycle` grant (`EXEC-ESTA-027`) instead of skipping them.
+- **Two real defects found by the HTTP lane, fixed in the slice**: `ESTA-D028` — `POST /estate`
+  accepted a name of spaces (gin's `required,min=2` counts characters) and queued a live estate; and
+  `ESTA-D029` — a class of caller mistakes (over-length notice, unknown `?column=`/`?status=`,
+  unparseable or self `to_user_id`, unknown timezone on create) answered 500 instead of 400. The
+  first probe run was 136 PASS / 4 FAIL; the clean re-run is what is committed, and the whitespace
+  estate the first run created was closed over the real `reject` transition, not deleted.
+- One probe failure was the probe's own mistake, recorded so it is not read as a product finding:
+  `Europe/Nairobi` is not an IANA zone (the real zone is `Africa/Nairobi`) — the server's 400 was correct.
+
+Rows: `0021`–`0032`, `0035`, `0036` → `IMPLEMENTED` / `PASSED`; `EST-UAT-0033`/`0034` (bulk estate/building
+import) stay `BLOCKED` as `ESTA-D016`, which is Phase 2.5; `ESTA-D010` → `FIXED`; `ESTA-D011` stays
+`PARTIAL_FIXED` — invite role-scoping closed 0028, but the five unconsulted staff roles and the
+binary super-role enum remain. Estate-a is now 49 PASSED / 62 BLOCKED / 4 NEEDS_MANUAL.
 
 ## Phase 3 — BFF guard authz and host approval (27 rows, no gate)
 

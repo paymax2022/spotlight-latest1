@@ -1,0 +1,27 @@
+# live-DB transcript — Phase 2.3 estate profile / invitations / ownership governance (M02)
+# captured 2026-10-27, uncached (-count=1)
+# command: cd backend && TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' go test ./internal/estate/ -count=1 -run 'TestLiveDB_Profile|TestLiveDB_Invite|TestLiveDB_OwnerTransfer' -v
+# database: local Supabase (supabase_db_spotlight, 127.0.0.1:54322)
+
+=== RUN   TestLiveDB_Profile_TimezoneDefaultsValidatesAndIsEnforcedInDB
+--- PASS: TestLiveDB_Profile_TimezoneDefaultsValidatesAndIsEnforcedInDB (4.80s)
+=== RUN   TestLiveDB_Profile_BrandingAndNoticeAreAdminOnlyAndBounded
+--- PASS: TestLiveDB_Profile_BrandingAndNoticeAreAdminOnlyAndBounded (0.99s)
+=== RUN   TestLiveDB_Profile_ConfigRevisionHistory
+--- PASS: TestLiveDB_Profile_ConfigRevisionHistory (0.66s)
+=== RUN   TestLiveDB_Profile_DuplicateEstateGoesToReviewQueue
+--- PASS: TestLiveDB_Profile_DuplicateEstateGoesToReviewQueue (1.04s)
+=== RUN   TestLiveDB_Invite_ManagerCodeGrantsAdminAndResidentCodeCannotDemote
+--- PASS: TestLiveDB_Invite_ManagerCodeGrantsAdminAndResidentCodeCannotDemote (2.38s)
+=== RUN   TestLiveDB_OwnerTransfer_AcceptIsTheOnlyWayOwnershipMoves
+--- PASS: TestLiveDB_OwnerTransfer_AcceptIsTheOnlyWayOwnershipMoves (0.68s)
+=== RUN   TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership
+=== RUN   TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership/declined_by_the_target
+=== RUN   TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership/withdrawn_by_the_owner
+--- PASS: TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership (1.40s)
+    --- PASS: TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership/declined_by_the_target (1.06s)
+    --- PASS: TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership/withdrawn_by_the_owner (0.28s)
+=== RUN   TestLiveDB_OwnerTransfer_ListingIsScopedToTheParties
+--- PASS: TestLiveDB_OwnerTransfer_ListingIsScopedToTheParties (1.05s)
+PASS
+ok  	spotlight/backend/internal/estate	17.277s

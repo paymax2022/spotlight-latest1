@@ -78,8 +78,17 @@ func (s *Service) WithVerificationRequired(on bool) *Service {
 	return s
 }
 
+// ErrEstateNameRequired — an estate must be given a name a resident can read. Gin's
+// binding:"required,min=2" counts three spaces as a name, so the refusal EST-UAT-0022 asks for has
+// to happen here, where the value is about to be stored.
+var ErrEstateNameRequired = errors.New("estate: a name is required")
+
 // CreateEstate creates a new estate and assigns the creator as estate_admin.
 func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEstateRequest) (*Estate, error) {
+	name := strings.TrimSpace(req.Name)
+	if len([]rune(name)) < 2 {
+		return nil, ErrEstateNameRequired
+	}
 	// SP-01: an approved estate-management merchant may create estates. When a
 	// gate is wired (FEATURE_ESTATE_MERCHANT_GATE on), it fails closed: an error
 	// or a false decision blocks creation so privileges are never self-granted.
@@ -96,13 +105,32 @@ func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEs
 	if s.verificationRequired {
 		status = EstateStatusPending
 	}
+	tz := strings.TrimSpace(req.Timezone)
+	if tz == "" {
+		tz = DefaultEstateTimezone
+	}
+	if err := validateEstateTimezone(tz); err != nil {
+		return nil, err
+	}
+	// EST-UAT-0023: a normalised (name, address) twin that is still live sends this application to
+	// the platform review queue instead of standing up a second live estate over the first one.
+	dupeID, dupeFound, derr := s.estateDuplicateLookup(ctx, name, req.Address)
+	if derr != nil {
+		return nil, derr
+	}
+	duplicateSuspected := dupeFound
+	if duplicateSuspected {
+		status = EstateStatusPending
+	}
 	e := &Estate{
-		ID:        uuid.New().String(),
-		Name:      req.Name,
-		Address:   req.Address,
-		AdminID:   adminID,
-		Status:    status,
-		CreatedAt: time.Now(),
+		ID:                 uuid.New().String(),
+		Name:               name,
+		Address:            req.Address,
+		AdminID:            adminID,
+		Status:             status,
+		CreatedAt:          time.Now(),
+		Timezone:           tz,
+		DuplicateSuspected: duplicateSuspected,
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -110,8 +138,9 @@ func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEs
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	const insertEstate = `INSERT INTO estates (id, name, address, admin_id, status) VALUES ($1,$2,$3,$4,$5)`
-	if _, err := tx.Exec(ctx, insertEstate, e.ID, e.Name, e.Address, e.AdminID, e.Status); err != nil {
+	const insertEstate = `INSERT INTO estates (id, name, address, admin_id, status, timezone, duplicate_suspected)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`
+	if _, err := tx.Exec(ctx, insertEstate, e.ID, e.Name, e.Address, e.AdminID, e.Status, e.Timezone, e.DuplicateSuspected); err != nil {
 		return nil, fmt.Errorf("estate: insert estate: %w", err)
 	}
 	const insertResident = `INSERT INTO estate_residents (estate_id, user_id, unit, role) VALUES ($1,$2,'',  'estate_admin')`
@@ -131,6 +160,13 @@ func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEs
 				`UPDATE estates SET geo_lat=$2, geo_lng=$3, plus_code=$4 WHERE id=$1`,
 				e.ID, lat, lng, plus)
 		}
+	}
+	if duplicateSuspected {
+		_ = s.audit(ctx, e.ID, adminID, "ESTATE_CREATE_DUPLICATE_SUSPECTED", "estate", e.ID,
+			map[string]any{"matched_estate_id": dupeID})
+		s.notify(ctx, e.ID, adminID, NotifEstateStatusChanged, "Estate needs review",
+			"An estate with the same name and address already exists, so this one was sent for platform review before it goes live.",
+			map[string]any{"estate_id": e.ID, "status": status, "duplicate_of": dupeID})
 	}
 	return e, nil
 }
@@ -1376,13 +1412,21 @@ func (s *Service) GetResidentCard(ctx context.Context, estateID, userID string) 
 	return &card, nil
 }
 
-// GenerateInviteCode creates a shareable join code (estate admin only).
+// GenerateInviteCode creates a shareable join code (estate admin only). The code carries the role it
+// grants, so an admin can invite a co-manager without leaving the estate (EST-UAT-0028).
 func (s *Service) GenerateInviteCode(ctx context.Context, estateID, adminID string, req GenerateInviteCodeRequest) (*InviteCode, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
 	if req.ExpiresAt.Before(time.Now()) {
 		return nil, errors.New("estate: expires_at must be in the future")
+	}
+	role := strings.TrimSpace(req.Role)
+	if role == "" {
+		role = RoleResident
+	}
+	if role != RoleResident && role != RoleEstateAdmin {
+		return nil, errors.New("estate: role must be resident or estate_admin")
 	}
 	// Generate a compact alphanumeric code (12 chars).
 	raw := uuid.New().String()
@@ -1393,18 +1437,25 @@ func (s *Service) GenerateInviteCode(ctx context.Context, estateID, adminID stri
 		EstateID:  estateID,
 		CreatedBy: adminID,
 		Code:      code,
+		Role:      role,
 		MaxUses:   req.MaxUses,
 		ExpiresAt: req.ExpiresAt,
 		CreatedAt: time.Now(),
 	}
 	const q = `
-		INSERT INTO estate_invite_codes (id, estate_id, created_by, code, max_uses, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6)`
-	_, err := s.db.Exec(ctx, q, ic.ID, ic.EstateID, ic.CreatedBy, ic.Code, ic.MaxUses, ic.ExpiresAt)
-	return ic, err
+		INSERT INTO estate_invite_codes (id, estate_id, created_by, code, max_uses, expires_at, role)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`
+	_, err := s.db.Exec(ctx, q, ic.ID, ic.EstateID, ic.CreatedBy, ic.Code, ic.MaxUses, ic.ExpiresAt, role)
+	if err != nil {
+		return nil, fmt.Errorf("estate: create invite code: %w", err)
+	}
+	_ = s.audit(ctx, estateID, adminID, "ESTATE_INVITE_CODE_CREATED", "invite_code", ic.ID,
+		map[string]any{"role": role, "max_uses": ic.MaxUses, "expires_at": ic.ExpiresAt.Format(time.RFC3339)})
+	return ic, nil
 }
 
-// JoinWithInviteCode validates and redeems an invite code, then adds the user as a resident.
+// JoinWithInviteCode validates and redeems an invite code, then adds the user with the role the code
+// carries.
 func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (*Resident, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -1414,10 +1465,10 @@ func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (
 
 	var ic InviteCode
 	const lookup = `
-		SELECT id, estate_id, max_uses, used_count, expires_at
+		SELECT id, estate_id, max_uses, used_count, expires_at, role
 		FROM estate_invite_codes WHERE code=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, lookup, code).Scan(
-		&ic.ID, &ic.EstateID, &ic.MaxUses, &ic.UsedCount, &ic.ExpiresAt,
+		&ic.ID, &ic.EstateID, &ic.MaxUses, &ic.UsedCount, &ic.ExpiresAt, &ic.Role,
 	); err != nil {
 		return nil, errors.New("estate: invalid invite code")
 	}
@@ -1437,22 +1488,42 @@ func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (
 		return nil, fmt.Errorf("estate: update invite code: %w", err)
 	}
 
-	// Insert resident (idempotent via ON CONFLICT).
+	// Insert resident. A manager code promotes an existing member; nothing an invite redeems can
+	// demote an admin or touch a removed or banned membership — those decisions belong to the admin
+	// routes, not to a code holder.
+	role := ic.Role
+	if role == "" {
+		role = RoleResident
+	}
 	r := &Resident{
 		ID:       uuid.New().String(),
 		EstateID: ic.EstateID,
 		UserID:   userID,
-		Role:     "resident",
+		Role:     role,
 	}
 	const insertR = `
 		INSERT INTO estate_residents (id, estate_id, user_id, unit, role)
-		VALUES ($1,$2,$3,'','resident')
-		ON CONFLICT (estate_id, user_id) DO NOTHING
+		VALUES ($1,$2,$3,'',$4)
+		ON CONFLICT (estate_id, user_id) DO UPDATE
+		SET role = CASE WHEN estate_residents.role = 'estate_admin'
+		                THEN estate_residents.role ELSE EXCLUDED.role END
+		WHERE estate_residents.deleted_at IS NULL AND estate_residents.banned_at IS NULL
 		RETURNING id, estate_id, user_id, unit, role, created_at`
-	_ = tx.QueryRow(ctx, insertR, r.ID, r.EstateID, r.UserID).Scan(
+	err = tx.QueryRow(ctx, insertR, r.ID, r.EstateID, r.UserID, role).Scan(
 		&r.ID, &r.EstateID, &r.UserID, &r.Unit, &r.Role, &r.CreatedAt,
 	)
-	return r, tx.Commit(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errors.New("estate: this estate membership is no longer active")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("estate: join by invite: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("estate: commit join: %w", err)
+	}
+	_ = s.audit(ctx, ic.EstateID, userID, "ESTATE_MEMBER_JOINED_BY_INVITE", "resident", r.ID,
+		map[string]any{"role": r.Role, "invite_code_id": ic.ID})
+	return r, nil
 }
 
 // RequestAccess creates a pending join request for an estate.

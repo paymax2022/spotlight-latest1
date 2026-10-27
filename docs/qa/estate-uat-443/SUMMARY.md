@@ -106,15 +106,15 @@ Deliberately **not** marked passed:
   half of `ESTD-D016` is closed by the same run, but no scheduled purge disposes expired visitor
   records.
 
-### Current counts (2026-10-27, after Phase 2.2)
+### Current counts (2026-10-27, after Phase 2.3)
 
 | Lane | Rows | Passed | Failed | Blocked | Not run | Needs manual | Other |
 |---|---|---|---|---|---|---|---|
-| estate-a | 115 | 35 | 0 | 76 | 0 | 4 | 0 |
+| estate-a | 115 | 49 | 0 | 62 | 0 | 4 | 0 |
 | estate-b | 116 | 57 | 5 | 6 | 48 | 0 | 0 |
 | estate-c | 116 | 18 | 55 | 41 | 0 | 2 | 0 |
 | estate-d | 96 | 51 | 0 | 25 | 0 | 19 | 1 |
-| **Total** | **443** | **161** | **60** | **148** | **48** | **25** | **1** |
+| **Total** | **443** | **175** | **60** | **134** | **48** | **25** | **1** |
 
 ### Phase 1 harvest (2026-10-27): the live-DB run does **not** cover estate-b/estate-c
 
@@ -208,22 +208,66 @@ recorded, not fixed** — the BFF `POST /api/v1/elections` still writes `status=
 app-created election cannot enter the workflow at all; that is a product decision about the
 mobile authoring surface, and re-marking `0202` past it would have hidden it.
 
+### Phase 2.3 (2026-10-27): estate profile, invitations and ownership governance (estate-a M02)
+
+Phase 2.1 and 2.2 built election machinery; this slice goes back to the estate object itself.
+M02 held 13 planned rows (14 in practice — `0036` branding was counted separately in the triage)
+and every one of them was `BLOCKED` on the same statement: `estates` had no lifecycle beyond the
+`status` column `caef65516` added, no timezone, no branding, no notice, no duplicate detection, no
+configuration revision history, no role-scoped invitation and no way to hand an estate to another
+owner. Like wave 2's earlier slices this is a **build**: the HTTP lane that finally settled them
+(`EXEC-ESTA-026`) could not have run a week ago because there was nothing to probe.
+
+| Piece | Change | Evidence |
+|---|---|---|
+| Schema | `20271099000040_estate_profile_governance.sql` (additive): `estates.timezone` validated against `pg_timezone_names` by the `estates_require_known_timezone_on_write` trigger + constraint, `estates.branding` (allow-list `logo_url`/`primary_color`/`accent_color`/`banner_url`, `#rrggbb`, http(s), ≤4096 B), `estates.notice` ≤2000 **runes**, `estates.duplicate_suspected` with a normalised (name,address) lookup, `estate_config_revisions` written by the AFTER trigger `estate_config_record_revision_on_write` under `pg_advisory_xact_lock`, and `estate_owner_transfers` with one-pending-per-target partial unique + the single `SECURITY DEFINER` writer `estate_owner_transfer_decide` (SQLSTATE 42501 / 55000 / P0002). Plus `20271099000050_estate_invite_roles.sql`: `estate_invite_codes.role` defaulting to `resident`, CHECK bounded by `estate_residents_role_check`, `(estate_id,role)` index. | `EXEC-ESTA-024` — both applied and **re-applied verbatim**, exit 0 with only `already exists, skipping` notices, then verified from the catalog and re-tested |
+| Service | `backend/internal/estate/profile.go` (profile read/update, duplicate lookup, config history, transfer request/list/decide) + `profile_handler.go`, wired by `backend/internal/app/estate_profile_routes.go` `RegisterEstateProfile`; `CreateEstate` now requires a ≥2-rune trimmed name and routes a normalised twin to the review queue instead of silently creating a duplicate. | `EXEC-ESTA-025` |
+| Lifecycle posture | Writes to a non-`active` estate are refused with `423` + `"code":"ESTATE_NOT_ACTIVE"` outside an explicit exemption list (SOS, guard incident/checkout/sync, code revoke/blacklist, offline log sync, legacy import); verify/reject/suspend/reactivate/close are RBAC-bound by `estate.admin.lifecycle` and every transition records a ≥5-rune reason. | `EXEC-ESTA-026` sections C–D |
+| Consoles/handlers | Manager invite codes mint with an explicit role and a resident code can no longer demote an existing `estate_admin`; ownership moves **only** when the target accepts — decline, withdraw and a mis-pathed decision all leave `admin_id` untouched, and the demoted former owner loses the estate's admin privileges. | `EXEC-ESTA-025`, `EXEC-ESTA-026` sections F/H |
+
+Verified over HTTP on a scratch-built backend at `:8095` (the `:8091`/`:8093`/`:8094` instances from
+other sessions were left running): **140 PASS / 0 FAIL in 10 sections** (`EXEC-ESTA-026`,
+`live-2026-10-27/probe-profile.out`); the new live-DB lane **10 PASS / 0 FAIL / 0 SKIP in 17.277s**
+(`EXEC-ESTA-025`); whole estate package afterwards **173 top-level + 50 subtests PASS / 0 FAIL / 0
+SKIP** (`EXEC-ESTA-028`). Environment build-up, the reviewer grant and the teardown state — `estates`
+= 9 closed / 1 active, and the active row is the pre-existing 2026-10-26 seed, not a probe estate —
+are recorded in `EXEC-ESTA-027` and `live-2026-10-27/README.md`.
+
+Ledger effects: `0021`, `0022`, `0023`, `0024`, `0025`, `0026`, `0027`, `0028`, `0029`, `0030`,
+`0031`, `0032`, `0035`, `0036` → `IMPLEMENTED` / `PASSED`; `ESTA-D010` (the estate-lifecycle schema
+defect) → `FIXED`; `ESTA-D011` stays `PARTIAL_FIXED` — `0028`'s manager invite closed one gap, five
+grantable roles are still consulted by no action path. **`ESTA-D028` and `ESTA-D029` were found by
+this lane's first run** (136/4): a whitespace-only estate name reached `201` and queued live, and
+over-length notice plus several caller mistakes returned `500` where `400` is the correct answer;
+both fixed in the same slice. One of the four original failures was a wrong premise in the probe
+(`Europe/Nairobi` is not an IANA zone — the server's `400` was right) and is documented rather than
+hidden.
+
+Limits written into the rows rather than glossed: `0031` is **policy storage, not timezone-aware
+scheduling** — no estate code reads `timezone` for computation yet; `0036`'s branding payload has **no
+client consumer** (grep over `frontend-web/app`, `frontend-web/src` and the mobile app found none);
+`0035` covers estate-level ownership only, not per-unit transfer; `0030` claims server-side scoping,
+not the mobile estate-switcher UX. `0033`/`0034` (bulk estate/building upload) stay `MISSING` /
+`BLOCKED` under `ESTA-D016`, which is a separate importer slice.
+
 ### Defect status changes
 
-Counted from `defects-<lane>.csv` on 2026-10-27, after Phase 2.2 (the roll-up table at the top is
+Counted from `defects-<lane>.csv` on 2026-10-27, after Phase 2.3 (the roll-up table at the top is
 the 2026-10-21 consolidation snapshot and has not been rewritten):
 
 | Lane | Defects | FIXED | PARTIAL_FIXED | RECORDED | S1/S2/S3/S4 | shared-platform |
 |---|---|---|---|---|---|---|
-| estate-a | 27 | 11 | 4 | 12 | 2/14/11/0 | 3 |
+| estate-a | 29 | 14 | 3 | 12 | 2/16/11/0 | 3 |
 | estate-b | 15 | 10 | 0 | 5 | 3/5/7/0 | 1 |
 | estate-c | 18 | 9 | 0 | 9 | 0/12/4/2 | 0 |
 | estate-d | 35 | 10 | 3 | 22 | 5/17/13/0 | 5 |
-| **Total** | **95** | **40** | **7** | **48** | **10/48/35/2** | **9** |
+| **Total** | **97** | **43** | **6** | **48** | **10/50/35/2** | **9** |
 
 `ESTA-D011`, `ESTA-D021`, `ESTA-D022` → `PARTIAL_FIXED` (commit `554173ae0`);
-`ESTA-D010` → `PARTIAL_FIXED` (commit `caef65516`; lifecycle machine + review queue exist, draft
-state / revision history / ownership transfer / timezone / branding do not);
+`ESTA-D010` → `FIXED` in Phase 2.3 (`caef65516` had taken it to `PARTIAL_FIXED` with the status
+machine + review queue; profile columns, revision history, owner transfers, role-scoped invites and
+the duplicate queue close the rest — the hash is recorded in `defects-estate-a.csv`);
+`ESTA-D028` + `ESTA-D029` → found **and** `FIXED` inside Phase 2.3;
 `ESTD-D025` → `FIXED` (commit `caef65516`, BFF mirror `fc6fd64f7`);
 `ESTD-D016` → `PARTIAL_FIXED` (commit `caef65516`; hold gate built, retention sweep not);
 `ESTD-D034` → `PARTIAL_FIXED` (commit `caef65516`; importer covers unit/resident/dues-balance only).
@@ -240,6 +284,9 @@ admin console, mobile ballot/receipt screens and this pack's ledgers), which is 
 `livedb-estate-suite-phase2.1.log`, `livedb-governance-phase2.2.log`,
 `livedb-estate-suite-phase2.2.log`) exist only in this working tree — the commit carries the
 tests that produce them, not their captured output. Re-running `E21`/`E23` regenerates them.
+Phase 2.3 avoided the problem by writing its transcripts as tracked `.out` files
+(`live-2026-10-27/probe-profile.out`, `livedb-estate-profile-phase2.3.out`,
+`livedb-full-suite-phase2.3.out`), so that lane's captured output travels with the commit.
 
 Recorded from the API_LIVE lanes, none of them fixed by this work:
 
@@ -264,9 +311,11 @@ malformed date (`NEEDS_MANUAL`).
 1. Turn on and live-verify the flags. **Done for `FEATURE_ESTATE_GUARD_GRANTS`** (EXEC-ESTA-017 with
    the flag on, EXEC-ESTA-018/019 as the flag-off control) — and that work is exactly what produced
    `ESTA-D024`, so the decision is now *whether to ship it on*, not whether it works.
-   `FEATURE_ESTATE_LIFECYCLE_ENABLED`, `FEATURE_ESTATE_VERIFICATION_REQUIRED` and
-   `FEATURE_ESTATE_IMPORT_ENABLED` still default to `false` and have never been exercised
-   over HTTP.
+   `FEATURE_ESTATE_LIFECYCLE_ENABLED` and `FEATURE_ESTATE_VERIFICATION_REQUIRED` were exercised over
+   HTTP in Phase 2.3 (EXEC-ESTA-026, 140 assertions on `:8095`) and behave as specified — but the
+   **flag-off** lane is still owed (Phase 2 exit criterion), so the shipped default has not yet been
+   compared against the verified posture. `FEATURE_ESTATE_IMPORT_ENABLED` remains unexercised over
+   HTTP.
 2. Wire host-arrival approval and staff grants into the BFF/mobile surface, or formally record the
    Go routes as the product surface for those cases. The BFF lane narrowed this to two concrete
    edits: authorise `/api/v1/visitor/gate/**` against `estate_staff_grants` (not membership alone),
@@ -293,8 +342,8 @@ still defaults to false. Fully fixed S1/S2 defects are only in the per-lane ledg
 | ESTD-D027 | S1 | estate-d | No maker-checker / approval-threshold controls on admin actions | PARTIAL_FIXED (`fc6fd64f7`: payout/ban/role-grant/threshold covered; vendor-verify and restriction still single-actor; behind `FEATURE_ESTATE_DUAL_CONTROL_ENABLED`) | no |
 | ESTD-D028 | S1 | estate-d | No support impersonation surface | RECORDED | yes |
 | ESTD-D034 | S1 | estate-d | No legacy-data import/migration tooling for estate | PARTIAL_FIXED (`caef65516`: unit/resident/dues-balance importer with dry-run + delta; rent balances, historic votes and payment rows have no import entity) | no |
-| ESTA-D010 | S2 | estate-a | Estate lifecycle & governance schema absent: no draft/publish/verify/deactivate/transfer/tz/branding | PARTIAL_FIXED (`caef65516`: status machine + review queue; no draft/revision history, transfer, timezone or branding) | no |
-| ESTA-D011 | S2 | estate-a | Estate role model is binary (resident/estate_admin): no finance/gate/election/facility/auditor/temporary delegations | PARTIAL_FIXED (`554173ae0`: `estate_staff_grants` + fail-closed `assertGate` for guard roles only; the other 5 roles are grantable but enforced nowhere) | no |
+| ESTA-D010 | S2 | estate-a | Estate lifecycle & governance schema absent: no draft/publish/verify/deactivate/transfer/tz/branding | **left this list on 2026-10-27** — `FIXED` by Phase 2.3; `estates.timezone/branding/notice/duplicate_suspected`, `estate_config_revisions` and `estate_owner_transfers` now exist and are live-proven (EXEC-ESTA-024…028). Bulk estate/building import (`ESTA-D016`) is still open | no |
+| ESTA-D011 | S2 | estate-a | Estate role model is binary (resident/estate_admin): no finance/gate/election/facility/auditor/temporary delegations | PARTIAL_FIXED (`554173ae0`: `estate_staff_grants` + fail-closed `assertGate` for guard roles only; the other 5 roles are grantable but enforced nowhere; Phase 2.3 added role-scoped invite codes) | no |
 | ESTA-D012 | S2 | estate-a | Merchant onboarding lacks withdraw/suspend/reactivate; resubmit only from NEEDS_MORE_INFO | RECORDED | yes |
 | ESTA-D017 | S2 | estate-a | QR payload unsigned; no offline cached-credential admission policy | RECORDED | no |
 | ESTA-D021 | S2 | estate-a | No per-gate assignment, supervisor-override permission, identity check, or device binding at the gate | PARTIAL_FIXED (`554173ae0`: guard admit authz fail-closed behind `FEATURE_ESTATE_GUARD_GRANTS`; override permission, identity check, device binding and `code.gate` all still absent). Live-confirmed 2026-10-26 (EXEC-ESTA-022) that the **BFF authorises gate work by membership alone** — an ungranted plain resident opened a shift, read the expected list and admitted a visitor | no |

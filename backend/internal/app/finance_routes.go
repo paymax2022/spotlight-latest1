@@ -1445,6 +1445,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// estate_admin_routes.go for the full rationale.
 		RegisterEstateAdmin(finance, pool, rbac, middleware.RequireAuthContext(supabase, rbac))
 		RegisterEstatePlatformLifecycle(finance, estateHandler, rbac, cfg.FeatureEstateLifecycleEnabled, cfg.FeatureEstateImportEnabled)
+		// Phase 2.3: estate profile, configuration history and ownership governance.
+		RegisterEstateProfile(estGroup, estateHandler)
+
 	}
 
 	// Property role registration rollout order, enforced in code: the flag only

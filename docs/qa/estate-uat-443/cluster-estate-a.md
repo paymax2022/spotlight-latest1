@@ -6,27 +6,30 @@ Lane: `estate-a` · worktree `/tmp/uat-estate-a` · branch `uat/estate-a` · 115
 ## Result summary
 
 Counted from `rtm-estate-a.csv` on 2026-10-27, after the Phase 1 evidence harvest
-(the RTM is the authority; the numbers in this file were the 2026-10-21 snapshot,
-which pre-dated the live-DB and API_LIVE runs):
+and the Phase 2.3 estate-governance lane (`live-2026-10-27/`, which moved 14 M02
+rows from BLOCKED to PASSED — the RTM is the authority; the prose in the module
+sections below was the 2026-10-21 snapshot, which pre-dated the live-DB and
+API_LIVE runs):
 
 | Module | Cases | PASSED | BLOCKED | NEEDS_MANUAL | FAILED | NOT_RUN |
 |---|---|---|---|---|---|---|
 | M01 Account, identity & merchant upgrade | 20 | 0 | 19 | 1 | 0 | 0 |
-| M02 Estate creation & governance | 16 | 0 | 16 | 0 | 0 | 0 |
+| M02 Estate creation & governance | 16 | 14 | 2 | 0 | 0 | 0 |
 | M03 Properties, units & occupancy | 16 | 0 | 16 | 0 | 0 | 0 |
 | M04 RBAC, delegation & tenancy isolation | 16 | 7 | 9 | 0 | 0 | 0 |
 | M05 Visitor invitations & access codes | 32 | 19 | 11 | 2 | 0 | 0 |
 | M06 Gate operations & security desk | 15 | 9 | 5 | 1 | 0 | 0 |
-| **Total** | **115** | **35** | **76** | **4** | **0** | **0** |
+| **Total** | **115** | **49** | **62** | **4** | **0** | **0** |
 
 `BLOCKED` here means "implementation reviewed in code, but no live backend/DB exists
 in this lane to exercise it" — see Environment below. It is not a failing verdict.
 That sentence is now only partly true for this lane: `live-2026-10-26/` records both a
 Go backend (`:8093`/`:8094`) and the Next.js BFF (`:3000`) driven over HTTP, which is
-what moved M04/M05/M06 to the PASSED counts above. The remaining 76 BLOCKED split
-23 `MISSING` (visitor cases with no implementation to exercise), 25 `PARTIAL` and 28
-`IMPLEMENTED` — the last two groups are code-reviewed only, with no executed check
-behind the row they sit on.
+what moved M04/M05/M06 — and now M02 — to the PASSED counts above. The remaining
+62 BLOCKED split 15 `MISSING` (visitor cases with no implementation to exercise,
+plus the two bulk-import cases 0033/0034), 21 `PARTIAL` and 26 `IMPLEMENTED` — the
+last two groups are code-reviewed only, with no executed check behind the row they
+sit on.
 
 ## Environment / execution honesty
 
@@ -71,16 +74,37 @@ suspend, reactivate endpoints; resubmit only from NEEDS_MORE_INFO.
 Estate-side: residency membership gate (`assertResident`) covers 0019;
 `SoftDeleteAccount` now refuses accounts with open invoices (ESTA-D013, fixed).
 
-## M02 — Estate creation & governance (largest gap)
+## M02 — Estate creation & governance
 
-`CreateEstate` produces a live estate immediately: the `estates` table has only
-id/name/address/admin_id — no status/lifecycle, verification, timezone,
-branding, owner transfer, or duplicate review (ESTA-D010, recorded, needs
-additive migrations). What exists and works: estate_config rules/subscription
-upserts with `ESTATE_CONFIG_SET` audit entries (0025, 0032-partial), invite
-codes + join requests (0028-partial — grants resident only, ESTA-D011),
-multi-estate partitioning by `:id` + membership (0030). Missing: 0023, 0024,
-0026, 0027, 0029, 0031, 0033–0036 (bulk import recorded as ESTA-D016).
+Closed by Phase 2.3 on 2026-10-27 (`live-2026-10-27/`; `ESTA-D010` → FIXED, two new
+defects found and fixed in the process). `POST /api/finance/estate` under
+`FEATURE_ESTATE_VERIFICATION_REQUIRED` creates an **application**, not a live estate:
+`status='pending'`, creator as owner, platform zone inherited, and every mutating
+`/estate/:id/**` call refused `423 ESTATE_NOT_ACTIVE` until a holder of
+`estate.admin.lifecycle` verifies it through `/estate-admin/estates`. Duplicate
+detection normalises (name, address) so a differently-typed twin lands in the queue
+flagged `duplicate_suspected` instead of becoming a second live estate, and a
+*rejected* twin stops blocking new applications. Profile governance is admin-only and
+bounded — timezone validated against `pg_timezone_names` by trigger and constraint,
+branding restricted to four allow-listed keys with `#rrggbb`/http(s) checks, notice
+capped at 2000 characters — and `estate_config` rule writes are versioned by the
+database (revision rows with `previous_value`, newest-first, nothing for untouched
+columns). Invite codes now carry a role (`resident` default, `estate_admin` for a
+manager) and a resident code cannot demote a sitting owner. Ownership moves only when
+the incoming owner accepts, through one `SECURITY DEFINER` writer, and the demoted
+former owner keeps membership but loses every admin surface; decline and withdraw both
+leave the estate where it was. Suspension and closure are enforced writes, not cosmetic
+status text.
+
+14 of 16 M02 rows now carry live evidence (EXEC-ESTA-024…028). The two that remain
+BLOCKED are `EST-UAT-0033/0034` (bulk estate/building upload and partial-import
+failure) — still `ESTA-D016`, Phase 2.5.
+
+Two limits to read with the PASSED rows: this is the **Go** surface, so nothing here
+speaks for the Next.js BFF the mobile app actually calls; and `branding`/`timezone` are
+stored, validated and served but no client renders them and no estate code reads the
+zone for computation, which is why those rows say so in their notes rather than
+claiming a rendered theme or timezone-aware scheduling.
 
 ## M03 — Properties, units & occupancy
 
@@ -143,19 +167,27 @@ and `uidx_estate_properties_unit_key` is present in the local database (checked 
 
 ## Defects
 
-27 defects in `defects-estate-a.csv` — 11 `FIXED`, 4 `PARTIAL_FIXED`, 12 `RECORDED`;
-by severity 2 S1, 14 S2, 11 S3. The 2 S1 are the missing `gate_sessions` write path
-and the gate-approve admission gap. The 4 `PARTIAL_FIXED` are the ones a later wave
-half-covered: `ESTA-D010`/`ESTA-D011`/`ESTA-D021`/`ESTA-D022` (see the status table in
-`SUMMARY.md`). `ESTA-D024`..`ESTA-D027` were recorded during the 2026-10-26 live runs:
+29 defects in `defects-estate-a.csv` — 14 `FIXED`, 3 `PARTIAL_FIXED`, 12 `RECORDED`;
+by severity 2 S1, 16 S2, 11 S3. The 2 S1 are the missing `gate_sessions` write path
+and the gate-approve admission gap. The 3 `PARTIAL_FIXED` are the ones a later wave
+half-covered: `ESTA-D011`/`ESTA-D021`/`ESTA-D022` (see the status table in
+`SUMMARY.md`) — `ESTA-D010` left that list on 2026-10-27 when Phase 2.3 closed it.
+`ESTA-D024`..`ESTA-D027` were recorded during the 2026-10-26 live runs:
 flag-gated estate discovery, the lookup branch that can never match, the CSV import
 that reports no per-row outcome, and the fixture regression that hid 23 red specs for
-five days. The remaining `RECORDED` rows are for orchestration (largest: estate
-lifecycle schema, delegated role model, resident approval flow, gate policy/device
+five days. `ESTA-D028`/`ESTA-D029` were found by the 2026-10-27 Phase 2.3 HTTP lane
+and fixed in the same slice — a whitespace-only estate name that created a live
+queued estate, and a class of caller mistakes (over-length notice, unknown query
+parameters, unparseable or self transfer target, unknown timezone on create) that
+answered 500 instead of 400. The remaining `RECORDED` rows are for orchestration
+(largest: delegated role model, resident approval flow, gate policy/device
 model — all need schema or cross-lane work).
 
 Shared-platform defects: ESTA-D012 (onboarding lifecycle), ESTA-D014 (vendor
 payout verification), ESTA-D018 (SMS delivery) — flagged `shared_platform=yes`.
 
-Shared files touched inside my domain only: none of the Go router files needed
-changes; `finance_routes.go` untouched.
+Shared files touched inside my domain only: Phase 2.3 added
+`backend/internal/app/estate_profile_routes.go` (new file, sibling of
+`RegisterEstateAdmin`) and one registration line in `finance_routes.go`, which also
+carries another session's ~30 uncommitted lines — so that file was staged by filtered
+index, not wholesale. No other session's file was edited.

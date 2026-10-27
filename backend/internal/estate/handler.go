@@ -68,6 +68,12 @@ func (h *Handler) CreateEstate(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
+	if errors.Is(err, ErrInvalidTimezone) || errors.Is(err, ErrEstateNameRequired) {
+		// EST-UAT-0022 / 0031: a missing mandatory field or an unknown zone is a refused request, not
+		// a server failure.
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
