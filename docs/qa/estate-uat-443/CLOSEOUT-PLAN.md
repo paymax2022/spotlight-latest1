@@ -185,7 +185,7 @@ Rows: `0202`/`0203`/`0204`/`0205`/`0208`/`0209`/`0210`/`0211`/`0219`/`0221`/`022
 `0228` stays `PARTIAL` (aggregates complete, export still absent — Phase 5 reporting cluster).
 Estate-b is now 57 PASSED / 5 FAILED / 6 BLOCKED / 48 NOT_RUN.
 
-### Phase 2.3 — status: done 2026-10-27 (estate profile, invitations and ownership governance, estate-a M02, 14 rows)
+### Phase 2.3 — status: done 2026-10-27 (estate profile, invitations and ownership governance, estate-a M02, 14 rows) — committed `b301468a5`
 
 The plan budgeted 13 rows; the RTM held 14 in scope (0021–0032, 0035, 0036), because 0030 was
 already `IMPLEMENTED` and only lacked an executed check rather than a build. Like 2.2 this is a

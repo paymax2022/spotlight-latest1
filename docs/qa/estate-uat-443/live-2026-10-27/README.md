@@ -13,7 +13,7 @@ correctly. EST-UAT-0033/0034 (bulk estate/building import) are not this slice �
 | Go backend | `APP_PORT=8095`, binary built to `/tmp/estate-uat-live/server-phase23.exe` (never into the repo) |
 | Flags forced for this lane | `FEATURE_ESTATE_ENABLED=true`, `FEATURE_ESTATE_LIFECYCLE_ENABLED=true`, `FEATURE_ESTATE_VERIFICATION_REQUIRED=true` |
 | Start command | `bash docs/qa/estate-uat-443/live-2026-10-27/03-run-server.sh` |
-| HEAD | `c45660cde`. The working tree also carries other sessions' unrelated edits (`internal/app/finance_routes.go` association-push/kv lines, `internal/association/**`, `internal/stays/**`, `internal/maps/**`, `kycverify`, `restaurant`, and an untracked `internal/estate/v1_handler.go`) — this lane touched none of them. |
+| HEAD | The lane ran on top of `c45660cde` and is itself commit `b301468a5` (profile service + handler + routes, both migrations, this evidence directory and the re-marked estate-a ledger). The working tree also carries other sessions' unrelated edits (`internal/app/finance_routes.go` association-push/kv lines, `internal/association/**`, `internal/stays/**`, `internal/maps/**`, `kycverify`, `restaurant`, and an untracked `internal/estate/v1_handler.go`) — this lane touched none of them, and `finance_routes.go` went in with only its three `RegisterEstateProfile` lines. |
 
 Port 8095 is deliberate: 8091/8093/8094 carry long-running local dev instances from other sessions,
 and a lane that restarts a server must not disturb them.

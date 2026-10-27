@@ -266,7 +266,8 @@ the 2026-10-21 consolidation snapshot and has not been rewritten):
 `ESTA-D011`, `ESTA-D021`, `ESTA-D022` → `PARTIAL_FIXED` (commit `554173ae0`);
 `ESTA-D010` → `FIXED` in Phase 2.3 (`caef65516` had taken it to `PARTIAL_FIXED` with the status
 machine + review queue; profile columns, revision history, owner transfers, role-scoped invites and
-the duplicate queue close the rest — the hash is recorded in `defects-estate-a.csv`);
+the duplicate queue close the rest — committed as `b301468a5`, which is now the `fix_commit` value in
+`defects-estate-a.csv` for `ESTA-D010`, `ESTA-D028` and `ESTA-D029`);
 `ESTA-D028` + `ESTA-D029` → found **and** `FIXED` inside Phase 2.3;
 `ESTD-D025` → `FIXED` (commit `caef65516`, BFF mirror `fc6fd64f7`);
 `ESTD-D016` → `PARTIAL_FIXED` (commit `caef65516`; hold gate built, retention sweep not);

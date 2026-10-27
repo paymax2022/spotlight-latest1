@@ -190,4 +190,5 @@ Shared files touched inside my domain only: Phase 2.3 added
 `backend/internal/app/estate_profile_routes.go` (new file, sibling of
 `RegisterEstateAdmin`) and one registration line in `finance_routes.go`, which also
 carries another session's ~30 uncommitted lines — so that file was staged by filtered
-index, not wholesale. No other session's file was edited.
+index, not wholesale. No other session's file was edited. The slice is commit
+`b301468a5`; `git show --stat` on it lists 26 files, all of them estate-a or M02 evidence.
