@@ -118,7 +118,7 @@ current shipped behaviour.
 - **Exit:** one documented default per flag with executed evidence at that default; migration
   rows applied and re-verified; defect statuses updated or the flag recorded as not-shipped.
 
-### Phase 2.1 — status: done 2026-10-27 (secret-ballot schema split, ESTB-D003/D011)
+### Phase 2.1 — status: done 2026-10-27 (secret-ballot schema split, ESTB-D003/D011) — committed `c4c69e0cd`
 
 Wave 2 is 36 schema/governance builds and flag lanes, not a harvest, so the two P0 secret-ballot
 rows had to be *built* rather than re-matched. Delivered end to end:
@@ -144,7 +144,7 @@ Remaining wave-2 sub-slices: ~~**2.2** estate-b M11 governance (15 rows)~~ **don
 **2.3** estate-a M02 lifecycle (13), **2.4** estate-a M03 occupancy (4), **2.5** lane-d
 config/import (4) + the last pending draft. The flag-on/flag-off HTTP lanes (item 2) close the phase.
 
-### Phase 2.2 — status: done 2026-10-27 (election governance workflow, estate-b M11, 15 rows)
+### Phase 2.2 — status: done 2026-10-27 (election governance workflow, estate-b M11, 15 rows) — committed `c4c69e0cd`
 
 Phase 2.1 made the ballot secret; these 15 rows were about everything that has to happen around a
 ballot, and none of it existed — elections went straight to `open`, candidates were whatever the

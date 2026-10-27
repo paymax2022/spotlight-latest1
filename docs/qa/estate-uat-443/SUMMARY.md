@@ -228,12 +228,18 @@ state / revision history / ownership transfer / timezone / branding do not);
 `ESTD-D016` → `PARTIAL_FIXED` (commit `caef65516`; hold gate built, retention sweep not);
 `ESTD-D034` → `PARTIAL_FIXED` (commit `caef65516`; importer covers unit/resident/dues-balance only).
 `ESTA-D027` → `FIXED` (fixture regression from `fc6fd64f7`; `status: 'active'` seeded in the four
-specs and 2 negative 423 specs added — repaired in the working tree, **uncommitted**, so its
-`fix_commit` column in `defects-estate-a.csv` is deliberately blank).
+specs and 2 negative 423 specs added, committed as `c4c69e0cd` on 2026-10-27).
 `ESTB-D003` + `ESTB-D011` → `FIXED` and `ESTB-D013` recorded **and** fixed in the same slice
 (Phase 2.1, above); `ESTB-D014` → `FIXED` in Phase 2.2 and `ESTB-D015` recorded there without a
-fix. Their migration, Go, BFF, admin and mobile changes are in the working tree, so the
-`fix_commit` cells stay blank until the Phase 2 commit exists.
+fix. Both phases shipped together as `c4c69e0cd` (migration, Go service and handlers, BFF routes,
+admin console, mobile ballot/receipt screens and this pack's ledgers), which is now the
+`fix_commit` value in `defects-estate-b.csv` for those four rows.
+
+**Evidence durability caveat:** `.gitignore:52` excludes `*.log`, so the transcripts named in
+`exec-estate-b.csv` and `live-2026-10-26/README.md` (`livedb-estate-suite.log`,
+`livedb-estate-suite-phase2.1.log`, `livedb-governance-phase2.2.log`,
+`livedb-estate-suite-phase2.2.log`) exist only in this working tree — the commit carries the
+tests that produce them, not their captured output. Re-running `E21`/`E23` regenerates them.
 
 Recorded from the API_LIVE lanes, none of them fixed by this work:
 

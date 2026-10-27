@@ -106,7 +106,7 @@ Missing after Phase 2.2: only ranked & multi-seat ballots (0222) — and that is
 |---|---|---|---|
 | ESTB-D001 | S1 | FIXED | BFF vote ignored eligibility rules + dues restrictions |
 | ESTB-D002 | S2 | FIXED | BFF getResidentContext ignored banned/deleted members |
-| ESTB-D003 | S2 | FIXED (Phase 2.1, uncommitted) | Ballot secrecy: receipt echo sealed, and the schema voter→choice link removed by the `election_ballots` split |
+| ESTB-D003 | S2 | FIXED (Phase 2.1, `c4c69e0cd`) | Ballot secrecy: receipt echo sealed, and the schema voter→choice link removed by the `election_ballots` split |
 | ESTB-D004 | S1 | FIXED | Dues BFF cross-key double-debit race (no atomic claim) |
 | ESTB-D005 | S1 | FIXED | Realtor BFF same race + foreign-key receipt misattribution |
 | ESTB-D006 | S2 | FIXED | Live tally exposed to all residents mid-poll |
@@ -114,10 +114,10 @@ Missing after Phase 2.2: only ranked & multi-seat ballots (0222) — and that is
 | ESTB-D008 | S3 | recorded | BFF meeting-create open to residents vs Go admin-only |
 | ESTB-D009 | S3 | recorded | Realtor PAYSTACK channel unimplemented (501) |
 | ESTB-D010 | S3 | shared_platform | Webhook signature/dup handling is platform-owned |
-| ESTB-D011 | S2 | FIXED (Phase 2.1, uncommitted) | Secret-ballot schema split: voter→choice unlinkability |
+| ESTB-D011 | S2 | FIXED (Phase 2.1, `c4c69e0cd`) | Secret-ballot schema split: voter→choice unlinkability |
 | ESTB-D012 | S3 | RECORDED | No partial/over-payment support on dues or rent (owned by Phase 4) |
-| ESTB-D013 | S3 | FIXED (Phase 2.1, uncommitted) | Resident election tally 500s on a candidate with NULL bio (`cannot scan NULL into *string`) — found by the new ballot test, not by a test written for it |
-| ESTB-D014 | S2 | FIXED (Phase 2.2, uncommitted) | Election governance workflow absent: no rule approval, no roll/challenge, no nominations, no per-unit weighting, no quorum/tie-break, no complaint/recount, no cancellation, no poll type — 15 rows, built in `E20`–`E22` |
+| ESTB-D013 | S3 | FIXED (Phase 2.1, `c4c69e0cd`) | Resident election tally 500s on a candidate with NULL bio (`cannot scan NULL into *string`) — found by the new ballot test, not by a test written for it |
+| ESTB-D014 | S2 | FIXED (Phase 2.2, `c4c69e0cd`) | Election governance workflow absent: no rule approval, no roll/challenge, no nominations, no per-unit weighting, no quorum/tie-break, no complaint/recount, no cancellation, no poll type — 15 rows, built in `E20`–`E22` |
 | ESTB-D015 | S3 | RECORDED | BFF `POST /api/v1/elections` writes `status='open'`, so an app-created election can never enter the governance workflow (every governance verb refuses a non-draft) — needs a product decision, not a silent re-point |
 
 See `defects-estate-b.csv` for full root causes; `rtm-estate-b.csv` for all 116 rows; `exec-estate-b.csv` for every executed check. `migrations-estate-b/` now holds only the superseded ballot-split draft — it was promoted and applied to the local database on 2026-10-27 (`E18`) as `supabase/migrations/20271099000010_estate_election_secret_ballot.sql`.
