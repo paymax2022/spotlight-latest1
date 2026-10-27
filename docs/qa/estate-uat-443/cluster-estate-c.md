@@ -6,6 +6,21 @@ Results: **18 PASSED · 41 BLOCKED · 55 FAILED (missing features, defects logge
 Implementation verdict: 30 IMPLEMENTED · 41 PARTIAL · 45 MISSING.
 Defects: 18 logged (ESTC-D001..D018) — **9 fixed this lane, 9 recorded** (feature builds beyond lane scope).
 
+Env premise lifted on 2026-10-26: three rows (`0232`, `0234`, `0341`) cite "no live backend" alongside a
+product gap in their evidence column. The local Supabase stack is reachable again and the `TestLiveDB`
+suite ran 60 PASS / 0 FAIL / 0 SKIP against it (EXEC-ESTA-014, `SUMMARY.md`), so the blocker for those
+rows is now the missing behaviour itself.
+
+That live-DB pass was completed on 2026-10-27 (`E16` in `exec-estate-b.csv`, `EXEC-C017` in
+`exec-estate-c.csv`, log `live-2026-10-26/livedb-estate-suite.log`). Read test-by-test instead of by
+suite name, it converts **no** estate-c row: the 60 tests cover dues, meetings, votes, escrow,
+delegation, notifications and vendor-payout mechanics, while this lane's open rows assert facility,
+document, announcement, procurement and export behaviours nothing exercises. The one estate-c row the
+run does speak to — `0286` (vendor payout) — stays `FAILED`, and its evidence now carries the executed
+proof (`_VendorPayout_RejectedWhenJobNotCompleted` + `_CompletedJobCreditsVendorWallet`: `status =
+'completed'` is the only gate; no PO, no invoice match). The details are in the "Phase 1 harvest"
+section of `SUMMARY.md`.
+
 ## Surfaces audited
 
 Two live API surfaces exist for the same estate domain, and they had drifted:

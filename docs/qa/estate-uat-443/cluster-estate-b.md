@@ -4,8 +4,32 @@ Lane: `uat/estate-b` · Worktree `/tmp/uat-estate-b` · Base `f0816a2c4` · 116 
 
 ## Environment (honest limits)
 
-- **No live backend.** `localhost:8080` is an unrelated `rx-api-gateway` container; no spotlight backend is running. `backend/.env` (main checkout) points at `127.0.0.1:54322` — local Supabase is **down** (`supabase status`: no container). `TEST_DATABASE_URL` unset → all `TestLiveDB_*` suites SKIP.
-- Executed evidence is therefore: `go build` (OK), `go vet` (OK), `go test` unit suites (all PASS), `npx vitest run tests/unit/estate` (48 PASS incl. 12 new), `npx tsc --noEmit` (clean), and structured code review. API_LIVE rows are BLOCKED by environment, not by product.
+- **No live backend.** `localhost:8080` is an unrelated `rx-api-gateway` container; no spotlight backend is running. `backend/.env` (main checkout) points at `127.0.0.1:54322` — local Supabase is **down** (`supabase status`: no container). `TEST_DATABASE_URL` unset → all `TestLiveDB_*` suites SKIP. **That limit was lifted on 2026-10-26**: the same local database is reachable again, the environment is documented in `live-2026-10-26/README.md`, and the `TestLiveDB` suite ran 60 PASS / 0 FAIL / 0 SKIP against it (EXEC-ESTA-014, `SUMMARY.md`; re-run 2026-10-27 as `E16` in `exec-estate-b.csv`). The one-at-a-time match of that run against this lane's rows is now **done** (Phase 1, 2026-10-27): it converted **0** estate-b rows, because every assertion in those 60 tests is about the dues/meetings/vote/escrow mechanics that lane-b's FAILED rows already describe as defective, not about the behaviours this lane's NOT_RUN rows expect. See the Phase 1 harvest section of `SUMMARY.md`.
+- Executed evidence is therefore: `go build` (OK), `go vet` (OK), `go test` unit suites (all PASS), `npx vitest run tests/unit/estate` (48 PASS incl. 12 new), `npx tsc --noEmit` (clean), and structured code review.
+- The 6 rows now marked `BLOCKED` are blocked by product or ownership, **not** by environment: `0127` (vacuous — there is no waiver endpoint to abuse), `0132` and `0153` (feature gap: no arrears aging buckets, no partial escrow deductions), `0134` (feature gap: `_Maintenance_OverdueNotifies` proves an overdue notice exists, but there are no due-date reminder keys to schedule), `0165` and `0178` (platform-owned webhook HMAC and payout batching, `ESTB-D010`).
+
+## Result tally (counted from `rtm-estate-b.csv`, 2026-10-27)
+
+| Module | Cases | PASSED | FAILED | BLOCKED | NOT_RUN |
+|---|---|---|---|---|---|
+| M07 — Dues, levies & assessments | 22 | 0 | 2 | 3 | 17 |
+| M08 — Rent, lease & landlord | 22 | 6 | 1 | 1 | 14 |
+| M09 — Payments, ledger, refunds & settlement | 26 | 14 | 2 | 2 | 8 |
+| M10 — Meetings & minutes | 16 | 8 | 0 | 0 | 8 |
+| M11 — Voting, polls & estate elections | 30 | 12 | 2 | 0 | 16 |
+| **Total** | **116** | **40** | **7** | **6** | **63** |
+
+`NOT_RUN` is used where the lane recorded no check at all — neither code review
+against the case's expectation nor an execution — and it is the largest outstanding
+item in this pack. The lane's own executions are `E0`–`E16` in `exec-estate-b.csv`;
+`E15` blocked exactly these suites (`PayDues` happy/concurrent, meetings FSM, vote
+concurrency, escrow resolve, `putIntent`) on 2026-10-21 because `TEST_DATABASE_URL` was
+unset, and `E16` re-ran them successfully on 2026-10-27 once the local database was
+reachable. Matching each test to the case it would actually settle (Phase 1) left this
+lane's counts at 40 PASSED: no NOT_RUN row here is settled by an existing executed
+check, so all 63 need new checks in Waves 4–5. `0134` was corrected from `NOT_RUN` to
+`BLOCKED` in the same pass because the live-DB maintenance test does prove an overdue
+notice path exists while the due-date reminder the case asks for does not.
 
 ## M07 — Dues, levies & assessments (22 cases: 0 impl-full, ~6 partial, 16 missing)
 

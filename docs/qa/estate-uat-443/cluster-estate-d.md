@@ -13,6 +13,25 @@ Artifacts: `rtm-estate-d.csv` (96 rows), `defects-estate-d.csv` (ESTD-D001..D035
 
 ## Results by module
 
+Current tally counted from `rtm-estate-d.csv` on 2026-10-26 (the RTM is the authority):
+
+| Module | Cases | PASSED | BLOCKED | NEEDS_MANUAL | Other |
+|---|---|---|---|---|---|
+| M18 Notifications & inbox | 14 | 11 | 2 | 1 | 0 |
+| M19 Integration & reliability | 15 | 6 | 6 | 3 | 0 |
+| M20 Security/privacy/fraud | 20 | 13 | 6 | 1 | 0 |
+| M21 A11y/perf/device | 20 | 5 | 4 | 11 | 0 |
+| M22 Super admin & audit | 15 | 8 | 4 | 2 | 1 |
+| M23 Migration/rollback | 12 | 8 | 3 | 1 | 0 |
+| **Total** | **96** | **51** | **25** | **19** | **1** |
+
+The single `Other` is EST-UAT-0423 (user disable), whose `result` cell keeps the
+lane's original `PARTIAL` verbatim — see the `Other` note in `SUMMARY.md`.
+
+Below is the 2026-10-21 authoring snapshot. It mixes the `implementation`
+(`PARTIAL→code-verified`, `MISSING`) and `result` vocabularies, which is why it no
+longer lines up with the RTM; it is kept for the reasoning, not for the counts.
+
 | Module | Cases | PASSED | PARTIAL→code-verified | MISSING | BLOCKED / NEEDS_MANUAL |
 |---|---|---|---|---|---|
 | M18 Notifications & inbox | 14 | 10 | 2 | 0 | 2 (0356 token, 0359 retention UI layer) |

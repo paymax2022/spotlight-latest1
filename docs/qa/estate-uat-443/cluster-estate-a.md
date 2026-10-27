@@ -5,28 +5,45 @@ Lane: `estate-a` · worktree `/tmp/uat-estate-a` · branch `uat/estate-a` · 115
 
 ## Result summary
 
+Counted from `rtm-estate-a.csv` on 2026-10-27, after the Phase 1 evidence harvest
+(the RTM is the authority; the numbers in this file were the 2026-10-21 snapshot,
+which pre-dated the live-DB and API_LIVE runs):
+
 | Module | Cases | PASSED | BLOCKED | NEEDS_MANUAL | FAILED | NOT_RUN |
 |---|---|---|---|---|---|---|
 | M01 Account, identity & merchant upgrade | 20 | 0 | 19 | 1 | 0 | 0 |
 | M02 Estate creation & governance | 16 | 0 | 16 | 0 | 0 | 0 |
 | M03 Properties, units & occupancy | 16 | 0 | 16 | 0 | 0 | 0 |
-| M04 RBAC, delegation & tenancy isolation | 16 | 0 | 16 | 0 | 0 | 0 |
-| M05 Visitor invitations & access codes | 32 | 18 | 12 | 1 | 0 | 0 |
-| M06 Gate operations & security desk | 15 | 3 | 12 | 0 | 0 | 0 |
+| M04 RBAC, delegation & tenancy isolation | 16 | 7 | 9 | 0 | 0 | 0 |
+| M05 Visitor invitations & access codes | 32 | 19 | 11 | 2 | 0 | 0 |
+| M06 Gate operations & security desk | 15 | 9 | 5 | 1 | 0 | 0 |
+| **Total** | **115** | **35** | **76** | **4** | **0** | **0** |
 
 `BLOCKED` here means "implementation reviewed in code, but no live backend/DB exists
 in this lane to exercise it" — see Environment below. It is not a failing verdict.
+That sentence is now only partly true for this lane: `live-2026-10-26/` records both a
+Go backend (`:8093`/`:8094`) and the Next.js BFF (`:3000`) driven over HTTP, which is
+what moved M04/M05/M06 to the PASSED counts above. The remaining 76 BLOCKED split
+23 `MISSING` (visitor cases with no implementation to exercise), 25 `PARTIAL` and 28
+`IMPLEMENTED` — the last two groups are code-reviewed only, with no executed check
+behind the row they sit on.
 
 ## Environment / execution honesty
 
 - `localhost:8080` is an **unrelated OrbStack `rx-api` container**, not this
-  backend — every path including `/` returns `{"error":"Unauthorized"}`. The Go
-  backend is not running locally and `supabase status` reports "Not linked".
-  No `TEST_DATABASE_URL` is reachable, so the `*_live_db_test.go` suites skip.
+  backend — every path including `/` returns `{"error":"Unauthorized"}`. At the time
+  this was written the Go backend was not running locally and `supabase status`
+  reported "Not linked", so no `TEST_DATABASE_URL` was reachable and the
+  `*_live_db_test.go` suites skipped. **That limit has since been lifted**: see
+  `live-2026-10-26/README.md`.
 - Executed: `go build` + `go vet` + `go test ./internal/estate/...` (green),
-  `npx vitest run tests/unit/estate` (57 tests green incl. the new 21-test spec
-  `visitor-gate-uat.spec.ts` written for the fixes below).
-- PASSED is only asserted where a unit spec or test run provides evidence.
+  `npx vitest run tests/unit/estate` (12 files / 116 tests, EXEC-ESTA-013), the
+  60-test `TEST_DATABASE_URL`-gated live-DB suite (EXEC-ESTA-014, re-run clean on
+  2026-10-27 as EXEC-ESTA-023 — 60 PASS / 0 FAIL / 0 SKIP, log
+  `live-2026-10-26/livedb-estate-suite.log`) and the BFF HTTP
+  probes (EXEC-ESTA-021 / EXEC-ESTA-022).
+- PASSED is only asserted where a unit spec, a live-DB test or an HTTP probe provides
+  evidence.
 
 ## Architecture note — two parallel visitor/gate stacks
 
@@ -124,10 +141,16 @@ estate_properties_unique_unit.pending.sql` (backs ESTA-D004).
 
 ## Defects
 
-23 defects in `defects-estate-a.csv`: 10 fixed in-lane (1 S1 session gap, 1 S1
-gate-approve admission gap, plus S2/S3), 13 recorded for orchestration (largest:
-estate lifecycle schema, delegated role model, resident approval flow, gate
-policy/device model — all need schema or cross-lane work).
+27 defects in `defects-estate-a.csv` — 11 `FIXED`, 4 `PARTIAL_FIXED`, 12 `RECORDED`;
+by severity 2 S1, 14 S2, 11 S3. The 2 S1 are the missing `gate_sessions` write path
+and the gate-approve admission gap. The 4 `PARTIAL_FIXED` are the ones a later wave
+half-covered: `ESTA-D010`/`ESTA-D011`/`ESTA-D021`/`ESTA-D022` (see the status table in
+`SUMMARY.md`). `ESTA-D024`..`ESTA-D027` were recorded during the 2026-10-26 live runs:
+flag-gated estate discovery, the lookup branch that can never match, the CSV import
+that reports no per-row outcome, and the fixture regression that hid 23 red specs for
+five days. The remaining `RECORDED` rows are for orchestration (largest: estate
+lifecycle schema, delegated role model, resident approval flow, gate policy/device
+model — all need schema or cross-lane work).
 
 Shared-platform defects: ESTA-D012 (onboarding lifecycle), ESTA-D014 (vendor
 payout verification), ESTA-D018 (SMS delivery) — flagged `shared_platform=yes`.

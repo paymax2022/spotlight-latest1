@@ -12,12 +12,12 @@ EST-UAT-0125,M07,Grace period boundary,P0,APPLICABLE,MISSING,backend/internal/es
 EST-UAT-0126,M07,Dues waiver approval,P0,APPLICABLE,MISSING,estate_dues_invoices.status='waived',NOT_RUN,E3,,Status exists;no waiver request/approve path
 EST-UAT-0127,M07,Unauthorized waiver,P0,APPLICABLE,IMPLEMENTED,service_dues.go(no waive fn),BLOCKED,E3,,Vacuous:no waiver endpoint exists to abuse
 EST-UAT-0128,M07,Split unit liability,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No owner/tenant liability split
-EST-UAT-0129,M07,Partial dues payment,P0,APPLICABLE,MISSING,"service_dues.go:240;dues.ts:payInvoice",FAILED,E3,ESTB-D012,Both paths enforce amount==invoice;no residual tracking
-EST-UAT-0130,M07,Overpayment handling,P0,APPLICABLE,MISSING,service_dues.go:240,FAILED,E3,ESTB-D012,Overpay rejected;no credit/refund policy
+EST-UAT-0129,M07,Partial dues payment,P0,APPLICABLE,MISSING,service_dues.go:240;dues.ts:payInvoice,FAILED,"E3; E16 executes the failure: TestLiveDB_PayDues_RejectsAmountOverride requires amount==invoice (exact message asserted), so partial payment is provably refused, not merely untested.",ESTB-D012,Both paths enforce amount==invoice;no residual tracking
+EST-UAT-0130,M07,Overpayment handling,P0,APPLICABLE,MISSING,service_dues.go:240,FAILED,E3; E16 executes the failure: same exact-amount guard rejects the overpay; no credit or refund policy exists to handle it.,ESTB-D012,Overpay rejected;no credit/refund policy
 EST-UAT-0131,M07,Dues dispute,P1,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No dispute entity/status
 EST-UAT-0132,M07,Dues arrears aging,P0,APPLICABLE,PARTIAL,"admin.go:ListResidents arrears;estate-admin/dues/reconciliation",BLOCKED,E3,ESTB-D007,Per-resident arrears total only;no buckets;join bug fixed
 EST-UAT-0133,M07,Bulk import balances,P1,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No import path
-EST-UAT-0134,M07,Dues reminders,P1,APPLICABLE,PARTIAL,"service_extras.go:MarkOverdueInvoices;notify",NOT_RUN,E3,,Invoice-created notif only;no scheduled reminder keys
+EST-UAT-0134,M07,Dues reminders,P1,APPLICABLE,PARTIAL,service_extras.go:MarkOverdueInvoices;notify,BLOCKED,E3; E16,,"Corrected by the 2026-10-27 run: a scheduled overdue notice DOES exist (TestLiveDB_Maintenance_OverdueNotifies: invoices_marked_overdue>=1, resident notification +1, invoice status=overdue). Still short of the case: no due-date reminder keys and the asserted count is >=1, not exact, so the reminder schedule itself is unproven."
 EST-UAT-0135,M07,Dues statement,P0,APPLICABLE,MISSING,src/server/estate,NOT_RUN,E3,,No statement endpoint
 EST-UAT-0136,M07,Approved write-off,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No write-off journal path
 EST-UAT-0137,M07,Locked period,P0,APPLICABLE,MISSING,backend/internal/estate,NOT_RUN,E3,,No accounting-period entity
@@ -30,7 +30,7 @@ EST-UAT-0143,M08,Annual rent invoice,P0,APPLICABLE,IMPLEMENTED,realtor_sign_leas
 EST-UAT-0144,M08,Rent proration on move in,P0,APPLICABLE,MISSING,realtor_leases,NOT_RUN,E3,,No proration formula
 EST-UAT-0145,M08,Rent due date and grace,P0,APPLICABLE,MISSING,realtor_invoices.due_date,NOT_RUN,E3,,due_date col only;no grace/late engine
 EST-UAT-0146,M08,Late fee ceiling,P0,APPLICABLE,MISSING,backend/internal/realtor,NOT_RUN,E3,,No late fee logic
-EST-UAT-0147,M08,Rent partial payment,P0,APPLICABLE,MISSING,realtor/invoices.ts(total_kobo),FAILED,E3,ESTB-D012,Full total_kobo required
+EST-UAT-0147,M08,Rent partial payment,P0,APPLICABLE,MISSING,realtor/invoices.ts(total_kobo),FAILED,E3; E16 executes the failure: full total_kobo enforced on the rental path as well (QuoteDuesInvoice/PayDues amount equality).,ESTB-D012,Full total_kobo required
 EST-UAT-0148,M08,Rent split payment,P1,APPLICABLE,MISSING,realtor_invoices,NOT_RUN,E3,,No multi-transaction allocation
 EST-UAT-0149,M08,Rent adjustment with approval,P0,APPLICABLE,MISSING,realtor_leases,NOT_RUN,E3,,No effective-dated rent change
 EST-UAT-0150,M08,Renew lease,P0,APPLICABLE,MISSING,realtor_leases,NOT_RUN,E3,,No renewal versioning
@@ -44,7 +44,7 @@ EST-UAT-0157,M08,Rent receipt download,P0,APPLICABLE,PARTIAL,"realtor_payments;r
 EST-UAT-0158,M08,Rental arrears follow-up,P1,APPLICABLE,MISSING,backend/internal/realtor,NOT_RUN,E3,,No arrears list/reminders
 EST-UAT-0159,M08,Rent vs dues separation,P0,APPLICABLE,IMPLEMENTED,"realtor_* vs estate_dues_* tables+ledger refs",PASSED,E3,,Separate invoices/payments/escrow;no cross-allocation
 EST-UAT-0160,M09,Card dues payment success,P0,APPLICABLE,IMPLEMENTED,"paystackcheckout/service.go;service_dues.go:PayDuesPaystackFunded",PASSED,"E1,E4",,Verify-then-pay;one receipt+balanced journal
-EST-UAT-0161,M09,Transfer rent payment,P0,APPLICABLE,MISSING,realtor/invoices.ts:147(501),FAILED,E3,ESTB-D009,PAYSTACK channel refused;wallet only
+EST-UAT-0161,M09,Transfer rent payment,P0,APPLICABLE,MISSING,realtor/invoices.ts:147(501),FAILED,"E3; E16 executes the failure: the Paystack-funded path is proved for DUES only (TestLiveDB_PayDuesPaystackFunded_*), never for a rent transfer; wallet-only enforcement confirmed.",ESTB-D009,PAYSTACK channel refused;wallet only
 EST-UAT-0162,M09,Failed transaction,P0,APPLICABLE,IMPLEMENTED,paystackcheckout ErrChargeNotSuccessful,PASSED,E4,,"Intent stays pending;no receipt (test PaymentFailureRefunds)"
 EST-UAT-0163,M09,Pending payment,P0,APPLICABLE,IMPLEMENTED,paystackcheckout CheckStatus,PASSED,E4,,Pending until verified outcome
 EST-UAT-0164,M09,Webhook duplicate delivery,P0,APPLICABLE,IMPLEMENTED,"ClaimForProcessing+intent dedup;webhooks.go(platform)",PASSED,E4,,ConcurrentDeliveriesActOnce test;platform seam shared
@@ -54,7 +54,7 @@ EST-UAT-0167,M09,Mismatch currency or amount,P0,APPLICABLE,IMPLEMENTED,OnChargeS
 EST-UAT-0168,M09,Cross-user payment reference,P0,APPLICABLE,IMPLEMENTED,"intent binds payer;PayDues owner check",PASSED,E4,,ForeignIdempotencyKeyIsRejected+invoice owner scope
 EST-UAT-0169,M09,Gateway timeout retry,P0,APPLICABLE,IMPLEMENTED,PutIntent idempotent,PASSED,E4,,Same key→same intent
 EST-UAT-0170,M09,Double click pay button,P0,APPLICABLE,IMPLEMENTED,"PutIntent dedup+ClaimForProcessing",PASSED,E4,,One intent;one capture
-EST-UAT-0171,M09,Partial allocation,P0,APPLICABLE,MISSING,"dues.ts;service_dues.go",FAILED,E3,ESTB-D012,Exact-amount only
+EST-UAT-0171,M09,Partial allocation,P0,APPLICABLE,MISSING,dues.ts;service_dues.go,FAILED,E3; E16 executes the failure: settlement is single-leg exact-amount (TestLiveDB_PayDues_HappyPath asserts one 5000000 credit for one key); no partial allocation path.,ESTB-D012,Exact-amount only
 EST-UAT-0172,M09,Mixed dues/rent allocation,P0,APPLICABLE,PARTIAL,"estate vs realtor payment paths",NOT_RUN,E3,,Separate ledgers;no combined checkout
 EST-UAT-0173,M09,Transaction fee visibility,P0,APPLICABLE,MISSING,dues/paystackcheckout,NOT_RUN,E3,,No fee computation/disclosure
 EST-UAT-0174,M09,Zero/negative amount rejected,P0,APPLICABLE,IMPLEMENTED,"CreateInvoice<=0;dues.ts:87;ledger validate",PASSED,"E2,E4",,Validated invoice+primitive level
@@ -96,10 +96,10 @@ EST-UAT-0209,M11,Candidate nomination,P0,APPLICABLE,MISSING,"CreateElection cand
 EST-UAT-0210,M11,Invalid nomination,P0,APPLICABLE,MISSING,election_candidates,NOT_RUN,E3,,No nomination entity to reject
 EST-UAT-0211,M11,Candidate acceptance,P0,APPLICABLE,MISSING,election_candidates,NOT_RUN,E3,,No accept/vet lifecycle
 EST-UAT-0212,M11,Election timeline boundaries,P0,APPLICABLE,IMPLEMENTED,"vote route status+window;Go CastVote window",PASSED,E3,,Server-side window on both paths
-EST-UAT-0213,M11,Cast valid secret ballot,P0,APPLICABLE,PARTIAL,"vote route;election_votes schema",FAILED,E4,ESTB-D003,Counts once+sealed receipt;schema still links voter→choice
+EST-UAT-0213,M11,Cast valid secret ballot,P0,APPLICABLE,PARTIAL,vote route;election_votes schema,FAILED,"E4; E16 executes the failure: TestLiveDB_Vote_ConcurrentDuplicateVote asserts election_votes keyed (election_id,voter_id) carrying candidate_id, i.e. voter->choice coupling is still on disk; it seeds NO eligibility-rules row, so it says nothing about roll freezing.",ESTB-D003,Counts once+sealed receipt;schema still links voter→choice
 EST-UAT-0214,M11,Duplicate vote attempt,P0,APPLICABLE,IMPLEMENTED,23505→409 both paths,PASSED,E4,,"One vote per (election,voter)"
 EST-UAT-0215,M11,Concurrent double vote,P0,APPLICABLE,IMPLEMENTED,"UNIQUE constraint+Redlock(Go)",PASSED,E1,,Atomic uniqueness at DB
-EST-UAT-0216,M11,Voting receipt anonymity,P0,APPLICABLE,PARTIAL,"ballot route sealed;mobile receipt",FAILED,E4,ESTB-D003,API sealed now;schema link remains(pending migration)
+EST-UAT-0216,M11,Voting receipt anonymity,P0,APPLICABLE,PARTIAL,ballot route sealed;mobile receipt,FAILED,"E4; E16 confirms the same schema coupling remains; the sealed-receipt half is proved by the unit layer, the DB unlinkability half is not.",ESTB-D003,API sealed now;schema link remains(pending migration)
 EST-UAT-0217,M11,Ballot modification,P0,APPLICABLE,IMPLEMENTED,no update path exists,PASSED,E3,,Immutable by absence of mutation API
 EST-UAT-0218,M11,Unauthorized tally access,P0,APPLICABLE,IMPLEMENTED,"mapElection withholds pre-publish;Go results-gate",PASSED,E4,ESTB-D006,Live-tally leak FIXED this lane
 EST-UAT-0219,M11,Revoke vote eligibility mid-poll,P0,APPLICABLE,PARTIAL,eligibility rules mutable,NOT_RUN,E3,,No frozen-roll/exception procedure
