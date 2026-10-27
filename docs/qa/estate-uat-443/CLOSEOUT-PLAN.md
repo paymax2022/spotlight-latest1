@@ -29,13 +29,13 @@ that is a legitimate end state; a fabricated pass is not.
 
 ## Phase 0 — disposition triage (done 2026-10-26)
 
-Every non-`PASSED` row carries exactly one disposition and one wave — 300 when Phase 0 ran, **299 now**
-after the Phase 1 harvest converted EST-UAT-0054 to `PASSED`.
+Every non-`PASSED` row carries exactly one disposition and one wave — 300 when Phase 0 ran, **297 now**
+after the Phase 1 harvest converted EST-UAT-0054 and Phase 2.1 converted EST-UAT-0213/0216.
 
 | Disposition | Meaning | Count |
 |---|---|---|
 | `E` | execute-only — code exists, needs an executed check | 36 |
-| `B` | build, then execute | 212 |
+| `B` | build, then execute | 210 |
 | `M` | manual / device / provider-matrix check | 29 |
 | `P` | platform-owned handoff | 22 |
 | `W` | waived | 0 (full close-out ordered) |
@@ -43,17 +43,18 @@ after the Phase 1 harvest converted EST-UAT-0054 to `PASSED`.
 | Wave | Rows | Disposition mix | Decision gate |
 |---|---|---|---|
 | 1 evidence harvest | 36 | 36 E | none |
-| 2 flags + schema promotion | 38 | 38 B | `flag-and-migration-policy` |
+| 2 flags + schema promotion | 36 | 36 B | `flag-and-migration-policy` |
 | 3 BFF guard authz + host approval | 27 | 27 B | none |
 | 4 payment completeness | 48 | 48 B | none |
 | 5 feature builds | 96 | 96 B | `phase5-build-depth` |
 | 6 device / provider matrix | 31 | 29 M + 2 B | `device-and-sandbox-access` |
 | 7 platform handoff | 23 | 22 P + 1 B | `platform-ownership` |
 
-These are the counts in the regenerated `closeout-triage.csv` (299 rows) after the Phase 1 harvest.
-The first pass over the same file, before any evidence was matched, read E 59 / B 194 / M 30 / P 17
-and waves 59/35/27/37/92/32/18; the difference is the 1 conversion, the 1 correction, the 9 hardened
-`FAILED` rows and the `ABSENT`-note reclassification described below.
+These are the counts in the regenerated `closeout-triage.csv` (297 rows) after Phase 1 and
+Phase 2.1. The first pass over the same file, before any evidence was matched, read
+E 59 / B 194 / M 30 / P 17 and waves 59/35/27/37/92/32/18; the difference is the 3 conversions,
+the 1 correction, the 9 hardened `FAILED` rows and the `ABSENT`-note reclassification described
+below.
 
 Rules are recorded per row in the `rule` column (`OVR` = set from a documented decision in
 `SUMMARY.md`; `R1`–`R8` = ledger-derived). The triage file asserts no evidence and changes no
@@ -92,9 +93,10 @@ test body was read to build an assertion inventory, and each open row was matche
   again on its own.
 - Ledger refreshed and validated: 443 rows, 0 ragged, counts `144 PASSED / 62 FAILED / 148 BLOCKED /
   63 NOT_RUN / 25 NEEDS_MANUAL / 1 PARTIAL`. `closeout-triage.csv` was regenerated from the corrected
-  ledgers (299 rows) and the Phase 0 tables above are its current contents.
+  ledgers (299 rows then; **297 after Phase 2.1**) and the Phase 0 tables above are its current
+  contents.
 
-## Phase 2 — flags and schema (38 rows, gate: `flag-and-migration-policy`)
+## Phase 2 — flags and schema (36 rows left, gate: `flag-and-migration-policy`)
 
 Eight estate flags in `backend/internal/config/config.go:1081-1088` all default **false**:
 `FEATURE_ESTATE_ENABLED`, `_MERCHANT_GATE`, `_GUARD_GRANTS`, `_DUES_PAYSTACK_CHECKOUT_ENABLED`,
@@ -103,15 +105,84 @@ Consequence: `ESTD-D025`/`D027`/`D034` read as FIXED/PARTIAL_FIXED but are unrea
 shipped default, and `ESTA-D024` (directory enumerable while `_GUARD_GRANTS` is off) is the
 current shipped behaviour.
 
-1. Review and promote the 6 `*.pending.sql` drafts (unique unit, one receipt per invoice,
-   secret ballot, booking overlap exclusion, notifications archive, estates lifecycle status) —
-   additive-only, version-collision check first.
+1. ~~Review and promote the 6 `*.pending.sql` drafts~~ — **corrected 2026-10-27**: only 1 draft was
+   ever left unapplied. 5 had already been promoted (`dc9c4163d`, 2026-10-22: unique-unit,
+   one-receipt-per-invoice, booking-overlap exclusion; `caef65516`, 2026-10-24: estates-lifecycle
+   status, import batches), and the secret-ballot draft was promoted and applied in Phase 2.1 below.
+   `estate_notifications_archive.pending.sql` is the only outstanding draft (sub-slice 2.5).
 2. Execute a flag-on **and** flag-off HTTP lane per flag, reusing the `live-2026-10-26/` harness
-   pattern (script + transcript), then record the ship decision per flag.
+   pattern (script + transcript), then record the ship decision per flag. **Not yet started** — all
+   8 flags still default to `false`.
 3. Close the two single-actor paths that keep `ESTD-D027` partial (vendor verify, restriction),
    and make caller-scoped estate discovery its own always-on rule (`ESTA-D024`).
 - **Exit:** one documented default per flag with executed evidence at that default; migration
   rows applied and re-verified; defect statuses updated or the flag recorded as not-shipped.
+
+### Phase 2.1 — status: done 2026-10-27 (secret-ballot schema split, ESTB-D003/D011)
+
+Wave 2 is 36 schema/governance builds and flag lanes, not a harvest, so the two P0 secret-ballot
+rows had to be *built* rather than re-matched. Delivered end to end:
+
+- `supabase/migrations/20271099000010_estate_election_secret_ballot.sql` — additive anonymous
+  `election_ballots` (no voter column, **no timestamp column**, nullable `candidate_id` = abstention)
+  plus a count-parity-gated backfill that clears `election_votes.candidate_id`; applied to the running
+  local database twice to prove idempotent re-apply (`E18`). Never `supabase db reset` — the database
+  holds learner and resident data.
+- One atomic writer `estate_cast_vote()` shared by Go `CastVote` and the BFF vote route, so neither
+  path can persist a voter→choice row; `23505` → already voted, `23503` → invalid candidate.
+- All four read paths re-pointed to ballots (`GetResults`, admin `ElectionResults`, admin
+  `ElectionAudit`, BFF `mapElection`), with abstentions counted in turnout but crediting no candidate.
+- New live-DB test `TestLiveDB_Vote_BallotCannotBeJoinedToVoter` asserts the join is impossible
+  (column scan + rejoin returns 0) instead of merely unused. Suite re-run: 61 top-level PASS /
+  30 subtests / 0 FAIL / 0 SKIP in 83.969s (`live-2026-10-26/livedb-estate-suite-phase2.1.log`).
+- Found and fixed a real defect on the way: `ESTB-D013` — `GetResults` 500s on a candidate with a
+  NULL bio.
+
+Rows: `0213`, `0216` → `PASSED`; `0221` → implementation `PARTIAL` (abstain API/UI still 2.2),
+which 2.2 below closes.
+Remaining wave-2 sub-slices: ~~**2.2** estate-b M11 governance (15 rows)~~ **done 2026-10-27**,
+**2.3** estate-a M02 lifecycle (13), **2.4** estate-a M03 occupancy (4), **2.5** lane-d
+config/import (4) + the last pending draft. The flag-on/flag-off HTTP lanes (item 2) close the phase.
+
+### Phase 2.2 — status: done 2026-10-27 (election governance workflow, estate-b M11, 15 rows)
+
+Phase 2.1 made the ballot secret; these 15 rows were about everything that has to happen around a
+ballot, and none of it existed — elections went straight to `open`, candidates were whatever the
+create call listed, and there was no roll, challenge, nomination, vetting, quorum, tie-break,
+complaint, recount, cancellation or poll type. Like 2.1 this is a **build**, not a harvest: no
+executed check could settle these rows because nothing implemented them.
+
+- `supabase/migrations/20271099000020_estate_election_governance.sql` — additive: 7 governance
+  tables, 12 `elections` columns, a strictly wider status CHECK (`cancelled`), `election_votes.unit_id`
+  behind two partial uniques replacing the unconditional one, RLS on every new table with a
+  service-role-only policy. Applied to the local database and **re-applied verbatim** to prove
+  idempotency (`E20`). Never `supabase db reset`.
+- `estate_cast_vote(election, voter, candidate, unit)` — the single writer from 2.1, upgraded to
+  enforce cancellation, window, candidate ownership, abstention, frozen-roll membership and
+  unit-holding in the statement that writes; the 3-arg form delegates so no caller escapes it.
+- `backend/internal/estate/election_governance.go` + handler, 29 estate-scoped routes, every one
+  bound by `(estate, election)` from the path rather than trusting an election id.
+- `frontend-admin/app/admin/estate/elections/_governance.tsx` (workflow console that surfaces the
+  service's refusal verbatim) and the mobile/BFF half of abstention + per-unit ballots; the BFF
+  receipt read had to stop using `maybeSingle()` because a weighted voter legitimately has several
+  participation rows.
+- Deliberately **not** built: ranked-choice / multi-seat (`0222`). Both need the counter to know a
+  voter's ordered or repeated selections — the persisted voter→choice link `0216` (PASSED) exists
+  to forbid. Recorded as a design decision in the migration header, not silently deferred.
+- Verification: `E21` 13 top-level PASS / 3 subtests / 0 FAIL / 0 SKIP in 26.694s
+  (`live-2026-10-26/livedb-governance-phase2.2.log`); `E23` re-ran the whole estate live-DB suite to
+  prove the 2.1 secrecy and one-vote tests still pass after `election_votes` lost its unconditional
+  unique; `E22` = frontend-web 146 estate tests + 21-test governance BFF spec, admin console
+  transport 8 tests, mobile voting 49 tests, `tsc --noEmit` clean in both web projects, `go build`
+  / `go vet` / estate + association packages clean.
+- Found on the way, **recorded rather than re-marked past**: `ESTB-D015` — BFF
+  `POST /api/v1/elections` writes `status='open'`, so an app-created election can never enter the
+  workflow, because every governance verb refuses a non-draft by design.
+
+Rows: `0202`/`0203`/`0204`/`0205`/`0208`/`0209`/`0210`/`0211`/`0219`/`0221`/`0223`/`0225`/`0227`/
+`0229`/`0230` → `IMPLEMENTED` / `PASSED`; `ESTB-D014` → `FIXED`; `0222` stays `NOT_RUN` by decision;
+`0228` stays `PARTIAL` (aggregates complete, export still absent — Phase 5 reporting cluster).
+Estate-b is now 57 PASSED / 5 FAILED / 6 BLOCKED / 48 NOT_RUN.
 
 ## Phase 3 — BFF guard authz and host approval (27 rows, no gate)
 

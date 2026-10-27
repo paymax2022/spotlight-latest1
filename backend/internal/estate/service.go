@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
@@ -211,7 +212,7 @@ func (s *Service) ScanVisitorPass(ctx context.Context, estateID, scannerID, qrCo
 	return p, nil
 }
 
-// CreateElection creates a new election within an estate (admin only).
+// CreateElection creates a new election within an estate (admin only), in draft.
 func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string, req CreateElectionRequest) (*Election, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, creatorID); err != nil {
 		return nil, err
@@ -219,8 +220,46 @@ func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string
 	if req.EndsAt.Before(req.StartsAt) {
 		return nil, errors.New("estate: ends_at must be after starts_at")
 	}
-	if len(req.Candidates) < 2 {
-		return nil, errors.New("estate: election must have at least 2 candidates")
+	kind := req.Kind
+	if kind == "" {
+		kind = ElectionKindBinding
+	}
+	if !validKind(kind) {
+		return nil, fmt.Errorf("estate: invalid kind %q", kind)
+	}
+	weighting := req.Weighting
+	if weighting == "" {
+		weighting = WeightingOnePersonOneVote
+	}
+	if !validWeighting(weighting) {
+		return nil, fmt.Errorf("estate: invalid weighting %q", weighting)
+	}
+	quorumType := req.QuorumType
+	if quorumType == "" {
+		quorumType = QuorumTypeNone
+	}
+	if !validQuorumType(quorumType) {
+		return nil, fmt.Errorf("estate: invalid quorum_type %q", quorumType)
+	}
+	if quorumType == QuorumTypePercent && (req.QuorumValue < 1 || req.QuorumValue > 100) {
+		return nil, errors.New("estate: a percent quorum must be between 1 and 100")
+	}
+	if quorumType == QuorumTypeCount && req.QuorumValue < 1 {
+		return nil, errors.New("estate: a count quorum must be at least 1 ballot")
+	}
+	tieBreak := req.TieBreak
+	if tieBreak == "" {
+		tieBreak = TieBreakNone
+	}
+	if !validTieBreak(tieBreak) {
+		return nil, fmt.Errorf("estate: invalid tie_break %q", tieBreak)
+	}
+	nominatedLater := req.NominationOpensAt != nil || req.NominationClosesAt != nil
+	if len(req.Candidates) < 2 && !nominatedLater {
+		return nil, errors.New("estate: an election needs at least 2 candidates, or a nomination window to gather them")
+	}
+	if nominatedLater && req.NominationOpensAt != nil && req.NominationClosesAt != nil && !req.NominationClosesAt.After(*req.NominationOpensAt) {
+		return nil, errors.New("estate: nomination_closes_at must be after nomination_opens_at")
 	}
 
 	el := &Election{
@@ -233,15 +272,27 @@ func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string
 		Status:      "draft",
 		CreatedBy:   creatorID,
 		CreatedAt:   time.Now(),
+		Kind:        kind,
+		Weighting:   weighting,
+		QuorumType:  quorumType,
+		QuorumValue: req.QuorumValue,
+		TieBreak:    tieBreak,
 	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("estate: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	const insertEl = `INSERT INTO elections (id, estate_id, title, description, starts_at, ends_at, status, created_by) VALUES ($1,$2,$3,$4,$5,$6,'draft',$7)`
-	if _, err := tx.Exec(ctx, insertEl, el.ID, el.EstateID, el.Title, el.Description, el.StartsAt, el.EndsAt, el.CreatedBy); err != nil {
+	const insertEl = `
+		INSERT INTO elections (id, estate_id, title, description, starts_at, ends_at, status, created_by,
+		                       kind, weighting, quorum_type, quorum_value, tie_break,
+		                       nomination_opens_at, nomination_closes_at)
+		VALUES ($1,$2,$3,$4,$5,$6,'draft',$7,$8,$9,$10,$11,$12,$13,$14)`
+	if _, err := tx.Exec(ctx, insertEl, el.ID, el.EstateID, el.Title, el.Description, el.StartsAt, el.EndsAt,
+		el.CreatedBy, el.Kind, el.Weighting, el.QuorumType, el.QuorumValue, el.TieBreak,
+		req.NominationOpensAt, req.NominationClosesAt); err != nil {
 		return nil, fmt.Errorf("estate: insert election: %w", err)
 	}
 	for _, c := range req.Candidates {
@@ -252,11 +303,15 @@ func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string
 			return nil, fmt.Errorf("estate: insert candidate: %w", err)
 		}
 	}
-	return el, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("estate: commit: %w", err)
+	}
+	return el, nil
 }
 
 // CastVote casts a vote in an open election using a Redlock-protected atomic check.
-// Enforces one-vote-per-resident via UNIQUE(election_id, voter_id).
+// One ballot per voter — or per held unit in a one_vote_per_unit election — is enforced by
+// the partial unique keys on election_votes, inside estate_cast_vote.
 func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID string, req CastVoteRequest) (*Vote, error) {
 	if err := s.assertResident(ctx, estateID, voterID); err != nil {
 		return nil, err
@@ -266,8 +321,10 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 	if err := s.enforceNotRestricted(ctx, estateID, voterID, ActionVote); err != nil {
 		return nil, err
 	}
-	// Per-election eligibility gate (Block 31): KYC / payment / resident-type rules.
-	elig, err := s.CheckVoterEligibility(ctx, estateID, electionID, voterID)
+	// Per-election eligibility gate (Block 31): KYC / payment / resident-type rules, plus
+	// the frozen roll once one exists — a mid-poll revocation must answer "no" here rather
+	// than letting the voter discover it as a database error (EST-UAT-0219).
+	elig, err := s.EligibilityOnRoll(ctx, estateID, electionID, voterID)
 	if err != nil {
 		return nil, err
 	}
@@ -281,6 +338,9 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 		return nil, errors.New("estate: election not found")
 	}
 	now := time.Now()
+	if status == "cancelled" {
+		return nil, errors.New("estate: this election has been cancelled")
+	}
 	if status != "open" || now.Before(startsAt) || now.After(endsAt) {
 		return nil, errors.New("estate: election is not currently open for voting")
 	}
@@ -299,31 +359,55 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 		ID:          uuid.New().String(),
 		ElectionID:  electionID,
 		VoterID:     voterID,
-		CandidateID: req.CandidateID,
+		CandidateID: strings.TrimSpace(req.CandidateID),
+		UnitID:      strings.TrimSpace(req.UnitID),
 		CastAt:      time.Now(),
 	}
-	// Replay guard: UNIQUE(election_id, voter_id) enforces one vote per voter per
-	// election at the DB. ON CONFLICT DO NOTHING makes a double-vote a clean no-op
-	// (no row returned) so we can distinguish a duplicate vote from an invalid
-	// candidate (FK violation → err), instead of relying on a raw constraint error.
-	const q = `
-		INSERT INTO election_votes (id, election_id, voter_id, candidate_id)
-		VALUES ($1,$2,$3,$4)
-		ON CONFLICT (election_id, voter_id) DO NOTHING
-		RETURNING id`
-	var insertedID string
-	if err := s.db.QueryRow(ctx, q, v.ID, v.ElectionID, v.VoterID, v.CandidateID).Scan(&insertedID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("estate: you have already voted in this election")
-		}
-		return nil, errors.New("estate: invalid candidate for this election")
+	v.Abstained = v.CandidateID == ""
+	// ESTB-D003: the choice and the identity no longer share a row. estate_cast_vote
+	// writes the participation registry and the anonymous ballot in one statement, so
+	// a ballot can never exist without its participation row (or the reverse). The
+	// partial unique keys still make a double vote impossible (per voter, or per unit in a
+	// weighted election); the function raises 23505 on replay, 23503 for a foreign
+	// candidate or missing election, 42501 for a cancelled election or a voter off the
+	// frozen roll, 55000 outside the window, and 23514 for a weighting violation.
+	const q = `SELECT ballot_id, participation_id FROM estate_cast_vote($1,$2,$3,$4)`
+	var candidateArg, unitArg any
+	if v.CandidateID != "" {
+		candidateArg = v.CandidateID
 	}
+	if v.UnitID != "" {
+		unitArg = v.UnitID
+	}
+	var ballotID, participationID string
+	err = s.db.QueryRow(ctx, q, electionID, voterID, candidateArg, unitArg).Scan(&ballotID, &participationID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			switch pgErr.Code {
+			case "23505":
+				return nil, errors.New("estate: you have already voted in this election")
+			case "23503":
+				return nil, errors.New("estate: invalid candidate for this election")
+			case "42501":
+				return nil, errors.New("estate: this election is cancelled, or you are not on the published roll")
+			case "55000":
+				return nil, errors.New("estate: election is not currently open for voting")
+			case "23514":
+				return nil, errors.New("estate: that ballot does not match how this election counts votes")
+			}
+		}
+		return nil, err
+	}
+	v.ID = ballotID
 	return v, nil
 }
 
 // GetResults returns the tally for a closed/tallied election.
 // ESTATE-AUTHZ: caller must be a resident/member — results are estate-private
 // (previously unauthenticated: any authed user could read any estate's tally).
+// The count itself comes from Service.tally, the same query the outcome, the certified
+// result and a recount run, so no two read paths can disagree about who won.
 func (s *Service) GetResults(ctx context.Context, estateID, electionID, userID string) ([]Candidate, error) {
 	if err := s.assertResident(ctx, estateID, userID); err != nil {
 		return nil, err
@@ -335,26 +419,7 @@ func (s *Service) GetResults(ctx context.Context, estateID, electionID, userID s
 	if status != "closed" && status != "tallied" {
 		return nil, errors.New("estate: results only available after election closes")
 	}
-	const q = `
-		SELECT ec.id, ec.election_id, ec.name, ec.bio, COUNT(ev.id) AS votes
-		FROM election_candidates ec
-		LEFT JOIN election_votes ev ON ev.candidate_id = ec.id
-		WHERE ec.election_id = $1
-		GROUP BY ec.id ORDER BY votes DESC`
-	rows, err := s.db.Query(ctx, q, electionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Candidate
-	for rows.Next() {
-		var c Candidate
-		if err := rows.Scan(&c.ID, &c.ElectionID, &c.Name, &c.Bio, &c.Votes); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
+	return s.tally(ctx, electionID)
 }
 
 // SendElectionReminders notifies residents who have NOT yet voted in an open

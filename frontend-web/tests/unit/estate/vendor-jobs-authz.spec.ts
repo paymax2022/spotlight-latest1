@@ -69,6 +69,7 @@ function fakeSupabase(tables: Record<string, Row[]>) {
 function seed(role: string) {
   const tables: Record<string, Row[]> = {
     estate_residents: [{ user_id: 'caller', estate_id: ESTATE, unit: '1', role }],
+    estates: [{ id: ESTATE, status: 'active' }],
     estate_vendors: [
       { id: 'v-mine', estate_id: ESTATE, user_id: 'caller', name: 'My Plumbing Co', status: 'verified' },
       { id: 'v-other', estate_id: ESTATE, user_id: 'someone-else', name: 'Rival Works', status: 'verified' },

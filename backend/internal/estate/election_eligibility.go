@@ -113,6 +113,15 @@ func (s *Service) SetEligibilityRules(ctx context.Context, estateID, adminID, el
 	if !exists {
 		return nil, errors.New("estate: election not found in this estate")
 	}
+	// An approved rule set is locked (EST-UAT-0203): the direct setter cannot overwrite a
+	// decision the estate has already signed off on.
+	var rulesLocked bool
+	if err := s.db.QueryRow(ctx, `SELECT rules_locked_at IS NOT NULL FROM elections WHERE id=$1`, electionID).Scan(&rulesLocked); err != nil {
+		return nil, err
+	}
+	if rulesLocked {
+		return nil, errors.New("estate: these rules are approved and locked — file a rule proposal instead")
+	}
 	types := req.ResidentTypes
 	if types == nil {
 		types = []string{}

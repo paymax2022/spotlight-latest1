@@ -304,7 +304,7 @@ export interface OversightElection {
   description: string | null;
   startsAt: string;
   endsAt: string;
-  status: 'draft' | 'open' | 'closed' | 'tallied';
+  status: 'draft' | 'open' | 'closed' | 'tallied' | 'cancelled';
   createdBy: string;
   createdAt: string;
 }
@@ -323,6 +323,170 @@ export interface ElectionAudit {
   candidates: number;
   status: string | null;
   doubleVoteDetected: boolean;
+}
+
+// Election governance (Phase 2.2). Mirrors the Go service structs in
+// backend/internal/estate/election_governance.go, camelCased by estateAdminService.
+export type ElectionVerdict =
+  | 'decided' | 'tie' | 'runoff_required' | 'no_quorum' | 'cancelled' | 'no_ballots';
+
+export interface ElectionGovernanceState {
+  id: string;
+  estateId: string;
+  title: string;
+  description?: string;
+  startsAt: string;
+  endsAt: string;
+  status: 'draft' | 'open' | 'closed' | 'tallied' | 'cancelled';
+  kind: 'binding' | 'poll';
+  weighting: 'one_person_one_vote' | 'one_vote_per_unit';
+  quorumType: 'none' | 'count' | 'percent';
+  quorumValue: number;
+  tieBreak: 'none' | 'earliest_candidate' | 'runoff';
+  nominationOpensAt?: string;
+  nominationClosesAt?: string;
+  rollFrozenAt?: string;
+  rulesLockedAt?: string;
+  cancelledAt?: string;
+  cancellationReason?: string;
+}
+
+export interface ElectionOutcomeRow {
+  electionId: string;
+  title: string;
+  kind: string;
+  status: string;
+  weighting: string;
+  binding: boolean;
+  eligibleVoters: number;
+  ballotsAvailable: number;
+  votersCast: number;
+  ballotsCast: number;
+  abstentions: number;
+  turnoutPercent: number;
+  quorumType: string;
+  quorumValue: number;
+  quorumRequired: number;
+  quorumMet: boolean;
+  results: { id: string; electionId: string; name: string; bio?: string; votes?: number }[];
+  topVotes: number;
+  winnerIds?: string[];
+  tieBreak: string;
+  verdict: ElectionVerdict;
+  tieBreakNote?: string;
+  cancellationReason?: string;
+  openComplaints: number;
+}
+
+export interface ElectionTurnoutRow {
+  electionId: string;
+  status: string;
+  weighting: string;
+  eligibleVoters: number;
+  ballotsAvailable: number;
+  votersCast: number;
+  ballotsCast: number;
+  turnoutPercent: number;
+  quorumType: string;
+  quorumValue: number;
+  quorumRequired: number;
+  quorumMet: boolean;
+}
+
+export interface ElectionRollRow {
+  id: string;
+  electionId: string;
+  version: number;
+  status: 'draft' | 'frozen';
+  builtBy?: string;
+  builtAt: string;
+  frozenBy?: string;
+  frozenAt?: string;
+  eligibleCount: number;
+  totalBallots: number;
+}
+
+export interface ElectionRollEntryRow {
+  rollId: string;
+  userId: string;
+  fullName: string;
+  unit: string;
+  occupancyType: string;
+  weight: number;
+  source: 'built' | 'exception';
+  status: 'active' | 'removed';
+  removalReason?: string;
+}
+
+export interface RollChallengeRow {
+  id: string;
+  electionId: string;
+  rollId: string;
+  subjectUserId: string;
+  subjectName: string;
+  raisedBy: string;
+  reason: string;
+  state: 'open' | 'upheld' | 'rejected';
+  resolvedBy?: string;
+  resolvedAt?: string;
+  resolution?: string;
+  createdAt: string;
+}
+
+export interface NominationRow {
+  id: string;
+  electionId: string;
+  nomineeUserId: string;
+  nomineeName: string;
+  nominatedBy?: string;
+  nominatedName?: string;
+  seat?: string;
+  statement?: string;
+  state: 'nominated' | 'accepted' | 'declined' | 'withdrawn' | 'rejected' | 'certified';
+  vettingState: 'pending' | 'cleared' | 'flagged';
+  reason?: string;
+  candidateId?: string;
+  createdAt: string;
+  decidedAt?: string;
+}
+
+export interface RuleProposalRow {
+  id: string;
+  electionId: string;
+  requireKyc: boolean;
+  requirePayment: boolean;
+  residentTypes: string[];
+  proposedBy: string;
+  proposedAt: string;
+  state: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+  decidedBy?: string;
+  decidedAt?: string;
+  decisionNote?: string;
+}
+
+export interface ElectionComplaintRow {
+  id: string;
+  electionId: string;
+  raisedBy: string;
+  kind: 'complaint' | 'recount';
+  detail: string;
+  state: 'open' | 'upheld' | 'dismissed';
+  resolvedBy?: string;
+  resolvedAt?: string;
+  resolution?: string;
+  createdAt: string;
+}
+
+export interface ElectionRecountRow {
+  id: string;
+  electionId: string;
+  requestedBy?: string;
+  complaintId?: string;
+  talliedAt: string;
+  ballotsCast: number;
+  abstentions: number;
+  totals: { id: string; electionId: string; name: string; bio?: string; votes?: number }[];
+  note?: string;
 }
 
 export type OccupancyStatus = 'vacant' | 'occupied' | 'reserved';

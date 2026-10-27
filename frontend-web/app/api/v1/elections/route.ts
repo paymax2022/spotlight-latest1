@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { ApiError, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { getResidentContext, mapElection } from '@/src/server/elections/elections.service';
+import { ELECTION_SELECT, getResidentContext, mapElection } from '@/src/server/elections/elections.service';
 
 // Elections for the caller's estate (newest first).
 export async function GET(request: Request) {
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
 
     const { data: rows, error } = await supabase
       .from('elections')
-      .select('id, estate_id, title, description, starts_at, ends_at, status')
+      .select(ELECTION_SELECT)
       .eq('estate_id', ctx.estateId)
       .order('created_at', { ascending: false });
     if (error) throw error;

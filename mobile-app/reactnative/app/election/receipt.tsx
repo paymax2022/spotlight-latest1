@@ -12,6 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { ElectionColors } from '@/features/election/constants/election.constants';
+import { ballotsForPosition } from '@/features/election/utils/electionFormatters';
 import { useElection, useMyBallot } from '@/features/election/hooks/useElection';
 
 export default function VoteReceiptScreen() {
@@ -30,9 +31,12 @@ export default function VoteReceiptScreen() {
 
   const e = election.data;
   const choices = ballot.data?.choices ?? {};
-  const voted = Object.keys(choices).length;
+  const weighted = ballot.data?.weighted ?? false;
+  const unitLabels: Record<string, string> = {};
+  for (const u of ballot.data?.units ?? []) unitLabels[u.id] = u.label;
+  const castCount = Object.keys(choices).length;
 
-  if (election.isError || !e || voted === 0) {
+  if (election.isError || !e || castCount === 0) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Vote receipt" />
@@ -43,6 +47,7 @@ export default function VoteReceiptScreen() {
 
   const ref = `VR-${(ballot.data?.submittedAt ? +new Date(ballot.data.submittedAt) : Date.now()).toString().slice(-8)}`;
   const when = ballot.data?.submittedAt ? new Date(ballot.data.submittedAt).toLocaleString('en-NG', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+  const positionsVoted = e.positions.filter((p) => ballotsForPosition(choices, p.id).length > 0).length;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -57,21 +62,37 @@ export default function VoteReceiptScreen() {
         <View style={styles.card}>
           <Row label="Reference" value={ref} mono />
           <Row label="Submitted" value={when} />
-          <Row label="Positions voted" value={`${voted} of ${e.positions.length}`} />
+          <Row
+            label={weighted ? 'Unit ballots cast' : 'Positions voted'}
+            value={weighted
+              ? `${castCount} of ${ballot.data?.units?.length ?? castCount}`
+              : `${positionsVoted} of ${e.positions.length}`}
+          />
         </View>
 
         <Text style={styles.sectionLabel}>Your choices</Text>
         <View style={styles.card}>
-          {e.positions.map((p, i) => {
-            const candidate = p.candidates.find((c) => c.id === choices[p.id]);
-            return (
-              <View key={p.id} style={[styles.choiceRow, i > 0 && styles.divider]}>
-                <Text style={styles.choicePos}>{p.title}</Text>
-                <Text style={styles.choiceCand}>
-                  {choices[p.id] === 'sealed' ? 'Sealed ballot' : candidate ? candidate.name : 'Not voted'}
-                </Text>
-              </View>
-            );
+          {e.positions.flatMap((p, i) => {
+            const entries = ballotsForPosition(choices, p.id);
+            if (!entries.length) {
+              return (
+                <View key={p.id} style={[styles.choiceRow, i > 0 && styles.divider]}>
+                  <Text style={styles.choicePos}>{p.title}</Text>
+                  <Text style={styles.choiceCand}>Not voted</Text>
+                </View>
+              );
+            }
+            return entries.map((entry) => {
+              const candidate = p.candidates.find((c) => c.id === entry.value);
+              return (
+                <View key={`${p.id}:${entry.unitId ?? '-'}`} style={[styles.choiceRow, i > 0 && styles.divider]}>
+                  <Text style={styles.choicePos}>{p.title}{entry.unitId ? ` · ${unitLabels[entry.unitId] ?? 'unit'}` : ''}</Text>
+                  <Text style={styles.choiceCand}>
+                    {entry.value === 'sealed' ? 'Sealed ballot' : candidate ? candidate.name : 'Not voted'}
+                  </Text>
+                </View>
+              );
+            });
           })}
         </View>
 

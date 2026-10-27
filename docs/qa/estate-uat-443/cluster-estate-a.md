@@ -136,8 +136,10 @@ enrollment (0110), no estate emergency posture switch (0112-partial).
 - `fix(estate): unit dedup, archive dependency gate, check-in race, deletion hold`
 - `test(estate): visitor-gate-uat.spec.ts — 21 specs for the UAT fixes`
 
-Pending migration (lane rule — no new migrations): `migrations-estate-a/
-estate_properties_unique_unit.pending.sql` (backs ESTA-D004).
+Nothing is pending schema promotion in this lane: the draft that backed ESTA-D004 was promoted on
+2026-10-22 (`dc9c4163d`) as `supabase/migrations/20271068000010_estate_properties_unique_unit.sql`,
+and `uidx_estate_properties_unit_key` is present in the local database (checked 2026-10-27 via
+`docker exec supabase_db_spotlight psql`). The lane itself wrote no migration, per runbook rule 5.
 
 ## Defects
 

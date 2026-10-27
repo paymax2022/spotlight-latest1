@@ -1,3 +1,13 @@
+-- SUPERSEDED 2026-10-27 — DO NOT APPLY THIS FILE.
+-- It was promoted, reviewed and applied to the running local database as
+-- supabase/migrations/20271099000010_estate_election_secret_ballot.sql
+-- (exec-estate-b.csv row E18). The shipped version differs from this draft in
+-- two load-bearing ways: election_ballots has NO cast_at column (a timestamp
+-- copied from election_votes.cast_at would be a join key that rebuilds the
+-- voter->choice link the split exists to break) and candidate_id is NULLABLE
+-- (a NULL ballot is an abstention, counted in turnout but crediting no candidate).
+-- Kept for provenance only.
+
 -- estate-b UAT remediation (ESTB-D003) — PENDING design proposal.
 -- election_votes stores (election_id, voter_id, candidate_id) in one row, which
 -- permanently links identity to selection — a true secret ballot is impossible

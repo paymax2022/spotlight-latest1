@@ -653,9 +653,9 @@ func (h *estateAdminHandler) ListElections(c *gin.Context) {
 func (h *estateAdminHandler) ElectionResults(c *gin.Context) {
 	electionID := c.Param("electionId")
 	sql := `
-SELECT ec.id, ec.name, COALESCE(ec.bio,''), COUNT(ev.id) AS votes
+SELECT ec.id, ec.name, COALESCE(ec.bio,''), COUNT(b.id) AS votes
 FROM election_candidates ec
-LEFT JOIN election_votes ev ON ev.candidate_id = ec.id
+LEFT JOIN election_ballots b ON b.candidate_id = ec.id
 WHERE ec.election_id = $1
 GROUP BY ec.id, ec.name, ec.bio
 ORDER BY votes DESC`
@@ -670,19 +670,20 @@ ORDER BY votes DESC`
 }
 
 // ElectionAudit returns integrity signals for an election: total ballots cast,
-// distinct voters, candidate count, and the UNIQUE(election_id, voter_id)
-// constraint guarantees one-ballot-per-voter at the DB layer (double-voting is
-// impossible by construction — see 20260616250000_estate.sql). We surface the
-// counts an integrity reviewer needs; the ballots themselves are secret
-// (candidate choice is not exposed here, only aggregates).
+// distinct voters, candidate count and status. Since ESTB-D003 the two counts come
+// from different tables — election_ballots holds the choices with no voter column,
+// election_votes holds the participation registry with no choice — so a mismatch
+// means the write path produced a ballot without a participant (or the reverse),
+// which is exactly what an integrity reviewer needs to see. The ballots themselves
+// are secret: only aggregates are exposed here.
 func (h *estateAdminHandler) ElectionAudit(c *gin.Context) {
 	electionID := c.Param("electionId")
 	const q = `
 SELECT
-  (SELECT COUNT(*) FROM election_votes WHERE election_id=$1)                       AS ballots_cast,
-  (SELECT COUNT(DISTINCT voter_id) FROM election_votes WHERE election_id=$1)       AS distinct_voters,
-  (SELECT COUNT(*) FROM election_candidates WHERE election_id=$1)                  AS candidates,
-  (SELECT status FROM elections WHERE id=$1)                                       AS status`
+  (SELECT COUNT(*) FROM election_ballots WHERE election_id=$1)                      AS ballots_cast,
+  (SELECT COUNT(DISTINCT voter_id) FROM election_votes WHERE election_id=$1)        AS distinct_voters,
+  (SELECT COUNT(*) FROM election_candidates WHERE election_id=$1)                   AS candidates,
+  (SELECT status FROM elections WHERE id=$1)                                        AS status`
 	var ballots, distinct, candidates int64
 	var status *string
 	if err := h.pool.QueryRow(c.Request.Context(), q, electionID).Scan(&ballots, &distinct, &candidates, &status); err != nil {

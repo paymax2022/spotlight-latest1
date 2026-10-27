@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { getResidentContext, isWithinWindow, mapElection } from '@/src/server/elections/elections.service';
+import { ELECTION_SELECT, getResidentContext, isWithinWindow, mapElection } from '@/src/server/elections/elections.service';
 
 // The election whose window is open now, or null.
 export async function GET(request: Request) {
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
 
     const { data: rows, error } = await supabase
       .from('elections')
-      .select('id, estate_id, title, description, starts_at, ends_at, status')
+      .select(ELECTION_SELECT)
       .eq('estate_id', ctx.estateId)
       .eq('status', 'open')
       .order('starts_at', { ascending: false });

@@ -34,8 +34,8 @@ export function listResponse<T>(
   );
 }
 
-export function errorResponse(message: string, status = 500) {
-  return NextResponse.json({ success: false, error: message }, { status });
+export function errorResponse(message: string, status = 500, code?: string) {
+  return NextResponse.json({ success: false, error: message, ...(code ? { code } : {}) }, { status });
 }
 
 export function handleApiError(error: unknown, fallbackMessage = 'Internal server error') {

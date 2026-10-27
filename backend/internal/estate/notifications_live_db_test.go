@@ -277,10 +277,11 @@ func TestLiveDB_Reminders_TargetNonResponders(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM elections WHERE id=$1`, electionID)
 	})
-	// 'answered' casts a ballot; 'silent' does not.
+	// 'answered' casts a ballot; 'silent' does not. Seeded the way estate_cast_vote
+	// writes it since ESTB-D003: participation in election_votes (no choice column
+	// value) and the choice in the anonymous election_ballots table.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO election_votes (election_id, voter_id, candidate_id) VALUES ($1,$2,$3)`,
-		electionID, answered, candA); err != nil {
+		`SELECT estate_cast_vote($1,$2,$3)`, electionID, answered, candA); err != nil {
 		t.Fatalf("seed vote: %v", err)
 	}
 	bAnswered = notifCount(t, ctx, pool, answered)

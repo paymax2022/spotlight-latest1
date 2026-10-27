@@ -32,24 +32,48 @@ export interface Election {
   totalEligibleVoters: number;
   votesCast: number;        // ballots fully submitted
   resultsPublished: boolean;
+  // How the poll was configured by the estate admin. `weighting` decides whether a
+  // resident votes once in total or once per unit held; quorumType/tieBreak explain a
+  // published result that has no winner (EST-UAT-0205/0223/0225/0230).
+  governance?: {
+    kind: 'binding' | 'poll';
+    weighting: 'one_person_one_vote' | 'one_vote_per_unit';
+    quorumType: 'none' | 'percent' | 'count';
+    quorumValue: number;
+    tieBreak: 'none' | 'earliest_candidate' | 'runoff';
+    nominationOpensAt?: string | null;
+    nominationClosesAt?: string | null;
+    rollFrozenAt?: string | null;
+    rulesLockedAt?: string | null;
+  };
 }
 
 // Which candidate the current resident picked per position.
 export interface MyBallot {
   electionId: string;
-  choices: Record<string, string>;  // positionId -> candidateId
+  choices: Record<string, string>;  // positionId -> candidateId, or 'sealed'
   submittedAt?: string;
+  // A one_vote_per_unit receipt is keyed `${positionId}:${unitId}`, so the app needs the
+  // voter's own holdings to show which ballots are still outstanding (EST-UAT-0205).
+  weighted?: boolean;
+  units?: { id: string; label: string; voted: boolean }[];
+  outstanding?: number;
 }
 
 export interface VoterEligibility {
   eligible: boolean;
   reason?: string;          // e.g. "Outstanding dues" (payment-ineligible)
+  reasons?: string[];
 }
 
 export interface CastVoteInput {
   electionId: string;
   positionId: string;
   candidateId: string;
+  // Abstention is a ballot with no candidate: counted in turnout, credited to nobody
+  // (EST-UAT-0221). Send abstain with an empty candidateId.
+  abstain?: boolean;
+  unitId?: string;          // required when governance.weighting is one_vote_per_unit
   idempotencyKey: string;
 }
 

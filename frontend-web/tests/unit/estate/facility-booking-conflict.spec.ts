@@ -80,6 +80,7 @@ function fakeSupabase(tables: Record<string, Row[]>) {
 function seed(bookings: Row[], capacity: number | null = 1) {
   const tables: Record<string, Row[]> = {
     estate_residents: [{ user_id: 'caller', estate_id: ESTATE, unit: '1', role: 'resident' }],
+    estates: [{ id: ESTATE, status: 'active' }],
     estate_facilities: [{ id: FACILITY, estate_id: ESTATE, name: 'Hall', fee_kobo: 0, capacity }],
     facility_bookings: bookings,
   };

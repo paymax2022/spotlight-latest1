@@ -131,8 +131,11 @@ expense side, SLA/response-interval metrics, data-as-of stamps (ESTC-D017).
 
 ## Recommendations for consolidation
 
-1. Apply `migrations-estate-c/facility_booking_overlap_exclusion.pending.sql`
-   (durable double-booking race guard; the code-level check already shipped).
+1. ~~Apply `migrations-estate-c/facility_booking_overlap_exclusion.pending.sql`~~ — **already
+   promoted** on 2026-10-22 (`dc9c4163d`) as
+   `supabase/migrations/20271068000030_facility_booking_overlap_exclusion.sql`, and the exclusion
+   constraint `facility_bookings_no_overlap` is live in the local database (checked 2026-10-27).
+   Re-executing the double-booking race case is Phase 5/8 verification work, not a promotion.
 2. Prioritise ESTC-D010/D011 (fee booking dead-ends) — residents currently
    cannot complete a paid reservation or receive any refund.
 3. The BFF and Go service now agree on scoping rules; keep them aligned —

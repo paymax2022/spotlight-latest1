@@ -67,7 +67,10 @@ Verified clean by code review + existing tests: object-level authorization (owne
 
 Fixed: `POST /estate/:id/emergencies` now sits behind `PerUserRateLimit(redisClient, "estate-sos", 12)` — bounds scripted SOS floods while staying far above real emergency cadence (ESTD-D021).
 
-Recorded: no DSAR export (ESTD-D015); no retention purge or legal-hold gate (ESTD-D016, pending SQL); audit metadata doesn't systematically capture prior/new values (ESTD-D017); no report export so CSV injection is N/A-but-feature-missing (ESTD-D018); MFA flag on member settings is advisory, not enforced (ESTD-D014, shared); platform auth/CSRF/session/JWT cases recorded shared (ESTD-D020) — a prior pass already documented the platform-wide `user_profiles` RLS PII exposure; not re-fixed here.
+Recorded: no DSAR export (ESTD-D015); no retention purge or legal-hold gate (ESTD-D016 — **superseded
+2026-10-27**: the legal-hold columns, service refusal and DB delete trigger shipped in `caef65516` and
+are live-proven by `TestLiveDB_Lifecycle_LegalHoldBlocksPurge`; what remains open is the *scheduled
+purge* of expired visitor records); audit metadata doesn't systematically capture prior/new values (ESTD-D017); no report export so CSV injection is N/A-but-feature-missing (ESTD-D018); MFA flag on member settings is advisory, not enforced (ESTD-D014, shared); platform auth/CSRF/session/JWT cases recorded shared (ESTD-D020) — a prior pass already documented the platform-wide `user_profiles` RLS PII exposure; not re-fixed here.
 
 ### M21 — Accessibility, performance & device
 
@@ -83,7 +86,14 @@ Device/browser/screen-reader/perf-target cases (0397-0404, 0408-0410, 0412-0413,
 
 **Fixed:** added `GET /estate-admin/audit` (ESTD-D032) — cross-estate audit search filterable by `estate_id`, `actor_id`, `action` (prefix), `subject_type/_id`, `from`/`to` RFC3339, capped at 500, guarded by `estate.admin.security` (audit oversight is a security function; no dedicated slug is seeded).
 
-**Missing (recorded):** no estate lifecycle state at all — `estates` has no status column, so neither verification queue (0418) nor suspension (0419) is implementable without schema work (pending SQL dropped, ESTD-D025); no platform provider-application queue (ESTD-D024); no global config rollout (ESTD-D026); no maker-checker/approval thresholds for estate admin actions (ESTD-D027, S1); no impersonation surface anywhere (ESTD-D028, S1, shared); user disable doesn't hand over gate shifts (ESTD-D029); no incident banner/SLA owner tracking (ESTD-D030); no per-estate feature flags (ESTD-D031); no suspicious-access alerting (ESTD-D033).
+**Missing (recorded):** ~~no estate lifecycle state at all — `estates` has no status column, so neither
+verification queue (0418) nor suspension (0419) is implementable without schema work (pending SQL
+dropped, ESTD-D025)~~ — **superseded 2026-10-27**: `estates.status` and `legal_hold` exist
+(`20271068001000_estates_lifecycle_status.sql`, `caef65516`, present in the local database and verified
+via `docker exec supabase_db_spotlight psql`), the queue and suspension transitions are live-proven by
+`TestLiveDB_Lifecycle_VerificationQueue` / `_Transitions` (0418/0419 were re-marked PASSED on
+2026-10-26), and what is left is that `FEATURE_ESTATE_LIFECYCLE_ENABLED` still defaults to **false**, so
+the shipped binary does not expose them; no platform provider-application queue (ESTD-D024); no global config rollout (ESTD-D026); no maker-checker/approval thresholds for estate admin actions (ESTD-D027, S1); no impersonation surface anywhere (ESTD-D028, S1, shared); user disable doesn't hand over gate shifts (ESTD-D029); no incident banner/SLA owner tracking (ESTD-D030); no per-estate feature flags (ESTD-D031); no suspicious-access alerting (ESTD-D033).
 
 ### M23 — Historical data, rollback & reconciliation
 

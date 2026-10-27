@@ -31,6 +31,7 @@ export default function ElectionScreen() {
   const publish = usePublishResults();
 
   const [selected, setSelected] = useState<Record<string, string>>({}); // positionId -> candidateId (pending)
+  const [unitFor, setUnitFor] = useState<Record<string, string>>({});    // positionId -> unit this ballot is cast on
 
   if (!electionId || election.isLoading || active.isLoading) {
     return (
@@ -60,18 +61,33 @@ export default function ElectionScreen() {
   // Tallies stay hidden until the admin publishes results — closing alone isn't enough.
   const showResults = status === 'results_published';
   const myChoices = ballot.data?.choices ?? {};
-  const votedCount = e.positions.filter((p) => myChoices[p.id]).length;
-  const allVoted = votedCount === e.positions.length;
+  // A one_vote_per_unit election gives a household one ballot per unit held, so the
+  // receipt is keyed by unit and "voted" is a property of the holding, not the position
+  // (EST-UAT-0205).
+  const weighted = e.governance?.weighting === 'one_vote_per_unit';
+  const openUnits = (ballot.data?.units ?? []).filter((u) => !u.voted);
+  const ballotsLeft = weighted ? (ballot.data?.outstanding ?? openUnits.length) : 0;
+  const votedCount = weighted
+    ? Object.keys(myChoices).length
+    : e.positions.filter((p) => myChoices[p.id]).length;
+  const allVoted = weighted
+    ? Object.keys(myChoices).length > 0 && ballotsLeft === 0
+    : votedCount === e.positions.length;
   const eligible = eligibility.data?.eligible ?? true;
 
-  const submit = async (position: ElectionPosition) => {
-    const candidateId = selected[position.id];
-    if (!candidateId) return;
+  const submit = async (position: ElectionPosition, candidateId?: string, unitId?: string) => {
+    const abstain = !candidateId;
+    if (weighted && !unitId) {
+      await alertAsync({ title: 'Choose a unit', message: 'This election counts one vote per unit held — pick the unit this ballot is for.' });
+      return;
+    }
     const candidate = position.candidates.find((c) => c.id === candidateId);
-    const ok = await confirmAsync({ title: 'Confirm your vote', message: `Vote ${candidate?.name} for ${position.title}? This can't be changed.`, confirmLabel: 'Cast vote' });
+    const what = abstain ? 'abstain on' : `vote ${candidate?.name} for`;
+    const unitNote = unitId ? ` for ${ballot.data?.units?.find((u) => u.id === unitId)?.label ?? unitId}` : '';
+    const ok = await confirmAsync({ title: 'Confirm your vote', message: `${what} ${position.title}${unitNote}? This can't be changed.`, confirmLabel: 'Cast vote' });
     if (!ok) return;
     castVote.mutate(
-      { electionId: e.id, positionId: position.id, candidateId },
+      { electionId: e.id, positionId: position.id, candidateId: candidateId ?? '', abstain, unitId },
       { onError: (err) => alertAsync({ title: 'Could not vote', message: err instanceof Error ? err.message : 'Please try again.' }) },
     );
   };
@@ -116,11 +132,19 @@ export default function ElectionScreen() {
         ) : isLive && allVoted ? (
           <Pressable onPress={() => router.push(`/election/receipt?id=${e.id}`)} accessibilityRole="button" style={styles.doneBanner}>
             <CheckCircle2 size={20} color={ElectionColors.live} strokeWidth={2} />
-            <Text style={styles.doneText}>You've voted in all {e.positions.length} positions. Thank you.</Text>
+            <Text style={styles.doneText}>
+              {weighted
+                ? `You've cast all ${Object.keys(myChoices).length} of your unit ballots. Thank you.`
+                : `You've voted in all ${e.positions.length} positions. Thank you.`}
+            </Text>
             <View style={styles.receiptLink}><Receipt size={14} color={ElectionColors.live} strokeWidth={2} /><Text style={styles.receiptText}>Receipt</Text></View>
           </Pressable>
         ) : isLive ? (
-          <Text style={styles.progress}>{votedCount} of {e.positions.length} positions voted</Text>
+          <Text style={styles.progress}>
+            {weighted
+              ? `${ballot.data?.units?.filter((u) => u.voted).length ?? 0} of ${ballot.data?.units?.length ?? 0} unit ballots cast`
+              : `${votedCount} of ${e.positions.length} positions voted`}
+          </Text>
         ) : null}
 
         {/* Admin: publish results once the election has ended */}
@@ -133,22 +157,30 @@ export default function ElectionScreen() {
         ) : null}
 
         {/* Positions */}
-        {e.positions.map((position) => (
-          <PositionCard
-            key={position.id}
-            electionId={e.id}
-            position={position}
-            voted={!!myChoices[position.id]}
-            votedCandidateId={myChoices[position.id]}
-            selectedCandidateId={selected[position.id]}
-            onSelect={(cid) => setSelected((s) => ({ ...s, [position.id]: cid }))}
-            onSubmit={() => submit(position)}
-            submitting={castVote.isPending}
-            live={isLive}
-            eligible={eligible}
-            showResults={showResults}
-          />
-        ))}
+        {e.positions.map((position) => {
+          const unitId = unitFor[position.id] ?? (openUnits.length === 1 ? openUnits[0]?.id : undefined);
+          return (
+            <PositionCard
+              key={position.id}
+              electionId={e.id}
+              position={position}
+              voted={weighted ? allVoted : !!myChoices[position.id]}
+              votedCandidateId={weighted ? undefined : myChoices[position.id]}
+              selectedCandidateId={selected[position.id]}
+              onSelect={(cid) => setSelected((s) => ({ ...s, [position.id]: cid }))}
+              onSubmit={() => submit(position, selected[position.id], unitId)}
+              onAbstain={() => submit(position, undefined, unitId)}
+              units={weighted ? (ballot.data?.units ?? []) : []}
+              selectedUnitId={unitId}
+              onSelectUnit={(uid) => setUnitFor((s) => ({ ...s, [position.id]: uid }))}
+              ballotsLeft={weighted ? ballotsLeft : undefined}
+              submitting={castVote.isPending}
+              live={isLive}
+              eligible={eligible}
+              showResults={showResults}
+            />
+          );
+        })}
 
         {showResults ? (
           <Text style={styles.closedNote}>Voting is closed. Final tallies shown above.</Text>
@@ -170,7 +202,8 @@ function StatusChip({ status }: { status: ReturnType<typeof derivedStatus> }) {
 }
 
 function PositionCard({
-  electionId, position, voted, votedCandidateId, selectedCandidateId, onSelect, onSubmit, submitting, live, eligible, showResults,
+  electionId, position, voted, votedCandidateId, selectedCandidateId, onSelect, onSubmit, onAbstain,
+  units, selectedUnitId, onSelectUnit, ballotsLeft, submitting, live, eligible, showResults,
 }: {
   electionId: string;
   position: ElectionPosition;
@@ -179,6 +212,11 @@ function PositionCard({
   selectedCandidateId?: string;
   onSelect: (candidateId: string) => void;
   onSubmit: () => void;
+  onAbstain: () => void;
+  units: { id: string; label: string; voted: boolean }[];
+  selectedUnitId?: string;
+  onSelectUnit: (unitId: string) => void;
+  ballotsLeft?: number;
   submitting: boolean;
   live: boolean;
   eligible: boolean;
@@ -186,10 +224,36 @@ function PositionCard({
 }) {
   const total = totalVotesFor(position.candidates);
   const max = Math.max(1, ...position.candidates.map((c) => c.votes));
+  const unitMissing = units.length > 0 && !selectedUnitId;
 
   return (
     <View style={styles.card}>
       <Text style={styles.posTitle}>{position.title}</Text>
+
+      {units.length > 0 && !showResults ? (
+        <View style={styles.unitBlock}>
+          <Text style={styles.unitHeading}>Cast this ballot for</Text>
+          <View style={styles.unitRow}>
+            {units.map((u) => {
+              const active = selectedUnitId === u.id;
+              return (
+                <Pressable
+                  key={u.id}
+                  onPress={() => !u.voted && onSelectUnit(u.id)}
+                  disabled={u.voted}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: active, disabled: u.voted }}
+                  accessibilityLabel={u.voted ? `${u.label} — already voted` : u.label}
+                  style={[styles.unitChip, active && styles.unitChipActive, u.voted && styles.unitChipUsed]}
+                >
+                  <Text style={[styles.unitChipText, active && styles.unitChipTextActive, u.voted && styles.unitChipTextUsed]}>{u.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {ballotsLeft !== undefined ? <Text style={styles.unitNote}>{ballotsLeft} unit ballot{ballotsLeft === 1 ? '' : 's'} left</Text> : null}
+        </View>
+      ) : null}
 
       {position.candidates.map((c: Candidate) => {
         if (showResults) {
@@ -244,7 +308,24 @@ function PositionCard({
           <Text style={styles.votedTagText}>Voted</Text>
         </View>
       ) : live && eligible && !showResults ? (
-        <PrimaryButton label="Cast vote" onPress={onSubmit} loading={submitting} disabled={!selectedCandidateId} />
+        <View style={styles.actions}>
+          <PrimaryButton
+            label="Cast vote"
+            onPress={onSubmit}
+            loading={submitting}
+            disabled={!selectedCandidateId || unitMissing}
+          />
+          <Pressable
+            onPress={onAbstain}
+            disabled={submitting || unitMissing}
+            accessibilityRole="button"
+            accessibilityLabel="Abstain on this position"
+            style={({ pressed }) => [styles.abstainBtn, pressed && styles.abstainBtnPressed, (submitting || unitMissing) && styles.abstainBtnDisabled]}
+          >
+            <Text style={styles.abstainText}>Abstain</Text>
+          </Pressable>
+          {unitMissing ? <Text style={styles.unitHint}>Pick the unit this ballot is for.</Text> : null}
+        </View>
       ) : null}
     </View>
   );
@@ -289,4 +370,20 @@ const styles = StyleSheet.create({
   votedTag: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', backgroundColor: ElectionColors.liveBg, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 4 },
   votedTagText: { ...Typography.labelSm, color: ElectionColors.live, fontWeight: '700' },
   closedNote: { ...Typography.bodySm, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: Spacing.xs },
+  unitBlock: { gap: 6 },
+  unitHeading: { ...Typography.labelSm, color: Colors.onSurfaceVariant, fontWeight: '700' },
+  unitRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  unitChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: Radius.full, borderWidth: 1.5, borderColor: Colors.surfaceContainerLow, backgroundColor: Colors.surfaceContainerLowest },
+  unitChipActive: { borderColor: Colors.primary, backgroundColor: Colors.iconBgPurple },
+  unitChipUsed: { opacity: 0.45 },
+  unitChipText: { ...Typography.labelSm, color: Colors.onSurfaceVariant, fontWeight: '700' },
+  unitChipTextActive: { color: Colors.primary },
+  unitChipTextUsed: { textDecorationLine: 'line-through' },
+  unitNote: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  unitHint: { ...Typography.bodySm, color: Colors.error, textAlign: 'center' },
+  actions: { gap: Spacing.sm },
+  abstainBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.outline },
+  abstainBtnPressed: { backgroundColor: Colors.surfaceContainerLow },
+  abstainBtnDisabled: { opacity: 0.5 },
+  abstainText: { ...Typography.labelMd, color: Colors.onSurfaceVariant, fontWeight: '700' },
 });

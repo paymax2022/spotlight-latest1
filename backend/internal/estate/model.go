@@ -38,6 +38,9 @@ type VisitorPass struct {
 }
 
 // Election is a private vote within an estate (e.g. AGM, committee election).
+// The governance columns (kind/weighting/quorum/tie_break/…) are what turn a ballot into
+// an electable result; they default to the historical single-position, one-person-one-vote
+// behaviour, so an election created before Phase 2.2 reads exactly as it did.
 type Election struct {
 	ID          string    `json:"id"`
 	EstateID    string    `json:"estate_id"`
@@ -45,9 +48,22 @@ type Election struct {
 	Description string    `json:"description,omitempty"`
 	StartsAt    time.Time `json:"starts_at"`
 	EndsAt      time.Time `json:"ends_at"`
-	Status      string    `json:"status"` // draft | open | closed | tallied
+	Status      string    `json:"status"` // draft | open | closed | tallied | cancelled
 	CreatedBy   string    `json:"created_by"`
 	CreatedAt   time.Time `json:"created_at"`
+
+	Kind        string `json:"kind"` // binding | poll
+	Weighting   string `json:"weighting"`
+	QuorumType  string `json:"quorum_type"`
+	QuorumValue int    `json:"quorum_value"`
+	TieBreak    string `json:"tie_break"`
+
+	NominationOpensAt  *time.Time `json:"nomination_opens_at,omitempty"`
+	NominationClosesAt *time.Time `json:"nomination_closes_at,omitempty"`
+	RollFrozenAt       *time.Time `json:"roll_frozen_at,omitempty"`
+	RulesLockedAt      *time.Time `json:"rules_locked_at,omitempty"`
+	CancelledAt        *time.Time `json:"cancelled_at,omitempty"`
+	CancellationReason string     `json:"cancellation_reason,omitempty"`
 }
 
 // Candidate is a choice in an election.
@@ -59,13 +75,17 @@ type Candidate struct {
 	Votes      int    `json:"votes,omitempty"` // only populated after close
 }
 
-// Vote is a single cast vote — stored as a commitment hash to preserve anonymity.
-// VoterID is retained for eligibility checks (one-vote-per-resident enforcement).
+// Vote is the receipt for one cast ballot. ID is the anonymous election_ballots row;
+// VoterID exists only to echo the caller's own submission back to them — the stored
+// choice (election_ballots) carries no voter column, and the participation registry
+// (election_votes) carries no choice.
 type Vote struct {
 	ID          string    `json:"id"`
 	ElectionID  string    `json:"election_id"`
 	VoterID     string    `json:"voter_id"`
 	CandidateID string    `json:"candidate_id"`
+	UnitID      string    `json:"unit_id,omitempty"` // the unit that authorised a weighted ballot
+	Abstained   bool      `json:"abstained"`
 	CastAt      time.Time `json:"cast_at"`
 }
 
@@ -560,17 +580,32 @@ type IssuePassRequest struct {
 }
 
 // CreateElectionRequest is the body for POST /estate/:id/elections.
+// Candidates may be supplied up front, or left to the nomination workflow (0209/0211):
+// an election with no inline candidates must open a nomination window, and OpenElection
+// refuses to open a ballot with fewer than two names on it either way.
 type CreateElectionRequest struct {
 	Title       string      `json:"title" binding:"required,min=2,max=200"`
 	Description string      `json:"description"`
 	StartsAt    time.Time   `json:"starts_at" binding:"required"`
 	EndsAt      time.Time   `json:"ends_at" binding:"required"`
-	Candidates  []Candidate `json:"candidates" binding:"required,min=2"`
+	Candidates  []Candidate `json:"candidates"`
+
+	Kind               string     `json:"kind"`
+	Weighting          string     `json:"weighting"`
+	QuorumType         string     `json:"quorum_type"`
+	QuorumValue        int        `json:"quorum_value"`
+	TieBreak           string     `json:"tie_break"`
+	NominationOpensAt  *time.Time `json:"nomination_opens_at"`
+	NominationClosesAt *time.Time `json:"nomination_closes_at"`
 }
 
 // CastVoteRequest is the body for POST /estate/:id/elections/:electionId/vote.
+// An empty candidate_id is an abstention — a blank ballot that counts in turnout and
+// credits no candidate (EST-UAT-0221). UnitID authorises one ballot per held unit in a
+// one_vote_per_unit election (EST-UAT-0205).
 type CastVoteRequest struct {
-	CandidateID string `json:"candidate_id" binding:"required"`
+	CandidateID string `json:"candidate_id"`
+	UnitID      string `json:"unit_id"`
 }
 
 // ResidentCard is the payload returned by GET /estate/:id/profile/id-card.
