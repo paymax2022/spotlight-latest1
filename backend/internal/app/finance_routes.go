@@ -94,7 +94,6 @@ import (
 	telemedsupport "spotlight/backend/internal/telemedadmin/support"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
-	"spotlight/backend/internal/transport/hail"
 	transportpaystackcheckout "spotlight/backend/internal/transport/paystackcheckout"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/webhooks"
@@ -206,7 +205,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 	ledgerRepo := ledger.NewRepository(pool)
 	ledgerSvc := ledger.NewService(ledgerRepo, redisClient)
-	startRecurringSettlementProcessor(ctx, cfg, pool, redisClient, ledgerSvc, auditSink) // Task 5.2, FEATURE_RECURRING_SETTLEMENT_ENABLED
 
 	// Wires REAL per-module detail (Service, Category, Service bought, Payment
 	// method, Status, Provider) into the centralized admin Transactions detail
@@ -758,10 +756,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureFXOrchestrationEnabled {
 		orchStore := orchestration.NewSQLStore(pool)
 
-		providers, fxErr := buildFXProviders(&cfg)
-		if fxErr != nil {
-			log.Fatalf("[finance] FATAL: FX orchestration enabled but %v (APP_ENV=%q)", fxErr, cfg.AppEnv)
-		}
+		providers := buildFXProviders(&cfg)
 		// Spread rule card comes from public.fx_markup_rates — the SAME table the
 		// legacy wallet FX service prices from — so one admin change at
 		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-032).
@@ -928,7 +923,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// goes through walletSvc, so the tier/daily-limit check fires exactly as it
 	// does for every other module rather than being reimplemented here. The
 	// hourly requery-sweep job (Phase 3) runs on the same ctx as the other finance jobs.
-	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, tiersSvc, auditSink)
+	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, auditSink)
 
 	// --- Multi-provider KYC verification gateway (ADR-013) ---
 	// Gated by FEATURE_KYC_VERIFY_ENABLED (default off). Builds the adapter
@@ -1244,38 +1239,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Block 31: per-election voter eligibility (KYC / payment / resident type)
 		estGroup.GET("/:id/elections/:electionId/eligibility", estateHandler.GetVoterEligibility)
 		estGroup.POST("/:id/elections/:electionId/eligibility", estateHandler.SetEligibilityRules)
-		estGroup.GET("/:id/elections/:electionId/eligibility/me", estateHandler.GetMyElectionEligibility)
 
-		// Phase 2.2: election governance — configuration, rule approval, roll, nominations,
 		// lifecycle, quorum/tie-break outcome, complaints and recounts (EST-UAT-0203…0230).
-		estGroup.POST("/:id/elections/:electionId/config", estateHandler.UpdateElectionConfig)
-		estGroup.POST("/:id/elections/:electionId/open", estateHandler.OpenElection)
-		estGroup.POST("/:id/elections/:electionId/close", estateHandler.CloseElection)
-		estGroup.POST("/:id/elections/:electionId/cancel", estateHandler.CancelElection)
-		estGroup.POST("/:id/elections/:electionId/tally", estateHandler.TallyElection)
-		estGroup.GET("/:id/elections/:electionId/outcome", estateHandler.GetElectionOutcome)
-		estGroup.GET("/:id/elections/:electionId/turnout", estateHandler.GetElectionTurnout)
-		estGroup.POST("/:id/elections/:electionId/rules/proposals", estateHandler.ProposeElectionRules)
-		estGroup.GET("/:id/elections/:electionId/rules/proposals", estateHandler.ListElectionRuleProposals)
-		estGroup.POST("/:id/elections/:electionId/rules/proposals/:proposalId/decide", estateHandler.DecideElectionRules)
-		estGroup.POST("/:id/elections/:electionId/roll/build", estateHandler.BuildElectionRoll)
-		estGroup.POST("/:id/elections/:electionId/roll/freeze", estateHandler.FreezeElectionRoll)
-		estGroup.GET("/:id/elections/:electionId/roll", estateHandler.ListElectionRoll)
-		estGroup.POST("/:id/elections/:electionId/roll/remove", estateHandler.RemoveRollEntry)
-		estGroup.POST("/:id/elections/:electionId/roll/exception", estateHandler.AddRollException)
-		estGroup.POST("/:id/elections/:electionId/roll/challenges", estateHandler.ChallengeRollEntry)
-		estGroup.GET("/:id/elections/:electionId/roll/challenges", estateHandler.ListRollChallenges)
-		estGroup.POST("/:id/elections/:electionId/roll/challenges/:challengeId/resolve", estateHandler.ResolveRollChallenge)
-		estGroup.POST("/:id/elections/:electionId/nominations", estateHandler.Nominate)
-		estGroup.GET("/:id/elections/:electionId/nominations", estateHandler.ListNominations)
-		estGroup.POST("/:id/elections/:electionId/nominations/:nominationId/decide", estateHandler.DecideNomination)
-		estGroup.POST("/:id/elections/:electionId/nominations/:nominationId/vet", estateHandler.VetNomination)
-		estGroup.POST("/:id/elections/:electionId/nominations/:nominationId/certify", estateHandler.CertifyNomination)
-		estGroup.POST("/:id/elections/:electionId/complaints", estateHandler.FileElectionComplaint)
-		estGroup.GET("/:id/elections/:electionId/complaints", estateHandler.ListElectionComplaints)
-		estGroup.POST("/:id/elections/:electionId/complaints/:complaintId/resolve", estateHandler.ResolveElectionComplaint)
-		estGroup.POST("/:id/elections/:electionId/recount", estateHandler.RunElectionRecount)
-		estGroup.GET("/:id/elections/:electionId/recounts", estateHandler.ListElectionRecounts)
 
 		// Block 24: Onboarding & property selection
 		estGroup.POST("/:id/invite-codes", estateHandler.GenerateInviteCode)
@@ -1492,16 +1457,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// estate_admin_routes.go for the full rationale.
 		RegisterEstateAdmin(finance, pool, rbac, middleware.RequireAuthContext(supabase, rbac))
 		RegisterEstatePlatformLifecycle(finance, estateHandler, rbac, cfg.FeatureEstateLifecycleEnabled, cfg.FeatureEstateImportEnabled)
-		// Phase 2.3: estate profile, configuration history and ownership governance.
-		RegisterEstateProfile(estGroup, estateHandler)
-
-		// V1 mobile-facing properties API — aggregates properties across user's estates.
-		v1EstatePropsHandler := estate.NewV1Handler(pool)
-		v1PropsGroup := r.Group("/api/v1/estate/properties")
-		v1PropsGroup.Use(middleware.RequireAuthContext(supabase, rbac))
-		v1PropsGroup.GET("", v1EstatePropsHandler.ListProperties)
-		v1PropsGroup.GET("/:id", v1EstatePropsHandler.GetProperty)
-		log.Println("[estate] v1 properties API registered at /api/v1/estate/properties")
 	}
 
 	// Property role registration rollout order, enforced in code: the flag only
@@ -2297,19 +2252,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Pharm.DELETE("/cart", pharmacyHandler.ClearCart)
 	}
 
-	if cfg.FeatureTransportHailingEnabled {
-		if redisClient == nil {
-			log.Println("[transport-hail] FEATURE_TRANSPORT_HAILING_ENABLED is on but Redis is unavailable - routes NOT mounted (matching needs the distributed lock)")
-		} else {
-			hailSvc := hail.NewService(hail.NewPGRepository(pool), hail.NewRedisLocker(redisClient),
-				hail.NewLedgerSettler(ledgerSvc).WithGuard(tiersSvc.EnforceCheckoutDebitLimitTx).WithAuditor(auditSink)).
-				WithWalletGate(hail.NewTierWalletGate(ledgerSvc, tiersSvc)).WithAuditor(auditSink)
-			v1Hail := r.Group("/api/v1/transport")
-			v1Hail.Use(mapsAuth())
-			v1Hail.Use(requireUserID())
-			hail.NewHandler(hailSvc).Register(v1Hail)
-		}
-	}
 
 	if cfg.FeatureAICareEnabled {
 		var aicAI aicare.AIProvider
@@ -3570,7 +3512,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			LiveBaseURL: cfg.CryptoQuidaxLiveBaseURL,
 		})
 		log.Printf("[crypto] price/withdrawal provider mode: %s", cryptoMode)
-		crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw)
+		cryptoSvc := crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw, cfg.CryptoWebhookSecret)
+
+		// Blocker 5: Wire Quidax webhook routes if secret is configured.
+		// RegisterWebhookRoutes mounts POST /webhooks/crypto/quidax with HMAC middleware.
+		if cfg.CryptoWebhookSecret != "" {
+			webhooks := r.Group("/api/v1")
+			cryptoSvc.RegisterWebhookRoutes(webhooks)
+		}
 
 		// Provider-driven swap pipeline (quote -> confirm -> webhook/reconciler settle). Its own
 		// flag, and it fails closed: any missing piece skips the routes instead of mounting a

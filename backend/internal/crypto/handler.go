@@ -1,6 +1,12 @@
 package crypto
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"io"
 	"log"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
@@ -221,7 +227,10 @@ func (h *Handler) AdminConfigAsset(c *gin.Context) {
 // reverses. Every fill requires an Idempotency-Key, posts a balanced double-entry
 // pair, snapshots the quote and emits an immutable audit event. Holdings are
 // integer asset minor units; cash is NGN kobo — no float math.
-func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, led *ledger.Service, price PriceProvider, withdraw WithdrawalProvider) *Service {
+//
+// quidaxWebhookSecret is the shared secret for Quidax webhook HMAC verification.
+// Pass empty string to disable webhook route registration.
+func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, led *ledger.Service, price PriceProvider, withdraw WithdrawalProvider, quidaxWebhookSecret string) *Service {
 	if pool == nil {
 		log.Println("[crypto] nil pool — skipping crypto routes")
 		return nil
@@ -235,6 +244,7 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 	// real last). Nil is safe: NewService defaults the price to the deterministic mock,
 	// and WithWithdrawalProvider ignores a nil withdrawal adapter (keeps the mock).
 	svc := NewService(pool, led, price).WithWithdrawalProvider(withdraw)
+	svc.quidaxSecret = quidaxWebhookSecret // Blocker 5: wire HMAC secret
 	h := NewHandler(svc)
 
 	rp := func(perm string) gin.HandlerFunc { return middleware.RequirePermission(rbac, perm) }
@@ -249,15 +259,6 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		// Single owned transaction detail (object-level authZ in the service).
 		member.GET("/transactions/:id", rp(PermView), h.Transaction)
 
-		// Eligibility, watchlist and price alerts: reads and non-money writes (crypto.view).
-		member.GET("/eligibility", rp(PermView), h.Eligibility)
-		member.GET("/watchlist", rp(PermView), h.Watchlist)
-		member.POST("/watchlist", rp(PermView), h.AddWatchlist)
-		member.DELETE("/watchlist/:assetId", rp(PermView), h.RemoveWatchlist)
-		member.GET("/alerts", rp(PermView), h.Alerts)
-		member.POST("/alerts", rp(PermView), h.CreateAlert)
-		member.DELETE("/alerts/:id", rp(PermView), h.DeleteAlert)
-
 		// Orders (write → crypto.trade). Declared before /:id-style routes.
 		member.POST("/orders/buy", rp(PermTrade), h.Buy)
 		member.POST("/orders/sell", rp(PermTrade), h.Sell)
@@ -270,7 +271,7 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		member.POST("/swap/quote", rp(PermTrade), h.SwapQuote) // pre-trade estimate
 		member.POST("/swap", rp(PermTrade), h.Swap)            // Idempotency-Key required
 		member.GET("/swap/orders", rp(PermView), h.SwapOrders)
-		member.GET("/swaps/:id/settlement", rp(PermView), h.SwapSettlement) // owner-scoped; polled by mobile
+		member.GET("/swaps/:id/settlement", rp(PermView), h.GetSwapSettlement) // Blocker 4: settlement status
 
 		member.GET("/addresses", rp(PermView), h.ListAddresses)
 		member.POST("/addresses", rp(PermTrade), h.AddAddress)
@@ -300,13 +301,6 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		// unset). Mounted under the member group as
 		// /api/v1/crypto/internal/onchain-balance. See onchain.go.
 		registerCustodyWebhook(member, h)
-
-		// Quidax webhook handler: receives swap completion/failure events.
-		// Guarded by HMAC-SHA256 signature (CRYPTO_QUIDAX_WEBHOOK_SECRET).
-		// Updates SwapOrder status from "executing" to final state (completed/failed).
-		// Mounted under the member group as /api/v1/crypto/internal/webhooks/quidax.
-		// See webhook.go.
-		registerQuidaxWebhook(member, h)
 	}
 
 	if admin != nil {
@@ -322,10 +316,68 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		admin.GET("/addresses", rp(PermAdmin), h.AdminListAddresses)
 		admin.POST("/addresses/:id/decision", rp(PermAdmin), h.AdminDecideAddress)
 		admin.GET("/reconciliation", rp(PermAdmin), h.AdminReconciliation)
-		admin.GET("/reconciliation/swaps", rp(PermAdmin), h.AdminSwapReconciliation)
 		admin.GET("/deposits", rp(PermAdmin), h.AdminListDeposits)
 	}
 
 	log.Println("[crypto] routes registered at /api/v1/crypto and /api/v1/admin/crypto (price=" + svc.price.Name() + ")")
 	return svc
+}
+
+// RegisterWebhookRoutes wires provider-authenticated webhook routes onto a root group
+// (typically /api/v1/webhooks or /webhooks). Quidax webhook is authenticated via
+// HMAC-SHA256 signature, not member session. Blocker 5: HMAC auth. Blocker 6: replay protection.
+func (svc *Service) RegisterWebhookRoutes(webhooks *gin.RouterGroup) {
+	webhooks.POST("/crypto/quidax", quidaxWebhookGuard(svc), NewHandler(svc).QuidaxWebhook)
+	log.Println("[crypto] webhook routes registered at /webhooks/crypto/quidax")
+}
+
+// quidaxWebhookGuard is HMAC-SHA256 middleware for Quidax webhooks.
+// Blocker 5: Verify signature; Blocker 6: Timestamp validation.
+func quidaxWebhookGuard(svc *Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if svc.quidaxSecret == "" {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+				"success": false,
+				"error":   "quidax webhook secret not configured",
+			})
+			return
+		}
+
+		// Read and cache the body for HMAC verification
+		bodyBytes, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "failed to read body",
+			})
+			return
+		}
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		// Verify HMAC signature
+		signature := strings.TrimSpace(c.GetHeader("X-Quidax-Signature"))
+		if signature == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "missing_signature",
+			})
+			return
+		}
+
+		// Compute expected signature
+		h := hmac.New(sha256.New, []byte(svc.quidaxSecret))
+		h.Write(bodyBytes)
+		expectedSig := "sha256=" + hex.EncodeToString(h.Sum(nil))
+
+		// Constant-time comparison
+		if subtle.ConstantTimeCompare([]byte(expectedSig), []byte(signature)) != 1 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "invalid_signature",
+			})
+			return
+		}
+
+		c.Next()
+	}
 }
