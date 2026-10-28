@@ -45,6 +45,8 @@ export default function ElectionDetailScreen() {
   const editable = isAdmin && (d?.status === 'DRAFT' || d?.status === 'NOMINATION');
   const next = d ? NEXT_STEP[d.status] : undefined;
   const everyPositionHasCandidate = Boolean(d?.positions.length) && d!.positions.every((p) => p.candidates.length > 0);
+  const positionsWithoutCandidates = (d?.positions ?? []).filter((p) => p.candidates.length === 0).map((p) => p.title);
+  const blockedOpen = editable && next?.action === 'open' && !everyPositionHasCandidate;
 
   const submitCandidates = async (membershipIds: string[]) => {
     if (!pickFor) return;
@@ -116,6 +118,13 @@ export default function ElectionDetailScreen() {
                   : d.status === 'PUBLISHED' ? 'Results published' : d.status}
               </Text>
               {editable ? <Text style={styles.adminHelp}>Add candidates to each position, then open voting.</Text> : null}
+              {blockedOpen ? (
+                <Text style={styles.adminBlocked}>
+                  {d.positions.length === 0
+                    ? 'This election has no positions yet.'
+                    : `Voting can’t open yet — no candidates for: ${positionsWithoutCandidates.join(', ')}.`}
+                </Text>
+              ) : null}
               {next ? (
                 <PrimaryButton label={next.label} onPress={advance} loading={transition.isPending} disabled={transition.isPending} />
               ) : null}
@@ -272,6 +281,7 @@ const styles = StyleSheet.create({
   desc: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   adminCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.primary, padding: Spacing.md, gap: Spacing.sm },
   adminTitle: { ...Typography.labelLg, color: Colors.primary },
+  adminBlocked: { ...Typography.labelMd, color: Colors.error },
   adminHelp: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   addCand: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', paddingVertical: 2 },
   addCandText: { ...Typography.labelMd, color: Colors.primary },

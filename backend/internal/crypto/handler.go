@@ -299,6 +299,13 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		// unset). Mounted under the member group as
 		// /api/v1/crypto/internal/onchain-balance. See onchain.go.
 		registerCustodyWebhook(member, h)
+
+		// Quidax webhook handler: receives swap completion/failure events.
+		// Guarded by HMAC-SHA256 signature (CRYPTO_QUIDAX_WEBHOOK_SECRET).
+		// Updates SwapOrder status from "executing" to final state (completed/failed).
+		// Mounted under the member group as /api/v1/crypto/internal/webhooks/quidax.
+		// See webhook.go.
+		registerQuidaxWebhook(member, h)
 	}
 
 	if admin != nil {

@@ -49,6 +49,7 @@ export default function PharmacyLayout() {
         <Stack.Screen name="symptom/escalation" options={{ gestureEnabled: false }} />
 
         {/* Provider */}
+        <Stack.Screen name="provider/index" />
         <Stack.Screen name="provider/onboarding" />
         <Stack.Screen name="provider/catalog" />
         <Stack.Screen name="provider/orders" />

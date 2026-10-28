@@ -984,6 +984,52 @@ func (s *Service) ensureSwapAudit(ctx context.Context, o *SwapOrder) error {
 		})
 }
 
+// UpdateSwapOrderStatusFromWebhook is called by the webhook handler (CR-013)
+// when Quidax reports a swap completion/failure event. It updates the order
+// status from "executing" to the Quidax-reported value (completed/failed/etc).
+// Idempotent: multiple identical events are safe (update to same status is no-op).
+// Returns ErrNotFound if swap_transaction_id doesn't match an existing order.
+func (s *Service) UpdateSwapOrderStatusFromWebhook(ctx context.Context, swapTransactionID, finalStatus string) error {
+	if swapTransactionID == "" || finalStatus == "" {
+		return ErrBadRequest
+	}
+
+	// Validate the status is a known value (prevent SQL injection via status param).
+	// Quidax reports: "completed", "failed", and possibly others.
+	// We accept any non-empty status but could restrict to a known set if needed.
+	// For now: accept as-is and store for audit.
+	const q = `
+		UPDATE crypto_swap_orders
+		SET status = $2, updated_at = now()
+		WHERE swap_transaction_id = $1 AND status = 'executing'
+		RETURNING id, user_id, status
+	`
+	var orderID, userID, newStatus string
+	err := s.db.QueryRow(ctx, q, swapTransactionID, finalStatus).Scan(&orderID, &userID, &newStatus)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// No order found with this swap_transaction_id in "executing" state.
+			// Could mean: already processed, never started, or bogus swap_transaction_id.
+			// Log but return success to Quidax to prevent webhook retry storms.
+			return fmt.Errorf("crypto: swap order not found or already terminal: %w", ErrNotFound)
+		}
+		return fmt.Errorf("crypto: update swap status: %w", err)
+	}
+
+	// Audit the status update.
+	err = s.audit.log(ctx, userID, "crypto.swap_status_updated", "crypto_swap_order", orderID, "",
+		nil, map[string]any{
+			"swap_transaction_id": swapTransactionID,
+			"final_status":        finalStatus,
+		})
+	if err != nil {
+		// Log audit failure but don't fail the request (the order is already updated).
+		fmt.Printf("[crypto] audit log failed for swap status update: %v\n", err)
+	}
+
+	return nil
+}
+
 // trimmed is a tiny helper (kept local to avoid a strings import churn elsewhere).
 func trimmed(s string) string {
 	i, j := 0, len(s)
