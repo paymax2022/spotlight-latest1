@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 import { api } from '@/api/client';
 import { unwrapEnvelope } from '@/features/crypto/utils/envelope';
-import { nextSwapStatus, type SwapEvent } from '@/features/crypto/utils/swapDisplay';
-import type { SwapOrderWire, SwapQuoteWire, SwapStatus } from '@/features/crypto/types/swapWire';
+import { nextSwapStatus, pollUntilSettled, type SwapEvent } from '@/features/crypto/utils/swapDisplay';
+import type { SwapOrderWire, SwapQuoteWire, SwapStatus, SettlementStatus } from '@/features/crypto/types/swapWire';
 
 export interface UseSwapReturn {
   quote: SwapQuoteWire | null;
@@ -11,6 +11,8 @@ export interface UseSwapReturn {
   getQuote(fromAssetID: string, toAssetID: string, fromUnits: number): Promise<void>;
   confirmSwap(quotationID: string): Promise<SwapOrderWire>;
   swapStatus: SwapStatus;
+  /** Polls every 2s, max 30 tries (1 min), until the ledger reports settled. Rejects on timeout. */
+  pollSettlement(orderID: string): Promise<SettlementStatus>;
 }
 
 const toError = (e: unknown): Error => {
@@ -75,5 +77,14 @@ export function useCryptoSwap(): UseSwapReturn {
     }
   }, [quote, step]);
 
-  return { quote, quoteLoading, quoteError, getQuote, confirmSwap, swapStatus };
+  const pollSettlement = useCallback(
+    (orderID: string) =>
+      pollUntilSettled(async () => {
+        const res = await api.get('/api/v1/admin/crypto/reconciliation', { params: { order_id: orderID } });
+        return unwrapEnvelope<SettlementStatus>(res?.data);
+      }),
+    [],
+  );
+
+  return { quote, quoteLoading, quoteError, getQuote, confirmSwap, swapStatus, pollSettlement };
 }

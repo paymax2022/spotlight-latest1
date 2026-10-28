@@ -68,3 +68,68 @@ describe('swap status machine', () => {
     assert.equal(nextSwapStatus('failed', 'reset'), 'idle');
   });
 });
+
+// ---- Phase 2 Task 1.2: Execution & Result logic ----
+import {
+  executionLabel, executionTimedOut, resultHeadline, settlementLabel, refundLabel,
+  orderDetailLines, pollUntilSettled, EXECUTION_TIMEOUT_MS, POLL_INTERVAL_MS, MAX_POLLS,
+} from '../../src/features/crypto/utils/swapDisplay.ts';
+
+const SETTLED = { ledger_settled: true, settled_at: '2026-10-28T12:00:00Z' };
+
+describe('Execution logic', () => {
+  test('displays processing indicator and transaction ID', () => {
+    assert.match(executionLabel('executing'), /Processing/);
+  });
+  test('times out after 30s without a status change', () => {
+    assert.equal(EXECUTION_TIMEOUT_MS, 30000);
+    assert.equal(executionTimedOut(0, 29999), false);
+    assert.equal(executionTimedOut(0, 31000), true);
+  });
+});
+
+describe('Result logic', () => {
+  test('success shows received amount and settlement status', () => {
+    assert.match(resultHeadline('completed'), /Swap completed/);
+    assert.match(receiveLabel(15000000, 'ngn').replace('will receive', 'received'), /received.*15,000,000.*NGN/);
+    assert.match(settlementLabel(SETTLED), /Settled/);
+    assert.match(settlementLabel(SETTLED), /2026-10-28T12:00:00Z/);
+  });
+  test('failure shows refund info and settled_at proof', () => {
+    assert.match(resultHeadline('failed'), /Swap failed/);
+    assert.match(refundLabel(SETTLED), /Refunded/);
+    assert.match(refundLabel(SETTLED), /2026-10-28T12:00:00Z/);
+  });
+  test('unsettled shows pending', () => {
+    assert.match(settlementLabel({ ledger_settled: false }), /pending/i);
+    assert.match(settlementLabel(null), /pending/i);
+  });
+  test('View Details lines include order id', () => {
+    assert.ok(orderDetailLines({ id: 'ord_123', status: 'completed' }, SETTLED).some((l) => /Order ID.*ord_123/.test(l)));
+  });
+});
+
+describe('pollUntilSettled', () => {
+  test('polls every 2s, up to 30 times', async () => {
+    assert.equal(POLL_INTERVAL_MS, 2000);
+    assert.equal(MAX_POLLS, 30);
+    let calls = 0; const sleeps: number[] = [];
+    await assert.rejects(
+      pollUntilSettled(async () => { calls++; return { ledger_settled: false }; }, { sleep: async (ms) => { sleeps.push(ms); } }),
+      /not settled/i,
+    );
+    assert.equal(calls, 30);
+    assert.ok(sleeps.every((s) => s === 2000));
+  });
+  test('resolves as soon as ledger_settled', async () => {
+    let calls = 0;
+    const r = await pollUntilSettled(async () => (++calls < 3 ? { ledger_settled: false } : SETTLED), { sleep: async () => {} });
+    assert.equal(r.ledger_settled, true);
+    assert.equal(calls, 3);
+  });
+  test('tolerates transient fetch errors', async () => {
+    let calls = 0;
+    const r = await pollUntilSettled(async () => { if (++calls < 2) throw new Error('net'); return SETTLED; }, { sleep: async () => {} });
+    assert.equal(r.ledger_settled, true);
+  });
+});
