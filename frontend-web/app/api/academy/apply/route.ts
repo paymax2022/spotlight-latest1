@@ -434,10 +434,22 @@ export async function POST(request: Request) {
       }
     }
 
-    if (registrationFeeRequired) {
+    // Calculate expected payment: application fee + first tuition installment
+    // Tuition is now collected at application time, not after approval
+    const areasTotal = selectedAreas.reduce((sum, area) => {
+      const selection = (body.area_selections ?? []).find((s: any) => s.slug === area.slug);
+      const key = selection?.key ?? '';
+      return sum + ((area.pricing_options ?? []).find((o: any) => o.key === key)?.price_ngn ?? area.fee_ngn ?? 0);
+    }, 0);
+    const calculatedTuition = areasTotal > 0 ? areasTotal : Number(batch?.training_fee_ngn ?? 0);
+    const paymentPref = String(body.payment_preference ?? 'installment').toLowerCase();
+    const firstTuitionPayment = paymentPref === 'one_off' ? calculatedTuition : (calculatedTuition / 3);
+    const expectedTotalPayment = requiredFee + firstTuitionPayment;
+
+    if (requiredFee > 0 || calculatedTuition > 0) {
       registrationFeeReference = String(body.application_fee_reference ?? '').trim();
       if (!registrationFeeReference) {
-        return errorResponse('Registration fee payment is required before submitting this application.', 402);
+        return errorResponse('Payment is required before submitting this application.', 402);
       }
 
       // A server-minted fee intent (POST /api/academy/application-fee/initiate)
@@ -474,9 +486,10 @@ export async function POST(request: Request) {
         paidRegistrationFee =
           Number(applicationFeeIntent.verified_amount_kobo ?? applicationFeeIntent.amount_kobo) / 100;
 
-        if (paidRegistrationFee < requiredFee) {
+        // Payment should cover both application fee and first tuition installment
+        if (paidRegistrationFee < expectedTotalPayment) {
           return errorResponse(
-            `Application fee payment is lower than the required ₦${requiredFee.toLocaleString('en-NG')}.`,
+            `Payment is lower than the required ₦${expectedTotalPayment.toLocaleString('en-NG')} (application fee + tuition).`,
             400,
           );
         }
@@ -507,15 +520,16 @@ export async function POST(request: Request) {
         return errorResponse('Registration fee payment must be made in NGN.', 400);
       }
 
-      if (paidRegistrationFee < requiredFee) {
+      // Payment should cover both application fee and first tuition installment
+      if (paidRegistrationFee < expectedTotalPayment) {
         return errorResponse(
-          `Application fee payment is lower than the required ₦${requiredFee.toLocaleString('en-NG')}.`,
+          `Payment is lower than the required ₦${expectedTotalPayment.toLocaleString('en-NG')} (application fee + tuition).`,
           400,
         );
       }
 
       if (payment.customerEmail && email && payment.customerEmail.toLowerCase() !== email.toLowerCase()) {
-        console.warn('Ignoring academy registration fee email mismatch after successful Paystack verification');
+        console.warn('Ignoring academy payment email mismatch after successful Paystack verification');
       }
       }
     }
