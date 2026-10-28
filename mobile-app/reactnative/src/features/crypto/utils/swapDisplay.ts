@@ -1,6 +1,7 @@
 // Pure display/state helpers for the swap quote + confirmation screens.
 // All amounts are integer minor units; no floats are used for money.
 import type { SwapStatus, SettlementStatus, SwapOrderWire } from '../types/swapWire.ts';
+import { unwrapEnvelope } from './envelope';
 
 export const URGENT_SECONDS = 5;
 
@@ -61,6 +62,19 @@ export function orderDetailLines(
   if (order.swap_transaction_id) lines.push(`Transaction ID: ${order.swap_transaction_id}`);
   lines.push(`Ledger: ${settlementLabel(s)}`);
   return lines;
+}
+
+/** Member-scoped settlement route (owner-checked server-side); the admin reconciliation route is NOT usable by members. */
+export const settlementPath = (orderID: string): string =>
+  `/api/v1/crypto/swaps/${encodeURIComponent(orderID)}/settlement`;
+
+/** One GET of the settlement route, unwrapping the {success, settlement} envelope. */
+export async function fetchSettlementOnce(
+  get: (url: string) => Promise<{ data?: unknown }>,
+  orderID: string,
+): Promise<SettlementStatus> {
+  const res = await get(settlementPath(orderID));
+  return unwrapEnvelope<SettlementStatus>(res?.data);
 }
 
 /** Polls fetchOnce until ledger_settled; a transient error counts as an unsettled attempt. */

@@ -8798,6 +8798,52 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /crypto/swaps/{id}/settlement:
+    get:
+      operationId: getCryptoSwapSettlement
+      summary: Ledger settlement status of one of the caller's crypto swap orders
+      description: |
+        Member-scoped, read-only. The mobile swap flow polls this after confirming a swap
+        until `ledger_settled` is true. Ownership is enforced server-side: an order that
+        belongs to another user yields 403, an unknown id yields 404. Needs `crypto.view`.
+        Mounted at `/api/v1/crypto/swaps/:id/settlement` (Go backend).
+      tags: [Crypto]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Swap order id (`SwapOrder.id`)
+      responses:
+        '200':
+          description: Settlement status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, settlement]
+                properties:
+                  success: { type: boolean }
+                  settlement:
+                    type: object
+                    required: [ledger_settled, settled_at]
+                    properties:
+                      ledger_settled: { type: boolean }
+                      settled_at:
+                        type: string
+                        format: date-time
+                        nullable: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /transfers/paymax/crypto:
     post:
       operationId: initiateCryptoWalletToWalletTransfer

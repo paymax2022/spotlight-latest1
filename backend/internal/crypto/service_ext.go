@@ -1100,3 +1100,30 @@ func trimmed(s string) string {
 	}
 	return s[i:j]
 }
+
+// SwapSettlement is the member-visible ledger-settlement state of one swap order.
+type SwapSettlement struct {
+	LedgerSettled bool       `json:"ledger_settled"`
+	SettledAt     *time.Time `json:"settled_at"` // null until settled
+}
+
+// swapSettlementFor projects an order onto its settlement state for userID.
+// Pure (no I/O): nil order → ErrNotFound, foreign order → ErrForbidden.
+func swapSettlementFor(o *SwapOrder, userID string) (*SwapSettlement, error) {
+	if o == nil {
+		return nil, ErrNotFound
+	}
+	if userID == "" || o.UserID != userID {
+		return nil, ErrForbidden
+	}
+	return &SwapSettlement{LedgerSettled: o.LedgerSettled, SettledAt: o.SettledAt}, nil
+}
+
+// SwapSettlement returns the caller's own swap order settlement state (read-only).
+func (s *Service) SwapSettlement(ctx context.Context, userID, orderID string) (*SwapSettlement, error) {
+	o, err := s.repo.GetSwapOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	return swapSettlementFor(o, userID)
+}

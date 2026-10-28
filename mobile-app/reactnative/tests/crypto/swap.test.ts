@@ -133,3 +133,32 @@ describe('pollUntilSettled', () => {
     assert.equal(r.ledger_settled, true);
   });
 });
+
+// ---- Task 1.2 fix: member-scoped settlement endpoint (not the admin reconciliation route) ----
+import { settlementPath, fetchSettlementOnce } from '../../src/features/crypto/utils/swapDisplay.ts';
+
+describe('settlement endpoint', () => {
+  test('path is the member-scoped swaps route, never the admin one', () => {
+    assert.equal(settlementPath('ord_1'), '/api/v1/crypto/swaps/ord_1/settlement');
+    assert.ok(!settlementPath('ord_1').includes('admin'));
+  });
+  test('path url-encodes the order id', () => {
+    assert.equal(settlementPath('a/b'), '/api/v1/crypto/swaps/a%2Fb/settlement');
+  });
+  test('fetchSettlementOnce GETs the new route and unwraps {success, settlement}', async () => {
+    const urls: string[] = [];
+    const get = async (url: string) => {
+      urls.push(url);
+      return { data: { success: true, settlement: { ledger_settled: true, settled_at: '2026-10-28T12:00:00Z' } } };
+    };
+    const s = await fetchSettlementOnce(get, 'ord_9');
+    assert.deepEqual(urls, ['/api/v1/crypto/swaps/ord_9/settlement']);
+    assert.equal(s.ledger_settled, true);
+    assert.equal(s.settled_at, '2026-10-28T12:00:00Z');
+  });
+  test('null settled_at is preserved for unsettled orders', async () => {
+    const s = await fetchSettlementOnce(async () => ({ data: { success: true, settlement: { ledger_settled: false, settled_at: null } } }), 'o');
+    assert.equal(s.ledger_settled, false);
+    assert.equal(s.settled_at, null);
+  });
+});

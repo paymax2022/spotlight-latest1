@@ -22,10 +22,10 @@ export interface SwapOrderWire {
   spread_bps: number;
 }
 
-/** Settlement lookup from GET /api/v1/admin/crypto/reconciliation?order_id=. */
+/** Settlement lookup from GET /api/v1/crypto/swaps/:id/settlement (member-scoped). */
 export interface SettlementStatus {
   ledger_settled: boolean;
-  settled_at?: string; // ISO timestamp
+  settled_at?: string | null; // ISO timestamp; null until settled
 }
 
 export type SwapStatus = 'idle' | 'confirming' | 'executing' | 'complete' | 'failed';

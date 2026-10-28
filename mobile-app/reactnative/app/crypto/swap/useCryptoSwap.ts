@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { api } from '@/api/client';
 import { unwrapEnvelope } from '@/features/crypto/utils/envelope';
-import { nextSwapStatus, pollUntilSettled, type SwapEvent } from '@/features/crypto/utils/swapDisplay';
+import { nextSwapStatus, pollUntilSettled, fetchSettlementOnce, type SwapEvent } from '@/features/crypto/utils/swapDisplay';
 import type { SwapOrderWire, SwapQuoteWire, SwapStatus, SettlementStatus } from '@/features/crypto/types/swapWire';
 
 export interface UseSwapReturn {
@@ -79,10 +79,7 @@ export function useCryptoSwap(): UseSwapReturn {
 
   const pollSettlement = useCallback(
     (orderID: string) =>
-      pollUntilSettled(async () => {
-        const res = await api.get('/api/v1/admin/crypto/reconciliation', { params: { order_id: orderID } });
-        return unwrapEnvelope<SettlementStatus>(res?.data);
-      }),
+      pollUntilSettled(() => fetchSettlementOnce((url) => api.get(url), orderID)),
     [],
   );
 

@@ -1,6 +1,8 @@
 package crypto
 
 import (
+	"errors"
+	"log"
 	"net/http"
 	"os"
 	"spotlight/backend/go-common/ginutil"
@@ -316,4 +318,21 @@ func resolveAsset(h *Handler, c *gin.Context, ref string) string {
 		}
 	}
 	return ref
+}
+
+// SwapSettlement GET /swaps/:id/settlement — owner-scoped ledger settlement state
+// polled by the mobile swap flow. 404 unknown order, 403 not the owner.
+func (h *Handler) SwapSettlement(c *gin.Context) {
+	st, err := h.svc.SwapSettlement(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		// Unmapped errors fall to errMap's default; settlement lookups must 500, not 400.
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrForbidden) {
+			log.Printf("[crypto] swap settlement lookup failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
+			return
+		}
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "settlement": st})
 }
