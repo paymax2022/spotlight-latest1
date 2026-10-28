@@ -1,0 +1,35 @@
+# Never ship host build output or dependencies into the image. The Dockerfile
+# runs `npm ci` for the target platform and then `COPY . .`; without this file a
+# host node_modules (darwin binaries) overwrites the Linux install and the build
+# fails on the SWC binary.
+node_modules
+.next
+out
+dist
+
+# Secrets. .env.local is untracked and present on dev machines -- copying it
+# would bake credentials into the image.
+.env
+.env.*
+
+# Incremental TypeScript state -- stale tsbuildinfo can suppress type errors.
+*.tsbuildinfo
+
+# VCS / editor / OS noise
+.git
+.gitignore
+.DS_Store
+.vscode
+.idea
+
+# Tests and docs are not needed to build or serve
+vitest.config.ts
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+README.md
+QA_*.md
+
+# Other platforms' deploy configs
+app.yaml
