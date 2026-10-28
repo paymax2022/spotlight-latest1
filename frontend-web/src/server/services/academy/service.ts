@@ -9,6 +9,7 @@ import type {
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getOptionalEnv } from '@/lib/config';
 import { sendTransactionalEmail } from '@/lib/email';
+import { autoCreateInstallmentPlan, ensureEnrollment } from './index';
 
 type ServerSupabaseClient = Awaited<ReturnType<typeof createClient>>;
 
@@ -189,6 +190,53 @@ export async function sendAcademyApplicationApprovedEmail(input: {
       </div>
     `,
   });
+}
+
+/**
+ * A paid application is approved as soon as its registration fee settles, so
+ * the applicant no longer waits on an admin decision. This runs the same
+ * approval side-effects as the admin PATCH route (instalment plan, enrolment,
+ * approval email). It only moves `pending` rows, so an application an admin has
+ * already decided is left as it is.
+ */
+export async function approveAfterPayment(applicationId: string): Promise<void> {
+  const supabase = createAdminClient();
+  const { data: app, error } = await supabase
+    .from('academy_applications')
+    .update({ status: 'approved' })
+    .eq('id', applicationId)
+    .eq('status', 'pending')
+    .select('id, batch_id, email, full_name, tuition_total_ngn, academy_batches(batch_name)')
+    .maybeSingle();
+
+  if (error) {
+    console.error('[academy/auto-approve] failed to approve paid application:', error);
+    throw new ApiError('Failed to approve application', 500);
+  }
+
+  // Nothing matched: already decided by an admin, or the row does not exist.
+  if (!app) return;
+
+  if (app.batch_id) {
+    await autoCreateInstallmentPlan(applicationId, app.batch_id, new Date().toISOString());
+  }
+
+  await ensureEnrollment(supabase, applicationId).catch((e) => {
+    console.error('[academy/auto-approve] enrolment after payment failed', e);
+  });
+
+  if (app.email) {
+    const batchName = (app as { academy_batches?: { batch_name?: string | null } | null })
+      .academy_batches?.batch_name;
+    await sendAcademyApplicationApprovedEmail({
+      email: app.email,
+      fullName: app.full_name,
+      batchName,
+      tuitionOwedNgn: (app as { tuition_total_ngn?: number | null }).tuition_total_ngn,
+    }).catch((e) => {
+      console.error('[academy/auto-approve] approval email failed', e);
+    });
+  }
 }
 
 export async function sendAcademyApplicationRejectedEmail(input: {
@@ -532,6 +580,11 @@ export async function confirmAcademyPayment(applicationId: string, paymentRefere
     console.error('Failed to update academy payment status:', updateError);
     throw new ApiError('Failed to confirm payment', 500);
   }
+
+  // The fee has settled, so no admin decision is needed any more.
+  await approveAfterPayment(applicationId).catch((e) => {
+    console.error('[academy/payment-confirm] auto-approval failed; admin can still approve', e);
+  });
 
   let confirmationEmailSent = false;
   let confirmationEmailReason: string | undefined;

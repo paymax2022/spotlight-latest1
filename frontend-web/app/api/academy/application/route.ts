@@ -164,7 +164,9 @@ function buildActions(
   // `=== true` test here silently never matches and would tell every applicant their
   // fee was outstanding.
   const feePaid =
-    Number(application.application_fee_paid ?? 0) > 0 || application.payment_status === 'paid';
+    Number(application.application_fee_paid ?? 0) > 0 ||
+    application.payment_status === 'paid' ||
+    application.payment_status === 'not_required';
   if (!feePaid) {
     actions.push({
       key: 'pay_application_fee',
@@ -174,10 +176,11 @@ function buildActions(
     });
   }
 
-  // Applicants get immediate access to learning after paying application fee.
-  // No admin approval is required. Once enrolled, they can start learning.
-  if (feePaid && enrolled) {
-    // Already enrolled — show learning access
+  // There is no admin review step: submitting settles payment, which approves and
+  // enrols. An approved applicant who is not yet enrolled (older admin-approved rows)
+  // is still offered the instalment that enrols them, so tuition is gated on
+  // approval, not enrolment.
+  if (status === 'approved') {
     const outstanding = payments
       .filter((p) => p.status !== 'paid' && p.status !== 'waived')
       .sort((a, b) => Number(a.installment_number ?? 0) - Number(b.installment_number ?? 0));
@@ -190,7 +193,9 @@ function buildActions(
           outstanding.length === 1
             ? 'Pay your tuition'
             : `Pay tuition instalment ${next.installment_number} of ${payments.length}`,
-        detail: 'Keep your instalments up to date to stay enrolled.',
+        detail: enrolled
+          ? 'Keep your instalments up to date to stay enrolled.'
+          : 'Pay to secure your place and start learning.',
         amountNgn: Number(next.amount_ngn ?? 0),
         dueDate: (next.due_date as string) ?? null,
       });
@@ -211,11 +216,13 @@ function buildActions(
       });
     }
 
-    actions.push({
-      key: 'start_learning',
-      label: outstanding.length > 0 ? 'Continue learning' : 'Start learning',
-      detail: 'Your place is secured. Your lessons and assignments are ready.',
-    });
+    if (enrolled) {
+      actions.push({
+        key: 'start_learning',
+        label: outstanding.length > 0 ? 'Continue learning' : 'Start learning',
+        detail: 'Your place is secured. Your lessons and assignments are ready.',
+      });
+    }
   }
 
   if (status === 'rejected') {
