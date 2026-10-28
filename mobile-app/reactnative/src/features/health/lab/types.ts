@@ -323,16 +323,16 @@ export interface ResultReleaseInput {
  * lab-specific payout request.
  */
 export interface ProviderEarnings {
-  /** Wallet balance the ledger reports: what a bank transfer can draw on. */
+  /** Wallet balance the ledger reports, before the bank-transfer fee. */
   availableKobo: number;
   /** Lifetime total released to this owner. */
   earnedKobo: number;
   /** Held on orders still moving through collection and processing. */
   pendingKobo: number;
-  /** Held on orders awaiting sign-off or escalated, plus disputed holds. */
+  /** Held on orders awaiting sign-off or escalated, disputed holds, and released orders whose credit has not landed yet. */
   heldKobo: number;
   /** The owner's own wallet-to-bank transfers, newest first. */
-  withdrawals: { id: string; amountKobo: number; at: string; status: 'paid' | 'processing' | 'failed' }[];
+  withdrawals: { id: string; amountKobo: number; feeKobo: number; at: string; status: 'paid' | 'processing' | 'failed' }[];
 }
 
 export interface CollectionAssignment {

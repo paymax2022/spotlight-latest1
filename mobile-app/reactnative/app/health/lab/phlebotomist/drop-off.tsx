@@ -74,7 +74,7 @@ export default function DropOffScreen() {
               <Building2 size={20} color={Colors.primary} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.destName}>{LAB_NAME}</Text>
+              <Text style={styles.destName}>The lab&apos;s accession desk</Text>
               <Text style={styles.destMeta}>Drop-off destination</Text>
             </View>
           </View>

@@ -11,6 +11,7 @@ import {
   ReceiptText, TrendingUp, Settings, ClipboardList,
   Building2, Plus, Tag, Plane,
   LayoutDashboard, FolderOpen, MessageSquare, Stethoscope, Pill, Search, RefreshCw,
+  PawPrint, Syringe,
 } from 'lucide-react-native';
 import type { ModuleTab } from '@/components/ModuleTabBar';
 
@@ -163,6 +164,14 @@ export const PHARMACY_TABS: readonly ModuleTab[] = [
   { href: '/health/pharmacy/search',  label: 'Search',  icon: Search },
   { href: '/health/pharmacy/orders',  label: 'Orders',  icon: ReceiptText },
   { href: '/health/pharmacy/refills', label: 'Refills', icon: RefreshCw },
+] as const;
+
+/** Vet customer — home, find a vet, appointments and vaccinations. */
+export const VET_TABS: readonly ModuleTab[] = [
+  { href: '/health/vet',                        label: 'Home',         icon: PawPrint },
+  { href: '/health/vet/find-vet',               label: 'Find vet',     icon: Search },
+  { href: '/health/vet/appointments',           label: 'Appointments', icon: CalendarDays },
+  { href: '/health/vet/vaccination-scheduler',  label: 'Vaccines',     icon: Syringe },
 ] as const;
 
 /** Telemedicine — the hub, the doctor directory, and the patient's appointments. */

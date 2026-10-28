@@ -129,6 +129,22 @@ paths:
       responses:
         '201': { description: Order created }
         '422': { description: Validation or domain refusal (for example a HOME order without an address) }
+  /provider/earnings:
+    get:
+      summary: A lab owner's earnings (read-only)
+      description: |
+        Moves no money. Releasing a result credits the held amount, in full, to the owner's wallet; withdrawing uses the wallet's existing bank transfer (POST /api/finance/transfers/bank, transaction PIN, tier limit, fee, ledger reservation, idempotency). The lab module deliberately has no payout mutation of its own.
+        Buckets come from escrow_holds joined to the owner's lab orders; each hold falls in at most one: earned (RELEASED to this owner), pending (HELD on CREATED..PROCESSING orders), held (DISPUTED, or HELD on RESULT_READY/ESCALATED orders, or HELD on an order already RELEASED/CLOSED whose credit has not landed). A HELD hold on a CANCELLED order is the patient's refund and is in no bucket. earned is attributed to the payee pinned at release time, so a later owner change does not move it. available is the ledger wallet balance BEFORE the bank-transfer fee. All figures are integer kobo. An unavailable ledger fails the request (503/500) rather than reporting zero.
+      responses:
+        '200': { description: Earnings, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, earnings: { $ref: '#/components/schemas/Earnings' } } } } } }
+        '403': { description: Caller owns no lab }
+        '503': { description: Ledger reader not wired }
+  /provider/reviews:
+    get:
+      summary: Reviews of the labs the caller owns, newest first
+      responses:
+        '200': { description: Reviews }
+        '403': { description: Caller owns no lab }
   /phlebotomist/assignments:
     get:
       summary: My home-collection route (assigned to me, plus the unassigned pool of labs I staff as an active phlebotomist)
@@ -292,6 +308,24 @@ components:
             steps:
               type: array
               items: { type: object, properties: { label: { type: string }, at: { type: string, format: date-time }, done: { type: boolean } } }
+    Earnings:
+      type: object
+      properties:
+        available_kobo: { type: integer, format: int64, description: Ledger wallet balance before the bank-transfer fee }
+        earned_kobo: { type: integer, format: int64 }
+        pending_kobo: { type: integer, format: int64 }
+        held_kobo: { type: integer, format: int64 }
+        withdrawals:
+          type: array
+          description: The owner's own wallet-sourced bank transfers (not lab-specific; bank-to-bank excluded), newest first, at most 20
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              amount_kobo: { type: integer, format: int64 }
+              fee_kobo: { type: integer, format: int64, description: Debited from the wallet on top of amount_kobo }
+              status: { type: string, enum: [paid, processing, failed] }
+              at: { type: string, format: date-time }
     Assignment:
       type: object
       properties:

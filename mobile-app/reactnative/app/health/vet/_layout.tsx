@@ -1,5 +1,8 @@
+import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/tokens';
+import ModuleTabBar from '@/components/ModuleTabBar';
+import { VET_TABS } from '@/constants/moduleTabs';
 
 /**
  * Veterinary vertical stack (HEALTH-BUILD Phase 3). Mounts under the shared
@@ -8,6 +11,7 @@ import { Colors } from '@/constants/tokens';
  */
 export default function VetLayout() {
   return (
+    <View style={{ flex: 1 }}>
     <Stack
       screenOptions={{
         headerShown: false,
@@ -52,5 +56,7 @@ export default function VetLayout() {
       <Stack.Screen name="provider/reviews" />
       <Stack.Screen name="provider/referral" />
     </Stack>
+    <ModuleTabBar tabs={VET_TABS} />
+    </View>
   );
 }

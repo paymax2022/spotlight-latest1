@@ -66,6 +66,9 @@ func TestLiveDB_Earnings_BucketsMatchEscrowStates(t *testing.T) {
 	seedEscrowOrder(t, ctx, pool, patient, lab, owner, "HELD", "RESULT_READY", 500_00)
 	seedEscrowOrder(t, ctx, pool, patient, lab, owner, "HELD", "ESCALATED", 600_00)
 	seedEscrowOrder(t, ctx, pool, patient, lab, owner, "DISPUTED", "RELEASED", 700_00)
+	// Order marked RELEASED but the escrow credit has not landed yet: still the owner's money, awaiting credit.
+	seedEscrowOrder(t, ctx, pool, patient, lab, owner, "HELD", "RELEASED", 50_00)
+	seedEscrowOrder(t, ctx, pool, patient, lab, owner, "HELD", "CLOSED", 20_00)
 	// Never this owner's money.
 	seedEscrowOrder(t, ctx, pool, patient, lab, owner, "REFUNDED", "CANCELLED", 9_000_00)
 	seedEscrowOrder(t, ctx, pool, patient, otherLab, otherOwner, "RELEASED", "RELEASED", 8_000_00)
@@ -81,8 +84,8 @@ func TestLiveDB_Earnings_BucketsMatchEscrowStates(t *testing.T) {
 	if e.PendingKobo != 700_00 {
 		t.Errorf("pending = %d, want 70000", e.PendingKobo)
 	}
-	if e.HeldKobo != 1_800_00 {
-		t.Errorf("held = %d, want 180000 (sign-off + escalated + disputed)", e.HeldKobo)
+	if e.HeldKobo != 1_870_00 {
+		t.Errorf("held = %d, want 187000 (sign-off + escalated + disputed + released-but-uncredited)", e.HeldKobo)
 	}
 	if e.AvailableKobo != 7_000_00 {
 		t.Errorf("available must be the wallet balance the ledger reports, got %d", e.AvailableKobo)
@@ -125,11 +128,17 @@ func TestLiveDB_Earnings_WithdrawalsAndReviews(t *testing.T) {
 	lab := seedDirLab(t, ctx, pool, owner, true, false, "APPROVED")
 
 	for i, st := range []string{"successful", "funds_reserved", "failed", "reversed"} {
-		if _, err := pool.Exec(ctx, `INSERT INTO bank_transfers (user_id, amount_kobo, fee_kobo, account_number, account_number_last4, account_name, bank_code, bank_name, reference, status, idempotency_key)
-			VALUES ($1,$2,0,'0123456789','6789','Lab Owner','058','GTBank',$3,$4,$5)`,
+		if _, err := pool.Exec(ctx, `INSERT INTO bank_transfers (user_id, amount_kobo, fee_kobo, account_number, account_number_last4, account_name, bank_code, bank_name, reference, status, idempotency_key, source_type)
+			VALUES ($1,$2,5000,'0123456789','6789','Lab Owner','058','GTBank',$3,$4,$5,'wallet')`,
 			owner, int64(100000*(i+1)), "bt-earn-"+uuid.NewString()[:8], st, "wd-"+uuid.NewString()); err != nil {
 			t.Fatalf("seed bank transfer: %v", err)
 		}
+	}
+	// A bank-to-bank transfer never touched the wallet, so it is not a withdrawal.
+	if _, err := pool.Exec(ctx, `INSERT INTO bank_transfers (user_id, amount_kobo, fee_kobo, account_number, account_number_last4, account_name, bank_code, bank_name, reference, status, idempotency_key, source_type)
+		VALUES ($1,900000,0,'0123456789','6789','Lab Owner','058','GTBank',$2,'awaiting_funding',$3,'bank')`,
+		owner, "bt-earn-"+uuid.NewString()[:8], "wd-"+uuid.NewString()); err != nil {
+		t.Fatalf("seed bank-to-bank transfer: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM bank_transfers WHERE user_id=$1`, owner)
@@ -142,6 +151,12 @@ func TestLiveDB_Earnings_WithdrawalsAndReviews(t *testing.T) {
 	got := map[string]int{}
 	for _, p := range e.Withdrawals {
 		got[p.Status]++
+		if p.FeeKobo != 5000 {
+			t.Fatalf("the transfer fee must be reported so history reconciles to the balance, got %d", p.FeeKobo)
+		}
+	}
+	if len(e.Withdrawals) != 4 {
+		t.Fatalf("only wallet-sourced transfers are withdrawals (bank-to-bank excluded), got %d", len(e.Withdrawals))
 	}
 	if got["paid"] != 1 || got["processing"] != 1 || got["failed"] != 2 {
 		t.Fatalf("bank transfer statuses must map to paid/processing/failed, got %v", got)

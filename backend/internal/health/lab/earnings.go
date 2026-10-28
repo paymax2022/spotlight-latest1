@@ -20,11 +20,23 @@ import (
 //
 //	earned    released to this owner (escrow RELEASED, payee = owner)
 //	pending   HELD on orders still moving through collection / processing
-//	held      HELD on orders awaiting sign-off or escalated, plus DISPUTED holds
+//	held      HELD on orders awaiting sign-off or escalated, plus DISPUTED holds, plus
+//	          HELD on an order already marked RELEASED/CLOSED (the order state commits
+//	          before the escrow credit, so a fault between the two leaves the money
+//	          HELD but visible here rather than in no bucket)
 //	available the wallet balance the ledger reports (what a bank transfer can draw on)
 //
 // Every figure is integer kobo and is derived from escrow_holds joined to this
 // owner's lab orders, so it can be reconciled row by row against the ledger.
+//
+// Known limitations (deliberate, reviewed):
+//   - A HELD hold on a CANCELLED order is the patient's money (a refund is due), so
+//     it is in no bucket of the owner's.
+//   - "earned" is attributed by payee: the escrow payee is pinned to the lab's owner
+//     AT RELEASE TIME. If a lab later changes owner, holds released to the previous
+//     owner stay with that user's earned total and are not shown to the new owner.
+//   - "available" is the ledger balance BEFORE the bank-transfer fee, which the
+//     corridor debits on top of the amount.
 
 var ErrNotLabOwner = errors.New("lab: only a lab owner can view earnings")
 
@@ -41,7 +53,8 @@ func (s *Service) SetEarningsReader(r EarningsReader) { s.earn = r }
 type Withdrawal struct {
 	ID         string    `json:"id"`
 	AmountKobo int64     `json:"amount_kobo"`
-	Status     string    `json:"status"` // paid | processing | failed
+	FeeKobo    int64     `json:"fee_kobo"` // debited on top of the amount
+	Status     string    `json:"status"`   // paid | processing | failed
 	At         time.Time `json:"at"`
 }
 
@@ -113,7 +126,7 @@ func (s *Service) ProviderEarnings(ctx context.Context, userID string) (*Earning
 		  COALESCE(SUM(h.amount_kobo) FILTER (WHERE h.state = 'HELD'
 		        AND o.state IN ('CREATED','SCHEDULED','SAMPLE_COLLECTED','IN_TRANSIT','ACCESSIONED','PROCESSING')), 0)::bigint,
 		  COALESCE(SUM(h.amount_kobo) FILTER (WHERE h.state = 'DISPUTED'
-		        OR (h.state = 'HELD' AND o.state IN ('RESULT_READY','ESCALATED'))), 0)::bigint
+		        OR (h.state = 'HELD' AND o.state IN ('RESULT_READY','ESCALATED','RELEASED','CLOSED'))), 0)::bigint
 		FROM lab_orders o
 		JOIN escrow_holds h ON h.id = o.escrow_id
 		WHERE o.lab_provider_id = ANY($1::uuid[])`, labs, userID).Scan(&earned, &pending, &held)
@@ -122,8 +135,8 @@ func (s *Service) ProviderEarnings(ctx context.Context, userID string) (*Earning
 	}
 
 	rows, err := s.db.Query(ctx, `
-		SELECT id::text, amount_kobo, status, created_at
-		FROM bank_transfers WHERE user_id = $1
+		SELECT id::text, amount_kobo, fee_kobo, status, created_at
+		FROM bank_transfers WHERE user_id = $1 AND source_type = 'wallet'
 		ORDER BY created_at DESC LIMIT 20`, userID)
 	if err != nil {
 		return nil, err
@@ -133,7 +146,7 @@ func (s *Service) ProviderEarnings(ctx context.Context, userID string) (*Earning
 	for rows.Next() {
 		var w Withdrawal
 		var status string
-		if err := rows.Scan(&w.ID, &w.AmountKobo, &status, &w.At); err != nil {
+		if err := rows.Scan(&w.ID, &w.AmountKobo, &w.FeeKobo, &status, &w.At); err != nil {
 			return nil, err
 		}
 		w.Status = withdrawalStatus(status)

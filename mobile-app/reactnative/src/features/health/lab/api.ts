@@ -967,6 +967,7 @@ export async function getProviderEarnings(): Promise<ProviderEarnings> {
     withdrawals: (e.withdrawals ?? []).map((w: any) => ({
       id: w.id,
       amountKobo: Number(w.amount_kobo ?? 0),
+      feeKobo: Number(w.fee_kobo ?? 0),
       at: w.at,
       status: w.status === 'paid' || w.status === 'failed' ? w.status : 'processing',
     })),
