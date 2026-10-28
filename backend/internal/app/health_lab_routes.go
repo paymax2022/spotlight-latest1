@@ -114,6 +114,12 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.POST("/results/:id/consent", h.AcknowledgeResult)
 	lg.POST("/results/:id/share", h.ShareResult)     // grants LAB_RESULTS via the shared consent module
 	lg.GET("/results/:id/signed-url", h.ResultSignedURL)
+	lg.GET("/phlebotomist/assignments", h.ListAssignments)             // my route: assigned + unassigned pool of labs I staff
+	lg.POST("/phlebotomist/assignments/:id/status", h.SetCollectionStatus) // en_route | arrived (+ optional position)
+	lg.GET("/phlebotomist/assignments/:id/checklist", h.GetChecklist)
+	lg.POST("/phlebotomist/assignments/:id/custody", h.LogCustody)     // bedside scan: collects + opens chain of custody (HL-6)
+	lg.POST("/phlebotomist/assignments/:id/drop-off", h.DropOff)       // custody to the lab's accession desk
+	lg.GET("/orders/:id/phlebotomist", h.OrderPhlebotomist)            // patient/lab: who is collecting
 	lg.POST("/reviews", h.SubmitReview)              // verified-purchase review (released order, once)
 	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
 	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR641)

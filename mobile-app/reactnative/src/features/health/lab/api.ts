@@ -240,18 +240,6 @@ const MOCK_LABS: Lab[] = [
   },
 ];
 
-const MOCK_PHLEBOTOMIST: Phlebotomist = {
-  id: 'phleb_amina',
-  name: 'Amina Bello',
-  credential: { authority: 'MLSCN', licenseNo: 'MLSCN-PHL-7781', status: 'verified' },
-  rating: 4.9,
-  reviewCount: 1203,
-  lat: 6.4255,
-  lng: 3.4198,
-  phone: '+234 803 000 0000',
-  vehicle: 'Branded scooter · LND-221-XY',
-};
-
 const now = Date.now();
 const iso = (offsetMin: number) => new Date(now + offsetMin * 60_000).toISOString();
 
@@ -342,42 +330,6 @@ const MOCK_EARNINGS: ProviderEarnings = {
     { id: 'po2', amountKobo: 1200000, at: iso(-60 * 6), status: 'processing' },
   ],
 };
-
-const MOCK_ASSIGNMENTS: CollectionAssignment[] = [
-  {
-    orderId: 'lord_001',
-    patientName: 'Chidi N.',
-    address: '12B Ozumba Mbadiwe Ave, Victoria Island, Lagos',
-    lat: 6.4281,
-    lng: 3.4219,
-    scheduledFor: iso(45),
-    testSummary: 'Essential Wellness Check (4 tests)',
-    sampleType: 'blood',
-    status: 'en_route',
-    distanceLabel: '2.1 km · 8 min',
-  },
-  {
-    orderId: 'lord_004',
-    patientName: 'Sade M.',
-    address: '7 Bourdillon Rd, Ikoyi, Lagos',
-    lat: 6.4503,
-    lng: 3.4316,
-    scheduledFor: iso(120),
-    testSummary: 'HbA1c + Lipid',
-    sampleType: 'blood',
-    status: 'assigned',
-    distanceLabel: '5.4 km · 18 min',
-  },
-];
-
-const MOCK_CHECKLIST: CollectionChecklistItem[] = [
-  { id: 'c1', label: 'Verify patient identity (name + DOB)', done: false, required: true },
-  { id: 'c2', label: 'Confirm fasting / prep requirements met', done: false, required: true },
-  { id: 'c3', label: 'Sanitise hands & don gloves', done: false, required: true },
-  { id: 'c4', label: 'Draw correct tubes for ordered tests', done: false, required: true },
-  { id: 'c5', label: 'Label tubes & affix barcode at bedside', done: false, required: true },
-  { id: 'c6', label: 'Confirm patient comfort & apply dressing', done: false, required: false },
-];
 
 // Deterministic thumbnail tint so the same catalog row always renders the same
 // colour (the backend catalog carries no image/colour of its own).
@@ -523,13 +475,32 @@ export async function getLab(id: string): Promise<Lab> {
   return mapLab(data.lab);
 }
 
-export async function getPhlebotomist(orderId: string): Promise<Phlebotomist> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_PHLEBOTOMIST;
+export async function getPhlebotomist(orderId: string): Promise<Phlebotomist | null> {
+  try {
+    const { data } = await api.get<{ phlebotomist: any }>(`${LAB_API}/orders/${orderId}/phlebotomist`);
+    const p = data.phlebotomist;
+    const cred = p.credential;
+    return {
+      id: p.id,
+      name: p.name ?? '',
+      credential: cred
+        ? {
+            authority: 'MLSCN',
+            licenseNo: cred.license_no ?? '',
+            status: cred.status === 'verified' || cred.status === 'expired' ? cred.status : 'pending',
+          }
+        : undefined,
+      phone: p.phone || undefined,
+      lat: typeof p.lat === 'number' ? p.lat : undefined,
+      lng: typeof p.lng === 'number' ? p.lng : undefined,
+      locationAt: p.location_at ?? undefined,
+      status: p.status ?? 'assigned',
+    };
+  } catch (e) {
+    // 404 = nobody assigned yet. That is a normal state, not a failure.
+    if ((e as { response?: { status?: number } })?.response?.status === 404) return null;
+    throw e;
   }
-  const { data } = await api.get<Phlebotomist>(`${LAB_API}/orders/${orderId}/phlebotomist`);
-  return data;
 }
 
 const COLLECTION_MODE_FROM_METHOD: Record<string, LabOrder['collectionMode']> = {
@@ -556,7 +527,9 @@ function mapOrder(raw: any): LabOrder {
     totalKobo: raw.total_kobo ?? 0,
     paymentHeld: !!raw.escrow_id && HELD_STATES.has(raw.state),
     createdAt: raw.created_at,
-    location: '',
+    location: raw.collection_address ?? '',
+    scheduledFor: raw.scheduled_for ?? undefined,
+    phlebotomistId: raw.assigned_phlebotomist_id ?? undefined,
     resultId: raw.result_record_id ?? undefined,
     custody: [],
   };
@@ -613,15 +586,21 @@ export async function createOrder(input: CreateOrderInput): Promise<LabOrder> {
   // real checkout with "at least one test required" / "collection_method must
   // be HOME or WALK_IN" — checkout was 100% broken, not silently wrong.
   const collectionMethod = input.collectionMode === 'home' ? 'HOME' : 'WALK_IN';
-  const { data } = await api.post<LabOrder>(`${LAB_API}/orders`, {
+  const { data } = await api.post<{ order: unknown }>(`${LAB_API}/orders`, {
     lab_provider_id: input.labId,
     collection_method: collectionMethod,
     test_ids: input.lines.map((l) => l.refId),
     idempotency_key: input.idempotencyKey,
+    ...(collectionMethod === 'HOME'
+      ? {
+          collection_address: input.location,
+          ...(input.scheduledFor ? { scheduled_for: input.scheduledFor } : {}),
+        }
+      : {}),
   }, {
     headers: { 'Idempotency-Key': input.idempotencyKey },
   });
-  return data;
+  return mapOrder(data.order);
 }
 
 export async function reorder(orderId: string): Promise<LabOrderLineSeed[]> {
@@ -1019,47 +998,67 @@ export async function getProviderReviews(): Promise<LabReview[]> {
   return data;
 }
 
-export async function getAssignments(): Promise<CollectionAssignment[]> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_ASSIGNMENTS;
-  }
-  const { data } = await api.get<CollectionAssignment[]>(`${LAB_API}/phlebotomist/assignments`);
-  return data;
+function formatDistance(m: unknown): string {
+  if (typeof m !== 'number' || !Number.isFinite(m)) return '';
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+}
+
+/** The phlebotomist route. Pass the device position to get distances. */
+export async function getAssignments(pos?: { lat: number; lng: number }): Promise<CollectionAssignment[]> {
+  const { data } = await api.get<{ assignments?: any[] }>(`${LAB_API}/phlebotomist/assignments`, {
+    params: pos ? { lat: pos.lat, lng: pos.lng } : undefined,
+  });
+  return (data.assignments ?? []).map((a) => ({
+    orderId: a.order_id,
+    patientName: a.patient_name ?? 'Patient',
+    address: a.address ?? '',
+    lat: typeof a.lat === 'number' ? a.lat : 0,
+    lng: typeof a.lng === 'number' ? a.lng : 0,
+    scheduledFor: a.scheduled_for ?? '',
+    testSummary: a.test_summary ?? '',
+    sampleType: a.sample_type ?? 'blood',
+    status: a.status ?? 'assigned',
+    distanceLabel: formatDistance(a.distance_m),
+  }));
+}
+
+/** Marks the visit en route / arrived (the first call claims an unassigned order). */
+export async function setCollectionStatus(
+  orderId: string,
+  status: 'en_route' | 'arrived',
+  pos?: { lat: number; lng: number },
+): Promise<void> {
+  await api.post(`${LAB_API}/phlebotomist/assignments/${orderId}/status`, {
+    status,
+    ...(pos ? { lat: pos.lat, lng: pos.lng } : {}),
+  });
 }
 
 export async function getChecklist(orderId: string): Promise<CollectionChecklistItem[]> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_CHECKLIST.map((c) => ({ ...c }));
-  }
-  const { data } = await api.get<CollectionChecklistItem[]>(`${LAB_API}/phlebotomist/assignments/${orderId}/checklist`);
-  return data;
+  const { data } = await api.get<{ items?: any[] }>(`${LAB_API}/phlebotomist/assignments/${orderId}/checklist`);
+  return (data.items ?? []).map((i) => ({ id: i.id, label: i.label, done: i.done === true, required: i.required === true }));
 }
 
-/** HL-6: log a chain-of-custody event. A failed condition → recollect. */
+/** Bedside scan: collects the sample under the scanned barcode and opens the chain of custody. */
 export async function logCustody(input: ChainOfCustodyInput): Promise<{ ok: true; breach: boolean }> {
-  if (USE_MOCK) {
-    await delay();
-    return { ok: true, breach: !input.conditionOk };
-  }
-  const { data } = await api.post<{ ok: true; breach: boolean }>(
-    `${LAB_API}/phlebotomist/assignments/${input.orderId}/custody`,
-    input,
-  );
-  return data;
+  const { data } = await api.post<{ breach: boolean }>(`${LAB_API}/phlebotomist/assignments/${input.orderId}/custody`, {
+    barcode: input.barcode,
+    condition_ok: input.conditionOk,
+    note: input.note ?? '',
+    completed_items: input.completedItems,
+  });
+  return { ok: true, breach: data.breach === true };
 }
 
 export async function dropOff(input: DropOffInput): Promise<{ ok: true }> {
-  if (USE_MOCK) {
-    await delay();
-    return { ok: true };
-  }
-  await api.post(`${LAB_API}/phlebotomist/assignments/${input.orderId}/drop-off`, input);
+  await api.post(`${LAB_API}/phlebotomist/assignments/${input.orderId}/drop-off`, {
+    ...(input.labId ? { lab_id: input.labId } : {}),
+    barcode: input.barcode,
+    note: input.note ?? '',
+  });
   return { ok: true };
 }
 
-// Stable idempotency-key minter for money-path mutations (mirrors pharmacy cartStore).
 export function newIdempotencyKey(prefix = 'lab'): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }

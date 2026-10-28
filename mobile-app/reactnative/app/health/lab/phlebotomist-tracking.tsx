@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Linking } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Star, Phone, Clock, MapPin, ChevronRight } from 'lucide-react-native';
+import { Phone, Clock, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -11,11 +11,18 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { formatDate } from '@/features/health/constants/health.constants';
+import { formatDate, relativeTime } from '@/features/health/constants/health.constants';
 import LabStatusPill from '@/features/health/lab/components/LabStatusPill';
-import LabMapView from '@/features/health/lab/components/LabMapView';
 import CredentialBadge from '@/features/health/components/CredentialBadge';
 import { useOrder, usePhlebotomist } from '@/features/health/lab/hooks';
+
+const VISIT_STATUS_LABEL = {
+  assigned: 'Assigned',
+  en_route: 'On the way',
+  arrived: 'Arrived',
+  collected: 'Collected',
+  dropped_off: 'At the lab',
+} as const;
 
 export default function PhlebotomistTrackingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -32,7 +39,7 @@ export default function PhlebotomistTrackingScreen() {
       <ScreenHeader title="Live tracking" subtitle="Phlebotomist on the way" />
       {loading ? (
         <StateView kind="loading" title="Locating phlebotomist…" />
-      ) : error || !order || !phleb ? (
+      ) : error || !order ? (
         <StateView
           kind="error"
           title="Couldn't load tracking"
@@ -43,27 +50,24 @@ export default function PhlebotomistTrackingScreen() {
             phlebQ.refetch();
           }}
         />
+      ) : !phleb ? (
+        <StateView
+          kind="empty"
+          icon="Clock"
+          title="Phlebotomist not assigned yet"
+          message="You'll see who is collecting your sample here as soon as the lab assigns someone."
+          actionLabel="View collection details"
+          onAction={() => router.push({ pathname: '/health/lab/test-status', params: { id: order.id } })}
+        />
       ) : (
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <LabMapView
-            pins={[
-              { id: 'phleb', label: phleb.name.split(' ')[0], x: 0.32, y: 0.4, active: true },
-              { id: 'patient', label: 'You', x: 0.7, y: 0.7 },
-            ]}
-            height={220}
-            caption={phleb.vehicle}
-          />
-
           <View style={styles.etaRow}>
             <View style={styles.etaCard}>
               <Clock size={18} color={Colors.teal} strokeWidth={2.2} />
-              <Text style={styles.etaValue}>~12 min</Text>
-              <Text style={styles.etaLabel}>Estimated arrival</Text>
-            </View>
-            <View style={styles.etaCard}>
-              <MapPin size={18} color={Colors.primary} strokeWidth={2.2} />
-              <Text style={styles.etaValue}>3.4 km</Text>
-              <Text style={styles.etaLabel}>Away</Text>
+              <Text style={styles.etaValue}>{VISIT_STATUS_LABEL[phleb.status]}</Text>
+              <Text style={styles.etaLabel}>
+                {phleb.locationAt ? `Last seen ${relativeTime(phleb.locationAt)}` : 'Location not shared'}
+              </Text>
             </View>
           </View>
 
@@ -76,22 +80,20 @@ export default function PhlebotomistTrackingScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.phlebName}>{phleb.name}</Text>
-                <View style={styles.ratingRow}>
-                  <Star size={14} color={Colors.gold} fill={Colors.gold} strokeWidth={2} />
-                  <Text style={styles.ratingText}>
-                    {phleb.rating.toFixed(1)} · {phleb.reviewCount} reviews
-                  </Text>
-                </View>
               </View>
             </View>
-            <View style={styles.badgeWrap}>
-              <CredentialBadge credential={phleb.credential} showLicense />
-            </View>
+            {phleb.credential ? (
+              <View style={styles.badgeWrap}>
+                <CredentialBadge credential={phleb.credential} showLicense />
+              </View>
+            ) : null}
 
+            {phleb.phone ? (
             <Pressable
               style={styles.callRow}
               accessibilityRole="button"
               accessibilityLabel={`Call ${phleb.name}`}
+              onPress={() => Linking.openURL(`tel:${phleb.phone}`)}
             >
               <View style={styles.callIcon}>
                 <Phone size={18} color={Colors.teal} strokeWidth={2.2} />
@@ -102,6 +104,7 @@ export default function PhlebotomistTrackingScreen() {
               </View>
               <ChevronRight size={18} color={Colors.onSurfaceVariant} />
             </Pressable>
+            ) : null}
           </View>
 
           <View style={styles.card}>

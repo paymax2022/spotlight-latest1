@@ -106,6 +106,112 @@ paths:
         '200': { description: "{ url, expires_at }" }
         '404': { description: No report document has been issued yet }
         '503': { description: Document delivery (R2) not configured }
+  /orders:
+    post:
+      summary: Place an order (payment HELD on the escrow rail, HL-9). Documented here for the home-collection fields only.
+      description: For collection_method HOME an address is required; scheduled_for must be within the next 90 days. The details are stored on the order so the phlebotomist route and tracking can use them. WALK_IN ignores them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lab_provider_id, collection_method, test_ids]
+              properties:
+                lab_provider_id: { type: string, format: uuid }
+                collection_method: { type: string, enum: [HOME, WALK_IN] }
+                test_ids: { type: array, items: { type: string, format: uuid } }
+                idempotency_key: { type: string }
+                collection_address: { type: string, maxLength: 300 }
+                collection_lat: { type: number }
+                collection_lng: { type: number }
+                scheduled_for: { type: string, format: date-time }
+      responses:
+        '201': { description: Order created }
+        '422': { description: Validation or domain refusal (for example a HOME order without an address) }
+  /phlebotomist/assignments:
+    get:
+      summary: My home-collection route (assigned to me, plus the unassigned pool of labs I staff as an active phlebotomist)
+      parameters:
+        - { name: lat, in: query, schema: { type: number }, description: Send with lng to get distance_m per stop }
+        - { name: lng, in: query, schema: { type: number } }
+      responses:
+        '200': { description: Assignments, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, assignments: { type: array, items: { $ref: '#/components/schemas/Assignment' } } } } } } }
+  /phlebotomist/assignments/{id}/status:
+    post:
+      summary: Mark the visit en route or arrived. The first call claims an unassigned order; the optional position is shown to the patient while the collection is active.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [en_route, arrived] }
+                lat: { type: number }
+                lng: { type: number }
+      responses:
+        '200': { description: Updated }
+        '400': { description: Unknown status or bad coordinates }
+        '404': { description: Not your order, already claimed by a colleague, or missing (indistinguishable) }
+        '409': { description: Order is no longer SCHEDULED }
+  /phlebotomist/assignments/{id}/checklist:
+    get:
+      summary: The bedside checklist (server-owned; the fasting step appears only when a fasting test is ordered)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Items with done state }
+        '404': { description: Not your order }
+  /phlebotomist/assignments/{id}/custody:
+    post:
+      summary: Bedside scan. Verifies every required checklist step, collects the sample under the scanned tube barcode (first scan) and opens the chain of custody (HL-6). condition_ok=false raises a breach and requires recollection.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [barcode, condition_ok, completed_items]
+              properties:
+                barcode: { type: string, description: 6-32 letters, digits or dashes }
+                condition_ok: { type: boolean }
+                note: { type: string }
+                completed_items: { type: array, items: { type: string } }
+      responses:
+        '201': { description: "{ sample_id, breach }" }
+        '400': { description: Malformed barcode or checklist incomplete }
+        '404': { description: Not your order }
+        '409': { description: Barcode mismatch on a re-scan, or barcode already on another sample }
+  /phlebotomist/assignments/{id}/drop-off:
+    post:
+      summary: Hand the sample to the lab accession desk. The scanned barcode must match the sample of record; custody passes to the lab owner.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [barcode]
+              properties:
+                barcode: { type: string }
+                lab_id: { type: string, format: uuid, description: Optional; checked against the order's lab when given }
+                note: { type: string }
+      responses:
+        '200': { description: Handed over }
+        '404': { description: Not your order or wrong lab }
+        '409': { description: Barcode mismatch }
+  /orders/{id}/phlebotomist:
+    get:
+      summary: Who is collecting (patient, owning lab or admin). 404 until a phlebotomist is assigned.
+      description: Phone and last position (fresher than 15 minutes) are returned to the patient only, and only while the collection is active. No rating or vehicle data exists for phlebotomists, so none is returned.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Phlebotomist }
+        '404': { description: Not assigned yet, or not your order }
   /tests/{id}:
     get:
       summary: One active catalog test
@@ -186,6 +292,19 @@ components:
             steps:
               type: array
               items: { type: object, properties: { label: { type: string }, at: { type: string, format: date-time }, done: { type: boolean } } }
+    Assignment:
+      type: object
+      properties:
+        order_id: { type: string, format: uuid }
+        patient_name: { type: string, description: First name and initial only }
+        address: { type: string }
+        lat: { type: number }
+        lng: { type: number }
+        scheduled_for: { type: string, format: date-time }
+        test_summary: { type: string }
+        sample_type: { type: string, enum: [blood, urine, stool, swab, saliva] }
+        status: { type: string, enum: [assigned, en_route, arrived, collected, dropped_off] }
+        distance_m: { type: number, nullable: true }
     Review:
       type: object
       properties:

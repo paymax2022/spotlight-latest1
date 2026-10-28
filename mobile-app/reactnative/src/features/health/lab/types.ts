@@ -77,16 +77,18 @@ export interface Lab {
   active: boolean;
 }
 
+/** Who is collecting. Only persisted facts: no rating or vehicle data exists for phlebotomists. */
 export interface Phlebotomist {
   id: string;
   name: string;
-  credential: ProviderCredential;
-  rating: number;
-  reviewCount: number;
-  lat: number;
-  lng: number;
-  phone: string;
-  vehicle: string;
+  credential?: ProviderCredential;
+  /** Shown to the patient only while the collection is active. */
+  phone?: string;
+  /** Last reported position; absent when none was shared in the last 15 minutes. */
+  lat?: number;
+  lng?: number;
+  locationAt?: string;
+  status: CollectionAssignment['status'];
 }
 
 // CREATED → SCHEDULED → SAMPLE_COLLECTED → IN_TRANSIT → ACCESSIONED →
@@ -347,11 +349,14 @@ export interface ChainOfCustodyInput {
   barcode: string;
   conditionOk: boolean;
   note?: string;
+  /** Ids of the checklist steps the phlebotomist confirmed; the server requires every required step. */
+  completedItems: string[];
 }
 
 export interface DropOffInput {
   orderId: string;
-  labId: string;
+  /** Optional: the server derives the lab from the order and only checks it if given. */
+  labId?: string;
   barcode: string;
   note?: string;
 }

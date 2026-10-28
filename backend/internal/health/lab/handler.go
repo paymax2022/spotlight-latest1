@@ -235,6 +235,11 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		CollectionMethod string   `json:"collection_method"`
 		IdempotencyKey   string   `json:"idempotency_key"`
 		TestIDs          []string `json:"test_ids"`
+		// Home collection: where and when. Required address for HOME.
+		CollectionAddress string   `json:"collection_address"`
+		CollectionLat     *float64 `json:"collection_lat"`
+		CollectionLng     *float64 `json:"collection_lng"`
+		ScheduledFor      string   `json:"scheduled_for"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
@@ -255,11 +260,20 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		}
 	}
 	idem := strutil.FirstNonEmpty(ginutil.IdempotencyKey(c), req.IdempotencyKey)
+	scheduledFor, ok := parseScheduledFor(req.ScheduledFor)
+	if !ok {
+		ginutil.FailOK(c, http.StatusBadRequest, "scheduled_for must be an RFC 3339 time")
+		return
+	}
 	in := CreateOrderInput{
-		LabProviderID:    req.LabProviderID,
-		CollectionMethod: CollectionMethod(req.CollectionMethod),
-		IdempotencyKey:   idem,
-		TestIDs:          req.TestIDs,
+		LabProviderID:     req.LabProviderID,
+		CollectionMethod:  CollectionMethod(req.CollectionMethod),
+		IdempotencyKey:    idem,
+		TestIDs:           req.TestIDs,
+		CollectionAddress: req.CollectionAddress,
+		CollectionLat:     req.CollectionLat,
+		CollectionLng:     req.CollectionLng,
+		ScheduledFor:      scheduledFor,
 	}
 	o, err := h.svc.CreateOrder(c.Request.Context(), id, in)
 	if err != nil {

@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+import { getDevicePosition } from './location';
 import {
   getTests,
   getTest,
@@ -31,6 +32,7 @@ import {
   requestPayout,
   getProviderReviews,
   getAssignments,
+  setCollectionStatus,
   getChecklist,
   logCustody,
   dropOff,
@@ -236,7 +238,21 @@ export function useProviderReviews() {
 }
 
 export function useAssignments() {
-  return useQuery({ queryKey: [KEY, 'phleb', 'assignments'], queryFn: getAssignments, staleTime: 10_000 });
+  return useQuery({
+    queryKey: [KEY, 'phleb', 'assignments'],
+    // Distances only when location permission is already granted (no prompt on a poll).
+    queryFn: async () => getAssignments(await getDevicePosition(false)),
+    staleTime: 10_000,
+  });
+}
+
+export function useSetCollectionStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ orderId, status }: { orderId: string; status: 'en_route' | 'arrived' }) =>
+      setCollectionStatus(orderId, status, await getDevicePosition(true)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'phleb', 'assignments'] }),
+  });
 }
 
 export function useChecklist(orderId?: string) {
