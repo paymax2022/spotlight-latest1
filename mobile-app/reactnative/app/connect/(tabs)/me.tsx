@@ -198,7 +198,7 @@ function Stat({ icon, value, label }: { icon: React.ReactNode; value: string; la
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
-  body: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 100, gap: Spacing.md },
+  body: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.lg, gap: Spacing.md },
   profileCard: {
     backgroundColor: Colors.surfaceContainerLowest,
     borderRadius: Radius.lg,
