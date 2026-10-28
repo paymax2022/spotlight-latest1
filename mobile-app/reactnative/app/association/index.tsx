@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -17,6 +17,11 @@ import {OrganisationCard} from '@/features/association/components';
 import {QuickNav} from '@/features/association/components';
 import { useOrganisations } from '@/features/association/hooks';
 import { HomeMenuButton } from '@/components/HomeMenu';
+
+// Source: 1774x887 PNG (~2 MB). Cloudinary serves a 1200px-wide, auto-format,
+// auto-quality rendition so phones don't download the original.
+const HERO_BANNER_URL =
+  'https://res.cloudinary.com/paymax/image/upload/w_1200,q_auto,f_auto/v1792924522/Luxury_purple_association_management_banner_sc1gfz.png';
 
 export default function AssociationDiscovery() {
   const [search, setSearch] = useState('');
@@ -43,6 +48,16 @@ export default function AssociationDiscovery() {
           </Pressable>
           <HomeMenuButton />
         </View>
+      </View>
+
+      <View style={styles.heroWrap}>
+        <Image
+          source={{ uri: HERO_BANNER_URL }}
+          style={styles.hero}
+          resizeMode="cover"
+          accessibilityRole="image"
+          accessibilityLabel="Association management"
+        />
       </View>
 
       <View style={styles.searchWrap}>
@@ -154,6 +169,8 @@ const styles = StyleSheet.create({
   headerTitleWrap: { flex: 1 },
   eyebrow: { ...Typography.caption, color: Colors.primary, fontWeight: '700' as const, textTransform: 'uppercase', letterSpacing: 0.6 },
   headerTitle: { ...Typography.titleLg, color: Colors.onSurface },
+  heroWrap: { paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.xs },
+  hero: { width: '100%', aspectRatio: 2, borderRadius: Radius.xl, backgroundColor: Colors.surfaceContainerHigh },
   searchWrap: { marginTop: Spacing.sm, marginBottom: Spacing.sm },
   sectionGap: { marginTop: Spacing.sm },
   list: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 120, gap: Spacing.md },
