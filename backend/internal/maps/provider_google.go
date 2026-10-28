@@ -135,6 +135,10 @@ type googleGeocodeResp struct {
 		FormattedAddress string `json:"formatted_address"`
 		PlaceID          string `json:"place_id"`
 		PartialMatch     bool   `json:"partial_match"`
+		AddressComponents []struct {
+			LongName string   `json:"long_name"`
+			Types    []string `json:"types"`
+		} `json:"address_components"`
 		Geometry         struct {
 			LocationType string `json:"location_type"`
 			Location     struct {
@@ -143,6 +147,45 @@ type googleGeocodeResp struct {
 			} `json:"location"`
 		} `json:"geometry"`
 	} `json:"results"`
+}
+
+// googleCity picks the city from Google's address components: the locality
+// ("Lagos", "Abuja"), else the state with its " State" suffix dropped, so a
+// Lagos address still gets a city when Google omits the locality.
+func googleCity(components []struct {
+	LongName string   `json:"long_name"`
+	Types    []string `json:"types"`
+}) string {
+	byType := func(want string) string {
+		for _, c := range components {
+			for _, t := range c.Types {
+				if t == want {
+					return c.LongName
+				}
+			}
+		}
+		return ""
+	}
+	if city := byType("locality"); city != "" {
+		return city
+	}
+	return googleState(components)
+}
+
+// googleState is the administrative_area_level_1 component with the " State"
+// suffix dropped ("Lagos State" → "Lagos"); "" when Google omits it.
+func googleState(components []struct {
+	LongName string   `json:"long_name"`
+	Types    []string `json:"types"`
+}) string {
+	for _, c := range components {
+		for _, t := range c.Types {
+			if t == "administrative_area_level_1" {
+				return strings.TrimSpace(strings.TrimSuffix(c.LongName, " State"))
+			}
+		}
+	}
+	return ""
 }
 
 // googleConfidence normalizes Google's native quality signals into 0..1.
@@ -193,6 +236,8 @@ func (g *Google) Geocode(ctx context.Context, address string) (GeoResult, error)
 	lat, lng := res.Geometry.Location.Lat, res.Geometry.Location.Lng
 	return GeoResult{
 		Lat: lat, Lng: lng, Address: res.FormattedAddress,
+		City:     googleCity(res.AddressComponents),
+		State:    googleState(res.AddressComponents),
 		PlusCode: g.codec.Encode(lat, lng),
 		Provider: g.Name(), Source: SourceGoogle, Cacheable: false,
 		Confidence: googleConfidence(res.Geometry.LocationType, res.PartialMatch),
@@ -214,14 +259,17 @@ func (g *Google) ReverseGeocode(ctx context.Context, lat, lng float64) (GeoResul
 	addr := fmt.Sprintf("%.5f, %.5f", lat, lng)
 	conf := Confidence(1.0) // reverse from an exact coordinate is fully confident.
 	partial := false
+	city, state := "", ""
 	if len(r.Results) > 0 {
 		res := r.Results[0]
 		addr = res.FormattedAddress
 		conf = googleConfidence(res.Geometry.LocationType, res.PartialMatch)
 		partial = res.PartialMatch
+		city = googleCity(res.AddressComponents)
+		state = googleState(res.AddressComponents)
 	}
 	return GeoResult{
-		Lat: lat, Lng: lng, Address: addr, PlusCode: g.codec.Encode(lat, lng),
+		Lat: lat, Lng: lng, Address: addr, City: city, State: state, PlusCode: g.codec.Encode(lat, lng),
 		Provider: g.Name(), Source: SourceGoogle, Cacheable: false,
 		Confidence: conf, H3Cell: PointCellKey(lat, lng), Partial: partial,
 	}, nil

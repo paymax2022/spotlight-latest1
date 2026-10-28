@@ -99,7 +99,13 @@ func (s *Service) CreateAnnouncement(ctx context.Context, adminID, orgID string,
 		map[string]any{"title": r.Title, "urgent": r.Urgent}); err != nil {
 		return "", err
 	}
-	return id, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	if r.Notify {
+		s.pushToOrg(orgID, r.Title, ptr.DerefZero(r.Body), "/association/announcements/"+id)
+	}
+	return id, nil
 }
 
 func (s *Service) UpdateAnnouncement(ctx context.Context, adminID, id string, r AnnouncementRequest) error {
@@ -192,7 +198,13 @@ func (s *Service) CreateMeeting(ctx context.Context, adminID, orgID string, r Me
 		map[string]any{"title": r.Title, "startsAt": startsAt}); err != nil {
 		return "", err
 	}
-	return id, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	if r.Notify {
+		s.pushToOrg(orgID, r.Title, ptr.DerefZero(r.Description), "/association/meetings/"+id)
+	}
+	return id, nil
 }
 
 func (s *Service) UpdateMeeting(ctx context.Context, adminID, id string, r MeetingRequest) error {
@@ -302,7 +314,13 @@ func (s *Service) CreateDocument(ctx context.Context, adminID, orgID string, r D
 		map[string]any{"title": r.Title, "restricted": r.Restricted}); err != nil {
 		return "", err
 	}
-	return id, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	if r.Notify {
+		s.pushToOrg(orgID, r.Title, "", "/association/documents/"+id)
+	}
+	return id, nil
 }
 
 func (s *Service) UpdateDocument(ctx context.Context, adminID, id string, r DocumentRequest) error {
@@ -400,7 +418,13 @@ func (s *Service) CreateEvent(ctx context.Context, adminID, orgID string, r Even
 		map[string]any{"title": r.Title, "paid": r.Paid, "feeKobo": r.FeeKobo}); err != nil {
 		return "", err
 	}
-	return id, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	if r.Notify {
+		s.pushToOrg(orgID, r.Title, ptr.DerefZero(r.Description), "/association/events/"+id)
+	}
+	return id, nil
 }
 
 func (s *Service) UpdateEvent(ctx context.Context, adminID, id string, r EventRequest) error {
@@ -525,7 +549,13 @@ func (s *Service) CreateTask(ctx context.Context, adminID, orgID string, r TaskR
 		map[string]any{"title": r.Title, "priority": priority}); err != nil {
 		return "", err
 	}
-	return id, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	if r.Notify && r.AssigneeID != nil {
+		s.pushToMemberships([]string{*r.AssigneeID}, "New task: "+r.Title, ptr.DerefZero(r.Description), "/association/tasks/"+id)
+	}
+	return id, nil
 }
 
 func (s *Service) UpdateTask(ctx context.Context, adminID, id string, r TaskRequest) error {
@@ -1269,11 +1299,51 @@ func (s *Service) SetCommitteeMemberRole(ctx context.Context, adminID, committee
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("%w: association: that member is not an active member of this committee", ErrInvalidInput)
 	}
+	// A position has one holder: appointing a new chair, secretary or treasurer
+	// steps the previous holder back to an ordinary member, in the same
+	// transaction so the committee is never left with two chairs.
+	if role != "MEMBER" {
+		if _, err := tx.Exec(ctx,
+			`UPDATE assoc_committee_members SET role='MEMBER'
+			 WHERE committee_id=$1 AND role=$3 AND membership_id<>$2`, committeeID, membershipID, role); err != nil {
+			return fmt.Errorf("association: replace committee %s: %w", role, err)
+		}
+	}
+	var committeeName string
+	_ = tx.QueryRow(ctx, `SELECT name FROM assoc_committees WHERE id=$1`, committeeID).Scan(&committeeName)
+	if role != "MEMBER" {
+		title := "You are now " + committeeRoleLabel(role) + " of " + committeeName
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO assoc_notifications (id, membership_id, kind, title, body, route)
+			VALUES (gen_random_uuid(), $1, 'COMMITTEE', $2, $3, $4)`,
+			membershipID, title, "You have been appointed by the organisation admin.", "/association/committees/"+committeeID); err != nil {
+			return fmt.Errorf("association: notify appointee: %w", err)
+		}
+	}
 	if err := s.audit(ctx, tx, orgID, adminID, "COMMITTEE_ROLE_SET", "committee", committeeID,
 		map[string]any{"membershipId": membershipID, "role": role}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if role != "MEMBER" {
+		s.pushToMemberships([]string{membershipID}, "You are now "+committeeRoleLabel(role)+" of "+committeeName,
+			"You have been appointed by the organisation admin.", "/association/committees/"+committeeID)
+	}
+	return nil
+}
+
+func committeeRoleLabel(role string) string {
+	switch role {
+	case "CHAIR":
+		return "Chairperson"
+	case "SECRETARY":
+		return "Secretary"
+	case "TREASURER":
+		return "Treasurer"
+	}
+	return "a member"
 }
 
 // ResolveDocumentDownload returns the storage key of a document the caller is

@@ -249,6 +249,15 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		// Single owned transaction detail (object-level authZ in the service).
 		member.GET("/transactions/:id", rp(PermView), h.Transaction)
 
+		// Eligibility, watchlist and price alerts: reads and non-money writes (crypto.view).
+		member.GET("/eligibility", rp(PermView), h.Eligibility)
+		member.GET("/watchlist", rp(PermView), h.Watchlist)
+		member.POST("/watchlist", rp(PermView), h.AddWatchlist)
+		member.DELETE("/watchlist/:assetId", rp(PermView), h.RemoveWatchlist)
+		member.GET("/alerts", rp(PermView), h.Alerts)
+		member.POST("/alerts", rp(PermView), h.CreateAlert)
+		member.DELETE("/alerts/:id", rp(PermView), h.DeleteAlert)
+
 		// Orders (write → crypto.trade). Declared before /:id-style routes.
 		member.POST("/orders/buy", rp(PermTrade), h.Buy)
 		member.POST("/orders/sell", rp(PermTrade), h.Sell)
@@ -261,6 +270,7 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		member.POST("/swap/quote", rp(PermTrade), h.SwapQuote) // pre-trade estimate
 		member.POST("/swap", rp(PermTrade), h.Swap)            // Idempotency-Key required
 		member.GET("/swap/orders", rp(PermView), h.SwapOrders)
+		member.GET("/swaps/:id/settlement", rp(PermView), h.SwapSettlement) // owner-scoped; polled by mobile
 
 		member.GET("/addresses", rp(PermView), h.ListAddresses)
 		member.POST("/addresses", rp(PermTrade), h.AddAddress)
@@ -290,6 +300,13 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		// unset). Mounted under the member group as
 		// /api/v1/crypto/internal/onchain-balance. See onchain.go.
 		registerCustodyWebhook(member, h)
+
+		// Quidax webhook handler: receives swap completion/failure events.
+		// Guarded by HMAC-SHA256 signature (CRYPTO_QUIDAX_WEBHOOK_SECRET).
+		// Updates SwapOrder status from "executing" to final state (completed/failed).
+		// Mounted under the member group as /api/v1/crypto/internal/webhooks/quidax.
+		// See webhook.go.
+		registerQuidaxWebhook(member, h)
 	}
 
 	if admin != nil {
@@ -305,6 +322,7 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		admin.GET("/addresses", rp(PermAdmin), h.AdminListAddresses)
 		admin.POST("/addresses/:id/decision", rp(PermAdmin), h.AdminDecideAddress)
 		admin.GET("/reconciliation", rp(PermAdmin), h.AdminReconciliation)
+		admin.GET("/reconciliation/swaps", rp(PermAdmin), h.AdminSwapReconciliation)
 		admin.GET("/deposits", rp(PermAdmin), h.AdminListDeposits)
 	}
 

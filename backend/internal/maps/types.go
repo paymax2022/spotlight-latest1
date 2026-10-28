@@ -100,6 +100,12 @@ type GeoResult struct {
 	Lat      float64 `json:"lat"`
 	Lng      float64 `json:"lng"`
 	Address  string  `json:"address"`
+	// City is the locality the coordinate sits in (e.g. "Lagos"). Empty when the
+	// provider does not say; callers must not invent one from the address text.
+	City     string  `json:"city,omitempty"`
+	// State is the state/region the coordinate sits in ("Lagos", "Abuja"). Empty
+	// when the provider does not say; never derived from the address text.
+	State    string  `json:"state,omitempty"`
 	PlusCode string  `json:"plus_code"`
 	Provider string  `json:"provider"`
 	Source   Source  `json:"source"`

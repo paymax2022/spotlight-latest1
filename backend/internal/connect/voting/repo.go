@@ -390,7 +390,8 @@ func (r *Repository) IsOnRoster(ctx context.Context, contestID, optionRef string
 
 // GetRosterEntry returns one contestant by id, with its live tally. Keyed on the
 // contestant id alone (a UUID primary key), so the caller does not need to know
-// which contest it belongs to.
+// which contest it belongs to. Only returns active contestants — rejected,
+// disqualified, or withdrawn contestants return (nil, nil).
 // Returns (nil, nil) when no such contestant exists.
 // viewerID sets LikedByMe (pass "" if the caller has no viewer, e.g. an
 // unauthenticated resolve path — it degrades to false, never errors).
@@ -416,7 +417,7 @@ func (r *Repository) GetRosterEntry(ctx context.Context, contestantID, viewerID 
 		LEFT JOIN (
 			SELECT contestant_id, COUNT(*) AS share_count FROM contestant_shares GROUP BY contestant_id
 		) cs ON cs.contestant_id = c.id
-		WHERE c.id::text = $1`
+		WHERE c.id::text = $1 AND c.is_active = true`
 
 	var e RosterEntry
 	var contestID string

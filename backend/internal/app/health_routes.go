@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"spotlight/backend/go-common/ginutil"
@@ -111,6 +112,7 @@ func RegisterHealth(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpo
 	hg.POST("/providers/applications/:id/credentials/presign", provH.PresignCredential)
 	hg.POST("/providers/applications/:id/credentials", provH.AddCredential)
 	hg.POST("/providers/applications/:id/submit", provH.Submit)
+	hg.PUT("/providers/applications/:id/location", provH.SetLocation) // owner; DRAFT/NEEDS_INFO only
 
 	// Records vault (consent-checked + access-logged).
 	hg.POST("/records", recH.Create)
@@ -296,9 +298,16 @@ func (a preconsultClinicalContext) ClinicalContext(ctx context.Context, patientI
 // approval. Reuses: providers SM + credential vault + idempotent capability
 // grant, the scheduler (HL-2 licence-expiry auto-suspend), and KYC for the
 // identity cross-check. Feature-flagged via the caller (health.vet).
-func RegisterHealthVCNVerification(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, supabase *integrations.SupabaseRestClient) {
+func RegisterHealthVCNVerification(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, supabase *integrations.SupabaseRestClient, presigner *r2.Presigner) {
 	if pool == nil {
 		return
+	}
+
+	// A configured presigner serves evidence documents as short-lived signed URLs;
+	// without R2 credentials the signer stays nil (empty URL, access still logged).
+	var signer credential.Signer
+	if presigner.Configured() {
+		signer = r2CredentialSigner{p: presigner}
 	}
 
 	// Reuse the providers SM + credential vault + idempotent capability grant.
@@ -311,7 +320,7 @@ func RegisterHealthVCNVerification(member *gin.RouterGroup, admin *gin.RouterGro
 		credential.NewVCNAdapter(), // Mode B (assisted); a future Mode A adapter slots in here unchanged
 		prov,
 		&kycIdentityReader{pool: pool, kyc: kyc.NewService(pool)},
-		nil, // Signer: orchestrator injects the R2 presigner (nil → empty URL, doc still access-logged)
+		signer,
 		&credSched{s: sched},
 		nil, // Auditor: nil-safe (matches the other health aggregators)
 	)
@@ -342,6 +351,17 @@ func RegisterHealthVCNVerification(member *gin.RouterGroup, admin *gin.RouterGro
 	ag.GET("/:recordId", middleware.RequirePermission(rbac, "health.vet.review"), h.GetRecord)
 	ag.GET("/documents/:docId/url", middleware.RequirePermission(rbac, "health.vet.review"), h.ReviewerDocURL)
 	ag.POST("/:recordId/decision", middleware.RequirePermission(rbac, "health.vet.review"), h.Decide)
+}
+
+// r2CredentialSigner adapts the R2 presigner to credential.Signer: a 5-minute GET URL
+// for a stored evidence document. The raw storage key is never returned to a client.
+type r2CredentialSigner struct{ p *r2.Presigner }
+
+func (s r2CredentialSigner) SignGet(_ context.Context, storageKey string) (string, error) {
+	if storageKey == "" {
+		return "", errors.New("credential: document has no storage key")
+	}
+	return s.p.PresignGet(storageKey, 5*time.Minute)
 }
 
 // kycIdentityReader adapts user_profiles + KYC into the identity snapshot used for

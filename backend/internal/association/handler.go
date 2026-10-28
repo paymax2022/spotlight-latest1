@@ -36,7 +36,7 @@ var errMap = httperr.New(http.StatusInternalServerError,
 	// the service before it surfaces — see DecideOfflinePayment). A same-key
 	// retry inside the Redis dedup window also lands here; the client retries
 	// and the verified replay converges.
-	httperr.R(http.StatusConflict, ErrElectionState, ErrIdempotencyKeyConflict,
+	httperr.R(http.StatusConflict, ErrElectionState, ErrVotingWindowEnded, ErrIdempotencyKeyConflict,
 		ErrPaymentAlreadyDecided, ledger.ErrDuplicate),
 	httperr.R(http.StatusNotFound, ErrNoMembership, pgx.ErrNoRows),
 	// SQLSTATE classes that are always caller-caused on this module's surface.
@@ -258,6 +258,30 @@ func (h *Handler) UpdatePrivacy(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, ps)
+}
+
+// PATCH /associations/me/settings - update user's organisation settings (name, acronym, description)
+func (h *Handler) UpdateMyOrganisationSettings(c *gin.Context) {
+	var req map[string]any
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+
+	// Get user's organisation ID via service
+	orgID, err := h.svc.GetUserOrganisationID(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+
+	// Use the existing UpdateOrganisationSettings with the user's org ID
+	result, err := h.svc.UpdateOrganisationSettings(c.Request.Context(), ginutil.UserID(c), orgID, req)
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 // GET /associations/me/activity

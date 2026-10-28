@@ -360,6 +360,8 @@ type Config struct {
 	FeatureTelemedicineEnabled   bool
 	FeatureVoteBridgeEnabled     bool
 	FeatureTransportEnabled      bool
+	// FeatureTransportHailingEnabled mounts /api/v1/transport/trips (Block 14: Redlock match, surge, 70/30 settle). Needs Redis.
+	FeatureTransportHailingEnabled bool
 	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
 	// FeatureBankAccountNameMatch: a restaurant payout account is verified only when
 	// the bank holder name matches the owner's KYC-verified name or an approved KYB
@@ -1098,6 +1100,7 @@ func Load() Config {
 		FeatureTelemedicineEnabled:                   getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
 		FeatureVoteBridgeEnabled:                     getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
+		FeatureTransportHailingEnabled: getEnvBool("FEATURE_TRANSPORT_HAILING_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
 		FeatureBankAccountNameMatch:                  getEnvBool("FEATURE_BANK_ACCOUNT_NAME_MATCH", false),
 		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),

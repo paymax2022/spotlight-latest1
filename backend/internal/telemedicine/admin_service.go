@@ -99,13 +99,89 @@ func (s *Service) GetAdminDashboard(ctx context.Context) (*AdminDashboard, error
 		return nil, fmt.Errorf("telemedicine: compute platform revenue: %w", err)
 	}
 
-	return &AdminDashboard{
+	d := &AdminDashboard{
 		TotalDoctors:            totalDoctors,
 		DoctorsPendingApproval:  pending,
 		DoctorsApproved:         approved,
 		AppointmentsThisWeek:    apptsThisWeek,
 		PlatformRevenueKoboWeek: revenue,
-	}, nil
+		Specialties:             []AdminSpecialtyStat{},
+		Activity:                []AdminActivity{},
+	}
+
+	const throughputQ = `
+		SELECT
+		  COUNT(*) FILTER (WHERE scheduled_at >= date_trunc('day', NOW()) AND scheduled_at < date_trunc('day', NOW()) + INTERVAL '1 day'),
+		  COUNT(*) FILTER (WHERE status IN ('booked', 'confirmed')),
+		  COUNT(*) FILTER (WHERE status = 'completed' AND created_at >= NOW() - INTERVAL '30 days'),
+		  COUNT(*) FILTER (WHERE status = 'cancelled' AND created_at >= NOW() - INTERVAL '30 days'),
+		  COALESCE(SUM((fee_kobo * 15 / 100) + COALESCE(platform_fee_kobo, 0))
+		    FILTER (WHERE status = 'completed' AND created_at >= NOW() - INTERVAL '30 days'), 0)
+		FROM appointments`
+	if err := s.db.QueryRow(ctx, throughputQ).Scan(
+		&d.ConsultationsToday, &d.ConsultationsOpen, &d.ConsultationsCompleted30d,
+		&d.Cancellations30d, &d.PlatformRevenueKobo30d); err != nil {
+		return nil, fmt.Errorf("telemedicine: consultation throughput: %w", err)
+	}
+
+	if err := s.db.QueryRow(ctx, `
+		SELECT COALESCE(ROUND(AVG(rating)::numeric, 2), 0)::float8
+		FROM telemedicine_reviews WHERE NOT is_hidden`).Scan(&d.AvgRating); err != nil {
+		return nil, fmt.Errorf("telemedicine: average rating: %w", err)
+	}
+
+	if err := s.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM prescriptions WHERE issued_at >= NOW() - INTERVAL '30 days'`).Scan(&d.PrescriptionsIssued30d); err != nil {
+		return nil, fmt.Errorf("telemedicine: prescriptions issued: %w", err)
+	}
+
+	specRows, err := s.db.Query(ctx, `
+		SELECT dr.specialty, COUNT(DISTINCT dr.id),
+		       COUNT(a.id) FILTER (WHERE a.created_at >= NOW() - INTERVAL '30 days')
+		FROM doctors dr
+		LEFT JOIN appointments a ON a.doctor_id = dr.id
+		GROUP BY dr.specialty
+		ORDER BY 3 DESC, 2 DESC, dr.specialty
+		LIMIT 12`)
+	if err != nil {
+		return nil, fmt.Errorf("telemedicine: specialty breakdown: %w", err)
+	}
+	defer specRows.Close()
+	for specRows.Next() {
+		var sp AdminSpecialtyStat
+		if err := specRows.Scan(&sp.Name, &sp.Clinicians, &sp.Consultations30d); err != nil {
+			return nil, fmt.Errorf("telemedicine: scan specialty: %w", err)
+		}
+		d.Specialties = append(d.Specialties, sp)
+	}
+	if err := specRows.Err(); err != nil {
+		return nil, err
+	}
+
+	actRows, err := s.db.Query(ctx, `
+		SELECT a.id::text, a.status, COALESCE(a.doctor_name, dr.name, 'a clinician'), COALESCE(a.ref, ''), a.created_at
+		FROM appointments a
+		LEFT JOIN doctors dr ON dr.id = a.doctor_id
+		ORDER BY a.created_at DESC
+		LIMIT 10`)
+	if err != nil {
+		return nil, fmt.Errorf("telemedicine: recent activity: %w", err)
+	}
+	defer actRows.Close()
+	for actRows.Next() {
+		var act AdminActivity
+		var status, doctor string
+		if err := actRows.Scan(&act.ID, &status, &doctor, &act.Ref, &act.CreatedAt); err != nil {
+			return nil, fmt.Errorf("telemedicine: scan activity: %w", err)
+		}
+		act.Kind = "consultation_" + status
+		act.Label = "Consultation with " + doctor + " " + status
+		d.Activity = append(d.Activity, act)
+	}
+	if err := actRows.Err(); err != nil {
+		return nil, err
+	}
+	return d, nil
 }
 
 // ListAdminDoctors returns the FULL doctor roster (not availability-filtered,
@@ -127,7 +203,11 @@ func (s *Service) ListAdminDoctors(ctx context.Context, q AdminDoctorListQuery) 
 	const listQ = `
 		SELECT d.id, d.user_id, d.name, d.specialty, d.consult_fee_kobo,
 		       d.is_available, d.is_online, d.created_at,
-		       v.id, v.status, v.mdcn_number, v.submitted_at, v.reviewed_at, v.rejection_reason
+		       v.id, v.status, v.mdcn_number, v.submitted_at, v.reviewed_at, v.rejection_reason,
+		       COALESCE((SELECT ROUND(AVG(r.rating)::numeric, 2) FROM telemedicine_reviews r
+		                 WHERE r.doctor_id = d.id AND NOT r.is_hidden), 0)::float8,
+		       (SELECT COUNT(*) FROM telemedicine_reviews r WHERE r.doctor_id = d.id AND NOT r.is_hidden),
+		       (SELECT COUNT(*) FROM appointments a WHERE a.doctor_id = d.id AND a.status = 'completed')
 		FROM doctors d
 		LEFT JOIN LATERAL (
 			SELECT id, status, mdcn_number, submitted_at, reviewed_at, rejection_reason
@@ -155,7 +235,8 @@ func (s *Service) ListAdminDoctors(ctx context.Context, q AdminDoctorListQuery) 
 		if err := rows.Scan(&it.ID, &it.UserID, &it.Name, &it.Specialty, &it.ConsultFeeKobo,
 			&it.IsAvailable, &it.IsOnline, &it.CreatedAt,
 			&it.VerificationID, &it.VerificationStatus, &it.MDCNNumber, &it.SubmittedAt,
-			&it.ReviewedAt, &it.RejectionReason); err != nil {
+			&it.ReviewedAt, &it.RejectionReason,
+			&it.Rating, &it.ReviewsCount, &it.ConsultationsTotal); err != nil {
 			return nil, 0, fmt.Errorf("telemedicine: scan admin doctor row: %w", err)
 		}
 		items = append(items, it)
@@ -227,7 +308,10 @@ func (s *Service) ListAdminAppointments(ctx context.Context, q AdminAppointmentL
 	const listQ = `
 		SELECT a.id, a.patient_id, a.doctor_id, COALESCE(d.name, ''), a.scheduled_at,
 		       a.status, a.fee_kobo, COALESCE(a.platform_fee_kobo, 0),
-		       COALESCE(NULLIF(a.total_kobo, 0), a.fee_kobo), a.created_at
+		       COALESCE(NULLIF(a.total_kobo, 0), a.fee_kobo), a.created_at,
+		       COALESCE(NULLIF(a.doctor_specialty, ''), d.specialty, ''),
+		       EXISTS (SELECT 1 FROM prescriptions p WHERE p.appointment_id = a.id),
+		       a.consultation_type
 		FROM appointments a
 		LEFT JOIN doctors d ON d.id = a.doctor_id
 		WHERE ($1::text IS NULL OR a.status = $1)
@@ -245,7 +329,8 @@ func (s *Service) ListAdminAppointments(ctx context.Context, q AdminAppointmentL
 	for rows.Next() {
 		var it AdminAppointment
 		if err := rows.Scan(&it.ID, &it.PatientID, &it.DoctorID, &it.DoctorName, &it.ScheduledAt,
-			&it.Status, &it.FeeKobo, &it.PlatformFeeKobo, &it.TotalKobo, &it.CreatedAt); err != nil {
+			&it.Status, &it.FeeKobo, &it.PlatformFeeKobo, &it.TotalKobo, &it.CreatedAt,
+			&it.Specialty, &it.PrescriptionIssued, &it.ConsultationType); err != nil {
 			return nil, 0, fmt.Errorf("telemedicine: scan admin appointment row: %w", err)
 		}
 		items = append(items, it)
@@ -484,6 +569,34 @@ type AdminDashboard struct {
 	// see CompleteAppointment's comment for why `fee_kobo * 0.85` (float) was a
 	// live bug (TELEMEDICINE-002) that must not be reintroduced here.
 	PlatformRevenueKoboWeek int64 `json:"platform_revenue_kobo_week"`
+
+	// Throughput figures, same revenue algebra as PlatformRevenueKoboWeek over a
+	// trailing 30-day window. "Today" is by scheduled_at; "open" is booked/confirmed.
+	ConsultationsToday        int                  `json:"consultations_today"`
+	ConsultationsOpen         int                  `json:"consultations_open"`
+	ConsultationsCompleted30d int                  `json:"consultations_completed_30d"`
+	Cancellations30d          int                  `json:"cancellations_30d"`
+	PlatformRevenueKobo30d    int64                `json:"platform_revenue_kobo_30d"`
+	AvgRating                 float64              `json:"avg_rating"`
+	PrescriptionsIssued30d    int                  `json:"prescriptions_issued_30d"`
+	Specialties               []AdminSpecialtyStat `json:"specialties"`
+	Activity                  []AdminActivity      `json:"activity"`
+}
+
+// AdminSpecialtyStat is one specialty row of the dashboard breakdown.
+type AdminSpecialtyStat struct {
+	Name             string `json:"name"`
+	Clinicians       int    `json:"clinicians"`
+	Consultations30d int    `json:"consultations_30d"`
+}
+
+// AdminActivity is one recent consultation event.
+type AdminActivity struct {
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	Label     string    `json:"label"`
+	Ref       string    `json:"ref,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // AdminDoctor is one row of the admin doctor roster — the FULL roster (unlike
@@ -499,6 +612,11 @@ type AdminDoctor struct {
 	IsAvailable    bool      `json:"is_available"`
 	IsOnline       bool      `json:"is_online"`
 	CreatedAt      time.Time `json:"created_at"`
+
+	// Live aggregates over non-hidden reviews and completed appointments.
+	Rating             float64 `json:"rating"`
+	ReviewsCount       int     `json:"reviews_count"`
+	ConsultationsTotal int     `json:"consultations_total"`
 
 	// Verification fields are nullable: a doctor row can exist with zero
 	// doctor_verifications rows (never submitted) — never fabricated.
@@ -530,6 +648,10 @@ type AdminAppointment struct {
 	PlatformFeeKobo int64     `json:"platform_fee_kobo"`
 	TotalKobo       int64     `json:"total_kobo"`
 	CreatedAt       time.Time `json:"created_at"`
+
+	Specialty          string `json:"specialty"`
+	PrescriptionIssued bool   `json:"prescription_issued"`
+	ConsultationType   string `json:"consultation_type"`
 }
 
 // AdminAppointmentListQuery holds validated query params for the system-wide

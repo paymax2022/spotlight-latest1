@@ -200,6 +200,7 @@ func (s *Service) GetEvent(ctx context.Context, userID, id string) (*EventDetail
 	); err != nil {
 		return nil, fmt.Errorf("association: event not found: %w", err)
 	}
+	d.CoverURL = s.resolveLogo(d.CoverURL)
 	d.MyRsvp = rsvp
 	d.Registered = registered
 	d.TicketCode = ticket

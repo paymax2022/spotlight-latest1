@@ -27,6 +27,9 @@ var (
 	ErrIneligible = errors.New("association: not eligible to vote")
 	// ErrVotingClosed — election is not open for voting (status/window).
 	ErrVotingClosed = errors.New("association: voting is not open")
+	// ErrVotingWindowEnded — the election's closing time has passed, so ballots can
+	// no longer be cast (and an officer cannot open it). 409.
+	ErrVotingWindowEnded = errors.New("association: the voting window has ended; extend the closing time or create a new election")
 	// ErrInvalidBallot — candidate/position does not belong to the election.
 	ErrInvalidBallot = errors.New("association: invalid ballot")
 	// ErrElectionState — operation not allowed from the election's current state.
@@ -286,6 +289,22 @@ func (s *Service) setElectionStatus(ctx context.Context, userID, electionID, fro
 
 // OpenElection moves DRAFT/NOMINATION → VOTING.
 func (s *Service) OpenElection(ctx context.Context, userID, electionID string) error {
+	// Officers only see this state: check authority first, then refuse to open an
+	// election whose closing time has already passed (it could never accept a ballot).
+	orgID, err := s.electionOrg(ctx, electionID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireElectionOfficer(ctx, userID, orgID); err != nil {
+		return err
+	}
+	var closesAt *time.Time
+	if err := s.db.QueryRow(ctx, `SELECT voting_closes_at FROM assoc_elections WHERE id=$1`, electionID).Scan(&closesAt); err != nil {
+		return err
+	}
+	if closesAt != nil && time.Now().After(*closesAt) {
+		return ErrVotingWindowEnded
+	}
 	if err := s.setElectionStatus(ctx, userID, electionID, "DRAFT", "VOTING", "ELECTION_OPEN"); err == nil {
 		return nil
 	}
@@ -316,7 +335,10 @@ func (s *Service) CastVote(ctx context.Context, userID, electionID string, in Ca
 	if status != "VOTING" {
 		return nil, ErrVotingClosed
 	}
-	if (opensAt != nil && now.Before(*opensAt)) || (closesAt != nil && now.After(*closesAt)) {
+	if closesAt != nil && now.After(*closesAt) {
+		return nil, ErrVotingWindowEnded
+	}
+	if opensAt != nil && now.Before(*opensAt) {
 		return nil, ErrVotingClosed
 	}
 	// Voter eligibility — active, good-standing member of THIS org. Fail closed.
@@ -577,6 +599,12 @@ func (s *Service) ListElections(ctx context.Context, userID, orgIDOverride strin
 		if err != nil {
 			return nil, err
 		}
+	}
+	// An officer of this organisation also sees drafts in their own list: the
+	// person who sets an election up in the app must be able to find it again to
+	// add candidates and open it. Members still never see a draft.
+	if !includeDraft && s.requireElectionOfficer(ctx, userID, orgID) == nil {
+		includeDraft = true
 	}
 	statusFilter := "e.status <> 'DRAFT'"
 	if includeDraft {

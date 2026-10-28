@@ -76,6 +76,9 @@ type Service struct {
 	// nil means stored values are passed through unchanged (see presign.go).
 	presigner *r2.Presigner
 	tiers     walletDebitLimiter
+	// pusher delivers a device push alongside the in-app notification row; nil
+	// (not wired, tests) means notifications stay in-app only. See push.go.
+	pusher PushFunc
 }
 
 // NewService builds the association service. The tier-limit gate is
@@ -446,6 +449,7 @@ func (s *Service) GetOrganisations(ctx context.Context, search string, limit, of
 		// on its own — the bucket is not public. Sign it here so the client can
 		// keep treating logoUrl as an image source. Pasted URLs pass through.
 		o.LogoURL = s.resolveLogo(o.LogoURL)
+		o.CoverURL = s.resolveLogo(o.CoverURL)
 		out = append(out, o)
 	}
 	return out, rows.Err()
@@ -485,6 +489,7 @@ func (s *Service) GetOrganisation(ctx context.Context, viewerID, orgID string) (
 	}
 	org.ApprovalSummary = approvalSummary(approvalRule, org.GroupType)
 	org.LogoURL = s.resolveLogo(org.LogoURL)
+	org.CoverURL = s.resolveLogo(org.CoverURL)
 
 	catRows, err := s.db.Query(ctx, `SELECT id, label, description, dues_kobo, cadence FROM assoc_membership_categories WHERE organisation_id=$1`, orgID)
 	if err == nil {
@@ -594,14 +599,27 @@ func (s *Service) GetDashboard(ctx context.Context, userID string) (*MemberDashb
 		WHERE m.user_id=$1 AND m.status='ACTIVE'
 		  AND NOT EXISTS (SELECT 1 FROM assoc_announcement_reads r WHERE r.announcement_id=a.id AND r.membership_id=m.id AND r.read_at IS NOT NULL)`,
 		userID).Scan(&unread)
-	_ = s.db.QueryRow(ctx, `
+	// assignee_id is a MEMBERSHIP id. Comparing it with the caller's user id
+	// matched nothing, so every dashboard reported zero open tasks.
+	if err := s.db.QueryRow(ctx, `
 		SELECT count(*) FROM assoc_tasks t
-		WHERE t.assignee_id=$1 AND t.status NOT IN ('COMPLETED','CANCELLED')`, userID).Scan(&openTasks)
+		WHERE t.assignee_id IN (SELECT id FROM assoc_memberships WHERE user_id=$1 AND status='ACTIVE')
+		  AND t.status NOT IN ('COMPLETED','CANCELLED','REJECTED')`, userID).Scan(&openTasks); err != nil {
+		log.Printf("association: dashboard open tasks: %v", err)
+	}
+	var unreadNotifs int
+	if err := s.db.QueryRow(ctx, `
+		SELECT count(*) FROM assoc_notifications n
+		JOIN assoc_memberships m ON m.id=n.membership_id
+		WHERE m.user_id=$1 AND m.status='ACTIVE' AND NOT n.read`, userID).Scan(&unreadNotifs); err != nil {
+		log.Printf("association: dashboard unread notifications: %v", err)
+	}
 
 	return &MemberDashboard{
 		Card:                card,
 		OutstandingKobo:     out,
 		UnreadAnnouncements: unread,
+		UnreadNotifications: unreadNotifs,
 		OpenTasks:           openTasks,
 	}, nil
 }
@@ -755,6 +773,18 @@ func (s *Service) UpdatePrivacy(ctx context.Context, userID string, ps PrivacySe
 		return nil, ErrNoMembership
 	}
 	return &ps, nil
+}
+
+// GetUserOrganisationID returns the organisation ID for a user's active membership
+func (s *Service) GetUserOrganisationID(ctx context.Context, userID string) (string, error) {
+	var orgID string
+	err := s.db.QueryRow(ctx,
+		`SELECT org_id FROM assoc_memberships WHERE user_id=$1 AND status='ACTIVE' LIMIT 1`,
+		userID).Scan(&orgID)
+	if err != nil {
+		return "", fmt.Errorf("association: get user org: %w", err)
+	}
+	return orgID, nil
 }
 
 // GetActivity returns recent audit/activity entries for the caller.
@@ -1441,6 +1471,8 @@ func (s *Service) GetEvents(ctx context.Context, userID string) ([]EventSummary,
 			// row from the caller's list; surface it instead.
 			return nil, fmt.Errorf("association: events: scan: %w", err)
 		}
+		// An uploaded banner is stored as an R2 object key; sign it like a logo.
+		e.CoverURL = s.resolveLogo(e.CoverURL)
 		out = append(out, e)
 	}
 	if out == nil {
