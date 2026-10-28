@@ -37,6 +37,7 @@ coverage/
 # Compiled Go binaries (build artifacts — never track). Anchored to the repo-root
 # backend binaries so they never match the backend/cmd/* source packages.
 /backend/server
+/backend/server.exe
 /backend/marketplace-cron
 
 # Sensitive keys/certs (keep out of git by default)
