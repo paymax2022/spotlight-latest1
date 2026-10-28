@@ -505,13 +505,15 @@ func (r *Repository) GetSwapOrder(ctx context.Context, orderID string) (*SwapOrd
 	}
 
 	const q = `
-		SELECT id, user_id, from_asset_id, from_symbol, to_asset_id, to_symbol,
-		       status, from_units, to_units, from_price_kobo, to_price_kobo,
-		       cash_kobo, spread_kobo, spread_bps, reference, created_at,
-		       quotation_id, swap_transaction_id, provider_status,
-		       ledger_settled, settled_at
-		FROM crypto_swap_orders
-		WHERE id = $1
+		SELECT o.id, o.user_id, o.from_asset_id, fa.symbol, o.to_asset_id, ta.symbol,
+		       o.status, o.from_units, o.to_units, o.from_price_kobo, o.to_price_kobo,
+		       o.cash_kobo, o.spread_kobo, o.spread_bps, COALESCE(o.reference, ''), o.created_at,
+		       COALESCE(o.quotation_id, ''), COALESCE(o.swap_transaction_id, ''),
+		       COALESCE(o.provider_status, ''), o.ledger_settled, o.settled_at
+		FROM crypto_swap_orders o
+		JOIN crypto_assets fa ON fa.id = o.from_asset_id
+		JOIN crypto_assets ta ON ta.id = o.to_asset_id
+		WHERE o.id = $1
 	`
 	var o SwapOrder
 	var settledAt *time.Time
@@ -540,7 +542,7 @@ func (r *Repository) MarkSwapOrderSettled(ctx context.Context, orderID string, s
 
 	const q = `
 		UPDATE crypto_swap_orders
-		SET ledger_settled = true, settled_at = $2, updated_at = now()
+		SET ledger_settled = true, settled_at = $2
 		WHERE id = $1
 	`
 	_, err := r.db.Exec(ctx, q, orderID, settledAt)

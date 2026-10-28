@@ -126,30 +126,32 @@ func (r *Repository) AllSwapOrders(ctx context.Context, startDate, endDate time.
 
 	// Build query with optional date filter
 	baseQuery := `
-		SELECT id, user_id, from_asset_id, from_symbol, to_asset_id, to_symbol,
-		       status, from_units, to_units, from_price_kobo, to_price_kobo,
-		       cash_kobo, spread_kobo, spread_bps, reference, created_at,
-		       quotation_id, swap_transaction_id, provider_status,
-		       ledger_settled, settled_at
-		FROM crypto_swap_orders`
+		SELECT o.id, o.user_id, o.from_asset_id, fa.symbol, o.to_asset_id, ta.symbol,
+		       o.status, o.from_units, o.to_units, o.from_price_kobo, o.to_price_kobo,
+		       o.cash_kobo, o.spread_kobo, o.spread_bps, COALESCE(o.reference, ''), o.created_at,
+		       COALESCE(o.quotation_id, ''), COALESCE(o.swap_transaction_id, ''),
+		       COALESCE(o.provider_status, ''), o.ledger_settled, o.settled_at
+		FROM crypto_swap_orders o
+		JOIN crypto_assets fa ON fa.id = o.from_asset_id
+		JOIN crypto_assets ta ON ta.id = o.to_asset_id`
 
 	// Add date filter if provided
 	if !startDate.IsZero() || !endDate.IsZero() {
 		baseQuery += ` WHERE`
 		if !startDate.IsZero() {
-			baseQuery += ` created_at >= $1`
+			baseQuery += ` o.created_at >= $1`
 			args = append(args, startDate)
 		}
 		if !endDate.IsZero() {
 			if !startDate.IsZero() {
 				baseQuery += ` AND`
 			}
-			baseQuery += ` created_at <= $` + fmt.Sprint(len(args)+1)
+			baseQuery += ` o.created_at <= $` + fmt.Sprint(len(args)+1)
 			args = append(args, endDate)
 		}
 	}
 
-	q = baseQuery + ` ORDER BY created_at DESC`
+	q = baseQuery + ` ORDER BY o.created_at DESC`
 
 	var rows pgx.Rows
 	var err error
