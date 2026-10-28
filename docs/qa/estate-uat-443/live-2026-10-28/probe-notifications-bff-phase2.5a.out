@@ -1,0 +1,355 @@
+=== estate notification BFF API_LIVE probe @ 2026-10-28T10:09:59Z base=http://127.0.0.1:3000 stamp=20261028100950
+inbox-res=6da72ac0-53c0-4ede-8dd9-e8d794353484 inbox-admin=fbc5f41b-c800-41f1-b675-0b3491f2207f inbox-none=68f392a3-d652-4b6b-93b7-8f54a525b230 (unused outsider=b329a4ea-f3bb-4483-9d7d-95203019ebbe)
+--- 1. preflight: the surface on BASE is Phase 2.5a code, the lane estate, and the single-membership guarantee
+server check: http://127.0.0.1:3000 answers the Phase 2.5a feed envelope
+PASS inbox-admin holds exactly one estate membership — count=1
+PASS inbox-res holds exactly one estate membership — count=1
+PASS inbox-none holds no estate membership — count=0
+PASS the outsider identity this lane no longer uses does hold memberships (why inboxnone exists) — nobody is a member of closed estates from earlier lanes, so it cannot prove the 403 branch
+PASS both identities resolve to the same lane estate — estate=7c0729c3-3040-49e2-a48b-60bc8377d720
+PASS the lane estate is the seeded BFF one — got "UAT Inbox BFF Estate 20261028100950" want "UAT Inbox BFF Estate 20261028100950"
+PASS estate status as seeded (the lifecycle mirror needs a non-active estate) — got "pending" want "pending"
+PASS fixture shape: 67 active rows in the recipient's inbox — got "67" want "67"
+PASS fixture shape: 4 rows already archived — got "4" want "4"
+PASS fixture shape: the other estate holds one eligible row — got "1" want "1"
+PASS that row lives in a different estate — other=f0310c93-c89a-40b3-8803-1687aa715686
+PASS all twelve labelled fixtures resolved by exact title — missing: none
+--- 2. who may reach the inbox at all, and where the estate comes from
+PASS want=401 got=401  [no token at all as ] — Unauthorized
+PASS want=401 got=401  [no token at all (badge) as ] — Unauthorized
+PASS want=401 got=401  [no token at all (read-all) as ] — Unauthorized
+PASS want=401 got=401  [no token at all (schedule) as ] — Unauthorized
+PASS want=403 got=403  [an identity with no estate membership as inboxnone] — Not a resident of any estate
+PASS and the reason is membership, not rows — got "Not a resident of any estate" want "Not a resident of any estate"
+PASS want=403 got=403  [an outsider cannot read the schedule as inboxnone] — Not a resident of any estate
+PASS for the same reason — got "Not a resident of any estate" want "Not a resident of any estate"
+PASS want=403 got=403  [an outsider cannot stamp reads as inboxnone] — Not a resident of any estate
+PASS want=200 got=200  [the badge answers a non-resident with zero as inboxnone] 
+PASS badge count for a non-resident — got "0" want "0"
+PASS want=200 got=200  [another estate's id in the query is not a switch as inboxres] 
+PASS and the row it returned still belongs to the caller — got "7c0729c3-3040-49e2-a48b-60bc8377d720" want "7c0729c3-3040-49e2-a48b-60bc8377d720"
+PASS want=200 got=200  [a malformed estate_id is inert, not a 500 as inboxres] 
+PASS and still the caller's estate — got "7c0729c3-3040-49e2-a48b-60bc8377d720" want "7c0729c3-3040-49e2-a48b-60bc8377d720"
+--- 3. the lifecycle mirror on a pending estate (the BFF half of ESTD-D025)
+PASS want=200 got=200  [a pending estate still answers the inbox read as inboxres] 
+PASS want=200 got=200  [a pending estate still answers the badge as inboxres] 
+PASS want=200 got=200  [a pending estate still answers the schedule read as inboxadmin] 
+PASS want=423 got=423  [pending estate takes no read stamp as inboxres] — Estate is pending — changes are disabled until it is active
+PASS and it says why — body contains "Estate is pending — changes are disabled until it is active"
+PASS want=423 got=423  [pending estate takes no archive as inboxres] — Estate is pending — changes are disabled until it is active
+PASS want=423 got=423  [pending estate takes no pin as inboxres] — Estate is pending — changes are disabled until it is active
+PASS want=423 got=423  [pending estate takes no bulk read as inboxres] — Estate is pending — changes are disabled until it is active
+PASS want=423 got=423  [pending estate takes no schedule write as inboxadmin] — Estate is pending — changes are disabled until it is active
+PASS want=423 got=423  [pending estate takes no sweep as inboxadmin] — Estate is pending — changes are disabled until it is active
+PASS and none of those attempts moved a row — got "67 4 71" want "67 4 71"
+PASS and no schedule row was written — got "0" want "0"
+PASS and neither write was audited — got "0" want "0"
+PASS and the unread row is still unread — got "t" want "t"
+PASS and the two seeded pins are still the only pins — got "2" want "2"
+--- 4. the same calls once the estate is active
+PASS estate is active — got "active" want "active"
+PASS want=200 got=200  [the feed still answers as inboxres] 
+PASS want=200 got=200  [the read stamp that was 423 is now 200 as inboxres] 
+PASS and it actually stamped it — got "t" want "t"
+PASS want=200 got=200  [the schedule write that was 423 is now 200 as inboxadmin] 
+PASS and the row exists now — got "1" want "1"
+PASS with the horizon that was sent — got "90" want "90"
+  (the 204 read-all and the sweep's 200 are proven in sections 14 and 16, where their row effects can be read)
+--- 5. the document shape: a paging envelope around the app's camelCase item
+PASS envelope keys — got "data,limit,offset,state,total,unread_only" want "data,limit,offset,state,total,unread_only"
+PASS item keys (a row with no deep link and no archive stamp carries neither key) — got "body,category,createdAt,estateId,id,pinned,readAt,title" want "body,category,createdAt,estateId,id,pinned,readAt,title"
+PASS the Go item keys are not this contract: no created_at (category proves the row parsed) — got "absent" want "absent"
+PASS no estate_id — got "absent" want "absent"
+PASS and no kind alias for category — got "absent" want "absent"
+PASS state echoes the selector — got "active" want "active"
+PASS limit echoes what was asked — got "3" want "3"
+PASS offset echoes what was asked — got "0" want "0"
+PASS a row that has a deep link carries deepLink — got "/estate/maintenance/77" want "/estate/maintenance/77"
+PASS and it is camelCase all the way down — got "body,category,createdAt,deepLink,estateId,id,pinned,readAt,title" want "body,category,createdAt,deepLink,estateId,id,pinned,readAt,title"
+--- 6. selector validation, on the surface the app actually calls
+PASS want=400 got=400  [an unknown state is a caller mistake as inboxres] — state must be active, archived or all
+PASS state message — got "state must be active, archived or all" want "state must be active, archived or all"
+PASS want=400 got=400  [an unknown category is a caller mistake as inboxres] — Unknown notification category
+PASS category message — got "Unknown notification category" want "Unknown notification category"
+PASS want=400 got=400  [a one-character search is refused as inboxres] — A search term of at least 2 characters is required
+PASS search-length message — got "A search term of at least 2 characters is required" want "A search term of at least 2 characters is required"
+PASS want=400 got=400  [a lone wildcard is refused by length before grammar as inboxres] — A search term of at least 2 characters is required
+PASS same reason — got "A search term of at least 2 characters is required" want "A search term of at least 2 characters is required"
+PASS want=400 got=400  [a comma would be parsed as a second filter as inboxres] — A search term may not contain , ( or )
+PASS and the message says so — got "A search term may not contain , ( or )" want "A search term may not contain , ( or )"
+PASS want=400 got=400  [parentheses are PostgREST separators too as inboxres] — A search term may not contain , ( or )
+PASS same rule — got "A search term may not contain , ( or )" want "A search term may not contain , ( or )"
+PASS want=400 got=400  [limit 0 is not 'no limit' as inboxres] — limit must be between 1 and 200
+PASS limit message — got "limit must be between 1 and 200" want "limit must be between 1 and 200"
+PASS want=400 got=400  [the ceiling is 200 as inboxres] — limit must be between 1 and 200
+PASS want=400 got=400  [a non-integer limit is refused as inboxres] — limit must be between 1 and 200
+PASS want=400 got=400  [and a fractional one as inboxres] — limit must be between 1 and 200
+PASS want=200 got=200  [a negative offset is read as 0, not an error as inboxres] 
+PASS and the envelope says which offset it used — got "0" want "0"
+PASS want=200 got=200  [unread_only accepts the truthy spellings as inboxres] 
+PASS and reports it back — got "true" want "true"
+PASS want=200 got=200  [anything else reads as false as inboxres] 
+PASS reported as false — got "false" want "false"
+--- 7. paging: total is the number the flat list could not tell you
+PASS default page size — got "50" want "50"
+PASS page length equals the limit — got "50" want "50"
+PASS total is the whole matching set, not the page — got "67" want "67"
+PASS total is larger than the page, so the truncation is visible — total=67 page=50
+PASS the ceiling is honoured — got "67" want "67"
+PASS and total is unchanged by the page size — got "67" want "67"
+PASS the tail page holds what the head page could not — got "17" want "17"
+PASS the two pages share no row — shared ids=0
+PASS and together they are the whole inbox — got "67" want "67"
+PASS want=200 got=200  [reading past the end is a page, not an error as inboxres] 
+PASS and the page is empty — got "0" want "0"
+PASS with total still stating the real size — got "67" want "67"
+--- 8. ordering: pinned first, newest next, and the same rule under paging
+PASS the first five rows are the database's first five for the same selector — got "6885bf12-6a3e-4847-aec8-6aca106075d3,0c7720d9-19a8-4be1-8232-84bb2133fcc8,6af8a8f8-3398-4cf8-a0eb-d3f9460b919a,fe35b78e-774c-4de7-8c1d-372d6d18e84e,388cd6cd-1786-482b-b369-7ad5ebce7e00" want "6885bf12-6a3e-4847-aec8-6aca106075d3,0c7720d9-19a8-4be1-8232-84bb2133fcc8,6af8a8f8-3398-4cf8-a0eb-d3f9460b919a,fe35b78e-774c-4de7-8c1d-372d6d18e84e,388cd6cd-1786-482b-b369-7ad5ebce7e00"
+PASS and the pinned notice leads them although it is 200 days old — got "6885bf12-6a3e-4847-aec8-6aca106075d3" want "6885bf12-6a3e-4847-aec8-6aca106075d3"
+PASS one pinned row on the page — got "1" want "1"
+PASS the rule holds past the first page (a pinned row is never displaced by an offset) — got "3aba67b4-87bf-4e22-b4c7-557359c3461d,5c9a7e36-7442-440b-8d80-430840e08f44,6da4c8e8-48ce-4b0e-8930-a8e16fe99547,4adc3424-fbc1-4894-89f1-54e996836784,0474c7d8-90eb-4fac-af9b-f2ca945efc14" want "3aba67b4-87bf-4e22-b4c7-557359c3461d,5c9a7e36-7442-440b-8d80-430840e08f44,6da4c8e8-48ce-4b0e-8930-a8e16fe99547,4adc3424-fbc1-4894-89f1-54e996836784,0474c7d8-90eb-4fac-af9b-f2ca945efc14"
+PASS and what leads the second page is not pinned — got "t" want "t"
+--- 9. the two halves, the unread filter, and the badge
+PASS active total from the API — got "67" want "67"
+PASS archived total from the API — got "4" want "4"
+PASS all = the recipient's whole row set — got "71" want "71"
+PASS the halves add up to the whole — 67 + 4 = 71
+PASS the archived view leads with the pinned row, then the rest newest-first — got "12,11" want "12,11"
+PASS every row of the archived page carries an archivedAt — got "true" want "true"
+PASS and no active row leaked into it — got "4" want "4"
+PASS category filter is exact — got "60" want "60"
+PASS and every row it returned is that category — got "true" want "true"
+PASS state and category compose — got "2" want "2"
+PASS unread_only agrees with the database — got "62" want "62"
+PASS and none of them is read — got "true" want "true"
+PASS want=200 got=200  [the badge as inboxres] 
+PASS badge == the database's unread ACTIVE count — got "62" want "62"
+PASS an archived unread row exists, so the badge is not the whole unread set — archived-unread=1 badge=62 unread-active=62
+--- 10. search reaches the body, not only the title
+PASS a token that appears only in a body still matches — got "1" want "1"
+PASS and it is the row the seed put it in — got "af42f351-71b1-4e08-9b12-6196fe775b90" want "af42f351-71b1-4e08-9b12-6196fe775b90"
+PASS whose title does not contain the term — got "false" want "false"
+PASS but its body does — got "t" want "t"
+PASS a two-word title query matches — got "1" want "1"
+PASS and it is the pinned fixture — got "6885bf12-6a3e-4847-aec8-6aca106075d3" want "6885bf12-6a3e-4847-aec8-6aca106075d3"
+PASS a phrase across body words matches — got "1" want "1"
+PASS a term nothing holds is an empty page, not an error — got "0" want "0"
+PASS and the page is empty — got "0" want "0"
+PASS search spans the archived half when asked — got "4" want "4"
+PASS body search across both halves — got "1" want "1"
+--- 11. the read stamp is written once and never moved
+PASS want=200 got=200  [re-reading a read notice is not an error as inboxres] 
+PASS the stamp did not move — got "1772600767" want "1772600767"
+PASS and the document it returned says the same instant — got "1772600767" want "1772600767"
+PASS the returned document is the row — got "aefa14b9-e3e8-4985-b552-8e1ac5189b5b" want "aefa14b9-e3e8-4985-b552-8e1ac5189b5b"
+PASS with its label still readable — got "UAT25b 05 old general unread" want "UAT25b 05 old general unread"
+PASS want=400 got=400  [a malformed id is a caller mistake as inboxres] — Invalid notification ID
+PASS and the message names the id — got "Invalid notification ID" want "Invalid notification ID"
+PASS want=404 got=404  [the admin's copy is not the caller's row as inboxres] — Notification not found
+PASS and the answer is 'not found', which does not confirm the row exists — got "Notification not found" want "Notification not found"
+PASS want=404 got=404  [another estate's row is the same 404 as inboxres] — Notification not found
+PASS and that row was not touched — got "t" want "t"
+PASS want=403 got=403  [a non-resident is stopped before the row is looked up as inboxnone] — Not a resident of any estate
+PASS which is the opposite order to Go's row-scoped 404 (documented divergence) — got "Not a resident of any estate" want "Not a resident of any estate"
+PASS and the stranger's attempt stamped nothing — got "t" want "t"
+--- 12. the archive round trip is reversible and loses nothing
+PASS want=200 got=200  [archiving with no body means archived=true as inboxres] 
+PASS the row carries an archive stamp now — got "t" want "t"
+PASS the deep link survived the trip — got "/estate/maintenance/77" want "/estate/maintenance/77"
+PASS and so did the read stamp — got "1792750191" want "1792750191"
+PASS and the category is untouched — got "maintenance" want "maintenance"
+PASS the archived row left the active page — got "false" want "false"
+PASS and total dropped by exactly one — got "66" want "66"
+PASS and appeared in the archived page — got "true" want "true"
+PASS want=200 got=200  [un-archiving is the same route with the flag off as inboxres] 
+PASS and the archive stamp is gone (readAt proves the document parsed) — got "absent" want "absent"
+PASS the read stamp was never touched by the un-archive — got "1792750191" want "1792750191"
+PASS the row is still there — got "1" want "1"
+PASS and it is back in the inbox — got "true" want "true"
+PASS with the page total back where it started — got "67" want "67"
+PASS want=404 got=404  [a resident cannot archive the admin's copy as inboxres] — Notification not found
+PASS and that row is exactly as it was — got "t" want "t"
+--- 13. pinning: a personal flag, and an estate admin's retention decision
+PASS want=200 got=200  [a member pins their own notice as inboxres] 
+PASS the flag is on the row — got "t" want "t"
+PASS and it now leads the feed — got "0c7720d9-19a8-4be1-8232-84bb2133fcc8" want "0c7720d9-19a8-4be1-8232-84bb2133fcc8"
+PASS want=200 got=200  [un-pinning is the same route as inboxres] 
+PASS the flag is off — got "t" want "t"
+PASS want=404 got=404  [a member naming themselves on another recipient's row does not get that row as inboxres] — Notification not found
+PASS and the answer is the owner-scoped 404, identical to pinning the row without naming anyone — got "Notification not found" want "Notification not found"
+PASS and the admin's copy is untouched — got "t" want "t"
+PASS want=403 got=403  [a member naming a stranger is also 403 as inboxres] — Admin access required
+PASS and the refusal never reached the row — got "t" want "t"
+PASS want=400 got=400  [an admin's target must be an id as inboxadmin] — Invalid user ID
+PASS and the message names the target — got "Invalid user ID" want "Invalid user ID"
+PASS want=200 got=200  [an estate admin pins a member's copy as inboxadmin] 
+PASS on the member's row — got "t" want "t"
+PASS and not on the admin's own copy — got "t" want "t"
+PASS want=200 got=200  [an admin pins their own copy without naming anyone as inboxadmin] 
+PASS which is the admin's row — got "t" want "t"
+PASS want=200 got=200  [and un-pins it again as inboxadmin] 
+PASS off again — got "t" want "t"
+PASS want=404 got=404  [an admin acting without user_id on a member's row is 404 as inboxadmin] — Notification not found
+PASS because that id is not one of the admin's rows — got "Notification not found" want "Notification not found"
+PASS and the member's row kept its flag — got "t" want "t"
+PASS want=200 got=200  [and the on-behalf un-pin releases it as inboxadmin] 
+PASS the sweep's exemption is gone — got "t" want "t"
+PASS only the two seeded pins remain (01 active, 12 archived) — got "2" want "2"
+--- 14. read-all stops at the edge of the archive
+PASS there are unread rows in both halves — active=62 archived=1
+PASS want=204 got=204  [read-all answers 204 as inboxres] 
+PASS with no body — got "0" want "0"
+PASS the inbox half is fully read — got "0" want "0"
+PASS the archive half still holds its unread rows — got "1" want "1"
+PASS row 14 is the archived unread one, still unread — got "t" want "t"
+PASS and still archived — got "t" want "t"
+PASS a bulk row was stamped for real — got "t" want "t"
+PASS and exactly the previously-unread rows got a fresh stamp — got "62" want "62"
+  (row 05 is in neither number: section 4 read it and section 11 re-dated it to a 2026-03-04 instant, so it is read but not freshly stamped — and it was already out of the unread count before read-all ran)
+PASS want=200 got=200  [the badge is empty afterwards as inboxres] 
+PASS count 0 — got "0" want "0"
+PASS want=204 got=204  [read-all is per recipient, not per estate as inboxadmin] 
+PASS the admin's own unread copy is now read — got "t" want "t"
+PASS which the resident's read-all had not touched — got "1" want "1"
+PASS want=204 got=204  [pressing it again is safe as inboxres] 
+PASS and it stamped nothing new — got "0" want "0"
+--- 15. the retention plane: who may read it, and what it will accept
+PASS want=403 got=403  [a member cannot read the schedule as inboxres] — Admin access required
+PASS and the reason is the role — got "Admin access required" want "Admin access required"
+PASS want=403 got=403  [a member cannot move it as inboxres] — Admin access required
+PASS for the same reason — got "Admin access required" want "Admin access required"
+PASS want=403 got=403  [a member cannot run it as inboxres] — Admin access required
+PASS again the role, not the lifecycle — got "Admin access required" want "Admin access required"
+PASS want=200 got=200  [the admin reads it as inboxadmin] 
+PASS estate scoped by membership, not by the caller — got "7c0729c3-3040-49e2-a48b-60bc8377d720" want "7c0729c3-3040-49e2-a48b-60bc8377d720"
+PASS the horizon the lane wrote — got "90" want "90"
+PASS enabled by default — got "true" want "true"
+PASS keep list is the default pair — got "security,system" want "security,system"
+PASS a written policy is not a default — got "false" want "false"
+PASS and it is attributed to whoever wrote it — got "fbc5f41b-c800-41f1-b675-0b3491f2207f" want "fbc5f41b-c800-41f1-b675-0b3491f2207f"
+PASS never-purge is absent, not 0 — got "absent" want "absent"
+PASS want=200 got=200  [a patch that names one field as inboxadmin] 
+PASS keeps the horizon it was not asked about — got "90" want "90"
+PASS keeps the keep list — got "security,system" want "security,system"
+PASS flips only what was sent — got "false" want "false"
+PASS want=200 got=200  [and flips it back as inboxadmin] 
+PASS still 90 days — got "90" want "90"
+PASS want=200 got=200  [a keep list is sent as a list, duplicates folded as inboxadmin] 
+PASS keep_categories REPLACES rather than merging — got "payment,general" want "payment,general"
+PASS so security is no longer protected — got "{payment,general}" want "{payment,general}"
+PASS want=200 got=200  [back to the default pair before the sweep as inboxadmin] 
+PASS and it is exactly the pair — got "security,system" want "security,system"
+PASS each accepted write so far audited exactly one row — got "5" want "5"
+PASS want=400 got=400  [a zero horizon is refused as inboxadmin] — Retention days must be positive and purge cannot be scheduled before archive
+PASS with the rule in the message — body contains "Retention days must be positive and purge cannot be scheduled before archive"
+PASS want=400 got=400  [and so is a negative one as inboxadmin] — Retention days must be positive and purge cannot be scheduled before archive
+PASS want=400 got=400  [a purge before the archive is refused as inboxadmin] — Retention days must be positive and purge cannot be scheduled before archive
+PASS want=400 got=400  [an invented category cannot be protected as inboxadmin] — Unknown notification category: emergencz
+PASS and the message names it — body contains "Unknown notification category: emergencz"
+PASS the database never saw any of those four — got "5" want "5"
+PASS and the stored policy is still the last accepted one — got "90/null" want "90/null"
+PASS want=200 got=200  [0 is the wire spelling of never-purge as inboxadmin] 
+PASS and it reads back as absent — got "absent" want "absent"
+PASS stored as NULL, not as 0 — got "null" want "null"
+PASS want=200 got=200  [shorten the horizon so the sweep has something to do as inboxadmin] 
+PASS the horizon moved — got "2" want "2"
+PASS every accepted write is audited under the estate — got "7" want "7"
+PASS and the audit counts grew by exactly the accepted writes (four before the rejects, two after) — got "7" want "7"
+--- 16. the sweep archives what is eligible and nothing else
+PASS the 2-day horizon left the sweep something eligible — eligible=7 (recipient-scoped: 6)
+PASS want=200 got=200  [run the estate's schedule now as inboxadmin] 
+PASS estate scope comes from the caller — got "7c0729c3-3040-49e2-a48b-60bc8377d720" want "7c0729c3-3040-49e2-a48b-60bc8377d720"
+PASS the sweep archived exactly what the database said was eligible — got "7" want "7"
+PASS and purged nothing, because the policy never opted in — got "0" want "0"
+PASS the pinned row stayed in the inbox — got "t" want "t"
+PASS the unread row stayed in the inbox — got "t" want "t"
+PASS the protected security row was not archived although it is 200 days old — got "t" want "t"
+PASS the newest row is nowhere near the horizon — got "t" want "t"
+PASS the admin's eligible copy moved (the sweep is estate-wide, not per recipient) — got "t" want "t"
+PASS and the other estate's eligible row did not move — got "t" want "t"
+PASS nothing eligible was left behind — got "0" want "0"
+PASS the recipient's archived half grew by exactly their share — got "10" want "10"
+PASS want=200 got=200  [pressing it again is safe as inboxadmin] 
+PASS archived 0 the second time — got "0" want "0"
+PASS purged 0 the second time — got "0" want "0"
+PASS and both runs were audited — got "2" want "2"
+PASS the first audit row carries the counters — got "7" want "7"
+PASS the archived view now holds what the sweep moved — got "10" want "10"
+--- 17. purge is opt-in, and the guard is a database rule, not a courtesy
+PASS want=400 got=400  [purging before the archive horizon is refused as inboxadmin] — Retention days must be positive and purge cannot be scheduled before archive
+PASS by the same rule — body contains "Retention days must be positive and purge cannot be scheduled before archive"
+PASS want=200 got=200  [purge after it is accepted as inboxadmin] 
+PASS read back — got "30" want "30"
+PASS two archived rows sit past a 3-day horizon — eligible=2 (11 and 14; 12 is pinned, 13 is protected by category)
+PASS want=200 got=200  [sweep with the opt-in horizon set as inboxadmin] 
+PASS purged exactly the archived rows past the horizon — got "2" want "2"
+PASS and its archive counter is exactly the rows eligible at that instant — got "0" want "0"
+PASS the plain archived row is gone — got "0" want "0"
+PASS the archived unread row is gone too (purging does not care about read state) — got "0" want "0"
+PASS the pinned archived row is still there — got "1" want "1"
+PASS the protected archived row is still there — got "1" want "1"
+PASS the other estate's row is still there — got "1" want "1"
+PASS the deliberate row is archive-eligible while the estate is held — eligible=1 (row 08: three days old, 2-day horizon)
+PASS want=200 got=200  [a held estate still answers the run as inboxadmin] 
+PASS it archived nothing — got "0" want "0"
+PASS and purged nothing — got "0" want "0"
+PASS even though the schedule had a row past the horizon — got "held-but-eligible" want "held-but-eligible"
+PASS and the row the hold protects is still there — got "1" want "1"
+PASS the hold stops archiving as well as purging — got "t" want "t"
+PASS want=200 got=200  [clearing the hold re-opens the schedule as inboxadmin] 
+PASS which now purges what the hold kept — got "1" want "1"
+PASS and archives at least what the hold had kept unarchived — archived=1 eligible_at_ask=1
+PASS the row the hold was covering is archived now — got "t" want "t"
+PASS and the row is gone — got "0" want "0"
+PASS the pinned row still refuses — got "1" want "1"
+PASS the protected row still refuses — got "1" want "1"
+PASS a direct DELETE of the pinned row is refused by name — ERROR:  this notification is retained beyond the sweep because it is pinned — unpin it first
+CONTEXT:  PL/pgSQL function estate_notifications_block_purge() line 31 at RAISE
+PASS a direct DELETE of the protected row names its category — ERROR:  this notification is retained beyond the sweep because its category security is protected for this estate — change the estate retention policy first
+CONTEXT:  PL/pgSQL function estate_notifications_block_purge() line 36 at RAISE
+PASS neither refusal deleted anything — got "2" want "2"
+PASS a plain archived row IS deletable (the guard is not a blanket block) — deleted=483433f5-9cf6-4960-93e2-054a40eb1a7b
+PASS and the row really is gone — got "0" want "0"
+PASS the pinned and protected rows are still present after that — got "2" want "2"
+--- 18. the sweep never reaches a second estate, from either direction
+PASS the other estate's row is still unarchived — got "t" want "t"
+PASS and is still its estate's only row — got "1" want "1"
+PASS want=200 got=200  [one more sweep of the caller's estate as inboxadmin] 
+PASS the other estate's row still has no archive stamp — got "t" want "t"
+PASS and still no rows were purged from it — got "1" want "1"
+PASS every row the inbox answers belongs to the caller's estate — got "true" want "true"
+PASS and none of them is the other estate's row — got "false" want "false"
+--- 19. the defaults an estate that never wrote a policy gets
+PASS want=200 got=200  [the admin reads a schedule for an estate that has none as inboxadmin] 
+PASS defaulted is true — got "true" want "true"
+PASS the documented archive horizon — got "90" want "90"
+PASS the default has no purge horizon — got "absent" want "absent"
+PASS the documented keep list — got "security,system" want "security,system"
+PASS enabled by default — got "true" want "true"
+PASS nobody updated a default — got "absent" want "absent"
+PASS and there is no updated_at — got "absent" want "absent"
+PASS want=200 got=200  [the sweep runs with no policy row at all as inboxadmin] 
+PASS and applies the documented 90-day default rather than archiving nothing — got "1" want "1"
+PASS the row it moved is the one that was unread and is now read — got "t" want "t"
+PASS a default never purges — got "0" want "0"
+PASS and the pinned row survived a default sweep too — got "t" want "t"
+PASS want=200 got=200  [writing over a default creates the row as inboxadmin] 
+PASS defaulted is false again — got "false" want "false"
+PASS and the values are the ones the lane had — got "true|2|3|security,system" want "true|2|3|security,system"
+--- 20. suspension and closure keep the history readable and stop the writes
+PASS want=200 got=200  [a suspended estate's member still reads their history as inboxres] 
+PASS with the rows they had — got "67" want "67"
+PASS want=423 got=423  [a suspended estate takes no archive as inboxres] — Estate is suspended — changes are disabled until it is active
+PASS and the message says suspended — body contains "Estate is suspended"
+PASS want=423 got=423  [a suspended estate takes no schedule write as inboxadmin] — Estate is suspended — changes are disabled until it is active
+PASS want=423 got=423  [a suspended estate takes no sweep as inboxadmin] — Estate is suspended — changes are disabled until it is active
+PASS no row moved while suspended — got "68" want "68"
+PASS want=200 got=200  [a closed estate still answers the read as inboxres] 
+PASS and nothing was deleted on the way — got "67" want "67"
+PASS want=423 got=423  [a closed estate takes no read stamp as inboxres] — Estate is closed — changes are disabled until it is active
+PASS by the same gate — body contains "Estate is closed"
+PASS the closed estate's schedule row is still there for the audit trail — got "1" want "1"
+PASS the pinned fixture and the protected fixture both survived the lane — got "2" want "2"
+PASS the other estate survived it all — got "1" want "1"
+PASS the lane wrote both kinds of audit row — got "2" want "2"
+=== Phase 2.5a BFF lane summary: PASS=327 FAIL=0 estate=7c0729c3-3040-49e2-a48b-60bc8377d720 (transcript lines 327/0)

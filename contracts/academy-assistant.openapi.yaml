@@ -1,0 +1,601 @@
+openapi: 3.0.3
+info:
+  title: Film Academy assistant - AI FAQ chat, human handoff and knowledge base
+  version: 1.0.0
+  description: |
+    Academy Assistant for Timeless Movies Film Academy inside Spotlight.
+
+    Two mount points, because the two audiences reach the Go backend by
+    different routes:
+
+    * Learner surface — `/api/v1/ai/academy/*`, the same base-path convention
+      the other in-app AI assistants use (`/api/v1/ai/invest`). Requires a
+      authenticated bearer session (`RequireAuthContext`); no permission slug,
+      a signed-in student may only ever touch their own conversation.
+    * Staff / admin surface — `/api/academy/admin/assistant/*`, under the
+      existing Academy admin group the web console already proxies through
+      `frontend-web/app/api/academy/admin/[...path]`.
+
+    Behaviour the client can rely on:
+
+    * Answers are generated ONLY from published `academy_faqs` rows. A draft,
+      unpublished or `Pending` FAQ can never reach the model — enforced in SQL
+      by the retrieval query and again by a table CHECK on publish.
+    * Person-specific cases (an individual's fees, payment status, application
+      status, account access, complaints, medical or identity details) never
+      reach the model. The server detects them and returns `offer_handoff`.
+    * The question is redacted (email, phone, card and OTP-like digit runs)
+      before it is sent upstream; full chat history is never sent.
+    * While a conversation is in `human` mode the model is not called at all —
+      every subsequent student message is stored for staff to read.
+    * Per-student budget: 6 requests/minute and 100/day by default
+      (`ACADEMY_ASSISTANT_RATE_PER_MIN` / `ACADEMY_ASSISTANT_RATE_PER_DAY`),
+      enforced BEFORE the upstream call, over Redis fixed windows, failing open
+      if Redis is unreachable (mirrors the doctor AI guard).
+    * If the model key is unset, timed out, quota-exhausted or erroring, the
+      client gets a friendly fallback plus `offer_handoff: true` — never a
+      secret, never a raw upstream error.
+    * Everything here is gated by `FEATURE_ACADEMY_ASSISTANT_ENABLED` (and the
+      runtime `academy.assistant` row in `academy_feature_flags`, which
+      overrides it fail-closed). Flag off mounts nothing.
+    * Success envelope: `{ "data": ... }` on the admin surface; the learner
+      surface returns the bare payload, matching the mobile API wrapper.
+      Error envelope: `{ "error": "..." }`.
+    * No money moves anywhere in this module. Tuition questions that need a
+      figure are handed to a human, not answered.
+servers:
+  - url: /api/v1/ai/academy
+security:
+  - bearerAuth: []
+tags:
+  - name: learner
+    description: The signed-in student's own assistant conversation.
+  - name: staff
+    description: Academy Support queue (academy.support.view / academy.support.manage).
+  - name: admin
+    description: Knowledge base authoring, admin only (academy.faq.manage).
+paths:
+  /chat:
+    post:
+      operationId: academyAssistantChat
+      tags: [learner]
+      summary: One assistant turn; creates the conversation on first use
+      description: |
+        `conversation_id` may be omitted to start a new conversation. The reply
+        is either a model answer grounded in the retrieved FAQs, a no-evidence
+        fallback, or a person-specific-case deflection — in the latter two cases
+        `offer_handoff` is true and the client shows **Talk to Academy Support**.
+        Returns 429 when the student is over their per-minute or per-day budget.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatRequest' }
+      responses:
+        '200':
+          description: The assistant turn.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /handoff:
+    post:
+      operationId: academyAssistantHandoff
+      tags: [learner]
+      summary: Escalate a conversation to Academy Support
+      description: |
+        Creates a ticket on `academy_support_tickets`, flips the conversation to
+        `human` mode and appends a system message. Idempotent per conversation —
+        escalating an already-human conversation returns the existing ticket
+        rather than creating a second one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffRequest' }
+      responses:
+        '200':
+          description: The conversation is now human-only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /conversations:
+    get:
+      operationId: academyAssistantListConversations
+      tags: [learner]
+      summary: The caller's own conversations, newest first
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Conversation' }
+        '401': { $ref: '#/components/responses/Error' }
+  /conversations/{id}/messages:
+    get:
+      operationId: academyAssistantMessages
+      tags: [learner]
+      summary: Full transcript of the caller's conversation
+      description: |
+        The refresh path the student screen polls for staff replies. Ownership is
+        fused into the WHERE clause, so someone else's conversation id and a
+        missing one are the same 404 — no existence oracle.
+      parameters: [{ $ref: '#/components/parameters/conversationId' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Message' }
+        '404': { $ref: '#/components/responses/Error' }
+  /conversations/{id}/feedback:
+    post:
+      operationId: academyAssistantFlag
+      tags: [learner]
+      summary: Flag an assistant answer as incorrect
+      description: |
+        Records the flag and opens the support ticket the student did not ask
+        for themselves — a flagged answer is an escalation trigger, so the
+        conversation moves to `human` mode like an explicit handoff.
+      parameters: [{ $ref: '#/components/parameters/conversationId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message_id]
+              properties:
+                message_id: { type: string, format: uuid }
+                note: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Flagged; handoff state returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffResponse' }
+        '404': { $ref: '#/components/responses/Error' }
+  /suggestions:
+    get:
+      operationId: academyAssistantSuggestions
+      tags: [learner]
+      summary: Suggested opening questions
+      description: |
+        Derived server-side from published FAQs only, so an unpublished topic
+        never appears as a suggestion. Empty array means the knowledge base has
+        nothing published yet — the screen shows that state rather than
+        inventing questions.
+      responses:
+        '200':
+          description: OK — bare array payload on the learner surface.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        '401': { $ref: '#/components/responses/Error' }
+  /admin/assistant/faqs:
+    get:
+      operationId: listAcademyFaqs
+      tags: [admin]
+      summary: Search the knowledge base (drafts included, admin only)
+      description: |
+        Mounted under `/api/academy/admin/assistant/faqs`. Needs
+        `academy.faq.manage`. Support-only staff (`academy.support.view`) cannot
+        reach it, so no one without admin rights can change an official answer.
+      parameters:
+        - { $ref: '#/components/parameters/q' }
+        - { $ref: '#/components/parameters/category' }
+        - name: published
+          in: query
+          schema: { type: boolean }
+        - { $ref: '#/components/parameters/limit' }
+        - { $ref: '#/components/parameters/offset' }
+      responses:
+        '200': { $ref: '#/components/responses/FaqList' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createAcademyFaq
+      tags: [admin]
+      summary: Create a FAQ (starts unpublished)
+      description: |
+        `published` defaults to false. Publishing is refused (400) when the
+        answer still carries a `Pending` / `TO BE APPROVED` placeholder or an
+        empty contact value — the same rule the retrieval layer enforces.
+      requestBody: { $ref: '#/components/requestBodies/Faq' }
+      responses:
+        '201': { $ref: '#/components/responses/FaqItem' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/assistant/faqs/{id}:
+    get:
+      operationId: getAcademyFaq
+      tags: [admin]
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses:
+        '200': { $ref: '#/components/responses/FaqItem' }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: updateAcademyFaq
+      tags: [admin]
+      summary: Edit a FAQ, publish or unpublish it
+      description: |
+        Unpublishing takes effect on the next retrieval — the answer stops
+        reaching the model immediately, with no cache in between. Records the
+        editing admin and bumps `updated_at`.
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      requestBody: { $ref: '#/components/requestBodies/Faq' }
+      responses:
+        '200': { $ref: '#/components/responses/FaqItem' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteAcademyFaq
+      tags: [admin]
+      summary: Retire a FAQ
+      description: Soft delete — the row is kept for audit, retrieval drops it.
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses:
+        '200': { $ref: '#/components/responses/FaqItem' }
+        '404': { $ref: '#/components/responses/Error' }
+  /admin/assistant/faqs/categories:
+    get:
+      operationId: listAcademyFaqCategories
+      tags: [admin]
+      summary: Distinct categories in use
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: string } }
+  /admin/assistant/tickets:
+    get:
+      operationId: listAcademySupportTickets
+      tags: [staff]
+      summary: The support queue
+      description: |
+        Replaces the previous hardcoded-empty response on the SU-09 surface with
+        a real read of `academy_support_tickets`. `summary` carries the open /
+        in-progress / closed counts, the unanswered count and the age in minutes
+        of the oldest unanswered ticket, which is what the console badges.
+        Needs `academy.support.view`.
+      parameters:
+        - { $ref: '#/components/parameters/status' }
+        - { $ref: '#/components/parameters/category' }
+        - { $ref: '#/components/parameters/q' }
+        - name: unanswered
+          in: query
+          schema: { type: boolean }
+        - { $ref: '#/components/parameters/limit' }
+        - { $ref: '#/components/parameters/offset' }
+      responses:
+        '200': { $ref: '#/components/responses/TicketList' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/assistant/tickets/{id}:
+    get:
+      operationId: getAcademySupportTicket
+      tags: [staff]
+      summary: One ticket with its full conversation
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses:
+        '200': { $ref: '#/components/responses/TicketDetail' }
+        '404': { $ref: '#/components/responses/Error' }
+  /admin/assistant/tickets/{id}/reply:
+    post:
+      operationId: replyAcademySupportTicket
+      tags: [staff]
+      summary: Send a staff message into the student's conversation
+      description: |
+        Appends a `staff` message to the linked conversation — which is the same
+        transcript the student reads — moves `open` to `in_progress`, and stamps
+        `last_staff_reply_at` so "unanswered" stops counting it. Needs
+        `academy.support.manage`. Rejected 409 once the ticket is closed.
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        '200': { $ref: '#/components/responses/TicketDetail' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /admin/assistant/tickets/{id}/status:
+    post:
+      operationId: setAcademySupportTicketStatus
+      tags: [staff]
+      summary: Claim, close or reopen a ticket
+      description: |
+        Transitions `open -> in_progress -> closed`, plus `closed -> open` to
+        reopen. Closing flips the linked conversation back to `bot` mode so the
+        next student message can use the assistant again. Closing without a
+        `resolution_notes` body is refused, so the queue keeps its audit trail.
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [open, in_progress, closed] }
+                resolution_notes: { type: string, maxLength: 2000 }
+      responses:
+        '200': { $ref: '#/components/responses/TicketDetail' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    conversationId:
+      name: id
+      in: path
+      required: true
+      description: Conversation UUID owned by the caller.
+      schema: { type: string, format: uuid }
+    status:
+      name: status
+      in: query
+      schema: { type: string, enum: [open, in_progress, closed] }
+    category:
+      name: category
+      in: query
+      schema: { type: string }
+    q:
+      name: q
+      in: query
+      description: Keyword search over question, answer and keywords.
+      schema: { type: string, maxLength: 200 }
+    limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+  requestBodies:
+    Faq:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/FaqInput' }
+  schemas:
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: The student's question. The composer caps at 1000 characters.
+        conversation_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Omit to start a new conversation.
+    ChatResponse:
+      type: object
+      required: [conversation_id, mode, reply, status, offer_handoff]
+      properties:
+        conversation_id: { type: string, format: uuid }
+        mode: { type: string, enum: [bot, human] }
+        reply: { type: string, description: The assistant turn, already persisted. }
+        status:
+          type: string
+          enum: [answered, fallback, deflect, queued, handoff]
+          description: |
+            What the student got, so the client picks the affordance instead of
+            inferring it from an empty source list. `answered` is a grounded
+            model answer; `fallback` is the no-evidence or model-unavailable
+            answer; `deflect` is a personal case sent to a person; `queued` is
+            human mode, where the model was never called; `handoff` means this
+            turn opened the ticket.
+        offer_handoff:
+          type: boolean
+          description: True when the client should surface Talk to Academy Support.
+        fallback:
+          type: boolean
+          description: True when no FAQ evidence cleared the relevance bar, or the model failed.
+        sources:
+          type: array
+          items: { type: string, format: uuid }
+          description: The FAQ ids retrieved for this answer, for audit.
+        message_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+    HandoffRequest:
+      type: object
+      required: [conversation_id]
+      properties:
+        conversation_id: { type: string, format: uuid }
+        reason:
+          type: string
+          maxLength: 500
+          description: What the student needs from a person.
+    HandoffResponse:
+      type: object
+      required: [conversation_id, ticket_id, mode, reply, offer_handoff]
+      properties:
+        conversation_id: { type: string, format: uuid }
+        ticket_id: { type: string, format: uuid }
+        ticket_number: { type: string }
+        mode: { type: string, const: human }
+        reply: { type: string }
+        offer_handoff: { type: boolean, const: false }
+    Conversation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        mode: { type: string, enum: [bot, human] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Message:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        sender:
+          type: string
+          enum: [user, assistant, staff, system]
+          description: Drives the bubble — You / Academy AI / Academy Staff / Support Update.
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+        flagged: { type: boolean }
+        sources:
+          type: array
+          items: { type: string, format: uuid }
+    FaqInput:
+      type: object
+      required: [category, question, answer]
+      properties:
+        category:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: registration, courses, fees, dates, eligibility, location, support…
+        question: { type: string, minLength: 3, maxLength: 500 }
+        answer: { type: string, minLength: 1, maxLength: 8000 }
+        keywords:
+          type: array
+          items: { type: string, maxLength: 60 }
+          maxItems: 40
+        published: { type: boolean, default: false }
+    Faq:
+      allOf:
+        - $ref: '#/components/schemas/FaqInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+            updated_by: { type: string, format: uuid, nullable: true }
+            deleted_at: { type: string, format: date-time, nullable: true }
+    Ticket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ticket_number: { type: string }
+        user_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid, nullable: true }
+        subject: { type: string }
+        category: { type: string }
+        priority: { type: string, enum: [low, medium, high] }
+        status: { type: string, enum: [open, in_progress, closed] }
+        message: { type: string, description: Newest student message on the thread. }
+        assigned_officer_id: { type: string, format: uuid, nullable: true }
+        resolution_notes: { type: string, nullable: true }
+        unanswered: { type: boolean }
+        age_minutes: { type: integer, description: Minutes since the ticket opened. }
+        last_student_message_at: { type: string, format: date-time, nullable: true }
+        last_staff_reply_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TicketSummary:
+      type: object
+      properties:
+        open: { type: integer }
+        in_progress: { type: integer }
+        closed: { type: integer }
+        unanswered: { type: integer }
+        oldest_unanswered_minutes:
+          type: integer
+          description: Age of the oldest ticket no one has replied to. The console surfaces this.
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Over the per-student budget; the model was not called.
+      headers:
+        X-RateLimit-Limit: { schema: { type: integer } }
+        X-RateLimit-Remaining: { schema: { type: integer } }
+        Retry-After: { schema: { type: integer } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    FaqList:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { type: array, items: { $ref: '#/components/schemas/Faq' } }
+              meta:
+                type: object
+                properties:
+                  total: { type: integer }
+    FaqItem:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { $ref: '#/components/schemas/Faq' }
+    TicketList:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { type: array, items: { $ref: '#/components/schemas/Ticket' } }
+              summary: { $ref: '#/components/schemas/TicketSummary' }
+    TicketDetail:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                allOf:
+                  - $ref: '#/components/schemas/Ticket'
+                  - type: object
+                    properties:
+                      messages:
+                        type: array
+                        items: { $ref: '#/components/schemas/Message' }

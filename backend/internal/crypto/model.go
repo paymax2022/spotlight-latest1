@@ -32,6 +32,17 @@ type Asset struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+// CryptoAccount maps a user to their provider subaccount ID (e.g., Quidax per-user account).
+// One account per (user, provider) pair; created on first trade/interaction.
+type CryptoAccount struct {
+	ID                string    `json:"id"`
+	UserID            string    `json:"user_id"`
+	Provider          string    `json:"provider"` // "quidax"
+	ProviderAccountID string    `json:"provider_account_id"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
 // Quote is a point-in-time price for an asset.
 type Quote struct {
 	AssetID   string    `json:"asset_id"`
@@ -291,6 +302,10 @@ type SwapQuote struct {
 	SpreadBps     int       `json:"spread_bps"`
 	Source        string    `json:"source"`
 	AsOf          time.Time `json:"as_of"`
+	// CR-011: Quidax quote fields
+	QuotationID string    `json:"quotation_id,omitempty"`  // Quidax quote ID (15-sec TTL)
+	ExpiresAt   time.Time `json:"expires_at,omitempty"`   // Quote expiry timestamp
+	Provider    string    `json:"provider,omitempty"`     // "quidax" or "internal"
 }
 
 // SwapOrder is an immutable record of a filled two-leg swap.
@@ -311,6 +326,15 @@ type SwapOrder struct {
 	SpreadBps     int       `json:"spread_bps"`
 	Reference     string    `json:"reference,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
+
+	// CR-012: Quidax integration fields
+	QuotationID      string `json:"quotation_id,omitempty"`      // From SwapQuote (15-sec TTL)
+	SwapTransactionID string `json:"swap_transaction_id,omitempty"` // From ConfirmQuotation (async execution)
+	ProviderStatus   string `json:"provider_status,omitempty"`    // Raw Quidax status for audit
+
+	// CR-014: Ledger settlement tracking
+	LedgerSettled bool       `json:"ledger_settled"`     // Whether final journals posted
+	SettledAt     *time.Time `json:"settled_at,omitempty"` // When settlement completed
 
 	idem string
 }
