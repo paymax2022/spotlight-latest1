@@ -43,6 +43,7 @@ export const FLAG_META: Record<AnalyteFlag, { label: string; color: string; bg: 
   normal: { label: 'Normal', color: Colors.teal, bg: Colors.iconBgTeal },
   low: { label: 'Low', color: Colors.onWarning, bg: Colors.iconBgGold },
   high: { label: 'High', color: Colors.onWarning, bg: Colors.iconBgGold },
+  abnormal: { label: 'Abnormal', color: Colors.onWarning, bg: Colors.iconBgGold },
   critical: { label: 'Critical', color: Colors.error, bg: Colors.errorContainer },
 };
 

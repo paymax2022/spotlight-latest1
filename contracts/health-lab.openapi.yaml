@@ -1,0 +1,366 @@
+openapi: 3.0.3
+info:
+  title: Health Lab — directory, catalog detail and reviews
+  version: 0.1.0
+  description: |
+    Persisted lab directory, catalog detail and verified reviews. These replace
+    the mobile app's client-side mock data (src/features/health/lab/api.ts).
+    Money is integer kobo. Member routes are mounted at /api/finance/health/lab
+    behind the finance auth chain and FeatureHealthLabEnabled.
+servers:
+  - url: /api/finance/health/lab
+paths:
+  /labs:
+    get:
+      summary: Discoverable MLSCN labs (HL-2 — approved and discoverable only)
+      parameters:
+        - { name: home_collection, in: query, schema: { type: boolean } }
+        - { name: lat, in: query, schema: { type: number, minimum: -90, maximum: 90 }, description: Must be sent with lng; list becomes nearest-first }
+        - { name: lng, in: query, schema: { type: number, minimum: -180, maximum: 180 } }
+      responses:
+        '200': { description: Labs, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, labs: { type: array, items: { $ref: '#/components/schemas/Lab' } } } } } } }
+        '400': { description: lat/lng out of range or not supplied together }
+  /labs/{id}:
+    get:
+      summary: One approved lab (discoverable or not, so an existing order's lab stays reachable)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Lab, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, lab: { $ref: '#/components/schemas/Lab' } } } } } }
+        '404': { description: Not found or not approved }
+  /labs/{id}/reviews:
+    get:
+      summary: Reviews for a lab, newest first (authors shown as first name + initial)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Reviews, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, reviews: { type: array, items: { $ref: '#/components/schemas/Review' } } } } } } }
+  /reviews:
+    post:
+      summary: Review a lab for one of your released orders (once per order)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, rating]
+              properties:
+                order_id: { type: string, format: uuid }
+                rating: { type: integer, minimum: 1, maximum: 5 }
+                body: { type: string, maxLength: 2000 }
+      responses:
+        '201': { description: Created }
+        '400': { description: Invalid rating or body }
+        '404': { description: Order missing or not yours (indistinguishable) }
+        '409': { description: Order not yet released, or already reviewed }
+  /results:
+    get:
+      summary: My released or escalated results (summaries — never analyte values)
+      responses:
+        '200': { description: Results, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, results: { type: array, items: { $ref: '#/components/schemas/Result' } } } } } } }
+  /results/shared:
+    get:
+      summary: Released results other patients have shared with me (active LAB_RESULTS or ALL consent)
+      responses:
+        '200': { description: Results with shared_by set }
+  /results/{id}:
+    get:
+      summary: One result (id is the order id). The patient must have acknowledged first; a grantee needs an active consent grant.
+      description: A critical result still with the care team (HL-7) returns its escalation and analytes_withheld=true, never values. Every vault-backed read is appended to the HL-8 access log.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Result with analytes, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, result: { $ref: '#/components/schemas/Result' } } } } } }
+        '403': { description: Consent notice not yet acknowledged }
+        '404': { description: Missing, unreleased, or not yours (indistinguishable) }
+  /results/{id}/consent:
+    post:
+      summary: Acknowledge the HL-8 consent notice for a result (idempotent)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Acknowledged }
+        '404': { description: Missing, unreleased, or not yours }
+  /results/{id}/share:
+    post:
+      summary: Grant a Spotlight account access to my lab results for 1-365 days (default 30)
+      description: Uses the shared consent module (scope LAB_RESULTS), so the grant is listed under and revocable from consent settings. Re-sharing with an existing active grantee returns the same consent.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [grantee_email]
+              properties:
+                grantee_email: { type: string, format: email }
+                days: { type: integer, minimum: 1, maximum: 365 }
+      responses:
+        '201': { description: Granted }
+        '400': { description: Invalid email, duration, or sharing with yourself }
+        '404': { description: No Spotlight account for that email, or result not yours/unreleased }
+        '503': { description: Consent module unavailable }
+  /results/{id}/signed-url:
+    get:
+      summary: Short-lived signed URL for the report document
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: "{ url, expires_at }" }
+        '404': { description: No report document has been issued yet }
+        '503': { description: Document delivery (R2) not configured }
+  /orders:
+    post:
+      summary: Place an order (payment HELD on the escrow rail, HL-9). Documented here for the home-collection fields only.
+      description: For collection_method HOME an address is required; scheduled_for must be within the next 90 days. The details are stored on the order so the phlebotomist route and tracking can use them. WALK_IN ignores them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lab_provider_id, collection_method, test_ids]
+              properties:
+                lab_provider_id: { type: string, format: uuid }
+                collection_method: { type: string, enum: [HOME, WALK_IN] }
+                test_ids: { type: array, items: { type: string, format: uuid } }
+                idempotency_key: { type: string }
+                collection_address: { type: string, maxLength: 300 }
+                collection_lat: { type: number }
+                collection_lng: { type: number }
+                scheduled_for: { type: string, format: date-time }
+      responses:
+        '201': { description: Order created }
+        '422': { description: Validation or domain refusal (for example a HOME order without an address) }
+  /provider/earnings:
+    get:
+      summary: A lab owner's earnings (read-only)
+      description: |
+        Moves no money. Releasing a result credits the held amount, in full, to the owner's wallet; withdrawing uses the wallet's existing bank transfer (POST /api/finance/transfers/bank, transaction PIN, tier limit, fee, ledger reservation, idempotency). The lab module deliberately has no payout mutation of its own.
+        Buckets come from escrow_holds joined to the owner's lab orders; each hold falls in at most one: earned (RELEASED to this owner), pending (HELD on CREATED..PROCESSING orders), held (DISPUTED, or HELD on RESULT_READY/ESCALATED orders, or HELD on an order already RELEASED/CLOSED whose credit has not landed). A HELD hold on a CANCELLED order is the patient's refund and is in no bucket. earned is attributed to the payee pinned at release time, so a later owner change does not move it. available is the ledger wallet balance BEFORE the bank-transfer fee. All figures are integer kobo. An unavailable ledger fails the request (503/500) rather than reporting zero.
+      responses:
+        '200': { description: Earnings, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, earnings: { $ref: '#/components/schemas/Earnings' } } } } } }
+        '403': { description: Caller owns no lab }
+        '503': { description: Ledger reader not wired }
+  /provider/reviews:
+    get:
+      summary: Reviews of the labs the caller owns, newest first
+      responses:
+        '200': { description: Reviews }
+        '403': { description: Caller owns no lab }
+  /phlebotomist/assignments:
+    get:
+      summary: My home-collection route (assigned to me, plus the unassigned pool of labs I staff as an active phlebotomist)
+      parameters:
+        - { name: lat, in: query, schema: { type: number }, description: Send with lng to get distance_m per stop }
+        - { name: lng, in: query, schema: { type: number } }
+      responses:
+        '200': { description: Assignments, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, assignments: { type: array, items: { $ref: '#/components/schemas/Assignment' } } } } } } }
+  /phlebotomist/assignments/{id}/status:
+    post:
+      summary: Mark the visit en route or arrived. The first call claims an unassigned order; the optional position is shown to the patient while the collection is active.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [en_route, arrived] }
+                lat: { type: number }
+                lng: { type: number }
+      responses:
+        '200': { description: Updated }
+        '400': { description: Unknown status or bad coordinates }
+        '404': { description: Not your order, already claimed by a colleague, or missing (indistinguishable) }
+        '409': { description: Order is no longer SCHEDULED }
+  /phlebotomist/assignments/{id}/checklist:
+    get:
+      summary: The bedside checklist (server-owned; the fasting step appears only when a fasting test is ordered)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Items with done state }
+        '404': { description: Not your order }
+  /phlebotomist/assignments/{id}/custody:
+    post:
+      summary: Bedside scan. Verifies every required checklist step, collects the sample under the scanned tube barcode (first scan) and opens the chain of custody (HL-6). condition_ok=false raises a breach and requires recollection.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [barcode, condition_ok, completed_items]
+              properties:
+                barcode: { type: string, description: 6-32 letters, digits or dashes }
+                condition_ok: { type: boolean }
+                note: { type: string }
+                completed_items: { type: array, items: { type: string } }
+      responses:
+        '201': { description: "{ sample_id, breach }" }
+        '400': { description: Malformed barcode or checklist incomplete }
+        '404': { description: Not your order }
+        '409': { description: Barcode mismatch on a re-scan, or barcode already on another sample }
+  /phlebotomist/assignments/{id}/drop-off:
+    post:
+      summary: Hand the sample to the lab accession desk. The scanned barcode must match the sample of record; custody passes to the lab owner.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [barcode]
+              properties:
+                barcode: { type: string }
+                lab_id: { type: string, format: uuid, description: Optional; checked against the order's lab when given }
+                note: { type: string }
+      responses:
+        '200': { description: Handed over }
+        '404': { description: Not your order or wrong lab }
+        '409': { description: Barcode mismatch }
+  /orders/{id}/phlebotomist:
+    get:
+      summary: Who is collecting (patient, owning lab or admin). 404 until a phlebotomist is assigned.
+      description: Phone and last position (fresher than 15 minutes) are returned to the patient only, and only while the collection is active. No rating or vehicle data exists for phlebotomists, so none is returned.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Phlebotomist }
+        '404': { description: Not assigned yet, or not your order }
+  /tests/{id}:
+    get:
+      summary: One active catalog test
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Test, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, test: { $ref: '#/components/schemas/Test' } } } } } }
+        '404': { description: Not found or inactive }
+  /packages/{id}:
+    get:
+      summary: One active package
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Package }
+        '404': { description: Not found or inactive }
+components:
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  schemas:
+    LabCredential:
+      type: object
+      properties:
+        authority: { type: string, example: MLSCN }
+        license_no: { type: string }
+        status: { type: string, enum: [verified, pending, expired] }
+        expires_at: { type: string, format: date-time, nullable: true }
+    Lab:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        headline: { type: string }
+        address: { type: string }
+        supports_home_collection: { type: boolean }
+        supports_walk_in: { type: boolean }
+        home_collection_fee_kobo: { type: integer, format: int64 }
+        result_eta_label: { type: string }
+        lat: { type: number }
+        lng: { type: number }
+        distance_m: { type: number, nullable: true, description: Present only when lat/lng were supplied }
+        rating: { type: number }
+        review_count: { type: integer }
+        credential: { $ref: '#/components/schemas/LabCredential' }
+    Result:
+      type: object
+      properties:
+        id: { type: string, format: uuid, description: The order id }
+        order_id: { type: string, format: uuid }
+        record_id: { type: string, format: uuid, nullable: true }
+        test_name: { type: string }
+        lab_name: { type: string }
+        status: { type: string, enum: [RELEASED, ESCALATED] }
+        released_by_name: { type: string }
+        released_at: { type: string, format: date-time }
+        collected_at: { type: string, format: date-time }
+        has_abnormal: { type: boolean }
+        has_critical: { type: boolean }
+        analytes_withheld: { type: boolean }
+        acknowledged: { type: boolean }
+        has_document: { type: boolean }
+        shared_by: { type: string }
+        analytes:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              value: { type: string }
+              unit: { type: string }
+              reference_range: { type: string }
+              flag: { type: string, enum: [normal, low, high, abnormal, critical], description: "Direction is inferred from value and range; 'abnormal' when it cannot be derived" }
+        escalation:
+          type: object
+          properties:
+            status: { type: string, enum: [pending, patient_notified, resolved] }
+            raised_at: { type: string, format: date-time }
+            analyte_name: { type: string }
+            steps:
+              type: array
+              items: { type: object, properties: { label: { type: string }, at: { type: string, format: date-time }, done: { type: boolean } } }
+    Earnings:
+      type: object
+      properties:
+        available_kobo: { type: integer, format: int64, description: Ledger wallet balance before the bank-transfer fee }
+        earned_kobo: { type: integer, format: int64 }
+        pending_kobo: { type: integer, format: int64 }
+        held_kobo: { type: integer, format: int64 }
+        withdrawals:
+          type: array
+          description: The owner's own wallet-sourced bank transfers (not lab-specific; bank-to-bank excluded), newest first, at most 20
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              amount_kobo: { type: integer, format: int64 }
+              fee_kobo: { type: integer, format: int64, description: Debited from the wallet on top of amount_kobo }
+              status: { type: string, enum: [paid, processing, failed] }
+              at: { type: string, format: date-time }
+    Assignment:
+      type: object
+      properties:
+        order_id: { type: string, format: uuid }
+        patient_name: { type: string, description: First name and initial only }
+        address: { type: string }
+        lat: { type: number }
+        lng: { type: number }
+        scheduled_for: { type: string, format: date-time }
+        test_summary: { type: string }
+        sample_type: { type: string, enum: [blood, urine, stool, swab, saliva] }
+        status: { type: string, enum: [assigned, en_route, arrived, collected, dropped_off] }
+        distance_m: { type: number, nullable: true }
+    Review:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        author: { type: string }
+        rating: { type: integer }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+    Test:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        lab_provider_id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        specimen: { type: string }
+        prep_instructions: { type: string }
+        tat_hours: { type: integer }
+        ref_range: { type: string }
+        price_kobo: { type: integer, format: int64 }
+        active: { type: boolean }
+        category: { type: string }
+        description: { type: string }
+        home_collection: { type: boolean }
+        fasting_required: { type: boolean }

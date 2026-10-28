@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { Wallet } from 'lucide-react-native';
 
 import { Colors } from '@/constants/tokens';
@@ -13,23 +14,25 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 
-import { useProviderEarnings, useRequestPayout } from '@/features/health/lab/hooks';
+import { useProviderEarnings } from '@/features/health/lab/hooks';
 import type { ProviderEarnings } from '@/features/health/lab/types';
 import { formatNaira, relativeTime } from '@/features/health/constants/health.constants';
 
-type Payout = ProviderEarnings['payouts'][number];
+type Payout = ProviderEarnings['withdrawals'][number];
 
 function PayoutRow({ payout }: { payout: Payout }) {
   const isPaid = payout.status === 'paid';
+  const isFailed = payout.status === 'failed';
   return (
     <View style={styles.payoutRow}>
       <View style={styles.payoutInfo}>
         <Text style={styles.payoutAmount}>{formatNaira(payout.amountKobo)}</Text>
+        {payout.feeKobo > 0 ? <Text style={styles.payoutTime}>+ {formatNaira(payout.feeKobo)} fee</Text> : null}
         <Text style={styles.payoutTime}>{relativeTime(payout.at)}</Text>
       </View>
-      <View style={[styles.statusPill, { backgroundColor: isPaid ? Colors.tertiaryContainer : Colors.surfaceContainerHigh }]}>
-        <Text style={[styles.statusText, { color: isPaid ? Colors.teal : Colors.gold }]}>
-          {isPaid ? 'Paid' : 'Processing'}
+      <View style={[styles.statusPill, { backgroundColor: isPaid ? Colors.tertiaryContainer : isFailed ? Colors.errorContainer : Colors.surfaceContainerHigh }]}>
+        <Text style={[styles.statusText, { color: isPaid ? Colors.teal : isFailed ? Colors.error : Colors.gold }]}>
+          {isPaid ? 'Paid' : isFailed ? 'Failed' : 'Processing'}
         </Text>
       </View>
     </View>
@@ -38,7 +41,6 @@ function PayoutRow({ payout }: { payout: Payout }) {
 
 export default function LabProviderEarningsScreen() {
   const earnings = useProviderEarnings();
-  const requestPayout = useRequestPayout();
 
   if (earnings.isLoading) {
     return (
@@ -65,12 +67,7 @@ export default function LabProviderEarningsScreen() {
   }
 
   const data = earnings.data;
-  const payouts = data.payouts ?? [];
-
-  const onRequestPayout = async () => {
-    await requestPayout.mutateAsync(data.availableKobo);
-    earnings.refetch();
-  };
+  const payouts = data.withdrawals ?? [];
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -85,34 +82,37 @@ export default function LabProviderEarningsScreen() {
             <View style={styles.balanceCard}>
               <View style={styles.balanceTop}>
                 <Wallet size={20} color={Colors.onPrimary} />
-                <Text style={styles.balanceLabel}>Available balance</Text>
+                <Text style={styles.balanceLabel}>Wallet balance (before transfer fee)</Text>
               </View>
               <Text style={styles.balanceBig}>{formatNaira(data.availableKobo)}</Text>
               <View style={styles.subRows}>
+                <View style={styles.subRow}>
+                  <Text style={styles.subLabel}>Total earned from released results</Text>
+                  <Text style={styles.subValue}>{formatNaira(data.earnedKobo)}</Text>
+                </View>
                 <View style={styles.subRow}>
                   <Text style={styles.subLabel}>Pending</Text>
                   <Text style={styles.subValue}>{formatNaira(data.pendingKobo)}</Text>
                 </View>
                 <View style={styles.subRow}>
-                  <Text style={styles.subLabel}>Held (awaiting release)</Text>
+                  <Text style={styles.subLabel}>Held (awaiting sign-off, credit or dispute)</Text>
                   <Text style={styles.subValue}>{formatNaira(data.heldKobo)}</Text>
                 </View>
               </View>
             </View>
             <Text style={styles.heldNote}>
-              Funds are held until the corresponding result is released (HL-9).
+              Payment for an order is held until its result is released, then credited to your wallet (HL-9). Withdrawals use your wallet's bank transfer, with your transaction PIN.
             </Text>
             <PrimaryButton
-              label="Request payout"
-              onPress={onRequestPayout}
-              loading={requestPayout.isPending}
+              label="Withdraw to bank"
+              onPress={() => router.push('/wallet/bank-transfer')}
               disabled={data.availableKobo <= 0}
             />
-            <Text style={styles.sectionTitle}>Recent payouts</Text>
+            <Text style={styles.sectionTitle}>Recent bank transfers</Text>
           </View>
         }
         ListEmptyComponent={
-          <StateView kind="empty" icon="Banknote" title="No payouts yet" message="Your payout history will appear here." compact />
+          <StateView kind="empty" icon="Banknote" title="No bank transfers yet" message="Transfers from your wallet to a bank will appear here." compact />
         }
       />
     </SafeAreaView>

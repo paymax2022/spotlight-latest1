@@ -103,6 +103,12 @@ function ResultBody({ result }: { result: LabResult }) {
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Results</Text>
+        {result.analytesWithheld ? (
+          <Text style={styles.caption}>
+            Your care team is reviewing a critical value and will contact you. The detailed values
+            appear here once the result is released.
+          </Text>
+        ) : null}
         {result.analytes.map((a, i) => (
           <View key={a.id}>
             {i > 0 ? <View style={styles.divider} /> : null}

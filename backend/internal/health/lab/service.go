@@ -107,6 +107,9 @@ type Service struct {
 	vault      RecordsVault
 	audit      Auditor
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	consent    ConsentGate        // optional; nil ⇒ result sharing is unavailable (503)
+	vaultRead  VaultReader        // optional; nil ⇒ signed report URLs are unavailable (503)
+	earn       EarningsReader     // optional; nil ⇒ earnings are unavailable (503)
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, notify Notifier, vault RecordsVault, audit Auditor) *Service {
@@ -179,15 +182,21 @@ func (s *Service) UpsertTest(ctx context.Context, ownerID string, t Test) (*Test
 	if t.ID == "" {
 		t.ID = uuid.New().String()
 	}
+	if strings.TrimSpace(t.Category) == "" {
+		t.Category = "wellness"
+	}
 	const q = `
 		INSERT INTO lab_tests
-			(id, lab_provider_id, code, name, specimen, prep_instructions, tat_hours, ref_range, price_kobo, active)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			(id, lab_provider_id, code, name, specimen, prep_instructions, tat_hours, ref_range, price_kobo, active,
+			 category, description, home_collection, fasting_required)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT (id) DO UPDATE SET
 			code=$3, name=$4, specimen=$5, prep_instructions=$6, tat_hours=$7, ref_range=$8,
-			price_kobo=$9, active=$10, updated_at=now()`
+			price_kobo=$9, active=$10, category=$11, description=$12, home_collection=$13,
+			fasting_required=$14, updated_at=now()`
 	if _, err := s.db.Exec(ctx, q, t.ID, t.LabProviderID, t.Code, t.Name, t.Specimen,
-		t.PrepInstructions, t.TATHours, t.RefRange, t.PriceKobo, t.Active); err != nil {
+		t.PrepInstructions, t.TATHours, t.RefRange, t.PriceKobo, t.Active,
+		t.Category, t.Description, t.HomeCollection, t.FastingRequired); err != nil {
 		return nil, fmt.Errorf("lab: upsert test: %w", err)
 	}
 	s.audited(ownerID, "", "health.lab.test.upsert", t.ID, nil,
@@ -199,7 +208,7 @@ func (s *Service) UpsertTest(ctx context.Context, ownerID string, t Test) (*Test
 // read is a plain active filter; prep instructions + TAT are surfaced.
 func (s *Service) ListTests(ctx context.Context, labProviderID string) ([]Test, error) {
 	const base = `
-		SELECT id, lab_provider_id, code, name, specimen, prep_instructions, tat_hours, ref_range, price_kobo, active, created_at
+		SELECT ` + testColumns + `
 		FROM lab_tests WHERE active = true`
 	q := base + labFilter(labProviderID) + ` ORDER BY name ASC LIMIT 200`
 	var rows pgx.Rows
@@ -215,9 +224,8 @@ func (s *Service) ListTests(ctx context.Context, labProviderID string) ([]Test, 
 	defer rows.Close()
 	var out []Test
 	for rows.Next() {
-		var t Test
-		if err := rows.Scan(&t.ID, &t.LabProviderID, &t.Code, &t.Name, &t.Specimen,
-			&t.PrepInstructions, &t.TATHours, &t.RefRange, &t.PriceKobo, &t.Active, &t.CreatedAt); err != nil {
+		t, err := scanTest(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -297,6 +305,11 @@ func (s *Service) ListOrdersForPatient(ctx context.Context, patientID string) ([
 		}
 		out[i].Lines = lines
 	}
+	ptrs := make([]*Order, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	s.decorateOrders(ctx, ptrs)
 	return out, nil
 }
 
@@ -313,6 +326,17 @@ type CreateOrderInput struct {
 	CollectionMethod CollectionMethod
 	IdempotencyKey   string
 	TestIDs          []string
+	PackageIDs       []string
+	// ExpectedTotalKobo, when set, is the total the patient confirmed. If the
+	// server's price differs the order is refused with ErrQuoteChanged BEFORE any
+	// money moves, so a price edit between quote and order can never overcharge.
+	ExpectedTotalKobo *int64
+	// Home-collection details the patient chose. Required for HOME (the
+	// phlebotomist needs somewhere to go); ignored for WALK_IN.
+	CollectionAddress string
+	CollectionLat     *float64
+	CollectionLng     *float64
+	ScheduledFor      *time.Time
 }
 
 // CreateOrder builds a LabOrder and HELDs the patient payment on the escrow rail
@@ -327,11 +351,14 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	if in.IdempotencyKey == "" {
 		return nil, errors.New("lab: idempotency key required (HL-9)")
 	}
-	if len(in.TestIDs) == 0 {
-		return nil, errors.New("lab: at least one test required")
+	if len(in.TestIDs)+len(in.PackageIDs) == 0 {
+		return nil, ErrEmptyOrder
 	}
 	if in.CollectionMethod != CollectHome && in.CollectionMethod != CollectWalkIn {
 		return nil, errors.New("lab: collection_method must be HOME or WALK_IN")
+	}
+	if err := validateCollectionDetails(&in); err != nil {
+		return nil, err
 	}
 	// Replay: return the existing order for this idempotency key — but only when
 	// it belongs to THIS patient. Keys are client-chosen: resolving one to
@@ -358,36 +385,17 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		}
 	}
 
-	// Price every line from the catalog (server-side, kobo integers).
-	prices := make([]int64, 0, len(in.TestIDs))
-	lines := make([]OrderLine, 0, len(in.TestIDs))
-	for _, testID := range in.TestIDs {
-		var name string
-		var price int64
-		var active bool
-		const tq = `SELECT name, price_kobo, active FROM lab_tests WHERE id=$1 AND lab_provider_id=$2`
-		if err := s.db.QueryRow(ctx, tq, testID, in.LabProviderID).Scan(&name, &price, &active); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, errors.New("lab: test not found in this lab catalog")
-			}
-			return nil, err
-		}
-		if !active {
-			return nil, errors.New("lab: test is not active")
-		}
-		prices = append(prices, price)
-		lines = append(lines, OrderLine{
-			ID: uuid.New().String(), TestID: testID, TestName: name, UnitPriceKobo: price,
-		})
-	}
-	// Exact, overflow-guarded minor-unit total (PM-008/PM-011).
-	total, err := sumLineKobo(prices)
+	// ONE pricing function for the held amount and the quote shown to the patient.
+	// The client supplies ids only; tests, packages and the home fee are priced
+	// from the catalog and the lab's profile here (kobo integers, overflow-guarded).
+	quote, err := s.QuoteOrder(ctx, in)
 	if err != nil {
 		return nil, err
 	}
-	if total <= 0 {
-		return nil, errors.New("lab: order total must be positive")
+	if in.ExpectedTotalKobo != nil && *in.ExpectedTotalKobo != quote.TotalKobo {
+		return nil, &QuoteChangedError{Quote: quote}
 	}
+	lines, total := quote.Lines, quote.TotalKobo
 
 	orderID := uuid.New().String()
 	ref := "lab:" + orderID
@@ -450,18 +458,20 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		}
 		const insOrder = `
 			INSERT INTO lab_orders
-				(id, patient_id, lab_provider_id, state, collection_method, total_kobo, escrow_id, idempotency_key)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
+				(id, patient_id, lab_provider_id, state, collection_method, total_kobo, escrow_id, idempotency_key,
+				 collection_address, collection_lat, collection_lng, scheduled_for, home_fee_kobo)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`
 		if _, err := tx.Exec(ctx, insOrder, orderID, patientID, in.LabProviderID,
-			string(StateCreated), string(in.CollectionMethod), total, escrowID, in.IdempotencyKey); err != nil {
+			string(StateCreated), string(in.CollectionMethod), total, escrowID, in.IdempotencyKey,
+			in.CollectionAddress, in.CollectionLat, in.CollectionLng, in.ScheduledFor, quote.HomeFeeKobo); err != nil {
 			return nil, fmt.Errorf("lab: insert order: %w", err)
 		}
 		const insLine = `
-			INSERT INTO lab_order_lines (id, order_id, test_id, test_name, unit_price_kobo)
-			VALUES ($1,$2,$3,$4,$5)`
+			INSERT INTO lab_order_lines (id, order_id, test_id, test_name, unit_price_kobo, package_id)
+			VALUES ($1,$2,$3,$4,$5,$6)`
 		for i := range lines {
 			lines[i].OrderID = orderID
-			if _, err := tx.Exec(ctx, insLine, lines[i].ID, orderID, lines[i].TestID, lines[i].TestName, lines[i].UnitPriceKobo); err != nil {
+			if _, err := tx.Exec(ctx, insLine, lines[i].ID, orderID, lines[i].TestID, lines[i].TestName, lines[i].UnitPriceKobo, lines[i].PackageID); err != nil {
 				return nil, fmt.Errorf("lab: insert line: %w", err)
 			}
 		}
@@ -470,7 +480,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		}
 		return &Order{
 			ID: orderID, PatientID: patientID, LabProviderID: in.LabProviderID,
-			State: StateCreated, CollectionMethod: in.CollectionMethod, TotalKobo: total,
+			State: StateCreated, CollectionMethod: in.CollectionMethod, TotalKobo: total, HomeFeeKobo: quote.HomeFeeKobo,
 			EscrowID: &escrowID, IdempotencyKey: in.IdempotencyKey, Lines: lines, CreatedAt: time.Now(),
 		}, nil
 	}()
@@ -478,7 +488,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		return failAfterHold(txErr)
 	}
 	s.audited(patientID, "", "health.lab.order.create", orderID, nil,
-		map[string]any{"state": string(StateCreated), "total_kobo": total, "escrow_id": escrowID,
+		map[string]any{"state": string(StateCreated), "total_kobo": total, "home_fee_kobo": quote.HomeFeeKobo, "escrow_id": escrowID,
 			"collection_method": string(in.CollectionMethod)})
 	return o, nil
 }
@@ -704,6 +714,13 @@ func (s *Service) Schedule(ctx context.Context, actorID, orderID string, isAdmin
 // actor gate runs BEFORE the state check so a foreign actor cannot learn
 // another patient's order state from the refusal.
 func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string) (*Sample, error) {
+	return s.collectWith(ctx, collectorID, orderID, note, "")
+}
+
+// collectWith is Collect with an optional scanned tube barcode. A phlebotomist's
+// tubes arrive pre-labelled, so the scanned code becomes the sample's barcode of
+// record; empty means "mint one". A barcode already on another sample is refused.
+func (s *Service) collectWith(ctx context.Context, collectorID, orderID, note, scannedBarcode string) (*Sample, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
 		return nil, err
@@ -725,6 +742,16 @@ func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string
 
 	sampleID := uuid.New().String()
 	barcode := generateBarcode()
+	if scannedBarcode != "" {
+		barcode = normalizeBarcode(scannedBarcode)
+		var taken bool
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM lab_samples WHERE barcode_ref = $1)`, barcode).Scan(&taken); err != nil {
+			return nil, err
+		}
+		if taken {
+			return nil, ErrBarcodeInUse
+		}
+	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -1239,9 +1266,11 @@ func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID st
 		}
 	}
 	const q = `
-		SELECT o.id, o.patient_id, o.state, o.collection_method, o.created_at, sm.barcode_ref
+		SELECT o.id, o.patient_id, o.state, o.collection_method, o.created_at, sm.barcode_ref,
+		       COALESCE(NULLIF(btrim(up.full_name),''), NULLIF(btrim(up.display_name),''), '')
 		FROM lab_orders o
 		LEFT JOIN lab_samples sm ON sm.order_id = o.id
+		LEFT JOIN user_profiles up ON up.id = o.patient_id
 		WHERE o.lab_provider_id = $1
 		ORDER BY o.created_at DESC LIMIT 200`
 	rows, err := s.db.Query(ctx, q, providerID)
@@ -1252,10 +1281,11 @@ func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID st
 	var out []ProviderOrderSummary
 	for rows.Next() {
 		var r ProviderOrderSummary
-		var state, method string
-		if err := rows.Scan(&r.ID, &r.PatientID, &state, &method, &r.CreatedAt, &r.SampleBarcode); err != nil {
+		var state, method, full string
+		if err := rows.Scan(&r.ID, &r.PatientID, &state, &method, &r.CreatedAt, &r.SampleBarcode, &full); err != nil {
 			return nil, err
 		}
+		r.PatientName = shortAuthor(full)
 		r.State = OrderState(state)
 		r.CollectionMethod = CollectionMethod(method)
 		r.HasCritical = r.State == StateEscalated
@@ -1287,6 +1317,7 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 		return nil, ErrOrderNotFound
 	}
 	o.Lines, _ = s.loadLines(ctx, orderID)
+	s.decorateOrders(ctx, []*Order{o})
 	return o, nil
 }
 
@@ -1437,11 +1468,11 @@ func appendCustody(ctx context.Context, tx pgx.Tx, sampleID string, from, to Sam
 func lockOrder(ctx context.Context, tx pgx.Tx, orderID string) (*Order, error) {
 	var o Order
 	var state, method string
-	const q = `SELECT id, patient_id, lab_provider_id, state, collection_method, total_kobo,
+	const q = `SELECT id, patient_id, lab_provider_id, state, collection_method, total_kobo, home_fee_kobo,
 	                  escrow_id, delivery_ref, result_record_id, cancel_reason, idempotency_key, created_at
 	           FROM lab_orders WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method,
-		&o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
+		&o.TotalKobo, &o.HomeFeeKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrOrderNotFound
 		}
@@ -1455,11 +1486,11 @@ func lockOrder(ctx context.Context, tx pgx.Tx, orderID string) (*Order, error) {
 func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	var o Order
 	var state, method string
-	const q = `SELECT id, patient_id, lab_provider_id, state, collection_method, total_kobo,
+	const q = `SELECT id, patient_id, lab_provider_id, state, collection_method, total_kobo, home_fee_kobo,
 	                  escrow_id, delivery_ref, result_record_id, cancel_reason, idempotency_key, created_at
 	           FROM lab_orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method,
-		&o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
+		&o.TotalKobo, &o.HomeFeeKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrOrderNotFound
 		}
@@ -1510,7 +1541,7 @@ func (s *Service) idemTakenByOther(ctx context.Context, patientID, idemKey strin
 }
 
 func (s *Service) loadLines(ctx context.Context, orderID string) ([]OrderLine, error) {
-	const q = `SELECT id, order_id, test_id, test_name, unit_price_kobo FROM lab_order_lines WHERE order_id=$1`
+	const q = `SELECT id, order_id, test_id, test_name, unit_price_kobo, package_id::text FROM lab_order_lines WHERE order_id=$1`
 	rows, err := s.db.Query(ctx, q, orderID)
 	if err != nil {
 		return nil, err
@@ -1519,7 +1550,7 @@ func (s *Service) loadLines(ctx context.Context, orderID string) ([]OrderLine, e
 	var out []OrderLine
 	for rows.Next() {
 		var l OrderLine
-		if err := rows.Scan(&l.ID, &l.OrderID, &l.TestID, &l.TestName, &l.UnitPriceKobo); err != nil {
+		if err := rows.Scan(&l.ID, &l.OrderID, &l.TestID, &l.TestName, &l.UnitPriceKobo, &l.PackageID); err != nil {
 			return nil, err
 		}
 		out = append(out, l)
