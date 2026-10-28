@@ -498,5 +498,54 @@ func scanWithdrawalRows(row rowScanner) (*Withdrawal, error) {
 	return &w, nil
 }
 
+// GetSwapOrder retrieves a swap order by ID (CR-014: settlement lookup).
+func (r *Repository) GetSwapOrder(ctx context.Context, orderID string) (*SwapOrder, error) {
+	if orderID == "" {
+		return nil, fmt.Errorf("crypto: swap order ID required")
+	}
+
+	const q = `
+		SELECT id, user_id, from_asset_id, from_symbol, to_asset_id, to_symbol,
+		       status, from_units, to_units, from_price_kobo, to_price_kobo,
+		       cash_kobo, spread_kobo, spread_bps, reference, created_at,
+		       quotation_id, swap_transaction_id, provider_status,
+		       ledger_settled, settled_at
+		FROM crypto_swap_orders
+		WHERE id = $1
+	`
+	var o SwapOrder
+	var settledAt *time.Time
+	if err := r.db.QueryRow(ctx, q, orderID).Scan(
+		&o.ID, &o.UserID, &o.FromAssetID, &o.FromSymbol, &o.ToAssetID, &o.ToSymbol,
+		&o.Status, &o.FromUnits, &o.ToUnits, &o.FromPriceKobo, &o.ToPriceKobo,
+		&o.CashKobo, &o.SpreadKobo, &o.SpreadBps, &o.Reference, &o.CreatedAt,
+		&o.QuotationID, &o.SwapTransactionID, &o.ProviderStatus,
+		&o.LedgerSettled, &settledAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil // Not found
+		}
+		return nil, err
+	}
+	o.SettledAt = settledAt
+	return &o, nil
+}
+
+// MarkSwapOrderSettled marks a swap order as settled in the ledger (CR-014).
+// Sets ledger_settled = true and settled_at to the provided timestamp.
+func (r *Repository) MarkSwapOrderSettled(ctx context.Context, orderID string, settledAt *time.Time) error {
+	if orderID == "" {
+		return fmt.Errorf("crypto: swap order ID required")
+	}
+
+	const q = `
+		UPDATE crypto_swap_orders
+		SET ledger_settled = true, settled_at = $2, updated_at = now()
+		WHERE id = $1
+	`
+	_, err := r.db.Exec(ctx, q, orderID, settledAt)
+	return err
+}
+
 // touch keeps the time import used regardless of build tags.
 var _ = time.Now

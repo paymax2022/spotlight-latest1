@@ -294,11 +294,6 @@ const MOCK_ORDERS: LabOrder[] = [
   },
 ];
 
-const MOCK_REVIEWS: LabReview[] = [
-  { id: 'rev1', author: 'Tunde A.', rating: 5, body: 'Phlebotomist arrived on time, painless draw. Results next morning.', at: iso(-60 * 24 * 3) },
-  { id: 'rev2', author: 'Ngozi K.', rating: 4, body: 'Good service. Wished the app showed live tracking sooner.', at: iso(-60 * 24 * 9) },
-];
-
 const MOCK_ONBOARDING: ProviderOnboardingState = {
   status: 'under_review',
   businessName: '',
@@ -320,16 +315,6 @@ const MOCK_PROVIDER_ORDERS: ProviderOrderRow[] = [
   { orderId: 'lord_003', patientName: 'Bola A.', status: 'SAMPLE_COLLECTED', testSummary: 'FBC + Malaria', collectionMode: 'walk_in', sampleBarcode: 'BC-77QW01', createdAt: iso(-220) },
   { orderId: 'lord_002', patientName: 'Funke O.', status: 'ESCALATED', testSummary: 'Lipid Profile', collectionMode: 'walk_in', sampleBarcode: 'BC-44TY09', createdAt: iso(-60 * 72), hasCritical: true },
 ];
-
-const MOCK_EARNINGS: ProviderEarnings = {
-  availableKobo: 4850000,
-  pendingKobo: 1200000,
-  heldKobo: 3150000,
-  payouts: [
-    { id: 'po1', amountKobo: 7500000, at: iso(-60 * 24 * 7), status: 'paid' },
-    { id: 'po2', amountKobo: 1200000, at: iso(-60 * 6), status: 'processing' },
-  ],
-};
 
 // Deterministic thumbnail tint so the same catalog row always renders the same
 // colour (the backend catalog carries no image/colour of its own).
@@ -972,30 +957,25 @@ export async function releaseResult(input: ResultReleaseInput): Promise<{ ok: tr
 }
 
 export async function getProviderEarnings(): Promise<ProviderEarnings> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_EARNINGS;
-  }
-  const { data } = await api.get<ProviderEarnings>(`${LAB_API}/provider/earnings`);
-  return data;
-}
-
-export async function requestPayout(amountKobo: number, idempotencyKey: string): Promise<{ ok: true }> {
-  if (USE_MOCK) {
-    await delay();
-    return { ok: true };
-  }
-  await api.post(`${LAB_API}/provider/payouts`, { amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey } });
-  return { ok: true };
+  const { data } = await api.get<{ earnings: any }>(`${LAB_API}/provider/earnings`);
+  const e = data.earnings;
+  return {
+    availableKobo: Number(e.available_kobo ?? 0),
+    earnedKobo: Number(e.earned_kobo ?? 0),
+    pendingKobo: Number(e.pending_kobo ?? 0),
+    heldKobo: Number(e.held_kobo ?? 0),
+    withdrawals: (e.withdrawals ?? []).map((w: any) => ({
+      id: w.id,
+      amountKobo: Number(w.amount_kobo ?? 0),
+      at: w.at,
+      status: w.status === 'paid' || w.status === 'failed' ? w.status : 'processing',
+    })),
+  };
 }
 
 export async function getProviderReviews(): Promise<LabReview[]> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_REVIEWS;
-  }
-  const { data } = await api.get<LabReview[]>(`${LAB_API}/provider/reviews`);
-  return data;
+  const { data } = await api.get<{ reviews?: unknown[] }>(`${LAB_API}/provider/reviews`);
+  return (data.reviews ?? []).map(mapReview);
 }
 
 function formatDistance(m: unknown): string {

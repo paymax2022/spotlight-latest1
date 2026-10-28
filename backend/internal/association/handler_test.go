@@ -29,6 +29,7 @@ func TestStatusFor_MapsErrorsToHTTPStatus(t *testing.T) {
 		{"ineligible", ErrIneligible, http.StatusForbidden},
 		{"voting closed", ErrVotingClosed, http.StatusForbidden},
 		{"election state", ErrElectionState, http.StatusConflict},
+		{"voting window ended", ErrVotingWindowEnded, http.StatusConflict},
 		{"no membership", ErrNoMembership, http.StatusNotFound},
 		{"pgx no rows", pgx.ErrNoRows, http.StatusNotFound},
 		{"wrapped forbidden", errWrap(ErrForbidden), http.StatusForbidden},

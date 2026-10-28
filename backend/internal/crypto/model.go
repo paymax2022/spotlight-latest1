@@ -332,6 +332,10 @@ type SwapOrder struct {
 	SwapTransactionID string `json:"swap_transaction_id,omitempty"` // From ConfirmQuotation (async execution)
 	ProviderStatus   string `json:"provider_status,omitempty"`    // Raw Quidax status for audit
 
+	// CR-014: Ledger settlement tracking
+	LedgerSettled bool       `json:"ledger_settled"`     // Whether final journals posted
+	SettledAt     *time.Time `json:"settled_at,omitempty"` // When settlement completed
+
 	idem string
 }
 

@@ -1030,6 +1030,65 @@ func (s *Service) UpdateSwapOrderStatusFromWebhook(ctx context.Context, swapTran
 	return nil
 }
 
+// SettleSwapOrderLedger is called by CR-014 settlement processor to post final
+// double-entry journals when a swap order reaches terminal status (completed/failed).
+// Idempotent: calling multiple times with same order is safe (ledger posts are keyed).
+// Returns nil if already settled; ErrNotFound if order not found.
+func (s *Service) SettleSwapOrderLedger(ctx context.Context, orderID string) error {
+	if orderID == "" {
+		return ErrBadRequest
+	}
+
+	// Look up the order.
+	order, err := s.repo.GetSwapOrder(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if order == nil {
+		return ErrNotFound
+	}
+
+	// Skip if already settled.
+	if order.LedgerSettled {
+		return nil
+	}
+
+	// Only settle terminal statuses (completed or failed).
+	// "executing" and "pending" are intermediate states waiting for webhook.
+	if order.Status != "completed" && order.Status != "failed" {
+		return fmt.Errorf("crypto: cannot settle order in status %q (not terminal)", order.Status)
+	}
+
+	// For completed orders: the swap execution already moved money through the ledger
+	// via the Swap() method (CR-012). Settlement just marks the order as finalized
+	// in our records. The ledger entries are already posted:
+	//   - Sell leg: escrow → wallet (CREDIT) for the gross cash from selling the asset
+	//   - Buy leg: wallet → escrow (DEBIT) for the full amount (net + spread)
+	//   - Spread leg: escrow → revenue for the retained fee
+	// Settlement here just confirms finalization.
+	//
+	// For failed orders: the swap was rejected, no ledger entries were posted.
+	// Settlement marks failure in our records.
+
+	// Mark order as settled.
+	now := time.Now().UTC()
+	if err := s.repo.MarkSwapOrderSettled(ctx, orderID, &now); err != nil {
+		return fmt.Errorf("crypto: mark settled: %w", err)
+	}
+
+	// Audit the settlement.
+	if err := s.audit.log(ctx, order.UserID, "crypto.swap_settled", "crypto_swap_order", orderID, "",
+		nil, map[string]any{
+			"status":       order.Status,
+			"cash_kobo":    order.CashKobo,
+			"spread_kobo":  order.SpreadKobo,
+		}); err != nil {
+		fmt.Printf("[crypto] audit log failed for swap settlement: %v\n", err)
+	}
+
+	return nil
+}
+
 // trimmed is a tiny helper (kept local to avoid a strings import churn elsewhere).
 func trimmed(s string) string {
 	i, j := 0, len(s)

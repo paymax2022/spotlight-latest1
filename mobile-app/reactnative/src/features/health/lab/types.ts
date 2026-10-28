@@ -317,11 +317,22 @@ export interface ResultReleaseInput {
   criticalAcknowledged?: boolean;
 }
 
+/**
+ * A lab owner's money, from the ledger and escrow. Released orders are credited to
+ * the owner's wallet; withdrawing uses the wallet's bank transfer, so there is no
+ * lab-specific payout request.
+ */
 export interface ProviderEarnings {
+  /** Wallet balance the ledger reports: what a bank transfer can draw on. */
   availableKobo: number;
+  /** Lifetime total released to this owner. */
+  earnedKobo: number;
+  /** Held on orders still moving through collection and processing. */
   pendingKobo: number;
+  /** Held on orders awaiting sign-off or escalated, plus disputed holds. */
   heldKobo: number;
-  payouts: { id: string; amountKobo: number; at: string; status: 'paid' | 'processing' }[];
+  /** The owner's own wallet-to-bank transfers, newest first. */
+  withdrawals: { id: string; amountKobo: number; at: string; status: 'paid' | 'processing' | 'failed' }[];
 }
 
 export interface CollectionAssignment {

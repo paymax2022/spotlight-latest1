@@ -36,7 +36,7 @@ var errMap = httperr.New(http.StatusInternalServerError,
 	// the service before it surfaces — see DecideOfflinePayment). A same-key
 	// retry inside the Redis dedup window also lands here; the client retries
 	// and the verified replay converges.
-	httperr.R(http.StatusConflict, ErrElectionState, ErrIdempotencyKeyConflict,
+	httperr.R(http.StatusConflict, ErrElectionState, ErrVotingWindowEnded, ErrIdempotencyKeyConflict,
 		ErrPaymentAlreadyDecided, ledger.ErrDuplicate),
 	httperr.R(http.StatusNotFound, ErrNoMembership, pgx.ErrNoRows),
 	// SQLSTATE classes that are always caller-caused on this module's surface.

@@ -29,7 +29,6 @@ import {
   enterResult,
   releaseResult,
   getProviderEarnings,
-  requestPayout,
   getProviderReviews,
   getAssignments,
   setCollectionStatus,
@@ -223,14 +222,6 @@ export function useReleaseResult() {
 
 export function useProviderEarnings() {
   return useQuery({ queryKey: [KEY, 'provider', 'earnings'], queryFn: getProviderEarnings });
-}
-
-export function useRequestPayout() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (amountKobo: number) => requestPayout(amountKobo, generateIdempotencyKey()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'provider', 'earnings'] }),
-  });
 }
 
 export function useProviderReviews() {

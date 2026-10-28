@@ -81,6 +81,7 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		Region:          cfg.R2Region,
 	})}, nil)
 	svc.SetResultSharing(&labConsentAdapter{c: consentSvc}, &labVaultReaderAdapter{r: vaultReadSvc})
+	svc.SetEarningsReader(&labEarningsReader{l: ledgerSvc})
 
 	// Central Commission & Profit recording at the lab order settlement point
 	// (Release → escrow release). Best-effort + idempotent + nil-safe: constructed
@@ -120,6 +121,8 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.POST("/phlebotomist/assignments/:id/custody", h.LogCustody)     // bedside scan: collects + opens chain of custody (HL-6)
 	lg.POST("/phlebotomist/assignments/:id/drop-off", h.DropOff)       // custody to the lab's accession desk
 	lg.GET("/orders/:id/phlebotomist", h.OrderPhlebotomist)            // patient/lab: who is collecting
+	lg.GET("/provider/earnings", h.ProviderEarnings) // lab owner: read-only; withdrawals use the wallet bank-transfer corridor
+	lg.GET("/provider/reviews", h.ProviderReviews)
 	lg.POST("/reviews", h.SubmitReview)              // verified-purchase review (released order, once)
 	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
 	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR641)
@@ -346,4 +349,12 @@ func (a *labVaultReaderAdapter) SignedDocURL(ctx context.Context, accessorID, re
 		}
 	}
 	return "", errors.Join(healthlab.ErrSharingUnavailable, errors.New("document delivery is not configured"))
+}
+
+// labEarningsReader reads the lab owner's withdrawable wallet balance from the
+// ledger (the figure the canonical wallet-to-bank corridor draws on). Read-only.
+type labEarningsReader struct{ l *ledger.Service }
+
+func (a *labEarningsReader) AvailableKobo(ctx context.Context, userID string) (int64, error) {
+	return a.l.GetBalance(ctx, userID)
 }

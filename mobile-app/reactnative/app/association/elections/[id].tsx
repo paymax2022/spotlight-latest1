@@ -90,7 +90,19 @@ export default function ElectionDetailScreen() {
           setConfirming((prev) => ({ ...prev, [position.id]: false }));
           setErrors((prev) => ({ ...prev, [position.id]: '' }));
         },
-        onError: () => setErrors((prev) => ({ ...prev, [position.id]: 'Your vote could not be recorded. Please try again.' })),
+        onError: (err) => {
+          // Show the server's reason (voting window ended, not eligible, …) rather
+          // than a generic line, so the voter knows whether retrying can help.
+          const reason = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+          const known = reason && /window has ended/i.test(reason)
+            ? 'Voting for this election has ended.'
+            : reason && /not eligible/i.test(reason)
+              ? 'You are not eligible to vote in this election.'
+              : reason && /not open/i.test(reason)
+                ? 'Voting is not open for this election.'
+                : 'Your vote could not be recorded. Please try again.';
+          setErrors((prev) => ({ ...prev, [position.id]: known }));
+        },
       },
     );
   };
