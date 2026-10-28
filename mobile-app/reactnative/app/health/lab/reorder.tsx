@@ -13,12 +13,6 @@ import StateView from '@/components/StateView';
 import { relativeTime } from '@/features/health/constants/health.constants';
 import { useResults } from '@/features/health/lab/hooks';
 
-const REMINDERS = [
-  { id: 'wellness', title: 'Annual wellness check', detail: 'Due in 2 months' },
-  { id: 'hba1c', title: 'HbA1c monitoring', detail: 'Recommended every 3 months' },
-  { id: 'lipid', title: 'Lipid profile', detail: 'Recommended every 6 months' },
-];
-
 export default function ReorderScreen() {
   const resultsQ = useResults();
   const results = resultsQ.data ?? [];
@@ -74,7 +68,7 @@ export default function ReorderScreen() {
                   style={styles.reorderBtn}
                   accessibilityRole="button"
                   accessibilityLabel={`Reorder ${r.testName}`}
-                  onPress={() => router.push('/health/lab/catalog')}
+                  onPress={() => router.push({ pathname: '/health/lab/catalog', params: { q: r.testName } })}
                 >
                   <RefreshCw size={16} color={Colors.onPrimary} strokeWidth={2.4} />
                   <Text style={styles.reorderText}>Reorder</Text>
@@ -83,27 +77,6 @@ export default function ReorderScreen() {
             ))
           )}
 
-          <Text style={[styles.sectionTitle, { marginTop: Spacing.sectionGap }]}>
-            Screening reminders
-          </Text>
-          {REMINDERS.map((rem) => (
-            <View key={rem.id} style={styles.card}>
-              <View style={styles.iconCircleGold}>
-                <Bell size={18} color={Colors.onWarning} strokeWidth={2.2} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.testName}>{rem.title}</Text>
-                <Text style={styles.metaText}>{rem.detail}</Text>
-              </View>
-              <Pressable
-                style={styles.ghostBtn}
-                accessibilityRole="button"
-                accessibilityLabel={`Set reminder for ${rem.title}`}
-              >
-                <Text style={styles.ghostText}>Set reminder</Text>
-              </Pressable>
-            </View>
-          ))}
         </ScrollView>
       )}
     </SafeAreaView>

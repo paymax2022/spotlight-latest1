@@ -190,11 +190,11 @@ export function parseAcademySettingsUpdateInput(body: unknown): AcademySettingsU
   }
 
   if (!Number.isFinite(applicationFee) || applicationFee < 0) {
-    throw new ApiError('Application fee must be a valid positive amount', 400);
+    throw new ApiError('Application fee must be a non-negative amount (0 or greater)', 400);
   }
 
   if (!Number.isFinite(tuitionFee) || tuitionFee < 0) {
-    throw new ApiError('Tuition fee must be a valid positive amount', 400);
+    throw new ApiError('Tuition fee must be a non-negative amount (0 or greater)', 400);
   }
 
   return {

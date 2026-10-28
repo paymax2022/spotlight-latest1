@@ -87,7 +87,7 @@ export default function BookScreen() {
               <Text style={styles.name}>{COLLECTION_MODE_LABEL[mode]}</Text>
               <Text style={styles.sub}>
                 {mode === 'home'
-                  ? `Phlebotomist visits you · ${formatNaira(lab.homeCollectionFeeKobo)} fee`
+                  ? `A phlebotomist visits you${lab.homeCollectionFeeKobo > 0 ? ` · ${formatNaira(lab.homeCollectionFeeKobo)} home visit fee` : ''}`
                   : lab.address}
               </Text>
             </View>

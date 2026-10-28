@@ -7,13 +7,16 @@
  *
  * These specs pin the fix:
  *   - POST /api/academy/application-fee/initiate mints OUR reference and quotes
- *     the fee from academy_settings — a client-declared amount is ignored;
+ *     ONE charge — the application fee from academy_settings PLUS the first
+ *     tuition instalment from the admin-managed price rows and the batch plan
+ *     config; a client-declared amount is ignored;
  *   - fulfilVerifiedGatewayCharge (webhook / recover / sweep) marks a pending
  *     intent paid only when Paystack collected ≥ the quote — under-collection
  *     terminates as amount_mismatch, never a paid intent;
  *   - POST /api/academy/apply trusts the intent's recorded verified amount
- *     (no live re-verify), consumes it so one charge files one application,
- *     releases it when the insert fails, and treats replay as a no-op.
+ *     (no live re-verify) provided it covers fee + first instalment, consumes it
+ *     so one charge files one application, releases it when the insert fails,
+ *     and treats replay as a no-op.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeSupabaseMock } from '../golden-path/_fixtures';
@@ -48,6 +51,10 @@ vi.mock('@/src/server/services/academy', () => ({
   getActiveAcademySettings: vi.fn(),
   // A batch accepts EXACTLY its linked trainings — this spec submits 'acting'.
   getBatchAreaSlugs: vi.fn(async () => ['acting']),
+}));
+
+vi.mock('@/src/server/services/academy/service', () => ({
+  approveAfterPayment: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@/src/server/voting-bridge/bridge', () => ({
@@ -85,6 +92,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyPaystackTransaction } from '@/src/lib/payments';
 import { getActiveAcademySettings } from '@/src/server/services/academy';
+import { approveAfterPayment } from '@/src/server/services/academy/service';
 import {
   createAcademyFeeIntent,
   getAcademyFeeIntentByReference,
@@ -102,8 +110,9 @@ const PAID_INTENT = {
   email: 'student@example.com',
   full_name: 'Ada Okafor',
   batch_id: 'batch-001',
-  amount_kobo: 500_000,
-  verified_amount_kobo: 500_000,
+  // Application fee 5,000 + first of three 30,000 instalments.
+  amount_kobo: 3_500_000,
+  verified_amount_kobo: 3_500_000,
   provider_reference: '999001',
   application_id: null,
   status: 'paid' as const,
@@ -115,6 +124,29 @@ const post = (route: (r: Request) => Promise<Response>, url: string, body: unkno
     headers: { 'content-type': 'application/json', authorization: 'Bearer test-token' },
     body: JSON.stringify(body),
   }));
+
+/**
+ * The two `.in(...)` lookups both routes make: the chosen areas by slug and
+ * their price rows by area_id. 'acting' has a weekend_day price of 90,000.
+ */
+function lookupIn(priceNgn = 90_000) {
+  return vi.fn().mockImplementation((column: string) =>
+    Promise.resolve(
+      column === 'area_id'
+        ? {
+            data: [{ area_id: 'acting', key: 'weekend_day', label: 'Weekend', note: null, price_ngn: priceNgn, sort_order: 1 }],
+            error: null,
+          }
+        : { data: [{ id: 'acting', slug: 'acting', fee_ngn: 0, is_active: true }], error: null },
+    ),
+  );
+}
+
+// 90,000 over 3 monthly instalments → 30,000 now, plus the 5,000 fee.
+const THREE_INSTALMENT_BATCH = {
+  id: 'batch-001', max_students: null, installments_count: 3, fee_frequency: 'monthly',
+  one_off_discount_pct: 10, training_fee_ngn: 0,
+};
 
 // ── Initiate ─────────────────────────────────────────────────────────────────
 
@@ -128,17 +160,23 @@ describe('POST /api/academy/application-fee/initiate', () => {
       application_fee_refundable: false,
       tuition_fee: 0,
     } as never);
+    const { mock, maybySingle } = makeSupabaseMock();
+    (mock as { in: unknown }).in = lookupIn();
+    maybySingle.mockResolvedValue({ data: THREE_INSTALMENT_BATCH, error: null });
+    vi.mocked(createAdminClient).mockReturnValue(mock as never);
   });
 
   const call = (body: unknown) =>
     post(initiateFee, '/api/academy/application-fee/initiate', body);
 
-  it('mints a server reference and quotes the fee from academy_settings — client amount ignored', async () => {
+  it('mints a server reference and quotes fee + first instalment — client amount ignored', async () => {
     const res = await call({
       email: 'applicant@example.com',
       full_name: 'Ada Okafor',
       batch_id: 'batch-001',
-      // Hostile claim: the amount comes from settings, never the request.
+      area_selections: [{ slug: 'acting', key: 'weekend_day' }],
+      payment_preference: 'installment',
+      // Hostile claim: the amount comes from settings + price rows, never the request.
       amountKobo: 1,
       application_fee: 1,
     });
@@ -146,15 +184,39 @@ describe('POST /api/academy/application-fee/initiate', () => {
 
     expect(res.status).toBe(200);
     expect(body.reference).toMatch(/^academy-fee-/);
-    expect(body.amountKobo).toBe(500_000);
+    // 5,000 fee + 90,000 / 3 = 35,000.
+    expect(body.amountKobo).toBe(3_500_000);
     expect(createAcademyFeeIntent).toHaveBeenCalledWith(
       expect.objectContaining({
         reference: body.reference,
         userId: 'user-001',
-        amountKobo: 500_000,
+        amountKobo: 3_500_000,
         batchId: 'batch-001',
+        metadata: expect.objectContaining({ applicationFeeNgn: 5000, firstTuitionNgn: 30000 }),
       }),
     );
+  });
+
+  it('quotes the discounted full tuition for a one-off payment', async () => {
+    const res = await call({
+      full_name: 'Ada Okafor',
+      batch_id: 'batch-001',
+      area_selections: [{ slug: 'acting', key: 'weekend_day' }],
+      payment_preference: 'one_off',
+    });
+    const body = await res.json();
+
+    // 90,000 less the batch's 10% = 81,000, plus the 5,000 fee.
+    expect(res.status).toBe(200);
+    expect(body.amountKobo).toBe(8_600_000);
+  });
+
+  it('quotes only the application fee when no areas are chosen yet', async () => {
+    const res = await call({ full_name: 'Ada Okafor', batch_id: 'batch-001' });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.amountKobo).toBe(500_000);
   });
 
   it('prefers the session email over the request body', async () => {
@@ -168,7 +230,7 @@ describe('POST /api/academy/application-fee/initiate', () => {
     );
   });
 
-  it('400s when no application fee is configured (free registration)', async () => {
+  it('400s when nothing is payable (free registration, no tuition)', async () => {
     vi.mocked(getActiveAcademySettings).mockResolvedValue({
       registration_type: 'free',
       application_fee: 0,
@@ -179,6 +241,25 @@ describe('POST /api/academy/application-fee/initiate', () => {
     const res = await call({ email: 'a@b.com', full_name: 'Ada Okafor' });
     expect(res.status).toBe(400);
     expect(createAcademyFeeIntent).not.toHaveBeenCalled();
+  });
+
+  it('free registration still charges the first tuition instalment', async () => {
+    vi.mocked(getActiveAcademySettings).mockResolvedValue({
+      registration_type: 'free',
+      application_fee: 0,
+      application_fee_refundable: false,
+      tuition_fee: 0,
+    } as never);
+
+    const res = await call({
+      full_name: 'Ada Okafor',
+      batch_id: 'batch-001',
+      area_selections: [{ slug: 'acting', key: 'weekend_day' }],
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.amountKobo).toBe(3_000_000);
   });
 
   it('400s without a full name, 401s when signed out', async () => {
@@ -192,7 +273,7 @@ describe('POST /api/academy/application-fee/initiate', () => {
 // ── Gateway fulfil arm ───────────────────────────────────────────────────────
 
 describe('fulfilVerifiedGatewayCharge — academy application-fee arm', () => {
-  const call = (intent: unknown, verifiedAmountKobo = 500_000) =>
+  const call = (intent: unknown, verifiedAmountKobo = 3_500_000) =>
     fulfilVerifiedGatewayCharge('academy-fee-ref-1', verifiedAmountKobo, {
       voteTransaction: null,
       registrationIntent: null,
@@ -208,7 +289,7 @@ describe('fulfilVerifiedGatewayCharge — academy application-fee arm', () => {
     expect(outcome).toEqual({ fulfilled: ['academy_application_fee'] });
     expect(markAcademyFeeIntentPaid).toHaveBeenCalledWith(
       'academy-fee-ref-1',
-      expect.objectContaining({ verifiedAmountKobo: 500_000 }),
+      expect.objectContaining({ verifiedAmountKobo: 3_500_000 }),
     );
     expect(markAcademyFeeIntent).not.toHaveBeenCalled();
   });
@@ -254,14 +335,11 @@ describe('POST /api/academy/apply — fee intent', () => {
 
   function mockApplyQueries() {
     const { mock, maybySingle, insertFn } = makeSupabaseMock();
-    // academy_interest_areas lookup ('slug' .in) resolves to the selected areas.
-    (mock as { in: unknown }).in = vi.fn().mockResolvedValue({
-      data: [{ slug: 'acting', fee_ngn: 250000, is_active: true }],
-      error: null,
-    });
+    // Areas by slug, and their tuition price rows by area_id (90,000).
+    (mock as { in: unknown }).in = lookupIn();
     maybySingle
-      // academy_batches → exists, unlimited seats
-      .mockResolvedValueOnce({ data: { id: 'batch-001', max_students: null }, error: null })
+      // academy_batches → exists, unlimited seats, 3 monthly instalments
+      .mockResolvedValueOnce({ data: THREE_INSTALMENT_BATCH, error: null })
       // findExistingBatchApplication: by userId, then by email → none
       .mockResolvedValueOnce({ data: null, error: null })
       .mockResolvedValueOnce({ data: null, error: null });
@@ -298,8 +376,35 @@ describe('POST /api/academy/apply — fee intent', () => {
       'academy-fee-ref-1',
       expect.any(String),
     );
-    expect(insertFn).toHaveBeenCalled();
+    expect(insertFn).toHaveBeenCalledWith(expect.objectContaining({
+      application_fee_paid: 5000,
+      tuition_total_ngn: 90000,
+    }));
     expect(releaseAcademyFeeIntent).not.toHaveBeenCalled();
+    // Approved on payment, first instalment recorded paid against the reference.
+    expect(approveAfterPayment).toHaveBeenCalledWith(body.applicationId, {
+      reference: 'academy-fee-ref-1',
+      firstInstalmentPaid: true,
+    });
+  });
+
+  it('rejects a paid intent that covers only the application fee, not the first instalment', async () => {
+    vi.mocked(getAcademyFeeIntentByReference).mockResolvedValue({
+      ...PAID_INTENT,
+      amount_kobo: 500_000,
+      verified_amount_kobo: 500_000,
+    } as never);
+    const { insertFn } = mockApplyQueries();
+
+    const res = await call(applyBody());
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/payment is lower/i);
+    expect(body.error).toContain('35,000');
+    expect(consumeAcademyFeeIntent).not.toHaveBeenCalled();
+    expect(insertFn).not.toHaveBeenCalled();
+    expect(approveAfterPayment).not.toHaveBeenCalled();
   });
 
   it('rejects a pending intent — payment confirmation still in flight', async () => {
@@ -370,7 +475,7 @@ describe('POST /api/academy/apply — fee intent', () => {
     vi.mocked(verifyPaystackTransaction).mockResolvedValue({
       status: 'success',
       currency: 'NGN',
-      amountKobo: 500_000,
+      amountKobo: 3_500_000,
       customerEmail: 'student@example.com',
     } as never);
     const { insertFn } = mockApplyQueries();

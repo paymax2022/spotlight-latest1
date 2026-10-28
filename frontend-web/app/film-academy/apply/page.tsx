@@ -13,6 +13,8 @@ const fmt = (n: number) =>
 type Batch = {
   id: string; batch_name: string; start_date: string; status: string;
   training_schedule: string; duration_weeks: number; description: string;
+  training_fee_ngn?: number | null; installments_count?: number | null;
+  fee_frequency?: string | null; one_off_discount_pct?: number | null;
 };
 /**
  * The applicant's details as the ACCOUNT already holds them, returned by
@@ -188,7 +190,7 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
 
   const batch = batches.find((b) => b.id === form.batch_id);
   const selectedBatchApplied = Boolean(form.batch_id && appliedBatchIds.includes(form.batch_id));
-  const registrationFeeRequired = settings.registration_type === 'paid' && settings.application_fee > 0;
+  const applicationFeeDue = settings.registration_type === 'paid' ? settings.application_fee : 0;
   const submitDisabled = submitting || selectedBatchApplied;
 
   // Only the areas THIS batch offers — exactly. An empty entry means the batch
@@ -215,6 +217,20 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
   const tuitionTotal = availableAreas
     .filter((a) => form.areas_of_interest.includes(a.slug))
     .reduce((sum, a) => sum + priceOf(a), 0);
+
+  // ONE payment at submit: the application fee plus the FIRST tuition
+  // instalment. Mirrors tuitionPlanShape on the server, which verifies it.
+  const billedTuition = tuitionTotal > 0 ? tuitionTotal : Number(batch?.training_fee_ngn ?? 0);
+  const payUpfront = form.payment_preference === 'one_off'
+    || !['weekly', 'biweekly', 'monthly'].includes(String(batch?.fee_frequency ?? 'monthly'));
+  const instalmentCount = payUpfront ? 1 : Math.min(12, Math.max(1, Number(batch?.installments_count ?? 1)));
+  const discountPct = form.payment_preference === 'one_off' ? Number(batch?.one_off_discount_pct ?? 0) : 0;
+  const discountedTuition = Math.round(billedTuition * (1 - discountPct / 100) * 100) / 100;
+  const firstTuitionDue = billedTuition > 0
+    ? (instalmentCount === 1 ? discountedTuition : Math.round((discountedTuition / instalmentCount) * 100) / 100)
+    : 0;
+  const payNow = applicationFeeDue + firstTuitionDue;
+  const registrationFeeRequired = payNow > 0;
 
   // Tapping a sub (price line) selects that area in that format; tapping the
   // selected line again deselects. At the cap a new area cannot be added.
@@ -349,6 +365,10 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
           email: form.email,
           full_name: form.full_name,
           batch_id: form.batch_id,
+          payment_preference: form.payment_preference,
+          ...(hasStructure
+            ? { area_selections: form.areas_of_interest.map((slug) => ({ slug, key: areaSelections[slug] })) }
+            : { areas_of_interest: form.areas_of_interest }),
         }),
       });
       const initJson = await initRes.json().catch(() => ({}));
@@ -599,11 +619,11 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
             {registrationFeeRequired && (
               <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.28)', borderRadius: 12, padding: '14px 16px' }}>
                 <p style={{ color: '#f59e0b', fontWeight: 800, fontSize: 14, marginBottom: 4 }}>
-                  Registration Fee Required: {fmt(settings.application_fee)}
+                  Payment Required: {fmt(payNow)}
                 </p>
                 <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, marginBottom: 0 }}>
-                  Your application will only be submitted after this fee is paid and verified.
-                  {settings.application_fee_refundable ? ' This fee is marked as refundable.' : ''}
+                  Your application and first tuition payment are taken together. Your application
+                  is only submitted after the payment is verified, and you start learning straight away.
                 </p>
               </div>
             )}
@@ -759,17 +779,18 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
             <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, padding: '14px 16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>Pay now</span>
-                <span style={{ fontSize: 18, fontWeight: 900, color: '#fff' }}>{fmt(settings.application_fee)}</span>
+                <span style={{ fontSize: 18, fontWeight: 900, color: '#fff' }}>{fmt(payNow)}</span>
               </div>
               <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 4, marginBottom: 0 }}>
-                Application fee. Non-refundable, and charged whether or not you are offered a place.
+                {applicationFeeDue > 0 ? `Application fee ${fmt(applicationFeeDue)} (non-refundable) + ` : ''}
+                {instalmentCount > 1 ? 'first tuition instalment' : 'tuition'}. You get access to your lessons as soon as you pay.
               </p>
 
               {tuitionTotal > 0 && (
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
                     <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>
-                      Tuition if accepted
+                      Total tuition{instalmentCount > 1 ? ` (${instalmentCount} instalments)` : ''}
                     </span>
                     <span style={{ fontSize: 14, color: '#f1f5f9', fontWeight: 700 }}>{fmt(tuitionTotal)}</span>
                   </div>
@@ -782,8 +803,9 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
                       </div>
                     ))}
                   <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 8, marginBottom: 0 }}>
-                    Payable only if you are offered a place, and refundable. Nothing for tuition is
-                    taken today. Tuition excludes feeding and project fees (script print-out,
+                    {instalmentCount > 1
+                      ? `The first instalment is paid now; the rest fall due on your plan. `
+                      : ''}Tuition excludes feeding and project fees (script print-out,
                     make-up, props &amp; set design, location — ₦20,000 per movie project).
                   </p>
                 </>
@@ -868,7 +890,7 @@ function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
                 : submitting
                   ? registrationFeeRequired ? 'Opening Payment...' : 'Submitting...'
                   : registrationFeeRequired
-                    ? `Pay Registration Fee (${fmt(settings.application_fee)})`
+                    ? `Pay ${fmt(payNow)} & Apply`
                     : 'Submit Application'}
             </button>
           </form>

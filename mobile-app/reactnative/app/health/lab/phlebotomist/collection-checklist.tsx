@@ -105,7 +105,7 @@ export default function CollectionChecklistScreen() {
           onPress={() =>
             router.push({
               pathname: '/health/lab/phlebotomist/chain-of-custody',
-              params: { orderId, patient },
+              params: { orderId, patient, completed: items.filter((it) => it.done).map((it) => it.id).join(',') },
             })
           }
           disabled={!allRequiredDone}

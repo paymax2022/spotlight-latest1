@@ -76,6 +76,8 @@ const params = (o: Record<string, string>) => ({ params: Promise.resolve(o) }) a
 // update()/insert()/upsert() record the payload in cfg.writes.
 interface TableCfg { single?: any; singleErr?: any; rows?: any[]; writes?: any[] }
 function makeSupabase(tables: Record<string, TableCfg>) {
+  // Lifecycle gate (ESTD-D025): estate writes require an active estate.
+  tables.estates ??= { single: { status: 'active' } };
   function builder(table: string) {
     const cfg = (tables[table] ??= {});
     cfg.writes = cfg.writes ?? [];
@@ -161,7 +163,7 @@ describe('POST /api/v1/visitor/gate/session — shift sign-in (ESTA-D001)', () =
 });
 
 describe('POST /api/v1/visitor/codes — validity window + phone (ESTA-D002)', () => {
-  const residentCtx = { estate_residents: { single: { estate_id: ESTATE, unit: 'A1', role: 'resident' } }, visitor_access_codes: { single: futureCode() }, visitor_blacklist: { single: null }, estates: { single: null }, user_profiles: { single: null } };
+  const residentCtx = { estate_residents: { single: { estate_id: ESTATE, unit: 'A1', role: 'resident' } }, visitor_access_codes: { single: futureCode() }, visitor_blacklist: { single: null }, estates: { single: { name: 'Estate A', status: 'active' } }, user_profiles: { single: null } };
   const body = { visitorName: 'V', validityStart: new Date(NOW + 60_000).toISOString(), validityEnd: new Date(NOW + 3_600_000).toISOString() };
 
   it('rejects an inverted window (end before start)', async () => {
@@ -275,7 +277,7 @@ describe('POST /api/v1/visitor/gate/sync — offline upload + dedup (ESTA-D006)'
 
 describe('POST /api/v1/visitor/codes/[id]/regenerate — compromised share (ESTA-D007)', () => {
   it('revokes the old code and issues a replacement preserving validity', async () => {
-    const tables = { visitor_access_codes: { single: futureCode({ issued_by: USER.id }), rows: [{ id: CODE_ID }] }, estates: { single: null }, user_profiles: { single: null }, estate_residents: { single: null } };
+    const tables = { visitor_access_codes: { single: futureCode({ issued_by: USER.id }), rows: [{ id: CODE_ID }] }, estates: { single: { name: 'Estate A', status: 'active' } }, user_profiles: { single: null }, estate_residents: { single: null } };
     vi.mocked(createAdminClient).mockReturnValue(makeSupabase(tables) as any);
     const res = await postRegenerate(req('POST', 'http://x'), params({ id: CODE_ID }));
     expect(res.status).toBe(201);

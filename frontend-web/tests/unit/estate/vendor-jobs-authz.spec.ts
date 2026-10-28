@@ -69,6 +69,8 @@ function fakeSupabase(tables: Record<string, Row[]>) {
 function seed(role: string) {
   const tables: Record<string, Row[]> = {
     estate_residents: [{ user_id: 'caller', estate_id: ESTATE, unit: '1', role }],
+    // Lifecycle gate (ESTD-D025): writes require an active estate.
+    estates: [{ id: ESTATE, status: 'active' }],
     estate_vendors: [
       { id: 'v-mine', estate_id: ESTATE, user_id: 'caller', name: 'My Plumbing Co', status: 'verified' },
       { id: 'v-other', estate_id: ESTATE, user_id: 'someone-else', name: 'Rival Works', status: 'verified' },
@@ -104,6 +106,7 @@ describe('GET /estate/vendors/jobs', () => {
     // remove caller's vendor row so they are a plain resident
     const fake = fakeSupabase({
       estate_residents: [{ user_id: 'caller', estate_id: ESTATE, unit: '1', role: 'resident' }],
+      estates: [{ id: ESTATE, status: 'active' }],
       estate_vendors: [{ id: 'v-other', estate_id: ESTATE, user_id: 'someone-else', name: 'Rival', status: 'verified' }],
       vendor_jobs: [{ id: JOB_ID, estate_id: ESTATE, vendor_id: 'v-other', status: 'available', amount_kobo: 1, created_at: 't' }],
     });

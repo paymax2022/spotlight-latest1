@@ -20,7 +20,7 @@ import { useLogCustody } from '@/features/health/lab/hooks';
 type Outcome = 'ok' | 'breach' | null;
 
 export default function ChainOfCustodyScreen() {
-  const { orderId, patient } = useLocalSearchParams<{ orderId: string; patient: string }>();
+  const { orderId, patient, completed } = useLocalSearchParams<{ orderId: string; patient: string; completed?: string }>();
   const logCustody = useLogCustody();
 
   const [barcode, setBarcode] = useState('');
@@ -34,6 +34,7 @@ export default function ChainOfCustodyScreen() {
       barcode: barcode.trim(),
       conditionOk,
       note: note.trim() || undefined,
+      completedItems: (completed ?? '').split(',').filter(Boolean),
     });
     setOutcome(res.breach ? 'breach' : 'ok');
   };
