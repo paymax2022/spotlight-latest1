@@ -1,20 +1,42 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 
-interface Props {
-  title:    string;
-  subtitle: string;
-  cta:      string;
-  badge?:   string;
+// Two forms. `imageUri` renders a finished banner picture with nothing painted
+// over it (the marketplace screens); otherwise the text-and-gradient card that
+// the home, arena, featured and association screens use.
+type ImageProps = {
+  imageUri: string;
   onPress:  () => void;
-}
+};
 
-export default function PromoBanner({ title, subtitle, cta, badge, onPress }: Props) {
+type TextProps = {
+  imageUri?: undefined;
+  title:     string;
+  subtitle:  string;
+  cta:       string;
+  badge?:    string;
+  onPress:   () => void;
+};
+
+type Props = ImageProps | TextProps;
+
+export default function PromoBanner(props: Props) {
+  const { onPress } = props;
+
+  if (props.imageUri !== undefined) {
+    return (
+      <Pressable onPress={onPress} style={({ pressed }) => [styles.wrapper, pressed && { opacity: 0.9 }]}>
+        <Image source={{ uri: props.imageUri }} style={styles.image} />
+      </Pressable>
+    );
+  }
+
+  const { title, subtitle, cta, badge } = props;
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.wrapper, pressed && { opacity: 0.9 }]}>
       <LinearGradient
@@ -43,6 +65,11 @@ export default function PromoBanner({ title, subtitle, cta, badge, onPress }: Pr
 
 const styles = StyleSheet.create({
   wrapper: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.lg },
+  image: {
+    width: '100%',
+    height: 180,
+    borderRadius: Radius.xl,
+  },
   card: {
     borderRadius: Radius.xl,
     padding:      Spacing.cardPadding,

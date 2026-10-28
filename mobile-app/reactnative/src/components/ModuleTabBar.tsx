@@ -48,6 +48,7 @@ function normalise(path: string): string {
 export default function ModuleTabBar({
   tabs,
   alsoVisibleOn = [],
+  alsoVisibleMatch = [],
 }: {
   tabs: readonly ModuleTab[];
   /**
@@ -56,6 +57,12 @@ export default function ModuleTabBar({
    * flow: every other pushed screen keeps the narrow default above.
    */
   alsoVisibleOn?: readonly string[];
+  /**
+   * Like `alsoVisibleOn`, but matched with a pattern against the normalised
+   * path — for dynamic detail routes (e.g. /x/<id>) that must show the bar while
+   * a sibling under the same prefix (e.g. /x/new, which has its own footer) must not.
+   */
+  alsoVisibleMatch?: readonly RegExp[];
 }) {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
@@ -75,7 +82,9 @@ export default function ModuleTabBar({
 
   // Not one of our destinations and not an opted-in flow — a pushed detail
   // screen. Draw nothing.
-  if (!activeHref && !inOptedInFlow) return null;
+  const inMatchedRoute = alsoVisibleMatch.some((re) => re.test(current));
+
+  if (!activeHref && !inOptedInFlow && !inMatchedRoute) return null;
 
   return (
     <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>

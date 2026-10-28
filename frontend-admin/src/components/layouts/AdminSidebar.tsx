@@ -445,9 +445,18 @@ const navItemsBase: NavItem[] = [
   { label: 'Fees · Competitions', href: '/admin/academy/fees/competition', section: 'Academy', permissions: ['academy.fees.competition.manage'] },
   { label: 'Fees · Gov Export', href: '/admin/academy/fees/gov-export', section: 'Academy', permissions: ['academy.fees.export.run'] },
   { label: 'Fees · Staff Roles', href: '/admin/academy/fees/roles', section: 'Academy', permissions: ['academy.fees.roles.assign'] },
-  { label: 'Telemedicine Overview', href: '/admin/telemedicine/dashboard', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
-  { label: 'Consultations', href: '/admin/telemedicine/consultations', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
-  { label: 'Clinicians', href: '/admin/telemedicine/clinicians', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
+  { label: 'Telemedicine Overview', href: '/admin/telemedicine/dashboard', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Consultations', href: '/admin/telemedicine/consultations', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Clinicians', href: '/admin/telemedicine/clinicians', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Onboarding Approvals', href: '/admin/telemedicine/onboarding', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Compliance & Licences', href: '/admin/telemedicine/compliance', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Reviews & Disputes', href: '/admin/telemedicine/reviews', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Prescriptions', href: '/admin/telemedicine/prescriptions', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'HMO Claims', href: '/admin/telemedicine/claims', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Referrals', href: '/admin/telemedicine/referrals', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Doctor Finance', href: '/admin/telemedicine/finance', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Support & Disputes', href: '/admin/telemedicine/support', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Safety & Emergencies', href: '/admin/telemedicine/safety', section: 'Health', permissions: ['telemedicine.admin.view'] },
   // Labelled "Savings Pools", NOT "Groups". These two rows and the Associations
   // rows below both sit in Community and both gate on savings.admin.*, so
   // "Groups Overview" / "Groups & Members" read as the association console's

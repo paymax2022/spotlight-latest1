@@ -35,7 +35,7 @@ export function draftToOrganisation(draft: OrgDraft, id: string): Organisation {
     acronym: draft.acronym || null,
     category: draft.category || 'Organisation',
     logoUrl: draft.logoUri ?? null,
-    coverUrl: null,
+    coverUrl: draft.coverPreviewUri ?? draft.coverUri ?? null,
     groupType: draft.groupType ?? 'CLOSED',
     memberCount: 0,
     chapterCount: draft.chapters.length,

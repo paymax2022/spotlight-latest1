@@ -1,12 +1,13 @@
 import React, { useRef, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
-  View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator,
+  View, Text, Image, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator,
 } from 'react-native';
+
+const CABLE_BANNER_URL = 'https://res.cloudinary.com/paymax/image/upload/v1792924522/Premium_purple_cable_bill_payment_q8wneb.png';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X, CheckCircle } from 'lucide-react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, Controller } from 'react-hook-form';
@@ -23,6 +24,8 @@ import { Typography } from '@/constants/tokens';
 import { shadow1, shadow2 } from '@/constants/tokens';
 import { getCableProviders, getCablePackages, initiateCablePaystack, validateSmartCard, payCable, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
 import { useGatewayCheckout } from '@/features/payments';
+import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
+import RecentUtilityTransactions from '@/features/services/RecentUtilityTransactions';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
@@ -92,6 +95,7 @@ export default function CableTvScreen() {
     onError:   () => { setValidation(null); setValidateError('Smart card number not found. Please check and try again.'); },
   });
 
+  const promptKyc = useBillKycPrompt();
   const { mutate: pay, isPending: paying, error: payError } = useMutation({
     mutationFn: payCable,
     onSuccess: (result) => {
@@ -103,8 +107,9 @@ export default function CableTvScreen() {
       const txId = String((result as Record<string, unknown>).transactionId ?? '');
       router.push(`/services/receipt/${txId}` as never);
     },
-    onError: () => {
+    onError: (err) => {
       confirmInFlightRef.current = false;
+      void promptKyc(err);
     },
   });
 
@@ -183,7 +188,7 @@ export default function CableTvScreen() {
         onResolved: (res) => { setShowConfirm(false); router.replace(`/services/paystack/${res.reference}` as never); },
       });
     } catch (err: unknown) {
-      setPaystackError(getErrorMessage(err));
+      if (!(await promptKyc(err))) setPaystackError(getErrorMessage(err));
     } finally {
       setPaystackLoading(false);
     }
@@ -210,14 +215,12 @@ export default function CableTvScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <LinearGradient colors={[Colors.teal, Colors.primaryContainer]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.hero, shadow2]}>
-          <View style={styles.heroIcon}><Text style={{ fontSize: 26 }}>📺</Text></View>
-          <View style={{ flex: 1, gap: Spacing.xs }}>
-            <Text style={styles.heroEyebrow}>SECURE SERVICE</Text>
-            <Text style={styles.heroTitle}>Cable TV Payment</Text>
-            <Text style={styles.heroSub}>Renew your subscription in seconds.</Text>
-          </View>
-        </LinearGradient>
+        <Image
+          source={{ uri: CABLE_BANNER_URL }}
+          accessibilityLabel="Cable TV bill payment"
+          style={[styles.heroBanner, shadow2]}
+          resizeMode="cover"
+        />
 
         <View style={[styles.card, shadow1]}>
           <Text style={styles.sectionTitle}>Select Provider</Text>
@@ -339,6 +342,8 @@ export default function CableTvScreen() {
         <View style={styles.actionWrap}>
           <PrimaryButton label="Review Subscription" onPress={onPressReview} disabled={!validation || !selectedPackage} />
         </View>
+
+        <RecentUtilityTransactions serviceType="CABLE_TV" heading="Recent cable TV" />
       </ScrollView>
 
       <Modal visible={showConfirm} transparent animationType="slide">
@@ -439,15 +444,12 @@ const styles = StyleSheet.create({
   iconBtn:     { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   topTitle:    { ...Typography.titleLg, color: Colors.primary },
   content:     { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.lg, paddingBottom: Platform.OS === 'ios' ? 120 : 96 },
-  hero:        { minHeight: 120, borderRadius: Radius.xl, padding: Spacing.cardPadding, flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.lg, overflow: 'hidden' },
-  heroIcon:    { width: 56, height: 56, borderRadius: Radius.lg, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
-  heroEyebrow: { ...Typography.labelSm, color: 'rgba(255,255,255,0.75)' },
-  heroTitle:   { ...Typography.headlineMd, color: Colors.onPrimary },
-  heroSub:     { ...Typography.bodySm, color: 'rgba(255,255,255,0.75)' },
+  // Banner is 1774×887 — keep its ratio so the whole artwork shows, not a cropped band.
+  heroBanner:  { width: '100%', aspectRatio: 1774 / 887, borderRadius: Radius.xl, marginBottom: Spacing.lg, overflow: 'hidden', backgroundColor: Colors.primaryContainer },
   card:        { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
   sectionTitle:{ ...Typography.titleMd, color: Colors.onSurface },
-  providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
-  providerCard:{ width: '48%', minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.md, gap: Spacing.sm },
+  providerGrid:{ flexDirection: 'row', flexWrap: 'nowrap', justifyContent: 'space-between', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
+  providerCard:{ flex: 1, minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.sm, gap: Spacing.sm, alignItems: 'center' },
   providerCardActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
   providerIcon:{ width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   providerInitial:{ ...Typography.labelMd, fontWeight: '800' },

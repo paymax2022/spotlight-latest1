@@ -195,6 +195,8 @@ export const NOTIFICATION_ICON: Record<NotificationKind, string> = {
   task:         'ListTodo',
   announcement: 'Megaphone',
   document:     'FileText',
+  event:        'CalendarDays',
+  committee:    'Users',
   admin:        'ShieldCheck',
 };
 

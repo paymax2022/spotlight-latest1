@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Vote, CheckCircle2, Lock, ChevronRight, CreditCard } from 'lucide-react-native';
+import { Vote, CheckCircle2, Lock, ChevronRight, CreditCard, Plus } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -11,7 +11,7 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useDashboard, useElections } from '@/features/association/hooks';
+import { useDashboard, useElections, useAdminAccess } from '@/features/association/hooks';
 import { formatDateTime } from '@/features/association/utils';
 import type { ElectionSummary } from '@/features/association/types/association.types';
 
@@ -23,6 +23,7 @@ const STATUS_LABEL: Record<string, string> = {
 export default function GovernanceLanding() {
   const dash = useDashboard();
   const elections = useElections();
+  const isAdmin = Boolean(useAdminAccess().data?.isAdmin);
 
   // overdue / restricted members are blocked until they settle dues.
   const standing = dash.data?.card.paymentStanding;
@@ -54,7 +55,15 @@ export default function GovernanceLanding() {
         ) : null}
 
         {/* Elections */}
-        <Text style={styles.sectionTitle}>Elections</Text>
+        <View style={styles.sectionRow}>
+          <Text style={styles.sectionTitle}>Elections</Text>
+          {isAdmin ? (
+            <Pressable onPress={() => router.push('/association/elections/new' as never)} style={styles.setupBtn} accessibilityRole="button" accessibilityLabel="Set up an election">
+              <Plus size={16} color={Colors.primary} strokeWidth={2.4} />
+              <Text style={styles.setupBtnText}>Set up election</Text>
+            </Pressable>
+          ) : null}
+        </View>
         {elections.isLoading ? (
           <StateView kind="loading" compact message="Loading elections…" />
         ) : elections.isError ? (
@@ -113,6 +122,9 @@ const styles = StyleSheet.create({
   eligTitle: { ...Typography.labelLg, color: Colors.onSurface },
   eligSub: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.xs },
+  sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  setupBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: Spacing.sm },
+  setupBtnText: { ...Typography.labelMd, color: Colors.primary },
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, paddingVertical: Spacing.sm },
   electionCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, padding: Spacing.md },
   electionIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },

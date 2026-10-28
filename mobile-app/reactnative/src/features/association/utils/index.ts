@@ -297,19 +297,48 @@ export type ShareOutcome = 'shared' | 'dismissed' | 'copied' | 'failed';
 export async function shareMembershipCard(card: MembershipCard): Promise<ShareOutcome> {
   const message = buildCardShareMessage(card);
   try {
-    const res = await Share.share({ message });
-    if (res.action === Share.dismissedAction) return 'dismissed';
+    const res = await Share.share({ message, title: `${card.organisationName} membership card` });
+    // The web Share resolves with undefined (navigator.share returns void), so
+    // reading res.action unguarded threw AFTER a successful share and sent the
+    // member to the clipboard fallback with a misleading "copied" message.
+    if (res?.action === Share.dismissedAction) return 'dismissed';
     return 'shared';
-  } catch {
-    try {
-      const Clipboard = require('expo-clipboard');
-      if (Clipboard?.setStringAsync) {
-        await Clipboard.setStringAsync(message);
-        return 'copied';
-      }
-    } catch { /* fall through */ }
-    return 'failed';
+  } catch (err) {
+    // Cancelling the browser's share sheet rejects with AbortError. That is the
+    // member changing their mind, not a failure to recover from.
+    if ((err as { name?: string })?.name === 'AbortError') return 'dismissed';
+    return (await copyToClipboard(message)) ? 'copied' : 'failed';
   }
+}
+
+// Clipboard fallback. expo-clipboard needs navigator.clipboard on the web, which
+// only exists in a secure context (https or localhost) — a phone opening the dev
+// server over a LAN address has neither Web Share nor the async clipboard, so the
+// last resort is the legacy execCommand copy.
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    const Clipboard = require('expo-clipboard');
+    if (Clipboard?.setStringAsync) {
+      await Clipboard.setStringAsync(text);
+      return true;
+    }
+  } catch { /* try the legacy path */ }
+
+  if (Platform.OS === 'web' && typeof document !== 'undefined') {
+    try {
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.setAttribute('readonly', '');
+      el.style.position = 'fixed';
+      el.style.opacity = '0';
+      document.body.appendChild(el);
+      el.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(el);
+      return ok;
+    } catch { /* give up */ }
+  }
+  return false;
 }
 
 // Who may do what with a committee, on the client.
@@ -605,6 +634,16 @@ export function logoError(logoUri: string | null): string | undefined {
   const value = (logoUri ?? '').trim();
   if (!value) return 'Add a logo — paste a URL or upload an image';
   if (value.startsWith('file://')) return 'That image has not finished uploading yet';
+  return undefined;
+}
+
+/** Validate the optional banner: empty is fine; otherwise a URL or an uploaded key, never a local file. */
+export function coverError(coverUri: string | null): string | undefined {
+  const value = (coverUri ?? '').trim();
+  if (!value) return undefined;
+  if (value.startsWith('file://')) return 'That image has not finished uploading yet';
+  if (isUploadedLogoKey(value)) return undefined;
+  if (!/^https?:\/\/\S+\.\S+/i.test(value)) return 'Enter a full URL starting with https://';
   return undefined;
 }
 

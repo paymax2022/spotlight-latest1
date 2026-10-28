@@ -36,7 +36,11 @@ vi.mock('@/src/server/elections/elections.service', () => ({
   getResidentContext: vi.fn(),
   mapElection: vi.fn(),
   isWithinWindow: vi.fn(),
+  checkVoteEligibility: vi.fn().mockResolvedValue({ eligible: true, reasons: [] }),
+  getVoterUnits: vi.fn().mockResolvedValue([]),
   MAIN_POSITION_SUFFIX: ':main',
+  SEALED_BALLOT: 'sealed',
+  ELECTION_SELECT: 'id, estate_id, title, description, starts_at, ends_at, status',
 }));
 vi.mock('@/src/server/voting-bridge/leaderboard.service', () => ({ getLeaderboard: vi.fn() }));
 vi.mock('@/src/server/voting/visibility.service', () => ({ getEffectiveVisibility: vi.fn() }));

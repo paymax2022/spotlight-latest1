@@ -29,6 +29,8 @@ import { useCartStore } from '@/features/health/pharmacy/cartStore';
 import { formatNaira } from '@/features/health/constants/health.constants';
 import { PHARMACY_SYMPTOM_SEARCH_ENABLED } from '@/features/health/api/symptomSearch.api';
 import { api } from '@/api/client';
+import { useQuery } from '@tanstack/react-query';
+import { getMyPharmacyProvider } from '@/features/health/pharmacy/api';
 
 // Marketing banner — stored in the shared R2 media bucket, never bundled into
 // the app, so it can be swapped without a release. Served through the Go
@@ -47,6 +49,11 @@ const QUICK_ACTIONS = [
 export default function PharmacyHomeScreen() {
   const { data: products, isLoading, isError, refetch } = useProducts();
   const { data: prescriptions } = usePrescriptions();
+  const providerStatus = useQuery({
+    queryKey: ['health', 'pharmacy', 'my-provider'],
+    queryFn: getMyPharmacyProvider,
+    staleTime: 60_000,
+  });
   // Subscribe to `lines` (not just count()) so the per-product steppers and the
   // cart CTA's amount re-render on every quantity change, not only when the
   // number of units happens to change.
@@ -205,14 +212,31 @@ export default function PharmacyHomeScreen() {
           </Pressable>
         ) : null}
 
-        {/* Provider onboarding */}
-        <ProviderOnboardingCard />
+        {/* Approved pharmacy owners get the provider dashboard; everyone else sees onboarding. */}
+        {providerStatus.data?.isOwner ? (
+          <Pressable
+            style={styles.ownerCard}
+            onPress={() => router.push('/health/pharmacy/provider')}
+            accessibilityLabel="Open pharmacy dashboard"
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.ownerTitle}>Pharmacy dashboard</Text>
+              <Text style={styles.ownerSub}>Orders, stock, prescriptions and earnings</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.onPrimary} />
+          </Pressable>
+        ) : (
+          <ProviderOnboardingCard />
+        )}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  ownerCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.primary, borderRadius: Radius.lg, padding: Spacing.md },
+  ownerTitle: { ...Typography.titleMd, color: Colors.onPrimary },
+  ownerSub: { ...Typography.bodySm, color: Colors.onPrimary, opacity: 0.85, marginTop: 2 },
   safe: { flex: 1, backgroundColor: Colors.background },
   content: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 110, gap: Spacing.lg },
   badge: {
