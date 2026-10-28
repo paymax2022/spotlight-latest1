@@ -206,6 +206,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 	ledgerRepo := ledger.NewRepository(pool)
 	ledgerSvc := ledger.NewService(ledgerRepo, redisClient)
+	startRecurringSettlementProcessor(ctx, cfg, pool, redisClient, ledgerSvc, auditSink) // Task 5.2, FEATURE_RECURRING_SETTLEMENT_ENABLED
 
 	// Wires REAL per-module detail (Service, Category, Service bought, Payment
 	// method, Status, Provider) into the centralized admin Transactions detail

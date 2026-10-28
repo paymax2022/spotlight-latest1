@@ -679,6 +679,7 @@ type Config struct {
 	FeatureSocialPayEnabled bool // Social Payments & P2P Escrow
 	FeatureP2PMarketEnabled bool // P2P Marketplace
 	FeatureSavingsEnabled   bool // Group & Goal Savings (Ajo/Esusu)
+	FeatureRecurringSettlementEnabled bool // Task 5.2 recurring settlement processor (asynq + Redlock)
 
 	// SavingsEarlyBreakPenaltyBps is the fee for breaking a LOCK vault before
 	// maturity, in basis points (1000 = 10%). MUST stay server-side: a
@@ -1195,6 +1196,7 @@ func Load() Config {
 		FeatureSocialPayEnabled:            getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
 		FeatureP2PMarketEnabled:            getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
 		FeatureSavingsEnabled:              getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		FeatureRecurringSettlementEnabled: getEnvBool("FEATURE_RECURRING_SETTLEMENT_ENABLED", false),
 		FeatureTradingEnabled:              getEnvBool("FEATURE_TRADING_ENABLED", false),
 		FeatureAITradingEnabled:            getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
 		TradingFeeBps:                      getEnvInt("TRADING_FEE_BPS", 2000),
