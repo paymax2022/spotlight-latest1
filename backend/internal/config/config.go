@@ -693,6 +693,7 @@ type Config struct {
 	FeatureHealthPharmacyEnabled bool
 	FeatureHealthLabEnabled      bool
 	FeatureHealthVetEnabled      bool
+	FeatureProviderPortalEnabled bool
 	// Pre-Consultation Health Intake (ADR-010). DEFAULT OFF. Gates the member
 	// /api/finance/health/intake/* + admin /api/health/admin/intake surface.
 	FeatureHealthIntakeEnabled bool
@@ -1201,6 +1202,7 @@ func Load() Config {
 		FeatureHealthPharmacyEnabled:       getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
 		FeatureHealthLabEnabled:            getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
 		FeatureHealthVetEnabled:            getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
+		FeatureProviderPortalEnabled:       getEnvBool("FEATURE_PROVIDER_PORTAL_ENABLED", false),
 		FeatureHealthIntakeEnabled:         getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
 		FeatureHealthTriageEnabled:         getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
 		FeatureHealthTriageWhatsAppEnabled: getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),

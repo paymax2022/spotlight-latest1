@@ -20,6 +20,7 @@ import (
 	"spotlight/backend/internal/association"
 	"spotlight/backend/internal/business"
 	"spotlight/backend/internal/config"
+	healthportal "spotlight/backend/internal/health/portal"
 	"spotlight/backend/internal/crowdfunding"
 	cfadminext "spotlight/backend/internal/crowdfunding/adminext"
 	cfcreator "spotlight/backend/internal/crowdfunding/creator"
@@ -665,6 +666,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// the same way).
 			RegisterHealthLab(finance, r.Group("/api/health/lab/admin"), pool, rbac, auditSink, cfg, supabase)
 		}
+		// Read-only capabilities for the mobile provider portal (ADR-PR<pr-number>).
+		// Always mounted; answers 503 while FEATURE_PROVIDER_PORTAL_ENABLED is off.
+		healthportal.Register(finance, pool, cfg.FeatureProviderPortalEnabled)
 		if cfg.FeatureHealthVetEnabled {
 			// PHARMACY-006/LAB-003-shaped bug: NOT adminGroupTop5 — see the
 			// comment on RegisterHealthVet's own ag.Use(RequireAuthContext(...))

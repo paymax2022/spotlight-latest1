@@ -1,13 +1,19 @@
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/tokens';
+import ProviderRouteGuard from '@/features/providerPortal/ProviderRouteGuard';
 
 /**
  * Pharmacy vertical stack (HEALTH-BUILD Phase 1). Mounts under the shared health
  * platform (app/health/_layout.tsx). Customer screens live here; provider screens
  * under ./provider/*. Legacy app/pharmacy is untouched.
  */
+const PROVIDER_RULES = [
+  { type: 'pharmacy', prefix: '/health/pharmacy/provider', open: ['onboarding'] },
+] as const;
+
 export default function PharmacyLayout() {
   return (
+    <ProviderRouteGuard rules={PROVIDER_RULES}>
     <Stack
       screenOptions={{
         headerShown: false,
@@ -54,5 +60,6 @@ export default function PharmacyLayout() {
       <Stack.Screen name="provider/earnings" />
       <Stack.Screen name="provider/reviews" />
     </Stack>
+    </ProviderRouteGuard>
   );
 }

@@ -1,13 +1,19 @@
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/tokens';
+import ProviderRouteGuard from '@/features/providerPortal/ProviderRouteGuard';
 
 /**
  * Veterinary vertical stack (HEALTH-BUILD Phase 3). Mounts under the shared
  * health platform (app/health/_layout.tsx). Customer screens live here;
  * provider screens under ./provider/*. Legacy app/(doctor)/vet is untouched.
  */
+const PROVIDER_RULES = [
+  { type: 'vet', prefix: '/health/vet/provider', open: ['onboarding', 'verification', 'verification-status'] },
+] as const;
+
 export default function VetLayout() {
   return (
+    <ProviderRouteGuard rules={PROVIDER_RULES}>
     <Stack
       screenOptions={{
         headerShown: false,
@@ -52,5 +58,6 @@ export default function VetLayout() {
       <Stack.Screen name="provider/reviews" />
       <Stack.Screen name="provider/referral" />
     </Stack>
+    </ProviderRouteGuard>
   );
 }
