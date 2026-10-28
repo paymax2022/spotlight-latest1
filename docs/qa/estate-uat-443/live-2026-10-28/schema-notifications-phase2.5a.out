@@ -1,0 +1,86 @@
+=== 1. estate_notifications: the two columns the case needed (archived_at, pinned) ===
+ column_name |        data_type         | is_nullable |   default_value   
+-------------+--------------------------+-------------+-------------------
+ id          | uuid                     | NO          | gen_random_uuid()
+ category    | text                     | NO          | 'general'::text
+ read_at     | timestamp with time zone | YES         | -
+ created_at  | timestamp with time zone | NO          | now()
+ archived_at | timestamp with time zone | YES         | -
+ pinned      | boolean                  | NO          | false
+(6 rows)
+
+=== 2. indexes on estate_notifications: active half, archived half, trigram search ===
+            indexname            |                                                                                             indexdef                                                                                             
+---------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ estate_notifications_pkey       | CREATE UNIQUE INDEX estate_notifications_pkey ON public.estate_notifications USING btree (id)
+ idx_estate_notifications_user   | CREATE INDEX idx_estate_notifications_user ON public.estate_notifications USING btree (estate_id, user_id, created_at DESC)
+ idx_notifications_search_trgm   | CREATE INDEX idx_notifications_search_trgm ON public.estate_notifications USING gin (((((COALESCE(title, ''::character varying))::text || ' '::text) || COALESCE(body, ''::text))) gin_trgm_ops)
+ idx_notifications_unread        | CREATE INDEX idx_notifications_unread ON public.estate_notifications USING btree (user_id) WHERE (read_at IS NULL)
+ idx_notifications_user          | CREATE INDEX idx_notifications_user ON public.estate_notifications USING btree (user_id, created_at DESC)
+ idx_notifications_user_active   | CREATE INDEX idx_notifications_user_active ON public.estate_notifications USING btree (user_id, created_at DESC) WHERE (archived_at IS NULL)
+ idx_notifications_user_archived | CREATE INDEX idx_notifications_user_archived ON public.estate_notifications USING btree (user_id, archived_at DESC) WHERE (archived_at IS NOT NULL)
+(7 rows)
+
+=== 3. pg_trgm availability decides whether search is indexed or a seq scan ===
+ pg_trgm_installed 
+-------------------
+ t
+(1 row)
+
+=== 4. the retention policy table: RLS on, defaults, and every CHECK ===
+                relname                 | relrowsecurity 
+----------------------------------------+----------------
+ estate_notification_retention_policies | t
+(1 row)
+
+                        conname                        |                                                                                               definition                                                                                               
+-------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ estate_notification_retention_policies_estate_id_fkey | FOREIGN KEY (estate_id) REFERENCES estates(id) ON DELETE CASCADE
+ estate_notification_retention_policies_pkey           | PRIMARY KEY (estate_id)
+ estate_nrp_archive_positive                           | CHECK ((archive_after_days > 0))
+ estate_nrp_keep_categories_valid                      | CHECK ((keep_categories <@ ARRAY['general'::text, 'payment'::text, 'meeting'::text, 'election'::text, 'security'::text, 'maintenance'::text, 'facility'::text, 'announcement'::text, 'system'::text]))
+ estate_nrp_purge_after_archive                        | CHECK (((purge_after_days IS NULL) OR (purge_after_days >= archive_after_days)))
+ estate_nrp_purge_positive                             | CHECK (((purge_after_days IS NULL) OR (purge_after_days > 0)))
+(6 rows)
+
+    column_name     | is_nullable |              default_value              
+--------------------+-------------+-----------------------------------------
+ estate_id          | NO          | -
+ enabled            | NO          | true
+ archive_after_days | NO          | 90
+ purge_after_days   | YES         | -
+ keep_categories    | NO          | ARRAY['security'::text, 'system'::text]
+ updated_by         | YES         | -
+ updated_at         | NO          | now()
+(7 rows)
+
+                polname                | polcmd |   for_roles    
+---------------------------------------+--------+----------------
+ notification_retention_policy_service | *      | {service_role}
+(1 row)
+
+=== 5. the purge guard: a BEFORE DELETE trigger, enabled, on every delete path ===
+                   tgname                   | tgtype | tgenabled |                                                                               definition                                                                                
+--------------------------------------------+--------+-----------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ estate_notifications_block_purge_on_delete |     11 | O         | CREATE TRIGGER estate_notifications_block_purge_on_delete BEFORE DELETE ON public.estate_notifications FOR EACH ROW EXECUTE FUNCTION estate_notifications_block_purge()
+(1 row)
+
+=== 6. the sweep functions: SECURITY DEFINER, service_role-only EXECUTE ===
+                  proname                  | security_definer |  owner   | anon_can_execute | authenticated_can_execute | service_can_execute 
+-------------------------------------------+------------------+----------+------------------+---------------------------+---------------------
+ estate_notifications_apply_retention      | t                | postgres | f                | f                         | t
+ estate_notifications_retention_for_estate | t                | postgres | f                | f                         | t
+(2 rows)
+
+=== 7. the argumentless entry point keeps its DEFAULT NULL (NULL = every estate) ===
+               proname                |              arguments              
+--------------------------------------+-------------------------------------
+ estate_notifications_apply_retention | p_estate_id uuid DEFAULT NULL::uuid
+(1 row)
+
+=== 8. the promoted draft is present verbatim: the pending file only ever added archived_at ===
+ column_name 
+-------------
+ archived_at
+(1 row)
+

@@ -1,0 +1,61 @@
+=== re-apply 20271099000070_estate_notifications_archive.sql at 2026-10-28T08:08:35Z
+--- file: /c/Users/Patrick.Egbuji/OneDrive - Antan Producing Limited/Documents/super-app/spotlight-latest1/docs/qa/estate-uat-443/live-2026-10-28/../../../../supabase/migrations/20271099000070_estate_notifications_archive.sql
+--- sha (first 12): 3b6e2f4dd08e
+--- lines: 293
+psql:<stdin>:39: NOTICE:  column "archived_at" of relation "estate_notifications" already exists, skipping
+ALTER TABLE
+psql:<stdin>:42: NOTICE:  relation "idx_notifications_user_active" already exists, skipping
+CREATE INDEX
+COMMENT
+psql:<stdin>:49: NOTICE:  relation "idx_notifications_user_archived" already exists, skipping
+CREATE INDEX
+psql:<stdin>:53: NOTICE:  column "pinned" of relation "estate_notifications" already exists, skipping
+ALTER TABLE
+COMMENT
+psql:<stdin>:68: NOTICE:  extension "pg_trgm" already exists, skipping
+DO
+psql:<stdin>:76: NOTICE:  relation "idx_notifications_search_trgm" already exists, skipping
+DO
+psql:<stdin>:102: NOTICE:  relation "estate_notification_retention_policies" already exists, skipping
+CREATE TABLE
+COMMENT
+CREATE FUNCTION
+DROP TRIGGER
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE FUNCTION
+COMMENT
+ALTER TABLE
+DROP POLICY
+CREATE POLICY
+REVOKE
+GRANT
+REVOKE
+GRANT
+--- apply exit code: 0
+=== guard function text after the re-apply (the reason it names)
+18:        RAISE EXCEPTION 'estate % is under legal hold — its notification history cannot be purged', OLD.estate_id
+34:        RAISE EXCEPTION 'this notification is retained beyond the sweep because it is pinned — unpin it first'
+39:        RAISE EXCEPTION 'this notification is retained beyond the sweep because its category % is protected for this estate — change the estate retention policy first',
+=== object inventory the re-apply leaves behind
+                relname                 | relkind | is_index 
+----------------------------------------+---------+----------
+ estate_notification_retention_policies | r       | f
+ estate_notifications                   | r       | f
+ idx_notifications_search_trgm          | i       | f
+ idx_notifications_user_active          | i       | f
+ idx_notifications_user_archived        | i       | f
+(5 rows)
+
+                   tgname                   | tgtype | tgenabled 
+--------------------------------------------+--------+-----------
+ estate_notifications_block_purge_on_delete |     11 | O
+(1 row)
+
+                  proname                  | prosecdef 
+-------------------------------------------+-----------
+ estate_notifications_apply_retention      | t
+ estate_notifications_block_purge          | f
+ estate_notifications_retention_for_estate | t
+(3 rows)
+

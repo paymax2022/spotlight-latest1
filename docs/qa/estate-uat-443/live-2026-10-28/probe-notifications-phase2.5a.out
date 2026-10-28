@@ -1,0 +1,244 @@
+=== estate notification inbox / retention API_LIVE probe @ 2026-10-28T08:20:24Z base=http://127.0.0.1:8095
+admin=7945fbd0-24bf-4ee0-9de4-de37aa51fa21 resident=f30648f3-1e07-48f8-9cdf-d458799946d7 guard=2448c98f-d030-4e58-a1f3-75c5a4348630 outsider=b329a4ea-f3bb-4483-9d7d-95203019ebbe run-id=20261028082024
+--- 1. the lane estate, created over HTTP, and the notification routes on a pending estate
+PASS want=201 got=201  [create the lane estate (verification required -> pending) as admin] 
+lane estate=870c4df4-7618-49f7-a267-98e186ca65a1 status=pending
+PASS estate created pending — got "pending" want "pending"
+PASS want=401 got=401  [no token at all as ] — missing bearer token
+PASS want=403 got=403  [not a member of the lane estate yet as resident] — estate: not a member of this estate
+PASS want=200 got=200  [creator (estate_admin) reads the empty inbox: reads stay open as admin] 
+PASS pending inbox read answers the paging envelope — got "active" want "active"
+PASS pending inbox total — got "0" want "0"
+PASS want=200 got=200  [creator reads the retention schedule while pending as admin] 
+PASS absent policy answers the documented default window — got "90" want "90"
+PASS and says it is a default, not a decision — got "true" want "true"
+PASS want=403 got=403  [the schedule is admin-only, pending or not as resident] — estate: not a member of this estate
+PASS want=423 got=423  [pending estate refuses the inbox write as admin] — estate: estate is pending — changes are disabled until it is active
+PASS the refusal is the lifecycle code, not a membership error — body contains "ESTATE_NOT_ACTIVE"
+PASS and names the estate status — body contains ""estate_status":"pending""
+PASS want=423 got=423  [pending estate refuses a retention change as admin] — estate: estate is pending — changes are disabled until it is active
+PASS want=423 got=423  [pending estate cannot run a sweep as admin] — estate: estate is pending — changes are disabled until it is active
+--- 2. publish the estate through the platform review queue
+PASS want=403 got=403  [the queue is RBAC-gated as resident] — forbidden
+PASS want=200 got=200  [reviewer lists the pending queue as admin] 
+PASS the lane estate is in its own review queue — body contains "870c4df4-7618-49f7-a267-98e186ca65a1"
+PASS want=200 got=200  [verify publishes it as admin] 
+PASS estate now active — got "active" want "active"
+PASS want=200 got=200  [reads still fine once active as admin] 
+--- 3. seed the fixtures (memberships + a 67-row inbox at chosen ages/states)
+BEGIN
+INSERT 0 1
+INSERT 0 1
+INSERT 0 13
+INSERT 0 1
+INSERT 0 55
+COMMIT
+ lane_rows | resident_rows | pre_archived | unread | pinned 
+-----------+---------------+--------------+--------+--------
+        69 |            68 |            4 |     59 |      2
+(1 row)
+
+seed applied
+resident inbox: active=64 archived=4 all=68 — guard: active=1 archived=0
+PASS archived + active partitions the inbox — got "68" want "68"
+fixture ids: 01=84b6f01f-db3b-409b-bb19-800cccfb326c 02=08ac538c-083c-4201-8b68-170af658048e 05=13a7477c-2f79-43f6-b106-225ec5731232 07=7d32edf7-0f8b-4483-a5b2-eb2fd7a512c9 08=c8fe4747-c542-468d-94cb-931b3967d169 12=b4312599-3fb1-49be-99e4-0d82e4e7a9c3 15=d9258ab8-f901-4713-9f9b-9f4a37b20562 21=9b867b75-cef9-4155-b749-ebce4696fea2
+--- 4. the paging envelope: total is the number the old LIMIT 50 hid
+PASS want=200 got=200  [default inbox read as resident] 
+PASS default limit is 50 — got "50" want "50"
+PASS total reports the whole match set, not the page — got "64" want "64"
+PASS the page itself is capped at the limit — got "50" want "50"
+PASS first item is the pinned row, above a 200-day age — got "UAT25a 01 pinned twenty" want "UAT25a 01 pinned twenty"
+PASS second item is the newest unpinned row — got "UAT25a 08 newest general" want "UAT25a 08 newest general"
+PASS third is the newest bulk row — got "UAT25a bulk 55" want "UAT25a bulk 55"
+PASS want=200 got=200  [a two-row window at offset 4 as resident] 
+PASS window length honoured — got "2" want "2"
+PASS total unchanged by paging — got "64" want "64"
+PASS offset echoed — got "4" want "4"
+PASS want=200 got=200  [walk past the end of the old silent cap as resident] 
+PASS the tail row count is total minus offset — got "4" want "4"
+PASS want=200 got=200  [limit=0 is 'no preference', not 'nothing' as resident] 
+PASS limit falls back to the default — got "50" want "50"
+PASS want=200 got=200  [a non-numeric limit is the same request as none as resident] 
+PASS malformed limit -> default 50 — got "50" want "50"
+PASS want=400 got=400  [limit above 200 refused as resident] — estate: limit must be between 1 and 200
+PASS want=400 got=400  [unknown state refused, not silently treated as active as resident] — estate: state must be active, archived or all
+PASS want=400 got=400  [a category outside the domain refused (a typo must not silently filter everything out) as resident] — estate: unknown notification category: emergencz
+--- 5. the two halves of the inbox, and the filters
+PASS want=200 got=200  [archive view as resident] 
+PASS archive view total — got "4" want "4"
+PASS the archive view leads with the pinned archived row (pinned-first holds in both halves) — got "UAT25a 12 archived pinned" want "UAT25a 12 archived pinned"
+PASS and carries the stamp the database holds (compared as an instant: Go prints it at +01:00, psql at +00) — got "1784535683" want "1784535683"
+PASS second is the newest un-pinned archived row by created_at — got "UAT25a 11 archived old general" want "UAT25a 11 archived old general"
+PASS want=200 got=200  [both halves in one read as resident] 
+PASS all = active + archived — got "68" want "68"
+PASS want=200 got=200  [category filter as resident] 
+PASS one security row in the active half — got "1" want "1"
+PASS and it is the fixture — got "UAT25a 03 old security read" want "UAT25a 03 old security read"
+PASS want=200 got=200  [unread-only view as resident] 
+PASS unread-only total matches the database — got "58" want "58"
+PASS unread_only echoed in the envelope — got "true" want "true"
+PASS want=200 got=200  [search reaches the body, not only the title as resident] 
+PASS the Kairos row is found — got "UAT25a 06 kairos body" want "UAT25a 06 kairos body"
+PASS search total — got "1" want "1"
+PASS want=200 got=200  [search reaches the title as resident] 
+PASS title match total — got "1" want "1"
+PASS want=200 got=200  [search matches the padded bulk labels as resident] 
+PASS a search page still reports the whole match count (bulk 40-49) — got "10" want "10"
+PASS want=400 got=400  [a one-character term is refused rather than matching half the inbox as resident] — estate: a search term of at least 2 characters is required
+PASS want=200 got=200  [search sees the archived half too, once asked as resident] 
+PASS searched into the archive — got "0" want "0"
+  ^ with state=active (the default) an archived row is not findable; state=all is the documented way back to it:
+PASS want=200 got=200  [search across both halves as resident] 
+PASS the archived row is reachable by search — got "1" want "1"
+PASS want=400 got=400  [a bare wildcard is refused by the same 2-character floor, not run as match-everything as resident] — estate: a search term of at least 2 characters is required
+PASS the refusal says why — body contains "at least 2 characters"
+  ^ an earlier draft of this lane claimed Go would accept %% and widen the match; it does not — ErrInvalidNotificationQuery fires on length before the term is escaped. The ILIKE is still parameter-bound (see the a(b case below), so the floor is a usability guard, not the injection defence.
+PASS want=200 got=200  [a bracketed term is literal in Go (PostgREST would reject it — see the BFF lane) as resident] 
+PASS literal-bracket search answers 200 — got "0" want "0"
+--- 6. marking one notice read, and the stamp's immutability
+PASS fixture 08 starts unread — got "null" want "null"
+PASS want=200 got=200  [mark unread row read as resident] 
+PASS the response carries the stamp — got "2026" want "2026"
+PASS want=200 got=200  [mark it read a second time as resident] 
+PASS the second call did not move the stamp (it is evidence of when it was seen) — got "2026-10-28 08:22:22.175086+00" want "2026-10-28 08:22:22.175086+00"
+PASS want=404 got=404  [another recipient's row is 404, not 403 — no inbox existence leak as resident] — estate: no such notification in your inbox
+PASS want=400 got=400  [malformed notification id as resident] — invalid UUID length: 10
+PASS want=400 got=400  [malformed estate id as resident] — invalid UUID length: 10
+PASS want=404 got=404  [a non-member cannot stamp anyone's inbox as nobody] — estate: no such notification in your inbox
+PASS and the refusal says it is not their row, so a stranger learns no more than a member would — body contains "no such notification in your inbox"
+  ^ by design, not by omission: single-row writes are scoped by (id, estate_id, user_id) in notifOwnRow, so the only write a caller can ever make is to their own copy. The estate-wide write (read-all) does assert membership and answers 403 - see section 11. The BFF reaches the opposite order (it resolves the estate first and answers 403 to a stranger); the divergence is recorded in the README rather than papered over.
+--- 7. the archive round trip is reversible and touches nothing else
+PASS want=200 got=200  [archive with an empty body means archive as resident] 
+PASS the row came back stamped — got "2026" want "2026"
+PASS the title survived — got "UAT25a 07 mid maintenance" want "UAT25a 07 mid maintenance"
+PASS the deep link survived — got "estate://maintenance/77" want "estate://maintenance/77"
+PASS the read state survived (same instant, whatever zone each side prints it in) — got "1792743683" want "1792743683"
+PASS active half shrank by one — got "63" want "63"
+PASS archived half grew by one — got "5" want "5"
+PASS want=200 got=200  [un-archive is the way back as resident] 
+PASS the stamp is gone — got "absent" want "absent"
+PASS and the row is not deleted — got "1" want "1"
+PASS counts back to the baseline — got "64 4" want "64 4"
+PASS want=404 got=404  [archiving is per recipient: the guard's copy is not the resident's to hide as resident] — estate: no such notification in your inbox
+PASS the guard's row is still in the guard's active inbox — got "1" want "1"
+PASS want=404 got=404  [non-member refused the same way the read route refuses as nobody] — estate: no such notification in your inbox
+--- 8. pinning: a personal flag, and an estate-admin retention decision
+PASS want=200 got=200  [resident pins their own row as resident] 
+PASS pinned echoed true — got "true" want "true"
+PASS want=400 got=400  [pin without the flag is a bad request, not a silent un-pin as resident] — pinned is required
+PASS want=403 got=403  [a member naming another recipient is refused as resident] — estate: insufficient role
+PASS want=200 got=200  [an estate admin may pin a recipient's copy — it is a retention decision as admin] 
+PASS the guard's row is pinned in the database — got "t" want "t"
+PASS want=404 got=404  [an id that is not that recipient's row is 404 as admin] — estate: no such notification in your inbox
+PASS want=200 got=200  [and un-pin as admin] 
+PASS want=200 got=200  [un-pin the fixture row so the sweep sections see the shape they claim as resident] 
+PASS 02 unpinned again — got "f" want "f"
+PASS want=200 got=200  [pinned-first ordering re-checked as resident] 
+PASS the pinned row still leads the page — got "UAT25a 01 pinned twenty" want "UAT25a 01 pinned twenty"
+--- 9. the retention schedule: who may read it, and what it will accept
+PASS want=403 got=403  [the schedule is admin-only as resident] — estate: insufficient role
+PASS want=200 got=200  [admin reads the effective policy as admin] 
+PASS absent row -> enabled by default — got "true" want "true"
+PASS archive window — got "90" want "90"
+PASS never purge by default — got "absent" want "absent"
+PASS protected categories default — got "security,system" want "security,system"
+PASS and it is flagged as a default — got "true" want "true"
+PASS no author on a default — got "absent" want "absent"
+PASS want=403 got=403  [a member cannot shorten the window as resident] — estate: insufficient role
+PASS want=400 got=400  [archive window must be positive as admin] — estate: retention days must be positive and purge cannot be scheduled before archive
+PASS want=400 got=400  [negative refused as admin] — estate: retention days must be positive and purge cannot be scheduled before archive
+PASS want=400 got=400  [purge inside the current 90-day archive window refused (the DB CHECK agrees) as admin] — estate: retention days must be positive and purge cannot be scheduled before archive
+PASS want=400 got=400  [a protected category outside the taxonomy refused — it would protect nothing as admin] — estate: unknown notification category: emergencz
+PASS want=200 got=200  [purge 0 is the wire spelling of never as admin] 
+PASS purge still absent after 0 — got "absent" want "absent"
+PASS the policy is no longer a default — got "false" want "false"
+PASS the author is the caller — got "7945fbd0-24bf-4ee0-9de4-de37aa51fa21" want "7945fbd0-24bf-4ee0-9de4-de37aa51fa21"
+PASS want=200 got=200  [a keep list replaces, it does not merge as admin] 
+PASS protected list is exactly what was sent — got "payment" want "payment"
+PASS want=200 got=200  [set the sweep window as admin] 
+PASS archive window written — got "30" want "30"
+PASS keep list restored — got "security,system" want "security,system"
+PASS every accepted policy write left exactly one audit row — got "3" want "3"
+PASS want=400 got=400  [a non-numeric window is a bad request, not a 500 as admin] — invalid request
+--- 10. the sweep archives what is eligible and nothing else
+eligible now=3 (old + read + unpinned + unprotected), old-and-unread rows that must survive=1
+PASS the fixture set does contain unread old rows to protect — got "1" want "1"
+PASS want=200 got=200  [run this estate's schedule as admin] 
+PASS archived counter equals the row set the database says is eligible — got "3" want "3"
+PASS nothing purged while purge is never — got "0" want "0"
+PASS 02 was archived by the sweep — got "t" want "t"
+PASS 03 (protected category) was NOT — got "t" want "t"
+PASS 01 (pinned) was NOT — got "t" want "t"
+PASS 05 (old but unread) was NOT — got "t" want "t"
+PASS 08 (read, one day old) was NOT — got "t" want "t"
+PASS 21 (the guard's copy, same estate) WAS — the sweep is estate-wide, not per recipient — got "t" want "t"
+PASS want=200 got=200  [run it again in the same window as admin] 
+PASS idempotent: nothing new archived — got "0" want "0"
+PASS want=403 got=403  [a member cannot trigger the sweep as resident] — estate: insufficient role
+--- 11. read-all stops at the edge of the archive
+PASS 14 is archived and unread before read-all — got "t" want "t"
+PASS want=200 got=200  [mark the inbox read as resident] 
+PASS marked_read equals the unread active rows — got "57" want "57"
+PASS nothing unread is left in the active half — got "0" want "0"
+PASS the archived unread row is still unread — read-all did not reach into the archive — got "t" want "t"
+PASS the archive half was not even re-stamped: its row count is unchanged — got "6" want "6"
+PASS want=403 got=403  [a stranger cannot stamp an estate they do not belong to as nobody] — estate: not a member of this estate
+--- 12. purge is opt-in, and the guard is a database rule, not a courtesy
+PASS an ordinary notice is deletable (the guard is not a blanket block) — got "d9258ab8-f901-4713-9f9b-9f4a37b20562" want "d9258ab8-f901-4713-9f9b-9f4a37b20562"
+PASS a pinned row refuses DELETE from any path, and says so — ERROR:  this notification is retained beyond the sweep because it is pinned — unpin it first
+PASS the pinned row still exists — got "1" want "1"
+PASS a protected-category row refuses DELETE, naming its category — ERROR:  this notification is retained beyond the sweep because its category security is protected for this estate — change the estate retention policy first
+PASS the protected row still exists — got "1" want "1"
+PASS want=200 got=200  [arm a purge horizon as admin] 
+PASS purge window written — got "30" want "30"
+second pass: archive-eligible=1 purge-eligible=2
+PASS want=200 got=200  [run the armed schedule as admin] 
+PASS the rows read-all made readable are archived now that they have been seen — got "1" want "1"
+PASS 05 (unread at the first sweep, read now) is archived — got "t" want "t"
+PASS purged counter equals the archived rows past the horizon — got "2" want "2"
+PASS 11 (archived, plain) is gone — got "0" want "0"
+PASS 14 (archived, never read) is gone — purge keys on the archive stamp, and only a recipient action puts an unread row there — got "0" want "0"
+PASS 12 (archived + pinned) survived the purge — got "1" want "1"
+PASS 13 (archived + protected) survived the purge — got "1" want "1"
+PASS 01 (pinned, active) survived — got "1" want "1"
+PASS want=200 got=200  [run once more after the purge as admin] 
+PASS purged 0 — nothing new is past the horizon — got "0" want "0"
+--- 13. legal hold freezes the purge, not the person
+PASS want=403 got=403  [a member cannot sweep to test the hold as resident] — estate: insufficient role
+PASS want=200 got=200  [put the estate under legal hold as admin] 
+PASS estate reports held — got "t" want "t"
+PASS want=200 got=200  [arm an aggressive schedule while held as admin] 
+PASS want=200 got=200  [run it as admin] 
+PASS the sweep declines to archive under hold — got "0" want "0"
+PASS and declines to purge — got "0" want "0"
+PASS no row of that inbox moved at all — got "65" want "65"
+PASS want=200 got=200  [legal hold is a purge brake, not a write freeze: the recipient can still read as resident] 
+PASS and even that write archived nothing: the newest archive stamp is unchanged — got "2026-10-28 08:23:05.171512+00" want "2026-10-28 08:23:05.171512+00"
+PASS hold still on after that write — got "t" want "t"
+PASS want=200 got=200  [release the hold as admin] 
+PASS estate no longer held — got "f" want "f"
+--- 14. a suspended estate keeps its inbox readable and takes no inbox writes
+PASS want=200 got=200  [suspend the estate as admin] 
+PASS want=200 got=200  [a suspended estate still answers the inbox read as resident] 
+PASS and reports the rows it still holds — got "65" want "65"
+PASS want=423 got=423  [archive refused while suspended as resident] — estate: estate is suspended — changes are disabled until it is active
+PASS with the lifecycle code — body contains "ESTATE_NOT_ACTIVE"
+PASS want=423 got=423  [pin refused while suspended as resident] — estate: estate is suspended — changes are disabled until it is active
+PASS want=423 got=423  [the schedule is refused while suspended as admin] — estate: estate is suspended — changes are disabled until it is active
+PASS want=423 got=423  [the sweep is refused while suspended as admin] — estate: estate is suspended — changes are disabled until it is active
+PASS want=200 got=200  [but the schedule is still readable as admin] 
+PASS want=200 got=200  [reactivate as admin] 
+PASS want=200 got=200  [the same write succeeds once active as resident] 
+PASS and the row really moved — got "t" want "t"
+PASS want=200 got=200  [put it back as resident] 
+--- 15. the sweep function is not callable without an identity
+PASS PostgREST refuses an anon EXECUTE on the sweep — got HTTP 404 {"message":"no Route matched with those values"}
+PASS and no row was archived by that attempt — got "1" want "1"
+--- 16. closure: the inbox stays readable, the writes stop
+PASS want=200 got=200  [close the lane estate as admin] 
+PASS want=200 got=200  [a closed estate still answers the inbox read (the history is retained, not erased) as resident] 
+PASS and it answers with the rows it had before closure — got "65" want "65"
+PASS want=423 got=423  [closed estate takes no write as resident] — estate: estate is closed — changes are disabled until it is active
+PASS closure deleted no notification row — got "65" want "65"
+PASS the policy row is still there for the audit trail — got "1" want "1"
+=== Phase 2.5a Go lane summary: PASS=204 FAIL=0 estate=870c4df4-7618-49f7-a267-98e186ca65a1 (transcript lines 204/0)
