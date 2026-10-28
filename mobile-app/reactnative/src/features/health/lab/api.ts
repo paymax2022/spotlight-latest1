@@ -443,22 +443,60 @@ function tatLabel(hours: number): string {
 // fasting flag — category/homeCollection default to the least presumptive
 // value and fastingRequired is inferred from the real prep-instructions text
 // (a check, not an invention) rather than left to crash the fasting-prep UI.
+const TEST_CATEGORIES: LabTest['category'][] = ['haematology','chemistry','endocrine','infectious','cardiac','wellness'];
+
 function mapTest(raw: any): LabTest {
   const prep: string = raw.prep_instructions ?? '';
+  const cat = String(raw.category ?? '');
   return {
     id: raw.id,
     name: raw.name ?? '',
     code: raw.code ?? '',
-    category: 'wellness',
+    category: (TEST_CATEGORIES as string[]).includes(cat) ? (cat as LabTest['category']) : 'wellness',
     priceKobo: raw.price_kobo ?? 0,
-    description: raw.ref_range ? `Reference range: ${raw.ref_range}` : '',
+    description: raw.description || (raw.ref_range ? `Reference range: ${raw.ref_range}` : ''),
     sampleType: SAMPLE_TYPE_FROM_SPECIMEN[String(raw.specimen ?? '').toUpperCase()] ?? 'blood',
     prep,
-    fastingRequired: /fast/i.test(prep),
+    fastingRequired: raw.fasting_required === true || /fast/i.test(prep),
     tat: tatLabel(raw.tat_hours ?? 0),
-    homeCollection: false,
+    homeCollection: raw.home_collection !== false,
     imageColor: tintForId(String(raw.id ?? '')),
   };
+}
+
+function distanceLabel(m: unknown): string {
+  if (typeof m !== 'number' || !Number.isFinite(m)) return '';
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+}
+
+function mapLab(raw: any): Lab {
+  const cred = raw.credential ?? {};
+  return {
+    id: raw.id,
+    name: raw.name ?? '',
+    headline: raw.headline ?? '',
+    credential: {
+      authority: 'MLSCN',
+      licenseNo: cred.license_no ?? '',
+      status: cred.status === 'verified' || cred.status === 'expired' ? cred.status : 'pending',
+      ...(cred.expires_at ? { expiresAt: cred.expires_at } : {}),
+    },
+    rating: Number(raw.rating ?? 0),
+    reviewCount: Number(raw.review_count ?? 0),
+    address: raw.address ?? '',
+    distanceLabel: distanceLabel(raw.distance_m),
+    lat: Number(raw.lat ?? 0),
+    lng: Number(raw.lng ?? 0),
+    supportsHomeCollection: raw.supports_home_collection === true,
+    supportsWalkIn: raw.supports_walk_in !== false,
+    homeCollectionFeeKobo: Number(raw.home_collection_fee_kobo ?? 0),
+    resultEtaLabel: raw.result_eta_label ?? '',
+    active: true,
+  };
+}
+
+function mapReview(raw: any): LabReview {
+  return { id: raw.id, author: raw.author ?? 'Patient', rating: Number(raw.rating ?? 0), body: raw.body ?? '', at: raw.created_at ?? '' };
 }
 
 function mapPackage(raw: any): TestPackage {
@@ -480,71 +518,46 @@ function mapPackage(raw: any): TestPackage {
 }
 
 export async function getTests(query?: CatalogQuery): Promise<LabTest[]> {
-  if (USE_MOCK) {
-    await delay();
-    let rows = MOCK_TESTS;
-    if (query?.category) rows = rows.filter((t) => t.category === query.category);
-    if (query?.q) {
-      const q = query.q.toLowerCase();
-      rows = rows.filter((t) => t.name.toLowerCase().includes(q) || t.code.toLowerCase().includes(q));
-    }
-    return rows;
-  }
   const { data } = await api.get<{ tests?: unknown[] }>(`${LAB_API}/tests`, { params: query });
-  return (data.tests ?? []).map(mapTest);
+  let rows = (data.tests ?? []).map(mapTest);
+  // The server catalog has no free-text search or category filter yet — narrow
+  // the already-persisted list here rather than showing stale results.
+  if (query?.category) rows = rows.filter((x) => x.category === query.category);
+  if (query?.q) {
+    const q = query.q.toLowerCase();
+    rows = rows.filter((x) => x.name.toLowerCase().includes(q) || x.code.toLowerCase().includes(q));
+  }
+  return rows;
 }
 
 export async function getTest(id: string): Promise<LabTest> {
-  if (USE_MOCK) {
-    await delay();
-    const t = MOCK_TESTS.find((x) => x.id === id);
-    if (!t) throw new Error('Test not found');
-    return t;
-  }
-  const { data } = await api.get<LabTest>(`${LAB_API}/tests/${id}`);
-  return data;
+  const { data } = await api.get<{ test: unknown }>(`${LAB_API}/tests/${id}`);
+  return mapTest(data.test);
 }
 
 export async function getPackages(): Promise<TestPackage[]> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_PACKAGES;
-  }
   const { data } = await api.get<{ packages?: unknown[] }>(`${LAB_API}/packages`);
   return (data.packages ?? []).map(mapPackage);
 }
 
 export async function getPackage(id: string): Promise<TestPackage> {
-  if (USE_MOCK) {
-    await delay();
-    const p = MOCK_PACKAGES.find((x) => x.id === id);
-    if (!p) throw new Error('Package not found');
-    return p;
-  }
-  const { data } = await api.get<TestPackage>(`${LAB_API}/packages/${id}`);
-  return data;
+  const { data } = await api.get<{ package: unknown }>(`${LAB_API}/packages/${id}`);
+  return mapPackage(data.package);
 }
 
-export async function getLabs(opts?: { homeCollection?: boolean }): Promise<Lab[]> {
-  if (USE_MOCK) {
-    await delay();
-    let rows = MOCK_LABS.filter((l) => l.active);
-    if (opts?.homeCollection) rows = rows.filter((l) => l.supportsHomeCollection);
-    return rows;
-  }
-  const { data } = await api.get<Lab[]>(`${LAB_API}/labs`, { params: opts });
-  return data;
+export async function getLabs(opts?: { homeCollection?: boolean; lat?: number; lng?: number }): Promise<Lab[]> {
+  const { data } = await api.get<{ labs?: unknown[] }>(`${LAB_API}/labs`, {
+    params: {
+      ...(opts?.homeCollection ? { home_collection: true } : {}),
+      ...(opts?.lat !== undefined && opts?.lng !== undefined ? { lat: opts.lat, lng: opts.lng } : {}),
+    },
+  });
+  return (data.labs ?? []).map(mapLab);
 }
 
 export async function getLab(id: string): Promise<Lab> {
-  if (USE_MOCK) {
-    await delay();
-    const l = MOCK_LABS.find((x) => x.id === id);
-    if (!l) throw new Error('Lab not found');
-    return l;
-  }
-  const { data } = await api.get<Lab>(`${LAB_API}/labs/${id}`);
-  return data;
+  const { data } = await api.get<{ lab: unknown }>(`${LAB_API}/labs/${id}`);
+  return mapLab(data.lab);
 }
 
 export async function getPhlebotomist(orderId: string): Promise<Phlebotomist> {
@@ -708,21 +721,18 @@ export async function shareResult(input: ShareResultInput): Promise<{ ok: true }
 }
 
 export async function getReviews(labId: string): Promise<LabReview[]> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_REVIEWS;
-  }
-  const { data } = await api.get<LabReview[]>(`${LAB_API}/labs/${labId}/reviews`);
-  return data;
+  const { data } = await api.get<{ reviews?: unknown[] }>(`${LAB_API}/labs/${labId}/reviews`);
+  return (data.reviews ?? []).map(mapReview);
 }
 
 export async function submitReview(input: SubmitReviewInput): Promise<LabReview> {
-  if (USE_MOCK) {
-    await delay();
-    return { id: `rev_${Date.now()}`, author: 'You', rating: input.rating, body: input.body, at: new Date().toISOString() };
-  }
-  const { data } = await api.post<LabReview>(`${LAB_API}/reviews`, input);
-  return data;
+  // The server derives the lab from the order — only the order id is trusted.
+  const { data } = await api.post<{ review: unknown }>(`${LAB_API}/reviews`, {
+    order_id: input.orderId,
+    rating: input.rating,
+    body: input.body,
+  });
+  return mapReview(data.review);
 }
 
 // `${LAB_API}/provider/onboarding` was never implemented backend side —

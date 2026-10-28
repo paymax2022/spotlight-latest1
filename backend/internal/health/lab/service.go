@@ -179,15 +179,21 @@ func (s *Service) UpsertTest(ctx context.Context, ownerID string, t Test) (*Test
 	if t.ID == "" {
 		t.ID = uuid.New().String()
 	}
+	if strings.TrimSpace(t.Category) == "" {
+		t.Category = "wellness"
+	}
 	const q = `
 		INSERT INTO lab_tests
-			(id, lab_provider_id, code, name, specimen, prep_instructions, tat_hours, ref_range, price_kobo, active)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			(id, lab_provider_id, code, name, specimen, prep_instructions, tat_hours, ref_range, price_kobo, active,
+			 category, description, home_collection, fasting_required)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT (id) DO UPDATE SET
 			code=$3, name=$4, specimen=$5, prep_instructions=$6, tat_hours=$7, ref_range=$8,
-			price_kobo=$9, active=$10, updated_at=now()`
+			price_kobo=$9, active=$10, category=$11, description=$12, home_collection=$13,
+			fasting_required=$14, updated_at=now()`
 	if _, err := s.db.Exec(ctx, q, t.ID, t.LabProviderID, t.Code, t.Name, t.Specimen,
-		t.PrepInstructions, t.TATHours, t.RefRange, t.PriceKobo, t.Active); err != nil {
+		t.PrepInstructions, t.TATHours, t.RefRange, t.PriceKobo, t.Active,
+		t.Category, t.Description, t.HomeCollection, t.FastingRequired); err != nil {
 		return nil, fmt.Errorf("lab: upsert test: %w", err)
 	}
 	s.audited(ownerID, "", "health.lab.test.upsert", t.ID, nil,
@@ -199,7 +205,7 @@ func (s *Service) UpsertTest(ctx context.Context, ownerID string, t Test) (*Test
 // read is a plain active filter; prep instructions + TAT are surfaced.
 func (s *Service) ListTests(ctx context.Context, labProviderID string) ([]Test, error) {
 	const base = `
-		SELECT id, lab_provider_id, code, name, specimen, prep_instructions, tat_hours, ref_range, price_kobo, active, created_at
+		SELECT ` + testColumns + `
 		FROM lab_tests WHERE active = true`
 	q := base + labFilter(labProviderID) + ` ORDER BY name ASC LIMIT 200`
 	var rows pgx.Rows
@@ -215,9 +221,8 @@ func (s *Service) ListTests(ctx context.Context, labProviderID string) ([]Test, 
 	defer rows.Close()
 	var out []Test
 	for rows.Next() {
-		var t Test
-		if err := rows.Scan(&t.ID, &t.LabProviderID, &t.Code, &t.Name, &t.Specimen,
-			&t.PrepInstructions, &t.TATHours, &t.RefRange, &t.PriceKobo, &t.Active, &t.CreatedAt); err != nil {
+		t, err := scanTest(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, t)

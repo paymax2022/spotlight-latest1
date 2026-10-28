@@ -150,6 +150,11 @@ type Test struct {
 	PriceKobo        int64     `json:"price_kobo"`
 	Active           bool      `json:"active"`
 	CreatedAt        time.Time `json:"created_at"`
+	// Display fields the catalog screens render (persisted, not client-guessed).
+	Category        string `json:"category"`
+	Description     string `json:"description"`
+	HomeCollection  bool   `json:"home_collection"`
+	FastingRequired bool   `json:"fasting_required"`
 }
 
 // Package is a bundle of tests sold at a package price (e.g. a screening panel).

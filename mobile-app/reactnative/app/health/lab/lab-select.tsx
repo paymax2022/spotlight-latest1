@@ -110,7 +110,7 @@ export default function LabSelectScreen() {
                 <View style={styles.metaRow}>
                   <MapPin size={14} color={Colors.onSurfaceVariant} strokeWidth={2} />
                   <Text style={styles.meta} numberOfLines={1}>
-                    {l.distanceLabel} · {l.address}
+                    {l.distanceLabel ? `${l.distanceLabel} · ` : ''}{l.address}
                   </Text>
                 </View>
 

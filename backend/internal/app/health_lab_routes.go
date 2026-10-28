@@ -86,6 +86,12 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.GET("/tests", h.ListTests)                    // catalog: prep, TAT, price
 	lg.POST("/tests", h.UpsertTest)                  // lab owner, HL-2 catalog governance
 	lg.GET("/packages", h.ListPackages)              // bundle catalog, same shape as ListTests
+	lg.GET("/tests/:id", h.GetTest)                  // one active test (detail screen)
+	lg.GET("/packages/:id", h.GetPackage)            // one active package
+	lg.GET("/labs", h.ListLabs)                      // discoverable MLSCN labs, nearest-first with lat/lng (HL-2)
+	lg.GET("/labs/:id", h.GetLab)
+	lg.GET("/labs/:id/reviews", h.ListLabReviews)
+	lg.POST("/reviews", h.SubmitReview)              // verified-purchase review (released order, once)
 	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
 	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR641)
 	lg.POST("/orders", h.CreateOrder)                // patient, payment HELD (HL-9)

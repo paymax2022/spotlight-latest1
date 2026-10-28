@@ -1,0 +1,121 @@
+openapi: 3.0.3
+info:
+  title: Health Lab — directory, catalog detail and reviews
+  version: 0.1.0
+  description: |
+    Persisted lab directory, catalog detail and verified reviews. These replace
+    the mobile app's client-side mock data (src/features/health/lab/api.ts).
+    Money is integer kobo. Member routes are mounted at /api/finance/health/lab
+    behind the finance auth chain and FeatureHealthLabEnabled.
+servers:
+  - url: /api/finance/health/lab
+paths:
+  /labs:
+    get:
+      summary: Discoverable MLSCN labs (HL-2 — approved and discoverable only)
+      parameters:
+        - { name: home_collection, in: query, schema: { type: boolean } }
+        - { name: lat, in: query, schema: { type: number, minimum: -90, maximum: 90 }, description: Must be sent with lng; list becomes nearest-first }
+        - { name: lng, in: query, schema: { type: number, minimum: -180, maximum: 180 } }
+      responses:
+        '200': { description: Labs, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, labs: { type: array, items: { $ref: '#/components/schemas/Lab' } } } } } } }
+        '400': { description: lat/lng out of range or not supplied together }
+  /labs/{id}:
+    get:
+      summary: One approved lab (discoverable or not, so an existing order's lab stays reachable)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Lab, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, lab: { $ref: '#/components/schemas/Lab' } } } } } }
+        '404': { description: Not found or not approved }
+  /labs/{id}/reviews:
+    get:
+      summary: Reviews for a lab, newest first (authors shown as first name + initial)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Reviews, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, reviews: { type: array, items: { $ref: '#/components/schemas/Review' } } } } } } }
+  /reviews:
+    post:
+      summary: Review a lab for one of your released orders (once per order)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, rating]
+              properties:
+                order_id: { type: string, format: uuid }
+                rating: { type: integer, minimum: 1, maximum: 5 }
+                body: { type: string, maxLength: 2000 }
+      responses:
+        '201': { description: Created }
+        '400': { description: Invalid rating or body }
+        '404': { description: Order missing or not yours (indistinguishable) }
+        '409': { description: Order not yet released, or already reviewed }
+  /tests/{id}:
+    get:
+      summary: One active catalog test
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Test, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, test: { $ref: '#/components/schemas/Test' } } } } } }
+        '404': { description: Not found or inactive }
+  /packages/{id}:
+    get:
+      summary: One active package
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Package }
+        '404': { description: Not found or inactive }
+components:
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  schemas:
+    LabCredential:
+      type: object
+      properties:
+        authority: { type: string, example: MLSCN }
+        license_no: { type: string }
+        status: { type: string, enum: [verified, pending, expired] }
+        expires_at: { type: string, format: date-time, nullable: true }
+    Lab:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        headline: { type: string }
+        address: { type: string }
+        supports_home_collection: { type: boolean }
+        supports_walk_in: { type: boolean }
+        home_collection_fee_kobo: { type: integer, format: int64 }
+        result_eta_label: { type: string }
+        lat: { type: number }
+        lng: { type: number }
+        distance_m: { type: number, nullable: true, description: Present only when lat/lng were supplied }
+        rating: { type: number }
+        review_count: { type: integer }
+        credential: { $ref: '#/components/schemas/LabCredential' }
+    Review:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        author: { type: string }
+        rating: { type: integer }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+    Test:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        lab_provider_id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        specimen: { type: string }
+        prep_instructions: { type: string }
+        tat_hours: { type: integer }
+        ref_range: { type: string }
+        price_kobo: { type: integer, format: int64 }
+        active: { type: boolean }
+        category: { type: string }
+        description: { type: string }
+        home_collection: { type: boolean }
+        fasting_required: { type: boolean }
