@@ -908,7 +908,7 @@ export interface PharmacyProviderStatus {
 const NO_PHARMACY_PROVIDER: PharmacyProviderStatus = { isOwner: false, records: [] };
 
 export async function getMyPharmacyProvider(): Promise<PharmacyProviderStatus> {
-  if (USE_MOCK) return NO_PHARMACY_PROVIDER;
+  // Owner access is always read from the server, never from the mock: the mock must not grant it.
   const { data } = await api.get(`${PHARMACY_API}/provider/me`);
   const p = data?.provider as PharmacyProviderStatus | undefined;
   return p ? { isOwner: Boolean(p.isOwner), records: p.records ?? [] } : NO_PHARMACY_PROVIDER;
