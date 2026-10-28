@@ -81,6 +81,9 @@ export async function signInAdmin(username: string, password: string) {
     // console-admin role (super-admin/system-admin — the only roles
     // RequireAdminConsoleRole admits), so wildcard permissions are the honest
     // display for the sidebar/routeGuard, exactly as the old 'admin' branch was.
+    // lgtm[js/clear-text-storage-of-sensitive-data]: This stores only non-sensitive
+    // metadata (id, email, roles, permissions). The actual auth token is in an HttpOnly
+    // cookie; server validates it on every request. Client-side RBAC rendering only.
     localStorage.setItem(
       ADMIN_USER_KEY,
       JSON.stringify({
