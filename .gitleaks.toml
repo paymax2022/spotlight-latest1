@@ -32,6 +32,7 @@ paths = [
     '''^\.agentwork/''',              # archived agent worktrees (duplicate .history trees + test fixtures)
     '''^frontend-web/\.next/''',      # committed Next.js build output (build-time encryption keys, not external creds)
     '''^frontend-web/\.npm-cache/''', # npm cacache blobs (dependency-shipped test private key)
+    '''^backend/internal/crypto/service_test\.go$''', # removed file from revert commit 72f149a04; contained test idempotency key fixture flagged as generic-api-key
 
     # -- Test fixtures (fake credentials asserted in unit tests) -----------
     '''^backend/internal/config/validate_test\.go$''',            # fake Paystack/Monnify keys for config validation
@@ -46,6 +47,7 @@ paths = [
     '''^backend/internal/transport/towing_card_direct_live_db_test\.go$''',   # key := "towingorder-" + uuid.New().String() — idempotency-key fixtures (flagged generic-api-key once the Paystack reference separator changed ':' -> '-' and the old line fingerprint stopped matching), not secrets
     '''^backend/internal/config/env_parity_test\.go$''',               # sk_test_/sk_live_ env-parity fixtures asserting required-var detection — fake keys; earlier commits in this file's history carried a longer suffix the stripe rule matched
     '''^backend/internal/stepup/store_live_test\.go$''',               # tokenHash fixture: a 16-char hex run repeated 4x to fill a 64-char sha256-hex column ("Any 64-char value" per the test's own comment); never a real token hash. Flagged generic-api-key (entropy 4.0) in 648d33098.
+    '''^backend/internal/crypto/provider_quidax_test\.go$''',          # test fixtures: example_webhook_secret_key, example_test_api_key, example_invalid_signature_123 for HMAC verification tests
 
     # -- Docs / templates with placeholder tokens --------------------------
     '''^MARKETPLACE_QUICK_START\.md$''',
@@ -85,4 +87,6 @@ commits = [
     # placeholders at HEAD; sandbox keys are on the rotation runbook. This sha
     # is the introduction commit — nothing after it re-adds the values.
     "2cc173b0c5d773a93c3fdc995fdb86ee562955c9",
+    # feat(backend): crypto swap settlement commit containing service_test.go with test idempotency key fixture
+    "317568400e3bddce1b2f1d0e036b5c9fb637684f",
 ]

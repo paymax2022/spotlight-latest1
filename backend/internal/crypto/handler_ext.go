@@ -348,6 +348,14 @@ func (h *Handler) QuidaxWebhook(c *gin.Context) {
 		return
 	}
 
+	// Blocker 6: Timestamp validation (prevent replay attacks)
+	// Enforces ±5 min window with ±1 min clock skew tolerance
+	if err := event.ValidateTimestamp(); err != nil {
+		log.Printf("[crypto] webhook timestamp validation failed: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid_timestamp"})
+		return
+	}
+
 	// Extract swap_transaction_id and status from the webhook event.
 	// Quidax sends these in the data field of the webhook event.
 	if event.Data == nil {
