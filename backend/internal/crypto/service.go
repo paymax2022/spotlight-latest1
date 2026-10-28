@@ -50,14 +50,15 @@ var ErrSwapUnwound = errors.New("crypto: swap key unwound — retry with a fresh
 // event. All amounts are integer minor units (kobo for cash; asset minor units
 // for holdings) — no float math anywhere.
 type Service struct {
-	db       *pgxpool.Pool
-	repo     *Repository
-	led      *ledger.Service
-	price    PriceProvider
-	audit    *auditLogger
-	withdraw WithdrawalProvider // pluggable on-chain broadcast seam (mock default)
-	tiers    walletDebitLimiter
-	swap     SwapProvider      // Quidax Instant Swap adapter (CR-009)
+	db             *pgxpool.Pool
+	repo           *Repository
+	led            *ledger.Service
+	price          PriceProvider
+	audit          *auditLogger
+	withdraw       WithdrawalProvider // pluggable on-chain broadcast seam (mock default)
+	tiers          walletDebitLimiter
+	swap           SwapProvider      // Quidax Instant Swap adapter (CR-009)
+	quidaxSecret   string             // HMAC secret for Quidax webhook verification
 }
 
 // NewService builds the crypto service. If price is nil the deterministic

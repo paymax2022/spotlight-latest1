@@ -336,3 +336,46 @@ func (h *Handler) SwapSettlement(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "settlement": st})
 }
+
+// QuidaxWebhook POST /webhooks/crypto/quidax — Quidax provider webhook handler
+// (Blocker 5: HMAC-SHA256 authentication, Blocker 6: replay protection).
+// Authenticated via HMAC signature in X-Quidax-Signature header (verified by middleware).
+// Updates swap order status based on provider webhook: pending → executing → filled/failed.
+func (h *Handler) QuidaxWebhook(c *gin.Context) {
+	var event QuidaxWebhookEvent
+	if err := c.BindJSON(&event); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid_json"})
+		return
+	}
+
+	// Extract swap_transaction_id and status from the webhook event.
+	// Quidax sends these in the data field of the webhook event.
+	if event.Data == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "missing event data"})
+		return
+	}
+
+	swapTxID, ok := event.Data["swap_transaction_id"].(string)
+	if !ok || swapTxID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "missing swap_transaction_id"})
+		return
+	}
+
+	status, ok := event.Data["status"].(string)
+	if !ok || status == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "missing status"})
+		return
+	}
+
+	// Update swap order status based on provider response.
+	// Service handles idempotency: same webhook replayed = no-op or safe re-update.
+	err := h.svc.UpdateSwapOrderStatusFromWebhook(c.Request.Context(), swapTxID, status)
+	if err != nil {
+		// Return 200 OK to prevent provider retry storms; errors logged internally.
+		log.Printf("[crypto] webhook processing failed: %v", err)
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}

@@ -271,7 +271,7 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		member.POST("/swap/quote", rp(PermTrade), h.SwapQuote) // pre-trade estimate
 		member.POST("/swap", rp(PermTrade), h.Swap)            // Idempotency-Key required
 		member.GET("/swap/orders", rp(PermView), h.SwapOrders)
-		member.GET("/swaps/:id/settlement", rp(PermView), h.GetSwapSettlement) // Blocker 4: settlement status
+		member.GET("/swaps/:id/settlement", rp(PermView), h.SwapSettlement) // Blocker 4: settlement status
 
 		member.GET("/addresses", rp(PermView), h.ListAddresses)
 		member.POST("/addresses", rp(PermTrade), h.AddAddress)
