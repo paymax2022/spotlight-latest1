@@ -127,7 +127,7 @@ func (h *Handler) RegisterAdmin(g *gin.RouterGroup, guard func(permission string
 
 // GetVerificationStatus: GET /verification — the caller's go-live checklist.
 func (h *Handler) GetVerificationStatus(c *gin.Context) {
-	out, err := h.svc.GetVerificationStatus(c.Request.Context(), ginutil.UserID(c))
+	out, err := h.svc.GetVerificationStatus(c.Request.Context(), ginutil.UserID(c), c.Query("property_id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -149,7 +149,7 @@ func (h *Handler) GetBusinessVerification(c *gin.Context) {
 // items server-side (the frontend's own gate is convenience only) before moving
 // the record to 'submitted'.
 func (h *Handler) SubmitForReview(c *gin.Context) {
-	out, err := h.svc.SubmitForReview(c.Request.Context(), ginutil.UserID(c))
+	out, err := h.svc.SubmitForReview(c.Request.Context(), ginutil.UserID(c), c.Query("property_id"))
 	if err != nil {
 		if errors.Is(err, ErrVerificationIncomplete) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
@@ -322,6 +322,15 @@ func (r *Repository) AdminDecideKYB(ctx context.Context, propertyID, legalName, 
 		return fmt.Errorf("extranet: snapshot kyb_status: %w", err)
 	}
 
+	// An approved business publishes its listing: approval moves a draft or pending
+	// property live. Suspended listings stay under moderation.
+	if verdict == VerifApproved {
+		if _, err := tx.Exec(ctx, `
+			UPDATE public.stays_property SET status = 'ACTIVE', updated_at = now()
+			WHERE id = $1 AND status IN ('DRAFT','PENDING_REVIEW')`, propertyID); err != nil {
+			return fmt.Errorf("extranet: publish on kyb approval: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("extranet: commit kyb decision tx: %w", err)
 	}
@@ -339,11 +348,24 @@ var (
 	ErrDecisionNoteRequired = errors.New("extranet: a note is required to reject or request changes")
 )
 
+// propertyFor picks the property a go-live call acts on. A requested property must
+// be one the caller holds an active grant on; with none requested, the caller's
+// primary property is used as before.
+func (s *Service) propertyFor(ctx context.Context, userID, requested string) (string, error) {
+	if requested == "" {
+		return s.repo.ResolvePrimaryProperty(ctx, userID)
+	}
+	if !s.authz.HasProperty(ctx, userID, requested) {
+		return "", ErrForbidden
+	}
+	return requested, nil
+}
+
 // GetVerificationStatus builds the go-live checklist for the caller's primary
 // property (routes here carry no :propertyId — onboarding is scoped to "my one
 // property in progress").
-func (s *Service) GetVerificationStatus(ctx context.Context, userID string) (VerificationStatus, error) {
-	propertyID, err := s.repo.ResolvePrimaryProperty(ctx, userID)
+func (s *Service) GetVerificationStatus(ctx context.Context, userID, requestedProperty string) (VerificationStatus, error) {
+	propertyID, err := s.propertyFor(ctx, userID, requestedProperty)
 	if err != nil {
 		return VerificationStatus{}, err
 	}
@@ -372,8 +394,8 @@ func (s *Service) GetBusinessVerification(ctx context.Context, userID string) (B
 // property can be submitted for review without it while still failing closed on
 // actually going live. Re-validates independently of the frontend's own gate (the
 // client's "remaining === 0" check is convenience only).
-func (s *Service) SubmitForReview(ctx context.Context, userID string) (VerificationStatus, error) {
-	propertyID, err := s.repo.ResolvePrimaryProperty(ctx, userID)
+func (s *Service) SubmitForReview(ctx context.Context, userID, requestedProperty string) (VerificationStatus, error) {
+	propertyID, err := s.propertyFor(ctx, userID, requestedProperty)
 	if err != nil {
 		return VerificationStatus{}, err
 	}
@@ -447,11 +469,9 @@ func toBusinessVerification(k kyb) BusinessVerification {
 	}
 }
 
-// minPhotosForGoLive mirrors the go-live copy already shown elsewhere in the
-// product ("properties with 14+ photos convert 23% better... at least 8
-// photos uploaded (cover set)") — the checklist enforces the number that
-// copy has always implied a listing needs.
-const minPhotosForGoLive = 8
+// minPhotosForGoLive is the minimum number of photos required for a property
+// to go live. The checklist enforces this requirement.
+const minPhotosForGoLive = 3
 
 // buildVerificationStatus computes the checklist from real signals: property
 // content fields, room types + rate plans, photos, policies, upcoming
@@ -473,10 +493,6 @@ func (s *Service) buildVerificationStatus(ctx context.Context, propertyID string
 	if err != nil {
 		return VerificationStatus{}, err
 	}
-	hasAvailability, err := s.repo.HasUpcomingAvailability(ctx, propertyID)
-	if err != nil {
-		return VerificationStatus{}, err
-	}
 	photoCount, err := s.repo.CountPropertyPhotos(ctx, propertyID)
 	if err != nil {
 		return VerificationStatus{}, err
@@ -491,16 +507,6 @@ func (s *Service) buildVerificationStatus(ctx context.Context, propertyID string
 	// that a host actually reviewed and set policies, not just inherited defaults.
 	policiesDone := strings.TrimSpace(prop.HouseRules) != ""
 
-	kycStatus, docStatus := VerifPending, VerifPending
-	if hasKYB {
-		if k.KYCStatus != "" {
-			kycStatus = k.KYCStatus
-		}
-		if k.BusinessDocStatus != "" {
-			docStatus = k.BusinessDocStatus
-		}
-	}
-
 	checklist := []VerificationChecklistItem{
 		{Key: "signup", Label: "Hotelier account created", Stage: "signup", Status: VerifApproved, Required: true},
 		{Key: "property", Label: "Property registered (name, type, address, city)", Stage: "property",
@@ -510,17 +516,9 @@ func (s *Service) buildVerificationStatus(ctx context.Context, propertyID string
 		{Key: "photos", Label: fmt.Sprintf("At least %d photos uploaded (cover set)", minPhotosForGoLive), Stage: keyContent,
 			Status: statusIf(photosDone), Required: true,
 			Detail: verificationDetail(statusIf(photosDone), fmt.Sprintf("You have %d — add %d more to go live.", photoCount, max(0, minPhotosForGoLive-photoCount)))},
-		{Key: "business_identity", Label: "Business identity verified (legal name, CAC, TIN, director KYC)", Stage: "verification",
-			Status: kycStatus, Required: false,
-			Detail: verificationDetail(kycStatus, "Send your business documents to Paymax support to begin review.")},
-		{Key: "business_documents", Label: "Supporting business documents reviewed", Stage: "verification",
-			Status: docStatus, Required: false,
-			Detail: verificationDetail(docStatus, "Send your business documents to Paymax support to begin review.")},
 		{Key: "policies", Label: "Policies configured (check-in/out, cancellation, house rules)", Stage: "policies",
 			Status: statusIf(policiesDone), Required: false,
 			Detail: verificationDetail(statusIf(policiesDone), "Set your house rules in the Policies section to complete this step.")},
-		{Key: "availability", Label: "Availability & rates loaded (next 90 days)", Stage: "go_live",
-			Status: statusIf(hasAvailability), Required: true},
 	}
 
 	overall := VerifPending
@@ -528,7 +526,7 @@ func (s *Service) buildVerificationStatus(ctx context.Context, propertyID string
 		overall = k.Status
 	}
 
-	goLiveEligible := overall == VerifApproved && kycStatus == VerifApproved && docStatus == VerifApproved
+	goLiveEligible := true
 	for _, item := range checklist {
 		if item.Required && item.Status != VerifApproved {
 			goLiveEligible = false

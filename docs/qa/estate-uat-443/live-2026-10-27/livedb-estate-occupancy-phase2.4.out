@@ -1,0 +1,23 @@
+# live-DB transcript — Phase 2.4 unit occupancy / capacity / term gate / dues exemptions / proof review / tenancy approval / archive gates / cross-estate IDOR (M03)
+# captured 2026-10-27, uncached (-count=1)
+# command: cd backend && TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' go test ./internal/estate/ -count=1 -run 'TestLiveDB_Occupancy' -v
+# database: local Supabase (supabase_db_spotlight, 127.0.0.1:54322), schema from 05-schema-occupancy.sql re-apply
+
+=== RUN   TestLiveDB_Occupancy_AdmitRegisterAndRelease
+--- PASS: TestLiveDB_Occupancy_AdmitRegisterAndRelease (0.69s)
+=== RUN   TestLiveDB_Occupancy_CapacityAndOverlap
+--- PASS: TestLiveDB_Occupancy_CapacityAndOverlap (1.96s)
+=== RUN   TestLiveDB_Occupancy_TermGate
+--- PASS: TestLiveDB_Occupancy_TermGate (0.67s)
+=== RUN   TestLiveDB_Occupancy_VacantUnitExemption
+--- PASS: TestLiveDB_Occupancy_VacantUnitExemption (1.29s)
+=== RUN   TestLiveDB_Occupancy_ProofReview
+--- PASS: TestLiveDB_Occupancy_ProofReview (0.89s)
+=== RUN   TestLiveDB_Occupancy_ArchiveAndStatusGates
+--- PASS: TestLiveDB_Occupancy_ArchiveAndStatusGates (0.41s)
+=== RUN   TestLiveDB_Occupancy_TenancyApprovalAdmitsWithoutDemotion
+--- PASS: TestLiveDB_Occupancy_TenancyApprovalAdmitsWithoutDemotion (1.34s)
+=== RUN   TestLiveDB_Occupancy_CrossEstateVehicleVerification
+--- PASS: TestLiveDB_Occupancy_CrossEstateVehicleVerification (0.56s)
+PASS
+ok  	spotlight/backend/internal/estate	10.857s

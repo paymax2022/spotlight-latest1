@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import {
-  ArrowLeft, Bell, CalendarDays, Megaphone, ListTodo, ChevronRight, AlertTriangle, UserRound, ShieldCheck,
+  ArrowLeft, Bell, CalendarDays, Megaphone, ListTodo, ChevronRight, AlertTriangle, UserRound, ShieldCheck, Pencil,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -36,9 +36,14 @@ export default function MemberHome() {
           <Text style={styles.headerTitle}>{dash.data?.card.organisationAcronym ?? 'Dashboard'}</Text>
         </View>
         {access.data?.isAdmin ? (
-          <Pressable onPress={() => router.push('/association/admin')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Admin console">
-            <ShieldCheck size={20} color={Colors.onSurface} strokeWidth={2} />
-          </Pressable>
+          <>
+            <Pressable onPress={() => router.push('/association/edit')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Edit organization">
+              <Pencil size={20} color={Colors.onSurface} strokeWidth={2} />
+            </Pressable>
+            <Pressable onPress={() => router.push('/association/admin')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Admin console">
+              <ShieldCheck size={20} color={Colors.onSurface} strokeWidth={2} />
+            </Pressable>
+          </>
         ) : null}
         <Pressable onPress={() => router.push('/association/profile')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="My profile">
           <UserRound size={20} color={Colors.onSurface} strokeWidth={2} />
@@ -46,7 +51,7 @@ export default function MemberHome() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <Pressable onPress={() => router.push('/association/notifications')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Notifications">
             <Bell size={20} color={Colors.onSurface} strokeWidth={2} />
-            {(dash.data?.unreadAnnouncements ?? 0) > 0 ? <View style={styles.dot} /> : null}
+            {(dash.data?.unreadNotifications ?? 0) + (dash.data?.unreadAnnouncements ?? 0) > 0 ? <View style={styles.dot} /> : null}
           </Pressable>
           <HomeMenuButton />
         </View>

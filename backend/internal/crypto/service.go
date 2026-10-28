@@ -7,6 +7,7 @@ import (
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -56,6 +57,7 @@ type Service struct {
 	audit    *auditLogger
 	withdraw WithdrawalProvider // pluggable on-chain broadcast seam (mock default)
 	tiers    walletDebitLimiter
+	swap     SwapProvider      // Quidax Instant Swap adapter (CR-009)
 }
 
 // NewService builds the crypto service. If price is nil the deterministic
@@ -75,6 +77,7 @@ func NewService(db *pgxpool.Pool, led *ledger.Service, price PriceProvider) *Ser
 		price:    price,
 		audit:    newAuditLogger(db),
 		withdraw: NewMockWithdrawalProvider(),
+		swap:     newMockSwapProvider(), // CR-011: Quidax adapter (mock by default)
 	}
 	if db != nil {
 		s.tiers = tiers.NewService(db)
@@ -393,4 +396,77 @@ func (a *auditLogger) log(ctx context.Context, actorID, action, entityType, enti
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`
 	_, err := a.db.Exec(ctx, q, actorID, action, entityType, dbutil.NullStr(entityID), oldJSON, newJSON, dbutil.NullStr(reason))
 	return err
+}
+
+// === CR-010: Account Management & Asset Discovery ===
+
+// EnsureQuidaxSubaccount retrieves or creates a Quidax subaccount mapping for the user.
+// Per Quidax docs, one subaccount per user is recommended for isolation.
+// Returns the provider account ID (Quidax subaccount ID) for use in swap API calls.
+func (s *Service) EnsureQuidaxSubaccount(ctx context.Context, userID string) (string, error) {
+	if userID == "" {
+		return "", ErrBadRequest
+	}
+
+	// Try to get existing account
+	account, err := s.repo.GetAccount(ctx, userID, "quidax")
+	if err == nil {
+		// Account exists, return the provider account ID
+		return account.ProviderAccountID, nil
+	}
+	if err != ErrNotFound {
+		// Real error, not just "not found"
+		return "", err
+	}
+
+	// Account doesn't exist. For Quidax, we use the userID as the subaccount identifier
+	// (per Quidax docs, users can be created on-demand or mapped 1:1 with external IDs).
+	// This is idempotent: multiple calls with the same userID converge to one account.
+	providerAccountID := userID
+
+	// Create or retrieve the account idempotently via upsert
+	account, err = s.repo.GetOrCreateAccount(ctx, userID, "quidax", providerAccountID)
+	if err != nil {
+		return "", err
+	}
+
+	return account.ProviderAccountID, nil
+}
+
+// ListQuidaxAssets returns the catalogue of active, tradable assets.
+// This is used by CR-011 (SwapQuote handler) to resolve currency codes and by
+// clients to discover supported pairs (NGN ↔ crypto).
+func (s *Service) ListQuidaxAssets(ctx context.Context) ([]Asset, error) {
+	// Query active assets from the catalogue
+	assets, err := s.repo.ListAssets(ctx, true /* activeOnly */)
+	if err != nil {
+		return nil, err
+	}
+	return assets, nil
+}
+
+// GetAssetBySymbol retrieves a single asset by its symbol (e.g., "BTC", "NGN").
+// Used for currency code mapping: NGN input → Asset lookup → Quidax currency code.
+// Symbols are case-insensitive (BTC, btc both match). Returns ErrNotFound if missing.
+func (s *Service) GetAssetBySymbol(ctx context.Context, symbol string) (*Asset, error) {
+	if symbol == "" {
+		return nil, ErrBadRequest
+	}
+
+	// Normalize to uppercase for consistent lookup
+	symbol = strings.ToUpper(symbol)
+
+	// List all assets and filter by symbol (case-insensitive)
+	assets, err := s.repo.ListAssets(ctx, true /* activeOnly */)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range assets {
+		if strings.EqualFold(assets[i].Symbol, symbol) {
+			return &assets[i], nil
+		}
+	}
+
+	return nil, ErrNotFound
 }

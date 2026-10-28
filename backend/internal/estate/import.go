@@ -166,7 +166,7 @@ const (
 )
 
 var (
-	importPropertyTypes = map[string]bool{"apartment": true, "house": true, "commercial": true, "land": true, legacyOther: true}
+	importPropertyTypes = PropertyTypes
 	importOccupancy     = map[string]bool{occupancyVacant: true, occupancyOccupied: true, "reserved": true}
 	importRelationships = map[string]bool{"occupant": true, "owner": true, "tenant": true}
 	importDuesCategory  = map[string]bool{
@@ -788,8 +788,17 @@ func applyImport(ctx context.Context, tx dbtx, estateID, batchID string, p *impo
 		var err error
 		switch pb.action {
 		case importInsert:
-			_, err = tx.Exec(ctx, `INSERT INTO estate_dues_invoices (id, estate_id, property_id, resident_id, category, amount_kobo, due_date, status)
-				VALUES ($1,$2,NULLIF($3,'')::UUID,$4,$5,$6,$7,'pending')`, pb.targetID, estateID, pb.unitID, pb.userID, b.Category, pb.row.amount, pb.row.due)
+			// The two occupancy exemptions (EST-UAT-0048 vacant unit, EST-UAT-0045 out-of-term resident)
+			// refuse a NEW charge against a unit that is empty or whose billed person is not in residence
+			// today. A legacy estate carries both constantly: arrears that survived a move-out, balances
+			// for units it has already re-let. Refusing those would drop receivables the source still says
+			// are owed, so an import commit is recorded as the explicit override the rules ask for, with
+			// the batch named as the reason and the batch row as the audit trail.
+			overrideReason := "opening balance carried over by import batch " + batchID
+			_, err = tx.Exec(ctx, `INSERT INTO estate_dues_invoices (id, estate_id, property_id, resident_id, category, amount_kobo, due_date, status,
+			                                        vacancy_override, vacancy_override_reason, term_override, term_override_reason)
+				VALUES ($1,$2,NULLIF($3,'')::UUID,$4,$5,$6,$7,'pending',TRUE,$8,TRUE,$8)`,
+				pb.targetID, estateID, pb.unitID, pb.userID, b.Category, pb.row.amount, pb.row.due, overrideReason)
 		case importUpdate:
 			_, err = tx.Exec(ctx, `UPDATE estate_dues_invoices SET property_id=NULLIF($2,'')::UUID, resident_id=$3, category=$4, amount_kobo=$5, due_date=$6
 				WHERE id=$1 AND status IN ('pending','overdue')`, pb.targetID, pb.unitID, pb.userID, b.Category, pb.row.amount, pb.row.due)
@@ -808,6 +817,15 @@ func applyImport(ctx context.Context, tx dbtx, estateID, batchID string, p *impo
 
 // applyOccupancy records owner/tenant/occupant on the unit. fillOnly keeps an
 // existing native assignment intact.
+//
+// Deliberate limit (estate-a M03): this writes the unit's party columns directly instead of calling
+// estate_occupancy_admit(). The admitting writer demands an estate_admin actor and enforces the unit's
+// capacity, and an import is run by a platform operator on behalf of an estate whose legacy roll may
+// already be over a capacity nobody configured — so honouring the source is the job here, and refusing
+// rows would lose them. The consequence is that a legacy import does NOT create occupancy registrations:
+// until those estates are re-admitted through the occupancy surface, the capacity count and the
+// "who is in this unit" register see only what the app recorded natively. Recorded as a defect rather
+// than silently accepted.
 func applyOccupancy(ctx context.Context, tx dbtx, unitID, userID, relationship string, fillOnly bool) error {
 	var q string
 	switch relationship {

@@ -168,6 +168,8 @@ export interface MemberDashboard {
   outstandingKobo: number;
   nextDueDate:   string | null;    // ISO
   unreadAnnouncements: number;
+  /** Unread assoc_notifications (tasks, events, meetings, documents, announcements). */
+  unreadNotifications?: number;
   openTasks:     number;
   nextMeeting:   { id: string; title: string; startsAt: string; location: string | null } | null;
   latestAnnouncement: { id: string; title: string; postedAt: string; urgent: boolean } | null;

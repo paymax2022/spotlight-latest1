@@ -1193,13 +1193,13 @@ func (s *Service) UpsertProfile(ctx context.Context, estateID, userID string, re
 			updated_at=NOW()
 		RETURNING id, resident_id, COALESCE(bio,''), COALESCE(profile_photo_url,''),
 			COALESCE(phone,''), COALESCE(alt_phone,''),
-			occupancy_type, COALESCE(visibility,'members'), created_at, updated_at`
+			occupancy_type, COALESCE(proof_status,'unverified'), COALESCE(visibility,'members'), created_at, updated_at`
 	err = s.db.QueryRow(ctx, q,
 		resID, req.Bio, req.ProfilePhotoURL, req.Phone, req.AltPhone,
 		ecJSON, nokJSON, req.OccupancyType, req.LeaseStart, req.LeaseEnd,
 		req.AgreementURL, req.OwnershipDocURL, req.Visibility,
 	).Scan(&p.ID, &p.ResidentID, &p.Bio, &p.ProfilePhotoURL, &p.Phone, &p.AltPhone,
-		&p.OccupancyType, &p.Visibility, &p.CreatedAt, &p.UpdatedAt)
+		&p.OccupancyType, &p.ProofStatus, &p.Visibility, &p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
 
@@ -1213,12 +1213,13 @@ func (s *Service) GetProfile(ctx context.Context, estateID, userID string) (*Res
 	const q = `
 		SELECT id, resident_id, COALESCE(bio,''), COALESCE(profile_photo_url,''),
 			COALESCE(phone,''), COALESCE(alt_phone,''),
-			occupancy_type, COALESCE(visibility,'members'), created_at, updated_at
+			occupancy_type, COALESCE(proof_status,'unverified'), COALESCE(visibility,'members'), created_at, updated_at
 		FROM resident_profiles WHERE resident_id=$1`
 	if err := s.db.QueryRow(ctx, q, resID).Scan(&p.ID, &p.ResidentID, &p.Bio, &p.ProfilePhotoURL,
-		&p.Phone, &p.AltPhone, &p.OccupancyType, &p.Visibility, &p.CreatedAt, &p.UpdatedAt,
+		&p.Phone, &p.AltPhone, &p.OccupancyType, &p.ProofStatus, &p.Visibility, &p.CreatedAt, &p.UpdatedAt,
 	); err != nil {
-		return &ResidentProfile{ResidentID: resID, Visibility: "members", OccupancyType: "resident"}, nil
+		return &ResidentProfile{ResidentID: resID, Visibility: "members",
+			OccupancyType: "resident", ProofStatus: ProofUnverified}, nil
 	}
 	return p, nil
 }
@@ -1334,22 +1335,36 @@ func (s *Service) UpdateStaffStatus(ctx context.Context, estateID, userID, staff
 }
 
 // AddVehicle registers a vehicle under a resident.
+//
+// Re-registering the same plate is an update, and until now it kept whatever verification stamp the
+// previous row carried — so swapping the document behind the entry left a NEW file certified by an
+// approval that had looked at the old one. Same rule as occupancy proof (EST-UAT-0051): the check is of
+// a document, not of a plate, so a different document voids the check.
 func (s *Service) AddVehicle(ctx context.Context, estateID, userID string, req AddVehicleRequest) (*ResidentVehicle, error) {
 	resID, err := s.getResidentID(ctx, estateID, userID)
 	if err != nil {
 		return nil, err
 	}
-	v := &ResidentVehicle{
-		ID: uuid.New().String(), ResidentID: resID,
-		Plate: req.Plate, Make: req.Make, Model: req.Model, Color: req.Color, DocURL: req.DocURL,
-		CreatedAt: time.Now(),
-	}
 	const q = `
 		INSERT INTO resident_vehicles (id, resident_id, plate, make, model, color, doc_url)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
-		ON CONFLICT (resident_id, plate) DO UPDATE SET make=EXCLUDED.make, model=EXCLUDED.model, color=EXCLUDED.color, doc_url=EXCLUDED.doc_url`
-	_, err = s.db.Exec(ctx, q, v.ID, v.ResidentID, v.Plate, v.Make, v.Model, v.Color, v.DocURL)
-	return v, err
+		ON CONFLICT (resident_id, plate) DO UPDATE SET
+			make=EXCLUDED.make, model=EXCLUDED.model, color=EXCLUDED.color, doc_url=EXCLUDED.doc_url,
+			verified        = resident_vehicles.verified AND resident_vehicles.doc_url IS NOT DISTINCT FROM EXCLUDED.doc_url,
+			verified_by     = CASE WHEN resident_vehicles.verified AND resident_vehicles.doc_url IS NOT DISTINCT FROM EXCLUDED.doc_url
+			                       THEN resident_vehicles.verified_by ELSE NULL END,
+			verified_at     = CASE WHEN resident_vehicles.verified AND resident_vehicles.doc_url IS NOT DISTINCT FROM EXCLUDED.doc_url
+			                       THEN resident_vehicles.verified_at ELSE NULL END
+		RETURNING id, resident_id, plate, COALESCE(make,''), COALESCE(model,''), COALESCE(color,''), COALESCE(doc_url,''),
+		          verified, verified_by, verified_at, created_at`
+	v := &ResidentVehicle{}
+	err = s.db.QueryRow(ctx, q, uuid.New().String(), resID, req.Plate, req.Make, req.Model, req.Color, req.DocURL).Scan(
+		&v.ID, &v.ResidentID, &v.Plate, &v.Make, &v.Model, &v.Color, &v.DocURL,
+		&v.Verified, &v.VerifiedBy, &v.VerifiedAt, &v.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("estate: register vehicle: %w", err)
+	}
+	return v, nil
 }
 
 // ListVehicles returns all vehicles for a resident.
@@ -1375,26 +1390,48 @@ func (s *Service) ListVehicles(ctx context.Context, estateID, userID string) ([]
 	return out, rows.Err()
 }
 
+// ErrVehicleNotFound — no vehicle with that id belongs to this estate.
+var ErrVehicleNotFound = errors.New("estate: vehicle not found in this estate")
+
 // VerifyVehicle marks a vehicle as estate-verified (admin only).
+//
+// The UPDATE used to be keyed on the vehicle id alone: an admin of ANY estate who passed the assert on
+// their own estate could verify a vehicle in another one, because the write never mentioned the estate it
+// was supposed to be scoped to. The join through the owner's residency is what binds it.
 func (s *Service) VerifyVehicle(ctx context.Context, estateID, adminID, vehicleID string) error {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return err
 	}
 	now := time.Now()
-	_, err := s.db.Exec(ctx,
-		`UPDATE resident_vehicles SET verified=TRUE, verified_by=$1, verified_at=$2 WHERE id=$3`,
-		adminID, now, vehicleID,
+	tag, err := s.db.Exec(ctx, `
+		UPDATE resident_vehicles v
+		SET verified=TRUE, verified_by=$1, verified_at=$2
+		FROM estate_residents r
+		WHERE v.id=$3 AND v.resident_id = r.id AND r.estate_id=$4`,
+		adminID, now, vehicleID, estateID,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("estate: verify vehicle: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrVehicleNotFound
+	}
+	_ = s.audit(ctx, estateID, adminID, "VEHICLE_VERIFIED", "vehicle", vehicleID, nil)
+	return nil
 }
 
 // GetResidentCard assembles the resident ID card payload.
 // The QR value encodes "<estate_id>:<resident_id>" for gate scanner verification.
+//
+// The card also carries the proof state (EST-UAT-0051): the guard reading "homeowner" needs to know
+// whether the estate has checked the document behind that word, because the label itself is something
+// the resident typed.
 func (s *Service) GetResidentCard(ctx context.Context, estateID, userID string) (*ResidentCard, error) {
 	var card ResidentCard
 	const q = `
 		SELECT r.id, r.estate_id, e.name, r.unit, r.role,
-		       COALESCE(rp.occupancy_type,'resident'), COALESCE(rp.profile_photo_url,''),
+		       COALESCE(rp.occupancy_type,'resident'), COALESCE(rp.proof_status,'unverified'),
+		       COALESCE(rp.profile_photo_url,''),
 		       COALESCE(NULLIF(btrim(au.first_name || ' ' || au.last_name), ''), au.email, '')
 		FROM estate_residents r
 		JOIN estates e ON e.id = r.estate_id
@@ -1403,7 +1440,7 @@ func (s *Service) GetResidentCard(ctx context.Context, estateID, userID string) 
 		WHERE r.estate_id = $1 AND r.user_id = $2`
 	if err := s.db.QueryRow(ctx, q, estateID, userID).Scan(
 		&card.ResidentID, &card.EstateID, &card.EstateName, &card.Unit, &card.Role,
-		&card.OccupancyType, &card.ProfilePhotoURL, &card.FullName,
+		&card.OccupancyType, &card.ProofStatus, &card.ProfilePhotoURL, &card.FullName,
 	); err != nil {
 		return nil, errors.New("estate: resident not found in this estate")
 	}
@@ -1699,9 +1736,21 @@ func (s *Service) AddProperty(ctx context.Context, estateID, adminID string, req
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
-	// Unit keys must be unique within an estate (EST-UAT-0038). There is no DB
-	// unique constraint yet (pending migration — see
-	// docs/qa/estate-uat-443/migrations-estate-a/), so enforce in code.
+	if req.Capacity < 0 {
+		return nil, ErrInvalidCapacity
+	}
+	propertyType := strings.TrimSpace(req.PropertyType)
+	if !PropertyTypes[propertyType] {
+		return nil, ErrInvalidPropertyType
+	}
+	capacity := req.Capacity
+	if capacity == 0 {
+		capacity = DefaultUnitCapacity
+	}
+	// Unit keys must be unique within an estate (EST-UAT-0038). The partial unique index
+	// uidx_estate_properties_unit_key (20271068000010_estate_properties_unique_unit.sql) is the durable
+	// guard, but it is created only on a database with no live duplicates, so this pre-check stays: it
+	// gives the caller the estate-scoped message whether or not that environment has the index yet.
 	var dupID string
 	err := s.db.QueryRow(ctx,
 		`SELECT id FROM estate_properties
@@ -1710,7 +1759,7 @@ func (s *Service) AddProperty(ctx context.Context, estateID, adminID string, req
 		estateID, req.UnitLabel, req.Block,
 	).Scan(&dupID)
 	if err == nil {
-		return nil, fmt.Errorf("estate: unit %q already exists in this estate", req.UnitLabel)
+		return nil, fmt.Errorf("%w: %s", ErrDuplicateUnitKey, req.UnitLabel)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("estate: check duplicate unit: %w", err)
@@ -1719,17 +1768,26 @@ func (s *Service) AddProperty(ctx context.Context, estateID, adminID string, req
 		ID:              uuid.New().String(),
 		EstateID:        estateID,
 		UnitLabel:       req.UnitLabel,
-		PropertyType:    req.PropertyType,
+		PropertyType:    propertyType,
 		Floor:           req.Floor,
 		Block:           req.Block,
 		OccupancyStatus: "vacant",
+		Capacity:        capacity,
 		CreatedAt:       time.Now(),
 	}
 	const q = `
-		INSERT INTO estate_properties (id, estate_id, unit_label, property_type, floor, block, occupancy_status)
-		VALUES ($1,$2,$3,$4,$5,$6,'vacant')`
-	_, err = s.db.Exec(ctx, q, p.ID, p.EstateID, p.UnitLabel, p.PropertyType, p.Floor, p.Block)
-	return p, err
+		INSERT INTO estate_properties (id, estate_id, unit_label, property_type, floor, block, occupancy_status, capacity)
+		VALUES ($1,$2,$3,$4,$5,$6,'vacant',$7)`
+	_, err = s.db.Exec(ctx, q, p.ID, p.EstateID, p.UnitLabel, p.PropertyType, p.Floor, p.Block, capacity)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" &&
+			pgErr.ConstraintName == "uidx_estate_properties_unit_key" {
+			return nil, fmt.Errorf("%w: %s", ErrDuplicateUnitKey, req.UnitLabel)
+		}
+		return nil, fmt.Errorf("estate: insert property: %w", err)
+	}
+	return p, nil
 }
 
 // ListProperties lists all properties in an estate.
@@ -1738,7 +1796,7 @@ func (s *Service) ListProperties(ctx context.Context, estateID, memberID string)
 		return nil, err
 	}
 	const q = `
-		SELECT id, estate_id, unit_label, property_type, COALESCE(floor,''), COALESCE(block,''), occupancy_status, landlord_id, tenant_id, archived, created_at
+		SELECT id, estate_id, unit_label, property_type, COALESCE(floor,''), COALESCE(block,''), occupancy_status, landlord_id, tenant_id, archived, capacity, created_at
 		FROM estate_properties WHERE estate_id=$1 AND archived=FALSE ORDER BY block, floor, unit_label`
 	rows, err := s.db.Query(ctx, q, estateID)
 	if err != nil {
@@ -1748,7 +1806,7 @@ func (s *Service) ListProperties(ctx context.Context, estateID, memberID string)
 	var out []EstateProperty
 	for rows.Next() {
 		var p EstateProperty
-		if err := rows.Scan(&p.ID, &p.EstateID, &p.UnitLabel, &p.PropertyType, &p.Floor, &p.Block, &p.OccupancyStatus, &p.LandlordID, &p.TenantID, &p.Archived, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.EstateID, &p.UnitLabel, &p.PropertyType, &p.Floor, &p.Block, &p.OccupancyStatus, &p.LandlordID, &p.TenantID, &p.Archived, &p.Capacity, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -1757,9 +1815,29 @@ func (s *Service) ListProperties(ctx context.Context, estateID, memberID string)
 }
 
 // ClaimOwnership submits a document-backed ownership claim for a property.
-func (s *Service) ClaimOwnership(ctx context.Context, propertyID, userID, docURL string) (*OwnershipClaim, error) {
+//
+// Two defects M03 recorded and this closes: the property was never bound to the estate in the route, so
+// a caller could name any unit id anywhere (including as a non-member), and the claim was the only place
+// the document existed — nothing on the resident's own record said the estate had looked at it, and a
+// re-declaration inherited the previous approval. A claim now requires membership, is checked against
+// the estate in the path, resets its own review state on re-submission, and moves the resident's proof
+// into the queue an admin reads.
+func (s *Service) ClaimOwnership(ctx context.Context, estateID, propertyID, userID, docURL string) (*OwnershipClaim, error) {
 	if strings.TrimSpace(docURL) == "" {
 		return nil, errors.New("estate: ownership_doc_url is required")
+	}
+	if err := s.assertResident(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
+	var live bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM estate_properties WHERE id=$1 AND estate_id=$2 AND archived=FALSE)`,
+		propertyID, estateID,
+	).Scan(&live); err != nil {
+		return nil, fmt.Errorf("estate: check unit: %w", err)
+	}
+	if !live {
+		return nil, ErrUnitNotFound
 	}
 	c := &OwnershipClaim{
 		ID:              uuid.New().String(),
@@ -1772,33 +1850,139 @@ func (s *Service) ClaimOwnership(ctx context.Context, propertyID, userID, docURL
 	const q = `
 		INSERT INTO property_ownership_claims (id, property_id, user_id, ownership_doc_url)
 		VALUES ($1,$2,$3,$4)
-		ON CONFLICT (property_id, user_id) DO UPDATE SET ownership_doc_url=EXCLUDED.ownership_doc_url, status='pending'
-		RETURNING id, property_id, user_id, ownership_doc_url, status, verified_by, verified_at, reject_reason, created_at`
+		ON CONFLICT (property_id, user_id) DO UPDATE SET ownership_doc_url=EXCLUDED.ownership_doc_url,
+			status='pending', verified_by=NULL, verified_at=NULL, reject_reason=NULL
+		RETURNING id, property_id, user_id, ownership_doc_url, status, verified_by, verified_at, COALESCE(reject_reason,''), created_at`
 	err := s.db.QueryRow(ctx, q, c.ID, c.PropertyID, c.UserID, c.OwnershipDocURL).Scan(
 		&c.ID, &c.PropertyID, &c.UserID, &c.OwnershipDocURL, &c.Status,
 		&c.VerifiedBy, &c.VerifiedAt, &c.RejectReason, &c.CreatedAt,
 	)
-	return c, err
+	if err != nil {
+		return nil, fmt.Errorf("estate: file ownership claim: %w", err)
+	}
+	// The review queue is on the person's declaration too, so the resident card stops presenting an
+	// unchecked occupancy label as if it were settled. 'verified' is not downgraded here: only replacing
+	// the document itself does that, in the database.
+	if _, err := s.db.Exec(ctx, `
+		UPDATE resident_profiles rp SET proof_status='pending'
+		FROM estate_residents r
+		WHERE rp.resident_id = r.id AND r.estate_id=$1 AND r.user_id=$2
+		  AND rp.proof_status IN ('unverified','rejected')`, estateID, userID); err != nil {
+		return nil, fmt.Errorf("estate: queue occupancy proof: %w", err)
+	}
+	s.notifyMembers(ctx, estateID, NotifAdminApprovalRequired, "Ownership claim to review",
+		"A resident has filed an ownership claim with a document. It is waiting in the review queue.",
+		map[string]any{"claim_id": c.ID, "property_id": c.PropertyID}, "estate_admin")
+	return c, nil
 }
 
-// ReviewOwnershipClaim approves or rejects an ownership claim.
-func (s *Service) ReviewOwnershipClaim(ctx context.Context, claimID, adminID, estateID, decision, rejectReason string) (*OwnershipClaim, error) {
+// ReviewOwnershipClaim approves or rejects an ownership claim (estate admin only).
+//
+// Approving used to be inert: the claim row changed colour and nothing else happened, so an "approved"
+// owner had no occupancy registration, the unit still carried its previous landlord, and the word on
+// the resident card stayed unverified. Approval now goes through the single admitting writer — the same
+// one an admin assignment and a tenancy approval use — so capacity, the one-owner rule and the residency
+// checks apply here as well, and proof state records who decided.
+//
+// The unit's occupant count is checked inside the writer; the claim, the admission, the party column and
+// the proof decision commit together or not at all.
+func (s *Service) ReviewOwnershipClaim(ctx context.Context, estateID, adminID, claimID, decision, rejectReason string) (*OwnershipClaim, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
-	now := time.Now()
-	c := &OwnershipClaim{}
-	const q = `
-		UPDATE property_ownership_claims oc
-		SET status=$1, verified_by=$2, verified_at=$3, reject_reason=$4
-		FROM estate_properties ep
-		WHERE oc.id=$5 AND ep.id=oc.property_id AND ep.estate_id=$6
-		RETURNING oc.id, oc.property_id, oc.user_id, oc.ownership_doc_url, oc.status, oc.verified_by, oc.verified_at, oc.reject_reason, oc.created_at`
-	err := s.db.QueryRow(ctx, q, decision, adminID, now, rejectReason, claimID, estateID).Scan(
+	if !validTransferDecision(decision) {
+		return nil, ErrInvalidReviewDecision
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var c OwnershipClaim
+	const load = `
+		SELECT oc.id, oc.property_id, oc.user_id, oc.ownership_doc_url, oc.status
+		FROM property_ownership_claims oc
+		JOIN estate_properties ep ON ep.id = oc.property_id
+		WHERE oc.id=$1 AND ep.estate_id=$2
+		FOR UPDATE OF oc`
+	if err := tx.QueryRow(ctx, load, claimID, estateID).Scan(
+		&c.ID, &c.PropertyID, &c.UserID, &c.OwnershipDocURL, &c.Status,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrClaimNotFound
+		}
+		return nil, fmt.Errorf("estate: load ownership claim: %w", err)
+	}
+	if c.Status != "pending" {
+		return nil, fmt.Errorf("%w: already %s", ErrClaimReviewed, c.Status)
+	}
+
+	const upd = `
+		UPDATE property_ownership_claims
+		SET status=$1, verified_by=$2, verified_at=NOW(), reject_reason=$3
+		WHERE id=$4
+		RETURNING id, property_id, user_id, ownership_doc_url, status, verified_by, verified_at, COALESCE(reject_reason,''), created_at`
+	if err := tx.QueryRow(ctx, upd, decision, adminID,
+		dbutil.NullStr(strings.TrimSpace(rejectReason)), claimID).Scan(
 		&c.ID, &c.PropertyID, &c.UserID, &c.OwnershipDocURL, &c.Status,
 		&c.VerifiedBy, &c.VerifiedAt, &c.RejectReason, &c.CreatedAt,
-	)
-	return c, err
+	); err != nil {
+		return nil, fmt.Errorf("estate: review ownership claim: %w", err)
+	}
+
+	if decision == "approved" {
+		if _, err := admitOccupancy(ctx, tx, occupancyAdmission{
+			estateID: estateID, propertyID: c.PropertyID, userID: c.UserID,
+			actorID: adminID, kind: OccupancyHomeowner,
+			note: "ownership claim " + c.ID,
+		}); err != nil {
+			return nil, err
+		}
+		if err := s.recordProofDecision(ctx, tx, estateID, adminID, c.UserID, ProofVerified,
+			"ownership claim "+c.ID, c.OwnershipDocURL); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.recordProofDecision(ctx, tx, estateID, adminID, c.UserID, ProofRejected,
+			"ownership claim "+c.ID+": "+strings.TrimSpace(rejectReason), ""); err != nil {
+			return nil, err
+		}
+	}
+	_ = s.auditTx(ctx, tx, estateID, adminID, "OWNERSHIP_CLAIM_REVIEW", "property", c.PropertyID,
+		map[string]any{"claim_id": claimID, "decision": decision})
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	s.notify(ctx, estateID, c.UserID, NotifAdminApprovalRequired, "Ownership claim "+decision,
+		"Your ownership claim was "+decision+".", map[string]any{"claim_id": claimID, "property_id": c.PropertyID})
+	return &c, nil
+}
+
+// recordProofDecision writes the reviewer identity and result onto the resident's own declaration
+// (EST-UAT-0051). It runs as two statements on purpose: syncing a replaced document URL and setting the
+// decision in one UPDATE would be undone by estate_reset_proof_on_redeclaration(), which clears any
+// approval that travels with a new file. docURL empty means "leave the declared document as it is".
+func (s *Service) recordProofDecision(ctx context.Context, tx pgx.Tx, estateID, adminID, userID, status, note, docURL string) error {
+	if docURL != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE resident_profiles rp SET ownership_doc_url=$3
+			FROM estate_residents r
+			WHERE rp.resident_id = r.id AND r.estate_id=$1 AND r.user_id=$2
+			  AND COALESCE(rp.ownership_doc_url,'') <> $3`, estateID, userID, docURL); err != nil {
+			return fmt.Errorf("estate: sync claimed document: %w", err)
+		}
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE resident_profiles rp
+		SET proof_status=$3, proof_verified_by=$4, proof_verified_at=NOW(), proof_review_note=$5
+		FROM estate_residents r
+		WHERE rp.resident_id = r.id AND r.estate_id=$1 AND r.user_id=$2`,
+		estateID, userID, status, adminID, dbutil.NullStr(note))
+	if err != nil {
+		return fmt.Errorf("estate: record occupancy proof decision: %w", err)
+	}
+	return nil
 }
 
 // CreateTenancyRequest submits a tenancy application for a property.
@@ -1815,13 +1999,13 @@ func (s *Service) CreateTenancyRequest(ctx context.Context, estateID, propertyID
 	if err := s.db.QueryRow(ctx,
 		`SELECT estate_id, COALESCE(landlord_id::TEXT,'') FROM estate_properties WHERE id=$1`, propertyID,
 	).Scan(&propEstate, &landlordID); err != nil {
-		return nil, errors.New("estate: property not found")
+		return nil, ErrUnitNotFound
 	}
 	if propEstate != estateID {
-		return nil, errors.New("estate: property does not belong to this estate")
+		return nil, ErrUnitNotFound
 	}
 	if landlordID == "" {
-		return nil, errors.New("estate: property has no landlord to review the request")
+		return nil, ErrUnitNoLandlord
 	}
 	tr := &TenancyRequest{
 		ID:           uuid.New().String(),
@@ -1837,7 +2021,7 @@ func (s *Service) CreateTenancyRequest(ctx context.Context, estateID, propertyID
 	const q = `
 		INSERT INTO tenancy_requests (id, property_id, tenant_id, landlord_id, lease_start, lease_end, agreement_url)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
-		ON CONFLICT (property_id, tenant_id) DO UPDATE SET landlord_id=EXCLUDED.landlord_id, lease_start=EXCLUDED.lease_start, lease_end=EXCLUDED.lease_end, agreement_url=EXCLUDED.agreement_url, status='pending'
+		ON CONFLICT (property_id, tenant_id) DO UPDATE SET landlord_id=EXCLUDED.landlord_id, lease_start=EXCLUDED.lease_start, lease_end=EXCLUDED.lease_end, agreement_url=EXCLUDED.agreement_url, status='pending', reviewed_by=NULL, reject_reason=NULL
 		RETURNING id, property_id, tenant_id, landlord_id, lease_start::TEXT, COALESCE(lease_end::TEXT,''), COALESCE(agreement_url,''), status, reviewed_at, created_at`
 	err := s.db.QueryRow(ctx, q, tr.ID, tr.PropertyID, tr.TenantID, tr.LandlordID, tr.LeaseStart, tr.LeaseEnd, tr.AgreementURL).Scan(
 		&tr.ID, &tr.PropertyID, &tr.TenantID, &tr.LandlordID, &tr.LeaseStart, &tr.LeaseEnd, &tr.AgreementURL,
@@ -1846,14 +2030,18 @@ func (s *Service) CreateTenancyRequest(ctx context.Context, estateID, propertyID
 	return tr, err
 }
 
-// ReviewTenancyRequest allows the property's landlord to approve or reject a
-// tenancy request. Approval side-effects (property occupancy + resident
-// membership) commit in the SAME transaction as the status flip — previously
-// they ran as separate error-discarding Execs, so a partial approval could
-// occupy the unit without admitting the tenant (or vice versa).
-func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordID, estateID, decision string) (*TenancyRequest, error) {
-	if decision != "approved" && decision != "rejected" {
-		return nil, errors.New("estate: decision must be 'approved' or 'rejected'")
+// ReviewTenancyRequest is the unit's landlord deciding a tenancy request — approving it admits the
+// tenant, rejecting it leaves the unit alone.
+//
+// The lease window is written, the reviewer is recorded, and approval goes through the same admitting
+// writer as every other occupancy change, which is promotion-only for role (an admin stays an admin, a
+// banned or deleted membership is not revived), copies the lease dates onto the registration, and
+// enforces capacity and the one-tenant rule. Only the unit's landlord can decide it — an estate admin
+// who is the tenant is refused, so nobody opens their own door. The unit in the path is part of the
+// lookup: a request id alone is not a capability over a different unit's lease.
+func (s *Service) ReviewTenancyRequest(ctx context.Context, estateID, propertyID, requestID, reviewerID, decision, rejectReason string) (*TenancyRequest, error) {
+	if !validTransferDecision(decision) {
+		return nil, ErrInvalidReviewDecision
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -1861,43 +2049,53 @@ func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordI
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	now := time.Now()
 	tr := &TenancyRequest{}
 	const q = `
-		UPDATE tenancy_requests tr SET status=$1, reviewed_at=$2
+		UPDATE tenancy_requests tr SET status=$1, reviewed_at=NOW(), reviewed_by=$2, reject_reason=$3
 		FROM estate_properties ep
-		WHERE tr.id=$3 AND tr.landlord_id=$4 AND ep.id=tr.property_id AND ep.estate_id=$5 AND tr.status='pending'
-		RETURNING tr.id, tr.property_id, tr.tenant_id, tr.landlord_id, tr.lease_start::TEXT, COALESCE(tr.lease_end::TEXT,''), COALESCE(tr.agreement_url,''), tr.status, tr.reviewed_at, tr.created_at`
-	if err := tx.QueryRow(ctx, q, decision, now, requestID, landlordID, estateID).Scan(
+		WHERE tr.id=$4 AND tr.property_id=$6 AND tr.landlord_id=$2 AND ep.id=tr.property_id AND ep.estate_id=$5 AND tr.status='pending'
+		RETURNING tr.id, tr.property_id, tr.tenant_id, tr.landlord_id, tr.lease_start::TEXT,
+		          COALESCE(tr.lease_end::TEXT,''), COALESCE(tr.agreement_url,''), tr.status,
+		          tr.reviewed_by, tr.reviewed_at, COALESCE(tr.reject_reason,''), tr.created_at`
+	if err := tx.QueryRow(ctx, q, decision, reviewerID, dbutil.NullStr(strings.TrimSpace(rejectReason)),
+		requestID, estateID, propertyID).Scan(
 		&tr.ID, &tr.PropertyID, &tr.TenantID, &tr.LandlordID, &tr.LeaseStart, &tr.LeaseEnd,
-		&tr.AgreementURL, &tr.Status, &tr.ReviewedAt, &tr.CreatedAt,
+		&tr.AgreementURL, &tr.Status, &tr.ReviewedBy, &tr.ReviewedAt, &tr.RejectReason, &tr.CreatedAt,
 	); err != nil {
-		return nil, errors.New("estate: tenancy request not found, not your request, or already reviewed")
+		return nil, ErrTenancyNotReviewable
 	}
 
-	// On approval: mark property occupied and upsert a resident record for the tenant.
 	if decision == "approved" {
-		if _, err := tx.Exec(ctx,
-			`UPDATE estate_properties SET tenant_id=$1, occupancy_status='occupied' WHERE id=$2 AND estate_id=$3`,
-			tr.TenantID, tr.PropertyID, estateID,
-		); err != nil {
-			return nil, fmt.Errorf("estate: mark property occupied: %w", err)
+		// The lease dates become the occupancy term, which is what EST-UAT-0045 asks for: access and
+		// dues follow it. A malformed stored date is refused here rather than admitted dateless.
+		from, err := parseOccupancyDate("lease_start", tr.LeaseStart)
+		if err != nil {
+			return nil, err
 		}
-		// estate_residents.role CHECK allows only 'resident'/'estate_admin';
-		// an approved tenant is admitted as a 'resident' (the tenant/owner
-		// distinction lives in resident_profiles.occupancy_type).
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO estate_residents (id, estate_id, user_id, unit, role)
-			 VALUES ($1,$2,$3,'','resident')
-			 ON CONFLICT (estate_id, user_id) DO UPDATE SET role='resident'`,
-			uuid.New().String(), estateID, tr.TenantID,
-		); err != nil {
-			return nil, fmt.Errorf("estate: admit approved tenant: %w", err)
+		until, err := parseOccupancyDate("lease_end", tr.LeaseEnd)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := admitOccupancy(ctx, tx, occupancyAdmission{
+			estateID: estateID, propertyID: tr.PropertyID, userID: tr.TenantID,
+			actorID: reviewerID, kind: OccupancyTenant, from: from, until: until,
+			note: "tenancy request " + tr.ID,
+		}); err != nil {
+			return nil, err
+		}
+		// An approved agreement is a checked document: the label the resident card prints stops being a
+		// self-declaration for this person. A rejection writes no proof state — refusing one request is
+		// not a verdict on everything else the resident has declared.
+		if err := s.recordProofDecision(ctx, tx, estateID, reviewerID, tr.TenantID, ProofVerified,
+			"tenancy request "+tr.ID, tr.AgreementURL); err != nil {
+			return nil, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	s.notify(ctx, estateID, tr.TenantID, NotifAdminApprovalRequired, "Tenancy request "+decision,
+		"Your tenancy request was "+decision+".", map[string]any{"request_id": tr.ID, "property_id": tr.PropertyID})
 	return tr, nil
 }
 
@@ -1909,11 +2107,30 @@ func (s *Service) assertResident(ctx context.Context, estateID, userID string) e
 	return s.assertRoles(ctx, estateID, userID, "resident", "estate_admin")
 }
 
+// assertRoles is the single membership gate every estate route passes through, and since Phase 2.4 it
+// is also where an occupancy term takes effect (EST-UAT-0045). Three states are distinguished on
+// purpose: no registration at all (the entire existing population — a member of the estate who has
+// never been recorded against a unit) is unrestricted exactly as before; a live registration covering
+// today admits them; registrations that exist but none of which covers today refuses them. An estate
+// admin is exempt from the term gate, because their authority is the estate's administration, governed
+// by the lifecycle gate and RBAC, not by which unit they sleep in.
 func (s *Service) assertRoles(ctx context.Context, estateID, userID string, roles ...string) error {
-	const q = `SELECT role, banned_at IS NOT NULL, deleted_at IS NOT NULL FROM estate_residents WHERE estate_id=$1 AND user_id=$2`
+	const q = `
+		SELECT r.role, r.banned_at IS NOT NULL, r.deleted_at IS NOT NULL,
+		       COALESCE(o.registered, FALSE), COALESCE(o.in_effect, TRUE)
+		FROM estate_residents r
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*) > 0 AS registered,
+			       COALESCE(bool_or(x.ended_at IS NULL
+			                        AND (x.effective_from IS NULL OR x.effective_from <= CURRENT_DATE)
+			                        AND (x.effective_until IS NULL OR x.effective_until >= CURRENT_DATE)), TRUE) AS in_effect
+			FROM estate_unit_occupants x
+			WHERE x.estate_id = r.estate_id AND x.user_id = r.user_id
+		) o ON TRUE
+		WHERE r.estate_id=$1 AND r.user_id=$2`
 	var role string
-	var banned, deleted bool
-	if err := s.db.QueryRow(ctx, q, estateID, userID).Scan(&role, &banned, &deleted); err != nil {
+	var banned, deleted, registered, inEffect bool
+	if err := s.db.QueryRow(ctx, q, estateID, userID).Scan(&role, &banned, &deleted, &registered, &inEffect); err != nil {
 		return errors.New("estate: not a member of this estate")
 	}
 	if deleted {
@@ -1923,6 +2140,9 @@ func (s *Service) assertRoles(ctx context.Context, estateID, userID string, role
 		return errors.New("estate: this account is banned from the estate")
 	}
 	if slices.Contains(roles, role) {
+		if role != "estate_admin" && registered && !inEffect {
+			return ErrResidencyNotInEffect
+		}
 		return nil
 	}
 	return errors.New("estate: insufficient role")

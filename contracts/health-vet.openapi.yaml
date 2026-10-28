@@ -196,6 +196,7 @@ components:
         lng: { type: number }
         consultFeeKobo: { type: integer, format: int64, description: "Lowest active tele price, in kobo" }
         homeVisitFeeKobo: { type: integer, format: int64, description: "Lowest active home price, in kobo" }
+        clinicFeeKobo: { type: integer, format: int64, description: "Lowest active clinic price, in kobo; 0 when the vet offers no clinic visit" }
         types:
           type: array
           items: { type: string, enum: [tele, home, clinic] }

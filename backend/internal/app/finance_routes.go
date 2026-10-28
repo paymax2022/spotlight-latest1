@@ -84,6 +84,13 @@ import (
 	"spotlight/backend/internal/services"
 	staysreservation "spotlight/backend/internal/stays/reservation"
 	"spotlight/backend/internal/telemedicine"
+	telemedclaims "spotlight/backend/internal/telemedadmin/claims"
+	telemedcompliance "spotlight/backend/internal/telemedadmin/compliance"
+	telemedfinance "spotlight/backend/internal/telemedadmin/finance"
+	telemedonboarding "spotlight/backend/internal/telemedadmin/onboarding"
+	telemedprescriptions "spotlight/backend/internal/telemedadmin/prescriptions"
+	telemedreviews "spotlight/backend/internal/telemedadmin/reviews"
+	telemedsupport "spotlight/backend/internal/telemedadmin/support"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	transportpaystackcheckout "spotlight/backend/internal/transport/paystackcheckout"
@@ -677,7 +684,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// Same adminGroupTop5 fix applies — this is a second, independent
 			// admin group instance sharing the path prefix, not the same
 			// middleware chain as RegisterHealthVet's own group above.
-			RegisterHealthVCNVerification(finance, r.Group("/api/health/vet/admin"), pool, rbac, supabase)
+			vcnPresigner := r2.New(r2.Config{
+				AccountEndpoint: cfg.R2AccountEndpoint,
+				Bucket:          cfg.R2Bucket,
+				AccessKeyID:     cfg.R2AccessKeyID,
+				SecretAccessKey: cfg.R2SecretAccessKey,
+				Region:          cfg.R2Region,
+			})
+			RegisterHealthVCNVerification(finance, r.Group("/api/health/vet/admin"), pool, rbac, supabase, vcnPresigner)
 		}
 		// AI Symptom Checker (triage & navigation, NOT diagnosis) — reuses the care
 		// loop + wallet + clinician-governed red-flag layer. SC-1..SC-12 enforced.
@@ -1030,6 +1044,27 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			log.Fatalf("[association] ASSOC_CARD_SIGNING_SECRET is required when APP_ENV=%q — refusing to sign membership cards with the public dev key", cfg.AppEnv)
 		} else {
 			log.Println("[association] WARNING: ASSOC_CARD_SIGNING_SECRET unset — using the public dev card key (development only)")
+		}
+		// Device push for in-app notifications (task assignment, events,
+		// announcements, meetings, documents). The in-app feed rows are written by
+		// the service regardless; this only adds the push, and is skipped when
+		// Redis/the queue is unavailable.
+		if cfg.RedisURL != "" {
+			if pushClient, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
+				assocNotif := notifications.NewService(pushClient)
+				assocSvc.SetPusher(func(ctx context.Context, userID, title, body string, data map[string]any) error {
+					return deliverToUser(ctx, pool, assocNotif, notifications.Notification{
+						UserID: userID,
+						Event:  notifications.Event("association.activity"),
+						Title:  title,
+						Body:   body,
+						Data:   data,
+					})
+				})
+				log.Println("[association] device push wired (tasks, events, announcements, meetings, documents)")
+			} else {
+				log.Printf("[association] push disabled: queue client: %v", qerr)
+			}
 		}
 		// Commission recording for realized dues profit (the RevenueSplit 5%
 		// platform fee). Ledger-less recorder — the dues split already posts the
@@ -1449,6 +1484,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Phase 2.3: estate profile, configuration history and ownership governance.
 		RegisterEstateProfile(estGroup, estateHandler)
 
+		// V1 mobile-facing properties API — aggregates properties across user's estates.
+		v1EstatePropsHandler := estate.NewV1Handler(pool)
+		v1PropsGroup := r.Group("/api/v1/estate/properties")
+		v1PropsGroup.Use(middleware.RequireAuthContext(supabase, rbac))
+		v1PropsGroup.GET("", v1EstatePropsHandler.ListProperties)
+		v1PropsGroup.GET("/:id", v1EstatePropsHandler.GetProperty)
+		log.Println("[estate] v1 properties API registered at /api/v1/estate/properties")
 	}
 
 	// Property role registration rollout order, enforced in code: the flag only
@@ -2214,6 +2256,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		teleAdmin.GET("/doctors", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListDoctors)
 		teleAdmin.GET("/appointments", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListAppointments)
 		teleAdmin.POST("/doctors/:userId/verify", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminVerifyDoctor)
+		// Per-area admin consoles (onboarding, reviews, prescriptions, finance, claims,
+		// support, compliance). Each package mounts its own /<area>/... routes; reads need
+		// telemedicine.admin.view, mutations telemedicine.admin.manage.
+		teleView := middleware.RequirePermission(rbac, "telemedicine.admin.view")
+		teleManage := middleware.RequirePermission(rbac, "telemedicine.admin.manage")
+		telemedonboarding.Register(teleAdmin, pool, teleView, teleManage)
+		telemedreviews.Register(teleAdmin, pool, teleView, teleManage)
+		telemedprescriptions.Register(teleAdmin, pool, teleView, teleManage)
+		telemedfinance.Register(teleAdmin, pool, teleView, teleManage)
+		telemedclaims.Register(teleAdmin, pool, teleView, teleManage)
+		telemedsupport.Register(teleAdmin, pool, teleView, teleManage)
+		telemedcompliance.Register(teleAdmin, pool, teleView, teleManage)
 	}
 
 	if cfg.FeaturePharmacyEnabled {

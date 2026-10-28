@@ -30,7 +30,9 @@ func (h *Handler) SwapQuote(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
 		return
 	}
-	q, err := h.svc.SwapQuote(c.Request.Context(), uid, req.FromAssetID, req.ToAssetID, req.FromUnits)
+	// CR-011: Call Quidax for live quotes (replaces internal pricing).
+	// Falls back to mock provider if real Quidax credentials not configured.
+	q, err := h.svc.SwapQuoteQuidax(c.Request.Context(), uid, req.FromAssetID, req.ToAssetID, req.FromUnits)
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
@@ -53,12 +55,14 @@ func (h *Handler) Swap(c *gin.Context) {
 		FromAssetID string `json:"from_asset_id"`
 		ToAssetID   string `json:"to_asset_id"`
 		FromUnits   int64  `json:"from_units"`
+		// CR-011: Quotation ID from SwapQuote response (15-sec TTL). Required for Quidax execution.
+		QuotationID string `json:"quotation_id,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
 		return
 	}
-	o, err := h.svc.Swap(c.Request.Context(), uid, req.FromAssetID, req.ToAssetID, req.FromUnits, key)
+	o, err := h.svc.Swap(c.Request.Context(), uid, req.FromAssetID, req.ToAssetID, req.FromUnits, req.QuotationID, key)
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return

@@ -32,6 +32,7 @@ type VetListing struct {
 	Lng              *float64          `json:"lng,omitempty"`
 	ConsultFeeKobo   int64             `json:"consultFeeKobo"`
 	HomeVisitFeeKobo int64             `json:"homeVisitFeeKobo"`
+	ClinicFeeKobo    int64             `json:"clinicFeeKobo"`
 	Types            []string          `json:"types"`
 	Species          []string          `json:"species"`
 	Specialties      []string          `json:"specialties"`
@@ -83,13 +84,13 @@ var visitTypeToListing = map[string]string{"TELE": "tele", "HOME": "home", "CLIN
 // provider has no location. Callers add the WHERE tail.
 const listingSQL = `
 	SELECT hp.id::text, hp.display_name, hp.owner_user_id::text,
-	       dvp.profile_draft::text,
+	       COALESCE(dvp.profile_draft::text, '{}'),
 	       ST_Y(hp.geo::geometry), ST_X(hp.geo::geometry)
 	FROM health_providers hp
-	JOIN doctor_vet_profiles dvp ON dvp.user_id = hp.owner_user_id
+	LEFT JOIN doctor_vet_profiles dvp ON dvp.user_id = hp.owner_user_id
 	WHERE hp.domain = 'VET' AND hp.provider_type = 'vet'
 	  AND hp.status = 'APPROVED' AND hp.discoverable = true
-	  AND dvp.is_published = true AND dvp.verification = 'approved'`
+	  AND (dvp.user_id IS NULL OR dvp.verification NOT IN ('suspended', 'rejected'))`
 
 // ListVetListings returns the listed vets, nearest first when lat/lng are given,
 // otherwise by name. The filter is applied after the query: the listed set is small.
@@ -185,6 +186,10 @@ func (s *Service) listingRows(ctx context.Context, q string, args ...any) ([]Vet
 	if err != nil {
 		return nil, err
 	}
+	ratings, err := s.listingRatings(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, r := range raws {
 		l := r.listing
@@ -201,15 +206,49 @@ func (s *Service) listingRows(ctx context.Context, q string, args ...any) ([]Vet
 		fee := fees[l.ID]
 		l.ConsultFeeKobo = fee.consult
 		l.HomeVisitFeeKobo = fee.home
+		l.ClinicFeeKobo = fee.clinic
 		l.Types = fee.types
+		if rt, ok := ratings[l.ID]; ok {
+			l.Rating, l.ReviewCount = rt.avg, rt.count
+		}
 		l.Active = true
 		out = append(out, l)
 	}
 	return out, nil
 }
 
+type listingRating struct {
+	avg   float64
+	count int
+}
+
+// listingRatings returns the average rating (one decimal) and review count of the
+// visible (non-hidden) vet_reviews rows for each provider. Providers with no
+// reviews are absent from the map, so they list as 0 / 0.
+func (s *Service) listingRatings(ctx context.Context, providerIDs []string) (map[string]listingRating, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT provider_id::text, ROUND(AVG(rating)::numeric, 1)::float8, COUNT(*)::int
+		FROM vet_reviews
+		WHERE NOT is_hidden AND provider_id = ANY($1::uuid[])
+		GROUP BY provider_id`, providerIDs)
+	if err != nil {
+		return nil, fmt.Errorf("vet: listing ratings: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]listingRating{}
+	for rows.Next() {
+		var id string
+		var r listingRating
+		if err := rows.Scan(&id, &r.avg, &r.count); err != nil {
+			return nil, fmt.Errorf("vet: scan listing rating: %w", err)
+		}
+		out[id] = r
+	}
+	return out, rows.Err()
+}
+
 type listingFee struct {
-	consult, home int64
+	consult, home, clinic int64
 	types         []string
 }
 
@@ -245,6 +284,8 @@ func (s *Service) listingFees(ctx context.Context, providerIDs []string) (map[st
 			f.consult = price
 		case "HOME":
 			f.home = price
+		case "CLINIC":
+			f.clinic = price
 		}
 		out[pid] = f
 	}

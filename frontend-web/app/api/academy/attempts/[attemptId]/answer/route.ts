@@ -31,7 +31,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ attemptId:
     }, attemptQuestionId, presentationOptionId);
     return successResponse({ success: true, ...saved });
   } catch (error) {
-    if (error instanceof ExamError) return errorResponse(error.message, error.status);
+    if (error instanceof ExamError) return errorResponse(error.message, error.status, error.code);
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }

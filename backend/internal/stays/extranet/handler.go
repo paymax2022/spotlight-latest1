@@ -64,6 +64,8 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 	g.POST("/properties/:propertyId/room-types", h.CreateRoomType)
 	g.GET("/properties/:propertyId/rate-plans", h.ListRatePlans)
 	g.POST("/properties/:propertyId/rate-plans", h.CreateRatePlan)
+	g.GET("/properties/:propertyId/availability", h.ListAvailability)
+	g.PUT("/properties/:propertyId/room-types/:roomTypeId/availability", h.SetAvailability)
 
 	g.GET("/properties/:propertyId/reservations", h.ListReservations)
 	g.GET("/properties/:propertyId/arrivals", h.Arrivals)
@@ -240,6 +242,7 @@ func (h *Handler) CreateRoomType(c *gin.Context) {
 		Name      string `json:"name" binding:"required"`
 		Occupancy int    `json:"occupancy"`
 		Bedding   string `json:"bedding"`
+		Units     int    `json:"units"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
@@ -248,7 +251,10 @@ func (h *Handler) CreateRoomType(c *gin.Context) {
 	if b.Occupancy <= 0 {
 		b.Occupancy = 2
 	}
-	id, err := h.svc.CreateRoomType(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.Name, b.Occupancy, b.Bedding)
+	if b.Units <= 0 {
+		b.Units = 1
+	}
+	id, err := h.svc.CreateRoomType(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.Name, b.Occupancy, b.Bedding, b.Units)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -275,13 +281,15 @@ func (h *Handler) CreateRatePlan(c *gin.Context) {
 		Refundable       bool   `json:"refundable"`
 		BaseSellRateKobo int64  `json:"base_sell_rate_kobo"`
 		Currency         string `json:"currency"`
+		LongStayMinNights   int    `json:"long_stay_min_nights"`
+		LongStayDiscountPct int    `json:"long_stay_discount_pct"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.CreateRatePlan(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"),
-		b.RoomTypeID, b.RatePlanType, b.Board, b.Refundable, b.BaseSellRateKobo, b.Currency)
+		b.RoomTypeID, b.RatePlanType, b.Board, b.Refundable, b.BaseSellRateKobo, b.Currency, b.LongStayMinNights, b.LongStayDiscountPct)
 	if err != nil {
 		mapErr(c, err)
 		return

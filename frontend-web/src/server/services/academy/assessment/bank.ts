@@ -225,6 +225,28 @@ export async function poolCount(
   return count ?? 0;
 }
 
+/** Approved items per topic code, for the per-topic publish floor. */
+export async function approvedByTopic(
+  db: Db,
+  scope: { stage: string; moduleCodes: string[] },
+): Promise<Map<string, number>> {
+  const { data, error } = await db
+    .from('academy_question_items')
+    .select('id, film_module_code')
+    .eq('academy_scope', FILM_SCOPE)
+    .eq('status', 'approved')
+    .eq('film_stage', scope.stage)
+    .in('film_module_code', scope.moduleCodes);
+  if (error) { console.error('[film/assessment] per-topic pool read failed', error); throw new Error('Could not check the question pool'); }
+
+  const counts = new Map<string, number>();
+  for (const code of scope.moduleCodes) counts.set(code, 0);
+  for (const row of (data ?? []) as unknown as Array<{ film_module_code: string }>) {
+    counts.set(row.film_module_code, (counts.get(row.film_module_code) ?? 0) + 1);
+  }
+  return counts;
+}
+
 /**
  * Draw approved film items for a stage (+ optional modules). Returns rows with the
  * options/answer needed to build a snapshot and score it. Order is randomised here

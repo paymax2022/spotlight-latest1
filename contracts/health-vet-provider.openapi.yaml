@@ -1,0 +1,444 @@
+openapi: 3.0.3
+info:
+  title: Paymax Health — Veterinary provider workspace
+  version: 1.0.0
+  description: |
+    The vet-facing half of the Veterinary API, mounted on the authenticated member
+    group at `/api/finance/health/vet`. Companion to `health-vet.openapi.yaml`
+    (pet-owner side). Responses are bare camelCase objects/arrays matching
+    `mobile-app/reactnative/src/features/health/vet/types.ts`; errors are
+    `{ "success": false, "error": "..." }`.
+
+    Gating: every route needs a signed-in user who owns an APPROVED VET provider
+    (HL-2); a missing/foreign appointment or pet is a uniform 404 (no existence
+    oracle between vets). Money moves only inside the shared booking service
+    (escrow + KYC, HL-9/HL-10) — nothing here posts a ledger entry.
+
+    Not in this file (already served elsewhere): `/provider/availability`
+    (GET/PUT), `/verification/submit|status|documents/{docId}/url` and the
+    generic `/api/finance/health/providers/applications` onboarding API.
+servers:
+  - url: /api/finance/health/vet
+security:
+  - bearerAuth: []
+paths:
+  /provider/profile:
+    get:
+      summary: The caller's own vet profile (works before approval)
+      responses:
+        '200': { description: Profile, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderProfile' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+    put:
+      summary: Update bio, fees and the visit types offered
+      description: |
+        Only an APPROVED vet. Fees are integer kobo; each enabled visit type becomes
+        an active service at its fee, a type left out is deactivated (never deleted).
+        Tele and clinic visits use `consultFeeKobo`, home visits `homeVisitFeeKobo`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bio: { type: string, maxLength: 2000 }
+                consultFeeKobo: { type: integer, format: int64, minimum: 0 }
+                homeVisitFeeKobo: { type: integer, format: int64, minimum: 0 }
+                types:
+                  type: array
+                  items: { $ref: '#/components/schemas/VisitType' }
+      responses:
+        '200': { description: Updated profile, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderProfile' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /provider/appointments:
+    get:
+      summary: The vet's own appointments (newest first, max 200)
+      responses:
+        '200':
+          description: Rows; the owner is shown as "First L."
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProviderAppointmentRow' }
+        '403': { $ref: '#/components/responses/Error' }
+  /provider/appointments/{id}/decision:
+    post:
+      summary: Accept, decline or reschedule a request
+      description: |
+        accept — REQUESTED→ACCEPTED→CONFIRMED (idempotent when already confirmed).
+        decline — cancels and refunds the held payment.
+        reschedule — moves the slot to `scheduledFor` (future, no clash with the vet's
+        other bookings), ending CONFIRMED.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [accept, decline, reschedule] }
+                scheduledFor: { type: string, format: date-time }
+      responses:
+        '200':
+          description: New state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  status: { $ref: '#/components/schemas/AppointmentStatus' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /provider/appointments/{id}/nav:
+    get:
+      summary: Home-visit destination, owner contact and straight-line ETA
+      description: Only for the vet's own live HOME visit; the phone is not released otherwise.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: Navigation, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderHomeNav' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /provider/appointments/{id}/soap:
+    post:
+      summary: Save the visit note — completes the visit and releases payment
+      description: |
+        Starts the consult if needed, completes it through the shared booking service
+        (SOAP note persisted, escrow released to the vet, KYC-gated) and stores the
+        diagnosis/follow-up. `summaryId` is the consult id — the id the owner-side
+        `GET /summaries/{id}` reads. Replays return it unchanged.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveSoapInput' }
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  summaryId: { type: string, format: uuid }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /provider/pets/{petId}/chart:
+    get:
+      summary: A treated pet's chart (HL-8 consent-gated)
+      description: |
+        Requires an active appointment for the pet (else 404). Basic details and the
+        vaccination schedule follow the relationship; other providers' notes and
+        prescriptions and the owner's vault records need the owner's active RECORDS
+        consent. Vault reads are access-logged.
+      parameters:
+        - { name: petId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Chart, content: { application/json: { schema: { $ref: '#/components/schemas/PetChart' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /provider/prescriptions:
+    post:
+      summary: Issue an e-prescription for the consult
+      description: |
+        Needs a started consult. Goes through the shared e-Rx engine (dispense-once,
+        no controlled drugs, species-aware safety hard stops → 422).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueRxInput' }
+      responses:
+        '201': { description: Issued, content: { application/json: { schema: { $ref: '#/components/schemas/EPrescription' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /provider/lab-orders:
+    post:
+      summary: Order lab tests for the pet (recorded by test name)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appointmentId, testNames]
+              properties:
+                appointmentId: { type: string, format: uuid }
+                petId: { type: string, format: uuid }
+                testNames: { type: array, minItems: 1, maxItems: 20, items: { type: string, maxLength: 200 } }
+                note: { type: string }
+      responses:
+        '201':
+          description: Ordered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  labOrderId: { type: string, format: uuid }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /provider/referrals:
+    post:
+      summary: Refer the pet to a specialist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appointmentId, specialty, toVetName]
+              properties:
+                appointmentId: { type: string, format: uuid }
+                petId: { type: string, format: uuid }
+                specialty: { type: string }
+                toVetName: { type: string }
+                reason: { type: string }
+      responses:
+        '201':
+          description: Saved
+          content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /provider/earnings:
+    get:
+      summary: Earnings overview (read-only, integer kobo)
+      description: |
+        availableKobo = payments released to the vet's wallet; pendingKobo = held, awaiting
+        acceptance; heldKobo = held, confirmed/in service. The ledger stays the source of
+        truth for balances.
+      responses:
+        '200': { description: Earnings, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderEarnings' } } } }
+  /provider/payouts:
+    post:
+      summary: Not a money route — always refused
+      description: |
+        Released earnings are already in the vet's Paymax wallet; withdrawing is the wallet's
+        own idempotent, KYC/tier-gated bank transfer. This route requires an Idempotency-Key
+        and answers 409 `payout_via_wallet`; it never moves funds.
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      responses:
+        '400': { $ref: '#/components/responses/Error' }
+        '409':
+          description: Withdraw from the wallet instead
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  code: { type: string, enum: [payout_via_wallet] }
+                  error: { type: string }
+  /provider/reviews:
+    get:
+      summary: Reviews of the vet (newest first, max 100)
+      responses:
+        '200':
+          description: Reviews; the author is shown as "First L."
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/VetReview' } } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean }
+              error: { type: string }
+  schemas:
+    VisitType: { type: string, enum: [tele, home, clinic] }
+    AppointmentStatus:
+      type: string
+      enum: [REQUESTED, ACCEPTED, CONFIRMED, IN_PROGRESS, COMPLETED, RESCHEDULED, CANCELLED, NO_SHOW]
+    Credential:
+      type: object
+      properties:
+        authority: { type: string, enum: [VCN] }
+        licenseNo: { type: string }
+        status: { type: string, enum: [verified, pending, expired] }
+        expiresAt: { type: string, format: date }
+    ProviderProfile:
+      type: object
+      required: [status, displayName, vcnLicenseNo, clinicName, bio, consultFeeKobo, homeVisitFeeKobo, types, species, credential]
+      properties:
+        status: { type: string, enum: [draft, submitted, under_review, needs_info, approved] }
+        applicationId: { type: string, format: uuid }
+        displayName: { type: string }
+        vcnLicenseNo: { type: string }
+        clinicName: { type: string }
+        bio: { type: string }
+        consultFeeKobo: { type: integer, format: int64 }
+        homeVisitFeeKobo: { type: integer, format: int64 }
+        types: { type: array, items: { $ref: '#/components/schemas/VisitType' } }
+        species: { type: array, items: { type: string } }
+        credential: { $ref: '#/components/schemas/Credential' }
+    ProviderAppointmentRow:
+      type: object
+      properties:
+        appointmentId: { type: string, format: uuid }
+        ownerName: { type: string }
+        petName: { type: string }
+        species: { type: string, enum: [dog, cat, bird, rabbit, reptile, other] }
+        type: { $ref: '#/components/schemas/VisitType' }
+        status: { $ref: '#/components/schemas/AppointmentStatus' }
+        scheduledFor: { type: string, format: date-time }
+        reason: { type: string }
+    ProviderHomeNav:
+      type: object
+      properties:
+        appointmentId: { type: string, format: uuid }
+        ownerName: { type: string }
+        petName: { type: string }
+        address: { type: string }
+        destLat: { type: number }
+        destLng: { type: number }
+        vetLat: { type: number }
+        vetLng: { type: number }
+        etaLabel: { type: string }
+        distanceLabel: { type: string }
+        phone: { type: string }
+    SaveSoapInput:
+      type: object
+      properties:
+        appointmentId: { type: string, format: uuid }
+        petId: { type: string, format: uuid }
+        soap:
+          type: object
+          properties:
+            subjective: { type: string }
+            objective: { type: string }
+            assessment: { type: string }
+            plan: { type: string }
+        diagnosis: { type: string }
+        followUpRecommended: { type: boolean }
+        followUpNote: { type: string }
+    Pet:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        species: { type: string }
+        breed: { type: string }
+        sex: { type: string, enum: [male, female, unknown] }
+        dob: { type: string, format: date }
+        ageLabel: { type: string }
+        weightKg: { type: number }
+        avatarColor: { type: string }
+        notes: { type: string }
+    VaccinationEntry:
+      type: object
+      properties:
+        id: { type: string }
+        petId: { type: string }
+        vaccine: { type: string }
+        status: { type: string, enum: [up_to_date, due_soon, overdue, scheduled] }
+        lastGivenAt: { type: string, format: date-time }
+        dueAt: { type: string, format: date-time }
+        notes: { type: string }
+    PetRecordEntry:
+      type: object
+      properties:
+        id: { type: string }
+        petId: { type: string }
+        kind: { type: string, enum: [consult_note, prescription, vaccination, lab_result, weight, document] }
+        title: { type: string }
+        summary: { type: string }
+        at: { type: string, format: date-time }
+        providerName: { type: string }
+        sensitive: { type: boolean }
+    PetChart:
+      type: object
+      properties:
+        pet: { $ref: '#/components/schemas/Pet' }
+        ownerName: { type: string }
+        vaccinations: { type: array, items: { $ref: '#/components/schemas/VaccinationEntry' } }
+        records: { type: array, items: { $ref: '#/components/schemas/PetRecordEntry' } }
+        weightSeries:
+          type: array
+          items:
+            type: object
+            properties:
+              at: { type: string, format: date-time }
+              kg: { type: number }
+    RxItem:
+      type: object
+      properties:
+        id: { type: string }
+        drugName: { type: string }
+        form: { type: string }
+        dosage: { type: string }
+        frequency: { type: string }
+        durationDays: { type: integer }
+        quantity: { type: integer }
+        pom: { type: boolean }
+        instructions: { type: string }
+    IssueRxInput:
+      type: object
+      required: [appointmentId, items]
+      properties:
+        appointmentId: { type: string, format: uuid }
+        petId: { type: string, format: uuid }
+        items: { type: array, minItems: 1, maxItems: 20, items: { $ref: '#/components/schemas/RxItem' } }
+        notes: { type: string }
+    EPrescription:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        appointmentId: { type: string, format: uuid }
+        petId: { type: string, format: uuid }
+        petName: { type: string }
+        vetId: { type: string }
+        vetName: { type: string }
+        vetCredential: { $ref: '#/components/schemas/Credential' }
+        status: { type: string, enum: [ISSUED, SENT_TO_PHARMACY, DISPENSED, EXPIRED] }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        items: { type: array, items: { $ref: '#/components/schemas/RxItem' } }
+        notes: { type: string }
+        sensitive: { type: boolean }
+    ProviderEarnings:
+      type: object
+      properties:
+        availableKobo: { type: integer, format: int64 }
+        pendingKobo: { type: integer, format: int64 }
+        heldKobo: { type: integer, format: int64 }
+        payouts:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              amountKobo: { type: integer, format: int64 }
+              at: { type: string, format: date-time }
+              status: { type: string, enum: [paid, processing] }
+    VetReview:
+      type: object
+      properties:
+        id: { type: string }
+        author: { type: string }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        body: { type: string }
+        at: { type: string, format: date-time }

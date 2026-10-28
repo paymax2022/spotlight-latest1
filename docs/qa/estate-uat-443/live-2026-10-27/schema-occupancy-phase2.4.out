@@ -1,0 +1,88 @@
+# schema inspection — Phase 2.4 occupancy surface, read from the running local database
+# captured 2026-10-27, after the idempotent re-apply recorded in migration-reapply-occupancy-phase2.4.out
+# command: docker exec -i supabase_db_spotlight psql -U postgres -d postgres -f - < docs/qa/estate-uat-443/live-2026-10-27/05-schema-occupancy.sql
+
+Border style is 2.
+--- 1. the occupancy registry table, its RLS state and its table constraints
++-----------------------+----------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|        relname        | relrowsecurity |                                                                                                                                  constraints                                                                                                                                  |
++-----------------------+----------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| estate_properties     | t              |                                                                                                                                                                                                                                                                               |
+| estate_unit_occupants | t              | estate_unit_occupants_estate_id_fkey, estate_unit_occupants_occupancy_type_check, estate_unit_occupants_pkey, estate_unit_occupants_property_id_fkey, estate_unit_occupants_property_id_user_id_key, estate_unit_occupants_user_id_fkey, estate_unit_occupants_window_ordered |
++-----------------------+----------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+(2 rows)
+
+--- 2. capacity + dues-exemption columns and their defaults
++----------------------+-------------------------+--------------------------+-----------------------------+
+|      table_name      |       column_name       |        data_type         |       column_default        |
++----------------------+-------------------------+--------------------------+-----------------------------+
+| estate_dues_invoices | term_override           | boolean                  | false                       |
+| estate_dues_invoices | term_override_reason    | text                     | (none)                      |
+| estate_dues_invoices | vacancy_override        | boolean                  | false                       |
+| estate_dues_invoices | vacancy_override_reason | text                     | (none)                      |
+| estate_properties    | capacity                | integer                  | 6                           |
+| estate_properties    | landlord_id             | uuid                     | (none)                      |
+| estate_properties    | occupancy_status        | character varying        | 'vacant'::character varying |
+| estate_properties    | tenant_id               | uuid                     | (none)                      |
+| resident_profiles    | proof_review_note       | text                     | (none)                      |
+| resident_profiles    | proof_status            | text                     | 'unverified'::text          |
+| resident_profiles    | proof_verified_at       | timestamp with time zone | (none)                      |
+| resident_profiles    | proof_verified_by       | uuid                     | (none)                      |
+| tenancy_requests     | reject_reason           | text                     | (none)                      |
+| tenancy_requests     | reviewed_by             | uuid                     | (none)                      |
++----------------------+-------------------------+--------------------------+-----------------------------+
+(14 rows)
+
+--- 3. the enforcing triggers and the functions they call
++------------------------------------------------+-----------------------+--------------------------------------+------------------+
+|                     tgname                     |       on_table        |               function               | security_definer |
++------------------------------------------------+-----------------------+--------------------------------------+------------------+
+| estate_enforce_out_of_term_billing_on_create   | estate_dues_invoices  | estate_enforce_out_of_term_billing   | f                |
+| estate_enforce_vacant_unit_exemption_on_create | estate_dues_invoices  | estate_enforce_vacant_unit_exemption | f                |
+| estate_enforce_unit_capacity_on_write          | estate_unit_occupants | estate_enforce_unit_capacity         | f                |
+| estate_reset_proof_on_redeclaration_on_write   | resident_profiles     | estate_reset_proof_on_redeclaration  | f                |
++------------------------------------------------+-----------------------+--------------------------------------+------------------+
+(4 rows)
+
+--- 4. the single admitting/releasing writers must be SECURITY DEFINER and owner-only executable
++--------------------------+-----------+----------+------------------+
+|         proname          | prosecdef |  owner   | non_owner_grants |
++--------------------------+-----------+----------+------------------+
+| estate_occupancy_admit   | t         | postgres | EXECUTE,EXECUTE  |
+| estate_occupancy_release | t         | postgres | EXECUTE,EXECUTE  |
++--------------------------+-----------+----------+------------------+
+(2 rows)
+
+--- 5. the two dues-exemption CHECKs and the proof-state CHECK are live constraints
++----------------------------------------------+---------------------------------------------------------------------------------------------------------------+
+|                   conname                    |                                                  definition                                                   |
++----------------------------------------------+---------------------------------------------------------------------------------------------------------------+
+| estate_dues_invoices_term_override_reason    | CHECK (((NOT term_override) OR (btrim(COALESCE(term_override_reason, ''::text)) <> ''::text)))                |
+| estate_dues_invoices_vacancy_override_reason | CHECK (((NOT vacancy_override) OR (btrim(COALESCE(vacancy_override_reason, ''::text)) <> ''::text)))          |
+| estate_unit_occupants_occupancy_type_check   | CHECK ((occupancy_type = ANY (ARRAY['resident'::text, 'tenant'::text, 'homeowner'::text])))                   |
+| estate_unit_occupants_window_ordered         | CHECK (((effective_from IS NULL) OR (effective_until IS NULL) OR (effective_until >= effective_from)))        |
+| resident_profiles_proof_status_check         | CHECK ((proof_status = ANY (ARRAY['unverified'::text, 'pending'::text, 'verified'::text, 'rejected'::text]))) |
++----------------------------------------------+---------------------------------------------------------------------------------------------------------------+
+(5 rows)
+
+--- 5b. the one-owner / one-tenant overlap rule is a PARTIAL UNIQUE INDEX, not a table constraint
++-----------------------+-----------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|       tablename       |                   indexname                   |                                                                                        indexdef                                                                                        |
++-----------------------+-----------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| estate_unit_occupants | estate_unit_occupants_live_idx                | CREATE INDEX estate_unit_occupants_live_idx ON public.estate_unit_occupants USING btree (property_id) WHERE (ended_at IS NULL)                                                         |
+| estate_unit_occupants | estate_unit_occupants_one_live_owner          | CREATE UNIQUE INDEX estate_unit_occupants_one_live_owner ON public.estate_unit_occupants USING btree (property_id) WHERE ((occupancy_type = 'homeowner'::text) AND (ended_at IS NULL)) |
+| estate_unit_occupants | estate_unit_occupants_one_live_tenant         | CREATE UNIQUE INDEX estate_unit_occupants_one_live_tenant ON public.estate_unit_occupants USING btree (property_id) WHERE ((occupancy_type = 'tenant'::text) AND (ended_at IS NULL))   |
+| estate_unit_occupants | estate_unit_occupants_pkey                    | CREATE UNIQUE INDEX estate_unit_occupants_pkey ON public.estate_unit_occupants USING btree (id)                                                                                        |
+| estate_unit_occupants | estate_unit_occupants_property_id_user_id_key | CREATE UNIQUE INDEX estate_unit_occupants_property_id_user_id_key ON public.estate_unit_occupants USING btree (property_id, user_id)                                                   |
+| estate_unit_occupants | estate_unit_occupants_user_idx                | CREATE INDEX estate_unit_occupants_user_idx ON public.estate_unit_occupants USING btree (estate_id, user_id)                                                                           |
++-----------------------+-----------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+(6 rows)
+
+--- 6. RLS policies on the registry (service-role writer only)
++-------------------+--------+----------------+------------+------------+
+|      polname      | polcmd |    polroles    | using_expr | check_expr |
++-------------------+--------+----------------+------------+------------+
+| occupancy_service | *      | {service_role} | true       | true       |
++-------------------+--------+----------------+------------+------------+
+(1 row)
+

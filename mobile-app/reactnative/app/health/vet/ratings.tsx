@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StarRating from '@/features/health/vet/components/StarRating';
 import { useSubmitReview } from '@/features/health/vet/hooks';
+import MissingContext from '@/features/health/vet/components/MissingContext';
 
 export default function RatingsScreen() {
   const { vetId, appointmentId } = useLocalSearchParams<{ vetId: string; appointmentId?: string }>();
@@ -22,10 +23,12 @@ export default function RatingsScreen() {
 
   const onSubmit = () => {
     submit.mutate(
-      { vetId, appointmentId: appointmentId ?? 'appt', rating, body: body.trim() },
+      { vetId, appointmentId: appointmentId!, rating, body: body.trim() },
       { onSuccess: () => setDone(true) },
     );
   };
+
+  if (!vetId || !appointmentId) return <MissingContext title="Rate your vet" />;
 
   if (done) {
     return (

@@ -578,6 +578,12 @@ func (s *Service) ListElections(ctx context.Context, userID, orgIDOverride strin
 			return nil, err
 		}
 	}
+	// An officer of this organisation also sees drafts in their own list: the
+	// person who sets an election up in the app must be able to find it again to
+	// add candidates and open it. Members still never see a draft.
+	if !includeDraft && s.requireElectionOfficer(ctx, userID, orgID) == nil {
+		includeDraft = true
+	}
 	statusFilter := "e.status <> 'DRAFT'"
 	if includeDraft {
 		statusFilter = "TRUE"

@@ -320,6 +320,12 @@ type CreateOrderInput struct {
 	CollectionMethod CollectionMethod
 	IdempotencyKey   string
 	TestIDs          []string
+	// Home-collection details the patient chose. Required for HOME (the
+	// phlebotomist needs somewhere to go); ignored for WALK_IN.
+	CollectionAddress string
+	CollectionLat     *float64
+	CollectionLng     *float64
+	ScheduledFor      *time.Time
 }
 
 // CreateOrder builds a LabOrder and HELDs the patient payment on the escrow rail
@@ -339,6 +345,9 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	}
 	if in.CollectionMethod != CollectHome && in.CollectionMethod != CollectWalkIn {
 		return nil, errors.New("lab: collection_method must be HOME or WALK_IN")
+	}
+	if err := validateCollectionDetails(&in); err != nil {
+		return nil, err
 	}
 	// Replay: return the existing order for this idempotency key — but only when
 	// it belongs to THIS patient. Keys are client-chosen: resolving one to
@@ -457,10 +466,12 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		}
 		const insOrder = `
 			INSERT INTO lab_orders
-				(id, patient_id, lab_provider_id, state, collection_method, total_kobo, escrow_id, idempotency_key)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
+				(id, patient_id, lab_provider_id, state, collection_method, total_kobo, escrow_id, idempotency_key,
+				 collection_address, collection_lat, collection_lng, scheduled_for)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`
 		if _, err := tx.Exec(ctx, insOrder, orderID, patientID, in.LabProviderID,
-			string(StateCreated), string(in.CollectionMethod), total, escrowID, in.IdempotencyKey); err != nil {
+			string(StateCreated), string(in.CollectionMethod), total, escrowID, in.IdempotencyKey,
+			in.CollectionAddress, in.CollectionLat, in.CollectionLng, in.ScheduledFor); err != nil {
 			return nil, fmt.Errorf("lab: insert order: %w", err)
 		}
 		const insLine = `
@@ -711,6 +722,13 @@ func (s *Service) Schedule(ctx context.Context, actorID, orderID string, isAdmin
 // actor gate runs BEFORE the state check so a foreign actor cannot learn
 // another patient's order state from the refusal.
 func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string) (*Sample, error) {
+	return s.collectWith(ctx, collectorID, orderID, note, "")
+}
+
+// collectWith is Collect with an optional scanned tube barcode. A phlebotomist's
+// tubes arrive pre-labelled, so the scanned code becomes the sample's barcode of
+// record; empty means "mint one". A barcode already on another sample is refused.
+func (s *Service) collectWith(ctx context.Context, collectorID, orderID, note, scannedBarcode string) (*Sample, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
 		return nil, err
@@ -732,6 +750,16 @@ func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string
 
 	sampleID := uuid.New().String()
 	barcode := generateBarcode()
+	if scannedBarcode != "" {
+		barcode = normalizeBarcode(scannedBarcode)
+		var taken bool
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM lab_samples WHERE barcode_ref = $1)`, barcode).Scan(&taken); err != nil {
+			return nil, err
+		}
+		if taken {
+			return nil, ErrBarcodeInUse
+		}
+	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {

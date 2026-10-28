@@ -141,7 +141,24 @@ export function useVerificationStatus(propertyId?: string) {
 export function useSubmitForReview(propertyId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => hotelier.submitForReview(),
+    mutationFn: () => hotelier.submitForReview(propertyId),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'verification', propertyId] }),
+  });
+}
+
+export function useAvailability(propertyId: string, from: string, to: string) {
+  return useQuery({
+    queryKey: [KEY, 'availability', propertyId, from, to],
+    queryFn: () => hotelier.listAvailability(propertyId, from, to),
+    enabled: Boolean(propertyId),
+  });
+}
+
+export function useSetRoomAvailability(propertyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ roomTypeId, ...input }: { roomTypeId: string; from: string; to: string; allotment: number; stopSell: boolean }) =>
+      hotelier.setRoomAvailability(propertyId, roomTypeId, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'availability', propertyId] }),
   });
 }

@@ -106,15 +106,20 @@ Deliberately **not** marked passed:
   half of `ESTD-D016` is closed by the same run, but no scheduled purge disposes expired visitor
   records.
 
-### Current counts (2026-10-27, after Phase 2.3)
+### Current counts (2026-10-27, after Phase 2.4)
 
 | Lane | Rows | Passed | Failed | Blocked | Not run | Needs manual | Other |
 |---|---|---|---|---|---|---|---|
-| estate-a | 115 | 49 | 0 | 62 | 0 | 4 | 0 |
+| estate-a | 115 | 60 | 0 | 47 | 0 | 4 | 4 |
 | estate-b | 116 | 57 | 5 | 6 | 48 | 0 | 0 |
 | estate-c | 116 | 18 | 55 | 41 | 0 | 2 | 0 |
 | estate-d | 96 | 51 | 0 | 25 | 0 | 19 | 1 |
-| **Total** | **443** | **175** | **60** | **134** | **48** | **25** | **1** |
+| **Total** | **443** | **186** | **60** | **119** | **48** | **25** | **5** |
+
+estate-a's `Other` column is the four `PARTIAL` **results** Phase 2.4 introduced (0037, 0047, 0049,
+0050): the check that ran passed, but a named leg of the case was never executed. `PARTIAL` was already
+a value in the `implementation` column; using it as a result is deliberate and defined in
+`cluster-estate-a.md`. estate-d's single `PARTIAL` result (`EST-UAT-0423`, M22 user disable) predates this phase.
 
 ### Phase 1 harvest (2026-10-27): the live-DB run does **not** cover estate-b/estate-c
 
@@ -250,18 +255,62 @@ client consumer** (grep over `frontend-web/app`, `frontend-web/src` and the mobi
 not the mobile estate-switcher UX. `0033`/`0034` (bulk estate/building upload) stay `MISSING` /
 `BLOCKED` under `ESTA-D016`, which is a separate importer slice.
 
+### Phase 2.4 (2026-10-27): unit occupancy, capacity, terms and proof (estate-a M03)
+
+M02 gave the estate a lifecycle; M03 had to give its **units** a state. All 16 M03 rows were
+`BLOCKED` at the start of this phase and every one of them was blocked on the same missing fact: nothing
+in the schema recorded *who occupies which unit*. `estate_residents` is one row per (estate, user) with a
+free-text `unit` label and no foreign key, so occupancy was not countable; `estate_properties` had no
+capacity; a tenancy approval threw away the lease dates it had just been given; owner and tenant were two
+UUID columns with no rule between them; and dues billed whatever amount the caller typed. Like Phase 2.3
+this is a **build**, not a re-run — the HTTP lane could not have existed a week ago.
+
+| Piece | Change | Evidence |
+|---|---|---|
+| Schema | `20271099000060_estate_occupancy_integrity.sql` (568 lines, additive only): `estate_unit_occupants` (one row per unit+person, `effective_from`/`effective_until`, `ended_at`, `in_effect`), `estate_properties.capacity` defaulting to 6 under `CHECK (capacity > 0)`, two partial uniques (one live owner, one live tenant per unit), the `SECURITY DEFINER` writers `estate_occupancy_admit` / `estate_occupancy_release`, the capacity trigger, `estate_enforce_vacant_unit_exemption` and `estate_enforce_out_of_term_billing` on invoice INSERT (each waivable only by its own override column **plus** a written reason), and `resident_profiles.proof_status`/`proof_verified_by`/`proof_verified_at`/`proof_review_note` with `estate_reset_proof_on_redeclaration`. | `EXEC-ESTA-032` — applied, then **re-applied verbatim** after the final green run (exit 0, 19 notices, all `already exists, skipping`), and read back from the catalog in `05-schema-occupancy.sql` (RLS on, both writers `prosecdef=t`, four triggers, both partial uniques intact) |
+| Service | `backend/internal/estate/occupancy.go` (656 lines) + `occupancy_handler.go`: `AdmitOccupant`, `ReleaseOccupant`, `ListOccupancies`, `SetUnitCapacity`, ownership-claim queue, `GetOccupancyProof`/`VerifyOccupancyProof`, and the term-aware membership check. `AssignLandlord`/`AssignTenant` no longer UPDATE a UUID column — they delegate to the same admitting writer a tenancy approval uses, so capacity, overlap, the archived-unit rule and "membership must still be active" are checked once, in the database. | `EXEC-ESTA-030`, `EXEC-ESTA-029` sections 3–5 |
+| Product decisions (2026-10-27) | EST-UAT-0044 → capacity as a per-unit count (default 6) with one current owner and one current tenant, and one owner holding many tenant units allowed; dependants in `household_members` do not consume a bed. EST-UAT-0048 → **vacant units are exempt**, overrideable only in writing. EST-UAT-0045 → the term gates access **and** dues, `NULL` window = unrestricted; the voting leg was descoped and is named in the row rather than claimed. | `cluster-estate-a.md`, rows 0044/0045/0048 |
+| Error surface | `writeOccupancyError` replaced the blanket `403`: caller mistakes are `400` naming the field, foreign or retired resources `404`, rule refusals `409`, privilege refusals `403` (`ESTA-D032`, `D035`..`D038`). | `EXEC-ESTA-029` sections 2b, 5b, 10, 12 |
+
+Verified over HTTP on a scratch-built backend at `:8095` (the `:8091`/`:8093`/`:8094` instances belonging
+to other sessions were never disturbed): **264 PASS / 0 FAIL across the 25 labelled sections** of
+`live-2026-10-27/probe-occupancy.out` (`EXEC-ESTA-029`); the new occupancy live-DB lane **8 PASS / 0 FAIL /
+0 SKIP in 10.857s** (`EXEC-ESTA-030`); whole estate package afterwards **181 top-level + 50 subtests PASS /
+0 FAIL / 0 SKIP** with `go build ./...` and `go vet` both exit 0 (`EXEC-ESTA-031`). The lane's step-up
+grants, reviewer grant, final database state and teardown are recorded in `EXEC-ESTA-032`.
+
+Ledger effects: `0038`, `0039`, `0040`, `0041`, `0043`, `0044`, `0045`, `0046`, `0048`, `0051`, `0052` →
+`IMPLEMENTED` / `PASSED`; `0037`, `0047`, `0049`, `0050` → **`PARTIAL` as a result** — the check that ran
+passed and a named leg never executed (no building API exists at all; no property transfer ever completed
+successfully; plate registry is per-resident with no gate consumer; refusals are proved but not logged);
+`0042` stays `BLOCKED` (it is not this slice). `ESTA-D015` — the occupancy rules engine M03 had been
+blocked on since wave 1 — → `FIXED`; `ESTA-D030`..`D032`, `D034`..`D038` → `FIXED`; `ESTA-D033`, `D039`,
+`D040` → `RECORDED` for the product owner rather than quietly widened.
+
+Limits written into the rows rather than glossed: the register read is **outside** the term gate by design
+(a member reads their own rows, which is why `ESTA-D033` is a recorded gap and not a fix); nothing
+auto-releases a registration at `lease_end`; the vehicle registry is never consulted by the gate;
+`estate_unit_occupants` is read only by the occupancy module, so EST-UAT-0045's voting leg is unproved;
+and the occupancy surface itself is **Go-only** — no mobile screen and no BFF route calls admit, release,
+register, capacity, claim or proof. One pre-existing BFF read does touch this data
+(`frontend-web/app/api/v1/estate/properties/route.ts`, tracked since before this slice): it selects the
+unit's `occupancy_status`, `landlord_id` and `tenant_id` straight from `estate_properties` with the admin
+client, so it reflects the deed columns the admitting writer maintains — but it never reads
+`estate_unit_occupants`, so it cannot show capacity, a term window or occupancy history. What is proved
+here is the backend, not a user-visible flow.
+
 ### Defect status changes
 
-Counted from `defects-<lane>.csv` on 2026-10-27, after Phase 2.3 (the roll-up table at the top is
+Counted from `defects-<lane>.csv` on 2026-10-27, after Phase 2.4 (the roll-up table at the top is
 the 2026-10-21 consolidation snapshot and has not been rewritten):
 
 | Lane | Defects | FIXED | PARTIAL_FIXED | RECORDED | S1/S2/S3/S4 | shared-platform |
 |---|---|---|---|---|---|---|
-| estate-a | 29 | 14 | 3 | 12 | 2/16/11/0 | 3 |
+| estate-a | 40 | 23 | 3 | 14 | 5/20/15/0 | 3 |
 | estate-b | 15 | 10 | 0 | 5 | 3/5/7/0 | 1 |
 | estate-c | 18 | 9 | 0 | 9 | 0/12/4/2 | 0 |
 | estate-d | 35 | 10 | 3 | 22 | 5/17/13/0 | 5 |
-| **Total** | **97** | **43** | **6** | **48** | **10/50/35/2** | **9** |
+| **Total** | **108** | **52** | **6** | **50** | **13/54/39/2** | **9** |
 
 `ESTA-D011`, `ESTA-D021`, `ESTA-D022` → `PARTIAL_FIXED` (commit `554173ae0`);
 `ESTA-D010` → `FIXED` in Phase 2.3 (`caef65516` had taken it to `PARTIAL_FIXED` with the status
@@ -274,6 +323,11 @@ the duplicate queue close the rest — committed as `b301468a5`, which is now th
 `ESTD-D034` → `PARTIAL_FIXED` (commit `caef65516`; importer covers unit/resident/dues-balance only).
 `ESTA-D027` → `FIXED` (fixture regression from `fc6fd64f7`; `status: 'active'` seeded in the four
 specs and 2 negative 423 specs added, committed as `c4c69e0cd` on 2026-10-27).
+`ESTA-D015` → `FIXED` and `ESTA-D030`..`D032`, `D034`..`D038` → `FIXED`, with `ESTA-D033`, `D039` and
+`D040` `RECORDED`, all on 2026-10-27 in Phase 2.4. Those nine `FIXED` rows carry an **empty
+`fix_commit`** — the slice is not committed yet, so the hash will be written when it lands (the
+migration it ships, `20271099000060_estate_occupancy_integrity.sql`, is likewise applied locally but
+untracked).
 `ESTB-D003` + `ESTB-D011` → `FIXED` and `ESTB-D013` recorded **and** fixed in the same slice
 (Phase 2.1, above); `ESTB-D014` → `FIXED` in Phase 2.2 and `ESTB-D015` recorded there without a
 fix. Both phases shipped together as `c4c69e0cd` (migration, Go service and handlers, BFF routes,
@@ -313,14 +367,21 @@ malformed date (`NEEDS_MANUAL`).
    the flag on, EXEC-ESTA-018/019 as the flag-off control) — and that work is exactly what produced
    `ESTA-D024`, so the decision is now *whether to ship it on*, not whether it works.
    `FEATURE_ESTATE_LIFECYCLE_ENABLED` and `FEATURE_ESTATE_VERIFICATION_REQUIRED` were exercised over
-   HTTP in Phase 2.3 (EXEC-ESTA-026, 140 assertions on `:8095`) and behave as specified — but the
+   HTTP in Phase 2.3 (EXEC-ESTA-026, 140 assertions on `:8095`) and again in Phase 2.4 (EXEC-ESTA-029,
+   264 assertions, which also needed them on to publish and close its probe estates) — and behave as
+   specified — but the
    **flag-off** lane is still owed (Phase 2 exit criterion), so the shipped default has not yet been
    compared against the verified posture. `FEATURE_ESTATE_IMPORT_ENABLED` remains unexercised over
    HTTP.
 2. Wire host-arrival approval and staff grants into the BFF/mobile surface, or formally record the
    Go routes as the product surface for those cases. The BFF lane narrowed this to two concrete
    edits: authorise `/api/v1/visitor/gate/**` against `estate_staff_grants` (not membership alone),
-   and write + read `require_host_approval` in `codes/route.ts`.
+   and write + read `require_host_approval` in `codes/route.ts`. Phase 2.4 adds a third, same-shaped
+   item: the M03 occupancy surface (admit / release / register / capacity / claim / proof) is
+   **Go-only**, and the one BFF read that touches this data
+   (`app/api/v1/estate/properties/route.ts`) selects the unit's `occupancy_status`/`landlord_id`/
+   `tenant_id` columns directly and never reads `estate_unit_occupants` — so capacity, term windows and
+   occupancy history are not yet visible to any client.
 3. ~~Seed a demo estate and run the BFF visitor golden path over HTTP~~ — done
    (`live-2026-10-26/`, EXEC-ESTA-021/022); 0073, 0092, 0102, 0111, 0112, 0113, 0114, 0115 converted.
 4. ~~Promote the 6 `*.pending.sql` drafts below~~ — only **one** genuinely unapplied draft is left; see *Pending schema changes* below.
@@ -372,7 +433,7 @@ still defaults to false. Fully fixed S1/S2 defects are only in the per-lane ledg
 
 ## Pending schema changes (NOT applied)
 
-Per runbook rule 5, lanes wrote no migrations. **This section was stale until 2026-10-27**: it
+Per runbook rule 5, lanes were to write no migrations. **This section was stale until 2026-10-27**: it
 listed 6 drafts, but `git log --diff-filter=A` shows 5 of them had already been promoted —
 3 on 2026-10-22 in `dc9c4163d`
 (`20271068000010_estate_properties_unique_unit.sql`,
@@ -381,6 +442,16 @@ listed 6 drafts, but `git log --diff-filter=A` shows 5 of them had already been 
 (`20271068001000_estates_lifecycle_status.sql`,
 `20271068001010_estate_import_batches.sql`), and the `migrations-estate-a/-c` source directories
 no longer exist on disk.
+
+**Rule 5 has not held since Phase 2.3, and the later phases did not hide it.** Phase 2.3 wrote and
+committed `20271099000040_estate_profile_governance.sql` + `20271099000050_estate_invite_roles.sql`
+(in `b301468a5`). Phase 2.4 wrote
+`supabase/migrations/20271099000060_estate_occupancy_integrity.sql` — additive, applied to the running
+local database and re-applied verbatim to prove idempotency, but **untracked in git** because the slice
+is uncommitted. So the outstanding item for that file is promotion to a commit, not promotion to the
+schema; the local database already has `estate_unit_occupants`, the capacity CHECK, both partial
+uniques, both `SECURITY DEFINER` writers and the four occupancy/dues/proof triggers. Any environment
+that has not applied it cannot run the M03 surface.
 
 What is actually outstanding:
 
@@ -391,7 +462,8 @@ What is actually outstanding:
   version drops its `cast_at` column and makes `candidate_id` nullable, so the draft must not
   be applied.
 - `estate-uat-443/migrations-estate-d/estate_notifications_archive.pending.sql` — the only
-  genuinely unapplied draft left in the pack (Phase 2.5).
+  genuinely **unapplied** draft left in the pack (Phase 2.5).
+- `20271099000060_estate_occupancy_integrity.sql` — applied locally, awaiting its commit (Phase 2.4).
 
 No draft is replayed with `supabase db reset` here: the database holds live-looking learner
 and resident data, so promotion is additive-only and applied to the running local database
@@ -400,5 +472,6 @@ and resident data, so promotion is additive-only and applied to the running loca
 Per-module narrative and evidence: `cluster-<lane>.md`; ledgers: `rtm-/defects-/exec-<lane>.csv` in this directory.
 
 Close-out plan and per-case work disposition: `CLOSEOUT-PLAN.md` (phases and exit criteria) with
-`closeout-triage.csv` (297 non-`PASSED` rows tagged `E`/`B`/`M`/`P` and assigned a wave; generated
-from the ledgers, claims no evidence and changes no result).
+`closeout-triage.csv` (a work plan, **not** evidence: 282 rows as generated after Phase 2.2, tagged
+`E`/`B`/`M`/`P` and assigned a wave; it predates Phases 2.3 and 2.4, claims no evidence and changes no
+result — `CLOSEOUT-PLAN.md` carries the staleness note and the regeneration blocker).

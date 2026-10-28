@@ -9,17 +9,22 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
+import ModalSheet from '@/components/ModalSheet';
 import StateView from '@/components/StateView';
-import { useRoomTypes } from '@/features/stays/hooks';
+import { useProperty, useRoomTypes } from '@/features/stays/hooks';
 import { formatMoney, formatNairaCompact, usdCentsToNgnKobo } from '@/features/stays/constants/stays.constants';
 
 export default function RoomsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const rooms = useRoomTypes(String(id));
+  const property = useProperty(String(id));
+  // Room types from search carry no photos of their own, so fall back to the property's media.
+  const fallbackPhoto = property.data?.media?.[0] ?? property.data?.coverUrl ?? '';
 
   return (
+    <ModalSheet fallback={`/stays/property/${id}`}>
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Choose a room" subtitle="Compare room types & rate plans" />
+      <ScreenHeader title="Choose a room" subtitle="Compare room types & rate plans" showBack />
       {rooms.isLoading ? (
         <StateView kind="loading" message="Loading rooms…" />
       ) : rooms.isError ? (
@@ -39,7 +44,7 @@ export default function RoomsScreen() {
                 style={styles.card}
                 onPress={() => router.push({ pathname: `/stays/property/${id}/rates`, params: { roomTypeId: item.id } })}
               >
-                <Image source={{ uri: item.photos[0] }} style={styles.image} />
+                <Image source={{ uri: item.photos[0] ?? fallbackPhoto }} style={styles.image} />
                 <View style={styles.body}>
                   <Text style={styles.name}>{item.name}</Text>
                   <View style={styles.metaRow}>
@@ -65,6 +70,7 @@ export default function RoomsScreen() {
         />
       )}
     </SafeAreaView>
+    </ModalSheet>
   );
 }
 

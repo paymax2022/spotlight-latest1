@@ -25,6 +25,94 @@ func (s *Service) SwapQuote(ctx context.Context, userID, fromAssetID, toAssetID 
 	return q, err
 }
 
+// SwapQuoteQuidax returns a live quote from Quidax Instant Swap API (CR-011).
+// Returns quotationID + expiresAt (15-sec TTL) for use in Swap confirmation.
+func (s *Service) SwapQuoteQuidax(ctx context.Context, userID, fromAssetID, toAssetID string, fromUnits int64) (*SwapQuote, error) {
+	// Validate inputs
+	if fromUnits <= 0 {
+		return nil, ErrBadRequest
+	}
+	if fromAssetID == toAssetID {
+		return nil, ErrSameAsset
+	}
+
+	// Get asset objects
+	from, err := s.repo.GetAsset(ctx, fromAssetID)
+	if err != nil {
+		return nil, err
+	}
+	to, err := s.repo.GetAsset(ctx, toAssetID)
+	if err != nil {
+		return nil, err
+	}
+
+	if !from.IsActive || !to.IsActive {
+		return nil, ErrAssetInactive
+	}
+
+	// Ensure Quidax subaccount exists for user (CR-010)
+	quidaxUserID, err := s.EnsureQuidaxSubaccount(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Call Quidax CreateQuotation with mapped currency codes
+	quotationID, expiresAt, err := s.swap.CreateQuotation(
+		ctx,
+		quidaxUserID,
+		from.Symbol,  // "NGN", "BTC", etc.
+		to.Symbol,    // "BTC", "ETH", etc.
+		fromUnits,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get current prices for response (rates derived from quote execution)
+	fromPrice, ok := s.price.PriceKobo(ctx, from.Symbol)
+	if !ok || fromPrice <= 0 {
+		fromPrice = 1 // Fallback: 1 kobo (avoid div by zero)
+	}
+	toPrice, ok := s.price.PriceKobo(ctx, to.Symbol)
+	if !ok || toPrice <= 0 {
+		toPrice = 1
+	}
+
+	// Compute cash value using from-price
+	cashKobo := cashForUnits(fromUnits, fromPrice, from.MinorUnitScale)
+	if cashKobo <= 0 {
+		return nil, ErrAmountTooSmall
+	}
+
+	// To-units estimated from cash / to-price (Quidax will confirm on swap execution)
+	toUnits := unitsForCash(cashKobo, toPrice, to.MinorUnitScale)
+	if toUnits <= 0 {
+		return nil, ErrAmountTooSmall
+	}
+
+	// Build response with Quidax fields
+	q := &SwapQuote{
+		FromAssetID:   from.ID,
+		FromSymbol:    from.Symbol,
+		ToAssetID:     to.ID,
+		ToSymbol:      to.Symbol,
+		FromUnits:     fromUnits,
+		ToUnits:       toUnits,
+		FromPriceKobo: fromPrice,
+		ToPriceKobo:   toPrice,
+		CashKobo:      cashKobo,
+		SpreadKobo:    0,      // Quidax handles spread internally
+		SpreadBps:     0,
+		QuotationID:   quotationID,
+		ExpiresAt:     expiresAt,
+		Provider:      s.swap.Name(), // "quidax" or "mock"
+		Source:        s.swap.Name(),
+		AsOf:          time.Now().UTC(),
+	}
+
+	return q, nil
+}
+
 // priceSwap computes the swap economics with integer arithmetic only. It returns
 // the quote plus the resolved from/to assets for reuse by Swap.
 func (s *Service) priceSwap(ctx context.Context, fromAssetID, toAssetID string, fromUnits int64) (*SwapQuote, *Asset, *Asset, int, error) {
@@ -95,7 +183,7 @@ func (s *Service) priceSwap(ctx context.Context, fromAssetID, toAssetID string, 
 //     Net wallet delta is zero (cashKobo = netCash + spreadKobo), so a swap needs
 //     no NGN balance; the spread is retained revenue. Fail-closed: an oversell is
 //     rejected by the holdings CHECK before any ledger post is finalised.
-func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID string, fromUnits int64, idemKey string) (*SwapOrder, error) {
+func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID string, fromUnits int64, quotationID string, idemKey string) (*SwapOrder, error) {
 	if idemKey == "" {
 		return nil, ErrBadRequest
 	}
@@ -135,6 +223,18 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 		return nil, ErrInsufficient
 	}
 
+	// CR-012: Call ConfirmQuotation if quotationID provided (Quidax swap)
+	var swapTransactionID, providerStatus string
+	if quotationID != "" {
+		txID, err := s.swap.ConfirmQuotation(ctx, userID, quotationID)
+		if err != nil {
+			// TTL expired (422) or invalid quotation: fail-closed, don't record order
+			return nil, fmt.Errorf("crypto: confirm quotation failed: %w", err)
+		}
+		swapTransactionID = txID
+		providerStatus = "pending" // Quidax executes async, status TBD by webhook
+	}
+
 	o := SwapOrder{
 		UserID: userID, FromAssetID: from.ID, FromSymbol: from.Symbol,
 		ToAssetID: to.ID, ToSymbol: to.Symbol,
@@ -142,6 +242,10 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 		FromPriceKobo: q.FromPriceKobo, ToPriceKobo: q.ToPriceKobo,
 		CashKobo: q.CashKobo, SpreadKobo: q.SpreadKobo, SpreadBps: spreadBps,
 		Reference: "crypto:swap:" + from.Symbol + "->" + to.Symbol, idem: idemKey,
+		// CR-012: Store Quidax execution state
+		QuotationID:       quotationID,
+		SwapTransactionID: swapTransactionID,
+		ProviderStatus:    providerStatus,
 	}
 
 	// Tier gate (fail-closed, E2E-FIN-046): the swap's cash legs DEBIT the wallet

@@ -18,6 +18,8 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { useProviderProfile, useSubmitVcnVerification } from '@/features/health/vet/hooks';
+import { uploadProviderCredential } from '@/features/health/api';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
 import type { VcnDocType, VcnSubmitDoc } from '@/features/health/vet/types';
 
 // Document rows the member attaches. VCN_CERT + ANNUAL_LICENCE are required.
@@ -27,13 +29,6 @@ const DOC_ROWS: { type: VcnDocType; label: string; required: boolean }[] = [
   { type: 'GOV_ID', label: 'Government ID', required: false },
 ];
 
-// Mock-first "attach document": in USE_MOCK there is no real DocumentPicker, so we
-// mint a fake storage_key (mirrors pharmacy upload-rx). In live mode the same
-// affordance would hand off to the existing upload pipeline to obtain the key.
-function fakeStorageKey(type: VcnDocType): string {
-  return `vet/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}/${type}`;
-}
-
 export default function VetVcnVerificationScreen() {
   const { data: profile, isLoading, isError, refetch } = useProviderProfile();
   const submit = useSubmitVcnVerification();
@@ -42,7 +37,9 @@ export default function VetVcnVerificationScreen() {
   const [fullName, setFullName] = useState('');
   const [dob, setDob] = useState('');
   const [consent, setConsent] = useState(false);
+  // storage keys of documents already uploaded to private storage, by type
   const [docs, setDocs] = useState<Partial<Record<VcnDocType, string>>>({});
+  const [uploading, setUploading] = useState<VcnDocType | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   if (isLoading) {
@@ -65,13 +62,39 @@ export default function VetVcnVerificationScreen() {
   // The provider profile carries the application id Mode B verification is scoped to.
   const applicationId = profile.applicationId;
 
-  const toggleDoc = (type: VcnDocType) => {
-    setDocs((prev) => {
+  const toggleDoc = async (type: VcnDocType) => {
+    if (docs[type]) {
+      setDocs((prev) => {
+        const next = { ...prev };
+        delete next[type];
+        return next;
+      });
+      return;
+    }
+    if (!applicationId) {
+      setErrors((prev) => ({ ...prev, application: 'Complete vet onboarding before verifying your licence.' }));
+      return;
+    }
+    const file = await pickFileForField('.pdf,.jpg,.jpeg,.png');
+    if (!file) return;
+    setUploading(type);
+    setErrors((prev) => {
       const next = { ...prev };
-      if (next[type]) delete next[type];
-      else next[type] = fakeStorageKey(type);
+      delete next[type];
       return next;
     });
+    try {
+      const storageKey = await uploadProviderCredential(applicationId, {
+        uri: file.uri,
+        fileName: file.name,
+        mimeType: file.mimeType,
+      });
+      setDocs((prev) => ({ ...prev, [type]: storageKey }));
+    } catch {
+      setErrors((prev) => ({ ...prev, [type]: 'Upload failed. Check your connection and try again.' }));
+    } finally {
+      setUploading(null);
+    }
   };
 
   const onSubmit = () => {
@@ -157,6 +180,7 @@ export default function VetVcnVerificationScreen() {
               <Pressable
                 style={[styles.docRow, attached && styles.docRowFilled, !!rowError && styles.docRowError]}
                 onPress={() => toggleDoc(row.type)}
+                disabled={uploading !== null}
                 accessibilityRole="button"
                 accessibilityLabel={`Attach ${row.label}`}
               >
@@ -172,7 +196,7 @@ export default function VetVcnVerificationScreen() {
                     {row.label}
                     {row.required ? ' *' : ''}
                   </Text>
-                  <Text style={styles.docMeta}>{attached ? 'Attached — tap to remove' : 'Tap to attach (PDF, JPG or PNG)'}</Text>
+                  <Text style={styles.docMeta}>{uploading === row.type ? 'Uploading…' : attached ? 'Uploaded — tap to remove' : 'Tap to attach (PDF, JPG or PNG)'}</Text>
                 </View>
                 {attached ? <X size={18} color={Colors.onSurfaceVariant} /> : null}
               </Pressable>
@@ -197,10 +221,11 @@ export default function VetVcnVerificationScreen() {
         </Pressable>
         {errors.consent ? <Text style={styles.error}>{errors.consent}</Text> : null}
         {errors.application ? <Text style={styles.error}>{errors.application}</Text> : null}
+        {submit.isError ? <Text style={styles.error}>We couldn’t submit your verification. Check your details and try again.</Text> : null}
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label="Submit for verification" onPress={onSubmit} loading={submit.isPending} />
+        <PrimaryButton label="Submit for verification" onPress={onSubmit} loading={submit.isPending} disabled={uploading !== null} />
       </View>
     </SafeAreaView>
   );

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, Switch, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
-import { BedDouble, CalendarDays, CheckCircle2, Circle, MapPin } from 'lucide-react-native';
+import { BedDouble, CalendarDays, CheckCircle2, Circle, MapPin, X } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -14,10 +14,12 @@ import StateView from '@/components/StateView';
 import { alertAsync } from '@/lib/confirm';
 import { useCurrentLocation } from '@/features/location/useCurrentLocation';
 import PhotoGrid from '@/features/stayshotelier/components/PhotoGrid';
+import DateRangeCalendar from '@/features/stays/components/DateRangeCalendar';
+import { formatShortDate } from '@/features/stays/constants/stays.constants';
 import {
   usePropertyDetail, useRoomTypes, useCreateRoomType, useRatePlans, useCreateRatePlan,
   useHotelierReservations, useUpdatePropertyContent, useUpdatePropertyDetails,
-  useVerificationStatus, useSubmitForReview,
+  useVerificationStatus, useSubmitForReview, useAvailability, useSetRoomAvailability,
 } from '@/features/stayshotelier/hooks';
 import {
   PROPERTY_TYPES, AMENITY_CATALOG, CANCELLATION_POLICIES,
@@ -96,6 +98,10 @@ export default function ManagePropertyScreen() {
         <Text style={styles.section}>Policies</Text>
         <PoliciesEditor propertyId={propertyId} property={property} />
 
+        {/* Availability calendar */}
+        <Text style={styles.section}>Availability</Text>
+        <AvailabilityEditor propertyId={propertyId} />
+
         {/* Reservations */}
         <View style={styles.rowBetween}>
           <Text style={styles.section}>Reservations</Text>
@@ -147,6 +153,112 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// Today (offset 0) or a later day, as YYYY-MM-DD.
+function isoDay(offset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return d.toISOString().slice(0, 10);
+}
+
+// Set how many rooms of one room type can be sold each night in a window, and
+// close nights with stop-sell. Sold counts come from bookings and are shown only.
+function AvailabilityEditor({ propertyId }: { propertyId: string }) {
+  const roomTypes = useRoomTypes(propertyId);
+  const [roomTypeId, setRoomTypeId] = useState<string | null>(null);
+  const [from, setFrom] = useState(isoDay(0));
+  const [to, setTo] = useState(isoDay(29));
+  // Which date the calendar sheet is setting, or null while it is closed.
+  const [picker, setPicker] = useState<'from' | 'to' | null>(null);
+  const [allotment, setAllotment] = useState('1');
+  const windowQuery = useAvailability(propertyId, from, to);
+  const setAvail = useSetRoomAvailability(propertyId);
+
+  if (roomTypes.isLoading) return <Card><Text style={styles.muted}>Loading room types…</Text></Card>;
+  const rooms = roomTypes.data ?? [];
+  if (rooms.length === 0) {
+    return <Card><Text style={styles.muted}>Add a room type with a rate first, then set its availability here.</Text></Card>;
+  }
+
+  const selected = rooms.find((r) => r.id === roomTypeId) ?? rooms[0];
+  const rows = (windowQuery.data ?? []).filter((d) => d.roomTypeId === selected.id);
+  const booked = rows.reduce((sum, d) => sum + d.sold, 0);
+
+  // A picked date sets its field and closes the sheet. The other field moves too if the
+  // range would otherwise run backwards, so the window is never empty or reversed.
+  const pickAvailabilityDay = (iso: string) => {
+    if (picker === 'from') {
+      setFrom(iso);
+      if (iso > to) setTo(iso);
+    } else {
+      setTo(iso);
+      if (iso < from) setFrom(iso);
+    }
+    setPicker(null);
+  };
+
+  const save = () => {
+    const n = Number(allotment);
+    if (!Number.isInteger(n) || n < 0) {
+      return alertAsync({ title: 'Check allotment', message: 'Enter a whole number of rooms, 0 or more.' });
+    }
+    if (!ISO_DAY.test(from) || !ISO_DAY.test(to)) {
+      return alertAsync({ title: 'Check dates', message: 'Use YYYY-MM-DD for both dates.' });
+    }
+    setAvail.mutate(
+      { roomTypeId: selected.id, from, to, allotment: n },
+      {
+        onSuccess: ({ daysUpdated }) => alertAsync({ title: 'Availability saved', message: `${daysUpdated} night(s) updated.` }),
+        onError: (e) => alertAsync({ title: 'Could not save availability', message: e instanceof Error ? e.message : 'Try again.' }),
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <SelectField
+        label="Room type"
+        value={selected.name}
+        options={rooms.map((r) => r.name)}
+        onChange={(name) => setRoomTypeId(rooms.find((r) => r.name === name)?.id ?? null)}
+        searchable={false}
+      />
+      <Pressable onPress={() => setPicker('from')} accessibilityLabel="Pick from date">
+        <Text style={styles.input}>From · {formatShortDate(from)}</Text>
+      </Pressable>
+      <Pressable onPress={() => setPicker('to')} accessibilityLabel="Pick to date">
+        <Text style={styles.input}>To · {formatShortDate(to)}</Text>
+      </Pressable>
+      <Modal visible={picker !== null} transparent animationType="slide" onRequestClose={() => setPicker(null)}>
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHead}>
+              <Text style={styles.cardTitle}>{picker === 'to' ? 'Pick the last date' : 'Pick the first date'}</Text>
+              <Pressable onPress={() => setPicker(null)} hitSlop={8} accessibilityLabel="Close date picker">
+                <X size={20} color={Colors.onSurface} />
+              </Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.sheetBody} showsVerticalScrollIndicator={false}>
+              <DateRangeCalendar start={from} end={to} onPick={pickAvailabilityDay} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      <TextInput value={allotment} onChangeText={setAllotment} keyboardType="number-pad" placeholder="Rooms to sell each night" style={styles.input} />
+      <PrimaryButton
+        label={setAvail.isPending ? 'Saving…' : 'Save availability'}
+        onPress={save}
+        loading={setAvail.isPending}
+        disabled={setAvail.isPending}
+      />
+      <Text style={styles.muted}>
+        {rows.length} night(s) in this window · {booked} booked
+      </Text>
+    </Card>
+  );
+}
+
 function VerificationCard({ propertyId, propertyStatus }: { propertyId: string; propertyStatus: string }) {
   const vs = useVerificationStatus(propertyId);
   const submit = useSubmitForReview(propertyId);
@@ -155,7 +267,8 @@ function VerificationCard({ propertyId, propertyStatus }: { propertyId: string; 
   if (vs.isError || !vs.data) return <Card><Text style={styles.muted}>Couldn't load your go-live checklist.</Text></Card>;
 
   const requiredRemaining = vs.data.checklist.filter((c) => c.required && c.status !== 'approved');
-  const canSubmit = requiredRemaining.length === 0 && propertyStatus === 'DRAFT';
+  const submittedAt = vs.data.submittedForReviewAt ?? null;
+  const canSubmit = requiredRemaining.length === 0 && propertyStatus === 'DRAFT' && !submittedAt;
 
   const submitForReview = () => {
     submit.mutate(undefined, {
@@ -179,7 +292,11 @@ function VerificationCard({ propertyId, propertyStatus }: { propertyId: string; 
           </View>
         </View>
       ))}
-      {propertyStatus === 'DRAFT' ? (
+      {propertyStatus === 'DRAFT' && submittedAt ? (
+        <Text style={styles.muted}>
+          Submitted for review on {new Date(submittedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}. Paymax will review your listing shortly.
+        </Text>
+      ) : propertyStatus === 'DRAFT' ? (
         <PrimaryButton
           label={submit.isPending ? 'Submitting…' : 'Submit for review'}
           onPress={submitForReview}
@@ -213,6 +330,10 @@ function BasicsEditor({ propertyId, property }: { propertyId: string; property: 
     );
   };
 
+  const dirty =
+    name !== property.name || description !== property.description || propertyType !== property.propertyType ||
+    starRating !== String(property.starRating || '');
+
   return (
     <Card>
       <Field label="Property name" value={name} onChangeText={setName} placeholder="Sunset Shortlets Lekki" />
@@ -231,7 +352,7 @@ function BasicsEditor({ propertyId, property }: { propertyId: string; property: 
         searchable={false}
       />
       <Field label="Star rating (0–5)" value={starRating} onChangeText={setStarRating} placeholder="4" keyboardType="numeric" />
-      <PrimaryButton label="Save" onPress={save} loading={update.isPending} disabled={!name.trim()} />
+      <PrimaryButton label="Save" onPress={save} loading={update.isPending} disabled={!name.trim() || !dirty || update.isPending} />
     </Card>
   );
 }
@@ -270,6 +391,10 @@ function LocationEditor({ propertyId, property }: { propertyId: string; property
 
   const saving = updateContent.isPending || updateDetails.isPending;
 
+  const dirty =
+    address !== property.address || city !== property.city ||
+    (lat || 0) !== (property.lat || 0) || (lng || 0) !== (property.lng || 0);
+
   return (
     <Card>
       <Field label="Address" value={address} onChangeText={setAddress} placeholder="12 Admiralty Way" />
@@ -280,7 +405,7 @@ function LocationEditor({ propertyId, property }: { propertyId: string; property
           {loc.loading ? 'Getting your location…' : lat && lng ? `Pinned: ${lat.toFixed(4)}, ${lng.toFixed(4)}` : 'Use my current location'}
         </Text>
       </Pressable>
-      <PrimaryButton label="Save" onPress={save} loading={saving} disabled={!address.trim() || !city.trim()} />
+      <PrimaryButton label="Save" onPress={save} loading={saving} disabled={!address.trim() || !city.trim() || !dirty || saving} />
     </Card>
   );
 }
@@ -305,6 +430,8 @@ function AmenitiesEditor({ propertyId, amenities }: { propertyId: string; amenit
     });
   };
 
+  const dirty = selected.size !== amenities.length || amenities.some((a) => !selected.has(a));
+
   return (
     <Card>
       {AMENITY_CATALOG.map((group) => (
@@ -322,7 +449,7 @@ function AmenitiesEditor({ propertyId, amenities }: { propertyId: string; amenit
           </View>
         </View>
       ))}
-      <PrimaryButton label="Save amenities" onPress={save} loading={update.isPending} />
+      <PrimaryButton label="Save amenities" onPress={save} loading={update.isPending} disabled={!dirty || update.isPending} />
     </Card>
   );
 }
@@ -352,6 +479,11 @@ function PoliciesEditor({ propertyId, property }: { propertyId: string; property
     );
   };
 
+  const dirty =
+    checkInFrom !== property.checkInFrom || checkOutUntil !== property.checkOutUntil ||
+    cancellationPolicy !== property.cancellationPolicy || houseRules !== property.houseRules ||
+    contactPhone !== property.contactPhone || contactEmail !== property.contactEmail;
+
   const policyLabel = CANCELLATION_POLICIES.find((p) => p.value === cancellationPolicy)?.label ?? cancellationPolicy;
 
   return (
@@ -378,7 +510,7 @@ function PoliciesEditor({ propertyId, property }: { propertyId: string; property
       <Field label="House rules" value={houseRules} onChangeText={setHouseRules} multiline placeholder="No smoking. No parties. Quiet hours after 10pm." />
       <Field label="Contact phone" value={contactPhone} onChangeText={setContactPhone} placeholder="+234 801 234 5678" keyboardType="default" />
       <Field label="Contact email" value={contactEmail} onChangeText={setContactEmail} placeholder="frontdesk@yourproperty.ng" />
-      <PrimaryButton label="Save policies" onPress={save} loading={update.isPending} disabled={!canSave} />
+      <PrimaryButton label="Save policies" onPress={save} loading={update.isPending} disabled={!canSave || !dirty || update.isPending} />
     </Card>
   );
 }
@@ -387,13 +519,16 @@ function RoomTypeBuilder({ propertyId, roomTypes, loading }: { propertyId: strin
   const [name, setName] = useState('');
   const [occupancy, setOccupancy] = useState('2');
   const [bedding, setBedding] = useState('');
+  const [units, setUnits] = useState('1');
   const create = useCreateRoomType(propertyId);
 
   const add = () => {
     const occ = Number(occupancy);
+    const unitCount = Number(units);
     if (!name.trim() || !Number.isFinite(occ) || occ <= 0) return;
-    create.mutate({ name: name.trim(), occupancy: occ, bedding: bedding.trim() }, {
-      onSuccess: () => { setName(''); setOccupancy('2'); setBedding(''); },
+    if (!Number.isInteger(unitCount) || unitCount < 1) return;
+    create.mutate({ name: name.trim(), occupancy: occ, bedding: bedding.trim(), units: unitCount }, {
+      onSuccess: () => { setName(''); setOccupancy('2'); setBedding(''); setUnits('1'); },
     });
   };
 
@@ -426,6 +561,7 @@ function RoomTypeBuilder({ propertyId, roomTypes, loading }: { propertyId: strin
           </View>
           <View style={{ flex: 2 }}>
             <Field label="Bedding" value={bedding} onChangeText={setBedding} placeholder="1 Queen bed" />
+            <Field label="Rooms to sell each night" value={units} onChangeText={setUnits} placeholder="1" keyboardType="numeric" />
           </View>
         </View>
         <PrimaryButton label="Add room type" onPress={add} loading={create.isPending} disabled={!name.trim()} />
@@ -439,7 +575,10 @@ function RatePlanBuilder({
 }: {
   propertyId: string;
   roomTypes: RoomType[];
-  ratePlans: { id: string; roomTypeId: string; type: string; refundable: boolean; baseSellRateKobo: number }[];
+  ratePlans: {
+    id: string; roomTypeId: string; type: string; refundable: boolean; baseSellRateKobo: number;
+    longStayMinNights?: number; longStayDiscountPct?: number;
+  }[];
   /** Belt-and-suspenders alongside the hook's own cache invalidation — called
    *  after a successful create so the list is guaranteed to reflect it without
    *  needing a manual reload. */
@@ -449,17 +588,29 @@ function RatePlanBuilder({
   const [type, setType] = useState('BAR');
   const [refundable, setRefundable] = useState(true);
   const [priceNaira, setPriceNaira] = useState('');
+  const [longStayMin, setLongStayMin] = useState('');
+  const [longStayPct, setLongStayPct] = useState('');
   const create = useCreateRatePlan(propertyId);
 
   const roomTypeById = Object.fromEntries(roomTypes.map((rt) => [rt.id, rt.name]));
   const price = Number(priceNaira);
-  const canAdd = roomTypeId !== '' && Number.isFinite(price) && price > 0;
+  const minNights = Number(longStayMin);
+  const discountPct = longStayPct.trim() === '' ? 0 : Number(longStayPct);
+  // A discount needs its threshold; a threshold alone is harmless and is not sent.
+  const longStayValid = discountPct === 0
+    || (Number.isInteger(discountPct) && discountPct > 0 && discountPct <= 100
+      && Number.isInteger(minNights) && minNights > 0);
+  const canAdd = roomTypeId !== '' && Number.isFinite(price) && price > 0 && longStayValid;
 
   const add = () => {
     if (!canAdd) return;
     create.mutate(
-      { roomTypeId, type, refundable, baseSellRateKobo: Math.round(price * 100) },
-      { onSuccess: () => { setPriceNaira(''); onCreated(); } },
+      {
+        roomTypeId, type, refundable, baseSellRateKobo: Math.round(price * 100),
+        longStayMinNights: discountPct > 0 ? minNights : undefined,
+        longStayDiscountPct: discountPct > 0 ? discountPct : undefined,
+      },
+      { onSuccess: () => { setPriceNaira(''); setLongStayMin(''); setLongStayPct(''); onCreated(); } },
     );
   };
 
@@ -478,6 +629,9 @@ function RatePlanBuilder({
               <View style={{ flex: 1 }}>
                 <Text style={styles.itemName}>{roomTypeById[rp.roomTypeId] ?? 'Room'} · {rp.type}</Text>
                 <Text style={styles.muted}>{rp.refundable ? 'Refundable' : 'Non-refundable'}</Text>
+                {rp.longStayDiscountPct && rp.longStayMinNights ? (
+                  <Text style={styles.muted}>{rp.longStayDiscountPct}% off for {rp.longStayMinNights}+ nights</Text>
+                ) : null}
               </View>
               <Text style={styles.itemName}>{naira(rp.baseSellRateKobo)}/night</Text>
             </View>
@@ -499,6 +653,17 @@ function RatePlanBuilder({
         />
         <SelectField label="Rate type" value={type} options={RATE_PLAN_TYPES} onChange={setType} searchable={false} />
         <Field label="Price per night (₦)" value={priceNaira} onChangeText={setPriceNaira} placeholder="45000" keyboardType="decimal-pad" />
+        <View style={styles.inlineRow}>
+          <View style={{ flex: 1 }}>
+            <Field label="Long-stay: from (nights)" value={longStayMin} onChangeText={setLongStayMin} placeholder="7" keyboardType="numeric" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Field label="Long-stay discount (%)" value={longStayPct} onChangeText={setLongStayPct} placeholder="10" keyboardType="numeric" />
+          </View>
+        </View>
+        {!longStayValid ? (
+          <Text style={styles.muted}>Enter a whole-number discount from 1 to 100, and the minimum nights it applies from.</Text>
+        ) : null}
         <View style={styles.rowBetween}>
           <Text style={styles.label}>Refundable</Text>
           <Switch value={refundable} onValueChange={setRefundable} trackColor={{ true: Colors.primary, false: Colors.outlineVariant }} />
@@ -557,6 +722,10 @@ const styles = StyleSheet.create({
   },
   itemName: { color: Colors.onSurface, fontSize: 15, fontWeight: '600' as const },
   emptyRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(11,28,48,0.45)' },
+  sheet: { backgroundColor: Colors.background, borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, maxHeight: '85%', paddingTop: Spacing.md },
+  sheetHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.containerMargin },
+  sheetBody: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl },
   checkRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
   checkLabel: { color: Colors.onSurface, fontSize: 13.5, fontWeight: '600' as const },
   locationBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 },

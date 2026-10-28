@@ -249,6 +249,15 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		// Single owned transaction detail (object-level authZ in the service).
 		member.GET("/transactions/:id", rp(PermView), h.Transaction)
 
+		// Eligibility, watchlist and price alerts: reads and non-money writes (crypto.view).
+		member.GET("/eligibility", rp(PermView), h.Eligibility)
+		member.GET("/watchlist", rp(PermView), h.Watchlist)
+		member.POST("/watchlist", rp(PermView), h.AddWatchlist)
+		member.DELETE("/watchlist/:assetId", rp(PermView), h.RemoveWatchlist)
+		member.GET("/alerts", rp(PermView), h.Alerts)
+		member.POST("/alerts", rp(PermView), h.CreateAlert)
+		member.DELETE("/alerts/:id", rp(PermView), h.DeleteAlert)
+
 		// Orders (write → crypto.trade). Declared before /:id-style routes.
 		member.POST("/orders/buy", rp(PermTrade), h.Buy)
 		member.POST("/orders/sell", rp(PermTrade), h.Sell)

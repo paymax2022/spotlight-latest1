@@ -1,0 +1,474 @@
+# live-DB transcript — Phase 2.4 whole estate package (M03 occupancy, on top of the M02 suite)
+# captured 2026-10-27, uncached (-count=1)
+# command: cd backend && TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' go test ./internal/estate/... -count=1 -v
+# database: local Supabase (supabase_db_spotlight, 127.0.0.1:54322)
+# result: 181 top-level PASS + 50 subtests / 0 FAIL / 0 SKIP (estate 33.092s, paystackcheckout 1.800s)
+
+=== RUN   TestAtoiDefault
+--- PASS: TestAtoiDefault (0.00s)
+=== RUN   TestParseAINoteResultValid
+--- PASS: TestParseAINoteResultValid (0.00s)
+=== RUN   TestParseAINoteResultMissingSummary
+--- PASS: TestParseAINoteResultMissingSummary (0.00s)
+=== RUN   TestParseAINoteResultBadJSON
+--- PASS: TestParseAINoteResultBadJSON (0.00s)
+=== RUN   TestParseAINoteResultEmptyArraysDefault
+--- PASS: TestParseAINoteResultEmptyArraysDefault (0.00s)
+=== RUN   TestLLMGeneratorInterfaceSatisfied
+--- PASS: TestLLMGeneratorInterfaceSatisfied (0.00s)
+=== RUN   TestAnalyticsTypes
+--- PASS: TestAnalyticsTypes (0.00s)
+=== RUN   TestResolveRangeDefaults
+--- PASS: TestResolveRangeDefaults (0.00s)
+=== RUN   TestResolveRangeExplicit
+--- PASS: TestResolveRangeExplicit (0.00s)
+=== RUN   TestResolveRangeInverted
+--- PASS: TestResolveRangeInverted (0.00s)
+=== RUN   TestMaxConcurrentBookings
+=== RUN   TestMaxConcurrentBookings/nil_capacity_is_exclusive
+=== RUN   TestMaxConcurrentBookings/zero_capacity_is_exclusive
+=== RUN   TestMaxConcurrentBookings/negative_capacity_is_exclusive
+=== RUN   TestMaxConcurrentBookings/capacity_one
+=== RUN   TestMaxConcurrentBookings/capacity_thirty
+--- PASS: TestMaxConcurrentBookings (0.00s)
+    --- PASS: TestMaxConcurrentBookings/nil_capacity_is_exclusive (0.00s)
+    --- PASS: TestMaxConcurrentBookings/zero_capacity_is_exclusive (0.00s)
+    --- PASS: TestMaxConcurrentBookings/negative_capacity_is_exclusive (0.00s)
+    --- PASS: TestMaxConcurrentBookings/capacity_one (0.00s)
+    --- PASS: TestMaxConcurrentBookings/capacity_thirty (0.00s)
+=== RUN   TestCreateEstateRefusedByMerchantGateIs403
+--- PASS: TestCreateEstateRefusedByMerchantGateIs403 (0.00s)
+=== RUN   TestAlertSeverity
+--- PASS: TestAlertSeverity (0.00s)
+=== RUN   TestLiveDBAssertGateFailClosed
+--- PASS: TestLiveDBAssertGateFailClosed (0.53s)
+=== RUN   TestLiveDBGrantRevokeAndExpiry
+--- PASS: TestLiveDBGrantRevokeAndExpiry (0.34s)
+=== RUN   TestLiveDBListEstatesIsolation
+--- PASS: TestLiveDBListEstatesIsolation (0.35s)
+=== RUN   TestLiveDBSingleUseAtomicRace
+--- PASS: TestLiveDBSingleUseAtomicRace (0.44s)
+=== RUN   TestLiveDBExpiryDenied
+--- PASS: TestLiveDBExpiryDenied (0.37s)
+=== RUN   TestLiveDBGuardAuthzRequiredOnCheckIn
+--- PASS: TestLiveDBGuardAuthzRequiredOnCheckIn (0.34s)
+=== RUN   TestLiveDBArrivalGating
+--- PASS: TestLiveDBArrivalGating (0.35s)
+=== RUN   TestLiveDBDeclinedArrivalStaysDenied
+--- PASS: TestLiveDBDeclinedArrivalStaysDenied (0.33s)
+=== RUN   TestLiveDBArrivalDecisionAuthz
+--- PASS: TestLiveDBArrivalDecisionAuthz (0.40s)
+=== RUN   TestLiveDBE2EVisitorAccessJourney
+--- PASS: TestLiveDBE2EVisitorAccessJourney (0.35s)
+=== RUN   TestGuardRolesExcludeSuperRole
+--- PASS: TestGuardRolesExcludeSuperRole (0.00s)
+=== RUN   TestEstateAdminIsNeverSelfGrantable
+--- PASS: TestEstateAdminIsNeverSelfGrantable (0.00s)
+=== RUN   TestGenerateNumericCodeIsSixDigits
+--- PASS: TestGenerateNumericCodeIsSixDigits (0.00s)
+=== RUN   TestMerchantGateFuncAdapter
+--- PASS: TestMerchantGateFuncAdapter (0.00s)
+=== RUN   TestCreateEstateBlockedWhenGateDenies
+--- PASS: TestCreateEstateBlockedWhenGateDenies (0.00s)
+=== RUN   TestCreateEstateBlockedWhenGateErrors
+--- PASS: TestCreateEstateBlockedWhenGateErrors (0.00s)
+=== RUN   TestHasLiveGrantNoRolesShortCircuits
+--- PASS: TestHasLiveGrantNoRolesShortCircuits (0.00s)
+=== RUN   TestSentinelErrorsAreDistinct
+--- PASS: TestSentinelErrorsAreDistinct (0.00s)
+=== RUN   TestLiveDB_DualControl_PayoutSelfApprovalRefused_CrossAdminExecutesOnce
+--- PASS: TestLiveDB_DualControl_PayoutSelfApprovalRefused_CrossAdminExecutesOnce (0.60s)
+=== RUN   TestLiveDB_DualControl_ConcurrentApproversExecuteOnce
+--- PASS: TestLiveDB_DualControl_ConcurrentApproversExecuteOnce (0.50s)
+=== RUN   TestLiveDB_DualControl_BelowThresholdExecutesDirectly
+--- PASS: TestLiveDB_DualControl_BelowThresholdExecutesDirectly (0.63s)
+=== RUN   TestLiveDB_DualControl_CreateIdempotentAndOneOpenPerSubject
+--- PASS: TestLiveDB_DualControl_CreateIdempotentAndOneOpenPerSubject (0.46s)
+=== RUN   TestLiveDB_DualControl_ResidentBanNeedsSecondAdmin
+--- PASS: TestLiveDB_DualControl_ResidentBanNeedsSecondAdmin (0.47s)
+=== RUN   TestLiveDB_DualControl_RoleGrant
+--- PASS: TestLiveDB_DualControl_RoleGrant (0.47s)
+=== RUN   TestLiveDB_DualControl_ThresholdChangeVersionedHistory
+--- PASS: TestLiveDB_DualControl_ThresholdChangeVersionedHistory (0.54s)
+=== RUN   TestLiveDB_DualControl_FlagOffKeepsSingleActor
+--- PASS: TestLiveDB_DualControl_FlagOffKeepsSingleActor (0.39s)
+=== RUN   TestRequiresChecker_ThresholdPolicy
+--- PASS: TestRequiresChecker_ThresholdPolicy (0.00s)
+=== RUN   TestParseThresholdPayload_KoboIntegersOnly
+--- PASS: TestParseThresholdPayload_KoboIntegersOnly (0.00s)
+=== RUN   TestApprovalStatusMapsOntoMakercheck
+--- PASS: TestApprovalStatusMapsOntoMakercheck (0.00s)
+=== RUN   TestDualControlOff_ServiceRefusesApprovals
+--- PASS: TestDualControlOff_ServiceRefusesApprovals (0.00s)
+=== RUN   TestApprovalHandlers_RequireIdempotencyKey
+--- PASS: TestApprovalHandlers_RequireIdempotencyKey (0.00s)
+=== RUN   TestApprovalHandlers_FlagOffIs503
+2026/10/28 00:07:36 [httperr] sanitized 503 response for POST /estate/e1/admin/approvals (request_id=): estate: dual-control approvals are not enabled
+--- PASS: TestApprovalHandlers_FlagOffIs503 (0.00s)
+=== RUN   TestApprovalErrMap
+--- PASS: TestApprovalErrMap (0.00s)
+=== RUN   TestWritePendingApproval
+--- PASS: TestWritePendingApproval (0.00s)
+=== RUN   TestEvaluateEligibility
+=== RUN   TestEvaluateEligibility/no_rules_→_eligible
+=== RUN   TestEvaluateEligibility/kyc_required_+_verified_→_eligible
+=== RUN   TestEvaluateEligibility/kyc_required_+_unverified_→_blocked
+=== RUN   TestEvaluateEligibility/kyc_required_but_verifier_unavailable_→_fail_closed
+=== RUN   TestEvaluateEligibility/payment_required_+_outstanding_dues_→_blocked
+=== RUN   TestEvaluateEligibility/payment_required_+_cleared_→_eligible
+=== RUN   TestEvaluateEligibility/resident_type_match_→_eligible
+=== RUN   TestEvaluateEligibility/resident_type_mismatch_→_blocked
+=== RUN   TestEvaluateEligibility/multiple_failures_accumulate
+=== RUN   TestEvaluateEligibility/all_requirements_satisfied
+--- PASS: TestEvaluateEligibility (0.00s)
+    --- PASS: TestEvaluateEligibility/no_rules_→_eligible (0.00s)
+    --- PASS: TestEvaluateEligibility/kyc_required_+_verified_→_eligible (0.00s)
+    --- PASS: TestEvaluateEligibility/kyc_required_+_unverified_→_blocked (0.00s)
+    --- PASS: TestEvaluateEligibility/kyc_required_but_verifier_unavailable_→_fail_closed (0.00s)
+    --- PASS: TestEvaluateEligibility/payment_required_+_outstanding_dues_→_blocked (0.00s)
+    --- PASS: TestEvaluateEligibility/payment_required_+_cleared_→_eligible (0.00s)
+    --- PASS: TestEvaluateEligibility/resident_type_match_→_eligible (0.00s)
+    --- PASS: TestEvaluateEligibility/resident_type_mismatch_→_blocked (0.00s)
+    --- PASS: TestEvaluateEligibility/multiple_failures_accumulate (0.00s)
+    --- PASS: TestEvaluateEligibility/all_requirements_satisfied (0.00s)
+=== RUN   TestContainsString
+--- PASS: TestContainsString (0.00s)
+=== RUN   TestLiveDB_Governance_RuleApprovalAppliesAndLocks
+--- PASS: TestLiveDB_Governance_RuleApprovalAppliesAndLocks (0.31s)
+=== RUN   TestLiveDB_Governance_RollBuildFreezeChallengeRevokesMidPoll
+--- PASS: TestLiveDB_Governance_RollBuildFreezeChallengeRevokesMidPoll (0.59s)
+=== RUN   TestLiveDB_Governance_RollRemovalAndException
+--- PASS: TestLiveDB_Governance_RollRemovalAndException (0.46s)
+=== RUN   TestLiveDB_Governance_UnfrozenRollDoesNotGate
+--- PASS: TestLiveDB_Governance_UnfrozenRollDoesNotGate (0.74s)
+=== RUN   TestLiveDB_Governance_PerUnitWeighting
+--- PASS: TestLiveDB_Governance_PerUnitWeighting (0.57s)
+=== RUN   TestLiveDB_Governance_AbstentionCountsInTurnoutOnly
+--- PASS: TestLiveDB_Governance_AbstentionCountsInTurnoutOnly (0.45s)
+=== RUN   TestLiveDB_Governance_NominationAcceptVetCertify
+--- PASS: TestLiveDB_Governance_NominationAcceptVetCertify (0.88s)
+=== RUN   TestLiveDB_Governance_QuorumBlocksCertification
+--- PASS: TestLiveDB_Governance_QuorumBlocksCertification (0.57s)
+=== RUN   TestLiveDB_Governance_CountQuorumWithWeighting
+--- PASS: TestLiveDB_Governance_CountQuorumWithWeighting (0.42s)
+=== RUN   TestLiveDB_Governance_TieBreak
+=== RUN   TestLiveDB_Governance_TieBreak/none
+=== RUN   TestLiveDB_Governance_TieBreak/earliest_candidate
+=== RUN   TestLiveDB_Governance_TieBreak/runoff
+--- PASS: TestLiveDB_Governance_TieBreak (0.51s)
+    --- PASS: TestLiveDB_Governance_TieBreak/none (0.07s)
+    --- PASS: TestLiveDB_Governance_TieBreak/earliest_candidate (0.05s)
+    --- PASS: TestLiveDB_Governance_TieBreak/runoff (0.05s)
+=== RUN   TestLiveDB_Governance_ComplaintGatesCertificationAndRecount
+--- PASS: TestLiveDB_Governance_ComplaintGatesCertificationAndRecount (0.37s)
+=== RUN   TestLiveDB_Governance_CancellationSealsTheBallot
+--- PASS: TestLiveDB_Governance_CancellationSealsTheBallot (0.36s)
+=== RUN   TestLiveDB_Governance_InformalPollIsNonBinding
+--- PASS: TestLiveDB_Governance_InformalPollIsNonBinding (0.37s)
+=== RUN   TestLiveDB_Import_DryRunCommitAndReplay
+--- PASS: TestLiveDB_Import_DryRunCommitAndReplay (0.30s)
+=== RUN   TestLiveDB_Import_DedupeAndDelta
+--- PASS: TestLiveDB_Import_DedupeAndDelta (0.32s)
+=== RUN   TestLiveDB_Import_ExceptionsAndGates
+--- PASS: TestLiveDB_Import_ExceptionsAndGates (0.33s)
+=== RUN   TestValidateImport_ValidBatch
+--- PASS: TestValidateImport_ValidBatch (0.00s)
+=== RUN   TestValidateImport_RowExceptions
+--- PASS: TestValidateImport_RowExceptions (0.00s)
+=== RUN   TestValidateImport_DuplicateUnitNaturalKey
+--- PASS: TestValidateImport_DuplicateUnitNaturalKey (0.00s)
+=== RUN   TestLiveDB_Lifecycle_Transitions
+--- PASS: TestLiveDB_Lifecycle_Transitions (0.21s)
+=== RUN   TestLiveDB_Lifecycle_VerificationQueue
+--- PASS: TestLiveDB_Lifecycle_VerificationQueue (0.20s)
+=== RUN   TestLiveDB_Lifecycle_ReasonRequiredAndNotFound
+--- PASS: TestLiveDB_Lifecycle_ReasonRequiredAndNotFound (0.18s)
+=== RUN   TestLiveDB_Lifecycle_LegalHoldBlocksPurge
+--- PASS: TestLiveDB_Lifecycle_LegalHoldBlocksPurge (0.22s)
+=== RUN   TestLiveDB_Lifecycle_GateMiddleware
+--- PASS: TestLiveDB_Lifecycle_GateMiddleware (0.19s)
+=== RUN   TestLifecycleTarget_TransitionTable
+--- PASS: TestLifecycleTarget_TransitionTable (0.00s)
+=== RUN   TestNormaliseReason
+--- PASS: TestNormaliseReason (0.00s)
+=== RUN   TestLifecycleExempt
+--- PASS: TestLifecycleExempt (0.00s)
+=== RUN   TestIsEstateNotActive
+--- PASS: TestIsEstateNotActive (0.00s)
+=== RUN   TestLifecycleGate_ReadsPassAndBadIDsFallThrough
+--- PASS: TestLifecycleGate_ReadsPassAndBadIDsFallThrough (0.00s)
+=== RUN   TestLiveDB_Meeting_StartMeeting_ScheduledToLive
+--- PASS: TestLiveDB_Meeting_StartMeeting_ScheduledToLive (0.19s)
+=== RUN   TestLiveDB_Meeting_EndMeeting_LiveToEnded
+--- PASS: TestLiveDB_Meeting_EndMeeting_LiveToEnded (0.18s)
+=== RUN   TestLiveDB_Meeting_CancelMeeting_FromScheduledOrLive
+=== RUN   TestLiveDB_Meeting_CancelMeeting_FromScheduledOrLive/scheduled
+=== RUN   TestLiveDB_Meeting_CancelMeeting_FromScheduledOrLive/live
+--- PASS: TestLiveDB_Meeting_CancelMeeting_FromScheduledOrLive (0.18s)
+    --- PASS: TestLiveDB_Meeting_CancelMeeting_FromScheduledOrLive/scheduled (0.02s)
+    --- PASS: TestLiveDB_Meeting_CancelMeeting_FromScheduledOrLive/live (0.01s)
+=== RUN   TestLiveDB_Meeting_RescheduleMeeting_BackToScheduled
+=== RUN   TestLiveDB_Meeting_RescheduleMeeting_BackToScheduled/scheduled
+=== RUN   TestLiveDB_Meeting_RescheduleMeeting_BackToScheduled/live
+--- PASS: TestLiveDB_Meeting_RescheduleMeeting_BackToScheduled (0.19s)
+    --- PASS: TestLiveDB_Meeting_RescheduleMeeting_BackToScheduled/scheduled (0.02s)
+    --- PASS: TestLiveDB_Meeting_RescheduleMeeting_BackToScheduled/live (0.01s)
+=== RUN   TestLiveDB_Meeting_TerminalStates_RejectAllTransitions
+=== RUN   TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/ended/StartMeeting
+=== RUN   TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/ended/EndMeeting
+=== RUN   TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/ended/RescheduleMeeting
+=== RUN   TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/cancelled/StartMeeting
+=== RUN   TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/cancelled/EndMeeting
+=== RUN   TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/cancelled/RescheduleMeeting
+=== RUN   TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/ended/CancelMeeting
+=== RUN   TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/cancelled/CancelMeeting
+--- PASS: TestLiveDB_Meeting_TerminalStates_RejectAllTransitions (0.19s)
+    --- PASS: TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/ended/StartMeeting (0.01s)
+    --- PASS: TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/ended/EndMeeting (0.00s)
+    --- PASS: TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/ended/RescheduleMeeting (0.00s)
+    --- PASS: TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/cancelled/StartMeeting (0.00s)
+    --- PASS: TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/cancelled/EndMeeting (0.00s)
+    --- PASS: TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/cancelled/RescheduleMeeting (0.00s)
+    --- PASS: TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/ended/CancelMeeting (0.00s)
+    --- PASS: TestLiveDB_Meeting_TerminalStates_RejectAllTransitions/cancelled/CancelMeeting (0.00s)
+=== RUN   TestLiveDB_Vote_ConcurrentDuplicateVote_ResultsInOneBallot
+--- PASS: TestLiveDB_Vote_ConcurrentDuplicateVote_ResultsInOneBallot (0.24s)
+=== RUN   TestLiveDB_Vote_BallotCannotBeJoinedToVoter
+--- PASS: TestLiveDB_Vote_BallotCannotBeJoinedToVoter (0.23s)
+=== RUN   TestValidRSVPResponse
+--- PASS: TestValidRSVPResponse (0.00s)
+=== RUN   TestValidCheckinMethod
+--- PASS: TestValidCheckinMethod (0.00s)
+=== RUN   TestValidMeetingMode
+--- PASS: TestValidMeetingMode (0.00s)
+=== RUN   TestLiveDB_Notify_PreferenceGateAndSafetyOverride
+--- PASS: TestLiveDB_Notify_PreferenceGateAndSafetyOverride (0.24s)
+=== RUN   TestLiveDB_Notify_PushDisabledKeepsFeed
+--- PASS: TestLiveDB_Notify_PushDisabledKeepsFeed (0.25s)
+=== RUN   TestLiveDB_Notify_DedupeReplay
+--- PASS: TestLiveDB_Notify_DedupeReplay (0.26s)
+=== RUN   TestLiveDB_ScanVisitorPass_NotifiesIssuer
+--- PASS: TestLiveDB_ScanVisitorPass_NotifiesIssuer (0.26s)
+=== RUN   TestLiveDB_CheckInVisitor_NotifiesIssuer
+--- PASS: TestLiveDB_CheckInVisitor_NotifiesIssuer (0.23s)
+=== RUN   TestLiveDB_Reminders_TargetNonResponders
+--- PASS: TestLiveDB_Reminders_TargetNonResponders (0.34s)
+=== RUN   TestLiveDB_RepairUpdate_NotifiesReporter
+--- PASS: TestLiveDB_RepairUpdate_NotifiesReporter (0.31s)
+=== RUN   TestLiveDB_Maintenance_OverdueNotifies
+--- PASS: TestLiveDB_Maintenance_OverdueNotifies (0.25s)
+=== RUN   TestEstateNotificationTaxonomy
+--- PASS: TestEstateNotificationTaxonomy (0.00s)
+=== RUN   TestNotifCategoryWithinDomain
+--- PASS: TestNotifCategoryWithinDomain (0.00s)
+=== RUN   TestNotifCategorySpotChecks
+--- PASS: TestNotifCategorySpotChecks (0.00s)
+=== RUN   TestNotifDeepLinkNonEmpty
+--- PASS: TestNotifDeepLinkNonEmpty (0.00s)
+=== RUN   TestNotifPrefColumnMapping
+--- PASS: TestNotifPrefColumnMapping (0.00s)
+=== RUN   TestNotifDedupeWindowBound
+--- PASS: TestNotifDedupeWindowBound (0.00s)
+=== RUN   TestLiveDB_Occupancy_AdmitRegisterAndRelease
+--- PASS: TestLiveDB_Occupancy_AdmitRegisterAndRelease (0.33s)
+=== RUN   TestLiveDB_Occupancy_CapacityAndOverlap
+--- PASS: TestLiveDB_Occupancy_CapacityAndOverlap (0.61s)
+=== RUN   TestLiveDB_Occupancy_TermGate
+--- PASS: TestLiveDB_Occupancy_TermGate (0.34s)
+=== RUN   TestLiveDB_Occupancy_VacantUnitExemption
+--- PASS: TestLiveDB_Occupancy_VacantUnitExemption (0.26s)
+=== RUN   TestLiveDB_Occupancy_ProofReview
+--- PASS: TestLiveDB_Occupancy_ProofReview (0.43s)
+=== RUN   TestLiveDB_Occupancy_ArchiveAndStatusGates
+--- PASS: TestLiveDB_Occupancy_ArchiveAndStatusGates (0.29s)
+=== RUN   TestLiveDB_Occupancy_TenancyApprovalAdmitsWithoutDemotion
+--- PASS: TestLiveDB_Occupancy_TenancyApprovalAdmitsWithoutDemotion (0.43s)
+=== RUN   TestLiveDB_Occupancy_CrossEstateVehicleVerification
+--- PASS: TestLiveDB_Occupancy_CrossEstateVehicleVerification (0.33s)
+=== RUN   TestLiveDB_PayDuesPaystackFunded_SkipsTierGate
+--- PASS: TestLiveDB_PayDuesPaystackFunded_SkipsTierGate (0.28s)
+=== RUN   TestLiveDB_PayDuesPaystackFunded_AmountMismatchRejects
+--- PASS: TestLiveDB_PayDuesPaystackFunded_AmountMismatchRejects (0.20s)
+=== RUN   TestLiveDB_QuoteDuesInvoice_MatchesPayDuesPaystackFundedAmount
+--- PASS: TestLiveDB_QuoteDuesInvoice_MatchesPayDuesPaystackFundedAmount (0.22s)
+=== RUN   TestLiveDB_QuoteDuesInvoice_RejectsAnotherResidentsInvoice
+--- PASS: TestLiveDB_QuoteDuesInvoice_RejectsAnotherResidentsInvoice (0.22s)
+=== RUN   TestEstateUploadKindsCoverBlocks
+--- PASS: TestEstateUploadKindsCoverBlocks (0.00s)
+=== RUN   TestEstateUploadAllowlistsRestrictive
+--- PASS: TestEstateUploadAllowlistsRestrictive (0.00s)
+=== RUN   TestEstateRandTokenUnguessable
+--- PASS: TestEstateRandTokenUnguessable (0.00s)
+=== RUN   TestPresignUploadFailsClosedWhenUnconfigured
+--- PASS: TestPresignUploadFailsClosedWhenUnconfigured (0.00s)
+=== RUN   TestDocDownloadAllowed
+--- PASS: TestDocDownloadAllowed (0.00s)
+=== RUN   TestDocumentDownloadTTL
+--- PASS: TestDocumentDownloadTTL (0.00s)
+=== RUN   TestLiveDB_Profile_TimezoneDefaultsValidatesAndIsEnforcedInDB
+--- PASS: TestLiveDB_Profile_TimezoneDefaultsValidatesAndIsEnforcedInDB (0.18s)
+=== RUN   TestLiveDB_Profile_BrandingAndNoticeAreAdminOnlyAndBounded
+--- PASS: TestLiveDB_Profile_BrandingAndNoticeAreAdminOnlyAndBounded (0.22s)
+=== RUN   TestLiveDB_Profile_ConfigRevisionHistory
+--- PASS: TestLiveDB_Profile_ConfigRevisionHistory (0.22s)
+=== RUN   TestLiveDB_Profile_DuplicateEstateGoesToReviewQueue
+--- PASS: TestLiveDB_Profile_DuplicateEstateGoesToReviewQueue (0.34s)
+=== RUN   TestLiveDB_Invite_ManagerCodeGrantsAdminAndResidentCodeCannotDemote
+--- PASS: TestLiveDB_Invite_ManagerCodeGrantsAdminAndResidentCodeCannotDemote (0.52s)
+=== RUN   TestLiveDB_OwnerTransfer_AcceptIsTheOnlyWayOwnershipMoves
+--- PASS: TestLiveDB_OwnerTransfer_AcceptIsTheOnlyWayOwnershipMoves (0.28s)
+=== RUN   TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership
+=== RUN   TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership/declined_by_the_target
+=== RUN   TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership/withdrawn_by_the_owner
+--- PASS: TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership (0.31s)
+    --- PASS: TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership/declined_by_the_target (0.20s)
+    --- PASS: TestLiveDB_OwnerTransfer_DeclineAndWithdrawKeepOwnership/withdrawn_by_the_owner (0.10s)
+=== RUN   TestLiveDB_OwnerTransfer_ListingIsScopedToTheParties
+--- PASS: TestLiveDB_OwnerTransfer_ListingIsScopedToTheParties (0.24s)
+=== RUN   TestValidOccupancyStatus
+--- PASS: TestValidOccupancyStatus (0.00s)
+=== RUN   TestValidTransferType
+--- PASS: TestValidTransferType (0.00s)
+=== RUN   TestValidTransferDecision
+--- PASS: TestValidTransferDecision (0.00s)
+=== RUN   TestRestrictionMatrix
+--- PASS: TestRestrictionMatrix (0.00s)
+=== RUN   TestRestrictionUnknownLevelDoesNotBlock
+--- PASS: TestRestrictionUnknownLevelDoesNotBlock (0.00s)
+=== RUN   TestRestrictionActionConstants
+--- PASS: TestRestrictionActionConstants (0.00s)
+=== RUN   TestLiveDBApprovalAdmitsOnce
+--- PASS: TestLiveDBApprovalAdmitsOnce (0.36s)
+=== RUN   TestLiveDBApprovalExpires
+--- PASS: TestLiveDBApprovalExpires (0.33s)
+=== RUN   TestLiveDBGuardGrantsFlagOffKeepsPreviousBehaviour
+--- PASS: TestLiveDBGuardGrantsFlagOffKeepsPreviousBehaviour (0.28s)
+=== RUN   TestLiveDBNewEstateTablesNotReachableViaPostgREST
+--- PASS: TestLiveDBNewEstateTablesNotReachableViaPostgREST (0.03s)
+=== RUN   TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction
+--- PASS: TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction (0.32s)
+=== RUN   TestLiveDB_PayDues_RejectsAmountOverride
+=== RUN   TestLiveDB_PayDues_RejectsAmountOverride/negative_override_rejected
+=== RUN   TestLiveDB_PayDues_RejectsAmountOverride/mismatched_positive_override_rejected
+=== RUN   TestLiveDB_PayDues_RejectsAmountOverride/zero_override_is_no_override_and_succeeds
+=== RUN   TestLiveDB_PayDues_RejectsAmountOverride/create_invoice_rejects_non_positive
+--- PASS: TestLiveDB_PayDues_RejectsAmountOverride (0.32s)
+    --- PASS: TestLiveDB_PayDues_RejectsAmountOverride/negative_override_rejected (0.01s)
+    --- PASS: TestLiveDB_PayDues_RejectsAmountOverride/mismatched_positive_override_rejected (0.00s)
+    --- PASS: TestLiveDB_PayDues_RejectsAmountOverride/zero_override_is_no_override_and_succeeds (0.05s)
+    --- PASS: TestLiveDB_PayDues_RejectsAmountOverride/create_invoice_rejects_non_positive (0.00s)
+=== RUN   TestLiveDB_PayDues_RejectsWaivedInvoice
+--- PASS: TestLiveDB_PayDues_RejectsWaivedInvoice (0.26s)
+=== RUN   TestLiveDB_PayDues_RejectsPayingAnotherResidentsInvoice
+--- PASS: TestLiveDB_PayDues_RejectsPayingAnotherResidentsInvoice (0.29s)
+=== RUN   TestLiveDB_PayDues_RejectsCrossEstateInvoice
+--- PASS: TestLiveDB_PayDues_RejectsCrossEstateInvoice (0.34s)
+=== RUN   TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt
+--- PASS: TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt (0.30s)
+=== RUN   TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce
+--- PASS: TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce (0.30s)
+=== RUN   TestUpdateMemberSettingsAllPointers
+--- PASS: TestUpdateMemberSettingsAllPointers (0.00s)
+=== RUN   TestMemberSettingsRoundTripFields
+--- PASS: TestMemberSettingsRoundTripFields (0.00s)
+=== RUN   TestLiveDB_VendorPayout_CompletedJobCreditsVendorWallet
+--- PASS: TestLiveDB_VendorPayout_CompletedJobCreditsVendorWallet (0.35s)
+=== RUN   TestLiveDB_VendorPayout_RejectedWhenJobNotCompleted
+=== RUN   TestLiveDB_VendorPayout_RejectedWhenJobNotCompleted/accepted
+=== RUN   TestLiveDB_VendorPayout_RejectedWhenJobNotCompleted/in_progress
+--- PASS: TestLiveDB_VendorPayout_RejectedWhenJobNotCompleted (0.33s)
+    --- PASS: TestLiveDB_VendorPayout_RejectedWhenJobNotCompleted/accepted (0.02s)
+    --- PASS: TestLiveDB_VendorPayout_RejectedWhenJobNotCompleted/in_progress (0.02s)
+=== RUN   TestLiveDB_VendorPayout_IDOR_CannotPayoutAnotherVendorsJob
+--- PASS: TestLiveDB_VendorPayout_IDOR_CannotPayoutAnotherVendorsJob (0.37s)
+=== RUN   TestLiveDB_VendorPayout_ReplaySameKeyIsIdempotent
+--- PASS: TestLiveDB_VendorPayout_ReplaySameKeyIsIdempotent (0.35s)
+=== RUN   TestLiveDB_VendorJobFSM
+=== RUN   TestLiveDB_VendorJobFSM/FSM-001_available->accepted_via_AcceptJob
+=== RUN   TestLiveDB_VendorJobFSM/FSM-002_available->rejected_via_RejectJob
+=== RUN   TestLiveDB_VendorJobFSM/FSM-003_accepted->en_route_via_CheckInAtGate
+=== RUN   TestLiveDB_VendorJobFSM/FSM-004_accepted->in_progress_via_StartJob
+=== RUN   TestLiveDB_VendorJobFSM/FSM-004b_en_route->in_progress_via_StartJob
+=== RUN   TestLiveDB_VendorJobFSM/FSM-005_in_progress->completed_via_MarkJobComplete
+=== RUN   TestLiveDB_VendorJobFSM/FSM-006_completed->paid_via_RequestPayout
+=== RUN   TestLiveDB_VendorJobFSM/FSM-007_paid->paid_RequestPayout_replay_is_a_no-op
+=== RUN   TestLiveDB_VendorJobFSM/FSM-008_RequestPayout_rejected_from_available
+=== RUN   TestLiveDB_VendorJobFSM/FSM-008_RequestPayout_rejected_from_in_progress
+=== RUN   TestLiveDB_VendorJobFSM/illegal:_AcceptJob_from_non-available
+=== RUN   TestLiveDB_VendorJobFSM/illegal:_CheckInAtGate_from_available
+--- PASS: TestLiveDB_VendorJobFSM (0.49s)
+    --- PASS: TestLiveDB_VendorJobFSM/FSM-001_available->accepted_via_AcceptJob (0.02s)
+    --- PASS: TestLiveDB_VendorJobFSM/FSM-002_available->rejected_via_RejectJob (0.01s)
+    --- PASS: TestLiveDB_VendorJobFSM/FSM-003_accepted->en_route_via_CheckInAtGate (0.01s)
+    --- PASS: TestLiveDB_VendorJobFSM/FSM-004_accepted->in_progress_via_StartJob (0.01s)
+    --- PASS: TestLiveDB_VendorJobFSM/FSM-004b_en_route->in_progress_via_StartJob (0.01s)
+    --- PASS: TestLiveDB_VendorJobFSM/FSM-005_in_progress->completed_via_MarkJobComplete (0.02s)
+    --- PASS: TestLiveDB_VendorJobFSM/FSM-006_completed->paid_via_RequestPayout (0.05s)
+    --- PASS: TestLiveDB_VendorJobFSM/FSM-007_paid->paid_RequestPayout_replay_is_a_no-op (0.03s)
+    --- PASS: TestLiveDB_VendorJobFSM/FSM-008_RequestPayout_rejected_from_available (0.01s)
+    --- PASS: TestLiveDB_VendorJobFSM/FSM-008_RequestPayout_rejected_from_in_progress (0.01s)
+    --- PASS: TestLiveDB_VendorJobFSM/illegal:_AcceptJob_from_non-available (0.01s)
+    --- PASS: TestLiveDB_VendorJobFSM/illegal:_CheckInAtGate_from_available (0.01s)
+=== RUN   TestRequestPayoutRequiresIdempotencyKey
+--- PASS: TestRequestPayoutRequiresIdempotencyKey (0.00s)
+=== RUN   TestRequestPayoutRequiresLedger
+--- PASS: TestRequestPayoutRequiresLedger (0.00s)
+=== RUN   TestMoneyPathGuardsPrecedeDataAccess
+--- PASS: TestMoneyPathGuardsPrecedeDataAccess (0.00s)
+=== RUN   TestCrossEstateIsolationContract
+--- PASS: TestCrossEstateIsolationContract (0.00s)
+=== RUN   TestVisitorPassStatusValues
+--- PASS: TestVisitorPassStatusValues (0.00s)
+=== RUN   TestElectionStatusValues
+--- PASS: TestElectionStatusValues (0.00s)
+=== RUN   TestResidentRoles
+--- PASS: TestResidentRoles (0.00s)
+=== RUN   TestVisitorPassValidityWindow
+--- PASS: TestVisitorPassValidityWindow (0.00s)
+=== RUN   TestElectionRequiresAtLeastTwoCandidates
+--- PASS: TestElectionRequiresAtLeastTwoCandidates (0.00s)
+=== RUN   TestOneVotePerResident
+    model_test.go:98: INVARIANT: (election_id, voter_id) must be UNIQUE — duplicate detected; DB will reject
+--- PASS: TestOneVotePerResident (0.00s)
+=== RUN   TestVisitorPassQRCodeRequired
+--- PASS: TestVisitorPassQRCodeRequired (0.00s)
+=== RUN   TestPayDuesRequiresIdempotencyKey
+--- PASS: TestPayDuesRequiresIdempotencyKey (0.00s)
+=== RUN   TestPayDuesRequestAmountInvariant
+--- PASS: TestPayDuesRequestAmountInvariant (0.00s)
+=== RUN   TestDuesInvoiceStatusValues
+--- PASS: TestDuesInvoiceStatusValues (0.00s)
+=== RUN   TestRestrictionLevels
+--- PASS: TestRestrictionLevels (0.00s)
+=== RUN   TestTaskEnums
+--- PASS: TestTaskEnums (0.00s)
+=== RUN   TestRepairLifecycle
+--- PASS: TestRepairLifecycle (0.00s)
+=== RUN   TestFacilityBookingWindow
+--- PASS: TestFacilityBookingWindow (0.00s)
+=== RUN   TestEmergencyKinds
+--- PASS: TestEmergencyKinds (0.00s)
+=== RUN   TestUploadLimitsConstants
+--- PASS: TestUploadLimitsConstants (0.00s)
+PASS
+ok  	spotlight/backend/internal/estate	33.092s
+=== RUN   TestLiveDB_PutIntent_ForeignKeyIsCollisionNotReplay
+--- PASS: TestLiveDB_PutIntent_ForeignKeyIsCollisionNotReplay (0.05s)
+=== RUN   TestInitiateCheckout_FreezesQuotedAmount
+--- PASS: TestInitiateCheckout_FreezesQuotedAmount (0.00s)
+=== RUN   TestInitiateCheckout_RejectsMissingIdempotencyKey
+--- PASS: TestInitiateCheckout_RejectsMissingIdempotencyKey (0.00s)
+=== RUN   TestOnChargeSuccess_PaysDuesAndConfirms
+--- PASS: TestOnChargeSuccess_PaysDuesAndConfirms (0.00s)
+=== RUN   TestOnChargeSuccess_AmountMismatchRefundsAndMarks
+--- PASS: TestOnChargeSuccess_AmountMismatchRefundsAndMarks (0.00s)
+=== RUN   TestOnChargeSuccess_PaymentFailureRefundsAndMarksOrderFailed
+--- PASS: TestOnChargeSuccess_PaymentFailureRefundsAndMarksOrderFailed (0.00s)
+=== RUN   TestOnChargeSuccess_ConcurrentDeliveriesActOnce
+--- PASS: TestOnChargeSuccess_ConcurrentDeliveriesActOnce (0.00s)
+=== RUN   TestOwnerCustomerID_ResolvesTheStartingResident
+--- PASS: TestOwnerCustomerID_ResolvesTheStartingResident (0.00s)
+=== RUN   TestInitiateCheckout_ForeignIdempotencyKeyIsRejected
+--- PASS: TestInitiateCheckout_ForeignIdempotencyKeyIsRejected (0.00s)
+PASS
+ok  	spotlight/backend/internal/estate/paystackcheckout	1.800s

@@ -25,9 +25,16 @@ const (
 // failure from assertResident/assertEstateAdmin/assertRoles. Those errors
 // predate sentinel values, so they are matched by message — anything else is a
 // data/infra error and keeps the caller's non-403 status mapping.
+//
+// ErrResidencyNotInEffect is the fourth member of that family (EST-UAT-0045): the person IS a member,
+// but their occupancy term does not cover today, so member-gated actions are refused while the door
+// stays open for reading the register that explains it.
 func isMembershipErr(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, ErrResidencyNotInEffect) {
+		return true
 	}
 	m := err.Error()
 	return strings.HasPrefix(m, "estate: not a member") ||
@@ -698,7 +705,7 @@ func (h *Handler) AddVehicle(c *gin.Context) {
 	}
 	v, err := h.svc.AddVehicle(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, v)
@@ -707,7 +714,7 @@ func (h *Handler) AddVehicle(c *gin.Context) {
 func (h *Handler) VerifyVehicle(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	if err := h.svc.VerifyVehicle(c.Request.Context(), c.Param("id"), adminID, c.Param("vid")); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"verified": true})
@@ -825,7 +832,7 @@ func (h *Handler) AddProperty(c *gin.Context) {
 	}
 	p, err := h.svc.AddProperty(c.Request.Context(), c.Param("id"), adminID, req)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, p)
@@ -848,9 +855,12 @@ func (h *Handler) ClaimOwnership(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	claim, err := h.svc.ClaimOwnership(c.Request.Context(), c.Param("pid"), userID, req.OwnershipDocURL)
+	if !validUUIDParam(c, "id") || !validUUIDParam(c, "pid") {
+		return
+	}
+	claim, err := h.svc.ClaimOwnership(c.Request.Context(), c.Param("id"), c.Param("pid"), userID, req.OwnershipDocURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, claim)
@@ -866,9 +876,12 @@ func (h *Handler) ReviewOwnershipClaim(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	claim, err := h.svc.ReviewOwnershipClaim(c.Request.Context(), c.Param("claimId"), adminID, c.Param("id"), body.Decision, body.RejectReason)
+	if !validUUIDParam(c, "id") || !validUUIDParam(c, "pid") || !validUUIDParam(c, "claimId") {
+		return
+	}
+	claim, err := h.svc.ReviewOwnershipClaim(c.Request.Context(), c.Param("id"), adminID, c.Param("claimId"), body.Decision, body.RejectReason)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, claim)
@@ -881,26 +894,33 @@ func (h *Handler) CreateTenancyRequest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
+	if !validUUIDParam(c, "id") || !validUUIDParam(c, "pid") {
+		return
+	}
 	tr, err := h.svc.CreateTenancyRequest(c.Request.Context(), c.Param("id"), c.Param("pid"), req, tenantID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, tr)
 }
 
 func (h *Handler) ReviewTenancyRequest(c *gin.Context) {
+	if !validUUIDParam(c, "id") || !validUUIDParam(c, "pid") || !validUUIDParam(c, "tid") {
+		return
+	}
 	landlordID := ginutil.UserID(c)
 	var body struct {
-		Decision string `json:"decision" binding:"required"`
+		Decision     string `json:"decision" binding:"required"`
+		RejectReason string `json:"reject_reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	tr, err := h.svc.ReviewTenancyRequest(c.Request.Context(), c.Param("tid"), landlordID, c.Param("id"), body.Decision)
+	tr, err := h.svc.ReviewTenancyRequest(c.Request.Context(), c.Param("id"), c.Param("pid"), c.Param("tid"), landlordID, body.Decision, body.RejectReason)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, tr)
@@ -909,7 +929,7 @@ func (h *Handler) ReviewTenancyRequest(c *gin.Context) {
 func (h *Handler) GetProperty(c *gin.Context) {
 	p, err := h.svc.GetProperty(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -923,7 +943,7 @@ func (h *Handler) UpdateProperty(c *gin.Context) {
 	}
 	p, err := h.svc.UpdateProperty(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"), req)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -939,7 +959,7 @@ func (h *Handler) AssignLandlord(c *gin.Context) {
 	}
 	p, err := h.svc.AssignLandlord(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"), body.UserID)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -955,7 +975,7 @@ func (h *Handler) AssignTenant(c *gin.Context) {
 	}
 	p, err := h.svc.AssignTenant(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"), body.UserID)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -969,17 +989,23 @@ func (h *Handler) SetOccupancyStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
+	if !validUUIDParam(c, "id") || !validUUIDParam(c, "pid") {
+		return
+	}
 	p, err := h.svc.SetOccupancyStatus(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"), body.Status)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, p)
 }
 
 func (h *Handler) ArchiveProperty(c *gin.Context) {
+	if !validUUIDParam(c, "id") || !validUUIDParam(c, "pid") {
+		return
+	}
 	if err := h.svc.ArchiveProperty(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid")); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"archived": true})
@@ -993,7 +1019,7 @@ func (h *Handler) RequestPropertyTransfer(c *gin.Context) {
 	}
 	r, err := h.svc.RequestPropertyTransfer(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"), body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, r)
@@ -1002,10 +1028,10 @@ func (h *Handler) RequestPropertyTransfer(c *gin.Context) {
 func (h *Handler) ListTransferRequests(c *gin.Context) {
 	rs, err := h.svc.ListTransferRequests(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Query(keyStatus))
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		writeOccupancyError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": rs})
+	c.JSON(http.StatusOK, gin.H{keyData: rs})
 }
 
 func (h *Handler) ReviewPropertyTransfer(c *gin.Context) {
@@ -1018,7 +1044,7 @@ func (h *Handler) ReviewPropertyTransfer(c *gin.Context) {
 	}
 	r, err := h.svc.ReviewPropertyTransfer(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("reqId"), body.Decision)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, r)
@@ -1027,7 +1053,7 @@ func (h *Handler) ReviewPropertyTransfer(c *gin.Context) {
 func (h *Handler) GetPropertyAnalytics(c *gin.Context) {
 	a, err := h.svc.GetPropertyAnalytics(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"))
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, a)

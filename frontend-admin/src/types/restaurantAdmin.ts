@@ -426,6 +426,9 @@ export interface RestaurantApplication {
   bank_account_name?: string;
   bank_account_number?: string;
   bank_name?: string;
+  bank_account_verified?: boolean | null;
+  bank_account_verified_at?: string | null;
+  bank_account_verification_error?: string | null;
   documents: OnboardingDoc[];
   status: OnboardingStatus;
   /** Raw restaurants.kyb_status — absent means the owner never submitted;

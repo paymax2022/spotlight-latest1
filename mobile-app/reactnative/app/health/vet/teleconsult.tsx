@@ -8,14 +8,13 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
-import { useConsult, useSendConsultMessage, useCompleteConsult } from '@/features/health/vet/hooks';
+import { useConsult, useSendConsultMessage } from '@/features/health/vet/hooks';
 import { relativeTime } from '@/features/health/constants/health.constants';
 
 export default function TeleconsultScreen() {
   const { id, appointmentId } = useLocalSearchParams<{ id: string; appointmentId?: string }>();
   const { data: consult, isLoading, isError, refetch } = useConsult(id);
   const sendMsg = useSendConsultMessage(id);
-  const complete = useCompleteConsult();
 
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -27,11 +26,14 @@ export default function TeleconsultScreen() {
     setDraft('');
   };
 
+  // The pet owner only leaves the call. Completing a consult (SOAP note + escrow
+  // release) is the vet's action, so the summary opens only once the vet has done it.
   const onEnd = () => {
-    complete.mutate(id, {
-      onSuccess: (res) =>
-        router.replace({ pathname: '/health/vet/consult-summary', params: { id: res.summaryId, appointmentId: appointmentId ?? '' } }),
-    });
+    if (consult?.status === 'completed') {
+      router.replace({ pathname: '/health/vet/consult-summary', params: { id, appointmentId: appointmentId ?? '' } });
+    } else {
+      router.replace('/health/vet/appointments');
+    }
   };
 
   if (isLoading) {

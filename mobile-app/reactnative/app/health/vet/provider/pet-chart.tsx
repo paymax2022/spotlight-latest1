@@ -39,10 +39,10 @@ export default function PetChartScreen() {
 
   const { pet } = chart;
   const meta = SPECIES_META[pet.species];
-  const appt = appointmentId ?? 'appt';
+  const appt = appointmentId ?? '';
 
   const ACTIONS = [
-    { key: 'consult', label: 'Start consult', icon: Video, href: { pathname: '/health/vet/provider/teleconsult', params: { id: 'vcns_001', appointmentId: appt } } },
+    { key: 'consult', label: 'Start consult', icon: Video, href: { pathname: '/health/vet/provider/teleconsult', params: { id: appt, appointmentId: appt } } },
     { key: 'soap', label: 'SOAP notes', icon: NotebookPen, href: { pathname: '/health/vet/provider/soap-notes', params: { appointmentId: appt, petId: pet.id } } },
     { key: 'rx', label: 'Prescribe', icon: ScrollText, href: { pathname: '/health/vet/provider/eprescribe', params: { appointmentId: appt, petId: pet.id } } },
     { key: 'lab', label: 'Order lab', icon: FlaskConical, href: { pathname: '/health/vet/provider/order-lab', params: { appointmentId: appt, petId: pet.id } } },

@@ -197,86 +197,309 @@ function Stat({ icon, value, label }: { icon: React.ReactNode; value: string; la
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  body: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.lg, gap: Spacing.md },
+  safe: { flex: 1, backgroundColor: '#f5f5f7' },
+  body: { paddingHorizontal: 0, paddingBottom: Spacing.lg, gap: Spacing.sm },
+
+  // HERO PROFILE CARD - Large, modern Tinder-style swiping card aesthetic
   profileCard: {
-    backgroundColor: Colors.surfaceContainerLowest,
-    borderRadius: Radius.lg,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    marginTop: 0,
+    marginHorizontal: Spacing.containerMargin,
+    marginBottom: Spacing.md,
+    gap: Spacing.lg,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+
+  identity: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: Spacing.md,
+    backgroundColor: '#FF4458',
+    paddingVertical: Spacing.xl,
+    paddingHorizontal: Spacing.lg,
+  },
+
+  photoAvatar: {
+    width: 120,
+    height: 160,
+    borderRadius: 12,
+    backgroundColor: Colors.surfaceContainerHigh,
+    marginBottom: Spacing.sm,
+    resizeMode: 'cover',
+  },
+
+  avatar: {
+    width: 120,
+    height: 160,
+    borderRadius: 12,
+    backgroundColor: '#667eea',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  avatarText: {
+    ...Typography.displayMd,
+    color: '#fff',
+    fontSize: 48,
+    fontWeight: '700',
+  },
+
+  identityBody: {
+    flex: 1,
+    gap: Spacing.sm,
+    width: '100%',
+  },
+
+  name: {
+    ...Typography.headlineLg,
+    color: '#fff',
+    fontSize: 28,
+    fontWeight: '700',
+    marginBottom: Spacing.xs,
+  },
+
+  age: {
+    ...Typography.titleMd,
+    color: 'rgba(255,255,255,0.9)',
+    fontWeight: '600',
+  },
+
+  cityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: Spacing.xs,
+  },
+
+  headline: {
+    ...Typography.bodyMd,
+    color: 'rgba(255,255,255,0.95)',
+    lineHeight: 20,
+    marginBottom: Spacing.xs,
+  },
+
+  intentRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+    flexWrap: 'wrap',
+  },
+
+  intentChip: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: Colors.surfaceContainerHigh,
-    padding: Spacing.md,
-    marginTop: Spacing.sm,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+
+  intentChipText: {
+    ...Typography.labelMd,
+    color: '#fff',
+    fontWeight: '600',
+  },
+
+  completeHint: {
+    ...Typography.labelMd,
+    color: 'rgba(255,255,255,0.85)',
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.md,
+  },
+
+  actionRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.lg,
+  },
+
+  actionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingVertical: 14,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+
+  actionPrimary: {
+    backgroundColor: '#FF4458',
+  },
+
+  actionPrimaryText: {
+    ...Typography.labelLg,
+    color: '#fff',
+    fontWeight: '700',
+  },
+
+  actionSecondary: {
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#FFB81C',
+  },
+
+  actionSecondaryText: {
+    ...Typography.labelLg,
+    color: '#FFB81C',
+    fontWeight: '700',
+  },
+
+  // WALLET CARD - Modern gradient Bumble style
+  walletCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    marginHorizontal: Spacing.containerMargin,
+    marginBottom: Spacing.md,
+    padding: Spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+
+  walletHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.md,
   },
-  identity: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
-  photoAvatar: { width: 84, height: 84, borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerHigh },
-  age: { ...Typography.titleMd, color: Colors.onSurfaceVariant },
-  cityRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  completeHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-  actionRow: { flexDirection: 'row', gap: Spacing.sm },
-  actionBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: Spacing.xs, paddingVertical: 12, borderRadius: Radius.full,
-  },
-  actionPrimary: { backgroundColor: ConnectColors.brand },
-  actionPrimaryText: { ...Typography.labelLg, color: Colors.onPrimary, fontWeight: '700' },
-  actionSecondary: { backgroundColor: Colors.iconBgPurple },
-  actionSecondaryText: { ...Typography.labelLg, color: ConnectColors.brand, fontWeight: '700' },
-  avatar: {
-    width: 84, height: 84, borderRadius: Radius.full,
-    backgroundColor: ConnectColors.brand, alignItems: 'center', justifyContent: 'center',
-  },
-  avatarText: { ...Typography.titleLg, color: Colors.onPrimary },
-  identityBody: { flex: 1, gap: 2 },
-  name: { ...Typography.titleMd, color: Colors.onSurface },
-  headline: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
-  intentRow: { flexDirection: 'row', gap: Spacing.xs, marginTop: Spacing.xs },
-  intentChip: { backgroundColor: Colors.iconBgBlue, paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: Radius.full },
-  intentChipText: { ...Typography.caption, color: Colors.secondary },
-  walletCard: {
-    backgroundColor: ConnectColors.brand,
-    borderRadius: Radius.lg,
-    padding: Spacing.md,
-  },
-  walletHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+
   walletIcon: {
-    width: 40, height: 40, borderRadius: Radius.md,
-    backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center',
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#FFB81C',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  walletLabel: { ...Typography.labelSm, color: Colors.inverseOnSurface },
-  walletBalance: { ...Typography.headlineMd, color: Colors.onPrimary },
+
+  walletLabel: {
+    ...Typography.labelMd,
+    color: '#666',
+    fontWeight: '600',
+  },
+
+  walletBalance: {
+    ...Typography.headlineLg,
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 24,
+  },
+
   card: {
-    backgroundColor: Colors.surfaceContainerLowest,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.surfaceContainerHigh,
-    padding: Spacing.md,
-    gap: Spacing.xs,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
-  cardTitle: { ...Typography.labelMd, color: Colors.onSurfaceVariant, marginBottom: Spacing.xs },
+
+  cardTitle: {
+    ...Typography.labelMd,
+    color: '#999',
+    marginBottom: Spacing.sm,
+    fontWeight: '600',
+  },
+
+  // GAMIFICATION CARD - Badoo-style with bold graphics
   gamiCard: {
-    backgroundColor: Colors.surfaceContainerLowest,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.surfaceContainerHigh,
-    padding: Spacing.md,
-    gap: Spacing.sm,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    marginHorizontal: Spacing.containerMargin,
+    marginBottom: Spacing.md,
+    padding: Spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
-  gamiHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  gamiTitle: { ...Typography.titleMd, color: Colors.onSurface },
-  gamiStats: { flexDirection: 'row', justifyContent: 'space-between' },
-  stat: { alignItems: 'center', gap: 2, flex: 1 },
-  statValue: { ...Typography.titleMd, color: Colors.onSurface },
-  statLabel: { ...Typography.caption, color: Colors.onSurfaceVariant },
+
+  gamiHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+
+  gamiTitle: {
+    ...Typography.headlineMd,
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 20,
+  },
+
+  gamiStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+  },
+
+  stat: {
+    alignItems: 'center',
+    gap: Spacing.sm,
+    flex: 1,
+    backgroundColor: '#f5f5f7',
+    paddingVertical: Spacing.lg,
+    borderRadius: 12,
+  },
+
+  statValue: {
+    ...Typography.headlineMd,
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 22,
+  },
+
+  statLabel: {
+    ...Typography.labelMd,
+    color: '#999',
+    fontWeight: '600',
+  },
+
+  // SETTINGS ROW
   settingsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
-    backgroundColor: Colors.surfaceContainerLowest,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.surfaceContainerHigh,
-    padding: Spacing.md,
+    gap: Spacing.md,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    marginHorizontal: Spacing.containerMargin,
+    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
-  settingsText: { ...Typography.labelLg, color: Colors.onSurface },
+
+  settingsText: {
+    ...Typography.labelLg,
+    color: '#000',
+    fontWeight: '600',
+  },
 });

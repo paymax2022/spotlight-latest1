@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { listClinicians, verifyDoctor, formatNaira, type ClinicianRecord } from '@/services/telemedicineAdminService';
+import Link from 'next/link';
+import { listClinicians, formatNaira, type ClinicianRecord } from '@/services/telemedicineAdminService';
 import { PageHeader, TelemedTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, th, td, input, label, select, fmtDate } from '../_ui';
 import { colors } from '@/components/ui/vuexy';
 
@@ -11,7 +12,6 @@ export default function CliniciansPage() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('');
   const [q, setQ] = useState('');
-  const [busyId, setBusyId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true); setError(null);
@@ -21,28 +21,11 @@ export default function CliniciansPage() {
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [status]);
 
-  async function onVerify(c: ClinicianRecord, decision: 'approved' | 'rejected') {
-    if (!c.user_id) return;
-    if (decision === 'rejected') {
-      const reason = window.prompt('Reason for rejection (required):', '');
-      if (!reason) return;
-      setBusyId(c.id);
-      try { await verifyDoctor(c.user_id, 'rejected', reason); await load(); }
-      catch (e) { setError(String(e)); }
-      finally { setBusyId(null); }
-      return;
-    }
-    setBusyId(c.id);
-    try { await verifyDoctor(c.user_id, 'approved'); await load(); }
-    catch (e) { setError(String(e)); }
-    finally { setBusyId(null); }
-  }
-
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Clinicians" subtitle="Clinician roster — MDCN credentials, ratings and consult fees." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <TelemedTabs active="clinicians" />
-      <DisclosureNote>MDCN approve/reject below is a real write (POST /admin/doctors/:userId/verify, RBAC telemedicine.admin.manage). Suspension is not yet exposed on the backend admin surface.</DisclosureNote>
+      <DisclosureNote>Approving a clinician from this list only records the MDCN verdict. To bring a doctor live (discoverable and bookable) review the application under Onboarding; suspension and licence expiry are under Compliance.</DisclosureNote>
 
       <FilterBar>
         <div style={{ minWidth: 200 }}>
@@ -81,10 +64,10 @@ export default function CliniciansPage() {
                   <td style={td()}>{fmtDate(c.joined_at)}</td>
                   <td style={td()}>
                     {c.user_id && c.status !== 'verified' && (
-                      <button style={btn()} disabled={busyId === c.id} onClick={() => onVerify(c, 'approved')}>Approve</button>
+                      <Link href='/admin/telemedicine/onboarding' style={{ ...btn(), textDecoration: 'none', display: 'inline-block' }}>Review application</Link>
                     )}{' '}
-                    {c.user_id && c.status !== 'rejected' && (
-                      <button style={btn()} disabled={busyId === c.id} onClick={() => onVerify(c, 'rejected')}>Reject</button>
+                    {c.user_id && c.status === 'verified' && (
+                      <Link href='/admin/telemedicine/compliance' style={{ ...btn(), textDecoration: 'none', display: 'inline-block' }}>Compliance</Link>
                     )}
                   </td>
                 </tr>

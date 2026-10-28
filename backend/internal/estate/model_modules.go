@@ -21,16 +21,23 @@ var ErrDocumentNotFound = errors.New("estate: document not found in this estate"
 var ErrDocumentForbidden = errors.New("estate: not authorised to access this document")
 
 // DuesInvoice is a billed obligation against a resident (service charge, rent…).
+// The two override pairs are the audit trail of the occupancy exemptions (EST-UAT-0048, 0045): a
+// vacant unit and an occupant whose term is not running are exempt by default, so a charge that
+// exists anyway must carry which rule it waived and why.
 type DuesInvoice struct {
-	ID         string    `json:"id"`
-	EstateID   string    `json:"estate_id"`
-	PropertyID *string   `json:"property_id,omitempty"`
-	ResidentID string    `json:"resident_id"`
-	Category   string    `json:"category"`
-	AmountKobo int64     `json:"amount_kobo"`
-	DueDate    time.Time `json:"due_date"`
-	Status     string    `json:"status"` // pending|paid|overdue|waived
-	CreatedAt  time.Time `json:"created_at"`
+	ID                    string    `json:"id"`
+	EstateID              string    `json:"estate_id"`
+	PropertyID            *string   `json:"property_id,omitempty"`
+	ResidentID            string    `json:"resident_id"`
+	Category              string    `json:"category"`
+	AmountKobo            int64     `json:"amount_kobo"`
+	DueDate               time.Time `json:"due_date"`
+	Status                string    `json:"status"` // pending|paid|overdue|waived
+	VacancyOverride       bool      `json:"vacancy_override"`
+	VacancyOverrideReason string    `json:"vacancy_override_reason,omitempty"`
+	TermOverride          bool      `json:"term_override"`
+	TermOverrideReason    string    `json:"term_override_reason,omitempty"`
+	CreatedAt             time.Time `json:"created_at"`
 }
 
 // DuesPayment is the immutable receipt for a settled (or attempted) dues payment.
@@ -61,12 +68,20 @@ type DuesRestriction struct {
 }
 
 // CreateInvoiceRequest is the body for POST /estate/:id/dues/invoices (admin).
+// The two overrides exist because occupancy now decides whether a unit may be billed at all
+// (EST-UAT-0048: a vacant unit is exempt; EST-UAT-0045: so is an occupant whose term on the unit is
+// not running). Billing through either exemption is a deliberate, auditable decision, so it requires
+// the reason that goes on the record.
 type CreateInvoiceRequest struct {
-	ResidentID string    `json:"resident_id" binding:"required"`
-	PropertyID string    `json:"property_id"`
-	Category   string    `json:"category" binding:"required"`
-	AmountKobo int64     `json:"amount_kobo" binding:"required,gt=0"`
-	DueDate    time.Time `json:"due_date" binding:"required"`
+	ResidentID            string    `json:"resident_id" binding:"required"`
+	PropertyID            string    `json:"property_id"`
+	Category              string    `json:"category" binding:"required"`
+	AmountKobo            int64     `json:"amount_kobo" binding:"required,gt=0"`
+	DueDate               time.Time `json:"due_date" binding:"required"`
+	VacancyOverride       bool      `json:"vacancy_override"`
+	VacancyOverrideReason string    `json:"vacancy_override_reason"`
+	TermOverride          bool      `json:"term_override"`
+	TermOverrideReason    string    `json:"term_override_reason"`
 }
 
 // PayDuesRequest is the body for POST /estate/:id/dues/invoices/:invoiceId/pay.
@@ -312,12 +327,20 @@ type FinanceDashboard struct {
 }
 
 // Notification (Block 43) is a unified feed item for a resident.
+//
+// ReadAt/ArchivedAt/Pinned/DeepLink are added by Phase 2.5a (estate-d EST-UAT-0359): an inbox that cannot
+// say whether it has been read, archived or pinned is a list, not an inbox, and the read-state columns
+// existed in the table while the payload hid them.
 type Notification struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"` // announcement|emergency|dues|repair
-	Title     string    `json:"title"`
-	Body      string    `json:"body,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string     `json:"id"`
+	Kind       string     `json:"kind"` // announcement|emergency|dues|repair
+	Title      string     `json:"title"`
+	Body       string     `json:"body,omitempty"`
+	DeepLink   string     `json:"deep_link,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ReadAt     *time.Time `json:"read_at,omitempty"`
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+	Pinned     bool       `json:"pinned"`
 }
 
 // EstateReport (Block 44) is a derived analytics snapshot.

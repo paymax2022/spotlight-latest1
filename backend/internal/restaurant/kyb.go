@@ -50,18 +50,21 @@ var kybBusinessTypes = map[string]bool{
 // KYB is a restaurant's business-verification record. Bank fields are the merchant's
 // OWN settlement (payout) account — business data they provide, not a credential.
 type KYB struct {
-	RestaurantID   string    `json:"restaurant_id"`
-	LegalName      string    `json:"legal_name"`
-	BusinessType   string    `json:"business_type"`
-	RCNumber       string    `json:"rc_number,omitempty"` // CAC RC/BN number
-	TIN            string    `json:"tin,omitempty"`
-	ContactEmail   string    `json:"contact_email"`
-	ContactPhone   string    `json:"contact_phone"`
-	BankCode       string    `json:"bank_code"`
-	AccountNumber  string    `json:"account_number"` // 10-digit NUBAN
-	AccountName    string    `json:"account_name"`
-	Status         KYBStatus `json:"status"`
-	DecisionReason *string   `json:"decision_reason,omitempty"`
+	RestaurantID                  string    `json:"restaurant_id"`
+	LegalName                     string    `json:"legal_name"`
+	BusinessType                  string    `json:"business_type"`
+	RCNumber                      string    `json:"rc_number,omitempty"` // CAC RC/BN number
+	TIN                           string    `json:"tin,omitempty"`
+	ContactEmail                  string    `json:"contact_email"`
+	ContactPhone                  string    `json:"contact_phone"`
+	BankCode                      string    `json:"bank_code"`
+	AccountNumber                 string    `json:"account_number"` // 10-digit NUBAN
+	AccountName                   string    `json:"account_name"`
+	Status                        KYBStatus `json:"status"`
+	DecisionReason                *string   `json:"decision_reason,omitempty"`
+	BankAccountVerifiedAt         *time.Time `json:"bank_account_verified_at,omitempty"`
+	BankAccountVerified           *bool     `json:"bank_account_verified,omitempty"`
+	BankAccountVerificationError  *string   `json:"bank_account_verification_error,omitempty"`
 	// FOOD-UAT-A-009: set on submit responses. Duplicate is true when the application
 	// was already in the review queue and this call changed nothing.
 	SubmissionID string `json:"submission_id,omitempty"`
@@ -156,6 +159,41 @@ func kybIncompleteErr(problems []string) error {
 	return fmt.Errorf("%w: %s", ErrKYBIncomplete, strings.Join(problems, "; "))
 }
 
+// verifyBankAccount calls the disbursement provider to resolve the account name and
+// stores the verification result in the database. Returns true if verified successfully.
+func (s *Service) verifyBankAccount(ctx context.Context, restaurantID, bankCode, accountNumber, accountName string) error {
+	if s.disbursement == nil {
+		// Bank verification not configured; skip silently
+		now := time.Now()
+		_, err := s.db.Exec(ctx,
+			`UPDATE restaurant_kyb SET bank_account_verified_at=$2, bank_account_verified=NULL, bank_account_verification_error='bank verification not configured'
+			 WHERE restaurant_id=$1`,
+			restaurantID, now)
+		return err
+	}
+
+	resolved, err := s.disbursement.ResolveAccount(ctx, bankCode, accountNumber)
+	if err != nil {
+		// Verification failed; store the error but don't fail submission
+		errMsg := err.Error()
+		now := time.Now()
+		_, dbErr := s.db.Exec(ctx,
+			`UPDATE restaurant_kyb SET bank_account_verified_at=$2, bank_account_verified=FALSE, bank_account_verification_error=$3
+			 WHERE restaurant_id=$1`,
+			restaurantID, now, errMsg)
+		return dbErr
+	}
+
+	// Account resolved; check if the name matches
+	verified := strings.EqualFold(strings.TrimSpace(resolved.AccountName), strings.TrimSpace(accountName))
+	now := time.Now()
+	_, err = s.db.Exec(ctx,
+		`UPDATE restaurant_kyb SET bank_account_verified_at=$2, bank_account_verified=$3, bank_account_verification_error=NULL
+		 WHERE restaurant_id=$1`,
+		restaurantID, now, verified)
+	return err
+}
+
 // loadKYB returns a restaurant's KYB record, or a zero-value draft when none exists
 // yet (so callers always get a consistent shape). ok is false when there is no row.
 func (s *Service) loadKYB(ctx context.Context, restaurantID string) (KYB, bool, error) {
@@ -163,12 +201,13 @@ func (s *Service) loadKYB(ctx context.Context, restaurantID string) (KYB, bool, 
 		SELECT COALESCE(legal_name,''), COALESCE(business_type,''), COALESCE(rc_number,''),
 		       COALESCE(tin,''), COALESCE(contact_email,''), COALESCE(contact_phone,''),
 		       COALESCE(bank_code,''), COALESCE(account_number,''), COALESCE(account_name,''),
-		       status, decision_reason
+		       status, decision_reason, bank_account_verified_at, bank_account_verified, bank_account_verification_error
 		FROM restaurant_kyb WHERE restaurant_id=$1`
 	k := KYB{RestaurantID: restaurantID, Status: KYBDraft}
 	err := s.db.QueryRow(ctx, q, restaurantID).Scan(
 		&k.LegalName, &k.BusinessType, &k.RCNumber, &k.TIN, &k.ContactEmail, &k.ContactPhone,
-		&k.BankCode, &k.AccountNumber, &k.AccountName, &k.Status, &k.DecisionReason)
+		&k.BankCode, &k.AccountNumber, &k.AccountName, &k.Status, &k.DecisionReason,
+		&k.BankAccountVerifiedAt, &k.BankAccountVerified, &k.BankAccountVerificationError)
 	if err != nil {
 		// No row yet → an empty draft (not an error).
 		return KYB{RestaurantID: restaurantID, Status: KYBDraft}, false, nil
@@ -348,6 +387,9 @@ func (s *Service) SubmitKYB(ctx context.Context, restaurantID, userID string) (*
 	if problems := validateKYBForSubmit(k, docTypes); len(problems) > 0 {
 		return nil, kybIncompleteErr(problems)
 	}
+	// Verify bank account (doesn't fail submission, just records the result)
+	_ = s.verifyBankAccount(ctx, restaurantID, k.BankCode, k.AccountNumber, k.AccountName)
+
 	// Compare-and-set on the editable statuses: two concurrent submits cannot both win.
 	tag, err := s.db.Exec(ctx,
 		`UPDATE restaurant_kyb SET status='submitted', decision_reason=NULL, submitted_at=now(), updated_at=now()

@@ -992,6 +992,7 @@ func validateOrgIdentity(d *OrgDraft) error {
 	d.Location = strings.TrimSpace(d.Location)
 	d.Website = strings.TrimSpace(d.Website)
 	d.LogoURL = strings.TrimSpace(d.LogoURL)
+	d.CoverURL = strings.TrimSpace(d.CoverURL)
 
 	if d.LogoURL == "" {
 		return errors.New("association: a logo is required — provide a logo URL or upload one")
@@ -1049,10 +1050,10 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 		   registration_fee_kobo, requires_payment, created_by, published,
 		   structure_type, grace_days, disable_voting, disable_events, disable_chat, disable_card,
 		   founded_year, location, website,
-		   idempotency_key)
+		   idempotency_key, cover_url)
 		VALUES ($1,$2,NULLIF($3,''),$4,$5,NULLIF($6,''),$7,$8,$9,$10,$11,true,NULLIF($12,''),$13,$14,$15,$16,$17,
 		        $18,NULLIF($19,''),NULLIF($20,''),
-		        NULLIF($21,''))`
+		        NULLIF($21,''),NULLIF($22,''))`
 	if _, err := tx.Exec(ctx, insOrg, orgID, d.Name, d.Acronym, d.Category, d.Description, d.LogoURL,
 		d.GroupType, strutil.OrBlank(d.ApprovalRule, "ADMIN"),
 		d.RegistrationFeeKobo, requiresPayment, userID,
@@ -1060,7 +1061,7 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 		d.Restrictions.DisableVoting, d.Restrictions.DisableEvents,
 		d.Restrictions.DisableChat, d.Restrictions.DisableCard,
 		d.FoundedYear, d.Location, d.Website,
-		strings.TrimSpace(d.IdempotencyKey)); err != nil {
+		strings.TrimSpace(d.IdempotencyKey), d.CoverURL); err != nil {
 		return nil, fmt.Errorf("association: insert organisation: %w", err)
 	}
 	for i, body := range d.Rules {

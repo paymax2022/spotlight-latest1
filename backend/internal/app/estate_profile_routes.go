@@ -31,5 +31,14 @@ func RegisterEstateProfile(est *gin.RouterGroup, h *estate.Handler) {
 	est.GET("/:id/owner-transfers", h.ListOwnerTransfers)
 	est.POST("/:id/owner-transfer/:transferId/decide", h.DecideOwnerTransfer)
 
+	// Phase 2.4 (estate-a M03): the unit occupancy registry, hung off the same group for the same
+	// lifecycle gate. It is mounted here rather than at the call site because the two surfaces are one
+	// governance decision — who this estate is, and who is allowed to live in it.
+	RegisterEstateOccupancy(est, h)
+
+	// Phase 2.5a (estate-d M18): the inbox archive / retention surface, for the same reason. Who the
+	// estate is, who lives in it, and how long the estate keeps telling them about it.
+	RegisterEstateNotifications(est, h)
+
 	log.Println("[estate] profile / ownership governance routes registered")
 }

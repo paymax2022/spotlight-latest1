@@ -105,13 +105,17 @@ type ResidentProfile struct {
 	EmergencyContact ContactInfo `json:"emergency_contact,omitempty"`
 	NextOfKin        ContactInfo `json:"next_of_kin,omitempty"`
 	OccupancyType    string      `json:"occupancy_type"` // resident|tenant|homeowner|landlord
-	LeaseStart       *string     `json:"lease_start,omitempty"`
-	LeaseEnd         *string     `json:"lease_end,omitempty"`
-	AgreementURL     string      `json:"agreement_url,omitempty"`
-	OwnershipDocURL  string      `json:"ownership_doc_url,omitempty"`
-	Visibility       string      `json:"visibility"` // public|members|admin_only
-	CreatedAt        time.Time   `json:"created_at"`
-	UpdatedAt        time.Time   `json:"updated_at"`
+	// ProofStatus is the estate's verdict on the declared documents, read at member level so the person
+	// who filed them can see where they stand (EST-UAT-0051). Replacing a document resets it in the
+	// database; nothing in Go can set it.
+	ProofStatus     string    `json:"proof_status"`
+	LeaseStart      *string   `json:"lease_start,omitempty"`
+	LeaseEnd        *string   `json:"lease_end,omitempty"`
+	AgreementURL    string    `json:"agreement_url,omitempty"`
+	OwnershipDocURL string    `json:"ownership_doc_url,omitempty"`
+	Visibility      string    `json:"visibility"` // public|members|admin_only
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // ContactInfo is a reusable embedded contact.
@@ -465,6 +469,7 @@ type EstateProperty struct {
 	Floor           string    `json:"floor,omitempty"`
 	Block           string    `json:"block,omitempty"`
 	OccupancyStatus string    `json:"occupancy_status"` // vacant | occupied | reserved
+	Capacity        int       `json:"capacity"`
 	LandlordID      *string   `json:"landlord_id,omitempty"`
 	TenantID        *string   `json:"tenant_id,omitempty"`
 	Archived        bool      `json:"archived"`
@@ -528,6 +533,8 @@ type OwnershipClaim struct {
 }
 
 // TenancyRequest is a tenant's application to occupy a property.
+// ReviewedBy/RejectReason are what EST-UAT-0051 asked for on this lane: a review that could set a
+// status but could not say who set it or why it was refused.
 type TenancyRequest struct {
 	ID           string     `json:"id"`
 	PropertyID   string     `json:"property_id"`
@@ -537,7 +544,9 @@ type TenancyRequest struct {
 	LeaseEnd     string     `json:"lease_end,omitempty"`
 	AgreementURL string     `json:"agreement_url,omitempty"`
 	Status       string     `json:"status"` // pending | approved | rejected | cancelled
+	ReviewedBy   *string    `json:"reviewed_by,omitempty"`
 	ReviewedAt   *time.Time `json:"reviewed_at,omitempty"`
+	RejectReason string     `json:"reject_reason,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
@@ -561,11 +570,14 @@ type RequestAccessRequest struct {
 }
 
 // AddPropertyRequest is the body for POST /estate/:id/properties.
+// Capacity is optional: 0 means the platform default, and the DB CHECK (>0) plus the
+// capacity trigger are what actually bound admissions (EST-UAT-0044).
 type AddPropertyRequest struct {
 	UnitLabel    string `json:"unit_label" binding:"required,min=1,max=100"`
 	PropertyType string `json:"property_type" binding:"required"`
 	Floor        string `json:"floor"`
 	Block        string `json:"block"`
+	Capacity     int    `json:"capacity"`
 }
 
 // ClaimOwnershipRequest is the body for POST /estate/:id/properties/:pid/claim.
@@ -629,13 +641,16 @@ type CastVoteRequest struct {
 // ResidentCard is the payload returned by GET /estate/:id/profile/id-card.
 // The QR value encodes "<estate_id>:<resident_id>" for gate scanner verification.
 type ResidentCard struct {
-	ResidentID      string `json:"resident_id"`
-	EstateID        string `json:"estate_id"`
-	EstateName      string `json:"estate_name"`
-	FullName        string `json:"full_name"`
-	Unit            string `json:"unit"`
-	Role            string `json:"role"`
-	OccupancyType   string `json:"occupancy_type"`
+	ResidentID    string `json:"resident_id"`
+	EstateID      string `json:"estate_id"`
+	EstateName    string `json:"estate_name"`
+	FullName      string `json:"full_name"`
+	Unit          string `json:"unit"`
+	Role          string `json:"role"`
+	OccupancyType string `json:"occupancy_type"`
+	// ProofStatus is what makes the printed occupancy_type more than a self-declaration: the guard
+	// reading the card can see whether the estate has checked the document behind it (EST-UAT-0051).
+	ProofStatus     string `json:"proof_status"`
 	ProfilePhotoURL string `json:"profile_photo_url,omitempty"`
 	QRValue         string `json:"qr_value"` // "<estate_id>:<resident_id>"
 	IssuedAt        string `json:"issued_at"`

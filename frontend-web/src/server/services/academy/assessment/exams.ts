@@ -1,12 +1,14 @@
 // Admin exam authoring over academy_exams, plus the publish-time pool preflight.
 //
-// Publishing is the gate that a DRAFT-heavy bank cannot accidentally satisfy:
-// an exam only publishes when its draw scope (stage + optional modules) has at
-// least draw_count APPROVED items. Importing can never reach here on its own, so
-// the 256 starter questions are exam-ineligible until SME review promotes them.
+// Publishing is the gate that a DRAFT-heavy bank cannot accidentally satisfy: a
+// stage exam only publishes when its draw scope (stage + optional modules) has at
+// least draw_count APPROVED items, and a checkpoint additionally requires every
+// topic it names to hold its own approved depth. Importing can never reach here on
+// its own, so the starter questions are exam-ineligible until SME review promotes them.
 
 import { createAdminClient } from '@/lib/supabase/server';
-import { poolCount } from './bank';
+import { MIN_APPROVED_ITEMS_PER_TOPIC } from '../topics/types';
+import { approvedByTopic, poolCount } from './bank';
 import type { ExamRow } from './attempts';
 
 type Db = ReturnType<typeof createAdminClient>;
@@ -28,7 +30,7 @@ export interface ExamInput {
 }
 
 const SELECT =
-  'id, program_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, opens_at, closes_at, draw_stage, draw_module_codes, draw_count';
+  'id, program_id, module_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, opens_at, closes_at, draw_stage, draw_module_codes, draw_count';
 
 /** Every exam for a programme (admin sees unpublished ones too). */
 export async function listAllExams(db: Db, programId: string | null): Promise<ExamRow[]> {
@@ -88,6 +90,8 @@ export interface PublishPreflight {
   reason?: string;
   poolSize?: number;
   required?: number;
+  /** Topics whose approved count is below the checkpoint floor. */
+  shortTopics?: Array<{ code: string; approved: number }>;
 }
 
 /**
@@ -107,6 +111,30 @@ export async function publishExam(db: Db, id: string): Promise<PublishPreflight>
     return { published: false, reason: 'The end time must be after the start time.' };
   }
   const required = exam.draw_count ?? 10;
+  const topicCodes = (exam.draw_module_codes ?? []).filter(Boolean);
+
+  // A checkpoint draws inside every topic it names, so an ample total pool can still
+  // hide one thin topic: each named topic needs its own approved depth. An exam that
+  // learners have already sat is grandfathered on the pool it published with, so
+  // re-publishing cannot strand an in-flight or graded attempt.
+  if (exam.kind !== 'stage_exam' && topicCodes.length > 0 && !(await attemptExistsForExam(db, id))) {
+    const floor = Math.max(MIN_APPROVED_ITEMS_PER_TOPIC, 2 * required);
+    const byTopic = await approvedByTopic(db, { stage: exam.draw_stage, moduleCodes: topicCodes });
+    const shortTopics = topicCodes
+      .map((code) => ({ code, approved: byTopic.get(code) ?? 0 }))
+      .filter((t) => t.approved < floor);
+    if (shortTopics.length > 0) {
+      return {
+        published: false,
+        poolSize: [...byTopic.values()].reduce((sum, n) => sum + n, 0),
+        required: floor,
+        shortTopics,
+        reason: `Each topic in this quiz needs at least ${floor} approved questions, and these do not: ${shortTopics
+          .map((t) => `${t.code} (${t.approved})`)
+          .join(', ')}. Review more questions for the topics listed, or lower the draw count.`,
+      };
+    }
+  }
 
   const pool = await poolCount(db, { stage: exam.draw_stage, moduleCodes: exam.draw_module_codes ?? [] });
   if (pool < required) {
@@ -119,6 +147,14 @@ export async function publishExam(db: Db, id: string): Promise<PublishPreflight>
   const { error } = await db.from('academy_exams').update({ is_published: true, updated_at: new Date().toISOString() }).eq('id', id);
   if (error) { console.error('[film/assessment] publish failed', error); return { published: false, reason: 'Could not publish the exam.' }; }
   return { published: true, poolSize: pool, required };
+}
+
+async function attemptExistsForExam(db: Db, examId: string): Promise<boolean> {
+  const { count } = await db
+    .from('academy_exam_attempts')
+    .select('id', { count: 'exact', head: true })
+    .eq('exam_id', examId);
+  return (count ?? 0) > 0;
 }
 
 export async function unpublishExam(db: Db, id: string): Promise<boolean> {

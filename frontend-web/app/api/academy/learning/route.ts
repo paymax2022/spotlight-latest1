@@ -4,6 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getDefaultProgramId, resolveLearner } from '@/src/server/services/academy';
 import { bestAttemptsByExam, type AttemptRow } from '@/src/server/services/academy/bestAttempt';
+import { moduleLockStates, quizPassed } from '@/src/server/services/academy/moduleGate';
 
 export async function GET(request: Request) {
   try {
@@ -99,10 +100,15 @@ export async function GET(request: Request) {
 
     const attemptsByExamId = bestAttemptsByExam((attemptsRes.data ?? []) as AttemptRow[]);
 
+    const orderedModules = (modulesRes.data ?? []) as Array<{ id: string }>;
+    // The same lock rule the quiz-start and lesson-progress paths use, so the
+    // curriculum never offers a quiz the server is about to refuse.
+    const locks = moduleLockStates(orderedModules.map((m) => m.id), examsByModuleId, attemptsByExamId);
+
     // Unpublished lessons are filtered here rather than in the query: the embedded
     // select cannot filter the child rows, so leaving it to Postgres would leak
     // draft lessons into a learner's curriculum.
-    const modules = (modulesRes.data ?? []).map((m, idx) => {
+    const modules = orderedModules.map((m, idx) => {
       const mod = m as {
         id: string; title: string; description: string | null; order_index: number | null;
         academy_lessons?: Array<Record<string, unknown>>;
@@ -119,18 +125,9 @@ export async function GET(request: Request) {
       // Get quiz for this module
       const exam = examsByModuleId.get(mod.id);
       const attempt = exam ? attemptsByExamId.get(exam.id) : null;
-      const quizPassed = attempt && attempt.percentage >= exam!.pass_mark;
+      const lastQuizPassed = exam ? quizPassed(exam, attempt) : false;
 
-      // Module is locked if the previous module's quiz was not passed at 85%
-      const previousModuleQuizPassed = idx === 0 ? true : (() => {
-        const prevModules = (modulesRes.data ?? []) as Array<{ id: string }>;
-        const prevMod = prevModules[idx - 1];
-        const prevExam = examsByModuleId.get(prevMod.id);
-        if (!prevExam) return true; // no quiz on previous module, not locked
-        const prevAttempt = attemptsByExamId.get(prevExam.id);
-        return !!prevAttempt && prevAttempt.percentage >= prevExam.pass_mark;
-      })();
-      const isLocked = !previousModuleQuizPassed;
+      const isLocked = locks[idx];
 
       const result: Record<string, unknown> & { lessons: typeof lessons } = {
         id: mod.id,
@@ -152,7 +149,7 @@ export async function GET(request: Request) {
           canStart: !isLocked,
           lastResult: attempt ? {
             scorePercent: Math.round(attempt.percentage),
-            passed: quizPassed,
+            passed: lastQuizPassed,
             earnedPoints: attempt.score,
             maxPoints: attempt.totalPoints,
           } : null,

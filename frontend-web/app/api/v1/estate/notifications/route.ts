@@ -2,29 +2,22 @@ import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { getResidentContext } from '@/src/server/estate/resident';
+import { listInbox, parseInboxFilter, requireInboxContext } from '@/src/server/estate/notifications';
 
-const COLS = 'id, estate_id, category, title, body, deep_link, read_at, created_at';
-
-export function mapNotification(row: any) {
-  return {
-    id: row.id, estateId: row.estate_id, category: row.category, title: row.title,
-    body: row.body ?? undefined, deepLink: row.deep_link ?? undefined,
-    readAt: row.read_at ?? undefined, createdAt: row.created_at,
-  };
-}
-
-// Current user's notification feed.
+// Current user's notification feed (EST-UAT-0359).
+//
+// This answers the half of the case the flat 100-row list could not: paging, the active/archived halves,
+// a category filter and a substring search, with `total` stating how many rows match before paging. The
+// response used to be a bare array; it is now the envelope the Go surface returns for the same read, so
+// a client that pages one gets the same document from the other. `data` carries the notifications, so
+// the existing callers that read the array simply read `data` now.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
-    const ctx = await getResidentContext(supabase, user.id);
-    if (!ctx) return NextResponse.json([]);
-    const { data: rows, error } = await supabase.from('estate_notifications')
-      .select(COLS).eq('estate_id', ctx.estateId).eq('user_id', user.id)
-      .order('created_at', { ascending: false }).limit(100);
-    if (error) throw error;
-    return NextResponse.json((rows ?? []).map(mapNotification));
+    const ctx = await requireInboxContext(supabase, user.id);
+    const url = new URL(request.url);
+    const page = await listInbox(supabase, ctx.estateId, user.id, parseInboxFilter(url.searchParams));
+    return NextResponse.json(page);
   } catch (error) { return handleApiError(error, 'Failed to list notifications'); }
 }

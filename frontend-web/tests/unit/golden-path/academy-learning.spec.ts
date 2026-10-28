@@ -41,16 +41,21 @@ const LEARNER = { ok: true as const, enrollmentId: 'enr-1', programId: 'prog-1',
 
 type Rows = Record<string, unknown>;
 
-/** Records every upsert/update so a test can assert what was written. */
-function db(rows: Record<string, Rows | null>) {
+/** Records every upsert/update so a test can assert what was written. A table given
+ * as an array models a multi-row read (the module gate), anything else a maybeSingle. */
+function db(rows: Record<string, Rows | Rows[] | null>) {
   const writes: Array<{ table: string; op: string; payload: Rows }> = [];
   const api = {
     writes,
     from: (table: string) => {
+      const data = rows[table];
+      const list = data === null || data === undefined ? [] : Array.isArray(data) ? data : [data];
       const chain: any = {
         select: () => chain,
         eq: () => chain,
-        maybeSingle: async () => ({ data: rows[table] ?? null, error: null }),
+        in: () => chain,
+        order: () => chain,
+        maybeSingle: async () => ({ data: list[0] ?? null, error: null }),
         upsert: async (payload: Rows) => {
           writes.push({ table, op: 'upsert', payload });
           return { error: null };
@@ -59,6 +64,7 @@ function db(rows: Record<string, Rows | null>) {
           writes.push({ table, op: 'update', payload });
           return { eq: async () => ({ error: null }) };
         },
+        then: (resolve: (v: { data: Rows[]; error: null }) => void) => resolve({ data: list, error: null }),
       };
       return chain;
     },
@@ -87,7 +93,12 @@ describe('POST /api/academy/learning/progress', () => {
   });
 
   it('records progress against the session enrolment, never a client-supplied one', async () => {
-    const d = db({ academy_lessons: { id: 'lesson-1', academy_modules: { program_id: 'prog-1' } } });
+    // module-1 is the programme's first module, so the module gate opens it and the
+    // ownership invariant below is what this case actually exercises.
+    const d = db({
+      academy_lessons: { id: 'lesson-1', module_id: 'module-1', academy_modules: { program_id: 'prog-1' } },
+      academy_modules: [{ id: 'module-1', order_index: 0 }],
+    });
     vi.mocked(createAdminClient).mockReturnValue(d);
 
     const res = await PROGRESS(

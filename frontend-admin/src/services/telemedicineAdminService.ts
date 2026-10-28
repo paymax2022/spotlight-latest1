@@ -94,6 +94,15 @@ interface RawAdminDashboard {
   doctors_approved: number;
   appointments_this_week: number;
   platform_revenue_kobo_week: number;
+  consultations_today?: number;
+  consultations_open?: number;
+  consultations_completed_30d?: number;
+  cancellations_30d?: number;
+  platform_revenue_kobo_30d?: number;
+  avg_rating?: number;
+  prescriptions_issued_30d?: number;
+  specialties?: { name: string; clinicians: number; consultations_30d: number }[];
+  activity?: { id: string; kind: string; label: string; ref?: string | null; created_at: string }[];
 }
 
 export type ClinicianStatus = 'verified' | 'pending' | 'suspended' | 'rejected' | 'unverified';
@@ -128,6 +137,9 @@ interface RawAdminDoctor {
   submitted_at?: string | null;
   reviewed_at?: string | null;
   rejection_reason?: string | null;
+  rating?: number;
+  reviews_count?: number;
+  consultations_total?: number;
 }
 
 export type ConsultStatus = 'booked' | 'confirmed' | 'completed' | 'cancelled';
@@ -155,6 +167,9 @@ interface RawAdminAppointment {
   platform_fee_kobo: number;
   total_kobo: number;
   created_at: string;
+  specialty?: string;
+  prescription_issued?: boolean;
+  consultation_type?: string;
 }
 
 /** Masks a raw patient UUID for display — the backend never returns a name. */
@@ -194,28 +209,16 @@ export async function getTelemedDashboard(): Promise<TelemedDashboard> {
     clinicians_total: raw.total_doctors,
     clinicians_verified: raw.doctors_approved,
     clinicians_pending: raw.doctors_pending_approval,
-    // The real dashboard aggregates a TRAILING-7-DAY window, not "today" or
-    // "30d" — there is no honest way to derive a daily or 30-day figure from
-    // it, so these stay 0 rather than fabricate a number the backend never
-    // computed. See backend/internal/telemedicine/admin_service.go
-    // GetAdminDashboard.
-    consultations_today: 0,
-    consultations_open: 0,
-    consultations_completed_30d: 0,
-    // NOT a 30-day figure — it is the trailing-7-day platform revenue
-    // (fee_kobo*15/100 + platform_fee_kobo per completed appointment). Reusing
-    // dashboard page's KPI label is updated to say "(7d)" to match.
-    consultation_revenue_30d_kobo: raw.platform_revenue_kobo_week,
-    // Not computed by this endpoint — no doctor rating aggregate is part of
-    // TELEMEDICINE-004's scope.
-    avg_rating: 0,
-    cancellations_30d: 0,
-    prescriptions_issued_30d: 0,
-    // Not computed by this endpoint (would need a per-specialty breakdown
-    // query out of this batch's scope) — empty, not fabricated.
-    specialties: [],
-    // No activity feed exists on the backend yet — empty, not fabricated.
-    activity: [],
+    consultations_today: raw.consultations_today ?? 0,
+    consultations_open: raw.consultations_open ?? 0,
+    consultations_completed_30d: raw.consultations_completed_30d ?? 0,
+    // Prefer the trailing-30d revenue; older backends only return the 7d figure.
+    consultation_revenue_30d_kobo: raw.platform_revenue_kobo_30d ?? raw.platform_revenue_kobo_week,
+    avg_rating: raw.avg_rating ?? 0,
+    cancellations_30d: raw.cancellations_30d ?? 0,
+    prescriptions_issued_30d: raw.prescriptions_issued_30d ?? 0,
+    specialties: raw.specialties ?? [],
+    activity: raw.activity ?? [],
   };
 }
 
@@ -245,11 +248,11 @@ export async function listClinicians(opts?: { status?: string; q?: string }): Pr
     mdcn_number: d.mdcn_number ?? '',
     // Not returned by GET /admin/doctors (no rating aggregate in this batch) —
     // 0 rather than fabricated.
-    rating: 0,
-    reviews_count: 0,
+    rating: d.rating ?? 0,
+    reviews_count: d.reviews_count ?? 0,
     consult_fee_kobo: d.consult_fee_kobo,
     // Not returned by GET /admin/doctors — 0 rather than fabricated.
-    consultations_total: 0,
+    consultations_total: d.consultations_total ?? 0,
     joined_at: d.created_at,
   }));
   if (opts?.status) rows = rows.filter((c) => c.status === opts.status);
@@ -331,13 +334,13 @@ export async function listConsultations(opts?: { status?: string; q?: string }):
     clinician_name: a.doctor_name || 'Unknown',
     // Not returned by GET /admin/appointments (would need a doctor join for
     // specialty too) — empty rather than fabricated.
-    specialty: '',
+    specialty: a.specialty ?? '',
     status: (a.status as ConsultStatus) ?? 'booked',
     fee_kobo: a.fee_kobo,
     scheduled_at: a.scheduled_at,
     // Not returned by GET /admin/appointments — false rather than fabricated
     // (there is no prescription-issued flag on this list endpoint).
-    prescription_issued: false,
+    prescription_issued: a.prescription_issued ?? false,
     created_at: a.created_at,
   }));
   if (opts?.q) {

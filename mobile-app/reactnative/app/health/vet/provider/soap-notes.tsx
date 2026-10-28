@@ -10,6 +10,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { useSaveSoapNote } from '@/features/health/vet/hooks';
+import MissingContext from '@/features/health/vet/components/MissingContext';
 
 const FIELDS: { key: 'subjective' | 'objective' | 'assessment' | 'plan'; label: string; placeholder: string }[] = [
   { key: 'subjective', label: 'Subjective', placeholder: 'Owner-reported history & complaints' },
@@ -42,7 +43,7 @@ export default function SoapNotesScreen() {
 
     save.mutate(
       {
-        appointmentId: appointmentId ?? 'appt',
+        appointmentId: appointmentId!,
         petId,
         soap,
         diagnosis: diagnosis.trim(),
@@ -51,10 +52,13 @@ export default function SoapNotesScreen() {
       },
       {
         onSuccess: (res) =>
-          router.replace({ pathname: '/health/vet/provider/eprescribe', params: { appointmentId: appointmentId ?? '', petId, summaryId: res.summaryId } }),
+          router.replace({ pathname: '/health/vet/provider/eprescribe', params: { appointmentId: appointmentId!, petId, summaryId: res.summaryId } }),
+        onError: () => setErrors((prev) => ({ ...prev, save: 'Couldn’t save the notes. Please try again.' })),
       },
     );
   };
+
+  if (!appointmentId || !petId) return <MissingContext title="SOAP notes" fallback="/health/vet/provider/requests" />;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -92,6 +96,7 @@ export default function SoapNotesScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
+        {errors.save ? <Text style={{ color: Colors.error, marginBottom: Spacing.xs }}>{errors.save}</Text> : null}
         <PrimaryButton label="Save & continue to prescribe" onPress={onSave} loading={save.isPending} />
       </View>
     </SafeAreaView>

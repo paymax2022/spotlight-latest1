@@ -1,5 +1,14 @@
+import { Platform, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/tokens';
+import ModuleTabBar from '@/components/ModuleTabBar';
+import { STAYS_TABS } from '@/constants/moduleTabs';
+
+// Book-now sheets. Native gets a slide-up modal; web gets a transparent overlay so the
+// property page stays visible behind the sheet that ModalSheet draws.
+const BOOK_SHEET = Platform.OS === 'web'
+  ? { animation: 'fade' as const, presentation: 'transparentModal' as const }
+  : { animation: 'slide_from_bottom' as const, presentation: 'modal' as const };
 
 /**
  * Paymax Stays (Hotel Booking) — traveller stack. Mirrors app/realtor/_layout
@@ -10,6 +19,7 @@ import { Colors } from '@/constants/tokens';
  */
 export default function StaysLayout() {
   return (
+    <View style={{ flex: 1 }}>
     <Stack
       screenOptions={{
         headerShown: false,
@@ -41,8 +51,9 @@ export default function StaysLayout() {
       <Stack.Screen name="property/[id]/amenities" />
       <Stack.Screen name="property/[id]/location" />
       <Stack.Screen name="property/[id]/reviews" />
-      <Stack.Screen name="property/[id]/rooms" />
-      <Stack.Screen name="property/[id]/rates" />
+      {/* Book now opens as a bottom modal: rooms, then the rate plans for the chosen room. */}
+      <Stack.Screen name="property/[id]/rooms" options={BOOK_SHEET} />
+      <Stack.Screen name="property/[id]/rates" options={BOOK_SHEET} />
       <Stack.Screen name="property/[id]/room-detail" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
       <Stack.Screen name="property/[id]/policies" />
 
@@ -60,5 +71,8 @@ export default function StaysLayout() {
       <Stack.Screen name="book/processing" options={{ gestureEnabled: false, animation: 'fade' }} />
       <Stack.Screen name="book/failure" options={{ gestureEnabled: false, animation: 'fade' }} />
     </Stack>
+      {/* Traveller tabs draw only on their own paths; detail, booking and host screens stay full-height. */}
+      <ModuleTabBar tabs={STAYS_TABS} alsoVisibleOn={['/stays/property']} />
+    </View>
   );
 }

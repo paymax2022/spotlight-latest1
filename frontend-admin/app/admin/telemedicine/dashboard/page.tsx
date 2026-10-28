@@ -46,7 +46,7 @@ export default function TelemedDashboardPage() {
               {/* Real backend aggregate is a trailing 7-day window (see
                   telemedicineAdminService.ts getTelemedDashboard mapping notes),
                   not 30d — label reflects that honestly. */}
-              <Kpi label="Platform revenue (7d)" value={formatNaira(data.consultation_revenue_30d_kobo)} />
+              <Kpi label="Platform revenue (30d)" value={formatNaira(data.consultation_revenue_30d_kobo)} />
               <Kpi label="Average rating" value={`${data.avg_rating.toFixed(1)} / 5`} />
               <Kpi label="Cancellations (30d)" value={data.cancellations_30d.toLocaleString('en-NG')} accent={data.cancellations_30d > 0 ? '#9a3412' : undefined} />
               <Kpi label="e-Prescriptions (30d)" value={data.prescriptions_issued_30d.toLocaleString('en-NG')} />

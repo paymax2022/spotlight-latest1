@@ -13,10 +13,14 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import VetMapView from '@/features/health/vet/components/VetMapView';
 import { useProviderHomeNav } from '@/features/health/vet/hooks';
+import MissingContext from '@/features/health/vet/components/MissingContext';
+import { projectPins } from '@/features/health/vet/mapPins';
 
 export default function ProviderHomeNavScreen() {
   const { appointmentId } = useLocalSearchParams<{ appointmentId?: string }>();
-  const { data: nav, isLoading, isError, refetch } = useProviderHomeNav(appointmentId ?? 'appt_010');
+  const { data: nav, isLoading, isError, refetch } = useProviderHomeNav(appointmentId ?? '');
+
+  if (!appointmentId) return <MissingContext title="Home visit" fallback="/health/vet/provider/requests" />;
 
   if (isLoading) {
     return (
@@ -35,21 +39,30 @@ export default function ProviderHomeNavScreen() {
     );
   }
 
+  // Older bookings (and owners who typed an address without picking a result) have
+  // no coordinates: fall back to an address search and skip the map pin.
+  const hasDest = !(nav.destLat === 0 && nav.destLng === 0);
   const openMaps = () =>
-    Linking.openURL(`https://maps.google.com/?q=${nav.destLat},${nav.destLng}`);
+    Linking.openURL(
+      hasDest
+        ? `https://maps.google.com/?q=${nav.destLat},${nav.destLng}`
+        : `https://maps.google.com/?q=${encodeURIComponent(nav.address)}`,
+    );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Home visit navigation" subtitle={`${nav.petName} · ${nav.ownerName}`} />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <VetMapView
-          pins={[
-            { id: 'me', label: 'You', x: 0.25, y: 0.7, active: true },
-            { id: 'dest', label: nav.ownerName, x: 0.7, y: 0.3 },
-          ]}
-          height={210}
-          caption={`${nav.etaLabel} · ${nav.distanceLabel}`}
-        />
+        {hasDest ? (
+          <VetMapView
+            pins={projectPins([
+              { id: 'me', label: 'You', lat: nav.vetLat, lng: nav.vetLng, active: true },
+              { id: 'dest', label: nav.ownerName, lat: nav.destLat, lng: nav.destLng },
+            ])}
+            height={210}
+            caption={`${nav.etaLabel} · ${nav.distanceLabel}`}
+          />
+        ) : null}
 
         <View style={[styles.card, shadow1]}>
           <MapPin size={18} color={Colors.primary} strokeWidth={2} />

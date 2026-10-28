@@ -260,6 +260,30 @@ func (h *Handler) UpdatePrivacy(c *gin.Context) {
 	c.JSON(http.StatusOK, ps)
 }
 
+// PATCH /associations/me/settings - update user's organisation settings (name, acronym, description)
+func (h *Handler) UpdateMyOrganisationSettings(c *gin.Context) {
+	var req map[string]any
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+
+	// Get user's organisation ID via service
+	orgID, err := h.svc.GetUserOrganisationID(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+
+	// Use the existing UpdateOrganisationSettings with the user's org ID
+	result, err := h.svc.UpdateOrganisationSettings(c.Request.Context(), ginutil.UserID(c), orgID, req)
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 // GET /associations/me/activity
 func (h *Handler) GetActivity(c *gin.Context) {
 	entries, err := h.svc.GetActivity(c.Request.Context(), ginutil.UserID(c))

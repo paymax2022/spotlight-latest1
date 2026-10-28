@@ -14,6 +14,7 @@ import VetMapView from '@/features/health/vet/components/VetMapView';
 import VetStatusPill from '@/features/health/vet/components/VetStatusPill';
 import { useHomeVisitTracking } from '@/features/health/vet/hooks';
 import { HOME_VISIT_STAGES } from '@/features/health/vet/constants';
+import { projectPins } from '@/features/health/vet/mapPins';
 
 export default function HomeVisitTrackingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -43,10 +44,10 @@ export default function HomeVisitTrackingScreen() {
       <ScreenHeader title="Home visit" subtitle={t.vetName} />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <VetMapView
-          pins={[
-            { id: 'vet', label: t.vetName, x: 0.3, y: 0.3, active: true },
-            { id: 'home', label: 'Home', x: 0.7, y: 0.7 },
-          ]}
+          pins={projectPins([
+            { id: 'vet', label: t.vetName, lat: t.vetLat, lng: t.vetLng, active: true },
+            { id: 'home', label: 'Home', lat: t.destLat, lng: t.destLng },
+          ])}
           height={200}
           caption={t.etaLabel}
         />

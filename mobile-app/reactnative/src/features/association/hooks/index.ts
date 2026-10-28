@@ -2,7 +2,7 @@ import { confirmImport, decideApplication, decideOfflinePayment, getAdminKpis, g
 import { assignRole, getMyAdminAccess, restoreMember, suspendMember, transferMember } from '../api/adminMembers.api';
 import { approveAiNote, awaitProcessing, convertActionItem, createAiNote, getAiNote, getAiNotes, publishAiNote, regenerateSummary } from '../api/ainotes.api';
 import { castVote, getDashboard, getDirectory, getDues, getElection, getElections, getMember, getMembershipCard, getOrganisation, getOrganisations, getReceipt, payInvoice, submitApplication, verifyMembershipCard } from '../api/association.api';
-import { CommitteeInput, addCommitteeMembers, createCommittee, deleteCommittee, updateCommittee } from '../api/authoring.api';
+import { CommitteeInput, addCommitteeMembers, createCommittee, deleteCommittee, updateCommittee, createElection, addElectionCandidate, openElection, closeElection, publishElectionResults, type ElectionInput } from '../api/authoring.api';
 import { getThread, getThreads, muteThread, reactToMessage, sendMessage } from '../api/chat.api';
 import { getCommittee, getCommittees, getEvent, getEvents, registerEvent, requestJoinCommittee, rsvpEvent, submitEventFeedback } from '../api/community.api';
 import { acknowledgeAnnouncement, acknowledgeDocument, checkInMeeting, decideMeeting, getAnnouncement, getAnnouncements, getDocument, getDocuments, getMeeting, getMeetings, getNotifications, getPendingMeetings, getTask, getTasks, markNotificationsRead, proposeMeeting, rsvpMeeting, updateTaskStatus } from '../api/engagement.api';
@@ -696,7 +696,10 @@ export function useMarkNotificationsRead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: markNotificationsRead,
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'notifications'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'notifications'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'dashboard'] });
+    },
   });
 }
 
@@ -901,5 +904,50 @@ export function useReplyTicket(id: string) {
         prev ? { ...prev, messages: [...prev.messages, msg] } : prev,
       );
     },
+  });
+}
+
+// ── Election management (officers) ──────────────────────────────────────────
+function useInvalidateElections(electionId?: string) {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: [KEY, 'elections'] });
+    if (electionId) qc.invalidateQueries({ queryKey: [KEY, 'election', electionId] });
+  };
+}
+
+export function useCreateElection() {
+  const invalidate = useInvalidateElections();
+  return useMutation({ mutationFn: (input: ElectionInput) => createElection(input), onSuccess: invalidate });
+}
+
+export function useAddElectionCandidates(electionId?: string) {
+  const invalidate = useInvalidateElections(electionId);
+  return useMutation({
+    // One request per member: the server checks each candidate's eligibility
+    // separately, so a single ineligible member must not fail the others.
+    mutationFn: async (v: { positionId: string; membershipIds: string[] }) => {
+      const results = await Promise.allSettled(
+        v.membershipIds.map((membershipId) =>
+          addElectionCandidate(electionId as string, { positionId: v.positionId, membershipId })),
+      );
+      return {
+        added: results.filter((r) => r.status === 'fulfilled').length,
+        requested: v.membershipIds.length,
+      };
+    },
+    onSuccess: invalidate,
+  });
+}
+
+export function useElectionTransition(electionId?: string) {
+  const invalidate = useInvalidateElections(electionId);
+  return useMutation({
+    mutationFn: (action: 'open' | 'close' | 'publish') => {
+      if (action === 'open') return openElection(electionId as string);
+      if (action === 'close') return closeElection(electionId as string);
+      return publishElectionResults(electionId as string);
+    },
+    onSuccess: invalidate,
   });
 }

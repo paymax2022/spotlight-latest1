@@ -162,6 +162,29 @@ export default function StaysHome() {
               </Section>
             ) : null}
 
+            {/* Recently added listings */}
+            {(home.data!.recentListings ?? []).length > 0 ? (
+              <Section title="Recently added">
+                <FlatList
+                  horizontal
+                  showsHorizontalScrollIndicator={Platform.OS === 'web'}
+                  data={home.data!.recentListings ?? []}
+                  keyExtractor={(p) => p.id}
+                  contentContainerStyle={styles.rail}
+                  ItemSeparatorComponent={() => <View style={{ width: Spacing.md }} />}
+                  renderItem={({ item }) => (
+                    <PropertyCard
+                      property={item}
+                      variant="rail"
+                      saved={isSavedSync(item.id)}
+                      onToggleSave={() => toggleSave.mutate(item.id)}
+                      onPress={() => router.push(`/stays/property/${item.id}`)}
+                    />
+                  )}
+                />
+              </Section>
+            ) : null}
+
             {/* Trending destinations */}
             {home.data!.trendingDestinations.length > 0 ? (
               <Section title="Trending destinations">

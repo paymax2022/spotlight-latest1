@@ -9,6 +9,8 @@ import {
   Trophy, Vote, BarChart3,
   Smartphone, Wifi, Zap, Tv, FileText,
   ReceiptText, TrendingUp, Settings, ClipboardList,
+  Building2, Plus, Tag, Plane,
+  LayoutDashboard, FolderOpen, MessageSquare, Stethoscope, Pill, Search, RefreshCw,
 } from 'lucide-react-native';
 import type { ModuleTab } from '@/components/ModuleTabBar';
 
@@ -138,4 +140,42 @@ export const UTILITY_TABS: readonly ModuleTab[] = [
   { href: '/services/electricity', label: 'Power',   icon: Zap },
   { href: '/services/cable-tv',    label: 'TV',      icon: Tv },
   { href: '/services/education',   label: 'Exams',   icon: GraduationCap },
+] as const;
+
+/** Stays host console — the hotelier's own properties and listing a new one. */
+export const STAYS_HOST_TABS: readonly ModuleTab[] = [
+  { href: '/stays/host',        label: 'Properties', icon: Building2 },
+  { href: '/stays/host/create', label: 'List',       icon: Plus },
+] as const;
+
+/** Doctor console — the same five destinations as the (doctor)/(tabs) bar. */
+export const DOCTOR_TABS: readonly ModuleTab[] = [
+  { href: '/(doctor)/(tabs)',              label: 'Dashboard',    icon: LayoutDashboard },
+  { href: '/(doctor)/(tabs)/appointments', label: 'Appointments', icon: CalendarDays },
+  { href: '/(doctor)/(tabs)/messages',     label: 'Messages',     icon: MessageSquare },
+  { href: '/(doctor)/(tabs)/records',      label: 'Records',      icon: FolderOpen },
+  { href: '/(doctor)/(tabs)/earnings',     label: 'Earnings',     icon: Wallet },
+] as const;
+
+/** Pharmacy customer — home, search, orders and refills. */
+export const PHARMACY_TABS: readonly ModuleTab[] = [
+  { href: '/health/pharmacy',         label: 'Home',    icon: Pill },
+  { href: '/health/pharmacy/search',  label: 'Search',  icon: Search },
+  { href: '/health/pharmacy/orders',  label: 'Orders',  icon: ReceiptText },
+  { href: '/health/pharmacy/refills', label: 'Refills', icon: RefreshCw },
+] as const;
+
+/** Telemedicine — the hub, the doctor directory, and the patient's appointments. */
+export const TELEMEDICINE_TABS: readonly ModuleTab[] = [
+  { href: '/services/telemedicine',              label: 'Home',         icon: Stethoscope },
+  { href: '/services/telemedicine/doctors',      label: 'Doctors',      icon: Users },
+  { href: '/services/telemedicine/appointments', label: 'Appointments', icon: CalendarDays },
+] as const;
+
+/** Stays traveller — explore, deals and saved places, and bookings. */
+export const STAYS_TABS: readonly ModuleTab[] = [
+  { href: '/stays',        label: 'Explore', icon: Compass },
+  { href: '/stays/deals',  label: 'Deals',   icon: Tag },
+  { href: '/stays/saved',  label: 'Saved',   icon: Bookmark },
+  { href: '/stays/trips',  label: 'Trips',   icon: Plane },
 ] as const;

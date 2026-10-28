@@ -2,7 +2,7 @@
 //
 // Invariants enforced here (not in the client):
 //   - eligibility = an enrolled learner + a published exam for THEIR programme
-//     + within the attempt limit;
+//     + the previous module's quizzes passed + within the attempt limit;
 //   - the DRAW is from APPROVED bank items only, snapshotted immutably at start;
 //   - the DEADLINE is the server clock; a save after expiry is refused;
 //   - submission finalizes AT MOST ONCE (guarded state transition + idempotency),
@@ -10,6 +10,9 @@
 //   - the learner DTO never carries the answer key.
 
 import { createAdminClient } from '@/lib/supabase/server';
+import {
+  ModuleGateUnavailableError, moduleLockedFor, moduleLockStatesFor, type ModuleLockState,
+} from '../moduleGate';
 import { presentQuestion, scoreAttempt } from './scoring';
 import { drawApproved, keysForItems, type DrawnItem } from './bank';
 import type { PresentedQuestion, SnapshotItem } from './types';
@@ -19,6 +22,8 @@ type Db = ReturnType<typeof createAdminClient>;
 export interface ExamRow {
   id: string;
   program_id: string;
+  /** The curriculum module a checkpoint belongs to; NULL for stage exams, which the module gate does not apply to. */
+  module_id: string | null;
   title: string;
   description: string | null;
   kind: string;
@@ -90,9 +95,41 @@ export async function examEligibility(
   if (!exam.draw_stage) {
     return { ok: false, code: 'EXAM_MISCONFIGURED', message: 'This exam has no content stage set. Contact your instructor.' };
   }
+  const lock = await lockForExam(db, exam, learner);
+  const locked = lockBlocker(exam, lock);
+  if (!locked.ok) return locked;
   const used = await attemptCount(db, exam.id, learner.enrollmentId);
   if (used >= exam.max_attempts) {
     return { ok: false, code: 'ATTEMPT_LIMIT_REACHED', message: `You have used all ${exam.max_attempts} attempts for this exam.` };
+  }
+  return { ok: true };
+}
+
+/**
+ * The curriculum lock in front of one exam. A checkpoint exam is only reachable
+ * once the PREVIOUS module's quizzes are passed, so a direct start call cannot
+ * skip a module the learner has not earned. Stage exams (no module) are not
+ * gated. A gate read that fails throws: an unreadable lock is a refusal, not an
+ * open door.
+ */
+async function lockForExam(db: Db, exam: ExamRow, learner: LearnerRef): Promise<ModuleLockState> {
+  if (!exam.module_id) return 'open';
+  try {
+    return await moduleLockedFor(db, exam.program_id, exam.module_id, learner.enrollmentId);
+  } catch (error) {
+    if (error instanceof ModuleGateUnavailableError) {
+      throw new ExamError(500, 'MODULE_GATE_UNAVAILABLE', 'Could not check your curriculum progress right now. Please try again.');
+    }
+    throw error;
+  }
+}
+
+function lockBlocker(exam: ExamRow, lock: ModuleLockState): ExamBlocker {
+  if (lock === 'locked') {
+    return { ok: false, code: 'MODULE_LOCKED', message: 'Pass the previous module quiz first to unlock this one.' };
+  }
+  if (lock === 'unavailable') {
+    return { ok: false, code: 'MODULE_UNAVAILABLE', message: 'This exam is not part of your published curriculum.' };
   }
   return { ok: true };
 }
@@ -131,7 +168,7 @@ export async function listLearnerExams(db: Db, learner: LearnerRef): Promise<Lea
   if (!learner.programId) return [];
   const { data, error } = await db
     .from('academy_exams')
-    .select('id, program_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, opens_at, closes_at, draw_stage, draw_module_codes, draw_count')
+    .select('id, program_id, module_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, opens_at, closes_at, draw_stage, draw_module_codes, draw_count')
     .eq('program_id', learner.programId)
     .eq('is_published', true)
     .order('created_at', { ascending: true });
@@ -140,11 +177,22 @@ export async function listLearnerExams(db: Db, learner: LearnerRef): Promise<Lea
     throw new Error('Could not load your exams');
   }
 
+  // One lock read for the whole list. Null means the gate could not be read, and
+  // then nothing module-bound may be offered — the list must never show a start
+  // button the eligibility check would refuse.
+  let locks: Map<string, ModuleLockState> | null = new Map();
+  try {
+    locks = await moduleLockStatesFor(db, learner.programId, learner.enrollmentId);
+  } catch (error) {
+    if (!(error instanceof ModuleGateUnavailableError)) throw error;
+    locks = null;
+  }
+
   const exams = (data ?? []) as unknown as ExamRow[];
   const out: LearnerExamSummary[] = [];
   for (const exam of exams) {
     const used = await attemptCount(db, exam.id, learner.enrollmentId);
-    const gate = await examEligibilityFromCount(db, exam, learner, used);
+    const gate = examEligibilityFromCount(exam, learner, used, locks);
     out.push({
       id: exam.id,
       title: exam.title,
@@ -165,12 +213,12 @@ export async function listLearnerExams(db: Db, learner: LearnerRef): Promise<Lea
 }
 
 /** The eligibility rules minus the attempt-count query the list already ran. */
-async function examEligibilityFromCount(
-  db: Db,
+function examEligibilityFromCount(
   exam: ExamRow,
   learner: LearnerRef,
   used: number,
-): Promise<ExamBlocker> {
+  locks: Map<string, ModuleLockState> | null,
+): ExamBlocker {
   const inWindow = examWindowBlocker(exam);
   if (!inWindow.ok) return inWindow;
   if (!learner.programId || exam.program_id !== learner.programId) {
@@ -178,6 +226,13 @@ async function examEligibilityFromCount(
   }
   if (!exam.draw_stage) {
     return { ok: false, code: 'EXAM_MISCONFIGURED', message: 'This exam has no content stage set. Contact your instructor.' };
+  }
+  if (exam.module_id) {
+    if (!locks) {
+      return { ok: false, code: 'MODULE_GATE_UNAVAILABLE', message: 'Could not check your curriculum progress right now. Please try again.' };
+    }
+    const blocked = lockBlocker(exam, locks.get(exam.module_id) ?? 'unavailable');
+    if (!blocked.ok) return blocked;
   }
   if (used >= exam.max_attempts) {
     return { ok: false, code: 'ATTEMPT_LIMIT_REACHED', message: `You have used all ${exam.max_attempts} attempts for this exam.` };
@@ -512,7 +567,7 @@ function snapshotToQuestions(snapshot: SnapshotItem[]): PresentedQuestion[] {
 export async function loadPublishedExam(db: Db, examId: string): Promise<ExamRow | null> {
   const { data } = await db
     .from('academy_exams')
-    .select('id, program_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, opens_at, closes_at, draw_stage, draw_module_codes, draw_count')
+    .select('id, program_id, module_id, title, description, kind, pass_mark, time_limit_minutes, max_attempts, is_published, opens_at, closes_at, draw_stage, draw_module_codes, draw_count')
     .eq('id', examId)
     .maybeSingle();
   return (data as unknown as ExamRow | null) ?? null;

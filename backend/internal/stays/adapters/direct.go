@@ -121,7 +121,8 @@ func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchR
 		       p.star_rating, p.property_type,
 		       rt.supplier_room_type_ref, rt.name,
 		       rp.supplier_rate_plan_ref, rp.rate_plan_type, rp.board, rp.refundable,
-		       rp.mobile_only, rp.cancellation_policy, rp.base_sell_rate_kobo, rp.tax_kobo, rp.currency
+		       rp.mobile_only, rp.cancellation_policy, rp.base_sell_rate_kobo, rp.tax_kobo, rp.currency,
+		       COALESCE(rp.long_stay_min_nights, 0), rp.long_stay_discount_pct
 		FROM public.stays_property p
 		JOIN public.stays_room_type rt ON rt.property_id = p.id
 		JOIN public.stays_rate_plan rp ON rp.room_type_id = rt.id
@@ -130,10 +131,8 @@ func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchR
 		  AND ($5 <= 0 OR rt.occupancy >= $5)
 		  AND ($3::date IS NULL OR NOT EXISTS (
 		    SELECT 1 FROM generate_series($3::date, ($4::date - 1), interval '1 day') AS n
-		    WHERE NOT EXISTS (
-		      SELECT 1 FROM public.stays_availability_day ad
-		      WHERE ad.room_type_id = rt.id AND ad.date = n
-		        AND ad.allotment - ad.sold >= $2 AND NOT ad.stop_sell)))
+		    LEFT JOIN public.stays_availability_day ad ON ad.room_type_id = rt.id AND ad.date = n
+		    WHERE NOT (NOT COALESCE(ad.stop_sell, false) AND COALESCE(ad.allotment, rt.units) - COALESCE(ad.sold, 0) >= $2)))
 		ORDER BY rp.base_sell_rate_kobo ASC
 		LIMIT 200`
 	var ci, co any
@@ -158,7 +157,7 @@ func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchR
 			&o.Lat, &o.Lng, &o.StarRating, &o.PropertyType,
 			&o.SupplierRoomTypeRef, &o.RoomName,
 			&o.RatePlan.SupplierRatePlanRef, &rpType, &board, &refundable,
-			&mobileOnly, &policy, &sellKobo, &taxKobo, &currency,
+			&mobileOnly, &policy, &sellKobo, &taxKobo, &currency, &o.RatePlan.LongStayMinNights, &o.RatePlan.LongStayDiscountPct,
 		); err != nil {
 			return nil, fmt.Errorf("direct: scan: %w", err)
 		}
@@ -261,19 +260,20 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 	// rate_plan_id (the rate_day key) in one query.
 	const q = `
 		SELECT rp.id, rp.base_sell_rate_kobo, rp.tax_kobo, rp.currency, rp.cancellation_policy,
-		       rt.id, rt.occupancy
+		       rt.id, rt.occupancy, COALESCE(rp.long_stay_min_nights, 0), rp.long_stay_discount_pct
 		FROM public.stays_rate_plan rp
 		JOIN public.stays_room_type rt ON rt.id = rp.room_type_id
 		JOIN public.stays_property p ON p.id = rt.property_id
 		WHERE p.supplier_property_ref = $1 AND rt.supplier_room_type_ref = $2
 		  AND rp.supplier_rate_plan_ref = $3 AND p.status = 'ACTIVE'`
 	var ratePlanID, roomTypeID string
+	var longMinNights, longPct int
 	var sellKobo, taxKobo int64
 	var currency string
 	var policy map[string]any
 	var occupancy int
 	err := a.db.QueryRow(ctx, q, req.SupplierPropertyRef, req.SupplierRoomTypeRef, req.SupplierRatePlanRef).
-		Scan(&ratePlanID, &sellKobo, &taxKobo, &currency, &policy, &roomTypeID, &occupancy)
+		Scan(&ratePlanID, &sellKobo, &taxKobo, &currency, &policy, &roomTypeID, &occupancy, &longMinNights, &longPct)
 	if err != nil {
 		// Treat a missing/unavailable rate plan as sold out (PREBOOK_SOLD_OUT).
 		return gateway.PrebookResult{SoldOut: true}, nil
@@ -309,7 +309,7 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 	// a missing cell falls back to the plan base rate with default (unrestricted)
 	// semantics. Restrictions: stop_sell on any occupied night, CTA at arrival,
 	// CTD at departure, and LOS bounds evaluated at arrival (hotel convention).
-	price, ok, priceErr := a.priceStay(ctx, ratePlanID, sellKobo, req.CheckIn, req.CheckOut)
+	price, ok, priceErr := a.priceStay(ctx, ratePlanID, sellKobo, longMinNights, longPct, req.CheckIn, req.CheckOut)
 	if priceErr != nil {
 		return gateway.PrebookResult{}, priceErr
 	}
@@ -359,7 +359,7 @@ func (a *DirectInventoryAdapter) ratePlanRefundable(ctx context.Context, supplie
 // a missing cell prices at the plan base rate with min_los=1 and no flags.
 // Returns ok=false when the stay is not bookable under the restrictions
 // (stop_sell / closed-to-arrival / closed-to-departure / LOS bounds).
-func (a *DirectInventoryAdapter) priceStay(ctx context.Context, ratePlanID string, baseKobo int64, checkIn, checkOut time.Time) (int64, bool, error) {
+func (a *DirectInventoryAdapter) priceStay(ctx context.Context, ratePlanID string, baseKobo int64, longMinNights, longPct int, checkIn, checkOut time.Time) (int64, bool, error) {
 	nights := nightsBetween(checkIn, checkOut)
 	if len(nights) == 0 {
 		return 0, false, nil
@@ -407,7 +407,9 @@ func (a *DirectInventoryAdapter) priceStay(ctx context.Context, ratePlanID strin
 	} else if ctd {
 		return 0, false, nil
 	}
-	return total, true, nil
+	// Creator long-stay rule: a stay at or past the threshold takes the percent off the
+	// room total. Rounds half up, matching the client preview.
+	return applyLongStayDiscount(total, len(nights), longMinNights, longPct), true, nil
 }
 
 // Book confirms a direct reservation, decrementing allotment under a row lock. It
@@ -674,9 +676,8 @@ func (a *DirectInventoryAdapter) applyARI(ctx context.Context, ev gateway.ARIEve
 
 // checkAvailability row-locks every stay night for the room type and reports
 // whether EVERY night has (allotment - sold) >= rooms and is not stop-sell. It does
-// NOT decrement (hold-only prebook check). A missing availability row for any night
-// is treated as zero allotment (not bookable) — inventory must be explicitly opened
-// before it can be sold. The FOR UPDATE lock is released when the tx commits.
+// NOT decrement (hold-only prebook check). A night with no availability row is open at the room type's units;
+// a row is written only once the night is booked or the host changes it. The FOR UPDATE lock is released when the tx commits.
 func (a *DirectInventoryAdapter) checkAvailability(ctx context.Context, roomTypeID string, checkIn, checkOut time.Time, rooms int) (bool, error) {
 	nights := nightsBetween(checkIn, checkOut)
 	if len(nights) == 0 {
@@ -688,6 +689,10 @@ func (a *DirectInventoryAdapter) checkAvailability(ctx context.Context, roomType
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	var units int
+	if err := tx.QueryRow(ctx, `SELECT units FROM public.stays_room_type WHERE id = $1`, roomTypeID).Scan(&units); err != nil {
+		return false, fmt.Errorf("direct: room units: %w", err)
+	}
 	for _, n := range nights { // ascending date order → deterministic lock order
 		var allotment, sold int
 		var stop bool
@@ -697,10 +702,11 @@ func (a *DirectInventoryAdapter) checkAvailability(ctx context.Context, roomType
 			WHERE room_type_id = $1 AND date = $2::date
 			FOR UPDATE`, roomTypeID, n).Scan(&allotment, &sold, &stop)
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return false, nil // no inventory opened → not bookable
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return false, fmt.Errorf("direct: lock availability: %w", err)
 			}
-			return false, fmt.Errorf("direct: lock availability: %w", err)
+			// A night with no row has never been booked or closed: it is open at the room type's units.
+			allotment, sold, stop = units, 0, false
 		}
 		if stop || allotment-sold < rooms {
 			return false, nil
@@ -746,6 +752,17 @@ func (a *DirectInventoryAdapter) commitDecrement(ctx context.Context, supplierRe
 	if claim.RowsAffected() == 0 {
 		// Already decremented for this booking — commit the empty tx, no double count.
 		return tx.Commit(ctx)
+	}
+
+	// Write the default row for each night that has none yet, so the lock and the
+	// decrement below always find one. Nights that already have a row keep their own.
+	for _, n := range nights {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO public.stays_availability_day (room_type_id, date, allotment, sold, stop_sell)
+			SELECT $1::uuid, $2::date, units, 0, false FROM public.stays_room_type WHERE id = $1::uuid
+			ON CONFLICT (room_type_id, date) DO NOTHING`, roomTypeID, n); err != nil {
+			return fmt.Errorf("direct: default availability: %w", err)
+		}
 	}
 
 	// Lock + validate every night under FOR UPDATE before any write. Ascending date
@@ -968,3 +985,13 @@ func payloadBool(m map[string]any, k string) bool {
 	}
 	return false
 }
+
+// applyLongStayDiscount takes the creator's long-stay percent off a stay total once
+// the stay reaches minNights. Rounds half up, matching the client-side preview.
+func applyLongStayDiscount(total int64, nights, minNights, pct int) int64 {
+	if minNights <= 0 || pct <= 0 || nights < minNights {
+		return total
+	}
+	return total - (total*int64(pct)+50)/100
+}
+
