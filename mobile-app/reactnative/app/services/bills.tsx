@@ -1,4 +1,8 @@
-import React from 'react';
+// Bills hub. The job here is "pay a bill", and for anyone who has bought before, "pay that
+// again" — so past purchases (with their provider logos) come first, then the five services.
+// Search filters both. History opens the transaction list.
+
+import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -7,129 +11,101 @@ import * as Icons from 'lucide-react-native';
 import SearchBar from '@/components/SearchBar';
 import { BILL_CATEGORIES } from '@/data/billPayment';
 import { useRecentBillers } from '@/features/services/useRecentBillers';
-import type { ServiceType } from '@/types/transaction';
-import { formatNaira } from '@/utils/money';
+import { filterServices, filterRecents, serviceRoute } from '@/features/services/billsHub';
+import PayAgainRow from '@/features/services/components/PayAgainRow';
+import ServiceGrid from '@/features/services/components/ServiceGrid';
 import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
-import { shadow1, shadow2 } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { HomeMenuButton } from '@/components/HomeMenu';
-import ProviderLogo from '@/components/ProviderLogo';
 import { RemoteBanner } from '@/features/media/banners';
 
-function DynamicIcon({ name, size = 24, color }: { name: string; size?: number; color: string }) {
-  const IconComponent = (Icons as unknown as Record<string, Icons.LucideIcon>)[name] ?? Icons.Circle;
-  return <IconComponent size={size} color={color} strokeWidth={2} />;
-}
-
-// Used only when a purchase recorded no provider name (rare): the category icon.
-const CATEGORY_ICON: Record<ServiceType, { icon: string; accent: string; bg: string }> = {
-  AIRTIME:     { icon: 'Smartphone',    accent: Colors.primary,   bg: Colors.iconBgPurple },
-  DATA:        { icon: 'Wifi',          accent: Colors.secondary, bg: Colors.iconBgBlue },
-  ELECTRICITY: { icon: 'Zap',           accent: Colors.onWarning, bg: Colors.iconBgGold },
-  CABLE_TV:    { icon: 'Tv',            accent: Colors.teal,      bg: Colors.iconBgTeal },
-  EDUCATION:   { icon: 'GraduationCap', accent: Colors.primary,   bg: Colors.iconBgPurple },
-};
-
 export default function BillsScreen() {
+  const [query, setQuery] = useState('');
   const recent = useRecentBillers();
+
+  const services = useMemo(() => filterServices(BILL_CATEGORIES, query), [query]);
+  const payAgain = useMemo(() => filterRecents(recent.rows, query), [recent.rows, query]);
+  const searching = query.trim().length > 0;
+  const nothingFound = searching && services.length === 0 && payAgain.length === 0;
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => goBack('/services')} style={styles.iconButton}>
+        <Pressable
+          onPress={() => goBack('/services')}
+          style={styles.iconButton}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
-        <Text style={styles.topTitle}>Bill Payments</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-          <Pressable style={styles.iconButton}>
+        <Text style={styles.topTitle} accessibilityRole="header">Bill Payments</Text>
+        <View style={styles.topActions}>
+          <Pressable
+            onPress={() => router.push('/services/transactions' as never)}
+            style={styles.iconButton}
+            accessibilityRole="button"
+            accessibilityLabel="Transaction history"
+          >
             <Icons.History size={21} color={Colors.primary} strokeWidth={2} />
           </Pressable>
           <HomeMenuButton />
         </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <RemoteBanner slug="utility-bills" priority style={styles.banner} />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.content}
+      >
+        <RemoteBanner slug="bills-hero" priority style={styles.banner} />
 
-        <SearchBar placeholder="Search biller or service" />
+        <SearchBar
+          placeholder="Search biller or service"
+          value={query}
+          onChangeText={setQuery}
+        />
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Choose Service</Text>
-          <Text style={styles.sectionAction}>Secure</Text>
-        </View>
+        {payAgain.length > 0 && (
+          <>
+            <Text style={styles.sectionTitle} accessibilityRole="header">Pay again</Text>
+            <PayAgainRow rows={payAgain} onPress={(r) => router.push(serviceRoute(r.serviceType) as never)} />
+          </>
+        )}
 
-        <View style={styles.categoryGrid}>
-          {BILL_CATEGORIES.map((category) => (
-            <Pressable
-              key={category.id}
-              onPress={() => router.push(category.route as never)}
-              style={[styles.categoryCard, shadow1]}
-            >
-              <View style={[styles.categoryIcon, { backgroundColor: category.bg }]}>
-                <DynamicIcon name={category.icon} color={category.accent} />
-              </View>
-              <Text style={styles.categoryTitle}>{category.label}</Text>
-              <Icons.ChevronRight size={18} color={Colors.outline} strokeWidth={2} />
-            </Pressable>
-          ))}
-        </View>
+        {services.length > 0 && (
+          <>
+            <Text style={styles.sectionTitle} accessibilityRole="header">Pay a bill</Text>
+            <ServiceGrid services={services} onPress={(route) => router.push(route as never)} />
+          </>
+        )}
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent Billers</Text>
-          <Pressable onPress={() => router.push('/services/beneficiaries' as never)}>
-            <Text style={styles.sectionAction}>Manage</Text>
+        {nothingFound && (
+          <Text style={styles.empty}>
+            Nothing matches “{query.trim()}”. Try a service like airtime or electricity, or a provider name.
+          </Text>
+        )}
+
+        {!searching && (
+          <Pressable
+            onPress={() => router.push('/services/beneficiaries' as never)}
+            style={({ pressed }) => [styles.manageCard, shadow1, pressed && { opacity: 0.9 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Saved beneficiaries. Add, review and manage repeat bill payments"
+          >
+            <View style={styles.manageIcon}>
+              <Icons.UsersRound size={22} color={Colors.teal} strokeWidth={2} />
+            </View>
+            <View style={styles.manageCopy}>
+              <Text style={styles.manageTitle}>Saved beneficiaries</Text>
+              <Text style={styles.manageSub}>Add, review and manage repeat bill payments</Text>
+            </View>
+            <Icons.ChevronRight size={18} color={Colors.outline} strokeWidth={2} />
           </Pressable>
-        </View>
-
-        <View style={[styles.recentCard, shadow1]}>
-          {recent.isLoading ? (
-            <Text style={styles.recentEmpty}>Loading your recent purchases…</Text>
-          ) : recent.rows.length === 0 ? (
-            <Text style={styles.recentEmpty}>
-              Your recent purchases will appear here, each with its provider's logo.
-            </Text>
-          ) : (
-            recent.rows.map((biller, index) => {
-              const fallback = CATEGORY_ICON[biller.serviceType];
-              return (
-                <View key={biller.id}>
-                  <View style={styles.recentRow}>
-                    {biller.providerName ? (
-                      // Any provider that was purchased from: a bundled logo when we have one,
-                      // else the logo the billing API returned, else a branded initials badge.
-                      <ProviderLogo code="" name={biller.providerName} size={42} logoUri={biller.logoUri} />
-                    ) : (
-                      <View style={[styles.recentIcon, { backgroundColor: fallback.bg }]}>
-                        <DynamicIcon name={fallback.icon} color={fallback.accent} size={20} />
-                      </View>
-                    )}
-                    <View style={styles.recentCopy}>
-                      <Text style={styles.recentTitle}>{biller.title}</Text>
-                      <Text style={styles.recentSubtitle}>{biller.subtitle}</Text>
-                    </View>
-                    <Text style={styles.recentAmount}>{formatNaira(biller.amountKobo, { decimals: false })}</Text>
-                  </View>
-                  {index < recent.rows.length - 1 && <View style={styles.divider} />}
-                </View>
-              );
-            })
-          )}
-        </View>
-
-        <Pressable
-          onPress={() => router.push('/services/beneficiaries' as never)}
-          style={[styles.manageCard, shadow1]}
-        >
-          <View style={[styles.categoryIcon, { backgroundColor: Colors.iconBgTeal }]}>
-            <DynamicIcon name="UsersRound" color={Colors.teal} />
-          </View>
-          <View style={styles.recentCopy}>
-            <Text style={styles.recentTitle}>Saved Beneficiaries</Text>
-            <Text style={styles.recentSubtitle}>Add, review, and manage repeat bill payments</Text>
-          </View>
-          <Icons.ChevronRight size={18} color={Colors.outline} strokeWidth={2} />
-        </Pressable>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -147,6 +123,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.surfaceContainerHigh,
   },
+  topActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   iconButton: {
     width: 40,
     height: 40,
@@ -161,50 +138,22 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 120 : 96,
   },
   banner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
-  sectionHeader: {
+  sectionTitle: {
+    ...Typography.titleLg,
+    color: Colors.onSurface,
     paddingHorizontal: Spacing.containerMargin,
     marginTop: Spacing.lg,
     marginBottom: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
   },
-  sectionTitle: { ...Typography.titleLg, color: Colors.onSurface },
-  sectionAction: { ...Typography.labelMd, color: Colors.secondary },
-  categoryGrid: {
-    paddingHorizontal: Spacing.containerMargin,
-    gap: Spacing.md,
-  },
-  categoryCard: {
-    minHeight: 82,
-    borderRadius: Radius.lg,
-    padding: Spacing.md,
-    backgroundColor: Colors.surfaceContainerLowest,
-    borderWidth: 1,
-    borderColor: Colors.surfaceContainerHigh,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-  },
-  categoryIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: Radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  categoryTitle: { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },
-  recentCard: {
-    marginHorizontal: Spacing.containerMargin,
-    borderRadius: Radius.xl,
-    backgroundColor: Colors.surfaceContainerLowest,
-    borderWidth: 1,
-    borderColor: Colors.surfaceContainerHigh,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
+  empty: {
+    ...Typography.bodyMd,
+    color: Colors.onSurfaceVariant,
+    textAlign: 'center',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.xl,
   },
   manageCard: {
-    minHeight: 76,
+    minHeight: 72,
     borderRadius: Radius.lg,
     padding: Spacing.md,
     backgroundColor: Colors.surfaceContainerLowest,
@@ -214,26 +163,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.md,
     marginHorizontal: Spacing.containerMargin,
-    marginTop: Spacing.md,
+    marginTop: Spacing.lg,
     marginBottom: Spacing.xl,
   },
-  recentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    paddingVertical: Spacing.md,
-  },
-  recentIcon: {
-    width: 42,
-    height: 42,
+  manageIcon: {
+    width: 44,
+    height: 44,
     borderRadius: Radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: Colors.iconBgTeal,
   },
-  recentCopy: { flex: 1 },
-  recentTitle: { ...Typography.labelMd, color: Colors.onSurface },
-  recentSubtitle: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
-  recentAmount: { ...Typography.labelMd, color: Colors.primary },
-  divider: { height: 1, backgroundColor: Colors.surfaceContainerHigh },
-  recentEmpty: { ...Typography.bodySm, color: Colors.onSurfaceVariant, padding: Spacing.lg, textAlign: 'center' },
+  manageCopy: { flex: 1 },
+  manageTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  manageSub: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
 });
