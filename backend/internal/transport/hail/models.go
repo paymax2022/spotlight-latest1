@@ -46,6 +46,31 @@ var (
 	ErrForbidden         = errors.New("transport: not permitted")
 	ErrInsufficientFunds = errors.New("transport: rider has insufficient funds")
 	ErrIdempotencyKey    = errors.New("transport: Idempotency-Key required")
+	// ErrTierGateUnwired: no wallet gate injected. RequestTrip fails closed
+	// rather than accepting a trip nobody verified the rider can pay for.
+	ErrTierGateUnwired = errors.New("transport: wallet/tier gate not wired")
+)
+
+// WalletGate is the booking-time rider check. It must return the tier
+// sentinels (tiers.ErrWalletDisabled / ErrDailyLimitExceeded /
+// ErrCheckoutAllowanceExceeded) unwrapped, and ErrInsufficientFunds when the
+// available balance is below fare. It is advisory at booking; the authoritative
+// in-tx guard runs again at settlement.
+type WalletGate interface {
+	CheckRider(ctx context.Context, riderID string, fareKobo int64) error
+}
+
+// Auditor is the nil-safe seam into the shared durable audit sink
+// (services.AuditService satisfies LogAction). Fire-and-forget by contract.
+type Auditor interface {
+	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
+}
+
+// Audit action names emitted by this module.
+const (
+	AuditTripRequested     = "transport.trip.requested"
+	AuditTripSettled       = "transport.trip.settled"
+	AuditSettlementReverse = "transport.settlement.reversed"
 )
 
 type Trip struct {

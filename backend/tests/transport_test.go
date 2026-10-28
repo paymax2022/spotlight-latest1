@@ -15,8 +15,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	goredis "github.com/redis/go-redis/v9"
 
+	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/transport/hail"
 )
 
@@ -191,11 +194,15 @@ type tpEnv struct {
 	lock *tpLocker
 	led  *tpLedger
 	svc  *hail.Service
+	gate *tpGate
+	aud  *tpAuditor
 }
 
 func newTpEnv() *tpEnv {
 	e := &tpEnv{repo: newTpRepo(), lock: newTpLocker(), led: &tpLedger{}}
-	e.svc = hail.NewService(e.repo, e.lock, e.led)
+	e.gate = &tpGate{}
+	e.aud = &tpAuditor{}
+	e.svc = hail.NewService(e.repo, e.lock, e.led).WithWalletGate(e.gate).WithAuditor(e.aud)
 	return e
 }
 
@@ -553,5 +560,328 @@ func TestTransportHTTP_RequiresIdempotencyKeyAndBody(t *testing.T) {
 	}
 	if w := tpDo(r, "POST", "/api/v1/transport/trips", "r1", "k", `{"pickup_lat":6.5}`); w.Code != 400 {
 		t.Fatalf("partial body: %d", w.Code)
+	}
+}
+
+// ---- Block 14 fix round 1: tier guard, audit, partial-settlement safety ----
+
+type tpGate struct{ err error }
+
+func (g *tpGate) CheckRider(context.Context, string, int64) error { return g.err }
+
+type tpAuditor struct {
+	mu      sync.Mutex
+	actions []string
+	meta    []map[string]any
+}
+
+func (a *tpAuditor) LogAction(_, _, action, _, _, _ string, _, newValues map[string]any, _, _, _ string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.actions = append(a.actions, action)
+	a.meta = append(a.meta, newValues)
+}
+
+func (a *tpAuditor) count(action string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for _, x := range a.actions {
+		if x == action {
+			n++
+		}
+	}
+	return n
+}
+
+// memBook is an in-memory double-entry book honouring the ledger.Service
+// contract the settler relies on: per-key idempotent replays, balance checks,
+// the in-tx debit guard, and reversal pairs. The LedgerSettler under test is
+// the real one.
+type memBook struct {
+	mu       sync.Mutex
+	seq      int
+	bal      map[string]int64
+	wallets  map[string]string
+	standing map[ledger.AccountType]string
+	entries  map[string]string // exact entry key -> signature
+	fail     map[string]error  // base idempotency key -> injected error (fires once)
+}
+
+func newMemBook() *memBook {
+	return &memBook{bal: map[string]int64{}, wallets: map[string]string{}, standing: map[ledger.AccountType]string{},
+		entries: map[string]string{}, fail: map[string]error{}}
+}
+
+func (b *memBook) newAcc() string { b.seq++; return fmt.Sprintf("acc-%d", b.seq) }
+
+func (b *memBook) GetOrCreateUserWallet(_ context.Context, u string) (*ledger.Account, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if id, ok := b.wallets[u]; ok {
+		return &ledger.Account{ID: id}, nil
+	}
+	id := b.newAcc()
+	b.wallets[u] = id
+	return &ledger.Account{ID: id}, nil
+}
+
+func (b *memBook) GetOrCreateStandingAccount(_ context.Context, t ledger.AccountType) (*ledger.Account, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if id, ok := b.standing[t]; ok {
+		return &ledger.Account{ID: id}, nil
+	}
+	id := b.newAcc()
+	b.standing[t] = id
+	return &ledger.Account{ID: id}, nil
+}
+
+func (b *memBook) GetBalance(_ context.Context, u string) (int64, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.bal[b.wallets[u]], nil
+}
+
+func (b *memBook) EntryByKey(_ context.Context, k string) (*ledger.Entry, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.entries[k]; ok {
+		return &ledger.Entry{IdempotencyKey: k}, true, nil
+	}
+	return nil, false, nil
+}
+
+// post applies one balanced pair under the caller-held lock.
+func (b *memBook) post(key, dSfx, cSfx, debit, credit string, amt int64) error {
+	if err, ok := b.fail[key]; ok {
+		delete(b.fail, key)
+		return err
+	}
+	sig := fmt.Sprintf("%s>%s:%d", debit, credit, amt)
+	if prev, ok := b.entries[key+cSfx]; ok {
+		if prev == sig {
+			return nil // identical replay: no-op success
+		}
+		return ledger.ErrDuplicate
+	}
+	b.entries[key+dSfx], b.entries[key+cSfx] = sig, sig
+	b.bal[debit] -= amt
+	b.bal[credit] += amt
+	return nil
+}
+
+func (b *memBook) DebitWithGuard(ctx context.Context, u, _, key, creditAcc string, amt int64, guard ledger.DebitGuard) error {
+	if guard == nil {
+		return ledger.ErrDebitGuardUnwired
+	}
+	acc, _ := b.GetOrCreateUserWallet(ctx, u)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.entries[key+":credit"] == fmt.Sprintf("%s>%s:%d", acc.ID, creditAcc, amt) {
+		return nil // replay converges before the guard, like the real repo
+	}
+	if err := guard(ctx, nil, u, amt); err != nil {
+		return err
+	}
+	if b.bal[acc.ID] < amt {
+		return ledger.ErrInsufficientFunds
+	}
+	return b.post(key, ":debit", ":credit", acc.ID, creditAcc, amt)
+}
+
+func (b *memBook) Credit(ctx context.Context, u, _, key, debitAcc string, amt int64) error {
+	acc, _ := b.GetOrCreateUserWallet(ctx, u)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.post(key, ":debit", ":credit", debitAcc, acc.ID, amt)
+}
+
+func (b *memBook) PostJournal(_ context.Context, j ledger.JournalEntry) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.post(j.IdempotencyKey, ":debit", ":credit", j.DebitAccountID, j.CreditAccountID, j.AmountKobo)
+}
+
+// PostReversal: restore gains, release is drained (ledger.Service semantics).
+func (b *memBook) PostReversal(_ context.Context, restore, release string, amt int64, _, key string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.post(key, ":rev_credit", ":rev_debit", release, restore, amt)
+}
+
+func (b *memBook) total() int64 {
+	var n int64
+	for _, v := range b.bal {
+		n += v
+	}
+	return n
+}
+
+func (b *memBook) of(u string) int64                       { return b.bal[b.wallets[u]] }
+func (b *memBook) std(t ledger.AccountType) int64          { return b.bal[b.standing[t]] }
+func okGuard(context.Context, pgx.Tx, string, int64) error { return nil }
+
+func fundedBook(rider string, kobo int64) *memBook {
+	b := newMemBook()
+	a, _ := b.GetOrCreateUserWallet(context.Background(), rider)
+	b.bal[a.ID] = kobo
+	return b
+}
+
+func TestTransportTierGuard_WalletDisabled(t *testing.T) {
+	e := newTpEnv()
+	e.gate.err = tiers.ErrWalletDisabled
+	r := tpRouter(e)
+	body := `{"pickup_lat":6.5,"pickup_lon":3.3,"dropoff_lat":6.6,"dropoff_lon":3.4}`
+
+	if _, err := e.svc.RequestTrip(context.Background(), "r1", 6.5, 3.3, 6.6, 3.4, "k1"); !errors.Is(err, tiers.ErrWalletDisabled) {
+		t.Fatalf("want ErrWalletDisabled, got %v", err)
+	}
+	if w := tpDo(r, "POST", "/api/v1/transport/trips", "r1", "k2", body); w.Code != http.StatusPaymentRequired {
+		t.Fatalf("disabled wallet must be 402, got %d %s", w.Code, w.Body)
+	}
+	if len(e.repo.trips) != 0 {
+		t.Fatalf("no trip may be created for a disabled wallet, got %d", len(e.repo.trips))
+	}
+	if e.aud.count(hail.AuditTripRequested) != 0 {
+		t.Fatal("rejected booking must not emit a trip.requested audit")
+	}
+
+	// Insufficient balance and cap breaches are also 402.
+	for _, ge := range []error{hail.ErrInsufficientFunds, tiers.ErrDailyLimitExceeded, tiers.ErrCheckoutAllowanceExceeded} {
+		e.gate.err = ge
+		if w := tpDo(r, "POST", "/api/v1/transport/trips", "r1", "k3", body); w.Code != http.StatusPaymentRequired {
+			t.Fatalf("%v: want 402 got %d", ge, w.Code)
+		}
+	}
+
+	// Fail closed when no gate is wired.
+	bare := hail.NewService(newTpRepo(), newTpLocker(), &tpLedger{})
+	if _, err := bare.RequestTrip(context.Background(), "r1", 6.5, 3.3, 6.6, 3.4, "k"); !errors.Is(err, hail.ErrTierGateUnwired) {
+		t.Fatalf("unwired gate must fail closed, got %v", err)
+	}
+}
+
+func TestTransportAudit_RequestAndSettleCarryFareAndSplit(t *testing.T) {
+	e := newTpEnv()
+	e.repo.addDriver("d1", hail.DriverAvailable)
+	tr := e.request(t, "r1", "k1")
+	e.request(t, "r1", "k1") // replay: no second audit
+	if e.aud.count(hail.AuditTripRequested) != 1 {
+		t.Fatalf("trip.requested audits = %d, want 1", e.aud.count(hail.AuditTripRequested))
+	}
+	_, _ = e.svc.ConfirmDriver(context.Background(), tr.ID, "d1", "c1")
+	if _, err := e.svc.CompleteTrip(context.Background(), tr.ID, "d1", "x1"); err != nil {
+		t.Fatal(err)
+	}
+	if e.aud.count(hail.AuditTripSettled) != 1 {
+		t.Fatalf("trip.settled audits = %d, want 1", e.aud.count(hail.AuditTripSettled))
+	}
+	m := e.aud.meta[len(e.aud.meta)-1]
+	if m["fare_kobo"] != int64(150000) || m["driver_share_kobo"] != int64(105000) || m["platform_share_kobo"] != int64(45000) ||
+		m["rider_id"] != "r1" || m["driver_id"] != "drv-d1" || m["trip_id"] != tr.ID {
+		t.Fatalf("settled audit payload incomplete: %v", m)
+	}
+}
+
+func TestTransportSettler_GuardIsMandatoryAndAuthoritative(t *testing.T) {
+	ctx := context.Background()
+	b := fundedBook("r1", 500000)
+	// Nil guard fails closed.
+	if err := hail.NewLedgerSettlerFor(b).Settle(ctx, "k", "t1", "r1", "d1", 150000, 105000, 45000); !errors.Is(err, ledger.ErrDebitGuardUnwired) {
+		t.Fatalf("want ErrDebitGuardUnwired, got %v", err)
+	}
+	// A refusing guard (wallet disabled at settlement) posts nothing and surfaces the sentinel.
+	s := hail.NewLedgerSettlerFor(b).WithGuard(func(context.Context, pgx.Tx, string, int64) error { return tiers.ErrWalletDisabled })
+	if err := s.Settle(ctx, "k", "t1", "r1", "d1", 150000, 105000, 45000); !errors.Is(err, tiers.ErrWalletDisabled) {
+		t.Fatalf("want ErrWalletDisabled, got %v", err)
+	}
+	if b.of("r1") != 500000 || len(b.entries) != 0 {
+		t.Fatal("refused settlement must post nothing")
+	}
+}
+
+func TestTransportPartialSettlement_DriverCreditFails(t *testing.T) {
+	const fare, drv, plat = int64(150000), int64(105000), int64(45000)
+	b := fundedBook("r1", 500000)
+	aud := &tpAuditor{}
+	s := hail.NewLedgerSettlerFor(b).WithGuard(okGuard).WithAuditor(aud)
+	ctx := context.Background()
+
+	// Driver credit fails once after the rider debit landed.
+	b.fail["k:driver"] = errors.New("db blip")
+	if err := s.Settle(ctx, "k", "t1", "r1", "d1", fare, drv, plat); err == nil {
+		t.Fatal("settle must report the leg failure")
+	}
+	if _, ok, _ := b.EntryByKey(ctx, "k:rider:rev:rev_credit"); !ok {
+		t.Fatal("rider debit must be reversed by a posted reversal entry")
+	}
+	if b.of("r1") != 500000 || b.std(ledger.AccountSettlement) != 0 || b.of("d1") != 0 {
+		t.Fatalf("funds must be fully restored: rider=%d settle=%d driver=%d", b.of("r1"), b.std(ledger.AccountSettlement), b.of("d1"))
+	}
+	if aud.count(hail.AuditSettlementReverse) != 1 {
+		t.Fatalf("reversal must be audited, got %d", aud.count(hail.AuditSettlementReverse))
+	}
+
+	// Retry: same key settles exactly once end to end (fresh generation).
+	if err := s.Settle(ctx, "k", "t1", "r1", "d1", fare, drv, plat); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if b.of("r1") != 500000-fare || b.of("d1") != drv || b.std(ledger.AccountPaymaxRevenue) != plat || b.std(ledger.AccountSettlement) != 0 {
+		t.Fatalf("after retry rider=%d driver=%d rev=%d settle=%d", b.of("r1"), b.of("d1"), b.std(ledger.AccountPaymaxRevenue), b.std(ledger.AccountSettlement))
+	}
+	// A further replay is a no-op (no double debit).
+	if err := s.Settle(ctx, "k", "t1", "r1", "d1", fare, drv, plat); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if b.of("r1") != 500000-fare || b.total() != 500000 {
+		t.Fatalf("replay moved money: rider=%d total=%d", b.of("r1"), b.total())
+	}
+}
+
+func TestTransportPartialSettlement_PlatformLegFailsUnwindsDriver(t *testing.T) {
+	const fare, drv, plat = int64(150000), int64(105000), int64(45000)
+	b := fundedBook("r1", 500000)
+	s := hail.NewLedgerSettlerFor(b).WithGuard(okGuard)
+	ctx := context.Background()
+
+	b.fail["k:platform"] = errors.New("db blip")
+	if err := s.Settle(ctx, "k", "t1", "r1", "d1", fare, drv, plat); err == nil {
+		t.Fatal("expected failure")
+	}
+	if b.of("r1") != 500000 || b.of("d1") != 0 || b.std(ledger.AccountSettlement) != 0 {
+		t.Fatalf("driver credit and rider debit must both unwind: rider=%d driver=%d settle=%d", b.of("r1"), b.of("d1"), b.std(ledger.AccountSettlement))
+	}
+	if err := s.Settle(ctx, "k", "t1", "r1", "d1", fare, drv, plat); err != nil {
+		t.Fatal(err)
+	}
+	if b.of("d1") != drv || b.std(ledger.AccountPaymaxRevenue) != plat || b.total() != 500000 {
+		t.Fatalf("retry wrong: driver=%d rev=%d total=%d", b.of("d1"), b.std(ledger.AccountPaymaxRevenue), b.total())
+	}
+}
+
+func TestTransportPartialSettlement_FailedCompensationResumesMissingLegsOnly(t *testing.T) {
+	const fare, drv, plat = int64(150000), int64(105000), int64(45000)
+	b := fundedBook("r1", 500000)
+	s := hail.NewLedgerSettlerFor(b).WithGuard(okGuard)
+	ctx := context.Background()
+
+	// Driver leg fails AND the compensating reversal fails: nothing is burned.
+	b.fail["k:driver"] = errors.New("blip")
+	b.fail["k:rider:rev"] = errors.New("blip2")
+	if err := s.Settle(ctx, "k", "t1", "r1", "d1", fare, drv, plat); err == nil {
+		t.Fatal("expected failure")
+	}
+	if b.std(ledger.AccountSettlement) != fare {
+		t.Fatalf("funds should still be parked in settlement, got %d", b.std(ledger.AccountSettlement))
+	}
+	// Retry replays the rider debit (no second debit) and posts only the missing legs.
+	if err := s.Settle(ctx, "k", "t1", "r1", "d1", fare, drv, plat); err != nil {
+		t.Fatal(err)
+	}
+	if b.of("r1") != 500000-fare || b.of("d1") != drv || b.std(ledger.AccountPaymaxRevenue) != plat ||
+		b.std(ledger.AccountSettlement) != 0 || b.total() != 500000 {
+		t.Fatalf("rider=%d driver=%d rev=%d settle=%d total=%d", b.of("r1"), b.of("d1"), b.std(ledger.AccountPaymaxRevenue), b.std(ledger.AccountSettlement), b.total())
 	}
 }

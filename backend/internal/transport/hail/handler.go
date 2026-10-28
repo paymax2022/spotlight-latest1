@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 type Handler struct{ svc *Service }
@@ -67,7 +68,8 @@ func respond(c *gin.Context, t *Trip, err error) {
 		status, msg = http.StatusNotFound, "not found"
 	case errors.Is(err, ErrForbidden):
 		status, msg = http.StatusForbidden, "not permitted"
-	case errors.Is(err, ErrInsufficientFunds):
+	case errors.Is(err, ErrInsufficientFunds), errors.Is(err, tiers.ErrWalletDisabled),
+		errors.Is(err, tiers.ErrDailyLimitExceeded), errors.Is(err, tiers.ErrCheckoutAllowanceExceeded):
 		status, msg = http.StatusPaymentRequired, err.Error()
 	case errors.Is(err, ErrLockContended), errors.Is(err, ErrNotRequested),
 		errors.Is(err, ErrNotMatched), errors.Is(err, ErrDriverUnavailable):

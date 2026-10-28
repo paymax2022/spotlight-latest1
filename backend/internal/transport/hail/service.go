@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"time"
 )
@@ -15,6 +16,23 @@ type Service struct {
 	lock     Locker
 	ledger   Ledger
 	baseFare int64
+	gate     WalletGate
+	auditor  Auditor
+}
+
+// WithWalletGate injects the booking-time rider check (required: RequestTrip
+// fails closed with ErrTierGateUnwired without it).
+func (s *Service) WithWalletGate(g WalletGate) *Service { s.gate = g; return s }
+
+// WithAuditor injects the durable audit sink. Nil leaves audit stdout-only.
+func (s *Service) WithAuditor(a Auditor) *Service { s.auditor = a; return s }
+
+func (s *Service) audit(actor, target, action, tripID string, meta map[string]any) {
+	log.Printf("[audit][transport-hail] action=%s actor=%s trip=%s meta=%v", action, actor, tripID, meta)
+	if s.auditor == nil {
+		return
+	}
+	s.auditor.LogAction(actor, target, action, "transport", "trip", tripID, nil, meta, "", "", "info")
 }
 
 func NewService(repo Repository, lock Locker, ledger Ledger) *Service {
@@ -44,8 +62,25 @@ func (s *Service) RequestTrip(ctx context.Context, riderID string, pLat, pLon, d
 		Status: StatusRequested, BaseFareKobo: s.baseFare, SurgeBPS: bps,
 		FareKobo: Fare(s.baseFare, bps), IdempotencyKey: idemKey,
 	}
-	got, _, err := s.repo.CreateTrip(ctx, t)
-	return got, err
+	// Booking-time gate (fail closed): wallet enabled, tier allowance, and
+	// available balance >= fare. Tier sentinels pass through unwrapped (402).
+	if s.gate == nil {
+		return nil, ErrTierGateUnwired
+	}
+	if err := s.gate.CheckRider(ctx, riderID, t.FareKobo); err != nil {
+		return nil, err
+	}
+	got, created, err := s.repo.CreateTrip(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	if created {
+		s.audit(riderID, "", AuditTripRequested, got.ID, map[string]any{
+			"trip_id": got.ID, "rider_id": riderID, "fare_kobo": got.FareKobo,
+			"base_fare_kobo": got.BaseFareKobo, "surge_bps": got.SurgeBPS,
+		})
+	}
+	return got, nil
 }
 
 // ConfirmDriver matches the calling driver to a trip under a distributed lock.
@@ -122,7 +157,17 @@ func (s *Service) CompleteTrip(ctx context.Context, tripID, driverUserID, idemKe
 		}
 		return nil, fmt.Errorf("transport: settle: %w", err)
 	}
-	return s.repo.CompleteTrip(ctx, t.ID, dShare, pShare)
+	done, err := s.repo.CompleteTrip(ctx, t.ID, dShare, pShare)
+	if err != nil {
+		return nil, err
+	}
+	// Settlement is durably posted here. A crash between Settle and this line
+	// re-emits on retry: audit rows are breadcrumbs, the ledger is the record.
+	s.audit(driverUserID, t.RiderID, AuditTripSettled, t.ID, map[string]any{
+		"trip_id": t.ID, "rider_id": t.RiderID, "driver_id": drv.ID, "driver_user_id": driverUserID,
+		"fare_kobo": t.FareKobo, "driver_share_kobo": dShare, "platform_share_kobo": pShare,
+	})
+	return done, nil
 }
 
 // GetTrip is owner-scoped: only the rider or the assigned driver may read it.

@@ -2297,7 +2297,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if redisClient == nil {
 			log.Println("[transport-hail] FEATURE_TRANSPORT_HAILING_ENABLED is on but Redis is unavailable - routes NOT mounted (matching needs the distributed lock)")
 		} else {
-			hailSvc := hail.NewService(hail.NewPGRepository(pool), hail.NewRedisLocker(redisClient), hail.NewLedgerSettler(ledgerSvc))
+			hailSvc := hail.NewService(hail.NewPGRepository(pool), hail.NewRedisLocker(redisClient),
+				hail.NewLedgerSettler(ledgerSvc).WithGuard(tiersSvc.EnforceCheckoutDebitLimitTx).WithAuditor(auditSink)).
+				WithWalletGate(hail.NewTierWalletGate(ledgerSvc, tiersSvc)).WithAuditor(auditSink)
 			v1Hail := r.Group("/api/v1/transport")
 			v1Hail.Use(mapsAuth())
 			v1Hail.Use(requireUserID())
