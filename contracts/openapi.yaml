@@ -19448,3 +19448,64 @@ paths:
         '403': { description: Missing insurance.reconciliation.resolve }
         '404': { description: "not_found — malformed uuid policy_id OR entry absent" }
         '409': { description: already_reversed }
+  /api/v1/transport/trips:
+    post:
+      operationId: transportTripRequest
+      summary: Request a ride (priced with live surge 1.0x-2.0x; flag FEATURE_TRANSPORT_HAILING_ENABLED)
+      tags: [Transport Hailing]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pickup_lat, pickup_lon, dropoff_lat, dropoff_lon]
+              properties:
+                pickup_lat: { type: number }
+                pickup_lon: { type: number }
+                dropoff_lat: { type: number }
+                dropoff_lon: { type: number }
+      responses:
+        '200': { description: "{ data: Trip } - base_fare_kobo, surge_bps (10000-20000), fare_kobo (integer kobo); replay returns the original trip" }
+        '400': { description: Missing Idempotency-Key or invalid coordinates }
+  /api/v1/transport/trips/{id}/confirm-driver:
+    post:
+      operationId: transportTripConfirmDriver
+      summary: Calling driver claims the trip (Redlock on trip and driver)
+      tags: [Transport Hailing]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      responses:
+        '200': { description: "{ data: Trip } status=matched; replay by the same driver is a 200" }
+        '403': { description: Caller is not a registered driver }
+        '409': { description: Lock contended, trip already matched, or driver unavailable }
+  /api/v1/transport/trips/{id}/complete:
+    post:
+      operationId: transportTripComplete
+      summary: Assigned driver completes the trip; fare settles 70% driver / 30% platform on the ledger
+      tags: [Transport Hailing]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      responses:
+        '200': { description: "{ data: Trip } status=completed with driver_share_kobo + platform_share_kobo == fare_kobo" }
+        '402': { description: Rider has insufficient funds; trip stays matched }
+        '403': { description: Caller is not the assigned driver }
+        '409': { description: Trip is not matched }
+  /api/v1/transport/trips/{id}:
+    get:
+      operationId: transportTripGet
+      summary: Trip detail (rider or assigned driver only)
+      tags: [Transport Hailing]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: "{ data: Trip }" }
+        '404': { description: Not found or caller is neither rider nor assigned driver }

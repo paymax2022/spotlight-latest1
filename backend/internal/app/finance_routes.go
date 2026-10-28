@@ -94,6 +94,7 @@ import (
 	telemedsupport "spotlight/backend/internal/telemedadmin/support"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
+	"spotlight/backend/internal/transport/hail"
 	transportpaystackcheckout "spotlight/backend/internal/transport/paystackcheckout"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/webhooks"
@@ -2290,6 +2291,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Pharm.PATCH("/cart/:product_id", pharmacyHandler.UpdateCartItem)
 		v1Pharm.DELETE("/cart/:product_id", pharmacyHandler.RemoveFromCart)
 		v1Pharm.DELETE("/cart", pharmacyHandler.ClearCart)
+	}
+
+	if cfg.FeatureTransportHailingEnabled {
+		if redisClient == nil {
+			log.Println("[transport-hail] FEATURE_TRANSPORT_HAILING_ENABLED is on but Redis is unavailable - routes NOT mounted (matching needs the distributed lock)")
+		} else {
+			hailSvc := hail.NewService(hail.NewPGRepository(pool), hail.NewRedisLocker(redisClient), hail.NewLedgerSettler(ledgerSvc))
+			v1Hail := r.Group("/api/v1/transport")
+			v1Hail.Use(mapsAuth())
+			v1Hail.Use(requireUserID())
+			hail.NewHandler(hailSvc).Register(v1Hail)
+		}
 	}
 
 	if cfg.FeatureAICareEnabled {
