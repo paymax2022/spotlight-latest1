@@ -69,7 +69,7 @@ function TuitionStructureCard({ data }: { data: FilmAcademyOverview }) {
         </>
       )}
       <Text style={styles.feeNote}>
-        Tuition is payable only if you are offered a place. Open a training in a
+        You pay the application fee and first tuition payment together when you apply. Open a training in a
         cohort below and tap its price line to choose, then continue to apply.
       </Text>
     </View>

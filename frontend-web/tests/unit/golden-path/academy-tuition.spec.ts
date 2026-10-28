@@ -333,7 +333,8 @@ describe('GET /api/academy/application — required actions', () => {
     // matches, which told every paid applicant their fee was still outstanding.
     const { keys } = await actionsFor(BASE);
     expect(keys).not.toContain('pay_application_fee');
-    expect(keys).toContain('await_review');
+    // There is no admin review step any more, so nobody is told to wait for one.
+    expect(keys).not.toContain('await_review');
   });
 
   it('chases an applicant whose fee genuinely did not settle', async () => {

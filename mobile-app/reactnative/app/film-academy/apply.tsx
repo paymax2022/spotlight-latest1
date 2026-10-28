@@ -12,7 +12,7 @@
 
 import React, { useEffect, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Alert,
+  View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -23,7 +23,8 @@ import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
-import { getOverview, applyToBatch } from '@/features/filmAcademy/api';
+import { getOverview, applyToBatch, FILM_ACADEMY_STATUS_KEY } from '@/features/filmAcademy/api';
+import { alertAsync } from '@/lib/confirm';
 import { useAuthStore } from '@/store/authStore';
 import { normalizeAccountName } from '@/features/account/name';
 import AccountDetailsCard from '@/features/account/AccountDetailsCard';
@@ -127,10 +128,19 @@ export default function FilmAcademyApplyScreen() {
   // The only amount charged at submit. Non-refundable.
   const applicationFee = baseFee;
 
-  // Total payment = application fee + first tuition installment (or full tuition if one-off)
-  // This merges application submission with tuition payment into one step.
-  const firstTuitionPayment = pref === 'one_off' ? tuitionTotal : (tuitionTotal / 3); // TODO: get actual installment count from plan
-  const totalPayment = applicationFee + firstTuitionPayment;
+  // ONE payment at submit: the application fee plus the FIRST tuition
+  // instalment. Mirrors tuitionPlanShape on the server, which verifies it.
+  const billedTuition = tuitionTotal > 0 ? tuitionTotal : Number(batch?.training_fee_ngn ?? 0);
+  const payUpfront = pref === 'one_off'
+    || !['weekly', 'biweekly', 'monthly'].includes(String(batch?.fee_frequency ?? 'monthly'));
+  const instalmentCount = payUpfront ? 1 : Math.min(12, Math.max(1, Number(batch?.installments_count ?? 1)));
+  const discountPct = pref === 'one_off' ? Number(batch?.one_off_discount_pct ?? 0) : 0;
+  const discountedTuition = Math.round(billedTuition * (1 - discountPct / 100) * 100) / 100;
+  const firstTuitionPayment = billedTuition > 0
+    ? (instalmentCount === 1 ? discountedTuition : Math.round((discountedTuition / instalmentCount) * 100) / 100)
+    : 0;
+  const applicationFeeDue = feeRequired ? applicationFee : 0;
+  const payNow = applicationFeeDue + firstTuitionPayment;
 
   // The cap is served by the API, not hardcoded here: it is a commercial rule and
   // the server is what enforces it. This only stops the user reaching a rejection.
@@ -227,8 +237,9 @@ export default function FilmAcademyApplyScreen() {
         application_fee_reference: reference,
       });
       await qc.invalidateQueries({ queryKey: FILM_ACADEMY_KEY });
-      Alert.alert('Application submitted', 'We will be in touch about next steps.');
-      goBack('/film-academy');
+      await qc.invalidateQueries({ queryKey: FILM_ACADEMY_STATUS_KEY });
+      await alertAsync({ title: 'You are in', message: 'Your payment was received and your place is secured. You can start learning now.' });
+      router.replace('/film-academy/learn');
     } catch (e) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
       setError(msg || 'Could not submit your application. Please try again.');
@@ -254,26 +265,23 @@ export default function FilmAcademyApplyScreen() {
     }
     if (!motivation.trim())  return setError('Tell us why you want to join.');
 
-    // Collect both application fee and first tuition payment in one step
+    // Nothing due (free intake, no tuition) — submit straight away.
+    if (payNow <= 0) return submitApplication();
+
     if (!payReady) {
       return setError('Card payment is unavailable right now. Please try again later.');
     }
 
-    // Merged payment: collect application fee + first tuition in one transaction.
-    // The server re-verifies against Paystack and creates the enrollment immediately.
-    // Amounts are in NAIRA, converted to kobo for Paystack (x100).
-    const paymentAmount = feeRequired ? totalPayment : tuitionTotal;
-    const purpose = feeRequired
-      ? `Film Academy application + tuition (${pref === 'one_off' ? 'one-off' : 'first installment'})`
-      : `Film Academy tuition (${pref === 'one_off' ? 'one-off' : 'first installment'})`;
-
+    // Collect the single payment FIRST, then submit with its reference. The
+    // server re-verifies the reference and amount against Paystack, so nothing
+    // here is trusted. Amounts are NAIRA; Paystack takes kobo (x100).
     setBusy(true);
     gateway.open({
       email: applicantEmail,
-      amountKobo: Math.round(paymentAmount * 100),
-      domain: feeRequired ? 'academy_application' : 'academy_tuition',
+      amountKobo: Math.round(payNow * 100),
+      domain: 'academy_application',
       metadataFields: [
-        { display_name: 'Purpose',  variable_name: 'purpose',  value: purpose },
+        { display_name: 'Purpose',  variable_name: 'purpose',  value: 'Film Academy application + tuition' },
         { display_name: 'Cohort',   variable_name: 'batch_id', value: String(batchId) },
       ],
       onSuccess: (reference) => { void submitApplication(reference); },
@@ -293,17 +301,10 @@ export default function FilmAcademyApplyScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        {(feeRequired || tuitionTotal > 0) && (
+        {payNow > 0 && !payReady && (
           <View style={styles.noticeBox}>
-            <Text style={styles.noticeTitle}>
-              ₦{(feeRequired ? totalPayment : tuitionTotal).toLocaleString('en-NG')} to pay now
-            </Text>
             <Text style={styles.noticeText}>
-              {payReady
-                ? feeRequired
-                  ? `Application fee (₦${applicationFee.toLocaleString('en-NG')}) + tuition ${pref === 'one_off' ? '(full)' : '(first payment)'} (₦${firstTuitionPayment.toLocaleString('en-NG')}). Payable by card when you submit.`
-                  : `Tuition ${pref === 'one_off' ? '(full amount)' : '(first installment)'} payable by card when you submit.`
-                : 'Card payment is unavailable right now, so this application cannot be submitted yet.'}
+              Card payment is unavailable right now, so this application cannot be submitted yet.
             </Text>
           </View>
         )}
@@ -336,8 +337,7 @@ export default function FilmAcademyApplyScreen() {
 
         <Text style={styles.label}>Areas of interest</Text>
         <Text style={styles.totalNote}>
-          Tap a training to open it, then tap its price line to choose. Tuition
-          is payable only if you are offered a place.
+          Tap a training to open it, then tap its price line to choose.
         </Text>
         <Text style={[styles.noticeText, atLimit && styles.limitReached]}>
           {atLimit
@@ -438,16 +438,21 @@ export default function FilmAcademyApplyScreen() {
         <View style={styles.totalBox}>
           <View style={[styles.totalRow, styles.totalRowGrand, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
             <Text style={styles.totalGrandLabel}>Pay now</Text>
-            <Text style={styles.totalGrandValue}>₦{baseFee.toLocaleString('en-NG')}</Text>
+            <Text style={styles.totalGrandValue}>₦{payNow.toLocaleString('en-NG')}</Text>
           </View>
           <Text style={styles.totalNote}>
-            Application fee. Non-refundable, and charged whether or not you are offered a place.
+            {applicationFeeDue > 0
+              ? `Application fee ₦${applicationFeeDue.toLocaleString('en-NG')} (non-refundable) + `
+              : ''}
+            {instalmentCount > 1 ? 'first tuition instalment' : 'tuition'}. You start learning as soon as you pay.
           </Text>
 
           {tuitionTotal > 0 && (
             <>
               <View style={[styles.totalRow, styles.totalRowGrand]}>
-                <Text style={styles.totalLabel}>Tuition if accepted</Text>
+                <Text style={styles.totalLabel}>
+                  Total tuition{instalmentCount > 1 ? ` (${instalmentCount} instalments)` : ''}
+                </Text>
                 <Text style={styles.totalValue}>₦{tuitionTotal.toLocaleString('en-NG')}</Text>
               </View>
               {selectedAreas
@@ -474,8 +479,10 @@ export default function FilmAcademyApplyScreen() {
                 </View>
               )}
               <Text style={styles.totalNote}>
-                Payable only if you are offered a place, and refundable. Nothing for
-                tuition is taken today. Tuition excludes feeding and project fees
+                {instalmentCount > 1
+                  ? 'The first instalment is paid now; the rest fall due on your plan. '
+                  : ''}
+                Tuition excludes feeding and project fees
                 (script print-out, make-up, props &amp; set design, location —
                 ₦20,000 per movie project).
               </Text>
@@ -519,8 +526,8 @@ export default function FilmAcademyApplyScreen() {
         <Pressable style={[styles.submit, busy && styles.submitBusy]} onPress={onSubmit} disabled={busy}>
           {busy ? <ActivityIndicator color="#FFFFFF" />
                 : <Text style={styles.submitText}>
-                    {feeRequired
-                      ? `Pay ₦${applicationFee.toLocaleString('en-NG')} & submit`
+                    {payNow > 0
+                      ? `Pay ₦${payNow.toLocaleString('en-NG')} & apply`
                       : 'Submit application'}
                   </Text>}
         </Pressable>
