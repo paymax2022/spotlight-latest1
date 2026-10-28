@@ -39,7 +39,7 @@ func (f *rtFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func newTestQuidax(rt *rtFunc, live bool) *quidaxProvider {
-	p := newQuidaxProvider("https://api.example/v1", "test-key", live)
+	p := newQuidaxProvider("https://api.example/v1", "example_test_api_key", live)
 	p.http = &http.Client{Transport: rt}
 	return p
 }
@@ -56,7 +56,7 @@ func TestQuidax_PriceKobo(t *testing.T) {
 		if !strings.HasSuffix(rt.lastReq.URL.Path, "/markets/tickers/btcngn") {
 			t.Errorf("ticker path = %s; want …/markets/tickers/btcngn", rt.lastReq.URL.Path)
 		}
-		if rt.lastReq.Header.Get("Authorization") != "Bearer test-key" {
+		if rt.lastReq.Header.Get("Authorization") != "Bearer example_test_api_key" {
 			t.Errorf("missing bearer auth header")
 		}
 	})
@@ -258,7 +258,7 @@ func TestQuidax_CreateQuotation(t *testing.T) {
 		if !strings.Contains(rt.lastReq.URL.Path, "/exchange-open-api/api/v1/users/user1/swap_quotation") {
 			t.Errorf("path = %s; want …/users/user1/swap_quotation", rt.lastReq.URL.Path)
 		}
-		if rt.lastReq.Header.Get("Authorization") != "Bearer test-key" {
+		if rt.lastReq.Header.Get("Authorization") != "Bearer example_test_api_key" {
 			t.Error("missing or wrong Authorization header")
 		}
 	})
@@ -428,7 +428,7 @@ func TestQuidax_GetSwapTransaction(t *testing.T) {
 
 func TestVerifyQuidaxWebhook(t *testing.T) {
 	t.Run("valid signature → nil error", func(t *testing.T) {
-		secret := "test-webhook-secret"
+		secret := "example_webhook_secret_key"
 		body := []byte(`{"event_type":"swap.completed","id":"EVT-1","timestamp":1635100000000}`)
 
 		// Calculate correct signature
@@ -443,16 +443,16 @@ func TestVerifyQuidaxWebhook(t *testing.T) {
 	})
 
 	t.Run("wrong signature → error", func(t *testing.T) {
-		secret := "test-secret"
+		secret := "example_webhook_secret_key"
 		body := []byte(`{"event_type":"swap.completed"}`)
-		err := VerifyQuidaxWebhook(body, "wrongsignature123", secret, 300)
+		err := VerifyQuidaxWebhook(body, "example_invalid_signature_123", secret, 300)
 		if err == nil {
 			t.Error("expected error with wrong signature")
 		}
 	})
 
 	t.Run("missing signature header → error", func(t *testing.T) {
-		err := VerifyQuidaxWebhook([]byte(`{}`), "", "secret", 300)
+		err := VerifyQuidaxWebhook([]byte(`{}`), "", "example_webhook_secret_key", 300)
 		if err == nil {
 			t.Error("expected error when signature missing")
 		}
@@ -460,7 +460,7 @@ func TestVerifyQuidaxWebhook(t *testing.T) {
 
 	t.Run("missing webhook secret → error", func(t *testing.T) {
 		body := []byte(`{}`)
-		h := hmac.New(sha256.New, []byte("some-secret"))
+		h := hmac.New(sha256.New, []byte("example_webhook_secret_key"))
 		h.Write(body)
 		sig := hex.EncodeToString(h.Sum(nil))
 		err := VerifyQuidaxWebhook(body, sig, "", 300)

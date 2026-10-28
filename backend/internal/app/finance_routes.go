@@ -756,10 +756,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureFXOrchestrationEnabled {
 		orchStore := orchestration.NewSQLStore(pool)
 
-		providers, err := buildFXProviders(&cfg)
-		if err != nil {
-			log.Fatalf("[fx] failed to build providers: %v", err)
-		}
+		providers := buildFXProviders(&cfg)
 		// Spread rule card comes from public.fx_markup_rates — the SAME table the
 		// legacy wallet FX service prices from — so one admin change at
 		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-032).
@@ -926,7 +923,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// goes through walletSvc, so the tier/daily-limit check fires exactly as it
 	// does for every other module rather than being reimplemented here. The
 	// hourly requery-sweep job (Phase 3) runs on the same ctx as the other finance jobs.
-	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, tiersSvc, auditSink)
+	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, auditSink)
 
 	// --- Multi-provider KYC verification gateway (ADR-013) ---
 	// Gated by FEATURE_KYC_VERIFY_ENABLED (default off). Builds the adapter

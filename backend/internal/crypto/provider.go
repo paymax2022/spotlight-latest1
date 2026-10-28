@@ -487,11 +487,33 @@ func VerifyQuidaxWebhook(rawBody []byte, signature, secret string, timestampThre
 }
 
 // QuidaxWebhookEvent represents a parsed Quidax webhook event.
+// Blocker 5: HMAC-SHA256 authentication (verified by middleware)
+// Blocker 6: Replay protection with timestamp validation (±5 min window)
 type QuidaxWebhookEvent struct {
 	EventType string         `json:"event_type"`
 	Data      map[string]any `json:"data"`
-	Timestamp int64          `json:"timestamp"` // Unix timestamp in milliseconds
+	Timestamp int64          `json:"timestamp"` // Unix timestamp in seconds
 	ID        string         `json:"id"`        // Event ID for deduplication
+}
+
+// ValidateTimestamp checks that the webhook timestamp is within the acceptable window.
+// Fails if timestamp is older than 5 minutes or more than 1 minute in the future.
+// This prevents replay attacks and handles clock skew tolerance (Blocker 6).
+func (e *QuidaxWebhookEvent) ValidateTimestamp() error {
+	now := time.Now().Unix()
+	age := now - e.Timestamp
+
+	// Allow +1 min skew for clock drift (webhook in future)
+	if age < -60 {
+		return errors.New("crypto: webhook timestamp is too far in the future (clock skew)")
+	}
+
+	// Allow 5 minutes (300 sec) for clock drift in the past
+	if age > 300 {
+		return errors.New("crypto: webhook timestamp is too old (possible replay)")
+	}
+
+	return nil
 }
 
 // ParseQuidaxWebhook unmarshals a Quidax webhook body into a structured event.
