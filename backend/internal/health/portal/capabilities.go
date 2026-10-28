@@ -2,7 +2,7 @@
 // mobile provider portal. It is a read-only view over rows the caller OWNS; it
 // never accepts an identity from the client and never reads another user's rows.
 // It is a UX gate: every provider-side route still enforces ownership and
-// approval itself (ADR-PR<pr-number> provider-portal-capabilities).
+// approval itself (ADR-PR915 provider-portal-capabilities).
 package portal
 
 import (

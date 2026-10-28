@@ -1,7 +1,7 @@
 // Wraps a provider area's layout. Screens under a gated prefix render only for a
 // user who owns an APPROVED provider record of that type; everyone else sees a
 // status screen instead. UX gate only — the API enforces ownership and approval
-// on every provider-side call (ADR-PR<pr-number> provider-portal-capabilities).
+// on every provider-side call (ADR-PR915 provider-portal-capabilities).
 
 import React from 'react';
 import { router, usePathname } from 'expo-router';

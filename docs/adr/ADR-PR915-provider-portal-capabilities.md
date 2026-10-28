@@ -1,9 +1,5 @@
-# ADR-PR<pr-number>: Exclusive provider portal driven by an ownership-derived capabilities endpoint
+# ADR-PR915: Exclusive provider portal driven by an ownership-derived capabilities endpoint
 
-> DRAFT. Move to `docs/adr/ADR-PR<real PR number>-provider-portal-capabilities.md` once the PR
-> exists, and replace every `<pr-number>` below with it. Never pick a number by hand
-> (`adr-guard.yml`). Do not create the file with the literal placeholder in its name: it cannot be
-> checked out on Windows.
 
 Status: proposed (flag-off: `FEATURE_PROVIDER_PORTAL_ENABLED`)
 

@@ -666,7 +666,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// the same way).
 			RegisterHealthLab(finance, r.Group("/api/health/lab/admin"), pool, rbac, auditSink, cfg, supabase)
 		}
-		// Read-only capabilities for the mobile provider portal (ADR-PR<pr-number>).
+		// Read-only capabilities for the mobile provider portal (ADR-PR915).
 		// Always mounted; answers 503 while FEATURE_PROVIDER_PORTAL_ENABLED is off.
 		healthportal.Register(finance, pool, cfg.FeatureProviderPortalEnabled)
 		if cfg.FeatureHealthVetEnabled {

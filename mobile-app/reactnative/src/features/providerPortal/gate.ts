@@ -3,7 +3,7 @@
 //
 // This is a UX gate: it decides which screen to SHOW. Every provider-side API
 // route still enforces ownership and approval on the server, so hiding a screen
-// here never grants or removes access (ADR-PR<pr-number> provider-portal-capabilities).
+// here never grants or removes access (ADR-PR915 provider-portal-capabilities).
 
 export type ProviderType = 'doctor' | 'vet' | 'pharmacy' | 'lab';
 
