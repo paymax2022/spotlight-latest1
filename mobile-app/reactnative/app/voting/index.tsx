@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Bell, ChevronRight, Trophy, UserPlus } from 'lucide-react-native';
+import { Bell, ChevronRight, UserPlus } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -18,9 +18,8 @@ import { useLeaderboard } from '@/features/voting/hooks/useLeaderboard';
 import { useFreeVoteAllocation } from '@/features/voting/hooks/useVote';
 import ContestCard from '@/features/voting/components/ContestCard';
 import NoContestsState from '@/features/voting/components/NoContestsState';
-import ContestStatusBadge from '@/features/voting/components/ContestStatusBadge';
 import FreeVoteBadge from '@/features/voting/components/FreeVoteBadge';
-import LeaderboardRow from '@/features/voting/components/LeaderboardRow';
+import LeaderboardPreviewCard from '@/features/voting/components/LeaderboardPreviewCard';
 import SponsorBanner from '@/features/voting/components/SponsorBanner';
 import ContestHero from '@/features/voting/components/ContestHero';
 import CountdownTimer from '@/features/voting/components/CountdownTimer';
@@ -150,29 +149,13 @@ export default function VotingHomeScreen() {
               actionLabel="Full Board"
               onAction={() => featuredContestId && router.push(`/voting/leaderboard?contestId=${featuredContestId}`)}
             />
-            <View style={[styles.leaderCard, shadow1]}>
-              <View style={styles.leaderHeader}>
-                <Trophy size={16} color={Colors.primary} strokeWidth={1.8} />
-                <Text style={styles.leaderTitle}>{featuredContest?.title ?? 'Spotlight Music Talent 2026'}</Text>
-                <ContestStatusBadge status={featuredContest?.status ?? 'LIVE'} size="sm" />
-              </View>
-              {topEntries.map((entry, i) => (
-                <View key={entry.contestant.id}>
-                  <LeaderboardRow
-                    entry={entry}
-                    onPress={() => router.push(`/voting/contestant-profile?contestantId=${entry.contestant.id}&contestId=${featuredContestId}`)}
-                    onVote={() => router.push(`/voting/contestant-profile?contestantId=${entry.contestant.id}&contestId=${featuredContestId}`)}
-                  />
-                  {i < topEntries.length - 1 && <View style={styles.divider} />}
-                </View>
-              ))}
-              <Pressable
-                onPress={() => router.push(`/voting/leaderboard?contestId=${featuredContestId}`)}
-                style={styles.seeAllBtn}
-              >
-                <Text style={styles.seeAllText}>See full leaderboard</Text>
-                <ChevronRight size={14} color={Colors.primary} strokeWidth={2} />
-              </Pressable>
+            <View style={styles.previewWrap}>
+              <LeaderboardPreviewCard
+                contest={featuredContest}
+                entries={topEntries}
+                onOpenContestant={(id) => router.push(`/voting/contestant-profile?contestantId=${id}&contestId=${featuredContestId}`)}
+                onOpenLeaderboard={() => router.push(`/voting/leaderboard?contestId=${featuredContestId}`)}
+              />
             </View>
           </>
         )}
@@ -219,18 +202,5 @@ const styles = StyleSheet.create({
   loader:       { paddingVertical: Spacing.xl, alignItems: 'center' },
   carousel:     { paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, paddingBottom: Spacing.sm },
   contestCardH: { width: 240 },
-  leaderCard: {
-    backgroundColor:  Colors.surfaceContainerLowest,
-    borderRadius:     Radius.xl,
-    marginHorizontal: Spacing.containerMargin,
-    padding:          Spacing.md,
-    borderWidth:      1,
-    borderColor:      Colors.surfaceContainerHigh,
-    marginBottom:     Spacing.md,
-  },
-  leaderHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginBottom: Spacing.sm },
-  leaderTitle:  { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
-  divider:      { height: 1, backgroundColor: Colors.surfaceContainerHigh },
-  seeAllBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingTop: Spacing.md },
-  seeAllText:   { ...Typography.labelMd, color: Colors.primary },
+  previewWrap:  { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
 });
