@@ -16,6 +16,8 @@ import type {
 
 // /api/finance/health endpoints are reachable. Mock-first, mirroring the connect/
 // crowdfunding conventions.
+// NOTE: the Lab vertical (src/features/health/lab) no longer reads this flag — it is live-only.
+// It still governs the shared health platform (records, consent, intake) and pharmacy.
 export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_HEALTH_USE_MOCK, true);
 
 // Health REST namespace — Go backend mounts the shared health platform + lab/

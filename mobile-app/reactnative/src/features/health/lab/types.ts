@@ -223,6 +223,13 @@ export interface CreateOrderInput {
   idempotencyKey: string;
 }
 
+/** One lab's offer of a catalog test: tests are per-lab rows, so the same test code has one id and price per lab. */
+export interface TestOffer {
+  labId: string;
+  testId: string;
+  priceKobo: number;
+}
+
 export interface ShareResultInput {
   resultId: string;
   /** Email of the recipient's Spotlight account — consent is granted to an account. */

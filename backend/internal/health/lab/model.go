@@ -188,6 +188,13 @@ type Order struct {
 	IdempotencyKey   string           `json:"idempotency_key"`
 	Lines            []OrderLine      `json:"lines,omitempty"`
 	CreatedAt        time.Time        `json:"created_at"`
+	// Display facts attached on read (see decorateOrders); never written back.
+	LabName                  string     `json:"lab_name,omitempty"`
+	SampleBarcode            *string    `json:"sample_barcode,omitempty"`
+	CollectionAddress        string     `json:"collection_address,omitempty"`
+	ScheduledFor             *time.Time `json:"scheduled_for,omitempty"`
+	AssignedPhlebotomist     *string    `json:"assigned_phlebotomist_id,omitempty"`
+	AssignedPhlebotomistName string     `json:"assigned_phlebotomist_name,omitempty"`
 }
 
 // OrderLine is a requested test (or test within a package), priced in kobo at
@@ -206,6 +213,7 @@ type OrderLine struct {
 type ProviderOrderSummary struct {
 	ID               string           `json:"id"`
 	PatientID        string           `json:"patient_id"`
+	PatientName      string           `json:"patient_name"` // first name + initial only
 	State            OrderState       `json:"state"`
 	CollectionMethod CollectionMethod `json:"collection_method"`
 	CreatedAt        time.Time        `json:"created_at"`

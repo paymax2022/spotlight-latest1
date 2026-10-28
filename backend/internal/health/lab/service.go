@@ -305,6 +305,11 @@ func (s *Service) ListOrdersForPatient(ctx context.Context, patientID string) ([
 		}
 		out[i].Lines = lines
 	}
+	ptrs := make([]*Order, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	s.decorateOrders(ctx, ptrs)
 	return out, nil
 }
 
@@ -1275,9 +1280,11 @@ func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID st
 		}
 	}
 	const q = `
-		SELECT o.id, o.patient_id, o.state, o.collection_method, o.created_at, sm.barcode_ref
+		SELECT o.id, o.patient_id, o.state, o.collection_method, o.created_at, sm.barcode_ref,
+		       COALESCE(NULLIF(btrim(up.full_name),''), NULLIF(btrim(up.display_name),''), '')
 		FROM lab_orders o
 		LEFT JOIN lab_samples sm ON sm.order_id = o.id
+		LEFT JOIN user_profiles up ON up.id = o.patient_id
 		WHERE o.lab_provider_id = $1
 		ORDER BY o.created_at DESC LIMIT 200`
 	rows, err := s.db.Query(ctx, q, providerID)
@@ -1288,10 +1295,11 @@ func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID st
 	var out []ProviderOrderSummary
 	for rows.Next() {
 		var r ProviderOrderSummary
-		var state, method string
-		if err := rows.Scan(&r.ID, &r.PatientID, &state, &method, &r.CreatedAt, &r.SampleBarcode); err != nil {
+		var state, method, full string
+		if err := rows.Scan(&r.ID, &r.PatientID, &state, &method, &r.CreatedAt, &r.SampleBarcode, &full); err != nil {
 			return nil, err
 		}
+		r.PatientName = shortAuthor(full)
 		r.State = OrderState(state)
 		r.CollectionMethod = CollectionMethod(method)
 		r.HasCritical = r.State == StateEscalated
@@ -1323,6 +1331,7 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 		return nil, ErrOrderNotFound
 	}
 	o.Lines, _ = s.loadLines(ctx, orderID)
+	s.decorateOrders(ctx, []*Order{o})
 	return o, nil
 }
 

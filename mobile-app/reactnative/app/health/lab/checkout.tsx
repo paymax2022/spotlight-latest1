@@ -35,8 +35,9 @@ export default function LabCheckoutScreen() {
   const pay = usePurchasePayment<LabOrder>();
 
   const priceKobo = Number(params.priceKobo ?? 0);
-  const collectionFee = mode === 'home' ? lab?.homeCollectionFeeKobo ?? 0 : 0;
-  const totalKobo = priceKobo + collectionFee;
+  // The server prices the order from the lab's catalog and holds exactly that, so
+  // the total shown is the test price. (A home-visit fee is not charged in-app yet.)
+  const totalKobo = priceKobo;
 
   const line: LabOrderLine = useMemo(
     () => ({
@@ -112,10 +113,6 @@ export default function LabCheckoutScreen() {
           <View style={styles.sumRow}>
             <Text style={styles.sumName} numberOfLines={1}>{line.name}</Text>
             <Text style={styles.sumVal}>{formatNaira(priceKobo)}</Text>
-          </View>
-          <View style={styles.sumRow}>
-            <Text style={styles.sumLabel}>Collection</Text>
-            <Text style={styles.sumVal}>{collectionFee ? formatNaira(collectionFee) : 'Free'}</Text>
           </View>
           <View style={styles.divider} />
           <View style={styles.sumRow}>

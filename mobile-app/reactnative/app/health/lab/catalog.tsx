@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -15,7 +16,8 @@ import { CATEGORY_OPTIONS } from '@/features/health/lab/constants';
 import type { TestCategory } from '@/features/health/lab/types';
 
 export default function LabCatalogScreen() {
-  const [q, setQ] = useState('');
+  const params = useLocalSearchParams<{ q?: string }>();
+  const [q, setQ] = useState(params.q ?? '');
   const [category, setCategory] = useState<TestCategory | 'all'>('all');
   const { data, isLoading, isError, refetch } = useTests({
     q: q || undefined,

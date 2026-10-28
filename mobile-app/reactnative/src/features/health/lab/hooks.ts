@@ -14,7 +14,7 @@ import {
   getOrders,
   getOrder,
   createOrder,
-  reorder,
+  getTestOffers,
   getResult,
   getResults,
   acknowledgeResultConsent,
@@ -135,8 +135,13 @@ export function useCreateOrder() {
   });
 }
 
-export function useReorder() {
-  return useMutation({ mutationFn: (orderId: string) => reorder(orderId) });
+export function useTestOffers(code?: string) {
+  return useQuery({
+    queryKey: [KEY, 'offers', code],
+    queryFn: () => getTestOffers(code as string),
+    enabled: Boolean(code),
+    staleTime: 60_000,
+  });
 }
 
 export function useResult(id?: string, opts?: { enabled?: boolean }) {

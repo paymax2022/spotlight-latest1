@@ -1,11 +1,11 @@
-// Self-contained, mock-first data layer for the Lab vertical. Reuses the shared
-// USE_MOCK flag + HEALTH_API_BASE; live endpoints live under /lab.
+// Data layer for the Lab vertical. Every call reads or writes the live API
+// (HEALTH_API_BASE/lab); nothing here is mocked or cached client-side.
 // IRON RULES: kobo only · HL-2 MLSCN gating · HL-6 chain-of-custody · HL-7 critical
 // escalation (never silent) · HL-8 consent-gated results · HL-9 held payment
 // (order/checkout carry an Idempotency-Key).
 
 import { api } from '@/api/client';
-import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
+import { HEALTH_API_BASE } from '../constants/health.constants';
 import { uploadProviderCredential, addProviderCredential } from '../api';
 import { Colors } from '@/constants/tokens';
 import type {
@@ -34,287 +34,13 @@ import type {
   CollectionAssignment,
   CollectionChecklistItem,
   ChainOfCustodyInput,
+  ChainOfCustodyEvent,
+  TestOffer,
   DropOffInput,
 } from './types';
 
 const LAB_API = `${HEALTH_API_BASE}/lab`;
 const PROVIDERS_API = `${HEALTH_API_BASE}/providers`;
-const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
-
-const MOCK_TESTS: LabTest[] = [
-  {
-    id: 'test_fbc',
-    name: 'Full Blood Count',
-    code: 'FBC',
-    category: 'haematology',
-    priceKobo: 650000,
-    description:
-      'Measures red and white cells, haemoglobin and platelets — screens for anaemia, infection and clotting issues.',
-    sampleType: 'blood',
-    prep: 'No special preparation needed. Stay hydrated.',
-    fastingRequired: false,
-    tat: 'Same day',
-    homeCollection: true,
-    imageColor: Colors.iconBgRed,
-  },
-  {
-    id: 'test_hba1c',
-    name: 'HbA1c (Diabetes)',
-    code: 'HbA1c',
-    category: 'endocrine',
-    priceKobo: 850000,
-    description: 'Average blood sugar over the last ~3 months. Used to diagnose and monitor diabetes.',
-    sampleType: 'blood',
-    prep: 'No fasting required. Avoid heavy meals just before the draw.',
-    fastingRequired: false,
-    tat: '24 hrs',
-    homeCollection: true,
-    imageColor: Colors.iconBgBlue,
-  },
-  {
-    id: 'test_lipid',
-    name: 'Lipid Profile',
-    code: 'LIPID',
-    category: 'cardiac',
-    priceKobo: 950000,
-    description: 'Total cholesterol, HDL, LDL and triglycerides — assesses cardiovascular risk.',
-    sampleType: 'blood',
-    prep: 'Fast for 9-12 hours. Water only.',
-    fastingRequired: true,
-    tat: '24 hrs',
-    homeCollection: true,
-    imageColor: Colors.iconBgGold,
-  },
-  {
-    id: 'test_lft',
-    name: 'Liver Function Test',
-    code: 'LFT',
-    category: 'chemistry',
-    priceKobo: 880000,
-    description: 'ALT, AST, bilirubin and proteins to assess liver health.',
-    sampleType: 'blood',
-    prep: 'Fast for 8 hours. Avoid alcohol for 24 hours.',
-    fastingRequired: true,
-    tat: '24 hrs',
-    homeCollection: true,
-    imageColor: Colors.iconBgPurple,
-  },
-  {
-    id: 'test_malaria',
-    name: 'Malaria Parasite',
-    code: 'MP',
-    category: 'infectious',
-    priceKobo: 350000,
-    description: 'Microscopy for malaria parasites. Recommended for fever and chills.',
-    sampleType: 'blood',
-    prep: 'No special preparation needed.',
-    fastingRequired: false,
-    tat: 'Same day',
-    homeCollection: true,
-    imageColor: Colors.iconBgTeal,
-  },
-  {
-    id: 'test_tsh',
-    name: 'Thyroid (TSH)',
-    code: 'TSH',
-    category: 'endocrine',
-    priceKobo: 720000,
-    description: 'Thyroid-stimulating hormone — screens for thyroid over/underactivity.',
-    sampleType: 'blood',
-    prep: 'No fasting required.',
-    fastingRequired: false,
-    tat: '48 hrs',
-    homeCollection: true,
-    imageColor: Colors.iconBgBlue,
-  },
-  {
-    id: 'test_urinalysis',
-    name: 'Urinalysis',
-    code: 'URIN',
-    category: 'chemistry',
-    priceKobo: 300000,
-    description: 'Screens urine for infection, kidney issues, glucose and protein.',
-    sampleType: 'urine',
-    prep: 'Provide a clean midstream sample. No fasting.',
-    fastingRequired: false,
-    tat: 'Same day',
-    homeCollection: false,
-    imageColor: Colors.iconBgGold,
-  },
-];
-
-const MOCK_PACKAGES: TestPackage[] = [
-  {
-    id: 'pkg_wellness',
-    name: 'Essential Wellness Check',
-    description: 'A broad annual screen covering blood, sugar, cholesterol and liver health.',
-    priceKobo: 2900000,
-    listPriceKobo: 3330000,
-    testIds: ['test_fbc', 'test_hba1c', 'test_lipid', 'test_lft'],
-    testCount: 4,
-    tat: '24-48 hrs',
-    prep: 'Fast for 9-12 hours. Water only.',
-    fastingRequired: true,
-    popular: true,
-    imageColor: Colors.iconBgTeal,
-  },
-  {
-    id: 'pkg_diabetes',
-    name: 'Diabetes Monitor',
-    description: 'HbA1c plus kidney and lipid markers for ongoing diabetes management.',
-    priceKobo: 1850000,
-    listPriceKobo: 2150000,
-    testIds: ['test_hba1c', 'test_lipid', 'test_urinalysis'],
-    testCount: 3,
-    tat: '24 hrs',
-    prep: 'No fasting required for HbA1c; fast 9h if lipids included.',
-    fastingRequired: true,
-    imageColor: Colors.iconBgBlue,
-  },
-  {
-    id: 'pkg_fever',
-    name: 'Fever & Infection Panel',
-    description: 'Malaria, full blood count and urinalysis for unexplained fever.',
-    priceKobo: 1100000,
-    listPriceKobo: 1300000,
-    testIds: ['test_malaria', 'test_fbc', 'test_urinalysis'],
-    testCount: 3,
-    tat: 'Same day',
-    prep: 'No special preparation needed.',
-    fastingRequired: false,
-    imageColor: Colors.iconBgRed,
-  },
-];
-
-const MOCK_LABS: Lab[] = [
-  {
-    id: 'lab_synlab',
-    name: 'SynLab Diagnostics',
-    headline: 'ISO-accredited diagnostic laboratory',
-    credential: { authority: 'MLSCN', licenseNo: 'MLSCN-LAG-2291', status: 'verified' },
-    rating: 4.8,
-    reviewCount: 412,
-    address: '15 Adeola Odeku St, Victoria Island, Lagos',
-    distanceLabel: '1.2 km',
-    lat: 6.4281,
-    lng: 3.4219,
-    supportsHomeCollection: true,
-    supportsWalkIn: true,
-    homeCollectionFeeKobo: 250000,
-    resultEtaLabel: 'Results in 24 hrs',
-    active: true,
-  },
-  {
-    id: 'lab_clina',
-    name: 'Clina-Lancet Labs',
-    headline: 'Reference laboratory · Pan-African network',
-    credential: { authority: 'MLSCN', licenseNo: 'MLSCN-LAG-1187', status: 'verified' },
-    rating: 4.7,
-    reviewCount: 298,
-    address: '5 Saka Tinubu St, Victoria Island, Lagos',
-    distanceLabel: '2.8 km',
-    lat: 6.4314,
-    lng: 3.4256,
-    supportsHomeCollection: true,
-    supportsWalkIn: true,
-    homeCollectionFeeKobo: 300000,
-    resultEtaLabel: 'Results in 24-48 hrs',
-    active: true,
-  },
-  {
-    id: 'lab_afriglobal',
-    name: 'Afriglobal Medicare',
-    headline: 'Walk-in diagnostics & wellness centre',
-    credential: { authority: 'MLSCN', licenseNo: 'MLSCN-LAG-3340', status: 'verified' },
-    rating: 4.6,
-    reviewCount: 187,
-    address: '23 Awolowo Rd, Ikoyi, Lagos',
-    distanceLabel: '4.1 km',
-    lat: 6.4503,
-    lng: 3.4316,
-    supportsHomeCollection: false,
-    supportsWalkIn: true,
-    homeCollectionFeeKobo: 0,
-    resultEtaLabel: 'Results same day',
-    active: true,
-  },
-];
-
-const now = Date.now();
-const iso = (offsetMin: number) => new Date(now + offsetMin * 60_000).toISOString();
-
-// A single in-progress order that walks the state machine, plus a released one.
-const MOCK_ORDERS: LabOrder[] = [
-  {
-    id: 'lord_001',
-    status: 'IN_TRANSIT',
-    labId: 'lab_synlab',
-    labName: 'SynLab Diagnostics',
-    collectionMode: 'home',
-    lines: [
-      { refId: 'pkg_wellness', kind: 'package', name: 'Essential Wellness Check', priceKobo: 2900000 },
-    ],
-    subtotalKobo: 2900000,
-    collectionFeeKobo: 250000,
-    totalKobo: 3150000,
-    paymentHeld: true,
-    createdAt: iso(-180),
-    scheduledFor: iso(-90),
-    location: '12B Ozumba Mbadiwe Ave, Victoria Island, Lagos',
-    sampleBarcode: 'BC-90KX12',
-    phlebotomistId: 'phleb_amina',
-    phlebotomistName: 'Amina Bello',
-    custody: [
-      { id: 'coc_1', step: 'collected', label: 'Sample collected', at: iso(-80), actor: 'Amina Bello (phlebotomist)', note: 'EDTA + SST tubes, patient ID verified' },
-      { id: 'coc_2', step: 'sealed', label: 'Tubes sealed & labelled', at: iso(-78), actor: 'Amina Bello (phlebotomist)', note: 'Barcode BC-90KX12 affixed' },
-      { id: 'coc_3', step: 'in_transit', label: 'In transit to lab', at: iso(-60), actor: 'Amina Bello (phlebotomist)', note: 'Cold chain maintained' },
-    ],
-  },
-  {
-    id: 'lord_002',
-    status: 'RELEASED',
-    labId: 'lab_clina',
-    labName: 'Clina-Lancet Labs',
-    collectionMode: 'walk_in',
-    lines: [{ refId: 'test_lipid', kind: 'test', name: 'Lipid Profile', priceKobo: 950000 }],
-    subtotalKobo: 950000,
-    collectionFeeKobo: 0,
-    totalKobo: 950000,
-    paymentHeld: false,
-    createdAt: iso(-60 * 72),
-    scheduledFor: iso(-60 * 70),
-    location: '5 Saka Tinubu St, Victoria Island, Lagos',
-    sampleBarcode: 'BC-44TY09',
-    resultId: 'lres_002',
-    hasCritical: true,
-    custody: [
-      { id: 'coc_a', step: 'collected', label: 'Sample collected (walk-in)', at: iso(-60 * 70), actor: 'Front desk', note: 'Patient ID verified' },
-      { id: 'coc_b', step: 'accessioned', label: 'Accessioned', at: iso(-60 * 69), actor: 'J. Okafor (scientist)', note: 'Condition OK' },
-    ],
-  },
-];
-
-const MOCK_ONBOARDING: ProviderOnboardingState = {
-  status: 'under_review',
-  businessName: '',
-  mlscnLicenseNo: '',
-  contactName: '',
-};
-
-const MOCK_CATALOG_PRICES: CatalogPriceItem[] = MOCK_TESTS.map((t) => ({
-  testId: t.id,
-  name: t.name,
-  code: t.code,
-  priceKobo: t.priceKobo,
-  active: true,
-  tat: t.tat,
-}));
-
-const MOCK_PROVIDER_ORDERS: ProviderOrderRow[] = [
-  { orderId: 'lord_001', patientName: 'Chidi N.', status: 'IN_TRANSIT', testSummary: 'Essential Wellness Check', collectionMode: 'home', sampleBarcode: 'BC-90KX12', createdAt: iso(-180) },
-  { orderId: 'lord_003', patientName: 'Bola A.', status: 'SAMPLE_COLLECTED', testSummary: 'FBC + Malaria', collectionMode: 'walk_in', sampleBarcode: 'BC-77QW01', createdAt: iso(-220) },
-  { orderId: 'lord_002', patientName: 'Funke O.', status: 'ESCALATED', testSummary: 'Lipid Profile', collectionMode: 'walk_in', sampleBarcode: 'BC-44TY09', createdAt: iso(-60 * 72), hasCritical: true },
-];
 
 // Deterministic thumbnail tint so the same catalog row always renders the same
 // colour (the backend catalog carries no image/colour of its own).
@@ -419,7 +145,14 @@ function mapPackage(raw: any): TestPackage {
 
 export async function getTests(query?: CatalogQuery): Promise<LabTest[]> {
   const { data } = await api.get<{ tests?: unknown[] }>(`${LAB_API}/tests`, { params: query });
-  let rows = (data.tests ?? []).map(mapTest);
+  // Tests are per-lab rows, so the browse list collapses each test code to its lowest price.
+  const best = new Map<string, LabTest>();
+  for (const row of (data.tests ?? []).map(mapTest)) {
+    const key = row.code || row.id;
+    const cur = best.get(key);
+    if (!cur || row.priceKobo < cur.priceKobo) best.set(key, row);
+  }
+  let rows = [...best.values()].sort((a, b) => a.name.localeCompare(b.name));
   // The server catalog has no free-text search or category filter yet — narrow
   // the already-persisted list here rather than showing stale results.
   if (query?.category) rows = rows.filter((x) => x.category === query.category);
@@ -428,6 +161,14 @@ export async function getTests(query?: CatalogQuery): Promise<LabTest[]> {
     rows = rows.filter((x) => x.name.toLowerCase().includes(q) || x.code.toLowerCase().includes(q));
   }
   return rows;
+}
+
+/** Every lab's offer of one test code, so the right lab's test id and price are ordered. */
+export async function getTestOffers(code: string): Promise<TestOffer[]> {
+  const { data } = await api.get<{ tests?: any[] }>(`${LAB_API}/tests`);
+  return (data.tests ?? [])
+    .filter((x) => x.code === code)
+    .map((x) => ({ labId: x.lab_provider_id, testId: x.id, priceKobo: Number(x.price_kobo ?? 0) }));
 }
 
 export async function getTest(id: string): Promise<LabTest> {
@@ -498,13 +239,13 @@ const HELD_STATES = new Set(['CREATED', 'SCHEDULED', 'SAMPLE_COLLECTED', 'IN_TRA
 // so they default to empty/absent rather than being invented — the home
 // screen's active-order card only reads id/status/lines/labName and already
 // tolerates an empty labName.
-function mapOrder(raw: any): LabOrder {
+function mapOrder(raw: any, custody: ChainOfCustodyEvent[] = []): LabOrder {
   const lines: any[] = raw.lines ?? [];
   return {
     id: raw.id,
     status: raw.state,
     labId: raw.lab_provider_id ?? '',
-    labName: '',
+    labName: raw.lab_name ?? '',
     collectionMode: COLLECTION_MODE_FROM_METHOD[raw.collection_method] ?? 'walk_in',
     lines: lines.map((l) => ({ refId: l.test_id, kind: 'test', name: l.test_name ?? '', priceKobo: l.unit_price_kobo ?? 0 })),
     subtotalKobo: raw.total_kobo ?? 0,
@@ -515,61 +256,49 @@ function mapOrder(raw: any): LabOrder {
     location: raw.collection_address ?? '',
     scheduledFor: raw.scheduled_for ?? undefined,
     phlebotomistId: raw.assigned_phlebotomist_id ?? undefined,
+    phlebotomistName: raw.assigned_phlebotomist_name || undefined,
+    sampleBarcode: raw.sample_barcode ?? undefined,
+    hasCritical: raw.state === 'ESCALATED' ? true : undefined,
     resultId: raw.result_record_id ?? undefined,
-    custody: [],
+    custody,
   };
 }
 
+const CUSTODY_STEP: Record<string, { step: ChainOfCustodyEvent['step']; label: string; actor: string; breach?: boolean }> = {
+  COLLECTED: { step: 'collected', label: 'Sample collected', actor: 'Collector' },
+  IN_CUSTODY: { step: 'sealed', label: 'Sample sealed and in custody', actor: 'Collector' },
+  HANDED_OVER: { step: 'in_transit', label: 'Handed over to the lab', actor: 'Collector' },
+  ACCESSIONED: { step: 'accessioned', label: 'Received and accessioned by the lab', actor: 'Lab' },
+  BREACHED: { step: 'breached', label: 'Chain of custody broken', actor: 'Lab', breach: true },
+  RECOLLECT_REQUIRED: { step: 'breached', label: 'Recollection required', actor: 'Lab', breach: true },
+};
+
+function mapCustody(raw: any): ChainOfCustodyEvent | null {
+  const m = CUSTODY_STEP[String(raw.to_state ?? '')];
+  if (!m) return null;
+  return { id: raw.id, step: m.step, label: m.label, at: raw.occurred_at, actor: m.actor, note: raw.note || undefined, breach: m.breach };
+}
+
 export async function getOrders(): Promise<LabOrder[]> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_ORDERS;
-  }
   const { data } = await api.get<{ orders?: unknown[] }>(`${LAB_API}/orders`);
-  return (data.orders ?? []).map(mapOrder);
+  return (data.orders ?? []).map((o) => mapOrder(o));
 }
 
 export async function getOrder(id: string): Promise<LabOrder> {
-  if (USE_MOCK) {
-    await delay();
-    const o = MOCK_ORDERS.find((x) => x.id === id) ?? MOCK_ORDERS[0];
-    return o;
-  }
-  const { data } = await api.get<{ order?: unknown }>(`${LAB_API}/orders/${id}`);
-  if (!data.order) throw new Error('Order not found');
-  return mapOrder(data.order);
+  const [orderRes, custodyRes] = await Promise.all([
+    api.get<{ order?: unknown }>(`${LAB_API}/orders/${id}`),
+    // The trail is supplementary; an order is still readable without it.
+    api.get<{ custody?: any[] }>(`${LAB_API}/orders/${id}/custody`).catch(() => ({ data: { custody: [] as any[] } })),
+  ]);
+  if (!orderRes.data.order) throw new Error('Order not found');
+  const custody = (custodyRes.data.custody ?? []).map(mapCustody).filter((e): e is ChainOfCustodyEvent => e !== null);
+  return mapOrder(orderRes.data.order, custody);
 }
 
 export async function createOrder(input: CreateOrderInput): Promise<LabOrder> {
-  if (USE_MOCK) {
-    await delay(500);
-    const subtotal = input.lines.reduce((s, l) => s + l.priceKobo, 0);
-    const lab = MOCK_LABS.find((l) => l.id === input.labId);
-    const collectionFee = input.collectionMode === 'home' ? lab?.homeCollectionFeeKobo ?? 0 : 0;
-    return {
-      id: `lord_${Date.now()}`,
-      status: input.collectionMode === 'home' ? 'SCHEDULED' : 'CREATED',
-      labId: input.labId,
-      labName: lab?.name ?? 'Selected lab',
-      collectionMode: input.collectionMode,
-      lines: input.lines,
-      subtotalKobo: subtotal,
-      collectionFeeKobo: collectionFee,
-      totalKobo: subtotal + collectionFee,
-      paymentHeld: true,
-      createdAt: new Date().toISOString(),
-      scheduledFor: input.scheduledFor,
-      location: input.location,
-      custody: [],
-    };
-  }
-  // POST /health/lab/orders (handler.go CreateOrder) binds
-  // {lab_provider_id, collection_method, test_ids, idempotency_key} — the live
-  // branch sent this screen's own field names (labId, collectionMode, lines)
-  // verbatim, none of which match, so CreateOrderInput.LabProviderID/
-  // CollectionMethod/TestIDs were always empty and the service rejected every
-  // real checkout with "at least one test required" / "collection_method must
-  // be HOME or WALK_IN" — checkout was 100% broken, not silently wrong.
+  // POST /health/lab/orders binds {lab_provider_id, collection_method, test_ids,
+  // idempotency_key, collection_address, scheduled_for}. The server prices every
+  // test from the chosen lab's catalog and holds that exact total (HL-9).
   const collectionMethod = input.collectionMode === 'home' ? 'HOME' : 'WALK_IN';
   const { data } = await api.post<{ order: unknown }>(`${LAB_API}/orders`, {
     lab_provider_id: input.labId,
@@ -587,17 +316,6 @@ export async function createOrder(input: CreateOrderInput): Promise<LabOrder> {
   });
   return mapOrder(data.order);
 }
-
-export async function reorder(orderId: string): Promise<LabOrderLineSeed[]> {
-  if (USE_MOCK) {
-    await delay();
-    const o = MOCK_ORDERS.find((x) => x.id === orderId) ?? MOCK_ORDERS[0];
-    return o.lines.map((l) => ({ refId: l.refId, kind: l.kind, name: l.name, priceKobo: l.priceKobo }));
-  }
-  const { data } = await api.post<LabOrderLineSeed[]>(`${LAB_API}/orders/${orderId}/reorder`, {});
-  return data;
-}
-type LabOrderLineSeed = { refId: string; kind: 'test' | 'package'; name: string; priceKobo: number };
 
 // ── Results (HL-8 consent-gated · HL-7 critical) ────────────────────────────
 function mapResult(raw: any): LabResult {
@@ -722,10 +440,6 @@ async function findLabApplication(): Promise<ProviderApplicationWire | undefined
 }
 
 export async function getProviderOnboarding(): Promise<ProviderOnboardingState> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_ONBOARDING;
-  }
   const app = await findLabApplication();
   if (!app) return { status: 'draft', businessName: '', mlscnLicenseNo: '', contactName: '' };
   return {
@@ -742,10 +456,6 @@ export async function getProviderOnboarding(): Promise<ProviderOnboardingState> 
 // presign+upload helper (uploadProviderCredential/addProviderCredential,
 // src/features/health/api.ts) already built for pharmacy/vet.
 export async function submitProviderOnboarding(input: SubmitOnboardingInput): Promise<ProviderOnboardingState> {
-  if (USE_MOCK) {
-    await delay();
-    return { ...MOCK_ONBOARDING, ...input, status: 'submitted' };
-  }
   let app = await findLabApplication();
   if (!app) {
     const created = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications`, {
@@ -775,10 +485,6 @@ export async function submitProviderOnboarding(input: SubmitOnboardingInput): Pr
 // correctly calls for the patient-facing browse view) — it just needs the
 // caller's own lab_provider_id to scope to "my tests" instead of every lab's.
 export async function getProviderCatalog(): Promise<CatalogPriceItem[]> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_CATALOG_PRICES;
-  }
   const providerId = await resolveMyLabProviderId();
   if (!providerId) return [];
   const { data } = await api.get<{ tests?: Array<{
@@ -803,6 +509,7 @@ export async function getProviderCatalog(): Promise<CatalogPriceItem[]> {
 interface ProviderOrderWire {
   id: string;
   patient_id: string;
+  patient_name?: string;
   state: string;
   collection_method: 'HOME' | 'WALK_IN';
   created_at: string;
@@ -812,10 +519,6 @@ interface ProviderOrderWire {
 }
 
 export async function getProviderOrders(): Promise<ProviderOrderRow[]> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_PROVIDER_ORDERS;
-  }
   const providerId = await resolveMyLabProviderId();
   if (!providerId) return [];
   const { data } = await api.get<{ orders?: ProviderOrderWire[] }>(`${LAB_API}/provider/orders`, {
@@ -823,7 +526,7 @@ export async function getProviderOrders(): Promise<ProviderOrderRow[]> {
   });
   return (data.orders ?? []).map((o) => ({
     orderId: o.id,
-    patientName: o.patient_id,
+    patientName: o.patient_name || 'Patient',
     status: o.state as ProviderOrderRow['status'],
     testSummary: o.test_names.join(', '),
     collectionMode: o.collection_method === 'HOME' ? 'home' : 'walk_in',
@@ -847,10 +550,6 @@ export async function getProviderOrders(): Promise<ProviderOrderRow[]> {
 // (POST /samples/:id/breach, {reason}) — called as a follow-up when the
 // barcode matched but conditionOk is explicitly false.
 export async function accessionSample(input: AccessionInput): Promise<{ ok: true; status: 'ACCESSIONED' | 'breached' }> {
-  if (USE_MOCK) {
-    await delay();
-    return { ok: true, status: input.conditionOk ? 'ACCESSIONED' : 'breached' };
-  }
   const { data: custody } = await api.get<{ custody?: Array<{ sample_id: string }> }>(
     `${LAB_API}/orders/${input.orderId}/custody`,
   );
@@ -894,23 +593,6 @@ const FLAG_TO_STATUS: Record<AnalyteFlag, 'NORMAL' | 'ABNORMAL' | 'CRITICAL'> = 
 };
 
 export async function enterResult(input: ResultEntryInput): Promise<LabResult> {
-  if (USE_MOCK) {
-    await delay();
-    const hasCritical = input.analytes.some((a) => a.flag === 'critical');
-    const hasAbnormal = input.analytes.some((a) => a.flag !== 'normal');
-    return {
-      id: `lres_${Date.now()}`,
-      orderId: input.orderId,
-      testName: 'Entered result',
-      labName: 'Your lab',
-      status: hasCritical ? 'ESCALATED' : 'RESULT_READY',
-      collectedAt: iso(-120),
-      analytes: input.analytes.map((a) => ({ ...a })),
-      hasAbnormal,
-      hasCritical,
-      interpretation: input.interpretation,
-    };
-  }
   const { data } = await api.post<{ order: { id: string; state: string } }>(
     `${LAB_API}/orders/${input.orderId}/results`,
     {
@@ -946,10 +628,6 @@ export async function enterResult(input: ResultEntryInput): Promise<LabResult> {
 // trust over the server's own recomputation, so it's intentionally never
 // wire data.
 export async function releaseResult(input: ResultReleaseInput): Promise<{ ok: true; releasedAt: string }> {
-  if (USE_MOCK) {
-    await delay();
-    return { ok: true, releasedAt: new Date().toISOString() };
-  }
   // Order (model.go) carries no updated_at field to read a real release
   // timestamp from — this is "now" by construction, not a parsed value.
   await api.post(`${LAB_API}/orders/${input.orderId}/release`, {});

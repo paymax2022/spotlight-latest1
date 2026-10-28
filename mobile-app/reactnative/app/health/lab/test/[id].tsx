@@ -93,7 +93,7 @@ export default function TestDetailScreen() {
           onPress={() =>
             router.push({
               pathname: '/health/lab/lab-select',
-              params: { testId: test.id, name: test.name, priceKobo: String(test.priceKobo), homeCollection: test.homeCollection ? '1' : '0' },
+              params: { testId: test.id, code: test.code, name: test.name, priceKobo: String(test.priceKobo), homeCollection: test.homeCollection ? '1' : '0' },
             })
           }
         />
