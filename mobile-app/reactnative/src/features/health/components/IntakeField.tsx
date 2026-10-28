@@ -192,10 +192,11 @@ export default function IntakeField({
             if (field.type !== 'number') return onChange(t);
             // Empty or non-numeric input → null, so optional number fields (e.g.
             // self-reported vitals) never store NaN and never block the step.
-            const n = Number(t);
-            onChange(t.trim() === '' || Number.isNaN(n) ? null : n);
+            const text = field.integer ? t.replace(/[^0-9]/g, '') : t;
+            const n = Number(text);
+            onChange(text.trim() === '' || Number.isNaN(n) ? null : n);
           }}
-          keyboardType={field.type === 'number' ? 'numeric' : 'default'}
+          keyboardType={field.type === 'number' ? (field.integer ? 'number-pad' : 'numeric') : 'default'}
           multiline={field.type === 'long_text'}
           error={error}
         />

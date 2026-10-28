@@ -18,7 +18,7 @@ export default function VoteSuccessScreen() {
   const { data: contestant } = useContestantProfile(contestantId ?? '');
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.content}>
         <VoteSuccessCard
           contestantName={contestant?.stageName ?? contestant?.name ?? 'your contestant'}
@@ -50,6 +50,7 @@ export default function VoteSuccessScreen() {
         visible={shareOpen}
         onClose={() => setShareOpen(false)}
         contestantName={contestant?.stageName ?? contestant?.name ?? 'Contestant'}
+        contestantId={contestantId}
         shareText={`I just voted for ${contestant?.stageName ?? contestant?.name} in the Spotlight Contest! Join me! 🎤🏆`}
       />
     </SafeAreaView>

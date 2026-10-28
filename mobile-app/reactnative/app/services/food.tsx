@@ -6,11 +6,11 @@ import {
   StyleSheet,
   Pressable,
   Platform,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Icons from 'lucide-react-native';
 import SearchBar from '@/components/SearchBar';
 import { Colors } from '@/constants/tokens';
@@ -289,20 +289,14 @@ export default function FoodScreen() {
           accessibilityRole="button"
           accessibilityLabel="Open Food & Delivery"
         >
-          <LinearGradient
-            colors={['#EF4444', '#B91C1C']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[s.hero, shadow2]}
-          >
-            <Text style={s.heroEyebrow}>Paymax Food</Text>
-            <Text style={s.heroTitle}>Hungry? Order now</Text>
-            <Text style={s.heroSubtitle}>Restaurants near you, live-tracked delivery, chat with your rider — pay with your Paymax wallet.</Text>
-            <View style={s.heroCta}>
-              <Text style={s.heroCtaText}>Browse restaurants</Text>
-              <Icons.ArrowRight size={16} color={Colors.white} strokeWidth={2.4} />
-            </View>
-          </LinearGradient>
+          <View style={s.heroBanner}>
+            <Image
+              source={{ uri: 'https://res.cloudinary.com/paymax/image/upload/v1792924527/Royal_purple_Nigerian_restaurant_app_hero_wemwoq.png' }}
+              style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
+              resizeMode="cover"
+              accessibilityLabel="Food & Delivery"
+            />
+          </View>
         </Pressable>
 
         {/* Search */}
@@ -465,19 +459,13 @@ const s = StyleSheet.create({
     paddingTop: Spacing.lg,
     paddingBottom: Platform.OS === 'ios' ? 120 : 96,
   },
-  hero: {
-    minHeight: 172,
+  heroBanner: {
+    aspectRatio: 2,
     borderRadius: Radius.xl,
-    padding: Spacing.cardPadding,
-    justifyContent: 'flex-end',
+    overflow: 'hidden',
     marginHorizontal: Spacing.containerMargin,
     marginBottom: Spacing.lg,
   },
-  heroEyebrow:  { ...Typography.labelSm, color: 'rgba(255,255,255,0.85)' },
-  heroTitle:    { ...Typography.headlineLgMobile, color: Colors.white, marginTop: Spacing.xs },
-  heroSubtitle: { ...Typography.bodySm, color: 'rgba(255,255,255,0.85)', marginTop: Spacing.xs },
-  heroCta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: Spacing.md },
-  heroCtaText: { ...Typography.labelMd, color: Colors.white },
   sectionHeader: {
     paddingHorizontal: Spacing.containerMargin,
     marginTop: Spacing.lg,

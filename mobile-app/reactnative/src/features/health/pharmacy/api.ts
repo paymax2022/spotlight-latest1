@@ -899,6 +899,21 @@ async function findPharmacyApplication(): Promise<ProviderApplicationWire | unde
   return data.applications?.find((a) => a.domain === 'PHARMACY');
 }
 
+/** The caller's own pharmacy provider records, and whether they are an approved owner. */
+export interface PharmacyProviderStatus {
+  isOwner: boolean;
+  records: { id: string; providerType: string; displayName: string; status: string }[];
+}
+
+const NO_PHARMACY_PROVIDER: PharmacyProviderStatus = { isOwner: false, records: [] };
+
+export async function getMyPharmacyProvider(): Promise<PharmacyProviderStatus> {
+  // Owner access is always read from the server, never from the mock: the mock must not grant it.
+  const { data } = await api.get(`${PHARMACY_API}/provider/me`);
+  const p = data?.provider as PharmacyProviderStatus | undefined;
+  return p ? { isOwner: Boolean(p.isOwner), records: p.records ?? [] } : NO_PHARMACY_PROVIDER;
+}
+
 export async function getProviderOnboarding(): Promise<ProviderOnboardingState> {
   if (USE_MOCK) {
     await delay();

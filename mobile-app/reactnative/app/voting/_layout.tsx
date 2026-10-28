@@ -32,7 +32,9 @@ export default function VotingLayout() {
       <Stack.Screen name="rules"                 options={{ animation: 'slide_from_bottom' }} />
       <Stack.Screen name="support"               options={{ animation: 'slide_from_bottom' }} />
     </Stack>
-  <ModuleTabBar tabs={VOTING_TABS} />
+  {/* vote-success keeps its actions in the page body (no fixed footer), so the
+      bar can sit under it; no tab is highlighted there. */}
+  <ModuleTabBar tabs={VOTING_TABS} alsoVisibleOn={['/voting/vote-success']} />
   </View>
   );
 }

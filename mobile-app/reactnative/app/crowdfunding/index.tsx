@@ -20,9 +20,6 @@ import { HomeMenuButton } from '@/components/HomeMenu';
 import { RemoteBanner } from '@/features/media/banners';
 import { TrendingUp, Building2 } from 'lucide-react-native';
 
-/** Source artwork is 1200x600. */
-const BANNER_ASPECT = 2;
-
 export default function CrowdfundingHome() {
   const categories = useCategories();
   const featured = useCampaigns({ collection: 'featured' });
@@ -89,14 +86,6 @@ export default function CrowdfundingHome() {
           contentContainerStyle={styles.scroll}
           refreshControl={undefined}
         >
-          <View style={styles.searchWrap}>
-            <SearchBar
-              placeholder="Search campaigns, creators, causes…"
-              editable={false}
-              onPress={() => router.push('/crowdfunding/search')}
-            />
-          </View>
-
           <RemoteBanner slug="crowdfunding" priority style={styles.banner} />
 
           {/* Crowdfunding-only menu — everything a user needs to run their
@@ -107,29 +96,6 @@ export default function CrowdfundingHome() {
             <MenuAction icon={HandCoins} label="Contributions" onPress={() => router.push('/crowdfunding/contributions')} />
             <MenuAction icon={Wallet} label="Wallet" onPress={() => router.push('/crowdfunding/wallet')} />
             <MenuAction icon={Settings} label="Settings" onPress={() => router.push('/crowdfunding/settings')} />
-          </View>
-
-          {/* Campaign banner, full-bleed at the source's 2:1 aspect (1200x600).
-              The ASPECT LIVES ON THE WRAPPER, not the Image: on
-              react-native-web a require()d asset gives the Image an inline
-              height from its intrinsic size (600px), which beats an
-              aspect-ratio rule and stretched the banner to 375x600. A plain
-              View has no such intrinsic size, so its aspect-ratio holds — and
-              because it is pure CSS it stays correct on resize, which neither
-              useWindowDimensions nor onLayout did here. */}
-          <View style={styles.bannerFrame}>
-            <Image
-              source={require('../../assets/banners/crowdfunding-banner.jpg')}
-              // width/height 100% are REQUIRED, not redundant with absoluteFill:
-              // rn-web gives a require()d asset an inline intrinsic size (1200x600)
-              // that beats absoluteFill's right/bottom, so the image would render
-              // at full size and be cropped by the frame instead of scaled into it.
-              style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
-              resizeMode="cover"
-              accessible
-              accessibilityRole="image"
-              accessibilityLabel="Crowdfund your dreams on Spotlight — one app, countless supporters, unlimited possibilities."
-            />
           </View>
 
           {/* Investment entry — only when the regulated module is licensed on */}
@@ -153,6 +119,19 @@ export default function CrowdfundingHome() {
               </View>
             </Pressable>
           )}
+
+          <Image
+            source={{ uri: 'https://res.cloudinary.com/paymax/image/upload/v1792951195/Crowdfunding_hope_for_every_family_tmoz1m.png' }}
+            style={styles.promotionalBanner}
+          />
+
+          <View style={styles.searchWrap}>
+            <SearchBar
+              placeholder="Search campaigns, creators, causes…"
+              editable={false}
+              onPress={() => router.push('/crowdfunding/search')}
+            />
+          </View>
 
           {/* Categories */}
           <SectionHeader title="Browse by cause" actionLabel="All" onAction={() => router.push('/crowdfunding/categories')} />
@@ -325,19 +304,13 @@ const styles = StyleSheet.create({
   eyebrow: { ...Typography.caption, color: Colors.primary, fontWeight: '700' as const, textTransform: 'uppercase', letterSpacing: 0.6 },
   headerTitle: { ...Typography.titleLg, color: Colors.onSurface },
   scroll: { paddingBottom: 120 },
-  searchWrap: { marginTop: Spacing.sm },
+  promotionalBanner: { width: '100%', height: 180, marginTop: Spacing.md, marginBottom: Spacing.md },
+  searchWrap: { marginTop: Spacing.md },
   banner: { marginHorizontal: Spacing.containerMargin, marginTop: Spacing.md },
   menuRow: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md, paddingHorizontal: Spacing.containerMargin },
   menuAction: { flex: 1, alignItems: 'center', gap: 6, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, paddingVertical: Spacing.md, ...shadow1 },
   menuActionIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },
   menuActionLabel: { ...Typography.labelSm, color: Colors.onSurface },
-  bannerFrame: {
-    width: '100%',
-    aspectRatio: BANNER_ASPECT,
-    marginTop: Spacing.md,
-    marginBottom: Spacing.md,
-    overflow: 'hidden',
-  },
   investBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.tertiaryContainer, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
   investIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
   investTitle: { ...Typography.labelLg, color: Colors.onPrimary },

@@ -95,7 +95,19 @@ export interface Earning {
   sourceRef: string;
   ledgerRef?: string | null;
   userId?: string | null;
+  paymentMethod?: string; // 'card' | 'wallet' | 'transfer' | 'cash' | 'unknown'
   createdAt: string;
+}
+
+export interface CategoryPaymentBreakdown {
+  category: string;
+  service: string;
+  paymentMethod: string;
+  count: number;
+  grossAmountKobo: number;
+  commissionKobo: number;
+  spotlightRevenueKobo: number;
+  referralCommissionKobo?: number;
 }
 
 export type GroupBy = 'category' | 'service' | 'day';
@@ -181,11 +193,15 @@ function mockReportDay(): ReportRow[] {
 }
 
 const MOCK_EARNINGS: Earning[] = [
-  { id: 'ern_1', configId: 'cfg_contest_vote', serviceCategory: 'Contest', service: 'voting', serviceSubtype: '', grossAmountKobo: 500000, commissionKobo: 150000, platformChargeKobo: 0, convenienceFeeKobo: 0, fixedFeeKobo: 0, spotlightRevenueKobo: 150000, currency: 'NGN', sourceModule: 'contest', sourceRef: 'vote_9981', ledgerRef: 'led_aa01', userId: 'usr_aa01', createdAt: iso(1) },
-  { id: 'ern_2', configId: 'cfg_life_food', serviceCategory: 'Lifestyle', service: 'restaurant_delivery', serviceSubtype: '', grossAmountKobo: 800000, commissionKobo: 96000, platformChargeKobo: 0, convenienceFeeKobo: 15000, fixedFeeKobo: 0, spotlightRevenueKobo: 111000, currency: 'NGN', sourceModule: 'restaurant', sourceRef: 'ord_5521', ledgerRef: 'led_bb02', userId: 'usr_bb02', createdAt: iso(3) },
-  { id: 'ern_3', configId: 'cfg_util_elec', serviceCategory: 'Utility_Bills', service: 'electricity', serviceSubtype: 'prepaid', grossAmountKobo: 1000000, commissionKobo: 15000, platformChargeKobo: 0, convenienceFeeKobo: 5000, fixedFeeKobo: 0, spotlightRevenueKobo: 20000, currency: 'NGN', sourceModule: 'bills', sourceRef: 'bill_7742', ledgerRef: 'led_cc03', userId: 'usr_cc03', createdAt: iso(6) },
-  { id: 'ern_4', configId: 'cfg_fin_fx', serviceCategory: 'Finance', service: 'fx', serviceSubtype: '', grossAmountKobo: 5000000, commissionKobo: 0, platformChargeKobo: 37500, convenienceFeeKobo: 0, fixedFeeKobo: 0, spotlightRevenueKobo: 37500, currency: 'NGN', sourceModule: 'fx', sourceRef: 'fx_3310', ledgerRef: 'led_dd04', userId: 'usr_dd04', createdAt: iso(9) },
-  { id: 'ern_5', configId: 'cfg_health_pharm', serviceCategory: 'Health', service: 'pharmacy', serviceSubtype: '', grossAmountKobo: 1200000, commissionKobo: 96000, platformChargeKobo: 0, convenienceFeeKobo: 0, fixedFeeKobo: 0, spotlightRevenueKobo: 96000, currency: 'NGN', sourceModule: 'health', sourceRef: 'rx_2201', ledgerRef: 'led_ee05', userId: 'usr_ee05', createdAt: iso(14) },
+  { id: 'ern_1', configId: 'cfg_contest_vote', serviceCategory: 'Contest', service: 'voting', serviceSubtype: '', grossAmountKobo: 500000, commissionKobo: 150000, platformChargeKobo: 0, convenienceFeeKobo: 0, fixedFeeKobo: 0, spotlightRevenueKobo: 150000, currency: 'NGN', sourceModule: 'contest', sourceRef: 'vote_9981', ledgerRef: 'led_aa01', userId: 'usr_aa01', paymentMethod: 'wallet', createdAt: iso(1) },
+  { id: 'ern_1b', configId: 'cfg_contest_vote', serviceCategory: 'Contest', service: 'voting', serviceSubtype: '', grossAmountKobo: 300000, commissionKobo: 90000, platformChargeKobo: 0, convenienceFeeKobo: 0, fixedFeeKobo: 0, spotlightRevenueKobo: 90000, currency: 'NGN', sourceModule: 'contest', sourceRef: 'vote_9982', ledgerRef: 'led_aa02', userId: 'usr_aa02', paymentMethod: 'card', createdAt: iso(2) },
+  { id: 'ern_2', configId: 'cfg_life_food', serviceCategory: 'Lifestyle', service: 'restaurant_delivery', serviceSubtype: '', grossAmountKobo: 800000, commissionKobo: 96000, platformChargeKobo: 0, convenienceFeeKobo: 15000, fixedFeeKobo: 0, spotlightRevenueKobo: 111000, currency: 'NGN', sourceModule: 'restaurant', sourceRef: 'ord_5521', ledgerRef: 'led_bb02', userId: 'usr_bb02', paymentMethod: 'card', createdAt: iso(3) },
+  { id: 'ern_2b', configId: 'cfg_life_food', serviceCategory: 'Lifestyle', service: 'restaurant_delivery', serviceSubtype: '', grossAmountKobo: 600000, commissionKobo: 72000, platformChargeKobo: 0, convenienceFeeKobo: 15000, fixedFeeKobo: 0, spotlightRevenueKobo: 87000, currency: 'NGN', sourceModule: 'restaurant', sourceRef: 'ord_5522', ledgerRef: 'led_bb03', userId: 'usr_bb03', paymentMethod: 'wallet', createdAt: iso(4) },
+  { id: 'ern_3', configId: 'cfg_util_airt', serviceCategory: 'Utility_Bills', service: 'airtime', serviceSubtype: '', grossAmountKobo: 1000000, commissionKobo: 20000, platformChargeKobo: 0, convenienceFeeKobo: 0, fixedFeeKobo: 0, spotlightRevenueKobo: 20000, currency: 'NGN', sourceModule: 'bills', sourceRef: 'bill_7742', ledgerRef: 'led_cc03', userId: 'usr_cc03', paymentMethod: 'card', createdAt: iso(6) },
+  { id: 'ern_3b', configId: 'cfg_util_airt', serviceCategory: 'Utility_Bills', service: 'airtime', serviceSubtype: '', grossAmountKobo: 500000, commissionKobo: 10000, platformChargeKobo: 0, convenienceFeeKobo: 0, fixedFeeKobo: 0, spotlightRevenueKobo: 10000, currency: 'NGN', sourceModule: 'bills', sourceRef: 'bill_7743', ledgerRef: 'led_cc04', userId: 'usr_cc04', paymentMethod: 'wallet', createdAt: iso(5) },
+  { id: 'ern_3c', configId: 'cfg_util_elec', serviceCategory: 'Utility_Bills', service: 'electricity', serviceSubtype: 'prepaid', grossAmountKobo: 2000000, commissionKobo: 30000, platformChargeKobo: 0, convenienceFeeKobo: 5000, fixedFeeKobo: 0, spotlightRevenueKobo: 35000, currency: 'NGN', sourceModule: 'bills', sourceRef: 'bill_7744', ledgerRef: 'led_cc05', userId: 'usr_cc05', paymentMethod: 'card', createdAt: iso(7) },
+  { id: 'ern_4', configId: 'cfg_fin_fx', serviceCategory: 'Finance', service: 'fx', serviceSubtype: '', grossAmountKobo: 5000000, commissionKobo: 0, platformChargeKobo: 37500, convenienceFeeKobo: 0, fixedFeeKobo: 0, spotlightRevenueKobo: 37500, currency: 'NGN', sourceModule: 'fx', sourceRef: 'fx_3310', ledgerRef: 'led_dd04', userId: 'usr_dd04', paymentMethod: 'transfer', createdAt: iso(9) },
+  { id: 'ern_5', configId: 'cfg_health_pharm', serviceCategory: 'Health', service: 'pharmacy', serviceSubtype: '', grossAmountKobo: 1200000, commissionKobo: 96000, platformChargeKobo: 0, convenienceFeeKobo: 0, fixedFeeKobo: 0, spotlightRevenueKobo: 96000, currency: 'NGN', sourceModule: 'health', sourceRef: 'rx_2201', ledgerRef: 'led_ee05', userId: 'usr_ee05', paymentMethod: 'card', createdAt: iso(14) },
 ];
 
 // GET /finance/commission/config → { success, configs, grouped, count }
@@ -315,4 +331,45 @@ export async function listEarnings(opts?: { from?: string; to?: string; category
   const q = qs.toString();
   const j = await getRaw<{ earnings?: Earning[] }>(`/commission/earnings${q ? `?${q}` : ''}`);
   return j.earnings ?? [];
+}
+
+export function buildCategoryPaymentBreakdown(earnings: Earning[], referralRewards?: ReferralReward[]): CategoryPaymentBreakdown[] {
+  const map = new Map<string, CategoryPaymentBreakdown>();
+  const referralMap = new Map<string, number>();
+
+  if (referralRewards) {
+    for (const r of referralRewards) {
+      if (r.status === 'CREDITED' || r.status === 'PENDING') {
+        const key = r.sourceTransaction;
+        referralMap.set(key, (referralMap.get(key) ?? 0) + r.rewardKobo);
+      }
+    }
+  }
+
+  for (const e of earnings) {
+    const key = `${e.serviceCategory}|${e.service}|${e.paymentMethod ?? 'unknown'}`;
+    const existing = map.get(key);
+    const referralKobo = referralMap.get(e.sourceRef) ?? 0;
+
+    if (existing) {
+      existing.count += 1;
+      existing.grossAmountKobo += e.grossAmountKobo;
+      existing.commissionKobo += e.commissionKobo;
+      existing.spotlightRevenueKobo += e.spotlightRevenueKobo;
+      if (referralKobo > 0) existing.referralCommissionKobo = (existing.referralCommissionKobo ?? 0) + referralKobo;
+    } else {
+      map.set(key, {
+        category: e.serviceCategory,
+        service: e.service,
+        paymentMethod: e.paymentMethod ?? 'unknown',
+        count: 1,
+        grossAmountKobo: e.grossAmountKobo,
+        commissionKobo: e.commissionKobo,
+        spotlightRevenueKobo: e.spotlightRevenueKobo,
+        ...(referralKobo > 0 ? { referralCommissionKobo: referralKobo } : {}),
+      });
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.spotlightRevenueKobo - a.spotlightRevenueKobo);
 }

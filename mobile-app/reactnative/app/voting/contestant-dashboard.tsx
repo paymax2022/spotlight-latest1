@@ -98,6 +98,7 @@ export default function ContestantDashboardScreen() {
         visible={shareOpen}
         onClose={() => setShareOpen(false)}
         contestantName={contestant.stageName ?? contestant.name}
+        contestantId={contestantId}
         shareText={`Vote for ${contestant.stageName ?? contestant.name} on Spotlight! 🎤 Every vote counts!`}
       />
     </SafeAreaView>

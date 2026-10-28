@@ -1,13 +1,16 @@
 import React, { useMemo, useRef, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
+import ContactPickerModal from '@/features/visitor/components/ContactPickerModal';
+import { toE164, toNsn } from '@/lib/phone/phone';
 import {
-  View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator,
+  View, Text, Image, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { LinearGradient } from 'expo-linear-gradient';
-import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X } from 'lucide-react-native';
+import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X, Clock } from 'lucide-react-native';
+
+const DATA_BANNER_URL = 'https://res.cloudinary.com/paymax/image/upload/v1792924527/Purple_fintech_data_bundle_banner_pyoorm.png';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
@@ -23,7 +26,9 @@ import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1, shadow2 } from '@/constants/tokens';
 import { getDataNetworks, getDataPlans, initiateDataPaystack, purchaseData, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
+import { getWalletTransactions } from '@/api/wallet.api';
 import { useGatewayCheckout } from '@/features/payments';
+import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
@@ -51,6 +56,7 @@ export default function DataScreen() {
   const [saveBeneficiary, setSaveBeneficiary] = useState(false);
   const [paymentMethod,   setPaymentMethod]   = useState<PaymentMethod>('WALLET');
   const [paystackLoading, setPaystackLoading] = useState(false);
+  const [contactsOpen, setContactsOpen]       = useState(false);
   const [paystackError,   setPaystackError]   = useState('');
   const idemKeyRef = useRef('');
   const confirmInFlightRef = useRef(false);
@@ -77,6 +83,14 @@ export default function DataScreen() {
     queryFn:  getWallet,
   });
 
+  const { data: dataTxPage } = useQuery({
+    queryKey: ['utility-transactions', 'recent', 5, 'DATA'],
+    queryFn:  () => getWalletTransactions({ serviceType: 'DATA', page: 1, limit: 5 }),
+    staleTime: 30_000,
+  });
+
+  const dataTransactions = dataTxPage?.items ?? [];
+
   // Build the dropdown options from the provider adapter's plans. SelectField
   // keys options by their label string, so labels must be unique — de-dupe by
   // suffixing a counter when a network exposes plans with identical labels.
@@ -98,8 +112,9 @@ export default function DataScreen() {
     ? planOptions.find((o) => o.plan.id === selectedPlan.id)?.label ?? ''
     : '';
 
-  const { control, handleSubmit, formState: { errors } } = useForm<Form>({ resolver: zodResolver(schema) });
+  const { control, handleSubmit, setValue, formState: { errors } } = useForm<Form>({ resolver: zodResolver(schema) });
 
+  const promptKyc = useBillKycPrompt();
   const { mutate: purchase, isPending, error: purchaseError } = useMutation({
     mutationFn: purchaseData,
     onSuccess: (result) => {
@@ -111,8 +126,9 @@ export default function DataScreen() {
       const txId = String((result as Record<string, unknown>).transactionId ?? '');
       router.push(`/services/receipt/${txId}` as never);
     },
-    onError: () => {
+    onError: (err) => {
       confirmInFlightRef.current = false;
+      void promptKyc(err);
     },
   });
 
@@ -182,7 +198,7 @@ export default function DataScreen() {
         onResolved: (res) => { setShowConfirm(false); router.replace(`/services/paystack/${res.reference}` as never); },
       });
     } catch (err: unknown) {
-      setPaystackError(getErrorMessage(err));
+      if (!(await promptKyc(err))) setPaystackError(getErrorMessage(err));
     } finally {
       setPaystackLoading(false);
     }
@@ -209,14 +225,12 @@ export default function DataScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <LinearGradient colors={[Colors.secondary, Colors.primaryContainer]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.hero, shadow2]}>
-          <View style={styles.heroIcon}><Text style={{ fontSize: 26 }}>📶</Text></View>
-          <View style={{ flex: 1, gap: Spacing.xs }}>
-            <Text style={styles.heroEyebrow}>SECURE SERVICE</Text>
-            <Text style={styles.heroTitle}>Buy Data Bundle</Text>
-            <Text style={styles.heroSub}>Mobile data for all major Nigerian networks.</Text>
-          </View>
-        </LinearGradient>
+        <Image
+          source={{ uri: DATA_BANNER_URL }}
+          accessibilityLabel="Buy data bundle"
+          style={[styles.heroBanner, shadow2]}
+          resizeMode="cover"
+        />
 
         <View style={[styles.card, shadow1]}>
           <Text style={styles.sectionTitle}>Select Network</Text>
@@ -241,8 +255,19 @@ export default function DataScreen() {
             name="phoneNumber"
             control={control}
             render={({ field }) => (
-              <PhoneNumberInput label="Phone / Router Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} error={errors.phoneNumber?.message} />
+              <PhoneNumberInput label="Phone / Router Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} onPickContact={() => setContactsOpen(true)} error={errors.phoneNumber?.message} />
             )}
+          />
+
+          <ContactPickerModal
+            visible={contactsOpen}
+            onClose={() => setContactsOpen(false)}
+            onSelect={(contact) => {
+              // Device numbers arrive as "+234 801…", "0801…" or "0801-…"; toNsn strips
+              // the country code, trunk zero and separators before the form sees them.
+              const nsn = toNsn(contact.phone);
+              setValue('phoneNumber', toE164(nsn) || nsn, { shouldValidate: true });
+            }}
           />
         </View>
 
@@ -303,6 +328,24 @@ export default function DataScreen() {
         </View>
 
         {purchaseError ? <Text style={styles.apiError}>{getErrorMessage(purchaseError)}</Text> : null}
+
+        {dataTransactions.length > 0 && (
+          <View style={[styles.card, shadow1]}>
+            <Text style={styles.sectionTitle}>Recent Data Purchases</Text>
+            {dataTransactions.map((tx) => (
+              <View key={tx.id} style={styles.transactionRow}>
+                <View style={styles.transactionIcon}>
+                  <Clock size={16} color={Colors.primary} />
+                </View>
+                <View style={styles.transactionBody}>
+                  <Text style={styles.transactionLabel} numberOfLines={1}>{tx.productName || tx.providerName || 'Data Purchase'}</Text>
+                  <Text style={styles.transactionMeta}>{new Date(tx.createdAt || '').toLocaleDateString('en-NG')}</Text>
+                </View>
+                <Text style={styles.transactionAmount}>₦{Math.abs(tx.totalAmount).toLocaleString()}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
         <View style={styles.actionWrap}>
           <PrimaryButton label="Review Purchase" onPress={onPressReview} />
@@ -403,15 +446,12 @@ const styles = StyleSheet.create({
   iconBtn:     { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   topTitle:    { ...Typography.titleLg, color: Colors.primary },
   content:     { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.lg, paddingBottom: Platform.OS === 'ios' ? 120 : 96 },
-  hero:        { minHeight: 120, borderRadius: Radius.xl, padding: Spacing.cardPadding, flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.lg, overflow: 'hidden' },
-  heroIcon:    { width: 56, height: 56, borderRadius: Radius.lg, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
-  heroEyebrow: { ...Typography.labelSm, color: 'rgba(255,255,255,0.75)' },
-  heroTitle:   { ...Typography.headlineMd, color: Colors.onPrimary },
-  heroSub:     { ...Typography.bodySm, color: 'rgba(255,255,255,0.75)' },
+  // Banner is 1774×887 — keep its ratio so the whole artwork shows, not a cropped band.
+  heroBanner:  { width: '100%', aspectRatio: 1774 / 887, borderRadius: Radius.xl, marginBottom: Spacing.lg, overflow: 'hidden', backgroundColor: Colors.primaryContainer },
   card:        { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
   sectionTitle:{ ...Typography.titleMd, color: Colors.onSurface },
-  providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
-  providerCard:{ width: '48%', minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.md, gap: Spacing.sm },
+  providerGrid:{ flexDirection: 'row', flexWrap: 'nowrap', justifyContent: 'space-between', gap: Spacing.xs, marginTop: Spacing.md, marginBottom: Spacing.lg },
+  providerCard:{ flex: 1, minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.sm, gap: Spacing.sm, alignItems: 'center' },
   providerCardActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
   providerIcon:{ width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   providerInitial:{ ...Typography.labelLg, fontWeight: '800' },
@@ -447,4 +487,10 @@ const styles = StyleSheet.create({
   modalActions:    { gap: Spacing.sm, marginTop: Spacing.lg },
   paystackInfoPanel: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.md, padding: Spacing.md, borderLeftWidth: 3, borderLeftColor: Colors.secondary, marginTop: Spacing.md },
   paystackInfoText:  { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },
+  transactionRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.surfaceContainerHigh },
+  transactionIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.iconBgBlue, alignItems: 'center', justifyContent: 'center' },
+  transactionBody: { flex: 1 },
+  transactionLabel: { ...Typography.labelMd, color: Colors.onSurface },
+  transactionMeta: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
+  transactionAmount: { ...Typography.labelMd, color: Colors.onSurface, fontWeight: '600' },
 });

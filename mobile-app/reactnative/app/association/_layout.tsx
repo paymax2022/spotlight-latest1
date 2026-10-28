@@ -137,12 +137,18 @@ export default function AssociationLayout() {
       <Stack.Screen name="support/tickets" />
       <Stack.Screen name="support/new" />
       <Stack.Screen name="support/[id]" />
+      <Stack.Screen name="elections/new" />
       <Stack.Screen name="elections/[id]" />
 
       {/* Edge / restriction states (H, Z) */}
       <Stack.Screen name="edge/[type]" options={{ animation: 'fade' }} />
     </Stack>
-  <ModuleTabBar tabs={ASSOCIATION_TABS} alsoVisibleOn={['/association/create']} />
+  <ModuleTabBar
+      tabs={ASSOCIATION_TABS}
+      alsoVisibleOn={['/association/create']}
+      // Election detail only: elections/new keeps its own fixed footer.
+      alsoVisibleMatch={[/^\/association\/elections\/(?!new$)[^/]+$/]}
+    />
   </View>
   );
 }

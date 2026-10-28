@@ -192,6 +192,25 @@ export default function OnboardingReviewPage() {
               <div><span style={{ color: colors.muted }}>CAC</span><div>{selected.cac_number ?? '—'}</div></div>
               <div><span style={{ color: colors.muted }}>Bank</span><div>{selected.bank_name ?? '—'} · {selected.bank_account_number ?? '—'}</div></div>
               <div><span style={{ color: colors.muted }}>Account name</span><div>{selected.bank_account_name ?? '—'}</div></div>
+              <div>
+                <span style={{ color: colors.muted }}>Bank verified</span>
+                <div>
+                  {selected.bank_account_verified === true ? (
+                    <span style={{ color: colors.success }}>✓ Verified</span>
+                  ) : selected.bank_account_verified === false ? (
+                    <span style={{ color: colors.danger }}>✗ Mismatch</span>
+                  ) : selected.bank_account_verified_at ? (
+                    <span style={{ color: colors.warning }}>Pending review</span>
+                  ) : (
+                    <span style={{ color: colors.muted }}>Not verified</span>
+                  )}
+                </div>
+                {selected.bank_account_verification_error && (
+                  <div style={{ color: colors.danger, fontSize: '0.75rem', marginTop: 4 }}>
+                    {selected.bank_account_verification_error}
+                  </div>
+                )}
+              </div>
             </div>
 
             <strong style={{ fontSize: '0.85rem' }}>Documents</strong>
@@ -203,6 +222,21 @@ export default function OnboardingReviewPage() {
                 </li>
               ))}
             </ul>
+
+            <strong style={{ fontSize: '0.85rem' }}>Menu Categories</strong>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0.25rem 0 0.75rem' }}>
+              Assign categories and cuisines the restaurant offers. This helps organize their menu for discovery.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '0.5rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
+              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Nigerian'} disabled /> Nigerian</label>
+              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Fast Food'} disabled /> Fast Food</label>
+              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Chinese'} disabled /> Chinese</label>
+              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Indian'} disabled /> Indian</label>
+              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Italian'} disabled /> Italian</label>
+              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Seafood'} disabled /> Seafood</label>
+              <label><input type="checkbox" defaultChecked={selected.cuisine === 'BBQ & Grills'} disabled /> BBQ & Grills</label>
+              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Healthy'} disabled /> Healthy</label>
+            </div>
 
             <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Reviewer note (required to reject)</label>
             <textarea

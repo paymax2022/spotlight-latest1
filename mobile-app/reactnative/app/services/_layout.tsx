@@ -25,7 +25,7 @@ export default function ServicesLayout() {
       <Stack.Screen name="transactions/[id]" />
       <Stack.Screen name="paystack/[reference]" />
     </Stack>
-  <ModuleTabBar tabs={UTILITY_TABS} />
+  <ModuleTabBar tabs={UTILITY_TABS} alsoVisibleOn={['/services/transactions']} />
   </View>
   );
 }

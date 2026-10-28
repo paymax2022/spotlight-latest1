@@ -37,7 +37,7 @@ const quickLinks: QuickLink[] = [
   { label: 'Emerging Teams', href: '/admin/emerging-teams', desc: 'Team entities under emerging innovator channel', stemAccess: 'read' },
   { label: 'Emerging Projects', href: '/admin/emerging-projects', desc: 'Project entities under emerging innovator channel', stemAccess: 'read' },
   { label: 'Reality TV', href: '/admin/reality-tv/dashboard', desc: 'Legacy bridge while migrating Reality TV module' },
-  { label: 'Film Academy', href: '/admin/film-academy', desc: 'Legacy bridge while migrating Film Academy module' },
+  { label: 'Film Academy', href: '/admin/academy/film', desc: 'Batches, applications, tuition and the TMFA course' },
   { label: 'Users & Services', href: '/admin/users-services', desc: 'Legacy bridge for user/service admin tools' },
 ];
 
@@ -155,6 +155,9 @@ export function AdminDashboard() {
       { key: 'academy', label: 'Academy', group: 'Programs', href: '/admin/academy',
         volume: { label: 'Applications', value: counts.academy ?? null },
         attention: { label: '', value: 0, href: '/admin/academy', severity: 'warn' } },
+      { key: 'film-academy', label: 'Film Academy', group: 'Programs', href: '/admin/academy/film',
+        volume: { label: 'Applications', value: counts.film_academy ?? null },
+        attention: { label: 'Awaiting review', value: null, href: '/admin/academy/film', severity: 'warn' } },
     ];
     return [...live, ...programme];
   }, [overview, counts]);

@@ -13,6 +13,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
+import PromoBanner from '@/components/PromoBanner';
 import { MarketColors, formatNaira, conditionLabel } from '@/features/marketplace';
 import type { Listing, ListingStatus } from '@/features/marketplace';
 import { confirmAsync } from '@/lib/confirm';
@@ -74,19 +75,26 @@ export default function SellTab() {
 function SellEntry() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.entryWrap}>
-        <View style={styles.entryIcon}><Camera size={36} color={MarketColors.brand} /></View>
-        <Text style={styles.entryTitle}>Sell on Paymax</Text>
-        <Text style={styles.entryBody}>List an item in minutes — snap a few photos and our composer does the rest. Escrow-ready by default, so buyers trust you faster.</Text>
-        <View style={styles.entryCta}>
-          <PrimaryButton label="Start a listing" onPress={() => router.push('/marketplace/sell/compose' as never)} />
+      <ScrollView contentContainerStyle={styles.sellEntryScroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.bannerWrap}>
+          <PromoBanner
+            imageUri="https://res.cloudinary.com/paymax/image/upload/v1792939131/Nigerian_marketplace_seller_hero_banner_1_fwem0k.png"
+            onPress={() => {}}
+          />
         </View>
-        <View style={styles.entryPoints}>
-          <EntryPoint icon={CheckCircle2} text="Auto-approved categories go live in under 5 minutes" />
-          <EntryPoint icon={CheckCircle2} text="Buyer-protection escrow built in" />
-          <EntryPoint icon={CheckCircle2} text="Fair-price guidance so you price to sell" />
+        <View style={styles.entryWrap}>
+          <Text style={styles.entryTitle}>Sell on Paymax</Text>
+          <Text style={styles.entryBody}>List an item in minutes — snap a few photos and our composer does the rest. Escrow-ready by default, so buyers trust you faster.</Text>
+          <View style={styles.entryCta}>
+            <PrimaryButton label="Start a listing" onPress={() => router.push('/marketplace/sell/compose' as never)} />
+          </View>
+          <View style={styles.entryPoints}>
+            <EntryPoint icon={CheckCircle2} text="Auto-approved categories go live in under 5 minutes" />
+            <EntryPoint icon={CheckCircle2} text="Buyer-protection escrow built in" />
+            <EntryPoint icon={CheckCircle2} text="Fair-price guidance so you price to sell" />
+          </View>
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -442,7 +450,9 @@ const styles = StyleSheet.create({
   actionDisabled: { opacity: 0.5 },
   actionText: { ...Typography.labelSm, fontWeight: '600' },
   // entry
-  entryWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl, gap: Spacing.md },
+  sellEntryScroll: { flexGrow: 1 },
+  bannerWrap: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.lg, paddingBottom: Spacing.sm },
+  entryWrap: { alignItems: 'center', paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.lg, gap: Spacing.sm },
   entryIcon: { width: 80, height: 80, borderRadius: 22, backgroundColor: MarketColors.okBg, alignItems: 'center', justifyContent: 'center' },
   entryTitle: { ...Typography.headlineMd, color: Colors.onSurface },
   entryBody: { ...Typography.bodyMd, color: MarketColors.muted, textAlign: 'center' },

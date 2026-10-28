@@ -2,6 +2,7 @@ export type AdminMenuCounts = {
   contestants: number;
   auditions: number;
   academy: number;
+  film_academy: number;
   reality_tv: number;
   sme_pitch: number;
   stem: number;

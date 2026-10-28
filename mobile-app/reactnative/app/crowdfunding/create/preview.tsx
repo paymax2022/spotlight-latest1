@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ScrollView, View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -13,6 +13,11 @@ import { useCampaignDraft } from '@/features/crowdfunding/store/campaignDraftSto
 import { useSubmitCampaign } from '@/features/crowdfunding/hooks/useCreator';
 import { formatNaira, deadlineLabel } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import { alertAsync } from '@/lib/confirm';
+import { useQuery } from '@tanstack/react-query';
+import { getKycProfile } from '@/api/kyc.api';
+import { checkCampaignAmountAllowed, tierLimitMessage } from '@/features/crowdfunding/utils/tierLimits';
+import { kycGrant } from '@/features/kycverify/draft';
+import { rememberResume } from '@/lib/resume';
 
 const MODEL_LABEL: Record<string, string> = {
   ALL_OR_NOTHING: 'All-or-nothing', FLEXIBLE: 'Flexible funding', MILESTONE: 'Milestone-based', IMMEDIATE: 'Immediate', ESCROW: 'Escrow',
@@ -21,6 +26,8 @@ const MODEL_LABEL: Record<string, string> = {
 export default function CreatePreviewScreen() {
   const { draft, patch, reset, hasHydrated } = useCampaignDraft();
   const submit = useSubmitCampaign();
+  const [checking, setChecking] = useState(false);
+  const kyc = useQuery({ queryKey: ['kyc', 'profile'], queryFn: getKycProfile, staleTime: 60_000 });
 
   // The draft store is in-memory only, so a web reload (or landing on this
   // route directly) wipes it while this screen still renders — type/category
@@ -39,7 +46,7 @@ export default function CreatePreviewScreen() {
   }
   const canSubmit = hasHydrated && missing.length === 0;
 
-  const go = (submitForReview: boolean) => {
+  const go = async (submitForReview: boolean) => {
     if (!hasHydrated) return;
     if (missing.length > 0) {
       void alertAsync({
@@ -49,6 +56,37 @@ export default function CreatePreviewScreen() {
       }).then(() => router.dismissTo('/crowdfunding/create'));
       return;
     }
+
+    // Check KYC tier before submission
+    setChecking(true);
+    try {
+      if (!kyc.data) {
+        await kyc.refetch();
+      }
+      const profile = kyc.data;
+      if (!profile) {
+        throw new Error('Could not load your KYC status');
+      }
+
+      // Check if the campaign amount is allowed for the creator's tier
+      const effectiveTier = Math.max(profile.tier, kycGrant.tier);
+      const { allowed, requiredTier } = checkCampaignAmountAllowed(effectiveTier, draft.goalKobo);
+      if (!allowed) {
+        const message = tierLimitMessage(effectiveTier, draft.goalKobo);
+        await alertAsync({
+          title: 'KYC required',
+          message,
+          buttonLabel: 'Complete KYC',
+        });
+        // The draft is persisted; KYC success resumes this screen.
+        rememberResume({ pathname: '/crowdfunding/create/preview' });
+        router.push(`/kyc?target=${requiredTier ?? 1}` as never);
+        return;
+      }
+    } finally {
+      setChecking(false);
+    }
+
     submit.mutate(
       { draft, submitForReview },
       {
@@ -112,9 +150,17 @@ export default function CreatePreviewScreen() {
       </ScrollView>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>
-        <PrimaryButton label="Submit for review" onPress={() => go(true)} loading={submit.isPending} disabled={!draft.acceptedPolicy || !canSubmit} />
+        {kyc.data && !checkCampaignAmountAllowed(kyc.data.tier, draft.goalKobo).allowed && (
+          <Text style={styles.kycWarning}>{tierLimitMessage(kyc.data.tier, draft.goalKobo)}</Text>
+        )}
+        <PrimaryButton
+          label="Submit for review"
+          onPress={() => go(true)}
+          loading={submit.isPending || checking}
+          disabled={!draft.acceptedPolicy || !canSubmit || checking}
+        />
         {hasHydrated && missing.length > 0 && <Text style={styles.missing}>Missing: {missing.join(', ')}</Text>}
-        <Pressable onPress={() => go(false)} disabled={submit.isPending || !hasHydrated} accessibilityRole="button" style={styles.draftBtn}>
+        <Pressable onPress={() => go(false)} disabled={submit.isPending || !hasHydrated || checking} accessibilityRole="button" style={styles.draftBtn}>
           <Text style={styles.draftText}>Save as draft</Text>
         </Pressable>
       </SafeAreaView>
@@ -160,6 +206,7 @@ const styles = StyleSheet.create({
   checkboxOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   acceptText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, flex: 1 },
   missing: { ...Typography.caption, color: Colors.error, textAlign: 'center' },
+  kycWarning: { ...Typography.labelSm, color: Colors.secondary, textAlign: 'center', marginBottom: Spacing.sm, paddingHorizontal: Spacing.sm },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, gap: Spacing.xs, borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh },
   draftBtn: { alignItems: 'center', paddingVertical: Spacing.sm },
   draftText: { ...Typography.labelLg, color: Colors.secondary },

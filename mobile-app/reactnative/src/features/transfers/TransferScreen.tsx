@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -54,9 +54,8 @@ import { walletBankFee, bankToBankFee } from './api';
 import type { TransferType, ResolvedAccount, TransferReceiptData } from './types';
 
 const SEGMENTS: { value: TransferType; label: string }[] = [
-  { value: 'wallet_wallet', label: 'Paymax' },
-  { value: 'wallet_bank', label: 'To Bank' },
-  { value: 'bank_bank', label: 'Bank → Bank' },
+  { value: 'wallet_wallet', label: 'Wallet 2 Wallet' },
+  { value: 'wallet_bank', label: 'Wallet 2 Bank' },
 ];
 
 type Step = 'form' | 'review' | 'success';
@@ -350,7 +349,7 @@ export default function TransferScreen() {
           <TransferReceipt receipt={receipt} onDone={resetAll} />
         ) : (
           <>
-            <Hero type={type} />
+            <Hero />
 
             {step === 'form' ? (
               <FormStep
@@ -437,45 +436,17 @@ export default function TransferScreen() {
   );
 }
 
-function Hero({ type }: { type: TransferType }) {
-  const copy: Record<TransferType, { eyebrow: string; title: string; subtitle: string }> = {
-    wallet_wallet: {
-      eyebrow: 'Wallet → Wallet',
-      title: 'Send to Paymax',
-      subtitle: 'Instant, free transfers to any Paymax account by phone or email.',
-    },
-    wallet_bank: {
-      eyebrow: 'Wallet → Bank',
-      title: 'Send to a bank',
-      subtitle: 'Pay any Nigerian bank account straight from your wallet balance.',
-    },
-    bank_bank: {
-      eyebrow: 'Bank → Bank',
-      title: 'Bank to bank',
-      subtitle: 'Fund from your bank and we disburse to the destination account.',
-    },
-  };
-  const c = copy[type];
+const HERO_BANNER_URI =
+  'https://res.cloudinary.com/paymax/image/upload/v1793144002/Effortless_money_transfers_in_modern_Lagos_fa37uu.png';
+
+function Hero() {
   return (
-    <LinearGradient
-      colors={[Colors.primary, Colors.primaryContainer]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={[styles.hero, shadow2]}
-    >
-      <View style={styles.heroIcon}>
-        {type === 'wallet_wallet' ? (
-          <Send size={26} color={Colors.onPrimary} strokeWidth={2.2} />
-        ) : (
-          <Banknote size={26} color={Colors.onPrimary} strokeWidth={2.2} />
-        )}
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.heroEyebrow}>{c.eyebrow}</Text>
-        <Text style={styles.heroTitle}>{c.title}</Text>
-        <Text style={styles.heroSubtitle}>{c.subtitle}</Text>
-      </View>
-    </LinearGradient>
+    <Image
+      source={{ uri: HERO_BANNER_URI }}
+      style={[styles.heroBanner, shadow2]}
+      resizeMode="cover"
+      accessibilityLabel="Nigerian professional trades crypto with ease"
+    />
   );
 }
 
@@ -510,9 +481,8 @@ function FormStep(props: {
     <View style={[styles.card, shadow1]}>
       {type === 'wallet_wallet' && (
         <>
-          <Text style={styles.sectionTitle}>Recipient</Text>
           <TextInputField
-            label="Phone or email"
+            label="Recipient Wallet"
             placeholder="0801 234 5678 or name@email.com"
             value={recipient}
             onChangeText={onRecipient}
@@ -580,7 +550,6 @@ function FormStep(props: {
       )}
 
       <View style={styles.spacer} />
-      <Text style={styles.sectionTitle}>Amount</Text>
       <AmountInput
         value={amount}
         onChange={onAmount}
@@ -790,6 +759,7 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.sm,
     paddingBottom: Platform.OS === 'ios' ? 140 : 120,
   },
+  heroBanner: { width: '100%', aspectRatio: 2, borderRadius: Radius.lg, marginBottom: Spacing.md },
   hero: {
     minHeight: 132,
     borderRadius: Radius.xl,

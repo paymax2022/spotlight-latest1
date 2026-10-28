@@ -109,6 +109,8 @@ export interface IntakeField {
   options?: IntakeOption[]; // for select fields
   min?: number;
   max?: number;
+  /** number fields: accept whole numbers only (digits; no sign or decimal point). */
+  integer?: boolean;
   /**
    * Patient-reported safety flag — surfaces the "patient-reported, not assessed"
    * label on the field (§5.3, never present intake as diagnosis).

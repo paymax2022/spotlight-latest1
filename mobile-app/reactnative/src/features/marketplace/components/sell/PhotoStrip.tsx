@@ -66,7 +66,15 @@ export default function PhotoStrip({ photos, onReorder, onRemove, onAddCamera, o
   const canAdd = photos.length < maxPhotos;
 
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.strip}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={true}
+      contentContainerStyle={styles.strip}
+      scrollEventThrottle={16}
+      decelerationRate="fast"
+      snapToInterval={THUMB + Spacing.sm}
+      snapToAlignment="start"
+    >
       {photos.map((p, i) => (
         <View key={p.id} style={styles.thumbCol}>
           <View style={styles.thumbWrap}>

@@ -15,7 +15,7 @@ import { useOrgDraft } from '@/features/association/store/orgDraftStore';
 import { pickDocument } from '@/features/association/utils';
 import { GROUP_TYPE_OPTIONS } from '@/features/association/constants';
 import { initials } from '@/features/association/utils';
-import { logoError, isRemoteLogoUrl, isUploadedLogoKey } from '@/features/association/utils';
+import { logoError, coverError, isRemoteLogoUrl, isUploadedLogoKey } from '@/features/association/utils';
 import { uploadLogo, LogoUploadsUnavailableError } from '@/features/association/api/logoUpload.api';
 import { LogoUploadError, describeLogoUploadFailure } from '@/features/association/api/logoUploadError';
 import TextInputField from '@/components/TextInputField';
@@ -39,8 +39,49 @@ export default function WizardBranding() {
   const urlValue = draft.logoUri && isRemoteLogoUrl(draft.logoUri) ? draft.logoUri : '';
   const uploaded = isUploadedLogoKey(draft.logoUri);
 
+  // The banner is optional, but a half-finished upload or a malformed URL must
+  // not slip through as if it were one.
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [coverUploadError, setCoverUploadError] = useState<string | null>(null);
+  const coverIssue = coverError(draft.coverUri);
+  const coverUrlValue = draft.coverUri && isRemoteLogoUrl(draft.coverUri) ? draft.coverUri : '';
+  const coverSrc = draft.coverPreviewUri ?? (coverUrlValue || null);
+
   // An in-flight or failed upload must not count as a logo.
-  const valid = Boolean(draft.groupType) && !logoIssue && !uploading && !uploadError;
+  const valid = Boolean(draft.groupType) && !logoIssue && !uploading && !uploadError
+    && !coverIssue && !coverUploading && !coverUploadError;
+
+  const onCover = async () => {
+    if (uploadsUnavailable) return;
+    const f = await pickDocument();
+    if (!f) return;
+    setCoverUploadError(null);
+    setCoverUploading(true);
+    patch({ coverPreviewUri: f.uri, coverUri: null });
+    try {
+      const objectKey = await uploadLogo(f.uri, f.name);
+      patch({ coverUri: objectKey });
+    } catch (err) {
+      if (err instanceof LogoUploadsUnavailableError) {
+        setUploadsUnavailable(true);
+        setCoverUploadError('Image upload is not available on this server yet — paste a banner URL below instead.');
+      } else {
+        const where = describeLogoUploadFailure(err);
+        if (err instanceof LogoUploadError) {
+          Sentry.captureException(err, {
+            tags: { feature: 'association-banner-upload', step: err.step, status: String(err.status ?? 'none') },
+            extra: { code: err.code, cause: String(err.cause ?? '') },
+          });
+        }
+        setCoverUploadError(
+          `That image couldn't be uploaded${where ? ` — failed ${where}` : ''}. Try again, or paste a banner URL instead.`,
+        );
+      }
+      patch({ coverPreviewUri: null });
+    } finally {
+      setCoverUploading(false);
+    }
+  };
 
   // Pick → preview immediately → upload → store the object key. The preview is
   // kept separately because the uploaded object is not publicly fetchable (the
@@ -129,6 +170,36 @@ export default function WizardBranding() {
           <Text style={styles.logoNote}>Paste a link to your logo, or tap the badge above to upload an image — whichever you set last is the one that is used.</Text>
         )}
 
+        {/* Banner — optional, by URL or upload */}
+        <Text style={styles.label}>Banner <Text style={styles.optional}>(optional)</Text></Text>
+        <Text style={styles.help}>A wide image shown at the top of your organisation page.</Text>
+        <Pressable onPress={onCover} accessibilityRole="button" accessibilityLabel="Upload banner">
+          <View style={[styles.banner, coverIssue ? styles.logoErrored : null]}>
+            {coverUploading ? <ActivityIndicator color={Colors.primary} /> :
+              coverSrc ? <Image source={{ uri: coverSrc }} style={styles.logoImg} resizeMode="cover" /> : (
+                <View style={styles.bannerEmpty}>
+                  <ImagePlus size={24} color={Colors.primary} strokeWidth={2} />
+                  <Text style={styles.logoHint}>{uploadsUnavailable ? 'Use the banner URL below' : 'Tap to upload a banner'}</Text>
+                </View>
+              )}
+          </View>
+        </Pressable>
+        {coverUploadError ? <Text style={styles.error}>{coverUploadError}</Text> : null}
+        <TextInputField
+          label="Banner URL"
+          placeholder="https://…"
+          value={coverUrlValue}
+          onChangeText={(t) => patch({ coverUri: t.trim() ? t.trim() : null, coverPreviewUri: null })}
+          autoCapitalize="none"
+          keyboardType="url"
+          error={coverIssue}
+        />
+        {(draft.coverUri || draft.coverPreviewUri) && !coverUploading ? (
+          <Pressable onPress={() => { setCoverUploadError(null); patch({ coverUri: null, coverPreviewUri: null }); }} accessibilityRole="button" accessibilityLabel="Remove banner">
+            <Text style={styles.removeLink}>Remove banner</Text>
+          </Pressable>
+        ) : null}
+
         <Text style={styles.label}>Group type</Text>
         <Text style={styles.help}>How do members join your organisation?</Text>
         {/* Keyed on the group type itself, not on `valid` — `valid` now also
@@ -166,6 +237,10 @@ const styles = StyleSheet.create({
   logoText: { ...Typography.headlineMd, color: Colors.primary, fontWeight: '800' as const },
   logoHint: { ...Typography.labelSm, color: Colors.secondary },
   logoErrored: { borderWidth: 1.5, borderColor: Colors.error },
+  optional: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  banner: { width: '100%', aspectRatio: 3, maxHeight: 180, borderRadius: Radius.lg, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  bannerEmpty: { alignItems: 'center', gap: 4 },
+  removeLink: { ...Typography.labelMd, color: Colors.error },
   logoNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: -Spacing.xs, marginBottom: Spacing.xs },
   label: { ...Typography.titleMd, color: Colors.onSurface },
   help: { ...Typography.labelSm, color: Colors.onSurfaceVariant },

@@ -13,7 +13,9 @@ import Link from 'next/link';
 import {
   listAdminTransactions,
   formatKobo,
+  paymentMethodLabel,
   type AdminTransactionRow,
+  type ModuleDetail,
   type LedgerEntryType,
 } from '@/services/transactionsAdminService';
 import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
@@ -32,6 +34,15 @@ function fmtDate(iso: string): string {
 function userCell(row: AdminTransactionRow): string {
   if (row.user_id) return row.user_name || row.user_email || row.user_id;
   return `System: ${row.account_type}`;
+}
+
+// Utility bills: the category (airtime, data, electricity…) is the service; the
+// free-text service_bought there carries a customer number, so it stays out of the list.
+function serviceCell(m: ModuleDetail): string {
+  if (m.module === 'utility_bill' && m.category) {
+    return m.category.charAt(0).toUpperCase() + m.category.slice(1);
+  }
+  return m.service_bought || m.category || '—';
 }
 
 // ledger_entries only records money movement that ALREADY happened — a
@@ -158,7 +169,7 @@ export default function AdminTransactionsPage() {
           <p style={{ color: colors.muted }}>No transactions match this filter.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 960 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1200 }}>
               <thead>
                 <tr>
                   <th style={thCell}>Date</th>
@@ -169,9 +180,12 @@ export default function AdminTransactionsPage() {
                   <th style={thCell}>Amount</th>
                   <th style={thCell}>User</th>
                   <th style={thCell}>Reference</th>
-                  <th style={thCell} title="Best-effort guess parsed from the reference string (SPLIT_PART on ':'). NOT an authoritative module field.">
-                    Source (inferred) *
+                  <th style={thCell} title="From the module's own records. Shown as the inferred source (italic) when no module resolver recognises the reference.">
+                    Module *
                   </th>
+                  <th style={thCell}>Service</th>
+                  <th style={thCell} title="The brand the customer paid (e.g. MTN); falls back to the aggregator/underwriter.">Provider</th>
+                  <th style={thCell} title="Wallet, debit card or bank transfer — as recorded by the module.">Paid with</th>
                   <th style={thCell}></th>
                 </tr>
               </thead>
@@ -186,9 +200,23 @@ export default function AdminTransactionsPage() {
                     <td style={tdCell}>{formatKobo(r.amount_kobo)}</td>
                     <td style={tdCell}>{userCell(r)}</td>
                     <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: '0.78rem' }}>{r.reference}</td>
-                    <td style={tdCell} title="Best-effort guess parsed from the reference string — not a real schema field.">
-                      {r.source_inferred || '—'}
-                    </td>
+                    {r.module_info ? (
+                      <>
+                        <td style={tdCell}>{r.module_info.service_label}</td>
+                        <td style={tdCell}>{serviceCell(r.module_info)}</td>
+                        <td style={tdCell}>{r.module_info.biller || r.module_info.provider || '—'}</td>
+                        <td style={tdCell}>{paymentMethodLabel(r.module_info.payment_method)}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td style={{ ...tdCell, fontStyle: 'italic', color: colors.muted }} title="Best-effort guess parsed from the reference string — no module resolver recognises this reference.">
+                          {r.source_inferred || '—'}
+                        </td>
+                        <td style={tdCell}>—</td>
+                        <td style={tdCell}>—</td>
+                        <td style={tdCell}>—</td>
+                      </>
+                    )}
                     <td style={tdCell}><Link href={`/admin/finance/transactions/${r.id}`} style={{ color: colors.info }}>Details →</Link></td>
                   </tr>
                   );

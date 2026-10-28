@@ -1,9 +1,9 @@
 import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/tokens';
 
-// Flip to false once live /api/v1/social endpoints are reachable
-// (or set EXPO_PUBLIC_SOCIAL_USE_MOCK=false). Mock-first convention.
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_SOCIAL_USE_MOCK, true);
+// Social Pay live API is now live. Set to true to use mock data for dev/testing.
+// Control via EXPO_PUBLIC_SOCIAL_USE_MOCK environment variable.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_SOCIAL_USE_MOCK, false);
 
 // Social Pay REST namespace. Served directly by the Go backend (Gin) under the
 // authenticated finance member group — NOT the frontend-web /api/v1 proxy.
