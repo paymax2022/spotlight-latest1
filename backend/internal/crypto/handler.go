@@ -322,6 +322,7 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		admin.GET("/addresses", rp(PermAdmin), h.AdminListAddresses)
 		admin.POST("/addresses/:id/decision", rp(PermAdmin), h.AdminDecideAddress)
 		admin.GET("/reconciliation", rp(PermAdmin), h.AdminReconciliation)
+		admin.GET("/reconciliation/swaps", rp(PermAdmin), h.AdminSwapReconciliation)
 		admin.GET("/deposits", rp(PermAdmin), h.AdminListDeposits)
 	}
 

@@ -337,6 +337,21 @@ func (h *Handler) AdminReconciliation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "rows": sum.Rows, "breaks": sum.Breaks, "as_of": sum.AsOf})
 }
 
+// AdminSwapReconciliation GET /admin/crypto/reconciliation/swaps?details=true.
+// Serves the swap-order drift report (ReconcileSwapOrders): ledger_settled vs
+// order status. Read-only; no money moves. The body is the flat
+// ReconciliationReport the admin console consumes (frontend-admin src/lib/api.ts).
+// Distinct from /reconciliation, which is the per-asset on-chain diff.
+func (h *Handler) AdminSwapReconciliation(c *gin.Context) {
+	details := c.Query("details") == "true"
+	report, err := h.svc.ReconcileSwapOrders(c.Request.Context(), details)
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, report)
+}
+
 // --- Money-IN deposits (GAP-DEP-01 Slice 3) ---------------------------------------------
 //
 // Read-only surfaces over the settled crypto_deposits journal. They expose money that has

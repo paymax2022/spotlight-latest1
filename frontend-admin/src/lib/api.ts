@@ -1,6 +1,6 @@
 // Swap reconciliation report client (Phase 1 CR-015).
-// GET /api/v1/admin/crypto/reconciliation?details=&start_date=&end_date=
-import { apiV1 } from '@/config/env';
+// GET /api/v1/admin/crypto/reconciliation/swaps?details=&start_date=&end_date=
+import { apiV1, adminAuthHeaders } from '@/config/env';
 
 export interface OrderReconciliationRow {
   order_id: string;
@@ -34,9 +34,14 @@ export async function fetchReconciliation(q: ReconciliationQuery = {}): Promise<
   if (q.details !== undefined) params.set('details', String(q.details));
   if (q.start_date) params.set('start_date', q.start_date);
   if (q.end_date) params.set('end_date', q.end_date);
-  const res = await fetch(`${apiV1()}/admin/crypto/reconciliation?${params.toString()}`, {
+  // credentials:'include' carries the HttpOnly sb-admin-token cookie to the
+  // same-origin proxy, which attaches the Bearer token server-side. No client
+  // Authorization header by design (see config/env.ts adminAuthHeaders).
+  const res = await fetch(`${apiV1()}/admin/crypto/reconciliation/swaps?${params.toString()}`, {
+    method: 'GET',
+    credentials: 'include',
     cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
+    headers: adminAuthHeaders({ 'Content-Type': 'application/json' }),
   });
   if (!res.ok) {
     let msg = `Reconciliation fetch failed: ${res.status}`;
