@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+import type { CollectionMode, LabOrderLine } from './types';
 import { getDevicePosition } from './location';
 import {
   getTests,
@@ -15,6 +16,8 @@ import {
   getOrder,
   createOrder,
   getTestOffers,
+  getPackageOffers,
+  quoteOrder,
   getResult,
   getResults,
   acknowledgeResultConsent,
@@ -132,6 +135,27 @@ export function useCreateOrder() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'orders'] });
     },
+  });
+}
+
+export function usePackageOffers(name?: string) {
+  return useQuery({
+    queryKey: [KEY, 'package-offers', name],
+    queryFn: () => getPackageOffers(name as string),
+    enabled: Boolean(name),
+    staleTime: 60_000,
+  });
+}
+
+/** The server's price for the order being built. Always fresh: it is what will be held. */
+export function useOrderQuote(input: { labId?: string; collectionMode: CollectionMode; lines: LabOrderLine[] }) {
+  const ids = input.lines.map((l) => `${l.kind}:${l.refId}`).join(',');
+  return useQuery({
+    queryKey: [KEY, 'quote', input.labId, input.collectionMode, ids],
+    queryFn: () => quoteOrder({ labId: input.labId as string, collectionMode: input.collectionMode, lines: input.lines }),
+    enabled: Boolean(input.labId) && input.lines.length > 0,
+    staleTime: 0,
+    gcTime: 0,
   });
 }
 

@@ -181,13 +181,15 @@ type Order struct {
 	State            OrderState       `json:"state"`
 	CollectionMethod CollectionMethod `json:"collection_method"`
 	TotalKobo        int64            `json:"total_kobo"`
-	EscrowID         *string          `json:"escrow_id,omitempty"`
-	DeliveryRef      *string          `json:"delivery_ref,omitempty"`     // phlebotomist dispatch / results courier
-	ResultRecordID   *string          `json:"result_record_id,omitempty"` // vault record id on release (HL-8)
-	CancelReason     string           `json:"cancel_reason,omitempty"`
-	IdempotencyKey   string           `json:"idempotency_key"`
-	Lines            []OrderLine      `json:"lines,omitempty"`
-	CreatedAt        time.Time        `json:"created_at"`
+	// HomeFeeKobo is the home-visit fee included in TotalKobo (0 for walk-in).
+	HomeFeeKobo    int64       `json:"home_fee_kobo"`
+	EscrowID       *string     `json:"escrow_id,omitempty"`
+	DeliveryRef    *string     `json:"delivery_ref,omitempty"`     // phlebotomist dispatch / results courier
+	ResultRecordID *string     `json:"result_record_id,omitempty"` // vault record id on release (HL-8)
+	CancelReason   string      `json:"cancel_reason,omitempty"`
+	IdempotencyKey string      `json:"idempotency_key"`
+	Lines          []OrderLine `json:"lines,omitempty"`
+	CreatedAt      time.Time   `json:"created_at"`
 	// Display facts attached on read (see decorateOrders); never written back.
 	LabName                  string     `json:"lab_name,omitempty"`
 	SampleBarcode            *string    `json:"sample_barcode,omitempty"`
@@ -205,6 +207,9 @@ type OrderLine struct {
 	TestID        string `json:"test_id"`
 	TestName      string `json:"test_name"`
 	UnitPriceKobo int64  `json:"unit_price_kobo"`
+	// PackageID is set when this line came from a package (whose price is allocated
+	// across its tests so the lines sum to exactly the package price).
+	PackageID *string `json:"package_id,omitempty"`
 }
 
 // ProviderOrderSummary is the lab-staff order-list row (Service.ListProviderOrders)

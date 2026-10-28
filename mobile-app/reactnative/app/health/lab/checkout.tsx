@@ -12,7 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { PaymentSheet, usePurchasePayment } from '@/features/payments';
-import { useLab, useCreateOrder } from '@/features/health/lab/hooks';
+import { useLab, useCreateOrder, useOrderQuote } from '@/features/health/lab/hooks';
 import { newIdempotencyKey } from '@/features/health/lab/api';
 import { formatNaira } from '@/features/health/constants/health.constants';
 import { PAYMENT_HELD_COPY, COLLECTION_MODE_LABEL } from '@/features/health/lab/constants';
@@ -35,9 +35,6 @@ export default function LabCheckoutScreen() {
   const pay = usePurchasePayment<LabOrder>();
 
   const priceKobo = Number(params.priceKobo ?? 0);
-  // The server prices the order from the lab's catalog and holds exactly that, so
-  // the total shown is the test price. (A home-visit fee is not charged in-app yet.)
-  const totalKobo = priceKobo;
 
   const line: LabOrderLine = useMemo(
     () => ({
@@ -49,11 +46,41 @@ export default function LabCheckoutScreen() {
     [params.packageId, params.testId, params.name, priceKobo],
   );
 
+  // The server's price (items + the lab's home-visit fee). This is both what is
+  // shown and what is charged, so it cannot differ from what the order will hold.
+  const quote = useOrderQuote({ labId: params.labId, collectionMode: mode, lines: [line] });
+  const totalKobo = quote.data?.totalKobo ?? 0;
+  const homeFeeKobo = quote.data?.homeFeeKobo ?? 0;
+  const itemsKobo = quote.data?.subtotalKobo ?? priceKobo;
+
   if (isLoading || !lab) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Checkout" />
         <StateView kind={isLoading ? 'loading' : 'empty'} icon="MapPin" title={isLoading ? undefined : 'Pick a lab first'} message={isLoading ? 'Loading…' : 'Choose a lab to continue.'} onAction={isLoading ? undefined : () => router.replace('/health/lab/catalog')} actionLabel={isLoading ? undefined : 'Browse tests'} />
+      </SafeAreaView>
+    );
+  }
+
+  if (quote.isLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Checkout" />
+        <StateView kind="loading" message="Confirming the price…" />
+      </SafeAreaView>
+    );
+  }
+  if (quote.isError || !quote.data) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Checkout" />
+        <StateView
+          kind="error"
+          title="Couldn't confirm the price"
+          message="This lab may no longer offer this item. Go back and choose again."
+          actionLabel="Try again"
+          onAction={() => quote.refetch()}
+        />
       </SafeAreaView>
     );
   }
@@ -72,6 +99,7 @@ export default function LabCheckoutScreen() {
           scheduledFor: params.scheduledFor || undefined,
           location: params.location ?? lab.address,
           idempotencyKey,
+          expectedTotalKobo: totalKobo,
         }),
       onPaid: (order) => {
         if (mode === 'home') {
@@ -112,8 +140,14 @@ export default function LabCheckoutScreen() {
         <View style={[styles.summary, shadow1]}>
           <View style={styles.sumRow}>
             <Text style={styles.sumName} numberOfLines={1}>{line.name}</Text>
-            <Text style={styles.sumVal}>{formatNaira(priceKobo)}</Text>
+            <Text style={styles.sumVal}>{formatNaira(itemsKobo)}</Text>
           </View>
+          {homeFeeKobo > 0 ? (
+            <View style={styles.sumRow}>
+              <Text style={styles.sumLabel}>Home visit fee</Text>
+              <Text style={styles.sumVal}>{formatNaira(homeFeeKobo)}</Text>
+            </View>
+          ) : null}
           <View style={styles.divider} />
           <View style={styles.sumRow}>
             <Text style={styles.totalLabel}>Total</Text>

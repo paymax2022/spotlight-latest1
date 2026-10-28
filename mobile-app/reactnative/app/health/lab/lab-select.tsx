@@ -13,7 +13,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import SegmentedControl from '@/components/SegmentedControl';
 import CredentialBadge from '@/features/health/components/CredentialBadge';
-import { useLabs, useTestOffers } from '@/features/health/lab/hooks';
+import { useLabs, useTestOffers, usePackageOffers } from '@/features/health/lab/hooks';
 import { formatNaira } from '@/features/health/constants/health.constants';
 import type { CollectionMode } from '@/features/health/lab/types';
 
@@ -30,15 +30,20 @@ export default function LabSelectScreen() {
   const [mode, setMode] = useState<CollectionMode>(supportsHome ? 'home' : 'walk_in');
   const [selected, setSelected] = useState<string | null>(null);
   const labsQ = useLabs(mode === 'home' ? { homeCollection: true } : undefined);
-  const offersQ = useTestOffers(params.code);
+  const testOffersQ = useTestOffers(params.code);
+  const pkgOffersQ = usePackageOffers(params.packageId ? params.name : undefined);
+  const offersQ = params.packageId ? pkgOffersQ : testOffersQ;
   const isLoading = labsQ.isLoading || offersQ.isLoading;
   const isError = labsQ.isError || offersQ.isError;
   const refetch = () => {
     labsQ.refetch();
     offersQ.refetch();
   };
-  // Only labs that actually offer this test, each at its own price.
-  const offers = offersQ.data ?? [];
+  // Only labs that actually offer this item, each at its own price. Tests and
+  // packages are per-lab rows, so the id and price depend on the chosen lab.
+  const offers: { labId: string; itemId: string; priceKobo: number }[] = params.packageId
+    ? (pkgOffersQ.data ?? []).map((o) => ({ labId: o.labId, itemId: o.packageId, priceKobo: o.priceKobo }))
+    : (testOffersQ.data ?? []).map((o) => ({ labId: o.labId, itemId: o.testId, priceKobo: o.priceKobo }));
   const labs = (labsQ.data ?? []).filter((l) => offers.some((o) => o.labId === l.id));
   const priceAt = (labId: string) => offers.find((o) => o.labId === labId)?.priceKobo;
 
@@ -48,8 +53,14 @@ export default function LabSelectScreen() {
     if (!offer) return;
     router.push({
       pathname: '/health/lab/book',
-      // The ordered test is THIS lab's row, at THIS lab's price.
-      params: { ...params, labId: selected, mode, testId: offer.testId, priceKobo: String(offer.priceKobo) },
+      // The ordered item is THIS lab's row, at THIS lab's price.
+      params: {
+        ...params,
+        labId: selected,
+        mode,
+        priceKobo: String(offer.priceKobo),
+        ...(params.packageId ? { packageId: offer.itemId } : { testId: offer.itemId }),
+      },
     });
   };
 
@@ -71,16 +82,7 @@ export default function LabSelectScreen() {
         />
       </View>
 
-      {params.packageId ? (
-        <StateView
-          kind="empty"
-          icon="Package"
-          title="Packages can't be ordered in the app yet"
-          message="Order the individual tests for now. Package pricing is coming."
-          actionLabel="Browse tests"
-          onAction={() => router.replace('/health/lab/catalog')}
-        />
-      ) : isLoading ? (
+      {isLoading ? (
         <StateView kind="loading" message="Finding labs…" />
       ) : isError ? (
         <StateView kind="error" title="Couldn't load labs" message="Please try again." actionLabel="Retry" onAction={refetch} />
@@ -124,7 +126,10 @@ export default function LabSelectScreen() {
 
                 <View style={styles.foot}>
                   <Text style={styles.eta}>{l.resultEtaLabel}</Text>
-                  <Text style={styles.fee}>{formatNaira(priceAt(l.id) ?? 0)}</Text>
+                  <Text style={styles.fee}>
+                    {formatNaira(priceAt(l.id) ?? 0)}
+                    {mode === 'home' && l.homeCollectionFeeKobo > 0 ? ` + ${formatNaira(l.homeCollectionFeeKobo)} home visit` : ''}
+                  </Text>
                 </View>
               </Pressable>
             );

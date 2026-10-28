@@ -221,6 +221,8 @@ export interface CreateOrderInput {
   scheduledFor?: string;
   location: string;
   idempotencyKey: string;
+  /** The total shown at checkout; the server refuses the order if its price differs. */
+  expectedTotalKobo?: number;
 }
 
 /** One lab's offer of a catalog test: tests are per-lab rows, so the same test code has one id and price per lab. */
@@ -228,6 +230,20 @@ export interface TestOffer {
   labId: string;
   testId: string;
   priceKobo: number;
+}
+
+/** One lab's offer of a package (packages are per-lab rows too). */
+export interface PackageOffer {
+  labId: string;
+  packageId: string;
+  priceKobo: number;
+}
+
+/** The server's price for an order — exactly what checkout will hold. */
+export interface OrderQuote {
+  subtotalKobo: number;
+  homeFeeKobo: number;
+  totalKobo: number;
 }
 
 export interface ShareResultInput {

@@ -126,6 +126,7 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.POST("/reviews", h.SubmitReview)              // verified-purchase review (released order, once)
 	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
 	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR641)
+	lg.POST("/orders/quote", h.QuoteOrder)         // server price for an order: tests + packages + home fee (what CreateOrder will hold)
 	lg.POST("/orders", h.CreateOrder)                // patient, payment HELD (HL-9)
 	lg.GET("/orders", h.ListMyOrders)                // patient's own order history + active-order card
 	lg.GET("/orders/:id", h.Get)                     // object-level authZ

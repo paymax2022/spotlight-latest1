@@ -36,6 +36,10 @@ import type {
   ChainOfCustodyInput,
   ChainOfCustodyEvent,
   TestOffer,
+  PackageOffer,
+  CollectionMode,
+  LabOrderLine,
+  OrderQuote,
   DropOffInput,
 } from './types';
 
@@ -171,6 +175,14 @@ export async function getTestOffers(code: string): Promise<TestOffer[]> {
     .map((x) => ({ labId: x.lab_provider_id, testId: x.id, priceKobo: Number(x.price_kobo ?? 0) }));
 }
 
+/** Every lab's offer of a package, matched by package name. */
+export async function getPackageOffers(name: string): Promise<PackageOffer[]> {
+  const { data } = await api.get<{ packages?: any[] }>(`${LAB_API}/packages`);
+  return (data.packages ?? [])
+    .filter((p) => p.name === name)
+    .map((p) => ({ labId: p.lab_provider_id, packageId: p.id, priceKobo: Number(p.price_kobo ?? 0) }));
+}
+
 export async function getTest(id: string): Promise<LabTest> {
   const { data } = await api.get<{ test: unknown }>(`${LAB_API}/tests/${id}`);
   return mapTest(data.test);
@@ -248,8 +260,8 @@ function mapOrder(raw: any, custody: ChainOfCustodyEvent[] = []): LabOrder {
     labName: raw.lab_name ?? '',
     collectionMode: COLLECTION_MODE_FROM_METHOD[raw.collection_method] ?? 'walk_in',
     lines: lines.map((l) => ({ refId: l.test_id, kind: 'test', name: l.test_name ?? '', priceKobo: l.unit_price_kobo ?? 0 })),
-    subtotalKobo: raw.total_kobo ?? 0,
-    collectionFeeKobo: 0,
+    subtotalKobo: (raw.total_kobo ?? 0) - (raw.home_fee_kobo ?? 0),
+    collectionFeeKobo: raw.home_fee_kobo ?? 0,
     totalKobo: raw.total_kobo ?? 0,
     paymentHeld: !!raw.escrow_id && HELD_STATES.has(raw.state),
     createdAt: raw.created_at,
@@ -295,6 +307,28 @@ export async function getOrder(id: string): Promise<LabOrder> {
   return mapOrder(orderRes.data.order, custody);
 }
 
+/**
+ * The server's price for an order: tests, packages and the lab's home-visit fee.
+ * Checkout shows and charges this figure, so it is exactly what is held (HL-9).
+ */
+export async function quoteOrder(input: {
+  labId: string;
+  collectionMode: CollectionMode;
+  lines: LabOrderLine[];
+}): Promise<OrderQuote> {
+  const { data } = await api.post<{ quote: any }>(`${LAB_API}/orders/quote`, {
+    lab_provider_id: input.labId,
+    collection_method: input.collectionMode === 'home' ? 'HOME' : 'WALK_IN',
+    test_ids: input.lines.filter((l) => l.kind === 'test').map((l) => l.refId),
+    package_ids: input.lines.filter((l) => l.kind === 'package').map((l) => l.refId),
+  });
+  return {
+    subtotalKobo: Number(data.quote.subtotal_kobo ?? 0),
+    homeFeeKobo: Number(data.quote.home_fee_kobo ?? 0),
+    totalKobo: Number(data.quote.total_kobo ?? 0),
+  };
+}
+
 export async function createOrder(input: CreateOrderInput): Promise<LabOrder> {
   // POST /health/lab/orders binds {lab_provider_id, collection_method, test_ids,
   // idempotency_key, collection_address, scheduled_for}. The server prices every
@@ -303,8 +337,11 @@ export async function createOrder(input: CreateOrderInput): Promise<LabOrder> {
   const { data } = await api.post<{ order: unknown }>(`${LAB_API}/orders`, {
     lab_provider_id: input.labId,
     collection_method: collectionMethod,
-    test_ids: input.lines.map((l) => l.refId),
+    test_ids: input.lines.filter((l) => l.kind === 'test').map((l) => l.refId),
+    package_ids: input.lines.filter((l) => l.kind === 'package').map((l) => l.refId),
     idempotency_key: input.idempotencyKey,
+    // The total the patient confirmed: the server refuses (409) if its price changed.
+    ...(input.expectedTotalKobo !== undefined ? { expected_total_kobo: input.expectedTotalKobo } : {}),
     ...(collectionMethod === 'HOME'
       ? {
           collection_address: input.location,

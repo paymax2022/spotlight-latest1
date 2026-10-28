@@ -22,7 +22,7 @@ func (s *Service) decorateOrders(ctx context.Context, orders []*Order) {
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT o.id::text, p.display_name, sm.barcode_ref, o.collection_address, o.scheduled_for,
-		       o.assigned_phlebotomist_id::text,
+		       o.assigned_phlebotomist_id::text, o.home_fee_kobo,
 		       COALESCE(NULLIF(btrim(up.full_name),''), NULLIF(btrim(up.display_name),''), '')
 		FROM lab_orders o
 		JOIN health_providers p ON p.id = o.lab_provider_id
@@ -35,16 +35,17 @@ func (s *Service) decorateOrders(ctx context.Context, orders []*Order) {
 	defer rows.Close()
 	for rows.Next() {
 		var id, lab, addr, phlebName string
+		var homeFee int64
 		var o *Order
 		var barcode, phleb *string
 		var sched *time.Time
-		if err := rows.Scan(&id, &lab, &barcode, &addr, &sched, &phleb, &phlebName); err != nil {
+		if err := rows.Scan(&id, &lab, &barcode, &addr, &sched, &phleb, &homeFee, &phlebName); err != nil {
 			return
 		}
 		if o = byID[id]; o == nil {
 			continue
 		}
-		o.LabName, o.SampleBarcode, o.CollectionAddress = lab, barcode, addr
+		o.LabName, o.SampleBarcode, o.CollectionAddress, o.HomeFeeKobo = lab, barcode, addr, homeFee
 		o.ScheduledFor, o.AssignedPhlebotomist = sched, phleb
 		if phleb != nil {
 			o.AssignedPhlebotomistName = shortAuthor(phlebName)

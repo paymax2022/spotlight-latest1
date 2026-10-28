@@ -231,10 +231,12 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		return
 	}
 	var req struct {
-		LabProviderID    string   `json:"lab_provider_id"`
-		CollectionMethod string   `json:"collection_method"`
-		IdempotencyKey   string   `json:"idempotency_key"`
-		TestIDs          []string `json:"test_ids"`
+		LabProviderID     string   `json:"lab_provider_id"`
+		CollectionMethod  string   `json:"collection_method"`
+		IdempotencyKey    string   `json:"idempotency_key"`
+		TestIDs           []string `json:"test_ids"`
+		PackageIDs        []string `json:"package_ids"`
+		ExpectedTotalKobo *int64   `json:"expected_total_kobo"`
 		// Home collection: where and when. Required address for HOME.
 		CollectionAddress string   `json:"collection_address"`
 		CollectionLat     *float64 `json:"collection_lat"`
@@ -259,6 +261,12 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 			return
 		}
 	}
+	for _, pkgID := range req.PackageIDs {
+		if _, err := uuid.Parse(pkgID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "package_ids must be uuids")
+			return
+		}
+	}
 	idem := strutil.FirstNonEmpty(ginutil.IdempotencyKey(c), req.IdempotencyKey)
 	scheduledFor, ok := parseScheduledFor(req.ScheduledFor)
 	if !ok {
@@ -270,6 +278,8 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		CollectionMethod:  CollectionMethod(req.CollectionMethod),
 		IdempotencyKey:    idem,
 		TestIDs:           req.TestIDs,
+		PackageIDs:        req.PackageIDs,
+		ExpectedTotalKobo: req.ExpectedTotalKobo,
 		CollectionAddress: req.CollectionAddress,
 		CollectionLat:     req.CollectionLat,
 		CollectionLng:     req.CollectionLng,
@@ -279,7 +289,10 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	if err != nil {
 		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
 		// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
+		var changed *QuoteChangedError
 		switch {
+		case errors.As(err, &changed):
+			c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error(), "quote": changed.Quote})
 		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
 			failErr(c, http.StatusForbidden, err)
 		case errors.Is(err, escrow.ErrTierGateUnwired):
