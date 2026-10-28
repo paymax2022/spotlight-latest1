@@ -17,6 +17,7 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.GET("/me/card", h.GetCard)
 	rg.GET("/me/profile", h.GetProfile)
 	rg.PUT("/me/profile", h.UpdateProfile)
+	rg.PATCH("/me/settings", h.UpdateMyOrganisationSettings) // admin: edit org name, acronym, description
 	rg.GET("/me/privacy", h.GetPrivacy)
 	rg.PUT("/me/privacy", h.UpdatePrivacy)
 	rg.GET("/me/activity", h.GetActivity)

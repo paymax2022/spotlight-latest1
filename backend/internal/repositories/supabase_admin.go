@@ -2,11 +2,14 @@ package repositories
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/url"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type AdminRepository interface {
@@ -52,8 +55,54 @@ func (r *AdminSupabaseRepository) GetMenuCounts() (domain.AdminMenuCounts, error
 	if counts.OpenMic, err = r.client.Count(context.Background(), "competition_enrollments"); err != nil {
 		return domain.AdminMenuCounts{}, err
 	}
+	if counts.FilmAcademy, err = r.getFilmAcademyApplicationCount(); err != nil {
+		return domain.AdminMenuCounts{}, err
+	}
 
 	return counts, nil
+}
+
+func (r *AdminSupabaseRepository) getFilmAcademyApplicationCount() (int, error) {
+	if r.client == nil || !r.client.Enabled() {
+		return 0, nil
+	}
+
+	// Query academy_applications where talent_category = 'film_production'
+	// Using the REST API with a filter: ?select=id&talent_category=eq.film_production
+	baseURL := r.client.BaseURL()
+	u, _ := url.Parse(baseURL + "/rest/v1/academy_applications")
+	q := u.Query()
+	q.Set("select", "id")
+	q.Set("talent_category", "eq.film_production")
+	u.RawQuery = q.Encode()
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
+	req.Header.Set("Apikey", r.client.APIKey())
+	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
+	req.Header.Set("Range", "0-0")
+	req.Header.Set("Prefer", "count=exact")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		return 0, fmt.Errorf("supabase REST academy_applications failed: %d", resp.StatusCode)
+	}
+
+	contentRange := resp.Header.Get("Content-Range")
+	if idx := strings.LastIndex(contentRange, "/"); idx >= 0 && idx+1 < len(contentRange) {
+		var total int
+		_, scanErr := fmt.Sscanf(contentRange[idx+1:], "%d", &total)
+		if scanErr == nil {
+			return total, nil
+		}
+	}
+
+	return 0, fmt.Errorf("could not parse film academy count")
 }
 
 type AnalyticsRepository interface {

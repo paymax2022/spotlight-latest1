@@ -326,6 +326,7 @@ func (h *Handler) Register(member *gin.RouterGroup, admin *gin.RouterGroup, guar
 	g.POST("/handle", h.ClaimHandle)
 	g.GET("/handle/me", h.MyHandle)
 	g.GET("/handle/:handle", h.ResolveHandle)
+	g.POST("/contacts/match", h.MatchContacts)
 	// P2P
 	g.POST("/send", h.Send)
 	g.GET("/requests", h.ListRequests)

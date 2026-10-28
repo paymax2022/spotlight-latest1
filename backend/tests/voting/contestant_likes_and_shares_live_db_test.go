@@ -129,3 +129,38 @@ func TestContestantShares_UnknownTokenDoesNotResolve(t *testing.T) {
 		t.Fatalf("resolved = %q for an unknown token, want empty", resolved)
 	}
 }
+
+func TestGetRosterEntry_RejectedContestantIsNotFound(t *testing.T) {
+	pool := votingPool(t)
+	ctx := context.Background()
+	repo := connectvoting.NewRepository(pool)
+
+	contestID := newContest(t, ctx, pool, contestOpts{status: "open"})
+	contestantID := newContestant(t, ctx, pool, contestID)
+
+	// Verify the active contestant can be fetched normally.
+	e, err := repo.GetRosterEntry(ctx, contestantID, "")
+	if err != nil {
+		t.Fatalf("get roster entry: %v", err)
+	}
+	if e == nil {
+		t.Fatal("expected an active contestant, got nil")
+	}
+
+	// Deactivate the contestant (simulating admin rejection).
+	_, err = pool.Exec(ctx, `
+		UPDATE public.contestants SET is_active = FALSE, status = 'rejected'
+		WHERE id::text = $1`, contestantID)
+	if err != nil {
+		t.Fatalf("deactivate contestant: %v", err)
+	}
+
+	// Rejected contestants must not be returned — GetRosterEntry checks is_active.
+	e2, err := repo.GetRosterEntry(ctx, contestantID, "")
+	if err != nil {
+		t.Fatalf("get roster entry after rejection: %v", err)
+	}
+	if e2 != nil {
+		t.Fatal("expected nil for rejected contestant, got a roster entry")
+	}
+}

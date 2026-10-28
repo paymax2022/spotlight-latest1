@@ -67,6 +67,10 @@ type AdminTransactionRow struct {
 	ReferrerID               *string `json:"referrer_id"`
 	ReferrerName             *string `json:"referrer_name"`
 	ReferrerCode             *string `json:"referrer_code"`
+
+	// ModuleInfo is filled on the LIST only, by the same resolvers as the detail
+	// view's ModuleDetail; nil when no resolver recognises the reference.
+	ModuleInfo *ModuleTransactionDetail `json:"module_info,omitempty"`
 }
 
 // AdminTransactionsPage is the paginated result: the page of rows plus the
@@ -241,7 +245,39 @@ func (r *Repository) AdminGetTransaction(ctx context.Context, id string) (*Admin
 // returned, never filtered out; display them as "System: <account type>".
 // Total uses COUNT(*) OVER() so it always matches the page's filter predicate.
 func (s *Service) AdminListTransactions(ctx context.Context, f AdminTransactionFilter) (*AdminTransactionsPage, error) {
-	return s.repo.AdminListTransactions(ctx, f)
+	page, err := s.repo.AdminListTransactions(ctx, f)
+	if err != nil || page == nil {
+		return page, err
+	}
+	// A reference can span several rows (both legs of one movement), so resolve
+	// each distinct reference once.
+	resolved := make(map[string]*ModuleTransactionDetail, len(page.Rows))
+	for i := range page.Rows {
+		ref := page.Rows[i].Reference
+		md, seen := resolved[ref]
+		if !seen {
+			md = s.resolveModuleDetail(ctx, ref)
+			resolved[ref] = md
+		}
+		page.Rows[i].ModuleInfo = md
+	}
+	return page, nil
+}
+
+// resolveModuleDetail returns the first matching resolver's detail, or nil. A
+// resolver's own failure is logged and skipped so it can't break the list.
+func (s *Service) resolveModuleDetail(ctx context.Context, reference string) *ModuleTransactionDetail {
+	for _, r := range s.resolvers {
+		md, found, err := r.Resolve(ctx, reference)
+		if err != nil {
+			log.Printf("ledger: admin transaction module-detail resolver error (reference=%s): %v", reference, err)
+			continue
+		}
+		if found {
+			return md
+		}
+	}
+	return nil
 }
 
 // AdminListTransactions is the repository-level implementation: dynamic WHERE
@@ -461,6 +497,7 @@ type ModuleTransactionDetail struct {
 	PaymentMethod string  `json:"payment_method"` // real value if the module tracks it, else honestly "wallet" (never invent "card" etc. without a real column backing it)
 	Status        string  `json:"status"`         // the REAL per-module status, not the generic ledger Posted/Reversed
 	Provider      *string `json:"provider"`       // aggregator/underwriter/provider name, when applicable
+	Biller        *string `json:"biller"`         // the brand the customer actually paid (e.g. MTN, IKEDC), when the module has one
 	Merchant      *string `json:"merchant"`       // a real peer merchant/seller, ONLY when the module genuinely has one
 }
 

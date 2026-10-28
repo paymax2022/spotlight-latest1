@@ -269,6 +269,8 @@ func RegisterCommission(member *gin.RouterGroup, admin *gin.RouterGroup, pool *p
 	}
 
 	svc := NewService(NewRepository(pool), ls)
+	// Wire the payment method enricher to add payment method info to earnings
+	svc.SetPaymentEnricher(NewPaymentMethodResolver(pool))
 	h := NewHandler(svc)
 
 	guard := func(permission string) gin.HandlerFunc {

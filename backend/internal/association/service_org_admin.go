@@ -89,6 +89,7 @@ func (s *Service) GetAdminOrganisation(ctx context.Context, adminID, orgID strin
 	// Uploaded logos are stored as R2 object keys; sign them so the admin console
 	// renders the same image the mobile app does (see presign.go).
 	d.LogoURL = s.resolveLogo(d.LogoURL)
+	d.CoverURL = s.resolveLogo(d.CoverURL)
 	scanJSONB(settings, &d.Settings)
 	if d.Settings == nil {
 		d.Settings = map[string]any{}

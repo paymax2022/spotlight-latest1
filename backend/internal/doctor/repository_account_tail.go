@@ -395,7 +395,8 @@ func (r *Repository) GetReputation(ctx context.Context, userID string) (*Reputat
 	out := &ReputationSummary{}
 	const rq = `
 		SELECT COALESCE(AVG(rating),0)::float8, COUNT(*)::bigint
-		FROM doctor_reviews WHERE user_id = $1 AND rating IS NOT NULL`
+		FROM doctor_reviews WHERE user_id = $1 AND rating IS NOT NULL
+		  AND COALESCE((detail->'moderation'->>'hidden')::boolean, false) = false`
 	if err := r.db.QueryRow(ctx, rq, userID).Scan(&out.AverageRating, &out.ReviewCount); err != nil {
 		return nil, err
 	}

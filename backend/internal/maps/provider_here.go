@@ -51,6 +51,8 @@ type hereItem struct {
 	ID      string `json:"id"`
 	Address struct {
 		Label string `json:"label"`
+		City  string `json:"city"`
+		State string `json:"state"`
 	} `json:"address"`
 	Position struct {
 		Lat float64 `json:"lat"`
@@ -118,6 +120,8 @@ func (h *HERE) Geocode(ctx context.Context, address string) (GeoResult, error) {
 	conf := hereConfidence(it)
 	return GeoResult{
 		Lat: lat, Lng: lng, Address: strutil.FirstNonEmpty(it.Address.Label, it.Title),
+		City:     it.Address.City,
+		State:    it.Address.State,
 		PlusCode: "", // HERE does not return Plus Codes; left empty (server may derive).
 		Provider: h.Name(), Source: SourceHere, Cacheable: false,
 		Confidence: conf, H3Cell: PointCellKey(lat, lng),
@@ -133,16 +137,19 @@ func (h *HERE) ReverseGeocode(ctx context.Context, lat, lng float64) (GeoResult,
 		return GeoResult{}, err
 	}
 	addr := fmt.Sprintf("%.5f, %.5f", lat, lng)
+	city, state := "", ""
 	conf := Confidence(1.0) // reverse from an exact coordinate is fully confident.
 	if len(r.Items) > 0 {
 		it := r.Items[0]
 		addr = strutil.FirstNonEmpty(it.Address.Label, it.Title)
+		city = it.Address.City
+		state = it.Address.State
 		if it.Scoring.QueryScore > 0 {
 			conf = hereConfidence(it)
 		}
 	}
 	return GeoResult{
-		Lat: lat, Lng: lng, Address: addr,
+		Lat: lat, Lng: lng, Address: addr, City: city, State: state,
 		Provider: h.Name(), Source: SourceHere, Cacheable: false,
 		Confidence: conf, H3Cell: PointCellKey(lat, lng),
 	}, nil

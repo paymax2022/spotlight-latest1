@@ -100,12 +100,14 @@ func (h *HTTPProvider) Geocode(ctx context.Context, address string) (GeoResult, 
 		Lat      float64 `json:"lat"`
 		Lng      float64 `json:"lng"`
 		Address  string  `json:"address"`
+		City     string  `json:"city"`
+		State    string  `json:"state"`
 		PlusCode string  `json:"plus_code"`
 	}
 	if err := h.get(ctx, "/geocode?address="+queryEscape(address), &body); err != nil {
 		return GeoResult{}, err
 	}
-	return h.geoResult(body.Lat, body.Lng, strutil.FirstNonEmpty(body.Address, address), body.PlusCode), nil
+	return h.geoResult(body.Lat, body.Lng, strutil.FirstNonEmpty(body.Address, address), body.City, body.State, body.PlusCode), nil
 }
 
 // ReverseGeocode resolves a coordinate to an address.
@@ -117,6 +119,8 @@ func (h *HTTPProvider) ReverseGeocode(ctx context.Context, lat, lng float64) (Ge
 		Lat      float64 `json:"lat"`
 		Lng      float64 `json:"lng"`
 		Address  string  `json:"address"`
+		City     string  `json:"city"`
+		State    string  `json:"state"`
 		PlusCode string  `json:"plus_code"`
 	}
 	path := fmt.Sprintf("/reverse?lat=%f&lng=%f", lat, lng)
@@ -128,15 +132,15 @@ func (h *HTTPProvider) ReverseGeocode(ctx context.Context, lat, lng float64) (Ge
 	if outLat == 0 && outLng == 0 {
 		outLat, outLng = lat, lng
 	}
-	return h.geoResult(outLat, outLng, body.Address, body.PlusCode), nil
+	return h.geoResult(outLat, outLng, body.Address, body.City, body.State, body.PlusCode), nil
 }
 
-func (h *HTTPProvider) geoResult(lat, lng float64, address, plusCode string) GeoResult {
+func (h *HTTPProvider) geoResult(lat, lng float64, address, city, state, plusCode string) GeoResult {
 	if plusCode == "" {
 		plusCode = h.cfg.codec.Encode(lat, lng)
 	}
 	return GeoResult{
-		Lat: lat, Lng: lng, Address: address, PlusCode: plusCode,
+		Lat: lat, Lng: lng, Address: address, City: city, State: state, PlusCode: plusCode,
 		Provider: h.cfg.Name, Source: h.cfg.Source,
 		Cacheable: isCacheableSource(h.cfg.Source),
 	}
