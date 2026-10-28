@@ -25,94 +25,6 @@ func (s *Service) SwapQuote(ctx context.Context, userID, fromAssetID, toAssetID 
 	return q, err
 }
 
-// SwapQuoteQuidax returns a live quote from Quidax Instant Swap API (CR-011).
-// Returns quotationID + expiresAt (15-sec TTL) for use in Swap confirmation.
-func (s *Service) SwapQuoteQuidax(ctx context.Context, userID, fromAssetID, toAssetID string, fromUnits int64) (*SwapQuote, error) {
-	// Validate inputs
-	if fromUnits <= 0 {
-		return nil, ErrBadRequest
-	}
-	if fromAssetID == toAssetID {
-		return nil, ErrSameAsset
-	}
-
-	// Get asset objects
-	from, err := s.repo.GetAsset(ctx, fromAssetID)
-	if err != nil {
-		return nil, err
-	}
-	to, err := s.repo.GetAsset(ctx, toAssetID)
-	if err != nil {
-		return nil, err
-	}
-
-	if !from.IsActive || !to.IsActive {
-		return nil, ErrAssetInactive
-	}
-
-	// Ensure Quidax subaccount exists for user (CR-010)
-	quidaxUserID, err := s.EnsureQuidaxSubaccount(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Call Quidax CreateQuotation with mapped currency codes
-	quotationID, expiresAt, err := s.swap.CreateQuotation(
-		ctx,
-		quidaxUserID,
-		from.Symbol,  // "NGN", "BTC", etc.
-		to.Symbol,    // "BTC", "ETH", etc.
-		fromUnits,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get current prices for response (rates derived from quote execution)
-	fromPrice, ok := s.price.PriceKobo(ctx, from.Symbol)
-	if !ok || fromPrice <= 0 {
-		fromPrice = 1 // Fallback: 1 kobo (avoid div by zero)
-	}
-	toPrice, ok := s.price.PriceKobo(ctx, to.Symbol)
-	if !ok || toPrice <= 0 {
-		toPrice = 1
-	}
-
-	// Compute cash value using from-price
-	cashKobo := cashForUnits(fromUnits, fromPrice, from.MinorUnitScale)
-	if cashKobo <= 0 {
-		return nil, ErrAmountTooSmall
-	}
-
-	// To-units estimated from cash / to-price (Quidax will confirm on swap execution)
-	toUnits := unitsForCash(cashKobo, toPrice, to.MinorUnitScale)
-	if toUnits <= 0 {
-		return nil, ErrAmountTooSmall
-	}
-
-	// Build response with Quidax fields
-	q := &SwapQuote{
-		FromAssetID:   from.ID,
-		FromSymbol:    from.Symbol,
-		ToAssetID:     to.ID,
-		ToSymbol:      to.Symbol,
-		FromUnits:     fromUnits,
-		ToUnits:       toUnits,
-		FromPriceKobo: fromPrice,
-		ToPriceKobo:   toPrice,
-		CashKobo:      cashKobo,
-		SpreadKobo:    0,      // Quidax handles spread internally
-		SpreadBps:     0,
-		QuotationID:   quotationID,
-		ExpiresAt:     expiresAt,
-		Provider:      s.swap.Name(), // "quidax" or "mock"
-		Source:        s.swap.Name(),
-		AsOf:          time.Now().UTC(),
-	}
-
-	return q, nil
-}
-
 // priceSwap computes the swap economics with integer arithmetic only. It returns
 // the quote plus the resolved from/to assets for reuse by Swap.
 func (s *Service) priceSwap(ctx context.Context, fromAssetID, toAssetID string, fromUnits int64) (*SwapQuote, *Asset, *Asset, int, error) {
@@ -183,7 +95,7 @@ func (s *Service) priceSwap(ctx context.Context, fromAssetID, toAssetID string, 
 //     Net wallet delta is zero (cashKobo = netCash + spreadKobo), so a swap needs
 //     no NGN balance; the spread is retained revenue. Fail-closed: an oversell is
 //     rejected by the holdings CHECK before any ledger post is finalised.
-func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID string, fromUnits int64, quotationID string, idemKey string) (*SwapOrder, error) {
+func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID string, fromUnits int64, idemKey string) (*SwapOrder, error) {
 	if idemKey == "" {
 		return nil, ErrBadRequest
 	}
@@ -223,18 +135,6 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 		return nil, ErrInsufficient
 	}
 
-	// CR-012: Call ConfirmQuotation if quotationID provided (Quidax swap)
-	var swapTransactionID, providerStatus string
-	if quotationID != "" {
-		txID, err := s.swap.ConfirmQuotation(ctx, userID, quotationID)
-		if err != nil {
-			// TTL expired (422) or invalid quotation: fail-closed, don't record order
-			return nil, fmt.Errorf("crypto: confirm quotation failed: %w", err)
-		}
-		swapTransactionID = txID
-		providerStatus = "pending" // Quidax executes async, status TBD by webhook
-	}
-
 	o := SwapOrder{
 		UserID: userID, FromAssetID: from.ID, FromSymbol: from.Symbol,
 		ToAssetID: to.ID, ToSymbol: to.Symbol,
@@ -242,10 +142,6 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 		FromPriceKobo: q.FromPriceKobo, ToPriceKobo: q.ToPriceKobo,
 		CashKobo: q.CashKobo, SpreadKobo: q.SpreadKobo, SpreadBps: spreadBps,
 		Reference: "crypto:swap:" + from.Symbol + "->" + to.Symbol, idem: idemKey,
-		// CR-012: Store Quidax execution state
-		QuotationID:       quotationID,
-		SwapTransactionID: swapTransactionID,
-		ProviderStatus:    providerStatus,
 	}
 
 	// Tier gate (fail-closed, E2E-FIN-046): the swap's cash legs DEBIT the wallet
@@ -984,111 +880,6 @@ func (s *Service) ensureSwapAudit(ctx context.Context, o *SwapOrder) error {
 		})
 }
 
-// UpdateSwapOrderStatusFromWebhook is called by the webhook handler (CR-013)
-// when Quidax reports a swap completion/failure event. It updates the order
-// status from "executing" to the Quidax-reported value (completed/failed/etc).
-// Idempotent: multiple identical events are safe (update to same status is no-op).
-// Returns ErrNotFound if swap_transaction_id doesn't match an existing order.
-func (s *Service) UpdateSwapOrderStatusFromWebhook(ctx context.Context, swapTransactionID, finalStatus string) error {
-	if swapTransactionID == "" || finalStatus == "" {
-		return ErrBadRequest
-	}
-
-	// Validate the status is a known value (prevent SQL injection via status param).
-	// Quidax reports: "completed", "failed", and possibly others.
-	// We accept any non-empty status but could restrict to a known set if needed.
-	// For now: accept as-is and store for audit.
-	const q = `
-		UPDATE crypto_swap_orders
-		SET status = $2, updated_at = now()
-		WHERE swap_transaction_id = $1 AND status = 'executing'
-		RETURNING id, user_id, status
-	`
-	var orderID, userID, newStatus string
-	err := s.db.QueryRow(ctx, q, swapTransactionID, finalStatus).Scan(&orderID, &userID, &newStatus)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// No order found with this swap_transaction_id in "executing" state.
-			// Could mean: already processed, never started, or bogus swap_transaction_id.
-			// Log but return success to Quidax to prevent webhook retry storms.
-			return fmt.Errorf("crypto: swap order not found or already terminal: %w", ErrNotFound)
-		}
-		return fmt.Errorf("crypto: update swap status: %w", err)
-	}
-
-	// Audit the status update.
-	err = s.audit.log(ctx, userID, "crypto.swap_status_updated", "crypto_swap_order", orderID, "",
-		nil, map[string]any{
-			"swap_transaction_id": swapTransactionID,
-			"final_status":        finalStatus,
-		})
-	if err != nil {
-		// Log audit failure but don't fail the request (the order is already updated).
-		fmt.Printf("[crypto] audit log failed for swap status update: %v\n", err)
-	}
-
-	return nil
-}
-
-// SettleSwapOrderLedger is called by CR-014 settlement processor to post final
-// double-entry journals when a swap order reaches terminal status (completed/failed).
-// Idempotent: calling multiple times with same order is safe (ledger posts are keyed).
-// Returns nil if already settled; ErrNotFound if order not found.
-func (s *Service) SettleSwapOrderLedger(ctx context.Context, orderID string) error {
-	if orderID == "" {
-		return ErrBadRequest
-	}
-
-	// Look up the order.
-	order, err := s.repo.GetSwapOrder(ctx, orderID)
-	if err != nil {
-		return err
-	}
-	if order == nil {
-		return ErrNotFound
-	}
-
-	// Skip if already settled.
-	if order.LedgerSettled {
-		return nil
-	}
-
-	// Only settle terminal statuses (completed or failed).
-	// "executing" and "pending" are intermediate states waiting for webhook.
-	if order.Status != "completed" && order.Status != "failed" {
-		return fmt.Errorf("crypto: cannot settle order in status %q (not terminal)", order.Status)
-	}
-
-	// For completed orders: the swap execution already moved money through the ledger
-	// via the Swap() method (CR-012). Settlement just marks the order as finalized
-	// in our records. The ledger entries are already posted:
-	//   - Sell leg: escrow → wallet (CREDIT) for the gross cash from selling the asset
-	//   - Buy leg: wallet → escrow (DEBIT) for the full amount (net + spread)
-	//   - Spread leg: escrow → revenue for the retained fee
-	// Settlement here just confirms finalization.
-	//
-	// For failed orders: the swap was rejected, no ledger entries were posted.
-	// Settlement marks failure in our records.
-
-	// Mark order as settled.
-	now := time.Now().UTC()
-	if err := s.repo.MarkSwapOrderSettled(ctx, orderID, &now); err != nil {
-		return fmt.Errorf("crypto: mark settled: %w", err)
-	}
-
-	// Audit the settlement.
-	if err := s.audit.log(ctx, order.UserID, "crypto.swap_settled", "crypto_swap_order", orderID, "",
-		nil, map[string]any{
-			"status":       order.Status,
-			"cash_kobo":    order.CashKobo,
-			"spread_kobo":  order.SpreadKobo,
-		}); err != nil {
-		fmt.Printf("[crypto] audit log failed for swap settlement: %v\n", err)
-	}
-
-	return nil
-}
-
 // trimmed is a tiny helper (kept local to avoid a strings import churn elsewhere).
 func trimmed(s string) string {
 	i, j := 0, len(s)
@@ -1099,31 +890,4 @@ func trimmed(s string) string {
 		j--
 	}
 	return s[i:j]
-}
-
-// SwapSettlement is the member-visible ledger-settlement state of one swap order.
-type SwapSettlement struct {
-	LedgerSettled bool       `json:"ledger_settled"`
-	SettledAt     *time.Time `json:"settled_at"` // null until settled
-}
-
-// swapSettlementFor projects an order onto its settlement state for userID.
-// Pure (no I/O): nil order → ErrNotFound, foreign order → ErrForbidden.
-func swapSettlementFor(o *SwapOrder, userID string) (*SwapSettlement, error) {
-	if o == nil {
-		return nil, ErrNotFound
-	}
-	if userID == "" || o.UserID != userID {
-		return nil, ErrForbidden
-	}
-	return &SwapSettlement{LedgerSettled: o.LedgerSettled, SettledAt: o.SettledAt}, nil
-}
-
-// SwapSettlement returns the caller's own swap order settlement state (read-only).
-func (s *Service) SwapSettlement(ctx context.Context, userID, orderID string) (*SwapSettlement, error) {
-	o, err := s.repo.GetSwapOrder(ctx, orderID)
-	if err != nil {
-		return nil, err
-	}
-	return swapSettlementFor(o, userID)
 }

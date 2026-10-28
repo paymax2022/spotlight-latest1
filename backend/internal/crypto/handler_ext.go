@@ -1,8 +1,6 @@
 package crypto
 
 import (
-	"errors"
-	"log"
 	"net/http"
 	"os"
 	"spotlight/backend/go-common/ginutil"
@@ -32,9 +30,7 @@ func (h *Handler) SwapQuote(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
 		return
 	}
-	// CR-011: Call Quidax for live quotes (replaces internal pricing).
-	// Falls back to mock provider if real Quidax credentials not configured.
-	q, err := h.svc.SwapQuoteQuidax(c.Request.Context(), uid, req.FromAssetID, req.ToAssetID, req.FromUnits)
+	q, err := h.svc.SwapQuote(c.Request.Context(), uid, req.FromAssetID, req.ToAssetID, req.FromUnits)
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
@@ -57,14 +53,12 @@ func (h *Handler) Swap(c *gin.Context) {
 		FromAssetID string `json:"from_asset_id"`
 		ToAssetID   string `json:"to_asset_id"`
 		FromUnits   int64  `json:"from_units"`
-		// CR-011: Quotation ID from SwapQuote response (15-sec TTL). Required for Quidax execution.
-		QuotationID string `json:"quotation_id,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
 		return
 	}
-	o, err := h.svc.Swap(c.Request.Context(), uid, req.FromAssetID, req.ToAssetID, req.FromUnits, req.QuotationID, key)
+	o, err := h.svc.Swap(c.Request.Context(), uid, req.FromAssetID, req.ToAssetID, req.FromUnits, key)
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
@@ -318,21 +312,4 @@ func resolveAsset(h *Handler, c *gin.Context, ref string) string {
 		}
 	}
 	return ref
-}
-
-// SwapSettlement GET /swaps/:id/settlement — owner-scoped ledger settlement state
-// polled by the mobile swap flow. 404 unknown order, 403 not the owner.
-func (h *Handler) SwapSettlement(c *gin.Context) {
-	st, err := h.svc.SwapSettlement(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
-	if err != nil {
-		// Unmapped errors fall to errMap's default; settlement lookups must 500, not 400.
-		if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrForbidden) {
-			log.Printf("[crypto] swap settlement lookup failed: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
-			return
-		}
-		errMap.WriteOK(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "settlement": st})
 }

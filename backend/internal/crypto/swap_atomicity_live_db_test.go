@@ -96,7 +96,7 @@ func TestLiveDB_Swap_CapBoundary_AllOrNothing(t *testing.T) {
 	}
 
 	key := "swap-cap-" + uuid.NewString()
-	o, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, "", key)
+	o, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, key)
 	if err != nil {
 		t.Fatalf("swap within cap must fill: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestLiveDB_Swap_CapBoundary_AllOrNothing(t *testing.T) {
 	_ = wallet
 
 	// A same-key replay converges to the same order and posts nothing twice.
-	o2, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, "", key)
+	o2, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, key)
 	if err != nil {
 		t.Fatalf("replay must converge: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestLiveDB_Swap_CapBoundary_AllOrNothing(t *testing.T) {
 	// FRESH swap at-cap: 4_000_000 used of 5_000_000; another ₦40k pushes over.
 	// Must refuse with ZERO new legs, NO second order, holdings untouched.
 	key2 := "swap-cap-" + uuid.NewString()
-	_, err = svc.Swap(ctx, user, usdt.ID, btc.ID, 15_000_000, "", key2) // ₦24k > ₦10k remaining
+	_, err = svc.Swap(ctx, user, usdt.ID, btc.ID, 15_000_000, key2) // ₦24k > ₦10k remaining
 	if err == nil {
 		t.Fatal("a second swap over the daily cap must refuse")
 	}
@@ -205,7 +205,7 @@ func TestLiveDB_Swap_PartialLegs_ReplayHeals(t *testing.T) {
 		t.Fatalf("plant buy leg: %v", err)
 	}
 
-	o, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, "", key)
+	o, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, key)
 	if err != nil {
 		t.Fatalf("partial replay must heal, got %v", err)
 	}
@@ -238,7 +238,7 @@ func TestLiveDB_Swap_BuyRefused_UnwindsSell_TombstonesKey(t *testing.T) {
 	led.SetDebitGuard(func(context.Context, pgx.Tx, string, int64) error { return forced })
 
 	key := "swap-unwind-" + uuid.NewString()
-	if _, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, "", key); !errors.Is(err, forced) {
+	if _, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, key); !errors.Is(err, forced) {
 		t.Fatalf("want forced refusal, got %v", err)
 	}
 
@@ -270,7 +270,7 @@ func TestLiveDB_Swap_BuyRefused_UnwindsSell_TombstonesKey(t *testing.T) {
 	// stale :sell legs would re-verify and a fresh :buy would debit the gross
 	// amount with no proceeds to offset (double charge). Early probe refusal
 	// here; the in-tx guard covers the concurrent-interleave case.
-	if _, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, "", key); !errors.Is(err, ErrSwapUnwound) {
+	if _, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, key); !errors.Is(err, ErrSwapUnwound) {
 		t.Fatalf("post-unwind replay must refuse ErrSwapUnwound, got %v", err)
 	}
 	if n, _ := countLegs(t, ctx, pool, key+":%"); n != 4 {
