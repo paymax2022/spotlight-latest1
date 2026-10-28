@@ -129,6 +129,54 @@ paths:
       responses:
         '201': { description: Order created }
         '422': { description: Validation or domain refusal (for example a HOME order without an address) }
+  /orders/crypto-quote:
+    post:
+      summary: Price an order in a crypto asset (read-only; no money moves)
+      description: Requires FEATURE_HEALTH_LAB_CRYPTO_PAYMENT and FEATURE_CRYPTO_ENABLED (503 otherwise). Same body as /orders plus asset_id. units_required is in asset minor units, rounded up and padded by 50 bps; the quote is advisory for 30 s and execution re-prices.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CryptoOrderRequest' }
+      responses:
+        '200': { description: Quote, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, quote: { $ref: '#/components/schemas/CryptoPaymentQuote' } } } } } }
+        '400': { description: Invalid body, unknown or inactive asset, empty order }
+        '503': { description: Crypto payment not enabled }
+  /orders/pay-crypto:
+    post:
+      summary: Pay and place an order from a crypto holding
+      description: |
+        Sells units of asset_id from the caller's holding into their NGN wallet
+        (crypto.Sell, balanced ledger legs) and then places the order exactly as
+        POST /orders does, so the NGN total is HELD in escrow. An order is paid
+        from creation, so the returned order is state CREATED with escrow_id set;
+        the lab is paid on result release as for any order. Idempotency-Key is
+        required; a replay returns the original order (200) and never sells again.
+        max_units is the cap from the caller's quote: if the live price needs more,
+        409 is returned before any money moves. If the sell fills below the total
+        the proceeds stay in the wallet and no order is created (422).
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/CryptoOrderRequest' }
+                - type: object
+                  required: [max_units]
+                  properties:
+                    max_units: { type: integer, format: int64, minimum: 1, description: Slippage cap in asset minor units }
+                    expected_total_kobo: { type: integer, format: int64 }
+      responses:
+        '201': { description: Paid and created }
+        '200': { description: Idempotent replay of an existing order }
+        '400': { description: Missing Idempotency-Key or invalid body }
+        '403': { description: Tier or wallet limit refused the hold }
+        '409': { description: Quote moved past max_units, price changed, or key used by another order }
+        '422': { description: Insufficient holdings, sell shortfall or domain refusal }
+        '503': { description: Crypto payment not enabled }
   /provider/earnings:
     get:
       summary: A lab owner's earnings (read-only)
@@ -246,6 +294,29 @@ components:
   parameters:
     Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
   schemas:
+    CryptoOrderRequest:
+      type: object
+      required: [lab_provider_id, collection_method, asset_id]
+      properties:
+        lab_provider_id: { type: string, format: uuid }
+        collection_method: { type: string, enum: [HOME, WALK_IN] }
+        asset_id: { type: string, format: uuid }
+        test_ids: { type: array, items: { type: string, format: uuid } }
+        package_ids: { type: array, items: { type: string, format: uuid } }
+        collection_address: { type: string, maxLength: 300 }
+        collection_lat: { type: number }
+        collection_lng: { type: number }
+        scheduled_for: { type: string, format: date-time }
+    CryptoPaymentQuote:
+      type: object
+      properties:
+        asset_id: { type: string, format: uuid }
+        symbol: { type: string }
+        total_kobo: { type: integer, format: int64 }
+        price_kobo: { type: integer, format: int64, description: NGN kobo per whole unit }
+        units_required: { type: integer, format: int64 }
+        quoted_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
     LabCredential:
       type: object
       properties:

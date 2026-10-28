@@ -694,6 +694,9 @@ type Config struct {
 	FeatureHealthEnabled         bool
 	FeatureHealthPharmacyEnabled bool
 	FeatureHealthLabEnabled      bool
+	// Pay a lab order from a crypto holding (sell-to-wallet, then escrow hold).
+	// DEFAULT OFF; also requires FeatureCryptoEnabled.
+	FeatureHealthLabCryptoPayment bool
 	FeatureHealthVetEnabled      bool
 	// Pre-Consultation Health Intake (ADR-010). DEFAULT OFF. Gates the member
 	// /api/finance/health/intake/* + admin /api/health/admin/intake surface.
@@ -1203,6 +1206,7 @@ func Load() Config {
 		FeatureHealthEnabled:               getEnvBool("FEATURE_HEALTH_ENABLED", false),
 		FeatureHealthPharmacyEnabled:       getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
 		FeatureHealthLabEnabled:            getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
+		FeatureHealthLabCryptoPayment:      getEnvBool("FEATURE_HEALTH_LAB_CRYPTO_PAYMENT", false),
 		FeatureHealthVetEnabled:            getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
 		FeatureHealthIntakeEnabled:         getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
 		FeatureHealthTriageEnabled:         getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),

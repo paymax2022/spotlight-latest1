@@ -110,6 +110,7 @@ type Service struct {
 	consent    ConsentGate        // optional; nil ⇒ result sharing is unavailable (503)
 	vaultRead  VaultReader        // optional; nil ⇒ signed report URLs are unavailable (503)
 	earn       EarningsReader     // optional; nil ⇒ earnings are unavailable (503)
+	crypto     CryptoPayer        // optional; nil ⇒ crypto payment is unavailable (503)
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, notify Notifier, vault RecordsVault, audit Auditor) *Service {

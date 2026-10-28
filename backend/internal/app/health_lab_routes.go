@@ -13,6 +13,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 
 	"spotlight/backend/internal/config"
+	"spotlight/backend/internal/crypto"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
@@ -93,6 +94,20 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 	}
 
+	// Crypto payment (Phase 2 Task 5.1): sell a holding into the wallet, then the
+	// normal escrow HOLD. Double-gated; flag off ⇒ the payer stays nil ⇒ 503.
+	if cfg.FeatureHealthLabCryptoPayment && cfg.FeatureCryptoEnabled {
+		cryptoPrice, _, _ := crypto.ProvidersFromConfig(crypto.ProviderConfig{
+			Provider:    cfg.CryptoProvider,
+			Live:        cfg.IsProd(),
+			TestKey:     cfg.CryptoQuidaxTestKey,
+			TestBaseURL: cfg.CryptoQuidaxTestBaseURL,
+			LiveKey:     cfg.CryptoQuidaxLiveKey,
+			LiveBaseURL: cfg.CryptoQuidaxLiveBaseURL,
+		})
+		svc.SetCryptoPayer(labCryptoAdapter{c: crypto.NewService(pool, ledgerSvc, cryptoPrice)})
+	}
+
 	isAdmin := func(c *gin.Context) bool { return isHealthLabAdmin(c, rbac) }
 	h := healthlab.NewHandler(svc, isAdmin)
 
@@ -127,7 +142,9 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
 	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR641)
 	lg.POST("/orders/quote", h.QuoteOrder)         // server price for an order: tests + packages + home fee (what CreateOrder will hold)
-	lg.POST("/orders", h.CreateOrder)                // patient, payment HELD (HL-9)
+	lg.POST("/orders/crypto-quote", h.QuoteCryptoPayment) // price the order in a crypto asset (read-only)
+	lg.POST("/orders/pay-crypto", h.PayWithCrypto)        // sell holding -> wallet -> escrow HELD; Idempotency-Key required
+	lg.POST("/orders", h.CreateOrder)              // patient, payment HELD (HL-9)
 	lg.GET("/orders", h.ListMyOrders)                // patient's own order history + active-order card
 	lg.GET("/orders/:id", h.Get)                     // object-level authZ
 	lg.GET("/orders/:id/results", h.Results)         // object-level authZ (HL-8)
