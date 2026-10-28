@@ -87,4 +87,6 @@ commits = [
     # placeholders at HEAD; sandbox keys are on the rotation runbook. This sha
     # is the introduction commit — nothing after it re-adds the values.
     "2cc173b0c5d773a93c3fdc995fdb86ee562955c9",
+    # feat(backend): crypto swap settlement commit containing service_test.go with test idempotency key fixture
+    "317568400e3bddce1b2f1d0e036b5c9fb637684f",
 ]
