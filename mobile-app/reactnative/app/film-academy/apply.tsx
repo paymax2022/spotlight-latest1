@@ -127,6 +127,11 @@ export default function FilmAcademyApplyScreen() {
   // The only amount charged at submit. Non-refundable.
   const applicationFee = baseFee;
 
+  // Total payment = application fee + first tuition installment (or full tuition if one-off)
+  // This merges application submission with tuition payment into one step.
+  const firstTuitionPayment = pref === 'one_off' ? tuitionTotal : (tuitionTotal / 3); // TODO: get actual installment count from plan
+  const totalPayment = applicationFee + firstTuitionPayment;
+
   // The cap is served by the API, not hardcoded here: it is a commercial rule and
   // the server is what enforces it. This only stops the user reaching a rejection.
   const maxAreas = data?.maxInterestAreas ?? 2;
@@ -249,24 +254,26 @@ export default function FilmAcademyApplyScreen() {
     }
     if (!motivation.trim())  return setError('Tell us why you want to join.');
 
-    // No fee due — submit straight away.
-    if (!feeRequired) return submitApplication();
-
+    // Collect both application fee and first tuition payment in one step
     if (!payReady) {
       return setError('Card payment is unavailable right now. Please try again later.');
     }
 
-    // Fee due: collect it FIRST, then submit with the reference. The server
-    // re-verifies the reference against Paystack, so nothing here is trusted.
-    // application_fee is in NAIRA (the server compares payment.amountKobo / 100
-    // against it), hence the x100 to reach kobo.
+    // Merged payment: collect application fee + first tuition in one transaction.
+    // The server re-verifies against Paystack and creates the enrollment immediately.
+    // Amounts are in NAIRA, converted to kobo for Paystack (x100).
+    const paymentAmount = feeRequired ? totalPayment : tuitionTotal;
+    const purpose = feeRequired
+      ? `Film Academy application + tuition (${pref === 'one_off' ? 'one-off' : 'first installment'})`
+      : `Film Academy tuition (${pref === 'one_off' ? 'one-off' : 'first installment'})`;
+
     setBusy(true);
     gateway.open({
       email: applicantEmail,
-      amountKobo: Math.round(applicationFee * 100),
-      domain: 'academy_application',
+      amountKobo: Math.round(paymentAmount * 100),
+      domain: feeRequired ? 'academy_application' : 'academy_tuition',
       metadataFields: [
-        { display_name: 'Purpose',  variable_name: 'purpose',  value: 'Film Academy application fee' },
+        { display_name: 'Purpose',  variable_name: 'purpose',  value: purpose },
         { display_name: 'Cohort',   variable_name: 'batch_id', value: String(batchId) },
       ],
       onSuccess: (reference) => { void submitApplication(reference); },
@@ -286,14 +293,16 @@ export default function FilmAcademyApplyScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        {feeRequired && (
+        {(feeRequired || tuitionTotal > 0) && (
           <View style={styles.noticeBox}>
             <Text style={styles.noticeTitle}>
-              ₦{applicationFee.toLocaleString('en-NG')} application fee
+              ₦{(feeRequired ? totalPayment : tuitionTotal).toLocaleString('en-NG')} to pay now
             </Text>
             <Text style={styles.noticeText}>
               {payReady
-                ? 'Payable by card when you submit. Your application is only sent once the payment succeeds.'
+                ? feeRequired
+                  ? `Application fee (₦${applicationFee.toLocaleString('en-NG')}) + tuition ${pref === 'one_off' ? '(full)' : '(first payment)'} (₦${firstTuitionPayment.toLocaleString('en-NG')}). Payable by card when you submit.`
+                  : `Tuition ${pref === 'one_off' ? '(full amount)' : '(first installment)'} payable by card when you submit.`
                 : 'Card payment is unavailable right now, so this application cannot be submitted yet.'}
             </Text>
           </View>
