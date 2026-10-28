@@ -515,6 +515,83 @@ func TestSwapErrorHandling(t *testing.T) {
 	})
 }
 
+// TestReconcileSwapOrdersWithDateFilter verifies that date filtering works correctly.
+func TestReconcileSwapOrdersWithDateFilter(t *testing.T) {
+	t.Run("filters swap orders by created_at date range", func(t *testing.T) {
+		s := newTestService(t)
+		ctx := context.Background()
+		userID := "user_test_recon_date"
+
+		// Seed assets
+		from, err := s.repo.UpsertAsset(ctx, "BTC", "Bitcoin", 100_000_000, true)
+		require.NoError(t, err)
+		to, err := s.repo.UpsertAsset(ctx, "NGN", "Naira", 1, true)
+		require.NoError(t, err)
+
+		// Seed initial holdings
+		_, _, err = s.repo.RecordFill(ctx, Order{UserID: userID, AssetID: from.ID, Side: "buy", Units: 200_000_000, CashKobo: 0, PriceKobo: 1}, 0)
+		require.NoError(t, err)
+
+		// Create 3 orders: one before range, one in range, one after
+		now := time.Now().UTC()
+		before := now.Add(-2 * time.Hour)
+		during := now
+		after := now.Add(2 * time.Hour)
+
+		// Create order before range
+		q1, err := s.SwapQuoteQuidax(ctx, userID, from.ID, to.ID, 10_000_000)
+		require.NoError(t, err)
+		order1, err := s.Swap(ctx, userID, from.ID, to.ID, 10_000_000, q1.QuotationID, "date_test_001")
+		require.NoError(t, err)
+
+		// Manually update created_at to before the range (using direct SQL)
+		_, err = s.repo.db.Exec(ctx, "UPDATE crypto_swap_orders SET created_at = $1 WHERE id = $2", before, order1.ID)
+		require.NoError(t, err)
+
+		// Create order during range
+		q2, err := s.SwapQuoteQuidax(ctx, userID, from.ID, to.ID, 10_000_000)
+		require.NoError(t, err)
+		order2, err := s.Swap(ctx, userID, from.ID, to.ID, 10_000_000, q2.QuotationID, "date_test_002")
+		require.NoError(t, err)
+
+		// Create order after range
+		q3, err := s.SwapQuoteQuidax(ctx, userID, from.ID, to.ID, 10_000_000)
+		require.NoError(t, err)
+		order3, err := s.Swap(ctx, userID, from.ID, to.ID, 10_000_000, q3.QuotationID, "date_test_003")
+		require.NoError(t, err)
+
+		// Manually update created_at to after the range
+		_, err = s.repo.db.Exec(ctx, "UPDATE crypto_swap_orders SET created_at = $1 WHERE id = $2", after, order3.ID)
+		require.NoError(t, err)
+
+		// Test 1: No filter — should get all 3 orders
+		report, err := s.ReconcileSwapOrders(ctx, false, time.Time{}, time.Time{})
+		require.NoError(t, err)
+		assert.Equal(t, 3, report.TotalOrders, "without filter should return all 3 orders")
+
+		// Test 2: Filter by date range (before < created_at < after)
+		// This should only return order2 (created during the range)
+		rangeStart := now.Add(-1 * time.Hour)
+		rangeEnd := now.Add(1 * time.Hour)
+		report, err = s.ReconcileSwapOrders(ctx, true, rangeStart, rangeEnd)
+		require.NoError(t, err)
+		assert.Equal(t, 1, report.TotalOrders, "filtered should return only 1 order in range")
+		if len(report.Orders) > 0 {
+			assert.Equal(t, order2.ID, report.Orders[0].OrderID, "should be the order created during the range")
+		}
+
+		// Test 3: Filter start date only (from start onwards)
+		report, err = s.ReconcileSwapOrders(ctx, true, during, time.Time{})
+		require.NoError(t, err)
+		assert.Equal(t, 2, report.TotalOrders, "filtered from start should return 2 orders (during and after)")
+
+		// Test 4: Filter end date only (up to end)
+		report, err = s.ReconcileSwapOrders(ctx, true, time.Time{}, during)
+		require.NoError(t, err)
+		assert.Equal(t, 2, report.TotalOrders, "filtered to end should return 2 orders (before and during)")
+	})
+}
+
 // newTestService creates a test Service with a mock repository.
 func newTestService(t *testing.T) *Service {
 	// For these unit tests, we use a real database connection via TEST_DATABASE_URL.
@@ -564,7 +641,7 @@ func resetTestDB(t *testing.T, db *pgxpool.Pool) {
 	defer cancel()
 
 	// Clear tables in reverse dependency order
-	for _, table := range []string{"crypto_accounts", "crypto_assets", "crypto_audit_log"} {
+	for _, table := range []string{"crypto_swap_orders", "crypto_accounts", "crypto_assets", "crypto_audit_log"} {
 		_, _ = db.Exec(ctx, "DELETE FROM "+table)
 	}
 }

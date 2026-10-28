@@ -337,14 +337,30 @@ func (h *Handler) AdminReconciliation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "rows": sum.Rows, "breaks": sum.Breaks, "as_of": sum.AsOf})
 }
 
-// AdminSwapReconciliation GET /admin/crypto/reconciliation/swaps?details=true.
+// AdminSwapReconciliation GET /admin/crypto/reconciliation/swaps?details=true&start_date=&end_date=.
 // Serves the swap-order drift report (ReconcileSwapOrders): ledger_settled vs
 // order status. Read-only; no money moves. The body is the flat
 // ReconciliationReport the admin console consumes (frontend-admin src/lib/api.ts).
 // Distinct from /reconciliation, which is the per-asset on-chain diff.
+// start_date and end_date are optional ISO 8601 timestamps; if provided, filters
+// orders to those created within the range.
 func (h *Handler) AdminSwapReconciliation(c *gin.Context) {
 	details := c.Query("details") == "true"
-	report, err := h.svc.ReconcileSwapOrders(c.Request.Context(), details)
+
+	// Parse optional date filters
+	var startDate, endDate time.Time
+	if startStr := c.Query("start_date"); startStr != "" {
+		if t, err := time.Parse(time.RFC3339, startStr); err == nil {
+			startDate = t
+		}
+	}
+	if endStr := c.Query("end_date"); endStr != "" {
+		if t, err := time.Parse(time.RFC3339, endStr); err == nil {
+			endDate = t
+		}
+	}
+
+	report, err := h.svc.ReconcileSwapOrders(c.Request.Context(), details, startDate, endDate)
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ReconciliationReport is the output of a swap reconciliation run comparing
@@ -34,10 +36,11 @@ type OrderReconciliationRow struct {
 // ReconcileSwapOrders compares ledger projections vs. Quidax state for all
 // swap orders and returns a drift report. Read-only: no money moves. Used
 // for audit and drift investigation. Includes all orders; details flag adds
-// per-order rows (empty list if details=false).
-func (s *Service) ReconcileSwapOrders(ctx context.Context, details bool) (*ReconciliationReport, error) {
-	// Get all swap orders (no auth check; read-only reconciliation).
-	orders, err := s.repo.AllSwapOrders(ctx)
+// per-order rows (empty list if details=false). If startDate and endDate are
+// non-zero, filters orders to those created within the range.
+func (s *Service) ReconcileSwapOrders(ctx context.Context, details bool, startDate, endDate time.Time) (*ReconciliationReport, error) {
+	// Get swap orders, optionally filtered by date range (no auth check; read-only reconciliation).
+	orders, err := s.repo.AllSwapOrders(ctx, startDate, endDate)
 	if err != nil {
 		return nil, fmt.Errorf("crypto: fetch orders: %w", err)
 	}
@@ -115,19 +118,46 @@ func detectOrderDrift(o *SwapOrder) string {
 	return "" // No drift detected
 }
 
-// AllSwapOrders retrieves all swap orders for reconciliation.
-// Used by ReconcileSwapOrders and admin reporting.
-func (r *Repository) AllSwapOrders(ctx context.Context) ([]SwapOrder, error) {
-	const q = `
+// AllSwapOrders retrieves swap orders for reconciliation, optionally filtered by
+// created_at date range. If startDate and endDate are zero-values, no date filter is applied.
+func (r *Repository) AllSwapOrders(ctx context.Context, startDate, endDate time.Time) ([]SwapOrder, error) {
+	var q string
+	var args []interface{}
+
+	// Build query with optional date filter
+	baseQuery := `
 		SELECT id, user_id, from_asset_id, from_symbol, to_asset_id, to_symbol,
 		       status, from_units, to_units, from_price_kobo, to_price_kobo,
 		       cash_kobo, spread_kobo, spread_bps, reference, created_at,
 		       quotation_id, swap_transaction_id, provider_status,
 		       ledger_settled, settled_at
-		FROM crypto_swap_orders
-		ORDER BY created_at DESC
-	`
-	rows, err := r.db.Query(ctx, q)
+		FROM crypto_swap_orders`
+
+	// Add date filter if provided
+	if !startDate.IsZero() || !endDate.IsZero() {
+		baseQuery += ` WHERE`
+		if !startDate.IsZero() {
+			baseQuery += ` created_at >= $1`
+			args = append(args, startDate)
+		}
+		if !endDate.IsZero() {
+			if !startDate.IsZero() {
+				baseQuery += ` AND`
+			}
+			baseQuery += ` created_at <= $` + fmt.Sprint(len(args)+1)
+			args = append(args, endDate)
+		}
+	}
+
+	q = baseQuery + ` ORDER BY created_at DESC`
+
+	var rows pgx.Rows
+	var err error
+	if len(args) > 0 {
+		rows, err = r.db.Query(ctx, q, args...)
+	} else {
+		rows, err = r.db.Query(ctx, q)
+	}
 	if err != nil {
 		return nil, err
 	}
