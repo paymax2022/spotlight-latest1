@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -16,10 +18,12 @@ import (
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	healthconsent "spotlight/backend/internal/health/consent"
 	healthlab "spotlight/backend/internal/health/lab"
 	healthrecords "spotlight/backend/internal/health/records"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/transport"
 )
@@ -65,6 +69,19 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		audit, // real immutable-audit sink injected by orchestrator (HL-12) — nil-safe
 	)
 
+	// Results vault sharing: consent via the shared consent module (HL-8), and
+	// signed report URLs via a records service that carries the R2 signer. An
+	// unconfigured R2 leaves signed URLs unavailable (503) — never a fabricated URL.
+	consentSvc := healthconsent.NewService(pool, nil)
+	vaultReadSvc := healthrecords.NewService(pool, consentSvc, r2CredentialSigner{p: r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	})}, nil)
+	svc.SetResultSharing(&labConsentAdapter{c: consentSvc}, &labVaultReaderAdapter{r: vaultReadSvc})
+
 	// Central Commission & Profit recording at the lab order settlement point
 	// (Release → escrow release). Best-effort + idempotent + nil-safe: constructed
 	// with a nil ledger so the earning row is appended WITHOUT re-posting to the
@@ -91,6 +108,12 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.GET("/labs", h.ListLabs)                      // discoverable MLSCN labs, nearest-first with lat/lng (HL-2)
 	lg.GET("/labs/:id", h.GetLab)
 	lg.GET("/labs/:id/reviews", h.ListLabReviews)
+	lg.GET("/results", h.ListResults)                // my released/escalated results (no values)
+	lg.GET("/results/shared", h.SharedResults)       // results others shared with me (HL-8 consent)
+	lg.GET("/results/:id", h.GetResult)              // detail: owner after acknowledgement, or consented grantee
+	lg.POST("/results/:id/consent", h.AcknowledgeResult)
+	lg.POST("/results/:id/share", h.ShareResult)     // grants LAB_RESULTS via the shared consent module
+	lg.GET("/results/:id/signed-url", h.ResultSignedURL)
 	lg.POST("/reviews", h.SubmitReview)              // verified-purchase review (released order, once)
 	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
 	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR641)
@@ -285,4 +308,36 @@ func (a *labVaultAdapter) Create(ctx context.Context, ownerID, createdBy, subjec
 		return "", err
 	}
 	return rec.ID, nil
+}
+
+// labConsentAdapter bridges the shared consent module for lab result sharing.
+type labConsentAdapter struct{ c *healthconsent.Service }
+
+func (a *labConsentAdapter) Grant(ctx context.Context, grantorID, granteeID, scope string, expiresAt *time.Time) (string, error) {
+	g, err := a.c.Grant(ctx, grantorID, granteeID, "", scope, expiresAt)
+	if err != nil {
+		return "", err
+	}
+	return g.ID, nil
+}
+
+func (a *labConsentAdapter) HasActiveGrant(ctx context.Context, granteeID, subjectOwnerID, scope string) (string, bool, error) {
+	return a.c.HasActiveGrant(ctx, granteeID, subjectOwnerID, scope)
+}
+
+// labVaultReaderAdapter resolves a result record's first document to a signed URL
+// through the records vault, which access-logs the read (HL-8/HL-12).
+type labVaultReaderAdapter struct{ r *healthrecords.Service }
+
+func (a *labVaultReaderAdapter) SignedDocURL(ctx context.Context, accessorID, recordID string) (string, error) {
+	rec, err := a.r.Get(ctx, accessorID, recordID, false)
+	if err != nil {
+		return "", err
+	}
+	for _, d := range rec.Docs {
+		if d.SignedURL != "" {
+			return d.SignedURL, nil
+		}
+	}
+	return "", errors.Join(healthlab.ErrSharingUnavailable, errors.New("document delivery is not configured"))
 }

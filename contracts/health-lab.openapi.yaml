@@ -52,6 +52,60 @@ paths:
         '400': { description: Invalid rating or body }
         '404': { description: Order missing or not yours (indistinguishable) }
         '409': { description: Order not yet released, or already reviewed }
+  /results:
+    get:
+      summary: My released or escalated results (summaries — never analyte values)
+      responses:
+        '200': { description: Results, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, results: { type: array, items: { $ref: '#/components/schemas/Result' } } } } } } }
+  /results/shared:
+    get:
+      summary: Released results other patients have shared with me (active LAB_RESULTS or ALL consent)
+      responses:
+        '200': { description: Results with shared_by set }
+  /results/{id}:
+    get:
+      summary: One result (id is the order id). The patient must have acknowledged first; a grantee needs an active consent grant.
+      description: A critical result still with the care team (HL-7) returns its escalation and analytes_withheld=true, never values. Every vault-backed read is appended to the HL-8 access log.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Result with analytes, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, result: { $ref: '#/components/schemas/Result' } } } } } }
+        '403': { description: Consent notice not yet acknowledged }
+        '404': { description: Missing, unreleased, or not yours (indistinguishable) }
+  /results/{id}/consent:
+    post:
+      summary: Acknowledge the HL-8 consent notice for a result (idempotent)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Acknowledged }
+        '404': { description: Missing, unreleased, or not yours }
+  /results/{id}/share:
+    post:
+      summary: Grant a Spotlight account access to my lab results for 1-365 days (default 30)
+      description: Uses the shared consent module (scope LAB_RESULTS), so the grant is listed under and revocable from consent settings. Re-sharing with an existing active grantee returns the same consent.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [grantee_email]
+              properties:
+                grantee_email: { type: string, format: email }
+                days: { type: integer, minimum: 1, maximum: 365 }
+      responses:
+        '201': { description: Granted }
+        '400': { description: Invalid email, duration, or sharing with yourself }
+        '404': { description: No Spotlight account for that email, or result not yours/unreleased }
+        '503': { description: Consent module unavailable }
+  /results/{id}/signed-url:
+    get:
+      summary: Short-lived signed URL for the report document
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: "{ url, expires_at }" }
+        '404': { description: No report document has been issued yet }
+        '503': { description: Document delivery (R2) not configured }
   /tests/{id}:
     get:
       summary: One active catalog test
@@ -94,6 +148,44 @@ components:
         rating: { type: number }
         review_count: { type: integer }
         credential: { $ref: '#/components/schemas/LabCredential' }
+    Result:
+      type: object
+      properties:
+        id: { type: string, format: uuid, description: The order id }
+        order_id: { type: string, format: uuid }
+        record_id: { type: string, format: uuid, nullable: true }
+        test_name: { type: string }
+        lab_name: { type: string }
+        status: { type: string, enum: [RELEASED, ESCALATED] }
+        released_by_name: { type: string }
+        released_at: { type: string, format: date-time }
+        collected_at: { type: string, format: date-time }
+        has_abnormal: { type: boolean }
+        has_critical: { type: boolean }
+        analytes_withheld: { type: boolean }
+        acknowledged: { type: boolean }
+        has_document: { type: boolean }
+        shared_by: { type: string }
+        analytes:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              value: { type: string }
+              unit: { type: string }
+              reference_range: { type: string }
+              flag: { type: string, enum: [normal, low, high, abnormal, critical], description: "Direction is inferred from value and range; 'abnormal' when it cannot be derived" }
+        escalation:
+          type: object
+          properties:
+            status: { type: string, enum: [pending, patient_notified, resolved] }
+            raised_at: { type: string, format: date-time }
+            analyte_name: { type: string }
+            steps:
+              type: array
+              items: { type: object, properties: { label: { type: string }, at: { type: string, format: date-time }, done: { type: boolean } } }
     Review:
       type: object
       properties:

@@ -107,6 +107,8 @@ type Service struct {
 	vault      RecordsVault
 	audit      Auditor
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	consent    ConsentGate        // optional; nil ⇒ result sharing is unavailable (503)
+	vaultRead  VaultReader        // optional; nil ⇒ signed report URLs are unavailable (503)
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, notify Notifier, vault RecordsVault, audit Auditor) *Service {

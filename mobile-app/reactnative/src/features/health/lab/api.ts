@@ -306,43 +306,6 @@ const MOCK_ORDERS: LabOrder[] = [
   },
 ];
 
-const MOCK_RESULTS: LabResult[] = [
-  {
-    id: 'lres_002',
-    orderId: 'lord_002',
-    testName: 'Lipid Profile',
-    labName: 'Clina-Lancet Labs',
-    status: 'ESCALATED',
-    releasedBy: 'J. Okafor, AMLSCN',
-    releasedAt: iso(-60 * 68),
-    collectedAt: iso(-60 * 70),
-    hasAbnormal: true,
-    hasCritical: true,
-    analytes: [
-      { id: 'a1', name: 'Total Cholesterol', value: '6.8', unit: 'mmol/L', referenceRange: '< 5.2', flag: 'high' },
-      { id: 'a2', name: 'HDL Cholesterol', value: '0.8', unit: 'mmol/L', referenceRange: '> 1.0', flag: 'low' },
-      { id: 'a3', name: 'LDL Cholesterol', value: '5.1', unit: 'mmol/L', referenceRange: '< 3.0', flag: 'high' },
-      { id: 'a4', name: 'Triglycerides', value: '11.2', unit: 'mmol/L', referenceRange: '< 1.7', flag: 'critical' },
-    ],
-    escalation: {
-      status: 'patient_notified',
-      raisedAt: iso(-60 * 68),
-      analyteName: 'Triglycerides',
-      notifiedClinician: 'Dr. Eze (on-call)',
-      steps: [
-        { label: 'Critical value detected by analyser', at: iso(-60 * 68), done: true },
-        { label: 'Scientist verified & flagged', at: iso(-60 * 67), done: true },
-        { label: 'On-call clinician notified', at: iso(-60 * 66), done: true },
-        { label: 'Patient contacted by care team', at: iso(-60 * 65), done: true },
-        { label: 'Follow-up consult scheduled', done: false },
-      ],
-    },
-    interpretation:
-      'Markedly elevated triglycerides (critical) with high LDL and low HDL — high cardiovascular and pancreatitis risk. Urgent clinical review advised; do not delay.',
-    docId: 'doc_lipid_002',
-  },
-];
-
 const MOCK_REVIEWS: LabReview[] = [
   { id: 'rev1', author: 'Tunde A.', rating: 5, body: 'Phlebotomist arrived on time, painless draw. Results next morning.', at: iso(-60 * 24 * 3) },
   { id: 'rev2', author: 'Ngozi K.', rating: 4, body: 'Good service. Wished the app showed live tracking sooner.', at: iso(-60 * 24 * 9) },
@@ -673,50 +636,65 @@ export async function reorder(orderId: string): Promise<LabOrderLineSeed[]> {
 type LabOrderLineSeed = { refId: string; kind: 'test' | 'package'; name: string; priceKobo: number };
 
 // ── Results (HL-8 consent-gated · HL-7 critical) ────────────────────────────
+function mapResult(raw: any): LabResult {
+  const esc = raw.escalation;
+  return {
+    id: raw.id,
+    orderId: raw.order_id ?? raw.id,
+    testName: raw.test_name ?? '',
+    labName: raw.lab_name ?? '',
+    status: raw.status === 'ESCALATED' ? 'ESCALATED' : 'RELEASED',
+    releasedBy: raw.released_by_name || undefined,
+    releasedAt: raw.released_at ?? undefined,
+    collectedAt: raw.collected_at ?? raw.released_at ?? new Date(0).toISOString(),
+    analytes: (raw.analytes ?? []).map((a: any) => ({
+      id: a.id, name: a.name ?? '', value: a.value ?? '', unit: a.unit ?? '',
+      referenceRange: a.reference_range ?? '', flag: a.flag ?? 'abnormal',
+    })),
+    hasAbnormal: raw.has_abnormal === true,
+    hasCritical: raw.has_critical === true,
+    analytesWithheld: raw.analytes_withheld === true,
+    escalation: esc
+      ? {
+          status: esc.status ?? 'pending',
+          raisedAt: esc.raised_at ?? '',
+          analyteName: esc.analyte_name ?? '',
+          steps: (esc.steps ?? []).map((s: any) => ({ label: s.label ?? '', at: s.at ?? undefined, done: s.done === true })),
+        }
+      : undefined,
+    docId: raw.has_document ? raw.record_id : undefined,
+  };
+}
+
+/** A result is one released order; its id is the order id. */
 export async function getResult(id: string): Promise<LabResult> {
-  if (USE_MOCK) {
-    await delay();
-    const r = MOCK_RESULTS.find((x) => x.id === id) ?? MOCK_RESULTS[0];
-    return r;
-  }
-  const { data } = await api.get<LabResult>(`${LAB_API}/results/${id}`);
-  return data;
+  const { data } = await api.get<{ result: unknown }>(`${LAB_API}/results/${id}`);
+  return mapResult(data.result);
 }
 
 export async function getResults(): Promise<LabResult[]> {
-  if (USE_MOCK) {
-    await delay();
-    return MOCK_RESULTS;
-  }
-  const { data } = await api.get<LabResult[]>(`${LAB_API}/results`);
-  return data;
+  const { data } = await api.get<{ results?: unknown[] }>(`${LAB_API}/results`);
+  return (data.results ?? []).map(mapResult);
 }
 
-/** HL-8: explicit consent before the result body is fetched/decrypted. */
+/** HL-8: records the patient's consent acknowledgement; the server refuses the detail read without it. */
 export async function acknowledgeResultConsent(resultId: string): Promise<{ acknowledged: boolean }> {
-  if (USE_MOCK) {
-    await delay();
-    return { acknowledged: true };
-  }
   const { data } = await api.post<{ acknowledged: boolean }>(`${LAB_API}/results/${resultId}/consent`, {});
-  return data;
+  return { acknowledged: data.acknowledged === true };
 }
 
+/** Short-lived signed URL for the report document; 404 until a report has been issued. */
 export async function getResultSignedUrl(resultId: string): Promise<{ url: string; expiresAt: string }> {
-  if (USE_MOCK) {
-    await delay();
-    return { url: `mock://signed/${resultId}.pdf`, expiresAt: iso(5) };
-  }
-  const { data } = await api.get<{ url: string; expiresAt: string }>(`${LAB_API}/results/${resultId}/signed-url`);
-  return data;
+  const { data } = await api.get<{ url: string; expires_at: string }>(`${LAB_API}/results/${resultId}/signed-url`);
+  return { url: data.url, expiresAt: data.expires_at };
 }
 
+/** Grants the recipient's Spotlight account read access via the shared, revocable consent module. */
 export async function shareResult(input: ShareResultInput): Promise<{ ok: true }> {
-  if (USE_MOCK) {
-    await delay();
-    return { ok: true };
-  }
-  await api.post(`${LAB_API}/results/${input.resultId}/share`, input);
+  await api.post(`${LAB_API}/results/${input.resultId}/share`, {
+    grantee_email: input.granteeEmail,
+    ...(input.days ? { days: input.days } : {}),
+  });
   return { ok: true };
 }
 
@@ -948,7 +926,7 @@ export async function accessionSample(input: AccessionInput): Promise<{ ok: true
 // deriveEffectiveStatus upgrade, so a client-side estimate here can never
 // under-escalate a real critical value.
 const FLAG_TO_STATUS: Record<AnalyteFlag, 'NORMAL' | 'ABNORMAL' | 'CRITICAL'> = {
-  normal: 'NORMAL', low: 'ABNORMAL', high: 'ABNORMAL', critical: 'CRITICAL',
+  normal: 'NORMAL', low: 'ABNORMAL', abnormal: 'ABNORMAL', high: 'ABNORMAL', critical: 'CRITICAL',
 };
 
 export async function enterResult(input: ResultEntryInput): Promise<LabResult> {

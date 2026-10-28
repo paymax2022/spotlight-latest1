@@ -147,7 +147,8 @@ export interface LabOrder {
 }
 
 // ── Results (HL-7 critical flag · HL-8 consent-gated) ─────────────────────────
-export type AnalyteFlag = 'normal' | 'low' | 'high' | 'critical';
+/** 'abnormal' = out of range but the direction could not be derived from the stored range. */
+export type AnalyteFlag = 'normal' | 'low' | 'high' | 'abnormal' | 'critical';
 
 export interface ResultAnalyte {
   id: string;
@@ -184,8 +185,10 @@ export interface LabResult {
   hasCritical: boolean;
   escalation?: CriticalEscalation;
   interpretation?: string;
-  /** Signed-URL PDF fetched on demand (HL-8). */
+  /** Signed-URL PDF fetched on demand (HL-8). Set only when a report document exists. */
   docId?: string;
+  /** HL-7: values are withheld while a critical result is still with the care team. */
+  analytesWithheld?: boolean;
 }
 
 export interface ResultConsent {
@@ -220,8 +223,10 @@ export interface CreateOrderInput {
 
 export interface ShareResultInput {
   resultId: string;
-  granteeName: string;
-  scopeNote?: string;
+  /** Email of the recipient's Spotlight account — consent is granted to an account. */
+  granteeEmail: string;
+  /** How long access lasts, 1-365 days (server default 30). */
+  days?: number;
 }
 
 export type ProviderOnboardingStatus =
