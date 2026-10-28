@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -12,11 +12,25 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import { ID_TYPES } from '@/features/kycverify/constants';
 import { kycVerifyDraft } from '@/features/kycverify/draft';
-import type { IdType } from '@/features/kycverify/types';
+import { useUsedIdTypes } from '@/features/kycverify/hooks';
+import type { IdType, KycTier } from '@/features/kycverify/types';
 
 /** K4 — ID type select (BVN/NIN and, where allowed, passport/licence). */
 export default function KycIdTypeScreen() {
   const [idType, setIdType] = useState<IdType>(kycVerifyDraft.current.idType);
+
+  // A higher tier is verified with a DIFFERENT ID than the one already used —
+  // offer only ID types that have not passed at a lower tier.
+  const targetTier = kycVerifyDraft.current.targetTier as KycTier;
+  const used = useUsedIdTypes(targetTier);
+  const usedTypes = used.data ?? [];
+  const options = ID_TYPES.filter((o) => !usedTypes.includes(o.value.toLowerCase()));
+  const usedLabels = ID_TYPES.filter((o) => usedTypes.includes(o.value.toLowerCase())).map((o) => o.value);
+
+  useEffect(() => {
+    if (options.length > 0 && !options.some((o) => o.value === idType)) setIdType(options[0].value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [used.data]);
 
   // Consent gate — cannot reach any check screen without recorded consent.
   if (!kycVerifyDraft.current.consentGiven || !kycVerifyDraft.current.sessionId) {
@@ -44,9 +58,14 @@ export default function KycIdTypeScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Choose ID type" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <Text style={styles.intro}>Which government ID would you like to verify with?</Text>
+        <Text style={styles.intro}>
+          {usedLabels.length
+            ? `You've already verified with your ${usedLabels.join(' and ')}. Choose a different ID for Tier ${targetTier}.`
+            : 'Which government ID would you like to verify with?'}
+        </Text>
+        {targetTier > 1 && used.isPending ? <StateView kind="loading" message="Checking your previous verification…" /> : null}
         <View style={styles.list}>
-          {ID_TYPES.map((opt) => {
+          {(targetTier > 1 && used.isPending ? [] : options).map((opt) => {
             const selected = idType === opt.value;
             return (
               <Pressable
@@ -70,7 +89,7 @@ export default function KycIdTypeScreen() {
       </ScrollView>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>
-        <PrimaryButton label="Continue" onPress={next} />
+        <PrimaryButton label="Continue" onPress={next} disabled={options.length === 0 || (targetTier > 1 && used.isPending)} />
       </SafeAreaView>
     </SafeAreaView>
   );

@@ -968,6 +968,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		kvGroup.GET("/me", kycHandler.GetMe)
 		kvGroup.POST("/session", kvHandler.StartSession)
 		kvGroup.GET("/session/:id", kvHandler.GetSession)
+		kvGroup.GET("/ids/used", kvHandler.UsedIDTypes)
 		kvGroup.POST("/consent", kvHandler.RecordConsent)
 		kvGroup.POST("/checks/id-number", kvHandler.CheckIDNumber)
 		kvGroup.POST("/checks/facial", kvHandler.CheckFacial)

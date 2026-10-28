@@ -214,6 +214,15 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 	if req.ClientRef == "" {
 		return nil, ErrInvalidRequest
 	}
+
+	// A higher tier must add independent evidence: refuse an ID type that already
+	// passed for a lower tier, before a check row is created or a provider called.
+	if ct == provider.KycIDNumber {
+		if err := s.guardIDTypeReuse(ctx, userID, sess.TargetTier, req.IDType); err != nil {
+			return nil, err
+		}
+	}
+
 	req.UserID = userID
 	req.Type = ct
 
