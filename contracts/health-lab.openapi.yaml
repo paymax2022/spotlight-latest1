@@ -9,6 +9,9 @@ info:
     behind the finance auth chain and FeatureHealthLabEnabled.
 servers:
   - url: /api/finance/health/lab
+security:
+  - bearerAuth: []
+
 paths:
   /labs:
     get:
@@ -51,7 +54,7 @@ paths:
         '201': { description: Created }
         '400': { description: Invalid rating or body }
         '404': { description: Order missing or not yours (indistinguishable) }
-        '409': { description: Order not yet released, or already reviewed }
+        '409': { description: "Order not yet released, or already reviewed" }
   /results:
     get:
       summary: My released or escalated results (summaries — never analyte values)
@@ -70,14 +73,14 @@ paths:
       responses:
         '200': { description: Result with analytes, content: { application/json: { schema: { type: object, properties: { success: { type: boolean }, result: { $ref: '#/components/schemas/Result' } } } } } }
         '403': { description: Consent notice not yet acknowledged }
-        '404': { description: Missing, unreleased, or not yours (indistinguishable) }
+        '404': { description: "Missing, unreleased, or not yours (indistinguishable)" }
   /results/{id}/consent:
     post:
       summary: Acknowledge the HL-8 consent notice for a result (idempotent)
       parameters: [ { $ref: '#/components/parameters/Id' } ]
       responses:
         '200': { description: Acknowledged }
-        '404': { description: Missing, unreleased, or not yours }
+        '404': { description: "Missing, unreleased, or not yours" }
   /results/{id}/share:
     post:
       summary: Grant a Spotlight account access to my lab results for 1-365 days (default 30)
@@ -95,8 +98,8 @@ paths:
                 days: { type: integer, minimum: 1, maximum: 365 }
       responses:
         '201': { description: Granted }
-        '400': { description: Invalid email, duration, or sharing with yourself }
-        '404': { description: No Spotlight account for that email, or result not yours/unreleased }
+        '400': { description: "Invalid email, duration, or sharing with yourself" }
+        '404': { description: "No Spotlight account for that email, or result not yours/unreleased" }
         '503': { description: Consent module unavailable }
   /results/{id}/signed-url:
     get:
@@ -171,7 +174,7 @@ paths:
       responses:
         '200': { description: Updated }
         '400': { description: Unknown status or bad coordinates }
-        '404': { description: Not your order, already claimed by a colleague, or missing (indistinguishable) }
+        '404': { description: "Not your order, already claimed by a colleague, or missing (indistinguishable)" }
         '409': { description: Order is no longer SCHEDULED }
   /phlebotomist/assignments/{id}/checklist:
     get:
@@ -192,7 +195,7 @@ paths:
               type: object
               required: [barcode, condition_ok, completed_items]
               properties:
-                barcode: { type: string, description: 6-32 letters, digits or dashes }
+                barcode: { type: string, description: "6-32 letters, digits or dashes" }
                 condition_ok: { type: boolean }
                 note: { type: string }
                 completed_items: { type: array, items: { type: string } }
@@ -200,7 +203,7 @@ paths:
         '201': { description: "{ sample_id, breach }" }
         '400': { description: Malformed barcode or checklist incomplete }
         '404': { description: Not your order }
-        '409': { description: Barcode mismatch on a re-scan, or barcode already on another sample }
+        '409': { description: "Barcode mismatch on a re-scan, or barcode already on another sample" }
   /phlebotomist/assignments/{id}/drop-off:
     post:
       summary: Hand the sample to the lab accession desk. The scanned barcode must match the sample of record; custody passes to the lab owner.
@@ -227,7 +230,7 @@ paths:
       parameters: [ { $ref: '#/components/parameters/Id' } ]
       responses:
         '200': { description: Phlebotomist }
-        '404': { description: Not assigned yet, or not your order }
+        '404': { description: "Not assigned yet, or not your order" }
   /tests/{id}:
     get:
       summary: One active catalog test
@@ -243,6 +246,8 @@ paths:
         '200': { description: Package }
         '404': { description: Not found or inactive }
 components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   parameters:
     Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
   schemas:

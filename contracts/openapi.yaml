@@ -63,7 +63,7 @@ components:
         status_reason: { type: string }
         status_changed_at: { type: string, format: date-time }
         status_changed_by: { type: string, format: uuid }
-        legal_hold: { type: boolean, description: Blocks deletion/purge paths (account PII scrub, household delete, hard estate delete) }
+        legal_hold: { type: boolean, description: "Blocks deletion/purge paths (account PII scrub, household delete, hard estate delete)" }
         legal_hold_reason: { type: string }
         created_at: { type: string, format: date-time }
     EstateImportRequest:
@@ -116,7 +116,7 @@ components:
         estate_id: { type: string, format: uuid }
         source_ref: { type: string }
         status: { type: string, enum: [dry_run, committed] }
-        summary: { type: object, description: Per-entity counts (received/insert/update/link/unchanged/error), opening_balance_total_kobo, control-total verdict, destination aggregates }
+        summary: { type: object, description: "Per-entity counts (received/insert/update/link/unchanged/error), opening_balance_total_kobo, control-total verdict, destination aggregates" }
         exceptions:
           type: array
           items:
@@ -10156,7 +10156,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/OrganiserPayout' }
-        '404': { description: Payout not found, or owned by a different organiser }
+        '404': { description: "Payout not found, or owned by a different organiser" }
 
   # ── Events social (FEATURE_EVENTS_SOCIAL) — likes, organiser follows and profiles ──
   # Moves no money: no ledger posting, no Idempotency-Key. Like/follow are idempotent
