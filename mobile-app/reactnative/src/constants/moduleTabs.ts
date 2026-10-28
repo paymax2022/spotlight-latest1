@@ -28,6 +28,13 @@ export const CROWDFUNDING_TABS: readonly ModuleTab[] = [
   { href: '/crowdfunding/contributions',  label: 'Backed',   icon: HandCoins },
 ] as const;
 
+/** Contest registration — entering a contest and following its applications. */
+export const REGISTRATION_TABS: readonly ModuleTab[] = [
+  { href: '/voting',                    label: 'Contests',     icon: Trophy },
+  { href: '/registration',              label: 'Register',     icon: ClipboardList },
+  { href: '/registration/applications', label: 'Applications', icon: FileText },
+] as const;
+
 /** Film academy — the applicant/student journey. */
 export const FILM_ACADEMY_TABS: readonly ModuleTab[] = [
   { href: '/film-academy',             label: 'Overview',    icon: GraduationCap },
