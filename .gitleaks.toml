@@ -32,6 +32,7 @@ paths = [
     '''^\.agentwork/''',              # archived agent worktrees (duplicate .history trees + test fixtures)
     '''^frontend-web/\.next/''',      # committed Next.js build output (build-time encryption keys, not external creds)
     '''^frontend-web/\.npm-cache/''', # npm cacache blobs (dependency-shipped test private key)
+    '''^backend/internal/crypto/service_test\.go$''', # removed file from revert commit 72f149a04; contained test idempotency key fixture flagged as generic-api-key
 
     # -- Test fixtures (fake credentials asserted in unit tests) -----------
     '''^backend/internal/config/validate_test\.go$''',            # fake Paystack/Monnify keys for config validation
