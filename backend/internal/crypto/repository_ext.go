@@ -15,6 +15,17 @@ import (
 // through these transactional methods (asset-unit legs); the cash legs live in the
 // finance ledger and are posted by the service.
 
+// swapInitialStatus is the status a swap order is first recorded with. A swap
+// confirmed with the provider (Quidax) carries a swap_transaction_id and is
+// 'executing' until the webhook reports the outcome; an internal swap has no
+// provider leg and is 'filled'.
+func swapInitialStatus(o SwapOrder) string {
+	if o.SwapTransactionID != "" {
+		return "executing"
+	}
+	return "filled"
+}
+
 // RecordSwapFill atomically writes the swap order row and moves BOTH holding
 // projections in ONE transaction: from-asset units decrement (CHECK units>=0
 // fail-closes an oversell) and to-asset units increment. ON CONFLICT on the
@@ -29,15 +40,18 @@ func (r *Repository) RecordSwapFill(ctx context.Context, o SwapOrder) (string, b
 
 	const insOrder = `INSERT INTO crypto_swap_orders
 		(user_id, from_asset_id, to_asset_id, status, from_units, to_units,
-		 from_price_kobo, to_price_kobo, cash_kobo, spread_kobo, spread_bps, idempotency_key, reference)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		 from_price_kobo, to_price_kobo, cash_kobo, spread_kobo, spread_bps, idempotency_key, reference,
+		 quotation_id, swap_transaction_id, provider_status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+		        NULLIF($14,''), NULLIF($15,''), NULLIF($16,''))
 		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
 		RETURNING id`
 	var orderID string
 	err = tx.QueryRow(ctx, insOrder,
-		o.UserID, o.FromAssetID, o.ToAssetID, "filled", o.FromUnits, o.ToUnits,
+		o.UserID, o.FromAssetID, o.ToAssetID, swapInitialStatus(o), o.FromUnits, o.ToUnits,
 		o.FromPriceKobo, o.ToPriceKobo, o.CashKobo, o.SpreadKobo, o.SpreadBps,
 		o.IdempotencyKey(), o.Reference,
+		o.QuotationID, o.SwapTransactionID, o.ProviderStatus,
 	).Scan(&orderID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if e := tx.QueryRow(ctx,
@@ -509,7 +523,8 @@ func (r *Repository) GetSwapOrder(ctx context.Context, orderID string) (*SwapOrd
 		       o.status, o.from_units, o.to_units, o.from_price_kobo, o.to_price_kobo,
 		       o.cash_kobo, o.spread_kobo, o.spread_bps, COALESCE(o.reference, ''), o.created_at,
 		       COALESCE(o.quotation_id, ''), COALESCE(o.swap_transaction_id, ''),
-		       COALESCE(o.provider_status, ''), o.ledger_settled, o.settled_at
+		       COALESCE(o.provider_status, ''), o.ledger_settled, o.settled_at,
+		       COALESCE(o.idempotency_key, '')
 		FROM crypto_swap_orders o
 		JOIN crypto_assets fa ON fa.id = o.from_asset_id
 		JOIN crypto_assets ta ON ta.id = o.to_asset_id
@@ -522,7 +537,7 @@ func (r *Repository) GetSwapOrder(ctx context.Context, orderID string) (*SwapOrd
 		&o.Status, &o.FromUnits, &o.ToUnits, &o.FromPriceKobo, &o.ToPriceKobo,
 		&o.CashKobo, &o.SpreadKobo, &o.SpreadBps, &o.Reference, &o.CreatedAt,
 		&o.QuotationID, &o.SwapTransactionID, &o.ProviderStatus,
-		&o.LedgerSettled, &settledAt,
+		&o.LedgerSettled, &settledAt, &o.idem,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // Not found

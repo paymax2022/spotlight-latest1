@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -383,7 +384,7 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 	o.ID = orderID
 
 	if dup {
-		o.Status = "filled"
+		o.Status = swapInitialStatus(o)
 		return &o, nil
 	}
 	// 3) Snapshot both quotes + audit (audit failure fatal for a money mutation).
@@ -396,7 +397,9 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 		}); err != nil {
 		return nil, err
 	}
-	o.Status = "filled"
+	// Quidax-confirmed swaps are 'executing' (RecordSwapFill stored that status)
+	// until the webhook reports the outcome; internal swaps are 'filled'.
+	o.Status = swapInitialStatus(o)
 	return &o, nil
 }
 
@@ -984,62 +987,102 @@ func (s *Service) ensureSwapAudit(ctx context.Context, o *SwapOrder) error {
 		})
 }
 
+// normalizeProviderSwapStatus maps a Quidax-reported swap status onto the
+// order status machine. Only terminal outcomes are accepted; anything else is
+// rejected so an unexpected provider value can never reach the status CHECK.
+func normalizeProviderSwapStatus(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "completed", "complete", "success", "successful", "done":
+		return "completed", nil
+	case "failed", "failure", "rejected", "cancelled", "canceled":
+		return "failed", nil
+	}
+	return "", fmt.Errorf("crypto: unsupported provider swap status %q: %w", raw, ErrBadRequest)
+}
+
 // UpdateSwapOrderStatusFromWebhook is called by the webhook handler (CR-013)
-// when Quidax reports a swap completion/failure event. It updates the order
-// status from "executing" to the Quidax-reported value (completed/failed/etc).
-// Idempotent: multiple identical events are safe (update to same status is no-op).
-// Returns ErrNotFound if swap_transaction_id doesn't match an existing order.
+// when Quidax reports a swap completion/failure event. It moves the order from
+// 'filled'/'executing' to the normalised terminal status (completed/failed)
+// and, on completion, finalises the ledger via SettleSwapOrderLedger.
+//
+// Idempotent and self-healing: a replayed event finds the order already in the
+// target status and still runs settlement if an earlier delivery crashed
+// between the status update and the settlement (settlement itself is a no-op
+// once ledger_settled is set). A terminal order never moves to a different
+// terminal status. Returns ErrNotFound if no order has this swap_transaction_id.
 func (s *Service) UpdateSwapOrderStatusFromWebhook(ctx context.Context, swapTransactionID, finalStatus string) error {
 	if swapTransactionID == "" || finalStatus == "" {
 		return ErrBadRequest
 	}
+	target, err := normalizeProviderSwapStatus(finalStatus)
+	if err != nil {
+		return err
+	}
 
-	// Validate the status is a known value (prevent SQL injection via status param).
-	// Quidax reports: "completed", "failed", and possibly others.
-	// We accept any non-empty status but could restrict to a known set if needed.
-	// For now: accept as-is and store for audit.
 	const q = `
 		UPDATE crypto_swap_orders
-		SET status = $2, updated_at = now()
-		WHERE swap_transaction_id = $1 AND status = 'executing'
-		RETURNING id, user_id, status
+		SET status = $2, provider_status = $3
+		WHERE swap_transaction_id = $1 AND status IN ('filled', 'executing')
+		RETURNING id, user_id
 	`
-	var orderID, userID, newStatus string
-	err := s.db.QueryRow(ctx, q, swapTransactionID, finalStatus).Scan(&orderID, &userID, &newStatus)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// No order found with this swap_transaction_id in "executing" state.
-			// Could mean: already processed, never started, or bogus swap_transaction_id.
-			// Log but return success to Quidax to prevent webhook retry storms.
-			return fmt.Errorf("crypto: swap order not found or already terminal: %w", ErrNotFound)
+	var orderID, userID string
+	err = s.db.QueryRow(ctx, q, swapTransactionID, target, finalStatus).Scan(&orderID, &userID)
+	switch {
+	case err == nil:
+		// Audit the status update (best effort: the order is already updated).
+		if aerr := s.audit.log(ctx, userID, "crypto.swap_status_updated", "crypto_swap_order", orderID, "",
+			nil, map[string]any{
+				"swap_transaction_id": swapTransactionID,
+				"final_status":        target,
+				"provider_status":     finalStatus,
+			}); aerr != nil {
+			fmt.Printf("[crypto] audit log failed for swap status update: %v\n", aerr)
 		}
+	case errors.Is(err, pgx.ErrNoRows):
+		// Not in an updatable state: replay, already terminal, or unknown id.
+		var cur string
+		if qerr := s.db.QueryRow(ctx,
+			`SELECT id, status FROM crypto_swap_orders WHERE swap_transaction_id = $1`,
+			swapTransactionID).Scan(&orderID, &cur); qerr != nil {
+			if errors.Is(qerr, pgx.ErrNoRows) {
+				return fmt.Errorf("crypto: swap order not found for swap_transaction_id: %w", ErrNotFound)
+			}
+			return fmt.Errorf("crypto: lookup swap order: %w", qerr)
+		}
+		if cur != target {
+			return fmt.Errorf("crypto: swap order %s is %q; refusing transition to %q: %w",
+				orderID, cur, target, ErrBadRequest)
+		}
+	default:
 		return fmt.Errorf("crypto: update swap status: %w", err)
 	}
 
-	// Audit the status update.
-	err = s.audit.log(ctx, userID, "crypto.swap_status_updated", "crypto_swap_order", orderID, "",
-		nil, map[string]any{
-			"swap_transaction_id": swapTransactionID,
-			"final_status":        finalStatus,
-		})
-	if err != nil {
-		// Log audit failure but don't fail the request (the order is already updated).
-		fmt.Printf("[crypto] audit log failed for swap status update: %v\n", err)
+	if target == "completed" {
+		if err := s.SettleSwapOrderLedger(ctx, orderID); err != nil {
+			return fmt.Errorf("crypto: settle swap %s: %w", orderID, err)
+		}
 	}
-
 	return nil
 }
 
-// SettleSwapOrderLedger is called by CR-014 settlement processor to post final
-// double-entry journals when a swap order reaches terminal status (completed/failed).
-// Idempotent: calling multiple times with same order is safe (ledger posts are keyed).
-// Returns nil if already settled; ErrNotFound if order not found.
+// SettleSwapOrderLedger finalises a completed swap order in the ledger.
+//
+// The double-entry legs for a swap are posted up-front by Swap() (idempotency
+// keyed, atomic with the order record): sell A escrow->wallet, buy B
+// wallet->escrow (gross), spread escrow->revenue. They balance by
+// construction, so posting them again here would double-count. Settlement
+// therefore VERIFIES the buy leg is durably posted (fail-closed: an order with
+// no ledger legs is never marked settled), then flips ledger_settled and emits
+// the audit event.
+//
+// Idempotent: returns nil if already settled; ErrNotFound if the order is
+// missing. Failed orders are rejected here (their holdings/ledger unwind is a
+// separate flow) so ledger_settled never marks a failed swap as reconciled.
 func (s *Service) SettleSwapOrderLedger(ctx context.Context, orderID string) error {
 	if orderID == "" {
 		return ErrBadRequest
 	}
 
-	// Look up the order.
 	order, err := s.repo.GetSwapOrder(ctx, orderID)
 	if err != nil {
 		return err
@@ -1047,41 +1090,37 @@ func (s *Service) SettleSwapOrderLedger(ctx context.Context, orderID string) err
 	if order == nil {
 		return ErrNotFound
 	}
-
-	// Skip if already settled.
 	if order.LedgerSettled {
 		return nil
 	}
-
-	// Only settle terminal statuses (completed or failed).
-	// "executing" and "pending" are intermediate states waiting for webhook.
-	if order.Status != "completed" && order.Status != "failed" {
-		return fmt.Errorf("crypto: cannot settle order in status %q (not terminal)", order.Status)
+	if order.Status != "completed" {
+		return fmt.Errorf("crypto: cannot settle order in status %q (want completed)", order.Status)
 	}
 
-	// For completed orders: the swap execution already moved money through the ledger
-	// via the Swap() method (CR-012). Settlement just marks the order as finalized
-	// in our records. The ledger entries are already posted:
-	//   - Sell leg: escrow → wallet (CREDIT) for the gross cash from selling the asset
-	//   - Buy leg: wallet → escrow (DEBIT) for the full amount (net + spread)
-	//   - Spread leg: escrow → revenue for the retained fee
-	// Settlement here just confirms finalization.
-	//
-	// For failed orders: the swap was rejected, no ledger entries were posted.
-	// Settlement marks failure in our records.
+	// Verify the swap's cash legs exist before declaring the ledger settled.
+	if key := order.IdempotencyKey(); key != "" {
+		posted, perr := s.led.Posted(ctx, key+":buy")
+		if perr != nil {
+			return fmt.Errorf("crypto: verify ledger legs: %w", perr)
+		}
+		if !posted {
+			return fmt.Errorf("crypto: swap %s has no posted ledger legs; refusing to settle", orderID)
+		}
+	}
 
-	// Mark order as settled.
 	now := time.Now().UTC()
 	if err := s.repo.MarkSwapOrderSettled(ctx, orderID, &now); err != nil {
 		return fmt.Errorf("crypto: mark settled: %w", err)
 	}
 
-	// Audit the settlement.
-	if err := s.audit.log(ctx, order.UserID, "crypto.swap_settled", "crypto_swap_order", orderID, "",
+	if err := s.audit.log(ctx, order.UserID, "crypto.settlement.completed", "crypto_swap_order", orderID, "",
 		nil, map[string]any{
-			"status":       order.Status,
-			"cash_kobo":    order.CashKobo,
-			"spread_kobo":  order.SpreadKobo,
+			"status":      order.Status,
+			"from_units":  order.FromUnits,
+			"to_units":    order.ToUnits,
+			"cash_kobo":   order.CashKobo,
+			"spread_kobo": order.SpreadKobo,
+			"settled_at":  now.Format(time.RFC3339),
 		}); err != nil {
 		fmt.Printf("[crypto] audit log failed for swap settlement: %v\n", err)
 	}

@@ -160,14 +160,27 @@ func TestCryptoLoadSwapPipeline(t *testing.T) {
 				return
 			}
 			s.swapOK = true
-			// Settlement by polling the owner-scoped settlement read.
+			// Deliver the Quidax completion webhook (executing -> completed ->
+			// ledger settled), as the provider callback does in production.
 			t2 := time.Now()
+			if err := svc.UpdateSwapOrderStatusFromWebhook(ctx, o.SwapTransactionID, "completed"); err != nil {
+				s.settleErr = fmt.Errorf("webhook completion: %w", err)
+				return
+			}
+			// Settlement by polling the owner-scoped settlement read.
 			deadline := t2.Add(5 * time.Second)
 			for {
 				st, err := svc.SwapSettlement(ctx, uid[i], o.ID)
-				if err == nil {
-					s.settledFlag = st.LedgerSettled
+				if err == nil && st.LedgerSettled {
+					s.settledFlag = true
 					break
+				}
+				if err == nil {
+					if time.Now().After(deadline) {
+						break // leave settledFlag false; asserted below
+					}
+					time.Sleep(20 * time.Millisecond)
+					continue
 				}
 				// Only "not yet visible" is retried; schema/SQL errors are final.
 				if !errors.Is(err, crypto.ErrNotFound) || time.Now().After(deadline) {
@@ -188,7 +201,7 @@ func TestCryptoLoadSwapPipeline(t *testing.T) {
 	// CSV
 	var sb strings.Builder
 	sb.WriteString("order_id,quote_latency_ms,swap_latency_ms,settlement_latency_ms,ledger_settled_flag,error\n")
-	ok, failures, settleFails := 0, []string{}, 0
+	ok, failures, settleFails, unsettled := 0, []string{}, 0, 0
 	var settleSample error
 	for _, s := range samples {
 		e := ""
@@ -197,6 +210,9 @@ func TestCryptoLoadSwapPipeline(t *testing.T) {
 			failures = append(failures, fmt.Sprintf("#%d %v", s.idx, s.err))
 		} else {
 			ok++
+			if s.settleErr == nil && !s.settledFlag {
+				unsettled++
+			}
 		}
 		if s.settleErr != nil {
 			settleFails++
@@ -276,6 +292,19 @@ func TestCryptoLoadSwapPipeline(t *testing.T) {
 	t.Logf("settlement read failures=%d/%d sample=%v", settleFails, ok, settleSample)
 	if settleFails > 0 {
 		t.Errorf("settlement polling failed for %d/%d swaps: %v", settleFails, ok, settleSample)
+	}
+	if unsettled > 0 {
+		t.Errorf("%d/%d successful swaps not ledger-settled after webhook; all swaps must be settled", unsettled, ok)
+	}
+	// Reconciliation dashboard must count the settled swaps (B3): completed +
+	// ledger_settled orders are reconciled, none may drift.
+	if rep, err := svc.ReconcileSwapOrders(ctx, false, time.Time{}, time.Time{}); err != nil {
+		t.Errorf("reconcile: %v", err)
+	} else {
+		t.Logf("RECON %s", rep.Summary)
+		if rep.ReconcilledOrders < ok-settleFails-unsettled || rep.ReconcilledOrders == 0 {
+			t.Errorf("reconciliation shows %d reconciled orders, want >= %d settled swaps", rep.ReconcilledOrders, ok-settleFails-unsettled)
+		}
 	}
 	if len(failures) > 0 {
 		t.Errorf("%d/%d swaps failed: %v", len(failures), users, failures)
