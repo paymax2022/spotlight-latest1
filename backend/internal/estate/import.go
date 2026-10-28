@@ -827,6 +827,16 @@ func applyImport(ctx context.Context, tx dbtx, estateID, batchID string, p *impo
 // "who is in this unit" register see only what the app recorded natively. Recorded as a defect rather
 // than silently accepted.
 func applyOccupancy(ctx context.Context, tx dbtx, unitID, userID, relationship string, fillOnly bool) error {
+	// Residency: an owner or tenant assigned to a unit is an estate resident (the same rule as the
+	// occupancy admit and the resident backfill). Promotion-only: a banned or removed membership is left alone.
+	if relationship == "owner" || relationship == "tenant" {
+		if _, err := tx.Exec(ctx, `INSERT INTO estate_residents (estate_id, user_id, unit, role)
+			SELECT p.estate_id, $2, btrim(COALESCE(p.block, '') || ' ' || COALESCE(p.floor, '') || ' ' || p.unit_label), 'resident'
+			FROM estate_properties p WHERE p.id = $1
+			ON CONFLICT (estate_id, user_id) DO NOTHING`, unitID, userID); err != nil {
+			return err
+		}
+	}
 	var q string
 	switch relationship {
 	case "owner":
