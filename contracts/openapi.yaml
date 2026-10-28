@@ -44,6 +44,30 @@ components:
         within 24 hours return the cached response without side effects.
 
   schemas:
+    OrderReconciliationRow:
+      type: object
+      properties:
+        order_id: { type: string }
+        user_id: { type: string }
+        status: { type: string }
+        ledger_settled: { type: boolean }
+        swap_transaction_id: { type: string }
+        provider_status: { type: string }
+        settled_at: { type: string, format: date-time, nullable: true }
+        drift: { type: string }
+    ReconciliationReport:
+      description: Swap-order drift report (ledger_settled vs order status). Read-only.
+      type: object
+      properties:
+        run_at: { type: string, format: date-time }
+        total_orders: { type: integer }
+        reconcilled_orders: { type: integer }
+        drift_orders: { type: integer }
+        failed_orders: { type: integer }
+        orders:
+          type: array
+          items: { $ref: '#/components/schemas/OrderReconciliationRow' }
+        summary: { type: string }
     SuccessResponse:
       description: Generic success acknowledgement for state-transition/action endpoints with no payload.
       type: object
@@ -4683,6 +4707,26 @@ security:
 # ── KYC endpoints ─────────────────────────────────────────────────────────────
 
 paths:
+  /api/v1/admin/crypto/reconciliation/swaps:
+    get:
+      operationId: adminCryptoReconciliationSwaps
+      summary: 'Admin: crypto swap-order reconciliation report (RBAC crypto admin; read-only)'
+      parameters:
+        - name: details
+          in: query
+          schema: { type: boolean }
+        - name: start_date
+          in: query
+          schema: { type: string, format: date-time }
+        - name: end_date
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Reconciliation report
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReconciliationReport' }
   # PASSWORD RESET is an emailed one-time code in three steps. There is NO reset link.
   /api/auth/request-password-reset:
     post:

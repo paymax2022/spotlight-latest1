@@ -758,7 +758,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureFXOrchestrationEnabled {
 		orchStore := orchestration.NewSQLStore(pool)
 
-		providers := buildFXProviders(&cfg)
+		providers, fxErr := buildFXProviders(&cfg)
+		if fxErr != nil {
+			log.Fatalf("[finance] FATAL: FX orchestration enabled but %v (APP_ENV=%q)", fxErr, cfg.AppEnv)
+		}
 		// Spread rule card comes from public.fx_markup_rates — the SAME table the
 		// legacy wallet FX service prices from — so one admin change at
 		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-032).

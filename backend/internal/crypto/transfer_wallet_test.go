@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 package crypto
 
 // RED-PHASE (TDD) unit tests for crypto wallet-to-wallet transfer

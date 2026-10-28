@@ -228,3 +228,27 @@ func TestEversend_Webhook_SignatureVerification(t *testing.T) {
 		t.Fatal("deterministic adapter must fail closed")
 	}
 }
+
+func TestEversendLive_ExecuteConversion_RateMovedAdverselyRejected(t *testing.T) {
+	c := &evsCapture{}
+	c.quoteRate.Store(1490.0) // ~67 bps below the 1500 promised to the customer
+	srv := evsServer(t, c)
+	defer srv.Close()
+	q := &orch.Quote{Source: orch.NewMoney(100000, "USD"), Destination: orch.NewMoney(150000000, "NGN"), AllInRate: 1500}
+	if _, err := newEvsLive(srv, false).ExecuteConversion(context.Background(), q, "k"); err != ErrRateMoved {
+		t.Fatalf("want ErrRateMoved, got %v", err)
+	}
+	if c.exchCalls.Load() != 0 {
+		t.Fatal("no exchange may be placed once the rate has moved")
+	}
+	c.quoteRate.Store(1495.0) // 33 bps: within tolerance
+	if _, err := newEvsLive(srv, false).ExecuteConversion(context.Background(), q, "k2"); err != nil {
+		t.Fatalf("within tolerance must execute: %v", err)
+	}
+}
+
+func TestEversend_CreateCollection_NeverFabricatesIBAN(t *testing.T) {
+	if r, err := NewEversend(false).CreateCollection(context.Background(), "EUR", "iban", "c"); err == nil || r != nil {
+		t.Fatalf("deterministic adapter must not return bank details: %+v", r)
+	}
+}

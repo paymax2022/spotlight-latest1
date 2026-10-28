@@ -19,6 +19,17 @@ import (
 	"github.com/google/uuid"
 )
 
+// maxSlippageBPS is the largest adverse move (50 bps) tolerated between the
+// rate quoted to the customer and the live provider rate at execution.
+const maxSlippageBPS = 50
+
+var (
+	// ErrNoCollectionAccount: no real collection account could be provisioned.
+	ErrNoCollectionAccount = errors.New("eversend: no collection account available")
+	// ErrRateMoved: the live rate moved beyond tolerance since the quote (HTTP 409).
+	ErrRateMoved = orch.NewError(orch.ErrRateExpired, "rate_moved", "eversend: live rate moved beyond tolerance since quote")
+)
+
 // Eversend favours wholesale FX and USD/EUR inbound (spec §3). Tighter spreads,
 // strong East/pan-African MoMo & bank corridors, USD/EUR IBANs (ACH/SEPA).
 type Eversend struct {
@@ -94,13 +105,9 @@ func (e *Eversend) ExecuteTransfer(ctx context.Context, q *orch.Quote, dest orch
 }
 
 func (e *Eversend) CreateCollection(ctx context.Context, currency, accountType, customerID string) (*orch.CollectionResult, error) {
-	details := map[string]any{
-		"account_name": "Paymax / Customer",
-		"iban":         "GB29NWBK60161331926819",
-		"bic":          "NWBKGB2L",
-		"rails":        railsForCurrency(currency),
-	}
-	return &orch.CollectionResult{ProviderRef: "evs_col_" + uuid.New().String()[:8], Details: details}, nil
+	// The deterministic adapter has no real account to hand out. It must never
+	// fabricate bank details (a customer could wire real money to them).
+	return nil, ErrNoCollectionAccount
 }
 
 // VerifyWebhookSignature always fails closed: this deterministic adapter has no
@@ -184,6 +191,13 @@ func (e *EversendLive) ExecuteConversion(ctx context.Context, q *orch.Quote, ide
 	if err != nil {
 		return nil, err
 	}
+	// Bound execution-time slippage: q.AllInRate is the customer rate already
+	// promised (post spread+fees), so a live provider rate that has fallen more
+	// than maxSlippageBPS below it would execute at a loss. Fail before any
+	// money moves (409). Skipped only when no quoted rate is available.
+	if q.AllInRate > 0 && quote.Rate < q.AllInRate*(1-float64(maxSlippageBPS)/10_000.0) {
+		return nil, ErrRateMoved
+	}
 	res, err := e.client.Exchange(ctx, quote.Token, idempotencyKey)
 	if err != nil {
 		return nil, err
@@ -219,11 +233,14 @@ func (e *EversendLive) ExecuteTransfer(ctx context.Context, q *orch.Quote, dest 
 
 func (e *EversendLive) CreateCollection(ctx context.Context, currency, accountType, customerID string) (*orch.CollectionResult, error) {
 	if e.client == nil || accountType != "iban" {
-		return e.fallback.CreateCollection(ctx, currency, accountType, customerID)
+		return nil, ErrNoCollectionAccount
 	}
 	iban, err := e.client.CreateIBAN(ctx, currency)
-	if err != nil || iban == nil {
-		return e.fallback.CreateCollection(ctx, currency, accountType, customerID)
+	if err != nil {
+		return nil, err
+	}
+	if iban == nil {
+		return nil, ErrNoCollectionAccount
 	}
 	return &orch.CollectionResult{
 		ProviderRef: iban.IBAN,
