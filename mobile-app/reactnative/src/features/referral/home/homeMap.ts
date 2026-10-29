@@ -82,7 +82,10 @@ export function mapEarningStatus(status: string): EarnStateKey {
     case 'pending': return 'pending';
     case 'vesting': return 'vesting';
     case 'eligible': return 'eligible';
-    case 'credited':
+    // The engine's CREDITED means "credited to the referral balance", not "paid out":
+    // a commission split stays withdrawable until the referrer withdraws (RB0 ledger
+    // eligible -> paid). The paid figure comes from /my-rewards.
+    case 'credited': return 'earned';
     case 'paid': return 'paid';
     case 'reversed':
     case 'clawed_back': return 'clawed_back';

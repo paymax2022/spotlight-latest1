@@ -74,9 +74,9 @@ func TestSweep_PaysAMissedEarningExactlyOnce(t *testing.T) {
 	cleanupRewards(t, pool, referrer)
 	earningID := insertDirectEarning(t, pool, referred, 15_000, 10*time.Minute)
 
-	before, err := ledgerSvc.GetBalance(ctx, referrer)
+	before, err := withdrawableKobo(ctx, pool, referrer)
 	if err != nil {
-		t.Fatalf("GetBalance before: %v", err)
+		t.Fatalf("withdrawable before: %v", err)
 	}
 
 	svc := commissionsplit.NewService(pool, ledgerSvc, true)
@@ -86,12 +86,12 @@ func TestSweep_PaysAMissedEarningExactlyOnce(t *testing.T) {
 		}
 	}
 
-	after, err := ledgerSvc.GetBalance(ctx, referrer)
+	after, err := withdrawableKobo(ctx, pool, referrer)
 	if err != nil {
-		t.Fatalf("GetBalance after: %v", err)
+		t.Fatalf("withdrawable after: %v", err)
 	}
 	if got, want := after-before, int64(3_000); got != want { // 20% of ₦150
-		t.Fatalf("referrer balance delta = %d, want %d", got, want)
+		t.Fatalf("referrer withdrawable delta = %d, want %d", got, want)
 	}
 	if n := rewardRows(t, pool, earningID); n != 1 {
 		t.Fatalf("referral_rewards rows = %d, want 1", n)
@@ -131,13 +131,13 @@ func TestSweep_LeavesAnAlreadyRewardedEarningAlone(t *testing.T) {
 	if _, err := svc.Sweep(ctx, sweepOpts()); err != nil {
 		t.Fatalf("first Sweep: %v", err)
 	}
-	mid, _ := ledgerSvc.GetBalance(ctx, referrer)
+	mid, _ := withdrawableKobo(ctx, pool, referrer)
 
 	// A second, independent service instance (another replica) sweeping again.
 	if _, err := commissionsplit.NewService(pool, ledgerSvc, true).Sweep(ctx, sweepOpts()); err != nil {
 		t.Fatalf("second Sweep: %v", err)
 	}
-	after, _ := ledgerSvc.GetBalance(ctx, referrer)
+	after, _ := withdrawableKobo(ctx, pool, referrer)
 	if after != mid {
 		t.Fatalf("second sweep moved money: %d -> %d", mid, after)
 	}
@@ -259,16 +259,16 @@ func TestSweep_CreditsAStrandedPendingRewardWithoutClaimingAnotherSlot(t *testin
 		t.Fatalf("seed pending reward: %v", err)
 	}
 
-	before, _ := ledgerSvc.GetBalance(ctx, referrer)
+	before, _ := withdrawableKobo(ctx, pool, referrer)
 	svc := commissionsplit.NewService(pool, ledgerSvc, true)
 	for i := 0; i < 2; i++ {
 		if _, err := svc.Sweep(ctx, sweepOpts()); err != nil {
 			t.Fatalf("Sweep #%d: %v", i+1, err)
 		}
 	}
-	after, _ := ledgerSvc.GetBalance(ctx, referrer)
+	after, _ := withdrawableKobo(ctx, pool, referrer)
 	if got, want := after-before, int64(3_000); got != want {
-		t.Fatalf("referrer balance delta = %d, want %d", got, want)
+		t.Fatalf("referrer withdrawable delta = %d, want %d", got, want)
 	}
 	var status string
 	if err := pool.QueryRow(ctx, `SELECT status FROM public.referral_rewards WHERE source_transaction_id = $1`, sourceTxn).Scan(&status); err != nil {

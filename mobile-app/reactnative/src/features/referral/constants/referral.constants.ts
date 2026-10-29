@@ -11,6 +11,14 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REFERRAL_USE_MOCK, f
 // Referral REST namespace (frontend-web proxy → Go backend /api/finance/referral).
 export const REFERRAL_API_BASE = '/api/v1/referral';
 
+// Earnings, withdrawable balance and invite tracking move whenever a referred
+// friend buys something, so the live screens poll the backend instead of
+// showing a snapshot from when they mounted. Off in mock mode (fixtures never
+// change). Spread into a useQuery options object.
+export const LIVE_REFRESH = USE_MOCK
+  ? {}
+  : ({ refetchInterval: 15_000, refetchOnWindowFocus: true, refetchOnReconnect: true } as const);
+
 // Module-scoped colors built on the base design tokens (never hardcode hex).
 // Mirrors Connect's ConnectColors pattern.
 export const ReferralColors = {
