@@ -169,6 +169,24 @@ components:
         failed: { type: integer }
         manual_required: { type: integer, description: Already paid out to the operator - refund must be handled by support/ops }
         complete: { type: boolean, description: true when no ticket is left pending/failed (manual_required counts as handled-by-ops) }
+    TripMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 4000 }
+        attachment_url: { type: string }
+    ScheduledAdminReason:
+      type: object
+      required: [reason_code]
+      properties:
+        reason_code: { type: string }
+        driver_id: { type: string, description: Target driver (reassign only) }
+    SchedPlace:
+      type: object
+      properties:
+        lat: { type: number }
+        lng: { type: number }
+        address: { type: string }
     Ok:
       type: object
       description: Generic success envelope. Most handlers wrap the payload in a `data` key or a named key (trip/offers/schedules/…).
@@ -359,6 +377,75 @@ paths:
       summary: Generate a share link for a trip
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: Share link }, '401': { description: Not authenticated } }
+  /mobility/trips/{id}/messages:
+    get:
+      tags: [mobility-customer]
+      summary: List in-trip chat messages (rider or assigned driver only)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: '{ messages: [...] }' }, '401': { description: Not authenticated }, '403': { description: Not a trip participant }, '404': { description: Trip not found } }
+    post:
+      tags: [mobility-customer]
+      summary: Post an in-trip chat message (rider or assigned driver only)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TripMessageRequest' }
+      responses: { '201': { description: '{ message }' }, '400': { description: Invalid body }, '401': { description: Not authenticated }, '403': { description: Not a trip participant }, '404': { description: Trip not found } }
+  /driver/trips/{id}/messages:
+    get:
+      tags: [mobility-driver]
+      summary: List in-trip chat messages (driver view; same handler and authz as /mobility/trips/{id}/messages)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: '{ messages: [...] }' }, '401': { description: Not authenticated }, '403': { description: Not a trip participant }, '404': { description: Trip not found } }
+    post:
+      tags: [mobility-driver]
+      summary: Post an in-trip chat message (driver view)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TripMessageRequest' }
+      responses: { '201': { description: '{ message }' }, '400': { description: Invalid body }, '401': { description: Not authenticated }, '403': { description: Not a trip participant }, '404': { description: Trip not found } }
+  /mobility/public/track/{token}:
+    get:
+      tags: [mobility-customer]
+      summary: Resolve a live-share tracking link (UNAUTHENTICATED)
+      description: >-
+        Mounted outside the auth-gated finance group so a share link opens without an account.
+        Returns only non-sensitive tracking fields (never the trip PIN) and enforces the 2 h token TTL.
+        Share links are issued by POST /mobility/rides/{id}/share with base TRANSPORT_SHARE_BASE_URL.
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: Tracking view }, '404': { description: Unknown or expired token } }
+  /mobility/rides/paystack/initiate:
+    post:
+      tags: [mobility-customer]
+      summary: Start a card-direct ride checkout (server-quoted fare; no wallet debit) — money mutation
+      description: >-
+        Mounted only when a Paystack client is configured and FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED is on.
+        Body is the same as POST /mobility/rides/request plus optional `email` and `callback_url`. The server
+        prices the ride; there is no amount field. Idempotency-Key header is REQUIRED; replaying a key with the
+        same request returns the same reference. Confirmation escrows via settlement.EscrowExternal; no wallet
+        is debited, so the KYC-tier gate does not run.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '201': { description: 'Checkout created ({ data: { reference, authorizationUrl, accessCode, amountKobo, status } })' }
+        '400': { description: invalid_input / idempotency_key_required }
+        '401': { description: Not authenticated }
+        '409': { description: idempotency_conflict }
+        '422': { description: email_required }
+  /mobility/rides/paystack/{reference}/status:
+    get:
+      tags: [mobility-customer]
+      summary: Poll a card-direct ride checkout (also drives confirmation)
+      description: Owner-only (another user's reference is 404). Verifies with Paystack server-side and books the ride exactly once.
+      parameters:
+        - { name: reference, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: 'Status ({ data: { reference, status, amountKobo, tripId? } })' }, '401': { description: Not authenticated }, '404': { description: unknown_reference } }
   /mobility/rides/{id}/sos:
     post:
       tags: [mobility-customer]
@@ -374,7 +461,7 @@ paths:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
       responses: { '200': { description: Rating }, '401': { description: Not authenticated } }
-  /mobility/parcel/{id}/rate:
+  /mobility/parcels/{id}/rate:
     post:
       tags: [mobility-customer]
       summary: Rate the courier on a delivered parcel (tip is a money mutation)
@@ -545,6 +632,190 @@ paths:
       tags: [mobility-driver]
       summary: Driver SOS safety incident
       responses: { '200': { description: Incident }, '401': { description: Not authenticated } }
+  /driver/documents/presign:
+    post:
+      tags: [mobility-driver]
+      summary: Presigned R2 PUT URL for a driver document upload
+      description: The client PUTs the file to uploadUrl, then persists fileUrl (server-chosen object key) via POST /driver/documents.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doc_type, file_name, mime_type]
+              properties:
+                doc_type: { type: string }
+                file_name: { type: string }
+                mime_type: { type: string }
+      responses:
+        '200':
+          description: Presigned upload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uploadUrl: { type: string }
+                  fileUrl: { type: string }
+        '400': { description: Unsupported document type / content type / file name }
+        '401': { description: Not authenticated }
+        '503': { description: Uploads are not configured }
+  /driver/service-profile:
+    put:
+      tags: [mobility-driver]
+      summary: Set the driver's service interests and coverage areas
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                service_interests: { type: array, items: { type: string } }
+                coverage_areas: { type: array, items: { type: string } }
+      responses: { '200': { description: '{ service_interests, coverage_areas } (validated)' }, '400': { description: Invalid body }, '401': { description: Not authenticated } }
+  /driver/onboarding-options:
+    get:
+      tags: [mobility-driver]
+      summary: Static onboarding option lists (service interests, coverage areas, document types)
+      responses: { '200': { description: Options }, '401': { description: Not authenticated } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SCHEDULED MOVEMENTS   [FeatureTransportSchedulingEnabled]
+  # ═══════════════════════════════════════════════════════════════════════════
+  /mobility/scheduled:
+    get:
+      tags: [mobility-customer]
+      summary: List the caller's scheduled bookings (cursor-paginated)
+      parameters:
+        - { name: filter, in: query, schema: { type: string, enum: [upcoming, past, all], default: all } }
+        - { name: cursor, in: query, description: created_at of the last item from the previous page, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { '200': { description: '{ bookings: [...], nextCursor }' }, '401': { description: Not authenticated } }
+    post:
+      tags: [mobility-customer]
+      summary: Schedule a future ride / parcel / airport / bus movement
+      description: Money-adjacent (fare is escrowed at dispatch) — requires an Idempotency-Key.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode, scheduled_pickup_at]
+              properties:
+                mode: { type: string }
+                scheduled_pickup_at: { type: string, format: date-time }
+                lead_time_minutes: { type: integer }
+                timezone: { type: string }
+                pickup: { type: object }
+                dropoff: { type: object }
+                mode_payload: { type: object }
+                payment_method: { type: string }
+      responses: { '201': { description: Scheduled booking }, '400': { description: Invalid body / missing Idempotency-Key }, '401': { description: Not authenticated }, '409': { description: Idempotency key conflict } }
+  /mobility/scheduled/estimate:
+    post:
+      tags: [mobility-customer]
+      summary: Estimate a scheduled movement (no money moves)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode: { type: string }
+                pickup: { $ref: '#/components/schemas/SchedPlace' }
+                dropoff: { $ref: '#/components/schemas/SchedPlace' }
+                mode_payload: { type: object }
+      responses: { '200': { description: Estimate }, '400': { description: Invalid body }, '401': { description: Not authenticated } }
+  /mobility/scheduled/{id}:
+    get:
+      tags: [mobility-customer]
+      summary: Get one of the caller's scheduled bookings
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Scheduled booking }, '401': { description: Not authenticated }, '403': { description: Not your booking }, '404': { description: Not found } }
+    patch:
+      tags: [mobility-customer]
+      summary: Reschedule / edit a booking (status=scheduled only)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scheduled_pickup_at: { type: string, format: date-time }
+                lead_time_minutes: { type: integer }
+                pickup: { type: object }
+                dropoff: { type: object }
+                mode_payload: { type: object }
+      responses: { '200': { description: Scheduled booking }, '401': { description: Not authenticated }, '403': { description: Not your booking }, '409': { description: Not editable in its current status } }
+  /mobility/scheduled/{id}/cancel:
+    post:
+      tags: [mobility-customer]
+      summary: Cancel a scheduled booking (refunds any escrow) — requires Idempotency-Key
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string } } }
+      responses: { '200': { description: Scheduled booking }, '401': { description: Not authenticated }, '403': { description: Not your booking }, '409': { description: Not cancellable } }
+  /admin/transport/scheduled:
+    get:
+      tags: [mobility-admin]
+      summary: Scheduled-bookings ops board (admin)
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: mode, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses: { '200': { description: '{ bookings: [...] }' }, '403': { description: Missing transport.admin.scheduled.read } }
+  /admin/transport/scheduled/{id}:
+    get:
+      tags: [mobility-admin]
+      summary: Get one scheduled booking (admin)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Scheduled booking }, '403': { description: Missing transport.admin.scheduled.read }, '404': { description: Not found } }
+  /admin/transport/scheduled/{id}/force-dispatch:
+    post:
+      tags: [mobility-admin]
+      summary: Force-dispatch a scheduled booking now (admin, audited)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduledAdminReason' }
+      responses: { '200': { description: Scheduled booking }, '400': { description: reason_code required }, '403': { description: Missing transport.admin.scheduled.reassign }, '409': { description: Invalid state } }
+  /admin/transport/scheduled/{id}/reassign:
+    post:
+      tags: [mobility-admin]
+      summary: Reassign a scheduled booking to a driver (admin, audited)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduledAdminReason' }
+      responses: { '200': { description: Scheduled booking }, '400': { description: reason_code required }, '403': { description: Missing transport.admin.scheduled.reassign }, '409': { description: Invalid state } }
+  /admin/transport/scheduled/{id}/cancel:
+    post:
+      tags: [mobility-admin]
+      summary: Cancel a scheduled booking and refund any escrow (admin, audited)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduledAdminReason' }
+      responses: { '200': { description: Scheduled booking }, '400': { description: reason_code required }, '403': { description: Missing transport.admin.scheduled.cancel }, '409': { description: Not cancellable } }
 
   # ═══════════════════════════════════════════════════════════════════════════
   # ADMIN — control plane (/admin/transport/*)   [FeatureTransportEnabled]
@@ -1315,6 +1586,226 @@ paths:
         '403': { description: Not your schedule }
         '404': { description: Schedule not found }
         '409': { description: Schedule already departed/completed }
+  /mobility/bus/tickets/{id}/rate:
+    post:
+      tags: [bus]
+      summary: Rate the bus operator for a boarded/completed ticket
+      description: >-
+        One rating per ticket per rater. The operator is resolved ticket → schedule → route → provider
+        and the provider's rating_avg / rating_count are recomputed. tip_kobo is accepted by the shared
+        RateRequest shape; bus ratings do not move money.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stars]
+              properties:
+                stars: { type: integer, minimum: 1, maximum: 5 }
+                comment: { type: string }
+      responses:
+        '201': { description: Rating }
+        '400': { description: Invalid body }
+        '401': { description: Not authenticated }
+        '403': { description: Not your ticket / trip not boarded }
+        '404': { description: Ticket not found }
+        '409': { description: Already rated }
+  /mobility/bus/search:
+    get:
+      tags: [bus]
+      summary: Search bookable marketplace bus trips
+      description: >-
+        Upcoming scheduled departures with an approved fare on active routes of verified, active
+        providers. fromState and toState must differ when both are supplied (400).
+      parameters:
+        - { name: fromState, in: query, schema: { type: string } }
+        - { name: toState, in: query, schema: { type: string } }
+        - { name: providerId, in: query, schema: { type: string, format: uuid } }
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: '{ trips: [BusTrip] } (fareKobo is integer kobo)' }
+        '400': { description: fromState and toState must differ }
+        '401': { description: Not authenticated }
+  /mobility/bus/providers:
+    get:
+      tags: [bus]
+      summary: List verified, active bus operators
+      parameters:
+        - { name: state, in: query, schema: { type: string } }
+        - { name: q, in: query, description: Business-name substring, schema: { type: string } }
+      responses: { '200': { description: '{ providers: [...] }' }, '401': { description: Not authenticated } }
+  /mobility/bus/providers/{id}:
+    get:
+      tags: [bus]
+      summary: One active operator's profile and active routes
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: '{ provider, routes }' }, '401': { description: Not authenticated }, '404': { description: Provider not found } }
+  /mobility/bus/provider/register:
+    post:
+      tags: [bus]
+      summary: Register the caller as a bus operator (pending verification)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [business_name, contact_phone, base_state]
+              properties:
+                business_name: { type: string }
+                contact_phone: { type: string }
+                contact_email: { type: string }
+                base_state: { type: string }
+                description: { type: string }
+      responses:
+        '201': { description: '{ provider }' }
+        '400': { description: Invalid body }
+        '401': { description: Not authenticated }
+        '409': { description: Already a registered bus provider }
+  /mobility/bus/provider/me:
+    get:
+      tags: [bus]
+      summary: Caller's operator dashboard
+      description: Returns { provider, routes, upcomingSchedules }; provider is null (200) when the caller is not an operator.
+      responses: { '200': { description: Dashboard }, '401': { description: Not authenticated } }
+    patch:
+      tags: [bus]
+      summary: Update the caller's operator profile (all fields optional)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                business_name: { type: string }
+                contact_phone: { type: string }
+                contact_email: { type: string }
+                logo_url: { type: string }
+                description: { type: string }
+                base_state: { type: string }
+      responses: { '200': { description: '{ provider }' }, '401': { description: Not authenticated }, '403': { description: Not a registered bus provider } }
+  /mobility/bus/provider/routes:
+    post:
+      tags: [bus]
+      summary: Publish an interstate route for the caller's provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_state, to_state, base_fare_kobo]
+              properties:
+                from_state: { type: string }
+                to_state: { type: string }
+                from_city: { type: string }
+                to_city: { type: string }
+                bus_type: { type: string }
+                base_fare_kobo: { $ref: '#/components/schemas/Money' }
+                amenities: { type: array, items: { type: string } }
+      responses:
+        '201': { description: '{ route }' }
+        '400': { description: from_state and to_state must differ }
+        '401': { description: Not authenticated }
+        '403': { description: Not a registered bus provider }
+  /mobility/bus/provider/routes/{id}:
+    patch:
+      tags: [bus]
+      summary: Update one of the caller's routes (ownership enforced)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from_city: { type: string }
+                to_city: { type: string }
+                bus_type: { type: string }
+                base_fare_kobo: { $ref: '#/components/schemas/Money' }
+                amenities: { type: array, items: { type: string } }
+                active: { type: boolean }
+      responses: { '200': { description: '{ route }' }, '401': { description: Not authenticated }, '403': { description: Not your route }, '404': { description: Route not found } }
+  /mobility/bus/provider/routes/{id}/schedules:
+    post:
+      tags: [bus]
+      summary: Add a departure to one of the caller's routes
+      description: Provider-set fares are self-serve trusted (fare_approved=true).
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [departure_time, total_seats, fare_kobo]
+              properties:
+                departure_time: { type: string, format: date-time }
+                total_seats: { type: integer, minimum: 1, maximum: 80 }
+                fare_kobo: { $ref: '#/components/schemas/Money' }
+                cancel_cutoff_minutes: { type: integer, minimum: 60, maximum: 1440 }
+      responses:
+        '201': { description: '{ schedule }' }
+        '400': { description: INVALID_TIME or invalid cutoff }
+        '401': { description: Not authenticated }
+        '403': { description: Not your route }
+        '404': { description: Route not found }
+  /mobility/bus/provider/bookings:
+    get:
+      tags: [bus]
+      summary: Passenger manifest for one of the caller's schedules
+      parameters:
+        - { name: scheduleId, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: '{ bookings: [...] } (active tickets only)' }
+        '400': { description: scheduleId required }
+        '401': { description: Not authenticated }
+        '403': { description: Not your schedule }
+        '404': { description: Schedule not found }
+  /mobility/bus/provider/templates:
+    get:
+      tags: [bus]
+      summary: List the caller's recurring departure templates
+      responses: { '200': { description: '{ templates: [...] }' }, '401': { description: Not authenticated }, '403': { description: Not a registered bus provider } }
+    post:
+      tags: [bus]
+      summary: Create a recurring departure template
+      description: The transport-scheduler materializes active templates into bus_schedules over a rolling horizon (idempotent per template + departure time).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [route_id, days_of_week, depart_time, total_seats, fare_kobo]
+              properties:
+                route_id: { type: string, format: uuid }
+                days_of_week: { type: array, items: { type: integer, minimum: 0, maximum: 6 }, description: 0=Sunday .. 6=Saturday }
+                depart_time: { type: string, description: "'HH:MM' local (Africa/Lagos)" }
+                total_seats: { type: integer, minimum: 1, maximum: 80 }
+                fare_kobo: { $ref: '#/components/schemas/Money' }
+                horizon_days: { type: integer, description: Defaults to 14 }
+      responses: { '201': { description: '{ template }' }, '400': { description: Invalid body }, '401': { description: Not authenticated }, '403': { description: Not your route } }
+  /mobility/bus/provider/templates/{id}:
+    patch:
+      tags: [bus]
+      summary: Toggle a departure template on/off (ownership enforced)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { active: { type: boolean } } }
+      responses: { '200': { description: '{ template }' }, '401': { description: Not authenticated }, '403': { description: Not your template }, '404': { description: Template not found } }
+    delete:
+      tags: [bus]
+      summary: Delete one of the caller's departure templates
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: '{ ok: true, status: deleted }' }, '401': { description: Not authenticated }, '403': { description: Not your template }, '404': { description: Template not found } }
   /driver/bus/validate:
     post:
       tags: [bus]
@@ -1823,6 +2314,33 @@ paths:
         '409': { description: Schedule already departed/completed }
   /admin/transport/bus/manifest:
     get: { tags: [mobility-admin], summary: Bus manifest (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/bus/operators:
+    get:
+      tags: [mobility-admin]
+      summary: List every bus operator (any status) for the verification queue
+      description: Pending operators sort first. Only verified + active operators appear in customer discovery.
+      responses: { '200': { description: '{ operators: [...] }' }, '403': { description: Missing mobility.view } }
+  /admin/transport/bus/operators/{id}/verification:
+    patch:
+      tags: [mobility-admin]
+      summary: Verify / suspend / re-pend a bus operator (admin, audited)
+      description: suspended also sets status=inactive (drops out of discovery); verified sets status=active. A reason is required to suspend.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [verified, suspended, pending] }
+                reason: { type: string }
+      responses:
+        '200': { description: '{ ok: true, verification_status }' }
+        '400': { description: Invalid status / reason required to suspend }
+        '403': { description: Missing mobility.bus.manage }
+        '404': { description: Bus provider not found }
   /admin/transport/towing:
     get: { tags: [mobility-admin], summary: List towing jobs (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/towing/{id}/status:
