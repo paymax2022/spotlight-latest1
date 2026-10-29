@@ -93,7 +93,7 @@ func TestCreateEstateBlockedWhenGateDenies(t *testing.T) {
 	svc := NewService(nil, nil).WithEstateMerchantGate(
 		EstateMerchantGateFunc(func(context.Context, string) (bool, error) { return false, nil }),
 	)
-	_, err := svc.CreateEstate(context.Background(), "u1", CreateEstateRequest{Name: "X", Address: "Y"})
+	_, err := svc.CreateEstate(context.Background(), "u1", CreateEstateRequest{Name: "Estate X", Address: "Y"})
 	if !errors.Is(err, ErrEstateManagerApprovalRequired) {
 		t.Fatalf("denied gate returned %v, want ErrEstateManagerApprovalRequired", err)
 	}
@@ -104,7 +104,7 @@ func TestCreateEstateBlockedWhenGateErrors(t *testing.T) {
 	svc := NewService(nil, nil).WithEstateMerchantGate(
 		EstateMerchantGateFunc(func(context.Context, string) (bool, error) { return false, sentinel }),
 	)
-	_, err := svc.CreateEstate(context.Background(), "u1", CreateEstateRequest{Name: "X", Address: "Y"})
+	_, err := svc.CreateEstate(context.Background(), "u1", CreateEstateRequest{Name: "Estate X", Address: "Y"})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("errored gate returned %v, want it wrapped (errors.Is to sentinel)", err)
 	}

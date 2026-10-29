@@ -2,7 +2,9 @@ package estate
 
 import "time"
 
-// Estate is a gated community or building complex.
+// Estate is a gated community or building complex. The profile columns (timezone) and
+// duplicate_suspected come from the M02 governance work; both default to the platform's historical
+// implicit behaviour, so an estate created before it reads unchanged.
 type Estate struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -10,6 +12,9 @@ type Estate struct {
 	AdminID   string    `json:"admin_id"`
 	Status    string    `json:"status,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+
+	Timezone           string `json:"timezone,omitempty"`
+	DuplicateSuspected bool   `json:"duplicate_suspected,omitempty"`
 }
 
 // Resident is a verified occupant of an estate.
@@ -38,6 +43,9 @@ type VisitorPass struct {
 }
 
 // Election is a private vote within an estate (e.g. AGM, committee election).
+// The governance columns (kind/weighting/quorum/tie_break/…) are what turn a ballot into
+// an electable result; they default to the historical single-position, one-person-one-vote
+// behaviour, so an election created before Phase 2.2 reads exactly as it did.
 type Election struct {
 	ID          string    `json:"id"`
 	EstateID    string    `json:"estate_id"`
@@ -45,9 +53,22 @@ type Election struct {
 	Description string    `json:"description,omitempty"`
 	StartsAt    time.Time `json:"starts_at"`
 	EndsAt      time.Time `json:"ends_at"`
-	Status      string    `json:"status"` // draft | open | closed | tallied
+	Status      string    `json:"status"` // draft | open | closed | tallied | cancelled
 	CreatedBy   string    `json:"created_by"`
 	CreatedAt   time.Time `json:"created_at"`
+
+	Kind        string `json:"kind"` // binding | poll
+	Weighting   string `json:"weighting"`
+	QuorumType  string `json:"quorum_type"`
+	QuorumValue int    `json:"quorum_value"`
+	TieBreak    string `json:"tie_break"`
+
+	NominationOpensAt  *time.Time `json:"nomination_opens_at,omitempty"`
+	NominationClosesAt *time.Time `json:"nomination_closes_at,omitempty"`
+	RollFrozenAt       *time.Time `json:"roll_frozen_at,omitempty"`
+	RulesLockedAt      *time.Time `json:"rules_locked_at,omitempty"`
+	CancelledAt        *time.Time `json:"cancelled_at,omitempty"`
+	CancellationReason string     `json:"cancellation_reason,omitempty"`
 }
 
 // Candidate is a choice in an election.
@@ -59,13 +80,17 @@ type Candidate struct {
 	Votes      int    `json:"votes,omitempty"` // only populated after close
 }
 
-// Vote is a single cast vote — stored as a commitment hash to preserve anonymity.
-// VoterID is retained for eligibility checks (one-vote-per-resident enforcement).
+// Vote is the receipt for one cast ballot. ID is the anonymous election_ballots row;
+// VoterID exists only to echo the caller's own submission back to them — the stored
+// choice (election_ballots) carries no voter column, and the participation registry
+// (election_votes) carries no choice.
 type Vote struct {
 	ID          string    `json:"id"`
 	ElectionID  string    `json:"election_id"`
 	VoterID     string    `json:"voter_id"`
 	CandidateID string    `json:"candidate_id"`
+	UnitID      string    `json:"unit_id,omitempty"` // the unit that authorised a weighted ballot
+	Abstained   bool      `json:"abstained"`
 	CastAt      time.Time `json:"cast_at"`
 }
 
@@ -80,13 +105,17 @@ type ResidentProfile struct {
 	EmergencyContact ContactInfo `json:"emergency_contact,omitempty"`
 	NextOfKin        ContactInfo `json:"next_of_kin,omitempty"`
 	OccupancyType    string      `json:"occupancy_type"` // resident|tenant|homeowner|landlord
-	LeaseStart       *string     `json:"lease_start,omitempty"`
-	LeaseEnd         *string     `json:"lease_end,omitempty"`
-	AgreementURL     string      `json:"agreement_url,omitempty"`
-	OwnershipDocURL  string      `json:"ownership_doc_url,omitempty"`
-	Visibility       string      `json:"visibility"` // public|members|admin_only
-	CreatedAt        time.Time   `json:"created_at"`
-	UpdatedAt        time.Time   `json:"updated_at"`
+	// ProofStatus is the estate's verdict on the declared documents, read at member level so the person
+	// who filed them can see where they stand (EST-UAT-0051). Replacing a document resets it in the
+	// database; nothing in Go can set it.
+	ProofStatus     string    `json:"proof_status"`
+	LeaseStart      *string   `json:"lease_start,omitempty"`
+	LeaseEnd        *string   `json:"lease_end,omitempty"`
+	AgreementURL    string    `json:"agreement_url,omitempty"`
+	OwnershipDocURL string    `json:"ownership_doc_url,omitempty"`
+	Visibility      string    `json:"visibility"` // public|members|admin_only
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // ContactInfo is a reusable embedded contact.
@@ -399,12 +428,20 @@ type EstateDashboard struct {
 	HouseholdCount     int                      `json:"household_count"`
 }
 
+// Estate membership roles. These are the only two values estate_residents.role accepts, so they are
+// also the only two an invite code may grant.
+const (
+	RoleResident    = "resident"
+	RoleEstateAdmin = "estate_admin"
+)
+
 // InviteCode is a shareable code to join an estate.
 type InviteCode struct {
 	ID        string    `json:"id"`
 	EstateID  string    `json:"estate_id"`
 	CreatedBy string    `json:"created_by"`
 	Code      string    `json:"code"`
+	Role      string    `json:"role"`
 	MaxUses   int       `json:"max_uses"`
 	UsedCount int       `json:"used_count"`
 	ExpiresAt time.Time `json:"expires_at"`
@@ -432,6 +469,7 @@ type EstateProperty struct {
 	Floor           string    `json:"floor,omitempty"`
 	Block           string    `json:"block,omitempty"`
 	OccupancyStatus string    `json:"occupancy_status"` // vacant | occupied | reserved
+	Capacity        int       `json:"capacity"`
 	LandlordID      *string   `json:"landlord_id,omitempty"`
 	TenantID        *string   `json:"tenant_id,omitempty"`
 	Archived        bool      `json:"archived"`
@@ -495,6 +533,8 @@ type OwnershipClaim struct {
 }
 
 // TenancyRequest is a tenant's application to occupy a property.
+// ReviewedBy/RejectReason are what EST-UAT-0051 asked for on this lane: a review that could set a
+// status but could not say who set it or why it was refused.
 type TenancyRequest struct {
 	ID           string     `json:"id"`
 	PropertyID   string     `json:"property_id"`
@@ -504,14 +544,19 @@ type TenancyRequest struct {
 	LeaseEnd     string     `json:"lease_end,omitempty"`
 	AgreementURL string     `json:"agreement_url,omitempty"`
 	Status       string     `json:"status"` // pending | approved | rejected | cancelled
+	ReviewedBy   *string    `json:"reviewed_by,omitempty"`
 	ReviewedAt   *time.Time `json:"reviewed_at,omitempty"`
+	RejectReason string     `json:"reject_reason,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
-// GenerateInviteCodeRequest is the body for POST /estate/:id/invite-codes.
+// GenerateInviteCodeRequest is the body for POST /estate/:id/invite-codes. Role is optional and
+// defaults to a plain resident; "estate_admin" mints a manager code (EST-UAT-0028), which is why
+// only an estate admin may create one.
 type GenerateInviteCodeRequest struct {
 	MaxUses   int       `json:"max_uses" binding:"required,min=1,max=500"`
 	ExpiresAt time.Time `json:"expires_at" binding:"required"`
+	Role      string    `json:"role" binding:"omitempty,oneof=resident estate_admin"`
 }
 
 // JoinWithCodeRequest is the body for POST /estate/join/invite.
@@ -525,11 +570,14 @@ type RequestAccessRequest struct {
 }
 
 // AddPropertyRequest is the body for POST /estate/:id/properties.
+// Capacity is optional: 0 means the platform default, and the DB CHECK (>0) plus the
+// capacity trigger are what actually bound admissions (EST-UAT-0044).
 type AddPropertyRequest struct {
 	UnitLabel    string `json:"unit_label" binding:"required,min=1,max=100"`
 	PropertyType string `json:"property_type" binding:"required"`
 	Floor        string `json:"floor"`
 	Block        string `json:"block"`
+	Capacity     int    `json:"capacity"`
 }
 
 // ClaimOwnershipRequest is the body for POST /estate/:id/properties/:pid/claim.
@@ -545,10 +593,12 @@ type TenancyRequestBody struct {
 	AgreementURL string `json:"agreement_url"`
 }
 
-// CreateEstateRequest is the body for POST /estate.
+// CreateEstateRequest is the body for POST /estate. Timezone is optional and defaults to the
+// platform zone; an unknown zone name is refused rather than stored.
 type CreateEstateRequest struct {
-	Name    string `json:"name" binding:"required,min=2,max=200"`
-	Address string `json:"address"`
+	Name     string `json:"name" binding:"required,min=2,max=200"`
+	Address  string `json:"address"`
+	Timezone string `json:"timezone"`
 }
 
 // IssuePassRequest is the body for POST /estate/:id/passes.
@@ -560,29 +610,47 @@ type IssuePassRequest struct {
 }
 
 // CreateElectionRequest is the body for POST /estate/:id/elections.
+// Candidates may be supplied up front, or left to the nomination workflow (0209/0211):
+// an election with no inline candidates must open a nomination window, and OpenElection
+// refuses to open a ballot with fewer than two names on it either way.
 type CreateElectionRequest struct {
 	Title       string      `json:"title" binding:"required,min=2,max=200"`
 	Description string      `json:"description"`
 	StartsAt    time.Time   `json:"starts_at" binding:"required"`
 	EndsAt      time.Time   `json:"ends_at" binding:"required"`
-	Candidates  []Candidate `json:"candidates" binding:"required,min=2"`
+	Candidates  []Candidate `json:"candidates"`
+
+	Kind               string     `json:"kind"`
+	Weighting          string     `json:"weighting"`
+	QuorumType         string     `json:"quorum_type"`
+	QuorumValue        int        `json:"quorum_value"`
+	TieBreak           string     `json:"tie_break"`
+	NominationOpensAt  *time.Time `json:"nomination_opens_at"`
+	NominationClosesAt *time.Time `json:"nomination_closes_at"`
 }
 
 // CastVoteRequest is the body for POST /estate/:id/elections/:electionId/vote.
+// An empty candidate_id is an abstention — a blank ballot that counts in turnout and
+// credits no candidate (EST-UAT-0221). UnitID authorises one ballot per held unit in a
+// one_vote_per_unit election (EST-UAT-0205).
 type CastVoteRequest struct {
-	CandidateID string `json:"candidate_id" binding:"required"`
+	CandidateID string `json:"candidate_id"`
+	UnitID      string `json:"unit_id"`
 }
 
 // ResidentCard is the payload returned by GET /estate/:id/profile/id-card.
 // The QR value encodes "<estate_id>:<resident_id>" for gate scanner verification.
 type ResidentCard struct {
-	ResidentID      string `json:"resident_id"`
-	EstateID        string `json:"estate_id"`
-	EstateName      string `json:"estate_name"`
-	FullName        string `json:"full_name"`
-	Unit            string `json:"unit"`
-	Role            string `json:"role"`
-	OccupancyType   string `json:"occupancy_type"`
+	ResidentID    string `json:"resident_id"`
+	EstateID      string `json:"estate_id"`
+	EstateName    string `json:"estate_name"`
+	FullName      string `json:"full_name"`
+	Unit          string `json:"unit"`
+	Role          string `json:"role"`
+	OccupancyType string `json:"occupancy_type"`
+	// ProofStatus is what makes the printed occupancy_type more than a self-declaration: the guard
+	// reading the card can see whether the estate has checked the document behind it (EST-UAT-0051).
+	ProofStatus     string `json:"proof_status"`
 	ProfilePhotoURL string `json:"profile_photo_url,omitempty"`
 	QRValue         string `json:"qr_value"` // "<estate_id>:<resident_id>"
 	IssuedAt        string `json:"issued_at"`

@@ -28,6 +28,8 @@ export default function CheckoutScreen() {
     slotLabel?: string;
     reason?: string;
     location?: string;
+    destLat?: string;
+    destLng?: string;
     feeKobo?: string;
     homeFeeKobo?: string;
   }>();
@@ -60,6 +62,8 @@ export default function CheckoutScreen() {
           feeKobo,
           homeVisitFeeKobo: homeFeeKobo,
           location: params.location || undefined,
+          destLat: params.destLat ? Number(params.destLat) : undefined,
+          destLng: params.destLng ? Number(params.destLng) : undefined,
           idempotencyKey,
         }),
       onPaid: (appt) => {

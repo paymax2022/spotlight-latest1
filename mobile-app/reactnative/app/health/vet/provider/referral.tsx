@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { useCreateReferral } from '@/features/health/vet/hooks';
 import { VET_SPECIALTIES } from '@/features/health/vet/constants';
+import MissingContext from '@/features/health/vet/components/MissingContext';
 
 export default function ReferralScreen() {
   const { appointmentId, petId } = useLocalSearchParams<{ appointmentId?: string; petId: string }>();
@@ -24,16 +25,18 @@ export default function ReferralScreen() {
   const [error, setError] = useState('');
 
   const onSubmit = () => {
-    if (!specialty || !reason.trim()) {
-      setError('Choose a specialty and add a reason.');
+    if (!specialty || !reason.trim() || !toVet.trim()) {
+      setError('Choose a specialty, name the specialist and add a reason.');
       return;
     }
     setError('');
     createRef.mutate(
-      { appointmentId: appointmentId ?? 'appt', petId, specialty, toVetName: toVet.trim() || 'Specialist', reason: reason.trim() },
-      { onSuccess: () => setDone(true) },
+      { appointmentId: appointmentId!, petId, specialty, toVetName: toVet.trim(), reason: reason.trim() },
+      { onSuccess: () => setDone(true), onError: () => setError('Couldn’t send the referral. Please try again.') },
     );
   };
+
+  if (!appointmentId || !petId) return <MissingContext title="Referral" fallback="/health/vet/provider/requests" />;
 
   if (done) {
     return (

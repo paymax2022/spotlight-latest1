@@ -691,32 +691,16 @@ func (s *Service) FinanceDashboard(ctx context.Context, estateID, adminID string
 	return d, nil
 }
 
+// Notifications is the legacy unfiltered inbox read: the active half of the caller's feed, newest 50.
+// Since Phase 2.5a it delegates to ListNotifications rather than carrying its own SQL, so the two cannot
+// drift — and so the 50-row cap that used to be invisible is now at least a named default of a paged
+// read (EST-UAT-0359).
 func (s *Service) Notifications(ctx context.Context, estateID, userID string) ([]Notification, error) {
-	if err := s.assertResident(ctx, estateID, userID); err != nil {
-		return nil, err
-	}
-	// Per-user persisted feed (Block 43): notifications are written to
-	// estate_notifications by the emitting events (announcement, emergency,
-	// payment, restriction, task, facility, …).
-	const q = `
-		SELECT id, category, title, COALESCE(body,''), created_at
-		FROM estate_notifications
-		WHERE estate_id=$1 AND user_id=$2
-		ORDER BY created_at DESC LIMIT 50`
-	rows, err := s.db.Query(ctx, q, estateID, userID)
+	page, err := s.ListNotifications(ctx, estateID, userID, NotificationFilter{})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Notification
-	for rows.Next() {
-		var n Notification
-		if err := rows.Scan(&n.ID, &n.Kind, &n.Title, &n.Body, &n.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, n)
-	}
-	return out, rows.Err()
+	return page.Items, nil
 }
 
 func (s *Service) Report(ctx context.Context, estateID, adminID string) (*EstateReport, error) {

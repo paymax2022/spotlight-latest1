@@ -26,7 +26,9 @@ import { ProviderOnboardingCard } from '@/features/health/components';
 import { usePets, useAppointments } from '@/features/health/vet/hooks';
 import { APPT_TYPE_META } from '@/features/health/vet/constants';
 import { formatNaira } from '@/features/health/constants/health.constants';
-import { RemoteBanner } from '@/features/media/banners';
+import SpotlightBanner from '@/components/SpotlightBanner';
+
+const VET_HERO_PUBLIC_ID = 'Warm_veterinary_care_for_happier_pets_wmxbs7';
 
 const QUICK_ACTIONS = [
   { key: 'find', label: 'Find a vet', icon: Stethoscope, href: '/health/vet/find-vet', bg: Colors.iconBgPurple, color: Colors.primary },
@@ -56,10 +58,15 @@ export default function VetHubScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Hero banner — artwork served from Cloudflare R2 via the gateway's
-            banner resolver, not bundled with the app. Its CTA ("Book a Vet
-            Consultation Now") lands on vet discovery. */}
-        <RemoteBanner slug="health-vet" onPress={() => router.push('/health/vet/find-vet')} />
+        {/* Hero banner — Cloudinary artwork (never bundled with the app). Tapping it
+            lands on vet discovery. */}
+        <SpotlightBanner
+          publicId={VET_HERO_PUBLIC_ID}
+          priority
+          aspectRatio={2}
+          alt="Warm veterinary care for happier pets"
+          onPress={() => router.push('/health/vet/find-vet')}
+        />
 
         {/* Quick actions */}
         <View style={styles.quickRow}>

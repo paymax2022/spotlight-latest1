@@ -1,0 +1,292 @@
+openapi: 3.0.3
+info:
+  title: Telemedicine admin - prescription oversight
+  version: 1.0.0
+  description: |
+    Read-mostly admin oversight of e-prescriptions and their fulfilment. Mounted under
+    /api/v1/telemedicine/admin. Reads require `telemedicine.admin.view`; the flag /
+    unflag mutations require `telemedicine.admin.manage` and append to
+    doctor_prescription_audit (action admin_flagged / admin_unflagged). Patient identity
+    is masked in lists; the detail endpoint reveals it and writes a row to
+    doctor_record_access_log (fail closed: no log row, no detail).
+servers:
+  - url: /api/v1/telemedicine/admin
+security:
+  - bearerAuth: []
+paths:
+  /prescriptions/summary:
+    get:
+      summary: KPI strip
+      operationId: prescriptionsSummary
+      responses:
+        '200':
+          description: Counters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Summary' }
+  /prescriptions:
+    get:
+      summary: List prescriptions (doctor-issued and telemedicine-booked)
+      operationId: listPrescriptions
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [draft, issued, dispensed, cancelled] } }
+        - { name: doctor_id, in: query, schema: { type: string, format: uuid }, description: doctors.id }
+        - { name: from, in: query, schema: { type: string, format: date }, description: inclusive, issued (or created) date }
+        - { name: to, in: query, schema: { type: string, format: date }, description: inclusive }
+        - { name: flagged, in: query, schema: { type: boolean } }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 }, description: ref, doctor name, diagnosis or id }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Page of prescriptions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/PrescriptionRow' } }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+  /prescriptions/fulfilments:
+    get:
+      summary: Pharmacy fulfilment queue
+      operationId: listFulfilments
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Page of fulfilments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/FulfilmentRow' } }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+  /prescriptions/refills:
+    get:
+      summary: Refill request queue
+      operationId: listRefills
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, consultation_required] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Page of refill requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RefillRow' } }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+  /prescriptions/{id}:
+    get:
+      summary: Prescription detail (unmasked; access is logged)
+      operationId: getPrescription
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PrescriptionDetail' }
+        '404': { $ref: '#/components/responses/Error' }
+  /prescriptions/{id}/flag:
+    post:
+      summary: Flag a doctor-issued prescription for review (idempotent)
+      operationId: flagPrescription
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        '200':
+          description: Flag state after the call
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/FlagState' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /prescriptions/{id}/unflag:
+    post:
+      summary: Clear an admin flag (idempotent)
+      operationId: unflagPrescription
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Flag state after the call
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/FlagState' }
+        '404': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+  schemas:
+    Summary:
+      type: object
+      properties:
+        issued_30d: { type: integer }
+        pending_fulfilment: { type: integer }
+        flagged: { type: integer }
+        refills_pending: { type: integer }
+        substitutions_pending: { type: integer }
+    PrescriptionRow:
+      type: object
+      properties:
+        id: { type: string }
+        source: { type: string, enum: [doctor, telemedicine] }
+        ref: { type: string }
+        doctor_id: { type: string }
+        doctor_name: { type: string }
+        patient_masked: { type: string }
+        diagnosis: { type: string }
+        status: { type: string }
+        item_count: { type: integer }
+        flagged: { type: boolean }
+        issued_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+    FulfilmentRow:
+      type: object
+      properties:
+        id: { type: string }
+        prescription_id: { type: string, nullable: true }
+        prescription_ref: { type: string }
+        pharmacy_name: { type: string }
+        status: { type: string }
+        total_kobo: { type: integer, format: int64, description: minor units (kobo) }
+        pending_substitutions: { type: integer }
+        delivery_status: { type: string }
+        created_at: { type: string, format: date-time }
+    RefillRow:
+      type: object
+      properties:
+        id: { type: string }
+        prescription_id: { type: string, nullable: true }
+        prescription_ref: { type: string }
+        doctor_name: { type: string }
+        patient_masked: { type: string }
+        status: { type: string }
+        created_at: { type: string, format: date-time }
+        reviewed_at: { type: string, format: date-time, nullable: true }
+    FlagState:
+      type: object
+      properties:
+        id: { type: string }
+        flagged: { type: boolean }
+    PrescriptionDetail:
+      allOf:
+        - $ref: '#/components/schemas/PrescriptionRow'
+        - type: object
+          properties:
+            patient_id: { type: string }
+            patient: { type: object, additionalProperties: true }
+            medications_text: { type: string, description: legacy telemedicine prescriptions only }
+            instructions: { type: string }
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  name: { type: string }
+                  dosage: { type: string }
+                  route: { type: string }
+                  frequency: { type: string }
+                  duration: { type: string }
+                  notes: { type: string }
+            audit:
+              type: array
+              items:
+                type: object
+                properties:
+                  action: { type: string }
+                  actor: { type: string, enum: [doctor, admin] }
+                  prev_status: { type: string }
+                  new_status: { type: string }
+                  detail: { type: object, additionalProperties: true }
+                  created_at: { type: string, format: date-time }
+            fulfilments:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string }
+                  pharmacy_name: { type: string }
+                  status: { type: string }
+                  total_kobo: { type: integer, format: int64 }
+                  deliveries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        status: { type: string }
+                        courier: { type: string }
+                        tracking_ref: { type: string }
+                        eta: { type: string, format: date-time, nullable: true }
+                        delivered_at: { type: string, format: date-time, nullable: true }
+                  substitutes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        original_drug: { type: string }
+                        substitute_drug: { type: string }
+                        status: { type: string }
+                        price_kobo: { type: integer, format: int64 }
+            refills:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string }
+                  created_at: { type: string, format: date-time }
+                  reviewed_at: { type: string, format: date-time, nullable: true }

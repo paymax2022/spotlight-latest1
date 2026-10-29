@@ -98,6 +98,18 @@ export async function createSession(targetTier: KycTier): Promise<VerificationSe
   );
 }
 
+/**
+ * GET /ids/used — ID types (lowercase, e.g. "bvn") that already PASSED an
+ * ID-number check for a tier below `targetTier`. A higher tier must be verified
+ * with a different ID, so these are not offered again (the server enforces it too).
+ */
+export async function getUsedIdTypes(targetTier: KycTier): Promise<string[]> {
+  if (USE_MOCK) return [];
+  const res = await api.get(`${BASE}/ids/used`, { params: { target_tier: targetTier } });
+  const list = (res.data?.data ?? res.data)?.id_types;
+  return Array.isArray(list) ? list.map((t: unknown) => String(t).toLowerCase()) : [];
+}
+
 /** GET /session/{id} — session + its checks (used for polling K11 → K12/K13). */
 export async function getSession(id: string): Promise<VerificationSession> {
   if (USE_MOCK) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -66,12 +67,33 @@ func (s *Service) WithTiers(t TierEnforcer) *Service {
 }
 
 // CreateInvoice bills a resident (estate admin only).
+//
+// The amount is still the admin's call — what changed here is that the database decides whether the
+// charge may exist at all. A vacant unit is exempt (EST-UAT-0048) and so is an occupant whose term on
+// the unit does not run today (EST-UAT-0045); both exemptions are raised by BEFORE INSERT triggers, so
+// an admin who means to bill anyway must say which rule is being waived and give the reason that goes
+// on the audit record.
 func (s *Service) CreateInvoice(ctx context.Context, estateID, adminID string, req CreateInvoiceRequest) (*DuesInvoice, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
 	if req.AmountKobo <= 0 {
-		return nil, errors.New("estate: invoice amount must be positive kobo")
+		return nil, ErrInvalidInvoiceAmount
+	}
+	vacancyReason := strings.TrimSpace(req.VacancyOverrideReason)
+	termReason := strings.TrimSpace(req.TermOverrideReason)
+	if req.VacancyOverride && vacancyReason == "" {
+		return nil, ErrBillingOverrideNeedsReason
+	}
+	if req.TermOverride && termReason == "" {
+		return nil, ErrBillingOverrideNeedsReason
+	}
+	// A reason attached to a rule that was not waived would read as a decision nobody made.
+	if !req.VacancyOverride {
+		vacancyReason = ""
+	}
+	if !req.TermOverride {
+		termReason = ""
 	}
 	inv := &DuesInvoice{
 		ID:         uuid.New().String(),
@@ -86,11 +108,28 @@ func (s *Service) CreateInvoice(ctx context.Context, estateID, adminID string, r
 	if req.PropertyID != "" {
 		inv.PropertyID = &req.PropertyID
 	}
+	inv.VacancyOverride = req.VacancyOverride
+	inv.VacancyOverrideReason = vacancyReason
+	inv.TermOverride = req.TermOverride
+	inv.TermOverrideReason = termReason
 	const q = `
-		INSERT INTO estate_dues_invoices (id, estate_id, property_id, resident_id, category, amount_kobo, due_date, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')`
-	if _, err := s.db.Exec(ctx, q, inv.ID, inv.EstateID, inv.PropertyID, inv.ResidentID, inv.Category, inv.AmountKobo, inv.DueDate); err != nil {
-		return nil, fmt.Errorf("estate: insert invoice: %w", err)
+		INSERT INTO estate_dues_invoices (id, estate_id, property_id, resident_id, category, amount_kobo, due_date, status,
+		                                  vacancy_override, vacancy_override_reason, term_override, term_override_reason)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11)`
+	_, err := s.db.Exec(ctx, q, inv.ID, inv.EstateID, inv.PropertyID, inv.ResidentID, inv.Category, inv.AmountKobo, inv.DueDate,
+		req.VacancyOverride, dbutil.NullStr(vacancyReason), req.TermOverride, dbutil.NullStr(termReason))
+	if err != nil {
+		return nil, mapOccupancyWriterErr("insert invoice", err)
+	}
+	// A waived exemption is the decision, so it is what the audit line carries. The vacancy rule is
+	// about the unit and the term rule about the person billed, hence different subject types.
+	if req.VacancyOverride {
+		_ = s.audit(ctx, estateID, adminID, "INVOICE_VACANCY_OVERRIDE", "property", req.PropertyID,
+			map[string]any{"invoice_id": inv.ID, keyAmountKobo: inv.AmountKobo, "reason": vacancyReason})
+	}
+	if req.TermOverride {
+		_ = s.audit(ctx, estateID, adminID, "INVOICE_TERM_OVERRIDE", "resident", req.ResidentID,
+			map[string]any{"invoice_id": inv.ID, keyAmountKobo: inv.AmountKobo, "reason": termReason})
 	}
 	// Block 30/43: notify the billed resident. Fire-and-forget.
 	s.notify(ctx, estateID, req.ResidentID, NotifPaymentDue, "New invoice",
@@ -105,7 +144,8 @@ func (s *Service) ListInvoices(ctx context.Context, estateID, userID, status str
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, estate_id, property_id, resident_id, category, amount_kobo, due_date, status, created_at
+	q := `SELECT id, estate_id, property_id, resident_id, category, amount_kobo, due_date, status,
+		vacancy_override, COALESCE(vacancy_override_reason,''), term_override, COALESCE(term_override_reason,''), created_at
 		FROM estate_dues_invoices WHERE estate_id=$1`
 	args := []any{estateID}
 	if role != "estate_admin" {
@@ -125,7 +165,8 @@ func (s *Service) ListInvoices(ctx context.Context, estateID, userID, status str
 	var out []DuesInvoice
 	for rows.Next() {
 		var inv DuesInvoice
-		if err := rows.Scan(&inv.ID, &inv.EstateID, &inv.PropertyID, &inv.ResidentID, &inv.Category, &inv.AmountKobo, &inv.DueDate, &inv.Status, &inv.CreatedAt); err != nil {
+		if err := rows.Scan(&inv.ID, &inv.EstateID, &inv.PropertyID, &inv.ResidentID, &inv.Category, &inv.AmountKobo, &inv.DueDate, &inv.Status,
+			&inv.VacancyOverride, &inv.VacancyOverrideReason, &inv.TermOverride, &inv.TermOverrideReason, &inv.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, inv)

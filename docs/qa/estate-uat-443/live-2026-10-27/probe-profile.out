@@ -1,0 +1,156 @@
+=== estate profile / ownership API_LIVE probe @ 2026-10-27T18:03:55Z base=http://127.0.0.1:8095
+admin=7945fbd0-24bf-4ee0-9de4-de37aa51fa21 resident=f30648f3-1e07-48f8-9cdf-d458799946d7 guard=2448c98f-d030-4e58-a1f3-75c5a4348630 outsider=b329a4ea-f3bb-4483-9d7d-95203019ebbe run-id=20261027180354
+--- 1. 0021/0022: create validation, and an application is pending rather than live
+PASS want=400 got=400  [create with no name as admin] — name is required
+PASS want=400 got=400  [create with a 1-character name as admin] — name is too short
+PASS want=400 got=400  [create with a whitespace-only name as admin] — estate: a name is required
+PASS want=400 got=400  [create with an unknown timezone as admin] — estate: invalid timezone: Mars/Phobos
+PASS want=201 got=201  [create estate as admin] 
+PASS 1a a new estate is pending, not live — got "pending" want "pending"
+PASS 1b the timezone default is the platform zone — got "Africa/Lagos" want "Africa/Lagos"
+PASS 1c the creator is the estate owner — got "7945fbd0-24bf-4ee0-9de4-de37aa51fa21" want "7945fbd0-24bf-4ee0-9de4-de37aa51fa21"
+estate under test: 2d732c0d-337b-4fe7-9bc4-6956586b7a26
+--- 2. 0024/0029: nothing on a pending estate can be written until the platform publishes it
+PASS want=423 got=423  [profile write on a pending estate as admin] — estate: estate is pending — changes are disabled until it is active
+PASS 2a refused with the machine-readable status — body contains ""estate_status":"pending""
+PASS want=423 got=423  [any estate write on a pending estate as admin] — estate: estate is pending — changes are disabled until it is active
+--- 3. 0024/0026: the review queue is reviewer-only and publishing is an audited transition
+PASS want=403 got=403  [review queue as a plain member (estate.admin.lifecycle RBAC) as resident] — forbidden
+PASS want=400 got=400  [review queue with an unknown status as admin] — status must be one of pending, active, suspended, closed
+PASS want=200 got=200  [review queue as a granted reviewer as admin] 
+PASS 3a the new application is in the queue — body contains "2d732c0d-337b-4fe7-9bc4-6956586b7a26"
+PASS want=400 got=400  [unknown lifecycle action as admin] — action must be one of verify, reject, suspend, reactivate, close
+PASS want=400 got=400  [verify with a too-short reason as admin] — estate: a reason of at least 5 characters is required
+PASS want=200 got=200  [a rejected transition left the estate pending as admin] 
+PASS 3b still pending after the refused attempts — got "pending" want "pending"
+PASS want=409 got=409  [suspend straight from pending as admin] — estate: invalid lifecycle transition: cannot suspend an estate that is pending
+PASS want=200 got=200  [publish / verify the estate as admin] 
+PASS 3c the verified estate is active — got "active" want "active"
+PASS want=200 got=200  [profile write works once published as admin] 
+--- 4. 0023/0027: a normalised twin is reviewed instead of going live; a rejection stops blocking
+PASS want=201 got=201  [create a whitespace/case twin of the live estate as admin] 
+PASS 4a the twin is flagged duplicate_suspected — got "true" want "true"
+PASS 4b the twin is held pending, never published — got "pending" want "pending"
+PASS want=200 got=200  [pending queue after the twin as admin] 
+PASS 4c the twin is in the review queue — body contains "4f1187ba-56f0-4c23-8527-a5b4af321658"
+PASS want=400 got=400  [reject with a too-short reason as admin] — estate: a reason of at least 5 characters is required
+PASS want=200 got=200  [reject the twin as admin] 
+PASS 4d a rejected estate is closed — got "closed" want "closed"
+PASS want=201 got=201  [create a second estate to reject first as admin] 
+PASS want=200 got=200  [reject it as admin] 
+PASS want=201 got=201  [re-apply over the rejected estate as admin] 
+PASS 4e a rejected application does not block a real one — got "" want ""
+PASS want=200 got=200  [publish the re-application (used as the wrong-estate path in section 7) as admin] 
+--- 5. 0030/0031/0036: profile reads are membership-scoped, writes are admin-only and bounded
+PASS want=403 got=403  [a non-member cannot read the profile (0030 partitioning) as guard] — estate: not a member of this estate
+PASS want=403 got=403  [a non-member cannot write the profile as guard] — estate: not a member of this estate
+PASS want=403 got=403  [an unknown estate is not readable by anyone as guard] — estate: not a member of this estate
+PASS want=400 got=400  [malformed estate id as admin] — invalid estate id
+PASS want=400 got=400  [unknown timezone as admin] — estate: invalid timezone: Not/AZone
+PASS want=400 got=400  [blank timezone as admin] — estate: invalid timezone: timezone is required
+PASS want=200 got=200  [valid IANA timezone as admin] 
+PASS 5a the timezone persisted — got "Africa/Nairobi" want "Africa/Nairobi"
+PASS want=400 got=400  [branding key outside the allow-list as admin] — estate: branding must be a JSON object: unknown field "theme"
+PASS want=400 got=400  [branding colour is not #rrggbb as admin] — estate: branding must be a JSON object: primary_color must be a #rrggbb colour
+PASS want=400 got=400  [branding value is not a string as admin] — estate: branding must be a JSON object: logo_url must be a string
+PASS want=400 got=400  [branding url scheme refused as admin] — estate: branding must be a JSON object: logo_url must be an http(s) URL
+PASS want=200 got=200  [valid branding as admin] 
+PASS 5b branding colour stored — got "#1f2d3e" want "#1f2d3e"
+PASS want=400 got=400  [notice over the 2000-character limit as admin] — estate: the notice is too long: at most 2000 characters
+PASS want=200 got=200  [branding cleared back to defaults as admin] 
+PASS want=200 got=200  [reset the zone for the rest of the run as admin] 
+--- 6. 0028: invite codes carry a role; a resident code joins, and no code demotes an owner
+PASS want=403 got=403  [a non-member cannot mint a manager code as resident] — estate: not a member of this estate
+PASS want=400 got=400  [unknown invite role refused as admin] — role has an unsupported value
+PASS want=400 got=400  [invite without max_uses as admin] — max_uses is required
+PASS want=201 got=201  [manager code as admin] 
+PASS 6a the manager code carries the manager role — got "estate_admin" want "estate_admin"
+PASS want=201 got=201  [default-role code as admin] 
+PASS 6b an omitted role defaults to resident — got "resident" want "resident"
+PASS want=201 got=201  [a member joins with the resident code as resident] 
+PASS 6c the resident code grants resident — got "resident" want "resident"
+PASS want=403 got=403  [a resident-code member gains no admin surface as resident] — estate: insufficient role
+PASS want=200 got=200  [the joined member reads the profile as resident] 
+PASS 6d members see the estate's timezone — got "Africa/Lagos" want "Africa/Lagos"
+PASS want=201 got=201  [the owner redeems a resident code as admin] 
+PASS 6e a resident code cannot demote the owner — got "estate_admin" want "estate_admin"
+PASS want=201 got=201  [outsider redeems the manager code as nobody] 
+PASS 6f the manager code grants estate_admin — got "estate_admin" want "estate_admin"
+PASS want=200 got=200  [the promoted manager holds the admin privilege as nobody] 
+--- 7. 0025/0032: governance rules are versioned by the database, not by the caller
+PASS want=400 got=400  [unknown config column is a 400, not a 500 as admin] — estate: unknown config column
+PASS want=200 got=200  [subscription history is empty until a plan is written as admin] 
+PASS 7a no phantom revision for an untouched column — got "" want ""
+PASS want=403 got=403  [a resident member cannot write rules as resident] — estate: insufficient role
+PASS want=200 got=200  [first governance rule write as admin] 
+PASS want=200 got=200  [second governance rule write as admin] 
+PASS want=200 got=200  [revision history as admin] 
+PASS 7b the newest revision is v2 — got "2" want "2"
+PASS 7c the newest rule value — got "7" want "7"
+PASS 7d v2 records the value it replaced — got "5" want "5"
+PASS 7e history is newest-first — got "1" want "1"
+PASS 7f v1 has no previous value — got "" want ""
+--- 8. 0035: ownership moves only when the incoming owner accepts
+PASS want=400 got=400  [unparseable target is a 400, not a 500 as admin] — estate: a valid to_user_id is required
+PASS want=400 got=400  [self transfer refused as admin] — estate: you already own this estate
+PASS want=403 got=403  [a non-member cannot be handed the estate as admin] — estate: the incoming owner is not a member of this estate
+PASS want=403 got=403  [a plain member cannot open a handover as resident] — estate: insufficient role
+PASS want=201 got=201  [open the handover as admin] 
+PASS 8a opening is pending — got "pending" want "pending"
+PASS want=409 got=409  [only one offer awaits a decision at a time as admin] — estate: a transfer is already pending for this estate
+PASS want=200 got=200  [profile after the request as admin] 
+PASS 8b the request itself moved nothing — got "7945fbd0-24bf-4ee0-9de4-de37aa51fa21" want "7945fbd0-24bf-4ee0-9de4-de37aa51fa21"
+PASS want=404 got=404  [decide an unknown transfer as guard] — estate: owner transfer not found
+PASS want=400 got=400  [malformed transfer id as guard] — invalid transfer id
+PASS want=403 got=403  [an unrelated member cannot decide as guard] — estate: you are not a party to this transfer
+PASS want=403 got=403  [the outgoing owner cannot accept as admin] — estate: only the incoming owner can accept a transfer
+PASS want=404 got=404  [a decision posted under another estate is refused as resident] — estate: owner transfer not found
+PASS want=200 got=200  [the mis-pathed decision moved nothing as admin] 
+PASS 8c ownership is still the outgoing owner's — got "7945fbd0-24bf-4ee0-9de4-de37aa51fa21" want "7945fbd0-24bf-4ee0-9de4-de37aa51fa21"
+PASS want=400 got=400  [unknown status filter is a 400, not a 500 as admin] — estate: unknown transfer status
+PASS want=200 got=200  [the owner sees the estate's offers as admin] 
+PASS 8d the pending offer is listed — body contains "b97dcfda-11f5-4d02-927f-815dee424436"
+PASS want=200 got=200  [the incoming owner accepts as resident] 
+PASS 8e the accept is recorded accepted — got "accepted" want "accepted"
+PASS want=200 got=200  [estate ownership after acceptance as admin] 
+PASS 8f the estate itself changed hands — got "f30648f3-1e07-48f8-9cdf-d458799946d7" want "f30648f3-1e07-48f8-9cdf-d458799946d7"
+PASS want=200 got=200  [profile read after acceptance as admin] 
+PASS 8g the profile reports the new owner — got "f30648f3-1e07-48f8-9cdf-d458799946d7" want "f30648f3-1e07-48f8-9cdf-d458799946d7"
+--- 8h. a decided transfer is final, and the demoted owner keeps no privileges
+PASS want=409 got=409  [re-deciding an accepted transfer as resident] — estate: this transfer has already been decided
+PASS want=403 got=403  [the former owner no longer reads governance history as admin] — estate: insufficient role
+PASS want=403 got=403  [the former owner cannot open a handover as admin] — estate: insufficient role
+PASS want=403 got=403  [the former owner cannot edit the notice as admin] — estate: insufficient role
+PASS want=200 got=200  [the former owner is still a member as admin] 
+PASS want=200 got=200  [the new owner edits the profile as resident] 
+PASS want=201 got=201  [the new owner opens a handover as resident] 
+PASS want=200 got=200  [the target declines as nobody] 
+PASS 8i a decline is recorded declined — got "declined" want "declined"
+PASS want=200 got=200  [ownership unchanged after the decline as admin] 
+PASS 8j the estate did not move on a decline — got "f30648f3-1e07-48f8-9cdf-d458799946d7" want "f30648f3-1e07-48f8-9cdf-d458799946d7"
+PASS want=201 got=201  [another handover as resident] 
+PASS want=200 got=200  [the owner withdraws it as resident] 
+PASS 8k a withdrawal is recorded cancelled — got "cancelled" want "cancelled"
+PASS want=200 got=200  [an estate_admin member sees the estate's whole handover history as nobody] 
+PASS 8l newest-first, the withdrawn offer is first — got "3be666eb-3aca-4b75-bc27-b196abd5d017" want "3be666eb-3aca-4b75-bc27-b196abd5d017"
+PASS 8m and the accepted handover is still in it — got "b97dcfda-11f5-4d02-927f-815dee424436" want "b97dcfda-11f5-4d02-927f-815dee424436"
+PASS want=200 got=200  [the demoted former owner is only a party to offers they received as admin] 
+PASS 8n no offer is addressed to the former owner — got "" want ""
+--- 9. 0029: suspension and closure stop every estate write
+PASS want=200 got=200  [suspend the estate as admin] 
+PASS 9a suspended — got "suspended" want "suspended"
+PASS want=423 got=423  [profile write while suspended as resident] — estate: estate is suspended — changes are disabled until it is active
+PASS want=423 got=423  [handover while suspended as resident] — estate: estate is suspended — changes are disabled until it is active
+PASS want=423 got=423  [a new member cannot join a suspended estate as nobody] — estate: estate is suspended — changes are disabled until it is active
+PASS want=200 got=200  [a suspended estate stays readable by the reviewer (read-only posture) as admin] 
+PASS 9c suspended estate reports the reason — got "estate management under platform review" want "estate management under platform review"
+PASS want=409 got=409  [verify from suspended as admin] — estate: invalid lifecycle transition: cannot verify an estate that is suspended
+PASS want=200 got=200  [reactivate as admin] 
+PASS 9b reactivated — got "active" want "active"
+PASS want=200 got=200  [writes work again once reactivated as resident] 
+--- 10. teardown: no probe estate is left live in the shared local database
+PASS want=200 got=200  [close the estate as admin] 
+PASS want=200 got=200  [close the re-application estate as admin] 
+PASS want=409 got=409  [a rejected estate is already closed as admin] — estate: invalid lifecycle transition: cannot close an estate that is closed
+
+=== result: 140 PASS / 0 FAIL

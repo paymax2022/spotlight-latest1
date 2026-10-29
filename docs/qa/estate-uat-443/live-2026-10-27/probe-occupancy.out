@@ -1,0 +1,316 @@
+=== estate occupancy API_LIVE probe @ 2026-10-27T23:02:30Z base=http://127.0.0.1:8095
+admin=7945fbd0-24bf-4ee0-9de4-de37aa51fa21 resident=f30648f3-1e07-48f8-9cdf-d458799946d7 guard=2448c98f-d030-4e58-a1f3-75c5a4348630 outsider=b329a4ea-f3bb-4483-9d7d-95203019ebbe run-id=20261027230230
+--- 1. the estate under test is an application first: no occupancy writes before publish
+PASS want=201 got=201  [create estate 1 as admin] 
+PASS 1a a new estate is pending — got "pending" want "pending"
+PASS want=423 got=423  [a unit cannot be added to an unpublished estate as admin] — estate: estate is pending — changes are disabled until it is active
+PASS 1b refused with the machine-readable lifecycle code — body contains ""ESTATE_NOT_ACTIVE""
+PASS want=403 got=403  [the review queue is platform RBAC, not estate membership as resident] — forbidden
+PASS want=200 got=200  [publish estate 1 as admin] 
+estate 1: 06e1894d-142a-4eae-9924-023bf64ad9ef
+--- 2. members and units
+PASS want=201 got=201  [add the resident as a member as admin] 
+PASS want=201 got=201  [add the guard as a member as admin] 
+PASS want=403 got=403  [a member cannot add members as resident] — estate: insufficient role
+PASS want=201 got=201  [create unit C-101 capacity=2 in 06e1894d-142a-4eae-9924-023bf64ad9ef]
+PASS want=201 got=201  [create unit C-104 capacity=3 in 06e1894d-142a-4eae-9924-023bf64ad9ef]
+PASS want=201 got=201  [create unit C-105 capacity=6 in 06e1894d-142a-4eae-9924-023bf64ad9ef]
+PASS want=201 got=201  [create unit C-106 capacity=4 in 06e1894d-142a-4eae-9924-023bf64ad9ef]
+PASS want=201 got=201  [create unit C-107 capacity=6 in 06e1894d-142a-4eae-9924-023bf64ad9ef]
+PASS want=201 got=201  [create unit C-108 capacity=3 in 06e1894d-142a-4eae-9924-023bf64ad9ef]
+PASS want=201 got=201  [create unit C-109 capacity=6 in 06e1894d-142a-4eae-9924-023bf64ad9ef]
+PASS want=201 got=201  [create unit C-110 capacity=2 in 06e1894d-142a-4eae-9924-023bf64ad9ef]
+PASS want=201 got=201  [create unit C-111 capacity=1 in 06e1894d-142a-4eae-9924-023bf64ad9ef]
+PASS want=201 got=201  [create unit C-112 capacity=2 in 06e1894d-142a-4eae-9924-023bf64ad9ef]
+units: cap=8246af28-2c73-4905-a50d-b661401da13c deed=c142294e-fa8a-496b-85a2-a3fb568c26c7 term=3c4af163-1a8b-4c47-b58e-c8b5bd9c7aa5 vac=22a7a272-a2dd-4216-b966-c10592fcc6c7 fterm=e9f47acb-e473-489a-899f-c392579645b1 clm=2194a159-b75b-4b30-9900-f367fbbc933e admin=13d97d3f-cd78-4287-8dcc-be2994e9a8ce nodeed=026ab4b0-eb71-41d3-af11-dc0617953d7a arch=b6909bfc-98cc-49a4-a3a4-50787502f556 dup=29dcf142-0f8d-4d78-9e3b-fec9db2d9ad0
+--- 2b. EST-UAT-0038: unit keys, the capacity default and the vacant birth state
+PASS 2b-1 an omitted capacity takes the module default — got "6" want "6"
+PASS 2b-2 a new unit is vacant — got "vacant" want "vacant"
+PASS want=409 got=409  [the same block/floor/label twice as admin] — estate: a unit with that label already exists in this estate: C-900
+PASS want=400 got=400  [negative capacity refused as admin] — estate: capacity must be at least 1
+PASS want=400 got=400  [a unit with no label as admin] — unit_label is required
+PASS want=400 got=400  [a property type outside the column domain (ESTA-D032) as admin] — estate: property_type must be apartment, house, commercial, land or other
+PASS 2b-3 the refusal names the domain — body contains "property_type"
+PASS want=201 got=201  [a padded type is stored trimmed rather than refused as admin] 
+PASS 2b-4 what was stored — got "apartment" want "apartment"
+PASS want=400 got=400  [the same rule on the update route as admin] — estate: property_type must be apartment, house, commercial, land or other
+PASS want=400 got=400  [a malformed unit id never reaches the database as admin] — invalid UUID length: 10
+--- 3. EST-UAT-0043/0046: one admission writes the registration, the deed column and the flag
+PASS want=201 got=201  [admin admits themself as a plain resident as admin] 
+PASS 3a the residency role the writer kept — got "estate_admin" want "estate_admin"
+PASS 3b the occupancy kind it stored — got "resident" want "resident"
+PASS want=200 got=200  [the unit recomputed to occupied as admin] 
+PASS 3c occupancy_status — got "occupied" want "occupied"
+PASS want=200 got=200  [the register for that unit as admin] 
+PASS 3d one live registration — got "1" want "1"
+PASS 3e in effect with no dates (NULL = unrestricted) — got "true" want "true"
+PASS want=200 got=200  [the estate-wide register (admin) as admin] 
+PASS want=403 got=403  [a non-member cannot read a unit's register as nobody] — estate: not a member of this estate
+PASS want=400 got=400  [a malformed unit id is a 400 as admin] — invalid UUID length: 10
+--- 3f. releasing keeps the history and frees the unit
+PASS want=200 got=200  [end the registration as admin] 
+PASS 3g the release names the registration row it closed — got "03aeaf38-2aee-4dfb-bbdb-65417a5a9d4c" want "03aeaf38-2aee-4dfb-bbdb-65417a5a9d4c"
+PASS 3g-2 and the unit it leaves — got "vacant" want "vacant"
+PASS want=404 got=404  [releasing twice is a 404, not a second write as admin] — estate: this person does not currently occupy that unit
+PASS want=200 got=200  [the live register is empty as admin] 
+PASS 3h no live rows — got "0" want "0"
+PASS want=200 got=200  [the closed registration is still readable as admin] 
+PASS 3i ended, and not in effect — got "false" want "false"
+PASS want=200 got=200  [the unit recomputed to vacant as admin] 
+PASS 3j occupancy_status — got "vacant" want "vacant"
+--- 4. EST-UAT-0044: capacity is a countable rule, and the refusal changes nothing
+PASS want=201 got=201  [occupant 1 of 2 as admin] 
+PASS want=201 got=201  [occupant 2 of 2 as admin] 
+PASS want=409 got=409  [a third occupant in a capacity-2 unit as admin] — estate: this unit is already at capacity
+PASS 4a the refusal names the limit — body contains "at capacity"
+PASS want=200 got=200  [the register is unchanged by the refusal as admin] 
+PASS 4b still two live registrations — got "2" want "2"
+PASS want=400 got=400  [lowering capacity below who already lives there as admin] — estate: this unit already has more occupants than that capacity: 2 recorded
+PASS want=200 got=200  [raising it as admin] 
+PASS 4c the unit now accepts three — got "3" want "3"
+PASS want=201 got=201  [the third bed is now fillable as admin] 
+PASS want=400 got=400  [capacity must be at least 1 as admin] — capacity is required
+PASS want=400 got=400  [capacity is required as admin] — capacity is required
+PASS want=403 got=403  [capacity is an admin decision as resident] — estate: insufficient role
+--- 4d. the overlap half: one current owner, one current tenant
+PASS want=201 got=201  [first homeowner on the deed unit as admin] 
+PASS want=409 got=409  [a second homeowner with no explicit transfer as admin] — estate: another member is already recorded as this unit's owner
+PASS 4e the refusal says the deed is taken — body contains "owner"
+PASS want=200 got=200  [the admission wrote the party column as admin] 
+PASS 4f landlord_id — got "f30648f3-1e07-48f8-9cdf-d458799946d7" want "f30648f3-1e07-48f8-9cdf-d458799946d7"
+PASS want=201 got=201  [an explicit displacement is allowed as admin] 
+PASS want=200 got=200  [the displaced owner is released, not deleted as admin] 
+PASS 4g one live homeowner — got "1" want "1"
+PASS 4h it is the new one — got "2448c98f-d030-4e58-a1f3-75c5a4348630" want "2448c98f-d030-4e58-a1f3-75c5a4348630"
+PASS want=200 got=200  [and the old one is in the history as admin] 
+PASS 4i two rows including the closed one — got "2" want "2"
+--- 5. the landlord's own privilege is exactly 'admit a tenant into the unit I own'
+PASS want=201 got=201  [the resident owns the term unit as admin] 
+PASS want=201 got=201  [the landlord admits their tenant as resident] 
+PASS want=403 got=403  [the landlord cannot admit another owner as resident] — estate: only an estate admin or this unit's landlord can record this occupancy
+PASS want=403 got=403  [a tenant cannot admit anybody as guard] — estate: only an estate admin or this unit's landlord can record this occupancy
+PASS want=409 got=409  [a second tenant on the same unit as admin] — estate: another member is already recorded as this unit's tenant
+PASS 5a the refusal names the tenant slot — body contains "tenant"
+PASS want=403 got=403  [an occupant cannot end somebody else's registration as guard] — estate: only an estate admin or the occupant can end this occupancy
+PASS want=200 got=200  [an occupant can end their own as guard] 
+PASS want=201 got=201  [the tenant slot is free again as admin] 
+PASS want=403 got=403  [ending another person's registration is an admin decision as resident] — estate: only an estate admin or the occupant can end this occupancy
+--- 5b. caller mistakes on the admitting route are 400s, not 500s
+PASS want=400 got=400  [unknown occupancy kind as admin] — estate: unknown occupancy type: squatter
+PASS want=400 got=400  [move-out before move-in as admin] — estate: the move-out date cannot precede the move-in date
+PASS want=400 got=400  [malformed target user id as admin] — estate: a valid user_id is required
+PASS want=400 got=400  [no target at all as admin] — user_id is required
+PASS want=400 got=400  [a non-ISO date names the field as admin] — estate: the move-out date cannot precede the move-in date: effective_from must be YYYY-MM-DD
+PASS 5b-effective_from — body contains "effective_from"
+--- 6. EST-UAT-0045: the term gates member actions and the unit itself, not the member's own record
+PASS want=201 got=201  [registration that starts in the future as admin] 
+PASS want=201 got=201  [registration in effect today as admin] 
+PASS want=200 got=200  [the register marks which terms run today as admin] 
+PASS 6a the future registration is not in effect — got "false" want "false"
+PASS 6b the in-term one is — got "true" want "true"
+PASS want=403 got=403  [the out-of-term member cannot open the unit as nobody] — estate: your occupancy of this unit is not in effect today
+PASS 6c the refusal is the term gate, not membership — body contains "not in effect"
+PASS want=200 got=200  [the estate-wide register still opens for the gated member as nobody] 
+PASS 6c-2 it holds only their own rows — got "0" want "0"
+PASS want=200 got=200  [and the unit register, where they can see their own term has not started as nobody] 
+PASS 6c-3 the out-of-term row is there, marked as such — got "false" want "false"
+PASS 6c-4 and nobody else's term is shown — got "0" want "0"
+PASS want=200 got=200  [while the admin who can act on it still reads it as admin] 
+PASS want=200 got=200  [an estate admin is exempt from the term gate as admin] 
+PASS want=201 got=201  [the same person with a dateless registration as admin] 
+PASS want=200 got=200  [and the gate opens — any live term covering today admits as nobody] 
+--- 6d. the platform step-up gate in front of the dues routes, before anything behind it is tested
+  cleared the step-up grants for admin
+  cleared the step-up grants for resident
+PASS want=403 got=403  [no second factor has been completed in this session as admin] — step-up verification required
+PASS 6d-1 the refusal is the step-up gate, not the estate's rule — body contains "step_up_required"
+  seeded a 20-minute step-up grant for admin (token 49937557…)
+PASS want=409 got=409  [with the grant the request reaches the estate's own billing rule as admin] — estate: dues are exempt for a vacant unit
+--- 7. EST-UAT-0048: a vacant unit is exempt from dues unless an admin overrides in writing
+PASS want=409 got=409  [billing a vacant unit as admin] — estate: dues are exempt for a vacant unit
+PASS 7a the refusal is the vacancy exemption — body contains "vacant"
+PASS want=400 got=400  [an override with no reason is not a decision as admin] — estate: a reason is required to bill against an occupancy exemption
+PASS want=201 got=201  [a reasoned override bills it as admin] 
+PASS 7b the invoice carries the override — got "true" want "true"
+PASS 7c and the reason it was billed on — got "levy that funds the vacant unit's security" want "levy that funds the vacant unit's security"
+PASS want=201 got=201  [the unit gets an occupant as admin] 
+PASS want=201 got=201  [and bills normally, with no override as admin] 
+PASS want=409 got=409  [a different vacant unit is still exempt as admin] — estate: dues are exempt for a vacant unit
+  seeded a 20-minute step-up grant for resident (token 11e42f4d…)
+PASS want=403 got=403  [raising dues is an admin action, even for a member who has stepped up as resident] — estate: insufficient role
+PASS 7d the refusal is the estate role, not the gate — body contains "insufficient role"
+PASS want=400 got=400  [a zero amount is the caller's arithmetic, not a server failure (ESTA-D036) as admin] — amount_kobo is required
+PASS want=400 got=400  [a negative amount is refused at the edge, with the field named, before any billing rule runs (ESTA-D036) as admin] — amount_kobo is out of range
+PASS 7e the amount refusal names the field the caller got wrong — body contains "amount_kobo"
+--- 8. EST-UAT-0045 (dues half): a member is not charged outside their term
+PASS want=201 got=201  [a dateless co-resident occupies the unit first as admin] 
+PASS want=200 got=200  [so the unit is no longer vacant as admin] 
+PASS 8a occupancy_status — got "occupied" want "occupied"
+PASS want=201 got=201  [a registration with no dates is billed normally (NULL = unrestricted) as admin] 
+PASS want=201 got=201  [and a tenant whose term starts later as admin] 
+PASS want=409 got=409  [billing the out-of-term occupant is refused as admin] — estate: dues are exempt while this occupant's term on the unit is not running
+PASS 8b the refusal is the term exemption — body contains "term on the unit is not running"
+PASS want=400 got=400  [term override without a reason as admin] — estate: a reason is required to bill against an occupancy exemption
+PASS want=201 got=201  [a reasoned term override bills as admin] 
+PASS 8c the invoice records the term override — got "true" want "true"
+--- 9. the occupancy decisions and the exemptions are audited, not silent
+PASS want=200 got=200  [the estate audit log as admin] 
+PASS 9a the admission is audited — body contains "ESTATE_UNIT_OCCUPANT_ADMITTED"
+PASS 9b the release is audited — body contains "ESTATE_UNIT_OCCUPANT_RELEASED"
+PASS 9c the vacancy override is audited — body contains "INVOICE_VACANCY_OVERRIDE"
+PASS 9d the term override is audited — body contains "INVOICE_TERM_OVERRIDE"
+PASS want=403 got=403  [the log is admin-only as guard] — estate: insufficient role
+--- 10. EST-UAT-0051: proof of occupancy is declared, queued, reviewed and attributed
+PASS want=200 got=200  [the resident declares a deed as resident] 
+PASS want=200 got=200  [they can read the state of their own claim as resident] 
+PASS 10a the declaration is unverified until an admin looks — got "unverified" want "unverified"
+PASS 10b the label they declared — got "homeowner" want "homeowner"
+PASS want=201 got=201  [file an ownership claim on a unit as resident] 
+PASS want=201 got=201  [re-filing the same claim re-opens it rather than queueing twice as resident] 
+PASS 10c the re-filed claim is pending again — got "pending" want "pending"
+PASS want=403 got=403  [the queue is admin-only as guard] — estate: insufficient role
+PASS want=200 got=200  [the admin reads the queue as admin] 
+PASS 10d the claim id is stable across the re-file — got "0c53ae4b-c4db-4393-8252-cb4051eff564" want "0c53ae4b-c4db-4393-8252-cb4051eff564"
+PASS 10e the queued claim is the one filed — body contains "0c53ae4b-c4db-4393-8252-cb4051eff564"
+PASS want=400 got=400  [an unknown status filter is a 400 as admin] — estate: claim status must be pending, approved or rejected
+PASS want=400 got=400  [an unknown decision is a 400 as admin] — estate: decision must be 'approved' or 'rejected'
+PASS want=403 got=403  [a member cannot review a claim as guard] — estate: insufficient role
+PASS want=200 got=200  [approve the claim as admin] 
+PASS 10f the claim is approved — got "approved" want "approved"
+PASS want=200 got=200  [the approval put the claimer on the deed as admin] 
+PASS 10g landlord_id — got "f30648f3-1e07-48f8-9cdf-d458799946d7" want "f30648f3-1e07-48f8-9cdf-d458799946d7"
+PASS want=200 got=200  [and made the declaration a checked document as admin] 
+PASS 10h proof_status — got "verified" want "verified"
+PASS 10i with a reviewer identity — got "7945fbd0-24bf-4ee0-9de4-de37aa51fa21" want "7945fbd0-24bf-4ee0-9de4-de37aa51fa21"
+PASS want=409 got=409  [re-reviewing a decided claim as admin] — estate: ownership claim already reviewed: already approved
+PASS want=404 got=404  [a claim id from nowhere as admin] — estate: ownership claim not found in this estate
+PASS want=200 got=200  [the admin parameter is ignored for a member, not obeyed as guard] 
+PASS 10x a member asking for somebody else's file gets their own — got "2448c98f-d030-4e58-a1f3-75c5a4348630" want "2448c98f-d030-4e58-a1f3-75c5a4348630"
+--- 10j. an approval cannot seize a unit somebody else is recorded as owning
+PASS want=201 got=201  [the resident claims the unit the guard owns as resident] 
+PASS want=409 got=409  [approving it is refused — the overlap rule still applies as admin] — estate: another member is already recorded as this unit's owner
+PASS 10k the refusal names the owner already on the deed — body contains "already recorded as this unit"
+PASS want=200 got=200  [the refused review rolled back: the claim is still pending, not approved as admin] 
+PASS 10l the claim is in the pending queue — body contains "39060c38-0441-4150-9294-e112bf60a360"
+PASS want=200 got=200  [so it can be rejected honestly as admin] 
+PASS 10m rejected with a reason — got "rejected" want "rejected"
+PASS want=200 got=200  [and the deed did not move as admin] 
+PASS 10n landlord_id unchanged — got "2448c98f-d030-4e58-a1f3-75c5a4348630" want "2448c98f-d030-4e58-a1f3-75c5a4348630"
+--- 10o. replacing a document resets the verdict; approving an empty declaration is refused
+PASS want=200 got=200  [re-declare with a different file as resident] 
+PASS want=200 got=200  [the old approval did not travel with the new file as resident] 
+PASS 10p proof_status back to unverified — got "unverified" want "unverified"
+PASS 10q and no reviewer attached — got "" want ""
+PASS want=403 got=403  [a member cannot mark their own documents verified as resident] — estate: insufficient role
+PASS want=400 got=400  [an unknown decision is a 400 as admin] — estate: proof decision must be verified or rejected
+PASS want=200 got=200  [reject with a reason as admin] 
+PASS 10r the rejection is recorded — got "rejected" want "rejected"
+PASS 10s and the resident can read why — got "the file is a mortgage statement, not a deed" want "the file is a mortgage statement, not a deed"
+PASS want=200 got=200  [then verified once the real deed is filed as admin] 
+PASS 10t verified by the admin — got "verified:7945fbd0-24bf-4ee0-9de4-de37aa51fa21" want "verified:7945fbd0-24bf-4ee0-9de4-de37aa51fa21"
+PASS want=404 got=404  [an id with no registration in this estate is a 404 as admin] — estate: no occupancy declaration on record for that resident
+PASS want=200 got=200  [the guard declares a label and files no document as guard] 
+PASS want=409 got=409  [approving an empty declaration is refused (ESTA-D035) as admin] — estate: there is no document on record to verify
+PASS 10u the refusal names the missing document — body contains "no document on record"
+--- 11. EST-UAT-0047: a tenancy approval admits the tenant, attributes the reviewer, and demotes nobody
+PASS want=201 got=201  [the guard owns the second unit as admin] 
+PASS want=201 got=201  [the body's landlord_id is not trusted — the unit's real owner is used as resident] 
+PASS 11a the request is addressed to the deed owner, whoever the body named — got "2448c98f-d030-4e58-a1f3-75c5a4348630" want "2448c98f-d030-4e58-a1f3-75c5a4348630"
+PASS want=404 got=404  [the estate admin the body named cannot approve it either as admin] — estate: tenancy request not found, not your request, or already reviewed
+PASS want=400 got=400  [an unknown decision is a 400 as resident] — estate: decision must be 'approved' or 'rejected'
+PASS want=201 got=201  [the estate admin rents the unit the resident owns as admin] 
+PASS want=404 got=404  [a plain member cannot approve somebody else's request as guard] — estate: tenancy request not found, not your request, or already reviewed
+PASS want=404 got=404  [not even the tenant, when the tenant is an estate admin as admin] — estate: tenancy request not found, not your request, or already reviewed
+PASS want=404 got=404  [and approving under the wrong unit path changes nothing as resident] — estate: tenancy request not found, not your request, or already reviewed
+PASS want=200 got=200  [its landlord approves as resident] 
+PASS 11a the request is approved — got "approved" want "approved"
+PASS 11b with the reviewer recorded — got "f30648f3-1e07-48f8-9cdf-d458799946d7" want "f30648f3-1e07-48f8-9cdf-d458799946d7"
+PASS want=200 got=200  [the approval wrote a registration over the lease window as admin] 
+PASS 11c the admin is on the register as tenant — got "tenant" want "tenant"
+PASS 11d and in effect — got "true" want "true"
+PASS want=200 got=200  [the unit's tenant column came from the same decision as admin] 
+PASS 11e tenant_id — got "7945fbd0-24bf-4ee0-9de4-de37aa51fa21" want "7945fbd0-24bf-4ee0-9de4-de37aa51fa21"
+PASS want=200 got=200  [the approved agreement is a checked document as admin] 
+PASS 11f proof_status — got "verified" want "verified"
+PASS want=404 got=404  [a decided request cannot be re-decided as resident] — estate: tenancy request not found, not your request, or already reviewed
+PASS want=200 got=200  [the admin who moved in as a tenant is still an estate admin as admin] 
+PASS 11g the demotion defect is gone — the admin is in the admin list — body contains "7945fbd0-24bf-4ee0-9de4-de37aa51fa21"
+PASS want=200 got=200  [and still administers the units as admin] 
+PASS want=200 got=200  [and still reads the review queues as admin] 
+--- 11i. a unit with nobody on the deed has no landlord to approve
+PASS want=409 got=409  [the request is refused at filing, not queued for nobody to decide as guard] — estate: this unit has no landlord to review the request
+PASS 11j the refusal names the missing landlord — body contains "landlord"
+--- 12. EST-UAT-0052: the register outranks the flag, and an occupied unit cannot be retired
+PASS want=409 got=409  [cannot flag a populated unit vacant as admin] — estate: this unit still has occupants recorded: 2 recorded
+PASS 12a the refusal names the register — body contains "occupants"
+PASS want=400 got=400  [an invented status is a 400, not a 500 as admin] — estate: occupancy status must be vacant, occupied or reserved: "moved-in"
+PASS want=403 got=403  [a member cannot set the flag as resident] — estate: insufficient role
+PASS want=200 got=200  [an empty unit can be reserved as admin] 
+PASS want=409 got=409  [a populated unit cannot be archived as admin] — estate: this unit still has occupants recorded: 2 recorded — end every occupancy first
+PASS want=200 got=200  [an empty unit archives as admin] 
+PASS want=404 got=404  [and takes no further admissions as admin] — estate: unit not found in this estate
+PASS want=404 got=404  [or claims as guard] — estate: unit not found in this estate
+PASS want=201 got=201  [and a retired unit's label can be reused by a live one as admin] 
+PASS want=200 got=200  [the occupant leaves; the receivable does not as guard] 
+PASS want=409 got=409  [a unit with an open invoice cannot be retired as admin] — estate: cannot archive a unit with open dues invoices — settle or waive them first: 2 pending or overdue
+PASS 12b the refusal names the receivable — body contains "invoices"
+PASS want=200 got=200  [analytics still reads for a live unit as admin] 
+--- 13. a banned membership is not revived by an admission
+  cleared the step-up grants for admin
+PASS want=403 got=403  [the ban route stands behind the same step-up gate as admin] — step-up verification required
+PASS 13d the refusal is the gate — body contains "step_up_required"
+  seeded a 20-minute step-up grant for admin (token 49937557…)
+PASS want=200 got=200  [ban the outsider as admin] 
+PASS want=403 got=403  [admitting them is refused as admin] — estate: this estate membership is no longer active
+PASS 13a the refusal is the membership, not the unit — body contains "membership"
+PASS want=200 got=200  [restore for the teardown as admin] 
+PASS want=201 got=201  [and the admission works again as admin] 
+--- 14. cross-estate authorisation: another estate's id is not a capability
+PASS want=201 got=201  [the resident founds a second estate as resident] 
+PASS want=200 got=200  [the platform publishes it as admin] 
+PASS want=403 got=403  [the estate-1 admin is not a member of estate 2 as admin] — estate: not a member of this estate
+PASS want=404 got=404  [admitting into another estate's unit through this estate's path as admin] — estate: unit not found in this estate
+PASS want=404 got=404  [and claiming another estate's unit as resident] — estate: unit not found in this estate
+PASS want=201 got=201  [the resident registers a car in their own estate as resident] 
+PASS want=404 got=404  [another estate's admin cannot verify it through this estate as admin] — estate: vehicle not found in this estate
+PASS want=200 got=200  [its own estate's admin can as resident] 
+PASS want=403 got=403  [and the estate-1 admin cannot even read estate 2's unit as admin] — estate: not a member of this estate
+PASS want=409 got=409  [a unit nobody owns has no landlord to answer, whoever files as nobody] — estate: this unit has no landlord to review the request
+PASS want=201 got=201  [estate 2's owner is recorded on that unit as resident] 
+PASS want=201 got=201  [filing an application needs no membership — that is how a prospective tenant arrives as nobody] 
+PASS 14a the request is addressed to the unit's real landlord, whoever the body named — body contains "f30648f3-1e07-48f8-9cdf-d458799946d7"
+PASS 14b and the response discloses that landlord id to a filer with no membership (ESTA-D039) — body contains "f30648f3-1e07-48f8-9cdf-d458799946d7"
+PASS want=403 got=403  [filing one grants the applicant no access to the estate as nobody] — estate: not a member of this estate
+--- 14b. a vehicle verdict does not survive the document it was based on
+PASS want=201 got=201  [the admin registers a car in estate 1 as admin] 
+PASS want=200 got=200  [and verifies it as admin] 
+PASS want=200 got=200  [the owner reads the verdict as admin] 
+PASS 14b-1 verified — got "true" want "true"
+PASS want=201 got=201  [re-registering the plate with a different document as admin] 
+PASS 14b-2 revokes the old verdict — got "false" want "false"
+--- 15. the resident card carries the proof state a guard reads
+PASS want=200 got=200  [the card of the verified homeowner as resident] 
+PASS 15a the label — got "homeowner" want "homeowner"
+PASS 15b and that the estate checked it — got "verified" want "verified"
+--- 16. teardown: end every registration, then close both estates
+  released f30648f3-1e07-48f8-9cdf-d458799946d7 from 8246af28-2c73-4905-a50d-b661401da13c
+  released 2448c98f-d030-4e58-a1f3-75c5a4348630 from 8246af28-2c73-4905-a50d-b661401da13c
+  released 7945fbd0-24bf-4ee0-9de4-de37aa51fa21 from 8246af28-2c73-4905-a50d-b661401da13c
+  released 2448c98f-d030-4e58-a1f3-75c5a4348630 from c142294e-fa8a-496b-85a2-a3fb568c26c7
+  released f30648f3-1e07-48f8-9cdf-d458799946d7 from 3c4af163-1a8b-4c47-b58e-c8b5bd9c7aa5
+  released 7945fbd0-24bf-4ee0-9de4-de37aa51fa21 from 3c4af163-1a8b-4c47-b58e-c8b5bd9c7aa5
+  released b329a4ea-f3bb-4483-9d7d-95203019ebbe from 3c4af163-1a8b-4c47-b58e-c8b5bd9c7aa5
+  released 2448c98f-d030-4e58-a1f3-75c5a4348630 from e9f47acb-e473-489a-899f-c392579645b1
+  released b329a4ea-f3bb-4483-9d7d-95203019ebbe from e9f47acb-e473-489a-899f-c392579645b1
+  released f30648f3-1e07-48f8-9cdf-d458799946d7 from 2194a159-b75b-4b30-9900-f367fbbc933e
+  released 7945fbd0-24bf-4ee0-9de4-de37aa51fa21 from 2194a159-b75b-4b30-9900-f367fbbc933e
+  released 2448c98f-d030-4e58-a1f3-75c5a4348630 from 13d97d3f-cd78-4287-8dcc-be2994e9a8ce
+  released b329a4ea-f3bb-4483-9d7d-95203019ebbe from 13d97d3f-cd78-4287-8dcc-be2994e9a8ce
+  released f30648f3-1e07-48f8-9cdf-d458799946d7 from 026ab4b0-eb71-41d3-af11-dc0617953d7a
+  released b329a4ea-f3bb-4483-9d7d-95203019ebbe from 026ab4b0-eb71-41d3-af11-dc0617953d7a
+PASS want=200 got=200  [close estate 1 as admin] 
+PASS want=200 got=200  [close estate 2 as admin] 
+PASS want=403 got=403  [its owner cannot reopen it from outside the queue as resident] — forbidden
+PASS want=409 got=409  [closure is terminal as admin] — estate: invalid lifecycle transition: cannot close an estate that is closed
+
+=== result: 264 PASS / 0 FAIL

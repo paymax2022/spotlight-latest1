@@ -13,6 +13,16 @@ import type {
 
 const KEY = 'kyc-verify';
 
+/** ID types already verified at a lower tier (excluded from the picker). */
+export function useUsedIdTypes(targetTier: KycTier) {
+  return useQuery<string[]>({
+    queryKey: [KEY, 'used-id-types', targetTier],
+    queryFn: () => kyc.getUsedIdTypes(targetTier),
+    enabled: targetTier > 1,
+    staleTime: 0,
+  });
+}
+
 /** GET /session/{id}. Poll-friendly: pass pollMs to enable K11 polling. */
 export function useKycSession(sessionId: string | null | undefined, pollMs?: number) {
   return useQuery<VerificationSession>({

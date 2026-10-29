@@ -92,6 +92,8 @@ export interface Vet {
   lng: number;
   consultFeeKobo: number;
   homeVisitFeeKobo: number;
+  /** Lowest active clinic price; 0 when none (older backends omit it). */
+  clinicFeeKobo: number;
   types: AppointmentType[];
   species: PetSpecies[];
   specialties: string[];
@@ -160,6 +162,9 @@ export interface CreateAppointmentInput {
   feeKobo: number;
   homeVisitFeeKobo: number;
   location?: string;
+  /** Home-visit destination from the address picker; the vet's navigation uses it. */
+  destLat?: number;
+  destLng?: number;
   intakeResponseId?: string;
   idempotencyKey: string;
 }
@@ -323,6 +328,12 @@ export interface ProviderProfile {
   types: AppointmentType[];
   species: PetSpecies[];
   credential: ProviderCredential;
+  /** Clinic location. Address parts feed the public listing; the point puts the vet on the map. */
+  clinicAddress?: string;
+  clinicCity?: string;
+  clinicState?: string;
+  clinicLat?: number | null;
+  clinicLng?: number | null;
 }
 
 // HL-2 assisted path: the vet is verified WITHOUT ever seeing the VCN portal.
@@ -351,10 +362,20 @@ export interface VcnStatus {
   stage: VcnStage;
 }
 
+export interface ClinicLocationInput {
+  address: string;
+  city?: string;
+  state?: string;
+  lat: number;
+  lng: number;
+}
+
 export interface SubmitOnboardingInput {
   displayName: string;
   vcnLicenseNo: string;
   clinicName: string;
+  // Required: pins the clinic so the vet appears in near-me and map results once approved.
+  location: ClinicLocationInput;
   // Previously the onboarding screen only ever collected the VCN licence
   // NUMBER — no document upload — so the credential vault's AddCredential
   // (which requires a real uploaded file) could never be called. Optional:
@@ -368,6 +389,11 @@ export interface UpdateProfileInput {
   consultFeeKobo?: number;
   homeVisitFeeKobo?: number;
   types?: AppointmentType[];
+  clinicAddress?: string;
+  clinicCity?: string;
+  clinicState?: string;
+  clinicLat?: number;
+  clinicLng?: number;
 }
 
 export interface ProviderAvailabilityBlock {

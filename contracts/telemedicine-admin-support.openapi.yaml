@@ -1,0 +1,310 @@
+openapi: 3.0.3
+info:
+  title: Telemedicine admin - support, disputes and safety
+  version: 1.0.0
+  description: |
+    Admin oversight queues for the doctor-facing support surfaces: support
+    tickets, support disputes, call disputes, safety issues and emergency
+    cases / escalations. Mounted under `/api/v1/telemedicine/admin`.
+
+    * Reads need `telemedicine.admin.view`; every mutation needs
+      `telemedicine.admin.manage`.
+    * Every mutation runs in one transaction with a `doctor_compliance_audit`
+      row (fail closed) and, where a doctor-visible change happened, a
+      `doctor_notifications` row.
+    * Assignment is recorded as the latest `admin.assign` audit row for the
+      entity (no schema change). Patient identifiers are masked in lists and
+      PII-looking keys are scrubbed from free-form `detail` payloads.
+    * Success envelope: `{ "data": ... }`. Error envelope: `{ "error": "..." }`.
+servers:
+  - url: /api/v1/telemedicine/admin
+security:
+  - bearerAuth: []
+paths:
+  /support/summary:
+    get:
+      operationId: supportSummary
+      summary: Status counts for every queue (KPI strip)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Summary' } } } } } }
+  /support/tickets:
+    get:
+      operationId: listSupportTickets
+      parameters: [ { $ref: '#/components/parameters/status' }, { $ref: '#/components/parameters/category' }, { $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/assigned' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/offset' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemList' }
+  /support/tickets/{id}:
+    get:
+      operationId: getSupportTicket
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+        '404': { $ref: '#/components/responses/Error' }
+  /support/tickets/{id}/reply:
+    post:
+      operationId: replySupportTicket
+      description: Posts an agent message to the doctor's thread. Moves `open` to `in_progress`. 409 when the ticket is closed.
+      parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/idempotencyKey' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reply' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /support/tickets/{id}/status:
+    post:
+      operationId: setSupportTicketStatus
+      description: "Transitions: open -> in_progress|resolved|closed; in_progress -> resolved|closed; resolved -> open|closed; closed is terminal."
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Status' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /support/tickets/{id}/assign:
+    post:
+      operationId: assignSupportTicket
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Assign' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /support/disputes:
+    get:
+      operationId: listSupportDisputes
+      parameters: [ { $ref: '#/components/parameters/status' }, { $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/assigned' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/offset' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemList' }
+  /support/disputes/{id}:
+    get:
+      operationId: getSupportDispute
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /support/disputes/{id}/reply:
+    post:
+      operationId: replySupportDispute
+      parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/idempotencyKey' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reply' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+  /support/disputes/{id}/status:
+    post:
+      operationId: setSupportDisputeStatus
+      description: "Transitions: open -> under_review|awaiting_response|resolved|rejected; under_review <-> awaiting_response; either -> resolved|rejected; resolved and rejected are terminal."
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Status' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+  /support/disputes/{id}/assign:
+    post:
+      operationId: assignSupportDispute
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Assign' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /support/call-disputes:
+    get:
+      operationId: listCallDisputes
+      parameters: [ { $ref: '#/components/parameters/status' }, { $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/assigned' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/offset' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemList' }
+  /support/call-disputes/{id}:
+    get:
+      operationId: getCallDispute
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /support/call-disputes/{id}/status:
+    post:
+      operationId: setCallDisputeStatus
+      description: "Transitions: open -> under_review|resolved|rejected; under_review -> resolved|rejected; resolved and rejected are terminal."
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Status' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+  /support/call-disputes/{id}/assign:
+    post:
+      operationId: assignCallDispute
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Assign' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /safety/issues:
+    get:
+      operationId: listSafetyIssues
+      parameters: [ { $ref: '#/components/parameters/status' }, { $ref: '#/components/parameters/severity' }, { $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/assigned' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/offset' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemList' }
+  /safety/issues/{id}:
+    get:
+      operationId: getSafetyIssue
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /safety/issues/{id}/status:
+    post:
+      operationId: setSafetyIssueStatus
+      description: "Stored `open` is the doctor app's `submitted`. Transitions: open -> acknowledged|investigating|closed; acknowledged -> investigating|closed; investigating -> closed; closed is terminal."
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Status' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+  /safety/issues/{id}/assign:
+    post:
+      operationId: assignSafetyIssue
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Assign' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /emergencies/cases:
+    get:
+      operationId: listEmergencyCases
+      parameters: [ { $ref: '#/components/parameters/status' }, { $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/assigned' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/offset' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemList' }
+  /emergencies/cases/{id}:
+    get:
+      operationId: getEmergencyCase
+      description: Includes the escalations raised by the same doctor for the same patient reference.
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /emergencies/cases/{id}/status:
+    post:
+      operationId: setEmergencyCaseStatus
+      description: "Transitions: open -> acknowledged|resolved; acknowledged -> resolved; resolved is terminal."
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Status' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+  /emergencies/cases/{id}/assign:
+    post:
+      operationId: assignEmergencyCase
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Assign' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /emergencies/escalations:
+    get:
+      operationId: listEmergencyEscalations
+      parameters: [ { $ref: '#/components/parameters/status' }, { $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/assigned' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/offset' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemList' }
+  /emergencies/escalations/{id}:
+    get:
+      operationId: getEmergencyEscalation
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /emergencies/escalations/{id}/assign:
+    post:
+      operationId: assignEmergencyEscalation
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Assign' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+  /emergencies/escalations/{id}/status:
+    post:
+      operationId: setEmergencyEscalationStatus
+      description: "Transitions: initiated -> notified|acknowledged|cancelled; notified -> acknowledged|cancelled; acknowledged and cancelled are terminal."
+      parameters: [ { $ref: '#/components/parameters/id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Status' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+  /emergencies/facilities:
+    get:
+      operationId: listEmergencyFacilities
+      description: Read-only reference list of facilities doctors have saved.
+      parameters: [ { $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/offset' } ]
+      responses:
+        '200': { description: OK }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    idempotencyKey: { name: Idempotency-Key, in: header, required: false, schema: { type: string, maxLength: 120 } }
+    status: { name: status, in: query, schema: { type: string } }
+    severity: { name: severity, in: query, schema: { type: string, enum: [low, medium, high, critical] } }
+    category: { name: category, in: query, schema: { type: string } }
+    q: { name: q, in: query, schema: { type: string, maxLength: 120 } }
+    assigned: { name: assigned, in: query, description: "`unassigned`, `me`, or an admin user id", schema: { type: string } }
+    limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+    offset: { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+  requestBodies:
+    Reply:
+      required: true
+      content: { application/json: { schema: { type: object, required: [body], properties: { body: { type: string, minLength: 1, maxLength: 4000 } } } } }
+    Status:
+      required: true
+      content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string }, note: { type: string, maxLength: 2000, description: Shown to the doctor (thread message for tickets and disputes). } } } } }
+    Assign:
+      required: false
+      content: { application/json: { schema: { type: object, properties: { assignee_id: { type: string, format: uuid, nullable: true, description: "Omit to assign to the caller; null clears the assignment." } } } } }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { type: object, properties: { error: { type: string } } } } }
+    ItemList:
+      description: OK
+      content: { application/json: { schema: { type: object, properties: { data: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Item' } }, total: { type: integer } } } } } } }
+    ItemDetail:
+      description: OK
+      content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/ItemDetail' } } } } }
+  schemas:
+    Item:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [ticket, dispute, call_dispute, safety_issue, emergency_case, emergency_escalation] }
+        ref: { type: string }
+        doctor_user_id: { type: string }
+        doctor_name: { type: string }
+        subject: { type: string }
+        category: { type: string }
+        severity: { type: string }
+        status: { type: string }
+        patient_ref: { type: string, description: Masked. }
+        assignee_id: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ItemDetail:
+      allOf:
+        - $ref: '#/components/schemas/Item'
+        - type: object
+          properties:
+            allowed_statuses: { type: array, items: { type: string } }
+            body: { type: string }
+            detail: { type: object, additionalProperties: true }
+            evidence: { type: array, items: {} }
+            messages: { type: array, items: { $ref: '#/components/schemas/Message' } }
+            escalations: { type: array, items: { $ref: '#/components/schemas/Item' } }
+            history: { type: array, items: { $ref: '#/components/schemas/HistoryEntry' } }
+    Message:
+      type: object
+      properties:
+        id: { type: string }
+        author: { type: string, enum: [doctor, agent, system] }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+    HistoryEntry:
+      type: object
+      properties:
+        action: { type: string }
+        admin_id: { type: string }
+        from: { type: string }
+        to: { type: string }
+        created_at: { type: string, format: date-time }
+    Summary:
+      type: object
+      additionalProperties:
+        type: object
+        properties:
+          total: { type: integer }
+          by_status: { type: object, additionalProperties: { type: integer } }
+          unassigned_open: { type: integer }

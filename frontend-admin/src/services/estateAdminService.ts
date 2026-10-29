@@ -22,6 +22,9 @@ import type {
   OversightRepair, OversightTask, OversightMeeting, OversightFacility, OversightFacilityBooking,
   OversightAnnouncement, OversightDocument,
   OversightElection, ElectionResultRow, ElectionAudit,
+  ElectionGovernanceState, ElectionOutcomeRow, ElectionTurnoutRow, ElectionRollRow,
+  ElectionRollEntryRow, RollChallengeRow, NominationRow, RuleProposalRow,
+  ElectionComplaintRow, ElectionRecountRow,
   AdminProperty, OccupancyStatus, PropertyTransferRequest, TransferType,
 } from '@/types/estateAdmin';
 
@@ -690,4 +693,247 @@ export async function getElectionAudit(electionId: string): Promise<ElectionAudi
   if (USE_MOCK) { await delay(); return O_AUDIT[electionId] ?? { electionId, ballotsCast: 0, distinctVoters: 0, candidates: 0, status: null, doubleVoteDetected: false }; }
   const row = await getJson<Record<string, unknown>>(`/estate-admin/elections/${electionId}/audit`);
   return toCamel<ElectionAudit>(row);
+}
+
+// Election governance (Phase 2.2 — EST-UAT-0203…0230) -------------------------------
+// These call the estate-scoped Go routes under /estate/:id/elections/:electionId/…,
+// which authorize on the estate_admin RESIDENT role — not on the platform estate.admin.*
+// RBAC slug that guards /estate-admin/*. An operator who is not an estate_admin in this
+// estate is answered 403, and that is deliberate: the franchise, the roll and the
+// certification are the estate's own business.
+function govBase(estateId: string, electionId: string): string {
+  return `/estate/${encodeURIComponent(estateId)}/elections/${encodeURIComponent(electionId)}`;
+}
+async function govGet<T>(estateId: string, electionId: string, suffix: string): Promise<T> {
+  const row = await getJson<Record<string, unknown>>(`${govBase(estateId, electionId)}${suffix}`);
+  return toCamel<T>(row);
+}
+async function govList<T>(estateId: string, electionId: string, suffix: string): Promise<T[]> {
+  const rows = await getJson<Array<Record<string, unknown>>>(`${govBase(estateId, electionId)}${suffix}`);
+  return (rows ?? []).map((r) => toCamel<T>(r));
+}
+async function govPost<T>(estateId: string, electionId: string, suffix: string, payload: unknown = {}): Promise<T> {
+  const row = await postJson<Record<string, unknown>>(`${govBase(estateId, electionId)}${suffix}`, payload);
+  return toCamel<T>(row);
+}
+
+export interface ElectionConfigInput {
+  kind?: 'binding' | 'poll';
+  weighting?: 'one_person_one_vote' | 'one_vote_per_unit';
+  quorumType?: 'none' | 'count' | 'percent';
+  quorumValue?: number;
+  tieBreak?: 'none' | 'earliest_candidate' | 'runoff';
+  nominationOpensAt?: string;
+  nominationClosesAt?: string;
+}
+
+function gState(electionId: string, over: Partial<ElectionGovernanceState> = {}): ElectionGovernanceState {
+  return {
+    id: electionId, estateId: estateId(), title: 'Q2 Residents AGM',
+    startsAt: days(1), endsAt: hrs(-24), status: 'draft', kind: 'binding',
+    weighting: 'one_vote_per_unit', quorumType: 'percent', quorumValue: 30, tieBreak: 'none',
+    ...over,
+  };
+}
+
+const G_ROLL: ElectionRollRow = {
+  id: 'roll-1', electionId: 'el1', version: 1, status: 'draft', builtBy: 'estate-admin',
+  builtAt: days(2), eligibleCount: 3, totalBallots: 5,
+};
+const G_ROLL_ENTRIES: ElectionRollEntryRow[] = [
+  { rollId: 'roll-1', userId: 'u-1', fullName: 'Ngozi Umeh', unit: 'A / W-01', occupancyType: 'homeowner', weight: 2, source: 'built', status: 'active' },
+  { rollId: 'roll-1', userId: 'u-2', fullName: 'Tunde Bakare', unit: 'A / W-02', occupancyType: 'tenant', weight: 1, source: 'built', status: 'active' },
+  { rollId: 'roll-1', userId: 'u-3', fullName: 'Aisha Yusuf', unit: 'B / W-11', occupancyType: 'landlord', weight: 2, source: 'exception', status: 'removed', removalReason: 'unit reassigned' },
+];
+const G_CHALLENGES: RollChallengeRow[] = [
+  { id: 'ch-1', electionId: 'el1', rollId: 'roll-1', subjectUserId: 'u-3', subjectName: 'Aisha Yusuf', raisedBy: 'u-2', reason: 'Sold the unit in March', state: 'open', createdAt: days(1) },
+];
+const G_NOMINATIONS: NominationRow[] = [
+  { id: 'nm-1', electionId: 'el1', nomineeUserId: 'u-1', nomineeName: 'Ngozi Umeh', nominatedBy: 'u-2', nominatedName: 'Tunde Bakare', seat: 'Chair', state: 'accepted', vettingState: 'cleared', createdAt: days(3) },
+  { id: 'nm-2', electionId: 'el1', nomineeUserId: 'u-2', nomineeName: 'Tunde Bakare', nominatedBy: 'u-1', nominatedName: 'Ngozi Umeh', seat: 'Chair', state: 'nominated', vettingState: 'pending', createdAt: days(2) },
+];
+const G_PROPOSALS: RuleProposalRow[] = [
+  { id: 'rp-1', electionId: 'el1', requireKyc: true, requirePayment: false, residentTypes: ['homeowner', 'landlord'], proposedBy: 'estate-admin', proposedAt: days(2), state: 'pending' },
+];
+const G_COMPLAINTS: ElectionComplaintRow[] = [
+  { id: 'cp-1', electionId: 'el1', raisedBy: 'u-3', kind: 'complaint', detail: 'My unit was left off the published roll', state: 'open', createdAt: days(1) },
+];
+const G_RECOUNTS: ElectionRecountRow[] = [
+  { id: 'rc-1', electionId: 'el2', talliedAt: days(1), ballotsCast: 184, abstentions: 6, totals: [{ id: 'c1', electionId: 'el2', name: 'Ngozi Umeh', votes: 101 }, { id: 'c2', electionId: 'el2', name: 'Tunde Bakare', votes: 83 }] },
+];
+
+function gOutcome(electionId: string): ElectionOutcomeRow {
+  const closed = electionId === 'el2';
+  return {
+    electionId, title: 'Q2 Residents AGM', kind: 'binding', status: closed ? 'tallied' : 'open',
+    weighting: 'one_vote_per_unit', binding: true, eligibleVoters: 3, ballotsAvailable: 5,
+    votersCast: closed ? 120 : 0, ballotsCast: closed ? 184 : 0, abstentions: closed ? 6 : 0,
+    turnoutPercent: closed ? 36.8 : 0, quorumType: 'percent', quorumValue: 30, quorumRequired: 2,
+    quorumMet: closed,
+    results: closed
+      ? [{ id: 'c1', electionId, name: 'Ngozi Umeh', votes: 101 }, { id: 'c2', electionId, name: 'Tunde Bakare', votes: 83 }]
+      : [],
+    topVotes: closed ? 101 : 0, winnerIds: closed ? ['c1'] : undefined,
+    tieBreak: 'earliest_candidate', verdict: closed ? 'decided' : 'no_ballots', openComplaints: 1,
+  };
+}
+
+function gTurnout(electionId: string): ElectionTurnoutRow {
+  return {
+    electionId, status: 'open', weighting: 'one_vote_per_unit', eligibleVoters: 3, ballotsAvailable: 5,
+    votersCast: 0, ballotsCast: 0, turnoutPercent: 0, quorumType: 'percent', quorumValue: 30,
+    quorumRequired: 2, quorumMet: false,
+  };
+}
+
+export async function updateElectionConfig(eid: string, electionId: string, input: ElectionConfigInput): Promise<ElectionGovernanceState> {
+  if (USE_MOCK) {
+    await delay();
+    return gState(electionId, {
+      kind: input.kind ?? 'binding', weighting: input.weighting ?? 'one_vote_per_unit',
+      quorumType: input.quorumType ?? 'percent', quorumValue: input.quorumValue ?? 30,
+      tieBreak: input.tieBreak ?? 'none',
+      nominationOpensAt: input.nominationOpensAt, nominationClosesAt: input.nominationClosesAt,
+    });
+  }
+  // Empty strings / nulls mean "leave as is" — the endpoint patches.
+  return govPost<ElectionGovernanceState>(eid, electionId, '/config', {
+    kind: input.kind ?? '', weighting: input.weighting ?? '', quorum_type: input.quorumType ?? '',
+    quorum_value: input.quorumValue ?? null, tie_break: input.tieBreak ?? '',
+    nomination_opens_at: input.nominationOpensAt ?? null, nomination_closes_at: input.nominationClosesAt ?? null,
+  });
+}
+
+export async function openElection(eid: string, electionId: string): Promise<ElectionGovernanceState> {
+  if (USE_MOCK) { await delay(); return gState(electionId, { status: 'open', startsAt: new Date().toISOString() }); }
+  return govPost<ElectionGovernanceState>(eid, electionId, '/open');
+}
+export async function closeElection(eid: string, electionId: string): Promise<ElectionGovernanceState> {
+  if (USE_MOCK) { await delay(); return gState(electionId, { status: 'closed', endsAt: new Date().toISOString() }); }
+  return govPost<ElectionGovernanceState>(eid, electionId, '/close');
+}
+export async function cancelElection(eid: string, electionId: string, reason: string): Promise<ElectionGovernanceState> {
+  if (USE_MOCK) { await delay(); return gState(electionId, { status: 'cancelled', cancelledAt: new Date().toISOString(), cancellationReason: reason }); }
+  return govPost<ElectionGovernanceState>(eid, electionId, '/cancel', { reason });
+}
+export async function tallyElection(eid: string, electionId: string): Promise<ElectionOutcomeRow> {
+  if (USE_MOCK) { await delay(); return { ...gOutcome('el2'), electionId, status: 'tallied', verdict: 'decided' }; }
+  return govPost<ElectionOutcomeRow>(eid, electionId, '/tally');
+}
+export async function getElectionOutcome(eid: string, electionId: string): Promise<ElectionOutcomeRow> {
+  if (USE_MOCK) { await delay(); return gOutcome(electionId); }
+  return govGet<ElectionOutcomeRow>(eid, electionId, '/outcome');
+}
+export async function getElectionTurnout(eid: string, electionId: string): Promise<ElectionTurnoutRow> {
+  if (USE_MOCK) { await delay(); return gTurnout(electionId); }
+  return govGet<ElectionTurnoutRow>(eid, electionId, '/turnout');
+}
+
+export async function proposeElectionRules(
+  eid: string, electionId: string,
+  input: { requireKyc: boolean; requirePayment: boolean; residentTypes: string[] },
+): Promise<RuleProposalRow> {
+  if (USE_MOCK) { await delay(); return { ...G_PROPOSALS[0], ...input, proposedAt: new Date().toISOString(), state: 'pending' }; }
+  return govPost<RuleProposalRow>(eid, electionId, '/rules/proposals', {
+    require_kyc: input.requireKyc, require_payment: input.requirePayment, resident_types: input.residentTypes,
+  });
+}
+export async function listElectionRuleProposals(eid: string, electionId: string): Promise<RuleProposalRow[]> {
+  if (USE_MOCK) { await delay(); return G_PROPOSALS.filter((p) => p.electionId === electionId); }
+  return govList<RuleProposalRow>(eid, electionId, '/rules/proposals');
+}
+export async function decideElectionRules(eid: string, electionId: string, proposalId: string, approve: boolean, note: string): Promise<RuleProposalRow> {
+  if (USE_MOCK) { await delay(); return { ...G_PROPOSALS[0], id: proposalId, state: approve ? 'approved' : 'rejected', decisionNote: note, decidedAt: new Date().toISOString() }; }
+  return govPost<RuleProposalRow>(eid, electionId, `/rules/proposals/${encodeURIComponent(proposalId)}/decide`, { approve, note });
+}
+
+export async function buildElectionRoll(eid: string, electionId: string): Promise<ElectionRollRow> {
+  if (USE_MOCK) { await delay(); return { ...G_ROLL, electionId, builtAt: new Date().toISOString(), status: 'draft' }; }
+  return govPost<ElectionRollRow>(eid, electionId, '/roll/build');
+}
+export async function freezeElectionRoll(eid: string, electionId: string, rollId: string): Promise<ElectionRollRow> {
+  if (USE_MOCK) { await delay(); return { ...G_ROLL, id: rollId, status: 'frozen', frozenAt: new Date().toISOString() }; }
+  return govPost<ElectionRollRow>(eid, electionId, '/roll/freeze', { roll_id: rollId });
+}
+export async function listElectionRoll(eid: string, electionId: string, version?: number): Promise<ElectionRollEntryRow[]> {
+  if (USE_MOCK) { await delay(); return G_ROLL_ENTRIES; }
+  return govList<ElectionRollEntryRow>(eid, electionId, `/roll${version ? `?version=${version}` : ''}`);
+}
+export async function removeRollEntry(eid: string, electionId: string, userId: string, reason: string): Promise<ElectionRollEntryRow> {
+  if (USE_MOCK) { await delay(); return { ...G_ROLL_ENTRIES[0], userId, status: 'removed', removalReason: reason }; }
+  return govPost<ElectionRollEntryRow>(eid, electionId, '/roll/remove', { user_id: userId, reason });
+}
+export async function addRollException(eid: string, electionId: string, userId: string, reason: string): Promise<ElectionRollEntryRow> {
+  if (USE_MOCK) { await delay(); return { rollId: G_ROLL.id, userId, fullName: 'Audited exception', unit: '—', occupancyType: 'homeowner', weight: 1, source: 'exception', status: 'active' }; }
+  return govPost<ElectionRollEntryRow>(eid, electionId, '/roll/exception', { user_id: userId, reason });
+}
+export async function challengeRollEntry(eid: string, electionId: string, subjectUserId: string, reason: string): Promise<RollChallengeRow> {
+  if (USE_MOCK) { await delay(); return { ...G_CHALLENGES[0], subjectUserId, reason, state: 'open', createdAt: new Date().toISOString() }; }
+  return govPost<RollChallengeRow>(eid, electionId, '/roll/challenges', { subject_user_id: subjectUserId, reason });
+}
+export async function listRollChallenges(eid: string, electionId: string): Promise<RollChallengeRow[]> {
+  if (USE_MOCK) { await delay(); return G_CHALLENGES.filter((c) => c.electionId === electionId); }
+  return govList<RollChallengeRow>(eid, electionId, '/roll/challenges');
+}
+export async function resolveRollChallenge(eid: string, electionId: string, challengeId: string, uphold: boolean, resolution: string): Promise<RollChallengeRow> {
+  if (USE_MOCK) { await delay(); return { ...G_CHALLENGES[0], id: challengeId, state: uphold ? 'upheld' : 'rejected', resolution, resolvedAt: new Date().toISOString() }; }
+  return govPost<RollChallengeRow>(eid, electionId, `/roll/challenges/${encodeURIComponent(challengeId)}/resolve`, { uphold, resolution });
+}
+
+export async function nominate(
+  eid: string, electionId: string,
+  input: { nomineeUserId: string; seat?: string; statement?: string },
+): Promise<NominationRow> {
+  if (USE_MOCK) {
+    await delay();
+    return { id: 'nm-new', electionId, nomineeUserId: input.nomineeUserId, nomineeName: 'Nominee', seat: input.seat, statement: input.statement, state: 'nominated', vettingState: 'pending', createdAt: new Date().toISOString() };
+  }
+  return govPost<NominationRow>(eid, electionId, '/nominations', {
+    nominee_user_id: input.nomineeUserId, seat: input.seat ?? '', statement: input.statement ?? '',
+  });
+}
+export async function listNominations(eid: string, electionId: string): Promise<NominationRow[]> {
+  if (USE_MOCK) { await delay(); return G_NOMINATIONS.filter((n) => n.electionId === electionId); }
+  return govList<NominationRow>(eid, electionId, '/nominations');
+}
+export async function decideNomination(
+  eid: string, electionId: string, nominationId: string,
+  decision: 'accept' | 'decline' | 'withdraw', reason?: string,
+): Promise<NominationRow> {
+  if (USE_MOCK) {
+    await delay();
+    const state = decision === 'accept' ? 'accepted' : decision === 'decline' ? 'declined' : 'withdrawn';
+    return { ...G_NOMINATIONS[0], id: nominationId, state, reason, decidedAt: new Date().toISOString() };
+  }
+  return govPost<NominationRow>(eid, electionId, `/nominations/${encodeURIComponent(nominationId)}/decide`, { decision, reason: reason ?? '' });
+}
+export async function vetNomination(eid: string, electionId: string, nominationId: string, cleared: boolean, reason?: string): Promise<NominationRow> {
+  if (USE_MOCK) { await delay(); return { ...G_NOMINATIONS[0], id: nominationId, vettingState: cleared ? 'cleared' : 'flagged', reason }; }
+  return govPost<NominationRow>(eid, electionId, `/nominations/${encodeURIComponent(nominationId)}/vet`, { cleared, reason: reason ?? '' });
+}
+export async function certifyNomination(eid: string, electionId: string, nominationId: string): Promise<{ id: string; electionId: string; name: string; bio?: string }> {
+  if (USE_MOCK) { await delay(); return { id: 'cand-new', electionId, name: G_NOMINATIONS[0].nomineeName }; }
+  return govPost<{ id: string; electionId: string; name: string; bio?: string }>(eid, electionId, `/nominations/${encodeURIComponent(nominationId)}/certify`);
+}
+
+export async function fileElectionComplaint(eid: string, electionId: string, kind: 'complaint' | 'recount', detail: string): Promise<ElectionComplaintRow> {
+  if (USE_MOCK) { await delay(); return { id: 'cp-new', electionId, raisedBy: 'estate-admin', kind, detail, state: 'open', createdAt: new Date().toISOString() }; }
+  return govPost<ElectionComplaintRow>(eid, electionId, '/complaints', { kind, detail });
+}
+export async function listElectionComplaints(eid: string, electionId: string): Promise<ElectionComplaintRow[]> {
+  if (USE_MOCK) { await delay(); return G_COMPLAINTS.filter((c) => c.electionId === electionId); }
+  return govList<ElectionComplaintRow>(eid, electionId, '/complaints');
+}
+export async function resolveElectionComplaint(eid: string, electionId: string, complaintId: string, uphold: boolean, resolution: string): Promise<ElectionComplaintRow> {
+  if (USE_MOCK) { await delay(); return { ...G_COMPLAINTS[0], id: complaintId, state: uphold ? 'upheld' : 'dismissed', resolution, resolvedAt: new Date().toISOString() }; }
+  return govPost<ElectionComplaintRow>(eid, electionId, `/complaints/${encodeURIComponent(complaintId)}/resolve`, { uphold, resolution });
+}
+
+export async function runElectionRecount(eid: string, electionId: string, note?: string, complaintId?: string): Promise<ElectionRecountRow> {
+  if (USE_MOCK) { await delay(); return { ...G_RECOUNTS[0], electionId, talliedAt: new Date().toISOString(), note }; }
+  return govPost<ElectionRecountRow>(eid, electionId, '/recount', { complaint_id: complaintId ?? '', note: note ?? '' });
+}
+export async function listElectionRecounts(eid: string, electionId: string): Promise<ElectionRecountRow[]> {
+  if (USE_MOCK) { await delay(); return G_RECOUNTS.filter((r) => r.electionId === electionId); }
+  return govList<ElectionRecountRow>(eid, electionId, '/recounts');
 }

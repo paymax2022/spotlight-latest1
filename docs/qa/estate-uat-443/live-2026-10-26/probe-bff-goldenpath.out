@@ -1,0 +1,68 @@
+=== estate-a BFF lane @ 2026-10-26T20:36:18Z base=http://127.0.0.1:3000 estate=0a1e5701-0000-4000-8000-000000000001
+--- A. guard shift lifecycle (POST gate/session is what unlocks every guard route)
+FAIL want=404 got=200  [no shift started yet as guard] {"id":"e95370d8-0a38-493b-9fd2-0142f7d56d2b","estateId":"0a1e5701-0000-4000-8000-000000000001","gateId":"0a1e5701-0000-4000-8000-000000000101","gateLabel":"Main Gate","guardId":"2448c98f-d030-4e58-a1f
+PASS want=201 got=201  [open shift at Main Gate as guard] {"id":"08b221ca-6f46-476e-97c6-8756b42ba0fc","estateId":"0a1e5701-0000-4000-8000-000000000001","gateId":"0a1e5701-0000-4000-8000-000000000101","gateLabel":"Main Gate","guardId":"2448c98f-d030-4e58-a1f
+gate session id=08b221ca-6f46-476e-97c6-8756b42ba0fc
+PASS want=200 got=200  [read back the open shift as guard] {"id":"08b221ca-6f46-476e-97c6-8756b42ba0fc","estateId":"0a1e5701-0000-4000-8000-000000000001","gateId":"0a1e5701-0000-4000-8000-000000000101","gateLabel":"Main Gate","guardId":"2448c98f-d030-4e58-a1f
+PASS want=403 got=403  [non-member cannot open a shift as nobody] {"success":false,"error":"Not a member of this estate"}
+PASS want=404 got=404  [shift at an unknown gate as guard] {"success":false,"error":"Gate not found in this estate"}
+--- B. resident issues a visitor pass (host side)
+PASS want=201 got=201  [host issues a 2-entry entry/exit pass as resident] {"id":"8c6d6a64-4c76-4dc4-8ad1-f1775240bc2d","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"","unitLabel":"A-102"
+pass id=8c6d6a64-4c76-4dc4-8ad1-f1775240bc2d numeric=829951
+PASS want=400 got=400  [pass without a visitor name refused as resident] {"success":false,"error":"Visitor name is required"}
+PASS want=400 got=400  [pass for an ended window refused as resident] {"success":false,"error":"Cannot issue a pass for a window that has already ended"}
+PASS want=200 got=200  [host lists own passes as resident] [{"id":"8c6d6a64-4c76-4dc4-8ad1-f1775240bc2d","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"","unitLabel":"A-102
+--- C. gate lookup, manual entry, admit, open visits, checkout
+PASS want=200 got=200  [guard types the 6-digit code (manual entry) as guard] {"found":true,"code":{"id":"8c6d6a64-4c76-4dc4-8ad1-f1775240bc2d","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"
+PASS want=200 got=200  [guard types an id prefix as guard] {"found":false,"code":null,"blacklisted":false}
+PASS want=200 got=200  [unknown code answers found=false, not an error as guard] {"found":false,"code":null,"blacklisted":false}
+PASS want=200 got=200  [guard admits the visitor as guard] {"id":"a5ab8b60-182b-41f2-b8a7-8df02185a3f0","estateId":"0a1e5701-0000-4000-8000-000000000001","accessCodeId":"8c6d6a64-4c76-4dc4-8ad1-f1775240bc2d","visitorName":"BFF Golden Guest","unitLabel":"A-102
+visit event id=a5ab8b60-182b-41f2-b8a7-8df02185a3f0
+PASS want=201 got=201  [host issues a 1-entry pass as resident] {"id":"9541d7b7-60e0-4040-9f66-cef047b0bba6","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"","unitLabel":"A-102"
+PASS want=200 got=200  [single-use pass admits once as guard] {"id":"3bb220f6-a11a-43a6-a9ea-641e957fc1da","estateId":"0a1e5701-0000-4000-8000-000000000001","accessCodeId":"9541d7b7-60e0-4040-9f66-cef047b0bba6","visitorName":"Single Use Guest","unitLabel":"A-102
+PASS want=409 got=409  [second admit of the spent pass refused 409 as guard] {"success":false,"error":"Access code is used"}
+PASS want=200 got=200  [open visits list as guard] [{"id":"3bb220f6-a11a-43a6-a9ea-641e957fc1da","visitorName":"Single Use Guest","unitLabel":"A-102","checkedInAt":"2026-10-26T20:36:37.084717+00:00","accessCodeId":"9541d7b7-60e0-4040-9f66-cef047b0bba6
+PASS want=200 got=200  [guard checks the visitor out as guard] {"id":"b90d6f84-7037-45e8-b7c5-44b87015df38","estateId":"0a1e5701-0000-4000-8000-000000000001","accessCodeId":"8c6d6a64-4c76-4dc4-8ad1-f1775240bc2d","visitorName":"BFF Golden Guest","unitLabel":"A-102
+PASS want=200 got=200  [gate log holds the events as guard] [{"id":"b90d6f84-7037-45e8-b7c5-44b87015df38","estateId":"0a1e5701-0000-4000-8000-000000000001","accessCodeId":"8c6d6a64-4c76-4dc4-8ad1-f1775240bc2d","visitorName":"BFF Golden Guest","unitLabel":"A-10
+gate log head: [{"id":"b90d6f84-7037-45e8-b7c5-44b87015df38","estateId":"0a1e5701-0000-4000-8000-000000000001","accessCodeId":"8c6d6a64-4c76-4dc4-8ad1-f1775240bc2d","visitorName":"BFF Golden Guest","unitLabel":"A-102","gateId":"0a1e5701-0000-4000-8000-000000000101","guardId":"2448c98f-d030-4e58-a1f3-75c5a4348630",
+--- D. denial, walk-in, emergency mode, incidents
+PASS want=201 got=201  [host issues a pass to be denied as resident] {"id":"58052dac-f1aa-4bc7-8c6f-2840816b2cb8","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"","unitLabel":"A-102"
+PASS want=200 got=200  [guard denies entry as guard] {"id":"7b108619-71bc-4443-aa42-b6fbb0816a98","estateId":"0a1e5701-0000-4000-8000-000000000001","accessCodeId":"58052dac-f1aa-4bc7-8c6f-2840816b2cb8","visitorName":"Denied Guest","unitLabel":"","gateId
+PASS want=200 got=200  [walk-in admission as guard] {"id":"26271c0f-4c99-4a56-a807-df40c877bfec","estateId":"0a1e5701-0000-4000-8000-000000000001","accessCodeId":null,"visitorName":"Walk-in Contractor","unitLabel":"A-101","gateId":"0a1e5701-0000-4000-8
+PASS want=200 got=200  [emergency gate mode as guard] {"id":"fc340d69-667f-45c2-b46c-cc5a2db350f3","estateId":"0a1e5701-0000-4000-8000-000000000001","accessCodeId":null,"visitorName":"Emergency Entry","unitLabel":"A-101","gateId":"0a1e5701-0000-4000-8000
+PASS want=201 got=201  [host issues a pass for the tailgating case as resident] {"id":"813a6a09-c8b9-4a55-872e-9f4953c812ea","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"","unitLabel":"A-102"
+PASS want=201 got=201  [tailgating incident raised as guard] {"id":"fb017072-e7d1-4e1b-9eca-f4a1ddea3e3d","kind":"incident","severity":"high","title":"Tailgating: two cars through one gate cycle","description":"Second vehicle followed the admitted car through M
+PASS want=200 got=200  [incident did NOT consume the pass (still lookupable) as guard] {"found":true,"code":{"id":"813a6a09-c8b9-4a55-872e-9f4953c812ea","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"
+pass 3 entriesUsed before incident: 0 / after: 0  status=active
+--- E. plate scan, watchlist
+PASS want=200 got=200  [plate scan matches the issued pass as guard] {"plate":"LAG-123XA","blacklisted":false,"matchedCode":{"id":"8c6d6a64-4c76-4dc4-8ad1-f1775240bc2d","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d4587999
+PASS want=400 got=400  [blank plate refused as guard] {"success":false,"error":"plate is required"}
+PASS want=201 got=201  [estate adds a watchlist entry as guard] {"id":"f8be7b24-c98a-4bc9-aec3-f30e220423b6","matchKind":"phone","matchValue":"08091112222","name":"Watch Listed Driver","reason":"Prior theft at service gate","createdAt":"2026-10-26T20:36:59.083976+
+PASS want=201 got=201  [host issues a pass to a watchlisted phone (flagged, not refused) as resident] {"id":"27e2bcf0-0456-4e90-ac5f-e8d5185fc3f4","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"","unitLabel":"A-102"
+watchlisted pass id=27e2bcf0-0456-4e90-ac5f-e8d5185fc3f4 blacklisted=true
+PASS want=403 got=403  [gate denies the watchlisted pass as guard] {"success":false,"error":"Visitor is blacklisted"}
+--- F. bulk for an event + CSV import
+PASS want=201 got=201  [bulk event codes as resident] {"eventName":"Estate UAT Open Day","codes":[{"id":"3884bb5d-3417-4b36-9f02-0a36505106d7","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","host
+event response: {"eventName":"Estate UAT Open Day","codes":[{"id":"3884bb5d-3417-4b36-9f02-0a36505106d7","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"","unitLabel":"A-102","estateName":"U
+csv import -> HTTP 201 {"imported":2}
+--- G. offline sync (flagged events replayed by UUID)
+PASS want=200 got=200  [offline event uploaded as guard] {"synced":1}
+PASS want=200 got=200  [same UUID replayed (dedup) as guard] {"synced":0}
+PASS want=400 got=400  [event without a UUID refused as guard] {"success":false,"error":"Each event needs a UUID id for dedup"}
+PASS want=200 got=200  [pending sync count as guard] {"count":0}
+--- H. handover closes the shift and the guard surface goes dark
+PASS want=200 got=200  [guard records handover as guard] {"id":"08b221ca-6f46-476e-97c6-8756b42ba0fc","estateId":"0a1e5701-0000-4000-8000-000000000001","gateId":"0a1e5701-0000-4000-8000-000000000101","gateLabel":"Main Gate","guardId":"2448c98f-d030-4e58-a1f
+PASS want=403 got=403  [no shift -> guard endpoints 403 as guard] {"success":false,"error":"No active gate session"}
+PASS want=403 got=403  [no shift -> admit refused as guard] {"success":false,"error":"No active gate session"}
+PASS want=201 got=201  [next guard signs in at the Service Gate as guard] {"id":"7b791459-2aac-47d6-bd05-1036529a569d","estateId":"0a1e5701-0000-4000-8000-000000000001","gateId":"0a1e5701-0000-4000-8000-000000000102","gateLabel":"Service Gate","guardId":"2448c98f-d030-4e58-
+--- I. the BFF has no guard-role authorisation (ESTA-D021 stays open)
+PASS want=201 got=201  [PLAIN RESIDENT (no gate_officer grant) opens a gate session as resident] {"id":"ee4cf31b-f0d6-4072-8761-c0e85ba252ab","estateId":"0a1e5701-0000-4000-8000-000000000001","gateId":"0a1e5701-0000-4000-8000-000000000101","gateLabel":"Main Gate","guardId":"f30648f3-1e07-48f8-9cd
+PASS want=200 got=200  [plain resident reads the expected-visitors list as resident] [{"id":"0608ddaa-cd69-4e39-97d2-7fcd6f37aa28","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"","unitLabel":"A-102
+PASS want=200 got=200  [plain resident admits a visitor as resident] {"id":"c84c9db7-516e-41ec-95d5-526afa7d35b0","estateId":"0a1e5701-0000-4000-8000-000000000001","accessCodeId":"8c6d6a64-4c76-4dc4-8ad1-f1775240bc2d","visitorName":"BFF Golden Guest","unitLabel":"A-102
+PASS want=403 got=403  [non-member still refused as nobody] {"success":false,"error":"No active gate session"}
+--- J. require_host_approval is not enforced at the BFF (ESTA-D022 / EST-UAT-0088)
+PASS want=201 got=201  [host asks for an approval-gated pass as resident] {"id":"81cae7dd-adb4-46f4-ab28-9d6425b49b4e","estateId":"0a1e5701-0000-4000-8000-000000000001","hostResidentId":"f30648f3-1e07-48f8-9cdf-d458799946d7","hostName":"","propertyId":"","unitLabel":"A-102"
+require_host_approval stored in DB for that pass: f (BFF insert never writes the column)
+PASS want=201 got=201  [guard reopens a shift as guard] {"id":"8ea61c3f-791d-471a-beb7-e22323677a50","estateId":"0a1e5701-0000-4000-8000-000000000001","gateId":"0a1e5701-0000-4000-8000-000000000101","gateLabel":"Main Gate","guardId":"2448c98f-d030-4e58-a1f
+PASS want=200 got=200  [guard admits WITHOUT any host decision — BFF ignores the flag as guard] {"id":"c89a7c70-9b0a-4bc1-8f3e-7dde19fedcc5","estateId":"0a1e5701-0000-4000-8000-000000000001","accessCodeId":"81cae7dd-adb4-46f4-ab28-9d6425b49b4e","visitorName":"Needs Approval","unitLabel":"A-102",
+=== BFF lane summary: PASS=46 FAIL=1

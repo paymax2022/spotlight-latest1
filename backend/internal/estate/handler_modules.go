@@ -19,7 +19,10 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 	}
 	inv, err := h.svc.CreateInvoice(c.Request.Context(), c.Param("id"), adminID, req)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		// The dues exemptions (EST-UAT-0048, 0045) and the override-reason rule are refused states of
+		// the estate's own billing rules, not authorisation failures: an override that waives them in
+		// writing succeeds, an incomplete one is a caller mistake, and an unwaived one is a conflict.
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, inv)
@@ -29,7 +32,7 @@ func (h *Handler) ListInvoices(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	invs, err := h.svc.ListInvoices(c.Request.Context(), c.Param("id"), userID, c.Query(keyStatus))
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		writeOccupancyError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": invs})
@@ -389,15 +392,8 @@ func (h *Handler) FinanceDashboard(c *gin.Context) {
 	c.JSON(http.StatusOK, d)
 }
 
-func (h *Handler) Notifications(c *gin.Context) {
-	userID := ginutil.UserID(c)
-	ns, err := h.svc.Notifications(c.Request.Context(), c.Param("id"), userID)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": ns})
-}
+// Notifications moved to notifications_retention_handler.go (EST-UAT-0359): the route is the same, the
+// handler now parses the state/category/search/paging filters the case asked for.
 
 func (h *Handler) Report(c *gin.Context) {
 	adminID := ginutil.UserID(c)

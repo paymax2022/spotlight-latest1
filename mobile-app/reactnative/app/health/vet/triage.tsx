@@ -30,7 +30,7 @@ const TRIAGE_FIELDS: IntakeFieldT[] = [
     ],
   },
   { id: 'symptoms', type: 'long_text', label: 'Describe the symptoms', required: true, placeholder: 'When did it start? Any changes?' },
-  { id: 'duration', type: 'short_text', label: 'How long has this been going on?', placeholder: 'e.g. 3 days' },
+  { id: 'duration', type: 'number', integer: true, min: 0, label: 'How many days has this been going on?', placeholder: 'e.g. 3' },
   { id: 'eating', type: 'boolean', label: 'Is your pet eating normally?', required: true },
   {
     id: 'urgency',

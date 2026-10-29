@@ -99,6 +99,9 @@ func TestLiveDB_VetListings_OnlyFullyApprovedAndPublishedVetsAreShown(t *testing
 	if got.ClinicName != "Clinic" || got.Bio != "Bio" {
 		t.Fatalf("profile fields: clinic=%q bio=%q", got.ClinicName, got.Bio)
 	}
+	if got.ClinicFeeKobo != 0 {
+		t.Fatalf("clinic fee = %d, want 0 (the only CLINIC service is inactive)", got.ClinicFeeKobo)
+	}
 	if got.ConsultFeeKobo != 300000 || got.HomeVisitFeeKobo != 800000 {
 		t.Fatalf("fees: consult=%d home=%d, want 300000 / 800000 (lowest active price)", got.ConsultFeeKobo, got.HomeVisitFeeKobo)
 	}

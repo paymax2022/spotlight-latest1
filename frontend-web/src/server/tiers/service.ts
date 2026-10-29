@@ -33,6 +33,18 @@ export interface WalletLimitResult {
   dailyLimitKobo: number | null;
 }
 
+/**
+ * A capped spend a Tier 0 (unverified) wallet may still make. Without one the
+ * wallet is disabled for Tier 0. A caller passes this only for a purchase of
+ * goods or services it owns (bills); transfers and withdrawals never do.
+ */
+export interface Tier0Allowance {
+  /** Largest single debit allowed; above it the member is asked for KYC Tier 1. */
+  perTransactionMaxKobo: number;
+  /** Cap on the member's wallet debits per UTC day while at Tier 0. */
+  dailyLimitKobo: number;
+}
+
 // getTierConfig
 
 export function getTierConfig(tier: KycTier): TierConfig {
@@ -58,6 +70,7 @@ export function getTierConfig(tier: KycTier): TierConfig {
 export async function enforceWalletLimit(
   userId: string,
   amountKobo: number,
+  tier0Allowance?: Tier0Allowance,
 ): Promise<WalletLimitResult> {
   if (!featureFlags.tierLimits()) {
     return { dailyLimitKobo: null };
@@ -76,22 +89,37 @@ export async function enforceWalletLimit(
   }
 
   const config = getTierConfig(tier);
+  let dailyLimitKobo = config.dailyWalletLimitKobo;
 
-  // Tier 0: wallet is fully disabled
   if (config.dailyWalletLimitKobo === 0) {
-    await recordLimitEvent(userId, tier, 'wallet_daily', {
-      amountKobo,
-      limitKobo: 0,
-      denied: true,
-    });
-    throw new ApiError(
-      'Wallet is disabled for unverified accounts. Complete KYC to enable your wallet.',
-      403,
-    );
+    if (!tier0Allowance) {
+      // Tier 0: wallet is fully disabled
+      await recordLimitEvent(userId, tier, 'wallet_daily', {
+        amountKobo,
+        limitKobo: 0,
+        denied: true,
+      });
+      throw new ApiError(
+        'Wallet is disabled for unverified accounts. Complete KYC to enable your wallet.',
+        403,
+      );
+    }
+    if (amountKobo > tier0Allowance.perTransactionMaxKobo) {
+      await recordLimitEvent(userId, tier, 'wallet_daily', {
+        amountKobo,
+        limitKobo: tier0Allowance.perTransactionMaxKobo,
+        denied: true,
+      });
+      throw new ApiError(
+        `This payment requires KYC Tier 1. Unverified accounts can pay up to ₦${(tier0Allowance.perTransactionMaxKobo / 100).toLocaleString('en-NG')} per bill — verify your identity to pay more.`,
+        403,
+      );
+    }
+    dailyLimitKobo = tier0Allowance.dailyLimitKobo;
   }
 
   // Tier 3 or any tier with null limit: unlimited
-  if (config.dailyWalletLimitKobo === null) {
+  if (dailyLimitKobo === null) {
     return { dailyLimitKobo: null };
   }
 
@@ -113,7 +141,7 @@ export async function enforceWalletLimit(
     .maybeSingle();
 
   if (acctErr || !acct) {
-    return { dailyLimitKobo: config.dailyWalletLimitKobo };
+    return { dailyLimitKobo };
   }
 
   const { data: sumRow, error: sumErr } = await supabase
@@ -127,7 +155,7 @@ export async function enforceWalletLimit(
     // Fail closed
     await recordLimitEvent(userId, tier, 'wallet_daily', {
       amountKobo,
-      limitKobo: config.dailyWalletLimitKobo,
+      limitKobo: dailyLimitKobo,
       denied: true,
     });
     throw new ApiError('Wallet limit check failed. Please try again.', 503);
@@ -138,20 +166,20 @@ export async function enforceWalletLimit(
     0,
   );
 
-  if (dailyTotal + amountKobo > config.dailyWalletLimitKobo) {
+  if (dailyTotal + amountKobo > dailyLimitKobo) {
     await recordLimitEvent(userId, tier, 'wallet_daily', {
       amountKobo,
       dailyTotalKobo: dailyTotal,
-      limitKobo: config.dailyWalletLimitKobo,
+      limitKobo: dailyLimitKobo,
       denied: true,
     });
     throw new ApiError(
-      `Daily wallet limit of ₦${config.dailyWalletLimitKobo / 100} reached for your KYC tier.`,
+      `Daily wallet limit of ₦${(dailyLimitKobo / 100).toLocaleString('en-NG')} reached for your KYC tier.`,
       403,
     );
   }
 
-  return { dailyLimitKobo: config.dailyWalletLimitKobo };
+  return { dailyLimitKobo };
 }
 
 // enforceVoteLimit

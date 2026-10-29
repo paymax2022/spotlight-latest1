@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"log"
 
 	"spotlight/backend/internal/config"
@@ -13,7 +14,11 @@ import (
 // buildFXProviders assembles the FX orchestration provider set. Eversend is
 // always present (live adapter when credentials are configured, deterministic
 // otherwise). VertoFX is appended only when FEATURE_VERTOFX is on.
-func buildFXProviders(cfg *config.Config) []orchestration.Provider {
+// ErrEversendCredentialsMissing: production refuses the deterministic Eversend
+// adapter; it would price and "settle" real money with synthetic data.
+var ErrEversendCredentialsMissing = errors.New("fx: Eversend credentials required in production")
+
+func buildFXProviders(cfg *config.Config) ([]orchestration.Provider, error) {
 	// Eversend: live HTTP adapter when client credentials are configured.
 	var evsProvider orchestration.Provider
 	if cfg.EversendClientID != "" && cfg.EversendClientSecret != "" {
@@ -23,6 +28,9 @@ func buildFXProviders(cfg *config.Config) []orchestration.Provider {
 		)
 		log.Println("[finance] FX orchestration: Eversend LIVE adapter enabled")
 	} else {
+		if cfg.IsProd() {
+			return nil, ErrEversendCredentialsMissing
+		}
 		evsProvider = adapters.NewEversend(cfg.EversendProd)
 	}
 	providers := []orchestration.Provider{
@@ -40,5 +48,5 @@ func buildFXProviders(cfg *config.Config) []orchestration.Provider {
 			log.Println("[finance] WARNING: FEATURE_VERTOFX is on but VertoFX credentials are empty; it will run in offline-mock mode and could win default routing in non-prod")
 		}
 	}
-	return providers
+	return providers, nil
 }

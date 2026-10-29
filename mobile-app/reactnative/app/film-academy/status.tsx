@@ -59,7 +59,7 @@ const ACTION_ROUTES: Record<string, string> = {
   // An overdue notice that cannot be acted on is just an accusation — it goes to
   // the same screen as a normal instalment payment.
   tuition_overdue: '/film-academy/tuition',
-  start_learning: '/film-academy/learn',
+  start_learning: '/film-academy/path',
 };
 
 function ActionCard({ action }: { action: FilmAcademyAction }) {

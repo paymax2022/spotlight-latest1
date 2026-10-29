@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, Image, Pressable, ScrollView } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, Image, Pressable, ScrollView, FlatList, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Icons from 'lucide-react-native';
@@ -50,14 +50,11 @@ export default function PropertyDetailScreen() {
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-        {/* Hero */}
-        <Pressable onPress={() => router.push(`/stays/property/${p.id}/gallery`)}>
-          <Image source={{ uri: p.coverUrl }} style={styles.hero} />
-          <View style={styles.galleryBtn}>
-            <Images size={14} color={Colors.white} />
-            <Text style={styles.galleryBtnText}>{p.media.length} photos</Text>
-          </View>
-        </Pressable>
+        {/* Hero: swipe between photos; the button opens the full gallery. */}
+        <HeroCarousel
+          photos={p.media.length ? p.media : [p.coverUrl]}
+          onOpenGallery={() => router.push(`/stays/property/${p.id}/gallery`)}
+        />
 
         <View style={styles.body}>
           <View style={styles.starsRow}>
@@ -123,10 +120,35 @@ export default function PropertyDetailScreen() {
           <Text style={styles.footerNote}>per night{ngnNote ? `  ·  ${ngnNote}` : ''}</Text>
         </View>
         <View style={styles.footerBtn}>
-          <PrimaryButton label="See rooms" onPress={() => router.push(`/stays/property/${p.id}/rooms`)} />
+          <PrimaryButton label="Book now" onPress={() => router.push(`/stays/property/${p.id}/rooms`)} />
         </View>
       </View>
     </SafeAreaView>
+  );
+}
+
+function HeroCarousel({ photos, onOpenGallery }: { photos: string[]; onOpenGallery: () => void }) {
+  const { width } = useWindowDimensions();
+  const [index, setIndex] = useState(0);
+
+  return (
+    <View>
+      <FlatList
+        data={photos}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        keyExtractor={(uri, i) => `${i}-${uri}`}
+        getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
+        scrollEventThrottle={16}
+        onScroll={(e) => setIndex(Math.round(e.nativeEvent.contentOffset.x / width))}
+        renderItem={({ item }) => <Image source={{ uri: item }} style={[styles.hero, { width }]} />}
+      />
+      <Pressable style={styles.galleryBtn} onPress={onOpenGallery} accessibilityLabel="Open photo gallery">
+        <Images size={14} color={Colors.white} />
+        <Text style={styles.galleryBtnText}>{index + 1} / {photos.length} photos</Text>
+      </Pressable>
+    </View>
   );
 }
 

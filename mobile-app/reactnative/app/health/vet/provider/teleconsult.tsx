@@ -27,7 +27,7 @@ export default function ProviderTeleconsultScreen() {
   };
 
   const onEnd = () =>
-    router.replace({ pathname: '/health/vet/provider/soap-notes', params: { appointmentId: appointmentId ?? '', petId: consult?.petId ?? 'pet_bella' } });
+    router.replace({ pathname: '/health/vet/provider/soap-notes', params: { appointmentId: appointmentId ?? '', petId: consult?.petId ?? '' } });
 
   if (isLoading) {
     return (

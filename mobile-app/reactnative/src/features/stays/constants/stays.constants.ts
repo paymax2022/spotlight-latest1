@@ -113,6 +113,16 @@ export function chargeableKobo(amountMinor: number, currency: Currency): number 
 }
 
 /**
+ * The creator's long-stay discount (kobo) off a room total: zero unless the stay
+ * reaches `minNights`. Rounds half up, matching the backend's applyLongStayDiscount,
+ * so the price shown here is the price that gets charged.
+ */
+export function longStayDiscountKobo(roomKobo: number, nights: number, minNights?: number, pct?: number): number {
+  if (!minNights || !pct || nights < minNights) return 0;
+  return Math.floor((roomKobo * pct + 50) / 100);
+}
+
+/**
  * Idempotency-Key for money-path mutations (book/cancel). Mirrors the money-path
  * convention so a retried Book can't double-create / double-charge.
  */

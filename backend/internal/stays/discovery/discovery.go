@@ -22,7 +22,8 @@ const keyError = "error"
 
 // Handler exposes member discovery routes under /api/finance/stays.
 type Handler struct {
-	db *pgxpool.Pool
+	db       *pgxpool.Pool
+	coverURL func(key string) string
 }
 
 func NewHandler(db *pgxpool.Pool) *Handler { return &Handler{db: db} }
@@ -48,13 +49,13 @@ func slug(s string) string {
 func (h *Handler) listDestinations(c *gin.Context, q string, limit int) ([]Destination, error) {
 	like := "%" + q + "%"
 	const sql = `
-		SELECT city, count(*)::int AS n
+		SELECT min(city) AS city, count(*)::int AS n
 		FROM public.stays_property
 		WHERE status = 'ACTIVE'
 		  AND city <> ''
 		  AND ($1 = '' OR city ILIKE $2)
-		GROUP BY city
-		ORDER BY n DESC, city ASC
+		GROUP BY lower(city)
+		ORDER BY n DESC, min(city) ASC
 		LIMIT $3`
 	rows, err := h.db.Query(c.Request.Context(), sql, q, like, limit)
 	if err != nil {
@@ -304,6 +305,7 @@ func (h *Handler) Loyalty(c *gin.Context) {
 type HomeFeed struct {
 	RecentSearches       []any         `json:"recent_searches"`
 	Deals                []any         `json:"deals"`
+	RecentListings       []RecentListing `json:"recent_listings"`
 	TrendingDestinations []Destination `json:"trending_destinations"`
 	Saved                []any         `json:"saved"`
 }
@@ -317,7 +319,13 @@ func (h *Handler) Home(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
+	recent, err := h.recentListings(c.Request.Context(), 8)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"data": HomeFeed{
+		RecentListings:       recent,
 		RecentSearches:       []any{},
 		Deals:                []any{},
 		TrendingDestinations: trending,

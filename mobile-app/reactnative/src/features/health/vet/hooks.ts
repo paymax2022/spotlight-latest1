@@ -23,7 +23,6 @@ import {
   getConsult,
   startConsult,
   sendConsultMessage,
-  completeConsult,
   getConsultSummary,
   getPrescription,
   getPrescriptions,
@@ -229,17 +228,6 @@ export function useSendConsultMessage(consultId?: string) {
   return useMutation({
     mutationFn: (body: string) => sendConsultMessage(consultId as string, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'consult', consultId] }),
-  });
-}
-
-export function useCompleteConsult() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => completeConsult(id),
-    onSuccess: (_d, id) => {
-      qc.invalidateQueries({ queryKey: [KEY, 'consult', id] });
-      qc.invalidateQueries({ queryKey: [KEY, 'appointments'] });
-    },
   });
 }
 

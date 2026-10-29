@@ -36,7 +36,7 @@ export default function WalletPayScreen() {
     if (pay.phase === 'done') router.push('/stays/book/confirm');
   }, [pay.phase]);
 
-  const methodLabel = paymentMethod === 'card' ? 'Card (Paystack)' : paymentMethod === 'transfer' ? 'Bank transfer' : 'Wallet';
+  const methodLabel = paymentMethod === 'card' ? 'Card (Paystack)' : 'Wallet';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

@@ -77,6 +77,10 @@ type RatePlan struct {
 	// CancellationPolicy is the normalised, snapshot-able policy (free-cancel
 	// deadline, penalty schedule, non-ref flag) — captured on the reservation.
 	CancellationPolicy map[string]any `json:"cancellation_policy"`
+	// LongStayMinNights / LongStayDiscountPct are the creator's long-stay rule. Zero
+	// LongStayMinNights means no rule. The discount applies to the room total only.
+	LongStayMinNights   int `json:"long_stay_min_nights,omitempty"`
+	LongStayDiscountPct int `json:"long_stay_discount_pct,omitempty"`
 }
 
 // PropertyOffer is one bookable search result: property + room type + rate plan +

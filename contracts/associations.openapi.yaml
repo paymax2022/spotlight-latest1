@@ -1440,6 +1440,7 @@ components:
         category: { type: string }
         description: { type: string }
         logoUri: { type: [string, 'null'] }
+        coverUri: { type: [string, 'null'], description: 'Optional banner. Pasted URL or an uploaded object key from POST /uploads/logo/presign; stored in cover_url and signed on read.' }
         groupType: { $ref: '#/components/schemas/GroupType' }
         approvalRule: { type: string, enum: [AUTO, ADMIN, CHAPTER_THEN_NATIONAL, PAYMENT_FIRST] }
         registrationFeeKobo: { $ref: '#/components/schemas/Kobo' }

@@ -1,7 +1,7 @@
 import React from 'react';
-import { View, Text, StyleSheet, FlatList } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -10,12 +10,31 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { ReviewScore } from '@/features/stays/components';
 import { useProperty, useReviews } from '@/features/stays/hooks';
+import { useTrips } from '@/features/stays/trips';
 import { REVIEW_DIMENSIONS, REVIEW_DIMENSION_LABEL, StaysColors } from '@/features/stays/constants/stays.constants';
 
 export default function ReviewsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const prop = useProperty(String(id));
   const reviews = useReviews(String(id));
+  const past = useTrips('past');
+  // A guest may review only after a completed stay here. Match by property name, since
+  // trips carry the reservation's property record rather than this page's listing key.
+  const reviewableStay = prop.data
+    ? (past.data ?? []).find((t) => t.state === 'COMPLETED' && t.propertyName === prop.data!.name)
+    : undefined;
+
+  const writeButton = reviewableStay ? (
+    <Pressable
+      style={styles.writeBtn}
+      accessibilityRole="button"
+      onPress={() => router.push({ pathname: '/stays/reviews/write', params: { id: reviewableStay.id } })}
+    >
+      <Text style={styles.writeBtnText}>Write a review</Text>
+    </Pressable>
+  ) : (
+    <Text style={styles.muted}>Complete a stay at this property to leave a review.</Text>
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -25,7 +44,10 @@ export default function ReviewsScreen() {
       ) : reviews.isError ? (
         <StateView kind="error" title="Couldn't load reviews" actionLabel="Retry" onAction={() => reviews.refetch()} />
       ) : (reviews.data?.length ?? 0) === 0 ? (
-        <StateView kind="empty" icon="MessageSquare" title="No reviews yet" message="Be the first to review after your stay." />
+        <View style={styles.emptyWrap}>
+          <StateView kind="empty" icon="MessageSquare" title="No reviews yet" message="Be the first to review after your stay." />
+          {writeButton}
+        </View>
       ) : (
         <FlatList
           data={reviews.data}
@@ -34,6 +56,7 @@ export default function ReviewsScreen() {
           ListHeaderComponent={
             prop.data ? (
               <View style={styles.summary}>
+                {writeButton}
                 <ReviewScore score={prop.data.reviewScore} reviewCount={prop.data.reviewCount} />
                 <View style={styles.subScores}>
                   {REVIEW_DIMENSIONS.map((d) => {
@@ -80,6 +103,10 @@ export default function ReviewsScreen() {
 }
 
 const styles = StyleSheet.create({
+  writeBtn: { alignSelf: 'center', backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.lg, marginVertical: Spacing.md },
+  writeBtnText: { ...Typography.labelLg, color: Colors.onPrimary },
+  muted: { ...Typography.bodySm, color: Colors.onSurfaceVariant, textAlign: 'center', marginVertical: Spacing.sm },
+  emptyWrap: { flex: 1, padding: Spacing.containerMargin },
   safe: { flex: 1, backgroundColor: Colors.background },
   list: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.xxl },
   summary: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.lg, padding: Spacing.md, marginBottom: Spacing.md, gap: Spacing.md },

@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { resolveUtilityCommission, type ResolvedCommission } from '@/src/server/commission/config';
 import { creditWallet, debitWallet, reverseWalletDebit } from '@/src/server/wallet/service';
+import { UTILITY_TIER0_ALLOWANCE, enforceUtilityPaymentGate } from '@/src/server/utility/payment-gate';
 import { sendUtilityRefundEmail } from '@/src/server/utility/refundEmail';
 import {
   buildVendRetryMeta,
@@ -1116,6 +1117,13 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     commission.config,
   );
   await assertCategoryAvailableForPayment(userId, category, pricing.retailAmountKobo);
+  // Tier/amount gate BEFORE the row insert and the debit, so a refused payment
+  // leaves no 'initiated' row. The paystack rail was gated at initiate time —
+  // by the time payUtility sees a paystack row the charge is already captured,
+  // and refusing here would strand the money.
+  if (paymentSource === 'wallet') {
+    await enforceUtilityPaymentGate(userId, 'wallet', pricing.retailAmountKobo);
+  }
   const adapter = getUtilityAdapter(route.provider.adapter_code);
   let validation: UtilityValidationResult = { valid: true };
   if (biller.requires_validation) {
@@ -1272,6 +1280,7 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
         idempotencyKey: `utility:${transactionId}:DEBIT`,
         description: `Utility payment ${receipt}`,
         metadata: { utility_transaction_id: transactionId, category, biller: biller.code },
+        tier0Allowance: UTILITY_TIER0_ALLOWANCE,
       });
     } catch (debitError) {
       // Go-plane parity (backend/internal/utilitybills PayUtility → markFailed):

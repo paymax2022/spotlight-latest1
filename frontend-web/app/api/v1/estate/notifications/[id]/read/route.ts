@@ -2,23 +2,37 @@ import { NextResponse } from 'next/server';
 import { ApiError, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
+import { getResidentContext } from '@/src/server/estate/resident';
+import {
+  getOwnNotification, mapEstateNotification, NOTIF_UUID_RE, patchOwnNotification,
+} from '@/src/server/estate/notifications';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
+// POST /api/v1/estate/notifications/[id]/read — stamp one of the caller's own notices read.
+//
+// The stamp is written once and never overwritten: read_at is the evidence that a recipient saw the
+// notice, and the retention sweep keys archiving on it, so re-reading must not move the date.
+//
+// Order matters and is the point of the first two lines: a malformed id is a caller mistake (400) rather
+// than a database 22P02 (500), and the estate write gate is answered before the row is looked up, so a
+// suspended estate's member learns the estate is closed rather than that their notice is gone.
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const params = await ctx.params;
   try {
     const user = await requireRequestUser(request);
-    // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
-    if (!UUID_RE.test(params.id)) throw new ApiError('Invalid notification ID', 400);
+    const { id } = await ctx.params;
+    if (!NOTIF_UUID_RE.test(id)) throw new ApiError('Invalid notification ID', 400);
+
     const supabase = createAdminClient();
-    const { data: existing, error: getErr } = await supabase.from('estate_notifications').select('id, user_id, read_at').eq('id', params.id).maybeSingle();
-    if (getErr) throw getErr;
-    if (!existing || (existing as any).user_id !== user.id) throw new ApiError('Notification not found', 404);
-    if (!(existing as any).read_at) {
-      const { error } = await supabase.from('estate_notifications').update({ read_at: new Date().toISOString() }).eq('id', params.id);
-      if (error) throw error;
-    }
-    return new NextResponse(null, { status: 204 });
+    // forWrite: the BFF mirror of the Go LifecycleGate on /estate/:id — a pending, suspended or closed
+    // estate takes no inbox mutation (ESTD-D025).
+    const resident = await getResidentContext(supabase, user.id, { forWrite: true });
+    if (!resident) throw new ApiError('Not a resident of any estate', 403);
+
+    const existing = await getOwnNotification(supabase, resident.estateId, user.id, id);
+    if (existing.read_at) return NextResponse.json(mapEstateNotification(existing));
+
+    const updated = await patchOwnNotification(supabase, resident.estateId, user.id, id, {
+      read_at: new Date().toISOString(),
+    });
+    return NextResponse.json(updated);
   } catch (error) { return handleApiError(error, 'Failed to mark notification read'); }
 }

@@ -78,7 +78,17 @@ func (c *Client) ensureToken(ctx context.Context) (string, error) {
 // maxRetries on transient (network / 5xx) failures, with linear backoff.
 const maxRetries = 3
 
+// WithBaseURL overrides the API base URL (tests, sandbox proxies).
+func (c *Client) WithBaseURL(u string) *Client {
+	c.baseURL = u
+	return c
+}
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
+	return c.doIdem(ctx, method, path, "", in, out)
+}
+
+func (c *Client) doIdem(ctx context.Context, method, path, idemKey string, in, out any) error {
 	tok, err := c.ensureToken(ctx)
 	if err != nil {
 		return err
@@ -107,6 +117,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		}
 		req.Header.Set("Authorization", "Bearer "+tok)
 		req.Header.Set("Content-Type", "application/json")
+		if idemKey != "" {
+			req.Header.Set("Idempotency-Key", idemKey)
+		}
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = err // transport error — retry
@@ -166,12 +179,12 @@ type ExchangeResult struct {
 }
 
 // Exchange executes a quoted exchange (POST /exchanges).
-func (c *Client) Exchange(ctx context.Context, quotationToken string) (*ExchangeResult, error) {
+func (c *Client) Exchange(ctx context.Context, quotationToken, idemKey string) (*ExchangeResult, error) {
 	body := map[string]any{"token": quotationToken}
 	var resp struct {
 		Data ExchangeResult `json:"data"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/exchanges", body, &resp); err != nil {
+	if err := c.doIdem(ctx, http.MethodPost, "/exchanges", idemKey, body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp.Data, nil
@@ -195,7 +208,7 @@ func (c *Client) Payout(ctx context.Context, currency, accountNumber, name strin
 	var resp struct {
 		Data PayoutResult `json:"data"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/payouts", body, &resp); err != nil {
+	if err := c.doIdem(ctx, http.MethodPost, "/payouts", reference, body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp.Data, nil

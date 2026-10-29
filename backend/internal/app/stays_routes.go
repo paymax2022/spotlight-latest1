@@ -3,6 +3,7 @@ package app
 import (
 	"log"
 	"os"
+	"time"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/commission"
 	financeledger "spotlight/backend/internal/finance/ledger"
@@ -132,7 +133,20 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 	mg.GET("/search", searchHandler.Search)
 	mg.GET("/properties/:rail/:supplier/:ref", searchHandler.Content)
 	// Discovery (destinations autocomplete over DIRECT inventory).
-	discoveryHandler := discovery.NewHandler(pool)
+	coverPresigner := r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	})
+	discoveryHandler := discovery.NewHandler(pool).WithCoverURL(func(key string) string {
+		u, err := coverPresigner.PresignGet(key, time.Hour)
+		if err != nil {
+			return ""
+		}
+		return u
+	})
 	mg.GET("/destinations", discoveryHandler.Destinations)
 	mg.GET("/home", discoveryHandler.Home)
 	mg.GET("/deals", discoveryHandler.Deals)
@@ -156,6 +170,7 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 	mg.GET("/reservations/:id/voucher", reservationHandler.Voucher)
 	mg.POST("/reservations/:id/cancel", reservationHandler.Cancel)
 	mg.POST("/reservations/:id/modify", reservationHandler.Modify) // Idempotency-Key REQUIRED
+	mg.POST("/reservations/:id/modify/quote", reservationHandler.ModifyQuote)
 
 	// Agent-assisted booking channel (a member with an agent role books on behalf
 	// of a walk-in customer, earning the existing Direct commission split — no new
@@ -180,6 +195,7 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 	ag.GET("/dashboard", guard("stays.admin.reservation"), adminHandler.Dashboard)
 	// Reservation search (ops support).
 	ag.GET("/reservations", guard("stays.admin.reservation"), reservationHandler.AdminSearch)
+	ag.GET("/users", guard("stays.admin.hotelier"), adminHandler.ListUsers)
 
 	log.Println("[stays] routes registered — search/dedup/prebook→book saga + admin live")
 }
