@@ -2222,6 +2222,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		teleAdmin.GET("/dashboard", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminGetDashboard)
 		teleAdmin.GET("/doctors", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListDoctors)
 		teleAdmin.GET("/appointments", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListAppointments)
+		teleAdmin.GET("/appointments/:id", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminGetAppointment)
+		teleAdmin.POST("/appointments/:id/cancel", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminCancelAppointment)
+		teleAdmin.POST("/appointments/:id/reassign", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminReassignAppointment)
 		teleAdmin.POST("/doctors/:userId/verify", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminVerifyDoctor)
 		// Per-area admin consoles (onboarding, reviews, prescriptions, finance, claims,
 		// support, compliance). Each package mounts its own /<area>/... routes; reads need
