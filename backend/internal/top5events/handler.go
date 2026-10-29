@@ -93,6 +93,10 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	admin.GET("/cashless", adminView, h.AdminGetCashlessFloat)
 	admin.GET("/vendors", adminView, h.AdminListVendors)
 	admin.GET("/settlement", adminView, h.AdminGetSettlement)
+
+	// Fraud queue: derived signals (read) + append-only reviewer decisions.
+	admin.GET("/fraud", adminView, h.AdminListFraud)
+	admin.POST("/fraud/:id/action", guard("events.moderate"), h.AdminFraudAction)
 }
 
 func uid(c *gin.Context) (string, bool) {

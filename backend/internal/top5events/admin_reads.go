@@ -83,7 +83,7 @@ type AdminDashboard struct {
 	VendorPayoutsHold   int                      `json:"vendor_payouts_kyc_hold"`
 	SettlementBreaks    int                      `json:"settlement_breaks_open"` // no break-detection exists; always 0
 	SettlementBreakKobo int64                    `json:"settlement_break_value_kobo"`
-	FraudOpen           int                      `json:"fraud_open"` // no fraud queue exists; always 0
+	FraudOpen           int                      `json:"fraud_open"` // derived signals still open or investigating (admin_fraud.go)
 	RefundsPending      int                      `json:"refunds_pending"`
 	SupportCasesOpen    int                      `json:"support_cases_open"`
 	TicketMix           []map[string]any         `json:"ticket_mix"`
@@ -273,6 +273,12 @@ func (s *Service) adminDashboardMixTrend(ctx context.Context, d *AdminDashboard)
 // activity feed's sales leg is always available; its governance leg joins the
 // commerce-only trail.
 func (s *Service) adminDashboardQueues(ctx context.Context, d *AdminDashboard) error {
+	fraudOpen, err := s.adminFraudOpenCount(ctx)
+	if err != nil {
+		return err
+	}
+	d.FraudOpen = fraudOpen
+
 	if s.commerceReads {
 		if err := s.db.QueryRow(ctx,
 			`SELECT COUNT(*) FROM event_refunds WHERE status IN ('REQUESTED','APPROVED','PROCESSING','FAILED')`).
