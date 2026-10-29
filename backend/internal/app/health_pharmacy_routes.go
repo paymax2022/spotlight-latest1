@@ -93,6 +93,10 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 
 	pg := member.Group("/health/pharmacy")
 	registerPharmacyProviderMe(pg, pool)
+	// Patient's own pharmacist-consult thread.
+	pg.GET("/consult/messages", h.ConsultMessages)
+	pg.POST("/consult/messages", h.SendConsultMessage)
+
 	pg.GET("/products", h.ListProducts)                         // NAFDAC-gated, Rx flag (HL-5)
 	pg.GET("/products/mine", h.MyProducts)                      // owner shelf incl. off-sale (before :id)
 	pg.GET("/products/:id", h.GetProduct)                       // single product + owning pharmacy
@@ -125,8 +129,6 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		h.Complete) // release payment (HL-9)
 	pg.POST("/orders/:id/cancel", h.Cancel)        // pre-dispense → refund (HL-9)
 	pg.POST("/orders/:id/reviews", h.SubmitReview) // patient, order must be completed
-	pg.GET("/consult/messages", h.ConsultMessages) // patient's own pharmacist-consult thread
-	pg.POST("/consult/messages", h.SendConsultMessage)
 
 	ag := admin.Group("")
 	// PHARMACY-001: `admin` (adminGroupTop5, top5_admin_group.go) applies ONLY
