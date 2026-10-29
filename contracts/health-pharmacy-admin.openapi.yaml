@@ -1,0 +1,136 @@
+openapi: 3.0.3
+info:
+  title: Health pharmacy — admin console reads
+  version: 1.0.0
+  description: >
+    Platform-wide admin reads behind RequireAuthContext + per-route RBAC. Responses use the
+    admin envelope {success, data}. Patient/pharmacist names are masked server-side (HL-8).
+    Amounts are integer kobo. Unknown enum filters answer 400.
+servers:
+  - url: /api/health/pharmacy/admin
+paths:
+  /pcn/applications:
+    get:
+      operationId: adminListPharmacyPcnApplications
+      summary: PHARMACY provider applications with credential docs (RBAC health.admin.providers)
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [draft, submitted, under_review, needs_info, approved, suspended, rejected] } }
+        - { name: q, in: query, schema: { type: string }, description: Name, id, or credential reference }
+      responses:
+        '200': { $ref: '#/components/responses/DataList' }
+        '400': { description: Unknown status }
+        '401': { description: Unauthenticated }
+        '403': { description: Missing permission }
+  /catalog:
+    get:
+      operationId: adminListPharmacyCatalog
+      summary: Every product with derived governance status (RBAC health.pharmacy.audit)
+      description: >
+        status derives from nafdac_status + active — BANNED→rejected; SUSPENDED or inactive
+        REGISTERED→suspended; REGISTERED→approved; otherwise pending.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, suspended] } }
+        - { name: pom, in: query, schema: { type: string, enum: [pom, otc] } }
+        - { name: q, in: query, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/DataList' }
+        '400': { description: Unknown filter }
+        '401': { description: Unauthenticated }
+        '403': { description: Missing permission }
+  /rx-audit:
+    get:
+      operationId: adminPharmacyRxAudit
+      summary: Prescription verification / dispense trail (RBAC health.pharmacy.audit)
+      description: dispense_once_ok is false when more than one dispense record cites the prescription. Complements /dispense-audit.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [issued, sent_to_pharmacy, verifying, verified, dispensed, fulfilled, rejected] } }
+        - { name: q, in: query, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/DataList' }
+        '400': { description: Unknown status }
+        '401': { description: Unauthenticated }
+        '403': { description: Missing permission }
+  /controlled-log:
+    get:
+      operationId: adminPharmacyControlledLog
+      summary: Dispensed controlled-substance lines (HL-4; empty at MVP) (RBAC health.pharmacy.audit)
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/DataList' }
+        '401': { description: Unauthenticated }
+        '403': { description: Missing permission }
+  /payouts:
+    get:
+      operationId: adminListPharmacyPayouts
+      summary: Per-pharmacy settlement position (RBAC health.pharmacy.orders)
+      description: >
+        collected_kobo = RELEASED escrow, held_kobo = HELD escrow, fees_kobo = commission recorded
+        for the pharmacy's orders. Release is automatic on completion behind the KYC gate, so
+        payout_status reflects that gate (kyc_hold | pending | paid) — there is no approval step.
+      parameters:
+        - { name: payout_status, in: query, schema: { type: string, enum: [pending, approved, paid, kyc_hold, rejected] } }
+        - { name: q, in: query, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/DataList' }
+        '400': { description: Unknown payout_status }
+        '401': { description: Unauthenticated }
+        '403': { description: Missing permission }
+  /reporting:
+    get:
+      operationId: adminPharmacyReporting
+      summary: Period rollup — GMV, revenue/commission, Rx vs OTC, refund rate, monthly (RBAC health.pharmacy.orders)
+      parameters:
+        - { name: period, in: query, schema: { type: string, enum: ['7d', '30d', '90d'], default: '30d' } }
+        - { name: format, in: query, schema: { type: string, enum: [json, csv], default: json } }
+      responses:
+        '200':
+          description: JSON envelope, or a CSV attachment when format=csv
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      generated_at: { type: string, format: date-time }
+                      period: { type: string }
+                      period_label: { type: string }
+                      gmv_kobo: { type: integer, format: int64 }
+                      net_revenue_kobo: { type: integer, format: int64 }
+                      commission_kobo: { type: integer, format: int64 }
+                      orders: { type: integer }
+                      rx_orders: { type: integer }
+                      otc_orders: { type: integer }
+                      refund_rate: { type: number }
+                      nafdac_block_rate: { type: number }
+                      payouts_kyc_hold: { type: integer }
+                      monthly:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            month: { type: string }
+                            gmv_kobo: { type: integer, format: int64 }
+                            net_kobo: { type: integer, format: int64 }
+                            orders: { type: integer }
+            text/csv:
+              schema: { type: string }
+        '400': { description: Unknown period or format }
+        '401': { description: Unauthenticated }
+        '403': { description: Missing permission }
+components:
+  responses:
+    DataList:
+      description: Admin list envelope (up to 500 rows)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean }
+              data:
+                type: array
+                items: { type: object }
