@@ -362,7 +362,7 @@ func (s *Service) UpsertProduct(ctx context.Context, ownerID string, p Product) 
 // ListProducts returns the active, NAFDAC-registered catalog for a pharmacy. The
 // catalog only ever contains registered products (HL-5 enforced at write), so the
 // read is a plain active filter; the Rx-required flag is surfaced to the client.
-func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuery string) ([]Product, error) {
+func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuery, category string) ([]Product, error) {
 	// Each product is owned by a pharmacy — surface that pharmacy's display name
 	// (LEFT JOIN health_providers) so the client can show and search by it. Both
 	// the pharmacy-id filter and the free-text search are bound parameters, never
@@ -379,6 +379,10 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 		// Match either the medicine name or the owning pharmacy's name.
 		where += fmt.Sprintf(" AND (pr.name ILIKE '%%'||$%d||'%%' OR hp.display_name ILIKE '%%'||$%d||'%%')", len(args), len(args))
 	}
+	if category != "" {
+		args = append(args, category)
+		where += fmt.Sprintf(" AND pr.category = $%d", len(args))
+	}
 	// TWO nullable columns are read into plain Go strings here:
 	// pharmacy_provider_id (uuid) and nafdac_ref (text). pgx fails the whole scan
 	// on either — "cannot scan NULL into *string" — and because that happens
@@ -393,7 +397,8 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 	// settle, and deliberately: a catalog that 500s hides it instead of showing it.
 	q := fmt.Sprintf(`
 		SELECT pr.id, COALESCE(pr.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
-		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at
+		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at,
+		       COALESCE(pr.category, '')
 		FROM pharmacy_products pr
 		LEFT JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id
 		WHERE pr.active = true AND pr.nafdac_status = 'REGISTERED'%s
@@ -407,7 +412,7 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 	for rows.Next() {
 		var p Product
 		if err := rows.Scan(&p.ID, &p.PharmacyProviderID, &p.PharmacyName, &p.Name, &p.NAFDACRef, &p.NAFDACStatus,
-			&p.RxRequired, &p.IsControlled, &p.PriceKobo, &p.StockQty, &p.Active, &p.CreatedAt); err != nil {
+			&p.RxRequired, &p.IsControlled, &p.PriceKobo, &p.StockQty, &p.Active, &p.CreatedAt, &p.Category); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

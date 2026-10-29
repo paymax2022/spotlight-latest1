@@ -25,6 +25,7 @@ import {
   getProviderCatalog,
   getStockAlerts,
   getProviderOrders,
+  confirmOrder,
   dispenseOrder,
   handoffOrder,
   getProviderRxQueue,
@@ -190,6 +191,17 @@ export function useStockAlerts() {
 
 export function useProviderOrders() {
   return useQuery({ queryKey: [KEY, 'provider', 'orders'], queryFn: getProviderOrders, staleTime: 15_000 });
+}
+
+export function useConfirmOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { orderId: string; idempotencyKey: string }) => confirmOrder(args.orderId, args.idempotencyKey),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'provider', 'orders'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'orders'] });
+    },
+  });
 }
 
 export function useDispenseOrder() {
