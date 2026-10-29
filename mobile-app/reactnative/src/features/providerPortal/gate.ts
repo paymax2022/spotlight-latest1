@@ -5,7 +5,21 @@
 // route still enforces ownership and approval on the server, so hiding a screen
 // here never grants or removes access (ADR-PR915 provider-portal-capabilities).
 
-export type ProviderType = 'doctor' | 'vet' | 'pharmacy' | 'lab';
+export type ProviderType =
+  | 'doctor'
+  | 'vet'
+  | 'pharmacy'
+  | 'lab'
+  | 'restaurant'
+  | 'rider'
+  | 'driver'
+  | 'marketplace_seller'
+  | 'event_organiser'
+  | 'estate_manager'
+  | 'property_manager'
+  | 'association_creator'
+  | 'crowdfunding_creator'
+  | 'bus_owner';
 
 export interface ProviderCapability {
   type: ProviderType;
@@ -43,6 +57,13 @@ export interface GateRule {
    * and verification-status screens an applicant must be able to open.
    */
   open?: readonly string[];
+  /**
+   * When true the rule matches only `prefix` itself, not its children. Used where
+   * a provider console shares a path segment with a customer screen (e.g.
+   * `/food/restaurant` is the owner console while `/food/restaurant/<id>` is the
+   * customer's view of an outlet).
+   */
+  exact?: boolean;
 }
 
 export type GateDecision =
@@ -75,6 +96,7 @@ export function decideGate(
 ): GateDecision {
   const path = normalise(pathname);
   for (const rule of rules) {
+    if (rule.exact && path !== normalise(rule.prefix)) continue;
     const rel = relative(path, rule.prefix);
     if (rel === null) continue;
     if (isOpen(rel, rule.open ?? [])) return { kind: 'allow' };

@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Store, ChevronRight, Sparkles } from 'lucide-react-native';
+import { Store, ChevronRight, Sparkles, LayoutGrid } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -74,6 +74,24 @@ export default function CapabilitiesScreen() {
               <Text style={styles.ctaSub}>Add a selling or service capability to your account</Text>
             </View>
             <ChevronRight size={20} color={Colors.onPrimary} strokeWidth={2} />
+          </Pressable>
+
+          {/* The provider portal — one console listing every business this user
+              owns, across all modules. */}
+          <Pressable
+            onPress={() => router.push('/provider-portal' as never)}
+            style={({ pressed }) => [styles.portalRow, shadow1, pressed && styles.pressed]}
+            accessibilityRole="button"
+            accessibilityLabel="Open provider portal"
+          >
+            <View style={styles.portalIcon}>
+              <LayoutGrid size={20} color={Colors.primary} strokeWidth={2} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.portalTitle}>Provider portal</Text>
+              <Text style={styles.portalSub}>Manage every business you own in one place</Text>
+            </View>
+            <ChevronRight size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
           </Pressable>
 
           {/* Switcher — Customer + each provider workspace */}
@@ -151,6 +169,10 @@ const styles = StyleSheet.create({
   ctaBody:     { flex: 1, gap: 2 },
   ctaTitle:    { ...Typography.titleMd, color: Colors.onPrimary },
   ctaSub:      { ...Typography.labelSm, color: Colors.inverseOnSurface },
+  portalRow:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.primary, borderRadius: Radius.lg, padding: Spacing.md, marginBottom: Spacing.lg },
+  portalIcon:  { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
+  portalTitle: { ...Typography.labelMd, color: Colors.onSurface },
+  portalSub:   { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   sectionFirst:{ paddingHorizontal: 0, marginBottom: Spacing.sm },
   section:     { paddingHorizontal: 0, marginTop: Spacing.lg, marginBottom: Spacing.sm },
   group:       { gap: 0 },

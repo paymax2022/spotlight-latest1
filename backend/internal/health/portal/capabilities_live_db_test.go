@@ -126,3 +126,143 @@ func TestLiveDB_Capabilities_StaffRowsAreNotABusiness(t *testing.T) {
 		t.Fatalf("staff-type rows must not open an owner portal, got %+v", got)
 	}
 }
+
+func seedRestaurant(t *testing.T, pool *pgxpool.Pool, owner, name, kybStatus string) string {
+	t.Helper()
+	id := uuid.NewString()
+	if _, err := pool.Exec(t.Context(), `
+		INSERT INTO restaurants (id, owner_id, name, address) VALUES ($1,$2,$3,'1 Test Street')`,
+		id, owner, name); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+	if kybStatus != "" {
+		if _, err := pool.Exec(t.Context(), `
+			INSERT INTO restaurant_kyb (restaurant_id, status) VALUES ($1,$2)`, id, kybStatus); err != nil {
+			t.Fatalf("seed kyb: %v", err)
+		}
+	}
+	return id
+}
+
+func TestLiveDB_Capabilities_RestaurantApprovalFollowsKYB(t *testing.T) {
+	pool := livePool(t)
+	alice, bob := seedUser(t, pool), seedUser(t, pool)
+
+	approved := seedRestaurant(t, pool, alice, "Alice Kitchen", "approved")
+	submitted := seedRestaurant(t, pool, bob, "Bob Kitchen", "submitted")
+
+	got, err := Capabilities(t.Context(), pool, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Type != "restaurant" || got[0].ProviderID != approved || !got[0].Approved {
+		t.Fatalf("alice = %+v, want her approved restaurant only", got)
+	}
+
+	got, err = Capabilities(t.Context(), pool, bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ProviderID != submitted || got[0].Approved || got[0].Status != "SUBMITTED" {
+		t.Fatalf("bob = %+v, want his submitted restaurant held as pending", got)
+	}
+}
+
+func TestLiveDB_Capabilities_ExtendedTypesAreOwnerScoped(t *testing.T) {
+	pool := livePool(t)
+	ctx := t.Context()
+	alice, bob := seedUser(t, pool), seedUser(t, pool)
+
+	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Alice Estate',$2)`, uuid.NewString(), alice); err != nil {
+		t.Fatalf("seed estate: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO assoc_organisations (id, name, category, created_by) VALUES ($1,'Alice Assoc','professional',$2)`, uuid.NewString(), alice); err != nil {
+		t.Fatalf("seed association: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO campaigns (id, creator_id, title, goal_kobo, deadline) VALUES ($1,$2,'Alice Campaign',100000, now() + interval '30 days')`, uuid.NewString(), alice); err != nil {
+		t.Fatalf("seed campaign: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO bus_providers (id, owner_user_id, business_name, contact_phone, verification_status) VALUES ($1,$2,'Alice Coaches','08000000000','pending')`, uuid.NewString(), alice); err != nil {
+		t.Fatalf("seed bus provider: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO campaigns (id, creator_id, title, goal_kobo, deadline) VALUES ($1,$2,'Bob Campaign',100000, now() + interval '30 days')`, uuid.NewString(), bob); err != nil {
+		t.Fatalf("seed bob campaign: %v", err)
+	}
+
+	got, err := Capabilities(ctx, pool, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]Capability{}
+	for _, c := range got {
+		seen[c.Type] = c
+	}
+	if seen["estate_manager"].DisplayName != "Alice Estate" || !seen["estate_manager"].Approved {
+		t.Fatalf("estate = %+v", seen["estate_manager"])
+	}
+	if seen["association_creator"].DisplayName != "Alice Assoc" {
+		t.Fatalf("association = %+v", seen["association_creator"])
+	}
+	if seen["crowdfunding_creator"].DisplayName != "Alice Campaign" {
+		t.Fatalf("campaign = %+v", seen["crowdfunding_creator"])
+	}
+	if b, ok := seen["bus_owner"]; !ok || b.Approved || b.Status != "PENDING" {
+		t.Fatalf("bus = %+v, want pending and not approved", b)
+	}
+	for _, c := range got {
+		if c.DisplayName == "Bob Campaign" {
+			t.Fatalf("alice sees bob's campaign: %+v", c)
+		}
+	}
+}
+
+func TestLiveDB_Capabilities_DriverApprovalFollowsVerification(t *testing.T) {
+	pool := livePool(t)
+	ctx := t.Context()
+	alice, bob := seedUser(t, pool), seedUser(t, pool)
+
+	if _, err := pool.Exec(ctx, `INSERT INTO drivers (user_id, name, vehicle_reg, verification_status) VALUES ($1,'Alice Rider','AA-111',$2)`, alice, "approved"); err != nil {
+		t.Fatalf("seed driver: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO drivers (user_id, name, vehicle_reg, verification_status) VALUES ($1,'Bob Rider','BB-222',$2)`, bob, "draft"); err != nil {
+		t.Fatalf("seed bob driver: %v", err)
+	}
+
+	// One drivers row is both the mobility driver and the delivery rider console,
+	// so it yields exactly those two capabilities with the row's approval state.
+	capsByType := func(caps []Capability) map[string]Capability {
+		m := map[string]Capability{}
+		for _, c := range caps {
+			m[c.Type] = c
+		}
+		return m
+	}
+
+	got, err := Capabilities(ctx, pool, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("alice = %+v, want driver + rider", got)
+	}
+	seen := capsByType(got)
+	for _, typ := range []string{"driver", "rider"} {
+		if c, ok := seen[typ]; !ok || !c.Approved || c.Status != "APPROVED" {
+			t.Fatalf("alice %s = %+v, want approved", typ, seen[typ])
+		}
+	}
+
+	got, err = Capabilities(ctx, pool, bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("bob = %+v, want driver + rider held as pending", got)
+	}
+	seen = capsByType(got)
+	for _, typ := range []string{"driver", "rider"} {
+		if c, ok := seen[typ]; !ok || c.Approved || c.Status != "DRAFT" {
+			t.Fatalf("bob %s = %+v, want draft held as pending", typ, seen[typ])
+		}
+	}
+}

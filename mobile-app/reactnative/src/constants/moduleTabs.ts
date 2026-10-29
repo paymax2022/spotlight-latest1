@@ -9,6 +9,7 @@ import {
   Trophy, Vote, BarChart3,
   Smartphone, Wifi, Zap, Tv, FileText,
   ReceiptText, TrendingUp, Settings,
+  Search, Pill, PawPrint, Stethoscope,
 } from 'lucide-react-native';
 import type { ModuleTab } from '@/components/ModuleTabBar';
 
@@ -74,6 +75,30 @@ export const RESTAURANT_TABS: readonly ModuleTab[] = [
     href: '/food/restaurant/manage', label: 'Manage', icon: Settings,
     matchPaths: ['/food/restaurant/staff'],
   },
+] as const;
+
+/**
+ * Health · pharmacy — the customer surface only. Checkout, product detail and
+ * the provider console are flow/detail screens with their own footer or nav,
+ * so they stay off the bar. The provider screens are gated by ProviderRouteGuard
+ * and use their own navigation.
+ */
+export const PHARMACY_TABS: readonly ModuleTab[] = [
+  { href: '/health/pharmacy',            label: 'Pharmacy', icon: Pill },
+  { href: '/health/pharmacy/search',     label: 'Search',   icon: Search },
+  { href: '/health/pharmacy/orders',     label: 'Orders',   icon: ReceiptText },
+  { href: '/health/pharmacy/rx-wallet',  label: 'Rx wallet', icon: Wallet },
+] as const;
+
+/**
+ * Health · veterinary — the customer surface only. Booking, checkout and the
+ * teleconsult flow carry their own fixed CTA, so they stay off the bar.
+ */
+export const VET_TABS: readonly ModuleTab[] = [
+  { href: '/health/vet',               label: 'Pets',         icon: PawPrint },
+  { href: '/health/vet/find-vet',      label: 'Find a vet',   icon: Search },
+  { href: '/health/vet/appointments',  label: 'Appointments', icon: CalendarDays },
+  { href: '/health/vet/triage',        label: 'Triage',       icon: Stethoscope },
 ] as const;
 
 /**

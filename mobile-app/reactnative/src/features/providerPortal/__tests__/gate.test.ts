@@ -59,3 +59,52 @@ test('case and repeated slashes cannot slip past a gated prefix', () => {
   assert.deepEqual(decideGate('/Health/Vet/Provider/Earnings', [vetRule], []), { kind: 'deny', type: 'vet' });
   assert.deepEqual(decideGate('/health//vet/provider//earnings', [vetRule], []), { kind: 'deny', type: 'vet' });
 });
+
+test('an exact rule gates only its own path, never a customer child route', () => {
+  const restaurantRoot: GateRule = { type: 'restaurant', prefix: '/food/restaurant', exact: true };
+  // the owner console root is gated
+  assert.deepEqual(decideGate('/food/restaurant', [restaurantRoot], []), { kind: 'deny', type: 'restaurant' });
+  // a customer opening one outlet's page is not
+  assert.deepEqual(decideGate('/food/restaurant/928928e1', [restaurantRoot], []), { kind: 'allow' });
+  assert.deepEqual(decideGate('/food/restaurant/928928e1', [restaurantRoot], [cap('restaurant', true)]), { kind: 'allow' });
+});
+
+test('the rider and restaurant consoles are gated by their own capabilities', () => {
+  const rules: GateRule[] = [
+    { type: 'restaurant', prefix: '/food/restaurant/manage' },
+    { type: 'rider', prefix: '/food/rider' },
+  ];
+  assert.deepEqual(decideGate('/food/restaurant/manage', rules, [cap('rider', true)]), { kind: 'deny', type: 'restaurant' });
+  assert.deepEqual(decideGate('/food/rider', rules, [cap('restaurant', true)]), { kind: 'deny', type: 'rider' });
+  assert.deepEqual(decideGate('/food/restaurant/manage', rules, [cap('restaurant', true)]), { kind: 'allow' });
+  assert.deepEqual(decideGate('/food/rider', rules, [cap('rider', true)]), { kind: 'allow' });
+});
+
+test('every business type gates its own area', () => {
+  const rules: GateRule[] = [
+    { type: 'driver', prefix: '/mobility/driver', open: ['onboarding'] },
+    { type: 'bus_owner', prefix: '/mobility/bus/provider', open: ['register'] },
+    { type: 'event_organiser', prefix: '/events/organiser', open: ['create'] },
+    { type: 'estate_manager', prefix: '/estate-admin' },
+    { type: 'property_manager', prefix: '/property/roles' },
+    { type: 'association_creator', prefix: '/association/admin' },
+    { type: 'crowdfunding_creator', prefix: '/crowdfunding/creator' },
+  ];
+  const cases: Array<[string, ProviderCapability['type']]> = [
+    ['/mobility/driver', 'driver'],
+    ['/mobility/bus/provider', 'bus_owner'],
+    ['/events/organiser/dashboard', 'event_organiser'],
+    ['/estate-admin/residents', 'estate_manager'],
+    ['/property/roles', 'property_manager'],
+    ['/association/admin', 'association_creator'],
+    ['/crowdfunding/creator/campaigns', 'crowdfunding_creator'],
+  ];
+  for (const [path, type] of cases) {
+    assert.deepEqual(decideGate(path, rules, []), { kind: 'deny', type }, `${path} must deny a stranger`);
+    assert.deepEqual(decideGate(path, rules, [cap(type, true)]), { kind: 'allow' }, `${path} must allow ${type}`);
+  }
+  // applications stay reachable before approval
+  assert.deepEqual(decideGate('/mobility/driver/onboarding', rules, []), { kind: 'allow' });
+  assert.deepEqual(decideGate('/mobility/bus/provider/register', rules, []), { kind: 'allow' });
+  assert.deepEqual(decideGate('/events/organiser/create', rules, []), { kind: 'allow' });
+});
