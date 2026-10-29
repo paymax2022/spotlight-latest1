@@ -675,6 +675,32 @@ export async function getOrder(id: string): Promise<PharmacyOrder> {
   return mapOrder(data.order);
 }
 
+// Mirrors the backend isPreDispense gate (model.go): refund-on-cancel is only
+// legal before the pharmacist dispenses.
+const CANCELLABLE: OrderStatus[] = ['created', 'rx_pending', 'confirmed'];
+export function isCancellable(status: OrderStatus): boolean {
+  return CANCELLABLE.includes(status);
+}
+
+/** Patient cancels a pre-dispense order; the held payment is refunded (HL-9). */
+export async function cancelOrder(orderId: string, idempotencyKey: string, reason?: string): Promise<PharmacyOrder> {
+  if (USE_MOCK) {
+    await delay(400);
+    const o = ORDERS.find((x) => x.id === orderId);
+    if (!o) throw new Error('Order not found');
+    if (!isCancellable(o.status)) throw new Error('This order can no longer be cancelled.');
+    o.status = 'cancelled';
+    return { ...o };
+  }
+  const { data } = await api.post<{ order?: unknown }>(
+    `${PHARMACY_API}/orders/${orderId}/cancel`,
+    { reason: reason ?? '' },
+    { headers: { 'Idempotency-Key': idempotencyKey } },
+  );
+  if (!data.order) throw new Error('Order not found');
+  return mapOrder(data.order);
+}
+
 /**
  * Create an order. HL-9: payment is captured to a HELD balance on CREATED; the
  * Idempotency-Key guards the money mutation (NL-9). Rx-required carts that lack a
