@@ -11,12 +11,13 @@ import {
 } from '@/api/doctor.phase2.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type { ReportReviewInput } from '@/types/doctor.phase2';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useReputation() {
   return useQuery({
     queryKey:        ['doctor', 'reputation'],
     queryFn:         getReputation,
-    placeholderData: DEMO_REPUTATION,
+    placeholderData: doctorPlaceholder(DEMO_REPUTATION),
     staleTime:       30_000,
   });
 }
@@ -36,7 +37,7 @@ export function usePayoutReport(rangeLabel?: string) {
   return useQuery({
     queryKey:        ['doctor', 'payout-report', rangeLabel],
     queryFn:         () => getPayoutReport(rangeLabel),
-    placeholderData: DEMO_PAYOUT_REPORT,
+    placeholderData: doctorPlaceholder(DEMO_PAYOUT_REPORT),
     staleTime:       60_000,
   });
 }

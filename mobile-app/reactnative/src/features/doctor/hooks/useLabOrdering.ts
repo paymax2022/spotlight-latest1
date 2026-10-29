@@ -23,6 +23,7 @@ import type {
   ShareLabOrderInput,
   CancelLabOrderInput,
 } from '@/types/doctor.batch3';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 // Re-export the pure coverage helper so the UI can import it from the hook module.
 export { checkLabCoverage } from '@/api/doctor.batch3.api';
@@ -31,7 +32,7 @@ export function useLabCatalogue() {
   return useQuery({
     queryKey:        ['doctor', 'lab-catalogue'],
     queryFn:         getLabCatalogue,
-    placeholderData: DEMO_LAB_CATALOGUE,
+    placeholderData: doctorPlaceholder(DEMO_LAB_CATALOGUE),
     staleTime:       300_000,
   });
 }
@@ -49,7 +50,7 @@ export function useLabProviders() {
   return useQuery({
     queryKey:        ['doctor', 'lab-providers'],
     queryFn:         getLabProviders,
-    placeholderData: DEMO_LAB_PROVIDERS,
+    placeholderData: doctorPlaceholder(DEMO_LAB_PROVIDERS),
     staleTime:       60_000,
   });
 }
@@ -59,7 +60,7 @@ export function useLabOrderRich(orderId: string) {
     queryKey:        ['doctor', 'lab-order-rich', orderId],
     queryFn:         () => getLabOrderRich(orderId),
     enabled:         !!orderId,
-    placeholderData: DEMO_LAB_ORDER_RICH,
+    placeholderData: doctorPlaceholder(DEMO_LAB_ORDER_RICH),
     staleTime:       30_000,
   });
 }

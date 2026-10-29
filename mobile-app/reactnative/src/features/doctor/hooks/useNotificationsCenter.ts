@@ -21,12 +21,13 @@ import type {
   MarkAllNotificationsReadInput,
   UpdateNotificationPrefsInput,
 } from '@/types/doctor.batch6';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useNotificationFeed() {
   return useQuery({
     queryKey:        ['doctor', 'notifications', 'rich'],
     queryFn:         getRichNotifications,
-    placeholderData: DEMO_RICH_NOTIFICATIONS,
+    placeholderData: doctorPlaceholder(DEMO_RICH_NOTIFICATIONS),
     staleTime:       15_000,
   });
 }
@@ -35,7 +36,7 @@ export function useNotificationGroups() {
   return useQuery({
     queryKey:        ['doctor', 'notifications', 'groups'],
     queryFn:         getNotificationGroups,
-    placeholderData: DEMO_NOTIFICATION_GROUPS,
+    placeholderData: doctorPlaceholder(DEMO_NOTIFICATION_GROUPS),
     staleTime:       15_000,
   });
 }
@@ -44,7 +45,7 @@ export function useNotificationPreferences() {
   return useQuery({
     queryKey:        ['doctor', 'notifications', 'preferences'],
     queryFn:         getNotificationPreferences,
-    placeholderData: DEMO_NOTIFICATION_PREFERENCES,
+    placeholderData: doctorPlaceholder(DEMO_NOTIFICATION_PREFERENCES),
     staleTime:       60_000,
   });
 }

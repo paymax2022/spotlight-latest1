@@ -32,12 +32,13 @@ import type {
   UpdateAppPreferencesInput,
   LogoutInput,
 } from '@/types/doctor.batch7';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useSecuritySettings() {
   return useQuery({
     queryKey:        ['doctor', 'security', 'settings'],
     queryFn:         getSecuritySettings,
-    placeholderData: DEMO_SECURITY_SETTINGS,
+    placeholderData: doctorPlaceholder(DEMO_SECURITY_SETTINGS),
     staleTime:       60_000,
   });
 }
@@ -46,7 +47,7 @@ export function useDevices() {
   return useQuery({
     queryKey:        ['doctor', 'security', 'devices'],
     queryFn:         getDevices,
-    placeholderData: DEMO_DEVICES,
+    placeholderData: doctorPlaceholder(DEMO_DEVICES),
     staleTime:       30_000,
   });
 }
@@ -55,7 +56,7 @@ export function useAppPreferences() {
   return useQuery({
     queryKey:        ['doctor', 'settings', 'app-preferences'],
     queryFn:         getAppPreferences,
-    placeholderData: DEMO_APP_PREFERENCES,
+    placeholderData: doctorPlaceholder(DEMO_APP_PREFERENCES),
     staleTime:       60_000,
   });
 }
