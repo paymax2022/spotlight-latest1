@@ -535,8 +535,23 @@ export async function getPrescriptions(): Promise<Prescription[]> {
     await delay();
     return [...MOCK_PRESCRIPTIONS].sort((a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt));
   }
-  const { data } = await api.get<{ prescriptions?: unknown[] }>(`${PHARMACY_API}/prescriptions`);
-  return (data.prescriptions ?? []).map(mapPrescriptionSummary);
+  // Patient photo/PDF uploads come back alongside e-Rx summaries under `uploads`.
+  const { data } = await api.get<{ prescriptions?: unknown[]; uploads?: unknown[] }>(`${PHARMACY_API}/prescriptions`);
+  return [...(data.prescriptions ?? []).map(mapPrescriptionSummary), ...(data.uploads ?? []).map(mapRxUpload)].sort(
+    (a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt),
+  );
+}
+
+function mapRxUpload(raw: any): Prescription {
+  return {
+    id: raw.id,
+    source: 'upload',
+    status: RX_STATUS_FROM_STATE[raw.state] ?? 'verifying',
+    uploadedAt: raw.created_at,
+    patientName: raw.patient_name ?? '',
+    items: [],
+    docColor: tintForId(String(raw.id ?? '')),
+  };
 }
 
 // mapPrescription maps the rx package's flat, uppercase-state Prescription
@@ -579,8 +594,17 @@ export async function getPrescription(id: string): Promise<Prescription> {
   return mapPrescription(data.prescription);
 }
 
-/** Upload an Rx for pharmacist verification (HL-3) → enters VERIFYING. */
-export async function uploadPrescription(input: { patientName: string; note?: string }): Promise<Prescription> {
+export interface RxUploadFile {
+  uri: string;
+  fileName: string;
+  mimeType: string;
+}
+
+/**
+ * Upload an Rx photo/PDF for pharmacist verification (HL-3) → enters VERIFYING.
+ * Presign → PUT the bytes straight to R2 → record the object server-side.
+ */
+export async function uploadPrescription(input: { patientName: string; note?: string; file: RxUploadFile }): Promise<Prescription> {
   if (USE_MOCK) {
     await delay(600);
     const rx: Prescription = {
@@ -595,8 +619,26 @@ export async function uploadPrescription(input: { patientName: string; note?: st
     MOCK_PRESCRIPTIONS.unshift(rx);
     return rx;
   }
-  const { data } = await api.post<Prescription>(`${PHARMACY_API}/prescriptions/upload`, input);
-  return data;
+  const { data: pre } = await api.post<{ presign?: { upload_url: string; storage_key: string; content_type: string } }>(
+    `${PHARMACY_API}/prescriptions/upload/presign`,
+    { file_name: input.file.fileName, content_type: input.file.mimeType },
+  );
+  if (!pre.presign) throw new Error('Upload is not available right now.');
+  const blob = await (await fetch(input.file.uri)).blob();
+  const res = await fetch(pre.presign.upload_url, {
+    method: 'PUT',
+    body: blob,
+    headers: { 'Content-Type': pre.presign.content_type },
+  });
+  if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+  const { data } = await api.post<{ upload?: unknown }>(`${PHARMACY_API}/prescriptions/upload`, {
+    storage_key: pre.presign.storage_key,
+    content_type: pre.presign.content_type,
+    patient_name: input.patientName,
+    note: input.note ?? '',
+  });
+  if (!data.upload) throw new Error('Upload was not recorded.');
+  return mapRxUpload(data.upload);
 }
 
 const ORDER_STATUS_FROM_STATE: Record<string, OrderStatus> = {

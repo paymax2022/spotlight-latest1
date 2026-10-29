@@ -157,6 +157,7 @@ type Service struct {
 	proofRec   ProofRecorder      // optional (DP-006); nil ⇒ proofs not stored (delivery still allowed)
 	proofVer   ProofVerifier      // optional (DP-006); nil ⇒ proofs recorded but not verified
 	rxLister   RxLister           // optional, injected via SetRxLister; nil ⇒ MyPrescriptions fails closed
+	uploads    Presigner          // optional R2 presigner for patient Rx uploads; nil ⇒ 503
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVerifier, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, audit Auditor) *Service {

@@ -118,7 +118,12 @@ func (h *Handler) ListMyPrescriptions(c *gin.Context) {
 		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rx})
+	uploads, err := h.svc.MyRxUploads(c.Request.Context(), id)
+	if err != nil {
+		failErr(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rx, "uploads": uploads})
 }
 
 // ListProducts — GET /products?pharmacy_provider_id=&q=  (NAFDAC-gated, Rx flag, HL-5)
