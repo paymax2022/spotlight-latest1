@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -156,6 +157,7 @@ func (h *Handler) ListEvents(c *gin.Context) {
 	filter := EventListFilter{
 		Category: c.Query("category"),
 		State:    c.Query("state"),
+		City:     c.Query("city"),
 		Limit:    20,
 		Offset:   0,
 		Q:        c.Query("q"),
@@ -303,6 +305,9 @@ type purchaseRequest struct {
 	Quantity  *int   `json:"quantity,omitempty"`
 	Promo     string `json:"promo,omitempty"`
 	PromoCode string `json:"promo_code,omitempty"`
+	// AttendeeNames optionally names each seat holder, in ticket order. Omit it
+	// entirely for an anonymous batch; sending it means every seat is named.
+	AttendeeNames []string `json:"attendee_names,omitempty"`
 }
 
 func (r purchaseRequest) promoValue() string {
@@ -310,6 +315,29 @@ func (r purchaseRequest) promoValue() string {
 		return r.Promo
 	}
 	return r.PromoCode
+}
+
+// attendeeValues trims the supplied names and decides whether the batch is
+// named at all. A list of all-blank names is the same request as no list: an
+// app that renders one empty input per seat must not fail its checkout because
+// the buyer skipped the optional field.
+func (r purchaseRequest) attendeeValues() []string {
+	if len(r.AttendeeNames) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(r.AttendeeNames))
+	anyNamed := false
+	for _, n := range r.AttendeeNames {
+		n = strings.TrimSpace(n)
+		if n != "" {
+			anyNamed = true
+		}
+		out = append(out, n)
+	}
+	if !anyNamed {
+		return nil
+	}
+	return out
 }
 
 func (h *Handler) Purchase(c *gin.Context) {
@@ -331,7 +359,8 @@ func (h *Handler) Purchase(c *gin.Context) {
 	if req.Quantity != nil {
 		qty = *req.Quantity
 	}
-	out, err := h.svc.PurchaseTickets(c.Request.Context(), u, c.Param("id"), req.TierID, req.promoValue(), qty, key)
+	out, err := h.svc.PurchaseTicketsWithAttendees(c.Request.Context(), u, c.Param("id"), req.TierID,
+		req.promoValue(), qty, key, req.attendeeValues())
 	respond(c, out, err)
 }
 

@@ -156,7 +156,7 @@ func (s *Service) IssueComp(ctx context.Context, callerID, eventID, tierID strin
 			SingleUse:    true,
 			AllowReentry: false,
 			RotateTTL:    30 * time.Second,
-			ValidFrom:    ev.StartsAt.Add(-6 * time.Hour),
+			ValidFrom:    credentialValidFrom(ev, s.commerceReads),
 			ValidTo:      ev.EndsAt,
 		})
 		if err != nil {

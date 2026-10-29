@@ -57,6 +57,7 @@ export default function AirtimeScreen() {
   const [paymentMethod,     setPaymentMethod]      = useState<PaymentMethod>('WALLET');
   const [paystackLoading,   setPaystackLoading]    = useState(false);
   const [paystackError,     setPaystackError]      = useState('');
+  const [formError,         setFormError]          = useState('');
 
   const idemKeyRef         = useRef('');
   const confirmInFlightRef = useRef(false);
@@ -115,7 +116,11 @@ export default function AirtimeScreen() {
   };
 
   const onPressReview = handleSubmit((values) => {
-    if (!selectedNetwork) return;
+    if (!selectedNetwork) {
+      setFormError('Please select a network');
+      return;
+    }
+    setFormError('');
     setPendingPayload(values);
     setTransactionPin('');
     setPinError('');
@@ -242,7 +247,7 @@ export default function AirtimeScreen() {
                 return (
                   <Pressable
                     key={net.id}
-                    onPress={() => setSelectedNetwork(net)}
+                    onPress={() => { setSelectedNetwork(net); setFormError(''); }}
                     style={[styles.providerCard, active && styles.providerCardActive]}
                   >
                     <ProviderLogo code={net.code} name={net.name} logoUri={resolveProviderImage(providerLogos, net.code, net.name)} />
@@ -325,6 +330,10 @@ export default function AirtimeScreen() {
 
         {purchaseError && (
           <Text style={styles.apiError}>{getErrorMessage(purchaseError)}</Text>
+        )}
+
+        {formError && (
+          <Text style={styles.apiError}>{formError}</Text>
         )}
 
         <View style={styles.actionWrap}>

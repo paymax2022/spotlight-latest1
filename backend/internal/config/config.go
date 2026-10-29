@@ -272,7 +272,16 @@ type Config struct {
 	FeatureEventsOrganiserPayouts bool
 	// FeatureEventsSocial (FEATURE_EVENTS_SOCIAL) exposes event likes and organiser follows.
 	FeatureEventsSocial  bool
-	FeatureEstateEnabled bool
+	// FeatureEventsCommerce (FEATURE_EVENTS_COMMERCIAL) turns on the events commerce
+	// and governance layer: buyer disclosure (city, venue address, refund policy,
+	// check-in windows), purchase snapshots on orders and receipts, the refund
+	// request/decision/execution queue, the moderation trail, the server-set
+	// platform fee, organiser sanctions, gate check-in attribution, event support
+	// cases and the customer notification inbox. Requires Supabase migration
+	// 20271400000000_events_commerce.sql — deploying the flag without it fails on
+	// the first event read. Default OFF.
+	FeatureEventsCommerce bool
+	FeatureEstateEnabled  bool
 	// FeatureEventsCardCheckoutEnabled (FEATURE_EVENTS_CARD_CHECKOUT) gates NEW
 	// Paystack card/bank-transfer checkouts for ticket orders (EVTB-D013): seats
 	// are held under the same tier FOR UPDATE lock as the wallet rail and settled
@@ -1080,6 +1089,7 @@ func Load() Config {
 		FeatureEventsCardCheckoutEnabled:             getEnvBool("FEATURE_EVENTS_CARD_CHECKOUT", false),
 		FeatureEventsOrganiserPayouts:                getEnvBool("FEATURE_EVENTS_ORGANISER_PAYOUTS", false),
 		FeatureEventsSocial:                          getEnvBool("FEATURE_EVENTS_SOCIAL", false),
+		FeatureEventsCommerce:                        getEnvBool("FEATURE_EVENTS_COMMERCIAL", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureEstateMerchantGate:                    getEnvBool("FEATURE_ESTATE_MERCHANT_GATE", false),
 		FeatureEstateGuardGrants:                     getEnvBool("FEATURE_ESTATE_GUARD_GRANTS", false),

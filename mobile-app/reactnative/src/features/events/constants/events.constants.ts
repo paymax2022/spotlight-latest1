@@ -37,6 +37,14 @@ export const EVENTS_COMPS_ENABLED =
 export const EVENTS_CARD_CHECKOUT_ENABLED =
   process.env.EXPO_PUBLIC_EVENTS_CARD_CHECKOUT?.trim().toLowerCase() === 'true';
 
+// Commercial rails: server-truth quotes, receipts/bookings, refunds, the support
+// desk, the notification inbox and the door roster (migration 20271400000000).
+// OFF unless explicitly 'true' — mirrors the server's FEATURE_EVENTS_COMMERCIAL
+// gate: every one of those routes 404s while the flag is off, so a screen must
+// hide the affordance rather than call it and show an error.
+export const EVENTS_COMMERCE_ENABLED =
+  process.env.EXPO_PUBLIC_EVENTS_COMMERCIAL?.trim().toLowerCase() === 'true';
+
 // Events REST namespace — Go backend `top5events` module, mounted directly
 // under /api/finance/events/* (see backend/internal/top5events). Composed
 // with the shared axios client's baseURL (EXPO_PUBLIC_API_BASE_URL) in api.ts.
@@ -155,3 +163,43 @@ export const TICKET_STATE_BADGE: Record<string, { label: string; color: string; 
   TRANSFERRED: { label: 'Transferred', color: EventColors.warnText, bg: EventColors.warnBg },
   REFUNDED:    { label: 'Refunded',    color: EventColors.danger,   bg: EventColors.dangerBg },
 };
+
+// Booking money state, exactly as backend bookingStatus() names it (one checkout,
+// all its seats). MIXED means the seats disagree with each other, not that the
+// arithmetic is unknown — the receipt still foots to total_kobo.
+export const BOOKING_STATE_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+  PENDING:             { label: 'Awaiting payment', color: EventColors.warnText, bg: EventColors.warnBg },
+  PAID:                { label: 'Paid',             color: EventColors.ok,       bg: EventColors.okBg },
+  PARTIALLY_REFUNDED:  { label: 'Part refunded',    color: EventColors.warnText, bg: EventColors.warnBg },
+  REFUNDED:            { label: 'Refunded',         color: EventColors.muted,    bg: EventColors.surfaceAlt },
+  MIXED:               { label: 'Mixed',            color: EventColors.warnText, bg: EventColors.warnBg },
+  EXPIRED:             { label: 'Expired',          color: EventColors.muted,    bg: EventColors.surfaceAlt },
+};
+
+// One seat's order row (OrderState).
+export const ORDER_STATE_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+  PENDING: { label: 'Awaiting payment', color: EventColors.warnText, bg: EventColors.warnBg },
+  PAID:    { label: 'Paid',             color: EventColors.ok,       bg: EventColors.okBg },
+  REFUNDED: { label: 'Refunded',        color: EventColors.muted,    bg: EventColors.surfaceAlt },
+  EXPIRED: { label: 'Expired',          color: EventColors.muted,    bg: EventColors.surfaceAlt },
+};
+
+// Refund request lifecycle (backend RefundState). A request sits in REQUESTED
+// until the organiser decides, then PROCESSING until the money actually moves.
+export const REFUND_STATE_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+  REQUESTED:  { label: 'Awaiting decision', color: EventColors.warnText, bg: EventColors.warnBg },
+  APPROVED:   { label: 'Approved',          color: EventColors.ok,       bg: EventColors.okBg },
+  REJECTED:   { label: 'Rejected',          color: EventColors.danger,   bg: EventColors.dangerBg },
+  PROCESSING: { label: 'Refunding',         color: EventColors.brand,    bg: EventColors.surfaceAlt },
+  REFUNDED:   { label: 'Refunded',          color: EventColors.ok,       bg: EventColors.okBg },
+  FAILED:     { label: 'Failed',            color: EventColors.danger,   bg: EventColors.dangerBg },
+};
+
+// Support case flow (backend SupportCaseState).
+export const SUPPORT_STATE_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+  OPEN:        { label: 'Open',        color: EventColors.brand,    bg: EventColors.surfaceAlt },
+  IN_PROGRESS: { label: 'In progress', color: EventColors.warnText, bg: EventColors.warnBg },
+  RESOLVED:    { label: 'Resolved',    color: EventColors.ok,       bg: EventColors.okBg },
+  CLOSED:      { label: 'Closed',      color: EventColors.muted,    bg: EventColors.surfaceAlt },
+};
+

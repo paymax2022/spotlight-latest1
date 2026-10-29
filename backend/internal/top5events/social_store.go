@@ -177,14 +177,26 @@ func mapSocialErr(op string, err error) error {
 	return fmt.Errorf("events: %s: %w", op, err)
 }
 
-// eventSelectCols is the social event select list, used only when the social flag
-// is on (Service.socialReads; GetEvent falls back to legacyEventByIDQuery and
-// scanLegacyEvent otherwise). The first eleven columns and their order are the
-// original GetEvent select; the social columns are appended at the END, and
-// scanEvent mirrors this list exactly. GetEvent, the organiser page and the
-// Following feed use it, so a change here must change scanEvent in the same edit.
-const eventSelectCols = `e.id, e.organiser_id, e.title, COALESCE(e.description,''), e.venue, e.state, COALESCE(e.category,''), e.starts_at, e.ends_at, e.fee_bps, e.created_at,
-		e.banner_url, e.venue_lat, e.venue_lng, e.venue_place_id, e.like_count, COALESCE(l.user_id IS NOT NULL, false)`
+// eventBaseSelectCols is the original GetEvent eleven-column select, aliased for
+// `FROM events e`. It is the prefix of both the social and the commerce select, so
+// the three read paths can share one scan.
+const eventBaseSelectCols = `e.id, e.organiser_id, e.title, COALESCE(e.description,''), e.venue, e.state, COALESCE(e.category,''), e.starts_at, e.ends_at, e.fee_bps, e.created_at`
+
+// socialSelectCols are the events-social columns (migration 20271094000000),
+// appended after the base list. The last entry is the caller's like, which needs
+// eventLikedJoin to be in the FROM clause.
+const socialSelectCols = `e.banner_url, e.venue_lat, e.venue_lng, e.venue_place_id, e.like_count, COALESCE(l.user_id IS NOT NULL, false)`
+
+// commerceSelectCols are the events-commerce disclosure, policy and moderation
+// columns (migration 20271400000000), appended last so a row can carry the social
+// set, the commerce set, both or neither — each appended in this fixed order and
+// matched by Service.scanEventRow.
+const commerceSelectCols = `e.city, e.venue_address, e.refund_policy, e.refund_cutoff_hours, e.checkin_opens_minutes, e.checkin_closes_minutes, e.submitted_at, e.moderation_status, e.moderation_note, e.moderation_decided_at`
+
+// eventSelectCols is the full social event select list, used whenever the social
+// flag is on (Service.socialReads). GetEvent, the organiser page and the Following
+// feed use it, so a change here must change scanEvent in the same edit.
+const eventSelectCols = eventBaseSelectCols + ",\n\t\t" + socialSelectCols
 
 // eventLikedJoin attaches the caller's like (at most one row: event_likes is keyed
 // on (event_id, user_id)). The caller is parameter $2; a NULL caller matches no row.

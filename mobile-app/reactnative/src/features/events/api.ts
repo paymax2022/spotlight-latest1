@@ -1,10 +1,11 @@
 import { api } from '@/api/client';
 import { getErrorMessage } from '@/utils/errorMapper';
-import { USE_MOCK, API_BASE } from './constants/events.constants';
+import { USE_MOCK, API_BASE, EVENTS_COMMERCE_ENABLED } from './constants/events.constants';
 import { checkFollowingPage } from './social';
 import { createEventBody } from './createBody';
 import type {
   Event,
+  EventQuery,
   EventSummary,
   EventDetail,
   TicketTier,
@@ -39,6 +40,21 @@ import type {
   OrganiserProfile,
   OrganiserPatch,
   BannerPresign,
+  QuoteArgs,
+  Quote,
+  Order,
+  Booking,
+  Refund,
+  EventNotification,
+  NotificationPage,
+  SupportCase,
+  SupportMessage,
+  OpenCaseInput,
+  ModerationDecision,
+  RosterRow,
+  RosterFilter,
+  CheckinStats,
+  CheckinEntry,
 } from './types';
 
 // Organiser lifecycle writes have a live endpoint and nothing a fixture could
@@ -54,6 +70,13 @@ export function lifecycleErrorMessage(err: unknown): string {
     return 'This action isn\'t available right now. Please try again later.';
   }
   return getErrorMessage(err);
+}
+
+// Commerce failures carry a full sentence in the response body (the Go sentinels
+// read "events: the refund window for this event has closed"). The package prefix
+// is an internal detail, so it is dropped before the text reaches a customer.
+export function commerceErrorMessage(err: unknown): string {
+  return lifecycleErrorMessage(err).replace(/^events:\s*/, '');
 }
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
@@ -99,6 +122,9 @@ const MOCK_EVENTS: EventDetail[] = [
     description: 'A week-long celebration of Afrobeat. Live bands, food, and dancing all night.',
     tiers: TIERS_FELABRATION,
     banner_url: null, venue_lat: 6.6018, venue_lng: 3.3515, venue_place_id: null, like_count: 128, liked: false,
+    city: 'Lagos', venue_address: 'Wiren Rd, Taewo, GRA, Ikeja', refund_policy: 'Refundable until 24 hours before the start time.',
+    refund_cutoff_hours: 24, checkin_opens_minutes: 120, checkin_closes_minutes: 60,
+    submitted_at: daysAgo(55), moderation_status: 'APPROVED', moderation_decided_at: daysAgo(50),
   },
   {
     id: 'e_approved', organiser_id: 'u_org2', title: 'Lagos Tech Summit', category: 'tech', state: 'APPROVED',
@@ -110,6 +136,9 @@ const MOCK_EVENTS: EventDetail[] = [
       { id: 't_pro', event_id: 'e_approved', name: 'Pro Pass', price_kobo: 3_500_000, capacity: 150, sold: 90, active: true },
     ],
     banner_url: null, venue_lat: 6.4281, venue_lng: 3.4219, venue_place_id: null, like_count: 42, liked: false,
+    city: 'Lagos', venue_address: '1c Onola Ade Ologun Erd, Victoria Island', refund_policy: 'Refundable until 48 hours before the start time.',
+    refund_cutoff_hours: 48, checkin_opens_minutes: 90, checkin_closes_minutes: 30,
+    submitted_at: daysAgo(18), moderation_status: 'APPROVED', moderation_decided_at: daysAgo(12),
   },
   {
     id: 'e_closed', organiser_id: 'u_org3', title: 'Detty December Beach Rave', category: 'music', state: 'CLOSED',
@@ -118,6 +147,9 @@ const MOCK_EVENTS: EventDetail[] = [
     description: 'Sun, sand and sound — the closer to the year.',
     tiers: [{ id: 't_ga', event_id: 'e_closed', name: 'General', price_kobo: 2_000_000, capacity: 4000, sold: 4000, active: false }],
     banner_url: null, venue_lat: null, venue_lng: null, venue_place_id: null, like_count: 310, liked: false,
+    city: 'Lagos', venue_address: 'Landmark Beach, Oniru', refund_policy: 'Non-refundable once the event has started.',
+    refund_cutoff_hours: 0, checkin_opens_minutes: 180, checkin_closes_minutes: 15,
+    submitted_at: daysAgo(78), moderation_status: 'APPROVED', moderation_decided_at: daysAgo(70),
   },
   {
     id: 'e_draft', organiser_id: 'u_me', title: 'Abuja Comedy Night', category: 'comedy', state: 'DRAFT',
@@ -126,6 +158,9 @@ const MOCK_EVENTS: EventDetail[] = [
     description: "A night of stand-up from Nigeria's funniest. (Pending approval.)",
     tiers: [{ id: 't_std', event_id: 'e_draft', name: 'Standard', price_kobo: 1_000_000, capacity: 300, sold: 0, active: true }],
     banner_url: null, venue_lat: null, venue_lng: null, venue_place_id: null, like_count: 0, liked: false,
+    city: 'Abuja', venue_address: '1 Transcorp Boulevard, Maitama', refund_policy: 'Refundable until 24 hours before the start time.',
+    refund_cutoff_hours: 24, checkin_opens_minutes: 60, checkin_closes_minutes: 30,
+    moderation_status: 'NONE',
   },
 ];
 
@@ -180,28 +215,183 @@ const MOCK_ATTENDEES: Attendee[] = [
   { id: 'a4', name: 'Ada Eze',      cashtag: '@ada',   tier_name: 'Table for 5', ticket_id: 'tk_a4', state: 'ISSUED', checked_in: false, checked_in_at: null },
 ];
 
+// ── Commerce fixtures (FEATURE_EVENTS_COMMERCIAL) ────────────────────────────
+// Amounts are integer kobo and follow the server's own arithmetic: the platform
+// fee is fee_bps of the subtotal truncated toward the buyer (the buyer keeps the
+// remainder of the division), and a refund returns the seat minus its share of
+// that fee. Orders are DERIVED from the bookings so the two can never disagree
+// about what one checkout cost.
+
+const MOCK_BOOKINGS: Booking[] = [
+  {
+    booking_ref: 'evt-1760000000001-fela', event_id: 'e_live', event_title: 'Felabration 2026',
+    venue: 'New Afrika Shrine, Ikeja, Lagos', city: 'Lagos', starts_at: hoursFromNow(3),
+    event_state: 'LIVE', status: 'PAID', seats: 2, subtotal_kobo: 10_000_000, discount_kobo: 0,
+    total_kobo: 10_000_000, refunded_kobo: 0, platform_fee_kobo: 500_000, organiser_net_kobo: 9_500_000,
+    fee_bps: 500, refund_policy: 'Refundable until 24 hours before the start time.',
+    created_at: hoursFromNow(-30),
+    orders: [
+      { id: 'ord_1', event_id: 'e_live', buyer_id: 'u_me', attendee_name: 'Ada Okafor', tier_name: 'VIP', unit_price_kobo: 5_000_000, discount_kobo: 0, total_kobo: 5_000_000, refunded_kobo: 0, status: 'PAID', payment_rail: 'wallet', created_at: hoursFromNow(-30) },
+      { id: 'ord_1b', event_id: 'e_live', buyer_id: 'u_me', attendee_name: 'Ada Okafor', tier_name: 'VIP', unit_price_kobo: 5_000_000, discount_kobo: 0, total_kobo: 5_000_000, refunded_kobo: 0, status: 'PAID', payment_rail: 'wallet', created_at: hoursFromNow(-30) },
+    ],
+  },
+  {
+    booking_ref: 'evt-1760000000002-rave', event_id: 'e_closed', event_title: 'Detty December Beach Rave',
+    venue: 'Landmark Beach, Oniru, Lagos', city: 'Lagos', starts_at: daysAgo(20),
+    event_state: 'CLOSED', status: 'PAID', seats: 1, subtotal_kobo: 2_000_000, discount_kobo: 0,
+    total_kobo: 2_000_000, refunded_kobo: 0, platform_fee_kobo: 100_000, organiser_net_kobo: 1_900_000,
+    fee_bps: 500, refund_policy: 'Non-refundable after the event starts.',
+    created_at: daysAgo(21),
+    orders: [
+      { id: 'ord_2', event_id: 'e_closed', buyer_id: 'u_me', tier_name: 'General', unit_price_kobo: 2_000_000, discount_kobo: 0, total_kobo: 2_000_000, refunded_kobo: 0, status: 'PAID', payment_rail: 'wallet', created_at: daysAgo(21) },
+    ],
+  },
+  {
+    booking_ref: 'evt-1760000000003-summit', event_id: 'e_approved', event_title: 'Lagos Tech Summit',
+    venue: 'Landmark Centre, Victoria Island, Lagos', city: 'Lagos', starts_at: daysFromNow(14),
+    event_state: 'APPROVED', status: 'PAID', seats: 1, subtotal_kobo: 3_500_000, discount_kobo: 350_000,
+    total_kobo: 3_150_000, refunded_kobo: 0, platform_fee_kobo: 157_500, organiser_net_kobo: 2_992_500,
+    fee_bps: 500, promo_code: 'EARLY10', refund_policy: 'Refundable until 48 hours before the start time.',
+    created_at: daysAgo(10),
+    orders: [
+      { id: 'ord_3', event_id: 'e_approved', buyer_id: 'u_me', tier_name: 'Pro Pass', promo_code: 'EARLY10', unit_price_kobo: 3_500_000, discount_kobo: 350_000, total_kobo: 3_150_000, refunded_kobo: 0, status: 'PAID', payment_rail: 'wallet', created_at: daysAgo(10) },
+    ],
+  },
+];
+
+// One refund in flight: the buyer asked, the organiser has not answered yet.
+let MOCK_REFUNDS: Refund[] = [
+  {
+    id: 'rf_1', event_id: 'e_live', order_id: 'ord_1b', ticket_id: 'tk_1b', buyer_id: 'u_me',
+    amount_kobo: 5_000_000, fee_kobo: 250_000, refund_kobo: 4_750_000,
+    reason: 'Cannot travel that weekend.', status: 'REQUESTED', created_at: hoursFromNow(-4),
+    event_title: 'Felabration 2026', event_state: 'LIVE', tier_name: 'VIP', attendee_name: 'Ada Okafor',
+    booking_ref: 'evt-1760000000001-fela',
+  },
+];
+
+let MOCK_NOTIFICATIONS: EventNotification[] = [
+  { id: 'nt_1', kind: 'refund_requested', title: 'Refund request received', body: 'We told the organiser about your request for Felabration 2026. You will get a decision in your inbox.', event_id: 'e_live', order_id: 'ord_1b', refund_id: 'rf_1', created_at: hoursFromNow(-4) },
+  { id: 'nt_2', kind: 'support_reply', title: 'Support replied', body: 'Your question about the Lagos Tech Summit promo code has an answer.', event_id: 'e_approved', created_at: daysAgo(1) },
+  { id: 'nt_3', kind: 'moderation', title: 'Event approved', body: 'Lagos Tech Summit is on sale.', event_id: 'e_approved', read_at: daysAgo(6), created_at: daysAgo(6) },
+];
+
+let MOCK_CASES: SupportCase[] = [
+  {
+    id: 'sc_1', event_id: 'e_approved', event_title: 'Lagos Tech Summit', order_id: 'ord_3',
+    opened_by: 'u_me', kind: 'REFUND', subject: 'Promo code did not apply twice',
+    body: 'I used EARLY10 for two seats but only one got the discount.',
+    status: 'IN_PROGRESS', priority: 'NORMAL', assigned_to: 'desk_1',
+    created_at: daysAgo(2), updated_at: hoursFromNow(-20), reply_count: 1,
+    messages: [
+      { id: 'sm_1', case_id: 'sc_1', author_id: 'desk_1', author_name: 'Spotlight Support', body: 'Thanks — checking the redemption log for your booking now.', created_at: hoursFromNow(-20) },
+    ],
+  },
+];
+
+// The door roster. Ticket ids match MOCK_TICKETS' event/tier pairing; the seat
+// names come from checkout, which is the whole point of capturing them.
+const MOCK_ROSTER: RosterRow[] = [
+  { id: 'tk_a1', name: 'Bisi Adeyemi', cashtag: '@bisi', tier_name: 'VIP', ticket_id: 'tk_a1', state: 'USED', checked_in: true, checked_in_at: hoursFromNow(-1), attendee_name: 'Bisi Adeyemi', gate: 'main', checkin_method: 'scan', checked_in_by: 'u_steward1', checked_in_by_name: 'Kemi (steward)' },
+  { id: 'tk_a2', name: 'Tunde Okafor', cashtag: '@tunde', tier_name: 'Regular', ticket_id: 'tk_a2', state: 'ISSUED', checked_in: false, checked_in_at: null, attendee_name: 'Tunde Okafor' },
+  { id: 'tk_a3', name: 'Chidi Nwosu', cashtag: '@chidi', tier_name: 'Regular', ticket_id: 'tk_a3', state: 'USED', checked_in: true, checked_in_at: hoursFromNow(-2), attendee_name: 'Chidi Nwosu', gate: 'vip', checkin_method: 'manual', checked_in_by: 'u_org1', checked_in_by_name: 'Organiser' },
+  { id: 'tk_a4', name: 'Ada Eze', cashtag: '@ada', tier_name: 'Table for 5', ticket_id: 'tk_a4', state: 'ISSUED', checked_in: false, checked_in_at: null },
+];
+
+let MOCK_CHECKIN_HISTORY: CheckinEntry[] = [
+  { id: 'ch_1', ticket_id: 'tk_a1', actor_id: 'u_steward1', actor_name: 'Kemi (steward)', action: 'IN', method: 'scan', gate: 'main', occurred_at: hoursFromNow(-1) },
+  { id: 'ch_2', ticket_id: 'tk_a3', actor_id: 'u_org1', actor_name: 'Organiser', action: 'IN', method: 'manual', gate: 'vip', reason: 'Phone dead at the gate', occurred_at: hoursFromNow(-2) },
+];
+
+function mockOrders(): Order[] {
+  return MOCK_BOOKINGS.flatMap((b) => (b.orders ?? []).map((o) => ({ ...o, booking_ref: b.booking_ref, event_title: b.event_title, event_starts_at: b.starts_at })));
+}
+
+// The server derives a quote from the stored tier, the promo and the event's own
+// fee — never from what the client claims. The fixture does the same arithmetic
+// so a mock run exercises the real numbers.
+function mockQuote(eventId: string, tierId: string, quantity: number, promo?: string): Quote {
+  const e = MOCK_EVENTS.find((x) => x.id === eventId);
+  const tier = e?.tiers.find((t) => t.id === tierId);
+  if (!e || !tier) throw new Error('Event or ticket tier not found');
+  const subtotal = tier.price_kobo * quantity;
+  const percentOff = promo === 'EARLY10' ? 10 : 0;
+  const discountPerSeat = Math.floor((tier.price_kobo * percentOff) / 100);
+  const discount = discountPerSeat * quantity;
+  const total = subtotal - discount;
+  const fee = Math.floor((total * e.fee_bps) / 10_000);
+  const capacity = tier.capacity;
+  return {
+    event_id: e.id, event_title: e.title, event_state: e.state, venue: e.venue, city: e.city,
+    starts_at: e.starts_at, tier_id: tier.id, tier_name: tier.name, quantity,
+    unit_price_kobo: tier.price_kobo, subtotal_kobo: subtotal,
+    promo_code: percentOff ? promo : undefined,
+    discount_per_seat_kobo: discountPerSeat, discount_kobo: discount, total_kobo: total,
+    fee_bps: e.fee_bps, platform_fee_kobo: fee, organiser_net_kobo: total - fee,
+    remaining_seats: Math.max(0, capacity - tier.sold), unlimited_capacity: capacity <= 0,
+    refund_policy: e.refund_policy, refund_cutoff_hours: e.refund_cutoff_hours,
+    checkin_opens_minutes: e.checkin_opens_minutes, checkin_closes_minutes: e.checkin_closes_minutes,
+  };
+}
+
 function summaryOf(e: EventDetail): EventSummary {
   const activeTiers = e.tiers.filter((t) => t.active);
   const minPrice = activeTiers.length ? Math.min(...activeTiers.map((t) => t.price_kobo)) : null;
   const soldOut = activeTiers.length > 0 && activeTiers.every((t) => t.sold >= t.capacity);
   return {
-    id: e.id, title: e.title, venue: e.venue, starts_at: e.starts_at, ends_at: e.ends_at,
+    id: e.id, title: e.title, venue: e.venue, city: e.city, starts_at: e.starts_at, ends_at: e.ends_at,
     state: e.state, category: e.category, min_price_kobo: minPrice, sold_out: soldOut,
   };
 }
 
-export async function listEvents(params?: { category?: string; state?: string }): Promise<EventSummary[]> {
+export async function listEvents(params?: EventQuery): Promise<EventSummary[]> {
   if (USE_MOCK) {
     await delay();
     let list = MOCK_EVENTS.filter((e) => e.state !== 'DRAFT' && e.state !== 'SUSPENDED');
     if (params?.category && params.category !== 'all') list = list.filter((e) => e.category === params.category);
     if (params?.state) list = list.filter((e) => e.state === params.state);
+    list = filterSummariesMock(list, params);
     return list.map(summaryOf);
   }
   const query: Record<string, string> = {};
   if (params?.category && params.category !== 'all') query.category = params.category;
   if (params?.state) query.state = params.state;
+  // Discovery extensions the backend already serves (UAT EVT-048/049/050): city
+  // (commerce column, ignored by the server while its flag is off), free-text,
+  // an RFC3339 date window and a deterministic sort.
+  if (params?.city)  query.city  = params.city;
+  if (params?.q)     query.q     = params.q;
+  if (params?.from)  query.from  = params.from;
+  if (params?.to)    query.to    = params.to;
+  if (params?.sort)  query.sort  = params.sort;
   return pickList<EventSummary>(await api.get(`${API_BASE}`, { params: query }), 'events');
+}
+
+// Mirrors the server's own filters so fixture mode behaves like the live list
+// rather than silently ignoring a chip the user tapped.
+function filterSummariesMock(list: EventDetail[], params?: EventQuery): EventDetail[] {
+  let out = list;
+  if (params?.city) {
+    const city = params.city.trim().toLowerCase();
+    out = out.filter((e) => (e.city ?? '').toLowerCase().includes(city));
+  }
+  if (params?.q) {
+    const q = params.q.trim().toLowerCase();
+    out = out.filter((e) => e.title.toLowerCase().includes(q) || e.venue.toLowerCase().includes(q));
+  }
+  if (params?.from) out = out.filter((e) => new Date(e.starts_at).getTime() >= new Date(params.from!).getTime());
+  if (params?.to)   out = out.filter((e) => new Date(e.starts_at).getTime() <= new Date(params.to!).getTime());
+  const priceOf = (e: EventDetail) => {
+    const active = e.tiers.filter((t) => t.active);
+    return active.length ? Math.min(...active.map((t) => t.price_kobo)) : Number.MAX_SAFE_INTEGER;
+  };
+  switch (params?.sort) {
+    case 'date_desc':   out = [...out].sort((a, b) => +new Date(b.starts_at) - +new Date(a.starts_at)); break;
+    case 'price_asc':   out = [...out].sort((a, b) => priceOf(a) - priceOf(b)); break;
+    case 'price_desc':  out = [...out].sort((a, b) => priceOf(b) - priceOf(a)); break;
+    default:            out = [...out].sort((a, b) => +new Date(a.starts_at) - +new Date(b.starts_at));
+  }
+  return out;
 }
 
 export async function getEvent(id: string): Promise<EventDetail> {
@@ -317,33 +507,40 @@ export async function listAttendees(eventId: string): Promise<Attendee[]> {
 export async function purchaseTickets(input: PurchaseTicketInput): Promise<PurchaseResult> {
   if (USE_MOCK) {
     await delay();
-    const e = MOCK_EVENTS.find((x) => x.id === input.eventId);
-    const tier = e?.tiers.find((t) => t.id === input.tier_id);
-    const tickets: Ticket[] = Array.from({ length: input.quantity }).map((_, i) => ({
+    const q = mockQuote(input.eventId, input.tier_id, input.quantity, input.promo_code);
+    const tickets: Ticket[] = Array.from({ length: q.quantity }).map((_, i) => ({
       id: `tk_${Date.now()}_${i}`, event_id: input.eventId, tier_id: input.tier_id,
-      order_id: `ord_${Date.now()}`, owner_id: 'u_me', state: 'ISSUED',
+      order_id: `ord_${Date.now()}_${i}`, owner_id: 'u_me', state: 'ISSUED',
       credential_id: `cred_${Math.random().toString(36).slice(2, 8)}`,
-      price_paid_kobo: tier?.price_kobo ?? 0, created_at: new Date().toISOString(),
+      price_paid_kobo: q.unit_price_kobo - q.discount_per_seat_kobo, created_at: new Date().toISOString(),
+      attendee_name: input.attendee_names?.[i] || undefined,
     }));
-    return { ok: true, tickets, total_kobo: (tier?.price_kobo ?? 0) * input.quantity };
+    return {
+      ok: true, tickets, total_kobo: q.total_kobo, quantity: q.quantity, fulfilled: tickets.length, partial: false,
+      booking_ref: `evt-${Date.now()}-mock`,
+    };
   }
-  // The Go contract is one ticket per POST /purchase (tier_id + promo, each
-  // with its own Idempotency-Key). Previously this sent `quantity`/`promo_code`
-  // — both ignored server-side — and unwrapped a single Ticket into a
-  // PurchaseResult shape it does not have, so res.tickets.length crashed the
-  // success hand-off. Buy N tickets as N idempotent purchases and report the
-  // real result.
-  const count = Math.max(1, input.quantity || 1);
-  const tickets: Ticket[] = [];
-  let total = 0;
-  for (let i = 0; i < count; i++) {
-    const t = await unwrap<Ticket>(await api.post(`${API_BASE}/${input.eventId}/purchase`,
-      { tier_id: input.tier_id, promo: input.promo_code },
-      { headers: { 'Idempotency-Key': idempotencyKey() } }));
-    tickets.push(t);
-    total += t.price_paid_kobo ?? 0;
-  }
-  return { ok: true, tickets, total_kobo: total };
+  // One POST per checkout, not per seat. The server runs the batch under the
+  // tier lock and keys each seat "<Idempotency-Key>:<i>", so one key groups the
+  // seats into one booking and a retry resumes without double-charging. It
+  // returns the seats it could issue (partial) rather than failing the basket.
+  const res = await api.post(`${API_BASE}/${input.eventId}/purchase`,
+    {
+      tier_id: input.tier_id,
+      quantity: input.quantity,
+      promo: input.promo_code,
+      attendee_names: input.attendee_names,
+    },
+    { headers: { 'Idempotency-Key': idempotencyKey() } });
+  const out = unwrap<PurchaseResult & { total_kobo?: number }>(res);
+  const tickets = out.tickets ?? [];
+  return {
+    ok: true,
+    tickets,
+    // The server totals the seats it actually issued; never re-derive it here.
+    total_kobo: out.total_kobo ?? tickets.reduce((s, t) => s + (t.price_paid_kobo ?? 0), 0),
+    quantity: out.quantity, fulfilled: out.fulfilled, partial: out.partial, booking_ref: out.booking_ref,
+  };
 }
 
 // ── Card checkout (server rail, FEATURE_EVENTS_CARD_CHECKOUT) ───────────────
@@ -807,4 +1004,356 @@ export async function validateScan(token: GateToken, gate: Gate): Promise<ScanRe
     const valid = !!(token.cid && token.sig);
     return { outcome: valid ? 'valid' : 'invalid', offline: true };
   }
+}
+
+// ── Events commerce (FEATURE_EVENTS_COMMERCIAL) ──────────────────────────────
+// Every route below is unmounted on the server while its flag is off, so a call
+// made against an unflagged backend is a 404 — not a retryable failure. The
+// client mirrors that gate: screens hide the affordance, and these guards catch
+// any call that slips past them with a message that says why.
+const commerceDisabled = () =>
+  new Error('Events commerce is turned off: the server does not expose these routes while FEATURE_EVENTS_COMMERCIAL is unset. Set EXPO_PUBLIC_EVENTS_COMMERCIAL=true only when the backend flag is on and migration 20271400000000 is applied.');
+
+function requireCommerce(): void {
+  if (!EVENTS_COMMERCE_ENABLED) throw commerceDisabled();
+}
+
+const byNewest = <T extends { created_at?: string; occurred_at?: string }>(a: T, b: T) =>
+  new Date((b.created_at ?? b.occurred_at) as string).getTime() - new Date((a.created_at ?? a.occurred_at) as string).getTime();
+
+// GET /:id/quote — the server's price for this basket. The checkout screen shows
+// this total, never its own arithmetic, and the wallet is debited exactly it.
+export async function quoteTickets(input: QuoteArgs): Promise<Quote> {
+  requireCommerce();
+  if (USE_MOCK) { await delay(160); return mockQuote(input.eventId, input.tier_id, input.quantity, input.promo_code); }
+  const params: Record<string, string | number> = { tier_id: input.tier_id, quantity: Math.max(1, input.quantity || 1) };
+  if (input.promo_code) params.promo = input.promo_code;
+  return unwrap(await api.get(`${API_BASE}/${input.eventId}/quote`, { params }));
+}
+
+// GET /my/orders — one row per seat.
+export async function listMyOrders(limit = 50, offset = 0): Promise<Order[]> {
+  requireCommerce();
+  if (USE_MOCK) { await delay(); return mockOrders().sort(byNewest); }
+  return unwrap(await api.get(`${API_BASE}/my/orders`, { params: { limit, offset } }));
+}
+
+// GET /my/bookings — one row per checkout (the customer's receipt list).
+export async function listMyBookings(limit = 30, offset = 0): Promise<Booking[]> {
+  requireCommerce();
+  if (USE_MOCK) { await delay(); return [...MOCK_BOOKINGS].sort(byNewest); }
+  return unwrap(await api.get(`${API_BASE}/my/bookings`, { params: { limit, offset } }));
+}
+
+export async function getBooking(bookingRef: string): Promise<Booking> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    const b = MOCK_BOOKINGS.find((x) => x.booking_ref === bookingRef);
+    if (!b) throw new Error('Unknown booking reference');
+    return b;
+  }
+  return unwrap(await api.get(`${API_BASE}/my/bookings/${encodeURIComponent(bookingRef)}`));
+}
+
+// ── Refunds ──────────────────────────────────────────────────────────────────
+
+// POST /tickets/:ticketId/refund-request — a request, not a payout: the organiser
+// (or the desk) decides, and only execution moves money.
+export async function requestRefund(ticketId: string, reason: string, idem = idempotencyKey()): Promise<Refund> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    const t = MOCK_TICKETS.find((x) => x.id === ticketId);
+    if (!t) throw new Error('Ticket not found');
+    if (t.state === 'USED') throw new Error('This ticket has already been used');
+    const fee = Math.floor((t.price_paid_kobo * 500) / 10_000);
+    const refund: Refund = {
+      id: `rf_${Date.now()}`, event_id: t.event_id, order_id: t.order_id, ticket_id: t.id, buyer_id: 'u_me',
+      amount_kobo: t.price_paid_kobo, fee_kobo: fee, refund_kobo: t.price_paid_kobo - fee,
+      reason, status: 'REQUESTED', created_at: new Date().toISOString(),
+    };
+    MOCK_REFUNDS = [refund, ...MOCK_REFUNDS];
+    return refund;
+  }
+  return unwrap(await api.post(`${API_BASE}/tickets/${ticketId}/refund-request`, { reason }, { headers: { 'Idempotency-Key': idem } }));
+}
+
+export async function listMyRefunds(): Promise<Refund[]> {
+  requireCommerce();
+  if (USE_MOCK) { await delay(); return [...MOCK_REFUNDS].sort(byNewest); }
+  return unwrap(await api.get(`${API_BASE}/my/refunds`));
+}
+
+// ── Organiser: refund queue ──────────────────────────────────────────────────
+
+export async function listEventRefunds(eventId: string, status = ''): Promise<Refund[]> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    return MOCK_REFUNDS.filter((r) => r.event_id === eventId && (!status || r.status === status)).sort(byNewest);
+  }
+  const params: Record<string, string> = {};
+  if (status) params.status = status;
+  return unwrap(await api.get(`${API_BASE}/${eventId}/refunds`, { params }));
+}
+
+export async function decideEventRefund(eventId: string, refundId: string, approve: boolean, note = ''): Promise<Refund> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    const next = MOCK_REFUNDS.map((r) => (r.id === refundId
+      ? { ...r, status: (approve ? 'APPROVED' : 'REJECTED') as Refund['status'], decision_note: note, decided_at: new Date().toISOString() }
+      : r));
+    MOCK_REFUNDS = next;
+    const found = next.find((r) => r.id === refundId);
+    if (!found) throw new Error('Unknown refund request');
+    return found;
+  }
+  return unwrap(await api.post(`${API_BASE}/${eventId}/refunds/${refundId}/decide`, { approve, note }));
+}
+
+// Execution is the money leg and is idempotent server-side; nothing here should
+// re-drive it on a retry — the receipt state is the authority.
+export async function executeEventRefund(eventId: string, refundId: string): Promise<Refund> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    const next = MOCK_REFUNDS.map((r) => (r.id === refundId
+      ? { ...r, status: 'REFUNDED' as Refund['status'], decided_at: r.decided_at ?? new Date().toISOString() }
+      : r));
+    MOCK_REFUNDS = next;
+    const found = next.find((r) => r.id === refundId);
+    if (!found) throw new Error('Unknown refund request');
+    return found;
+  }
+  return unwrap(await api.post(`${API_BASE}/${eventId}/refunds/${refundId}/execute`, {}));
+}
+
+// ── Notification inbox ───────────────────────────────────────────────────────
+
+// The route answers { success, data: [...], unread: n }, so the count is read off
+// the envelope rather than derived from the page the caller paged through.
+export async function listNotifications(opts?: { unreadOnly?: boolean; limit?: number; offset?: number }): Promise<NotificationPage> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    const list = [...MOCK_NOTIFICATIONS].sort(byNewest);
+    const shown = opts?.unreadOnly ? list.filter((n) => !n.read_at) : list;
+    return { notifications: shown, unread: list.filter((n) => !n.read_at).length };
+  }
+  const params: Record<string, string | number> = { limit: opts?.limit ?? 30, offset: opts?.offset ?? 0 };
+  if (opts?.unreadOnly) params.unread = 'true';
+  const body = (await api.get(`${API_BASE}/my/notifications`, { params })).data as Record<string, unknown> | undefined;
+  const list = (Array.isArray(body?.data) ? body!.data : []) as EventNotification[];
+  return { notifications: list, unread: Number(body?.unread ?? list.filter((n) => !n.read_at).length) };
+}
+
+export async function markNotificationRead(notificationId: string): Promise<void> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay(120);
+    MOCK_NOTIFICATIONS = MOCK_NOTIFICATIONS.map((n) => (n.id === notificationId ? { ...n, read_at: new Date().toISOString() } : n));
+    return;
+  }
+  await api.post(`${API_BASE}/notifications/${notificationId}/read`, {});
+}
+
+export async function markAllNotificationsRead(): Promise<number> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay(120);
+    const now = new Date().toISOString();
+    const before = MOCK_NOTIFICATIONS.filter((n) => !n.read_at).length;
+    MOCK_NOTIFICATIONS = MOCK_NOTIFICATIONS.map((n) => ({ ...n, read_at: now }));
+    return before;
+  }
+  const out = unwrap<{ marked?: number }>(await api.post(`${API_BASE}/my/notifications/read-all`, {}));
+  return out.marked ?? 0;
+}
+
+// ── Support desk ─────────────────────────────────────────────────────────────
+
+export async function openSupportCase(input: OpenCaseInput): Promise<SupportCase> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    const now = new Date().toISOString();
+    const event = MOCK_EVENTS.find((e) => e.id === input.event_id);
+    const c: SupportCase = {
+      id: `sc_${Date.now()}`, event_id: input.event_id, event_title: event?.title,
+      order_id: input.order_id, ticket_id: input.ticket_id,
+      opened_by: 'u_me', kind: input.kind, subject: input.subject, body: input.body,
+      status: 'OPEN', priority: input.priority ?? 'NORMAL', created_at: now, updated_at: now,
+      reply_count: 0,
+    };
+    MOCK_CASES = [c, ...MOCK_CASES];
+    return c;
+  }
+  return unwrap(await api.post(`${API_BASE}/support/cases`, input, { headers: { 'Idempotency-Key': idempotencyKey() } }));
+}
+
+export async function listMyCases(status = ''): Promise<SupportCase[]> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    return MOCK_CASES.filter((c) => !status || c.status === status).sort(byNewest);
+  }
+  const params: Record<string, string> = {};
+  if (status) params.status = status;
+  return unwrap(await api.get(`${API_BASE}/support/cases`, { params }));
+}
+
+export async function getSupportCase(caseId: string): Promise<SupportCase> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    const c = MOCK_CASES.find((x) => x.id === caseId);
+    if (!c) throw new Error('Support case not found');
+    return c;
+  }
+  return unwrap(await api.get(`${API_BASE}/support/cases/${caseId}`));
+}
+
+export async function replySupportCase(caseId: string, body: string): Promise<SupportMessage> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    const msg: SupportMessage = { id: `sm_${Date.now()}`, case_id: caseId, author_id: 'u_me', author_name: 'You', body, created_at: new Date().toISOString() };
+    MOCK_CASES = MOCK_CASES.map((c) => (c.id === caseId
+      ? { ...c, messages: [...(c.messages ?? []), msg], reply_count: (c.reply_count ?? 0) + 1, last_message: msg, updated_at: msg.created_at }
+      : c));
+    return msg;
+  }
+  return unwrap(await api.post(`${API_BASE}/support/cases/${caseId}/replies`, { body }));
+}
+
+// ── Door operations (organiser / steward) ────────────────────────────────────
+
+// GET /:id/roster — the list the door works from, filtered server-side.
+export async function listRoster(eventId: string, f: RosterFilter = {}): Promise<RosterRow[]> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    let rows = [...MOCK_ROSTER];
+    if (f.state === 'waiting')     rows = rows.filter((r) => !r.checked_in && r.state !== 'REFUNDED');
+    if (f.state === 'checked_in')  rows = rows.filter((r) => r.checked_in);
+    if (f.state)                   rows = rows.filter((r) => r.state === f.state);
+    if (f.gate)                    rows = rows.filter((r) => r.gate === f.gate);
+    if (f.q) {
+      const q = f.q.trim().toLowerCase();
+      rows = rows.filter((r) => (r.attendee_name ?? '').toLowerCase().includes(q) || r.name.toLowerCase().includes(q) || r.cashtag.toLowerCase().includes(q) || r.ticket_id.toLowerCase().includes(q));
+    }
+    const offset = f.offset ?? 0;
+    return f.limit ? rows.slice(offset, offset + f.limit) : rows.slice(offset);
+  }
+  const params: Record<string, string | number> = {};
+  if (f.state) params.state = f.state;
+  if (f.gate)  params.gate  = f.gate;
+  if (f.q)     params.q     = f.q;
+  if (f.limit)  params.limit  = f.limit;
+  if (f.offset) params.offset = f.offset;
+  return unwrap(await api.get(`${API_BASE}/${eventId}/roster`, { params }));
+}
+
+// GET /:id/checkin-stats — the door counters, including whether the window is
+// open right now (the server decides; the screen only renders it).
+export async function getCheckinStats(eventId: string): Promise<CheckinStats> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    const rows = [...MOCK_ROSTER];
+    const checked = rows.filter((r) => r.checked_in);
+    const byGate: Record<string, number> = {};
+    const byMethod: Record<string, number> = {};
+    for (const r of checked) {
+      if (r.gate) byGate[r.gate] = (byGate[r.gate] ?? 0) + 1;
+      if (r.checkin_method) byMethod[r.checkin_method] = (byMethod[r.checkin_method] ?? 0) + 1;
+    }
+    const ev = MOCK_EVENTS.find((e) => e.id === eventId);
+    return {
+      total: rows.length, checked_in: checked.length,
+      waiting: rows.filter((r) => !r.checked_in && r.state !== 'REFUNDED').length,
+      refunded: rows.filter((r) => r.state === 'REFUNDED').length,
+      by_gate: byGate, by_method: byMethod,
+      window_opens_at: ev ? new Date(new Date(ev.starts_at).getTime() - (ev.checkin_opens_minutes ?? 0) * 60_000).toISOString() : null,
+      window_closes_at: ev ? new Date(new Date(ev.starts_at).getTime() + (ev.checkin_closes_minutes ?? 0) * 60_000).toISOString() : null,
+      open: true,
+    };
+  }
+  return unwrap(await api.get(`${API_BASE}/${eventId}/checkin-stats`));
+}
+
+export async function listCheckinHistory(eventId: string, limit = 100, offset = 0): Promise<CheckinEntry[]> {
+  requireCommerce();
+  if (USE_MOCK) { await delay(); return [...MOCK_CHECKIN_HISTORY].sort(byNewest).slice(offset, offset + limit); }
+  return unwrap(await api.get(`${API_BASE}/${eventId}/checkin-history`, { params: { limit, offset } }));
+}
+
+// Manual check-in is an audited override, so a reason is not decoration: the
+// reversal screen and any dispute read this row.
+export async function manualCheckIn(eventId: string, input: { ticket_id: string; gate?: string; reason?: string }): Promise<Ticket> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    const row = MOCK_ROSTER.find((r) => r.ticket_id === input.ticket_id);
+    if (!row) throw new Error('Ticket not found for this event');
+    if (row.checked_in) throw new Error('Already checked in');
+    const now = new Date().toISOString();
+    row.checked_in = true; row.checked_in_at = now; row.state = 'USED';
+    row.gate = input.gate || 'main'; row.checkin_method = 'manual';
+    row.checked_in_by = 'u_me'; row.checked_in_by_name = 'You';
+    MOCK_CHECKIN_HISTORY = [
+      { id: `ch_${Date.now()}`, ticket_id: input.ticket_id, actor_id: 'u_me', actor_name: 'You', action: 'IN', method: 'manual', gate: row.gate, reason: input.reason, occurred_at: now },
+      ...MOCK_CHECKIN_HISTORY,
+    ];
+    const t = MOCK_TICKETS.find((x) => x.id === input.ticket_id);
+    return t ? { ...t, state: 'USED', checked_in_at: now, checkin_method: 'manual', checked_in_gate: row.gate } :
+      { id: input.ticket_id, event_id: eventId, tier_id: '', order_id: '', owner_id: '', state: 'USED', credential_id: '', price_paid_kobo: 0, created_at: now };
+  }
+  return unwrap(await api.post(`${API_BASE}/${eventId}/checkin`, input));
+}
+
+export async function undoCheckIn(eventId: string, input: { ticket_id: string; reason: string }): Promise<Ticket> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    if (!input.reason.trim()) throw new Error('A reason is required to reverse a check-in');
+    const row = MOCK_ROSTER.find((r) => r.ticket_id === input.ticket_id);
+    if (!row) throw new Error('Ticket not found for this event');
+    if (!row.checked_in) throw new Error('This ticket has not been checked in');
+    const now = new Date().toISOString();
+    row.checked_in = false; row.checked_in_at = null; row.state = 'ISSUED';
+    MOCK_CHECKIN_HISTORY = [
+      { id: `ch_${Date.now()}`, ticket_id: input.ticket_id, actor_id: 'u_me', actor_name: 'You', action: 'OUT', method: 'undo', gate: row.gate, reason: input.reason, occurred_at: now },
+      ...MOCK_CHECKIN_HISTORY,
+    ];
+    const t = MOCK_TICKETS.find((x) => x.id === input.ticket_id);
+    return t ? { ...t, state: 'ISSUED', checked_in_at: undefined } :
+      { id: input.ticket_id, event_id: eventId, tier_id: '', order_id: '', owner_id: '', state: 'ISSUED', credential_id: '', price_paid_kobo: 0, created_at: now };
+  }
+  return unwrap(await api.post(`${API_BASE}/${eventId}/checkin/undo`, input));
+}
+
+// ── Governance: submit for review + trail ────────────────────────────────────
+
+// POST /:id/submit-review — with commerce on, a submission needs a complete
+// disclosure set (city, address, refund policy, check-in windows) and the server
+// refuses without it.
+export async function submitEventForReview(eventId: string): Promise<void> {
+  requireCommerce();
+  if (USE_MOCK) throw notInFixtureMode('Submitting an event for review');
+  await api.post(`${API_BASE}/${eventId}/submit-review`, {});
+}
+
+export async function listEventModeration(eventId: string): Promise<ModerationDecision[]> {
+  requireCommerce();
+  if (USE_MOCK) {
+    await delay();
+    return [
+      { id: 'md_1', event_id: eventId, actor_id: 'u_me', actor_name: 'You', action: 'SUBMIT', from_state: 'DRAFT', to_state: 'SUBMITTED', created_at: daysAgo(18) },
+      { id: 'md_2', event_id: eventId, actor_id: 'admin_1', actor_name: 'Spotlight Review', action: 'APPROVE', from_state: 'SUBMITTED', to_state: 'APPROVED', created_at: daysAgo(12) },
+    ];
+  }
+  return unwrap(await api.get(`${API_BASE}/${eventId}/moderation`));
 }

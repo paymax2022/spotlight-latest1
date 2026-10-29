@@ -16,6 +16,13 @@ export interface CreateEventBodyInput {
   venue_lat?: number | null;
   venue_lng?: number | null;
   venue_place_id?: string | null;
+  // Commerce disclosure/policy — sent only when the organiser actually set them.
+  city?: string;
+  venue_address?: string;
+  refund_policy?: string;
+  refund_cutoff_hours?: number;
+  checkin_opens_minutes?: number;
+  checkin_closes_minutes?: number;
 }
 
 export function createEventBody(input: CreateEventBodyInput): Record<string, unknown> {
@@ -30,5 +37,14 @@ export function createEventBody(input: CreateEventBodyInput): Record<string, unk
     const placeId = input.venue_place_id?.trim();
     if (placeId) body.venue_place_id = placeId;
   }
+  // An empty string would overwrite the server's default disclosure with a blank
+  // policy a buyer then reads as "no refunds", so blanks are simply omitted.
+  const text = (s?: string) => { const v = s?.trim(); return v ? v : undefined; };
+  const city = text(input.city);               if (city) body.city = city;
+  const address = text(input.venue_address);   if (address) body.venue_address = address;
+  const refund = text(input.refund_policy);    if (refund) body.refund_policy = refund;
+  if (input.refund_cutoff_hours   != null) body.refund_cutoff_hours   = input.refund_cutoff_hours;
+  if (input.checkin_opens_minutes != null) body.checkin_opens_minutes = input.checkin_opens_minutes;
+  if (input.checkin_closes_minutes != null) body.checkin_closes_minutes = input.checkin_closes_minutes;
   return body;
 }

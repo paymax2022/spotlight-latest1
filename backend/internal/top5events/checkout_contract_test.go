@@ -32,6 +32,40 @@ func TestPurchaseRequest_BindsMobileClientShape(t *testing.T) {
 	}
 }
 
+// The door reads the names captured at checkout (UAT EVT-218), so the HTTP layer
+// must bind attendee_names and pass them through instead of dropping them.
+func TestPurchaseRequest_BindsAttendeeNames(t *testing.T) {
+	var named purchaseRequest
+	if err := json.Unmarshal([]byte(`{"tier_id":"t1","quantity":2,"attendee_names":[" Ada ","Obi"]}`), &named); err != nil {
+		t.Fatal(err)
+	}
+	if got := named.attendeeValues(); len(got) != 2 || got[0] != "Ada" || got[1] != "Obi" {
+		t.Fatalf("attendee names not bound/trimmed: %#v", got)
+	}
+
+	var anonymous purchaseRequest
+	_ = json.Unmarshal([]byte(`{"tier_id":"t1","quantity":2}`), &anonymous)
+	if anonymous.attendeeValues() != nil {
+		t.Fatal("omitted attendee_names must stay nil (seats issued unnamed)")
+	}
+
+	// An app renders one optional input per seat; leaving them all blank is the
+	// same request as not showing the field, not a validation failure.
+	var blanks purchaseRequest
+	_ = json.Unmarshal([]byte(`{"tier_id":"t1","quantity":2,"attendee_names":["","  "]}`), &blanks)
+	if blanks.attendeeValues() != nil {
+		t.Fatalf("all-blank attendee_names must collapse to unnamed, got %#v", blanks.attendeeValues())
+	}
+
+	// A partly-filled list reaches the service, which refuses it: silent
+	// mis-attribution of seats is the failure this API exists to prevent.
+	var part purchaseRequest
+	_ = json.Unmarshal([]byte(`{"tier_id":"t1","quantity":3,"attendee_names":["Ada","",""]}`), &part)
+	if got := part.attendeeValues(); len(got) != 3 || got[0] != "Ada" {
+		t.Fatalf("partial list must survive to the service: %#v", got)
+	}
+}
+
 func TestPurchaseRequest_BindsLegacyPromoSpelling(t *testing.T) {
 	var req purchaseRequest
 	if err := json.Unmarshal([]byte(`{"tier_id":"t1","promo":"VIP"}`), &req); err != nil {
@@ -98,6 +132,15 @@ func TestPurchaseTickets_QuantityValidation(t *testing.T) {
 	}
 	if _, err := s.PurchaseTickets(t.Context(), "u1", "e1", "t1", "", 1, ""); err == nil {
 		t.Fatal("empty idempotency key must be rejected")
+	}
+	// A seat list that does not match the quantity is refused before any order is
+	// reserved, so a mistyped checkout can never half-name a booking. (A pool-less
+	// service is the proof: the mismatch returns validation-clean while a
+	// correctly-sized list would have reached the database.)
+	for _, names := range [][]string{{"Ada"}, {"Ada", "Obi", "Shola"}} {
+		if _, err := s.PurchaseTicketsWithAttendees(t.Context(), "u1", "e1", "t1", "", 2, "idem", names); !errors.Is(err, ErrValidation) {
+			t.Fatalf("attendee list of %d against qty 2: want ErrValidation, got %v", len(names), err)
+		}
 	}
 }
 

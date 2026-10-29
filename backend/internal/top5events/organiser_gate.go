@@ -78,6 +78,20 @@ func (s *Service) requireOrganiser(ctx context.Context, userID string) error {
 	if !ok {
 		return ErrOrganiserRequired
 	}
+	// A suspended organiser keeps their live events — buyers already hold tickets for
+	// them, and pulling an event off sale is the separate, per-event decision in
+	// SuspendEvent — but they start nothing new: no create, duplicate, submit or
+	// publish. Untouched while the commerce flag is off, because the table it reads
+	// is created by that migration.
+	if s.commerceReads {
+		suspended, err := s.isOrganiserSuspended(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if suspended {
+			return ErrOrganiserSuspended
+		}
+	}
 	return nil
 }
 

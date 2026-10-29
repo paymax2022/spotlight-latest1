@@ -81,6 +81,15 @@ type Service struct {
 	// Off by default; only the FEATURE_EVENTS_SOCIAL block in app wiring sets it,
 	// so a database without migration 20271094000000 keeps the original queries.
 	socialReads bool
+
+	// commerceReads turns on the events-commerce columns (disclosure and policy on
+	// events, purchase snapshots on event_orders, check-in attribution on
+	// event_tickets) and the behaviours built on them: a server-set platform fee,
+	// refund-window enforcement, check-in windows and the governance tables. Off by
+	// default; only the FEATURE_EVENTS_COMMERCIAL block in app wiring sets it, so a
+	// database without migration 20271400000000 keeps every original query.
+	// Independent of socialReads — see eventRowSelect.
+	commerceReads bool
 }
 
 func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, sett *settlement.Service, tiersSvc *tiers.Service, cred *credential.Service, tags *cashtag.Service, audit Auditor) *Service {
@@ -130,9 +139,10 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	if organiserID == "" {
 		return nil, errors.New("events: organiser required")
 	}
-	if err := s.requireOrganiser(ctx, organiserID); err != nil {
-		return nil, err
-	}
+	// Pure checks first, gate second, database last. The organiser gate is itself
+	// two reads (the RBAC permission, and with commerce on the sanction record),
+	// and a malformed draft must not cost one. Nothing touches the pool until the
+	// gate has passed, so authorization still precedes every side effect.
 	e, err := prepareNewEvent(e, s.socialReads)
 	if err != nil {
 		return nil, err
@@ -140,11 +150,29 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	if err := validateEventInput(e.Title, e.StartsAt, e.EndsAt); err != nil {
 		return nil, err
 	}
+	if s.commerceReads {
+		if err := prepareCommerceEvent(&e); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.requireOrganiser(ctx, organiserID); err != nil {
+		return nil, err
+	}
 	e.ID = uuid.New().String()
 	e.OrganiserID = organiserID
 	e.State = EventDraft
 	e.CreatedAt = time.Now()
-	if e.FeeBps <= 0 {
+	if s.commerceReads {
+		// The platform fee is ops policy, not a form field: with commerce on the
+		// caller's fee_bps is discarded and event_fee_settings decides. A settings
+		// read that fails aborts the create rather than drafting an event at an
+		// invented rate.
+		fee, err := s.platformFeeBps(ctx)
+		if err != nil {
+			return nil, err
+		}
+		e.FeeBps = fee
+	} else if e.FeeBps <= 0 {
 		e.FeeBps = 1000 // platform default: 10% (the Cancel refund keeps this as the non-refundable fee)
 	}
 	// organizer_id (legacy, NOT NULL, no default) is populated alongside the
@@ -160,16 +188,35 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 		INSERT INTO events (id, organizer_id, organiser_id, title, description, venue, state, category, starts_at, ends_at, fee_bps,
 		                    venue_lat, venue_lng, venue_place_id)
 		VALUES ($1,$2,$2,$3,$4,$5,'DRAFT',$6,$7,$8,$9,$10,$11,$12)`
-	if s.socialReads {
-		_, err = s.db.Exec(ctx, insSocial, e.ID, e.OrganiserID, e.Title, e.Description, e.Venue, e.Category, e.StartsAt, e.EndsAt, e.FeeBps,
-			e.VenueLat, e.VenueLng, e.VenuePlaceID)
-	} else {
-		_, err = s.db.Exec(ctx, ins, e.ID, e.OrganiserID, e.Title, e.Description, e.Venue, e.Category, e.StartsAt, e.EndsAt, e.FeeBps)
+	// The commerce variant writes the disclosure and policy columns (migration
+	// 20271400000000). moderation_status is left to its column default: it is
+	// platform-owned and a fresh draft has no review yet.
+	const insCommerce = `
+		INSERT INTO events (id, organizer_id, organiser_id, title, description, venue, state, category, starts_at, ends_at, fee_bps,
+		                    city, venue_address, refund_policy, refund_cutoff_hours, checkin_opens_minutes, checkin_closes_minutes)
+		VALUES ($1,$2,$2,$3,$4,$5,'DRAFT',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`
+	const insSocialCommerce = `
+		INSERT INTO events (id, organizer_id, organiser_id, title, description, venue, state, category, starts_at, ends_at, fee_bps,
+		                    venue_lat, venue_lng, venue_place_id,
+		                    city, venue_address, refund_policy, refund_cutoff_hours, checkin_opens_minutes, checkin_closes_minutes)
+		VALUES ($1,$2,$2,$3,$4,$5,'DRAFT',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`
+	base := []any{e.ID, e.OrganiserID, e.Title, e.Description, e.Venue, e.Category, e.StartsAt, e.EndsAt, e.FeeBps}
+	switch {
+	case s.socialReads && s.commerceReads:
+		_, err = s.db.Exec(ctx, insSocialCommerce, append(base, e.VenueLat, e.VenueLng, e.VenuePlaceID,
+			e.City, e.VenueAddress, e.RefundPolicy, e.RefundCutoffHours, e.CheckinOpensMinutes, e.CheckinClosesMinutes)...)
+	case s.socialReads:
+		_, err = s.db.Exec(ctx, insSocial, append(base, e.VenueLat, e.VenueLng, e.VenuePlaceID)...)
+	case s.commerceReads:
+		_, err = s.db.Exec(ctx, insCommerce, append(base,
+			e.City, e.VenueAddress, e.RefundPolicy, e.RefundCutoffHours, e.CheckinOpensMinutes, e.CheckinClosesMinutes)...)
+	default:
+		_, err = s.db.Exec(ctx, ins, base...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("events: insert: %w", err)
 	}
-	s.log(organiserID, "events.create", e.ID, map[string]any{"title": e.Title})
+	s.log(organiserID, "events.create", e.ID, map[string]any{"title": e.Title, "fee_bps": e.FeeBps})
 	return &e, nil
 }
 
@@ -307,30 +354,22 @@ func (s *Service) GetEvent(ctx context.Context, eventID string) (*Event, error) 
 // events shape leaves it NULL-able; AdminGetEvent coalesces it the same way.
 const legacyEventByIDQuery = `SELECT id, organiser_id, title, COALESCE(description,''), venue, state, COALESCE(category,''), starts_at, ends_at, fee_bps, created_at FROM events WHERE id=$1`
 
-// eventByIDQuery is the by-id event select for the current flag state: the
-// original 11 columns when the social flag is off, the social column list and the
-// caller's like join (caller is $2) when it is on.
+// eventByIDQuery is the by-id event select for the current flag state. With both
+// flags off it is the original 11-column read; otherwise it is assembled from the
+// base list plus whichever of the social and commerce column groups is on (see
+// eventRowSelect in commerce_store.go).
 func (s *Service) eventByIDQuery() string {
-	if !s.socialReads {
-		return legacyEventByIDQuery
-	}
-	return `SELECT ` + eventSelectCols + ` FROM events e ` + eventLikedJoin + ` WHERE e.id=$1`
+	return s.eventRowSelect()
 }
 
 // GetEventForCaller returns an event by id. With the social flag on it carries the
 // social fields and Liked reflects callerID's like (false when callerID is empty,
-// i.e. an anonymous read); the select and scan live in social_store.go. With the
-// flag off it runs the original select and the social fields stay zero.
+// i.e. an anonymous read); with the commerce flag on it carries the disclosure,
+// policy and moderation fields. With both off it runs the original select and every
+// extension stays zero. The select, its arguments and the scan are one triplet in
+// commerce_store.go.
 func (s *Service) GetEventForCaller(ctx context.Context, eventID, callerID string) (*Event, error) {
-	var (
-		e   *Event
-		err error
-	)
-	if s.socialReads {
-		e, err = scanEvent(s.db.QueryRow(ctx, s.eventByIDQuery(), eventID, likeCaller(callerID)))
-	} else {
-		e, err = scanLegacyEvent(s.db.QueryRow(ctx, s.eventByIDQuery(), eventID))
-	}
+	e, err := s.scanEventRow(s.db.QueryRow(ctx, s.eventRowSelect(), s.eventRowArgs(eventID, callerID)...))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -392,6 +431,13 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 	if filter.Category != "" {
 		args = append(args, filter.Category)
 		where += fmt.Sprintf(" AND e.category = $%d", len(args))
+	}
+	if filter.City != "" && s.commerceReads {
+		// Case-insensitive so "lagos" finds "Lagos"; still a bound parameter, so a
+		// caller-supplied % or _ behaves as a wildcard and nothing reaches the SQL.
+		// Ignored when the commerce flag is off: events.city does not exist yet.
+		args = append(args, filter.City)
+		where += fmt.Sprintf(" AND e.city ILIKE $%d", len(args))
 	}
 
 	requestedState := filter.State
@@ -456,14 +502,21 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 		orderBy = "min_price_kobo DESC, e.starts_at ASC"
 	}
 
+	// The discovery feed carries the event's city only once the column exists; an
+	// empty literal keeps the select and the scan the same shape either way.
+	cityExpr := "''"
+	if s.commerceReads {
+		cityExpr = "COALESCE(e.city,'')"
+	}
+
 	q := fmt.Sprintf(`
-		SELECT e.id, e.title, e.venue, e.state, COALESCE(e.category,''), e.starts_at, e.ends_at,
+		SELECT e.id, e.title, e.venue, %s AS city, e.state, COALESCE(e.category,''), e.starts_at, e.ends_at,
 		       COALESCE((SELECT MIN(t.price_kobo) FROM event_ticket_tiers t WHERE t.event_id = e.id AND t.active = true), 0) AS min_price_kobo,
 		       COALESCE((SELECT bool_and(t.capacity > 0 AND t.sold >= t.capacity) FROM event_ticket_tiers t WHERE t.event_id = e.id AND t.active = true), false) AS sold_out
 		FROM events e
 		%s
 		ORDER BY %s
-		LIMIT $%d OFFSET $%d`, where, orderBy, limitPH, offsetPH)
+		LIMIT $%d OFFSET $%d`, cityExpr, where, orderBy, limitPH, offsetPH)
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -475,7 +528,7 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 	for rows.Next() {
 		var sum EventSummary
 		var state string
-		if err := rows.Scan(&sum.ID, &sum.Title, &sum.Venue, &state, &sum.Category, &sum.StartsAt, &sum.EndsAt, &sum.MinPriceKobo, &sum.SoldOut); err != nil {
+		if err := rows.Scan(&sum.ID, &sum.Title, &sum.Venue, &sum.City, &state, &sum.Category, &sum.StartsAt, &sum.EndsAt, &sum.MinPriceKobo, &sum.SoldOut); err != nil {
 			return nil, fmt.Errorf("events: list scan: %w", err)
 		}
 		sum.State = EventState(state)
@@ -576,6 +629,10 @@ type PurchaseResult struct {
 	Fulfilled int      `json:"fulfilled"`        // units actually issued
 	Partial   bool     `json:"partial"`          // true when fulfilled < quantity
 	Ticket    *Ticket  `json:"ticket,omitempty"` // first ticket, for single-unit consumers
+	// BookingRef groups the seats this checkout issued so the client can open the
+	// receipt directly. Only set with FEATURE_EVENTS_COMMERCIAL on: booking_ref is
+	// a commerce column, and before it exists there is no booking to name.
+	BookingRef string `json:"booking_ref,omitempty"`
 }
 
 // MaxTicketsPerOrder bounds one checkout. The mobile selector already caps at
@@ -595,8 +652,8 @@ func unitIdemKey(base string, i, n int) string {
 	return fmt.Sprintf("%s:%d", base, i)
 }
 
-// PurchaseTickets buys quantity tickets of a tier for buyerID in one checkout,
-// optionally applying a promo code to every unit. Each unit runs the same
+// PurchaseTicketsWithAttendees buys quantity tickets of a tier for buyerID in one
+// checkout, optionally applying a promo code to every unit. Each unit runs the same
 // reserve-under-lock then debit-then-issue flow as a single Purchase, keyed by
 // its own derived idempotency key, so (a) concurrent buyers still serialize on
 // the tier row (no oversell), and (b) a replayed or crashed batch resumes each
@@ -604,7 +661,15 @@ func unitIdemKey(base string, i, n int) string {
 // exhausted) returns the units already issued with Partial=true rather than
 // charging for tickets it could not deliver; only a zero-fulfilment batch
 // surfaces the error.
-func (s *Service) PurchaseTickets(ctx context.Context, buyerID, eventID, tierID, promo string, quantity int, idemKey string) (*PurchaseResult, error) {
+//
+// attendees names the seat holders, so a multi-ticket booking reads real names at
+// the door. A nil or empty slice issues every seat unnamed; a non-empty slice must
+// be exactly `quantity` long — a partial list would silently mis-attribute seats,
+// which is the failure this API exists to prevent.
+func (s *Service) PurchaseTicketsWithAttendees(ctx context.Context, buyerID, eventID, tierID, promo string, quantity int, idemKey string, attendees []string) (*PurchaseResult, error) {
+	if len(attendees) > 0 && len(attendees) != quantity {
+		return nil, fmt.Errorf("%w: events: attendee names must be supplied for every seat or none", ErrValidation)
+	}
 	if idemKey == "" {
 		return nil, errors.New("events: idempotency key required")
 	}
@@ -614,7 +679,11 @@ func (s *Service) PurchaseTickets(ctx context.Context, buyerID, eventID, tierID,
 	res := &PurchaseResult{Tickets: []Ticket{}, Quantity: quantity}
 	var firstErr error
 	for i := range quantity {
-		t, err := s.Purchase(ctx, buyerID, eventID, tierID, promo, unitIdemKey(idemKey, i, quantity))
+		attendee := ""
+		if len(attendees) > 0 {
+			attendee = attendees[i]
+		}
+		t, err := s.purchaseWithAttendee(ctx, buyerID, eventID, tierID, promo, unitIdemKey(idemKey, i, quantity), attendee)
 		if err != nil {
 			firstErr = err
 			break
@@ -628,6 +697,11 @@ func (s *Service) PurchaseTickets(ctx context.Context, buyerID, eventID, tierID,
 	}
 	if res.Fulfilled > 0 {
 		res.Ticket = &res.Tickets[0]
+		if s.commerceReads {
+			// The seats just issued carry this booking_ref in event_orders; naming
+			// it lets the checkout hand off straight to the receipt.
+			res.BookingRef = bookingRefFromIdem(idemKey)
+		}
 	}
 	if res.Fulfilled == 0 {
 		return nil, firstErr
@@ -635,11 +709,23 @@ func (s *Service) PurchaseTickets(ctx context.Context, buyerID, eventID, tierID,
 	return res, nil
 }
 
+// PurchaseTickets is PurchaseTicketsWithAttendees with no attendee names.
+func (s *Service) PurchaseTickets(ctx context.Context, buyerID, eventID, tierID, promo string, quantity int, idemKey string) (*PurchaseResult, error) {
+	return s.PurchaseTicketsWithAttendees(ctx, buyerID, eventID, tierID, promo, quantity, idemKey, nil)
+}
+
 // Purchase buys one ticket of a tier for buyerID, optionally applying a promo code.
 // Money path: wallet.Debit (tier-limit enforced fail-closed) into the platform
 // escrow account; idempotent on idemKey (NL-9). On success it issues a credential
 // (rotating-QR gate entry) and an ISSUED ticket bound to it.
 func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo, idemKey string) (*Ticket, error) {
+	return s.purchaseWithAttendee(ctx, buyerID, eventID, tierID, promo, idemKey, "")
+}
+
+// purchaseWithAttendee is Purchase for one named seat holder. The name is written
+// only when the commerce flag is on (event_tickets.attendee_name does not exist
+// before that migration).
+func (s *Service) purchaseWithAttendee(ctx context.Context, buyerID, eventID, tierID, promo, idemKey, attendee string) (*Ticket, error) {
 	if buyerID == "" || idemKey == "" {
 		return nil, errors.New("events: buyer and idempotency key required")
 	}
@@ -683,6 +769,7 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	// or ReconcilePendingOrders.
 	orderID, payable, err := s.reserveSeatTx(ctx, tx, seatReservation{
 		buyerID: buyerID, eventID: eventID, tierID: tierID, promo: promo, idemKey: idemKey, rail: railWallet,
+		attendeeName: attendee,
 	})
 	if err != nil {
 		return nil, err
@@ -694,6 +781,7 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	return s.finalizePurchase(ctx, pendingOrder{
 		id: orderID, eventID: eventID, buyerID: buyerID, tierID: tierID,
 		idemKey: idemKey, payable: payable, status: orderStatusPending,
+		attendeeName: attendee,
 	})
 }
 
@@ -708,6 +796,7 @@ type seatReservation struct {
 	buyerID, eventID, tierID, promo, idemKey string
 	rail                                     string // railWallet | railCard
 	cardRef                                  string // Paystack reference (railCard only)
+	attendeeName                             string // who the seat is for (commerce only)
 }
 
 // reserveSeatTx holds ONE seat inside tx: it locks the tier row FOR UPDATE,
@@ -722,8 +811,9 @@ func (s *Service) reserveSeatTx(ctx context.Context, tx pgx.Tx, r seatReservatio
 	var price int64
 	var capacity, sold int
 	var active, inviteOnly bool
+	var tierName string
 	var salesStart, salesEnd *time.Time
-	if err := tx.QueryRow(ctx, `SELECT price_kobo, capacity, sold, active, sales_start_at, sales_end_at, invite_only FROM event_ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE`, r.tierID, r.eventID).Scan(&price, &capacity, &sold, &active, &salesStart, &salesEnd, &inviteOnly); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT price_kobo, capacity, sold, active, sales_start_at, sales_end_at, invite_only, name FROM event_ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE`, r.tierID, r.eventID).Scan(&price, &capacity, &sold, &active, &salesStart, &salesEnd, &inviteOnly, &tierName); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", 0, ErrNotFound
 		}
@@ -796,18 +886,36 @@ func (s *Service) reserveSeatTx(ctx context.Context, tx pgx.Tx, r seatReservatio
 		return "", 0, fmt.Errorf("events: reserve inventory: %w", err)
 	}
 	orderID := uuid.New().String()
+
+	// The order insert is assembled rather than written out per flag combination:
+	// the rail decides whether the Paystack columns are present, and the commerce
+	// flag decides whether the purchase snapshot columns are, and the four
+	// combinations would otherwise be four near-identical statements that can drift.
+	// Placeholders stay in append order, so args must be appended in the same order.
+	cols := "id, event_id, buyer_id, tier_id, total_kobo, status, idempotency_key"
+	vals := "$1,$2,$3,$4,$5,'PENDING',$6"
+	args := []any{orderID, r.eventID, r.buyerID, r.tierID, payable, r.idemKey}
 	if r.rail == railCard {
 		// Card hold: the PENDING order IS the inventory hold, tagged with the
 		// Paystack reference that will pay it (see card_checkout.go).
-		const insCardOrder = `INSERT INTO event_orders (id, event_id, buyer_id, tier_id, total_kobo, status, idempotency_key, payment_rail, card_reference) VALUES ($1,$2,$3,$4,$5,'PENDING',$6,'card',$7)`
-		if _, err := tx.Exec(ctx, insCardOrder, orderID, r.eventID, r.buyerID, r.tierID, payable, r.idemKey, r.cardRef); err != nil {
-			return "", 0, fmt.Errorf("events: insert order: %w", err)
+		cols += ", payment_rail, card_reference"
+		vals += ",'card',$7"
+		args = append(args, r.cardRef)
+	}
+	if s.commerceReads {
+		discount := price - payable
+		if discount < 0 {
+			discount = 0
 		}
-	} else {
-		const insOrder = `INSERT INTO event_orders (id, event_id, buyer_id, tier_id, total_kobo, status, idempotency_key) VALUES ($1,$2,$3,$4,$5,'PENDING',$6)`
-		if _, err := tx.Exec(ctx, insOrder, orderID, r.eventID, r.buyerID, r.tierID, payable, r.idemKey); err != nil {
-			return "", 0, fmt.Errorf("events: insert order: %w", err)
+		cols += ", attendee_name, booking_ref, tier_name, promo_code, unit_price_kobo, discount_kobo"
+		for i := range 6 {
+			vals += fmt.Sprintf(",$%d", len(args)+1+i)
 		}
+		args = append(args, clampTrim(r.attendeeName, maxAttendeeNameLen),
+			bookingRefFromIdem(r.idemKey), tierName, r.promo, price, discount)
+	}
+	if _, err := tx.Exec(ctx, fmt.Sprintf("INSERT INTO event_orders (%s) VALUES (%s)", cols, vals), args...); err != nil {
+		return "", 0, fmt.Errorf("events: insert order: %w", err)
 	}
 	if appliedPromoID != "" {
 		if _, err := tx.Exec(ctx, `INSERT INTO event_promo_redemptions (id, promo_id, user_id, order_id) VALUES ($1,$2,$3,$4) ON CONFLICT (promo_id, order_id) DO NOTHING`, uuid.New().String(), appliedPromoID, r.buyerID, orderID); err != nil {
@@ -823,15 +931,21 @@ type pendingOrder struct {
 	id, eventID, buyerID, tierID, idemKey, status string
 	payable                                       int64
 	rail                                          string // event_orders.payment_rail
+	attendeeName                                  string // commerce only; "" otherwise
 }
 
 // orderByIdem loads the existing order for an idempotency key (pgx.ErrNoRows if none).
+// The attendee name travels with it so a crash-resume re-tickets the seat under the
+// name the buyer supplied, and only under the commerce flag that stored it.
 func (s *Service) orderByIdem(ctx context.Context, idemKey string) (pendingOrder, error) {
 	o := pendingOrder{idemKey: idemKey}
-	err := s.db.QueryRow(ctx,
-		`SELECT id, event_id, buyer_id, COALESCE(tier_id::text,''), total_kobo, status, payment_rail FROM event_orders WHERE idempotency_key=$1`, idemKey).
-		Scan(&o.id, &o.eventID, &o.buyerID, &o.tierID, &o.payable, &o.status, &o.rail)
-	return o, err
+	q := `SELECT id, event_id, buyer_id, COALESCE(tier_id::text,''), total_kobo, status, payment_rail FROM event_orders WHERE idempotency_key=$1`
+	dests := []any{&o.id, &o.eventID, &o.buyerID, &o.tierID, &o.payable, &o.status, &o.rail}
+	if s.commerceReads {
+		q = `SELECT id, event_id, buyer_id, COALESCE(tier_id::text,''), total_kobo, status, payment_rail, attendee_name FROM event_orders WHERE idempotency_key=$1`
+		dests = append(dests, &o.attendeeName)
+	}
+	return o, s.db.QueryRow(ctx, q, idemKey).Scan(dests...)
 }
 
 // finalizePurchase runs the debit → PAID → ticket tail of a checkout. It is safe to
@@ -913,14 +1027,22 @@ func (s *Service) finalizePurchase(ctx context.Context, o pendingOrder) (*Ticket
 		SingleUse:    true,
 		AllowReentry: false,
 		RotateTTL:    30 * time.Second,
-		ValidFrom:    ev.StartsAt.Add(-6 * time.Hour),
-		ValidTo:      ev.EndsAt,
+		// With commerce on the QR becomes valid when the organiser says the doors
+		// open, not a fixed six hours before; see credentialValidFrom.
+		ValidFrom: credentialValidFrom(ev, s.commerceReads),
+		ValidTo:   ev.EndsAt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("events: issue credential: %w", err)
 	}
 	const insTicket = `INSERT INTO event_tickets (id, event_id, tier_id, order_id, owner_id, state, credential_id, price_paid_kobo) VALUES ($1,$2,$3,$4,$5,'ISSUED',$6,$7) ON CONFLICT (order_id) DO NOTHING`
-	if _, err := s.db.Exec(ctx, insTicket, uuid.New().String(), o.eventID, o.tierID, o.id, o.buyerID, cred.ID, o.payable); err != nil {
+	insTicketCommerce := `INSERT INTO event_tickets (id, event_id, tier_id, order_id, owner_id, state, credential_id, price_paid_kobo, attendee_name) VALUES ($1,$2,$3,$4,$5,'ISSUED',$6,$7,$8) ON CONFLICT (order_id) DO NOTHING`
+	ticketSQL, ticketArgs := insTicket, []any{uuid.New().String(), o.eventID, o.tierID, o.id, o.buyerID, cred.ID, o.payable}
+	if s.commerceReads {
+		ticketSQL = insTicketCommerce
+		ticketArgs = append(ticketArgs, clampTrim(o.attendeeName, maxAttendeeNameLen))
+	}
+	if _, err := s.db.Exec(ctx, ticketSQL, ticketArgs...); err != nil {
 		return nil, fmt.Errorf("events: insert ticket: %w", err)
 	}
 	s.log(o.buyerID, "events.purchase", o.id, map[string]any{"event": o.eventID, "tier": o.tierID, "kobo": o.payable})
@@ -935,6 +1057,9 @@ func (s *Service) finalizePurchase(ctx context.Context, o pendingOrder) (*Ticket
 	// the money into escrow; this appends the earning row only).
 	buyer := o.buyerID
 	s.recordCommissionSafe(ctx, "Lifestyle", "Event Tickets", "", o.payable, o.id, &buyer)
+	// The buyer's inbox receipt for this seat. The (user, order, kind) unique index
+	// makes a crash-resume of the same order unable to send it twice.
+	s.notify(ctx, o.buyerID, NotifyPurchase, "Ticket confirmed", ev.Title, o.eventID, o.id, "")
 	// Return the persisted ticket (handles the ON CONFLICT-skipped race where a
 	// concurrent resume issued it first).
 	return s.ticketByOrder(ctx, o.id)
@@ -942,14 +1067,7 @@ func (s *Service) finalizePurchase(ctx context.Context, o pendingOrder) (*Ticket
 
 // ticketByOrder returns the single ticket for an order (pgx.ErrNoRows if none yet).
 func (s *Service) ticketByOrder(ctx context.Context, orderID string) (*Ticket, error) {
-	const q = `SELECT id, event_id, tier_id, order_id, owner_id, state, COALESCE(credential_id::text,''), price_paid_kobo, created_at FROM event_tickets WHERE order_id=$1`
-	var t Ticket
-	var state string
-	if err := s.db.QueryRow(ctx, q, orderID).Scan(&t.ID, &t.EventID, &t.TierID, &t.OrderID, &t.OwnerID, &state, &t.CredentialID, &t.PricePaidKobo, &t.CreatedAt); err != nil {
-		return nil, err
-	}
-	t.State = TicketState(state)
-	return &t, nil
+	return scanTicketRow(s.db.QueryRow(ctx, s.ticketRowSQL("order_id=$1"), orderID), s.commerceReads)
 }
 
 // expireOrder releases a reserved seat and marks a never-paid order EXPIRED. The
@@ -987,15 +1105,25 @@ func (s *Service) expireOrder(ctx context.Context, orderID, tierID string) {
 // StartPendingOrderReconciler (reconciler.go). Returns (finalized, sweptToTerminalOrError).
 func (s *Service) ReconcilePendingOrders(ctx context.Context, olderThan time.Duration) (int, int, error) {
 	cutoff := time.Now().Add(-olderThan)
-	rows, err := s.db.Query(ctx,
-		`SELECT id, event_id, buyer_id, COALESCE(tier_id::text,''), total_kobo, idempotency_key FROM event_orders WHERE status='PENDING' AND payment_rail='wallet' AND created_at < $1`, cutoff)
+	// The sweep re-tickets a seat the buyer already paid for, so it has to carry the
+	// attendee name the reservation stored — otherwise a crash between the
+	// reservation and the debit would issue an unnamed ticket for a named seat.
+	q := `SELECT id, event_id, buyer_id, COALESCE(tier_id::text,''), total_kobo, idempotency_key FROM event_orders WHERE status='PENDING' AND payment_rail='wallet' AND created_at < $1`
+	if s.commerceReads {
+		q = `SELECT id, event_id, buyer_id, COALESCE(tier_id::text,''), total_kobo, idempotency_key, attendee_name FROM event_orders WHERE status='PENDING' AND payment_rail='wallet' AND created_at < $1`
+	}
+	rows, err := s.db.Query(ctx, q, cutoff)
 	if err != nil {
 		return 0, 0, err
 	}
 	var pend []pendingOrder
 	for rows.Next() {
 		o := pendingOrder{status: orderStatusPending}
-		if rows.Scan(&o.id, &o.eventID, &o.buyerID, &o.tierID, &o.payable, &o.idemKey) == nil {
+		dests := []any{&o.id, &o.eventID, &o.buyerID, &o.tierID, &o.payable, &o.idemKey}
+		if s.commerceReads {
+			dests = append(dests, &o.attendeeName)
+		}
+		if rows.Scan(dests...) == nil {
 			pend = append(pend, o)
 		}
 	}
@@ -1046,7 +1174,8 @@ func (s *Service) GiftTicket(ctx context.Context, ownerID, ticketID, recipientHa
 		return nil, err
 	}
 	newCred, err := s.cred.Issue(ctx, recipientID, credential.KindEventTicket, credential.Policy{
-		SingleUse: true, RotateTTL: 30 * time.Second, ValidFrom: ev.StartsAt.Add(-6 * time.Hour), ValidTo: ev.EndsAt,
+		SingleUse: true, RotateTTL: 30 * time.Second,
+		ValidFrom: credentialValidFrom(ev, s.commerceReads), ValidTo: ev.EndsAt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("events: reissue credential: %w", err)
@@ -1072,14 +1201,23 @@ func (s *Service) GiftTicket(ctx context.Context, ownerID, ticketID, recipientHa
 // Validate, which rejects it on its own terms (ReasonNotFound) — there's no
 // event to scope the check against, and Validate's rejection is exactly the
 // signal a scanner should see either way.
+//
+// With the commerce flag on the door also has a clock: a scan outside the event's
+// check-in window is refused BEFORE the token is validated, so an early arrival
+// keeps a usable pass instead of burning it, and the accepted scan records who
+// admitted the attendee, at which gate, and by which method.
 func (s *Service) ScanTicket(ctx context.Context, callerID string, tok credential.Token, gate credential.Gate) (*credential.Result, error) {
-	var eventID, ticketID, organiserID string
-	resolveErr := s.db.QueryRow(ctx,
-		`SELECT t.id, t.event_id, e.organiser_id FROM event_tickets t
-		 JOIN events e ON e.id = t.event_id WHERE t.credential_id = $1`, tok.CredentialID,
-	).Scan(&ticketID, &eventID, &organiserID)
-	if resolveErr == nil {
-		if err := s.assertStewardOrOrganiser(ctx, eventID, organiserID, callerID); err != nil {
+	row, found, err := s.loadCheckinRow(ctx, "t.credential_id = $1", tok.CredentialID)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		if err := s.scanGateCheck(ctx, row, callerID); err != nil {
+			// Outside the window answers 200 with a rejected Result, not an error:
+			// the token is fine, the clock is not, and nothing was consumed.
+			if errors.Is(err, ErrCheckinNotOpen) || errors.Is(err, ErrCheckinClosed) {
+				return &credential.Result{OK: false, CredentialID: tok.CredentialID, Reason: ReasonCheckinWindow}, nil
+			}
 			return nil, err
 		}
 	}
@@ -1089,8 +1227,16 @@ func (s *Service) ScanTicket(ctx context.Context, callerID string, tok credentia
 		return nil, err
 	}
 	if res.OK {
-		_, _ = s.db.Exec(ctx, `UPDATE event_tickets SET state='USED', checked_in_at=now() WHERE credential_id=$1 AND state IN ('ISSUED','TRANSFERRED')`, res.CredentialID)
-		s.publishCheckinSafe(ctx, eventID, organiserID, ticketID, res.CredentialID)
+		if s.commerceReads {
+			if err := s.markCheckedIn(ctx, res.CredentialID, callerID, gate.Name, CheckinMethodScan); err != nil {
+				return nil, err
+			}
+			s.logCheckin(ctx, row.eventID, row.ticketID, callerID, CheckinActionIn, CheckinMethodScan,
+				gate.Name, res.CredentialID, "")
+		} else {
+			_, _ = s.db.Exec(ctx, `UPDATE event_tickets SET state='USED', checked_in_at=now() WHERE credential_id=$1 AND state IN ('ISSUED','TRANSFERRED')`, res.CredentialID)
+		}
+		s.publishCheckinSafe(ctx, row.eventID, row.organiserID, row.ticketID, res.CredentialID)
 	}
 	return res, nil
 }
@@ -1190,34 +1336,24 @@ func (s *Service) ListStewards(ctx context.Context, organiserID, eventID string)
 
 // MyTickets lists the caller's tickets.
 func (s *Service) MyTickets(ctx context.Context, userID string) ([]Ticket, error) {
-	const q = `SELECT id, event_id, tier_id, order_id, owner_id, state, COALESCE(credential_id::text,''), price_paid_kobo, created_at FROM event_tickets WHERE owner_id=$1 ORDER BY created_at DESC`
-	rows, err := s.db.Query(ctx, q, userID)
+	rows, err := s.db.Query(ctx, s.ticketRowSQL("owner_id=$1 ORDER BY created_at DESC"), userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Ticket
 	for rows.Next() {
-		var t Ticket
-		var state string
-		if err := rows.Scan(&t.ID, &t.EventID, &t.TierID, &t.OrderID, &t.OwnerID, &state, &t.CredentialID, &t.PricePaidKobo, &t.CreatedAt); err != nil {
+		t, err := scanTicketRow(rows, s.commerceReads)
+		if err != nil {
 			return nil, err
 		}
-		t.State = TicketState(state)
-		out = append(out, t)
+		out = append(out, *t)
 	}
 	return out, rows.Err()
 }
 
 func (s *Service) getTicket(ctx context.Context, id string) (*Ticket, error) {
-	const q = `SELECT id, event_id, tier_id, order_id, owner_id, state, COALESCE(credential_id::text,''), price_paid_kobo, created_at FROM event_tickets WHERE id=$1`
-	var t Ticket
-	var state string
-	if err := s.db.QueryRow(ctx, q, id).Scan(&t.ID, &t.EventID, &t.TierID, &t.OrderID, &t.OwnerID, &state, &t.CredentialID, &t.PricePaidKobo, &t.CreatedAt); err != nil {
-		return nil, err
-	}
-	t.State = TicketState(state)
-	return &t, nil
+	return scanTicketRow(s.db.QueryRow(ctx, s.ticketRowSQL("id=$1"), id), s.commerceReads)
 }
 
 // TicketToken returns the caller's own live rotating gate token for a ticket they
