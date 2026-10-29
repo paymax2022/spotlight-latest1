@@ -125,6 +125,8 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		h.Complete) // release payment (HL-9)
 	pg.POST("/orders/:id/cancel", h.Cancel)        // pre-dispense → refund (HL-9)
 	pg.POST("/orders/:id/reviews", h.SubmitReview) // patient, order must be completed
+	pg.GET("/consult/messages", h.ConsultMessages) // patient's own pharmacist-consult thread
+	pg.POST("/consult/messages", h.SendConsultMessage)
 
 	ag := admin.Group("")
 	// PHARMACY-001: `admin` (adminGroupTop5, top5_admin_group.go) applies ONLY
