@@ -241,6 +241,10 @@ function LocationEditor({ propertyId, property }: { propertyId: string; property
   const [city, setCity] = useState(property.city);
   const [lat, setLat] = useState(property.lat || 0);
   const [lng, setLng] = useState(property.lng || 0);
+  // The location was captured on the create screen, so this is a review of what was
+  // saved rather than a second entry form. The fields only appear when the host asks
+  // to change them.
+  const [editing, setEditing] = useState(false);
   const updateContent = useUpdatePropertyContent(propertyId);
   const updateDetails = useUpdatePropertyDetails(propertyId);
   const loc = useCurrentLocation();
@@ -263,12 +267,38 @@ function LocationEditor({ propertyId, property }: { propertyId: string; property
     try {
       await updateContent.mutateAsync({ address, city });
       if (lat && lng) await updateDetails.mutateAsync({ lat, lng });
+      setEditing(false);
     } catch {
       alertAsync({ title: "Couldn't save", message: 'Check your connection and try again.' });
     }
   };
 
+  const cancel = () => {
+    setAddress(property.address); setCity(property.city);
+    setLat(property.lat || 0); setLng(property.lng || 0);
+    setEditing(false);
+  };
+
   const saving = updateContent.isPending || updateDetails.isPending;
+  const pinned = Boolean(property.lat && property.lng);
+
+  if (!editing) {
+    return (
+      <Card>
+        <Text style={styles.itemName}>{property.address || 'No address on file'}</Text>
+        {property.city ? <Text style={styles.muted}>{property.city}</Text> : null}
+        <View style={styles.emptyRow}>
+          <MapPin size={15} color={pinned ? Colors.primary : Colors.outlineVariant} />
+          <Text style={styles.muted}>
+            {pinned
+              ? `Pinned: ${property.lat.toFixed(4)}, ${property.lng.toFixed(4)}`
+              : 'No map pin yet — add one so guests can find this listing in “near me”.'}
+          </Text>
+        </View>
+        <PrimaryButton label="Edit location" variant="secondary" onPress={() => setEditing(true)} />
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -281,6 +311,7 @@ function LocationEditor({ propertyId, property }: { propertyId: string; property
         </Text>
       </Pressable>
       <PrimaryButton label="Save" onPress={save} loading={saving} disabled={!address.trim() || !city.trim()} />
+      <PrimaryButton label="Cancel" variant="ghost" onPress={cancel} disabled={saving} />
     </Card>
   );
 }
