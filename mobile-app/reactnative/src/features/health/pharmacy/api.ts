@@ -753,8 +753,20 @@ export async function reorder(orderId: string): Promise<PharmacyOrder['lines']> 
     if (!o) throw new Error('Order not found');
     return o.lines;
   }
-  const { data } = await api.post<PharmacyOrder['lines']>(`${PHARMACY_API}/orders/${orderId}/reorder`, {});
-  return data;
+  // Lines are re-priced against the live catalog; unavailable ones are dropped
+  // so checkout never re-submits a product that can no longer be sold.
+  const { data } = await api.post<{ lines?: any[] }>(`${PHARMACY_API}/orders/${orderId}/reorder`, {});
+  return (data.lines ?? [])
+    .filter((l) => l.available)
+    .map((l) => ({
+      productId: l.product_id,
+      name: l.product_name ?? '',
+      form: '',
+      priceKobo: l.unit_price_kobo ?? 0,
+      qty: l.quantity ?? 1,
+      rxRequired: !!l.rx_required,
+      imageColor: tintForId(String(l.product_id ?? '')),
+    }));
 }
 
 export async function getMedications(): Promise<MedicationItem[]> {
@@ -762,8 +774,29 @@ export async function getMedications(): Promise<MedicationItem[]> {
     await delay();
     return MOCK_MEDS;
   }
-  const { data } = await api.get<MedicationItem[]>(`${PHARMACY_API}/medications`);
-  return data;
+  // The backend has no adherence/supply tracking yet — those default to 0.
+  const { data } = await api.get<{ medications?: any[] }>(`${PHARMACY_API}/medications`);
+  return (data.medications ?? []).map((m) => ({
+    id: m.id,
+    name: m.drug_name ?? '',
+    form: '',
+    schedule: m.dosage ?? '',
+    adherence: 0,
+    daysLeft: 0,
+    rxRequired: !!m.is_pom,
+  }));
+}
+
+function mapRefill(r: any): Refill {
+  return {
+    id: r.id,
+    medicationName: r.drug_name ?? '',
+    form: r.dosage ?? '',
+    dueAt: r.due_at,
+    scheduled: !!r.scheduled,
+    autoRefill: !!r.auto_refill,
+    rxId: r.prescription_id ?? undefined,
+  };
 }
 
 export async function getRefills(): Promise<Refill[]> {
@@ -771,8 +804,8 @@ export async function getRefills(): Promise<Refill[]> {
     await delay();
     return MOCK_REFILLS;
   }
-  const { data } = await api.get<Refill[]>(`${PHARMACY_API}/refills`);
-  return data;
+  const { data } = await api.get<{ refills?: any[] }>(`${PHARMACY_API}/refills`);
+  return (data.refills ?? []).map(mapRefill);
 }
 
 export async function scheduleRefill(id: string, autoRefill: boolean): Promise<Refill> {
@@ -784,8 +817,9 @@ export async function scheduleRefill(id: string, autoRefill: boolean): Promise<R
     rf.autoRefill = autoRefill;
     return { ...rf };
   }
-  const { data } = await api.post<Refill>(`${PHARMACY_API}/refills/${id}/schedule`, { autoRefill });
-  return data;
+  const { data } = await api.post<{ refill?: any }>(`${PHARMACY_API}/refills/${id}/schedule`, { auto_refill: autoRefill });
+  if (!data.refill) throw new Error('Refill not found');
+  return mapRefill(data.refill);
 }
 
 // GET /pharmacy/pharmacies/{id}/reviews (ADR-017) — the live surface is always
