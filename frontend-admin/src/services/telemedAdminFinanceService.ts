@@ -1,10 +1,12 @@
-// Telemedicine admin — finance oversight (READ-ONLY). Live data only: there is no
-// fixture mode, so an empty database shows empty states rather than invented
-// numbers. Backend: GET /api/v1/telemedicine/admin/finance/* (permission
-// telemedicine.admin.view), contract in contracts/telemedicine-admin-finance.openapi.yaml.
-// Money is integer kobo throughout; nothing here moves or writes money.
+// Telemedicine admin — finance oversight + workflow decisions. Live data only: there
+// is no fixture mode, so an empty database shows empty states rather than invented
+// numbers. Backend: /api/v1/telemedicine/admin/finance/* (reads need
+// telemedicine.admin.view, decisions telemedicine.admin.manage), contract in
+// contracts/telemedicine-admin-finance.openapi.yaml. Money is integer kobo; no
+// decision here posts to the ledger.
 
 import { apiV1 } from '@/config/env';
+import { operationKey } from './idempotency';
 
 function financeBase(): string {
   return `${apiV1()}/telemedicine/admin/finance`;
@@ -63,6 +65,9 @@ export interface Payout {
   paid_at: string | null;
   bank_account: BankAccountMasked;
   open_disputes: number;
+  held_at?: string | null;
+  hold_reason?: string | null;
+  approved_at?: string | null;
 }
 export interface Dispute {
   id: string;
@@ -146,6 +151,51 @@ export const listDisputes = (f: PageArgs & { status?: string } = {}) => getJson<
 export const getDispute = (id: string) => getJson<DisputeDetail>(`/disputes/${encodeURIComponent(id)}`);
 
 export const getCommissionConfig = () => getJson<CommissionConfigView>('/commission-config');
+
+export interface ActionResult {
+  action: string;
+  entity_id: string;
+  status: string;
+  audit_id: string;
+  at: string;
+  replayed: boolean;
+}
+
+async function sendJson<T>(method: 'POST' | 'PUT', path: string, key: string, body: unknown): Promise<T> {
+  const res = await fetch(`${financeBase()}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) {
+    let msg = `Request failed (${res.status})`;
+    if (res.status === 403) msg = 'You do not have permission to change telemedicine finance (telemedicine.admin.manage).';
+    else {
+      try { const j = await res.json(); if (j?.error) msg = String(j.error); } catch { /* keep default */ }
+    }
+    throw new Error(msg);
+  }
+  const j = await res.json();
+  return (j?.data ?? j) as T;
+}
+
+// One-shot decisions key on the entity so a double-click dedupes server-side.
+export const approvePayout = (id: string, note = '') =>
+  sendJson<ActionResult>('POST', `/payouts/${encodeURIComponent(id)}/approve`, operationKey('telemed:payout-approve', id), { note });
+
+export const holdPayout = (id: string, reason: string) =>
+  sendJson<ActionResult>('POST', `/payouts/${encodeURIComponent(id)}/hold`, operationKey('telemed:payout-hold', id), { reason });
+
+export const resolveDispute = (id: string, outcome: 'resolved' | 'rejected', note: string) =>
+  sendJson<ActionResult>('POST', `/disputes/${encodeURIComponent(id)}/resolve`, operationKey('telemed:dispute-resolve', id), { outcome, note });
+
+// A commission override can legitimately be set to the same values again later,
+// so each submit gets its own key (a repeat upsert of identical values is harmless).
+export const updateCommission = (
+  doctorUserId: string,
+  body: { commission_bps: number; vat_bps: number; payout_cycle: 'weekly' | 'biweekly' | 'monthly' },
+) => sendJson<ActionResult>('PUT', `/commission-config/${encodeURIComponent(doctorUserId)}`,
+  operationKey('telemed:commission', doctorUserId, Date.now()), body);
 
 /** Basis points as a percentage string, e.g. 1500 -> "15%", 750 -> "7.5%". */
 export function bpsToPercent(bps: number): string {
