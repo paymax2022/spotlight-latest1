@@ -271,7 +271,7 @@ type Config struct {
 	// statements and the admin settlement queue (EVTC-D003). Default OFF.
 	FeatureEventsOrganiserPayouts bool
 	// FeatureEventsSocial (FEATURE_EVENTS_SOCIAL) exposes event likes and organiser follows.
-	FeatureEventsSocial  bool
+	FeatureEventsSocial bool
 	// FeatureEventsCommerce (FEATURE_EVENTS_COMMERCIAL) turns on the events commerce
 	// and governance layer: buyer disclosure (city, venue address, refund policy,
 	// check-in windows), purchase snapshots on orders and receipts, the refund
@@ -364,14 +364,14 @@ type Config struct {
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
 	// false: the gate's route map is hand-built and must be validated against real
 	// traffic before it can refuse anything.
-	FeatureModuleGateEnforce     bool
-	FeatureNutritionEnabled      bool // Nutrition Resolution Engine (NRE)
-	FeatureTelemedicineEnabled   bool
-	FeatureVoteBridgeEnabled     bool
-	FeatureTransportEnabled      bool
+	FeatureModuleGateEnforce   bool
+	FeatureNutritionEnabled    bool // Nutrition Resolution Engine (NRE)
+	FeatureTelemedicineEnabled bool
+	FeatureVoteBridgeEnabled   bool
+	FeatureTransportEnabled    bool
 	// FeatureTransportHailingEnabled mounts /api/v1/transport/trips (Block 14: Redlock match, surge, 70/30 settle). Needs Redis.
 	FeatureTransportHailingEnabled bool
-	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
+	FeatureTransportModesEnabled   bool // parcel/bus/towing/movers/car-hire expansion
 	// FeatureBankAccountNameMatch: a restaurant payout account is verified only when
 	// the bank holder name matches the owner's KYC-verified name or an approved KYB
 	// legal name; mismatches are held for admin review. Off = name-enquiry only.
@@ -462,10 +462,12 @@ type Config struct {
 	TransportBusSettleGraceMinutes             int // TRANSPORT_BUS_SETTLE_GRACE_MINUTES (default 30)
 	TransportBusCancelCutoffMinutes            int // TRANSPORT_BUS_CANCEL_CUTOFF_MINUTES (default 120, clamped 60-1440)
 	TransportBusMinBookingLeadMinutes          int // TRANSPORT_BUS_MIN_BOOKING_LEAD_MINUTES (default 15)
-	FeatureAICareEnabled                       bool
-	FeatureDisputesEnabled                     bool
-	FeatureRatingsEnabled                      bool
-	FeaturePharmacyEnabled                     bool
+	// TransportShareBaseURL (TRANSPORT_SHARE_BASE_URL): base for ride live-share links.
+	TransportShareBaseURL  string
+	FeatureAICareEnabled   bool
+	FeatureDisputesEnabled bool
+	FeatureRatingsEnabled  bool
+	FeaturePharmacyEnabled bool
 	// Symptom-based medication search (term → concept → condition cluster →
 	// therapeutic class → live SKUs, triage tiers T1–T4). DEFAULT OFF. Gates
 	// /pharmacy/symptom-search, /pharmacy/classes/{id}/skus and the
@@ -689,9 +691,9 @@ type Config struct {
 	// Top-5 expansion modules (no-new-licence; ride existing wallet/ledger rails).
 	// DEFAULT OFF. Each gates /api/finance/<mod> + /api/<mod>/admin (internal/<mod>).
 	// (FeatureEventsEnabled is declared once above with the other module flags.)
-	FeatureSocialPayEnabled bool // Social Payments & P2P Escrow
-	FeatureP2PMarketEnabled bool // P2P Marketplace
-	FeatureSavingsEnabled   bool // Group & Goal Savings (Ajo/Esusu)
+	FeatureSocialPayEnabled           bool // Social Payments & P2P Escrow
+	FeatureP2PMarketEnabled           bool // P2P Marketplace
+	FeatureSavingsEnabled             bool // Group & Goal Savings (Ajo/Esusu)
 	FeatureRecurringSettlementEnabled bool // Task 5.2 recurring settlement processor (asynq + Redlock)
 
 	// SavingsEarlyBreakPenaltyBps is the fee for breaking a LOCK vault before
@@ -711,7 +713,7 @@ type Config struct {
 	// Pay a lab order from a crypto holding (sell-to-wallet, then escrow hold).
 	// DEFAULT OFF; also requires FeatureCryptoEnabled.
 	FeatureHealthLabCryptoPayment bool
-	FeatureHealthVetEnabled      bool
+	FeatureHealthVetEnabled       bool
 	// Pre-Consultation Health Intake (ADR-010). DEFAULT OFF. Gates the member
 	// /api/finance/health/intake/* + admin /api/health/admin/intake surface.
 	FeatureHealthIntakeEnabled bool
@@ -1118,7 +1120,7 @@ func Load() Config {
 		FeatureTelemedicineEnabled:                   getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
 		FeatureVoteBridgeEnabled:                     getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
-		FeatureTransportHailingEnabled: getEnvBool("FEATURE_TRANSPORT_HAILING_ENABLED", false),
+		FeatureTransportHailingEnabled:               getEnvBool("FEATURE_TRANSPORT_HAILING_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
 		FeatureBankAccountNameMatch:                  getEnvBool("FEATURE_BANK_ACCOUNT_NAME_MATCH", false),
 		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
@@ -1137,6 +1139,7 @@ func Load() Config {
 		TransportBusSettleGraceMinutes:               getEnvInt("TRANSPORT_BUS_SETTLE_GRACE_MINUTES", 30),
 		TransportBusCancelCutoffMinutes:              getEnvInt("TRANSPORT_BUS_CANCEL_CUTOFF_MINUTES", 120),
 		TransportBusMinBookingLeadMinutes:            getEnvInt("TRANSPORT_BUS_MIN_BOOKING_LEAD_MINUTES", 15),
+		TransportShareBaseURL:                        getEnv("TRANSPORT_SHARE_BASE_URL", "https://spotlight.app/track"),
 		ParcelRouteTokenSecret:                       getEnv("PARCEL_ROUTE_TOKEN_SECRET", ""),
 		FeatureAICareEnabled:                         getEnvBool("FEATURE_AICARE_ENABLED", false),
 		FeatureDisputesEnabled:                       getEnvBool("FEATURE_DISPUTES_ENABLED", false),
@@ -1211,7 +1214,7 @@ func Load() Config {
 		FeatureSocialPayEnabled:            getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
 		FeatureP2PMarketEnabled:            getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
 		FeatureSavingsEnabled:              getEnvBool("FEATURE_SAVINGS_ENABLED", false),
-		FeatureRecurringSettlementEnabled: getEnvBool("FEATURE_RECURRING_SETTLEMENT_ENABLED", false),
+		FeatureRecurringSettlementEnabled:  getEnvBool("FEATURE_RECURRING_SETTLEMENT_ENABLED", false),
 		FeatureTradingEnabled:              getEnvBool("FEATURE_TRADING_ENABLED", false),
 		FeatureAITradingEnabled:            getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
 		TradingFeeBps:                      getEnvInt("TRADING_FEE_BPS", 2000),
