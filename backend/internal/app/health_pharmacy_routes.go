@@ -110,8 +110,12 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	pg.GET("/orders", h.ListMine) // owner-scoped fulfilment queue
 	// The patient's own order history — a distinct path from /orders (the owner
 	// inbox above) so the two never collide. Also declared before /orders/:id.
-	pg.GET("/orders/mine", h.ListMyOrders)    // patient-scoped order history
-	pg.GET("/earnings", h.Earnings)           // owner-scoped money view
+	pg.GET("/orders/mine", h.ListMyOrders) // patient-scoped order history
+	pg.GET("/earnings", h.Earnings)        // owner-scoped money view
+	// Pharmacist work surfaces — scope resolved from health_providers.owner_user_id.
+	pg.GET("/provider/stock-alerts", h.StockAlerts)
+	pg.GET("/provider/rx-queue", h.RxQueue)
+	pg.GET("/provider/controlled-log", h.ControlledLog)
 	pg.GET("/orders/:id", h.Get)              // object-level authZ
 	pg.POST("/orders/:id/confirm", h.Confirm) // HL-3 verified e-Rx gate
 	pg.POST("/orders/:id/dispense", h.Dispense)

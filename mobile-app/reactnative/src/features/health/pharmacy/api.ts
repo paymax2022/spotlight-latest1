@@ -1011,8 +1011,14 @@ export async function getStockAlerts(): Promise<StockAlert[]> {
       .filter((c) => c.stock <= c.reorderLevel)
       .map((c) => ({ productId: c.productId, name: c.name, stock: c.stock, reorderLevel: c.reorderLevel, severity: c.stock === 0 ? 'out' : 'low' }));
   }
-  const { data } = await api.get<StockAlert[]>(`${PHARMACY_API}/provider/stock-alerts`);
-  return data;
+  const { data } = await api.get<{ alerts?: any[] }>(`${PHARMACY_API}/provider/stock-alerts`);
+  return (data.alerts ?? []).map((a) => ({
+    productId: a.product_id,
+    name: a.name ?? '',
+    stock: a.stock_qty ?? 0,
+    reorderLevel: a.reorder_level ?? 0,
+    severity: a.severity === 'out' ? 'out' : 'low',
+  }));
 }
 
 // GET /orders (h.ListMine) — the pharmacist's owner-scoped fulfilment inbox.
@@ -1074,8 +1080,15 @@ export async function getProviderRxQueue(): Promise<ProviderRxQueueItem[]> {
       status: r.status,
     }));
   }
-  const { data } = await api.get<ProviderRxQueueItem[]>(`${PHARMACY_API}/provider/rx-queue`);
-  return data;
+  const { data } = await api.get<{ queue?: any[] }>(`${PHARMACY_API}/provider/rx-queue`);
+  return (data.queue ?? []).map((q) => ({
+    rxId: q.rx_id,
+    patientName: q.patient_name ?? '',
+    prescriberName: q.prescriber_name || undefined,
+    uploadedAt: q.created_at,
+    itemCount: q.item_count ?? 0,
+    status: RX_STATUS_FROM_STATE[q.state] ?? 'verifying',
+  }));
 }
 
 export async function decideRx(rxId: string, decision: RxDecision, note?: string): Promise<Prescription> {
@@ -1118,8 +1131,18 @@ export async function getControlledLog(): Promise<ControlledLogEntry[]> {
       { id: 'cl_1', drugName: 'Codeine syrup (restricted)', patientName: 'Withheld', quantity: '1 × 100ml', pharmacistName: 'Pharm. Grace E.', registerRef: 'CR-2026-0042', at: new Date(Date.now() - 86_400_000).toISOString() },
     ];
   }
-  const { data } = await api.get<ControlledLogEntry[]>(`${PHARMACY_API}/provider/controlled-log`);
-  return data;
+  // HL-4: controlled substances are excluded at MVP, so the live register is
+  // normally empty — it is a real query, not a placeholder.
+  const { data } = await api.get<{ entries?: any[] }>(`${PHARMACY_API}/provider/controlled-log`);
+  return (data.entries ?? []).map((e) => ({
+    id: e.id,
+    drugName: e.drug_name ?? '',
+    patientName: e.patient_name ?? '',
+    quantity: String(e.quantity ?? ''),
+    pharmacistName: e.pharmacist_name ?? '',
+    registerRef: e.order_id ?? '',
+    at: e.dispensed_at,
+  }));
 }
 
 export async function getProviderEarnings(): Promise<ProviderEarnings> {
