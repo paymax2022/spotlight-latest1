@@ -20,6 +20,7 @@ export interface ListedVetWire {
   lng?: number;
   consultFeeKobo?: number;
   homeVisitFeeKobo?: number;
+  clinicFeeKobo?: number;
   types?: string[];
   species?: string[];
   specialties?: string[];
@@ -56,6 +57,7 @@ export function mapListedVet(raw: ListedVetWire): Vet {
     lng: raw.lng ?? 0,
     consultFeeKobo: raw.consultFeeKobo ?? 0,
     homeVisitFeeKobo: raw.homeVisitFeeKobo ?? 0,
+    clinicFeeKobo: raw.clinicFeeKobo ?? 0,
     types: (raw.types ?? []) as Vet['types'],
     species: (raw.species ?? []) as Vet['species'],
     specialties: raw.specialties ?? [],

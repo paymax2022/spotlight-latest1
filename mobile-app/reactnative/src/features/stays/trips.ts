@@ -550,14 +550,19 @@ export async function quoteModify(input: ModifyInput): Promise<ModifyQuote> {
       unavailable,
     };
   }
-  // TODO(stays): no backend modify-quote endpoint yet.
-  // Return a safe default (no delta, availability unknown) without a network call.
+  // Live: the server re-prices the new dates and changes nothing, so the guest sees the
+  // real delta before they confirm.
+  const { data } = await api.post(
+    `${STAYS_API_BASE}/reservations/${encodeURIComponent(input.reservationId)}/modify/quote`,
+    { check_in: input.checkIn, check_out: input.checkOut },
+  );
+  const q = unwrap<{ old_total_kobo: number; new_total_kobo: number; delta_kobo: number; unavailable: boolean }>(data);
   return {
-    deltaKobo: 0,
-    newTotalKobo: 0,
-    oldTotalKobo: 0,
+    deltaKobo: q.delta_kobo,
+    newTotalKobo: q.new_total_kobo,
+    oldTotalKobo: q.old_total_kobo,
     newNights: nightsBetween(input.checkIn, input.checkOut),
-    unavailable: false,
+    unavailable: q.unavailable,
   };
 }
 

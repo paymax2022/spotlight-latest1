@@ -1,0 +1,30 @@
+=== Phase 2.5a live-DB suite at 2026-10-28T08:26:17Z
+--- TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:54322/postgres   (local supabase db, container supabase_db_spotlight)
+--- cwd=/c/Users/Patrick.Egbuji/OneDrive - Antan Producing Limited/Documents/super-app/spotlight-latest1/backend
+--- go test ./internal/estate/ -count=1 -run 'TestLiveDB_Inbox|TestLiveDB_NotificationRetention|TestLiveDB_NotificationPurge' -v
+--- guard-message assertions in this run expect the reason-specific text that the re-applied
++++ 20271099000070 now raises ('because it is pinned' / 'because its category % is protected')
+=== RUN   TestLiveDB_Inbox_PagingAndPinnedFirst
+--- PASS: TestLiveDB_Inbox_PagingAndPinnedFirst (7.78s)
+=== RUN   TestLiveDB_Inbox_ArchiveRoundTrip
+--- PASS: TestLiveDB_Inbox_ArchiveRoundTrip (0.84s)
+=== RUN   TestLiveDB_Inbox_Search
+--- PASS: TestLiveDB_Inbox_Search (6.43s)
+=== RUN   TestLiveDB_Inbox_ReadStamps
+--- PASS: TestLiveDB_Inbox_ReadStamps (3.99s)
+=== RUN   TestLiveDB_Inbox_WritesScopedToOwner
+--- PASS: TestLiveDB_Inbox_WritesScopedToOwner (1.31s)
+=== RUN   TestLiveDB_NotificationRetentionPolicy_DefaultsThenWritten
+--- PASS: TestLiveDB_NotificationRetentionPolicy_DefaultsThenWritten (1.52s)
+=== RUN   TestLiveDB_NotificationRetentionSweep
+--- PASS: TestLiveDB_NotificationRetentionSweep (4.52s)
+=== RUN   TestLiveDB_NotificationRetentionPurge
+--- PASS: TestLiveDB_NotificationRetentionPurge (2.00s)
+=== RUN   TestLiveDB_NotificationPurgeGuard_LegalHold
+--- PASS: TestLiveDB_NotificationPurgeGuard_LegalHold (0.74s)
+=== RUN   TestLiveDB_NotificationRetention_PlatformSweep
+--- PASS: TestLiveDB_NotificationRetention_PlatformSweep (1.03s)
+PASS
+ok  	spotlight/backend/internal/estate	34.039s
+--- suite exit code: 0
+--- tallies: PASS=10 FAIL=0 SKIP=0

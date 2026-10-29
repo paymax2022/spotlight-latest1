@@ -38,6 +38,9 @@ export default defineConfig({
           EXPO_PUBLIC_LEARN_USE_MOCK: 'true',
           EXPO_PUBLIC_MEETINGS_USE_MOCK: 'true',
           EXPO_PUBLIC_LOYALTY_USE_MOCK: 'true',
+          // The Earn hub specs assert the fixture figures (MOCK_SUMMARY); referral is live by
+          // default now, so pin it here as the other modules are.
+          EXPO_PUBLIC_REFERRAL_USE_MOCK: 'true',
           EXPO_PUBLIC_ELECTION_USE_MOCK: 'true',
           EXPO_PUBLIC_VISITOR_USE_MOCK: 'true',
           EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK: 'true',

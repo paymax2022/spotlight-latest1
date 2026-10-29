@@ -150,6 +150,11 @@ type Test struct {
 	PriceKobo        int64     `json:"price_kobo"`
 	Active           bool      `json:"active"`
 	CreatedAt        time.Time `json:"created_at"`
+	// Display fields the catalog screens render (persisted, not client-guessed).
+	Category        string `json:"category"`
+	Description     string `json:"description"`
+	HomeCollection  bool   `json:"home_collection"`
+	FastingRequired bool   `json:"fasting_required"`
 }
 
 // Package is a bundle of tests sold at a package price (e.g. a screening panel).
@@ -176,13 +181,22 @@ type Order struct {
 	State            OrderState       `json:"state"`
 	CollectionMethod CollectionMethod `json:"collection_method"`
 	TotalKobo        int64            `json:"total_kobo"`
-	EscrowID         *string          `json:"escrow_id,omitempty"`
-	DeliveryRef      *string          `json:"delivery_ref,omitempty"`     // phlebotomist dispatch / results courier
-	ResultRecordID   *string          `json:"result_record_id,omitempty"` // vault record id on release (HL-8)
-	CancelReason     string           `json:"cancel_reason,omitempty"`
-	IdempotencyKey   string           `json:"idempotency_key"`
-	Lines            []OrderLine      `json:"lines,omitempty"`
-	CreatedAt        time.Time        `json:"created_at"`
+	// HomeFeeKobo is the home-visit fee included in TotalKobo (0 for walk-in).
+	HomeFeeKobo    int64       `json:"home_fee_kobo"`
+	EscrowID       *string     `json:"escrow_id,omitempty"`
+	DeliveryRef    *string     `json:"delivery_ref,omitempty"`     // phlebotomist dispatch / results courier
+	ResultRecordID *string     `json:"result_record_id,omitempty"` // vault record id on release (HL-8)
+	CancelReason   string      `json:"cancel_reason,omitempty"`
+	IdempotencyKey string      `json:"idempotency_key"`
+	Lines          []OrderLine `json:"lines,omitempty"`
+	CreatedAt      time.Time   `json:"created_at"`
+	// Display facts attached on read (see decorateOrders); never written back.
+	LabName                  string     `json:"lab_name,omitempty"`
+	SampleBarcode            *string    `json:"sample_barcode,omitempty"`
+	CollectionAddress        string     `json:"collection_address,omitempty"`
+	ScheduledFor             *time.Time `json:"scheduled_for,omitempty"`
+	AssignedPhlebotomist     *string    `json:"assigned_phlebotomist_id,omitempty"`
+	AssignedPhlebotomistName string     `json:"assigned_phlebotomist_name,omitempty"`
 }
 
 // OrderLine is a requested test (or test within a package), priced in kobo at
@@ -193,6 +207,9 @@ type OrderLine struct {
 	TestID        string `json:"test_id"`
 	TestName      string `json:"test_name"`
 	UnitPriceKobo int64  `json:"unit_price_kobo"`
+	// PackageID is set when this line came from a package (whose price is allocated
+	// across its tests so the lines sum to exactly the package price).
+	PackageID *string `json:"package_id,omitempty"`
 }
 
 // ProviderOrderSummary is the lab-staff order-list row (Service.ListProviderOrders)
@@ -201,6 +218,7 @@ type OrderLine struct {
 type ProviderOrderSummary struct {
 	ID               string           `json:"id"`
 	PatientID        string           `json:"patient_id"`
+	PatientName      string           `json:"patient_name"` // first name + initial only
 	State            OrderState       `json:"state"`
 	CollectionMethod CollectionMethod `json:"collection_method"`
 	CreatedAt        time.Time        `json:"created_at"`

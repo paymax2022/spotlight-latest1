@@ -122,6 +122,17 @@ type EventPatch struct {
 	VenueLngSet     bool     `json:"-"`
 	VenuePlaceID    *string  `json:"-"`
 	VenuePlaceIDSet bool     `json:"-"`
+
+	// Commerce disclosure and policy (events-commerce). These columns are NOT NULL
+	// with defaults, so "absent means unchanged" is the whole contract — an
+	// explicit null would clear a policy the refund engine depends on, so it is
+	// not offered. Applied only when the commerce flag is on.
+	City                 *string `json:"city,omitempty"`
+	VenueAddress         *string `json:"venue_address,omitempty"`
+	RefundPolicy         *string `json:"refund_policy,omitempty"`
+	RefundCutoffHours    *int    `json:"refund_cutoff_hours,omitempty"`
+	CheckinOpensMinutes  *int    `json:"checkin_opens_minutes,omitempty"`
+	CheckinClosesMinutes *int    `json:"checkin_closes_minutes,omitempty"`
 }
 
 // UnmarshalJSON decodes the plain fields as before and reads venue_lat,
@@ -182,6 +193,13 @@ func (s *Service) UpdateEvent(ctx context.Context, callerID, eventID string, pat
 	// when the social flag is on (with it off they are ignored).
 	if s.socialReads {
 		if err := checkVenueCoords(patch.VenueLat, patch.VenueLng); err != nil {
+			return nil, err
+		}
+	}
+	// Refund and check-in windows are range-checked the same way, and only when the
+	// commerce flag is on — the columns do not exist otherwise.
+	if s.commerceReads {
+		if err := validatePatchPolicy(patch); err != nil {
 			return nil, err
 		}
 	}
@@ -265,6 +283,28 @@ func (s *Service) UpdateEvent(ctx context.Context, callerID, eventID string, pat
 		}
 		if patch.VenuePlaceIDSet {
 			add("venue_place_id", nullableValue(normPlaceID(patch.VenuePlaceID)))
+		}
+	}
+	if s.commerceReads {
+		// Soft fields, like venue: applied only when present, and trimmed/capped
+		// the same way CreateEvent applies them.
+		if patch.City != nil {
+			add("city", clampTrim(*patch.City, maxCityLen))
+		}
+		if patch.VenueAddress != nil {
+			add("venue_address", clampTrim(*patch.VenueAddress, maxVenueAddressLen))
+		}
+		if patch.RefundPolicy != nil {
+			add("refund_policy", clampTrim(*patch.RefundPolicy, maxRefundPolicyLen))
+		}
+		if patch.RefundCutoffHours != nil {
+			add("refund_cutoff_hours", *patch.RefundCutoffHours)
+		}
+		if patch.CheckinOpensMinutes != nil {
+			add("checkin_opens_minutes", *patch.CheckinOpensMinutes)
+		}
+		if patch.CheckinClosesMinutes != nil {
+			add("checkin_closes_minutes", *patch.CheckinClosesMinutes)
 		}
 	}
 	if len(sets) > 0 {
@@ -363,6 +403,7 @@ var ErrEventClosed = errors.New("events: event is closed and cannot be cancelled
 // its order for the payer.
 type cancelTicket struct {
 	id           string
+	orderID      string // the order this seat was paid on — the refund + inbox anchor
 	buyerID      string // order.buyer_id (the payer, NOT the ticket's current owner)
 	pricePaid    int64
 	credentialID *string
@@ -426,7 +467,7 @@ func (s *Service) Cancel(ctx context.Context, ownerID, eventID, reason, idemKey 
 // retries, and every step is idempotent.
 func (s *Service) refundCancelledEvent(ctx context.Context, ev *Event) error {
 	rows, err := s.db.Query(ctx, `
-		SELECT t.id, COALESCE(o.buyer_id::text,''), t.price_paid_kobo, t.credential_id::text
+		SELECT t.id, t.order_id::text, COALESCE(o.buyer_id::text,''), t.price_paid_kobo, t.credential_id::text
 		FROM event_tickets t LEFT JOIN event_orders o ON o.id = t.order_id
 		WHERE t.event_id=$1 AND t.state <> 'REFUNDED'
 		ORDER BY t.created_at, t.id`, ev.ID)
@@ -436,7 +477,7 @@ func (s *Service) refundCancelledEvent(ctx context.Context, ev *Event) error {
 	var todo []cancelTicket
 	for rows.Next() {
 		var ct cancelTicket
-		if err := rows.Scan(&ct.id, &ct.buyerID, &ct.pricePaid, &ct.credentialID); err != nil {
+		if err := rows.Scan(&ct.id, &ct.orderID, &ct.buyerID, &ct.pricePaid, &ct.credentialID); err != nil {
 			rows.Close()
 			return fmt.Errorf("events: scan ticket: %w", err)
 		}
@@ -450,7 +491,15 @@ func (s *Service) refundCancelledEvent(ctx context.Context, ev *Event) error {
 	for _, ct := range todo {
 		if err := s.cancelRefundOneTicket(ctx, ev, ct.id, ct.buyerID, ct.pricePaid, ct.credentialID); err != nil {
 			errs = append(errs, fmt.Errorf("ticket %s: %w", ct.id, err))
+			continue
 		}
+		// The payer, not the current holder: a gifted ticket refunds the person the
+		// money came from, and the notice belongs in their inbox too. No amount is
+		// quoted here — the refund row and the wallet ledger are the money truth,
+		// and a notice that restates a figure can only drift from them.
+		s.notify(ctx, ct.buyerID, NotifyEventCancelled, "Event cancelled",
+			ev.Title+" was cancelled. Anything you paid has been returned to your wallet.",
+			ev.ID, ct.orderID, "")
 	}
 	return errors.Join(errs...)
 }
@@ -472,8 +521,7 @@ func (s *Service) cancelRefundOneTicket(ctx context.Context, ev *Event, ticketID
 		if buyerID == "" {
 			return errors.New("events: paid ticket has no order/payer to refund")
 		}
-		fee := pricePaidKobo * int64(ev.FeeBps) / 10000
-		refund := pricePaidKobo - fee
+		refund, fee := splitRefund(pricePaidKobo, ev.FeeBps)
 		// Fail closed: post nothing unless the split is consistent.
 		if refund < 0 || fee < 0 || refund+fee != pricePaidKobo {
 			return fmt.Errorf("events: inconsistent cancel split (price=%d fee=%d refund=%d)", pricePaidKobo, fee, refund)

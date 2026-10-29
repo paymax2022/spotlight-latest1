@@ -327,6 +327,12 @@ func TestLiveDB_Payout_ConcurrentTriggersPayOnce(t *testing.T) {
 		checker := seedTicketTokenUser(t, ctx, pool)
 		wg.Go(func() {
 			p, err := f.svc.ApproveOrganiserPayout(ctx, checker, id, newKey())
+			// A checker that loses the claim race sees the payout already
+			// PROCESSING and is told so (ErrPayoutInFlight); it must not move
+			// money. The exactly-once credit is asserted below.
+			if errors.Is(err, top5events.ErrPayoutInFlight) {
+				return
+			}
 			if err != nil {
 				t.Errorf("approve: %v", err)
 				return

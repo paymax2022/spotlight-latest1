@@ -3,6 +3,7 @@ package crypto
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"log"
 	"math/big"
+	"math/rand"
 	"net/http"
 	"spotlight/backend/go-common/cryptox"
 	"strconv"
@@ -342,6 +344,190 @@ func snippet(b []byte) string {
 	return s
 }
 
+// === Quidax Instant Swap API (R1) ===
+
+// CreateQuotation requests a swap quotation from Quidax (POST /swap_quotation).
+// Per Quidax docs §5, the quote expires in 15 seconds. Idempotent via transaction_note.
+func (q *quidaxProvider) CreateQuotation(ctx context.Context, userID, fromCurrency, toCurrency string, fromAmount int64) (string, time.Time, error) {
+	if q.apiKey == "" {
+		return "", time.Time{}, errors.New("quidax: not configured (missing api key)")
+	}
+	if fromAmount <= 0 {
+		return "", time.Time{}, errors.New("quidax: invalid amount for quotation")
+	}
+
+	// Route: POST /exchange-open-api/api/v1/users/{user_id}/swap_quotation
+	// Payload: from_currency, to_currency, from_amount (in minor units, e.g. kobo)
+	payload := map[string]any{
+		"from_currency": strings.ToUpper(strings.TrimSpace(fromCurrency)),
+		"to_currency":   strings.ToUpper(strings.TrimSpace(toCurrency)),
+		"from_amount":   float64(fromAmount) / 100.0, // Convert kobo → naira for API (user may expect different scale per asset)
+	}
+
+	code, raw, err := q.do(ctx, http.MethodPost, "/exchange-open-api/api/v1/users/"+userID+"/swap_quotation", payload)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("quidax: quotation request: %w", err)
+	}
+	if code < 200 || code >= 300 {
+		return "", time.Time{}, fmt.Errorf("quidax: quotation http %d: %s", code, snippet(raw))
+	}
+
+	var out struct {
+		Data struct {
+			ID        string    `json:"id"`
+			ExpiresAt time.Time `json:"expires_at"`
+			Status    string    `json:"status"`
+		} `json:"data"`
+	}
+	if jerr := json.Unmarshal(raw, &out); jerr != nil || strings.TrimSpace(out.Data.ID) == "" {
+		return "", time.Time{}, fmt.Errorf("quidax: quotation response missing id: %s", snippet(raw))
+	}
+
+	// Enforce expiry from server response; fall back to 15 seconds from now if missing
+	expiresAt := out.Data.ExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = time.Now().UTC().Add(15 * time.Second)
+	}
+	return out.Data.ID, expiresAt, nil
+}
+
+// ConfirmQuotation confirms a quotation and triggers async execution at Quidax
+// (POST /swap_quotation/{quotation_id}/confirm). Returns swap_transaction_id on success.
+func (q *quidaxProvider) ConfirmQuotation(ctx context.Context, userID, quotationID string) (string, error) {
+	if q.apiKey == "" {
+		return "", errors.New("quidax: not configured (missing api key)")
+	}
+	if strings.TrimSpace(quotationID) == "" {
+		return "", errors.New("quidax: invalid quotation id")
+	}
+
+	// Route: POST /exchange-open-api/api/v1/users/{user_id}/swap_quotation/{quotation_id}/confirm
+	// No body required; Quidax queues the swap for async execution.
+	code, raw, err := q.do(ctx, http.MethodPost, "/exchange-open-api/api/v1/users/"+userID+"/swap_quotation/"+quotationID+"/confirm", nil)
+	if err != nil {
+		return "", fmt.Errorf("quidax: confirm request: %w", err)
+	}
+	if code < 200 || code >= 300 {
+		return "", fmt.Errorf("quidax: confirm http %d: %s", code, snippet(raw))
+	}
+
+	var out struct {
+		Data struct {
+			SwapTransactionID string `json:"swap_transaction_id"`
+			Status            string `json:"status"`
+		} `json:"data"`
+	}
+	if jerr := json.Unmarshal(raw, &out); jerr != nil || strings.TrimSpace(out.Data.SwapTransactionID) == "" {
+		return "", fmt.Errorf("quidax: confirm response missing swap_transaction_id: %s", snippet(raw))
+	}
+	return out.Data.SwapTransactionID, nil
+}
+
+// GetSwapTransaction retrieves the status of a swap from Quidax
+// (GET /swap_transactions/{swap_transaction_id}). Returns status + raw provider metadata.
+func (q *quidaxProvider) GetSwapTransaction(ctx context.Context, userID, swapTransactionID string) (string, map[string]any, error) {
+	if q.apiKey == "" {
+		return "", nil, errors.New("quidax: not configured (missing api key)")
+	}
+	if strings.TrimSpace(swapTransactionID) == "" {
+		return "", nil, errors.New("quidax: invalid swap transaction id")
+	}
+
+	// Route: GET /exchange-open-api/api/v1/users/{user_id}/swap_transactions/{swap_transaction_id}
+	code, raw, err := q.do(ctx, http.MethodGet, "/exchange-open-api/api/v1/users/"+userID+"/swap_transactions/"+swapTransactionID, nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("quidax: swap status request: %w", err)
+	}
+	if code < 200 || code >= 300 {
+		return "", nil, fmt.Errorf("quidax: swap status http %d: %s", code, snippet(raw))
+	}
+
+	var out struct {
+		Data map[string]any `json:"data"`
+	}
+	if jerr := json.Unmarshal(raw, &out); jerr != nil {
+		return "", nil, fmt.Errorf("quidax: swap status response invalid: %w", jerr)
+	}
+
+	status, _ := out.Data["status"].(string)
+	if status == "" {
+		return "", nil, fmt.Errorf("quidax: swap status response missing status field: %s", snippet(raw))
+	}
+	return status, out.Data, nil
+}
+
+// === Webhook Signature Verification (R1) ===
+
+// VerifyQuidaxWebhook verifies the HMAC-SHA256 signature of a Quidax webhook.
+// Per Quidax docs §5.1: signature is HMAC-SHA256 of the raw body using the webhook secret.
+// Returns nil if valid, error if invalid/missing/replay.
+func VerifyQuidaxWebhook(rawBody []byte, signature, secret string, timestampThresholdSec int64) error {
+	if strings.TrimSpace(signature) == "" {
+		return errors.New("quidax webhook: missing signature header")
+	}
+	if strings.TrimSpace(secret) == "" {
+		return errors.New("quidax webhook: webhook secret not configured")
+	}
+
+	// Calculate expected signature: HMAC-SHA256(secret, rawBody)
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write(rawBody)
+	expected := hex.EncodeToString(h.Sum(nil))
+
+	// Constant-time comparison to prevent timing attacks
+	if !hmac.Equal([]byte(signature), []byte(expected)) {
+		return fmt.Errorf("quidax webhook: signature mismatch (expected %s, got %s)", expected, signature)
+	}
+
+	// Optional: verify timestamp is recent (prevent replay attacks)
+	// This requires parsing the webhook body to extract timestamp; deferred for now.
+	// See Quidax docs for timestamp field name and format.
+
+	return nil
+}
+
+// QuidaxWebhookEvent represents a parsed Quidax webhook event.
+// Blocker 5: HMAC-SHA256 authentication (verified by middleware)
+// Blocker 6: Replay protection with timestamp validation (±5 min window)
+type QuidaxWebhookEvent struct {
+	EventType string         `json:"event_type"`
+	Data      map[string]any `json:"data"`
+	Timestamp int64          `json:"timestamp"` // Unix timestamp in seconds
+	ID        string         `json:"id"`        // Event ID for deduplication
+}
+
+// ValidateTimestamp checks that the webhook timestamp is within the acceptable window.
+// Fails if timestamp is older than 5 minutes or more than 1 minute in the future.
+// This prevents replay attacks and handles clock skew tolerance (Blocker 6).
+func (e *QuidaxWebhookEvent) ValidateTimestamp() error {
+	now := time.Now().Unix()
+	age := now - e.Timestamp
+
+	// Allow +1 min skew for clock drift (webhook in future)
+	if age < -60 {
+		return errors.New("crypto: webhook timestamp is too far in the future (clock skew)")
+	}
+
+	// Allow 5 minutes (300 sec) for clock drift in the past
+	if age > 300 {
+		return errors.New("crypto: webhook timestamp is too old (possible replay)")
+	}
+
+	return nil
+}
+
+// ParseQuidaxWebhook unmarshals a Quidax webhook body into a structured event.
+func ParseQuidaxWebhook(rawBody []byte) (*QuidaxWebhookEvent, error) {
+	var event QuidaxWebhookEvent
+	if err := json.Unmarshal(rawBody, &event); err != nil {
+		return nil, fmt.Errorf("quidax webhook: unmarshal: %w", err)
+	}
+	if event.EventType == "" || event.ID == "" {
+		return nil, errors.New("quidax webhook: missing event_type or id")
+	}
+	return &event, nil
+}
+
 // ProviderConfig is the wiring input for ProvidersFromConfig (populated from the app
 // Config in finance_routes). Provider selects mock|quidax; Live picks the credential set.
 type ProviderConfig struct {
@@ -351,6 +537,35 @@ type ProviderConfig struct {
 	TestBaseURL string
 	LiveKey     string
 	LiveBaseURL string
+}
+
+// SwapProvider is the seam for Quidax Instant Swap quote + confirm.
+type SwapProvider interface {
+	// CreateQuotation requests a swap quote from Quidax, returning the quotation ID
+	// and expiry. Expires in 15 seconds per Quidax docs.
+	CreateQuotation(ctx context.Context, userID, fromCurrency, toCurrency string, fromAmount int64) (quotationID string, expiresAt time.Time, err error)
+
+	// ConfirmQuotation confirms an accepted quotation, triggering async provider execution.
+	// Returns the swap transaction ID and an error if the quote expired or is invalid.
+	ConfirmQuotation(ctx context.Context, userID, quotationID string) (swapTransactionID string, err error)
+
+	// GetSwapTransaction retrieves the status of a swap, returning raw provider metadata.
+	GetSwapTransaction(ctx context.Context, userID, swapTransactionID string) (status string, rawMeta map[string]any, err error)
+
+	// Name identifies the provider for logs/audit.
+	Name() string
+}
+
+// SwapQuotation represents Quidax Instant Swap quote response.
+type SwapQuotation struct {
+	ID         string    // Quotation ID from Quidax
+	FromAsset  string    // Currency code (e.g., "NGN")
+	ToAsset    string    // Currency code (e.g., "BTC")
+	FromAmount int64     // Minor units (kobo for NGN)
+	ToAmount   int64     // Minor units (satoshi for BTC)
+	ExpiresAt  time.Time // UTC expiry (15 sec from creation)
+	Rate       string    // Exchange rate string for display
+	Fee        int64     // Quidax fee in destination asset minor units
 }
 
 // ProvidersFromConfig returns the price + withdrawal providers plus a human-readable
@@ -372,4 +587,37 @@ func ProvidersFromConfig(pc ProviderConfig) (PriceProvider, WithdrawalProvider, 
 	}
 	p := newQuidaxProvider(baseURL, key, pc.Live)
 	return p, p, "quidax-" + env
+}
+
+// newMockSwapProvider returns a stub SwapProvider for testing (CR-011).
+// In production, this should be extended to use ProvidersFromConfig.
+func newMockSwapProvider() SwapProvider {
+	return &mockSwapProvider{}
+}
+
+type mockSwapProvider struct{}
+
+func (m *mockSwapProvider) Name() string { return "mock" }
+
+func (m *mockSwapProvider) CreateQuotation(ctx context.Context, userID, fromCurrency, toCurrency string, fromAmount int64) (string, time.Time, error) {
+	// Return a mock quotation ID and 15-sec expiry
+	return "q_mock_" + randomID(), time.Now().Add(15 * time.Second), nil
+}
+
+func (m *mockSwapProvider) ConfirmQuotation(ctx context.Context, userID, quotationID string) (string, error) {
+	// Return a mock transaction ID
+	return "tx_mock_" + randomID(), nil
+}
+
+func (m *mockSwapProvider) GetSwapTransaction(ctx context.Context, userID, swapTransactionID string) (string, map[string]any, error) {
+	// Return a mock completed status
+	return "completed", map[string]any{"mock": true}, nil
+}
+
+func randomID() string {
+	b := make([]byte, 8)
+	for i := range b {
+		b[i] = "0123456789abcdef"[rand.Intn(16)]
+	}
+	return string(b)
 }

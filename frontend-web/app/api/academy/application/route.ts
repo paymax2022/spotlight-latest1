@@ -164,7 +164,9 @@ function buildActions(
   // `=== true` test here silently never matches and would tell every applicant their
   // fee was outstanding.
   const feePaid =
-    Number(application.application_fee_paid ?? 0) > 0 || application.payment_status === 'paid';
+    Number(application.application_fee_paid ?? 0) > 0 ||
+    application.payment_status === 'paid' ||
+    application.payment_status === 'not_required';
   if (!feePaid) {
     actions.push({
       key: 'pay_application_fee',
@@ -174,15 +176,10 @@ function buildActions(
     });
   }
 
-  if (status === 'pending' || status === 'under_review' || status === 'submitted') {
-    actions.push({
-      key: 'await_review',
-      label: 'Awaiting review',
-      detail: 'No action needed from you right now. We will notify you once a decision is made.',
-    });
-  }
-
-  // Tuition only becomes payable once the application is approved.
+  // There is no admin review step: submitting settles payment, which approves and
+  // enrols. An approved applicant who is not yet enrolled (older admin-approved rows)
+  // is still offered the instalment that enrols them, so tuition is gated on
+  // approval, not enrolment.
   if (status === 'approved') {
     const outstanding = payments
       .filter((p) => p.status !== 'paid' && p.status !== 'waived')
@@ -198,15 +195,12 @@ function buildActions(
             : `Pay tuition instalment ${next.installment_number} of ${payments.length}`,
         detail: enrolled
           ? 'Keep your instalments up to date to stay enrolled.'
-          : 'Your application was approved. Pay to secure your place and start learning.',
+          : 'Pay to secure your place and start learning.',
         amountNgn: Number(next.amount_ngn ?? 0),
         dueDate: (next.due_date as string) ?? null,
       });
     }
 
-    // Arrears are stated plainly rather than used to silently lock someone out.
-    // Suspending access is an admin decision with real consequences for a paying
-    // learner; the system's job here is to make the debt impossible to miss.
     const compliance = summariseCompliance(payments);
     if (compliance.state === 'overdue') {
       actions.unshift({
@@ -222,9 +216,6 @@ function buildActions(
       });
     }
 
-    // Learning opens on ENROLMENT, not on the plan being fully settled. A learner on
-    // a three-month plan would otherwise be locked out until the course was nearly
-    // over, despite having paid to secure the place.
     if (enrolled) {
       actions.push({
         key: 'start_learning',

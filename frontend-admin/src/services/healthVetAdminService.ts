@@ -273,7 +273,16 @@ export async function listAppointments(opts?: { status?: string; mode?: string; 
   if (opts?.mode) qs.set('mode', opts.mode);
   if (opts?.emergency) qs.set('emergency', opts.emergency);
   if (opts?.q) qs.set('q', opts.q);
-  return getJson<VetAppointment[]>(`/appointments${qs.toString() ? `?${qs}` : ''}`);
+  // The console list lives at /appointments/console (the bare /appointments is the raw oversight read); filters apply here.
+  let rows = await getJson<VetAppointment[]>('/appointments/console');
+  if (opts?.status) rows = rows.filter((r) => r.status === opts.status);
+  if (opts?.mode) rows = rows.filter((r) => r.mode === opts.mode);
+  if (opts?.emergency === 'yes') rows = rows.filter((r) => r.is_emergency);
+  if (opts?.q) {
+    const q = opts.q.toLowerCase();
+    rows = rows.filter((r) => r.pet_name.toLowerCase().includes(q) || r.owner_masked.toLowerCase().includes(q) || r.vet_masked.toLowerCase().includes(q) || r.id.includes(q));
+  }
+  return rows;
 }
 export async function getAppointment(id: string): Promise<VetAppointmentDetail> {
   if (USE_MOCK) {

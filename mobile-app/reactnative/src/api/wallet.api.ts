@@ -3,6 +3,7 @@ import { createSupabaseClient } from '@/lib/supabase';
 import { mapWalletFromApi, mapWalletFromSupabase, resolveFallbackBalanceKobo } from '@/api/mappers/wallet.mapper';
 import type { Wallet } from '@/types/wallet';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+import { kycTierRequired } from '@/api/kycGate';
 
 const ZERO_WALLET: Wallet = { balance: 0, currency: 'NGN', ledgerBalance: 0, pendingBalance: 0 };
 
@@ -36,9 +37,13 @@ export async function getWallet(): Promise<Wallet> {
       return mapWalletFromSupabase(data);
     }
     return mapWalletFromApi(data);
-  } catch {
+  } catch (err) {
     const fallback = await getWalletFromSupabase();
-    return fallback ?? { ...ZERO_WALLET, balanceUnavailable: true };
+    const wallet = fallback ?? { ...ZERO_WALLET, balanceUnavailable: true };
+    // A KYC 403 is not an outage: keep the real balance and tell the screen why money
+    // actions are limited, so it can ask the user to verify instead of failing quietly.
+    const tier = kycTierRequired(err);
+    return tier ? { ...wallet, kycTierRequired: tier } : wallet;
   }
 }
 

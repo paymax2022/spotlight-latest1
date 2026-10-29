@@ -229,7 +229,7 @@ export default function FilmAcademyTuitionScreen() {
                 button that lands on a locked screen. */}
             {enrolled && (
               <Pressable
-                onPress={() => router.push('/film-academy/learn' as never)}
+                onPress={() => router.push('/film-academy/path' as never)}
                 style={[styles.learnBtn, allPaid ? styles.learnBtnPrimary : styles.learnBtnSecondary]}
               >
                 <GraduationCap size={18} color={allPaid ? Colors.black : Colors.gold} />

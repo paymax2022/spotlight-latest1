@@ -25,6 +25,7 @@ export default function WizardPreview() {
   // An uploaded logo is stored as an R2 object key, which is not fetchable, so
   // show the local preview picked on the Branding step; a pasted URL renders as-is.
   const logoSrc = draft.logoPreviewUri ?? (draft.logoUri && isRemoteLogoUrl(draft.logoUri) ? draft.logoUri : null);
+  const coverSrc = draft.coverPreviewUri ?? (draft.coverUri && isRemoteLogoUrl(draft.coverUri) ? draft.coverUri : null);
 
   const groupTypeLabel = GROUP_TYPE_OPTIONS.find((o) => o.value === draft.groupType)?.label ?? '—';
   const approvalLabel = APPROVAL_RULE_OPTIONS.find((o) => o.value === draft.approvalRule)?.label ?? '—';
@@ -43,6 +44,7 @@ export default function WizardPreview() {
       <ScreenHeader title="Review & publish" />
       <WizardProgress step={5} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        {coverSrc ? <Image source={{ uri: coverSrc }} style={styles.cover} resizeMode="cover" accessibilityLabel="Organisation banner" /> : null}
         {/* Identity */}
         <View style={[styles.card, shadow1]}>
           <View style={styles.identity}>
@@ -152,6 +154,7 @@ const styles = StyleSheet.create({
   identity: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   logo: { width: 52, height: 52, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   logoImg: { width: '100%', height: '100%' },
+  cover: { width: '100%', aspectRatio: 3, maxHeight: 180, borderRadius: Radius.lg, marginBottom: Spacing.sm },
   logoText: { ...Typography.labelLg, color: Colors.primary, fontWeight: '800' as const },
   name: { ...Typography.titleMd, color: Colors.onSurface },
   category: { ...Typography.labelSm, color: Colors.onSurfaceVariant },

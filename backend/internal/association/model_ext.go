@@ -248,7 +248,11 @@ type OrgDraft struct {
 	// LogoURL is bound from `logoUri` because that is the wizard draft's field
 	// name. The client sets it either from a pasted URL or from the image
 	// picker; see the note on validateOrgIdentity about what the picker yields.
-	LogoURL  string `json:"logoUri"`
+	LogoURL string `json:"logoUri"`
+	// CoverURL is the optional banner, bound from `coverUri` and stored in
+	// cover_url. Same two sources as the logo: a pasted URL or an uploaded
+	// object key (minted by the same presign endpoint).
+	CoverURL string `json:"coverUri"`
 	Location string `json:"location"`
 	Website  string `json:"website"`
 	// FoundedYear is a pointer so "absent" is distinguishable from year 0 —

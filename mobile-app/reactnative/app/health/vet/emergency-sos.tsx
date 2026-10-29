@@ -12,6 +12,7 @@ import StateView from '@/components/StateView';
 import VetMapView from '@/features/health/vet/components/VetMapView';
 import { useEmergencyVets } from '@/features/health/vet/hooks';
 import { VET_EMERGENCY_DISCLAIMER } from '@/features/health/vet/constants';
+import { projectPins } from '@/features/health/vet/mapPins';
 
 export default function EmergencySosScreen() {
   const { data: vets, isLoading, isError, refetch } = useEmergencyVets();
@@ -36,7 +37,7 @@ export default function EmergencySosScreen() {
         ) : (
           <>
             <VetMapView
-              pins={(vets ?? []).map((v, i) => ({ id: v.id, label: v.name, x: 0.25 + (i % 3) * 0.3, y: 0.3 + Math.floor(i / 3) * 0.35, active: v.open24h }))}
+              pins={projectPins((vets ?? []).map((v) => ({ id: v.id, label: v.name, lat: v.lat, lng: v.lng, active: v.open24h })))}
               height={170}
               caption="Nearest emergency care"
             />

@@ -199,7 +199,15 @@ export interface ShareLinkResult {
 // The web app's own base URL, same variable the referral module's invite
 // links are built from — keeps every "share a link to get someone into the
 // app" feature pointed at one configured host instead of each hardcoding it.
-const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_BASE_URL || 'https://spotlight.ng';
+// Share links must open the public web site (it hosts /vote-link/<token>), so the
+// fallback is the production site — the same host as the backend's WEB_APP_BASE_URL
+// and EXPO_PUBLIC_SITE_URL — not the API host or the app's own origin.
+const WEB_BASE_URL = (
+  process.env.EXPO_PUBLIC_SHARE_BASE_URL ||
+  process.env.EXPO_PUBLIC_WEB_BASE_URL ||
+  process.env.EXPO_PUBLIC_SITE_URL ||
+  'https://www.spotlightng.com'
+).replace(/\/+$/, '');
 
 /** Record a share and return the link to hand to the OS share sheet. */
 export async function shareContestant(contestantId: string): Promise<ShareLinkResult> {

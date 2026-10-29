@@ -19,6 +19,15 @@ export function TelemedTabs({ active }: { active: string }) {
     { href: '/admin/telemedicine/dashboard', label: 'Overview', key: 'overview' },
     { href: '/admin/telemedicine/consultations', label: 'Consultations', key: 'consultations' },
     { href: '/admin/telemedicine/clinicians', label: 'Clinicians', key: 'clinicians' },
+    { href: '/admin/telemedicine/onboarding', label: 'Onboarding', key: 'onboarding' },
+    { href: '/admin/telemedicine/compliance', label: 'Compliance', key: 'compliance' },
+    { href: '/admin/telemedicine/reviews', label: 'Reviews', key: 'reviews' },
+    { href: '/admin/telemedicine/prescriptions', label: 'Prescriptions', key: 'prescriptions' },
+    { href: '/admin/telemedicine/claims', label: 'HMO claims', key: 'claims' },
+    { href: '/admin/telemedicine/referrals', label: 'Referrals', key: 'referrals' },
+    { href: '/admin/telemedicine/finance', label: 'Finance', key: 'finance' },
+    { href: '/admin/telemedicine/support', label: 'Support', key: 'support' },
+    { href: '/admin/telemedicine/safety', label: 'Safety', key: 'safety' },
   ];
   return (
     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>

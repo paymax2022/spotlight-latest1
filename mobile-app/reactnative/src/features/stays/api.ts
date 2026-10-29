@@ -21,6 +21,7 @@ import {
   USE_MOCK,
   MOCK_DELAY_MS,
   chargeableKobo,
+  longStayDiscountKobo,
   usdCentsToNgnKobo,
 } from './constants/stays.constants';
 import {
@@ -192,6 +193,8 @@ interface BEOffer {
     refundable: boolean;
     mobile_only: boolean;
     cancellation_policy?: unknown;
+    long_stay_min_nights?: number;
+    long_stay_discount_pct?: number;
   };
   net_rate_kobo: number;
   tax_kobo: number;
@@ -324,6 +327,7 @@ export async function getStaysHome(): Promise<StaysHome> {
       ],
       deals: MOCK_DEALS,
       trendingDestinations: MOCK_DESTINATIONS.slice(0, 4),
+      recentListings: MOCK_PROPERTIES.slice(0, 4),
       saved: MOCK_PROPERTIES.filter((p) => savedIds.has(p.id)),
     };
   }
@@ -331,6 +335,10 @@ export async function getStaysHome(): Promise<StaysHome> {
   const { data } = await api.get(`${STAYS_API_BASE}/home`);
   const body = unwrap<{
     trending_destinations?: Array<{ id: string; name: string; region: string; kind: string; property_count: number }>;
+    recent_listings?: Array<{
+      id: string; supplier_code: string; supplier_ref: string; name: string; city: string; star: number;
+      property_type: string; cover_url: string; lead_price_kobo: number; currency: string;
+    }>;
   }>(data) ?? {};
   const trendingDestinations = (body.trending_destinations ?? []).map((d) => ({
     id: d.id,
@@ -339,7 +347,29 @@ export async function getStaysHome(): Promise<StaysHome> {
     kind: (d.kind === 'landmark' || d.kind === 'area' ? d.kind : 'city') as DestinationSuggestion['kind'],
     propertyCount: d.property_count ?? 0,
   }));
-  return { recentSearches: [], deals: [], trendingDestinations, saved: [] };
+  // Detail pages decode an offer key, so a recent listing gets the same key a search result carries.
+  const recentListings: PropertyCard[] = (body.recent_listings ?? []).map((r) => ({
+    id: encodeKey({
+      r: 'DIRECT', s: r.supplier_code, p: r.supplier_ref, ci: '', co: '', rm: 1, ad: 2,
+      cur: toCurrency(r.currency), nm: r.name, cy: r.city, st: r.star, pt: r.property_type, price: r.lead_price_kobo,
+    }),
+    name: r.name,
+    city: r.city,
+    area: '',
+    star: r.star ?? 0,
+    propertyType: r.property_type as PropertyType,
+    sourceRail: 'DIRECT' as const,
+    coverUrl: r.cover_url ?? '',
+    leadPriceMinor: r.lead_price_kobo ?? 0,
+    currency: r.currency as Currency,
+    reviewScore: 0,
+    reviewCount: 0,
+    freeCancellation: false,
+    amenities: [],
+    geo: { lat: 0, lng: 0 },
+    soldOut: false,
+  }));
+  return { recentSearches: [], deals: [], trendingDestinations, recentListings, saved: [] };
 }
 
 function addDays(n: number): string {
@@ -593,23 +623,30 @@ export async function getProperty(id: string): Promise<PropertyDetail> {
   };
 }
 
-export async function getRoomTypes(propertyId: string): Promise<RoomType[]> {
+export async function getRoomTypes(
+  propertyId: string,
+  dates?: { checkIn: string; checkOut: string },
+): Promise<RoomType[]> {
   if (USE_MOCK) {
     await delay(240);
     return MOCK_ROOM_TYPES[propertyId] ?? MOCK_ROOM_TYPES.__default;
   }
   const key = decodeKey(propertyId);
   if (!key) return [];
+  // Explicit dates (the rates screen's stay length) win. Otherwise a listing opened without
+  // dates prices the next night, so every date below agrees.
+  const stay = { ci: dates?.checkIn || key.ci || addDays(1), co: dates?.checkOut || key.co || addDays(2) };
   // offer_token into each RatePlan.id so prebook can address it.
+  // A listing opened without dates has none in its key: price the next night, as the search screen does.
   const q: SearchQuery = {
     destination: key.cy ?? '',
-    checkIn: key.ci,
-    checkOut: key.co,
+    checkIn: stay.ci,
+    checkOut: stay.co,
     guests: { adults: key.ad, children: 0, childrenAges: [], rooms: key.rm },
   };
   const { data } = await api.get(`${STAYS_API_BASE}/search`, { params: searchParams(q) });
   const results = (unwrap<BEResult[]>(data) ?? []).filter((res) => res.offer.supplier_property_ref === key.p);
-  const n = nights(key.ci, key.co);
+  const n = nights(stay.ci, stay.co);
   const byRoom = new Map<string, BEResult[]>();
   for (const res of results) {
     const rk = res.offer.supplier_room_type_ref || res.offer.room_name;
@@ -623,11 +660,14 @@ export async function getRoomTypes(propertyId: string): Promise<RoomType[]> {
     const currency = toCurrency(group[0].breakdown.display_currency || first.currency);
     const ratePlans: RatePlan[] = group.map((res) => {
       const o = res.offer;
-      const perNight = Math.round(res.breakdown.gross_kobo / n);
+      // The search quotes the nightly rate (the stay total is built from the nightly
+      // calendar at prebook), so the gross is already per night. Dividing it by the
+      // nights made longer stays look cheaper.
+      const perNight = res.breakdown.gross_kobo;
       const rpKey: OfferKey = {
         r: o.rail, s: o.supplier_code, p: o.supplier_property_ref,
         rt: o.supplier_room_type_ref, rp: o.rate_plan?.supplier_rate_plan_ref, ot: o.offer_token,
-        ci: key.ci, co: key.co, rm: key.rm, ad: key.ad, cur: currency, price: perNight,
+        ci: stay.ci, co: stay.co, rm: key.rm, ad: key.ad, cur: currency, price: perNight,
       };
       return {
         id: encodeKey(rpKey),
@@ -638,6 +678,8 @@ export async function getRoomTypes(propertyId: string): Promise<RoomType[]> {
         mobileOnly: Boolean(o.rate_plan?.mobile_only),
         pricePerNightMinor: perNight,
         currency,
+        longStayMinNights: o.rate_plan?.long_stay_min_nights || undefined,
+        longStayDiscountPct: o.rate_plan?.long_stay_discount_pct || undefined,
       };
     });
     const fromPrice = ratePlans.reduce((m, rp) => Math.min(m, rp.pricePerNightMinor), ratePlans[0]?.pricePerNightMinor ?? 0);
@@ -760,11 +802,20 @@ export function buildBreakdown(input: PrebookInput, addOns: AddOn[], priceBumpPc
   const n = draft.nights;
   const perNightKobo = chargeableKobo(draft.pricePerNightMinor, draft.currency);
   const bumped = Math.round(perNightKobo * (1 + priceBumpPct));
-  const roomKobo = bumped * n;
+  const roomGrossKobo = bumped * n;
+  const longStayDiscount = longStayDiscountKobo(roomGrossKobo, n, draft.longStayMinNights, draft.longStayDiscountPct);
+  const roomKobo = roomGrossKobo - longStayDiscount;
 
   const lines: PriceLine[] = [
-    { label: `${draft.roomTypeName} · ${n} night${n > 1 ? 's' : ''}`, amountKobo: roomKobo, kind: 'room' },
+    { label: `${draft.roomTypeName} · ${n} night${n > 1 ? 's' : ''}`, amountKobo: roomGrossKobo, kind: 'room' },
   ];
+  if (longStayDiscount > 0) {
+    lines.push({
+      label: `Long-stay discount (${draft.longStayDiscountPct}% off, ${draft.longStayMinNights}+ nights)`,
+      amountKobo: -longStayDiscount,
+      kind: 'discount',
+    });
+  }
   for (const key of addOnKeys) {
     const a = addOns.find((x) => x.key === key);
     if (a) lines.push({ label: a.label, amountKobo: a.priceMinor, kind: 'addon' });

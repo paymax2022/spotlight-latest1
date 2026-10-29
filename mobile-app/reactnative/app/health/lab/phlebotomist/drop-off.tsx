@@ -17,9 +17,6 @@ import TextInputField from '@/components/TextInputField';
 
 import { useDropOff } from '@/features/health/lab/hooks';
 
-const LAB_ID = 'lab_synlab';
-const LAB_NAME = 'SynLab Diagnostics';
-
 export default function DropOffScreen() {
   const { orderId, barcode } = useLocalSearchParams<{ orderId: string; barcode: string }>();
   const dropOff = useDropOff();
@@ -30,7 +27,6 @@ export default function DropOffScreen() {
   const onConfirm = async () => {
     await dropOff.mutateAsync({
       orderId,
-      labId: LAB_ID,
       barcode,
       note: note.trim() || undefined,
     });
@@ -40,12 +36,12 @@ export default function DropOffScreen() {
   if (done) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Lab drop-off" subtitle={LAB_NAME} />
+        <ScreenHeader title="Lab drop-off" subtitle="Handed to the lab" />
         <StateView
           kind="empty"
           icon="PackageCheck"
           title="Sample handed off"
-          message={`Delivered to ${LAB_NAME}. The lab will accession this sample next.`}
+          message="Custody has passed to the lab. They will accession this sample next."
           actionLabel="Back to assignments"
           onAction={() => router.replace('/health/lab/phlebotomist/assignments')}
         />
@@ -78,7 +74,7 @@ export default function DropOffScreen() {
               <Building2 size={20} color={Colors.primary} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.destName}>{LAB_NAME}</Text>
+              <Text style={styles.destName}>The lab&apos;s accession desk</Text>
               <Text style={styles.destMeta}>Drop-off destination</Text>
             </View>
           </View>

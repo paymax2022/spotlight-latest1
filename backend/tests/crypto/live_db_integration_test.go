@@ -159,7 +159,7 @@ func TestLiveDB_Swap_NetWalletDeltaZero_SpreadToRevenue_Idempotent(t *testing.T)
 	}
 
 	key := newIdemKey(t, "swap")
-	first, err := svc.Swap(ctx, userID, fromAssetID, toAssetID, swapUnits, key)
+	first, err := svc.Swap(ctx, userID, fromAssetID, toAssetID, swapUnits, "", key)
 	if err != nil {
 		t.Fatalf("Swap: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestLiveDB_Swap_NetWalletDeltaZero_SpreadToRevenue_Idempotent(t *testing.T)
 	}
 
 	// Retry with the SAME idempotency key.
-	second, err := svc.Swap(ctx, userID, fromAssetID, toAssetID, swapUnits, key)
+	second, err := svc.Swap(ctx, userID, fromAssetID, toAssetID, swapUnits, "", key)
 	if err != nil {
 		t.Fatalf("retried Swap: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestLiveDB_Swap_OversellRejected_HoldingsUnchanged(t *testing.T) {
 	}
 	fromUnitsBefore := findHoldingUnits(holdingsBefore, fromAssetID)
 
-	_, err = svc.Swap(ctx, userID, fromAssetID, toAssetID, fromUnitsBefore*1000, newIdemKey(t, "oversell"))
+	_, err = svc.Swap(ctx, userID, fromAssetID, toAssetID, fromUnitsBefore*1000, "", newIdemKey(t, "oversell"))
 	if !errors.Is(err, crypto.ErrInsufficient) {
 		t.Fatalf("oversell swap: err = %v, want ErrInsufficient", err)
 	}

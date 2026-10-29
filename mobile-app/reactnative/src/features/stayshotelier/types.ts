@@ -142,6 +142,9 @@ export interface RatePlan {
   refundable: boolean;
   baseSellRateKobo: number;
   currency: string;
+  /** Long-stay rule: stays of at least this many nights take longStayDiscountPct off. */
+  longStayMinNights?: number;
+  longStayDiscountPct?: number;
 }
 
 export interface HotelierReservation {
@@ -157,7 +160,8 @@ export interface CreatePropertyInput {
   name: string;
   propertyType: PropertyTypeValue;
   address: string;
-  city: string;
+  /** Optional: the map-picked address already places the property. */
+  city?: string;
   starRating?: number;
 }
 
@@ -165,6 +169,8 @@ export interface CreateRoomTypeInput {
   name: string;
   occupancy: number;
   bedding?: string;
+  /** Rooms of this type open for sale each night. Defaults to one. */
+  units?: number;
 }
 
 export interface CreateRatePlanInput {
@@ -172,4 +178,6 @@ export interface CreateRatePlanInput {
   type: string;
   refundable: boolean;
   baseSellRateKobo: number;
+  longStayMinNights?: number;
+  longStayDiscountPct?: number;
 }

@@ -2,6 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+import type { CollectionMode, LabOrderLine } from './types';
+import { getDevicePosition } from './location';
 import {
   getTests,
   getTest,
@@ -13,7 +15,9 @@ import {
   getOrders,
   getOrder,
   createOrder,
-  reorder,
+  getTestOffers,
+  getPackageOffers,
+  quoteOrder,
   getResult,
   getResults,
   acknowledgeResultConsent,
@@ -28,9 +32,9 @@ import {
   enterResult,
   releaseResult,
   getProviderEarnings,
-  requestPayout,
   getProviderReviews,
   getAssignments,
+  setCollectionStatus,
   getChecklist,
   logCustody,
   dropOff,
@@ -134,8 +138,34 @@ export function useCreateOrder() {
   });
 }
 
-export function useReorder() {
-  return useMutation({ mutationFn: (orderId: string) => reorder(orderId) });
+export function usePackageOffers(name?: string) {
+  return useQuery({
+    queryKey: [KEY, 'package-offers', name],
+    queryFn: () => getPackageOffers(name as string),
+    enabled: Boolean(name),
+    staleTime: 60_000,
+  });
+}
+
+/** The server's price for the order being built. Always fresh: it is what will be held. */
+export function useOrderQuote(input: { labId?: string; collectionMode: CollectionMode; lines: LabOrderLine[] }) {
+  const ids = input.lines.map((l) => `${l.kind}:${l.refId}`).join(',');
+  return useQuery({
+    queryKey: [KEY, 'quote', input.labId, input.collectionMode, ids],
+    queryFn: () => quoteOrder({ labId: input.labId as string, collectionMode: input.collectionMode, lines: input.lines }),
+    enabled: Boolean(input.labId) && input.lines.length > 0,
+    staleTime: 0,
+    gcTime: 0,
+  });
+}
+
+export function useTestOffers(code?: string) {
+  return useQuery({
+    queryKey: [KEY, 'offers', code],
+    queryFn: () => getTestOffers(code as string),
+    enabled: Boolean(code),
+    staleTime: 60_000,
+  });
 }
 
 export function useResult(id?: string, opts?: { enabled?: boolean }) {
@@ -223,20 +253,26 @@ export function useProviderEarnings() {
   return useQuery({ queryKey: [KEY, 'provider', 'earnings'], queryFn: getProviderEarnings });
 }
 
-export function useRequestPayout() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (amountKobo: number) => requestPayout(amountKobo, generateIdempotencyKey()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'provider', 'earnings'] }),
-  });
-}
-
 export function useProviderReviews() {
   return useQuery({ queryKey: [KEY, 'provider', 'reviews'], queryFn: getProviderReviews });
 }
 
 export function useAssignments() {
-  return useQuery({ queryKey: [KEY, 'phleb', 'assignments'], queryFn: getAssignments, staleTime: 10_000 });
+  return useQuery({
+    queryKey: [KEY, 'phleb', 'assignments'],
+    // Distances only when location permission is already granted (no prompt on a poll).
+    queryFn: async () => getAssignments(await getDevicePosition(false)),
+    staleTime: 10_000,
+  });
+}
+
+export function useSetCollectionStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ orderId, status }: { orderId: string; status: 'en_route' | 'arrived' }) =>
+      setCollectionStatus(orderId, status, await getDevicePosition(true)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'phleb', 'assignments'] }),
+  });
 }
 
 export function useChecklist(orderId?: string) {

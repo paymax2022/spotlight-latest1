@@ -8,11 +8,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, waitFor } from '@testing-library/react';
 import type { AdminOverview, OverviewModule } from '@/types/adminOverview';
 
-const mockGetAdminOverview = vi.fn();
+const mockLoadAdminOverview = vi.fn();
 const mockGetAdminMenuCounts = vi.fn();
 
 vi.mock('@/services/adminApiClient', () => ({
-  getAdminOverview: (...a: unknown[]) => mockGetAdminOverview(...a),
+  loadAdminOverview: (...a: unknown[]) => mockLoadAdminOverview(...a),
   getAdminMenuCounts: (...a: unknown[]) => mockGetAdminMenuCounts(...a),
 }));
 vi.mock('@/config/stemAccess', () => ({
@@ -43,7 +43,7 @@ const queue = (
 
 const serve = (modules: OverviewModule[]) => {
   const overview: AdminOverview = { generated_at: '2026-10-08T09:00:00Z', modules };
-  mockGetAdminOverview.mockResolvedValue(overview);
+  mockLoadAdminOverview.mockResolvedValue({ status: 'ok', overview });
   mockGetAdminMenuCounts.mockResolvedValue(null);
 };
 
@@ -114,5 +114,33 @@ describe('AdminDashboard — awaiting approval', () => {
     expect(section.queryByText('Marketplace seller verification')).toBeNull();
     // ...but it is named, so an admin can tell "could not look" from "nothing to do".
     expect(screen.getAllByText(/could not be read|—/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('AdminDashboard — the backend rejected the session', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('says the session was rejected and links to sign in, instead of blaming the backend', async () => {
+    mockLoadAdminOverview.mockResolvedValue({ status: 'unauthorized' });
+    mockGetAdminMenuCounts.mockResolvedValue(null);
+    render(<AdminDashboard />);
+
+    const section = await needsAttention();
+    expect(section.getByText(/session is no longer valid/i)).toBeTruthy();
+    expect(section.getByRole('link', { name: /sign in again/i }).getAttribute('href')).toBe('/admin/login');
+    expect(section.queryByText(/did not answer/i)).toBeNull();
+    expect(section.queryByText(/check the backend is running/i)).toBeNull();
+    expect(screen.getByText('session rejected')).toBeTruthy();
+    expect(screen.queryByText('unreachable')).toBeNull();
+  });
+
+  it('still blames the backend when it genuinely did not answer', async () => {
+    mockLoadAdminOverview.mockResolvedValue({ status: 'unavailable' });
+    mockGetAdminMenuCounts.mockResolvedValue(null);
+    render(<AdminDashboard />);
+
+    const section = await needsAttention();
+    expect(section.getByText(/did not answer/i)).toBeTruthy();
+    expect(section.queryByText(/session is no longer valid/i)).toBeNull();
   });
 });

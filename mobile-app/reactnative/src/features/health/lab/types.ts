@@ -77,16 +77,18 @@ export interface Lab {
   active: boolean;
 }
 
+/** Who is collecting. Only persisted facts: no rating or vehicle data exists for phlebotomists. */
 export interface Phlebotomist {
   id: string;
   name: string;
-  credential: ProviderCredential;
-  rating: number;
-  reviewCount: number;
-  lat: number;
-  lng: number;
-  phone: string;
-  vehicle: string;
+  credential?: ProviderCredential;
+  /** Shown to the patient only while the collection is active. */
+  phone?: string;
+  /** Last reported position; absent when none was shared in the last 15 minutes. */
+  lat?: number;
+  lng?: number;
+  locationAt?: string;
+  status: CollectionAssignment['status'];
 }
 
 // CREATED → SCHEDULED → SAMPLE_COLLECTED → IN_TRANSIT → ACCESSIONED →
@@ -147,7 +149,8 @@ export interface LabOrder {
 }
 
 // ── Results (HL-7 critical flag · HL-8 consent-gated) ─────────────────────────
-export type AnalyteFlag = 'normal' | 'low' | 'high' | 'critical';
+/** 'abnormal' = out of range but the direction could not be derived from the stored range. */
+export type AnalyteFlag = 'normal' | 'low' | 'high' | 'abnormal' | 'critical';
 
 export interface ResultAnalyte {
   id: string;
@@ -184,8 +187,10 @@ export interface LabResult {
   hasCritical: boolean;
   escalation?: CriticalEscalation;
   interpretation?: string;
-  /** Signed-URL PDF fetched on demand (HL-8). */
+  /** Signed-URL PDF fetched on demand (HL-8). Set only when a report document exists. */
   docId?: string;
+  /** HL-7: values are withheld while a critical result is still with the care team. */
+  analytesWithheld?: boolean;
 }
 
 export interface ResultConsent {
@@ -216,12 +221,37 @@ export interface CreateOrderInput {
   scheduledFor?: string;
   location: string;
   idempotencyKey: string;
+  /** The total shown at checkout; the server refuses the order if its price differs. */
+  expectedTotalKobo?: number;
+}
+
+/** One lab's offer of a catalog test: tests are per-lab rows, so the same test code has one id and price per lab. */
+export interface TestOffer {
+  labId: string;
+  testId: string;
+  priceKobo: number;
+}
+
+/** One lab's offer of a package (packages are per-lab rows too). */
+export interface PackageOffer {
+  labId: string;
+  packageId: string;
+  priceKobo: number;
+}
+
+/** The server's price for an order — exactly what checkout will hold. */
+export interface OrderQuote {
+  subtotalKobo: number;
+  homeFeeKobo: number;
+  totalKobo: number;
 }
 
 export interface ShareResultInput {
   resultId: string;
-  granteeName: string;
-  scopeNote?: string;
+  /** Email of the recipient's Spotlight account — consent is granted to an account. */
+  granteeEmail: string;
+  /** How long access lasts, 1-365 days (server default 30). */
+  days?: number;
 }
 
 export type ProviderOnboardingStatus =
@@ -310,11 +340,22 @@ export interface ResultReleaseInput {
   criticalAcknowledged?: boolean;
 }
 
+/**
+ * A lab owner's money, from the ledger and escrow. Released orders are credited to
+ * the owner's wallet; withdrawing uses the wallet's bank transfer, so there is no
+ * lab-specific payout request.
+ */
 export interface ProviderEarnings {
+  /** Wallet balance the ledger reports, before the bank-transfer fee. */
   availableKobo: number;
+  /** Lifetime total released to this owner. */
+  earnedKobo: number;
+  /** Held on orders still moving through collection and processing. */
   pendingKobo: number;
+  /** Held on orders awaiting sign-off or escalated, disputed holds, and released orders whose credit has not landed yet. */
   heldKobo: number;
-  payouts: { id: string; amountKobo: number; at: string; status: 'paid' | 'processing' }[];
+  /** The owner's own wallet-to-bank transfers, newest first. */
+  withdrawals: { id: string; amountKobo: number; feeKobo: number; at: string; status: 'paid' | 'processing' | 'failed' }[];
 }
 
 export interface CollectionAssignment {
@@ -342,11 +383,14 @@ export interface ChainOfCustodyInput {
   barcode: string;
   conditionOk: boolean;
   note?: string;
+  /** Ids of the checklist steps the phlebotomist confirmed; the server requires every required step. */
+  completedItems: string[];
 }
 
 export interface DropOffInput {
   orderId: string;
-  labId: string;
+  /** Optional: the server derives the lab from the order and only checks it if given. */
+  labId?: string;
   barcode: string;
   note?: string;
 }

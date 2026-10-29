@@ -369,3 +369,56 @@ export async function getDocumentDownloadUrl(documentId: string): Promise<string
   const { data } = await api.get(`${BASE}/documents/${documentId}/download-url`);
   return ((data?.data ?? data) as { downloadUrl: string }).downloadUrl;
 }
+
+// ── Elections (officer actions) ─────────────────────────────────────────────
+// These hit /elections, not /admin/…: the server gates them on the caller
+// holding an admin role in the organisation (the creator does), so the client
+// only decides what to SHOW. Creating an election leaves it in DRAFT; members
+// cannot see it until an officer opens it.
+
+export interface ElectionPositionInput {
+  title: string;
+  seats: number;
+  /** Admin role the winner is given at handover. Omit for a ceremonial position. */
+  role?: 'CHAPTER_ADMIN' | 'FINANCE_ADMIN' | 'SECRETARY' | 'NATIONAL_ADMIN';
+}
+
+export interface ElectionInput {
+  title: string;
+  description?: string;
+  /** RFC3339. */
+  votingOpensAt?: string | null;
+  votingClosesAt?: string | null;
+  requireGoodStanding?: boolean;
+  positions: ElectionPositionInput[];
+}
+
+export async function createElection(input: ElectionInput): Promise<CreatedId> {
+  if (USE_MOCK) throw notInFixtureMode('Creating an election');
+  const { data } = await api.post(`${BASE}/elections`, input);
+  return data;
+}
+
+export async function addElectionCandidate(
+  electionId: string,
+  input: { positionId: string; membershipId: string; manifesto?: string },
+): Promise<CreatedId> {
+  if (USE_MOCK) throw notInFixtureMode('Adding a candidate');
+  const { data } = await api.post(`${BASE}/elections/${electionId}/candidates`, input);
+  return data;
+}
+
+export async function openElection(electionId: string): Promise<void> {
+  if (USE_MOCK) throw notInFixtureMode('Opening an election');
+  await api.post(`${BASE}/elections/${electionId}/open`);
+}
+
+export async function closeElection(electionId: string): Promise<void> {
+  if (USE_MOCK) throw notInFixtureMode('Closing an election');
+  await api.post(`${BASE}/elections/${electionId}/close`);
+}
+
+export async function publishElectionResults(electionId: string): Promise<void> {
+  if (USE_MOCK) throw notInFixtureMode('Publishing election results');
+  await api.post(`${BASE}/elections/${electionId}/publish`);
+}

@@ -61,6 +61,24 @@ type Event struct {
 	VenuePlaceID *string  `json:"venue_place_id"`
 	LikeCount    int      `json:"like_count"`
 	Liked        bool     `json:"liked"`
+
+	// Commerce fields (events-commerce, migration 20271400000000): the buyer-facing
+	// disclosure set, the refund/check-in policy the organiser sets, and the
+	// moderation review state. Read and written only when the commerce flag is on —
+	// with it off these stay zero and every query keeps its pre-migration column
+	// list. Unlike the social fields these are plain values, not pointers: the
+	// migration defaults them for every existing row, so a zero never means "the
+	// column is NULL", it means "not set".
+	City                 string     `json:"city,omitempty"`
+	VenueAddress         string     `json:"venue_address,omitempty"`
+	RefundPolicy         string     `json:"refund_policy,omitempty"`
+	RefundCutoffHours    int        `json:"refund_cutoff_hours,omitempty"`
+	CheckinOpensMinutes  int        `json:"checkin_opens_minutes,omitempty"`
+	CheckinClosesMinutes int        `json:"checkin_closes_minutes,omitempty"`
+	SubmittedAt          *time.Time `json:"submitted_at,omitempty"`
+	ModerationStatus     string     `json:"moderation_status,omitempty"`
+	ModerationNote       string     `json:"moderation_note,omitempty"`
+	ModerationDecidedAt  *time.Time `json:"moderation_decided_at,omitempty"`
 }
 
 // EventListFilter narrows the discovery/list feed. Category and State are
@@ -78,6 +96,10 @@ type EventListFilter struct {
 	From *time.Time
 	To   *time.Time
 	Sort string // date_asc (default) | date_desc | price_asc | price_desc
+
+	// City narrows discovery to one location (UAT EVT-048). Honoured only when the
+	// commerce flag is on, since events.city exists only after that migration.
+	City string
 }
 
 // EventSummary is the lightweight discovery-feed projection of an Event: no
@@ -86,6 +108,7 @@ type EventSummary struct {
 	ID           string     `json:"id"`
 	Title        string     `json:"title"`
 	Venue        string     `json:"venue,omitempty"`
+	City         string     `json:"city,omitempty"` // "" unless the commerce flag is on (no pre-migration column)
 	State        EventState `json:"state"`
 	Category     string     `json:"category,omitempty"`
 	StartsAt     time.Time  `json:"starts_at"`
@@ -154,6 +177,15 @@ type Ticket struct {
 	CredentialID  string      `json:"credential_id"`
 	PricePaidKobo int64       `json:"price_paid_kobo"`
 	CreatedAt     time.Time   `json:"created_at"`
+
+	// AttendeeName is who the seat is for, captured at checkout. Check-in
+	// attribution records who let them in, at which gate, by which method — the
+	// door audit trail (UAT EVT-218/219). All zero unless the commerce flag is on.
+	AttendeeName  string     `json:"attendee_name,omitempty"`
+	CheckedInAt   *time.Time `json:"checked_in_at,omitempty"`
+	CheckinMethod string     `json:"checkin_method,omitempty"`
+	CheckedInBy   string     `json:"checked_in_by,omitempty"`
+	CheckedInGate string     `json:"checked_in_gate,omitempty"`
 }
 
 // Steward is a per-event grant letting someone other than the organiser call
@@ -168,15 +200,30 @@ type Steward struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Order is a checkout aggregate (one or more tickets paid via wallet.Debit).
+// Order is one seat's checkout record (event_orders). Money moved through
+// wallet.Debit or a verified Paystack charge; the snapshot fields restate the
+// price the buyer agreed at checkout so a later tier edit cannot re-price a
+// receipt. BookingRef groups the seats of one multi-ticket purchase.
 type Order struct {
-	ID             string    `json:"id"`
-	EventID        string    `json:"event_id"`
-	BuyerID        string    `json:"buyer_id"`
-	TotalKobo      int64     `json:"total_kobo"`
-	Status         string    `json:"status"` // PAID | REFUNDED
-	IdempotencyKey string    `json:"idempotency_key"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             string     `json:"id"`
+	Reference      string     `json:"reference,omitempty"` // card_reference on the card rail; "" on wallet
+	BookingRef     string     `json:"booking_ref,omitempty"`
+	EventID        string     `json:"event_id"`
+	EventTitle     string     `json:"event_title,omitempty"`
+	EventStartsAt  *time.Time `json:"event_starts_at,omitempty"`
+	BuyerID        string     `json:"buyer_id"`
+	BuyerName      string     `json:"buyer_name,omitempty"`
+	AttendeeName   string     `json:"attendee_name,omitempty"`
+	TierName       string     `json:"tier_name,omitempty"`
+	PromoCode      string     `json:"promo_code,omitempty"`
+	UnitPriceKobo  int64      `json:"unit_price_kobo"`
+	DiscountKobo   int64      `json:"discount_kobo"`
+	TotalKobo      int64      `json:"total_kobo"`
+	RefundedKobo   int64      `json:"refunded_kobo"`
+	PaymentRail    string     `json:"payment_rail,omitempty"`
+	Status         string     `json:"status"` // PENDING | PAID | EXPIRED | REFUNDED
+	IdempotencyKey string     `json:"idempotency_key,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // EventWalletState is the cashless wallet lifecycle (closed-loop, NL-3).

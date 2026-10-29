@@ -236,6 +236,25 @@ export const featureFlags = {
    * strictly safe and the whole plane stays reversible until the bank is reviewed.
    */
   filmAcademyAssessment: () => envFlag('FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED'),
+
+  /**
+   * TMFA topic mastery curriculum (`film_courses` / `film_topics`): the learner
+   * path, topic detail, topic quizzes and the admin publication/media console.
+   * Separate from the stage-exam flag because the path and teaching articles can
+   * be prepared and reviewed before any topic quiz is published. Off by default;
+   * every endpoint 503s while unset.
+   */
+  filmAcademyTopics: () => envFlag('FEATURE_FILM_ACADEMY_TOPICS_ENABLED'),
+
+  /**
+   * Film Academy pilot delivery — an audited exception that opens ONE course's
+   * sequence for real learners while the curriculum is still unreviewed, so the
+   * path, quizzes and holds can be exercised before faculty sign-off. It is not
+   * a publication shortcut: it only substitutes for the "topic published" and
+   * "reviewed question pool" preconditions, and the service ignores it entirely
+   * under NODE_ENV=production. Off by default.
+   */
+  filmAcademyPilotDelivery: () => envFlag('FEATURE_FILM_ACADEMY_PILOT_DELIVERY_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;

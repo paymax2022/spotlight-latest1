@@ -1,0 +1,44 @@
+-- === Phase 2.5a teardown, run at 2026-10-28T10:15:38Z — the teardown that follows the green BFF lane (stamp 20261028100950) and the Go lane run at 08:20Z ===
+BEGIN
+SELECT 14
+=== lanes found (before) ===
+ lane_estates 
+--------------
+           14
+(1 row)
+
+ lane_notifications 
+--------------------
+                 69
+(1 row)
+
+UPDATE 14
+UPDATE 1
+UPDATE 65
+DELETE 69
+DELETE 1
+DELETE 2
+UPDATE 1
+COMMIT
+=== lanes after teardown: everything must read 0 except the closed estate rows ===
+ notifications_left | policies_left | memberships_left | estates_still_open | retention_audit_rows_kept 
+--------------------+---------------+------------------+--------------------+---------------------------
+                  0 |             0 |                0 |                  0 |                        75
+(1 row)
+
+               email               | memberships 
+-----------------------------------+-------------
+ estate-uat-admin@local.test       |          14
+ estate-uat-guard@local.test       |           5
+ estate-uat-inbox-admin@local.test |           0
+ estate-uat-inbox-none@local.test  |           0
+ estate-uat-inbox-res@local.test   |           0
+ estate-uat-outsider@local.test    |           5
+ estate-uat-resident@local.test    |          11
+(7 rows)
+
+DELETE 1
+ lifecycle_granted_after_teardown |            email            
+----------------------------------+-----------------------------
+ f                                | estate-uat-admin@local.test
+(1 row)

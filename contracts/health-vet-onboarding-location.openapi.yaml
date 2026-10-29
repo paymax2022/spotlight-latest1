@@ -1,0 +1,93 @@
+openapi: 3.0.3
+info:
+  title: Health providers — application clinic location
+  version: 1.0.0
+  description: >
+    Stores the clinic location on a provider application while it is still editable.
+    A vet has no health_providers row until admin approval, so approval copies the point
+    onto health_providers.geo (NULL-safe: it never overwrites an existing geo with NULL).
+    The saved point is also returned by GET /providers/applications and /:id as geo_lat/geo_lng.
+servers:
+  - url: /api/finance/health
+paths:
+  /providers/applications/{id}/location:
+    put:
+      operationId: setApplicationLocation
+      summary: Save the clinic location on the caller's own application
+      description: >
+        Owner only (a foreign or missing application is a uniform 404). Allowed while the
+        application is DRAFT or NEEDS_INFO; any other state answers 409. For VET applications the
+        address, city and state are also merged into the vet profile draft (personalInfo) without
+        touching other draft keys.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationLocationInput'
+      responses:
+        '200':
+          description: Location saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationEnvelope'
+        '400':
+          description: Invalid body, missing coordinates, out-of-range coordinates, (0,0), or a field too long
+        '401':
+          description: Unauthenticated
+        '404':
+          description: Application not found (or owned by someone else)
+        '409':
+          description: Application is not DRAFT or NEEDS_INFO
+components:
+  schemas:
+    ApplicationLocationInput:
+      type: object
+      required: [lat, lng]
+      properties:
+        address:
+          type: string
+          maxLength: 200
+        city:
+          type: string
+          maxLength: 100
+        state:
+          type: string
+          maxLength: 100
+        lat:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+        lng:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+    ApplicationEnvelope:
+      type: object
+      properties:
+        success: { type: boolean }
+        application:
+          $ref: '#/components/schemas/Application'
+    Application:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        owner_user_id: { type: string, format: uuid }
+        domain: { type: string, enum: [VET, PHARMACY, LAB] }
+        provider_type: { type: string }
+        display_name: { type: string }
+        state:
+          type: string
+          enum: [DRAFT, SUBMITTED, UNDER_REVIEW, NEEDS_INFO, APPROVED, SUSPENDED, REJECTED]
+        review_note: { type: string }
+        provider_id: { type: string, format: uuid, nullable: true }
+        geo_lat: { type: number, format: double, nullable: true }
+        geo_lng: { type: number, format: double, nullable: true }

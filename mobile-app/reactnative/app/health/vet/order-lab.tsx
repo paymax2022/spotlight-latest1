@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StateView from '@/components/StateView';
 import { useOrderLabForPet, usePet } from '@/features/health/vet/hooks';
+import MissingContext from '@/features/health/vet/components/MissingContext';
 
 const PET_TESTS = [
   'Complete Blood Count (CBC)',
@@ -37,10 +38,12 @@ export default function OrderLabScreen() {
 
   const onSubmit = () => {
     orderLab.mutate(
-      { appointmentId: appointmentId ?? 'appt', petId, testNames: selected, note: note.trim() || undefined },
+      { appointmentId: appointmentId!, petId, testNames: selected, note: note.trim() || undefined },
       { onSuccess: () => setDone(true) },
     );
   };
+
+  if (!appointmentId || !petId) return <MissingContext title="Order lab test" />;
 
   if (done) {
     return (
@@ -82,6 +85,8 @@ export default function OrderLabScreen() {
             );
           })}
         </View>
+
+        {orderLab.isError ? <Text style={styles.trustText}>Couldn’t create the lab order. Check your connection and try again.</Text> : null}
 
         <TextInputField label="Note to the lab (optional)" placeholder="Clinical context, fasting, etc." value={note} onChangeText={setNote} multiline />
       </ScrollView>

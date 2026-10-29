@@ -85,6 +85,13 @@ import (
 	"spotlight/backend/internal/services"
 	staysreservation "spotlight/backend/internal/stays/reservation"
 	"spotlight/backend/internal/telemedicine"
+	telemedclaims "spotlight/backend/internal/telemedadmin/claims"
+	telemedcompliance "spotlight/backend/internal/telemedadmin/compliance"
+	telemedfinance "spotlight/backend/internal/telemedadmin/finance"
+	telemedonboarding "spotlight/backend/internal/telemedadmin/onboarding"
+	telemedprescriptions "spotlight/backend/internal/telemedadmin/prescriptions"
+	telemedreviews "spotlight/backend/internal/telemedadmin/reviews"
+	telemedsupport "spotlight/backend/internal/telemedadmin/support"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	transportpaystackcheckout "spotlight/backend/internal/transport/paystackcheckout"
@@ -681,7 +688,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// Same adminGroupTop5 fix applies — this is a second, independent
 			// admin group instance sharing the path prefix, not the same
 			// middleware chain as RegisterHealthVet's own group above.
-			RegisterHealthVCNVerification(finance, r.Group("/api/health/vet/admin"), pool, rbac, supabase)
+			vcnPresigner := r2.New(r2.Config{
+				AccountEndpoint: cfg.R2AccountEndpoint,
+				Bucket:          cfg.R2Bucket,
+				AccessKeyID:     cfg.R2AccessKeyID,
+				SecretAccessKey: cfg.R2SecretAccessKey,
+				Region:          cfg.R2Region,
+			})
+			RegisterHealthVCNVerification(finance, r.Group("/api/health/vet/admin"), pool, rbac, supabase, vcnPresigner)
 		}
 		// AI Symptom Checker (triage & navigation, NOT diagnosis) — reuses the care
 		// loop + wallet + clinician-governed red-flag layer. SC-1..SC-12 enforced.
@@ -740,7 +754,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureFXOrchestrationEnabled {
 		orchStore := orchestration.NewSQLStore(pool)
 
-		providers := buildFXProviders(&cfg)
+		providers, err := buildFXProviders(&cfg)
+		if err != nil {
+			log.Fatalf("[fx] failed to build providers: %v", err)
+		}
 		// Spread rule card comes from public.fx_markup_rates — the SAME table the
 		// legacy wallet FX service prices from — so one admin change at
 		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-032).
@@ -907,7 +924,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// goes through walletSvc, so the tier/daily-limit check fires exactly as it
 	// does for every other module rather than being reimplemented here. The
 	// hourly requery-sweep job (Phase 3) runs on the same ctx as the other finance jobs.
-	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, auditSink)
+	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, tiersSvc, auditSink)
 
 	// --- Multi-provider KYC verification gateway (ADR-013) ---
 	// Gated by FEATURE_KYC_VERIFY_ENABLED (default off). Builds the adapter
@@ -972,6 +989,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		kvGroup.GET("/me", kycHandler.GetMe)
 		kvGroup.POST("/session", kvHandler.StartSession)
 		kvGroup.GET("/session/:id", kvHandler.GetSession)
+		kvGroup.GET("/ids/used", kvHandler.UsedIDTypes)
 		kvGroup.POST("/consent", kvHandler.RecordConsent)
 		kvGroup.POST("/checks/id-number", kvHandler.CheckIDNumber)
 		kvGroup.POST("/checks/facial", kvHandler.CheckFacial)
@@ -1033,6 +1051,27 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			log.Fatalf("[association] ASSOC_CARD_SIGNING_SECRET is required when APP_ENV=%q — refusing to sign membership cards with the public dev key", cfg.AppEnv)
 		} else {
 			log.Println("[association] WARNING: ASSOC_CARD_SIGNING_SECRET unset — using the public dev card key (development only)")
+		}
+		// Device push for in-app notifications (task assignment, events,
+		// announcements, meetings, documents). The in-app feed rows are written by
+		// the service regardless; this only adds the push, and is skipped when
+		// Redis/the queue is unavailable.
+		if cfg.RedisURL != "" {
+			if pushClient, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
+				assocNotif := notifications.NewService(pushClient)
+				assocSvc.SetPusher(func(ctx context.Context, userID, title, body string, data map[string]any) error {
+					return deliverToUser(ctx, pool, assocNotif, notifications.Notification{
+						UserID: userID,
+						Event:  notifications.Event("association.activity"),
+						Title:  title,
+						Body:   body,
+						Data:   data,
+					})
+				})
+				log.Println("[association] device push wired (tasks, events, announcements, meetings, documents)")
+			} else {
+				log.Printf("[association] push disabled: queue client: %v", qerr)
+			}
 		}
 		// Commission recording for realized dues profit (the RevenueSplit 5%
 		// platform fee). Ledger-less recorder — the dues split already posts the
@@ -1201,6 +1240,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Block 31: per-election voter eligibility (KYC / payment / resident type)
 		estGroup.GET("/:id/elections/:electionId/eligibility", estateHandler.GetVoterEligibility)
 		estGroup.POST("/:id/elections/:electionId/eligibility", estateHandler.SetEligibilityRules)
+
+		// lifecycle, quorum/tie-break outcome, complaints and recounts (EST-UAT-0203…0230).
 
 		// Block 24: Onboarding & property selection
 		estGroup.POST("/:id/invite-codes", estateHandler.GenerateInviteCode)
@@ -2182,6 +2223,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		teleAdmin.GET("/doctors", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListDoctors)
 		teleAdmin.GET("/appointments", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListAppointments)
 		teleAdmin.POST("/doctors/:userId/verify", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminVerifyDoctor)
+		// Per-area admin consoles (onboarding, reviews, prescriptions, finance, claims,
+		// support, compliance). Each package mounts its own /<area>/... routes; reads need
+		// telemedicine.admin.view, mutations telemedicine.admin.manage.
+		teleView := middleware.RequirePermission(rbac, "telemedicine.admin.view")
+		teleManage := middleware.RequirePermission(rbac, "telemedicine.admin.manage")
+		telemedonboarding.Register(teleAdmin, pool, teleView, teleManage)
+		telemedreviews.Register(teleAdmin, pool, teleView, teleManage)
+		telemedprescriptions.Register(teleAdmin, pool, teleView, teleManage)
+		telemedfinance.Register(teleAdmin, pool, teleView, teleManage)
+		telemedclaims.Register(teleAdmin, pool, teleView, teleManage)
+		telemedsupport.Register(teleAdmin, pool, teleView, teleManage)
+		telemedcompliance.Register(teleAdmin, pool, teleView, teleManage)
 	}
 
 	if cfg.FeaturePharmacyEnabled {
@@ -2199,6 +2252,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Pharm.DELETE("/cart/:product_id", pharmacyHandler.RemoveFromCart)
 		v1Pharm.DELETE("/cart", pharmacyHandler.ClearCart)
 	}
+
 
 	if cfg.FeatureAICareEnabled {
 		var aicAI aicare.AIProvider
@@ -2255,6 +2309,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				transportSvc = transportSvc.WithReceiverPinSMS(termii)
 			} else {
 				log.Println("[transport] FEATURE_PARCEL_RECEIVER_PIN_SMS is on but TERMII_API_KEY is unset — receivers will not be texted their drop-off PIN")
+			}
+		}
+		// Free receiver PIN channel: email to the booking's receiver_email (Resend;
+		// nil without a key — never put a nil *ResendClient in the interface).
+		if cfg.FeatureParcelReceiverPinNotifyEnabled {
+			if rc := integrations.NewResendClient(cfg.ResendAPIKey, cfg.ResendFromEmail); rc != nil {
+				transportSvc = transportSvc.WithReceiverPinNotify(rc)
+			} else {
+				log.Println("[transport] FEATURE_PARCEL_RECEIVER_PIN_NOTIFY is on but RESEND_API_KEY is unset — receivers will not be emailed their drop-off PIN")
 			}
 		}
 		// Bridge transport dispatch/estimation onto the provider-agnostic
@@ -3459,7 +3522,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			LiveBaseURL: cfg.CryptoQuidaxLiveBaseURL,
 		})
 		log.Printf("[crypto] price/withdrawal provider mode: %s", cryptoMode)
-		crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw)
+		cryptoSvc := crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw, cfg.CryptoWebhookSecret)
+
+		// Blocker 5: Wire Quidax webhook routes if secret is configured.
+		// RegisterWebhookRoutes mounts POST /webhooks/crypto/quidax with HMAC middleware.
+		if cfg.CryptoWebhookSecret != "" {
+			webhooks := r.Group("/api/v1")
+			cryptoSvc.RegisterWebhookRoutes(webhooks)
+		}
 
 		// Provider-driven swap pipeline (quote -> confirm -> webhook/reconciler settle). Its own
 		// flag, and it fails closed: any missing piece skips the routes instead of mounting a

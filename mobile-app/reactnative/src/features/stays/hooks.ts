@@ -54,10 +54,10 @@ export function useProperty(id: string) {
   return useQuery({ queryKey: [KEY, 'property', id], queryFn: () => api.getProperty(id), enabled: !!id });
 }
 
-export function useRoomTypes(propertyId: string) {
+export function useRoomTypes(propertyId: string, dates?: { checkIn: string; checkOut: string }) {
   return useQuery({
-    queryKey: [KEY, 'rooms', propertyId],
-    queryFn: () => api.getRoomTypes(propertyId),
+    queryKey: [KEY, 'rooms', propertyId, dates?.checkIn ?? null, dates?.checkOut ?? null],
+    queryFn: () => api.getRoomTypes(propertyId, dates),
     enabled: !!propertyId,
   });
 }

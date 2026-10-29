@@ -1,0 +1,219 @@
+openapi: 3.0.3
+info:
+  title: Telemedicine admin - doctor onboarding approval
+  version: 1.0.0
+  description: |
+    Admin console surface for reviewing doctor / specialist / veterinarian
+    onboarding applications. Mounted under /api/v1/telemedicine/admin.
+    Reads require telemedicine.admin.view; decisions require
+    telemedicine.admin.manage. An "application" is one provider account that has
+    started onboarding in the mobile app (doctor_profiles row), joined with its
+    latest merchant-upgrade request, legal consents, app permissions and latest
+    MDCN verification. Decisions are applied through the existing MDCN review
+    service (state machine, discoverability gate, licence auto-suspend job) and
+    then recorded against the merchant-upgrade request. Every decision writes an
+    immutable doctor_compliance_audit row.
+servers:
+  - url: /api/v1/telemedicine/admin
+security:
+  - bearerAuth: []
+paths:
+  /onboarding/applications:
+    get:
+      operationId: listOnboardingApplications
+      summary: List onboarding applications
+      x-required-permission: telemedicine.admin.view
+      parameters:
+        - { name: stage, in: query, schema: { $ref: '#/components/schemas/Stage' } }
+        - { name: q, in: query, description: Matches name, email, phone or MDCN number, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 25 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Page of applications plus per-stage counts (unfiltered by stage).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/ApplicationList' }
+        '400': { $ref: '#/components/responses/Error' }
+  /onboarding/applications/{userId}:
+    get:
+      operationId: getOnboardingApplication
+      summary: Full review view of one application
+      x-required-permission: telemedicine.admin.view
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Application detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/ApplicationDetail' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /onboarding/applications/{userId}/decision:
+    post:
+      operationId: decideOnboardingApplication
+      summary: Approve, reject or request more information
+      description: |
+        Acts on the applicant's latest MDCN verification. approve requires
+        licence_expiry (future date) and discipline; reject and need_info require
+        notes. Repeating the same decision is a no-op success. A reviewer cannot
+        decide their own application (403).
+      x-required-permission: telemedicine.admin.manage
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecisionRequest' }
+      responses:
+        '200':
+          description: Updated application
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/ApplicationDetail' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+  schemas:
+    Stage:
+      type: string
+      description: |
+        started = account exists, nothing chosen; type_selected = provider type
+        chosen; in_progress = profile builder under way; pending_review =
+        submitted, awaiting a decision; needs_info = reviewer asked for more;
+        approved; rejected; suspended = licence suspended after approval.
+      enum: [started, type_selected, in_progress, pending_review, needs_info, approved, rejected, suspended]
+    ProviderType:
+      type: string
+      enum: [doctor, specialist, veterinarian]
+    DecisionAction:
+      type: string
+      enum: [approve, need_info, reject]
+    ApplicationSummary:
+      type: object
+      required: [user_id, name, stage, consents_accepted, consents_required, permissions_granted, steps_completed]
+      properties:
+        user_id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        provider_type: { $ref: '#/components/schemas/ProviderType' }
+        selected_type: { type: string, nullable: true, description: Provider type chosen in onboarding (profile draft) }
+        stage: { $ref: '#/components/schemas/Stage' }
+        upgrade_state: { type: string, nullable: true, description: Raw doctor_merchant_upgrades.state }
+        verification_status: { type: string, nullable: true }
+        verification_id: { type: string, format: uuid, nullable: true }
+        mdcn_number: { type: string, nullable: true }
+        consents_accepted: { type: integer }
+        consents_required: { type: integer }
+        permissions_granted: { type: integer }
+        steps_completed: { type: integer }
+        submitted_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time }
+    ApplicationList:
+      type: object
+      required: [items, total, counts]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ApplicationSummary' }
+        total: { type: integer }
+        counts:
+          type: object
+          additionalProperties: { type: integer }
+    Consent:
+      type: object
+      properties:
+        kind: { type: string }
+        version: { type: string }
+        accepted: { type: boolean }
+        accepted_at: { type: string, format: date-time, nullable: true }
+    Permission:
+      type: object
+      properties:
+        kind: { type: string }
+        state: { type: string, enum: [granted, denied, undetermined] }
+        decided_at: { type: string, format: date-time, nullable: true }
+    VerificationDocument:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        doc_type: { type: string }
+        label: { type: string, nullable: true }
+        file_name: { type: string, nullable: true }
+        mime_type: { type: string, nullable: true }
+        size_bytes: { type: integer, nullable: true }
+        required: { type: boolean }
+        uploaded_at: { type: string, format: date-time }
+    Verification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string }
+        kind: { type: string, enum: [initial, renewal, resubmission] }
+        mdcn_number: { type: string, nullable: true }
+        discipline: { type: string, nullable: true }
+        licence_expiry: { type: string, format: date, nullable: true }
+        submitted_at: { type: string, format: date-time, nullable: true }
+        decided_at: { type: string, format: date-time, nullable: true }
+        notes: { type: string, nullable: true }
+        rejection_reason: { type: string, nullable: true }
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        action: { type: string }
+        actor_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        detail: { type: object, additionalProperties: true }
+    ApplicationDetail:
+      allOf:
+        - $ref: '#/components/schemas/ApplicationSummary'
+        - type: object
+          properties:
+            specialty: { type: string, nullable: true }
+            hospital: { type: string, nullable: true }
+            is_published: { type: boolean }
+            completed_steps: { type: array, items: { type: string } }
+            consents: { type: array, items: { $ref: '#/components/schemas/Consent' } }
+            permissions: { type: array, items: { $ref: '#/components/schemas/Permission' } }
+            verifications: { type: array, items: { $ref: '#/components/schemas/Verification' } }
+            documents: { type: array, items: { $ref: '#/components/schemas/VerificationDocument' } }
+            audit: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+            can_decide: { type: boolean, description: True when the latest verification is pending or needs_info }
+            review_path: { type: string, description: Admin path of the full MDCN review screen for this verification }
+    DecisionRequest:
+      type: object
+      required: [action]
+      properties:
+        action: { $ref: '#/components/schemas/DecisionAction' }
+        licence_expiry: { type: string, format: date, description: Required for approve, must be in the future }
+        discipline: { type: string, enum: [medical, dental], description: Required for approve }
+        notes: { type: string, maxLength: 2000, description: Required for reject and need_info }

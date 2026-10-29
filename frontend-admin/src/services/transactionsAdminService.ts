@@ -16,8 +16,22 @@ import { apiRoot } from '@/config/env';
 
 export type LedgerEntryType = 'CREDIT' | 'DEBIT' | 'REVERSAL_CREDIT' | 'REVERSAL_DEBIT';
 
+export interface ModuleDetail {
+  module: string;
+  service_label: string;
+  category: string | null;
+  service_bought: string;
+  payment_method: string;
+  status: string;
+  provider: string | null;
+  biller?: string | null;
+  merchant: string | null;
+}
+
 export interface AdminTransactionRow {
   id: string;
+  /** Resolved module/service/provider/payment summary; absent when no module resolver recognises the reference. */
+  module_info?: ModuleDetail | null;
   type: LedgerEntryType;
   amount_kobo: number;
   reference: string;
@@ -71,16 +85,7 @@ export interface AdminTransactionDetail extends AdminTransactionRow {
   // module/reference combinations today — resolvers exist for a growing
   // bills). A null here is not an error — render an honest "no resolver yet"
   // note rather than hiding the absence.
-  module_detail: {
-    module: string;
-    service_label: string;
-    category: string | null;
-    service_bought: string;
-    payment_method: string;
-    status: string;
-    provider: string | null;
-    merchant: string | null;
-  } | null;
+  module_detail: ModuleDetail | null;
 }
 
 export interface AdminTransactionFilters {
@@ -110,6 +115,19 @@ function adminBase(): string {
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
   return {};
+}
+
+const PAYMENT_LABELS: Record<string, string> = {
+  wallet: 'Wallet',
+  paystack: 'Debit card',
+  card: 'Debit card',
+  transfer: 'Bank transfer',
+  cash: 'Cash',
+};
+
+export function paymentMethodLabel(method: string | null | undefined): string {
+  if (!method) return '—';
+  return PAYMENT_LABELS[method.toLowerCase()] ?? method;
 }
 
 export function formatKobo(kobo: number | null | undefined): string {

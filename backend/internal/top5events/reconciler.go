@@ -49,6 +49,17 @@ func StartPendingOrderReconciler(ctx context.Context, svc *Service, interval, ol
 		} else if n > 0 {
 			log.Printf("[top5events] cancelled-event refund sweep: events=%d", n)
 		}
+		// Approved/processing refunds re-drive to REFUNDED (commerce only —
+		// event_refunds exists only after migration 20271400000000). The ledger legs
+		// are keyed on the refund id, so a sweep that overlaps the desk's own retry
+		// replays instead of double-paying.
+		if svc.commerceReads {
+			if n, rerr := svc.ReconcileRefunds(cctx); rerr != nil {
+				log.Printf("[top5events] refund sweep error: %v", rerr)
+			} else if n > 0 {
+				log.Printf("[top5events] refund sweep: refunded=%d", n)
+			}
+		}
 		// Card-rail sweep — a no-op until EnableCardCheckout wires the rail
 		// (EVTB-D013). Settles paid charges whose webhook never arrived, takes
 		// over settle claims a crashed worker abandoned, releases expired unpaid

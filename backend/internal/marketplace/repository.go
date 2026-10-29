@@ -196,7 +196,7 @@ func (r *Repository) ThumbKeysFor(ctx context.Context, listingIDs []string) (map
 	rows, err := r.db.Query(ctx, `
 		SELECT DISTINCT ON (listing_id) listing_id, url_thumb
 		FROM public.mkt_listing_media
-		WHERE listing_id = ANY($1)
+		WHERE listing_id = ANY($1::uuid[])
 		ORDER BY listing_id, sort_order, created_at`, listingIDs)
 	if err != nil {
 		return nil, wrapInternal("list listing media", err)
@@ -255,10 +255,11 @@ func (r *Repository) MediaForListings(ctx context.Context, listingIDs []string) 
 	if len(listingIDs) == 0 {
 		return out, nil
 	}
+	// Explicit type cast for ANY($1::uuid[]) to ensure Postgres infers UUID array type
 	rows, err := r.db.Query(ctx, `
 		SELECT listing_id, id, url_thumb, blurhash, sort_order
 		FROM public.mkt_listing_media
-		WHERE listing_id = ANY($1)
+		WHERE listing_id = ANY($1::uuid[])
 		ORDER BY listing_id, sort_order, created_at`, listingIDs)
 	if err != nil {
 		return nil, wrapInternal("list listing media for page", err)
@@ -272,7 +273,10 @@ func (r *Repository) MediaForListings(ctx context.Context, listingIDs []string) 
 		}
 		out[listingID] = append(out[listingID], m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, wrapInternal("iterate listing media rows", err)
+	}
+	return out, nil
 }
 
 // AppendListingMedia adds photos to an EXISTING listing, starting at

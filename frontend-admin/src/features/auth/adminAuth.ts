@@ -1,5 +1,6 @@
 'use client';
 
+import { isAuthSessionMissingError } from '@supabase/supabase-js';
 import { getSupabaseClient } from '@/services/supabaseClient';
 import { apiV1 } from '@/config/env';
 
@@ -81,6 +82,9 @@ export async function signInAdmin(username: string, password: string) {
     // console-admin role (super-admin/system-admin — the only roles
     // RequireAdminConsoleRole admits), so wildcard permissions are the honest
     // display for the sidebar/routeGuard, exactly as the old 'admin' branch was.
+    // lgtm[js/clear-text-storage-of-sensitive-data]: This stores only non-sensitive
+    // metadata (id, email, roles, permissions). The actual auth token is in an HttpOnly
+    // cookie; server validates it on every request. Client-side RBAC rendering only.
     localStorage.setItem(
       ADMIN_USER_KEY,
       JSON.stringify({
@@ -196,8 +200,44 @@ export async function syncAdminSession(): Promise<boolean> {
     return false;
   }
 
+  // getSession() only checks the token's own expiry. GoTrue can have revoked
+  // the session underneath it — an admin-API password reset (what
+  // scripts/dev/ensure-dev-login.sh does) or a sign-out elsewhere kills every
+  // session for the account, and the still-unexpired token then fails every
+  // backend call with 401 "invalid token". Ask GoTrue whether it still knows
+  // this session, and only act on a DEFINITIVE rejection: a transport failure
+  // or 5xx is an auth outage, not a verdict, and must not sign the operator out.
+  const { error: userError } = await supabase.auth.getUser(session.access_token);
+  if (userError && isSessionRejected(userError)) {
+    localStorage.removeItem(ADMIN_USER_KEY);
+    void dropCookie();
+    // The persisted refresh token belongs to the same dead session; forget it
+    // locally so the next guard pass cannot mint and re-mirror another token
+    // for it. Local scope only — a global sign-out would call /logout with the
+    // very token GoTrue just refused.
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch {
+      /* non-fatal */
+    }
+    return false;
+  }
+
   await mirrorCookie(session.access_token, session.expires_at);
   return true;
+}
+
+/**
+ * True only for GoTrue's own rejection of the token, never for a transport failure.
+ *
+ * supabase-js does not surface GoTrue's 403 `session_not_found` as a 403: it
+ * rewrites it into its own AuthSessionMissingError (status 400) and drops the
+ * persisted session itself. Checking 401/403 alone therefore missed the exact
+ * case this guard exists for and waved the operator into a console that was
+ * logging itself out underneath them.
+ */
+function isSessionRejected(error: { status?: number }): boolean {
+  return error.status === 401 || error.status === 403 || isAuthSessionMissingError(error);
 }
 
 /**

@@ -202,6 +202,7 @@ type MemberDashboard struct {
 	OutstandingKobo     int64          `json:"outstandingKobo"`
 	NextDueDate         *string        `json:"nextDueDate"`
 	UnreadAnnouncements int            `json:"unreadAnnouncements"`
+	UnreadNotifications int            `json:"unreadNotifications"`
 	OpenTasks           int            `json:"openTasks"`
 }
 

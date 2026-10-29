@@ -25,12 +25,13 @@ import {
   Kpi, Bar, btn, btnPrimary, btnDanger, th, td, input, label, select, card, fmtDate,
 } from '../_ui';
 import * as svc from '@/services/filmAcademyAdminService';
+import { parseFormatPriceInput, FORMAT_PRICE_HINT } from './formatPrice';
 
 type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'assessment' | 'bank' | 'exams' | 'settings';
 
 const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'batches',     label: 'Batches',      hint: 'Cohorts the app offers on /film-academy' },
-  { key: 'applications',label: 'Applications', hint: 'Decisions drive /film-academy/status' },
+  { key: 'applications',label: 'Applications', hint: 'View applicants and their interest areas' },
   { key: 'tuition',     label: 'Tuition',      hint: 'Plans shown on /film-academy/tuition' },
   { key: 'curriculum',  label: 'Curriculum',   hint: 'Modules, lessons and the week 1-4 assignment timeline' },
   { key: 'progress',    label: 'Progress',     hint: 'Who has sent which part, and who is behind' },
@@ -104,7 +105,7 @@ export default function FilmAcademyAdminPage() {
       </div>
 
       {tab === 'batches'      ? <BatchesTab onNotice={setNotice} /> : null}
-      {tab === 'applications' ? <ApplicationsTab onNotice={setNotice} /> : null}
+      {tab === 'applications' ? <ApplicationsTab /> : null}
       {tab === 'tuition'      ? <TuitionTab onNotice={setNotice} /> : null}
       {tab === 'curriculum'   ? <CurriculumTab onNotice={setNotice} /> : null}
       {tab === 'progress'     ? <ProgressTab onNotice={setNotice} /> : null}
@@ -389,6 +390,10 @@ function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
   }, [area.pricing_options]);
 
   const dirty = options.some((o) => Number(prices[o.key]) !== Number(o.price_ngn));
+  // Never coerce a blank/invalid input to 0 — Save stays disabled until every line is valid.
+  const parsed = options.map((o) => ({ key: o.key, price_ngn: parseFormatPriceInput(prices[o.key]) }));
+  const invalid = parsed.some((p) => p.price_ngn === null);
+  const validPricing = () => parsed.map((p) => ({ key: p.key, price_ngn: p.price_ngn as number }));
 
   return (
     <div style={{
@@ -411,16 +416,18 @@ function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
       </div>
       {open && (
         <div style={{ padding: '0.2rem 0.75rem 0.6rem 2.3rem', display: 'grid', gap: '0.4rem' }}>
-          {options.map((o) => (
+          {options.map((o, i) => (
             <div key={o.key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               <div style={{ minWidth: 220, flex: 1, fontSize: '0.78rem' }}>
                 {o.label}{o.note ? ` (${o.note})` : ''}
               </div>
               <span style={{ fontSize: '0.75rem', color: colors.muted, whiteSpace: 'nowrap' }}>
-                = {naira(Math.max(0, Number(prices[o.key]) || 0))}
+                {parsed[i].price_ngn === null
+                  ? <span style={{ color: colors.danger }}>{FORMAT_PRICE_HINT}</span>
+                  : <>= {naira(parsed[i].price_ngn)}</>}
               </span>
               <span style={{ fontSize: '0.75rem', color: colors.muted }}>₦</span>
-              <input type="number" min={0} style={{ ...input(), width: 130 }}
+              <input type="number" min={1} step={1} style={{ ...input(), width: 130 }}
                 value={prices[o.key] ?? ''}
                 onClick={(e) => e.stopPropagation()}
                 onChange={(e) => setPrices((prev) => ({ ...prev, [o.key]: e.target.value }))} />
@@ -434,12 +441,11 @@ function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.15rem' }}>
               <button
                 style={btnPrimary()}
-                disabled={busy || !dirty}
+                disabled={busy || !dirty || invalid}
                 onClick={(e) => {
                   e.stopPropagation();
-                  void onSavePricing(
-                    options.map((o) => ({ key: o.key, price_ngn: Math.max(0, Number(prices[o.key]) || 0) })),
-                  );
+                  if (invalid) return;
+                  void onSavePricing(validPricing());
                 }}
               >
                 {dirty ? (busy ? 'Saving…' : 'Save prices') : 'Prices saved'}
@@ -455,33 +461,10 @@ function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
   );
 }
 
-const APP_STATUSES = ['submitted', 'under_review', 'approved', 'rejected', 'waitlisted'];
-
-function ApplicationsTab({ onNotice }: NoticeProp) {
+function ApplicationsTab() {
   const batches = useAsync(() => svc.listBatches(), []);
   const [batchId, setBatchId] = useState('');
-  const [status, setStatus] = useState('');
-  const apps = useAsync(() => svc.listApplications({ batchId: batchId || undefined, status: status || undefined }), [batchId, status]);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [notes, setNotes] = useState<Record<string, string>>({});
-
-  const decide = async (id: string, next: string) => {
-    const verb = next === 'approved' ? 'Approve' : next === 'rejected' ? 'Reject' : 'Update';
-    if (!window.confirm(
-      next === 'approved'
-        ? 'Approve this application? This creates the instalment plan and starts the enrolment — the applicant sees it immediately on their phone.'
-        : `${verb} this application?`,
-    )) return;
-    setBusy(id);
-    try {
-      await svc.decideApplication(id, { status: next, review_notes: notes[id] || undefined });
-      await apps.reload();
-      onNotice(next === 'approved'
-        ? 'Approved. The instalment plan is created and /film-academy/status now shows the decision.'
-        : 'Application updated — the applicant sees the new status on their phone.');
-    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(null); }
-  };
+  const apps = useAsync(() => svc.listApplications({ batchId: batchId || undefined }), [batchId]);
 
   const list = apps.data ?? [];
 
@@ -495,24 +478,16 @@ function ApplicationsTab({ onNotice }: NoticeProp) {
             {(batches.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.batch_name}</option>)}
           </select>
         </div>
-        <div style={{ minWidth: 180 }}>
-          <span style={label()}>Status</span>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">Any status</option>
-            {APP_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
         <button style={btn()} onClick={() => void apps.reload()}>Refresh</button>
       </FilterBar>
 
       <StateBlock loading={apps.loading} error={apps.error} empty={list.length === 0}
-        emptyText="No applications match this filter.">
+        emptyText="No applications found.">
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
             <thead><tr>
               <th style={th()}>Applicant</th><th style={th()}>Batch</th><th style={th()}>Areas</th>
-              <th style={th()}>Status</th><th style={th()}>App. fee paid</th>
-              <th style={th()}>Applied</th><th style={th()}>Decision</th>
+              <th style={th()}>App. fee paid</th><th style={th()}>Applied</th>
             </tr></thead>
             <tbody>
               {list.map((a) => (
@@ -524,28 +499,8 @@ function ApplicationsTab({ onNotice }: NoticeProp) {
                   </td>
                   <td style={td()}>{a.academy_batches?.batch_name || '—'}</td>
                   <td style={td()}>{(a.areas_of_interest ?? []).join(', ') || '—'}</td>
-                  <td style={td()}><Badge status={a.status ?? 'submitted'} /></td>
-                  {/* application_fee_paid is NUMERIC (the amount), not a boolean. */}
                   <td style={td()}>{naira(a.application_fee_paid)}</td>
                   <td style={td()}>{fmtDate(a.created_at)}</td>
-                  <td style={{ ...td(), minWidth: 260 }}>
-                    <input
-                      style={{ ...input(), marginBottom: 6 }}
-                      placeholder="Review note (optional)"
-                      value={notes[a.id] ?? ''}
-                      onChange={(e) => setNotes({ ...notes, [a.id]: e.target.value })}
-                    />
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <button style={btnPrimary()} disabled={busy === a.id || a.status === 'approved'}
-                        onClick={() => void decide(a.id, 'approved')}>
-                        {busy === a.id ? '…' : 'Approve'}
-                      </button>
-                      <button style={btnDanger()} disabled={busy === a.id || a.status === 'rejected'}
-                        onClick={() => void decide(a.id, 'rejected')}>Reject</button>
-                      <button style={btn()} disabled={busy === a.id}
-                        onClick={() => void decide(a.id, 'under_review')}>Review</button>
-                    </div>
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -553,8 +508,7 @@ function ApplicationsTab({ onNotice }: NoticeProp) {
         </div>
       </StateBlock>
       <AuditNote>
-        Approving creates the instalment plan and calls enrolment. Where tuition is due, the enrolment
-        completes on the FIRST instalment — not the full amount.
+        Applicants gain immediate access to learning materials after payment. No admin approval needed.
       </AuditNote>
     </Card>
   );
@@ -1180,6 +1134,7 @@ function SettingsTab({ onNotice }: NoticeProp) {
         registration_type: form.registration_type,
         application_fee: Number(form.application_fee) || 0,
         application_fee_refundable: !!form.application_fee_refundable,
+        tuition_fee: Number(form.tuition_fee) || 0,
       });
       await settings.reload();
       onNotice('Settings saved — the apply form on the phone uses these immediately.');
@@ -1347,6 +1302,10 @@ function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
   }, [area.pricing_options]);
 
   const dirty = options.some((o) => Number(prices[o.key]) !== Number(o.price_ngn));
+  // Never coerce a blank/invalid input to 0 — Save stays disabled until every line is valid.
+  const parsed = options.map((o) => ({ key: o.key, price_ngn: parseFormatPriceInput(prices[o.key]) }));
+  const invalid = parsed.some((p) => p.price_ngn === null);
+  const validPricing = () => parsed.map((p) => ({ key: p.key, price_ngn: p.price_ngn as number }));
 
   return (
     <>
@@ -1385,17 +1344,19 @@ function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
         <tr>
           <td colSpan={4} style={{ ...td(), backgroundColor: 'rgba(128,128,128,0.06)' }}>
             <div style={{ display: 'grid', gap: '0.5rem', padding: '0.35rem 0' }}>
-              {options.map((o) => (
+              {options.map((o, i) => (
                 <div key={o.key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                   <div style={{ minWidth: 260, flex: 1 }}>
                     <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{o.label}</div>
                     {o.note ? <div style={{ fontSize: '0.72rem', color: colors.muted }}>{o.note}</div> : null}
                   </div>
                   <span style={{ fontSize: '0.78rem', color: colors.muted, whiteSpace: 'nowrap' }}>
-                    = {naira(Math.max(0, Number(prices[o.key]) || 0))}
+                    {parsed[i].price_ngn === null
+                      ? <span style={{ color: colors.danger }}>{FORMAT_PRICE_HINT}</span>
+                      : <>= {naira(parsed[i].price_ngn)}</>}
                   </span>
                   <span style={{ fontSize: '0.78rem', color: colors.muted }}>₦</span>
-                  <input type="number" min={0} style={{ ...input(), width: 140 }}
+                  <input type="number" min={1} step={1} style={{ ...input(), width: 140 }}
                     value={prices[o.key] ?? ''}
                     onChange={(e) => setPrices((prev) => ({ ...prev, [o.key]: e.target.value }))} />
                 </div>
@@ -1410,11 +1371,8 @@ function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
                   <input type="checkbox" checked={applyAll} onChange={(e) => setApplyAll(e.target.checked)} />
                   Apply these prices to <strong>all</strong> trainings
                 </label>
-                <button style={btnPrimary()} disabled={busy || !dirty || options.length === 0}
-                  onClick={() => void onSavePricing(
-                    options.map((o) => ({ key: o.key, price_ngn: Math.max(0, Number(prices[o.key]) || 0) })),
-                    applyAll,
-                  )}>
+                <button style={btnPrimary()} disabled={busy || !dirty || invalid || options.length === 0}
+                  onClick={() => { if (!invalid) void onSavePricing(validPricing(), applyAll); }}>
                   {dirty ? 'Save tuition' : 'Saved'}
                 </button>
               </div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Image, ScrollView, Pressable, StyleSheet, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MessageCircle, CalendarDays, ListTodo, FileText, Check, Clock, Crown, Pencil, X, UserMinus, Trash2, UserPlus } from 'lucide-react-native';
@@ -17,9 +17,23 @@ import CommitteeMemberPicker from '@/features/association/components/CommitteeMe
 import { canManageCommittees } from '@/features/association/utils';
 import { useAdminAccess } from '@/features/association/hooks';
 import { useQueryClient } from '@tanstack/react-query';
-import { decideCommitteeRequest, removeCommitteeMember } from '@/features/association/api/authoring.api';
+import { decideCommitteeRequest, removeCommitteeMember, setCommitteeMemberRole } from '@/features/association/api/authoring.api';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { initials, formatCount } from '@/features/association/utils';
+
+// The server stores positions as CHAIR | SECRETARY | TREASURER | MEMBER.
+const ROLE_OPTIONS: Array<{ value: string; label: string; help: string }> = [
+  { value: 'CHAIR', label: 'Chairperson', help: 'Leads the committee. Only one at a time.' },
+  { value: 'SECRETARY', label: 'Secretary', help: 'Keeps records and minutes. Only one at a time.' },
+  { value: 'TREASURER', label: 'Treasurer', help: 'Looks after committee funds. Only one at a time.' },
+  { value: 'MEMBER', label: 'Member', help: 'No special position.' },
+];
+
+function roleLabel(role?: string | null): string {
+  const key = (role ?? 'MEMBER').toUpperCase();
+  if (key === 'CHAIRPERSON') return 'Chairperson';
+  return ROLE_OPTIONS.find((o) => o.value === key)?.label ?? (role || 'Member');
+}
 
 export default function CommitteeDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -38,6 +52,7 @@ export default function CommitteeDetail() {
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const qc = useQueryClient();
   const [busy, setBusy] = React.useState(false);
+  const [roleTarget, setRoleTarget] = React.useState<{ membershipId: string; name: string; role: string } | null>(null);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['association', 'committee', id] });
 
@@ -106,6 +121,22 @@ export default function CommitteeDetail() {
       }
     } catch {
       await alertAsync({ title: "Couldn't add members", message: 'Please try again.' });
+    }
+  };
+
+  const appoint = async (role: string) => {
+    const target = roleTarget;
+    if (!target || busy) return;
+    setRoleTarget(null);
+    if (role === target.role) return;
+    setBusy(true);
+    try {
+      await setCommitteeMemberRole(id as string, target.membershipId, role);
+      refresh();
+    } catch {
+      await alertAsync({ title: "Couldn't set that position", message: 'Only active members of the committee can hold a position. Please try again.' });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -274,7 +305,21 @@ export default function CommitteeDetail() {
                       this screen could answer, that row was a dead end. */}
                   {m.status === 'PENDING' ? <Text style={styles.pendingTag}>Awaiting approval</Text> : null}
                 </View>
-                <Text style={styles.memberRole}>{m.role ?? 'Member'}</Text>
+                {isAdmin && m.membershipId && m.status !== 'PENDING' ? (
+                  <Pressable
+                    onPress={() => setRoleTarget({ membershipId: m.membershipId as string, name: displayName, role: (m.role ?? 'MEMBER').toUpperCase() })}
+                    disabled={busy}
+                    hitSlop={8}
+                    style={styles.roleChip}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Position for ${displayName}: ${roleLabel(m.role)}. Tap to change`}
+                  >
+                    <Text style={styles.roleChipText}>{roleLabel(m.role)}</Text>
+                    <Pencil size={11} color={Colors.primary} strokeWidth={2.4} />
+                  </Pressable>
+                ) : (
+                  <Text style={styles.memberRole}>{roleLabel(m.role)}</Text>
+                )}
                 {isAdmin && m.membershipId ? (
                   m.status === 'PENDING' ? (
                     <View style={styles.adminActions}>
@@ -296,6 +341,34 @@ export default function CommitteeDetail() {
           })}
         </View>
       </ScrollView>
+
+      {/* Appoint a position */}
+      <Modal visible={roleTarget !== null} transparent animationType="fade" onRequestClose={() => setRoleTarget(null)}>
+        <Pressable style={styles.backdrop} onPress={() => setRoleTarget(null)} accessibilityLabel="Close">
+          <Pressable style={styles.sheet} onPress={() => undefined}>
+            <Text style={styles.sheetTitle}>Position for {roleTarget?.name}</Text>
+            <Text style={styles.sheetHelp}>Choosing Chairperson, Secretary or Treasurer replaces the current holder.</Text>
+            {ROLE_OPTIONS.map((o) => {
+              const active = roleTarget?.role === o.value;
+              return (
+                <Pressable
+                  key={o.value}
+                  onPress={() => void appoint(o.value)}
+                  style={[styles.sheetOption, active && styles.sheetOptionActive]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: active }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.sheetOptionLabel, active && { color: Colors.primary }]}>{o.label}</Text>
+                    <Text style={styles.sheetOptionHelp}>{o.help}</Text>
+                  </View>
+                  {active ? <Check size={18} color={Colors.primary} strokeWidth={2.6} /> : null}
+                </Pressable>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Join CTA */}
       {!isMember ? (
@@ -352,6 +425,16 @@ const styles = StyleSheet.create({
   avatarText: { ...Typography.labelSm, color: Colors.primary, fontWeight: '700' as const },
   memberName: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
   memberRole: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  roleChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: Spacing.sm, paddingVertical: 4, borderRadius: Radius.full, backgroundColor: Colors.iconBgPurple },
+  roleChipText: { ...Typography.labelSm, color: Colors.primary, fontWeight: '700' as const },
+  backdrop: { flex: 1, backgroundColor: 'rgba(11,28,48,0.45)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: Colors.background, borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, padding: Spacing.containerMargin, gap: Spacing.sm, paddingBottom: Spacing.xl },
+  sheetTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  sheetHelp: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginBottom: Spacing.xs },
+  sheetOption: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest },
+  sheetOptionActive: { borderColor: Colors.primary },
+  sheetOptionLabel: { ...Typography.labelLg, color: Colors.onSurface },
+  sheetOptionHelp: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.lg, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
   pendingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
   pendingText: { ...Typography.labelMd, color: Colors.onWarning },

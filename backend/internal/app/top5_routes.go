@@ -328,6 +328,18 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 		handler.RegisterSocial(member)
 	}
 
+	if cfg.FeatureEventsCommerce {
+		// Events commerce + governance: disclosure and policy columns on events,
+		// purchase snapshots on orders, refunds, moderation, the server-set fee,
+		// organiser sanctions, check-in attribution, support cases and notifications.
+		// Deploy gate: apply migration 20271400000000_events_commerce.sql before
+		// turning FEATURE_EVENTS_COMMERCIAL on — the read path asks for those
+		// columns. Independent of FEATURE_EVENTS_SOCIAL; either can be on alone.
+		svc.EnableCommerceReads()
+		handler.RegisterCommerce(member, admin, guard)
+		log.Println("[top5events] events commerce ON — disclosure, refunds, moderation, fees, check-in, support")
+	}
+
 	// Money-path durability: sweep ticket checkouts left PENDING by a crash between
 	// reservation and payment, charging/ticketing buyers who can pay and expiring
 	// (releasing the seat) those who cannot. Idempotent + multi-instance safe.

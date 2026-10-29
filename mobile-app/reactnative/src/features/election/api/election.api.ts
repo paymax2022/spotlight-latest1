@@ -108,20 +108,31 @@ export async function getMyBallot(electionId: string): Promise<MyBallot> {
 export async function castVote(input: CastVoteInput): Promise<MyBallot> {
   if (USE_MOCK) throw notInFixtureMode('Casting a vote');
   // Resident-scoped: POST /api/v1/elections/{id}/vote, body { positionId,
-  // candidateId }. The handler maps the single-position DB schema onto the
-  // client's multi-position contract via a synthesized `${id}:main` position and
-  // returns the full MyBallot (choices keyed by that position). We merge it into
-  // the local cache so multi-position UIs keep a per-position "voted" state.
+  // candidateId, unitId?, abstain? }. The handler maps the single-position DB schema onto
+  // the client's multi-position contract via a synthesized `${id}:main` position and
+  // returns the full MyBallot (choices keyed by that position, suffixed with the unit for
+  // a per-unit ballot). We merge it into the local cache so multi-position UIs keep a
+  // per-position "voted" state — an abstention records the sealed marker, never a
+  // candidate.
   const { data } = await api.post<MyBallot>(
     `${B}/${input.electionId}/vote`,
-    { positionId: input.positionId, candidateId: input.candidateId },
+    {
+      positionId: input.positionId,
+      candidateId: input.abstain ? '' : input.candidateId,
+      abstain: input.abstain === true,
+      ...(input.unitId ? { unitId: input.unitId } : {}),
+    },
     idem(input.idempotencyKey),
   );
   const prev = ballots[input.electionId] ?? { electionId: input.electionId, choices: {} };
+  const key = input.unitId ? `${input.positionId}:${input.unitId}` : input.positionId;
   const merged: MyBallot = {
     electionId: input.electionId,
-    choices: { ...prev.choices, ...(data?.choices ?? {}), [input.positionId]: input.candidateId },
+    choices: { ...prev.choices, ...(data?.choices ?? {}), [key]: input.abstain ? 'sealed' : input.candidateId },
     submittedAt: data?.submittedAt ?? prev.submittedAt,
+    weighted: data?.weighted ?? prev.weighted,
+    units: data?.units ?? prev.units,
+    outstanding: data?.outstanding ?? prev.outstanding,
   };
   ballots[input.electionId] = merged;
   return { ...merged, choices: { ...merged.choices } };

@@ -10,6 +10,7 @@ import (
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/health/clinicloc"
 	"strings"
 	"time"
 
@@ -158,6 +159,64 @@ func (s *Service) Submit(ctx context.Context, ownerID, applicationID string) (*A
 			return "", fmt.Errorf("providers: cannot submit from %s", cur)
 		}
 	}, "health.provider.application.submit")
+}
+
+// ErrLocationNotEditable is returned when a location is saved outside DRAFT/NEEDS_INFO.
+var ErrLocationNotEditable = errors.New("providers: location can only be changed while the application is a draft or needs info")
+
+// LocationInput is the clinic location saved on an application. Lat/Lng are required.
+type LocationInput struct {
+	Address string
+	City    string
+	State   string
+	Lat     float64
+	Lng     float64
+}
+
+// SetLocation stores the provider location on the application (geo_lat/geo_lng) while it
+// is still editable by the owner (DRAFT or NEEDS_INFO). A vet has no health_providers
+// row until approval, so approval copies the point onto it (upsertProvider). For VET
+// the address parts are also merged into the vet profile draft, like PUT /provider/profile.
+func (s *Service) SetLocation(ctx context.Context, ownerID, applicationID string, in LocationInput) (*Application, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("providers: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	app, err := lockApplication(ctx, tx, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	if app.OwnerUserID != ownerID { // uniform not-found for a foreign application
+		return nil, ErrApplicationNotFound
+	}
+	if app.State != StateDraft && app.State != StateNeedsInfo {
+		return nil, ErrLocationNotEditable
+	}
+	if _, err := tx.Exec(ctx, `UPDATE health_provider_applications SET geo_lat=$2, geo_lng=$3, updated_at=now() WHERE id=$1`,
+		applicationID, in.Lat, in.Lng); err != nil {
+		return nil, fmt.Errorf("providers: save location: %w", err)
+	}
+	if app.Domain == "VET" {
+		patch := clinicloc.DraftPatch(clinicloc.Input{Address: &in.Address, City: &in.City, State: &in.State})
+		for k, v := range patch {
+			if v == "" {
+				delete(patch, k) // an empty part is not sent, so it never blanks a saved value
+			}
+		}
+		if err := clinicloc.MergeDraft(ctx, tx, ownerID, patch); err != nil {
+			return nil, fmt.Errorf("providers: save clinic address: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("providers: commit: %w", err)
+	}
+	s.audited(ownerID, app.OwnerUserID, "health.provider.application.location", applicationID, nil,
+		map[string]any{"has_location": true})
+	lat, lng := in.Lat, in.Lng
+	app.GeoLat, app.GeoLng = &lat, &lng
+	return app, nil
 }
 
 // Decision is the admin verdict on an application (HEALTH-BUILD §6 decision route).
@@ -347,7 +406,7 @@ func (s *Service) GetApplication(ctx context.Context, ownerID, applicationID str
 }
 
 func (s *Service) ListApplications(ctx context.Context, ownerID string) ([]Application, error) {
-	const q = `SELECT id, owner_user_id, domain, provider_type, display_name, state, review_note, provider_id, created_at, updated_at
+	const q = `SELECT id, owner_user_id, domain, provider_type, display_name, state, review_note, provider_id, geo_lat, geo_lng, created_at, updated_at
 	           FROM health_provider_applications WHERE owner_user_id=$1 ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q, ownerID)
 	if err != nil {
@@ -359,7 +418,7 @@ func (s *Service) ListApplications(ctx context.Context, ownerID string) ([]Appli
 		var a Application
 		var state string
 		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Domain, &a.ProviderType, &a.DisplayName,
-			&state, &a.ReviewNote, &a.ProviderID, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&state, &a.ReviewNote, &a.ProviderID, &a.GeoLat, &a.GeoLng, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		a.State = State(state)
@@ -371,10 +430,10 @@ func (s *Service) ListApplications(ctx context.Context, ownerID string) ([]Appli
 func (s *Service) getApplication(ctx context.Context, id string) (*Application, error) {
 	var a Application
 	var state string
-	const q = `SELECT id, owner_user_id, domain, provider_type, display_name, state, review_note, provider_id, created_at, updated_at
+	const q = `SELECT id, owner_user_id, domain, provider_type, display_name, state, review_note, provider_id, geo_lat, geo_lng, created_at, updated_at
 	           FROM health_provider_applications WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, id).Scan(&a.ID, &a.OwnerUserID, &a.Domain, &a.ProviderType,
-		&a.DisplayName, &state, &a.ReviewNote, &a.ProviderID, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		&a.DisplayName, &state, &a.ReviewNote, &a.ProviderID, &a.GeoLat, &a.GeoLng, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrApplicationNotFound
 		}
@@ -387,10 +446,10 @@ func (s *Service) getApplication(ctx context.Context, id string) (*Application, 
 func lockApplication(ctx context.Context, tx pgx.Tx, id string) (*Application, error) {
 	var a Application
 	var state string
-	const q = `SELECT id, owner_user_id, domain, provider_type, display_name, state, provider_id
+	const q = `SELECT id, owner_user_id, domain, provider_type, display_name, state, provider_id, geo_lat, geo_lng
 	           FROM health_provider_applications WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, id).Scan(&a.ID, &a.OwnerUserID, &a.Domain, &a.ProviderType,
-		&a.DisplayName, &state, &a.ProviderID); err != nil {
+		&a.DisplayName, &state, &a.ProviderID, &a.GeoLat, &a.GeoLng); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrApplicationNotFound
 		}
@@ -406,13 +465,16 @@ func lockApplication(ctx context.Context, tx pgx.Tx, id string) (*Application, e
 func upsertProvider(ctx context.Context, tx pgx.Tx, app *Application) (string, error) {
 	id := uuid.New().String()
 	const q = `
-		INSERT INTO health_providers (id, owner_user_id, domain, provider_type, display_name, status, discoverable)
-		VALUES ($1,$2,$3,$4,$5,'APPROVED',true)
+		INSERT INTO health_providers (id, owner_user_id, domain, provider_type, display_name, status, discoverable, geo)
+		VALUES ($1,$2,$3,$4,$5,'APPROVED',true,
+		        CASE WHEN $6::float8 IS NULL OR $7::float8 IS NULL THEN NULL
+		             ELSE ST_SetSRID(ST_MakePoint($7::float8, $6::float8), 4326)::geography END)
 		ON CONFLICT (owner_user_id, domain, provider_type)
-		DO UPDATE SET status='APPROVED', discoverable=true, updated_at=now()
+		DO UPDATE SET status='APPROVED', discoverable=true,
+		              geo=COALESCE(EXCLUDED.geo, health_providers.geo), updated_at=now()
 		RETURNING id`
 	var out string
-	if err := tx.QueryRow(ctx, q, id, app.OwnerUserID, app.Domain, app.ProviderType, app.DisplayName).Scan(&out); err != nil {
+	if err := tx.QueryRow(ctx, q, id, app.OwnerUserID, app.Domain, app.ProviderType, app.DisplayName, app.GeoLat, app.GeoLng).Scan(&out); err != nil {
 		return "", fmt.Errorf("providers: upsert capability: %w", err)
 	}
 	return out, nil
@@ -743,6 +805,58 @@ func (h *Handler) Submit(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})
+}
+
+// SetLocation — PUT /providers/applications/:id/location {address, city, state, lat, lng}
+func (h *Handler) SetLocation(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if !uuidPathID(c) {
+		return
+	}
+	var req struct {
+		Address *string  `json:"address"`
+		City    *string  `json:"city"`
+		State   *string  `json:"state"`
+		Lat     *float64 `json:"lat"`
+		Lng     *float64 `json:"lng"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	in, msg := parseLocation(req.Address, req.City, req.State, req.Lat, req.Lng)
+	if msg != "" {
+		ginutil.FailOK(c, http.StatusBadRequest, msg)
+		return
+	}
+	app, err := h.svc.SetLocation(c.Request.Context(), id, c.Param("id"), in)
+	if err != nil {
+		providerFail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})
+}
+
+// parseLocation applies the shared clinic-location rules and additionally requires
+// coordinates (a location with no point is useless for discovery).
+func parseLocation(address, city, state *string, lat, lng *float64) (LocationInput, string) {
+	if lat == nil || lng == nil {
+		return LocationInput{}, "lat and lng are required"
+	}
+	if msg := clinicloc.Validate(clinicloc.Input{Address: address, City: city, State: state, Lat: lat, Lng: lng}); msg != "" {
+		return LocationInput{}, msg
+	}
+	str := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return strings.TrimSpace(*p)
+	}
+	return LocationInput{Address: str(address), City: str(city), State: str(state), Lat: *lat, Lng: *lng}, ""
 }
 
 // Get — GET /providers/applications/:id

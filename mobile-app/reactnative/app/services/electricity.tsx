@@ -1,12 +1,11 @@
 import React, { useRef, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
-  View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator,
+  View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X, CheckCircle } from 'lucide-react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, Controller } from 'react-hook-form';
@@ -23,8 +22,10 @@ import { Typography } from '@/constants/tokens';
 import { shadow1, shadow2 } from '@/constants/tokens';
 import { getElectricityDiscos, initiateElectricityPaystack, validateMeter, payElectricity, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
 import { useGatewayCheckout } from '@/features/payments';
+import { useBillKycPrompt } from '@/features/services/useBillKycPrompt';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
+import { getTransactions } from '@/api/transactions.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { Disco, MeterValidation, MeterType } from '@/types/billing';
@@ -92,6 +93,11 @@ export default function ElectricityScreen() {
     queryFn:  getWallet,
   });
 
+  const { data: transactionsData } = useQuery({
+    queryKey: ['electricity-transactions'],
+    queryFn:  () => getTransactions({ serviceType: 'ELECTRICITY', limit: 5 }),
+  });
+
   const { control, handleSubmit, watch, setValue, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
     defaultValues: { meterNumber: __DEV__ ? TEST_METERS.PREPAID : '' },
@@ -113,6 +119,7 @@ export default function ElectricityScreen() {
     },
   });
 
+  const promptKyc = useBillKycPrompt();
   const { mutate: pay, isPending: paying, error: payError } = useMutation({
     mutationFn: payElectricity,
     onSuccess: (result) => {
@@ -124,8 +131,9 @@ export default function ElectricityScreen() {
       const txId = String((result as Record<string, unknown>).transactionId ?? '');
       router.push(`/services/receipt/${txId}` as never);
     },
-    onError: () => {
+    onError: (err) => {
       confirmInFlightRef.current = false;
+      void promptKyc(err);
     },
   });
 
@@ -198,7 +206,7 @@ export default function ElectricityScreen() {
         onResolved: (res) => { setShowConfirm(false); router.replace(`/services/paystack/${res.reference}` as never); },
       });
     } catch (err: unknown) {
-      setPaystackError(getErrorMessage(err));
+      if (!(await promptKyc(err))) setPaystackError(getErrorMessage(err));
     } finally {
       setPaystackLoading(false);
     }
@@ -229,14 +237,14 @@ export default function ElectricityScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <LinearGradient colors={['#D97706', Colors.primaryContainer]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.hero, shadow2]}>
-          <View style={styles.heroIcon}><Text style={{ fontSize: 26 }}>⚡</Text></View>
-          <View style={{ flex: 1, gap: Spacing.xs }}>
-            <Text style={styles.heroEyebrow}>SECURE SERVICE</Text>
-            <Text style={styles.heroTitle}>Electricity Payment</Text>
-            <Text style={styles.heroSub}>Prepaid & postpaid utility payments.</Text>
-          </View>
-        </LinearGradient>
+        <View style={styles.heroBanner}>
+          <Image
+            source={{ uri: 'https://res.cloudinary.com/paymax/image/upload/v1792924522/Purple_electricity_payment_hero_banner_amdysf.png' }}
+            style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
+            resizeMode="cover"
+            accessibilityLabel="Electricity Payment"
+          />
+        </View>
 
         <View style={[styles.card, shadow1]}>
           <Text style={styles.sectionTitle}>Select DISCO</Text>
@@ -355,6 +363,27 @@ export default function ElectricityScreen() {
         <View style={styles.actionWrap}>
           <PrimaryButton label="Review Payment" onPress={onPressReview} disabled={!validation} />
         </View>
+
+        {/* Latest Transactions */}
+        {transactionsData && transactionsData.items.length > 0 && (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Latest Transactions</Text>
+            {transactionsData.items.map((tx) => (
+              <View key={tx.id} style={styles.transactionRow}>
+                <View style={styles.transactionInfo}>
+                  <Text style={styles.transactionTitle}>{tx.biller_name}</Text>
+                  <Text style={styles.transactionDate}>{new Date(tx.created_at).toLocaleDateString('en-NG')}</Text>
+                </View>
+                <View style={styles.transactionAmount}>
+                  <Text style={[styles.transactionValue, { color: tx.status === 'successful' ? Colors.green : Colors.muted }]}>
+                    ₦{Number(tx.amount).toLocaleString('en-NG')}
+                  </Text>
+                  <Text style={styles.transactionStatus}>{tx.status}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
       </ScrollView>
 
       <Modal visible={showConfirm} transparent animationType="slide">
@@ -458,15 +487,11 @@ const styles = StyleSheet.create({
   iconBtn:     { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   topTitle:    { ...Typography.titleLg, color: Colors.primary },
   content:     { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.lg, paddingBottom: Platform.OS === 'ios' ? 120 : 96 },
-  hero:        { minHeight: 120, borderRadius: Radius.xl, padding: Spacing.cardPadding, flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.lg, overflow: 'hidden' },
-  heroIcon:    { width: 56, height: 56, borderRadius: Radius.lg, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
-  heroEyebrow: { ...Typography.labelSm, color: 'rgba(255,255,255,0.75)' },
-  heroTitle:   { ...Typography.headlineMd, color: Colors.onPrimary },
-  heroSub:     { ...Typography.bodySm, color: 'rgba(255,255,255,0.75)' },
+  heroBanner:  { aspectRatio: 2, borderRadius: Radius.xl, overflow: 'hidden', marginBottom: Spacing.lg },
   card:        { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
   sectionTitle:{ ...Typography.titleMd, color: Colors.onSurface },
-  providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
-  providerCard:{ width: '48%', minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.md, gap: Spacing.sm },
+  providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
+  providerCard:{ width: '31%', minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.sm, gap: Spacing.sm, alignItems: 'center' },
   providerCardActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
   providerIcon:{ width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   providerLogoWrap:{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: Colors.surfaceContainerHigh, overflow: 'hidden' },
@@ -514,4 +539,11 @@ const styles = StyleSheet.create({
   processingText:  { ...Typography.labelSm, color: Colors.secondary, lineHeight: 18, marginTop: Spacing.sm },
   paystackInfoPanel: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.md, padding: Spacing.md, borderLeftWidth: 3, borderLeftColor: Colors.secondary, marginTop: Spacing.md },
   paystackInfoText:  { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },
+  transactionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.surfaceContainerHigh },
+  transactionInfo: { flex: 1 },
+  transactionTitle: { ...Typography.labelMd, color: Colors.onSurface },
+  transactionDate: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 4 },
+  transactionAmount: { alignItems: 'flex-end' },
+  transactionValue: { ...Typography.labelMd, color: Colors.onSurface },
+  transactionStatus: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2, textTransform: 'capitalize' },
 });

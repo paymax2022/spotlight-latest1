@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -22,22 +22,22 @@ export default function ShareResultsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const share = useShareResult();
 
-  const [granteeName, setGranteeName] = useState('');
-  const [scopeNote, setScopeNote] = useState('');
+  const [granteeEmail, setGranteeEmail] = useState('');
+  const [days, setDays] = useState(30);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const canShare = granteeName.trim().length > 0;
+  const canShare = /^S+@S+.S+$/.test(granteeEmail.trim());
 
   const onShare = async () => {
     if (!canShare) return;
+    setError(null);
     try {
-      await share.mutateAsync({
-        resultId: id,
-        granteeName: granteeName.trim(),
-        scopeNote: scopeNote.trim() || undefined,
-      });
+      await share.mutateAsync({ resultId: id, granteeEmail: granteeEmail.trim(), days });
       setDone(true);
-    } catch {
+    } catch (e) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setError(msg ? msg.replace(/^lab:s*/, '') : 'Could not share these results. Please try again.');
     }
   };
 
@@ -80,19 +80,30 @@ export default function ShareResultsScreen() {
 
           <View style={styles.card}>
             <TextInputField
-              label="Who are you sharing with?"
-              value={granteeName}
-              onChangeText={setGranteeName}
-              placeholder="e.g. Dr. Eze, Reddington Hospital"
+              label="Recipient's Spotlight email"
+              value={granteeEmail}
+              onChangeText={setGranteeEmail}
+              placeholder="doctor@example.com"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
             />
             <View style={styles.gap} />
-            <TextInputField
-              label="Add a note (optional)"
-              value={scopeNote}
-              onChangeText={setScopeNote}
-              placeholder="What this is for, or any context"
-              multiline
-            />
+            <Text style={styles.durationLabel}>Access lasts</Text>
+            <View style={styles.durationRow}>
+              {[7, 30, 90].map((d) => (
+                <Pressable
+                  key={d}
+                  onPress={() => setDays(d)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: days === d }}
+                  style={[styles.durationChip, days === d && styles.durationChipOn]}
+                >
+                  <Text style={[styles.durationText, days === d && styles.durationTextOn]}>{d} days</Text>
+                </Pressable>
+              ))}
+            </View>
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
           </View>
         </ScrollView>
 
@@ -110,6 +121,16 @@ export default function ShareResultsScreen() {
 }
 
 const styles = StyleSheet.create({
+  durationLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
+  durationRow: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.xs },
+  durationChip: {
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: Radius.full,
+    backgroundColor: Colors.surfaceContainerLow,
+  },
+  durationChipOn: { backgroundColor: Colors.primary },
+  durationText: { ...Typography.labelMd, color: Colors.onSurface },
+  durationTextOn: { color: Colors.white },
+  errorText: { ...Typography.bodySm, color: Colors.error, marginTop: Spacing.sm },
   safe: { flex: 1, backgroundColor: Colors.background },
   flex: { flex: 1 },
   scroll: {

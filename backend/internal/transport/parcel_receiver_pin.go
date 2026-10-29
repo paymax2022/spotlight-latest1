@@ -3,17 +3,29 @@ package transport
 import (
 	"context"
 	"log"
+	"net/mail"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
 
-// Receiver drop-off PIN by SMS (FEATURE_PARCEL_RECEIVER_PIN_SMS, ADR-PR857).
+// Receiver drop-off PIN after pickup (ADR-PR857 SMS; ADR-PR860 email + push).
 //
 // The courier must collect the drop-off PIN from the receiver, but only the
 // sender can read it (ParcelDetail). Once the parcel is picked up, the receiver
-// (parcels.receiver_phone) is texted the PIN, so a delivery never stalls at the
-// door waiting on the sender to relay it.
+// is told the PIN, so a delivery never stalls at the door waiting on the sender
+// to relay it. Channels, each optional and independently wired:
+//   - email to parcels.receiver_email, which only the sender sets, at booking
+//     (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY; free)
+//   - SMS to receiver_phone (FEATURE_PARCEL_RECEIVER_PIN_SMS; paid)
+// The receiver's own Paymax account is deliberately NOT a channel (no push, no
+// account email): user_profiles.phone / phone_verified are writable by their
+// owner over PostgREST and nothing server-side proves them, so "the account
+// whose verified phone is the receiver's" can be anyone who claims that number
+// — e.g. a courier's second account (ADR-PR860).
+// The notice counts as sent when at least one channel accepted it;
+// receiver_notified_via records which.
 //
 //   - At most once per parcel: the send is CLAIMED (receiver_pin_notice NULL →
 //     'sending') before the provider is called, so retries and concurrent
@@ -36,6 +48,11 @@ type ReceiverSMSSender interface {
 	SendSMS(ctx context.Context, to, body string) error
 }
 
+// ReceiverEmailSender sends one plain-text email (integrations.ResendClient).
+type ReceiverEmailSender interface {
+	SendEmail(ctx context.Context, to, subject, text string) error
+}
+
 // WithReceiverPinSMS turns the receiver PIN text on. nil (the default, and what
 // the wiring passes when the flag is off or SMS is not configured) = off.
 func (s *Service) WithReceiverPinSMS(sender ReceiverSMSSender) *Service {
@@ -43,7 +60,45 @@ func (s *Service) WithReceiverPinSMS(sender ReceiverSMSSender) *Service {
 	return s
 }
 
-const receiverPinSendTimeout = 20 * time.Second
+// WithReceiverPinNotify turns the free channel on: email to the receiver_email
+// given at booking. nil = off.
+func (s *Service) WithReceiverPinNotify(email ReceiverEmailSender) *Service {
+	s.receiverEmail = email
+	return s
+}
+
+func (s *Service) receiverNoticeOn() bool {
+	return s.receiverSMS != nil || s.receiverEmail != nil
+}
+
+// receiverEmailDomainRe: the domain must have a dot (net/mail accepts "x@y").
+var receiverEmailDomainRe = regexp.MustCompile(`^[a-z0-9-]+(\.[a-z0-9-]+)+$`)
+
+// normaliseReceiverEmail returns the bare address lower-cased, or "" unless the
+// input is exactly one plain address (no display name, no angle brackets, no
+// comments), at most 254 characters, with a dotted domain.
+func normaliseReceiverEmail(raw string) string {
+	e := strings.ToLower(strings.TrimSpace(raw))
+	if e == "" || len(e) > 254 {
+		return ""
+	}
+	a, err := mail.ParseAddress(e)
+	if err != nil || a.Name != "" || a.Address != e {
+		return ""
+	}
+	at := strings.LastIndexByte(e, '@')
+	if at < 1 || !receiverEmailDomainRe.MatchString(e[at+1:]) {
+		return ""
+	}
+	return e
+}
+
+// receiverPinSendTimeout bounds the whole notice; each channel also gets its
+// own receiverPinChannelTimeout so a slow provider cannot starve the next one.
+const (
+	receiverPinSendTimeout    = 40 * time.Second
+	receiverPinChannelTimeout = 15 * time.Second
+)
 
 // receiverPhoneRe: optional + then 7–15 digits, after stripping spaces, dashes
 // and brackets (the connect onboarding rule).
@@ -91,10 +146,18 @@ func receiverPinMessage(pin string) string {
 		pin + ". Do not share it before you have the parcel."
 }
 
-// notifyReceiverAfterPickup texts the receiver off the request path: the pickup
+const receiverPinEmailSubject = "Your Paymax delivery PIN"
+
+func receiverPinEmail(pin string) string {
+	return "A parcel is on its way to you through Paymax.\n\n" +
+		"When the courier hands it over, give them this delivery PIN: " + pin + "\n\n" +
+		"Do not share the PIN before you have the parcel. If you are not expecting a parcel, you can ignore this email."
+}
+
+// notifyReceiverAfterPickup tells the receiver off the request path: the pickup
 // has already committed, and a slow provider must not hold the courier's call.
 func (s *Service) notifyReceiverAfterPickup(ctx context.Context, parcelID string) {
-	if s.receiverSMS == nil {
+	if !s.receiverNoticeOn() {
 		return
 	}
 	go func() {
@@ -102,29 +165,32 @@ func (s *Service) notifyReceiverAfterPickup(ctx context.Context, parcelID string
 		// covers request goroutines). Log the parcel only — never the value.
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("[transport] parcel %s: receiver PIN SMS panicked; not sent", parcelID)
+				log.Printf("[transport] parcel %s: receiver PIN notice panicked; not sent", parcelID)
 			}
 		}()
 		s.notifyReceiverDropoffPin(context.WithoutCancel(ctx), parcelID)
 	}()
 }
 
-// notifyReceiverDropoffPin claims the parcel's one receiver notice and sends it.
-// Safe to call any number of times, concurrently: only the claim winner sends.
+// notifyReceiverDropoffPin claims the parcel's one receiver notice and sends it
+// through every channel that can reach the receiver. Safe to call any number of
+// times, concurrently: only the claim winner sends.
 func (s *Service) notifyReceiverDropoffPin(ctx context.Context, parcelID string) {
-	if s.receiverSMS == nil {
+	if !s.receiverNoticeOn() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, receiverPinSendTimeout)
 	defer cancel()
 
 	var senderID, phone, pin string
+	var receiverEmail *string
 	err := s.db.QueryRow(ctx, `
 		UPDATE parcels SET receiver_pin_notice='sending'
 		WHERE id=$1 AND receiver_pin_notice IS NULL
 		  AND status IN ('picked_up','in_transit') AND dropoff_pin IS NOT NULL
 		  AND settlement_id IS NOT NULL
-		RETURNING sender_id::text, receiver_phone, dropoff_pin`, parcelID).Scan(&senderID, &phone, &pin)
+		RETURNING sender_id::text, receiver_phone, receiver_email, dropoff_pin`,
+		parcelID).Scan(&senderID, &phone, &receiverEmail, &pin)
 	if err != nil {
 		return // already claimed (sent / failed / in flight), not in transit, or no row
 	}
@@ -132,47 +198,73 @@ func (s *Service) notifyReceiverDropoffPin(ctx context.Context, parcelID string)
 	// Each failure is logged BEFORE it is recorded, so a recorded outcome
 	// always has its log line.
 	if !dropoffPinRe.MatchString(pin) {
-		log.Printf("[transport] parcel %s: receiver PIN SMS not sent: the stored PIN is not a server-generated PIN", parcelID)
-		s.finishReceiverNotice(ctx, parcelID, senderID, false, "invalid_pin")
+		log.Printf("[transport] parcel %s: receiver PIN notice not sent: the stored PIN is not a server-generated PIN", parcelID)
+		s.finishReceiverNotice(ctx, parcelID, senderID, nil, "invalid_pin")
 		return
 	}
-	to := normaliseReceiverPhone(phone)
-	if to == "" {
-		log.Printf("[transport] parcel %s: receiver PIN SMS not sent: receiver phone is not a phone number", parcelID)
-		s.finishReceiverNotice(ctx, parcelID, senderID, false, "invalid_phone")
+
+	var via []string
+
+	// 1. Email to the address the sender gave at booking (free).
+	if s.receiverEmail != nil && receiverEmail != nil {
+		if to := normaliseReceiverEmail(*receiverEmail); to != "" {
+			cctx, ccancel := context.WithTimeout(ctx, receiverPinChannelTimeout)
+			err := s.receiverEmail.SendEmail(cctx, to, receiverPinEmailSubject, receiverPinEmail(pin))
+			ccancel()
+			if err != nil {
+				log.Printf("[transport] parcel %s: receiver PIN email failed: %s", parcelID, redact(err.Error(), pin, to))
+			} else {
+				via = append(via, "email")
+			}
+		}
+	}
+	// 2. SMS (paid; its own flag).
+	if s.receiverSMS != nil {
+		cctx, ccancel := context.WithTimeout(ctx, receiverPinChannelTimeout)
+		defer ccancel()
+		if to := normaliseReceiverPhone(phone); to == "" {
+			log.Printf("[transport] parcel %s: receiver PIN SMS not sent: receiver phone is not a phone number", parcelID)
+		} else if err := s.receiverSMS.SendSMS(cctx, to, receiverPinMessage(pin)); err != nil {
+			// The provider's error text, never the body we sent (it holds the PIN).
+			log.Printf("[transport] parcel %s: receiver PIN SMS to %s failed: %s", parcelID, maskReceiverPhone(to),
+				redact(err.Error(), pin, to, strings.TrimSpace(phone)))
+		} else {
+			via = append(via, "sms")
+		}
+	}
+
+	if len(via) == 0 {
+		log.Printf("[transport] parcel %s: receiver PIN notice: no channel reached the receiver — the sender must pass the PIN on", parcelID)
+		s.finishReceiverNotice(ctx, parcelID, senderID, nil, "no_channel_reached")
 		return
 	}
-	if sendErr := s.receiverSMS.SendSMS(ctx, to, receiverPinMessage(pin)); sendErr != nil {
-		// The provider's error text, never the body we sent (it holds the PIN).
-		log.Printf("[transport] parcel %s: receiver PIN SMS to %s failed: %s", parcelID, maskReceiverPhone(to),
-			redact(sendErr.Error(), pin, to, strings.TrimSpace(phone)))
-		s.finishReceiverNotice(ctx, parcelID, senderID, false, "provider_error")
-		return
-	}
-	s.finishReceiverNotice(ctx, parcelID, senderID, true, "")
+	s.finishReceiverNotice(ctx, parcelID, senderID, via, "")
 }
 
 // finishReceiverNotice records the outcome of a claimed send and audits it
-// (channel and outcome only — no PIN, no phone). The audit actor is the sender:
-// the text goes out on their behalf.
-func (s *Service) finishReceiverNotice(ctx context.Context, parcelID, senderID string, sent bool, reason string) {
+// (channels and outcome only — no PIN, no phone, no address). The audit actor
+// is the sender: the notice goes out on their behalf. via == nil = failed.
+func (s *Service) finishReceiverNotice(ctx context.Context, parcelID, senderID string, via []string, reason string) {
 	// Detached: the send's own deadline may be what just expired.
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
+	sent := len(via) > 0
+	sort.Strings(via) // stable record, whatever order the channels answered in
 	var err error
 	if sent {
 		_, err = s.db.Exec(wctx,
-			`UPDATE parcels SET receiver_pin_notice='sent', receiver_notified_at=NOW() WHERE id=$1 AND receiver_pin_notice='sending'`, parcelID)
+			`UPDATE parcels SET receiver_pin_notice='sent', receiver_notified_at=NOW(), receiver_notified_via=$2
+			 WHERE id=$1 AND receiver_pin_notice='sending'`, parcelID, via)
 	} else {
 		_, err = s.db.Exec(wctx,
 			`UPDATE parcels SET receiver_pin_notice='failed' WHERE id=$1 AND receiver_pin_notice='sending'`, parcelID)
 	}
 	if err != nil {
-		log.Printf("[transport] parcel %s: recording the receiver PIN SMS outcome failed: %v", parcelID, err)
+		log.Printf("[transport] parcel %s: recording the receiver PIN notice outcome failed: %v", parcelID, err)
 	}
-	action, meta := "parcel.receiver_pin_sent", map[string]any{"channel": "sms"}
+	action, meta := "parcel.receiver_pin_sent", map[string]any{"channels": via}
 	if !sent {
-		action, meta["reason"] = "parcel.receiver_pin_failed", reason
+		action, meta = "parcel.receiver_pin_failed", map[string]any{"reason": reason}
 	}
 	s.recordModeEvent(wctx, senderID, action, "parcel", parcelID, "", "", meta)
 }

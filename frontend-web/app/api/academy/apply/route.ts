@@ -5,6 +5,7 @@ import { ApiError, errorResponse, handleApiError, successResponse } from '@/src/
 import { requireRequestUser, type RequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getActiveAcademySettings, getBatchAreaSlugs } from '@/src/server/services/academy';
+import { approveAfterPayment } from '@/src/server/services/academy/service';
 import {
   ACADEMY_DELIVERABLES,
   ACADEMY_FEE_EXCLUSIONS,
@@ -14,6 +15,9 @@ import {
   isPricingKey,
   pricingDefinition,
   tuitionForFormat,
+  tuitionForSelections,
+  tuitionPlanShape,
+  parseAreaSelections,
   type AcademyPricingKey,
   type AreaPricingOptionRow,
 } from '@/src/server/services/academy/pricing';
@@ -219,36 +223,6 @@ async function getOptionalRequestUser(request: Request) {
  */
 const MAX_INTEREST_AREAS_PER_APPLICATION = 2;
 
-/**
- * Parse `area_selections: [{slug, key}]` into {slug: key}, or null when the
- * client used the legacy flat shape. 'invalid' rejects unknown formats or a
- * duplicated area before anything is priced.
- */
-function parseAreaSelections(value: unknown): Record<string, AcademyPricingKey> | 'invalid' | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const out: Record<string, AcademyPricingKey> = {};
-  for (const item of value) {
-    const slug = getString((item as { slug?: unknown })?.slug);
-    const key = getString((item as { key?: unknown })?.key);
-    if (!slug || !isPricingKey(key)) return 'invalid';
-    if (out[slug]) return 'invalid';
-    out[slug] = key;
-  }
-  return out;
-}
-
-/** Tuition when each area carries its own format — the sum of the chosen subs. */
-function tuitionForSelections(
-  areas: Array<{ id: string; slug: string }>,
-  selections: Record<string, AcademyPricingKey>,
-  rows: AreaPricingOptionRow[],
-): number {
-  return areas.reduce((sum, a) => {
-    const key = selections[a.slug] ?? ACADEMY_PRICING_FALLBACK_KEY;
-    const row = rows.find((r) => r.area_id === a.id && r.key === key);
-    return sum + (row ? Number(row.price_ngn) : pricingDefinition(key).price_ngn);
-  }, 0);
-}
 
 export async function POST(request: Request) {
   try {
@@ -386,7 +360,7 @@ export async function POST(request: Request) {
 
     const { data: batch, error: batchError } = await supabase
       .from('academy_batches')
-      .select('id, max_students')
+      .select('id, max_students, training_fee_ngn, installments_count, fee_frequency, one_off_discount_pct')
       .eq('id', batchId)
       .maybeSingle();
 
@@ -434,10 +408,27 @@ export async function POST(request: Request) {
       }
     }
 
-    if (registrationFeeRequired) {
+    // ONE payment at submit: the application fee plus the first tuition
+    // instalment, derived from the same plan shape the plan rows are built from.
+    const batchRow = batch as {
+      training_fee_ngn: number | null; installments_count: number | null;
+      fee_frequency: string | null; one_off_discount_pct: number | null;
+    };
+    const billedTuition = tuitionTotal > 0 ? tuitionTotal : Number(batchRow.training_fee_ngn ?? 0);
+    const planShape = tuitionPlanShape({
+      tuition: billedTuition,
+      preference: paymentPreference,
+      installmentsCount: batchRow.installments_count,
+      feeFrequency: batchRow.fee_frequency,
+      oneOffDiscountPct: batchRow.one_off_discount_pct,
+    });
+    const applicationFeeDue = registrationFeeRequired ? requiredFee : 0;
+    const expectedTotalPayment = applicationFeeDue + planShape.firstDueNgn;
+
+    if (expectedTotalPayment > 0) {
       registrationFeeReference = String(body.application_fee_reference ?? '').trim();
       if (!registrationFeeReference) {
-        return errorResponse('Registration fee payment is required before submitting this application.', 402);
+        return errorResponse('Payment is required before submitting this application.', 402);
       }
 
       // A server-minted fee intent (POST /api/academy/application-fee/initiate)
@@ -474,9 +465,10 @@ export async function POST(request: Request) {
         paidRegistrationFee =
           Number(applicationFeeIntent.verified_amount_kobo ?? applicationFeeIntent.amount_kobo) / 100;
 
-        if (paidRegistrationFee < requiredFee) {
+        // Payment should cover both application fee and first tuition installment
+        if (paidRegistrationFee < expectedTotalPayment) {
           return errorResponse(
-            `Application fee payment is lower than the required ₦${requiredFee.toLocaleString('en-NG')}.`,
+            `Payment is lower than the required ₦${expectedTotalPayment.toLocaleString('en-NG')} (application fee + tuition).`,
             400,
           );
         }
@@ -507,15 +499,16 @@ export async function POST(request: Request) {
         return errorResponse('Registration fee payment must be made in NGN.', 400);
       }
 
-      if (paidRegistrationFee < requiredFee) {
+      // Payment should cover both application fee and first tuition installment
+      if (paidRegistrationFee < expectedTotalPayment) {
         return errorResponse(
-          `Application fee payment is lower than the required ₦${requiredFee.toLocaleString('en-NG')}.`,
+          `Payment is lower than the required ₦${expectedTotalPayment.toLocaleString('en-NG')} (application fee + tuition).`,
           400,
         );
       }
 
       if (payment.customerEmail && email && payment.customerEmail.toLowerCase() !== email.toLowerCase()) {
-        console.warn('Ignoring academy registration fee email mismatch after successful Paystack verification');
+        console.warn('Ignoring academy payment email mismatch after successful Paystack verification');
       }
       }
     }
@@ -540,7 +533,7 @@ export async function POST(request: Request) {
         return errorResponse('This payment reference has already been used for an application.', 409);
       }
     }
-    const paymentStatus = registrationFeeRequired ? 'paid' : 'not_required';
+    const paymentStatus = expectedTotalPayment > 0 ? 'paid' : 'not_required';
     const talentCategory = deriveTalentCategory(areasOfInterest);
     const careerGoals = getString(body.career_goals) || motivation;
     const relevantTraining = getString(body.relevant_training) || experience;
@@ -563,7 +556,7 @@ export async function POST(request: Request) {
       batch_id: batchId,
       payment_reference: registrationFeeReference || null,
       payment_status: paymentStatus,
-      application_fee_paid: paidRegistrationFee,
+      application_fee_paid: Math.min(paidRegistrationFee, applicationFeeDue),
       talent_category: talentCategory,
       motivation: legacyMotivation || motivation,
     };
@@ -625,6 +618,15 @@ export async function POST(request: Request) {
       console.error('Academy application insert failed:', insertError);
       throw new ApiError('Failed to submit application', 500);
     }
+
+    // There is no admin approval step: submitting settles the payment, which
+    // approves, creates the plan with its first instalment paid, and enrols.
+    await approveAfterPayment(applicationId, {
+      reference: registrationFeeReference || null,
+      firstInstalmentPaid: planShape.firstDueNgn > 0 && Boolean(registrationFeeReference),
+    }).catch((e) => {
+      console.error('[academy/apply] auto-approval after payment failed', e);
+    });
 
     return successResponse({ success: true, applicationId }, 201);
   } catch (error) {

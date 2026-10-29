@@ -54,6 +54,17 @@ export async function regPatch<T>(path: string, body?: unknown): Promise<T> {
   return res.data as T;
 }
 
+// A stored upload's previewUrl is a relative, auth-gated route
+// (/api/registration/uploads/<key>) — an <Image> can neither resolve it against
+// the API host nor send the Bearer token. Ask the API (authenticated) for a
+// directly loadable, short-lived URL instead. Already-absolute values pass through.
+export async function resolveUploadUrl(previewUrl: string): Promise<string> {
+  if (/^(https?:|data:|blob:|file:|content:)/i.test(previewUrl)) return previewUrl;
+  const res = await api.get<{ url?: string }>(previewUrl, { params: { format: 'json' } });
+  if (!res.data?.url) throw new Error('Upload preview unavailable');
+  return res.data.url;
+}
+
 // Multipart upload for `file` fields. RN FormData accepts a { uri, name, type }
 // blob descriptor; axios sets the multipart boundary when given a FormData body.
 export async function regUpload<T>(

@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -83,15 +84,20 @@ type AdminDashboard struct {
 	SettlementBreaks    int                      `json:"settlement_breaks_open"` // no break-detection exists; always 0
 	SettlementBreakKobo int64                    `json:"settlement_break_value_kobo"`
 	FraudOpen           int                      `json:"fraud_open"` // no fraud queue exists; always 0
-	TicketMix           []map[string]any         `json:"ticket_mix"` // no per-tier-name rollup across events built; empty
-	GMVTrend            []map[string]any         `json:"gmv_trend"`  // no daily time-series query built; empty
-	Activity            []AdminDashboardActivity `json:"activity"`   // no queryable audit feed wired here; empty
+	RefundsPending      int                      `json:"refunds_pending"`
+	SupportCasesOpen    int                      `json:"support_cases_open"`
+	TicketMix           []map[string]any         `json:"ticket_mix"`
+	GMVTrend            []map[string]any         `json:"gmv_trend"`
+	Activity            []AdminDashboardActivity `json:"activity"`
 }
 
 // AdminGetDashboard composes real aggregates from the same tables the other
-// admin reads use. Deliberately does NOT synthesize settlement_breaks_open,
-// fraud_open, ticket_mix, gmv_trend, or activity — none of those have a real
-// data source in this module today (see the per-field comments above).
+// admin reads use. settlement_breaks_open and fraud_open stay at 0 because no
+// break-detection or fraud-queue concept exists in this module — a zero there
+// means "not tracked", never "verified none". Everything else, including the
+// refund and support-desk queue badges, is a live count; the two commerce-only
+// sources (refund/support case tables, the moderation trail behind the activity
+// feed) are skipped while FEATURE_EVENTS_COMMERCIAL is off.
 func (s *Service) AdminGetDashboard(ctx context.Context) (*AdminDashboard, error) {
 	d := &AdminDashboard{TicketMix: []map[string]any{}, GMVTrend: []map[string]any{}, Activity: []AdminDashboardActivity{}}
 
@@ -185,7 +191,175 @@ func (s *Service) AdminGetDashboard(ctx context.Context) (*AdminDashboard, error
 	// same transaction that closes the wallet (see WalletLifecycle_Close*
 	// tests) — there is no "pending, not yet refunded" state in this model, so
 	// this is always 0, not a gap.
+
+	if err := s.adminDashboardMixTrend(ctx, d); err != nil {
+		return nil, err
+	}
+	if err := s.adminDashboardQueues(ctx, d); err != nil {
+		return nil, err
+	}
 	return d, nil
+}
+
+// adminDashboardMixTrend fills the two chart series from PAID orders — the same
+// rows the headline GMV/sold numbers above count, so a chart bar and the total
+// it sums to can never disagree.
+func (s *Service) adminDashboardMixTrend(ctx context.Context, d *AdminDashboard) error {
+	const trend = `
+		SELECT o.created_at::date AS day,
+		       SUM(o.total_kobo) AS gmv_kobo,
+		       SUM(o.total_kobo * e.fee_bps / 10000) AS net_kobo
+		FROM event_orders o JOIN events e ON e.id = o.event_id
+		WHERE o.status='PAID' AND o.created_at >= now() - interval '30 days'
+		GROUP BY 1 ORDER BY 1 ASC`
+	rows, err := s.db.Query(ctx, trend)
+	if err != nil {
+		return fmt.Errorf("events: admin dashboard trend: %w", err)
+	}
+	for rows.Next() {
+		var day time.Time
+		var gmv, net int64
+		if err := rows.Scan(&day, &gmv, &net); err != nil {
+			rows.Close()
+			return fmt.Errorf("events: admin dashboard trend scan: %w", err)
+		}
+		d.GMVTrend = append(d.GMVTrend, map[string]any{
+			"date":     day.Format("2006-01-02"),
+			"gmv_kobo": gmv,
+			"net_kobo": net,
+		})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	const mix = `
+		SELECT COALESCE(NULLIF(t.name,''),'General'), COUNT(*), SUM(o.total_kobo)
+		FROM event_orders o JOIN event_ticket_tiers t ON t.id = o.tier_id
+		WHERE o.status='PAID' AND o.created_at >= now() - interval '30 days'
+		GROUP BY 1 ORDER BY SUM(o.total_kobo) DESC LIMIT 8`
+	mixRows, err := s.db.Query(ctx, mix)
+	if err != nil {
+		return fmt.Errorf("events: admin dashboard mix: %w", err)
+	}
+	for mixRows.Next() {
+		var tier string
+		var sold int
+		var gmv int64
+		if err := mixRows.Scan(&tier, &sold, &gmv); err != nil {
+			mixRows.Close()
+			return fmt.Errorf("events: admin dashboard mix scan: %w", err)
+		}
+		share := 0.0
+		if d.TicketsSold30d > 0 {
+			share = float64(sold) / float64(d.TicketsSold30d) * 100
+		}
+		d.TicketMix = append(d.TicketMix, map[string]any{
+			"tier":      tier,
+			"sold":      sold,
+			"gmv_kobo":  gmv,
+			"share_pct": share,
+		})
+	}
+	mixRows.Close()
+	return mixRows.Err()
+}
+
+// adminDashboardQueues counts the work an admin actually has to do: refunds not
+// yet finished and support cases not yet closed. Both tables arrive with the
+// commerce migration, so with the flag off they report 0 = "not tracked" rather
+// than asking a pre-migration database for a table it does not have. The
+// activity feed's sales leg is always available; its governance leg joins the
+// commerce-only trail.
+func (s *Service) adminDashboardQueues(ctx context.Context, d *AdminDashboard) error {
+	if s.commerceReads {
+		if err := s.db.QueryRow(ctx,
+			`SELECT COUNT(*) FROM event_refunds WHERE status IN ('REQUESTED','APPROVED','PROCESSING','FAILED')`).
+			Scan(&d.RefundsPending); err != nil {
+			return fmt.Errorf("events: admin dashboard refund queue: %w", err)
+		}
+		if err := s.db.QueryRow(ctx,
+			`SELECT COUNT(*) FROM event_support_cases WHERE status IN ('OPEN','IN_PROGRESS')`).
+			Scan(&d.SupportCasesOpen); err != nil {
+			return fmt.Errorf("events: admin dashboard support queue: %w", err)
+		}
+	}
+
+	type activityRow struct {
+		a  AdminDashboardActivity
+		at time.Time
+	}
+	rows := []activityRow{}
+
+	const sales = `
+		SELECT o.id, COALESCE(e.title,''), o.created_at
+		FROM event_orders o JOIN events e ON e.id = o.event_id
+		WHERE o.status='PAID'
+		ORDER BY o.created_at DESC LIMIT 10`
+	saleRows, err := s.db.Query(ctx, sales)
+	if err != nil {
+		return fmt.Errorf("events: admin dashboard activity sales: %w", err)
+	}
+	for saleRows.Next() {
+		var id, title string
+		var at timeScan
+		if err := saleRows.Scan(&id, &title, &at.t); err != nil {
+			saleRows.Close()
+			return fmt.Errorf("events: admin dashboard activity sales scan: %w", err)
+		}
+		ref := id
+		rows = append(rows, activityRow{AdminDashboardActivity{
+			ID: id, Kind: "ticket_sale", Label: "Ticket sale · " + title, Ref: &ref,
+			CreatedAt: at.t.Format(rfc3339),
+		}, at.t})
+	}
+	saleRows.Close()
+	if err := saleRows.Err(); err != nil {
+		return err
+	}
+
+	if s.commerceReads {
+		const decisions = `
+			SELECT d.id, d.action, d.to_state, COALESCE(e.title,''), d.created_at
+			FROM event_moderation_decisions d
+			LEFT JOIN events e ON e.id = d.event_id
+			ORDER BY d.created_at DESC LIMIT 10`
+		decRows, err := s.db.Query(ctx, decisions)
+		if err != nil {
+			return fmt.Errorf("events: admin dashboard activity moderation: %w", err)
+		}
+		for decRows.Next() {
+			var id, action, to, title string
+			var at timeScan
+			if err := decRows.Scan(&id, &action, &to, &title, &at.t); err != nil {
+				decRows.Close()
+				return fmt.Errorf("events: admin dashboard activity moderation scan: %w", err)
+			}
+			label := moderationLabel(action)
+			if title != "" {
+				label += " · " + title
+			}
+			ref := id
+			rows = append(rows, activityRow{AdminDashboardActivity{
+				ID: id, Kind: adminStatus(action), Label: label, Ref: &ref,
+				CreatedAt: at.t.Format(rfc3339),
+			}, at.t})
+		}
+		decRows.Close()
+		if err := decRows.Err(); err != nil {
+			return err
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].at.After(rows[j].at) })
+	if len(rows) > 20 {
+		rows = rows[:20]
+	}
+	for _, r := range rows {
+		d.Activity = append(d.Activity, r.a)
+	}
+	return nil
 }
 
 // --- C. Event catalog + detail ---
@@ -195,7 +369,7 @@ type AdminEventSummary struct {
 	Title           string `json:"title"`
 	OrganiserMasked string `json:"organiser_masked"`
 	Category        string `json:"category"`
-	City            string `json:"city"` // no city column exists on events; always ""
+	City            string `json:"city"`
 	Status          string `json:"status"`
 	StartsAt        string `json:"starts_at"`
 	Capacity        int    `json:"capacity"`
@@ -203,20 +377,69 @@ type AdminEventSummary struct {
 	GMVKobo         int64  `json:"gmv_kobo"`
 	CashlessEnabled bool   `json:"cashless_enabled"`
 	CreatedAt       string `json:"created_at"`
+
+	// Commerce-only: populated when FEATURE_EVENTS_COMMERCIAL is on, omitted
+	// otherwise (the columns below come from the commerce migration).
+	RefundPolicy     string `json:"refund_policy,omitempty"`
+	ModerationStatus string `json:"moderation_status,omitempty"`
+	ModerationNote   string `json:"moderation_note,omitempty"`
+	SubmittedAt      string `json:"submitted_at,omitempty"`
 }
 
 // tickets_sold = issued entitlements never refunded (comps count — they consume
 // capacity); gmv_kobo = money actually collected (PAID orders, promo-net). The
 // previous tiers.sold*price derivation overstated both — see AdminGetDashboard.
-const adminEventSummaryQuery = `
+const adminEventColsBase = `
 	SELECT e.id, e.title, COALESCE(up.full_name,''), COALESCE(e.category,''),
 	       e.state, e.starts_at, e.created_at,
 	       COALESCE((SELECT SUM(t.capacity) FROM event_ticket_tiers t WHERE t.event_id=e.id), 0),
 	       COALESCE((SELECT COUNT(*) FROM event_tickets tk WHERE tk.event_id=e.id AND tk.state<>'REFUNDED'), 0),
 	       COALESCE((SELECT SUM(o.total_kobo) FROM event_orders o WHERE o.event_id=e.id AND o.status='PAID'), 0),
-	       EXISTS(SELECT 1 FROM event_wallets w WHERE w.event_id=e.id)
+	       EXISTS(SELECT 1 FROM event_wallets w WHERE w.event_id=e.id)`
+
+// adminEventColsCommerce adds the columns the commerce migration owns. They are
+// appended, never merged into the base list, so a database that has not applied
+// 20271400000000 still answers the flag-off query with its original shape.
+const adminEventColsCommerce = `,
+	       e.city, e.refund_policy, e.moderation_status, e.moderation_note, e.submitted_at`
+
+const adminEventFrom = `
 	FROM events e
 	LEFT JOIN user_profiles up ON up.id = e.organiser_id`
+
+// adminEventSummarySQL builds the shared admin projection for a WHERE clause
+// (pass "" for no predicate). Column order and adminEventTargets must agree.
+func (s *Service) adminEventSummarySQL(where string) string {
+	cols := adminEventColsBase
+	if s.commerceReads {
+		cols += adminEventColsCommerce
+	}
+	return cols + adminEventFrom + " " + where
+}
+
+// adminEventTargets returns the scan destinations for adminEventSummarySQL.
+// submitted_at is nullable — an event that has never been submitted — so it
+// scans through a **time.Time and stays empty in the JSON when NULL.
+func (s *Service) adminEventTargets(e *AdminEventSummary, state, organiserName *string, startsAt, createdAt *timeScan, submittedAt **time.Time) []any {
+	dests := []any{&e.ID, &e.Title, organiserName, &e.Category, state, &startsAt.t, &createdAt.t,
+		&e.Capacity, &e.TicketsSold, &e.GMVKobo, &e.CashlessEnabled}
+	if s.commerceReads {
+		dests = append(dests, &e.City, &e.RefundPolicy, &e.ModerationStatus, &e.ModerationNote, submittedAt)
+	}
+	return dests
+}
+
+// adminEventFormats applies the enum-casing and timestamp formatting the admin
+// console's TS types expect.
+func adminEventFormats(e *AdminEventSummary, state, organiserName string, startsAt, createdAt time.Time, submittedAt *time.Time) {
+	e.OrganiserMasked = maskName(organiserName)
+	e.Status = adminStatus(state)
+	e.StartsAt = startsAt.Format(rfc3339)
+	e.CreatedAt = createdAt.Format(rfc3339)
+	if submittedAt != nil {
+		e.SubmittedAt = submittedAt.Format(rfc3339)
+	}
+}
 
 // AdminListEvents lists events across ALL states (admin view — discovery's
 // ListEvents restricts non-organiser callers to public states), with
@@ -233,7 +456,7 @@ func (s *Service) AdminListEvents(ctx context.Context, status, q string) ([]Admi
 		args = append(args, "%"+q+"%")
 		where += fmt.Sprintf(" AND e.title ILIKE $%d", len(args))
 	}
-	query := adminEventSummaryQuery + " " + where + " ORDER BY e.created_at DESC LIMIT 200"
+	query := s.adminEventSummarySQL(where) + " ORDER BY e.created_at DESC LIMIT 200"
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("events: admin list: %w", err)
@@ -243,17 +466,13 @@ func (s *Service) AdminListEvents(ctx context.Context, status, q string) ([]Admi
 	out := []AdminEventSummary{}
 	for rows.Next() {
 		var e AdminEventSummary
-		var state string
-		var organiserName string
+		var state, organiserName string
 		var startsAt, createdAt timeScan
-		if err := rows.Scan(&e.ID, &e.Title, &organiserName, &e.Category, &state, &startsAt.t, &createdAt.t,
-			&e.Capacity, &e.TicketsSold, &e.GMVKobo, &e.CashlessEnabled); err != nil {
+		var submittedAt *time.Time
+		if err := rows.Scan(s.adminEventTargets(&e, &state, &organiserName, &startsAt, &createdAt, &submittedAt)...); err != nil {
 			return nil, fmt.Errorf("events: admin list scan: %w", err)
 		}
-		e.OrganiserMasked = maskName(organiserName)
-		e.Status = adminStatus(state)
-		e.StartsAt = startsAt.t.Format(rfc3339)
-		e.CreatedAt = createdAt.t.Format(rfc3339)
+		adminEventFormats(&e, state, organiserName, startsAt.t, createdAt.t, submittedAt)
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -284,35 +503,42 @@ type AdminTicketTier struct {
 type AdminEventDetail struct {
 	AdminEventSummary
 
-	Description       string            `json:"description"`
-	Venue             string            `json:"venue"`
-	CapacitySoldPct   float64           `json:"capacity_sold_pct"`
-	NetRevenueKobo    int64             `json:"net_revenue_kobo"`
-	CashlessFloatKobo int64             `json:"cashless_float_kobo"`
-	CashlessLiability int64             `json:"cashless_liability_kobo"`
-	Tiers             []AdminTicketTier `json:"tiers"`
-	Timeline          []map[string]any  `json:"timeline"` // no queryable audit trail wired here; always empty
+	Description       string                    `json:"description"`
+	Venue             string                    `json:"venue"`
+	CapacitySoldPct   float64                   `json:"capacity_sold_pct"`
+	NetRevenueKobo    int64                     `json:"net_revenue_kobo"`
+	CashlessFloatKobo int64                     `json:"cashless_float_kobo"`
+	CashlessLiability int64                     `json:"cashless_liability_kobo"`
+	Tiers             []AdminTicketTier         `json:"tiers"`
+	Timeline          []AdminEventTimelineEntry `json:"timeline"`
+}
+
+type AdminEventTimelineEntry struct {
+	ID          string `json:"id"`
+	Status      string `json:"status"`
+	Label       string `json:"label"`
+	ActorMasked string `json:"actor_masked"`
+	AuditID     string `json:"audit_id"`
+	At          string `json:"at"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // AdminGetEvent returns full detail for one event, admin-scoped (any state).
 func (s *Service) AdminGetEvent(ctx context.Context, eventID string) (*AdminEventDetail, error) {
-	row := s.db.QueryRow(ctx, adminEventSummaryQuery+" WHERE e.id=$1", eventID)
+	row := s.db.QueryRow(ctx, s.adminEventSummarySQL("WHERE e.id=$1"), eventID)
 	var d AdminEventDetail
 	var state, organiserName string
 	var startsAt, createdAt timeScan
-	if err := row.Scan(&d.ID, &d.Title, &organiserName, &d.Category, &state, &startsAt.t, &createdAt.t,
-		&d.Capacity, &d.TicketsSold, &d.GMVKobo, &d.CashlessEnabled); err != nil {
+	var submittedAt *time.Time
+	if err := row.Scan(s.adminEventTargets(&d.AdminEventSummary, &state, &organiserName, &startsAt, &createdAt, &submittedAt)...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("events: admin get: %w", err)
 	}
-	d.OrganiserMasked = maskName(organiserName)
-	d.Status = adminStatus(state)
-	d.StartsAt = startsAt.t.Format(rfc3339)
-	d.CreatedAt = createdAt.t.Format(rfc3339)
+	adminEventFormats(&d.AdminEventSummary, state, organiserName, startsAt.t, createdAt.t, submittedAt)
 	d.Tiers = []AdminTicketTier{}
-	d.Timeline = []map[string]any{}
+	d.Timeline = []AdminEventTimelineEntry{}
 
 	var feeBps int
 	if err := s.db.QueryRow(ctx, `SELECT COALESCE(description,''), venue, fee_bps FROM events WHERE id=$1`, eventID).
@@ -339,7 +565,85 @@ func (s *Service) AdminGetEvent(ctx context.Context, eventID string) (*AdminEven
 		return nil, err
 	}
 	d.Tiers = tiers
+
+	// The review trail is real once FEATURE_EVENTS_COMMERCIAL is on: every
+	// submit / approve / reject / request-changes / suspend / reinstate the
+	// platform took against this event is a row in event_moderation_decisions,
+	// with the actor who took it. Flag off, that table does not exist, so the
+	// timeline stays empty instead of failing the whole detail read.
+	if s.commerceReads {
+		tl, terr := s.adminEventTimeline(ctx, eventID)
+		if terr != nil {
+			return nil, terr
+		}
+		d.Timeline = tl
+	}
 	return &d, nil
+}
+
+// adminEventTimeline reads the event's append-only governance trail, oldest
+// first — the console renders it as the event's history.
+func (s *Service) adminEventTimeline(ctx context.Context, eventID string) ([]AdminEventTimelineEntry, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT d.id, d.action, d.from_state, d.to_state, d.reason, d.note,
+		       COALESCE(up.full_name,''), d.created_at
+		FROM event_moderation_decisions d
+		LEFT JOIN user_profiles up ON up.id = d.actor_id
+		WHERE d.event_id = $1
+		ORDER BY d.created_at ASC, d.id ASC`, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("events: admin timeline: %w", err)
+	}
+	defer rows.Close()
+
+	out := []AdminEventTimelineEntry{}
+	for rows.Next() {
+		var (
+			id, action, from, to, reason, note, actor string
+			at                                        timeScan
+		)
+		if err := rows.Scan(&id, &action, &from, &to, &reason, &note, &actor, &at.t); err != nil {
+			return nil, fmt.Errorf("events: admin timeline scan: %w", err)
+		}
+		status := to
+		if status == "" {
+			status = from // platform-wide decisions (FEE_SET) change no event state
+		}
+		if reason == "" {
+			reason = note
+		}
+		out = append(out, AdminEventTimelineEntry{
+			ID:          id,
+			Status:      adminStatus(status),
+			Label:       moderationLabel(action),
+			ActorMasked: maskName(actor),
+			AuditID:     id,
+			At:          at.t.Format(rfc3339),
+			Reason:      reason,
+		})
+	}
+	return out, rows.Err()
+}
+
+// moderationLabel turns a trail action into the console's human row title.
+func moderationLabel(action string) string {
+	switch action {
+	case ModerationActSubmit:
+		return "Submitted for review"
+	case ModerationActApprove:
+		return "Approved"
+	case ModerationActReject:
+		return "Rejected"
+	case ModerationActRequestChanges:
+		return "Changes requested"
+	case ModerationActSuspend:
+		return "Suspended"
+	case ModerationActReinstate:
+		return "Reinstated"
+	case ModerationActFeeSet:
+		return "Platform fee changed"
+	}
+	return action
 }
 
 // AdminListTickets lists ticket tiers across events (admin inventory view),

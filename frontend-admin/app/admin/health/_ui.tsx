@@ -133,14 +133,16 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
   );
 }
 
-export function Kpi({ label: lbl, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
-  return (
+export function Kpi({ label: lbl, value, sub, accent, href }: { label: string; value: string; sub?: string; accent?: string; href?: string }) {
+  const card = (
     <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem 1rem', background: colors.card, boxShadow: '0 1px 3px rgba(47,43,61,0.06)' }}>
       <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>{lbl}</div>
       <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? colors.text }}>{value}</div>
       {sub ? <div style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.15rem' }}>{sub}</div> : null}
     </div>
   );
+  // With an href the whole card is the link to its details page.
+  return href ? <Link href={href} style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>{card}</Link> : card;
 }
 
 type Tab = { href: string; label: string; key: string };

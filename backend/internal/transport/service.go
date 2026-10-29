@@ -71,6 +71,9 @@ type Service struct {
 	// receiverSMS texts the receiver their drop-off PIN after pickup
 	// (WithReceiverPinSMS, parcel_receiver_pin.go); nil = off.
 	receiverSMS ReceiverSMSSender
+	// receiverEmail: the free receiver PIN channel (WithReceiverPinNotify);
+	// nil = off.
+	receiverEmail ReceiverEmailSender
 }
 
 // ExternalRefunder is the nil-safe seam transport.Service uses to correctly

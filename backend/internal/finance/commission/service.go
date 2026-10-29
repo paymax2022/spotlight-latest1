@@ -30,9 +30,10 @@ type ReferralHook interface {
 // Service holds the commission business logic: rate resolution + fee math,
 // audited config mutation, idempotent earning recognition, and profit reports.
 type Service struct {
-	repo         *Repository
-	ledger       ledgerService // optional; nil ⇒ earnings recorded without a ledger post
-	referralHook ReferralHook  // optional; nil ⇒ no referral commission-split
+	repo              *Repository
+	ledger            ledgerService // optional; nil ⇒ earnings recorded without a ledger post
+	referralHook      ReferralHook  // optional; nil ⇒ no referral commission-split
+	paymentEnricher   *PaymentMethodResolver // optional; nil ⇒ no payment method enrichment
 }
 
 // NewService builds the service. ledgerSvc may be nil (ledger posting becomes a
@@ -47,6 +48,10 @@ func NewService(repo *Repository, ledgerSvc ledgerService) *Service {
 // Nil-safe: never wiring one is a valid, pre-existing state (referral split
 // simply never fires).
 func (s *Service) SetReferralHook(h ReferralHook) { s.referralHook = h }
+
+// SetPaymentEnricher wires the payment method enricher for commission earnings.
+// Nil-safe: never wiring one means earnings are returned without payment method info.
+func (s *Service) SetPaymentEnricher(e *PaymentMethodResolver) { s.paymentEnricher = e }
 
 // notifyReferralHook fires ONLY when InsertEarning reports a genuinely NEW row
 // (exactly once per real earning — never on a replay duplicate). A hook panic
@@ -350,9 +355,22 @@ func (s *Service) ProfitReport(ctx context.Context, from, to time.Time, groupBy 
 	return s.repo.Report(ctx, from, to, groupBy)
 }
 
-// ListEarnings returns raw earning rows over [from,to) filtered by category.
+// ListEarnings returns earning rows over [from,to) filtered by category,
+// optionally enriched with payment method info when a PaymentMethodResolver is wired.
 func (s *Service) ListEarnings(ctx context.Context, from, to time.Time, category string, limit int) ([]Earning, error) {
-	return s.repo.ListEarnings(ctx, from, to, category, limit)
+	earnings, err := s.repo.ListEarnings(ctx, from, to, category, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich earnings with payment method info if resolver is available.
+	if s.paymentEnricher != nil {
+		for i := range earnings {
+			_ = s.paymentEnricher.EnrichEarning(ctx, &earnings[i])
+		}
+	}
+
+	return earnings, nil
 }
 
 // configToMap snapshots a config for the before/after jsonb audit payload.
@@ -539,6 +557,7 @@ type Earning struct {
 	SourceRef            string    `json:"sourceRef"`
 	LedgerRef            *string   `json:"ledgerRef,omitempty"`
 	UserID               *string   `json:"userId,omitempty"`
+	PaymentMethod        *string   `json:"paymentMethod,omitempty"` // 'wallet', 'card', 'transfer', 'cash', 'unknown'
 	IdempotencyKey       *string   `json:"idempotencyKey,omitempty"`
 	CreatedAt            time.Time `json:"createdAt"`
 }

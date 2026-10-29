@@ -88,26 +88,30 @@ func lifecycleTarget(from, action string) (string, bool) {
 
 // EstateLifecycle is the platform view of an estate's lifecycle state.
 type EstateLifecycle struct {
-	EstateID        string     `json:"estate_id"`
-	Name            string     `json:"name"`
-	Address         string     `json:"address,omitempty"`
-	AdminID         string     `json:"admin_id"`
-	Status          string     `json:"status"`
-	StatusReason    string     `json:"status_reason,omitempty"`
-	StatusChangedAt *time.Time `json:"status_changed_at,omitempty"`
-	StatusChangedBy *string    `json:"status_changed_by,omitempty"`
-	LegalHold       bool       `json:"legal_hold"`
-	LegalHoldReason string     `json:"legal_hold_reason,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
+	EstateID           string     `json:"estate_id"`
+	Name               string     `json:"name"`
+	Address            string     `json:"address,omitempty"`
+	AdminID            string     `json:"admin_id"`
+	Status             string     `json:"status"`
+	StatusReason       string     `json:"status_reason,omitempty"`
+	StatusChangedAt    *time.Time `json:"status_changed_at,omitempty"`
+	StatusChangedBy    *string    `json:"status_changed_by,omitempty"`
+	LegalHold          bool       `json:"legal_hold"`
+	LegalHoldReason    string     `json:"legal_hold_reason,omitempty"`
+	DuplicateSuspected bool       `json:"duplicate_suspected,omitempty"`
+	Timezone           string     `json:"timezone,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
 }
 
 const lifecycleCols = `id, name, COALESCE(address,''), admin_id, status, COALESCE(status_reason,''),
-	status_changed_at, status_changed_by::TEXT, legal_hold, COALESCE(legal_hold_reason,''), created_at`
+	status_changed_at, status_changed_by::TEXT, legal_hold, COALESCE(legal_hold_reason,''),
+	duplicate_suspected, timezone, created_at`
 
 func scanLifecycle(row pgx.Row) (*EstateLifecycle, error) {
 	var l EstateLifecycle
 	err := row.Scan(&l.EstateID, &l.Name, &l.Address, &l.AdminID, &l.Status, &l.StatusReason,
-		&l.StatusChangedAt, &l.StatusChangedBy, &l.LegalHold, &l.LegalHoldReason, &l.CreatedAt)
+		&l.StatusChangedAt, &l.StatusChangedBy, &l.LegalHold, &l.LegalHoldReason,
+		&l.DuplicateSuspected, &l.Timezone, &l.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrEstateNotFound
 	}

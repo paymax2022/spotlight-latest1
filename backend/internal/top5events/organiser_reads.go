@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -93,6 +94,15 @@ type AttendeeRow struct {
 	State       string  `json:"state"`
 	CheckedIn   bool    `json:"checked_in"`
 	CheckedInAt *string `json:"checked_in_at"` // ISO 8601, null if never scanned
+
+	// Door attribution (events-commerce). Name is the account owner, which after a
+	// gift is not the person in the seat, so the seat keeps its own attendee name;
+	// CheckedInBy is the steward who admitted them. All zero with the flag off.
+	AttendeeName  string `json:"attendee_name,omitempty"`
+	Gate          string `json:"gate,omitempty"`
+	Method        string `json:"checkin_method,omitempty"`
+	CheckedInBy   string `json:"checked_in_by,omitempty"`
+	CheckedInName string `json:"checked_in_by_name,omitempty"`
 }
 
 // AttendeesForEvent lists an event's ticket holders. Organiser-or-steward
@@ -116,16 +126,81 @@ func (s *Service) AttendeesForEvent(ctx context.Context, callerID, eventID strin
 // attendeeRows is the roster query shared by AttendeesForEvent and
 // AttendeesCSV. It performs NO authorization — callers must gate first.
 func (s *Service) attendeeRows(ctx context.Context, eventID string) ([]AttendeeRow, error) {
-	const q = `
-		SELECT t.id, COALESCE(up.full_name,''), COALESCE(ch.handle,''), tr.name, t.id, t.state,
-		       t.checked_in_at IS NOT NULL, to_char(t.checked_in_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-		FROM event_tickets t
+	return s.attendeeRowsFiltered(ctx, eventID, CheckinFilter{})
+}
+
+// The roster is one query with two column groups: the eight columns it shipped
+// with, then the door attribution group that exists only after migration
+// 20271400000000. Commerce columns are appended at the END so the pre-commerce
+// positions (and the CSV's column indexes) never move.
+const (
+	attendeeSelectBase = `t.id, COALESCE(up.full_name,''), COALESCE(ch.handle,''), tr.name, t.id, t.state,
+		       t.checked_in_at IS NOT NULL, to_char(t.checked_in_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	attendeeSelectCommerce = `, COALESCE(t.attendee_name,''), t.checked_in_gate, t.checkin_method,
+		       COALESCE(t.checked_in_by::text,''), COALESCE(ab.full_name,'')`
+	attendeeJoins = `FROM event_tickets t
 		JOIN event_ticket_tiers tr ON tr.id = t.tier_id
 		LEFT JOIN user_profiles up ON up.id = t.owner_id
-		LEFT JOIN cashtag_handles ch ON ch.user_id = t.owner_id
-		WHERE t.event_id = $1
-		ORDER BY t.created_at DESC`
-	rows, err := s.db.Query(ctx, q, eventID)
+		LEFT JOIN cashtag_handles ch ON ch.user_id = t.owner_id`
+	attendeeJoinsCommerce = `
+		LEFT JOIN user_profiles ab ON ab.id = t.checked_in_by`
+)
+
+// attendeeRowsFiltered is attendeeRows with the door's filters applied. An empty
+// filter is the unfiltered roster: no LIMIT clause at all, so the roster and the
+// CSV export keep returning every ticket the way they did before.
+//
+// Gate and attendee-name search are commerce-only (those columns do not exist
+// otherwise) and are dropped silently when the flag is off, rather than producing
+// a query that fails on an un-migrated database.
+func (s *Service) attendeeRowsFiltered(ctx context.Context, eventID string, f CheckinFilter) ([]AttendeeRow, error) {
+	cols, joins := attendeeSelectBase, attendeeJoins
+	if s.commerceReads {
+		cols += attendeeSelectCommerce
+		joins += attendeeJoinsCommerce
+	}
+	args := []any{eventID}
+	where := []string{"t.event_id = $1"}
+
+	switch st := strings.ToLower(strings.TrimSpace(f.State)); st {
+	case "", "all":
+	case "waiting":
+		where = append(where, `t.state IN ('ISSUED','TRANSFERRED') AND t.checked_in_at IS NULL`)
+	case "checked_in":
+		where = append(where, `t.state = 'USED'`)
+	default:
+		args = append(args, strings.ToUpper(st))
+		where = append(where, fmt.Sprintf("t.state = $%d", len(args)))
+	}
+	if g := clampTrim(f.Gate, maxGateNameLen); g != "" && s.commerceReads {
+		args = append(args, g)
+		where = append(where, fmt.Sprintf("t.checked_in_gate = $%d", len(args)))
+	}
+	if q := clampTrim(f.Q, 100); q != "" {
+		args = append(args, "%"+q+"%")
+		n := fmt.Sprintf("$%d", len(args))
+		like := fmt.Sprintf(`(COALESCE(up.full_name,'') ILIKE %s OR COALESCE(ch.handle,'') ILIKE %s`, n, n)
+		if s.commerceReads {
+			like = fmt.Sprintf(`(COALESCE(up.full_name,'') ILIKE %s OR COALESCE(ch.handle,'') ILIKE %s OR COALESCE(t.attendee_name,'') ILIKE %s`, n, n, n)
+		}
+		where = append(where, like+fmt.Sprintf(` OR t.id::text = %s)`, n))
+	}
+
+	sql := "SELECT " + cols + " " + joins + " WHERE " + strings.Join(where, " AND ") + " ORDER BY t.created_at DESC"
+	if f.Limit > 0 {
+		limit := f.Limit
+		if limit > 500 {
+			limit = 500
+		}
+		offset := f.Offset
+		if offset < 0 {
+			offset = 0
+		}
+		args = append(args, limit, offset)
+		sql += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args))
+	}
+
+	rows, err := s.db.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("events: attendees: %w", err)
 	}
@@ -134,11 +209,13 @@ func (s *Service) attendeeRows(ctx context.Context, eventID string) ([]AttendeeR
 	out := []AttendeeRow{}
 	for rows.Next() {
 		var a AttendeeRow
-		var checkedInAt *string
-		if err := rows.Scan(&a.ID, &a.Name, &a.Cashtag, &a.TierName, &a.TicketID, &a.State, &a.CheckedIn, &checkedInAt); err != nil {
+		dests := []any{&a.ID, &a.Name, &a.Cashtag, &a.TierName, &a.TicketID, &a.State, &a.CheckedIn, &a.CheckedInAt}
+		if s.commerceReads {
+			dests = append(dests, &a.AttendeeName, &a.Gate, &a.Method, &a.CheckedInBy, &a.CheckedInName)
+		}
+		if err := rows.Scan(dests...); err != nil {
 			return nil, fmt.Errorf("events: attendees scan: %w", err)
 		}
-		a.CheckedInAt = checkedInAt
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -158,7 +235,13 @@ func (s *Service) AttendeesCSV(ctx context.Context, callerID, eventID string) ([
 	}
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
-	if err := w.Write([]string{"name", "cashtag", "tier_name", "ticket_id", "state", "checked_in", "checked_in_at"}); err != nil {
+	header := []string{"name", "cashtag", "tier_name", "ticket_id", "state", "checked_in", "checked_in_at"}
+	if s.commerceReads {
+		// Appended, never inserted: the pre-commerce column positions are part of
+		// the export contract.
+		header = append(header, "attendee_name", "gate", "checkin_method", "checked_in_by")
+	}
+	if err := w.Write(header); err != nil {
 		return nil, err
 	}
 	for _, a := range rows {
@@ -169,7 +252,11 @@ func (s *Service) AttendeesCSV(ctx context.Context, callerID, eventID string) ([
 		// Sanitize user-controlled free-text cells against spreadsheet formula
 		// injection (a cell beginning =,+,-,@ executes when opened in Excel/Sheets).
 		// ticket_id/state/checked_in/timestamp are machine-controlled and left as-is.
-		if err := w.Write([]string{csvSafe(a.Name), csvSafe(a.Cashtag), csvSafe(a.TierName), a.TicketID, a.State, strconv.FormatBool(a.CheckedIn), at}); err != nil {
+		rec := []string{csvSafe(a.Name), csvSafe(a.Cashtag), csvSafe(a.TierName), a.TicketID, a.State, strconv.FormatBool(a.CheckedIn), at}
+		if s.commerceReads {
+			rec = append(rec, csvSafe(a.AttendeeName), csvSafe(a.Gate), a.Method, csvSafe(a.CheckedInName))
+		}
+		if err := w.Write(rec); err != nil {
 			return nil, err
 		}
 	}

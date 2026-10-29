@@ -14,6 +14,7 @@ import VetCard from '@/features/health/vet/components/VetCard';
 import { useVets } from '@/features/health/vet/hooks';
 import { APPT_TYPE_OPTIONS } from '@/features/health/vet/constants';
 import type { AppointmentType } from '@/features/health/vet/types';
+import { projectPins } from '@/features/health/vet/mapPins';
 
 const TYPE_FILTER: { value: 'all' | AppointmentType; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -30,13 +31,15 @@ export default function FindVetScreen() {
     type: type === 'all' ? undefined : type,
   });
 
-  const pins = (vets ?? []).map((v, i) => ({
-    id: v.id,
-    label: v.name.replace(/^Dr\.?\s*/, 'Dr. '),
-    x: 0.2 + (i % 3) * 0.3,
-    y: 0.25 + Math.floor(i / 3) * 0.35,
-    active: v.availableNow,
-  }));
+  const pins = projectPins(
+    (vets ?? []).map((v) => ({
+      id: v.id,
+      label: v.name.replace(/^Dr.?s*/, 'Dr. '),
+      lat: v.lat,
+      lng: v.lng,
+      active: v.availableNow,
+    })),
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

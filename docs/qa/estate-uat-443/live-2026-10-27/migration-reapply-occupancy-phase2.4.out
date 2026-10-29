@@ -1,0 +1,23 @@
+# migration re-apply proof — Phase 2.4 occupancy schema (20271099000060_estate_occupancy_integrity.sql)
+# captured 2026-10-27, after the final green HTTP pass, to show the migration applies idempotently
+# command: docker exec -i supabase_db_spotlight psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q -f - < supabase/migrations/20271099000060_estate_occupancy_integrity.sql
+# result: exit 0, 19 notices, every one of them "already exists, skipping" (or the dropped old-signature function not existing) — no data statement in the path
+
+psql:<stdin>:46: NOTICE:  column "capacity" of relation "estate_properties" already exists, skipping
+psql:<stdin>:80: NOTICE:  relation "estate_unit_occupants" already exists, skipping
+psql:<stdin>:87: NOTICE:  relation "estate_unit_occupants_one_live_owner" already exists, skipping
+psql:<stdin>:90: NOTICE:  relation "estate_unit_occupants_one_live_tenant" already exists, skipping
+psql:<stdin>:94: NOTICE:  relation "estate_unit_occupants_user_idx" already exists, skipping
+psql:<stdin>:96: NOTICE:  relation "estate_unit_occupants_live_idx" already exists, skipping
+psql:<stdin>:158: NOTICE:  function estate_occupancy_admit(uuid,uuid,uuid,uuid,text,date,date,text) does not exist, skipping
+psql:<stdin>:375: NOTICE:  column "vacancy_override" of relation "estate_dues_invoices" already exists, skipping
+psql:<stdin>:375: NOTICE:  column "vacancy_override_reason" of relation "estate_dues_invoices" already exists, skipping
+psql:<stdin>:426: NOTICE:  column "term_override" of relation "estate_dues_invoices" already exists, skipping
+psql:<stdin>:426: NOTICE:  column "term_override_reason" of relation "estate_dues_invoices" already exists, skipping
+psql:<stdin>:484: NOTICE:  column "proof_status" of relation "resident_profiles" already exists, skipping
+psql:<stdin>:484: NOTICE:  column "proof_verified_by" of relation "resident_profiles" already exists, skipping
+psql:<stdin>:484: NOTICE:  column "proof_verified_at" of relation "resident_profiles" already exists, skipping
+psql:<stdin>:484: NOTICE:  column "proof_review_note" of relation "resident_profiles" already exists, skipping
+psql:<stdin>:521: NOTICE:  column "reviewed_by" of relation "tenancy_requests" already exists, skipping
+psql:<stdin>:521: NOTICE:  column "reject_reason" of relation "tenancy_requests" already exists, skipping
+psql:<stdin>:526: NOTICE:  relation "property_ownership_claims_pending_idx" already exists, skipping

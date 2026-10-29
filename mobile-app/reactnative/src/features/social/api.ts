@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { api } from '@/api/client';
 import { USE_MOCK, API_BASE, AML_DAILY_LIMIT_KOBO, normalizeHandle } from './constants/social.constants';
 import type {
@@ -100,8 +101,14 @@ const MOCK_POOLS: GroupPool[] = [
 // the fields the backend doesn't return (MISSING: GET /me profile summary).
 export async function getMyCashtag(): Promise<MyCashtag> {
   if (USE_MOCK) { await delay(); return MOCK_ME; }
-  const res = await api.get(`${API_BASE}/handle/me`);
-  const body = (res.data ?? {}) as { handle?: { handle?: string; display_name?: string } | null };
+  let body: { handle?: { handle?: string; display_name?: string } | null } = {};
+  try {
+    const res = await api.get(`${API_BASE}/handle/me`);
+    body = (res.data ?? {}) as typeof body;
+  } catch (e) {
+    // Backend returns 404 when the user has not claimed a cashtag yet.
+    if ((e as { response?: { status?: number } })?.response?.status !== 404) throw e;
+  }
   const hd = body.handle;
   return {
     handle: hd?.handle ?? null,
@@ -112,13 +119,25 @@ export async function getMyCashtag(): Promise<MyCashtag> {
   };
 }
 
-// MISSING BACKEND ENDPOINT: no GET /api/finance/social/activity feed exists.
-// The mock feed is dev-only: a deployed build shows an empty feed rather than
-// invented transactions. Flip once the backend adds an activity endpoint.
+// Backend: GET /activity returns activity feed with pagination support.
 export async function getActivity(): Promise<ActivityItem[]> {
-  if (!USE_MOCK) return [];
-  await delay();
-  return MOCK_ACTIVITY;
+  if (USE_MOCK) { await delay(); return MOCK_ACTIVITY; }
+  try {
+    const res = await api.get(`${API_BASE}/activity`);
+    const items = (res.data as { activity?: Array<{ kind: string; id: string; counterpart_id: string; amount_kobo: number; note: string; state?: string; created_at: string }> })?.activity ?? [];
+    return items.map((item) => ({
+      id: item.id,
+      kind: item.kind as ActivityItem['kind'],
+      status: (item.state || 'completed') as ActivityStatus,
+      counterparty: item.counterpart_id,
+      avatarColor: '#340075',
+      amountKobo: item.amount_kobo,
+      note: item.note || '',
+      createdAtISO: item.created_at,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export async function resolveCashtag(handle: string): Promise<Cashtag | null> {
@@ -152,18 +171,62 @@ export async function searchCashtags(query: string): Promise<Cashtag[]> {
   return MOCK_DIRECTORY.filter((c) => c.handle.includes(q) || c.displayName.toLowerCase().includes(q));
 }
 
-// MISSING BACKEND ENDPOINT: no /contacts directory endpoint exists.
-export async function getContacts(): Promise<Cashtag[]> {
-  if (!USE_MOCK) return [];
-  await delay();
-  return MOCK_DIRECTORY;
+export interface PhoneContact { id: string; name: string; phone: string }
+export interface PhoneContactsResult {
+  /** granted: device book read; denied: user refused; unavailable: no address book (e.g. web) */
+  access: 'granted' | 'denied' | 'unavailable';
+  onPaymax: Array<Cashtag & { phone: string }>;
+  others: PhoneContact[];
 }
 
-// MISSING BACKEND ENDPOINT: no GET /splits (list) endpoint — only GET /splits/:id.
+const phoneKey = (p: string) => p.replace(/\D/g, '').slice(-10);
+
+// Reads the phone's address book (with permission) and asks the backend which
+// numbers belong to people who claimed a cashtag. Only matched people can be paid.
+export async function getContacts(): Promise<PhoneContactsResult> {
+  if (USE_MOCK) {
+    await delay();
+    return { access: 'granted', onPaymax: MOCK_DIRECTORY.map((c) => ({ ...c, phone: '' })), others: [] };
+  }
+  if (Platform.OS === 'web') return { access: 'unavailable', onPaymax: [], others: [] };
+  let device: PhoneContact[] | null;
+  try {
+    const { getDeviceContacts } = await import('@/lib/contacts');
+    device = await getDeviceContacts();
+  } catch {
+    return { access: 'unavailable', onPaymax: [], others: [] };
+  }
+  if (!device) return { access: 'denied', onPaymax: [], others: [] };
+
+  const phones = Array.from(new Set(device.map((c) => c.phone))).slice(0, 500);
+  const res = await api.post(`${API_BASE}/contacts/match`, { phones });
+  const matches = ((res.data as { matches?: Array<{ phone: string; handle: string; display_name: string }> })?.matches) ?? [];
+  const byPhone = new Map(matches.map((m) => [m.phone, m]));
+
+  const onPaymax: PhoneContactsResult['onPaymax'] = [];
+  const others: PhoneContact[] = [];
+  for (const c of device) {
+    const m = byPhone.get(phoneKey(c.phone));
+    if (m) {
+      const handle = normalizeHandle(m.handle);
+      onPaymax.push({ id: c.id, handle, displayName: c.name || m.display_name, avatarColor: '#340075', verified: false, phone: c.phone });
+    } else {
+      others.push(c);
+    }
+  }
+  return { access: 'granted', onPaymax, others };
+}
+
+// Backend: GET /splits returns user's splits with pagination support.
 export async function listSplits(): Promise<SplitBill[]> {
-  if (!USE_MOCK) return [];
-  await delay();
-  return MOCK_SPLITS;
+  if (USE_MOCK) { await delay(); return MOCK_SPLITS; }
+  try {
+    const res = await api.get(`${API_BASE}/splits`);
+    const bills = (res.data as { splits?: Record<string, unknown>[] })?.splits ?? [];
+    return bills.map((bill) => mapSplit(bill, undefined));
+  } catch {
+    return [];
+  }
 }
 
 export async function getSplit(id: string): Promise<SplitBill> {
@@ -178,16 +241,35 @@ export async function getSplit(id: string): Promise<SplitBill> {
   return mapSplit(body.bill, body.shares);
 }
 
-// MISSING BACKEND ENDPOINT: no GET /pools (list) endpoint — only GET /pools/:id/balance.
+// Backend: GET /pools returns user's pools with pagination support.
 export async function listPools(): Promise<GroupPool[]> {
-  if (!USE_MOCK) return [];
-  await delay();
-  return MOCK_POOLS;
+  if (USE_MOCK) { await delay(); return MOCK_POOLS; }
+  try {
+    const res = await api.get(`${API_BASE}/pools`);
+    const pools = (res.data as { pools?: Array<{ id: string; title: string; description: string; status: string; goal_kobo: number; raised_kobo: number; created_at: string; contributors?: Array<{ id: string; name?: string; handle?: string; avatar_color?: string; amount_kobo: number }> }> })?.pools ?? [];
+    return pools.map((pool) => ({
+      id: pool.id,
+      title: pool.title,
+      description: pool.description,
+      status: (pool.status.toLowerCase() as 'open' | 'closed'),
+      goalKobo: pool.goal_kobo,
+      raisedKobo: pool.raised_kobo,
+      payoutRule: '',
+      createdAtISO: pool.created_at,
+      contributors: (pool.contributors ?? []).map((c) => ({
+        id: c.id,
+        name: c.name ?? c.handle ?? '',
+        handle: c.handle ?? '',
+        avatarColor: c.avatar_color ?? '#340075',
+        amountKobo: c.amount_kobo,
+      })),
+    }));
+  } catch {
+    return [];
+  }
 }
 
-// Backend only exposes GET /pools/:id/balance (not a full pool read). We
-// surface the balance and keep the rest of the shape from the mock/local
-// cache so the detail screen still renders (MISSING: full GET /pools/:id).
+// Backend: GET /pools/:id returns full pool details with contributors.
 export async function getPool(id: string): Promise<GroupPool> {
   if (USE_MOCK) {
     await delay();
@@ -195,11 +277,27 @@ export async function getPool(id: string): Promise<GroupPool> {
     if (!p) throw new Error('Pool not found');
     return p;
   }
-  const res = await api.get(`${API_BASE}/pools/${id}/balance`);
-  const raisedKobo = Number((res.data as { balance_kobo?: number })?.balance_kobo ?? 0);
-  const cached = MOCK_POOLS.find((x) => x.id === id);
-  if (!cached) throw new Error('Pool not found');
-  return { ...cached, raisedKobo };
+  const res = await api.get(`${API_BASE}/pools/${id}`);
+  const pool = (res.data ?? {}) as { pool?: { id: string; title: string; description: string; status: string; goal_kobo: number; raised_kobo: number; created_at: string; contributors?: Array<{ id: string; name?: string; handle?: string; avatar_color?: string; amount_kobo: number }> } };
+  const p = pool.pool;
+  if (!p) throw new Error('Pool not found');
+  return {
+    id: p.id,
+    title: p.title,
+    description: p.description,
+    status: (p.status.toLowerCase() as 'open' | 'closed'),
+    goalKobo: p.goal_kobo,
+    raisedKobo: p.raised_kobo,
+    payoutRule: '',
+    createdAtISO: p.created_at,
+    contributors: (p.contributors ?? []).map((c) => ({
+      id: c.id,
+      name: c.name ?? c.handle ?? '',
+      handle: c.handle ?? '',
+      avatarColor: c.avatar_color ?? '#340075',
+      amountKobo: c.amount_kobo,
+    })),
+  };
 }
 
 interface SplitShareServer {

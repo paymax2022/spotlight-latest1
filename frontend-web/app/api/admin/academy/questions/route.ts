@@ -33,6 +33,7 @@ export async function GET(request: Request) {
       status: url.searchParams.get('status') ?? undefined,
       stage: url.searchParams.get('stage') ?? undefined,
       moduleCode: url.searchParams.get('moduleCode') ?? undefined,
+      topicId: url.searchParams.get('topicId') ?? undefined,
       q: url.searchParams.get('q') ?? undefined,
       page, pageSize,
     });

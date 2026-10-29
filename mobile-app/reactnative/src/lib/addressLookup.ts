@@ -51,6 +51,10 @@ export interface ResolvedAddress {
   label: string;
   lat: number;
   lng: number;
+  /** Locality from the provider, when it gave one. Never derived from the label. */
+  city?: string;
+  /** State/region from the provider, when it gave one. Never derived from the label. */
+  state?: string;
   plusCode?: string;
   source: AddressSource;
   /** True when the coordinate came from a confirmed map pin / reverse geocode. */
@@ -373,7 +377,7 @@ export async function resolveCoordinate(
     try {
       const g = await proxy.geocode(hit.label, opts.surface ?? 'default');
       markProxyUp();
-      return { label: hit.label, lat: g.lat, lng: g.lng, plusCode: g.plus_code, source: 'proxy', precise: false };
+      return { label: hit.label, lat: g.lat, lng: g.lng, city: g.city || undefined, state: g.state || undefined, plusCode: g.plus_code, source: 'proxy', precise: false };
     } catch (e) {
       if (aborted(e)) return null;
       markProxyDown();
@@ -421,7 +425,7 @@ export async function reverseLookup(
     try {
       const r = await proxy.reverse(lat, lng, 'default');
       markProxyUp();
-      return { label: r.address, lat: r.lat, lng: r.lng, plusCode: r.plus_code, source: 'proxy', precise: true };
+      return { label: r.address, lat: r.lat, lng: r.lng, city: r.city || undefined, state: r.state || undefined, plusCode: r.plus_code, source: 'proxy', precise: true };
     } catch (e) {
       if (aborted(e)) return null;
       markProxyDown();

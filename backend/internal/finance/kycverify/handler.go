@@ -43,7 +43,7 @@ var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusBadRequest, ErrInvalidTier, ErrInvalidRequest),
 	httperr.R(http.StatusServiceUnavailable, ErrNoProvider, ErrProviderUnavailable),
 	httperr.R(http.StatusNotFound, ErrNotFound),
-	httperr.R(http.StatusConflict, ErrIllegalTransition),
+	httperr.R(http.StatusConflict, ErrIllegalTransition, ErrIDTypeAlreadyUsed),
 )
 
 func writeErr(c *gin.Context, err error) {
@@ -53,6 +53,8 @@ func writeErr(c *gin.Context, err error) {
 		body["code"] = "consent_required"
 	case errors.Is(err, ErrNoProvider):
 		body["code"] = "no_provider"
+	case errors.Is(err, ErrIDTypeAlreadyUsed):
+		body["code"] = "id_type_already_used"
 	}
 	c.JSON(errMap.Code(err), body)
 }

@@ -80,7 +80,7 @@ components:
         status_reason: { type: string }
         status_changed_at: { type: string, format: date-time }
         status_changed_by: { type: string, format: uuid }
-        legal_hold: { type: boolean, description: Blocks deletion/purge paths (account PII scrub, household delete, hard estate delete) }
+        legal_hold: { type: boolean, description: "Blocks deletion/purge paths (account PII scrub, household delete, hard estate delete)" }
         legal_hold_reason: { type: string }
         created_at: { type: string, format: date-time }
     EstateImportRequest:
@@ -133,7 +133,7 @@ components:
         estate_id: { type: string, format: uuid }
         source_ref: { type: string }
         status: { type: string, enum: [dry_run, committed] }
-        summary: { type: object, description: Per-entity counts (received/insert/update/link/unchanged/error), opening_balance_total_kobo, control-total verdict, destination aggregates }
+        summary: { type: object, description: "Per-entity counts (received/insert/update/link/unchanged/error), opening_balance_total_kobo, control-total verdict, destination aggregates" }
         exceptions:
           type: array
           items:
@@ -1112,6 +1112,41 @@ components:
         sender_display_name:
           type: string
           nullable: true
+        receiver_display_name:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    CryptoWalletTransfer:
+      type: object
+      required: [id, reference, asset, units, fee_units, ngn_value_kobo, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reference:
+          type: string
+        asset:
+          type: string
+          example: USDT
+        units:
+          type: string
+          description: Amount moved, whole-asset units as a decimal string
+        fee_units:
+          type: string
+          description: Fee charged in the same asset, decimal string ("0" until a fee schedule is approved)
+        ngn_value_kobo:
+          type: integer
+          format: int64
+          description: NGN mark of the transfer at execution time, in kobo (used for tier-limit checks)
+        narration:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [successful, failed, reversed]
         receiver_display_name:
           type: string
           nullable: true
@@ -8807,6 +8842,125 @@ paths:
         '503':
           description: Provider portal disabled (feature flag off).
 
+  /transfers/paymax/crypto:
+    post:
+      operationId: initiateCryptoWalletToWalletTransfer
+      summary: >
+        Instantly transfer a crypto holding from the authenticated user's wallet to
+        another Paymax user. Atomic and idempotent on the provided key.
+      description: |
+        Moves `units` of `asset` from the caller's crypto holding to the recipient's
+        holding in a single DB transaction (internal transfer — no on-chain movement,
+        no provider call). Complements `POST /transfers/paymax`, which moves NGN.
+
+        Money rules:
+          - REQUIRES an `Idempotency-Key`. Replaying the same key with the same body
+            returns the prior result (`already_processed: true`); the same key with a
+            different body is 409. A key is scoped to the caller.
+          - `units` is a decimal STRING in whole-asset units (e.g. "12.5"), never a
+            float. Precision beyond the asset's minor-unit scale is 422. The server
+            converts to integer asset minor units; no float math anywhere.
+          - Posts a balanced asset-unit ledger pair (crypto_ledger_entries, in asset minor units, not the NGN finance ledger) and moves both holding
+            projections atomically; ledger rows are immutable (a reversal is a new
+            pair). Emits an audit event. Never updates a holding column directly.
+          - REQUIRES the caller's transaction PIN in the body. A missing PIN is 400 and
+            is never verified (it must not count toward the PIN lockout); a wrong PIN
+            is 403 and counts.
+          - Tier limits are checked fail-closed against the NGN mark of the transfer
+            (`ngn_value_kobo`, from the latest quote at execution time).
+          - The transfer is crypto AML-screened BEFORE any debit (sender, recipient and
+            amount). A screening refusal moves no money.
+          - Sender and recipient must be different accounts (422 `self_transfer`).
+          - Gated by FEATURE_CRYPTO_ENABLED and FEATURE_CRYPTO_WALLET_TRANSFERS_ENABLED
+            (default off); either off → 503. Member route; needs `crypto.trade`.
+      tags: [Transfers, Crypto]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipient_identifier, asset, units, pin]
+              additionalProperties: false
+              properties:
+                recipient_identifier:
+                  type: string
+                  description: Recipient's phone, email, or Paymax username (same resolution rules as `/transfers/paymax`)
+                asset:
+                  type: string
+                  example: USDT
+                  description: Asset symbol; must be enabled for transfers
+                units:
+                  type: string
+                  pattern: '^[0-9]+(\.[0-9]+)?$'
+                  example: '12.5'
+                  description: Amount in whole-asset units as a decimal string; must be greater than zero
+                pin:
+                  type: string
+                  description: Caller's transaction PIN (verified server-side, never logged)
+                narration:
+                  type: string
+                  maxLength: 100
+      responses:
+        '200':
+          description: Transfer successful (or already processed — idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, transfer]
+                properties:
+                  success: { type: boolean }
+                  already_processed: { type: boolean }
+                  transfer: { $ref: '#/components/schemas/CryptoWalletTransfer' }
+        '400':
+          description: Malformed body, missing `pin`, or missing Idempotency-Key
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Insufficient crypto holding (code `insufficient_holdings`). No money moves.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: >
+            Wrong PIN, tier limit exceeded, caller lacks `crypto.trade`, or the transfer
+            was refused by AML screening. No money moves.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Recipient not found, or the asset is unknown / not enabled for transfers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            Either `ambiguous_recipient` (more than one account carries this phone
+            number; refused before any debit), or the Idempotency-Key was reused with a
+            different request body.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: >
+            `units` is zero, negative or finer than the asset's minor-unit scale, or
+            the recipient is the caller (`self_transfer`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Crypto wallet transfers disabled (FEATURE_CRYPTO_ENABLED or FEATURE_CRYPTO_WALLET_TRANSFERS_ENABLED is false)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
 # ── Referrals ──────────────────────────────────────────────────────────────────
 
   /referrals/me:
@@ -10217,7 +10371,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/OrganiserPayout' }
-        '404': { description: Payout not found, or owned by a different organiser }
+        '404': { description: "Payout not found, or owned by a different organiser" }
 
   # ── Events social (FEATURE_EVENTS_SOCIAL) — likes, organiser follows and profiles ──
   # Moves no money: no ledger posting, no Idempotency-Key. Like/follow are idempotent

@@ -162,8 +162,12 @@ export async function getOnboardingSlides(): Promise<OnboardingSlide[]> {
   return doctorGet<OnboardingSlide[]>('/onboarding/slides');
 }
 
+let mockSelectedType: ProviderType | undefined;
+
 export async function getMerchantUpgradeStatus(): Promise<MerchantUpgradeStatus> {
-  if (DOCTOR_USE_MOCK) return wait(DEMO_MERCHANT_UPGRADE_STATUS);
+  if (DOCTOR_USE_MOCK) {
+    return wait(mockSelectedType ? { ...DEMO_MERCHANT_UPGRADE_STATUS, selectedType: mockSelectedType } : DEMO_MERCHANT_UPGRADE_STATUS);
+  }
   return doctorGet<MerchantUpgradeStatus>('/onboarding/merchant-upgrade');
 }
 
@@ -200,8 +204,14 @@ interface LegalConsentWire {
   acceptedAt?: string;
 }
 
+// Fixture mode only: acceptances made this session. Without it acceptConsent
+// built an updated status and threw it away, so the hub refetched the static
+// demo status, still listed the document as outstanding, and nobody could get
+// past the first outstanding agreement.
+let mockConsentStatus: ConsentStatus = DEMO_CONSENT_STATUS;
+
 export async function getConsentStatus(): Promise<ConsentStatus> {
-  if (DOCTOR_USE_MOCK) return wait(DEMO_CONSENT_STATUS);
+  if (DOCTOR_USE_MOCK) return wait(mockConsentStatus);
   const rows = await doctorGet<LegalConsentWire[]>('/onboarding/consents');
 
   // ORDER BY created_at DESC server-side, so the FIRST row seen per kind is the
@@ -321,6 +331,7 @@ export async function requestMerchantUpgrade(input: RequestMerchantUpgradeInput)
 // 'type_selected' with this input's provider type.
 export async function selectProviderType(input: SelectProviderTypeInput): Promise<SelectProviderTypeResult> {
   if (DOCTOR_USE_MOCK) {
+    mockSelectedType = input.providerType;
     const status: MerchantUpgradeStatus = {
       state: 'type_selected', selectedType: input.providerType, startedAt: iso(0), updatedAt: iso(0),
     };
@@ -343,13 +354,14 @@ export async function acceptConsent(input: AcceptConsentInput): Promise<AcceptCo
     };
     // Fold the new acceptance into the demo status (de-dupe by kind).
     const accepted = [
-      ...DEMO_CONSENT_STATUS.accepted.filter((c) => c.kind !== input.kind),
+      ...mockConsentStatus.accepted.filter((c) => c.kind !== input.kind),
       record,
     ];
-    const outstanding = DEMO_CONSENT_STATUS.outstanding.filter((k) => k !== input.kind);
+    const outstanding = mockConsentStatus.outstanding.filter((k) => k !== input.kind);
     const status: ConsentStatus = {
       accepted, outstanding, allAccepted: outstanding.length === 0, updatedAt: iso(0),
     };
+    mockConsentStatus = status;
     return wait({ record, status }, 500);
   }
   // Wire body must name the field consentKind, not kind: Go's AcceptConsentRequest

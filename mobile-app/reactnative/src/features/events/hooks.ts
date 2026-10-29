@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
 import { applyLikeToggle, applyFollowToggle, type ToggleState } from './social';
-import type { EventDetail, OrganiserProfile, EventPatch, TierPatch, PromoPatch, CreatePromoInput, IssueCompInput, AnnounceInput, AddTierInput, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate, AddTeamMemberInput } from './types';
+import type { EventDetail, EventQuery, OrganiserProfile, EventPatch, TierPatch, PromoPatch, CreatePromoInput, IssueCompInput, AnnounceInput, AddTierInput, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate, AddTeamMemberInput, OpenCaseInput, QuoteArgs, RosterFilter } from './types';
+import { EVENTS_COMMERCE_ENABLED } from './constants/events.constants';
 
 // Exported so useEventsRealtime (realtime/useEventsRealtime.ts) can invalidate
 // the exact same query keys on a push, rather than duplicating the shape.
 export const KEYS = {
-  events:    (params?: { category?: string; state?: string }) => ['events', 'list', params ?? {}] as const,
+  events:    (params?: EventQuery) => ['events', 'list', params ?? {}] as const,
   event:     (id: string) => ['events', 'event', id] as const,
   tickets:   ['events', 'tickets'] as const,
   ticket:    (id: string) => ['events', 'ticket', id] as const,
@@ -24,9 +25,25 @@ export const KEYS = {
   // KEYS.followingAll is the prefix that invalidates every page of the feed.
   followingAll: ['events', 'following'] as const,
   following: (limit: number, offset: number) => ['events', 'following', { limit, offset }] as const,
+  // Commerce (FEATURE_EVENTS_COMMERCIAL). The unread badge is keyed separately
+  // from the paged list so marking one read refreshes both.
+  quote:        (q: QuoteArgs) => ['events', 'quote', q] as const,
+  orders:       ['events', 'orders'] as const,
+  bookings:     ['events', 'bookings'] as const,
+  booking:      (ref: string) => ['events', 'booking', ref] as const,
+  myRefunds:    ['events', 'my-refunds'] as const,
+  eventRefunds: (id: string, status: string) => ['events', 'event-refunds', id, status] as const,
+  notifications: (unreadOnly: boolean) => ['events', 'notifications', { unreadOnly }] as const,
+  unreadCount:  ['events', 'notifications', 'unread'] as const,
+  cases:        (status: string) => ['events', 'cases', status] as const,
+  caseDetail:   (id: string) => ['events', 'case', id] as const,
+  roster:       (id: string, f: RosterFilter) => ['events', 'roster', id, f] as const,
+  checkinStats:  (id: string) => ['events', 'checkin-stats', id] as const,
+  checkinHistory:(id: string) => ['events', 'checkin-history', id] as const,
+  moderation:   (id: string) => ['events', 'moderation', id] as const,
 };
 
-export const useEvents = (params?: { category?: string; state?: string }) =>
+export const useEvents = (params?: EventQuery) =>
   useQuery({ queryKey: KEYS.events(params), queryFn: () => api.listEvents(params) });
 
 export const useEvent = (id: string) =>
@@ -81,6 +98,11 @@ export function usePurchaseTickets() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEYS.tickets });
       qc.invalidateQueries({ queryKey: ['events', 'list'] });
+      // A paid checkout changes the receipt list, its booking and the seat
+      // counters on the event card.
+      qc.invalidateQueries({ queryKey: KEYS.orders });
+      qc.invalidateQueries({ queryKey: KEYS.bookings });
+      qc.invalidateQueries({ queryKey: ['events', 'notifications'] });
     },
   });
 }
@@ -372,3 +394,208 @@ export function useFollowOrganiser(organiserId: string) {
   };
   return { state, toggle, isPending: mutation.isPending, error: mutation.error };
 }
+
+// ── Commerce (FEATURE_EVENTS_COMMERCIAL) ─────────────────────────────────────
+// Every query below is disabled while the flag is off, because the routes are
+// unmounted server-side — an unflagged call is a 404, not a retryable failure.
+const COMMERCE = EVENTS_COMMERCE_ENABLED;
+
+export const useQuote = (args: QuoteArgs | null) =>
+  useQuery({
+    queryKey: KEYS.quote(args ?? { eventId: '', tier_id: '', quantity: 0 }),
+    queryFn: () => api.quoteTickets(args as QuoteArgs),
+    enabled: COMMERCE && !!args && !!args.eventId && !!args.tier_id && args.quantity > 0,
+    // Prices and remaining seats move while a basket is open, but not by the
+    // second; this is a freshness floor, not a cache of the amount charged.
+    staleTime: 15_000,
+  });
+
+export const useMyOrders = () =>
+  useQuery({ queryKey: KEYS.orders, queryFn: () => api.listMyOrders(), enabled: COMMERCE });
+
+export const useMyBookings = () =>
+  useQuery({ queryKey: KEYS.bookings, queryFn: () => api.listMyBookings(), enabled: COMMERCE });
+
+export const useBooking = (bookingRef: string) =>
+  useQuery({ queryKey: KEYS.booking(bookingRef), queryFn: () => api.getBooking(bookingRef), enabled: COMMERCE && !!bookingRef });
+
+export const useMyRefunds = () =>
+  useQuery({ queryKey: KEYS.myRefunds, queryFn: api.listMyRefunds, enabled: COMMERCE });
+
+export function useRequestRefund() {
+  const qc = useQueryClient();
+  return useMutation({
+    // One key per user intent: the caller keeps the same idem across a retry so
+    // the server replays the request instead of opening a second case.
+    mutationFn: ({ ticketId, reason, idemKey }: { ticketId: string; reason: string; idemKey: string }) =>
+      api.requestRefund(ticketId, reason, idemKey),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.myRefunds });
+      qc.invalidateQueries({ queryKey: KEYS.tickets });
+      qc.invalidateQueries({ queryKey: KEYS.notifications(true) });
+    },
+  });
+}
+
+// ── Organiser: refund queue ──────────────────────────────────────────────────
+export const useEventRefunds = (eventId: string, status = '') =>
+  useQuery({
+    queryKey: KEYS.eventRefunds(eventId, status),
+    queryFn: () => api.listEventRefunds(eventId, status),
+    enabled: COMMERCE && !!eventId,
+  });
+
+function useRefundQueue(eventId: string) {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: KEYS.eventRefunds(eventId, '') });
+    qc.invalidateQueries({ queryKey: KEYS.eventRefunds(eventId, 'REQUESTED') });
+    qc.invalidateQueries({ queryKey: KEYS.myRefunds });
+    qc.invalidateQueries({ queryKey: KEYS.tickets });
+    qc.invalidateQueries({ queryKey: KEYS.event(eventId) });
+  };
+}
+
+export function useDecideRefund(eventId: string) {
+  const invalidate = useRefundQueue(eventId);
+  return useMutation({
+    mutationFn: ({ refundId, approve, note }: { refundId: string; approve: boolean; note?: string }) =>
+      api.decideEventRefund(eventId, refundId, approve, note ?? ''),
+    onSuccess: invalidate,
+  });
+}
+
+export function useExecuteRefund(eventId: string) {
+  const invalidate = useRefundQueue(eventId);
+  return useMutation({
+    mutationFn: (refundId: string) => api.executeEventRefund(eventId, refundId),
+    onSuccess: invalidate,
+  });
+}
+
+// ── Notification inbox ───────────────────────────────────────────────────────
+export const useNotifications = (unreadOnly = false) =>
+  useQuery({ queryKey: KEYS.notifications(unreadOnly), queryFn: () => api.listNotifications({ unreadOnly }), enabled: COMMERCE });
+
+// The badge only needs the count, so it reads the same cached page list rather
+// than issuing a second request per screen.
+export function useUnreadCount() {
+  const { data } = useNotifications(false);
+  return data?.unread ?? 0;
+}
+
+export function useMarkNotificationRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.markNotificationRead(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['events', 'notifications'] });
+    },
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.markAllNotificationsRead(),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['events', 'notifications'] }); },
+  });
+}
+
+// ── Support desk ─────────────────────────────────────────────────────────────
+export const useMyCases = (status = '') =>
+  useQuery({ queryKey: KEYS.cases(status), queryFn: () => api.listMyCases(status), enabled: COMMERCE });
+
+export const useSupportCase = (caseId: string) =>
+  useQuery({
+    queryKey: KEYS.caseDetail(caseId),
+    queryFn: () => api.getSupportCase(caseId),
+    enabled: COMMERCE && !!caseId,
+  });
+
+export function useOpenSupportCase() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: OpenCaseInput) => api.openSupportCase(input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['events', 'cases'] });
+      qc.invalidateQueries({ queryKey: ['events', 'notifications'] });
+    },
+  });
+}
+
+export function useReplySupportCase(caseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) => api.replySupportCase(caseId, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.caseDetail(caseId) });
+      qc.invalidateQueries({ queryKey: ['events', 'cases'] });
+    },
+  });
+}
+
+// ── Door operations ──────────────────────────────────────────────────────────
+// The door works from this list while people are physically queueing, so it
+// re-reads on the same cadence as the roster poll it replaces.
+export const useRoster = (eventId: string, f: RosterFilter = {}) =>
+  useQuery({
+    queryKey: KEYS.roster(eventId, f),
+    queryFn: () => api.listRoster(eventId, f),
+    enabled: COMMERCE && !!eventId,
+    refetchInterval: COMMERCE ? 15_000 : 0,
+  });
+
+export const useCheckinStats = (eventId: string) =>
+  useQuery({
+    queryKey: KEYS.checkinStats(eventId),
+    queryFn: () => api.getCheckinStats(eventId),
+    enabled: COMMERCE && !!eventId,
+    refetchInterval: COMMERCE ? 15_000 : 0,
+  });
+
+export const useCheckinHistory = (eventId: string) =>
+  useQuery({ queryKey: KEYS.checkinHistory(eventId), queryFn: () => api.listCheckinHistory(eventId), enabled: COMMERCE && !!eventId });
+
+function useDoorInvalidators(eventId: string) {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: ['events', 'roster', eventId] });
+    qc.invalidateQueries({ queryKey: KEYS.checkinStats(eventId) });
+    qc.invalidateQueries({ queryKey: KEYS.checkinHistory(eventId) });
+    qc.invalidateQueries({ queryKey: KEYS.attendees(eventId) });
+    qc.invalidateQueries({ queryKey: KEYS.event(eventId) });
+  };
+}
+
+export function useManualCheckIn(eventId: string) {
+  const invalidate = useDoorInvalidators(eventId);
+  return useMutation({
+    mutationFn: (input: { ticket_id: string; gate?: string; reason?: string }) => api.manualCheckIn(eventId, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUndoCheckIn(eventId: string) {
+  const invalidate = useDoorInvalidators(eventId);
+  return useMutation({
+    mutationFn: (input: { ticket_id: string; reason: string }) => api.undoCheckIn(eventId, input),
+    onSuccess: invalidate,
+  });
+}
+
+// ── Governance ───────────────────────────────────────────────────────────────
+export function useSubmitForReview(eventId: string) {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: () => api.submitEventForReview(eventId),
+    onSuccess: () => {
+      invalidate(eventId);
+      qc.invalidateQueries({ queryKey: KEYS.moderation(eventId) });
+    },
+  });
+}
+
+export const useEventModeration = (eventId: string) =>
+  useQuery({ queryKey: KEYS.moderation(eventId), queryFn: () => api.listEventModeration(eventId), enabled: COMMERCE && !!eventId });

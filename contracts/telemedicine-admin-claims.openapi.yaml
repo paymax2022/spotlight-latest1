@@ -1,0 +1,459 @@
+openapi: 3.0.3
+info:
+  title: Telemedicine Admin — HMO claims, pre-authorisations, fraud warnings and referrals
+  version: 1.0.0
+  description: |
+    Read-mostly admin oversight of the doctor module's HMO and referral records,
+    mounted under /api/v1/telemedicine/admin. Reads need `telemedicine.admin.view`;
+    mutations need `telemedicine.admin.manage`. Mutations write an immutable row to
+    doctor_compliance_audit (fail closed: no audit row, no change) and never move money.
+    Patient identifiers are masked in every response. Free-form `detail` JSON is
+    returned only on detail endpoints and only for an allow-listed set of keys.
+servers:
+  - url: /api/v1/telemedicine/admin
+security:
+  - bearerAuth: []
+paths:
+  /claims/summary:
+    get:
+      summary: KPI counts for claims, pre-auth and fraud warnings
+      operationId: claimsSummary
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ClaimsSummary' }
+  /claims/claims:
+    get:
+      summary: List HMO claims (newest first)
+      operationId: listHmoClaims
+      parameters:
+        - { $ref: '#/components/parameters/Status' }
+        - { $ref: '#/components/parameters/Q' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/HmoClaim' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /claims/claims/{id}:
+    get:
+      summary: One claim with allow-listed detail and its audit trail
+      operationId: getHmoClaim
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/HmoClaimDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /claims/claims/{id}/review:
+    post:
+      summary: Record an admin review note on a claim (status is not changed)
+      operationId: reviewHmoClaim
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note: { type: string, minLength: 3, maxLength: 1000 }
+      responses:
+        '200':
+          description: Updated claim
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/HmoClaimDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /claims/preauth:
+    get:
+      summary: List HMO pre-authorisation requests
+      operationId: listPreAuth
+      parameters:
+        - { $ref: '#/components/parameters/Status' }
+        - { $ref: '#/components/parameters/Q' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/PreAuth' }
+  /claims/preauth/{id}:
+    get:
+      summary: One pre-authorisation request
+      operationId: getPreAuth
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PreAuthDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /claims/fraud-warnings:
+    get:
+      summary: List HMO fraud warnings
+      operationId: listFraudWarnings
+      parameters:
+        - name: acknowledged
+          in: query
+          schema: { type: boolean }
+        - name: severity
+          in: query
+          schema: { type: string }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/FraudWarning' }
+  /claims/fraud-warnings/{id}/acknowledge:
+    post:
+      summary: Acknowledge a fraud warning (idempotent; audited)
+      operationId: acknowledgeFraudWarning
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: Warning after acknowledgement
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/FraudWarning' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /referrals/summary:
+    get:
+      summary: KPI counts for referrals and second-opinion requests
+      operationId: referralsSummary
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ReferralsSummary' }
+  /referrals/outgoing:
+    get:
+      summary: List outgoing referrals (doctor to specialist)
+      operationId: listOutgoingReferrals
+      parameters:
+        - { $ref: '#/components/parameters/Status' }
+        - { $ref: '#/components/parameters/Q' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Referral' }
+  /referrals/outgoing/{id}:
+    get:
+      summary: One outgoing referral
+      operationId: getOutgoingReferral
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ReferralDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /referrals/incoming:
+    get:
+      summary: List incoming referrals received by doctors
+      operationId: listIncomingReferrals
+      parameters:
+        - { $ref: '#/components/parameters/Status' }
+        - { $ref: '#/components/parameters/Q' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Referral' }
+  /referrals/incoming/{id}:
+    get:
+      summary: One incoming referral
+      operationId: getIncomingReferral
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ReferralDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /referrals/opinions:
+    get:
+      summary: List second-opinion requests
+      operationId: listOpinionRequests
+      parameters:
+        - { $ref: '#/components/parameters/Status' }
+        - { $ref: '#/components/parameters/Q' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Referral' }
+  /referrals/opinions/{id}:
+    get:
+      summary: One second-opinion request
+      operationId: getOpinionRequest
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ReferralDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Status:
+      name: status
+      in: query
+      description: Exact status match (lower-case letters, digits, underscore; max 32 chars).
+      schema: { type: string, pattern: '^[a-z0-9_]{1,32}$' }
+    Q:
+      name: q
+      in: query
+      description: Matches claim ref, doctor name or id prefix (max 64 chars).
+      schema: { type: string, maxLength: 64 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 20 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No such record
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    ListEnvelope:
+      type: object
+      properties:
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+    ClaimsSummary:
+      type: object
+      properties:
+        claims_total: { type: integer }
+        claims_by_status:
+          type: object
+          additionalProperties: { type: integer }
+        claims_amount_kobo: { type: integer, format: int64, description: Sum of claimed amounts, minor units (reporting only). }
+        preauth_total: { type: integer }
+        preauth_by_status:
+          type: object
+          additionalProperties: { type: integer }
+        fraud_warnings_open: { type: integer }
+        fraud_warnings_high_open: { type: integer }
+    ReferralsSummary:
+      type: object
+      properties:
+        outgoing_total: { type: integer }
+        outgoing_by_status:
+          type: object
+          additionalProperties: { type: integer }
+        incoming_total: { type: integer }
+        incoming_by_status:
+          type: object
+          additionalProperties: { type: integer }
+        opinions_total: { type: integer }
+        opinions_by_status:
+          type: object
+          additionalProperties: { type: integer }
+    HmoClaim:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ref: { type: string, nullable: true }
+        doctor_id: { type: string, nullable: true }
+        doctor_user_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        patient_masked: { type: string }
+        appointment_id: { type: string, nullable: true }
+        status: { type: string }
+        amount_kobo: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    HmoClaimDetail:
+      allOf:
+        - $ref: '#/components/schemas/HmoClaim'
+        - type: object
+          properties:
+            detail: { type: object, additionalProperties: true }
+            audit:
+              type: array
+              items: { $ref: '#/components/schemas/AuditEntry' }
+    PreAuth:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        doctor_user_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        patient_masked: { type: string }
+        appointment_id: { type: string, nullable: true }
+        status: { type: string }
+        auth_code_present: { type: boolean }
+        amount_kobo: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    PreAuthDetail:
+      allOf:
+        - $ref: '#/components/schemas/PreAuth'
+        - type: object
+          properties:
+            detail: { type: object, additionalProperties: true }
+    FraudWarning:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        doctor_user_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        severity: { type: string }
+        acknowledged: { type: boolean }
+        acknowledged_at: { type: string, format: date-time, nullable: true }
+        summary: { type: string, description: Allow-listed text from the warning detail. }
+        created_at: { type: string, format: date-time }
+    Referral:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [outgoing, incoming, opinion] }
+        doctor_user_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        counterpart: { type: string, description: Specialist id, referring doctor or empty for opinions. }
+        patient_masked: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ReferralDetail:
+      allOf:
+        - $ref: '#/components/schemas/Referral'
+        - type: object
+          properties:
+            detail: { type: object, additionalProperties: true }
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        action: { type: string }
+        actor_id: { type: string }
+        note: { type: string }
+        created_at: { type: string, format: date-time }

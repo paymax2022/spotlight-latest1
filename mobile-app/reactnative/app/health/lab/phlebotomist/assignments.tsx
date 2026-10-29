@@ -13,10 +13,10 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 
-import { useAssignments } from '@/features/health/lab/hooks';
+import { useAssignments, useSetCollectionStatus } from '@/features/health/lab/hooks';
 import { SAMPLE_TYPE_LABEL } from '@/features/health/lab/constants';
+import { formatDate } from '@/features/health/constants/health.constants';
 import type { CollectionAssignment } from '@/features/health/lab/types';
-import LabMapView from '@/features/health/lab/components/LabMapView';
 
 function statusStyle(status: CollectionAssignment['status']) {
   switch (status) {
@@ -42,6 +42,7 @@ const STATUS_LABEL: Record<CollectionAssignment['status'], string> = {
 
 export default function AssignmentsScreen() {
   const assignments = useAssignments();
+  const setStatus = useSetCollectionStatus();
 
   if (assignments.isLoading) {
     return (
@@ -83,21 +84,11 @@ export default function AssignmentsScreen() {
     );
   }
 
-  const firstEnRouteId = data.find((a) => a.status === 'en_route')?.orderId;
-
-  const pins = data.map((a, i) => ({
-    id: a.orderId,
-    label: a.patientName,
-    x: 0.15 + ((i * 0.27 + (i % 3) * 0.11) % 0.7),
-    y: 0.18 + ((i * 0.19 + (i % 2) * 0.13) % 0.64),
-    active: a.orderId === firstEnRouteId,
-  }));
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Today's route" subtitle="Sample collection" />
       <ScrollView contentContainerStyle={styles.content}>
-        <LabMapView pins={pins} caption={`${data.length} stop${data.length === 1 ? '' : 's'} today`} />
+        <Text style={styles.stopCount}>{data.length} stop{data.length === 1 ? '' : 's'} today</Text>
 
         <View style={styles.list}>
           {data.map((a) => {
@@ -129,17 +120,30 @@ export default function AssignmentsScreen() {
                   </View>
                   <View style={styles.metaItem}>
                     <Clock size={14} color={Colors.onSurfaceVariant} />
-                    <Text style={styles.metaText}>{a.scheduledFor}</Text>
+                    <Text style={styles.metaText}>{a.scheduledFor ? formatDate(a.scheduledFor) : 'Time to be confirmed'}</Text>
                   </View>
                 </View>
 
+                <Text style={styles.address} numberOfLines={2}>{a.address}</Text>
                 <View style={styles.footerRow}>
                   <View style={styles.metaItem}>
                     <Route size={14} color={Colors.primary} />
-                    <Text style={styles.distance}>{a.distanceLabel}</Text>
+                    <Text style={styles.distance}>{a.distanceLabel || 'Distance unavailable'}</Text>
                   </View>
                   <ChevronRight size={18} color={Colors.onSurfaceVariant} />
                 </View>
+                {a.status === 'assigned' || a.status === 'en_route' ? (
+                  <Pressable
+                    style={styles.action}
+                    disabled={setStatus.isPending}
+                    accessibilityRole="button"
+                    onPress={() =>
+                      setStatus.mutate({ orderId: a.orderId, status: a.status === 'assigned' ? 'en_route' : 'arrived' })
+                    }
+                  >
+                    <Text style={styles.actionText}>{a.status === 'assigned' ? 'Start route' : "I've arrived"}</Text>
+                  </Pressable>
+                ) : null}
               </Pressable>
             );
           })}
@@ -150,6 +154,17 @@ export default function AssignmentsScreen() {
 }
 
 const styles = StyleSheet.create({
+  stopCount: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
+  address: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  action: {
+    marginTop: Spacing.sm,
+    alignSelf: 'flex-start',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.primary,
+  },
+  actionText: { ...Typography.labelMd, color: Colors.white },
   safe: { flex: 1, backgroundColor: Colors.background },
   content: { padding: Spacing.containerMargin, gap: Spacing.lg, paddingBottom: Spacing.xxl },
   list: { gap: Spacing.md },

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -12,6 +12,8 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { ID_NUMBER_HELP } from '@/features/kycverify/constants';
 import { kycVerifyDraft } from '@/features/kycverify/draft';
+import { useUsedIdTypes } from '@/features/kycverify/hooks';
+import type { KycTier } from '@/features/kycverify/types';
 
 /**
  * K5 — ID number entry. Inline validation (length for BVN/NIN) + a "why we need
@@ -24,6 +26,14 @@ import { kycVerifyDraft } from '@/features/kycverify/draft';
  */
 export default function KycIdNumberScreen() {
   const draft = kycVerifyDraft.current;
+
+  // Direct visits skip the picker: never accept an ID type already used at a
+  // lower tier (the server refuses it as well).
+  const used = useUsedIdTypes(draft.targetTier as KycTier);
+  const idTypeUsed = (used.data ?? []).includes(draft.idType.toLowerCase());
+  useEffect(() => {
+    if (idTypeUsed) router.replace('/kyc-verify/id-type');
+  }, [idTypeUsed]);
   const help = ID_NUMBER_HELP[draft.idType];
 
   const [idNumber, setIdNumber] = useState(draft.idNumber);

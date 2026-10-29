@@ -24,10 +24,14 @@ test.describe('Referral E2E - Earn hub', () => {
     await expect(page.getByText('₦1,500', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('Lifetime earned ₦5,000')).toBeVisible();
 
-    // Invite funnel + leaderboard rank from MOCK_SUMMARY.
+    // Invite funnel + tier from MOCK_SUMMARY. There is no leaderboard source, so no rank is shown.
     await expect(page.getByText('Invited', { exact: true })).toBeVisible();
-    await expect(page.getByText('#23')).toBeVisible();
+    await expect(page.getByText('Tier', { exact: true })).toBeVisible();
     await expect(page.getByText('Rising', { exact: true })).toBeVisible();
+    await expect(page.getByText('#23')).toHaveCount(0);
+
+    // Next milestone from MOCK_SUMMARY.nextMilestone (6 left of 10, ₦5,000 bonus).
+    await expect(page.getByText('6 more activations to earn ₦5,000')).toBeVisible();
   });
 
   test('shows quick-share entry points and recent activity', async ({ page }) => {

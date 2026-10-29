@@ -1,9 +1,9 @@
-import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, ScrollView, StyleSheet, Pressable, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, AtSign, Send, HandCoins, Split, Users } from 'lucide-react-native';
+import { ArrowLeft, AtSign, Send, HandCoins, Split, Users, History } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -20,6 +20,7 @@ import { HomeMenuButton } from '@/components/HomeMenu';
 export default function SocialHome() {
   const me = useMyCashtag();
   const activity = useActivity();
+  const [activeNav, setActiveNav] = useState<'send' | 'request' | 'split' | 'pool' | 'activity'>('send');
 
   const loading = me.isLoading && activity.isLoading;
   const errored = me.isError && activity.isError;
@@ -28,29 +29,33 @@ export default function SocialHome() {
   const refetchAll = () => { me.refetch(); activity.refetch(); };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.header}>
-        <Pressable onPress={() => goBack('/')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
-          <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
-        <View style={styles.headerTitleWrap}>
-          <Text style={styles.eyebrow}>Paymax</Text>
-          <Text style={styles.headerTitle}>Social Pay</Text>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-          <Pressable onPress={() => router.push('/social/cashtag-setup')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Cashtag settings">
-            <AtSign size={20} color={Colors.onSurface} strokeWidth={2} />
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <View style={{ flex: 1 }}>
+        <View style={styles.header}>
+          <Pressable onPress={() => goBack('/')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+            <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
-          <HomeMenuButton />
+          <View style={styles.headerTitleWrap}>
+            <Text style={styles.eyebrow}>Paymax</Text>
+            <Text style={styles.headerTitle}>Social Pay</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Pressable onPress={() => router.push('/social/cashtag-setup')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Cashtag settings">
+              <AtSign size={20} color={Colors.onSurface} strokeWidth={2} />
+            </Pressable>
+            <HomeMenuButton />
+          </View>
         </View>
-      </View>
 
-      {loading ? (
-        <StateView kind="loading" message="Loading your feed…" />
-      ) : errored ? (
-        <StateView kind="error" title="Couldn't load Social Pay" actionLabel="Retry" onAction={refetchAll} />
-      ) : (
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {loading ? (
+          <StateView kind="loading" message="Loading your feed…" />
+        ) : errored ? (
+          <StateView kind="error" title="Couldn't load Social Pay" actionLabel="Retry" onAction={refetchAll} />
+        ) : (
+          <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          {/* Hero banner */}
+          <Image source={{ uri: 'https://res.cloudinary.com/paymax/image/upload/v1793137524/Friends_split_bills_with_Cashtag_dlit9r.png' }} style={styles.heroBanner} resizeMode="cover" />
+
           {/* Identity card */}
           <Pressable onPress={() => router.push('/social/cashtag-setup')} style={styles.idCard}>
             <CashtagAvatar name={me.data?.displayName} handle={me.data?.handle ?? undefined} color={me.data?.avatarColor ?? Colors.primary} size={48} verified />
@@ -88,9 +93,28 @@ export default function SocialHome() {
           )}
 
           <View style={{ height: Spacing.xxl }} />
-        </ScrollView>
-      )}
+          </ScrollView>
+        )}
+      </View>
+
+      {/* Bottom Navigation */}
+      <View style={styles.bottomNav}>
+        <NavButton icon={Send} label="Send" active={activeNav === 'send'} onPress={() => router.push('/social/send')} />
+        <NavButton icon={HandCoins} label="Request" active={activeNav === 'request'} onPress={() => router.push('/social/request')} />
+        <NavButton icon={Split} label="Split" active={activeNav === 'split'} onPress={() => router.push('/social/split/create')} />
+        <NavButton icon={Users} label="Pool" active={activeNav === 'pool'} onPress={() => router.push('/social/pool/create')} />
+        <NavButton icon={History} label="Activity" active={activeNav === 'activity'} onPress={() => router.push('/social/activity')} />
+      </View>
     </SafeAreaView>
+  );
+}
+
+function NavButton({ icon: Icon, label, active, onPress }: { icon: typeof Send; label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.navButton, active && styles.navButtonActive]}>
+      <Icon size={20} color={active ? SocialColors.brand : SocialColors.muted} strokeWidth={2} />
+      <Text style={[styles.navLabel, active && styles.navLabelActive]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -105,6 +129,7 @@ function QuickAction({ icon: Icon, label, onPress }: { icon: typeof Send; label:
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
+  heroBanner: { width: '100%', height: 240, borderRadius: Radius.lg, marginBottom: Spacing.md },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.sm, gap: Spacing.sm },
   iconBtn: { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   headerTitleWrap: { flex: 1 },
@@ -123,4 +148,9 @@ const styles = StyleSheet.create({
   actionLabel: { ...Typography.labelSm, color: SocialColors.text },
   sectionHeader: { paddingHorizontal: 0, marginTop: Spacing.sm },
   card: { backgroundColor: SocialColors.surface, borderRadius: Radius.lg, paddingHorizontal: Spacing.cardPadding, paddingVertical: Spacing.xs, ...shadow1 },
+  bottomNav: { flexDirection: 'row', backgroundColor: SocialColors.surface, borderTopWidth: 1, borderTopColor: SocialColors.border, paddingHorizontal: Spacing.xs, paddingVertical: Spacing.sm },
+  navButton: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: Spacing.sm },
+  navButtonActive: { opacity: 1 },
+  navLabel: { ...Typography.labelXs, color: SocialColors.muted },
+  navLabelActive: { color: SocialColors.brand },
 });

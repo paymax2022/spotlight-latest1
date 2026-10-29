@@ -98,6 +98,10 @@ export interface OrgDraft {
    * empty badge for the rest of the wizard.
    */
   logoPreviewUri: string | null;
+  /** Banner, OPTIONAL. Same rules as logoUri: a pasted URL or an uploaded R2 object key. */
+  coverUri:    string | null;
+  /** Local file URI of a just-picked banner, preview only. Never submitted. */
+  coverPreviewUri: string | null;
   groupType:   GroupType | null;
   approvalRule: ApprovalRule | null;
   registrationFeeKobo: number;
@@ -662,6 +666,8 @@ export type NotificationKind =
   | 'task'
   | 'announcement'
   | 'document'
+  | 'event'
+  | 'committee'
   | 'admin';
 
 export interface AppNotification {

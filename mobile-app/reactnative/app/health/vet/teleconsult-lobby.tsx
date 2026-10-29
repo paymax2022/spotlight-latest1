@@ -23,7 +23,7 @@ const CHECKS = [
 export default function TeleconsultLobbyScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: appt, isLoading, isError, refetch } = useAppointment(id);
-  const { data: consult } = useConsult(appt?.consultId ?? 'vcns_001');
+  const { data: consult } = useConsult(appt ? (appt.consultId ?? appt.id) : '');
 
   if (isLoading) {
     return (
@@ -80,7 +80,7 @@ export default function TeleconsultLobbyScreen() {
       <View style={styles.footer}>
         <PrimaryButton
           label={ready ? 'Join consult' : 'Join when ready'}
-          onPress={() => router.replace({ pathname: '/health/vet/teleconsult', params: { id: appt.consultId ?? 'vcns_001', appointmentId: appt.id } })}
+          onPress={() => router.replace({ pathname: '/health/vet/teleconsult', params: { id: appt.consultId ?? appt.id, appointmentId: appt.id } })}
         />
       </View>
     </SafeAreaView>

@@ -1,0 +1,7 @@
+=== FEATURE_ESTATE_GUARD_GRANTS OFF (default) @ 2026-10-26T20:20:24Z
+guard grant still live in DB: 2448c98f-d030-4e58-a1f3-75c5a4348630
+want=200 got=200  [member with NO grant reaches gate surface (pre-#876 rule) as resident] {"data":[{"id":"270ea3ba-03a7-4c15-b7f8-e2852ce92a5b","estate_id":"0a1e5701-0000-4000-8000-000000000001","issued_by":"f30648f3-1e07-48f8-9cdf-d458799946d7","vis
+want=200 got=403  [member with NO grant may attempt a checkin as resident] {"error":"access code not found","payload":null}
+want=403 got=403  [non-member refused regardless of flag as nobody] {"error":"estate: not a member of this estate"}
+want=403 got=403  [non-member cannot delegate as nobody] {"error":"estate: not a member of this estate"}
+want=200 got=200  [non-member estate discovery (must be empty) as nobody] {"data":[{"id":"0a1e5701-0000-4000-8000-000000000001","name":"UAT Gate Estate Alpha","admin_id":"7945fbd0-24bf-4ee0-9de4-de37aa51fa21","created_at":"2026-10-26T

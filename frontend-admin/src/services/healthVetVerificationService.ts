@@ -88,7 +88,9 @@ const QUEUE: VcnQueueItem[] = [
 
 export async function listVerificationQueue(): Promise<VcnQueueItem[]> {
   if (USE_MOCK) { await delay(); return QUEUE.map((q) => ({ ...q, record: { ...q.record } })); }
-  return getJson<VcnQueueItem[]>('/verification/queue');
+  // The backend answers { items: [...] } (credential.Handler.Queue), not a bare array.
+  const r = await getJson<VcnQueueItem[] | { items?: VcnQueueItem[] }>('/verification/queue');
+  return Array.isArray(r) ? r : (r.items ?? []);
 }
 
 export async function getVerificationRecord(id: string): Promise<VcnVerificationRecord> {

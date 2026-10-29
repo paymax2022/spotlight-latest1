@@ -13,8 +13,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import SegmentedControl from '@/components/SegmentedControl';
 import CredentialBadge from '@/features/health/components/CredentialBadge';
-import LabMapView from '@/features/health/lab/components/LabMapView';
-import { useLabs } from '@/features/health/lab/hooks';
+import { useLabs, useTestOffers, usePackageOffers } from '@/features/health/lab/hooks';
 import { formatNaira } from '@/features/health/constants/health.constants';
 import type { CollectionMode } from '@/features/health/lab/types';
 
@@ -25,19 +24,43 @@ export default function LabSelectScreen() {
     name?: string;
     priceKobo?: string;
     homeCollection?: string;
+    code?: string;
   }>();
   const supportsHome = params.homeCollection === '1';
   const [mode, setMode] = useState<CollectionMode>(supportsHome ? 'home' : 'walk_in');
   const [selected, setSelected] = useState<string | null>(null);
-  const { data: labs, isLoading, isError, refetch } = useLabs(
-    mode === 'home' ? { homeCollection: true } : undefined,
-  );
+  const labsQ = useLabs(mode === 'home' ? { homeCollection: true } : undefined);
+  const testOffersQ = useTestOffers(params.code);
+  const pkgOffersQ = usePackageOffers(params.packageId ? params.name : undefined);
+  const offersQ = params.packageId ? pkgOffersQ : testOffersQ;
+  const isLoading = labsQ.isLoading || offersQ.isLoading;
+  const isError = labsQ.isError || offersQ.isError;
+  const refetch = () => {
+    labsQ.refetch();
+    offersQ.refetch();
+  };
+  // Only labs that actually offer this item, each at its own price. Tests and
+  // packages are per-lab rows, so the id and price depend on the chosen lab.
+  const offers: { labId: string; itemId: string; priceKobo: number }[] = params.packageId
+    ? (pkgOffersQ.data ?? []).map((o) => ({ labId: o.labId, itemId: o.packageId, priceKobo: o.priceKobo }))
+    : (testOffersQ.data ?? []).map((o) => ({ labId: o.labId, itemId: o.testId, priceKobo: o.priceKobo }));
+  const labs = (labsQ.data ?? []).filter((l) => offers.some((o) => o.labId === l.id));
+  const priceAt = (labId: string) => offers.find((o) => o.labId === labId)?.priceKobo;
 
   const onContinue = () => {
     if (!selected) return;
+    const offer = offers.find((o) => o.labId === selected);
+    if (!offer) return;
     router.push({
       pathname: '/health/lab/book',
-      params: { ...params, labId: selected, mode },
+      // The ordered item is THIS lab's row, at THIS lab's price.
+      params: {
+        ...params,
+        labId: selected,
+        mode,
+        priceKobo: String(offer.priceKobo),
+        ...(params.packageId ? { packageId: offer.itemId } : { testId: offer.itemId }),
+      },
     });
   };
 
@@ -60,27 +83,14 @@ export default function LabSelectScreen() {
       </View>
 
       {isLoading ? (
-        <StateView kind="loading" message="Finding nearby labs…" />
+        <StateView kind="loading" message="Finding labs…" />
       ) : isError ? (
         <StateView kind="error" title="Couldn't load labs" message="Please try again." actionLabel="Retry" onAction={refetch} />
-      ) : (labs ?? []).length === 0 ? (
-        <StateView kind="empty" icon="MapPin" title="No labs available" message="Try the other collection mode." />
+      ) : labs.length === 0 ? (
+        <StateView kind="empty" icon="MapPin" title="No labs available" message="No lab offers this test for this collection mode. Try the other mode." />
       ) : (
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <LabMapView
-            height={160}
-            caption={`${(labs ?? []).length} labs near you`}
-            pins={(labs ?? []).map((l, i) => ({
-              id: l.id,
-              label: l.name,
-              x: 0.2 + (i * 0.28) % 0.6,
-              y: 0.25 + (i % 3) * 0.22,
-              active: l.id === selected,
-            }))}
-          />
-
-          {(labs ?? []).map((l) => {
-            const fee = mode === 'home' ? l.homeCollectionFeeKobo : 0;
+          {labs.map((l) => {
             return (
               <Pressable
                 key={l.id}
@@ -110,13 +120,16 @@ export default function LabSelectScreen() {
                 <View style={styles.metaRow}>
                   <MapPin size={14} color={Colors.onSurfaceVariant} strokeWidth={2} />
                   <Text style={styles.meta} numberOfLines={1}>
-                    {l.distanceLabel} · {l.address}
+                    {l.distanceLabel ? `${l.distanceLabel} · ` : ''}{l.address}
                   </Text>
                 </View>
 
                 <View style={styles.foot}>
                   <Text style={styles.eta}>{l.resultEtaLabel}</Text>
-                  <Text style={styles.fee}>{mode === 'home' ? `Collection ${formatNaira(fee)}` : 'No collection fee'}</Text>
+                  <Text style={styles.fee}>
+                    {formatNaira(priceAt(l.id) ?? 0)}
+                    {mode === 'home' && l.homeCollectionFeeKobo > 0 ? ` + ${formatNaira(l.homeCollectionFeeKobo)} home visit` : ''}
+                  </Text>
                 </View>
               </Pressable>
             );

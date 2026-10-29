@@ -22,6 +22,12 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Ensure Go and Node are on PATH (Git Bash on Windows doesn't inherit Windows PATH automatically)
+export PATH="/c/Users/Patrick.Egbuji/AppData/Local/Programs/go/bin:$PATH"
+if [ -d "/c/Program Files/nodejs" ]; then
+  export PATH="/c/Program Files/nodejs:$PATH"
+fi
+
 # Colors (fall back to empty if not a terminal)
 if [ -t 1 ]; then
   C_RESET="\033[0m"; C_BOLD="\033[1m"

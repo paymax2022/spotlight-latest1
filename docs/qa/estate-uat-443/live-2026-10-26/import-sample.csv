@@ -1,0 +1,4 @@
+visitor_name,code_type,valid_from,valid_until,unit_label
+CSV Guest One,one_time,2026-10-26T20:36:18Z,2026-10-26T23:36:18Z,A-102
+CSV Guest Two,one_time,2026-10-26T20:36:18Z,2026-10-26T23:36:18Z,A-102
+BAD ROW

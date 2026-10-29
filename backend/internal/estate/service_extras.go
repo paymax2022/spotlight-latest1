@@ -20,7 +20,10 @@ import (
 // fire-and-forget: a notification failure never fails the underlying operation
 // (mirrors the project's email policy).
 
-// The 18 estate notification types (Block 43).
+// The estate notification taxonomy: the 18 declared below (Block 43) plus the three occupancy notices
+// M03 adds in occupancy.go (estate-a EST-UAT-0043, 0046, 0051) — a person moved onto or off a unit, or
+// given a verdict on their documents, is told in the same feed as everything else. EstateNotificationTypes
+// is the whole set.
 const (
 	NotifVisitorArrived           = "visitor_arrived"
 	NotifVisitorDenied            = "visitor_denied"
@@ -49,6 +52,7 @@ var EstateNotificationTypes = []string{
 	NotifMeetingReminder, NotifTaskAssigned, NotifTaskOverdue, NotifRepairUpdate,
 	NotifVendorAssigned, NotifElectionReminder, NotifElectionResult, NotifAnnouncement,
 	NotifEmergencyAlert, NotifFacilityBookingConfirmed, NotifAdminApprovalRequired,
+	NotifEstateOccupancyAdmitted, NotifEstateOccupancyReleased, NotifEstateOccupancyProofReviewed,
 }
 
 // EstateNotification is the payload handed to the Notifier for push delivery.
@@ -101,6 +105,11 @@ func notifCategory(notifType string) string {
 	case NotifAnnouncement:
 		return "announcement"
 	case NotifAdminApprovalRequired, NotifEstateStatusChanged:
+		return "system"
+	// Occupancy is an administrative record, not a bill, a meeting or an alert: the person needs the
+	// verdict and who made it, which is what the system feed carries. Never user-mutable, so
+	// notifPrefColumn leaves it always-delivered like the other two above.
+	case NotifEstateOccupancyAdmitted, NotifEstateOccupancyReleased, NotifEstateOccupancyProofReviewed:
 		return "system"
 	default: // task_assigned, task_overdue, and any future type
 		return "general"
@@ -455,7 +464,9 @@ func (s *Service) SoftDeleteAccount(ctx context.Context, estateID, userID string
 //   - AutoApplyOverdueRestrictions: residents with overdue dues get a soft
 //                                   restriction (skipped if already restricted)
 //   - ExpireAccessCodes:        active visitor codes past valid_until → 'expired'
-// RunEstateMaintenance runs all three for one estate (admin-triggered);
+//   - ApplyNotificationRetention: each estate's inbox schedule, archived/purged
+//                                   under the purge guard (EST-UAT-0359)
+// RunEstateMaintenance runs all four for one estate (admin-triggered);
 // RunMaintenanceAllEstates runs them platform-wide (scheduler entry point).
 
 // overdueFlip is one invoice that transitioned pending→overdue in a
@@ -566,6 +577,18 @@ func (s *Service) runMaintenance(ctx context.Context, estateID string) (map[stri
 		return out, err
 	}
 	out["access_codes_expired"] = n
+
+	// Inbox retention (estate-d EST-UAT-0359): the fourth job. Each estate's own policy decides what
+	// leaves the inbox, and the database decides what may be deleted at all — a pinned notice, a
+	// protected category and any notice belonging to an estate under legal hold are refused by the purge
+	// guard in 20271099000070, so a scheduler that runs daily cannot slowly erase the evidence a dispute
+	// turns on. Counted here so MAINTENANCE_RUN records what the sweep did rather than just that it ran.
+	sw, err := s.runRetentionSweep(ctx, estateID)
+	if err != nil {
+		return out, err
+	}
+	out["notifications_archived"] = sw["notifications_archived"]
+	out["notifications_purged"] = sw["notifications_purged"]
 	return out, nil
 }
 
@@ -583,6 +606,8 @@ func (s *Service) RunEstateMaintenance(ctx context.Context, estateID, adminID st
 		"invoices_marked_overdue": res["invoices_marked_overdue"],
 		"restrictions_applied":    res["restrictions_applied"],
 		"access_codes_expired":    res["access_codes_expired"],
+		"notifications_archived":  res["notifications_archived"],
+		"notifications_purged":    res["notifications_purged"],
 	})
 	return res, nil
 }

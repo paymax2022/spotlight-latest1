@@ -11,6 +11,13 @@ export interface Wallet {
    * state instead.
    */
   balanceUnavailable?: boolean;
+  /**
+   * Set when the balance API refused the read because the user's KYC tier is below the
+   * gate (403). The balance shown is still the real one, read directly from Supabase;
+   * this only tells the screen to ask the user to verify their identity so Add Money,
+   * Send and Withdraw work. The value is the tier the server demanded.
+   */
+  kycTierRequired?: number;
 }
 
 export interface TransferRecipient {

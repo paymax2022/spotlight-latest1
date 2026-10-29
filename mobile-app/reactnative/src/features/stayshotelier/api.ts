@@ -82,6 +82,8 @@ function mapRatePlan(r: any): RatePlan {
     refundable: !!r.refundable,
     baseSellRateKobo: r.base_sell_rate_kobo ?? 0,
     currency: r.currency || 'NGN',
+    longStayMinNights: r.long_stay_min_nights || undefined,
+    longStayDiscountPct: r.long_stay_discount_pct || undefined,
   };
 }
 function mapReservation(r: any): HotelierReservation {
@@ -121,7 +123,7 @@ export async function createProperty(input: CreatePropertyInput): Promise<{ id: 
     await delay();
     const id = nextId('p');
     mockProperties.push({
-      id, name: input.name, description: '', address: input.address, city: input.city,
+      id, name: input.name, description: '', address: input.address, city: input.city ?? '',
       starRating: input.starRating ?? 0, propertyType: input.propertyType, status: 'DRAFT',
       lat: 0, lng: 0, amenities: [], houseRules: '', cancellationPolicy: 'FLEXIBLE',
       checkInFrom: '14:00', checkOutUntil: '12:00', contactPhone: '', contactEmail: '',
@@ -270,6 +272,7 @@ export async function createRoomType(propertyId: string, input: CreateRoomTypeIn
   const res = await api.post(`${BASE}/properties/${propertyId}/room-types`, {
     name: input.name,
     occupancy: input.occupancy,
+    units: input.units ?? 1,
     bedding: input.bedding ?? '',
   });
   return unwrap<{ id: string }>(res);
@@ -301,6 +304,8 @@ export async function createRatePlan(propertyId: string, input: CreateRatePlanIn
     refundable: input.refundable,
     base_sell_rate_kobo: input.baseSellRateKobo,
     currency: 'NGN',
+    long_stay_min_nights: input.longStayMinNights,
+    long_stay_discount_pct: input.longStayDiscountPct ?? 0,
   });
   return unwrap<{ id: string }>(res);
 }
@@ -343,23 +348,67 @@ export async function getVerificationStatus(propertyId: string): Promise<Verific
       { key: 'signup', label: 'Hotelier account created', stage: 'signup', status: 'approved' as const, required: true },
       { key: 'property', label: 'Property registered (name, type, address, city)', stage: 'property', status: p?.address ? 'approved' as const : 'in_progress' as const, required: true },
       { key: 'content', label: 'Property description and at least one room type with a rate plan', stage: 'content', status: (p?.description && roomTypes.length && ratePlans.length) ? 'approved' as const : 'in_progress' as const, required: true },
-      { key: 'photos', label: 'At least 8 photos uploaded (cover set)', stage: 'content', status: photos.length >= 8 ? 'approved' as const : 'in_progress' as const, required: true, detail: photos.length >= 8 ? undefined : `You have ${photos.length} — add ${8 - photos.length} more to go live.` },
+      { key: 'photos', label: 'At least 3 photos uploaded (cover set)', stage: 'content', status: photos.length >= 3 ? 'approved' as const : 'in_progress' as const, required: true, detail: photos.length >= 3 ? undefined : `You have ${photos.length} — add ${3 - photos.length} more to go live.` },
       { key: 'policies', label: 'Policies configured (check-in/out, cancellation, house rules)', stage: 'policies', status: p?.houseRules ? 'approved' as const : 'in_progress' as const, required: false },
-      { key: 'availability', label: 'Availability & rates loaded (next 90 days)', stage: 'go_live', status: 'in_progress' as const, required: true },
     ];
     return {
       propertyId, propertyName: p?.name ?? '', overall: 'pending', goLiveEligible: false, checklist,
     };
   }
-  const res = await api.get(`${BASE}/verification`);
+  const res = await api.get(`${BASE}/verification`, { params: { property_id: propertyId } });
   return mapVerification(unwrap(res));
 }
 
-export async function submitForReview(): Promise<VerificationStatus> {
+export async function submitForReview(propertyId: string): Promise<VerificationStatus> {
   if (USE_MOCK) {
     await delay();
     throw new Error('Submitting for review is unavailable in fixture mode — switch to the live backend.');
   }
-  const res = await api.post(`${BASE}/verification/submit`, {});
+  const res = await api.post(`${BASE}/verification/submit`, {}, { params: { property_id: propertyId } });
   return mapVerification(unwrap(res));
+}
+
+// ─── Availability calendar ───────────────────────────────────────────────────
+// One row per room type and night. The host sets allotment and stop-sell for a
+// window; sold is maintained by bookings and is read-only here.
+
+export interface AvailabilityDay {
+  roomTypeId: string;
+  date: string;
+  allotment: number;
+  sold: number;
+  stopSell: boolean;
+}
+
+export async function listAvailability(propertyId: string, from?: string, to?: string): Promise<AvailabilityDay[]> {
+  if (USE_MOCK) {
+    await delay();
+    return [];
+  }
+  const res = await api.get(`${BASE}/properties/${propertyId}/availability`, { params: { from, to } });
+  return (unwrap<any[]>(res) ?? []).map((d) => ({
+    roomTypeId: d.room_type_id,
+    date: d.date,
+    allotment: d.allotment,
+    sold: d.sold,
+    stopSell: d.stop_sell,
+  }));
+}
+
+export async function setRoomAvailability(
+  propertyId: string,
+  roomTypeId: string,
+  input: { from: string; to: string; allotment: number },
+): Promise<{ daysUpdated: number }> {
+  if (USE_MOCK) {
+    await delay();
+    return { daysUpdated: 0 };
+  }
+  const res = await api.put(`${BASE}/properties/${propertyId}/room-types/${roomTypeId}/availability`, {
+    from: input.from,
+    to: input.to,
+    allotment: input.allotment,
+  });
+  const body = unwrap<{ days_updated?: number }>(res);
+  return { daysUpdated: body?.days_updated ?? 0 };
 }

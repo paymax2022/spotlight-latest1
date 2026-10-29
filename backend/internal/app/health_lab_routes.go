@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -11,15 +13,18 @@ import (
 	"spotlight/backend/go-common/ginutil"
 
 	"spotlight/backend/internal/config"
+	"spotlight/backend/internal/crypto"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	healthconsent "spotlight/backend/internal/health/consent"
 	healthlab "spotlight/backend/internal/health/lab"
 	healthrecords "spotlight/backend/internal/health/records"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/transport"
 )
@@ -65,6 +70,20 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		audit, // real immutable-audit sink injected by orchestrator (HL-12) — nil-safe
 	)
 
+	// Results vault sharing: consent via the shared consent module (HL-8), and
+	// signed report URLs via a records service that carries the R2 signer. An
+	// unconfigured R2 leaves signed URLs unavailable (503) — never a fabricated URL.
+	consentSvc := healthconsent.NewService(pool, nil)
+	vaultReadSvc := healthrecords.NewService(pool, consentSvc, labReportSigner{p: r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	})}, nil)
+	svc.SetResultSharing(&labConsentAdapter{c: consentSvc}, &labVaultReaderAdapter{r: vaultReadSvc})
+	svc.SetEarningsReader(&labEarningsReader{l: ledgerSvc})
+
 	// Central Commission & Profit recording at the lab order settlement point
 	// (Release → escrow release). Best-effort + idempotent + nil-safe: constructed
 	// with a nil ledger so the earning row is appended WITHOUT re-posting to the
@@ -73,6 +92,20 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// off leaves the recorder nil ⇒ silent no-op.
 	if cfg.FeatureCommissionEnabled {
 		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
+	}
+
+	// Crypto payment (Phase 2 Task 5.1): sell a holding into the wallet, then the
+	// normal escrow HOLD. Double-gated; flag off ⇒ the payer stays nil ⇒ 503.
+	if cfg.FeatureHealthLabCryptoPayment && cfg.FeatureCryptoEnabled {
+		cryptoPrice, _, _ := crypto.ProvidersFromConfig(crypto.ProviderConfig{
+			Provider:    cfg.CryptoProvider,
+			Live:        cfg.IsProd(),
+			TestKey:     cfg.CryptoQuidaxTestKey,
+			TestBaseURL: cfg.CryptoQuidaxTestBaseURL,
+			LiveKey:     cfg.CryptoQuidaxLiveKey,
+			LiveBaseURL: cfg.CryptoQuidaxLiveBaseURL,
+		})
+		svc.SetCryptoPayer(labCryptoAdapter{c: crypto.NewService(pool, ledgerSvc, cryptoPrice)})
 	}
 
 	isAdmin := func(c *gin.Context) bool { return isHealthLabAdmin(c, rbac) }
@@ -86,9 +119,32 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.GET("/tests", h.ListTests)                    // catalog: prep, TAT, price
 	lg.POST("/tests", h.UpsertTest)                  // lab owner, HL-2 catalog governance
 	lg.GET("/packages", h.ListPackages)              // bundle catalog, same shape as ListTests
+	lg.GET("/tests/:id", h.GetTest)                  // one active test (detail screen)
+	lg.GET("/packages/:id", h.GetPackage)            // one active package
+	lg.GET("/labs", h.ListLabs)                      // discoverable MLSCN labs, nearest-first with lat/lng (HL-2)
+	lg.GET("/labs/:id", h.GetLab)
+	lg.GET("/labs/:id/reviews", h.ListLabReviews)
+	lg.GET("/results", h.ListResults)                // my released/escalated results (no values)
+	lg.GET("/results/shared", h.SharedResults)       // results others shared with me (HL-8 consent)
+	lg.GET("/results/:id", h.GetResult)              // detail: owner after acknowledgement, or consented grantee
+	lg.POST("/results/:id/consent", h.AcknowledgeResult)
+	lg.POST("/results/:id/share", h.ShareResult)     // grants LAB_RESULTS via the shared consent module
+	lg.GET("/results/:id/signed-url", h.ResultSignedURL)
+	lg.GET("/phlebotomist/assignments", h.ListAssignments)             // my route: assigned + unassigned pool of labs I staff
+	lg.POST("/phlebotomist/assignments/:id/status", h.SetCollectionStatus) // en_route | arrived (+ optional position)
+	lg.GET("/phlebotomist/assignments/:id/checklist", h.GetChecklist)
+	lg.POST("/phlebotomist/assignments/:id/custody", h.LogCustody)     // bedside scan: collects + opens chain of custody (HL-6)
+	lg.POST("/phlebotomist/assignments/:id/drop-off", h.DropOff)       // custody to the lab's accession desk
+	lg.GET("/orders/:id/phlebotomist", h.OrderPhlebotomist)            // patient/lab: who is collecting
+	lg.GET("/provider/earnings", h.ProviderEarnings) // lab owner: read-only; withdrawals use the wallet bank-transfer corridor
+	lg.GET("/provider/reviews", h.ProviderReviews)
+	lg.POST("/reviews", h.SubmitReview)              // verified-purchase review (released order, once)
 	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
 	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR641)
-	lg.POST("/orders", h.CreateOrder)                // patient, payment HELD (HL-9)
+	lg.POST("/orders/quote", middleware.PerUserRateLimit(nil, "health-lab-quote", 30), h.QuoteOrder) // server price: tests + packages + home fee (what CreateOrder will hold); rate-limited per user
+	lg.POST("/orders/crypto-quote", h.QuoteCryptoPayment)                                          // price the order in a crypto asset (read-only)
+	lg.POST("/orders/pay-crypto", h.PayWithCrypto)                                                 // sell holding -> wallet -> escrow HELD; Idempotency-Key required
+	lg.POST("/orders", h.CreateOrder)                                                              // patient, payment HELD (HL-9)
 	lg.GET("/orders", h.ListMyOrders)                // patient's own order history + active-order card
 	lg.GET("/orders/:id", h.Get)                     // object-level authZ
 	lg.GET("/orders/:id/results", h.Results)         // object-level authZ (HL-8)
@@ -279,4 +335,55 @@ func (a *labVaultAdapter) Create(ctx context.Context, ownerID, createdBy, subjec
 		return "", err
 	}
 	return rec.ID, nil
+}
+
+// labConsentAdapter bridges the shared consent module for lab result sharing.
+type labConsentAdapter struct{ c *healthconsent.Service }
+
+func (a *labConsentAdapter) Grant(ctx context.Context, grantorID, granteeID, scope string, expiresAt *time.Time) (string, error) {
+	g, err := a.c.Grant(ctx, grantorID, granteeID, "", scope, expiresAt)
+	if err != nil {
+		return "", err
+	}
+	return g.ID, nil
+}
+
+func (a *labConsentAdapter) HasActiveGrant(ctx context.Context, granteeID, subjectOwnerID, scope string) (string, bool, error) {
+	return a.c.HasActiveGrant(ctx, granteeID, subjectOwnerID, scope)
+}
+
+// labVaultReaderAdapter resolves a result record's first document to a signed URL
+// through the records vault, which access-logs the read (HL-8/HL-12).
+type labVaultReaderAdapter struct{ r *healthrecords.Service }
+
+func (a *labVaultReaderAdapter) SignedDocURL(ctx context.Context, accessorID, recordID string) (string, error) {
+	rec, err := a.r.Get(ctx, accessorID, recordID, false)
+	if err != nil {
+		return "", err
+	}
+	for _, d := range rec.Docs {
+		if d.SignedURL != "" {
+			return d.SignedURL, nil
+		}
+	}
+	return "", errors.Join(healthlab.ErrSharingUnavailable, errors.New("document delivery is not configured"))
+}
+
+// labEarningsReader reads the lab owner's withdrawable wallet balance from the
+// ledger (the figure the canonical wallet-to-bank corridor draws on). Read-only.
+type labEarningsReader struct{ l *ledger.Service }
+
+func (a *labEarningsReader) AvailableKobo(ctx context.Context, userID string) (int64, error) {
+	return a.l.GetBalance(ctx, userID)
+}
+
+// labReportSigner adapts the R2 presigner to records.Signer: a short-lived GET URL
+// for a stored lab report. The raw storage key is never returned to a client.
+type labReportSigner struct{ p *r2.Presigner }
+
+func (s labReportSigner) SignGet(_ context.Context, storageKey string) (string, error) {
+	if storageKey == "" {
+		return "", errors.New("lab: report has no storage key")
+	}
+	return s.p.PresignGet(storageKey, 5*time.Minute)
 }
