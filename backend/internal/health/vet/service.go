@@ -87,7 +87,8 @@ type Service struct {
 	records    *healthrecords.Service
 	jobs       *scheduler.Service
 	audit      Auditor
-	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	commission CommissionRecorder     // optional; nil ⇒ realized-profit recording is a no-op
+	capability CapabilityStatusSetter // optional; nil ⇒ admin suspend/reinstate refuse
 }
 
 func NewService(

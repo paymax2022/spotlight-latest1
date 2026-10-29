@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 
@@ -18,6 +19,7 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	healthconsult "spotlight/backend/internal/health/consult"
+	healthproviders "spotlight/backend/internal/health/providers"
 	healthrecords "spotlight/backend/internal/health/records"
 	healthrx "spotlight/backend/internal/health/rx"
 	healthscheduling "spotlight/backend/internal/health/scheduling"
@@ -97,6 +99,9 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 	}
 
+	// Admin suspend/reinstate reuse the providers state machine + idempotent grant.
+	svc.SetCapabilityStatusSetter(vetCapabilityAdapter{p: healthproviders.NewService(pool, newCapabilityGranter(rbac), nil)})
+
 	isAdmin := func(c *gin.Context) bool { return isHealthVetAdmin(c, rbac) }
 	h := healthvet.NewHandler(svc, isAdmin)
 
@@ -115,7 +120,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg.GET("/vets/:id/availability", h.VetAvailability)      // bookable slots for a listed vet
 	vg.GET("/provider/availability", h.ProviderAvailability) // the vet's own weekly hours
 	vg.PUT("/provider/availability", h.SaveProviderAvailability)
-	vg.POST("/services", h.UpsertService)                // verified vet owner; fee governance
+	vg.POST("/services", h.UpsertService) // verified vet owner; fee governance
 	// POST/GET /appointments, GET /appointments/:id and POST .../cancel are served by
 	// vetowner.RegisterAppointmentAdapters below (app wire shape; same service underneath).
 	vg.POST("/appointments/:id/accept", h.Accept)        // verified vet (HL-2)
@@ -123,6 +128,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg.POST("/appointments/:id/dispatch", h.Dispatch)    // home visit on transport rail
 	vg.POST("/consults/:id/start", h.StartConsult)       // verified vet; consult engine (HL-2)
 	vg.POST("/consults/:id/complete", h.CompleteConsult) // SOAP + e-Rx/lab handoff; RELEASE (HL-9)
+	vg.POST("/vets/:id/report", h.ReportVet)             // member report → admin moderation queue
 	vg.POST("/sos", h.EmergencySOS)                      // HL-11: nearest in-person vet + disclaimer
 
 	// Pet-owner and vet-provider API surfaces (persisted; contracts/health-vet-*.openapi.yaml).
@@ -149,6 +155,10 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	ag.GET("/vcn-audit", guard("health.vet.vcn"), h.AdminVCNAudit)                              // VCN credential audit (HL-2)
 	ag.GET("/erx-audit", guard("health.vet.erx"), h.AdminERxAudit)                              // e-prescription audit (HL-3)
 	ag.POST("/services/:id/deactivate", guard("health.vet.services"), h.AdminDeactivateService) // service/fee governance
+	ag.POST("/services/:id/reactivate", guard("health.vet.services"), h.AdminReactivateService)
+	ag.POST("/providers/:id/suspend", guard("health.vet.vcn"), h.AdminProviderStatus("suspend"))     // HL-2 via providers SM
+	ag.POST("/providers/:id/reinstate", guard("health.vet.vcn"), h.AdminProviderStatus("reinstate")) // refuses expired credentials
+	ag.POST("/moderation/:id/action", guard("health.vet.moderation"), h.AdminModerate)
 
 	// Console read views (frontend-admin /admin/health/vet/*): read-only, shaped
 	// for the console's types. See healthvet/admin_console.go.
@@ -158,7 +168,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	ag.GET("/eprescriptions", guard("health.vet.erx"), h.AdminConsoleERx)
 	ag.GET("/services", guard("health.vet.services"), h.AdminConsoleServices)
 	ag.GET("/payouts", guard("health.vet.payouts"), h.AdminConsolePayouts)
-	ag.GET("/moderation", guard("health.vet.moderation"), h.AdminConsoleModeration)
+	ag.GET("/moderation", guard("health.vet.moderation"), h.AdminListModeration)
 	ag.GET("/reporting", guard("health.vet.reporting"), h.AdminConsoleReporting)
 
 	log.Println("[health.vet] vet routes registered — pets/vets/appointments/consults/dispatch/sos + admin")
@@ -264,4 +274,15 @@ func (a *vetPayoutGateAdapter) PayoutEligible(ctx context.Context, ownerUserID s
 		return false, nil // fail-closed: no verifiable profile → not eligible
 	}
 	return int(p.Tier) >= 1, nil
+}
+
+// vetCapabilityAdapter maps the providers service onto healthvet.CapabilityStatusSetter.
+type vetCapabilityAdapter struct{ p *healthproviders.Service }
+
+func (a vetCapabilityAdapter) SetCapabilityStatus(ctx context.Context, adminID, providerID, action, note string) error {
+	_, err := a.p.SetCapabilityStatus(ctx, adminID, providerID, action, note)
+	if errors.Is(err, healthproviders.ErrApplicationNotFound) {
+		return healthvet.ErrProviderNotFound
+	}
+	return err
 }

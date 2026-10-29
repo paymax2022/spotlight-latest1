@@ -54,7 +54,11 @@ async function getJson<T>(path: string): Promise<T> {
 }
 async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body: unknown): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { method, headers: authHeaders(), body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  if (!res.ok) {
+    let detail = '';
+    try { const j = await res.json(); detail = j?.error ? `: ${j.error}` : ''; } catch { /* non-JSON body */ }
+    throw new Error(`Request failed (${res.status})${detail}`);
+  }
   const j = await res.json();
   return (j?.data ?? j) as T;
 }
@@ -196,13 +200,40 @@ export async function listVcnApplications(opts?: { status?: string; q?: string }
   if (opts?.q) qs.set('q', opts.q);
   return getJson<VcnApplication[]>(`/vcn/applications${qs.toString() ? `?${qs}` : ''}`);
 }
-export async function decideVcn(id: string, decision: VcnDecision, note?: string): Promise<VcnDecisionResult> {
-  // A real, correctly-wired VCN decision endpoint exists via
-  // healthVetVerificationService.ts::decideVerification, but its
-  // VcnApplication shape doesn't match this file's — the two data models
-  // aren't reconciled, so this can't be silently redirected to that route.
-  if (USE_MOCK) throw new Error(`Deciding a VCN application ${NO_BACKEND_YET}`);
-  return sendJson<VcnDecisionResult>('POST', `/vcn/applications/${id}/decision`, { decision, note });
+const FIXTURE_REFUSAL = 'is unavailable in fixture mode: this console will not report a write it did not perform.';
+
+/**
+ * approve / need_info / reject go to the credential decision route
+ * (POST /verification/:recordId/decision, health.vet.review) using the row's
+ * verification_record_id; approve requires licence_expiry (YYYY-MM-DD).
+ * suspend / reinstate go to POST /providers/:id/{suspend|reinstate} (health.vet.vcn),
+ * which run the providers state machine; reinstate is refused while a credential is expired.
+ */
+export async function decideVcn(
+  app: Pick<VcnApplication, 'id' | 'verification_record_id'>,
+  decision: VcnDecision,
+  opts?: { note?: string; licenceExpiry?: string },
+): Promise<VcnDecisionResult> {
+  if (USE_MOCK) throw new Error(`Deciding a VCN application ${FIXTURE_REFUSAL}`);
+  if (decision === 'suspend' || decision === 'reinstate') {
+    await sendJson('POST', `/providers/${app.id}/${decision}`, { note: opts?.note });
+    return {
+      id: app.id,
+      status: decision === 'suspend' ? 'suspended' : 'approved',
+      capability_granted: decision === 'reinstate',
+      audit_id: '',
+      message: decision === 'suspend' ? 'Vet suspended and de-listed (HL-2).' : 'Vet reinstated and listed again.',
+    };
+  }
+  if (!app.verification_record_id) throw new Error('This vet has no credential verification record to decide on.');
+  if (decision === 'approve' && !opts?.licenceExpiry) throw new Error('Approving requires the licence expiry date.');
+  const rec = await sendJson<{ status: string }>('POST', `/verification/${app.verification_record_id}/decision`, {
+    action: decision,
+    licence_expiry: decision === 'approve' ? opts?.licenceExpiry : undefined,
+    notes: opts?.note,
+  });
+  const status = decision === 'approve' ? 'approved' : decision === 'reject' ? 'rejected' : 'needs_info';
+  return { id: app.id, status, capability_granted: decision === 'approve', audit_id: '', message: `Verification ${rec?.status ?? status} recorded to the audit log.` };
 }
 
 // C · Service / fee governance
@@ -232,17 +263,13 @@ export async function listServices(opts?: { status?: string; mode?: string; q?: 
   if (opts?.q) qs.set('q', opts.q);
   return getJson<VetService[]>(`/services${qs.toString() ? `?${qs}` : ''}`);
 }
-export async function governService(id: string, action: VetServiceGovernanceAction, note?: string): Promise<VetServiceGovernanceResult> {
-  // Only 'suspend' maps to a real route (POST /services/:id/deactivate, no
-  // body). There is no pending/approval state machine server-side, so
-  // 'approve' and 'reject' have nothing to call.
-  if (USE_MOCK) {
-    if (action !== 'suspend') throw new Error(`Governance action "${action}" ${NO_BACKEND_YET}`);
-    await delay();
-    return { id, status: 'suspended', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Service ${id}: suspend applied.` };
-  }
-  if (action !== 'suspend') throw new Error(`Governance action "${action}" ${NO_BACKEND_YET}`);
-  return sendJson<VetServiceGovernanceResult>('POST', `/services/${id}/deactivate`, {});
+export async function governService(id: string, action: VetServiceGovernanceAction, _note?: string): Promise<VetServiceGovernanceResult> {
+  // vet_services carries only active/inactive (no pending queue): approve →
+  // POST /services/:id/reactivate; suspend and reject → POST /services/:id/deactivate.
+  if (USE_MOCK) throw new Error(`Governance action "${action}" ${FIXTURE_REFUSAL}`);
+  const listed = action === 'approve';
+  await sendJson('POST', `/services/${id}/${listed ? 'reactivate' : 'deactivate'}`, {});
+  return { id, status: listed ? 'approved' : 'suspended', audit_id: '', message: listed ? 'Service listed — recorded to the audit log.' : 'Service de-listed — recorded to the audit log.' };
 }
 
 // D · Appointment oversight
@@ -397,10 +424,11 @@ export async function listModeration(opts?: { status?: string; severity?: string
   return getJson<ModerationItem[]>(`/moderation${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function moderate(id: string, action: ModerationAction, note?: string): Promise<ModerationResult> {
-  // No moderation concept exists anywhere in backend/internal/health — no
-  // table, service, or route backs a moderation queue or action.
-  if (USE_MOCK) throw new Error(`Applying a moderation action ${NO_BACKEND_YET}`);
-  return sendJson<ModerationResult>('POST', `/moderation/${id}/action`, { action, note });
+  // POST /moderation/:id/action (healthvet/admin_governance.go). suspend_provider
+  // suspends the vet through the providers state machine, then resolves the item.
+  if (USE_MOCK) throw new Error(`Applying a moderation action ${FIXTURE_REFUSAL}`);
+  const r = await sendJson<{ id: string; status: ModerationResult['status'] }>('POST', `/moderation/${id}/action`, { action, note });
+  return { id: r.id, status: r.status, audit_id: '', message: `Moderation item ${r.status} — recorded to the audit log.` };
 }
 
 // H · Reporting
