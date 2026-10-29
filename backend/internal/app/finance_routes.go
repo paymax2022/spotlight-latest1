@@ -2168,6 +2168,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			WithTiers(tiersSvc).
 			WithPlatformFeeBp(platformFeeBp).
 			WithAudit(doctor.NewRepository(pool))
+		// Booking/cancel notices: push to every registered device via the same
+		// queue + token fan-out the health reminders use. No Redis → Send fails
+		// observably (logged + metered); the booking itself is unaffected.
+		telemedNotif := healthReminderNotifier(cfg.RedisURL)
+		telemedSvc = telemedSvc.WithNotifier(telemedicine.NotifierFunc(
+			func(ctx context.Context, userID, event, title, body string, data map[string]any) error {
+				return deliverToUser(ctx, pool, telemedNotif, notifications.Notification{
+					UserID: userID, Event: notifications.Event(event), Title: title, Body: body, Data: data,
+				})
+			}))
 		telemedHandler := telemedicine.NewHandler(telemedSvc)
 
 		// Legacy /api/finance/telemedicine/... (kept for backward compat)
