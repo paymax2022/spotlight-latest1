@@ -115,7 +115,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg.GET("/vets/:id/availability", h.VetAvailability)      // bookable slots for a listed vet
 	vg.GET("/provider/availability", h.ProviderAvailability) // the vet's own weekly hours
 	vg.PUT("/provider/availability", h.SaveProviderAvailability)
-	vg.POST("/services", h.UpsertService)                // verified vet owner; fee governance
+	vg.POST("/services", h.UpsertService) // verified vet owner; fee governance
 	// POST/GET /appointments, GET /appointments/:id and POST .../cancel are served by
 	// vetowner.RegisterAppointmentAdapters below (app wire shape; same service underneath).
 	vg.POST("/appointments/:id/accept", h.Accept)        // verified vet (HL-2)
@@ -159,7 +159,8 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	ag.GET("/services", guard("health.vet.services"), h.AdminConsoleServices)
 	ag.GET("/payouts", guard("health.vet.payouts"), h.AdminConsolePayouts)
 	ag.GET("/moderation", guard("health.vet.moderation"), h.AdminConsoleModeration)
-	ag.GET("/reporting", guard("health.vet.reporting"), h.AdminConsoleReporting)
+	ag.GET("/reporting", guard("health.vet.reporting"), h.AdminConsoleReporting) // ?period=7d|30d|90d|ytd|all
+	ag.GET("/reporting/export.csv", guard("health.vet.reporting"), h.AdminReportingExportCSV)
 
 	log.Println("[health.vet] vet routes registered — pets/vets/appointments/consults/dispatch/sos + admin")
 }

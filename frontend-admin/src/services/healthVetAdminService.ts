@@ -117,57 +117,29 @@ const DASHBOARD: VetDashboard = {
   ],
 };
 /** Raw shape of GET /api/health/vet/admin/dashboard's `data`
- *  (healthvet.AdminDashboard, backend/internal/health/vet/admin_model.go). */
-interface RawAdminDashboard {
+ *  (healthvet.AdminDashboard + AdminDashboardKPIs, backend/internal/health/vet/admin_kpis.go).
+ *  The KPI block already uses VetDashboard's field names. */
+type RawAdminDashboard = Omit<VetDashboard, 'generated_at' | 'vets_active' | 'appointments_total' | 'appointments_by_state' | 'platform_revenue_kobo_week'> & {
   total_appointments: number;
   appointments_by_state: Record<string, number>;
   platform_revenue_kobo_week: number;
   total_vets: number;
-}
+};
 
 export async function getVetDashboard(): Promise<VetDashboard> {
   if (USE_MOCK) { await delay(); return { ...DASHBOARD, appointment_mix: [...DASHBOARD.appointment_mix], appointments_trend: [...DASHBOARD.appointments_trend], activity: [...DASHBOARD.activity] }; }
   const raw = await getJson<RawAdminDashboard>('/dashboard');
+  const { total_appointments, total_vets, ...kpis } = raw;
+  // services_pending_governance, sos_routed_30d and activity have no backend
+  // source (see admin_kpis.go) and arrive as 0 / [].
   return {
+    ...kpis,
     generated_at: new Date().toISOString(),
-    // Real, this-pass-scoped fields — see admin_model.go's AdminDashboard doc
-    // comment for exactly what each one is and, for platform revenue, why it
-    // is a direct read of commission_earnings rather than a recomputed %.
-    appointments_total: raw.total_appointments,
-    appointments_by_state: raw.appointments_by_state,
-    platform_revenue_kobo_week: raw.platform_revenue_kobo_week,
-    vets_active: raw.total_vets,
-    // Everything below this line is NOT computed by the real backend yet —
-    // this pass scoped only the appointment-state aggregate, trailing-7-day
-    // platform revenue, and APPROVED-vet count (mirrors Lab's own dashboard
-    // fix and Pharmacy's PHARMACY-001 honesty precedent). Left at 0/empty
-    // rather than fabricated.
-    appointments_today: 0,
-    appointments_30d: 0,
-    consults_completed_30d: 0,
-    appointment_completion_rate: 0,
-    no_show_rate: 0,
-    gmv_today_kobo: 0,
-    gmv_30d_kobo: 0,
-    net_revenue_30d_kobo: 0,
-    take_rate: 0,
-    avg_appointment_value_kobo: 0,
-    held_balance_kobo: 0,
-    released_30d_kobo: 0,
-    refunded_30d_kobo: 0,
-    vcn_pending_review: 0,
-    vets_suspended: 0,
-    vcn_expiring_30d: 0,
-    eprescriptions_30d: 0,
-    eprescriptions_pom_30d: 0,
-    eprescription_flags_open: 0,
-    services_pending_governance: 0,
-    moderation_open: 0,
-    payouts_kyc_hold: 0,
-    sos_routed_30d: 0,
-    appointment_mix: [],
-    appointments_trend: [],
-    activity: [],
+    appointments_total: total_appointments,
+    vets_active: total_vets,
+    appointment_mix: kpis.appointment_mix ?? [],
+    appointments_trend: kpis.appointments_trend ?? [],
+    activity: kpis.activity ?? [],
   };
 }
 
@@ -434,6 +406,20 @@ const REPORTING: VetReportingData = {
     return { month: m.toLocaleDateString('en-NG', { month: 'short', year: '2-digit' }), gmv_kobo: gmv, net_kobo: Math.round(gmv * 0.1), appointments: 8_000 + i * 850 };
   }),
 };
+/** Downloads GET /reporting/export.csv for the period (browser only). */
+export async function exportReportingCsv(period?: string): Promise<void> {
+  if (USE_MOCK) throw new Error('CSV export is unavailable in fixture mode — it exports live data only.');
+  const qs = period ? `?period=${encodeURIComponent(period)}` : '';
+  const res = await fetch(`${adminBase()}/reporting/export.csv${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Export failed (${res.status})`);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `vet-reporting-${period || 'all'}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function getReporting(opts?: { period?: string }): Promise<VetReportingData> {
   if (USE_MOCK) { await delay(); return { ...REPORTING, by_state: [...REPORTING.by_state], monthly: [...REPORTING.monthly] }; }
   const qs = new URLSearchParams();
