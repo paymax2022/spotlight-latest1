@@ -257,6 +257,8 @@ const navItemsBase: NavItem[] = [
   { label: 'Vendors', href: '/admin/events/vendors', section: 'Events', permissions: ['events.admin.vendors'] },
   { label: 'Settlement', href: '/admin/events/settlement', section: 'Events', permissions: ['events.admin.settlement'] },
   { label: 'Fraud & Risk', href: '/admin/events/fraud', section: 'Events', permissions: ['events.admin.fraud'] },
+  { label: 'Refund Desk', href: '/admin/events/refunds', section: 'Events', permissions: ['events.refund'] },
+  { label: 'Organiser Payouts', href: '/admin/events/payouts', section: 'Events', permissions: ['events.settle', 'events.admin.view'] },
   { label: 'Loyalty Dashboard', href: '/admin/loyalty/dashboard', section: 'Loyalty', permissions: ['loyalty.admin.dashboard', 'loyalty.admin.view'] },
   { label: 'Earn Rules', href: '/admin/loyalty/earn-rules', section: 'Loyalty', permissions: ['loyalty.admin.earn_rules'] },
   { label: 'Tiers', href: '/admin/loyalty/tiers', section: 'Loyalty', permissions: ['loyalty.admin.tiers'] },

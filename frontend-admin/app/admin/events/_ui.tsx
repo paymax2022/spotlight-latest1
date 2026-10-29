@@ -129,6 +129,8 @@ export function EventsTabs({ active }: { active: string }) {
     { href: '/admin/events/vendors', label: 'Vendors', key: 'vendors' },
     { href: '/admin/events/settlement', label: 'Settlement', key: 'settlement' },
     { href: '/admin/events/fraud', label: 'Fraud', key: 'fraud' },
+    { href: '/admin/events/refunds', label: 'Refunds', key: 'refunds' },
+    { href: '/admin/events/payouts', label: 'Payouts', key: 'payouts' },
   ]} />;
 }
 
