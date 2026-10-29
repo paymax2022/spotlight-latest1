@@ -2,6 +2,7 @@
 import { useQuery } from '@tanstack/react-query';
 import * as homeApi from './api';
 import { referralKeys } from '../foundation/hooks';
+import { LIVE_REFRESH } from '../constants/referral.constants';
 
 export const homeKeys = {
   dashboard: () => [...referralKeys.all, 'home', 'dashboard'] as const,
@@ -10,7 +11,7 @@ export const homeKeys = {
 };
 
 export function useDashboard() {
-  return useQuery({ queryKey: homeKeys.dashboard(), queryFn: homeApi.getDashboard });
+  return useQuery({ queryKey: homeKeys.dashboard(), queryFn: homeApi.getDashboard, ...LIVE_REFRESH });
 }
 
 export function useMyCode() {
@@ -18,5 +19,5 @@ export function useMyCode() {
 }
 
 export function useActivity() {
-  return useQuery({ queryKey: homeKeys.activity(), queryFn: homeApi.getActivity });
+  return useQuery({ queryKey: homeKeys.activity(), queryFn: homeApi.getActivity, ...LIVE_REFRESH });
 }

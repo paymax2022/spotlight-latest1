@@ -66,7 +66,8 @@ function mapEngineStatus(status: string): RewardLedgerRow['state'] {
     case 'PENDING':
       return 'pending';
     case 'CREDITED':
-      return 'paid';
+      // Credited to the referral balance, not yet withdrawn — see home/api.ts.
+      return 'earned';
     case 'REVERSED':
       return 'clawed_back';
     default:

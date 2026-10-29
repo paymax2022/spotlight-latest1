@@ -2,6 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as inviteApi from './api';
 import { referralKeys } from '../foundation/hooks';
+import { LIVE_REFRESH } from '../constants/referral.constants';
 import type { ShareContext, VanityLinkInput } from './types';
 
 export const inviteKeys = {
@@ -71,6 +72,7 @@ export function useTrackedInvitees() {
     queryKey: inviteKeys.tracking(),
     queryFn: inviteApi.getTrackedInvitees,
     staleTime: 30_000,
+    ...LIVE_REFRESH,
   });
 }
 
