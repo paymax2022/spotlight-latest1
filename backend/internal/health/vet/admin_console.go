@@ -11,8 +11,8 @@ package healthvet
 //   - a field the backend has no source for is omitted or zero, not invented —
 //     there is no vet moderation store, so ListModeration answers an empty list;
 //   - the payout view is DERIVED from the escrow legs (vet_appointment_payments
-//     RELEASED) and the commission rows already recorded; deciding a payout is
-//     not built here (it is a money mutation and needs its own spec).
+//     RELEASED) and the commission rows already recorded; payout decisions are
+//     an append-only attestation in admin_payouts.go (vet_payout_decisions).
 
 import (
 	"context"
@@ -306,29 +306,45 @@ func (s *Service) AdminConsolePayouts(ctx context.Context) ([]AdminConsolePayout
 		       COALESCE(dv.profile_draft->'draft'->'affiliations'->0->>'name',''),
 		       SUM(vp.total_kobo), MIN(vp.created_at),
 		       COALESCE((SELECT SUM(ce.spotlight_revenue_kobo) FROM commission_earnings ce
-		                 WHERE ce.source_module='health.vet' AND ce.source_ref = ANY(array_agg(vp.appointment_id::text))),0)
+		                 WHERE ce.source_module='health.vet' AND ce.source_ref = ANY(array_agg(vp.appointment_id::text))),0),
+		       hp.owner_user_id::text,
+		       COALESCE((SELECT d.decision FROM vet_payout_decisions d
+		                 WHERE d.provider_id = hp.id AND d.released_kobo = SUM(vp.total_kobo)
+		                 ORDER BY d.created_at DESC LIMIT 1),'')
 		FROM vet_appointment_payments vp
 		JOIN health_providers hp ON hp.id = vp.provider_id
 		LEFT JOIN doctor_vet_profiles dv ON dv.user_id = hp.owner_user_id
 		WHERE vp.pay_state = 'RELEASED'
-		GROUP BY hp.id, hp.display_name, dv.profile_draft
+		GROUP BY hp.id, hp.display_name, hp.owner_user_id, dv.profile_draft
 		ORDER BY MIN(vp.created_at) DESC LIMIT 200`)
 	if err != nil {
 		return nil, fmt.Errorf("vet: console payouts: %w", err)
 	}
 	defer rows.Close()
 	out := []AdminConsolePayout{}
+	owners := []string{}
 	for rows.Next() {
 		var p AdminConsolePayout
-		if err := rows.Scan(&p.ID, &p.VetMasked, &p.ClinicMasked, &p.ReleasedKobo, &p.CreatedAt, &p.FeesKobo); err != nil {
+		var owner, decision string
+		if err := rows.Scan(&p.ID, &p.VetMasked, &p.ClinicMasked, &p.ReleasedKobo, &p.CreatedAt, &p.FeesKobo, &owner, &decision); err != nil {
 			return nil, err
 		}
 		p.NetPayableKobo = p.ReleasedKobo - p.FeesKobo
-		// No payout-run table exists for vets: every row is an accrual awaiting one.
-		p.PayoutStatus, p.KYCTier = "pending", "unknown"
+		// Status is the latest decision on THIS accrual snapshot (vet_payout_decisions);
+		// a larger accrual than the one decided reads as pending again.
+		p.PayoutStatus, p.KYCTier = storedToPayoutStatus(decision), "unknown"
 		out = append(out, p)
+		owners = append(owners, owner)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if s.payout != nil {
+			out[i].KYCVerified, _ = s.payout.PayoutEligible(ctx, owners[i])
+		}
+	}
+	return out, nil
 }
 
 // AdminConsoleReporting aggregates vet_appointment_payments. gmv is the sum of

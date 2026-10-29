@@ -84,7 +84,6 @@ import (
 	"spotlight/backend/internal/restaurant/taxonomy"
 	"spotlight/backend/internal/services"
 	staysreservation "spotlight/backend/internal/stays/reservation"
-	"spotlight/backend/internal/telemedicine"
 	telemedclaims "spotlight/backend/internal/telemedadmin/claims"
 	telemedcompliance "spotlight/backend/internal/telemedadmin/compliance"
 	telemedfinance "spotlight/backend/internal/telemedadmin/finance"
@@ -92,6 +91,7 @@ import (
 	telemedprescriptions "spotlight/backend/internal/telemedadmin/prescriptions"
 	telemedreviews "spotlight/backend/internal/telemedadmin/reviews"
 	telemedsupport "spotlight/backend/internal/telemedadmin/support"
+	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	transportpaystackcheckout "spotlight/backend/internal/transport/paystackcheckout"
@@ -682,7 +682,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// PHARMACY-006/LAB-003-shaped bug: NOT adminGroupTop5 — see the
 			// comment on RegisterHealthVet's own ag.Use(RequireAuthContext(...))
 			// call for why (identical ordering hazard, fixed the same way).
-			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase)
+			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase, auditSink)
 			// Mode-B (assisted) VCN verification: vet gets verified without ever
 			// seeing the VCN portal; ops confirms out-of-band; capability granted
 			// only on approval. Member /api/finance/health/vet/verification/*,
@@ -2254,7 +2254,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Pharm.DELETE("/cart/:product_id", pharmacyHandler.RemoveFromCart)
 		v1Pharm.DELETE("/cart", pharmacyHandler.ClearCart)
 	}
-
 
 	if cfg.FeatureAICareEnabled {
 		var aicAI aicare.AIProvider
