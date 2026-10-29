@@ -14,6 +14,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import { getWallet } from '@/api/wallet.api';
+import KycRequiredBanner from '@/components/KycRequiredBanner';
 import { getWalletLedger, getWalletFlowSummary, type WalletLedgerEntry } from '@/api/walletLedger.api';
 // Shared formatter — this screen's own copy used minimumFractionDigits:0, so a
 // total ending in a round ten of kobo lost its last digit (₦13,645.20 read as
@@ -136,6 +137,8 @@ export default function WalletScreen() {
             { id: 'exchange', label: 'Exchange',  icon: <RefreshCw size={20} color={Colors.onPrimary} strokeWidth={2} />, onPress: () => router.push('/services/fx' as never) },
           ]}
         />
+
+        {wallet?.kycTierRequired ? <KycRequiredBanner requiredTier={wallet.kycTierRequired} /> : null}
 
         <Pressable
           style={({ pressed }) => [styles.tierBanner, shadow1, pressed && { opacity: 0.85 }]}

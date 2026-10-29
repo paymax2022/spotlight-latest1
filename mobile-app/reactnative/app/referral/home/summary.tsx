@@ -33,31 +33,41 @@ export default function SummaryScreen() {
             <Text style={styles.totalSub}>From your friends' real, verified activity</Text>
           </View>
 
-          <Line
-            icon={<Wallet size={18} color={ReferralColors.ok} strokeWidth={2} />}
-            state="eligible" label="Ready to withdraw" amount={data.snapshot.eligibleKobo}
-            onPress={() => router.push('/referral/earnings/withdraw')}
-          />
-          <Line
-            icon={<Hourglass size={18} color={ReferralColors.warn} strokeWidth={2} />}
-            state="vesting" label="Vesting (unlocks over time)" amount={data.snapshot.vestingKobo}
-            onPress={() => router.push('/referral/earnings/vesting-tracker')}
-          />
-          <Line
-            icon={<Clock size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />}
-            state="pending" label="Pending qualifying action" amount={data.snapshot.pendingKobo}
-            onPress={() => router.push('/referral/(tabs)/earnings')}
-          />
-          <Line
-            icon={<TrendingUp size={18} color={Colors.tertiaryContainer} strokeWidth={2} />}
-            state="paid" label="Paid to wallet" amount={data.snapshot.paidKobo}
-            onPress={() => router.push('/referral/earnings/statement')}
-          />
-          <Line
-            icon={<CircleAlert size={18} color={Colors.error} strokeWidth={2} />}
-            state="clawed_back" label="Reversed / clawed back" amount={data.snapshot.clawedBackKobo}
-            onPress={() => router.push('/referral/earnings/clawback-notice')}
-          />
+          {data.snapshotUnavailable ? (
+            <DisclosureCard
+              tone="warn"
+              title="Breakdown unavailable"
+              body="We couldn't load your earnings by state right now. Your lifetime total above is correct. Go back and pull down to refresh."
+            />
+          ) : (
+            <>
+            <Line
+              icon={<Wallet size={18} color={ReferralColors.ok} strokeWidth={2} />}
+              state="eligible" label="Ready to withdraw" amount={data.snapshot.eligibleKobo}
+              onPress={() => router.push('/referral/earnings/withdraw')}
+            />
+            <Line
+              icon={<Hourglass size={18} color={ReferralColors.warn} strokeWidth={2} />}
+              state="vesting" label="Vesting (unlocks over time)" amount={data.snapshot.vestingKobo}
+              onPress={() => router.push('/referral/earnings/vesting-tracker')}
+            />
+            <Line
+              icon={<Clock size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />}
+              state="pending" label="Pending qualifying action" amount={data.snapshot.pendingKobo}
+              onPress={() => router.push('/referral/(tabs)/earnings')}
+            />
+            <Line
+              icon={<TrendingUp size={18} color={Colors.tertiaryContainer} strokeWidth={2} />}
+              state="paid" label="Paid to wallet" amount={data.snapshot.paidKobo}
+              onPress={() => router.push('/referral/earnings/statement')}
+            />
+            <Line
+              icon={<CircleAlert size={18} color={Colors.error} strokeWidth={2} />}
+              state="clawed_back" label="Reversed / clawed back" amount={data.snapshot.clawedBackKobo}
+              onPress={() => router.push('/referral/earnings/clawback-notice')}
+            />
+            </>
+          )}
 
           <DisclosureCard tone="info" title="What these mean" body={COMPLIANT_EARN_SHORT} />
         </ScrollView>

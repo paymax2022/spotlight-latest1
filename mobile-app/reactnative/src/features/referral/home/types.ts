@@ -17,8 +17,23 @@ export interface EarningsSnapshot {
   currency: string;
 }
 
+/** The next count-threshold bonus: reach `threshold` activations to earn `bonusKobo`. */
+export interface NextMilestone {
+  threshold: number;
+  bonusKobo: number;
+  /** Activations still needed (may be 0 or negative briefly before the nightly recalc). */
+  remaining: number;
+}
+
 export interface DashboardSummary {
   snapshot: EarningsSnapshot;
+  /**
+   * True when the per-state earnings breakdown could not be loaded. `snapshot` is then
+   * zeros (except lifetime) and must be shown as unavailable, never as real ₦0.
+   */
+  snapshotUnavailable: boolean;
+  /** Next count-threshold bonus, when the backend reports one. */
+  nextMilestone: NextMilestone | null;
   /** Total people invited (sent links/codes/contacts). null = no live source yet. */
   invitesSent: number | null;
   /** Invitees that signed up (account created). null = no live source yet. */

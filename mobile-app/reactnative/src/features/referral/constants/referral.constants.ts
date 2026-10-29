@@ -3,9 +3,10 @@
 import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/tokens';
 
-// Flip to false once the live Go-backend /referral endpoints are reachable from
-// the app (or set EXPO_PUBLIC_REFERRAL_USE_MOCK=false). Phase 0 stays mock-first.
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REFERRAL_USE_MOCK, true);
+// LIVE by default: the Direct Rewards engine endpoints exist, so a forgotten flag should fail
+// visibly against the real backend instead of inventing earnings. Fixtures are opt-in
+// (EXPO_PUBLIC_REFERRAL_USE_MOCK=true) and never served by a deployed build (see mockPolicy).
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REFERRAL_USE_MOCK, false);
 
 // Referral REST namespace (frontend-web proxy → Go backend /api/finance/referral).
 export const REFERRAL_API_BASE = '/api/v1/referral';
