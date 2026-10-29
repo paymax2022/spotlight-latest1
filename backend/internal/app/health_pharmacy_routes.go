@@ -18,6 +18,7 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	healthpharmacy "spotlight/backend/internal/health/pharmacy"
+	healthproviders "spotlight/backend/internal/health/providers"
 	healthrx "spotlight/backend/internal/health/rx"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
@@ -86,6 +87,10 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 
 	isAdmin := func(c *gin.Context) bool { return isHealthPharmacyAdmin(c, rbac) }
 	h := healthpharmacy.NewHandler(svc, isAdmin)
+	// PCN decisions delegate to the shared provider-review service (same FSM and
+	// capability grant as /api/health/admin/providers/applications/:id/decision);
+	// the pharmacy service audits the decision itself.
+	h.SetApplicationDecider(pcnDeciderAdapter{svc: healthproviders.NewService(pool, newCapabilityGranter(rbac), nil)})
 
 	guard := func(permission string) gin.HandlerFunc {
 		return middleware.RequirePermission(rbac, permission)
@@ -142,6 +147,11 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	// Without this, none of PHARMACY-001's new routes — or the ones that
 	// already existed — were ever actually reachable with a real token.
 	ag.Use(middleware.RequireAuthContext(supabase, rbac))
+	// Admin console write actions (PCN decision, catalog governance, recalls).
+	ag.POST("/pcn/applications/:id/decision", guard("health.admin.providers"), h.AdminDecidePcn)
+	ag.POST("/catalog/:id/govern", guard("health.pharmacy.recall"), h.AdminGovernCatalog)
+	ag.GET("/recalls", guard("health.pharmacy.recall"), h.AdminListRecalls)
+	ag.POST("/recalls", guard("health.pharmacy.recall"), h.AdminCreateRecall)
 	// PHARMACY-001: dashboard + order-detail are extensions of the SAME
 	// admin-oversight surface /orders already sits behind — reusing
 	// health.pharmacy.orders rather than minting a new permission slug (unlike
@@ -169,6 +179,18 @@ func isHealthPharmacyAdmin(c *gin.Context, rbac services.RBACService) bool {
 	}
 	ok, err := rbac.CheckPermission(uid, "health.pharmacy.audit", "global", "")
 	return err == nil && ok
+}
+
+// pcnDeciderAdapter bridges pharmacy's ApplicationDecider seam onto the shared
+// provider-review service (pharmacy never imports its types directly).
+type pcnDeciderAdapter struct{ svc *healthproviders.Service }
+
+func (a pcnDeciderAdapter) Decide(ctx context.Context, adminID, applicationID, action, note string) (string, error) {
+	app, err := a.svc.Decision(ctx, adminID, applicationID, action, note)
+	if err != nil {
+		return "", err
+	}
+	return string(app.State), nil
 }
 
 type escrowAdapter struct{ e *escrow.Service }

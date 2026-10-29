@@ -20,6 +20,7 @@ import (
 type Handler struct {
 	svc     *Service
 	isAdmin func(c *gin.Context) bool
+	decider ApplicationDecider // optional provider-review seam for PCN decisions; nil ⇒ 503
 }
 
 func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
