@@ -84,7 +84,6 @@ import (
 	"spotlight/backend/internal/restaurant/taxonomy"
 	"spotlight/backend/internal/services"
 	staysreservation "spotlight/backend/internal/stays/reservation"
-	"spotlight/backend/internal/telemedicine"
 	telemedclaims "spotlight/backend/internal/telemedadmin/claims"
 	telemedcompliance "spotlight/backend/internal/telemedadmin/compliance"
 	telemedfinance "spotlight/backend/internal/telemedadmin/finance"
@@ -92,6 +91,7 @@ import (
 	telemedprescriptions "spotlight/backend/internal/telemedadmin/prescriptions"
 	telemedreviews "spotlight/backend/internal/telemedadmin/reviews"
 	telemedsupport "spotlight/backend/internal/telemedadmin/support"
+	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	transportpaystackcheckout "spotlight/backend/internal/transport/paystackcheckout"
@@ -2255,7 +2255,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Pharm.DELETE("/cart", pharmacyHandler.ClearCart)
 	}
 
-
 	if cfg.FeatureAICareEnabled {
 		var aicAI aicare.AIProvider
 		if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
@@ -2646,6 +2645,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			adminTr.POST("/bus/schedules/:id/approve-fare", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusApproveFare)
 			adminTr.POST("/bus/schedules/:id/cancel", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCancelSchedule)
 			adminTr.GET("/bus/manifest", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusManifest)
+			adminTr.GET("/bus/reports/revenue", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusRevenueReport)
 			// Provider verification workflow (ADR-020 go-live gate): list operators +
 			// verify/suspend. Verified-only discovery is enforced in SearchBusTrips.
 			adminTr.GET("/bus/operators", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusListOperators)
