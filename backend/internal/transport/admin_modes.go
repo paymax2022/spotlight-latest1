@@ -35,7 +35,7 @@ func (a *AdminService) ListParcels(ctx context.Context, status string) ([]map[st
 		       p.courier_id, d.name AS courier_name,
 		       p.status, p.category, p.size, p.speed,
 		       p.pickup_address, p.dropoff_address,
-		       p.fare_kobo, p.declared_value_kobo, p.proof_url,
+		       p.fare_kobo, p.declared_value_kobo, p.proof_url, p.pod_review_status,
 		       st.status AS settlement_status,
 		       p.created_at, p.updated_at
 		FROM parcels p
@@ -500,11 +500,11 @@ func scanParcelList(ctx context.Context, rows pgx.Rows, err error) ([]map[string
 	var out []map[string]any
 	for rows.Next() {
 		var id, sender, status, category, size, speed, pickup, dropoff string
-		var senderName, courier, courierName, proofURL, settlementStatus *string
+		var senderName, courier, courierName, proofURL, podReview, settlementStatus *string
 		var fare, declaredValue int64
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(&id, &sender, &senderName, &courier, &courierName, &status, &category, &size, &speed,
-			&pickup, &dropoff, &fare, &declaredValue, &proofURL, &settlementStatus, &createdAt, &updatedAt); err != nil {
+			&pickup, &dropoff, &fare, &declaredValue, &proofURL, &podReview, &settlementStatus, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, map[string]any{
@@ -513,7 +513,7 @@ func scanParcelList(ctx context.Context, rows pgx.Rows, err error) ([]map[string
 			"status": status, "category": category, "size": size, "speed": speed,
 			"pickup_address": pickup, "dropoff_address": dropoff,
 			"fare_kobo": fare, "declared_value_kobo": declaredValue,
-			"pod_status": deriveParcelPodStatus(status, proofURL), "pod_proof_url": proofURL,
+			"pod_status": parcelPodStatus(status, proofURL, podReview), "pod_proof_url": proofURL,
 			"escrow_status": escrowStatusFromSettlement(settlementStatus),
 			"created_at":    createdAt, "updated_at": updatedAt,
 		})
@@ -549,6 +549,15 @@ func moverEscrowStatus(status string) string {
 		return "held"
 	}
 	return status
+}
+
+// parcelPodStatus prefers an explicit admin review (pod_review_status, set by
+// ReviewParcelPod) over the status/proof_url derivation below.
+func parcelPodStatus(status string, proofURL, review *string) string {
+	if review != nil && *review != "" {
+		return *review
+	}
+	return deriveParcelPodStatus(status, proofURL)
 }
 
 // deriveParcelPodStatus infers proof-of-delivery review state from parcel

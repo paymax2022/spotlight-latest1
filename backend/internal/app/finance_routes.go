@@ -20,7 +20,6 @@ import (
 	"spotlight/backend/internal/association"
 	"spotlight/backend/internal/business"
 	"spotlight/backend/internal/config"
-	healthportal "spotlight/backend/internal/health/portal"
 	"spotlight/backend/internal/crowdfunding"
 	cfadminext "spotlight/backend/internal/crowdfunding/adminext"
 	cfcreator "spotlight/backend/internal/crowdfunding/creator"
@@ -48,6 +47,7 @@ import (
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/fractionalre"
 	"spotlight/backend/internal/groups"
+	healthportal "spotlight/backend/internal/health/portal"
 	"spotlight/backend/internal/insurance/embedded"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/integrations/llm"
@@ -84,7 +84,6 @@ import (
 	"spotlight/backend/internal/restaurant/taxonomy"
 	"spotlight/backend/internal/services"
 	staysreservation "spotlight/backend/internal/stays/reservation"
-	"spotlight/backend/internal/telemedicine"
 	telemedclaims "spotlight/backend/internal/telemedadmin/claims"
 	telemedcompliance "spotlight/backend/internal/telemedadmin/compliance"
 	telemedfinance "spotlight/backend/internal/telemedadmin/finance"
@@ -92,6 +91,7 @@ import (
 	telemedprescriptions "spotlight/backend/internal/telemedadmin/prescriptions"
 	telemedreviews "spotlight/backend/internal/telemedadmin/reviews"
 	telemedsupport "spotlight/backend/internal/telemedadmin/support"
+	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	transportpaystackcheckout "spotlight/backend/internal/transport/paystackcheckout"
@@ -2253,7 +2253,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Pharm.DELETE("/cart", pharmacyHandler.ClearCart)
 	}
 
-
 	if cfg.FeatureAICareEnabled {
 		var aicAI aicare.AIProvider
 		if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
@@ -2637,6 +2636,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// mutations use the mode-specific .manage slug).
 			adminTr.GET("/parcels", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminParcelsList)
 			adminTr.PATCH("/parcels/:id/status", middleware.RequirePermission(rbac, mobilityParcelManagePerm), transportAdmin.AdminParcelStatus)
+			adminTr.PATCH("/parcels/:id/pod-review", middleware.RequirePermission(rbac, mobilityParcelManagePerm), transportAdmin.AdminParcelPodReview)
 
 			adminTr.GET("/bus/routes", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusListRoutes)
 			adminTr.POST("/bus/routes", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCreateRoute)
