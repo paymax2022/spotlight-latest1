@@ -235,9 +235,15 @@ components:
           format: date-time
           nullable: true
           description: >-
-            Sender only. When the receiver was sent the drop-off PIN by SMS (FEATURE_PARCEL_RECEIVER_PIN_SMS).
-            Null when no SMS was sent: flag off, SMS not configured, or the send failed. The app should
-            then tell the sender to pass the drop-off PIN on themselves.
+            Sender only. When the receiver was sent the drop-off PIN through at least one channel (see
+            POST /driver/parcels/{id}/picked-up). Null when nothing was sent: the features are off, there was
+            no channel to reach the receiver, or every send failed. The app should then tell the sender to
+            pass the drop-off PIN on themselves.
+        receiverNotifiedVia:
+          type: array
+          items: { type: string, enum: [email, sms] }
+          description: Sender only. The channels the drop-off PIN reached the receiver through; empty when none.
+        receiverEmail: { type: string, nullable: true, description: 'Sender only. The receiver email given at booking, if any.' }
     ParcelRequest:
       type: object
       description: An open parcel a courier can accept. No receiver details before acceptance.
@@ -962,6 +968,7 @@ paths:
                 expected_fare_kobo: { type: integer, format: int64, description: 'Fare (kobo) the customer confirmed; mismatch → 409 FARE_CHANGED' }
                 route_token: { type: string, description: 'routeToken from the estimate; prices from its signed route (15 min)' }
                 insure: { type: boolean, description: 'Buy Goods-in-Transit cover, paid now with the fare (FEATURE_PARCEL_PREPAID_INSURANCE). Needs declared_value_kobo > 0 and a complete sender profile.' }
+                receiver_email: { type: string, format: email, maxLength: 254, description: 'Optional. The receiver is emailed the drop-off PIN once the parcel is picked up (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY). A malformed address is 400 invalid_input.' }
                 expected_insurance_kobo: { type: integer, format: int64, description: 'Premium (kobo) the customer confirmed (the estimate insuranceKobo); mismatch → 409 FARE_CHANGED' }
       responses:
         '200': { description: Parcel }
@@ -1151,10 +1158,15 @@ paths:
       tags: [parcel]
       summary: Courier — mark parcel picked up
       description: >
-        Moves the parcel to in_transit. With FEATURE_PARCEL_RECEIVER_PIN_SMS on and SMS configured, the
-        receiver (receiver_phone) is then sent ONE SMS carrying the drop-off PIN. It goes out at most once
-        per parcel, however often this is retried. It is best-effort: a failed send never fails or delays
-        this call, and the parcel's receiverNotifiedAt stays null. The PIN is never written to logs or
+        Moves the parcel to in_transit, then tells the receiver the drop-off PIN through every channel
+        that can reach them:
+          - email, to the receiver_email given at booking (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY; free);
+          - SMS to receiver_phone (FEATURE_PARCEL_RECEIVER_PIN_SMS; paid, off by default).
+        A Paymax account whose profile phone matches receiver_phone is deliberately never a channel:
+        profile phones are self-asserted, so anyone could claim the receiver's number.
+        It runs at most once per parcel, however often this call is retried, and only for a paid booking.
+        It is best-effort: a failed send never fails or delays this call. receiverNotifiedAt and
+        receiverNotifiedVia report what reached the receiver. The PIN is never written to logs or
         audit records.
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: Parcel }, '401': { description: Not authenticated } }
