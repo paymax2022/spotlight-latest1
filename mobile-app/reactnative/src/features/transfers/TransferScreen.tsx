@@ -3,7 +3,7 @@ import { Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Send,
@@ -63,6 +63,16 @@ type Step = 'form' | 'review' | 'success';
 // Minimum transferable amount (kobo) — ₦1.
 const MIN_TRANSFER_KOBO = 100;
 
+/**
+ * The transfer routes answer 403 `pin_not_set` when the caller has no PIN. The
+ * cached pin-status can be stale — a PIN created on another device, or a mock
+ * store left over from local development — which leaves the sheet asking for
+ * digits the server says cannot exist. Match on the code, not the wording.
+ */
+function isPinNotSet(err: unknown): boolean {
+  return (err as { response?: { data?: { code?: unknown } } })?.response?.data?.code === 'pin_not_set';
+}
+
 interface BankAccountState {
   bankCode: string;
   bankName: string;
@@ -90,6 +100,8 @@ export default function TransferScreen() {
   // PIN gate
   const [pinSheet, setPinSheet] = useState<null | 'create' | 'verify'>(null);
   const [pinError, setPinError] = useState<string | null>(null);
+  // Server said the caller has no PIN, so no sheet can succeed until one exists.
+  const [pinNotSet, setPinNotSet] = useState(false);
 
   // receipt
   const [receipt, setReceipt] = useState<TransferReceiptData | null>(null);
@@ -98,6 +110,7 @@ export default function TransferScreen() {
 
   const banksQuery = useBanks();
   const pinStatusQuery = usePinStatus();
+  const queryClient = useQueryClient();
   const walletQuery = useQuery({ queryKey: ['wallet', 'balance'], queryFn: getWallet, staleTime: 30_000 });
   const beneficiariesQuery = useQuery({
     queryKey: ['beneficiaries'],
@@ -151,6 +164,7 @@ export default function TransferScreen() {
     setDest(emptyAccount);
     setSource(emptyAccount);
     setReceipt(null);
+    setPinNotSet(false);
   };
 
   const resolveRecipientMut = useMutation({
@@ -160,6 +174,19 @@ export default function TransferScreen() {
       setStep('review');
     },
   });
+
+  // A `pin_not_set` failure cannot be fixed by typing another PIN, so stop
+  // asking for one: close the sheet and offer to create it. Every other failure
+  // stays where it is, under the dots.
+  const handleTransferError = (e: unknown) => {
+    if (isPinNotSet(e)) {
+      setPinSheet(null);
+      setPinError(null);
+      setPinNotSet(true);
+      return;
+    }
+    setPinError(getErrorMessage(e));
+  };
 
   const walletTransferMut = useMutation({
     mutationFn: (pin: string) =>
@@ -187,7 +214,7 @@ export default function TransferScreen() {
       });
       setStep('success');
     },
-    onError: (e) => setPinError(getErrorMessage(e)),
+    onError: handleTransferError,
   });
 
   useEffect(() => {
@@ -245,6 +272,19 @@ export default function TransferScreen() {
     setPinSheet(hasPin ? 'verify' : 'create');
   };
 
+  // push, not replace: the set-PIN screen sits on top of this one, so its
+  // goBack() lifts it again and the review step — amount, recipient, fee — is
+  // still here waiting. The shared pin-status query key refills `hasPin` too.
+  const goToPinSetup = () => {
+    setPinNotSet(false);
+    router.push('/security/set-pin?mode=manage');
+    // The transfer's 403 is authoritative, so correct the shared cache the
+    // set-PIN screen reads: otherwise a stale `hasPin: true` makes it demand a
+    // current PIN the user does not have, and every wrong guess counts toward
+    // the lockout. Pushed first so the root PIN gate sees the new route.
+    queryClient.setQueryData(['transfers', 'pin-status'], { hasPin: false });
+  };
+
   const submitTransfer = (pin: string) => {
     setPinError(null);
     // Defense-in-depth: re-assert amount + balance at authorise time so no state
@@ -276,7 +316,7 @@ export default function TransferScreen() {
         },
         {
           onSuccess: (r) => { setPinSheet(null); setReceipt(r); setStep('success'); },
-          onError: (e) => setPinError(getErrorMessage(e)),
+          onError: handleTransferError,
         },
       );
       return;
@@ -303,7 +343,7 @@ export default function TransferScreen() {
         },
         {
           onSuccess: (r) => { setPinSheet(null); setReceipt(r); setStep('success'); },
-          onError: (e) => setPinError(getErrorMessage(e)),
+          onError: handleTransferError,
         },
       );
     }
@@ -410,6 +450,13 @@ export default function TransferScreen() {
               loading={resolveRecipientMut.isPending}
               disabled={!canReview}
             />
+          ) : pinNotSet ? (
+            <>
+              <Text style={styles.pinNotSetNote}>
+                You haven’t set a transaction PIN yet. Set one now — you’ll come straight back here to finish this transfer.
+              </Text>
+              <PrimaryButton label="Set transaction PIN" onPress={goToPinSetup} />
+            </>
           ) : (
             <PrimaryButton
               label={transferPending ? 'Processing…' : 'Confirm with PIN'}
@@ -892,6 +939,13 @@ const styles = StyleSheet.create({
   guardError: {
     ...Typography.labelSm,
     color: Colors.error,
+    textAlign: 'center',
+    marginBottom: Spacing.sm,
+    lineHeight: 18,
+  },
+  pinNotSetNote: {
+    ...Typography.labelSm,
+    color: Colors.onSurfaceVariant,
     textAlign: 'center',
     marginBottom: Spacing.sm,
     lineHeight: 18,
