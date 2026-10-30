@@ -22,6 +22,7 @@ import {
   cancelAppointment,
   getConsult,
   startConsult,
+  requestLabForPet,
   sendConsultMessage,
   getConsultSummary,
   getPrescription,
@@ -218,8 +219,11 @@ export function useConsult(id?: string) {
 export function useStartConsult() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => startConsult(id),
-    onSuccess: (_d, id) => qc.invalidateQueries({ queryKey: [KEY, 'consult', id] }),
+    mutationFn: (appointmentId: string) => startConsult(appointmentId),
+    onSuccess: (consult, appointmentId) => {
+      qc.setQueryData([KEY, 'consult', consult.id], consult);
+      qc.invalidateQueries({ queryKey: [KEY, 'consult', appointmentId] });
+    },
   });
 }
 
@@ -385,6 +389,16 @@ export function useIssuePrescription() {
   });
 }
 
+/** Pet-owner lab request — the owner entry point (app/health/vet/order-lab.tsx). */
+export function useRequestLabForPet() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: OrderLabInput) => requestLabForPet(input),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: [KEY, 'pet-records', v.petId] }),
+  });
+}
+
+/** Vet-side lab order (requires the vet role) — app/health/vet/provider/order-lab.tsx. */
 export function useOrderLabForPet() {
   const qc = useQueryClient();
   return useMutation({

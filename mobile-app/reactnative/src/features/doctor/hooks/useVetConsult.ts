@@ -28,6 +28,8 @@ import {
   DEMO_VET_CONSULT_HISTORY,
 } from '@/api/doctor.batch5.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+// DEMO_* placeholders only in mock mode: a live build must never render (or act on) invented rows.
+import { DOCTOR_USE_MOCK } from '@/api/doctor.client';
 import type {
   RespondToPetRequestInput,
   SaveVetSoapNoteInput,
@@ -38,7 +40,7 @@ export function useVetAppointments() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'appointments'],
     queryFn:         getVetAppointments,
-    placeholderData: DEMO_VET_APPOINTMENTS,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_APPOINTMENTS : undefined,
     staleTime:       30_000,
   });
 }
@@ -47,7 +49,7 @@ export function usePetOwnerRequests() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'owner-requests'],
     queryFn:         getPetOwnerRequests,
-    placeholderData: DEMO_PET_OWNER_REQUESTS,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_PET_OWNER_REQUESTS : undefined,
     staleTime:       30_000,
   });
 }
@@ -57,7 +59,7 @@ export function useVetChatThread(petId: string) {
     queryKey:        ['doctor', 'vet', 'chat', petId],
     queryFn:         () => getVetChatThread(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_VET_CHAT_THREAD,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_CHAT_THREAD : undefined,
     staleTime:       15_000,
   });
 }
@@ -67,7 +69,7 @@ export function useVetCallSession(petId: string) {
     queryKey:        ['doctor', 'vet', 'call', petId],
     queryFn:         () => getVetCallSession(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_VET_CALL_SESSION,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_CALL_SESSION : undefined,
     staleTime:       15_000,
   });
 }
@@ -77,7 +79,7 @@ export function useVetSoapNote(petId: string) {
     queryKey:        ['doctor', 'vet', 'soap', petId],
     queryFn:         () => getVetSoapNote(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_VET_CLINICAL_NOTE,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_CLINICAL_NOTE : undefined,
     staleTime:       30_000,
   });
 }
@@ -87,7 +89,7 @@ export function usePetEmergencyWarnings(petId: string) {
     queryKey:        ['doctor', 'vet', 'emergency-warnings', petId],
     queryFn:         () => getPetEmergencyWarnings(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_PET_EMERGENCY_WARNINGS,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_PET_EMERGENCY_WARNINGS : undefined,
     staleTime:       30_000,
   });
 }
@@ -96,7 +98,7 @@ export function useVetSpecialists() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'specialists'],
     queryFn:         getVetSpecialists,
-    placeholderData: DEMO_VET_SPECIALISTS,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_SPECIALISTS : undefined,
     staleTime:       60_000,
   });
 }
@@ -106,7 +108,7 @@ export function useVetReferrals(petId: string) {
     queryKey:        ['doctor', 'vet', 'referrals', petId],
     queryFn:         () => getVetReferrals(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_VET_REFERRALS,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_REFERRALS : undefined,
     staleTime:       30_000,
   });
 }
@@ -116,7 +118,7 @@ export function useVetConsultSummary(consultId: string) {
     queryKey:        ['doctor', 'vet', 'consult-summary', consultId],
     queryFn:         () => getVetConsultSummary(consultId),
     enabled:         !!consultId,
-    placeholderData: DEMO_VET_CONSULT_SUMMARY,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_CONSULT_SUMMARY : undefined,
     staleTime:       30_000,
   });
 }
@@ -125,7 +127,7 @@ export function useVetConsultHistory() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'consult-history'],
     queryFn:         getVetConsultHistory,
-    placeholderData: DEMO_VET_CONSULT_HISTORY,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_CONSULT_HISTORY : undefined,
     staleTime:       30_000,
   });
 }

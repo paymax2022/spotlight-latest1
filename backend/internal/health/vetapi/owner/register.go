@@ -61,6 +61,7 @@ func Register(vg *gin.RouterGroup, pool *pgxpool.Pool) {
 	vg.POST("/medications/:id/refill", h.RequestRefill)
 	vg.GET("/appointments/:id/tracking", h.HomeVisitTracking)
 	vg.GET("/emergency", h.EmergencyVets)
+	vg.POST("/lab-requests", h.RequestLab) // owner-side lab request (vet side: /provider/lab-orders)
 }
 
 // RegisterAppointmentAdapters mounts the app-shaped appointment endpoints. They
