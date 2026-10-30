@@ -1,0 +1,177 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight Health — Veterinary admin governance & moderation
+  version: 1.0.0
+  description: >
+    Admin governance writes for the vet vertical under /api/health/vet/admin
+    (backend/internal/app/health_vet_routes.go; healthvet/admin_governance.go),
+    plus the member report route that feeds the moderation queue
+    (/api/finance/health/vet/vets/{id}/report). Suspend/reinstate run the
+    providers application state machine (HL-2). Every write is audited (HL-12).
+    VCN approve/need_info/reject use the credential route
+    POST /verification/{recordId}/decision; the console's VCN rows carry
+    verification_record_id for it.
+servers:
+  - url: /api/health/vet/admin
+paths:
+  /services/{id}/reactivate:
+    post:
+      operationId: reactivateVetService
+      summary: Put a deactivated vet service back in the catalog
+      tags: [Health Vet Admin]
+      security: [{ bearerAuth: [] }]
+      x-permission: health.vet.services
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Reactivated, content: { application/json: { schema: { $ref: '#/components/schemas/Ok' } } } }
+        '400': { description: id is not a uuid }
+        '403': { description: Missing health.vet.services }
+        '409': { description: Service not found }
+  /providers/{id}/suspend:
+    post:
+      operationId: suspendVetProvider
+      summary: Suspend and de-list a vet (idempotent)
+      tags: [Health Vet Admin]
+      security: [{ bearerAuth: [] }]
+      x-permission: health.vet.vcn
+      parameters:
+        - { name: id, in: path, required: true, description: health_providers.id, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/NoteBody' } } }
+      responses:
+        '200': { description: Suspended, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderStatusResult' } } } }
+        '400': { description: Bad id or body }
+        '403': { description: Missing health.vet.vcn }
+        '404': { description: Not a VET provider, or it has no application }
+        '409': { description: Illegal state transition }
+  /providers/{id}/reinstate:
+    post:
+      operationId: reinstateVetProvider
+      summary: Reinstate a suspended vet; refused while any credential is expired
+      tags: [Health Vet Admin]
+      security: [{ bearerAuth: [] }]
+      x-permission: health.vet.vcn
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/NoteBody' } } }
+      responses:
+        '200': { description: Reinstated, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderStatusResult' } } } }
+        '400': { description: Bad id or body }
+        '403': { description: Missing health.vet.vcn }
+        '404': { description: Not a VET provider, or it has no application }
+        '409': { description: Expired credential, or illegal state transition }
+  /moderation:
+    get:
+      operationId: listVetModeration
+      summary: Moderation queue, open items first (at most 500)
+      tags: [Health Vet Admin]
+      security: [{ bearerAuth: [] }]
+      x-permission: health.vet.moderation
+      responses:
+        '200':
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { type: array, items: { $ref: '#/components/schemas/ModerationItem' } }
+  /moderation/{id}/action:
+    post:
+      operationId: actOnVetModeration
+      summary: Investigate, resolve, ignore, or suspend the subject vet and resolve
+      tags: [Health Vet Admin]
+      security: [{ bearerAuth: [] }]
+      x-permission: health.vet.moderation
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [investigate, resolve, ignore, suspend_provider] }
+                note: { type: string }
+      responses:
+        '200':
+          description: New status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string, enum: [investigating, resolved, ignored] }
+        '400': { description: Bad id or unknown action }
+        '404': { description: Item not found }
+        '409': { description: Item already resolved/ignored, or the provider suspend was refused }
+  /api/finance/health/vet/vets/{id}/report:
+    servers:
+      - url: /
+    post:
+      operationId: reportVet
+      summary: Member reports a vet to the moderation queue
+      tags: [Health Vet]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: false, description: A repeated key returns the original item, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, summary]
+              properties:
+                kind: { type: string, enum: [profile_claim, review_abuse, credential_mismatch, unlicensed_advice, image_violation, other] }
+                summary: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '201': { description: Created (status open) }
+        '400': { description: Bad id, kind or summary }
+        '401': { description: Not authenticated }
+        '404': { description: Not a VET provider }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  schemas:
+    Ok:
+      type: object
+      properties: { success: { type: boolean } }
+    NoteBody:
+      type: object
+      properties: { note: { type: string } }
+    ProviderStatusResult:
+      type: object
+      properties:
+        success: { type: boolean }
+        data:
+          type: object
+          properties:
+            id: { type: string }
+            action: { type: string, enum: [suspend, reinstate] }
+    ModerationItem:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        subject_id: { type: string }
+        subject_masked: { type: string }
+        summary: { type: string }
+        severity: { type: string, enum: [low, medium, high] }
+        status: { type: string, enum: [open, investigating, resolved, ignored] }
+        vcn_licence_no: { type: [string, 'null'] }
+        reporter_masked: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }

@@ -17,6 +17,7 @@ export default function VcnAuditPage() {
   const [open, setOpen] = useState<VcnApplication | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [expiry, setExpiry] = useState('');
 
   async function load() {
     setLoading(true); setError(null);
@@ -26,9 +27,9 @@ export default function VcnAuditPage() {
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [status]);
 
-  async function decide(id: string, decision: VcnDecision) {
+  async function decide(app: VcnApplication, decision: VcnDecision) {
     setBusy(true); setMsg(null);
-    try { const r = await decideVcn(id, decision); setMsg(r.message); await load(); }
+    try { const r = await decideVcn(app, decision, { licenceExpiry: expiry || undefined }); setMsg(r.message); setOpen(null); await load(); }
     catch (e) { setMsg(String(e)); }
     finally { setBusy(false); }
   }
@@ -107,12 +108,19 @@ export default function VcnAuditPage() {
               ))}
             </tbody>
           </table>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button disabled={busy} style={btnPrimary()} onClick={() => decide(open.id, 'approve')}>Approve &amp; grant capability</button>
-            <button disabled={busy} style={btn()} onClick={() => decide(open.id, 'need_info')}>Request info</button>
-            <button disabled={busy} style={btn()} onClick={() => decide(open.id, 'suspend')}>Suspend</button>
-            <button disabled={busy} style={btnDanger()} onClick={() => decide(open.id, 'reject')}>Reject</button>
+          <div style={{ marginBottom: '0.75rem', maxWidth: 220 }}>
+            <label style={label()}>Licence expiry (required to approve)</label>
+            <input type="date" style={input()} value={expiry} onChange={(e) => setExpiry(e.target.value)} />
           </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button disabled={busy || !open.verification_record_id || !expiry} style={btnPrimary()} onClick={() => decide(open, 'approve')}>Approve &amp; grant capability</button>
+            <button disabled={busy || !open.verification_record_id} style={btn()} onClick={() => decide(open, 'need_info')}>Request info</button>
+            {open.status === 'suspended'
+              ? <button disabled={busy} style={btn()} onClick={() => decide(open, 'reinstate')}>Reinstate</button>
+              : <button disabled={busy} style={btn()} onClick={() => decide(open, 'suspend')}>Suspend</button>}
+            <button disabled={busy || !open.verification_record_id} style={btnDanger()} onClick={() => decide(open, 'reject')}>Reject</button>
+          </div>
+          {!open.verification_record_id && <div style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.4rem' }}>No credential verification record on file — approve/reject happen in the Verification queue once the vet submits.</div>}
           <AuditNote>Approval is fail-closed on the VCN licence (HL-2) and every decision is written to the immutable audit log (HL-12).</AuditNote>
         </Card>
       )}
