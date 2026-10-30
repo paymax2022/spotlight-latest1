@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -106,6 +106,11 @@ export default function EventsDiscovery() {
         </View>
       </View>
 
+      <Image
+        source={{ uri: 'https://res.cloudinary.com/paymax/image/upload/v1792955031/Unforgettable_Nigerian_events_await_yz6iy6.png' }}
+        style={styles.heroBanner}
+      />
+
       <SearchBar placeholder="Search events, venues…" value={query} onChangeText={setQuery} />
       <View style={styles.filterWrap}>
         <SegmentedControl scrollable options={EVENT_CATEGORIES as any} value={cat} onChange={setCat} />
@@ -202,6 +207,7 @@ const styles = StyleSheet.create({
   headerTitleWrap: { flex: 1 },
   eyebrow: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   headerTitle: { ...Typography.headlineMd, color: Colors.onSurface },
+  heroBanner: { width: '100%', height: 180, marginHorizontal: 0, marginVertical: Spacing.md },
   filterWrap: { marginBottom: Spacing.sm },
   chipRow: { gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin },
   chip: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs, borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerLow, borderWidth: 1, borderColor: Colors.outlineVariant },
