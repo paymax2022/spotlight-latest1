@@ -3,12 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getEarnings, requestPayout, DEMO_EARNINGS } from '@/api/doctor.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type { RequestPayoutInput } from '@/types/doctor';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useEarnings() {
   return useQuery({
     queryKey:        ['doctor', 'earnings'],
     queryFn:         getEarnings,
-    placeholderData: DEMO_EARNINGS,
+    placeholderData: doctorPlaceholder(DEMO_EARNINGS),
     staleTime:       30_000,
   });
 }

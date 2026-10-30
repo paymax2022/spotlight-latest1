@@ -46,6 +46,28 @@ const TRIAGE_FIELDS: IntakeFieldT[] = [
   },
 ];
 
+/** The booking `reason` (≤1000 chars, persisted on the appointment) carries every
+ *  triage answer so the vet sees them, not just the symptoms line. */
+export function formatTriageReason(values: IntakeResponseValues): string {
+  const label = (id: string) => {
+    const f = TRIAGE_FIELDS.find((x) => x.id === id);
+    const v = values[id];
+    if (v == null || v === '') return undefined;
+    if (typeof v === 'boolean') return v ? 'yes' : 'no';
+    const opt = f?.options?.find((o) => o.value === v);
+    return opt ? opt.label : String(v);
+  };
+  const parts = [
+    label('reason') && `Reason: ${label('reason')}`,
+    label('duration') && `Days: ${label('duration')}`,
+    label('eating') && `Eating normally: ${label('eating')}`,
+    label('urgency') && `Urgency: ${label('urgency')}`,
+  ].filter(Boolean);
+  const symptoms = label('symptoms');
+  const text = [parts.join(' · '), symptoms && `Symptoms: ${symptoms}`].filter(Boolean).join('\n');
+  return (text || 'Consultation').slice(0, 1000);
+}
+
 export default function TriageScreen() {
   const { vetId, petId } = useLocalSearchParams<{ vetId: string; petId?: string }>();
   const { data: pets } = usePets();
@@ -86,7 +108,7 @@ export default function TriageScreen() {
       params: {
         vetId,
         petId: selectedPet!,
-        reason: String(values.symptoms ?? values.reason ?? 'Consultation'),
+        reason: formatTriageReason(values),
       },
     });
   };

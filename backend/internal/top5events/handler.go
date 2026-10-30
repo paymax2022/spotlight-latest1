@@ -83,6 +83,10 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	admin.POST("/:id/approve", guard("events.approve"), h.Approve)
 	admin.POST("/:id/suspend", guard("events.suspend"), h.Suspend)
 	admin.POST("/:id/vendors/:vendorId/settle", guard("events.settle"), h.SettleVendor)
+	// Reviewable payout decision (approve settles via SettleVendor) and
+	// settlement-break reviewer decisions (admin_settlement_review.go).
+	admin.POST("/vendors/:id/payout", guard("events.settle"), h.AdminVendorPayout)
+	admin.POST("/settlement/:id/resolve", guard("events.settle"), h.AdminResolveSettlementBreak)
 
 	// Admin reads (RBAC events.admin.view, seeded but previously unused).
 	adminView := guard("events.admin.view")
@@ -93,6 +97,10 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	admin.GET("/cashless", adminView, h.AdminGetCashlessFloat)
 	admin.GET("/vendors", adminView, h.AdminListVendors)
 	admin.GET("/settlement", adminView, h.AdminGetSettlement)
+
+	// Fraud queue: derived signals (read) + append-only reviewer decisions.
+	admin.GET("/fraud", adminView, h.AdminListFraud)
+	admin.POST("/fraud/:id/action", guard("events.moderate"), h.AdminFraudAction)
 }
 
 func uid(c *gin.Context) (string, bool) {

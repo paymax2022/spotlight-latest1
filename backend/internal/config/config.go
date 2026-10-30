@@ -462,6 +462,8 @@ type Config struct {
 	TransportBusSettleGraceMinutes             int // TRANSPORT_BUS_SETTLE_GRACE_MINUTES (default 30)
 	TransportBusCancelCutoffMinutes            int // TRANSPORT_BUS_CANCEL_CUTOFF_MINUTES (default 120, clamped 60-1440)
 	TransportBusMinBookingLeadMinutes          int // TRANSPORT_BUS_MIN_BOOKING_LEAD_MINUTES (default 15)
+	// TransportShareBaseURL (TRANSPORT_SHARE_BASE_URL): base for ride live-share links.
+	TransportShareBaseURL                      string
 	FeatureAICareEnabled                       bool
 	FeatureDisputesEnabled                     bool
 	FeatureRatingsEnabled                      bool
@@ -1138,6 +1140,7 @@ func Load() Config {
 		TransportBusSettleGraceMinutes:               getEnvInt("TRANSPORT_BUS_SETTLE_GRACE_MINUTES", 30),
 		TransportBusCancelCutoffMinutes:              getEnvInt("TRANSPORT_BUS_CANCEL_CUTOFF_MINUTES", 120),
 		TransportBusMinBookingLeadMinutes:            getEnvInt("TRANSPORT_BUS_MIN_BOOKING_LEAD_MINUTES", 15),
+		TransportShareBaseURL:                        getEnv("TRANSPORT_SHARE_BASE_URL", "https://spotlight.app/track"),
 		ParcelRouteTokenSecret:                       getEnv("PARCEL_ROUTE_TOKEN_SECRET", ""),
 		FeatureAICareEnabled:                         getEnvBool("FEATURE_AICARE_ENABLED", false),
 		FeatureDisputesEnabled:                       getEnvBool("FEATURE_DISPUTES_ENABLED", false),

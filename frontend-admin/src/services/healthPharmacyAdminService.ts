@@ -197,10 +197,10 @@ export async function listPcnApplications(opts?: { status?: string; q?: string }
   return getJson<PcnApplication[]>(`/pcn/applications${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePcn(id: string, decision: PcnDecision, note?: string): Promise<PcnDecisionResult> {
-  // No PCN application table, service, or handler exists anywhere in
-  // backend/internal/health/pharmacy — only a "future adapter" comment
-  // reference. There is nothing this can call yet.
-  if (USE_MOCK) throw new Error(`Deciding a PCN application ${NO_BACKEND_YET}`);
+  // Backed by POST /pcn/applications/:id/decision, which delegates to the shared
+  // provider-review service. Only approve / reject / need_info are supported;
+  // suspend / reinstate answer 400 until that service grows those edges.
+  if (USE_MOCK) throw new Error(`Deciding a PCN application is a live-only action — set ${USE_MOCK_ENV}=false`);
   return sendJson<PcnDecisionResult>('POST', `/pcn/applications/${id}/decision`, { decision, note });
 }
 
@@ -233,8 +233,8 @@ export async function listCatalog(opts?: { status?: string; pom?: string; q?: st
   return getJson<CatalogItem[]>(`/catalog${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function governCatalogItem(id: string, action: CatalogGovernanceAction, note?: string): Promise<CatalogGovernanceResult> {
-  // there is no separate governance entity or /catalog/:id/govern route.
-  if (USE_MOCK) throw new Error(`Governing a catalog item ${NO_BACKEND_YET}`);
+  // Backed by POST /catalog/:id/govern (approve | reject | suspend → nafdac_status + active).
+  if (USE_MOCK) throw new Error(`Governing a catalog item is a live-only action — set ${USE_MOCK_ENV}=false`);
   return sendJson<CatalogGovernanceResult>('POST', `/catalog/${id}/govern`, { action, note });
 }
 
@@ -512,10 +512,9 @@ export async function listRecalls(opts?: { status?: string; severity?: string; q
   return getJson<RecallRecord[]>(`/recalls${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function createRecall(input: CreateRecallInput): Promise<CreateRecallResult> {
-  // Only real recall-adjacent capability is AdminRecallProduct (deactivate
-  // by product id, no body). There is no RecallRecord entity, batch/severity
-  // tracking, or /recalls route backing this shape.
-  if (USE_MOCK) throw new Error(`Opening a recall ${NO_BACKEND_YET}`);
+  // Backed by POST /recalls (pharmacy_recalls). An optional product_id ties the
+  // recall to a catalog product, which is deactivated in the same transaction.
+  if (USE_MOCK) throw new Error(`Opening a recall is a live-only action — set ${USE_MOCK_ENV}=false`);
   return sendJson<CreateRecallResult>('POST', '/recalls', input);
 }
 
@@ -578,6 +577,29 @@ const REPORTING: ReportingData = {
     return { month: m.toLocaleDateString('en-NG', { month: 'short', year: '2-digit' }), gmv_kobo: gmv, net_kobo: Math.round(gmv * 0.07), orders: 32_000 + i * 3_200 };
   }),
 };
+/** Download the period rollup as CSV (GET /reporting?format=csv). Kobo stays integer kobo. */
+export async function downloadReportingCsv(opts?: { period?: string }): Promise<Blob> {
+  if (USE_MOCK) {
+    const r = REPORTING;
+    const rows = [
+      ['metric', 'value'],
+      ['period', opts?.period ?? '30d'],
+      ['gmv_kobo', String(r.gmv_kobo)],
+      ['net_revenue_kobo', String(r.net_revenue_kobo)],
+      ['orders', String(r.orders)],
+      [],
+      ['month', 'gmv_kobo', 'net_kobo', 'orders'],
+      ...r.monthly.map((m) => [m.month, String(m.gmv_kobo), String(m.net_kobo), String(m.orders)]),
+    ];
+    return new Blob([rows.map((row) => row.join(',')).join('\n')], { type: 'text/csv' });
+  }
+  const qs = new URLSearchParams({ format: 'csv' });
+  if (opts?.period) qs.set('period', opts.period);
+  const res = await fetch(`${adminBase()}/reporting?${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  return res.blob();
+}
+
 export async function getReporting(opts?: { period?: string }): Promise<ReportingData> {
   if (USE_MOCK) { await delay(); return { ...REPORTING, by_state: [...REPORTING.by_state], monthly: [...REPORTING.monthly] }; }
   const qs = new URLSearchParams();

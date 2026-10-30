@@ -11,8 +11,8 @@ package healthvet
 //   - a field the backend has no source for is omitted or zero, not invented
 //     (the moderation queue lives in admin_governance.go);
 //   - the payout view is DERIVED from the escrow legs (vet_appointment_payments
-//     RELEASED) and the commission rows already recorded; deciding a payout is
-//     not built here (it is a money mutation and needs its own spec).
+//     RELEASED) and the commission rows already recorded; payout decisions are
+//     an append-only attestation in admin_payouts.go (vet_payout_decisions).
 
 import (
 	"context"
@@ -313,29 +313,45 @@ func (s *Service) AdminConsolePayouts(ctx context.Context) ([]AdminConsolePayout
 		       COALESCE(dv.profile_draft->'draft'->'affiliations'->0->>'name',''),
 		       SUM(vp.total_kobo), MIN(vp.created_at),
 		       COALESCE((SELECT SUM(ce.spotlight_revenue_kobo) FROM commission_earnings ce
-		                 WHERE ce.source_module='health.vet' AND ce.source_ref = ANY(array_agg(vp.appointment_id::text))),0)
+		                 WHERE ce.source_module='health.vet' AND ce.source_ref = ANY(array_agg(vp.appointment_id::text))),0),
+		       hp.owner_user_id::text,
+		       COALESCE((SELECT d.decision FROM vet_payout_decisions d
+		                 WHERE d.provider_id = hp.id AND d.released_kobo = SUM(vp.total_kobo)
+		                 ORDER BY d.created_at DESC LIMIT 1),'')
 		FROM vet_appointment_payments vp
 		JOIN health_providers hp ON hp.id = vp.provider_id
 		LEFT JOIN doctor_vet_profiles dv ON dv.user_id = hp.owner_user_id
 		WHERE vp.pay_state = 'RELEASED'
-		GROUP BY hp.id, hp.display_name, dv.profile_draft
+		GROUP BY hp.id, hp.display_name, hp.owner_user_id, dv.profile_draft
 		ORDER BY MIN(vp.created_at) DESC LIMIT 200`)
 	if err != nil {
 		return nil, fmt.Errorf("vet: console payouts: %w", err)
 	}
 	defer rows.Close()
 	out := []AdminConsolePayout{}
+	owners := []string{}
 	for rows.Next() {
 		var p AdminConsolePayout
-		if err := rows.Scan(&p.ID, &p.VetMasked, &p.ClinicMasked, &p.ReleasedKobo, &p.CreatedAt, &p.FeesKobo); err != nil {
+		var owner, decision string
+		if err := rows.Scan(&p.ID, &p.VetMasked, &p.ClinicMasked, &p.ReleasedKobo, &p.CreatedAt, &p.FeesKobo, &owner, &decision); err != nil {
 			return nil, err
 		}
 		p.NetPayableKobo = p.ReleasedKobo - p.FeesKobo
-		// No payout-run table exists for vets: every row is an accrual awaiting one.
-		p.PayoutStatus, p.KYCTier = "pending", "unknown"
+		// Status is the latest decision on THIS accrual snapshot (vet_payout_decisions);
+		// a larger accrual than the one decided reads as pending again.
+		p.PayoutStatus, p.KYCTier = storedToPayoutStatus(decision), "unknown"
 		out = append(out, p)
+		owners = append(owners, owner)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if s.payout != nil {
+			out[i].KYCVerified, _ = s.payout.PayoutEligible(ctx, owners[i])
+		}
+	}
+	return out, nil
 }
 
 // AdminConsoleReporting aggregates vet_appointment_payments. gmv is the sum of
@@ -381,8 +397,15 @@ func ratio(n, d int64) float64 {
 	return float64(n) / float64(d)
 }
 
-func (s *Service) AdminConsoleReporting(ctx context.Context) (*AdminConsoleReporting, error) {
-	r := &AdminConsoleReporting{GeneratedAt: time.Now().UTC(), PeriodLabel: "All time", ByState: []AdminConsoleStateRow{}, Monthly: []AdminConsoleMonthRow{}}
+// AdminConsoleReporting aggregates over period (7d|30d|90d|ytd|all; "" = all).
+// $1 is the lower bound on created_at; NULL means all time.
+func (s *Service) AdminConsoleReporting(ctx context.Context, period string) (*AdminConsoleReporting, error) {
+	now := time.Now().UTC()
+	since, label, ok := reportingSince(period, now)
+	if !ok {
+		return nil, fmt.Errorf("vet: unknown reporting period %q", period)
+	}
+	r := &AdminConsoleReporting{GeneratedAt: now, PeriodLabel: label, ByState: []AdminConsoleStateRow{}, Monthly: []AdminConsoleMonthRow{}}
 
 	var completed, noShow, refunded int64
 	if err := s.db.QueryRow(ctx, `
@@ -390,13 +413,15 @@ func (s *Service) AdminConsoleReporting(ctx context.Context) (*AdminConsoleRepor
 		       COUNT(*) FILTER (WHERE vp.visit_type='TELE'), COUNT(*) FILTER (WHERE vp.visit_type='HOME'), COUNT(*) FILTER (WHERE vp.visit_type='CLINIC'),
 		       COUNT(*) FILTER (WHERE ap.state='COMPLETED'), COUNT(*) FILTER (WHERE ap.state='NO_SHOW'), COUNT(*) FILTER (WHERE vp.pay_state='REFUNDED'),
 		       COALESCE(SUM(vp.total_kobo) FILTER (WHERE vp.pay_state <> 'REFUNDED'),0)
-		FROM vet_appointment_payments vp JOIN health_appointments ap ON ap.id = vp.appointment_id`,
+		FROM vet_appointment_payments vp JOIN health_appointments ap ON ap.id = vp.appointment_id
+		WHERE ($1::timestamptz IS NULL OR vp.created_at >= $1)`, since,
 	).Scan(&r.Appointments, &r.TeleAppointments, &r.HomeAppointments, &r.ClinicAppointment, &completed, &noShow, &refunded, &r.GMVKobo); err != nil {
 		return nil, fmt.Errorf("vet: console reporting totals: %w", err)
 	}
 	r.CompletionRate, r.NoShowRate, r.RefundRate = ratio(completed, r.Appointments), ratio(noShow, r.Appointments), ratio(refunded, r.Appointments)
 
-	if err := s.db.QueryRow(ctx, `SELECT COALESCE(SUM(spotlight_revenue_kobo),0) FROM commission_earnings WHERE source_module='health.vet'`).Scan(&r.NetRevenueKobo); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT COALESCE(SUM(spotlight_revenue_kobo),0) FROM commission_earnings
+		WHERE source_module='health.vet' AND ($1::timestamptz IS NULL OR created_at >= $1)`, since).Scan(&r.NetRevenueKobo); err != nil {
 		return nil, fmt.Errorf("vet: console reporting revenue: %w", err)
 	}
 
@@ -405,7 +430,8 @@ func (s *Service) AdminConsoleReporting(ctx context.Context) (*AdminConsoleRepor
 		SELECT COUNT(DISTINCT rp.id), COUNT(DISTINCT rp.id) FILTER (WHERE i.is_pom)
 		FROM health_prescriptions rp
 		JOIN vet_appointment_payments vp ON vp.consult_id = rp.consult_id
-		LEFT JOIN health_prescription_items i ON i.prescription_id = rp.id`).Scan(&r.Eprescriptions, &pom); err != nil {
+		LEFT JOIN health_prescription_items i ON i.prescription_id = rp.id
+		WHERE ($1::timestamptz IS NULL OR rp.created_at >= $1)`, since).Scan(&r.Eprescriptions, &pom); err != nil {
 		return nil, fmt.Errorf("vet: console reporting erx: %w", err)
 	}
 	r.POMShare = ratio(pom, r.Eprescriptions)
@@ -413,7 +439,8 @@ func (s *Service) AdminConsoleReporting(ctx context.Context) (*AdminConsoleRepor
 	rows, err := s.db.Query(ctx, `
 		SELECT lower(ap.state), COUNT(*), COALESCE(SUM(vp.total_kobo),0)
 		FROM vet_appointment_payments vp JOIN health_appointments ap ON ap.id = vp.appointment_id
-		GROUP BY ap.state ORDER BY COUNT(*) DESC`)
+		WHERE ($1::timestamptz IS NULL OR vp.created_at >= $1)
+		GROUP BY ap.state ORDER BY COUNT(*) DESC`, since)
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +450,7 @@ func (s *Service) AdminConsoleReporting(ctx context.Context) (*AdminConsoleRepor
 		if err := rows.Scan(&st.State, &st.Appointments, &st.GMVKobo); err != nil {
 			return nil, err
 		}
-		st.SharePct = ratio(st.Appointments, r.Appointments) * 100
+		st.SharePct = ratio(st.Appointments, r.Appointments) // fraction 0..1, as the console's pct() expects
 		r.ByState = append(r.ByState, st)
 	}
 	if err := rows.Err(); err != nil {
@@ -433,12 +460,12 @@ func (s *Service) AdminConsoleReporting(ctx context.Context) (*AdminConsoleRepor
 	mrows, err := s.db.Query(ctx, `
 		WITH m AS (
 			SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month, COUNT(*) AS n, COALESCE(SUM(total_kobo),0) AS gmv
-			FROM vet_appointment_payments GROUP BY 1
+			FROM vet_appointment_payments WHERE ($1::timestamptz IS NULL OR created_at >= $1) GROUP BY 1
 		), c AS (
 			SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month, SUM(spotlight_revenue_kobo) AS net
-			FROM commission_earnings WHERE source_module='health.vet' GROUP BY 1
+			FROM commission_earnings WHERE source_module='health.vet' AND ($1::timestamptz IS NULL OR created_at >= $1) GROUP BY 1
 		)
-		SELECT m.month, m.n, m.gmv, COALESCE(c.net,0) FROM m LEFT JOIN c USING (month) ORDER BY m.month DESC LIMIT 12`)
+		SELECT m.month, m.n, m.gmv, COALESCE(c.net,0) FROM m LEFT JOIN c USING (month) ORDER BY m.month DESC LIMIT 12`, since)
 	if err != nil {
 		return nil, err
 	}
@@ -503,6 +530,10 @@ func (h *Handler) AdminConsolePayouts(c *gin.Context) {
 }
 
 func (h *Handler) AdminConsoleReporting(c *gin.Context) {
-	d, err := h.svc.AdminConsoleReporting(c.Request.Context())
+	if _, _, ok := reportingSince(c.Query("period"), time.Now().UTC()); !ok {
+		c.JSON(400, gin.H{"success": false, "error": "period must be 7d, 30d, 90d, ytd or all"})
+		return
+	}
+	d, err := h.svc.AdminConsoleReporting(c.Request.Context(), c.Query("period"))
 	consoleOK(c, d, err)
 }

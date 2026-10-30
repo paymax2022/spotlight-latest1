@@ -16,12 +16,13 @@ import type {
   SendChatMessageInput,
   SaveSoapNoteInput,
 } from '@/types/doctor';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useChatThreads() {
   return useQuery({
     queryKey:        ['doctor', 'chat-threads'],
     queryFn:         getChatThreads,
-    placeholderData: DEMO_CHAT_THREADS,
+    placeholderData: doctorPlaceholder(DEMO_CHAT_THREADS),
     staleTime:       15_000,
   });
 }
@@ -31,7 +32,7 @@ export function useChatMessages(threadId: string) {
     queryKey:        ['doctor', 'chat-messages', threadId],
     queryFn:         () => getChatMessages(threadId),
     enabled:         !!threadId,
-    placeholderData: DEMO_CHAT_MESSAGES.filter((m) => m.threadId === threadId),
+    placeholderData: doctorPlaceholder(DEMO_CHAT_MESSAGES.filter((m) => m.threadId === threadId)),
     staleTime:       10_000,
   });
 }

@@ -13,18 +13,21 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import PharmacyStatusPill from '@/features/health/components/PharmacyStatusPill';
 import PharmacyOrderTimeline from '@/features/health/components/PharmacyOrderTimeline';
-import { useOrder, useDispenseOrder, useHandoffOrder } from '@/features/health/pharmacy/hooks';
+import { useOrder, useConfirmOrder, useDispenseOrder, useHandoffOrder } from '@/features/health/pharmacy/hooks';
 import { newIdempotencyKey } from '@/features/health/pharmacy/cartStore';
 import { formatNaira } from '@/features/health/constants/health.constants';
 import type { PharmacyOrder } from '@/features/health/pharmacy/types';
 
-const PRE_DISPENSE: PharmacyOrder['status'][] = ['created', 'rx_pending', 'confirmed'];
+// Backend FSM: CREATED/RX_PENDING -> CONFIRMED -> DISPENSED. Confirm is a
+// distinct step (it runs the verified-Rx gate); dispense is only legal once CONFIRMED.
+const PRE_CONFIRM: PharmacyOrder['status'][] = ['created', 'rx_pending'];
 
 export default function ProviderDispenseScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const id = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? params.id[0] : undefined;
 
   const { data: order, isLoading, isError, refetch } = useOrder(id);
+  const confirm = useConfirmOrder();
   const dispense = useDispenseOrder();
   const handoff = useHandoffOrder();
 
@@ -47,8 +50,13 @@ export default function ProviderDispenseScreen() {
   }
 
   const awaitingRx = order.requiresRx && !order.rxId;
-  const isPreDispense = PRE_DISPENSE.includes(order.status);
+  const isPreConfirm = PRE_CONFIRM.includes(order.status);
+  const isConfirmed = order.status === 'confirmed';
   const isDispensed = order.status === 'dispensed';
+
+  const onConfirm = async () => {
+    await confirm.mutateAsync({ orderId: order.id, idempotencyKey: newIdempotencyKey('confirm') });
+  };
 
   const onDispense = async () => {
     await dispense.mutateAsync({ orderId: order.id, idempotencyKey: newIdempotencyKey('dispense') });
@@ -137,14 +145,24 @@ export default function ProviderDispenseScreen() {
       </ScrollView>
 
       {/* Footer actions */}
-      {isPreDispense ? (
+      {isPreConfirm ? (
+        <View style={styles.footer}>
+          <PrimaryButton
+            label="Confirm order"
+            onPress={onConfirm}
+            loading={confirm.isPending}
+            disabled={awaitingRx}
+          />
+          {confirm.isError ? <Text style={styles.errText}>Couldn't confirm this order. Check the prescription and try again.</Text> : null}
+        </View>
+      ) : isConfirmed ? (
         <View style={styles.footer}>
           <PrimaryButton
             label="Mark dispensed & packed"
             onPress={onDispense}
             loading={dispense.isPending}
-            disabled={awaitingRx}
           />
+          {dispense.isError ? <Text style={styles.errText}>Couldn't mark this order dispensed. Please try again.</Text> : null}
         </View>
       ) : isDispensed ? (
         <View style={styles.footer}>
@@ -202,4 +220,5 @@ const styles = StyleSheet.create({
   footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background },
   doneRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
   doneText: { ...Typography.labelLg, color: Colors.onSurfaceVariant },
+  errText: { ...Typography.bodySm, color: Colors.error, textAlign: 'center', marginTop: Spacing.sm },
 });

@@ -20,6 +20,7 @@ import (
 type Handler struct {
 	svc     *Service
 	isAdmin func(c *gin.Context) bool
+	decider ApplicationDecider // optional provider-review seam for PCN decisions; nil ⇒ 503
 }
 
 func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
@@ -118,10 +119,15 @@ func (h *Handler) ListMyPrescriptions(c *gin.Context) {
 		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rx})
+	uploads, err := h.svc.MyRxUploads(c.Request.Context(), id)
+	if err != nil {
+		failErr(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rx, "uploads": uploads})
 }
 
-// ListProducts — GET /products?pharmacy_provider_id=&q=  (NAFDAC-gated, Rx flag, HL-5)
+// ListProducts — GET /products?pharmacy_provider_id=&q=&category=  (NAFDAC-gated, Rx flag, HL-5)
 // q is an optional case-insensitive search on the medicine name or owning pharmacy name.
 func (h *Handler) ListProducts(c *gin.Context) {
 	// pharmacy_provider_id is optional, but once supplied it feeds a
@@ -134,7 +140,12 @@ func (h *Handler) ListProducts(c *gin.Context) {
 			return
 		}
 	}
-	products, err := h.svc.ListProducts(c.Request.Context(), provID, c.Query("q"))
+	category := c.Query("category")
+	if !ValidProductCategory(category) {
+		ginutil.FailOK(c, http.StatusBadRequest, "category is not a recognised catalog category")
+		return
+	}
+	products, err := h.svc.ListProducts(c.Request.Context(), provID, c.Query("q"), category)
 	if err != nil {
 		failErr(c, http.StatusInternalServerError, err)
 		return

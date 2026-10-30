@@ -77,12 +77,50 @@ async function readList(url: string, key: string): Promise<any[]> {
 // admin_modes.go's ListParcels/ListTowingJobs/ListMoverJobs/ListCarHireBookings
 // settlements for escrow state — see that file), while the console types here
 // are camelCase. Mirrors mobilityAdminService.ts's mapTrip/mapDriverSummary
-// pattern. Bus endpoints don't get a mapper: their backend rows were never
-// enriched the same way, so readList()'s raw pass-through is all there is.
+// pattern. Bus rows are already camelCase; their mappers only default fields.
 // Fields the backend does not track yet (zone — no mode table has a per-job
 // zone column, only a pricing-config default) get the same honest 'default'
 // fallback used in mobilityAdminService.ts rather than a fabricated value.
 type Row = Record<string, any>;
+
+function mapBusRoute(r: Row): BusRoute {
+  return {
+    id: r.id,
+    operatorId: r.operatorId ?? '',
+    operatorName: r.operatorName || (r.operatorId ? `operator ${String(r.operatorId).slice(0, 8)}` : 'Unknown'),
+    origin: r.origin ?? r.originTerminal ?? '',
+    destination: r.destination ?? r.destTerminal ?? '',
+    fareKobo: Number.isInteger(r.fareKobo) ? r.fareKobo : 0,
+    fareApproved: Boolean(r.fareApproved),
+    active: r.active ?? r.status === 'active',
+  };
+}
+
+function mapBusSchedule(s: Row): BusSchedule {
+  return {
+    id: s.id,
+    routeId: s.routeId ?? '',
+    routeLabel: s.routeLabel ?? '',
+    operatorName: s.operatorName ?? '',
+    departAt: s.departAt ?? s.departureTime ?? '',
+    fareKobo: Number.isInteger(s.fareKobo) ? s.fareKobo : 0,
+    fareApproved: Boolean(s.fareApproved),
+    seatsTotal: s.seatsTotal ?? s.totalSeats ?? 0,
+    seatsBooked: s.seatsBooked ?? 0,
+    status: s.status,
+  };
+}
+
+function mapBusManifestRow(m: Row): BusManifestRow {
+  return {
+    ticketId: m.ticketId,
+    passengerName: m.passengerName ?? '',
+    seatNumber: String(m.seatNumber ?? ''),
+    status: m.boardingStatus === 'boarded' ? 'boarded' : m.status,
+    fareKobo: Number.isInteger(m.fareKobo) ? m.fareKobo : 0,
+    bookedAt: m.bookedAt ?? '',
+  };
+}
 
 function mapParcelRow(p: Row): ParcelRow {
   return {
@@ -258,10 +296,9 @@ export async function setParcelStatus(id: string, patch: ModeStatusPatch): Promi
 }
 
 export async function reviewParcelPod(id: string, decision: PodStatus, reason: string): Promise<{ ok: boolean }> {
-  // No backend at all: the parcels admin surface only has AdminParcelStatus
-  // (a general status PATCH) — no distinct proof-of-delivery review action
-  // exists in backend/internal/app/finance_routes.go's parcels admin routes.
-  if (USE_MOCK) throw new Error(`Reviewing a parcel proof of delivery ${NO_BACKEND_YET}`);
+  // Record-only, audited (transportAdmin.AdminParcelPodReview); it does not move
+  // money or change the parcel status. Only approved/rejected are accepted.
+  if (USE_MOCK) throw new Error(`Reviewing a parcel proof of delivery ${NOT_IN_FIXTURE_MODE}`);
   return writeOk(`${adminBase()}/parcels/${id}/pod-review`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ decision, reason }) });
 }
 
@@ -281,24 +318,40 @@ export async function setBusProviderVerification(
 
 export async function getBusRoutes(): Promise<BusRoute[]> {
   if (USE_MOCK) { await delay(); return [...BUS_ROUTES]; }
-  return readList(`${adminBase()}/bus/routes`, 'routes');
+  const rows = await readList(`${adminBase()}/bus/routes`, 'routes');
+  return rows.map(mapBusRoute);
 }
 
+// Route-level approval approves every still-bookable schedule on the route whose
+// fare is unapproved (PATCH /bus/routes/:id/approve-fare, audited per schedule).
 export async function approveBusRouteFare(id: string, reason: string): Promise<{ ok: boolean }> {
-  // No backend at all: only schedule-level fare approval exists
-  // (POST /bus/schedules/:id/approve-fare, transportAdmin.AdminBusApproveFare)
-  // — there is no route-level equivalent in finance_routes.go's bus admin routes.
-  if (USE_MOCK) throw new Error(`Approving a bus route fare ${NO_BACKEND_YET}`);
+  if (USE_MOCK) throw new Error(`Approving a bus route fare ${NOT_IN_FIXTURE_MODE}`);
   return writeOk(`${adminBase()}/bus/routes/${id}/approve-fare`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ reason }) });
 }
 
-export async function getBusSchedules(): Promise<BusSchedule[]> {
+export interface BusScheduleQuery {
+  routeId?: string;
+  status?: string;
+  fareApproved?: boolean;
+  from?: string; // YYYY-MM-DD
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+// GET /bus/schedules → { schedules, total, limit, offset } (paged, newest departure first).
+export async function getBusSchedules(q: BusScheduleQuery = {}): Promise<BusSchedule[]> {
   if (USE_MOCK) { await delay(); return [...BUS_SCHEDULES]; }
-  // No backend at all: finance_routes.go registers no admin GET for schedules —
-  // only POST /bus/schedules (create) and POST /bus/schedules/:id/approve-fare.
-  // GET /bus/schedules exists only on the customer-facing `mob` group (different
-  // base path, requires a route_id) and is not reachable from adminBase().
-  throw new Error(`Listing bus schedules ${NO_BACKEND_YET}`);
+  const params = new URLSearchParams();
+  if (q.routeId) params.set('route_id', q.routeId);
+  if (q.status) params.set('status', q.status);
+  if (q.fareApproved !== undefined) params.set('fare_approved', String(q.fareApproved));
+  if (q.from) params.set('from', q.from);
+  if (q.to) params.set('to', q.to);
+  params.set('limit', String(q.limit ?? 100));
+  if (q.offset) params.set('offset', String(q.offset));
+  const rows = await readList(`${adminBase()}/bus/schedules?${params.toString()}`, 'schedules');
+  return rows.map(mapBusSchedule);
 }
 
 export async function approveBusScheduleFare(id: string, reason: string): Promise<{ ok: boolean }> {
@@ -309,7 +362,8 @@ export async function approveBusScheduleFare(id: string, reason: string): Promis
 
 export async function getBusManifest(scheduleId: string): Promise<BusManifestRow[]> {
   if (USE_MOCK) { await delay(); return BUS_MANIFEST[scheduleId] ?? []; }
-  return readList(`${adminBase()}/bus/manifest?schedule_id=${encodeURIComponent(scheduleId)}`, 'manifest');
+  const rows = await readList(`${adminBase()}/bus/manifest?schedule_id=${encodeURIComponent(scheduleId)}`, 'manifest');
+  return rows.map(mapBusManifestRow);
 }
 
 export async function getTowingJobs(status?: TowingStatus | ''): Promise<TowingRow[]> {

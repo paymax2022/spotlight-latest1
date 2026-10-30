@@ -12,7 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StateView from '@/components/StateView';
-import { useOrderLabForPet, usePet } from '@/features/health/vet/hooks';
+import { useRequestLabForPet, usePet } from '@/features/health/vet/hooks';
 import MissingContext from '@/features/health/vet/components/MissingContext';
 
 const PET_TESTS = [
@@ -28,7 +28,7 @@ const PET_TESTS = [
 export default function OrderLabScreen() {
   const { petId, appointmentId } = useLocalSearchParams<{ petId: string; appointmentId?: string }>();
   const { data: pet } = usePet(petId);
-  const orderLab = useOrderLabForPet();
+  const orderLab = useRequestLabForPet();
   const [selected, setSelected] = useState<string[]>([]);
   const [note, setNote] = useState('');
   const [done, setDone] = useState(false);

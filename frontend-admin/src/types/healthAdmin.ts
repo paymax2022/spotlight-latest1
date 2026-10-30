@@ -233,6 +233,8 @@ export type RecallRecord = {
 };
 
 export type CreateRecallInput = {
+  /** Optional catalog product to deactivate with the recall. */
+  product_id?: string;
   product_name: string;
   nafdac_reg_no?: string;
   batch_no: string;

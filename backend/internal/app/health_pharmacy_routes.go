@@ -18,9 +18,11 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	healthpharmacy "spotlight/backend/internal/health/pharmacy"
+	healthproviders "spotlight/backend/internal/health/providers"
 	healthrx "spotlight/backend/internal/health/rx"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/r2"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/transport"
@@ -36,11 +38,12 @@ import (
 //   - member: /api/finance/health/pharmacy/*  (member-authenticated; user_id mirrored)
 //   - admin : /api/health/pharmacy/admin/*    (per-route RBAC health.pharmacy.*)
 //
-// Gated by FeatureHealthPharmacyEnabled at the orchestrator. Auditing is nil-safe.
+// Gated by FeatureHealthPharmacyEnabled at the orchestrator. Every order FSM
+// transition is written to the shared audit sink (nil-safe when absent).
 // Returns the pharmacy service so the orchestrator can hand it optional
 // collaborators (e.g. the symptom-search ReviewCaseOpener seam — PRD §10);
 // nil when the pool is absent.
-func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, supabase *integrations.SupabaseRestClient, redis *platformRedis.Client) *healthpharmacy.Service {
+func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService, cfg config.Config, supabase *integrations.SupabaseRestClient, redis *platformRedis.Client) *healthpharmacy.Service {
 	if pool == nil {
 		log.Println("[health.pharmacy] nil pool — skipping pharmacy routes")
 		return nil
@@ -67,12 +70,21 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		&dispatchAdapter{t: transportSvc, db: pool},
 		&providerGateAdapter{db: pool},
 		&payoutGateAdapter{kyc: kycSvc},
-		nil, // audit sink injected by orchestrator (HL-12) — nil-safe here
+		audit, // shared immutable-audit sink from the orchestrator (HL-12) — nil-safe
 	)
 	svc.SetRxLister(&rxListerAdapter{rx: rxSvc})
 	// DP-002 dispense-match: was left permanently nil (dead check) — the seam
 	// existed but nothing ever called SetRxItems. See rxItemsAdapter above.
 	svc.SetRxItems(&rxItemsAdapter{db: pool})
+	// Patient Rx uploads reuse the shared R2 presigner — unconfigured ⇒ 503,
+	// never a fabricated URL.
+	svc.SetUploadPresigner(r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	}))
 
 	// Central Commission & Profit recording at the pharmacy order settlement point
 	// (Complete → escrow release). Best-effort + idempotent + nil-safe: constructed
@@ -86,6 +98,10 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 
 	isAdmin := func(c *gin.Context) bool { return isHealthPharmacyAdmin(c, rbac) }
 	h := healthpharmacy.NewHandler(svc, isAdmin)
+	// PCN decisions delegate to the shared provider-review service (same FSM and
+	// capability grant as /api/health/admin/providers/applications/:id/decision);
+	// the pharmacy service audits the decision itself.
+	h.SetApplicationDecider(pcnDeciderAdapter{svc: healthproviders.NewService(pool, newCapabilityGranter(rbac), nil)})
 
 	guard := func(permission string) gin.HandlerFunc {
 		return middleware.RequirePermission(rbac, permission)
@@ -93,12 +109,18 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 
 	pg := member.Group("/health/pharmacy")
 	registerPharmacyProviderMe(pg, pool)
+	// Patient's own pharmacist-consult thread.
+	pg.GET("/consult/messages", h.ConsultMessages)
+	pg.POST("/consult/messages", h.SendConsultMessage)
+
 	pg.GET("/products", h.ListProducts)                         // NAFDAC-gated, Rx flag (HL-5)
 	pg.GET("/products/mine", h.MyProducts)                      // owner shelf incl. off-sale (before :id)
 	pg.GET("/products/:id", h.GetProduct)                       // single product + owning pharmacy
 	pg.POST("/products", h.UpsertProduct)                       // pharmacy owner, HL-5 write-gate
 	pg.GET("/prescriptions", h.ListMyPrescriptions)             // patient's own list
 	pg.POST("/prescriptions/:id/verify", h.VerifyPrescription)  // pharmacist, HL-3
+	pg.POST("/prescriptions/upload/presign", h.PresignRxUpload) // patient, presigned R2 PUT
+	pg.POST("/prescriptions/upload", h.RecordRxUpload)          // patient, records the uploaded object
 	pg.GET("/pharmacies", h.DiscoverPharmacies)                 // browse ALL pharmacies — proximity/rating (HL-2)
 	pg.GET("/pharmacies/:id", h.GetPharmacy)                    // pharmacy detail
 	pg.GET("/pharmacies/:id/reviews", h.ListPharmacyReviews)    // public rating feed
@@ -110,8 +132,12 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	pg.GET("/orders", h.ListMine) // owner-scoped fulfilment queue
 	// The patient's own order history — a distinct path from /orders (the owner
 	// inbox above) so the two never collide. Also declared before /orders/:id.
-	pg.GET("/orders/mine", h.ListMyOrders)    // patient-scoped order history
-	pg.GET("/earnings", h.Earnings)           // owner-scoped money view
+	pg.GET("/orders/mine", h.ListMyOrders) // patient-scoped order history
+	pg.GET("/earnings", h.Earnings)        // owner-scoped money view
+	// Pharmacist work surfaces — scope resolved from health_providers.owner_user_id.
+	pg.GET("/provider/stock-alerts", h.StockAlerts)
+	pg.GET("/provider/rx-queue", h.RxQueue)
+	pg.GET("/provider/controlled-log", h.ControlledLog)
 	pg.GET("/orders/:id", h.Get)              // object-level authZ
 	pg.POST("/orders/:id/confirm", h.Confirm) // HL-3 verified e-Rx gate
 	pg.POST("/orders/:id/dispense", h.Dispense)
@@ -125,6 +151,10 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		h.Complete) // release payment (HL-9)
 	pg.POST("/orders/:id/cancel", h.Cancel)        // pre-dispense → refund (HL-9)
 	pg.POST("/orders/:id/reviews", h.SubmitReview) // patient, order must be completed
+	pg.POST("/orders/:id/reorder", h.Reorder)      // patient, re-prices a past order (creates nothing)
+	pg.GET("/medications", h.Medications)          // patient's verified/dispensed Rx items
+	pg.GET("/refills", h.Refills)                  // patient's dispensed items + schedule
+	pg.POST("/refills/:id/schedule", h.ScheduleRefill)
 
 	ag := admin.Group("")
 	// PHARMACY-001: `admin` (adminGroupTop5, top5_admin_group.go) applies ONLY
@@ -142,6 +172,11 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	// Without this, none of PHARMACY-001's new routes — or the ones that
 	// already existed — were ever actually reachable with a real token.
 	ag.Use(middleware.RequireAuthContext(supabase, rbac))
+	// Admin console write actions (PCN decision, catalog governance, recalls).
+	ag.POST("/pcn/applications/:id/decision", guard("health.admin.providers"), h.AdminDecidePcn)
+	ag.POST("/catalog/:id/govern", guard("health.pharmacy.recall"), h.AdminGovernCatalog)
+	ag.GET("/recalls", guard("health.pharmacy.recall"), h.AdminListRecalls)
+	ag.POST("/recalls", guard("health.pharmacy.recall"), h.AdminCreateRecall)
 	// PHARMACY-001: dashboard + order-detail are extensions of the SAME
 	// admin-oversight surface /orders already sits behind — reusing
 	// health.pharmacy.orders rather than minting a new permission slug (unlike
@@ -152,6 +187,15 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	ag.GET("/orders/:id", guard("health.pharmacy.orders"), h.AdminGetOrder)
 	ag.GET("/dispense-audit", guard("health.pharmacy.audit"), h.AdminDispenseAudit)
 	ag.POST("/products/:id/recall", guard("health.pharmacy.recall"), h.AdminRecallProduct)
+	// Admin console read surfaces (healthPharmacyAdminService.ts). PCN review
+	// reuses the shared provider-review permission; the rest reuse the module's
+	// existing slugs rather than minting new ones.
+	ag.GET("/pcn/applications", guard("health.admin.providers"), h.AdminPcnApplications)
+	ag.GET("/catalog", guard("health.pharmacy.audit"), h.AdminCatalog)
+	ag.GET("/rx-audit", guard("health.pharmacy.audit"), h.AdminRxAudit)
+	ag.GET("/controlled-log", guard("health.pharmacy.audit"), h.AdminControlledLog)
+	ag.GET("/payouts", guard("health.pharmacy.orders"), h.AdminPayouts)
+	ag.GET("/reporting", guard("health.pharmacy.orders"), h.AdminReporting)
 
 	log.Println("[health.pharmacy] pharmacy routes registered — catalog/orders/rx-verify/dispense/dispatch/complete + admin")
 	return svc
@@ -169,6 +213,18 @@ func isHealthPharmacyAdmin(c *gin.Context, rbac services.RBACService) bool {
 	}
 	ok, err := rbac.CheckPermission(uid, "health.pharmacy.audit", "global", "")
 	return err == nil && ok
+}
+
+// pcnDeciderAdapter bridges pharmacy's ApplicationDecider seam onto the shared
+// provider-review service (pharmacy never imports its types directly).
+type pcnDeciderAdapter struct{ svc *healthproviders.Service }
+
+func (a pcnDeciderAdapter) Decide(ctx context.Context, adminID, applicationID, action, note string) (string, error) {
+	app, err := a.svc.Decision(ctx, adminID, applicationID, action, note)
+	if err != nil {
+		return "", err
+	}
+	return string(app.State), nil
 }
 
 type escrowAdapter struct{ e *escrow.Service }

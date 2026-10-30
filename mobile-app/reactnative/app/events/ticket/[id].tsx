@@ -13,7 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import TicketPass from '@/features/events/components/TicketPass';
 import { useTicket, useTicketToken, useGiftTicket, useEvent } from '@/features/events/hooks';
-import { EventColors } from '@/features/events/constants/events.constants';
+import { EventColors, EVENTS_COMMERCE_ENABLED } from '@/features/events/constants/events.constants';
 
 export default function TicketPassScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -36,6 +36,9 @@ export default function TicketPassScreen() {
   const qrPayload = gateToken ? JSON.stringify(gateToken) : '';
   const canTransfer = t.state === 'ISSUED';
   const tier = event?.tiers.find((x) => x.id === t.tier_id);
+  // Eligibility detail (window, cancelled event, open request) is explained on
+  // the request screen; here we only hide it for seats with nothing to return.
+  const canAskRefund = EVENTS_COMMERCE_ENABLED && t.price_paid_kobo > 0 && t.state !== 'REFUNDED' && t.state !== 'USED';
 
   const doTransfer = async () => {
     setErr(null);
@@ -68,6 +71,14 @@ export default function TicketPassScreen() {
             {t.state === 'USED' ? 'This ticket has already been used at the gate.' : 'This ticket has been transferred to another user.'}
           </Text>
         )}
+        {canAskRefund ? (
+          <PrimaryButton
+            label="Request refund"
+            variant="ghost"
+            onPress={() => router.push({ pathname: '/events/refunds/request', params: { ticketId: t.id } })}
+            style={{ marginTop: Spacing.sm }}
+          />
+        ) : null}
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getReporting, formatNaira } from '@/services/healthPharmacyAdminService';
+import { getReporting, downloadReportingCsv, formatNaira } from '@/services/healthPharmacyAdminService';
 import type { ReportingData } from '@/types/healthAdmin';
 import { PageHeader, PharmacyTabs, Card, Kpi, DisclosureNote, StateBlock, FilterBar, btn, th, td, label, select, pct } from '../../_ui';
 import { colors } from '@/components/ui/vuexy';
@@ -20,6 +20,18 @@ export default function ReportingPage() {
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [period]);
 
+  async function exportCsv() {
+    try {
+      const blob = await downloadReportingCsv({ period });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pharmacy-report-${period}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) { setError(String(e)); }
+  }
+
   const maxGmv = data ? Math.max(...data.monthly.map((m) => m.gmv_kobo), 1) : 1;
 
   return (
@@ -36,6 +48,7 @@ export default function ReportingPage() {
           </select>
         </div>
         <button style={btn()} onClick={load}>Apply</button>
+        <button style={btn()} onClick={exportCsv}>Export CSV</button>
       </FilterBar>
 
       <StateBlock loading={loading} error={error} empty={!data} emptyText="No reporting data available.">

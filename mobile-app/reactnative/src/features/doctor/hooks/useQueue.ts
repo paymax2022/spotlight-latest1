@@ -28,6 +28,7 @@ import type {
   EndConsultationInput,
   MarkNoShowInput,
 } from '@/types/doctor.batch1';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 // barrel alongside the queue hooks.
 export { computeConsultCountdown } from '@/api/doctor.batch1.api';
@@ -41,7 +42,7 @@ export function useConsultationQueue() {
   return useQuery({
     queryKey:        ['doctor', 'queue'],
     queryFn:         getConsultationQueue,
-    placeholderData: DEMO_QUEUE,
+    placeholderData: doctorPlaceholder(DEMO_QUEUE),
     staleTime:       15_000,
   });
 }
@@ -50,7 +51,7 @@ export function useAppointmentRequests() {
   return useQuery({
     queryKey:        ['doctor', 'appointment-requests'],
     queryFn:         getAppointmentRequests,
-    placeholderData: DEMO_APPOINTMENT_REQUESTS,
+    placeholderData: doctorPlaceholder(DEMO_APPOINTMENT_REQUESTS),
     staleTime:       15_000,
   });
 }

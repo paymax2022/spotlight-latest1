@@ -25,6 +25,7 @@ import {
   getProviderCatalog,
   getStockAlerts,
   getProviderOrders,
+  confirmOrder,
   dispenseOrder,
   handoffOrder,
   getProviderRxQueue,
@@ -32,6 +33,7 @@ import {
   getControlledLog,
   getProviderEarnings,
   requestPayout,
+  cancelOrder,
 } from './api';
 import type {
   ProductCategory,
@@ -94,7 +96,7 @@ export function usePrescription(id?: string) {
 export function useUploadPrescription() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { patientName: string; note?: string }) => uploadPrescription(input),
+    mutationFn: (input: Parameters<typeof uploadPrescription>[0]) => uploadPrescription(input),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'prescriptions'] }),
   });
 }
@@ -192,6 +194,17 @@ export function useProviderOrders() {
   return useQuery({ queryKey: [KEY, 'provider', 'orders'], queryFn: getProviderOrders, staleTime: 15_000 });
 }
 
+export function useConfirmOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { orderId: string; idempotencyKey: string }) => confirmOrder(args.orderId, args.idempotencyKey),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'provider', 'orders'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'orders'] });
+    },
+  });
+}
+
 export function useDispenseOrder() {
   const qc = useQueryClient();
   return useMutation({
@@ -243,5 +256,17 @@ export function useRequestPayout() {
   return useMutation({
     mutationFn: (args: { amountKobo: number; idempotencyKey: string }) => requestPayout(args.amountKobo, args.idempotencyKey),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'provider', 'earnings'] }),
+  });
+}
+
+export function useCancelOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { orderId: string; idempotencyKey: string; reason?: string }) =>
+      cancelOrder(args.orderId, args.idempotencyKey, args.reason),
+    onSuccess: (order) => {
+      qc.invalidateQueries({ queryKey: [KEY, 'orders'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'order', order.id] });
+    },
   });
 }
