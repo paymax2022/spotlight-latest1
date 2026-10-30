@@ -22,6 +22,7 @@ import (
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/referral/commissionsplit"
+	referralledger "spotlight/backend/internal/referral/ledger"
 )
 
 func mustLivePool(t *testing.T) *pgxpool.Pool {
@@ -106,7 +107,18 @@ func cleanupRewards(t *testing.T, pool *pgxpool.Pool, referrerID string) {
 	t.Helper()
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_rewards WHERE referrer_id = $1`, referrerID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_reward_ledger WHERE beneficiary_id = $1`, referrerID)
 	})
+}
+
+// withdrawableKobo is the referrer's eligible (withdrawable) referral balance —
+// where a commission split now lands, instead of the wallet.
+func withdrawableKobo(ctx context.Context, pool *pgxpool.Pool, referrerID string) (int64, error) {
+	var n int64
+	err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_kobo), 0) FROM public.referral_reward_ledger
+		WHERE beneficiary_id = $1 AND state = 'eligible'`, referrerID).Scan(&n)
+	return n, err
 }
 
 func earningFor(userID, module string, spotlightRevenueKobo int64) commission.Earning {
@@ -135,7 +147,11 @@ func TestOnEarningRecorded_PaysReferrerTwentyPercent(t *testing.T) {
 	seedAttribution(t, pool, referred, referrer, false)
 	cleanupRewards(t, pool, referrer)
 
-	before, err := ledgerSvc.GetBalance(ctx, referrer)
+	before, err := withdrawableKobo(ctx, pool, referrer)
+	if err != nil {
+		t.Fatalf("withdrawable before: %v", err)
+	}
+	walletBefore, err := ledgerSvc.GetBalance(ctx, referrer)
 	if err != nil {
 		t.Fatalf("GetBalance before: %v", err)
 	}
@@ -143,12 +159,17 @@ func TestOnEarningRecorded_PaysReferrerTwentyPercent(t *testing.T) {
 	svc := commissionsplit.NewService(pool, ledgerSvc, true)
 	svc.OnEarningRecorded(ctx, earningFor(referred, "utility", 100_000)) // ₦1,000 commission
 
-	after, err := ledgerSvc.GetBalance(ctx, referrer)
+	// Earning is not a payout: the wallet moves only when the referrer withdraws.
+	if walletAfter, _ := ledgerSvc.GetBalance(ctx, referrer); walletAfter != walletBefore {
+		t.Fatalf("wallet moved at earn time (%d → %d); the split must land as withdrawable, not in the wallet", walletBefore, walletAfter)
+	}
+
+	after, err := withdrawableKobo(ctx, pool, referrer)
 	if err != nil {
-		t.Fatalf("GetBalance after: %v", err)
+		t.Fatalf("withdrawable after: %v", err)
 	}
 	if got, want := after-before, int64(20_000); got != want { // 20% of ₦1,000
-		t.Fatalf("referrer balance delta = %d, want %d", got, want)
+		t.Fatalf("referrer withdrawable delta = %d, want %d", got, want)
 	}
 
 	var rewardCount int
@@ -168,7 +189,7 @@ func TestOnEarningRecorded_PaysReferrerTwentyPercent(t *testing.T) {
 		t.Fatalf("read referral_rewards row: %v", err)
 	}
 	if status != "CREDITED" {
-		t.Fatalf("reward status = %q, want CREDITED (the ledger credit succeeded, so the record must say so honestly)", status)
+		t.Fatalf("reward status = %q, want CREDITED (credited to the referral balance)", status)
 	}
 	if appliedRate != 0.20 {
 		t.Fatalf("applied_rate = %v, want 0.20 (flat, never tiered)", appliedRate)
@@ -213,15 +234,15 @@ func TestOnEarningRecorded_DefaultsToAdminOnceCodeIsRetired(t *testing.T) {
 	seedAttribution(t, pool, referredB, referrer, false)
 	seedAttribution(t, pool, referredC, referrer, false)
 
-	before, _ := ledgerSvc.GetBalance(ctx, referrer)
+	before, _ := withdrawableKobo(ctx, pool, referrer)
 
 	svc.OnEarningRecorded(ctx, earningFor(referredA, "utility", 100_000)) // #1 — rewarded
 	svc.OnEarningRecorded(ctx, earningFor(referredB, "utility", 100_000)) // #2 — rewarded (hits cap)
 	svc.OnEarningRecorded(ctx, earningFor(referredC, "utility", 100_000)) // #3 — retired, defaults to admin
 
-	after, _ := ledgerSvc.GetBalance(ctx, referrer)
+	after, _ := withdrawableKobo(ctx, pool, referrer)
 	if got, want := after-before, int64(40_000); got != want { // only 2 × 20% of ₦1,000
-		t.Fatalf("referrer balance delta = %d, want %d (exactly 2 rewards, not 3)", got, want)
+		t.Fatalf("referrer withdrawable delta = %d, want %d (exactly 2 rewards, not 3)", got, want)
 	}
 
 	var rewardCount int
@@ -255,13 +276,13 @@ func TestOnEarningRecorded_ReplayOfTheSameEarningNeverDoubleCredits(t *testing.T
 	svc := commissionsplit.NewService(pool, ledgerSvc, true)
 	e := earningFor(referred, "utility", 100_000)
 
-	before, _ := ledgerSvc.GetBalance(ctx, referrer)
+	before, _ := withdrawableKobo(ctx, pool, referrer)
 	svc.OnEarningRecorded(ctx, e)
 	svc.OnEarningRecorded(ctx, e) // exact replay — same e.ID, same everything
-	after, _ := ledgerSvc.GetBalance(ctx, referrer)
+	after, _ := withdrawableKobo(ctx, pool, referrer)
 
 	if got, want := after-before, int64(20_000); got != want {
-		t.Fatalf("referrer balance delta = %d, want %d (a replay must never double-credit)", got, want)
+		t.Fatalf("referrer withdrawable delta = %d, want %d (a replay must never double-credit)", got, want)
 	}
 
 	var rewardCount int
@@ -294,13 +315,13 @@ func TestOnEarningRecorded_LegacyReferrerWithoutLinkStillEarns(t *testing.T) {
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_links WHERE referrer_id = $1`, referrer)
 	})
 
-	before, _ := ledgerSvc.GetBalance(ctx, referrer)
+	before, _ := withdrawableKobo(ctx, pool, referrer)
 	svc := commissionsplit.NewService(pool, ledgerSvc, true)
 	svc.OnEarningRecorded(ctx, earningFor(referred, "utility", 100_000))
-	after, _ := ledgerSvc.GetBalance(ctx, referrer)
+	after, _ := withdrawableKobo(ctx, pool, referrer)
 
 	if got, want := after-before, int64(20_000); got != want {
-		t.Fatalf("referrer balance delta = %d, want %d — a referrer with no referral_links row must still be paid", got, want)
+		t.Fatalf("referrer withdrawable delta = %d, want %d — a referrer with no referral_links row must still be paid", got, want)
 	}
 
 	var rewardCount int
@@ -343,5 +364,47 @@ func TestOnEarningRecorded_DisabledFlagIsANoOp(t *testing.T) {
 	}
 	if rewardCount != 0 {
 		t.Fatalf("reward_count = %d, want 0 — a disabled hook must never touch anything", rewardCount)
+	}
+}
+
+// The whole earn → withdraw loop: a referred user's purchase lands 20% as
+// withdrawable, and the referrer's withdraw moves exactly that into the wallet
+// (balanced double-entry via the RB0 ledger) and leaves nothing eligible.
+func TestOnEarningRecorded_EarningIsWithdrawableToWallet(t *testing.T) {
+	pool := mustLivePool(t)
+	ctx := context.Background()
+	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
+
+	referrer := seedUser(t, pool)
+	referred := seedUser(t, pool)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO user_profiles (id, email, kyc_tier, kyc_status) VALUES ($1, $2, 1, 'verified')
+		 ON CONFLICT (id) DO UPDATE SET kyc_tier = 1, kyc_status = 'verified'`,
+		referrer, "commsplit-kyc-"+uuid.NewString()[:8]+"@commission-split-fixture.test"); err != nil {
+		t.Fatalf("seed verified profile: %v", err)
+	}
+	seedReferralLink(t, pool, referrer, -1, -1)
+	seedAttribution(t, pool, referred, referrer, false)
+	cleanupRewards(t, pool, referrer)
+
+	commissionsplit.NewService(pool, ledgerSvc, true).OnEarningRecorded(ctx, earningFor(referred, "utility", 100_000))
+
+	walletBefore, err := ledgerSvc.GetBalance(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetBalance before: %v", err)
+	}
+	res, err := referralledger.NewService(pool, ledgerSvc).WithdrawEligible(ctx, referrer, "commsplit-withdraw-"+uuid.NewString())
+	if err != nil {
+		t.Fatalf("WithdrawEligible: %v", err)
+	}
+	if res.WithdrawnKobo != 20_000 || res.RemainingEligibleKobo != 0 {
+		t.Fatalf("withdraw = %+v, want 20000 withdrawn and 0 remaining", res)
+	}
+	walletAfter, err := ledgerSvc.GetBalance(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetBalance after: %v", err)
+	}
+	if got := walletAfter - walletBefore; got != 20_000 {
+		t.Fatalf("wallet delta after withdraw = %d, want 20000", got)
 	}
 }

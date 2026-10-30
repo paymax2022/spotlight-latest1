@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// querier is the read-only slice of pgxpool.Pool this package needs. Every query
-// here is a SELECT; nothing in this package writes.
+// querier is the read-only slice of pgxpool.Pool the read handlers need. Every
+// query in this file is a SELECT; the admin decisions live in actions.go.
 type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
@@ -27,7 +27,7 @@ const payoutSelect = `
 	       p.status, p.consult_count, p.period_label, p.failure_reason, p.requested_at, p.paid_at,
 	       b.bank_name, b.account_number, COALESCE(b.is_verified, false),
 	       (SELECT COUNT(*) FROM doctor_settlement_disputes sd WHERE sd.payout_id = p.id AND sd.status = 'open'),
-	       p.ledger_ref, p.provider_reference
+	       p.ledger_ref, p.provider_reference, p.held_at, p.hold_reason, p.approved_at
 	FROM doctor_payouts p
 	LEFT JOIN LATERAL (SELECT name FROM doctors WHERE user_id = p.user_id LIMIT 1) d ON true
 	LEFT JOIN doctor_bank_accounts b ON b.id = p.bank_account_id`
@@ -38,7 +38,7 @@ func scanPayout(row pgx.Row) (PayoutDetail, error) {
 	err := row.Scan(&pd.ID, &pd.DoctorUserID, &pd.DoctorName, &pd.Ref, &pd.AmountKobo, &pd.Currency,
 		&pd.Status, &pd.ConsultCount, &pd.PeriodLabel, &pd.FailureReason, &pd.RequestedAt, &pd.PaidAt,
 		&pd.BankAccount.BankName, &acct, &pd.BankAccount.IsVerified, &pd.OpenDisputes,
-		&pd.LedgerRef, &pd.ProviderReference)
+		&pd.LedgerRef, &pd.ProviderReference, &pd.HeldAt, &pd.HoldReason, &pd.ApprovedAt)
 	if err != nil {
 		return pd, err
 	}

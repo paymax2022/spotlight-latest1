@@ -1,0 +1,115 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight Health — Veterinary admin dashboard & reporting
+  version: 1.0.0
+  description: >
+    Read-only admin aggregates for the vet vertical under /api/health/vet/admin
+    (healthvet.AdminDashboard + admin_kpis.go, AdminConsoleReporting). Money is
+    integer kobo; rates and share_pct are fractions 0..1. KPIs without a source
+    table are 0 (services_pending_governance, sos_routed_30d) and activity is [].
+servers:
+  - url: /api/health/vet/admin
+paths:
+  /dashboard:
+    get:
+      operationId: getVetAdminDashboard
+      summary: Platform-wide vet KPIs (30-day window unless named otherwise)
+      tags: [Health Vet Admin]
+      security: [{ bearerAuth: [] }]
+      x-permission: health.vet.appointments
+      responses:
+        '200':
+          description: Dashboard
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/VetAdminDashboard' }
+  /reporting:
+    get:
+      operationId: getVetAdminReporting
+      summary: Reporting aggregates over a period
+      tags: [Health Vet Admin]
+      security: [{ bearerAuth: [] }]
+      x-permission: health.vet.reporting
+      parameters:
+        - $ref: '#/components/parameters/Period'
+      responses:
+        '200': { description: Reporting data (VetReportingData shape) }
+        '400': { description: Unknown period }
+  /reporting/export.csv:
+    get:
+      operationId: exportVetAdminReportingCsv
+      summary: The same reporting aggregates as CSV (summary, by_state and monthly sections)
+      tags: [Health Vet Admin]
+      security: [{ bearerAuth: [] }]
+      x-permission: health.vet.reporting
+      parameters:
+        - $ref: '#/components/parameters/Period'
+      responses:
+        '200':
+          description: CSV with columns section,key,value,appointments,gmv_kobo,net_kobo
+          content:
+            text/csv:
+              schema: { type: string }
+        '400': { description: Unknown period }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    Period:
+      name: period
+      in: query
+      required: false
+      description: Lower bound on created_at; omitted or "all" means all time
+      schema: { type: string, enum: [7d, 30d, 90d, ytd, all] }
+  schemas:
+    VetAdminDashboard:
+      type: object
+      properties:
+        total_appointments: { type: integer }
+        appointments_by_state: { type: object, additionalProperties: { type: integer } }
+        platform_revenue_kobo_week: { type: integer, format: int64 }
+        total_vets: { type: integer }
+        appointments_today: { type: integer }
+        appointments_30d: { type: integer }
+        consults_completed_30d: { type: integer }
+        appointment_completion_rate: { type: number }
+        no_show_rate: { type: number }
+        gmv_today_kobo: { type: integer, format: int64 }
+        gmv_30d_kobo: { type: integer, format: int64 }
+        net_revenue_30d_kobo: { type: integer, format: int64 }
+        take_rate: { type: number }
+        avg_appointment_value_kobo: { type: integer, format: int64 }
+        held_balance_kobo: { type: integer, format: int64 }
+        released_30d_kobo: { type: integer, format: int64 }
+        refunded_30d_kobo: { type: integer, format: int64 }
+        vcn_pending_review: { type: integer }
+        vets_suspended: { type: integer }
+        vcn_expiring_30d: { type: integer }
+        eprescriptions_30d: { type: integer }
+        eprescriptions_pom_30d: { type: integer }
+        eprescription_flags_open: { type: integer }
+        services_pending_governance: { type: integer, description: Always 0 — no pending state exists }
+        moderation_open: { type: integer }
+        payouts_kyc_hold: { type: integer }
+        sos_routed_30d: { type: integer, description: Always 0 — SOS is not persisted }
+        appointment_mix:
+          type: array
+          items:
+            type: object
+            properties:
+              label: { type: string }
+              appointments: { type: integer }
+              gmv_kobo: { type: integer, format: int64 }
+              share_pct: { type: number }
+        appointments_trend:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string, format: date }
+              appointments: { type: integer }
+        activity: { type: array, items: {} }

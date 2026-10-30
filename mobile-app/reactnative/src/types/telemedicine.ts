@@ -88,6 +88,8 @@ export interface Appointment {
   /** What the patient actually paid (fee + platform fee), and what a cancellation refunds. */
   totalKobo?:  number;
   createdAt:   string;            // ISO datetime
+  /** Raw ISO slot start (live rows only); the consult clock is anchored to it. */
+  scheduledAt?: string;
   reason?:     string;            // patient's described reason
   doctorNote?: string;            // post-consult note
 }

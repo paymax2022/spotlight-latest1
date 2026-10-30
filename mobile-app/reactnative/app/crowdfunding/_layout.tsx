@@ -3,9 +3,13 @@ import { Colors } from '@/constants/tokens';
 import { View } from 'react-native';
 import ModuleTabBar from '@/components/ModuleTabBar';
 import { CROWDFUNDING_TABS } from '@/constants/moduleTabs';
+import ProviderRouteGuard from '@/features/providerPortal/ProviderRouteGuard';
+
+const PROVIDER_RULES = [{ type: 'crowdfunding_creator', prefix: '/crowdfunding/creator' }] as const;
 
 export default function CrowdfundingLayout() {
   return (
+    <ProviderRouteGuard rules={PROVIDER_RULES}>
     <View style={{ flex: 1 }}>
       <Stack
       screenOptions={{
@@ -144,5 +148,6 @@ export default function CrowdfundingLayout() {
     </Stack>
   <ModuleTabBar tabs={CROWDFUNDING_TABS} />
   </View>
+    </ProviderRouteGuard>
   );
 }

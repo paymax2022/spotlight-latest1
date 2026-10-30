@@ -54,7 +54,7 @@ func TestSetServiceProfile_PersistsDedupedAndReadsBack_Integration(t *testing.T)
 	svc := transport.NewService(pool, nil)
 	userID := seedProfileDriver(t, ctx, pool)
 
-	vi, ca, err := svc.SetServiceProfile(ctx, userID, []string{"rides", "rides", "movers"}, []string{"ikeja", "ikeja", "yaba"})
+	vi, ca, err := svc.SetServiceProfile(ctx, userID, []string{"rides", "rides", "movers"}, []string{"lagos/ikeja", "lagos/ikeja", "lagos/yaba"})
 	if err != nil {
 		t.Fatalf("SetServiceProfile: %v", err)
 	}

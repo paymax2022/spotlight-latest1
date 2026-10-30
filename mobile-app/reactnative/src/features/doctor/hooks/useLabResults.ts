@@ -25,12 +25,13 @@ import type {
   ShareResultExplanationInput,
   ReportSuspiciousResultInput,
 } from '@/types/doctor.batch3';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useResultInbox() {
   return useQuery({
     queryKey:        ['doctor', 'lab-result-inbox'],
     queryFn:         getResultInbox,
-    placeholderData: DEMO_RESULT_INBOX,
+    placeholderData: doctorPlaceholder(DEMO_RESULT_INBOX),
     staleTime:       15_000,
   });
 }
@@ -40,7 +41,7 @@ export function useLabResultRich(resultId: string) {
     queryKey:        ['doctor', 'lab-result-rich', resultId],
     queryFn:         () => getLabResultRich(resultId),
     enabled:         !!resultId,
-    placeholderData: DEMO_LAB_RESULT_RICH,
+    placeholderData: doctorPlaceholder(DEMO_LAB_RESULT_RICH),
     staleTime:       30_000,
   });
 }

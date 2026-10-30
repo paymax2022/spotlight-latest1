@@ -1,7 +1,13 @@
 import { Stack } from 'expo-router';
+import ProviderRouteGuard from '@/features/providerPortal/ProviderRouteGuard';
+
+const PROVIDER_RULES = [
+  { type: 'doctor', prefix: '', open: ['onboarding', 'profile/setup', 'credentialing', 'account-status', 'app-status'] },
+] as const;
 
 export default function DoctorLayout() {
   return (
+    <ProviderRouteGuard rules={PROVIDER_RULES}>
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="signup/index" />
@@ -219,5 +225,6 @@ export default function DoctorLayout() {
       <Stack.Screen name="account-status/session-expired" />
       <Stack.Screen name="account-status/access-denied" />
     </Stack>
+    </ProviderRouteGuard>
   );
 }

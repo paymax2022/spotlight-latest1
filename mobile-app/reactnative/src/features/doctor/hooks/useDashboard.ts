@@ -16,12 +16,13 @@ import type {
   SetPresenceInput,
   DismissAnnouncementInput,
 } from '@/types/doctor.batch1';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useDashboard() {
   return useQuery({
     queryKey:        ['doctor', 'dashboard'],
     queryFn:         getDashboard,
-    placeholderData: DEMO_DASHBOARD,
+    placeholderData: doctorPlaceholder(DEMO_DASHBOARD),
     staleTime:       15_000,
   });
 }
@@ -30,7 +31,7 @@ export function useAnnouncement() {
   return useQuery({
     queryKey:        ['doctor', 'dashboard', 'announcement'],
     queryFn:         getAnnouncement,
-    placeholderData: DEMO_ANNOUNCEMENT,
+    placeholderData: doctorPlaceholder(DEMO_ANNOUNCEMENT),
     staleTime:       60_000,
   });
 }

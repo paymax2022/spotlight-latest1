@@ -20,7 +20,6 @@ import (
 	"spotlight/backend/internal/association"
 	"spotlight/backend/internal/business"
 	"spotlight/backend/internal/config"
-	// healthportal "spotlight/backend/internal/health/portal" // TODO: deferred to phase 2
 	"spotlight/backend/internal/crowdfunding"
 	cfadminext "spotlight/backend/internal/crowdfunding/adminext"
 	cfcreator "spotlight/backend/internal/crowdfunding/creator"
@@ -48,6 +47,7 @@ import (
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/fractionalre"
 	"spotlight/backend/internal/groups"
+	healthportal "spotlight/backend/internal/health/portal"
 	"spotlight/backend/internal/insurance/embedded"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/integrations/llm"
@@ -654,7 +654,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// already rejects a missing/invalid token itself, so requireUserID()
 			// adds nothing here besides that ordering hazard — see
 			// health_pharmacy_routes.go's own comment at ag.Use(...).
-			pharmacySvc := RegisterHealthPharmacy(finance, r.Group("/api/health/pharmacy/admin"), pool, rbac, cfg, supabase, redisClient)
+			pharmacySvc := RegisterHealthPharmacy(finance, r.Group("/api/health/pharmacy/admin"), pool, rbac, auditSink, cfg, supabase, redisClient)
 			// Symptom-based medication search addon — its own flag AND'd with
 			// the pharmacy flag (FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED).
 			if cfg.FeaturePharmacySymptomSearchEnabled {
@@ -673,16 +673,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// the same way).
 			RegisterHealthLab(finance, r.Group("/api/health/lab/admin"), pool, rbac, auditSink, cfg, supabase)
 		}
-		// if cfg.FeatureProviderPortalEnabled {
-		// 	// Read-only capabilities for the mobile provider portal (ADR-PR<pr-number>).
-		// 	// TODO: health/portal module not yet implemented — deferred to phase 2.
-		// 	healthportal.Register(finance, pool)
-		// }
+		// Read-only capabilities for the mobile provider portal (ADR-PR915).
+		// Always mounted; answers 503 while FEATURE_PROVIDER_PORTAL_ENABLED is off.
+		healthportal.Register(finance, pool, cfg.FeatureProviderPortalEnabled)
 		if cfg.FeatureHealthVetEnabled {
 			// PHARMACY-006/LAB-003-shaped bug: NOT adminGroupTop5 — see the
 			// comment on RegisterHealthVet's own ag.Use(RequireAuthContext(...))
 			// call for why (identical ordering hazard, fixed the same way).
-			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase)
+			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase, auditSink)
 			// Mode-B (assisted) VCN verification: vet gets verified without ever
 			// seeing the VCN portal; ops confirms out-of-band; capability granted
 			// only on approval. Member /api/finance/health/vet/verification/*,
@@ -2170,6 +2168,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			WithTiers(tiersSvc).
 			WithPlatformFeeBp(platformFeeBp).
 			WithAudit(doctor.NewRepository(pool))
+		// Booking/cancel notices: push to every registered device via the same
+		// queue + token fan-out the health reminders use. No Redis → Send fails
+		// observably (logged + metered); the booking itself is unaffected.
+		telemedNotif := healthReminderNotifier(cfg.RedisURL)
+		telemedSvc = telemedSvc.WithNotifier(telemedicine.NotifierFunc(
+			func(ctx context.Context, userID, event, title, body string, data map[string]any) error {
+				return deliverToUser(ctx, pool, telemedNotif, notifications.Notification{
+					UserID: userID, Event: notifications.Event(event), Title: title, Body: body, Data: data,
+				})
+			}))
 		telemedHandler := telemedicine.NewHandler(telemedSvc)
 
 		// Legacy /api/finance/telemedicine/... (kept for backward compat)
@@ -2224,6 +2232,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		teleAdmin.GET("/dashboard", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminGetDashboard)
 		teleAdmin.GET("/doctors", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListDoctors)
 		teleAdmin.GET("/appointments", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListAppointments)
+		teleAdmin.GET("/appointments/:id", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminGetAppointment)
+		teleAdmin.POST("/appointments/:id/cancel", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminCancelAppointment)
+		teleAdmin.POST("/appointments/:id/reassign", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminReassignAppointment)
 		teleAdmin.POST("/doctors/:userId/verify", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminVerifyDoctor)
 		// Per-area admin consoles (onboarding, reviews, prescriptions, finance, claims,
 		// support, compliance). Each package mounts its own /<area>/... routes; reads need
@@ -2300,6 +2311,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		transportSvc := transport.NewService(pool, settlementSvcTr).WithTiers(tiersSvc).WithLedger(ledgerSvc).
 			WithBusConfig(transport.NewBusConfig(cfg.FeatureTransportBusDeferredSettlementEnabled,
 				cfg.TransportBusSettleGraceMinutes, cfg.TransportBusCancelCutoffMinutes, cfg.TransportBusMinBookingLeadMinutes))
+		transportSvc = transportSvc.WithShareBaseURL(cfg.TransportShareBaseURL)
+		// Member transport notifications (scheduled reminders, dispatch failures,
+		// insurance refunds) ride the shared asynq push queue; no Redis = log only.
+		if cfg.RedisURL != "" {
+			if nClient, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
+				transportSvc = transportSvc.WithUserNotifier(transport.NewPushUserNotifier(pool, notifications.NewService(nClient)))
+			} else {
+				log.Printf("[transport] user notifier not wired — queue client init failed: %v", qerr)
+			}
+		}
 		transportSvc = transportSvc.WithParcelRateCard(cfg.FeatureParcelRateCardEnabled).
 			WithParcelInsuranceMinPremium(int64(cfg.ParcelInsuranceMinPremiumKobo)).
 			WithPrepaidInsurance(cfg.FeatureParcelPrepaidInsuranceEnabled)
@@ -2638,10 +2659,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// mutations use the mode-specific .manage slug).
 			adminTr.GET("/parcels", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminParcelsList)
 			adminTr.PATCH("/parcels/:id/status", middleware.RequirePermission(rbac, mobilityParcelManagePerm), transportAdmin.AdminParcelStatus)
+			adminTr.PATCH("/parcels/:id/pod-review", middleware.RequirePermission(rbac, mobilityParcelManagePerm), transportAdmin.AdminParcelPodReview)
 
 			adminTr.GET("/bus/routes", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusListRoutes)
 			adminTr.POST("/bus/routes", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCreateRoute)
+			adminTr.GET("/bus/schedules", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusListSchedules)
 			adminTr.POST("/bus/schedules", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCreateSchedule)
+			adminTr.PATCH("/bus/routes/:id/approve-fare", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusApproveRouteFares)
 			adminTr.POST("/bus/schedules/:id/approve-fare", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusApproveFare)
 			adminTr.POST("/bus/schedules/:id/cancel", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCancelSchedule)
 			adminTr.GET("/bus/manifest", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusManifest)

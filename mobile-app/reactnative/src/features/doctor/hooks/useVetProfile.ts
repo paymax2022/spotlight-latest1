@@ -15,6 +15,8 @@ import {
   DEMO_VET_VERIFICATION,
 } from '@/api/doctor.batch1.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+// DEMO_* placeholders only in mock mode: a live build must never render (or act on) invented rows.
+import { DOCTOR_USE_MOCK } from '@/api/doctor.client';
 import type {
   SaveVetProfileDraftInput,
   SubmitVetVerificationInput,
@@ -26,7 +28,7 @@ export function useVetProfileDraft(draftId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'vet-profile', 'draft', draftId],
     queryFn:         () => getVetProfileDraft(draftId),
-    placeholderData: DEMO_VET_PROFILE_DRAFT,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_PROFILE_DRAFT : undefined,
     staleTime:       30_000,
   });
 }
@@ -35,7 +37,7 @@ export function useVetDocumentSlots() {
   return useQuery({
     queryKey:        ['doctor', 'vet-profile', 'document-slots'],
     queryFn:         getVetDocumentSlots,
-    placeholderData: DEMO_VET_DOCUMENT_SLOTS,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_DOCUMENT_SLOTS : undefined,
     staleTime:       30_000,
   });
 }
@@ -44,7 +46,7 @@ export function useVetVerification(submissionId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'vet-profile', 'verification', submissionId],
     queryFn:         () => getVetVerification(submissionId),
-    placeholderData: DEMO_VET_VERIFICATION,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_VERIFICATION : undefined,
     staleTime:       30_000,
   });
 }

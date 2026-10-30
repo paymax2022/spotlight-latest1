@@ -3,9 +3,13 @@ import { Colors } from '@/constants/tokens';
 import { View } from 'react-native';
 import ModuleTabBar from '@/components/ModuleTabBar';
 import { ASSOCIATION_TABS } from '@/constants/moduleTabs';
+import ProviderRouteGuard from '@/features/providerPortal/ProviderRouteGuard';
+
+const PROVIDER_RULES = [{ type: 'association_creator', prefix: '/association/admin' }] as const;
 
 export default function AssociationLayout() {
   return (
+    <ProviderRouteGuard rules={PROVIDER_RULES}>
     <View style={{ flex: 1 }}>
       <Stack
       screenOptions={{
@@ -150,5 +154,6 @@ export default function AssociationLayout() {
       alsoVisibleMatch={[/^\/association\/elections\/(?!new$)[^/]+$/]}
     />
   </View>
+    </ProviderRouteGuard>
   );
 }

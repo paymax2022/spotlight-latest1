@@ -12,12 +12,13 @@ import type {
   ConsultStatus,
   UpdateAppointmentStatusInput,
 } from '@/types/doctor';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useAppointments(status?: ConsultStatus) {
   return useQuery({
     queryKey:        ['doctor', 'appointments', status],
     queryFn:         () => getAppointments(status),
-    placeholderData: DEMO_APPOINTMENTS,
+    placeholderData: doctorPlaceholder(DEMO_APPOINTMENTS),
     staleTime:       30_000,
   });
 }

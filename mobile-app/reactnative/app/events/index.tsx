@@ -3,7 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, Ticket as TicketIcon, Plus, Search, Bell, ReceiptText, Inbox } from 'lucide-react-native';
+import { ArrowLeft, Ticket as TicketIcon, Plus, Search, Bell, ReceiptText, Inbox, LifeBuoy } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -139,6 +139,7 @@ export default function EventsDiscovery() {
         <View style={styles.ledgerRow}>
           <LedgerLink Icon={ReceiptText} label="My orders" href="/events/orders" />
           <LedgerLink Icon={Inbox}    label="My refunds" href="/events/refunds" />
+          <LedgerLink Icon={LifeBuoy} label="Support" href="/events/support" />
         </View>
       ) : null}
 

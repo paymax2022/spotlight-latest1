@@ -12,6 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import PharmacyStatusPill from '@/features/health/components/PharmacyStatusPill';
+import PharmacyCancelOrderButton from '@/features/health/components/PharmacyCancelOrderButton';
 import PharmacyOrderTimeline from '@/features/health/components/PharmacyOrderTimeline';
 import { useOrder } from '@/features/health/pharmacy/hooks';
 import { formatNaira } from '@/features/health/constants/health.constants';
@@ -84,6 +85,7 @@ export default function DeliveryTrackingScreen() {
 
           <View style={styles.footer}>
             <PrimaryButton label="View order details" variant="secondary" onPress={() => router.push('/health/pharmacy/orders')} />
+            <PharmacyCancelOrderButton order={order} />
           </View>
         </>
       )}
@@ -153,5 +155,5 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
   },
   heldText: { ...Typography.bodySm, color: Colors.tertiaryContainer, flex: 1, lineHeight: 18 },
-  footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background },
+  footer: { padding: Spacing.containerMargin, gap: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background },
 });
