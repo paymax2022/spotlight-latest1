@@ -74,7 +74,7 @@ export default function EventApprovalPage() {
                 <tr key={r.id}>
                   <td style={td()}>
                     <Link href={`/admin/events/events/${r.id}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>{r.title}</Link>
-                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id} · {r.tiers_count} tiers{r.cashless_enabled ? ' · cashless' : ''}</div>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}{r.tiers_count != null ? ` · ${r.tiers_count} tiers` : ''}{r.cashless_enabled ? ' · cashless' : ''}</div>
                   </td>
                   <td style={td()}>{r.organiser_masked}</td>
                   <td style={td()}>{r.category}</td>
@@ -82,7 +82,9 @@ export default function EventApprovalPage() {
                   <td style={td()}>{fmtDate(r.starts_at)}</td>
                   <td style={td()}>{r.capacity.toLocaleString('en-NG')}</td>
                   <td style={td()}>
-                    <Badge status={r.cms_complete ? 'completed' : 'pending'} label={r.cms_complete ? 'complete' : 'incomplete'} />
+                    {r.cms_complete == null
+                      ? <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>
+                      : <Badge status={r.cms_complete ? 'completed' : 'pending'} label={r.cms_complete ? 'complete' : 'incomplete'} />}
                     {r.flagged_terms && <div style={{ marginTop: 4 }}><Badge status="flagged" label="policy flag" /></div>}
                   </td>
                   <td style={td()}><Badge status={r.status} /></td>
@@ -95,6 +97,8 @@ export default function EventApprovalPage() {
                       </div>
                     ) : r.status === 'approved' || r.status === 'live' ? (
                       <button style={btnDanger()} disabled={busy === r.id} onClick={() => decide(r, 'suspend')}>Suspend</button>
+                    ) : r.status === 'suspended' ? (
+                      <button style={btn()} disabled={busy === r.id} onClick={() => decide(r, 'reinstate')}>Reinstate</button>
                     ) : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
                   </td>
                 </tr>
