@@ -381,6 +381,8 @@ const navItemsBase: NavItem[] = [
   { label: 'Mobility Reports', href: '/admin/mobility/reports', section: 'Mobility', permissions: ['mobility.view'] },
   { label: 'Parcels', href: '/admin/mobility/parcels', section: 'Mobility', permissions: ['mobility.view'] },
   { label: 'Bus', href: '/admin/mobility/bus', section: 'Mobility', permissions: ['mobility.view'] },
+  { label: 'Bus Revenue', href: '/admin/mobility/bus/revenue', section: 'Mobility', permissions: ['mobility.view'] },
+  { label: 'New Bus Route / Schedule', href: '/admin/mobility/bus/new', section: 'Mobility', permissions: ['mobility.bus.manage'] },
   { label: 'Towing', href: '/admin/mobility/towing', section: 'Mobility', permissions: ['mobility.view'] },
   { label: 'Movers', href: '/admin/mobility/movers', section: 'Mobility', permissions: ['mobility.view'] },
   { label: 'Car Hire', href: '/admin/mobility/car-hire', section: 'Mobility', permissions: ['mobility.view'] },
