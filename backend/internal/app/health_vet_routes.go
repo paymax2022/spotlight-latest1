@@ -46,7 +46,7 @@ import (
 //   - admin : /api/health/vet/admin/*    (per-route RBAC health.vet.*)
 //
 // Gated by FeatureHealthVetEnabled at the orchestrator. Auditing is nil-safe.
-func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, supabase *integrations.SupabaseRestClient) {
+func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, supabase *integrations.SupabaseRestClient, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[health.vet] nil pool — skipping vet routes")
 		return
@@ -84,7 +84,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		rxSvc,
 		recordsSvc,
 		sched,
-		nil, // audit sink injected by orchestrator (HL-12) — nil-safe here
+		audit, // shared immutable-audit sink (HL-12) — nil-safe
 	)
 
 	// Central Commission & Profit recording at the vet appointment settlement point
@@ -115,7 +115,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg.GET("/vets/:id/availability", h.VetAvailability)      // bookable slots for a listed vet
 	vg.GET("/provider/availability", h.ProviderAvailability) // the vet's own weekly hours
 	vg.PUT("/provider/availability", h.SaveProviderAvailability)
-	vg.POST("/services", h.UpsertService)                // verified vet owner; fee governance
+	vg.POST("/services", h.UpsertService) // verified vet owner; fee governance
 	// POST/GET /appointments, GET /appointments/:id and POST .../cancel are served by
 	// vetowner.RegisterAppointmentAdapters below (app wire shape; same service underneath).
 	vg.POST("/appointments/:id/accept", h.Accept)        // verified vet (HL-2)
@@ -158,6 +158,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	ag.GET("/eprescriptions", guard("health.vet.erx"), h.AdminConsoleERx)
 	ag.GET("/services", guard("health.vet.services"), h.AdminConsoleServices)
 	ag.GET("/payouts", guard("health.vet.payouts"), h.AdminConsolePayouts)
+	ag.POST("/payouts/:id/decision", guard("health.vet.payouts"), h.AdminDecidePayout) // idempotent, audited attestation
 	ag.GET("/moderation", guard("health.vet.moderation"), h.AdminConsoleModeration)
 	ag.GET("/reporting", guard("health.vet.reporting"), h.AdminConsoleReporting)
 

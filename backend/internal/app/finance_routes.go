@@ -680,7 +680,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// PHARMACY-006/LAB-003-shaped bug: NOT adminGroupTop5 — see the
 			// comment on RegisterHealthVet's own ag.Use(RequireAuthContext(...))
 			// call for why (identical ordering hazard, fixed the same way).
-			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase)
+			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase, auditSink)
 			// Mode-B (assisted) VCN verification: vet gets verified without ever
 			// seeing the VCN portal; ops confirms out-of-band; capability granted
 			// only on approval. Member /api/finance/health/vet/verification/*,
