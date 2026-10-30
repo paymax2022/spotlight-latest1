@@ -578,6 +578,29 @@ const REPORTING: ReportingData = {
     return { month: m.toLocaleDateString('en-NG', { month: 'short', year: '2-digit' }), gmv_kobo: gmv, net_kobo: Math.round(gmv * 0.07), orders: 32_000 + i * 3_200 };
   }),
 };
+/** Download the period rollup as CSV (GET /reporting?format=csv). Kobo stays integer kobo. */
+export async function downloadReportingCsv(opts?: { period?: string }): Promise<Blob> {
+  if (USE_MOCK) {
+    const r = REPORTING;
+    const rows = [
+      ['metric', 'value'],
+      ['period', opts?.period ?? '30d'],
+      ['gmv_kobo', String(r.gmv_kobo)],
+      ['net_revenue_kobo', String(r.net_revenue_kobo)],
+      ['orders', String(r.orders)],
+      [],
+      ['month', 'gmv_kobo', 'net_kobo', 'orders'],
+      ...r.monthly.map((m) => [m.month, String(m.gmv_kobo), String(m.net_kobo), String(m.orders)]),
+    ];
+    return new Blob([rows.map((row) => row.join(',')).join('\n')], { type: 'text/csv' });
+  }
+  const qs = new URLSearchParams({ format: 'csv' });
+  if (opts?.period) qs.set('period', opts.period);
+  const res = await fetch(`${adminBase()}/reporting?${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  return res.blob();
+}
+
 export async function getReporting(opts?: { period?: string }): Promise<ReportingData> {
   if (USE_MOCK) { await delay(); return { ...REPORTING, by_state: [...REPORTING.by_state], monthly: [...REPORTING.monthly] }; }
   const qs = new URLSearchParams();

@@ -177,6 +177,15 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	ag.GET("/orders/:id", guard("health.pharmacy.orders"), h.AdminGetOrder)
 	ag.GET("/dispense-audit", guard("health.pharmacy.audit"), h.AdminDispenseAudit)
 	ag.POST("/products/:id/recall", guard("health.pharmacy.recall"), h.AdminRecallProduct)
+	// Admin console read surfaces (healthPharmacyAdminService.ts). PCN review
+	// reuses the shared provider-review permission; the rest reuse the module's
+	// existing slugs rather than minting new ones.
+	ag.GET("/pcn/applications", guard("health.admin.providers"), h.AdminPcnApplications)
+	ag.GET("/catalog", guard("health.pharmacy.audit"), h.AdminCatalog)
+	ag.GET("/rx-audit", guard("health.pharmacy.audit"), h.AdminRxAudit)
+	ag.GET("/controlled-log", guard("health.pharmacy.audit"), h.AdminControlledLog)
+	ag.GET("/payouts", guard("health.pharmacy.orders"), h.AdminPayouts)
+	ag.GET("/reporting", guard("health.pharmacy.orders"), h.AdminReporting)
 
 	log.Println("[health.pharmacy] pharmacy routes registered — catalog/orders/rx-verify/dispense/dispatch/complete + admin")
 	return svc
