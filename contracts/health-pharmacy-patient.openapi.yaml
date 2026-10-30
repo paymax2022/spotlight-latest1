@@ -1,0 +1,130 @@
+openapi: 3.0.3
+info:
+  title: Health pharmacy — patient medications, refills, reorder
+  version: 1.0.0
+  description: >
+    Patient-scoped reads over the caller's own prescriptions and orders. A foreign or
+    missing id is a uniform 404. Amounts are integer kobo.
+servers:
+  - url: /api/finance/health/pharmacy
+paths:
+  /orders/{id}/reorder:
+    post:
+      operationId: reorderPharmacyOrder
+      summary: Re-price the lines of the caller's past order against the live catalog
+      description: Creates nothing; the client re-adds available lines to the cart and checks out normally.
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Re-priced lines
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  lines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        product_id: { type: string, format: uuid }
+                        product_name: { type: string }
+                        quantity: { type: integer }
+                        unit_price_kobo: { type: integer, format: int64 }
+                        rx_required: { type: boolean }
+                        available: { type: boolean, description: Active, NAFDAC-registered and stock covers quantity }
+        '400': { description: Malformed order id }
+        '401': { description: Unauthenticated }
+        '404': { description: Order not found or not the caller's }
+  /medications:
+    get:
+      operationId: listPharmacyMedications
+      summary: Items on the caller's VERIFIED / DISPENSED / FULFILLED prescriptions
+      responses:
+        '200':
+          description: Up to 200 medications, newest prescription first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  medications:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        prescription_id: { type: string, format: uuid }
+                        drug_name: { type: string }
+                        dosage: { type: string }
+                        quantity: { type: integer }
+                        is_pom: { type: boolean }
+                        rx_state: { type: string }
+                        prescribed_at: { type: string, format: date-time }
+        '401': { description: Unauthenticated }
+  /refills:
+    get:
+      operationId: listPharmacyRefills
+      summary: Dispensed prescription items with refill schedule
+      description: due_at is the saved schedule, else dispensed_at (or created_at) + 30 days.
+      responses:
+        '200':
+          description: Up to 200 refills, soonest due first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  refills:
+                    type: array
+                    items: { $ref: '#/components/schemas/Refill' }
+        '401': { description: Unauthenticated }
+  /refills/{id}/schedule:
+    post:
+      operationId: schedulePharmacyRefill
+      summary: Save the caller's refill preference for one dispensed item (idempotent upsert)
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                auto_refill: { type: boolean }
+      responses:
+        '200':
+          description: The refill after scheduling
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  refill: { $ref: '#/components/schemas/Refill' }
+        '400': { description: Malformed id or body }
+        '401': { description: Unauthenticated }
+        '404': { description: Item not found, not dispensed, or not the caller's }
+components:
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    Refill:
+      type: object
+      properties:
+        id: { type: string, format: uuid, description: health_prescription_items.id }
+        prescription_id: { type: string, format: uuid }
+        drug_name: { type: string }
+        dosage: { type: string }
+        due_at: { type: string, format: date-time }
+        scheduled: { type: boolean }
+        auto_refill: { type: boolean }

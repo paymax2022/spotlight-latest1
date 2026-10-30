@@ -130,6 +130,10 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		h.Complete) // release payment (HL-9)
 	pg.POST("/orders/:id/cancel", h.Cancel)        // pre-dispense → refund (HL-9)
 	pg.POST("/orders/:id/reviews", h.SubmitReview) // patient, order must be completed
+	pg.POST("/orders/:id/reorder", h.Reorder)      // patient, re-prices a past order (creates nothing)
+	pg.GET("/medications", h.Medications)          // patient's verified/dispensed Rx items
+	pg.GET("/refills", h.Refills)                  // patient's dispensed items + schedule
+	pg.POST("/refills/:id/schedule", h.ScheduleRefill)
 
 	ag := admin.Group("")
 	// PHARMACY-001: `admin` (adminGroupTop5, top5_admin_group.go) applies ONLY
