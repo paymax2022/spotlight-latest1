@@ -33,6 +33,7 @@ import {
   getControlledLog,
   getProviderEarnings,
   requestPayout,
+  cancelOrder,
 } from './api';
 import type {
   ProductCategory,
@@ -255,5 +256,17 @@ export function useRequestPayout() {
   return useMutation({
     mutationFn: (args: { amountKobo: number; idempotencyKey: string }) => requestPayout(args.amountKobo, args.idempotencyKey),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'provider', 'earnings'] }),
+  });
+}
+
+export function useCancelOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { orderId: string; idempotencyKey: string; reason?: string }) =>
+      cancelOrder(args.orderId, args.idempotencyKey, args.reason),
+    onSuccess: (order) => {
+      qc.invalidateQueries({ queryKey: [KEY, 'orders'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'order', order.id] });
+    },
   });
 }
