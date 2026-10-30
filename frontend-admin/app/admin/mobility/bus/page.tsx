@@ -41,11 +41,14 @@ export default function MobilityBusPage() {
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try {
-      const [o, r, s] = await Promise.all([getBusOperators(), getBusRoutes(), getBusSchedules()]);
-      setOperators(o); setRoutes(r); setSchedules(s);
-    } catch (e) { setError(String(e)); }
-    finally { setLoading(false); }
+    // allSettled: one failing list must not blank the other two sections.
+    const [o, r, s] = await Promise.allSettled([getBusOperators(), getBusRoutes(), getBusSchedules()]);
+    const failed: string[] = [];
+    if (o.status === 'fulfilled') setOperators(o.value); else failed.push(`operators (${String(o.reason)})`);
+    if (r.status === 'fulfilled') setRoutes(r.value); else failed.push(`routes (${String(r.reason)})`);
+    if (s.status === 'fulfilled') setSchedules(s.value); else failed.push(`schedules (${String(s.reason)})`);
+    if (failed.length) setError(`Could not load ${failed.join('; ')}`);
+    setLoading(false);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -244,6 +247,9 @@ export default function MobilityBusPage() {
           <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(440px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', fontWeight: 700 }}>Approve {approve.kind} fare</h2>
             <p style={{ fontSize: '0.85rem', color: colors.muted, margin: '0 0 0.75rem' }}>{approve.label}</p>
+            {approve.kind === 'route' && (
+              <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 0.75rem' }}>Approves every bookable schedule on this route whose fare is still pending.</p>
+            )}
             <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Reason (required — written to audit log)</label>
             <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="e.g. Fare within approved band for corridor." style={{ ...input(), marginTop: 4, fontFamily: 'inherit' }} />
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>

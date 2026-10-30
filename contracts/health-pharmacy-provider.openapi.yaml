@@ -1,0 +1,89 @@
+openapi: 3.0.3
+info:
+  title: Health pharmacy — pharmacist work surfaces
+  version: 1.0.0
+  description: >
+    Owner-scoped reads for the partner pharmacy app. Scope is resolved server-side from
+    health_providers.owner_user_id; a caller who owns no pharmacy receives empty lists.
+servers:
+  - url: /api/finance/health/pharmacy
+paths:
+  /provider/stock-alerts:
+    get:
+      operationId: listPharmacyStockAlerts
+      summary: Active products at or below the reorder level (10) across the caller's pharmacies
+      responses:
+        '200':
+          description: Up to 200 alerts, lowest stock first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  alerts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        product_id: { type: string, format: uuid }
+                        pharmacy_provider_id: { type: string, format: uuid }
+                        name: { type: string }
+                        stock_qty: { type: integer }
+                        reorder_level: { type: integer }
+                        severity: { type: string, enum: [low, out] }
+        '401': { description: Unauthenticated }
+  /provider/rx-queue:
+    get:
+      operationId: listPharmacyRxQueue
+      summary: Prescriptions routed to the caller's APPROVED pharmacies awaiting a decision
+      description: States SENT_TO_PHARMACY and VERIFYING, oldest first. Decide via POST /prescriptions/{id}/verify.
+      responses:
+        '200':
+          description: Up to 200 queue items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  queue:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        rx_id: { type: string, format: uuid }
+                        pharmacy_provider_id: { type: string, format: uuid }
+                        patient_name: { type: string }
+                        prescriber_name: { type: string }
+                        state: { type: string, enum: [SENT_TO_PHARMACY, VERIFYING] }
+                        item_count: { type: integer }
+                        created_at: { type: string, format: date-time }
+        '401': { description: Unauthenticated }
+  /provider/controlled-log:
+    get:
+      operationId: listPharmacyControlledLog
+      summary: Dispensed controlled-substance lines for the caller's pharmacies (HL-4 register)
+      description: Controlled products are CHECK-excluded at MVP, so this is empty until they are enabled.
+      responses:
+        '200':
+          description: Up to 500 entries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        order_id: { type: string, format: uuid }
+                        drug_name: { type: string }
+                        quantity: { type: integer }
+                        patient_name: { type: string }
+                        pharmacist_name: { type: string }
+                        dispensed_at: { type: string, format: date-time }
+        '401': { description: Unauthenticated }

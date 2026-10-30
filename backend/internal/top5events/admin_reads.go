@@ -81,9 +81,9 @@ type AdminDashboard struct {
 	EventsPending       int                      `json:"events_pending_approval"`
 	VendorsActive       int                      `json:"vendors_active"`
 	VendorPayoutsHold   int                      `json:"vendor_payouts_kyc_hold"`
-	SettlementBreaks    int                      `json:"settlement_breaks_open"` // no break-detection exists; always 0
+	SettlementBreaks    int                      `json:"settlement_breaks_open"` // derived breaks still open or investigating (admin_settlement_review.go)
 	SettlementBreakKobo int64                    `json:"settlement_break_value_kobo"`
-	FraudOpen           int                      `json:"fraud_open"` // no fraud queue exists; always 0
+	FraudOpen           int                      `json:"fraud_open"` // derived signals still open or investigating (admin_fraud.go)
 	RefundsPending      int                      `json:"refunds_pending"`
 	SupportCasesOpen    int                      `json:"support_cases_open"`
 	TicketMix           []map[string]any         `json:"ticket_mix"`
@@ -187,10 +187,12 @@ func (s *Service) AdminGetDashboard(ctx context.Context) (*AdminDashboard, error
 		return nil, err
 	}
 
-	// ResidualPendingKobo: CloseWallet refunds the residual atomically in the
-	// same transaction that closes the wallet (see WalletLifecycle_Close*
-	// tests) — there is no "pending, not yet refunded" state in this model, so
-	// this is always 0, not a gap.
+	// ResidualPendingKobo: CloseWallet refunds the residual in the same
+	// transaction that closes the wallet, so this should read 0. It is computed
+	// rather than assumed so a CLOSED wallet left holding float surfaces here.
+	if err := s.db.QueryRow(ctx, residualPendingSQL).Scan(&d.ResidualPendingKobo); err != nil {
+		return nil, fmt.Errorf("events: admin dashboard residual pending: %w", err)
+	}
 
 	if err := s.adminDashboardMixTrend(ctx, d); err != nil {
 		return nil, err
@@ -273,6 +275,12 @@ func (s *Service) adminDashboardMixTrend(ctx context.Context, d *AdminDashboard)
 // activity feed's sales leg is always available; its governance leg joins the
 // commerce-only trail.
 func (s *Service) adminDashboardQueues(ctx context.Context, d *AdminDashboard) error {
+	fraudOpen, err := s.adminFraudOpenCount(ctx)
+	if err != nil {
+		return err
+	}
+	d.FraudOpen = fraudOpen
+
 	if s.commerceReads {
 		if err := s.db.QueryRow(ctx,
 			`SELECT COUNT(*) FROM event_refunds WHERE status IN ('REQUESTED','APPROVED','PROCESSING','FAILED')`).
@@ -359,7 +367,7 @@ func (s *Service) adminDashboardQueues(ctx context.Context, d *AdminDashboard) e
 	for _, r := range rows {
 		d.Activity = append(d.Activity, r.a)
 	}
-	return nil
+	return s.adminDashboardBreaks(ctx, d)
 }
 
 // --- C. Event catalog + detail ---
@@ -766,7 +774,7 @@ type AdminCashlessLine struct {
 	SpentKobo            int64   `json:"spent_kobo"`
 	LiabilityKobo        int64   `json:"liability_kobo"`
 	ResidualRefundedKobo int64   `json:"residual_refunded_kobo"`
-	ResidualPendingKobo  int64   `json:"residual_pending_kobo"` // always 0 — CloseWallet refunds atomically, see AdminGetDashboard comment
+	ResidualPendingKobo  int64   `json:"residual_pending_kobo"` // float still held by CLOSED wallets; 0 when every close refunded
 	ClosedAt             *string `json:"closed_at"`
 }
 
@@ -788,7 +796,8 @@ func (s *Service) AdminGetCashlessFloat(ctx context.Context) (*AdminCashlessFloa
 	rows, err := s.db.Query(ctx, `
 		SELECT w.event_id, e.title, w.state, w.updated_at,
 		       COALESCE(SUM(le.amount_kobo) FILTER (WHERE le.type='TOPUP'),0),
-		       COALESCE(SUM(le.amount_kobo) FILTER (WHERE le.type IN ('CHARGE','REFUND')),0)
+		       COALESCE(SUM(le.amount_kobo) FILTER (WHERE le.type IN ('CHARGE','REFUND')),0),
+		       COALESCE(SUM(le.amount_kobo) FILTER (WHERE le.type='REFUND'),0)
 		FROM event_wallets w
 		JOIN events e ON e.id = w.event_id
 		LEFT JOIN event_wallet_ledger le ON le.wallet_id = w.id
@@ -805,8 +814,8 @@ func (s *Service) AdminGetCashlessFloat(ctx context.Context) (*AdminCashlessFloa
 	for rows.Next() {
 		var eventID, title, state string
 		var updatedAt timeScan
-		var loaded, spent int64
-		if err := rows.Scan(&eventID, &title, &state, &updatedAt.t, &loaded, &spent); err != nil {
+		var loaded, spent, refunded int64
+		if err := rows.Scan(&eventID, &title, &state, &updatedAt.t, &loaded, &spent, &refunded); err != nil {
 			return nil, fmt.Errorf("events: admin cashless scan: %w", err)
 		}
 		line, ok := lineByEvent[eventID]
@@ -817,10 +826,15 @@ func (s *Service) AdminGetCashlessFloat(ctx context.Context) (*AdminCashlessFloa
 		line.LoadedKobo += loaded
 		line.SpentKobo += spent
 		line.LiabilityKobo = line.LoadedKobo - line.SpentKobo
+		line.ResidualRefundedKobo += refunded
 		line.WalletStatus = strings.ToLower(state)
 		if state == "CLOSED" {
 			ts := updatedAt.t.Format(rfc3339)
 			line.ClosedAt = &ts
+			if held := loaded - spent; held > 0 {
+				line.ResidualPendingKobo += held
+				f.TotalResidualPendingKobo += held
+			}
 		}
 		f.TotalLoadedKobo += loaded
 		f.TotalSpentKobo += spent
@@ -844,7 +858,7 @@ type AdminVendorRecord struct {
 	KYCTier        string `json:"kyc_tier"`
 	KYCVerified    bool   `json:"kyc_verified"`
 	CollectedKobo  int64  `json:"collected_kobo"`
-	FeesKobo       int64  `json:"fees_kobo"` // no settled-fee history read here; always 0 until settled (SettleVendor posts fees at settlement time)
+	FeesKobo       int64  `json:"fees_kobo"` // fee SettleVendor would take on the unsettled float now (event fee_bps)
 	NetPayableKobo int64  `json:"net_payable_kobo"`
 	PayoutStatus   string `json:"payout_status"`
 	Active         bool   `json:"active"`
@@ -859,7 +873,7 @@ func (s *Service) AdminListVendors(ctx context.Context, payoutStatus, q string) 
 		where += fmt.Sprintf(" AND (v.name ILIKE $%d OR e.title ILIKE $%d)", len(args), len(args))
 	}
 	query := `
-		SELECT v.id, v.name, v.event_id, e.title, v.user_id, v.active, v.created_at,
+		SELECT v.id, v.name, v.event_id, e.title, v.user_id, v.active, v.created_at, e.fee_bps,
 		       COALESCE((SELECT SUM(amount_kobo) FROM vendor_float WHERE vendor_id=v.id AND settled=false), 0),
 		       EXISTS(SELECT 1 FROM vendor_float WHERE vendor_id=v.id AND settled=true)
 		FROM event_vendors v JOIN events e ON e.id = v.event_id ` + where + ` ORDER BY v.created_at DESC LIMIT 200`
@@ -869,20 +883,25 @@ func (s *Service) AdminListVendors(ctx context.Context, payoutStatus, q string) 
 	}
 	defer rows.Close()
 
+	rejected, err := s.rejectedVendorPayouts(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := []AdminVendorRecord{}
 	for rows.Next() {
 		var v AdminVendorRecord
 		var userID string
 		var createdAt timeScan
 		var unsettled int64
+		var feeBps int
 		var hasSettled bool
-		if err := rows.Scan(&v.ID, &v.NameMasked, &v.EventID, &v.EventTitle, &userID, &v.Active, &createdAt.t, &unsettled, &hasSettled); err != nil {
+		if err := rows.Scan(&v.ID, &v.NameMasked, &v.EventID, &v.EventTitle, &userID, &v.Active, &createdAt.t, &feeBps, &unsettled, &hasSettled); err != nil {
 			return nil, fmt.Errorf("events: admin vendors scan: %w", err)
 		}
 		v.NameMasked = maskName(v.NameMasked)
 		v.CreatedAt = createdAt.t.Format(rfc3339)
 		v.CollectedKobo = unsettled
-		v.NetPayableKobo = unsettled
+		v.FeesKobo, v.NetPayableKobo = vendorFeeSplit(unsettled, feeBps)
 
 		tier, err := s.tiers.GetUserTier(ctx, userID)
 		verified := err == nil && int(tier) >= 1
@@ -891,6 +910,8 @@ func (s *Service) AdminListVendors(ctx context.Context, payoutStatus, q string) 
 		switch {
 		case !verified:
 			v.PayoutStatus = "kyc_hold"
+		case unsettled > 0 && rejected[v.ID]:
+			v.PayoutStatus = payoutStatusRejected
 		case unsettled > 0:
 			v.PayoutStatus = "pending"
 		case hasSettled:
@@ -922,9 +943,9 @@ type AdminSettlementLine struct {
 	FeesKobo            int64   `json:"fees_kobo"`
 	VendorPayoutsKobo   int64   `json:"vendor_payouts_kobo"`
 	OrganiserNetKobo    int64   `json:"organiser_net_kobo"`
-	ResidualRefundsKobo int64   `json:"residual_refunds_kobo"` // no per-event residual-refund ledger tag exists; always 0
+	ResidualRefundsKobo int64   `json:"residual_refunds_kobo"` // cashless residual refunded to attendees' main wallets (event_wallet_ledger REFUND)
 	Status              string  `json:"status"`
-	BreakKobo           int64   `json:"break_kobo"` // no reconciliation-break detection exists; always 0
+	BreakKobo           int64   `json:"break_kobo"` // derived invariant delta across the event's vendors; 0 == clean
 	SettledAt           *string `json:"settled_at"`
 }
 
@@ -934,8 +955,8 @@ type AdminSettlement struct {
 	TotalFeesKobo          int64                 `json:"total_fees_kobo"`
 	TotalOrganiserNetKobo  int64                 `json:"total_organiser_net_kobo"`
 	TotalVendorPayoutsKobo int64                 `json:"total_vendor_payouts_kobo"`
-	TotalBreakKobo         int64                 `json:"total_break_kobo"` // always 0, see AdminSettlementLine.BreakKobo
-	BreaksOpen             int                   `json:"breaks_open"`      // always 0, no break-detection exists
+	TotalBreakKobo         int64                 `json:"total_break_kobo"`
+	BreaksOpen             int                   `json:"breaks_open"` // breaks still open or investigating
 	Lines                  []AdminSettlementLine `json:"lines"`
 }
 
@@ -947,7 +968,10 @@ func (s *Service) AdminGetSettlement(ctx context.Context) (*AdminSettlement, err
 	out := &AdminSettlement{GeneratedAt: nowRFC3339(), Lines: []AdminSettlementLine{}}
 
 	rows, err := s.db.Query(ctx, `
-		SELECT es.event_id, e.title, SUM(es.gross_kobo), SUM(es.fee_kobo), SUM(es.net_kobo), MAX(es.created_at)
+		SELECT es.event_id, e.title, SUM(es.gross_kobo), SUM(es.fee_kobo), SUM(es.net_kobo), MAX(es.created_at),
+		       COALESCE((SELECT SUM(le.amount_kobo) FROM event_wallet_ledger le
+		                 JOIN event_wallets w ON w.id = le.wallet_id
+		                 WHERE w.event_id = es.event_id AND le.type = 'REFUND'), 0)
 		FROM event_settlements es JOIN events e ON e.id = es.event_id
 		GROUP BY es.event_id, e.title ORDER BY MAX(es.created_at) DESC LIMIT 200`)
 	if err != nil {
@@ -958,7 +982,7 @@ func (s *Service) AdminGetSettlement(ctx context.Context) (*AdminSettlement, err
 	for rows.Next() {
 		var l AdminSettlementLine
 		var settledAt timeScan
-		if err := rows.Scan(&l.EventID, &l.EventTitle, &l.GrossKobo, &l.FeesKobo, &l.VendorPayoutsKobo, &settledAt.t); err != nil {
+		if err := rows.Scan(&l.EventID, &l.EventTitle, &l.GrossKobo, &l.FeesKobo, &l.VendorPayoutsKobo, &settledAt.t, &l.ResidualRefundsKobo); err != nil {
 			return nil, fmt.Errorf("events: admin settlement scan: %w", err)
 		}
 		l.ID = "set_" + l.EventID
@@ -973,5 +997,36 @@ func (s *Service) AdminGetSettlement(ctx context.Context) (*AdminSettlement, err
 		out.TotalVendorPayoutsKobo += l.VendorPayoutsKobo
 		out.TotalOrganiserNetKobo += l.OrganiserNetKobo
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if err := s.applySettlementBreaks(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// residualPendingSQL sums float still held by CLOSED event wallets
+// (TOPUP − CHARGE − REFUND > 0). CloseWallet refunds atomically, so a non-zero
+// value is a defect worth surfacing, not an expected queue.
+const residualPendingSQL = `
+	SELECT COALESCE(SUM(held), 0) FROM (
+		SELECT COALESCE(SUM(le.amount_kobo) FILTER (WHERE le.type='TOPUP'),0)
+		     - COALESCE(SUM(le.amount_kobo) FILTER (WHERE le.type IN ('CHARGE','REFUND')),0) AS held
+		FROM event_wallets w LEFT JOIN event_wallet_ledger le ON le.wallet_id = w.id
+		WHERE w.state = 'CLOSED'
+		GROUP BY w.id
+	) per_wallet WHERE held > 0`
+
+// vendorFeeSplit mirrors SettleVendor's arithmetic exactly (integer bps,
+// truncating toward zero, fee+net == gross) so the admin preview can never
+// disagree with what settlement will post.
+// Returns (fee, net).
+func vendorFeeSplit(grossKobo int64, feeBps int) (int64, int64) {
+	if grossKobo <= 0 {
+		return 0, 0
+	}
+	fee := (grossKobo * int64(feeBps)) / 10000
+	return fee, grossKobo - fee
 }

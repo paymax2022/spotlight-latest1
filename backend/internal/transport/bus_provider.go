@@ -352,12 +352,79 @@ func (s *Service) assertRouteOwned(ctx context.Context, routeID, providerID stri
 	return nil
 }
 
-// SearchBusTrips returns bookable interstate trips joined provider→route→schedule.
-// Only active providers, active routes, upcoming scheduled departures. Rejects
-// fromState===toState when both are supplied (interstate-only).
-func (s *Service) SearchBusTrips(ctx context.Context, fromState, toState, providerID, date string) ([]map[string]any, error) {
-	if fromState != "" && toState != "" && sameState(fromState, toState) {
-		return nil, codedErr(http.StatusBadRequest, CodeInvalidState, "fromState and toState must differ")
+// BusTripSearch is GET /mobility/bus/search.
+type BusTripSearch struct {
+	FromState, ToState string
+	// TripKind is "inter" (default: states must differ) or "intra" (one state,
+	// city→city). FromCity/ToCity are optional city/terminal filters.
+	TripKind         string
+	FromCity, ToCity string
+	ProviderID, Date string
+}
+
+// buildBusTripSearchWhere validates the search and returns the extra AND
+// clauses with their positional args. Pure, so it is unit-tested. City
+// matching is case-insensitive and bidirectional substring (a broader pick
+// such as "Ibadan" matches the route city "Ibadan North" and vice versa),
+// done with strpos so user input never becomes a LIKE pattern.
+func buildBusTripSearchWhere(q BusTripSearch) (string, []any, error) {
+	kind := strings.ToLower(strings.TrimSpace(q.TripKind))
+	switch kind {
+	case "", "inter":
+		if q.FromState != "" && q.ToState != "" && sameState(q.FromState, q.ToState) {
+			return "", nil, codedErr(http.StatusBadRequest, CodeInvalidState, "fromState and toState must differ")
+		}
+	case "intra":
+		if q.FromState == "" || (q.ToState != "" && !sameState(q.FromState, q.ToState)) {
+			return "", nil, codedErr(http.StatusBadRequest, CodeInvalidState, "an intra-state search needs one state (fromState = toState)")
+		}
+	default:
+		return "", nil, codedErr(http.StatusBadRequest, CodeInvalidState, "tripKind must be inter or intra")
+	}
+	var b strings.Builder
+	var args []any
+	add := func(clause string, v any) {
+		args = append(args, v)
+		b.WriteString(strings.ReplaceAll(clause, "$?", fmt.Sprintf("$%d", len(args))))
+	}
+	if q.FromState != "" {
+		add(" AND r.from_state ILIKE $?", strings.TrimSpace(q.FromState))
+	}
+	switch {
+	case kind == "intra":
+		add(" AND r.to_state ILIKE $?", strings.TrimSpace(q.FromState))
+	case q.ToState != "":
+		add(" AND r.to_state ILIKE $?", strings.TrimSpace(q.ToState))
+	}
+	for _, c := range []struct{ val, col string }{
+		{q.FromCity, "COALESCE(r.from_city, r.origin_terminal)"},
+		{q.ToCity, "COALESCE(r.to_city, r.dest_terminal)"},
+	} {
+		if v := strings.ToLower(strings.TrimSpace(c.val)); v != "" {
+			add(" AND (strpos(lower("+c.col+"), $?) > 0 OR strpos($?, lower("+c.col+")) > 0)", v)
+		}
+	}
+	if q.ProviderID != "" {
+		add(" AND p.id::text = $?", q.ProviderID)
+	}
+	if q.Date != "" {
+		if _, err := time.Parse("2006-01-02", q.Date); err != nil {
+			return "", nil, codedErr(http.StatusBadRequest, "INVALID_DATE", "date must be YYYY-MM-DD")
+		}
+		add(" AND s.departure_time::date = $?::date", q.Date)
+	}
+	return b.String(), args, nil
+}
+
+// SearchBusTrips returns bookable trips joined provider→route→schedule. Only
+// verified active providers, active routes, approved upcoming departures.
+// NOTE: bus_routes_diff_states (CHECK from_state <> to_state) means no
+// provider route can be intra-state today, so an intra search validly
+// returns no trips until that constraint is revisited.
+func (s *Service) SearchBusTrips(ctx context.Context, search BusTripSearch) ([]map[string]any, error) {
+	where, args, err := buildBusTripSearchWhere(search)
+	if err != nil {
+		return nil, err
 	}
 	q := `
 		SELECT s.id, r.id, p.id, p.business_name, p.verification_status, p.rating_avg,
@@ -373,28 +440,7 @@ func (s *Service) SearchBusTrips(ctx context.Context, fromState, toState, provid
 		WHERE r.active = TRUE AND p.status = 'active'
 		  AND p.verification_status = 'verified'
 		  AND s.fare_approved = TRUE AND s.status = 'scheduled'
-		  AND s.departure_time >= NOW()`
-	args := []any{}
-	i := 1
-	if fromState != "" {
-		q += fmt.Sprintf(" AND r.from_state ILIKE $%d", i)
-		args = append(args, fromState)
-		i++
-	}
-	if toState != "" {
-		q += fmt.Sprintf(" AND r.to_state ILIKE $%d", i)
-		args = append(args, toState)
-		i++
-	}
-	if providerID != "" {
-		q += fmt.Sprintf(" AND p.id = $%d", i)
-		args = append(args, providerID)
-		i++
-	}
-	if date != "" {
-		q += fmt.Sprintf(" AND s.departure_time::date = $%d::date", i)
-		args = append(args, date)
-	}
+		  AND s.departure_time >= NOW()` + where
 	q += " ORDER BY s.departure_time LIMIT 100"
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {

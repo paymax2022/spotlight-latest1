@@ -28,12 +28,13 @@ import type {
   ConfirmPatientReceivedInput,
   ReportPharmacyInput,
 } from '@/types/doctor.batch3';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function usePharmacies(patientId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'pharmacies', patientId],
     queryFn:         () => getPharmacies(patientId),
-    placeholderData: DEMO_PHARMACIES,
+    placeholderData: doctorPlaceholder(DEMO_PHARMACIES),
     staleTime:       60_000,
   });
 }
@@ -60,7 +61,7 @@ export function usePharmacyMessages(fulfilmentId: string) {
     queryKey:        ['doctor', 'pharmacy-messages', fulfilmentId],
     queryFn:         () => getPharmacyMessages(fulfilmentId),
     enabled:         !!fulfilmentId,
-    placeholderData: DEMO_PHARMACY_MESSAGES.filter((m) => m.fulfilmentId === fulfilmentId),
+    placeholderData: doctorPlaceholder(DEMO_PHARMACY_MESSAGES.filter((m) => m.fulfilmentId === fulfilmentId)),
     staleTime:       10_000,
   });
 }
@@ -69,7 +70,7 @@ export function useDeliveryAlerts() {
   return useQuery({
     queryKey:        ['doctor', 'delivery-alerts'],
     queryFn:         getDeliveryAlerts,
-    placeholderData: DEMO_DELIVERY_ALERTS,
+    placeholderData: doctorPlaceholder(DEMO_DELIVERY_ALERTS),
     staleTime:       15_000,
   });
 }

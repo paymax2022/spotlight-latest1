@@ -32,12 +32,13 @@ import type {
   UpdatePayoutBankAccountInput,
   RaiseSettlementDisputeInput,
 } from '@/types/doctor.batch6';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useEarningsBreakdown() {
   return useQuery({
     queryKey:        ['doctor', 'earnings', 'breakdown'],
     queryFn:         getEarningsBreakdown,
-    placeholderData: DEMO_EARNINGS_BREAKDOWN,
+    placeholderData: doctorPlaceholder(DEMO_EARNINGS_BREAKDOWN),
     staleTime:       30_000,
   });
 }
@@ -46,7 +47,7 @@ export function useWalletBalance() {
   return useQuery({
     queryKey:        ['doctor', 'wallet', 'balance'],
     queryFn:         getWalletBalance,
-    placeholderData: DEMO_WALLET_BALANCE,
+    placeholderData: doctorPlaceholder(DEMO_WALLET_BALANCE),
     staleTime:       30_000,
   });
 }
@@ -55,7 +56,7 @@ export function usePayoutDetails() {
   return useQuery({
     queryKey:        ['doctor', 'wallet', 'payout-details'],
     queryFn:         getPayoutDetails,
-    placeholderData: DEMO_PAYOUT_DETAILS,
+    placeholderData: doctorPlaceholder(DEMO_PAYOUT_DETAILS),
     staleTime:       30_000,
   });
 }
@@ -65,7 +66,7 @@ export function usePayoutDetail(id: string) {
     queryKey:        ['doctor', 'wallet', 'payout-detail', id],
     queryFn:         () => getPayoutDetail(id),
     enabled:         !!id,
-    placeholderData: DEMO_PAYOUT_DETAILS.find((p) => p.id === id),
+    placeholderData: doctorPlaceholder(DEMO_PAYOUT_DETAILS.find((p) => p.id === id)),
     staleTime:       30_000,
   });
 }
@@ -74,7 +75,7 @@ export function useInvoices() {
   return useQuery({
     queryKey:        ['doctor', 'wallet', 'invoices'],
     queryFn:         getInvoices,
-    placeholderData: DEMO_INVOICES,
+    placeholderData: doctorPlaceholder(DEMO_INVOICES),
     staleTime:       30_000,
   });
 }
@@ -83,7 +84,7 @@ export function useCommissionBreakdown(rangeLabel?: string) {
   return useQuery({
     queryKey:        ['doctor', 'wallet', 'commission', rangeLabel],
     queryFn:         () => getCommissionBreakdown(rangeLabel),
-    placeholderData: DEMO_COMMISSION_BREAKDOWN,
+    placeholderData: doctorPlaceholder(DEMO_COMMISSION_BREAKDOWN),
     staleTime:       60_000,
   });
 }
@@ -92,7 +93,7 @@ export function useTaxVatReport(rangeLabel?: string) {
   return useQuery({
     queryKey:        ['doctor', 'wallet', 'tax-vat', rangeLabel],
     queryFn:         () => getTaxVatReport(rangeLabel),
-    placeholderData: DEMO_TAX_VAT_REPORT,
+    placeholderData: doctorPlaceholder(DEMO_TAX_VAT_REPORT),
     staleTime:       60_000,
   });
 }
@@ -101,7 +102,7 @@ export function useSettlementDisputes() {
   return useQuery({
     queryKey:        ['doctor', 'wallet', 'disputes'],
     queryFn:         getSettlementDisputes,
-    placeholderData: DEMO_SETTLEMENT_DISPUTES,
+    placeholderData: doctorPlaceholder(DEMO_SETTLEMENT_DISPUTES),
     staleTime:       30_000,
   });
 }

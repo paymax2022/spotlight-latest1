@@ -24,12 +24,13 @@ import type {
   UploadDisputeEvidenceInput,
   SendSupportMessageInput,
 } from '@/types/doctor.batch7';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useFaqs() {
   return useQuery({
     queryKey:        ['doctor', 'support', 'faqs'],
     queryFn:         getFaqs,
-    placeholderData: DEMO_FAQS,
+    placeholderData: doctorPlaceholder(DEMO_FAQS),
     staleTime:       300_000,
   });
 }
@@ -38,7 +39,7 @@ export function useHelpArticles() {
   return useQuery({
     queryKey:        ['doctor', 'support', 'help-articles'],
     queryFn:         getHelpArticles,
-    placeholderData: DEMO_HELP_ARTICLES,
+    placeholderData: doctorPlaceholder(DEMO_HELP_ARTICLES),
     staleTime:       300_000,
   });
 }
@@ -47,7 +48,7 @@ export function useDisputes() {
   return useQuery({
     queryKey:        ['doctor', 'support', 'disputes'],
     queryFn:         getDisputes,
-    placeholderData: DEMO_DISPUTES,
+    placeholderData: doctorPlaceholder(DEMO_DISPUTES),
     staleTime:       30_000,
   });
 }

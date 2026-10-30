@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -74,6 +75,10 @@ type Service struct {
 	// receiverEmail: the free receiver PIN channel (WithReceiverPinNotify);
 	// nil = off.
 	receiverEmail ReceiverEmailSender
+	// userNotifier delivers member notifications (WithUserNotifier); nil = log only.
+	userNotifier UserNotifier
+	// shareBaseURL prefixes live-share links (WithShareBaseURL); "" = defaultShareBaseURL.
+	shareBaseURL string
 }
 
 // ExternalRefunder is the nil-safe seam transport.Service uses to correctly
@@ -819,9 +824,24 @@ type ShareLink struct {
 // shareLinkTTL is how long a live-share link stays resolvable.
 const shareLinkTTL = 2 * time.Hour
 
-// shareBaseURL is the public base for a share link. TODO(config): move to
-// PricingConfig/app config once a public web base URL is threaded through.
-const shareBaseURL = "https://spotlight.app/track"
+// defaultShareBaseURL is the share-link base used when TRANSPORT_SHARE_BASE_URL
+// is not wired (config.TransportShareBaseURL carries the same default).
+const defaultShareBaseURL = "https://spotlight.app/track"
+
+// WithShareBaseURL sets the public base for live-share links. Blank keeps the default.
+func (s *Service) WithShareBaseURL(u string) *Service {
+	s.shareBaseURL = strings.TrimRight(strings.TrimSpace(u), "/")
+	return s
+}
+
+// shareURL builds the openable link for a share token.
+func (s *Service) shareURL(token string) string {
+	base := s.shareBaseURL
+	if base == "" {
+		base = defaultShareBaseURL
+	}
+	return base + "/" + token
+}
 
 // sosRequiresDriver is the pure authz decision for a standalone safety
 // incident: a trip-bound SOS is already gated by trip participation, but an
@@ -916,7 +936,7 @@ func (s *Service) ShareToken(ctx context.Context, tripID, riderID string) (*Shar
 	})
 	return &ShareLink{
 		ShareToken: token,
-		URL:        shareBaseURL + "/" + token,
+		URL:        s.shareURL(token),
 		ExpiresAt:  expiresAt,
 	}, nil
 }

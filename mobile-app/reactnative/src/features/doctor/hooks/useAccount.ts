@@ -15,12 +15,13 @@ import type {
   CreateSupportTicketInput,
   UpdateDoctorSettingsInput,
 } from '@/types/doctor';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useNotifications() {
   return useQuery({
     queryKey:        ['doctor', 'notifications'],
     queryFn:         getNotifications,
-    placeholderData: DEMO_NOTIFICATIONS,
+    placeholderData: doctorPlaceholder(DEMO_NOTIFICATIONS),
     staleTime:       15_000,
   });
 }
@@ -29,7 +30,7 @@ export function useSupportTickets() {
   return useQuery({
     queryKey:        ['doctor', 'support-tickets'],
     queryFn:         getSupportTickets,
-    placeholderData: DEMO_SUPPORT_TICKETS,
+    placeholderData: doctorPlaceholder(DEMO_SUPPORT_TICKETS),
     staleTime:       30_000,
   });
 }
@@ -38,7 +39,7 @@ export function useSettings() {
   return useQuery({
     queryKey:        ['doctor', 'settings'],
     queryFn:         getSettings,
-    placeholderData: DEMO_SETTINGS,
+    placeholderData: doctorPlaceholder(DEMO_SETTINGS),
     staleTime:       30_000,
   });
 }

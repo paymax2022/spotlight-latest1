@@ -25,12 +25,13 @@ import type {
   DisputeReviewInput,
   RequestReviewRemovalInput,
 } from '@/types/doctor.batch6';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useConsultationFeedback() {
   return useQuery({
     queryKey:        ['doctor', 'reputation', 'feedback'],
     queryFn:         getConsultationFeedback,
-    placeholderData: DEMO_CONSULT_FEEDBACK,
+    placeholderData: doctorPlaceholder(DEMO_CONSULT_FEEDBACK),
     staleTime:       30_000,
   });
 }
@@ -39,7 +40,7 @@ export function useQualityScore() {
   return useQuery({
     queryKey:        ['doctor', 'reputation', 'quality-score'],
     queryFn:         getQualityScore,
-    placeholderData: DEMO_QUALITY_SCORE,
+    placeholderData: doctorPlaceholder(DEMO_QUALITY_SCORE),
     staleTime:       60_000,
   });
 }
@@ -48,7 +49,7 @@ export function useRankingInsight() {
   return useQuery({
     queryKey:        ['doctor', 'reputation', 'ranking'],
     queryFn:         getRankingInsight,
-    placeholderData: DEMO_RANKING_INSIGHT,
+    placeholderData: doctorPlaceholder(DEMO_RANKING_INSIGHT),
     staleTime:       60_000,
   });
 }
@@ -57,7 +58,7 @@ export function useImprovementRecommendations() {
   return useQuery({
     queryKey:        ['doctor', 'reputation', 'recommendations'],
     queryFn:         getImprovementRecommendations,
-    placeholderData: DEMO_IMPROVEMENT_RECOMMENDATIONS,
+    placeholderData: doctorPlaceholder(DEMO_IMPROVEMENT_RECOMMENDATIONS),
     staleTime:       60_000,
   });
 }
@@ -66,7 +67,7 @@ export function useReviewDisputes() {
   return useQuery({
     queryKey:        ['doctor', 'reputation', 'disputes'],
     queryFn:         getReviewDisputes,
-    placeholderData: DEMO_REVIEW_DISPUTES,
+    placeholderData: doctorPlaceholder(DEMO_REVIEW_DISPUTES),
     staleTime:       30_000,
   });
 }

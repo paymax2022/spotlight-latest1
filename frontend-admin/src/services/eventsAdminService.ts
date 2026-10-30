@@ -22,6 +22,7 @@ import type {
   EventFraudSignal,
   EventFraudAction,
   EventFraudActionResult,
+  EventStatus,
 } from '@/types/eventsAdmin';
 
 export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_EVENTS_USE_MOCK);
@@ -68,8 +69,8 @@ async function getJson<T>(path: string): Promise<T> {
   const j = await res.json();
   return (j?.data ?? j) as T;
 }
-async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminBase()}${path}`, { method, headers: authHeaders(), body: JSON.stringify(body) });
+async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  const res = await fetch(`${adminBase()}${path}`, { method, headers: { ...authHeaders(), ...extraHeaders }, body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   const j = await res.json();
   return (j?.data ?? j) as T;
@@ -135,11 +136,10 @@ const APPROVALS: EventApprovalItem[] = [
   { id: 'evt_9004', title: 'Port Harcourt Comedy Night', organiser_masked: 'PH Laughs•••', category: 'Comedy', city: 'Port Harcourt', status: 'draft', starts_at: dateAhead(45), capacity: 1200, tiers_count: 2, cashless_enabled: false, submitted_at: null, cms_complete: false, flagged_terms: false, created_at: iso(30) },
   { id: 'evt_9005', title: 'Owambe Owners Convention', organiser_masked: 'Lekki Events•••', category: 'Conference', city: 'Lagos', status: 'submitted', starts_at: dateAhead(60), capacity: 3000, tiers_count: 4, cashless_enabled: true, submitted_at: iso(40), cms_complete: true, flagged_terms: false, created_at: iso(120) },
 ];
-// backend has no separate /approvals route — that filter IS the approvals
-// queue). EventApprovalItem's tiers_count is derivable from real data, but
-// cms_complete and flagged_terms are content-moderation flags with no
-// backend concept at all — wiring this would mean fabricating those two
-// fields rather than honestly reporting them, so this stays mock-only.
+// The approvals queue IS the admin event list filtered by state (the backend's
+// /moderation queue reuses the same AdminListEvents read), so live mode reads
+// /events?status=. tiers_count, cms_complete and flagged_terms have no backend
+// source — they come back null and the page renders "—" instead of a guess.
 export async function listEventApprovals(opts?: { status?: string; q?: string }): Promise<EventApprovalItem[]> {
   if (USE_MOCK) {
     await delay();
@@ -154,18 +154,62 @@ export async function listEventApprovals(opts?: { status?: string; q?: string })
   const qs = new URLSearchParams();
   if (opts?.status) qs.set('status', opts.status);
   if (opts?.q) qs.set('q', opts.q);
-  return getJson<EventApprovalItem[]>(`/approvals${qs.toString() ? `?${qs}` : ''}`);
+  const rows = await getJson<(EventSummary & { submitted_at?: string })[]>(`/events${qs.toString() ? `?${qs}` : ''}`);
+  return (rows ?? []).map((r) => ({
+    id: r.id,
+    title: r.title,
+    organiser_masked: r.organiser_masked,
+    category: r.category,
+    city: r.city,
+    status: r.status,
+    starts_at: r.starts_at,
+    capacity: r.capacity,
+    tiers_count: null,
+    cashless_enabled: r.cashless_enabled,
+    submitted_at: r.submitted_at || null,
+    cms_complete: null,
+    flagged_terms: null,
+    created_at: r.created_at,
+  }));
 }
+
+// Decisions go through the governed review routes (commerce_handler.go
+// /events/:id/review/*), which record an append-only moderation decision and
+// notify the organiser. The newest decision row for the event is the audit id.
+const REVIEW_VERB: Record<EventApprovalDecision, string> = {
+  approve: 'approve',
+  reject: 'reject',
+  request_changes: 'changes',
+  suspend: 'suspend',
+  reinstate: 'reinstate',
+};
+const DECISION_STATUS: Record<EventApprovalDecision, EventStatus> = {
+  approve: 'approved',
+  reject: 'draft',
+  request_changes: 'draft',
+  suspend: 'suspended',
+  reinstate: 'approved',
+};
 export async function decideEvent(id: string, decision: EventApprovalDecision, note?: string): Promise<EventDecisionResult> {
   if (USE_MOCK) throw new Error(`Deciding an event ${NOT_IN_FIXTURE_MODE}`);
-  // (top5events.Handler.{Approve,Suspend}), both with no body. "reject" and
-  // "request_changes" have no backend equivalent — the service only has
-  // Approve/Suspend state-transition methods.
-  if (decision === 'reject' || decision === 'request_changes') {
-    throw new Error(`Deciding "${decision}" on an event ${NO_BACKEND_YET}`);
+  if ((decision === 'reject' || decision === 'request_changes') && !note?.trim()) {
+    throw new Error('A rejection or change request needs a note the organiser can act on.');
   }
-  const verb = decision === 'approve' ? 'approve' : 'suspend';
-  return sendJson<EventDecisionResult>('POST', `/${id}/${verb}`, {});
+  const path = `/events/${encodeURIComponent(id)}`;
+  await sendJson<unknown>('POST', `${path}/review/${REVIEW_VERB[decision]}`, { reason: note ?? '' });
+  let auditId = '';
+  try {
+    const trail = await getJson<{ id: string }[]>(`${path}/moderation`);
+    auditId = trail?.[0]?.id ?? '';
+  } catch {
+    // The decision committed; a failed trail read must not report it as failed.
+  }
+  return {
+    id,
+    status: DECISION_STATUS[decision],
+    audit_id: auditId || 'see moderation trail',
+    message: `Event ${decision.replace('_', ' ')} recorded`,
+  };
 }
 
 // C · Event catalog + detail
@@ -291,17 +335,15 @@ export async function listVendors(opts?: { payout_status?: string; q?: string })
   if (opts?.q) qs.set('q', opts.q);
   return getJson<VendorRecord[]>(`/vendors${qs.toString() ? `?${qs}` : ''}`);
 }
+// Live: POST /vendors/:id/payout (admin_settlement_review.go). approve settles
+// the vendor's unsettled float now via SettleVendor (KYC-gated, NL-10) and is
+// a money mutation, so it carries an Idempotency-Key minted once per click;
+// reject records a hold and moves no money.
 export async function decideVendorPayout(id: string, decision: 'approve' | 'reject', note?: string): Promise<VendorPayoutResult> {
-  // No "decide" concept exists: the real capability is POST
-  // /:eventId/vendors/:vendorId/settle (top5events.Handler.SettleVendor) — an
-  // UNCONDITIONAL, irreversible pay-now action requiring BOTH the event id and
-  // vendor id plus an Idempotency-Key header, with no request body and no
-  // "decision" parameter at all (it fails closed on missing KYC, but there is
-  // scope, and "reject" has no backend equivalent regardless. Treated as a
-  // genuine gap rather than silently firing an irreversible settlement in
-  // place of what the UI presents as a reviewable decision.
-  if (USE_MOCK) throw new Error(`Deciding a vendor payout ${NO_BACKEND_YET}`);
-  return sendJson<VendorPayoutResult>('POST', `/vendors/${id}/payout`, { decision, note });
+  if (USE_MOCK) throw new Error(`Deciding a vendor payout ${NOT_IN_FIXTURE_MODE}`);
+  if (decision === 'reject' && !note?.trim()) throw new Error('Rejecting a payout needs a note.');
+  const headers = decision === 'approve' ? { 'Idempotency-Key': crypto.randomUUID() } : undefined;
+  return sendJson<VendorPayoutResult>('POST', `/vendors/${encodeURIComponent(id)}/payout`, { decision, note: note ?? '' }, headers);
 }
 
 // G · Settlement + reconciliation
@@ -323,14 +365,12 @@ export async function getSettlement(): Promise<Settlement> {
   if (USE_MOCK) { await delay(); return { ...SETTLEMENT, lines: [...SETTLEMENT.lines] }; }
   return getJson<Settlement>('/settlement');
 }
+// Live: POST /settlement/:id/resolve records a reviewer decision on a derived
+// break (append-only); it never moves money — corrections are reversing
+// ledger entries. resolve/reconcile need a note.
 export async function resolveSettlementBreak(id: string, action: 'investigate' | 'resolve' | 'reconcile', note?: string): Promise<SettlementResolveResult> {
-  // No backend at all: grepped backend/internal/top5events for "settlement
-  // break"/"break"/"reconcil" — only order-payment reconciliation exists
-  // (StartPendingOrderReconciler), unrelated to settlement breaks. No GET
-  // /settlement either — the events admin group has exactly 3 routes total
-  // (approve/suspend/vendor-settle).
-  if (USE_MOCK) throw new Error(`Resolving a settlement break ${NO_BACKEND_YET}`);
-  return sendJson<SettlementResolveResult>('POST', `/settlement/${id}/resolve`, { action, note });
+  if (USE_MOCK) throw new Error(`Resolving a settlement break ${NOT_IN_FIXTURE_MODE}`);
+  return sendJson<SettlementResolveResult>('POST', `/settlement/${encodeURIComponent(id)}/resolve`, { action, note: note ?? '' });
 }
 
 // H · Fraud — dup-scan / abnormal top-up
@@ -358,9 +398,10 @@ export async function listEventFraud(opts?: { status?: string; kind?: string; q?
   if (opts?.q) qs.set('q', opts.q);
   return getJson<EventFraudSignal[]>(`/fraud${qs.toString() ? `?${qs}` : ''}`);
 }
+// Live: backend/internal/top5events/admin_fraud.go derives signals on read and
+// records decisions append-only (event_fraud_reviews). Clear/block need a note;
+// block on a vendor self-charge also deactivates the vendor.
 export async function decideEventFraud(id: string, action: EventFraudAction, note?: string): Promise<EventFraudActionResult> {
-  // No backend at all: grepped backend/internal/top5events for "fraud" — zero
-  // matches. No fraud queue or action verb exists anywhere in the module.
-  if (USE_MOCK) throw new Error(`Actioning an event fraud signal ${NO_BACKEND_YET}`);
-  return sendJson<EventFraudActionResult>('POST', `/fraud/${id}/action`, { action, note });
+  if (USE_MOCK) throw new Error(`Actioning an event fraud signal ${NOT_IN_FIXTURE_MODE}`);
+  return sendJson<EventFraudActionResult>('POST', `/fraud/${encodeURIComponent(id)}/action`, { action, note: note ?? '' });
 }

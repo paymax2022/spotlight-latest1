@@ -391,7 +391,7 @@ export async function reportPharmacy(input: ReportPharmacyInput): Promise<Report
     void (input.reason, input.detail, input.fulfilmentId);
     return wait({ reportId: `prep-${Date.now()}`, ref: `PREP-${input.idempotencyKey.slice(-6).toUpperCase()}` }, 500);
   }
-  return doctorPost<ReportPharmacyResult>(`/pharmacy/${input.pharmacyId}/report`, input, input.idempotencyKey);
+  return doctorPost<ReportPharmacyResult>(`/pharmacies/${input.pharmacyId}/report`, input, input.idempotencyKey);
 }
 
 // SECTION M — LAB TEST ORDERING

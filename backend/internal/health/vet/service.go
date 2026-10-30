@@ -1340,6 +1340,9 @@ func (s *Service) AdminDashboard(ctx context.Context) (*AdminDashboard, error) {
 		return nil, fmt.Errorf("vet: admin dashboard vet count: %w", err)
 	}
 
+	if err := s.fillDashboardKPIs(ctx, &out.AdminDashboardKPIs); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -1475,6 +1478,9 @@ type Vaccination struct {
 // Contrast with the owner/vet-scoped views (model.go), which are scoped to
 // one caller.
 type AdminDashboard struct {
+	// AdminDashboardKPIs carries the console's 30-day KPIs (admin_kpis.go).
+	AdminDashboardKPIs
+
 	TotalAppointments int64 `json:"total_appointments"`
 	// AppointmentsByState is a count per ApptState value (model.go), including
 	// states with zero appointments — the console renders a complete state

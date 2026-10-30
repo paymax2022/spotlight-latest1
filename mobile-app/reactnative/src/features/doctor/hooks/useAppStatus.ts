@@ -14,12 +14,13 @@ import {
   DEMO_ACCOUNT_STATUS,
 } from '@/api/doctor.batch7.api';
 import type { EdgeStateKind, EdgeStateDescriptor } from '@/types/doctor.batch7';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useAppStatus() {
   return useQuery({
     queryKey:        ['doctor', 'app-status'],
     queryFn:         getAppStatus,
-    placeholderData: DEMO_APP_STATUS,
+    placeholderData: doctorPlaceholder(DEMO_APP_STATUS),
     staleTime:       60_000,
     refetchInterval: 300_000, // poll for maintenance / forced-update changes
   });
@@ -29,7 +30,7 @@ export function useAccountStatus() {
   return useQuery({
     queryKey:        ['doctor', 'account-status'],
     queryFn:         getAccountStatus,
-    placeholderData: DEMO_ACCOUNT_STATUS,
+    placeholderData: doctorPlaceholder(DEMO_ACCOUNT_STATUS),
     staleTime:       30_000,
   });
 }
