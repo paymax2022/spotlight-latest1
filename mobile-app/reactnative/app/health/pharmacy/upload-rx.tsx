@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -12,10 +14,15 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { useUploadPrescription } from '@/features/health/pharmacy/hooks';
+import type { RxUploadFile } from '@/features/health/pharmacy/api';
+import { useAuthStore } from '@/store/authStore';
+
+const RX_DOC_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf'];
 
 export default function UploadRxScreen() {
-  const [attached, setAttached] = useState<string | null>(null);
-  const [patientName, setPatientName] = useState('Ada Obi');
+  const [attached, setAttached] = useState<RxUploadFile | null>(null);
+  const userName = useAuthStore((s) => s.user?.fullName ?? '');
+  const [patientName, setPatientName] = useState(userName);
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
   const upload = useUploadPrescription();
@@ -31,11 +38,38 @@ export default function UploadRxScreen() {
     }
     setError(null);
     try {
-      const rx = await upload.mutateAsync({ patientName: patientName.trim(), note: note.trim() || undefined });
-      router.replace({ pathname: '/health/pharmacy/rx-status', params: { id: rx.id } });
+      await upload.mutateAsync({ patientName: patientName.trim(), note: note.trim() || undefined, file: attached });
+      // Uploads are listed in the Rx wallet; rx-status reads e-Rx records only.
+      router.replace('/health/pharmacy/rx-wallet');
     } catch {
       setError('Upload failed. Please try again.');
     }
+  };
+
+  const takePhoto = async () => {
+    setError(null);
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      setError('Camera access is needed to photograph your prescription.');
+      return;
+    }
+    const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 });
+    if (res.canceled || !res.assets?.length) return;
+    const a = res.assets[0];
+    setAttached({ uri: a.uri, fileName: a.fileName ?? `rx-${Date.now()}.jpg`, mimeType: a.mimeType ?? 'image/jpeg' });
+  };
+
+  const chooseFile = async () => {
+    setError(null);
+    const res = await DocumentPicker.getDocumentAsync({ type: RX_DOC_TYPES, copyToCacheDirectory: true, multiple: false });
+    if (res.canceled || !res.assets?.length) return;
+    const f = res.assets[0];
+    const mimeType = f.mimeType ?? '';
+    if (!RX_DOC_TYPES.includes(mimeType)) {
+      setError('Attach a photo (JPG, PNG, WEBP, HEIC) or a PDF.');
+      return;
+    }
+    setAttached({ uri: f.uri, fileName: f.name, mimeType });
   };
 
   return (
@@ -50,7 +84,7 @@ export default function UploadRxScreen() {
               <FileText size={28} color={Colors.secondary} strokeWidth={2} />
             </View>
             <View style={styles.heroBody}>
-              <Text style={styles.previewName}>{attached}</Text>
+              <Text style={styles.previewName} numberOfLines={1}>{attached.fileName}</Text>
               <Text style={styles.previewSub}>Ready to submit for verification</Text>
             </View>
             <Pressable onPress={() => setAttached(null)} hitSlop={8}>
@@ -59,13 +93,13 @@ export default function UploadRxScreen() {
           </View>
         ) : (
           <View style={styles.attachRow}>
-            <Pressable style={[styles.attach, shadow1]} onPress={() => setAttached('Rx_photo.jpg')}>
+            <Pressable style={[styles.attach, shadow1]} onPress={takePhoto}>
               <View style={[styles.attachIcon, { backgroundColor: Colors.iconBgBlue }]}>
                 <Camera size={24} color={Colors.secondary} strokeWidth={2} />
               </View>
               <Text style={styles.attachLabel}>Take photo</Text>
             </Pressable>
-            <Pressable style={[styles.attach, shadow1]} onPress={() => setAttached('prescription.pdf')}>
+            <Pressable style={[styles.attach, shadow1]} onPress={chooseFile}>
               <View style={[styles.attachIcon, { backgroundColor: Colors.iconBgTeal }]}>
                 <ImageIcon size={24} color={Colors.teal} strokeWidth={2} />
               </View>

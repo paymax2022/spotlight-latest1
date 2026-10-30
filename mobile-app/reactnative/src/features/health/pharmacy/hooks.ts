@@ -96,7 +96,7 @@ export function usePrescription(id?: string) {
 export function useUploadPrescription() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { patientName: string; note?: string }) => uploadPrescription(input),
+    mutationFn: (input: Parameters<typeof uploadPrescription>[0]) => uploadPrescription(input),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'prescriptions'] }),
   });
 }

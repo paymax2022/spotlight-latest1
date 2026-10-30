@@ -21,6 +21,7 @@ import (
 	healthrx "spotlight/backend/internal/health/rx"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/r2"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/transport"
@@ -74,6 +75,15 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	// DP-002 dispense-match: was left permanently nil (dead check) — the seam
 	// existed but nothing ever called SetRxItems. See rxItemsAdapter above.
 	svc.SetRxItems(&rxItemsAdapter{db: pool})
+	// Patient Rx uploads reuse the shared R2 presigner — unconfigured ⇒ 503,
+	// never a fabricated URL.
+	svc.SetUploadPresigner(r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	}))
 
 	// Central Commission & Profit recording at the pharmacy order settlement point
 	// (Complete → escrow release). Best-effort + idempotent + nil-safe: constructed
@@ -104,6 +114,8 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	pg.POST("/products", h.UpsertProduct)                       // pharmacy owner, HL-5 write-gate
 	pg.GET("/prescriptions", h.ListMyPrescriptions)             // patient's own list
 	pg.POST("/prescriptions/:id/verify", h.VerifyPrescription)  // pharmacist, HL-3
+	pg.POST("/prescriptions/upload/presign", h.PresignRxUpload) // patient, presigned R2 PUT
+	pg.POST("/prescriptions/upload", h.RecordRxUpload)          // patient, records the uploaded object
 	pg.GET("/pharmacies", h.DiscoverPharmacies)                 // browse ALL pharmacies — proximity/rating (HL-2)
 	pg.GET("/pharmacies/:id", h.GetPharmacy)                    // pharmacy detail
 	pg.GET("/pharmacies/:id/reviews", h.ListPharmacyReviews)    // public rating feed
