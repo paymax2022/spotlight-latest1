@@ -2,6 +2,8 @@ package kycverify
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -197,9 +199,21 @@ type GatewayResult struct {
 	FailedOver []string
 }
 
+// kycGatewayBudget bounds one whole failover walk; kycHopTimeout bounds a single
+// provider attempt. Each adapter sets its own 30s http.Client timeout, so with a
+// two-provider chain an unbounded walk can hang for 60s — past the mobile
+// client's own timeout and past most proxies — which means the member sees a
+// server timeout while the check is still completing behind them. The hop slice
+// also stops one hanging provider from stranding the rest of the chain.
+var (
+	kycGatewayBudget = 25 * time.Second
+	kycHopTimeout    = 10 * time.Second
+)
+
 // Run routes one check through the failover chain. It returns ErrNoProvider when
 // every provider in the chain is unavailable (missing port, open breaker, or
-// error). The request's Threshold is set from the routing rule when unset.
+// error), or ErrProviderTimeout when a hop ran out of its slice. The request's
+// Threshold is set from the routing rule when unset.
 func (g *Gateway) Run(ctx context.Context, ct provider.KycCheckType, req provider.KycVerifyRequest) (*GatewayResult, error) {
 	chain := g.table.Resolve(ct)
 	if len(chain) == 0 {
@@ -210,7 +224,11 @@ func (g *Gateway) Run(ctx context.Context, ct provider.KycCheckType, req provide
 		req.Threshold = threshold
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, kycGatewayBudget)
+	defer cancel()
+
 	var failedOver []string
+	sawTimeout := false
 	now := time.Now()
 	for _, name := range chain {
 		// Pure gate: is this hop usable right now?
@@ -221,12 +239,25 @@ func (g *Gateway) Run(ctx context.Context, ct provider.KycCheckType, req provide
 			continue
 		}
 
-		res, err := invoke(ctx, port, ct, req)
+		hopCtx, hopCancel := context.WithTimeout(ctx, kycHopTimeout)
+		res, err := invoke(hopCtx, port, ct, req)
+		timedOut := err != nil && (errors.Is(err, context.DeadlineExceeded) || hopCtx.Err() != nil)
+		hopCancel()
+
 		if err != nil {
-			// Adapter error → trip breaker for this (provider,checktype), fail over.
+			// Adapter error (or a provider that used up its slice) → trip the
+			// breaker for this (provider,checktype) and fail over.
 			g.breaker.trip(name, ct, time.Now())
-			log.Printf("audit kycverify event=gateway.failover provider=%s type=%s reason=error", name, ct)
+			reason := "error"
+			if timedOut {
+				reason = "timeout"
+				sawTimeout = true
+			}
+			log.Printf("audit kycverify event=gateway.failover provider=%s type=%s reason=%s", name, ct, reason)
 			failedOver = append(failedOver, name)
+			if ctx.Err() != nil {
+				break // the whole budget is gone; starting another hop would only stall
+			}
 			continue
 		}
 		g.breaker.reset(name, ct)
@@ -234,6 +265,9 @@ func (g *Gateway) Run(ctx context.Context, ct provider.KycCheckType, req provide
 		// Gate biometric/document/liveness confidence into PASS vs REVIEW.
 		res.Status = gateResult(ct, res, threshold)
 		return &GatewayResult{Provider: name, Result: res, FailedOver: failedOver}, nil
+	}
+	if sawTimeout || ctx.Err() != nil {
+		return nil, fmt.Errorf("%w: providers=%s", ErrProviderTimeout, strings.Join(failedOver, ","))
 	}
 	return nil, ErrNoProvider
 }

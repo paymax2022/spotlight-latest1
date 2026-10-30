@@ -1,7 +1,9 @@
 // Node ESM resolve hook for `node --test` unit runs.
-// Maps the TS `@/` path alias → `src/` and fills in missing file extensions /
-// index files, so pure-logic modules (which use extensionless + `@/` imports,
-// resolved by Metro/tsc at build time) load under
+// Maps the TS `@/` path alias → `src/`, fills in missing file extensions /
+// index files, and swaps the native modules node cannot parse (react-native's
+// Flow types, and lucide-react-native, which require()s it through the CJS
+// loader) for the stubs in tests/unit/stubs — so pure-logic modules (which use
+// extensionless + `@/` imports, resolved by Metro/tsc at build time) load under
 // `node --experimental-strip-types --test` with no bundler.
 import { existsSync, statSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -9,6 +11,8 @@ import path from 'node:path';
 
 const SRC = path.resolve(fileURLToPath(import.meta.url), '../../../src');
 const RN_STUB = path.resolve(fileURLToPath(import.meta.url), '../stubs/react-native.mjs');
+const LUCIDE_STUB = path.resolve(fileURLToPath(import.meta.url), '../stubs/lucide-react-native.mjs');
+const STUBS = { 'react-native': RN_STUB, 'lucide-react-native': LUCIDE_STUB };
 const EXTS = ['.ts', '.tsx', '.mts', '.js', '.mjs', '.cjs', '.json'];
 
 function resolveWithExt(abs) {
@@ -26,8 +30,9 @@ function resolveWithExt(abs) {
 }
 
 export async function resolve(specifier, context, nextResolve) {
-  if (specifier === 'react-native') {
-    return { url: pathToFileURL(RN_STUB).href, shortCircuit: true };
+  const stub = STUBS[specifier];
+  if (stub) {
+    return { url: pathToFileURL(stub).href, shortCircuit: true };
   }
   let abs = null;
   if (specifier.startsWith('@/')) {

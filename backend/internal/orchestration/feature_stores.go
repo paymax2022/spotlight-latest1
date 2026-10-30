@@ -322,6 +322,8 @@ type VerificationStore interface {
 	// SetStatus is the admin/back-office review decision (approve/reject). Approving
 	// lifts the tier; rejecting records a reason. Returns the updated record.
 	SetStatus(ctx context.Context, customerID, status, reason string) (VerificationRecord, error)
+	// List returns the review queue, optionally filtered to the given statuses.
+	List(ctx context.Context, statuses []string, limit int) ([]AdminVerificationRow, error)
 }
 
 type sqlVerificationStore struct{ db *pgxpool.Pool }

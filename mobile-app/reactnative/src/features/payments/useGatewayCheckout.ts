@@ -20,6 +20,7 @@ import { promptEmailAsync } from '@/lib/emailPrompt';
 import { isEmailRequiredError } from './billingEmail';
 import { usePaystackGateway } from './usePaystackGateway';
 import { extractAccessCode, type PaystackGatewayController } from './paystackGateway';
+import { customerFacingInitError } from './gatewayError';
 
 export type GatewayPhase = 'idle' | 'initializing' | 'awaiting' | 'done' | 'error';
 
@@ -97,7 +98,7 @@ export function useGatewayCheckout(): GatewayCheckoutController {
             continue;
           }
           setPhase('error');
-          setError(e instanceof Error ? e.message : 'Could not start payment. Please try again.');
+          setError(customerFacingInitError(e));
           return;
         }
       }

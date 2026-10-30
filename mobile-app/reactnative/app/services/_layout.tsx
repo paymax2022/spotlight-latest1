@@ -1,7 +1,7 @@
 import { Stack } from 'expo-router';
 import { View } from 'react-native';
 import ModuleTabBar from '@/components/ModuleTabBar';
-import { UTILITY_TABS } from '@/constants/moduleTabs';
+import { UTILITY_TABS, TRANSFER_TABS } from '@/constants/moduleTabs';
 
 export default function ServicesLayout() {
   return (
@@ -25,7 +25,10 @@ export default function ServicesLayout() {
       <Stack.Screen name="transactions/[id]" />
       <Stack.Screen name="paystack/[reference]" />
     </Stack>
-  <ModuleTabBar tabs={UTILITY_TABS} alsoVisibleOn={['/services/transactions']} />
+    {/* The two sets are disjoint, and a bar renders nothing when the current
+        path is not one of its tabs, so only ever one of these draws. */}
+    <ModuleTabBar tabs={UTILITY_TABS} />
+    <ModuleTabBar tabs={TRANSFER_TABS} alsoVisibleOn={['/services/transactions']} />
   </View>
   );
 }

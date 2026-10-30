@@ -3,8 +3,13 @@
 
 export function formatNaira(kobo: number | null | undefined): string {
   if (kobo == null) return '—';
+  // Commission rewards routinely carry kobo (20% of an arbitrary revenue
+  // figure), so truncating the remainder turned a real ₦6.80 credit into "₦6".
+  // Whole-naira amounts still render without decimals.
   const naira = Math.trunc(kobo / 100);
-  return `₦${naira.toLocaleString('en-NG')}`;
+  const koboPart = Math.abs(Math.trunc(kobo) % 100);
+  const base = `₦${naira.toLocaleString('en-NG')}`;
+  return koboPart === 0 ? base : `${base}.${String(koboPart).padStart(2, '0')}`;
 }
 
 // Full naira + kobo (e.g. ₦1,234.50) for statements where the sub-naira part matters.

@@ -6,6 +6,7 @@ import type { SwitchContextInput } from './types';
 export const propertyKeys = {
   all:          ['property'] as const,
   context:      () => [...propertyKeys.all, 'context'] as const,
+  membership:   () => [...propertyKeys.all, 'estate-membership'] as const,
   rentPassport: () => [...propertyKeys.all, 'rent-passport'] as const,
   gatePass:     (bookingId: string) => [...propertyKeys.all, 'gate-pass', bookingId] as const,
 };
@@ -47,6 +48,26 @@ export function useSwitchContext() {
       qc.setQueryData(propertyKeys.context(), envelope);
       qc.invalidateQueries({ queryKey: propertyKeys.all });
     },
+  });
+}
+
+/**
+ * Whether this account belongs to an estate at all.
+ *
+ * Backed by a live endpoint (never mocked) because it gates entry to the estate
+ * and visitor screens; a wrong answer here would either hide features from a
+ * real resident or dangle features in front of an account every estate route
+ * will refuse. A failure is terminal — asked once, not retried on focus — and
+ * the screens fail closed until it succeeds, so no error is swallowed into a
+ * misleading "member" answer.
+ */
+export function useEstateMembership() {
+  return useQuery({
+    queryKey: propertyKeys.membership(),
+    queryFn: api.getEstateMembership,
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
   });
 }
 

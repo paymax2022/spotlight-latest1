@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Image, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Icons from 'lucide-react-native';
@@ -269,9 +269,31 @@ export default function RestaurantDetailScreen() {
             onScroll={onMenuScroll}
             scrollEventThrottle={32}
           >
+            {/* The owner's storefront banner, exactly as uploaded at set-up. The
+                server signs the stored key into a viewable URL; when the outlet
+                has none the header below stands alone. */}
+            {restaurant.bannerUrl ? (
+              <Image
+                source={{ uri: restaurant.bannerUrl }}
+                style={[s.banner, shadow1]}
+                resizeMode="cover"
+                accessibilityLabel={`${restaurant.name} banner`}
+                accessibilityIgnoresInvertColors
+              />
+            ) : null}
+
             <View style={[s.header, shadow1]}>
               <View style={[s.iconBox, { backgroundColor: restaurant.iconBg }]}>
-                <DynamicIcon name={restaurant.icon} color={restaurant.iconColor} size={30} />
+                {restaurant.logoUrl ? (
+                  <Image
+                    source={{ uri: restaurant.logoUrl }}
+                    style={s.logoImg}
+                    resizeMode="cover"
+                    accessibilityIgnoresInvertColors
+                  />
+                ) : (
+                  <DynamicIcon name={restaurant.icon} color={restaurant.iconColor} size={30} />
+                )}
               </View>
               <View style={{ flex: 1, gap: 4 }}>
                 <Text style={s.name}>{restaurant.name}</Text>
@@ -433,7 +455,9 @@ const s = StyleSheet.create({
   topTitle: { ...Typography.titleLg, color: Colors.primary, flex: 1, textAlign: 'center' },
   content: { padding: Spacing.containerMargin, paddingBottom: Platform.OS === 'ios' ? 140 : 120 },
   header: { flexDirection: 'row', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
-  iconBox: { width: 60, height: 60, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
+  banner: { width: '100%', height: 168, borderRadius: Radius.lg, marginBottom: Spacing.md, backgroundColor: Colors.surfaceContainerLow },
+  iconBox: { width: 60, height: 60, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  logoImg: { width: '100%', height: '100%' },
   name: { ...Typography.titleLg, color: Colors.onSurface },
   metaLine: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginTop: 2 },

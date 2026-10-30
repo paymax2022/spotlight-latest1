@@ -137,12 +137,16 @@ func (s *Service) DriverMeFull(ctx context.Context, userID string) (map[string]a
 	}
 	docs, _ := s.listDocuments(ctx, id)
 	vehicles, _ := s.listVehicles(ctx, id)
+	var guarantor *Guarantor
+	if g, gerr := s.getGuarantor(ctx, id); gerr == nil {
+		guarantor = g
+	}
 	return map[string]any{
 		"id": id, "name": name, "vehicle_reg": vreg, "vehicle_type": vtype,
 		"status": status, "rating": rating, "verification_status": vstatus,
 		"phone": phone, "email": email, "photo_url": photo,
 		"service_interests": serviceInterests, "coverage_areas": coverageAreas,
-		"documents": docs, "vehicles": vehicles,
+		"documents": docs, "vehicles": vehicles, "guarantor": guarantor,
 	}, nil
 }
 

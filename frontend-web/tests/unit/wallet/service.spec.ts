@@ -25,6 +25,7 @@ import {
   createTopupIntent,
 } from '@/src/server/wallet/service';
 import { createAdminClient } from '@/lib/supabase/server';
+import { enforceWalletLimit } from '@/src/server/tiers/service';
 import { journalSignedSum, type LedgerLegInsert } from '@/src/server/wallet/journal';
 
 const USER_ID = 'user-wallet-001';
@@ -228,6 +229,29 @@ describe('debitWallet', () => {
     expect(mock.rpc).toHaveBeenCalledWith('debit_wallet_atomic', expect.objectContaining({
       p_account_id: ACCOUNT_ID,
       p_amount_kobo: 200_000,
+    }));
+  });
+
+  it('skips the KYC tier gate when the spend is funded by an external card charge', async () => {
+    const { mock, maybySingle } = setupMock();
+    maybySingle
+      .mockResolvedValueOnce({ data: null, error: null })              // idempotency miss
+      .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account
+      .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (migrate)
+    vi.mocked(mock.rpc).mockResolvedValueOnce({ data: null, error: null });
+
+    await debitWallet(USER_ID, {
+      amountKobo: 500_000,
+      reference: 'UTL-20261029-CARD',
+      idempotencyKey: 'utility:txn-001:DEBIT',
+      skipTierLimit: true,
+    });
+
+    // The card charge was verified externally; the wallet tier limit must not
+    // reject it (a Tier 0 account would otherwise have its card payment stranded).
+    expect(enforceWalletLimit).not.toHaveBeenCalled();
+    expect(mock.rpc).toHaveBeenCalledWith('debit_wallet_atomic', expect.objectContaining({
+      p_daily_limit_kobo: null,
     }));
   });
 

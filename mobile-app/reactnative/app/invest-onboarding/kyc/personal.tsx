@@ -8,6 +8,7 @@ import { Spacing } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import IdNumberField from '@/features/kycverify/components/IdNumberField';
 import StepHeader from '@/features/investonboarding/components/StepHeader';
 import { kycDraft } from '@/features/investonboarding/utils/onboardingDraft';
 import { validatePersonal, hasNoErrors } from '@/features/investonboarding/utils/onboarding.utils';
@@ -43,8 +44,8 @@ export default function KycPersonalScreen() {
           <TextInputField label="First name" placeholder="e.g. Ada" value={form.firstName} onChangeText={(t) => set('firstName', t)} autoCapitalize="words" error={errors.firstName} />
           <TextInputField label="Last name" placeholder="e.g. Okeke" value={form.lastName} onChangeText={(t) => set('lastName', t)} autoCapitalize="words" error={errors.lastName} />
           <TextInputField label="Date of birth" placeholder="YYYY-MM-DD" value={form.dob} onChangeText={(t) => set('dob', t)} keyboardType="numbers-and-punctuation" error={errors.dob} />
-          <TextInputField label="BVN" placeholder="11-digit Bank Verification Number" value={form.bvn} onChangeText={(t) => set('bvn', t.replace(/\D/g, '').slice(0, 11))} keyboardType="number-pad" maxLength={11} error={errors.bvn} />
-          <TextInputField label="NIN" placeholder="11-digit National ID Number" value={form.nin} onChangeText={(t) => set('nin', t.replace(/\D/g, '').slice(0, 11))} keyboardType="number-pad" maxLength={11} error={errors.nin} />
+          <IdNumberField idType="BVN" label="BVN" value={form.bvn} onChangeText={(t) => set('bvn', t)} error={errors.bvn} />
+          <IdNumberField idType="NIN" label="NIN" value={form.nin} onChangeText={(t) => set('nin', t)} error={errors.nin} />
 
           <Text style={styles.privacy}>{KYC_PRIVACY_NOTE}</Text>
         </ScrollView>

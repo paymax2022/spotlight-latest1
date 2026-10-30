@@ -9,7 +9,9 @@ package extranet
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -75,6 +77,8 @@ func newMediaFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) medi
 
 	t.Cleanup(func() {
 		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_rate_plan WHERE room_type_id IN (SELECT id FROM public.stays_room_type WHERE property_id = $1)`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_room_type WHERE property_id = $1`, property)
 		_, _ = pool.Exec(bg, `DELETE FROM public.stays_property_photo WHERE property_id = $1`, property)
 		_, _ = pool.Exec(bg, `DELETE FROM public.stays_hotelier_profile WHERE property_id = $1`, property)
 		_, _ = pool.Exec(bg, `DELETE FROM public.stays_property WHERE id = $1`, property)
@@ -316,6 +320,28 @@ func TestLiveDB_VerificationChecklistReflectsRealPhotosAndPolicies(t *testing.T)
 	if find("policies").Status == VerifApproved {
 		t.Error("policies should not read approved before house_rules is ever set")
 	}
+	// Business identity/document verification is ops-side only (AdminDecideKYB);
+	// the host checklist stopped carrying those rows, and the photo label has to
+	// track the constant rather than a hard-coded number.
+	for _, gone := range []string{"business_identity", "business_documents"} {
+		for _, item := range vs.Checklist {
+			if item.Key == gone {
+				t.Errorf("checklist still carries %q", gone)
+			}
+		}
+	}
+	if want := fmt.Sprintf("At least %d photos uploaded (cover set)", minPhotosForGoLive); find("photos").Label != want {
+		t.Errorf("photos label = %q, want %q", find("photos").Label, want)
+	}
+	// The checklist asks about what the host is given controls for, and nothing
+	// else — no inventory/calendar step.
+	var keys []string
+	for _, item := range vs.Checklist {
+		keys = append(keys, item.Key)
+	}
+	if want := []string{"signup", "property", keyContent, "photos", "policies"}; !slices.Equal(keys, want) {
+		t.Errorf("checklist keys = %v, want %v", keys, want)
+	}
 
 	if err := f.svc.UpdateDetails(ctx, f.owner, f.property, PropertyDetailsPatch{HouseRules: new("Be quiet after 10pm.")}); err != nil {
 		t.Fatalf("UpdateDetails: %v", err)
@@ -343,5 +369,122 @@ func TestLiveDB_VerificationChecklistReflectsRealPhotosAndPolicies(t *testing.T)
 		t.Errorf("photos = %s, want approved after uploading %d", find2("photos").Status, minPhotosForGoLive)
 	} else if find2("policies").Status != VerifApproved {
 		t.Errorf("policies = %s, want approved once house_rules is set", find2("policies").Status)
+	}
+}
+
+// A listing is sellable the moment it is published — inventory does not need
+// opening first (see adapters/direct.go), so it must not be a submission gate
+// either. This submits a property that has zero calendar rows.
+func TestLiveDB_SubmitForReviewNeedsNoCalendar(t *testing.T) {
+	pool := mediaPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	f := newMediaFixture(t, ctx, pool)
+
+	if err := f.svc.UpdateContent(ctx, f.owner, f.property, "", "Coside hotel with a quiet courtyard.", "", "", 4, "hotel"); err != nil {
+		t.Fatalf("UpdateContent: %v", err)
+	}
+	roomType, err := f.svc.CreateRoomType(ctx, f.owner, f.property, "Deluxe King", 2, "1 king bed")
+	if err != nil {
+		t.Fatalf("CreateRoomType: %v", err)
+	}
+	if _, err := f.svc.CreateRatePlan(ctx, f.owner, f.property, roomType, "BAR", "room_only", true, 45_000_00, "NGN"); err != nil {
+		t.Fatalf("CreateRatePlan: %v", err)
+	}
+	for i := range minPhotosForGoLive {
+		_, key, _ := f.svc.PresignPhotoUpload(ctx, f.owner, f.property, "image/jpeg")
+		if _, err := f.svc.ConfirmPhotoUpload(ctx, f.owner, f.property, key, "", ""); err != nil {
+			t.Fatalf("ConfirmPhotoUpload #%d: %v", i, err)
+		}
+	}
+
+	var days int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM public.stays_availability_day WHERE room_type_id = $1`, roomType).Scan(&days); err != nil {
+		t.Fatalf("count calendar: %v", err)
+	}
+	if days != 0 {
+		t.Fatalf("fixture opened %d calendar rows, want none to prove the gate is gone", days)
+	}
+
+	vs, err := f.svc.SubmitForReview(ctx, f.owner, "")
+	if err != nil {
+		t.Fatalf("SubmitForReview with no calendar: %v", err)
+	}
+	if !vs.GoLiveEligible {
+		t.Errorf("go_live_eligible = false, want true — required steps: %+v", required(vs))
+	}
+}
+
+func required(vs VerificationStatus) []string {
+	var out []string
+	for _, item := range vs.Checklist {
+		if item.Required && item.Status != VerifApproved {
+			out = append(out, item.Key)
+		}
+	}
+	return out
+}
+
+// The host console works on one listing at a time (/stays/host/:propertyId/manage).
+// While verification only resolved "the account's primary property", a hotelier's
+// second, untouched listing showed the first listing's all-green checklist and let
+// Submit fire — submitting the wrong property.
+func TestLiveDB_VerificationIsScopedToTheNamedProperty(t *testing.T) {
+	pool := mediaPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	f := newMediaFixture(t, ctx, pool)
+
+	second := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO public.stays_property
+			(id, source_rail, supplier_code, supplier_property_ref, name, address, city, star_rating, property_type, created_at)
+		VALUES ($1, 'DIRECT', 'self', $2, 'STF Second Listing', '2 St', 'Abuja', 3, 'hotel', now() + interval '1 hour')`,
+		second, uuid.NewString()); err != nil {
+		t.Fatalf("seed second property: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO public.stays_hotelier_profile (user_id, property_id, role, status) VALUES ($1,$2,'OWNER','ACTIVE')`,
+		f.owner, second); err != nil {
+		t.Fatalf("seed second grant: %v", err)
+	}
+	stranger := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+		stranger, stranger+"@seed.test"); err != nil {
+		t.Fatalf("seed stranger: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_property WHERE id = $1`, second)
+		_, _ = pool.Exec(bg, `DELETE FROM auth.users WHERE id = $1`, stranger)
+	})
+
+	primary, err := f.svc.GetVerificationStatus(ctx, f.owner, "")
+	if err != nil {
+		t.Fatalf("GetVerificationStatus (account-level): %v", err)
+	}
+	if primary.PropertyID != f.property {
+		t.Fatalf("account-level checklist is for %s, want the primary %s", primary.PropertyID, f.property)
+	}
+
+	scoped, err := f.svc.GetVerificationStatus(ctx, f.owner, second)
+	if err != nil {
+		t.Fatalf("GetVerificationStatus (second property): %v", err)
+	}
+	if scoped.PropertyID != second {
+		t.Errorf("scoped checklist is for %s, want %s", scoped.PropertyID, second)
+	}
+	if missing := required(scoped); len(missing) == 0 {
+		t.Errorf("an untouched listing reports no outstanding required steps: %+v", scoped.Checklist)
+	} else if _, err := f.svc.SubmitForReview(ctx, f.owner, second); !errors.Is(err, ErrVerificationIncomplete) {
+		t.Errorf("Submit on the untouched listing = %v, want ErrVerificationIncomplete (missing %v)", err, missing)
+	}
+
+	if _, err := f.svc.GetVerificationStatus(ctx, stranger, f.property); !errors.Is(err, ErrForbidden) {
+		t.Errorf("another hotelier reading this listing = %v, want ErrForbidden", err)
+	}
+	if _, err := f.svc.SubmitForReview(ctx, stranger, f.property); !errors.Is(err, ErrForbidden) {
+		t.Errorf("another hotelier submitting this listing = %v, want ErrForbidden", err)
 	}
 }

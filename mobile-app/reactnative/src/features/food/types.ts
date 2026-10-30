@@ -27,6 +27,15 @@ export interface TaxonomyCategory {
 export interface Restaurant {
   id: string;
   name: string;
+  /**
+   * Wide storefront image the owner uploaded at set-up. The server resolves the
+   * stored object key to a short-lived viewable URL before responding; null when
+   * the outlet has no banner. Customers see it on the discovery card and the
+   * store page header.
+   */
+  bannerUrl?: string | null;
+  /** Square storefront logo, same resolution rules as bannerUrl. */
+  logoUrl?: string | null;
   cuisine: string;
   /** Taxonomy cuisines (server `cuisines`); undefined when the server sends none. */
   cuisineRefs?: CuisineRef[];

@@ -334,6 +334,9 @@ describe('payUtility — card-paid bills reach the ledger (flag ON)', () => {
     expect(debitWallet).toHaveBeenCalledWith(USER_ID, expect.objectContaining({
       amountKobo: 500_000,
       idempotencyKey: `utility:${transaction.id}:DEBIT`,
+      // Card funds are charged at Paystack, not drawn from the user's own wallet
+      // balance, so the KYC tier limit must not block the spend.
+      skipTierLimit: true,
     }));
 
     const collectAt = vi.mocked(creditWallet).mock.invocationCallOrder[0];

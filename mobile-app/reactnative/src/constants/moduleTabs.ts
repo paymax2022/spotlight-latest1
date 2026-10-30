@@ -8,7 +8,7 @@ import {
   GraduationCap, BookOpen, ClipboardList, Wallet,
   Trophy, Vote, BarChart3,
   Smartphone, Wifi, Zap, Tv, FileText,
-  ReceiptText, TrendingUp, Settings,
+  ReceiptText, TrendingUp, Settings, ArrowLeftRight, LifeBuoy,
   Search, Pill, PawPrint, Stethoscope,
 } from 'lucide-react-native';
 import type { ModuleTab } from '@/components/ModuleTabBar';
@@ -164,4 +164,24 @@ export const UTILITY_TABS: readonly ModuleTab[] = [
   { href: '/services/electricity', label: 'Power',   icon: Zap },
   { href: '/services/cable-tv',    label: 'TV',      icon: Tv },
   { href: '/services/education',   label: 'Exams',   icon: GraduationCap },
+] as const;
+
+/**
+ * Sending money — the transfer screen plus the three surfaces it leans on.
+ *
+ * Transfer gets its own bar instead of a 7th UTILITY_TABS entry because six is
+ * the width that bar was checked at on 375pt: each icon pill needs 52pt (20pt
+ * glyph + 16pt padding per side) and seven tabs only give it 52.4pt, so the
+ * one-word labels start ellipsizing on every one of the six working screens.
+ *
+ * These two sets are disjoint — which is why `/services/transactions` is a tab
+ * here rather than an `alsoVisibleOn` on the utility bar. ModuleTabBar draws
+ * only when the current path is one of its own tabs, so mounting both in the
+ * services layout still renders exactly one of them.
+ */
+export const TRANSFER_TABS: readonly ModuleTab[] = [
+  { href: '/services/transfer',      label: 'Send',    icon: ArrowLeftRight },
+  { href: '/services/beneficiaries', label: 'Saved',   icon: Users },
+  { href: '/services/transactions',  label: 'History', icon: ReceiptText },
+  { href: '/services/support',       label: 'Help',    icon: LifeBuoy },
 ] as const;

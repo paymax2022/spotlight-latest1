@@ -257,8 +257,12 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 	if gerr != nil {
 		// No provider answered — record the check as FAILED (guarded) so the
 		// session can resolve; never leave it dangling at INITIATED.
+		reason := "no provider available"
+		if errors.Is(gerr, ErrProviderTimeout) {
+			reason = "providers timed out"
+		}
 		if terr := applyCheckTransition(stored.Status, provider.KycFailed); terr == nil {
-			_ = s.repo.SetCheckStatus(ctx, stored.ID, provider.KycFailed, "no provider available")
+			_ = s.repo.SetCheckStatus(ctx, stored.ID, provider.KycFailed, reason)
 		}
 		return nil, gerr
 	}
@@ -408,6 +412,9 @@ var (
 	ErrConsentRequired = errors.New("kycverify: NDPA/CBN consent required before verification")
 	// ErrNoProvider — the routing chain for a check type has no usable provider. 503.
 	ErrNoProvider = errors.New("kycverify: no provider available for check type")
+	// ErrProviderTimeout — every provider in the chain ran out of its time slice.
+	// Distinct from ErrNoProvider so logs/reason text say "slow", not "absent". 503.
+	ErrProviderTimeout = errors.New("kycverify: verification providers timed out")
 	// ErrProviderUnavailable — the gateway/registry is not configured. 503.
 	ErrProviderUnavailable = errors.New("kycverify: provider gateway not configured")
 	// ErrInvalidTier — target tier outside the 1..3 CBN range. 400.
@@ -671,6 +678,19 @@ func (o *Orchestrator) Recompute(ctx context.Context, sessionID string) (Session
 		return resolved, nil
 	}
 
+	// A retried check that now passes resolves a failed session straight to
+	// TIER_VERIFIED, which the graph only expresses as a retry hop
+	// (TIER_FAILED → TIER_PENDING) followed by the pass. Write the hop first;
+	// without it a member who mistyped once can never recover on that session —
+	// every later attempt answered 409 illegal state transition.
+	if hop, ok := retryHopBefore(sess.Status, resolved); ok {
+		if err := o.repo.UpdateSessionStatus(ctx, sessionID, hop); err != nil {
+			return "", err
+		}
+		o.audit(ctx, "kycverify.session.transition", sess.UserID, sessionID, string(hop))
+		sess.Status = hop
+	}
+
 	// An unexpected edge is a hard error, never a silent skip — illegal
 	// orchestration is caught, not swallowed.
 	if !CanTransitionSession(sess.Status, resolved) {
@@ -754,6 +774,22 @@ var sessionTransitions = fsm.Table[SessionStatus]{
 	SessRejected:     fsm.Set(SessTierPending), // retry after rejection
 	SessTierVerified: nil,                      // terminal (for this target tier)
 	SessApproved:     nil,
+}
+
+// retryHopBefore names the intermediate status a session has to be written to
+// before it can reach `resolved`. The graph treats a retry as TIER_FAILED →
+// TIER_PENDING, so a check that fails and is then re-run successfully resolves
+// to TIER_VERIFIED through that hop rather than in one jump.
+func retryHopBefore(from, resolved SessionStatus) (SessionStatus, bool) {
+	if resolved != SessTierVerified {
+		return "", false
+	}
+	switch from {
+	case SessTierFailed, SessRejected:
+		return SessTierPending, true
+	default:
+		return "", false
+	}
 }
 
 // CanTransitionSession reports whether a session may move from → to.

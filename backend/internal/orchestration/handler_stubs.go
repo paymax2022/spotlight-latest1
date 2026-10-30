@@ -346,6 +346,23 @@ func (h *Handler) SubmitCustomer(c *gin.Context) {
 		writeErr(c, bad("consents", "consents is required"))
 		return
 	}
+	// Each consent is an affirmative act. A consent that is absent decodes as
+	// false, and false is refused exactly like an explicit decline — the server
+	// must never infer agreement the customer did not give.
+	for _, consent := range []struct {
+		param  string
+		agreed bool
+		msg    string
+	}{
+		{"consents.terms", req.Consents.Terms, "you must accept the Terms of Service"},
+		{"consents.privacy", req.Consents.Privacy, "you must accept the Privacy & Data Policy"},
+		{"consents.fxDisclosure", req.Consents.FxDisclosure, "you must accept the FX Risk Disclosure"},
+	} {
+		if !consent.agreed {
+			writeErr(c, bad(consent.param, consent.msg))
+			return
+		}
+	}
 	if req.Identity == nil {
 		writeErr(c, bad("identity", "identity is required"))
 		return

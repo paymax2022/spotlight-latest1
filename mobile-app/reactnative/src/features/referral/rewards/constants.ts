@@ -85,12 +85,14 @@ export function shareMessage(code: string, link: string): string {
 
 export function formatNaira(kobo: number | null | undefined, opts?: { decimals?: boolean }): string {
   if (kobo == null) return '—';
-  const value = kobo / 100;
-  const fractionDigits = opts?.decimals ? 2 : 0;
-  return '₦' + value.toLocaleString('en-NG', {
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
-  });
+  // Never round kobo away: a ₦6.80 commission rendered as "₦7" overstates it
+  // and "₦6" understates it. Whole-naira amounts stay whole unless the caller
+  // asks for fixed 2-decimal display.
+  const naira = Math.trunc(kobo / 100);
+  const koboPart = Math.abs(Math.trunc(kobo) % 100);
+  const base = '₦' + naira.toLocaleString('en-NG');
+  if (opts?.decimals || koboPart !== 0) return `${base}.${String(koboPart).padStart(2, '0')}`;
+  return base;
 }
 
 export function formatNairaCompact(kobo: number | null | undefined): string {

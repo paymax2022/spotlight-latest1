@@ -826,7 +826,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			WithSecondary(orchestration.NewSecondaryStore(pool)).
 			WithBusiness(orchestration.NewBusinessStore(pool)).
 			WithCollections(orchestration.NewCollectionStore(pool)).
-			WithVerification(orchestration.NewVerificationStore(pool))
+			WithVerification(orchestration.NewVerificationStore(pool)).
+			WithAdminOverview(orchestration.NewAdminOverviewSource(pool))
 
 		og := r.Group("/api/v1/fx")
 		// RequireAuthContext populates the user_id that requireUserID fail-closes
@@ -896,6 +897,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		og.POST("/notifications/read-all", orchHandler.MarkAllNotificationsRead)
 		// FX virtual cards are disabled: no card-issuing provider is configured, so
 		// the /cards routes are intentionally not mounted.
+		// FX console read surface. The overview is the one console page with a real
+		// backend: it aggregates the same ledger rows this block serves plus the live
+		// treasury snapshot, so the operator sees actual volume instead of the
+		// console's in-file sample. Its own read permission keeps an ops viewer from
+		// needing the markup-WRITE grant.
+		fxOverview := r.Group("/api/finance/admin/fx")
+		fxOverview.Use(mapsAuth())
+		fxOverview.GET("/overview", middleware.RequirePermission(rbac, "finance.admin.fx_ops"), orchHandler.AdminOverview)
+		// KYC review queue: the same rows the customer flow writes, so a submitted
+		// application is visible to a reviewer immediately. Decision = approve/reject.
+		fxOverview.GET("/verifications", middleware.RequirePermission(rbac, "finance.admin.fx_ops"), orchHandler.AdminListVerifications)
+		fxOverview.POST("/verifications/:customerId/decision", middleware.RequirePermission(rbac, "finance.admin.fx_ops"), orchHandler.AdminDecideVerification)
 		// Inbound provider webhooks (no auth; provider-signed).
 		r.POST("/api/v1/fx/webhooks/:provider", orchHandler.InboundWebhook)
 		log.Println("[finance] FX orchestration routes registered at /api/v1/fx")
@@ -2395,6 +2408,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		})
 		transportHandler = transportHandler.WithPresigner(transportPresigner, cfg.R2Bucket)
 
+		// NIN / driver's licence data-match at onboarding. Reuses the Dojah
+		// adapter the KYC gateway routes through; without credentials there is
+		// nothing honest to call, so the endpoint fails closed with 503.
+		if cfg.DojahAppID != "" && cfg.DojahSecretKey != "" {
+			transportHandler = transportHandler.WithIDVerifier(dojah.New(cfg.DojahAppID, cfg.DojahSecretKey, cfg.DojahProd))
+		}
+
 		// Real-time trip tracking: driver GPS → MatchToRoad snap → rider+driver
 		// over WebSocket (Redis pub/sub fans out across instances).
 		transportHub := platformWS.New(wsOriginAllowed)
@@ -2477,7 +2497,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		drv := finance.Group("/driver")
 		drv.POST("/onboarding/submit", transportHandler.OnboardingSubmit)
 		drv.POST("/documents", transportHandler.AddDocument)
+		drv.POST("/documents/upload", transportHandler.UploadDriverDocument)
 		drv.POST("/documents/presign", transportHandler.PresignDriverDocument)
+		drv.POST("/kyc/verify", transportHandler.VerifyDriverIdentity)
+		drv.POST("/guarantor", transportHandler.AddGuarantor)
 		drv.POST("/vehicle", transportHandler.AddVehicle)
 		drv.PUT("/service-profile", transportHandler.SetServiceProfile)
 		drv.GET("/onboarding-options", transportHandler.OnboardingOptions)

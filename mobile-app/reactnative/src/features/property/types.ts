@@ -47,6 +47,15 @@ export interface SwitchContextInput {
   contextId:   string;
 }
 
+/**
+ * The caller's estate membership, resolved server-side from estate_residents.
+ * `isResident: false` is the definitive "no estate features" answer; it is
+ * never derived from the switchable property context.
+ */
+export type EstateMembership =
+  | { isResident: false }
+  | { isResident: true; estateId: string; unit: string; role: string };
+
 export interface RentPassportPayment {
   id:         string;
   paidAt:     string;  // ISO date

@@ -319,9 +319,8 @@ export async function listReservations(propertyId: string): Promise<HotelierRese
   return (unwrap<any[]>(res) ?? []).map(mapReservation);
 }
 
-// Not property-scoped: the backend resolves "the caller's primary property"
-// (ResolvePrimaryProperty) rather than taking a :propertyId — a hotelier is
-// assumed to be onboarding one property at a time.
+// Property-scoped: the checklist belongs to the listing on screen, so a hotelier
+// with several listings never sees (or submits) the wrong one's progress.
 function mapVerification(v: any): VerificationStatus {
   return {
     propertyId: v.property_id,
@@ -352,10 +351,12 @@ export async function getVerificationStatus(propertyId: string): Promise<Verific
       { key: 'policies', label: 'Policies configured (check-in/out, cancellation, house rules)', stage: 'policies', status: p?.houseRules ? 'approved' as const : 'in_progress' as const, required: false },
     ];
     return {
-      propertyId, propertyName: p?.name ?? '', overall: 'pending', goLiveEligible: false, checklist,
+      propertyId, propertyName: p?.name ?? '', overall: 'pending',
+      goLiveEligible: checklist.every((c) => !c.required || c.status === 'approved'),
+      checklist,
     };
   }
-  const res = await api.get(`${BASE}/verification`, { params: { property_id: propertyId } });
+  const res = await api.get(`${BASE}/properties/${propertyId}/verification`);
   return mapVerification(unwrap(res));
 }
 
@@ -364,7 +365,7 @@ export async function submitForReview(propertyId: string): Promise<VerificationS
     await delay();
     throw new Error('Submitting for review is unavailable in fixture mode — switch to the live backend.');
   }
-  const res = await api.post(`${BASE}/verification/submit`, {}, { params: { property_id: propertyId } });
+  const res = await api.post(`${BASE}/properties/${propertyId}/verification/submit`, {});
   return mapVerification(unwrap(res));
 }
 

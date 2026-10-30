@@ -67,32 +67,6 @@ export const DOC_TYPES: { value: DocType; label: string }[] = [
   { value: 'VOTERS_CARD',     label: "Voter's Card" },
 ];
 
-/** Whether a given ID type needs a "why we need this" BVN/NIN-length hint. */
-export const ID_NUMBER_HELP: Record<IdType, { placeholder: string; why: string; length?: number }> = {
-  BVN: {
-    placeholder: '11-digit BVN',
-    why: 'Your BVN lets us confirm your identity against bank records. We never see your bank balance or transactions.',
-    length: 11,
-  },
-  NIN: {
-    placeholder: '11-digit NIN',
-    why: 'Your NIN is matched against the national identity database to confirm your name and date of birth.',
-    length: 11,
-  },
-  PASSPORT: {
-    placeholder: 'Passport number',
-    why: 'We match your passport number against government records to confirm your identity.',
-  },
-  DRIVERS_LICENSE: {
-    placeholder: 'Licence number',
-    why: "We match your driver's licence against government records to confirm your identity.",
-  },
-  VOTERS_CARD: {
-    placeholder: 'VIN',
-    why: "We match your voter's card against INEC records to confirm your identity.",
-  },
-};
-
 /** The next tier a user can step up to from their current tier. */
 export function nextTier(current: KycTier): Exclude<KycTier, 0> | null {
   if (current >= 3) return null;

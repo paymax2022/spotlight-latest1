@@ -14,7 +14,7 @@ import type { AccountType } from '@/features/fx/types/fx.types';
 
 const STEPS = [
   { icon: ShieldCheck, label: 'Accept terms & data consents' },
-  { icon: IdCard, label: 'Verify your identity document' },
+  { icon: IdCard, label: 'Verify your ID number against the registry' },
   { icon: ScanFace, label: 'Take a quick selfie (liveness)' },
   { icon: FileCheck, label: 'Submit for review' },
 ];

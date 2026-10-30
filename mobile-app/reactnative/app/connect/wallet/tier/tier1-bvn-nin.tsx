@@ -9,7 +9,8 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import TextInputField from '@/components/TextInputField';
+import IdNumberField from '@/features/kycverify/components/IdNumberField';
+import { validateIdNumber } from '@/features/kycverify/idFormats';
 import CheckRow from '@/features/fx/components/CheckRow';
 import { CONSENT_VERSION } from '@/features/kycverify/constants';
 import { formatKobo } from '@/features/connect/constants/format';
@@ -20,14 +21,17 @@ export default function Tier1BvnNin() {
   const submit = useSubmitTier1();
   const [type, setType] = useState<'bvn' | 'nin'>('bvn');
   const [value, setValue] = useState('');
+  const [touched, setTouched] = useState(false);
   const [consent, setConsent] = useState(false);
 
-  const valid = /^\d{11}$/.test(value);
+  const idType = type === 'bvn' ? 'BVN' : 'NIN';
+  const validation = validateIdNumber(idType, value);
+  const valid = validation.ok;
 
   const onSubmit = () => {
     if (!valid || !consent) return;
     submit.mutate(
-      { identifier: value, identifierType: type, consentVersion: CONSENT_VERSION },
+      { identifier: validation.normalized, identifierType: type, consentVersion: CONSENT_VERSION },
       {
         onSuccess: (r) => {
           if (r.reviewState === 'pending') router.replace('/connect/wallet/tier/pending');
@@ -56,13 +60,11 @@ export default function Tier1BvnNin() {
           ))}
         </View>
 
-        <TextInputField
-          label={`${type.toUpperCase()} (11 digits)`}
+        <IdNumberField
+          idType={type === 'bvn' ? 'BVN' : 'NIN'}
           value={value}
-          onChangeText={(t) => setValue(t.replace(/[^0-9]/g, '').slice(0, 11))}
-          keyboardType="number-pad"
-          placeholder="00000000000"
-          inputMode="numeric"
+          onChangeText={(t) => { setTouched(true); setValue(t); }}
+          error={touched && value.length > 0 ? validation.error : undefined}
         />
 
         <View style={styles.consentCard}>

@@ -21,7 +21,7 @@ export default function VerificationPage() {
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Business & identity verification" subtitle="KYC for the property owner, business documents (CAC), and your Naira payout account. Required before go-live." action={<button onClick={load} style={btn()}>Refresh</button>} />
+      <PageHeader title="Business & identity verification" subtitle="KYC for the property owner, business documents (CAC), and your Naira payout account. Needed to receive payouts — it is not part of the go-live checklist." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <ExtranetTabs active="onboarding" />
       <PropertyScopeNote propertyName={biz?.legal_name ?? 'your property'} />
 

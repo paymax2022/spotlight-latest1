@@ -1281,6 +1281,11 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
         description: `Utility payment ${receipt}`,
         metadata: { utility_transaction_id: transactionId, category, biller: biller.code },
         tier0Allowance: UTILITY_TIER0_ALLOWANCE,
+        // Card path: this exact amount was charged at Paystack and collected in
+        // the step above. The tier limit governs wallet-balance spending, not
+        // externally verified card funds, so it must not block the spend for a
+        // Tier 0 account (that left the charge stranded in the wallet).
+        skipTierLimit: paymentSource === 'paystack',
       });
     } catch (debitError) {
       // Go-plane parity (backend/internal/utilitybills PayUtility → markFailed):

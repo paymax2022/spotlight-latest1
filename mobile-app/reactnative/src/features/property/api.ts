@@ -9,6 +9,7 @@ import { api } from '@/api/client';
 import type {
   ActiveContextRef,
   ContextEnvelope,
+  EstateMembership,
   RentPassport,
   StayGatePass,
   SwitchContextInput,
@@ -56,6 +57,15 @@ export async function getRentPassport(): Promise<RentPassport> {
   }
   const res = await api.get('/api/finance/property/rent-passport/me');
   return (res.data?.data ?? res.data) as RentPassport;
+}
+
+// Always live — no mock path on purpose. This is the signal both the estate and
+// visitor screens use to decide whether their features are enterable, and a
+// gate that can be handed a fixture envelope (USE_MOCK above) would unlock for
+// accounts that have no estate_residents row at all.
+export async function getEstateMembership(): Promise<EstateMembership> {
+  const res = await api.get('/api/v1/estate/membership');
+  return res.data as EstateMembership;
 }
 
 // Returns null when no pass has been auto-issued (live path: 404 → null).

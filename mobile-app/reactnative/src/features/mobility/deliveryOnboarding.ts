@@ -73,7 +73,68 @@ export function coverageAreaLabel(value: string, areas: AreaOption[]): string {
   return areas.find((a) => a.value.endsWith('/' + lga))?.label ?? value;
 }
 
+// Step 4 is identity-first: NIN and driver's licence are proven by a provider
+// data-match (no scan uploads), proof of address is the one uploaded file, and
+// the guarantor's signed document is issued AFTER onboarding. Vehicle papers
+// (insurance, roadworthiness) are not part of this gate.
+export interface IdentityDocRequirement {
+  docType: 'nin' | 'drivers_licence';
+  label: string;
+  hint: string;
+  placeholder: string;
+  /** NIN is exactly 11 digits; a licence number is 5–20 alphanumerics. */
+  validate: (value: string) => boolean;
+}
 
+export const NIN_REQUIREMENT: IdentityDocRequirement = {
+  docType: 'nin',
+  label: 'NIN',
+  hint: 'Your 11-digit National Identification Number',
+  placeholder: '12345678901',
+  validate: (v) => /^\d{11}$/.test(v.trim()),
+};
+
+export const LICENCE_REQUIREMENT: IdentityDocRequirement = {
+  docType: 'drivers_licence',
+  label: "Driver's Licence",
+  hint: 'The number on your driver’s licence',
+  placeholder: 'ABC123456789',
+  validate: (v) => /^[A-Za-z0-9/-]{5,20}$/.test(v.trim()),
+};
+
+/** A bicycle courier has no licence; every motorised driver needs both. */
+export function identityDocsFor(vehicleType: VehicleType): IdentityDocRequirement[] {
+  return vehicleType === 'bicycle' ? [NIN_REQUIREMENT] : [NIN_REQUIREMENT, LICENCE_REQUIREMENT];
+}
+
+export const PROOF_OF_ADDRESS_DOC = {
+  docType: 'proof_of_address' as DocType,
+  label: 'Proof of Address',
+  hint: 'Utility bill from the last 3 months',
+};
+
+export const GUARANTOR_RELATIONSHIPS = [
+  'Parent', 'Sibling', 'Spouse', 'Relative', 'Friend', 'Colleague', 'Employer', 'Other',
+];
+
+// approved = provider matched; submitted = provider was unavailable and ops will
+// review. Both let the driver continue — otherwise a provider outage would trap
+// them on a step they cannot influence.
+const IDENTITY_READY_STATUSES = new Set(['approved', 'submitted', 'verified', 'uploaded']);
+
+export function identityReady(status: string | undefined | null): boolean {
+  return !!status && IDENTITY_READY_STATUSES.has(status);
+}
+
+export function guarantorComplete(
+  g: { fullName?: string | null; phone?: string | null; relationship?: string | null } | null | undefined,
+): boolean {
+  return !!g && (g.fullName ?? '').trim().length >= 3 && (g.phone ?? '').trim().length >= 7 && !!g.relationship;
+}
+
+// The documents step still collects uploads against this set: the app has no
+// client call to the identity/guarantor endpoints yet, so the data-match model
+// above is not reachable from the UI.
 const DOCS_BY_VEHICLE: Record<VehicleType, DocType[]> = {
   bicycle: ['government_id', 'proof_of_address'],
   motorcycle: ['government_id', 'proof_of_address', 'drivers_licence'],
@@ -82,6 +143,22 @@ const DOCS_BY_VEHICLE: Record<VehicleType, DocType[]> = {
 
 export function requiredDocumentsFor(vehicleType: VehicleType): DocType[] {
   return DOCS_BY_VEHICLE[vehicleType] ?? DOCS_BY_VEHICLE.car;
+}
+
+/** What still stands between the driver and Submit, in the order shown. */
+export function missingOnboardingItems(
+  vehicleType: VehicleType,
+  docs: readonly { docType: string; status: string }[],
+  guarantor: { fullName?: string | null; phone?: string | null; relationship?: string | null } | null | undefined,
+): string[] {
+  const byType = new Map(docs.map((d) => [d.docType, d.status]));
+  const missing: string[] = [];
+  for (const req of identityDocsFor(vehicleType)) {
+    if (!identityReady(byType.get(req.docType))) missing.push(req.label);
+  }
+  if (!byType.has(PROOF_OF_ADDRESS_DOC.docType)) missing.push(PROOF_OF_ADDRESS_DOC.label);
+  if (!guarantorComplete(guarantor)) missing.push('Guarantor details');
+  return missing;
 }
 
 export function canContinueServicesStep(interests: string[], areas: string[]): boolean {

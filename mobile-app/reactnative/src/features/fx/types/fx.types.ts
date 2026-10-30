@@ -277,8 +277,6 @@ export interface KycIdentity {
   docType: IdDocType;
   idNumber: string;
   dateOfBirth: string;          // ISO date
-  frontUploaded: boolean;
-  backUploaded: boolean;
   selfieUploaded: boolean;
 }
 

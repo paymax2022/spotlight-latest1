@@ -41,7 +41,7 @@ func NewHandler(svc *Service) *Handler {
 var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusForbidden, ErrConsentRequired, ErrForbidden),
 	httperr.R(http.StatusBadRequest, ErrInvalidTier, ErrInvalidRequest),
-	httperr.R(http.StatusServiceUnavailable, ErrNoProvider, ErrProviderUnavailable),
+	httperr.R(http.StatusServiceUnavailable, ErrNoProvider, ErrProviderTimeout, ErrProviderUnavailable),
 	httperr.R(http.StatusNotFound, ErrNotFound),
 	httperr.R(http.StatusConflict, ErrIllegalTransition, ErrIDTypeAlreadyUsed),
 )
@@ -53,6 +53,8 @@ func writeErr(c *gin.Context, err error) {
 		body["code"] = "consent_required"
 	case errors.Is(err, ErrNoProvider):
 		body["code"] = "no_provider"
+	case errors.Is(err, ErrProviderTimeout):
+		body["code"] = "provider_timeout"
 	case errors.Is(err, ErrIDTypeAlreadyUsed):
 		body["code"] = "id_type_already_used"
 	}

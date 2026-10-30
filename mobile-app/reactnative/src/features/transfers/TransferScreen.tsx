@@ -6,7 +6,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
-  Send,
   User,
   BadgeCheck,
   Building2,
@@ -20,6 +19,7 @@ import SegmentedControl from '@/components/SegmentedControl';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 import {
   resolvePaymaxRecipient,
@@ -373,9 +373,9 @@ export default function TransferScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Send Money</Text>
-        <View style={styles.iconButton}>
-          <Send size={20} color={Colors.primary} strokeWidth={2.2} />
-        </View>
+        {/* Inline mounting registers this header, which suppresses HomeMenuHost's
+            floating ☰ — otherwise it lands at 52pt, under this 64pt bar. */}
+        <HomeMenuButton />
       </View>
 
       {step === 'form' && (
@@ -924,7 +924,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     paddingHorizontal: Spacing.containerMargin,
     paddingTop: Spacing.md,
-    paddingBottom: Platform.OS === 'ios' ? 32 : Spacing.lg,
+    // The services tab bar sits under this CTA and already clears the home
+    // indicator, so the old 32pt iOS-only inset just left a gap above it.
+    paddingBottom: Spacing.md,
     backgroundColor: 'rgba(248,249,255,0.96)',
     borderTopWidth: 1,
     borderTopColor: Colors.surfaceContainerHigh,

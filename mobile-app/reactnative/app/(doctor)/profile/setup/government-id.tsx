@@ -8,13 +8,26 @@ import { Typography } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
-import TextInputField from '@/components/TextInputField';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, WizardProgress } from '@/features/doctor/components';
 import { useDocumentSlots, useProfileDraft, useSaveProfileDraft } from '@/features/doctor/hooks';
 import { ID_TYPE_OPTIONS } from '@/features/doctor/constants';
 import { checkIdNumber, createSession, postConsent } from '@/features/kycverify/api';
-import type { VerificationCheck } from '@/features/kycverify/types';
+import { CONSENT_VERSION } from '@/features/kycverify/constants';
+import { cleanProviderReason } from '@/features/kycverify/providerReason';
+import { ID_FORMATS, validateIdNumber } from '@/features/kycverify/idFormats';
+import IdNumberField from '@/features/kycverify/components/IdNumberField';
+import DojahRequirement from '@/features/kycverify/components/DojahRequirement';
+import type { IdType, VerificationCheck } from '@/features/kycverify/types';
+
+// The doctor wizard keys its options by its own slugs; the KYC gateway and
+// Dojah's routes are keyed by IdType.
+const ID_TYPE_BY_OPTION: Record<string, IdType> = {
+  nin: 'NIN',
+  drivers: 'DRIVERS_LICENSE',
+  passport: 'PASSPORT',
+  voters_card: 'VOTERS_CARD',
+};
 
 export default function GovernmentIdScreen() {
   const { data: slots, isLoading, isError, refetch } = useDocumentSlots();
@@ -29,12 +42,12 @@ export default function GovernmentIdScreen() {
   // DISPLAYED for the user to affirm, and Continue is that affirmation.
   const [verified, setVerified] = useState<VerificationCheck | null>(null);
 
-  const handleVerify = async () => {
-    if (!idType || !idNumber.trim()) return;
+  const idTypeKey = idType ? ID_TYPE_BY_OPTION[idType] : undefined;
+  const validation = idTypeKey ? validateIdNumber(idTypeKey, idNumber) : { ok: false, normalized: idNumber, error: undefined };
 
-    const cleanId = idNumber.replace(/\D/g, '');
-    if (cleanId.length !== 11) {
-      setError('ID number must be exactly 11 digits.');
+  const handleVerify = async () => {
+    if (!idTypeKey || !validation.ok) {
+      if (idTypeKey) setError(validation.error ?? 'Enter your ID number first.');
       return;
     }
 
@@ -46,13 +59,13 @@ export default function GovernmentIdScreen() {
       const session = await createSession(1);
 
       // 2. Record mandatory NDPA/CBN consent before running checks
-      await postConsent('kyc-data-processing', '1.0');
+      await postConsent('kyc-data-processing', CONSENT_VERSION);
 
       // 3. Run the ID number check against that session
       const check = await checkIdNumber({
         sessionId: session.id,
-        idType: idType as any,
-        idNumber: cleanId,
+        idType: idTypeKey,
+        idNumber: validation.normalized,
       });
 
       if (check.status === 'PASSED') {
@@ -60,7 +73,7 @@ export default function GovernmentIdScreen() {
       } else if (check.status === 'PENDING' || check.status === 'REVIEW') {
         setError('Verification is still processing. Please try again in a moment.');
       } else {
-        setError(check.reason || 'We could not match this ID number. Check the number and try again.');
+        setError(cleanProviderReason(check.reason) ?? 'We could not match this ID number. Check the number and try again.');
       }
     } catch (e: any) {
       setError(e.message || 'Verification failed. Please check your ID number.');
@@ -118,17 +131,19 @@ export default function GovernmentIdScreen() {
             placeholder="Select ID type"
             value={ID_TYPE_OPTIONS.find((o) => o.value === idType)?.label}
             options={ID_TYPE_OPTIONS.map((o) => o.label)}
-            onChange={(label) => { setIdType(ID_TYPE_OPTIONS.find((o) => o.label === label)?.value); setVerified(null); }}
+            onChange={(label) => { setIdType(ID_TYPE_OPTIONS.find((o) => o.label === label)?.value); setIdNumber(''); setVerified(null); setError(undefined); }}
             searchable={false}
           />
-          <TextInputField
-            label="ID number"
-            placeholder="Enter your 11-digit ID number"
-            value={idNumber}
-            onChangeText={(text) => { setIdNumber(text.replace(/\D/g, '')); setVerified(null); }}
-            keyboardType="number-pad"
-            maxLength={11}
-          />
+          {idTypeKey ? (
+            <>
+              <IdNumberField
+                idType={idTypeKey}
+                value={idNumber}
+                onChangeText={(text) => { setIdNumber(text); setVerified(null); setError(undefined); }}
+              />
+              <DojahRequirement idType={idTypeKey} idNumber={validation.normalized} />
+            </>
+          ) : null}
           {error && <Text style={styles.error}>{error}</Text>}
           {verified?.status === 'PASSED' ? (
             <View style={styles.matchCard}>
@@ -153,6 +168,7 @@ export default function GovernmentIdScreen() {
               label={verifying ? 'Verifying...' : 'Verify'}
               onPress={handleVerify}
               loading={verifying}
+              disabled={!validation.ok}
               variant="secondary"
               style={styles.verifyBtn}
             />

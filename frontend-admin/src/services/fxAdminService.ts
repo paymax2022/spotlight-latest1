@@ -1,16 +1,13 @@
-// Mock-backed. No backend endpoints exist yet for this console's surface —
-// /api/fx/admin/... is not registered anywhere in the Go service (verified by
-// grep). The closest real mount is /api/finance/admin/fx (see
-// backend/internal/app/finance_routes.go), and even that only serves the FX
-// markup-rate console (/markup, /markup/audit) — a narrower, unrelated surface
-// from this file's overview/transactions/routing/providers/etc. adminBase()
-// below points at that real group anyway, because it is the true root this
-// backend has not built yet still 404s, same as before, and gets there via a
-// route the backend actually owns instead of one that never existed. Shaped
-// after crowdfundingAdminService / fintechService so that once the admin
-// only change needed — but until then every mutation below refuses honestly
-// rather than reporting a success it did not perform. All money is integer
-// minor units.
+// Mock-backed EXCEPT for the overview. The overview has a real backend
+// (GET /api/finance/admin/fx/overview, RBAC finance.admin.fx_ops) and is
+// deliberately NOT mock-gated: fabricated GMV/margin on a money screen is
+// indistinguishable from real figures, so that page fails loud instead of
+// inventing numbers. Every other surface below still has no Go backend
+// (/api/fx/admin/... is not registered anywhere; the closest real mount is
+// /api/finance/admin/fx). Shaped after crowdfundingAdminService / fintechService
+// so that once the rest of the admin surface exists, only the fetch needs
+// changing — but until then every mutation below refuses honestly rather than
+// reporting a success it did not perform. All money is integer minor units.
 import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
@@ -19,6 +16,7 @@ import type {
   RoutingWeights, RouteSimResult, ProviderConfig, FloatBucket, RebalanceEvent,
   SpreadRule, ReconRun, ReconBreak, Provider,
   AdminCustomer, CustomerDetail, CustomerVerification,
+  FxKycSubmission, FxKycDecision,
   ScreeningAlert, CaseStatus,
   WebhookEndpoint, WebhookDelivery, ApiKey,
   FxAnalytics,
@@ -62,32 +60,6 @@ async function writeLive(url: string, init: RequestInit): Promise<{ ok: boolean 
   await reqLive(url, init);
   return { ok: true };
 }
-
-const OVERVIEW: FxOverview = {
-  gmvUsdCents: 4_280_500_00,
-  marginUsdCents: 48_900_00,
-  txCount24h: 1_284,
-  successRate: 98.4,
-  failureRate: 1.6,
-  reconBreaks: 3,
-  openIncidents: 1,
-  floatHealthPct: 86,
-  providerMix: [
-    { provider: 'eversend', share: 58, volumeUsdCents: 2_482_690_00 },
-    { provider: 'vertofx', share: 42, volumeUsdCents: 1_797_810_00 },
-  ],
-  topCorridors: [
-    { corridor: 'USD-NGN', volumeUsdCents: 1_920_000_00, marginUsdCents: 22_400_00, successRate: 98.9 },
-    { corridor: 'USD-XAF', volumeUsdCents: 640_000_00, marginUsdCents: 9_100_00, successRate: 97.2 },
-    { corridor: 'EUR-NGN', volumeUsdCents: 580_000_00, marginUsdCents: 7_300_00, successRate: 99.1 },
-    { corridor: 'USD-GHS', volumeUsdCents: 410_000_00, marginUsdCents: 5_200_00, successRate: 96.4 },
-    { corridor: 'GBP-NGN', volumeUsdCents: 320_000_00, marginUsdCents: 4_900_00, successRate: 98.0 },
-  ],
-  breakers: [
-    { provider: 'eversend', state: 'closed' },
-    { provider: 'vertofx', state: 'half_open' },
-  ],
-};
 
 const TXNS: FxTxDetail[] = [
   {
@@ -207,10 +179,47 @@ const RECON_BREAKS: ReconBreak[] = [
   { id: 'bk3', runId: 'run2', provider: 'vertofx', reference: 'PMX-CV-90044', type: 'timing', expectedMinor: 0, actualMinor: 0, currency: 'USD', status: 'open', createdAt: '2026-06-18T23:20:00Z' },
 ];
 
+// Live, always — see the file header. The backend answers with the standard
+// {data} envelope and an {error:{message}} envelope on failure.
 export async function getOverview(): Promise<FxOverview> {
-  if (USE_MOCK) { await delay(); return OVERVIEW; }
   const res = await fetch(`${adminBase()}/overview`, { headers: authHeaders() });
-  return res.json();
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = (body as { error?: { message?: string } } | null)?.error?.message;
+    throw new Error(message || `Overview request failed (${res.status})`);
+  }
+  return ((body as { data?: FxOverview } | null)?.data ?? body) as FxOverview;
+}
+
+/**
+ * LIVE: the FX KYC review queue. Reads the same orch_fx_customer_verifications
+ * rows the customer's submission writes, so a new application appears here
+ * immediately. Deliberately not mock-gated — inventing a queue would hide the
+ * very gap this page exists to close.
+ */
+export async function getKycQueue(status?: FxKycSubmission['status']): Promise<FxKycSubmission[]> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${adminBase()}/verifications${qs}`, { headers: authHeaders() });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = (body as { error?: { message?: string } } | null)?.error?.message;
+    throw new Error(message || `KYC queue request failed (${res.status})`);
+  }
+  return ((body as { data?: FxKycSubmission[] } | null)?.data ?? []) as FxKycSubmission[];
+}
+
+/** Approve or reject one submission. A rejection must carry the reason the customer will see. */
+export async function decideKyc(customerId: string, decision: FxKycDecision, reason?: string): Promise<void> {
+  const res = await fetch(`${adminBase()}/verifications/${encodeURIComponent(customerId)}/decision`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ status: decision, reason: reason ?? '' }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = (body as { error?: { message?: string } } | null)?.error?.message;
+    throw new Error(message || `KYC decision failed (${res.status})`);
+  }
 }
 
 export async function getTransactions(filter?: FxTxFilter): Promise<FxTxSummary[]> {

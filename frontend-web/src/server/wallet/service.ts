@@ -201,6 +201,15 @@ export interface WalletMutationInput {
    * owns a purchase flow (bills) passes this; transfers and withdrawals never do.
    */
   tier0Allowance?: Tier0Allowance;
+  /**
+   * Skips the KYC tier limit for this debit. Only for funds that were charged
+   * externally and collected into the wallet in the same operation (e.g. a
+   * Paystack card charge spent immediately on a utility bill): the tier limit
+   * governs the user's own wallet balance, and applying it here rejects the
+   * card payment of every Tier 0 account even though the money never came from
+   * an unverified wallet.
+   */
+  skipTierLimit?: boolean;
 }
 
 export interface WalletMutationResult {
@@ -271,8 +280,13 @@ export async function debitWallet(
   }
 
   // Block 7: get the user's tier daily limit before touching the DB.
-  // enforceWalletLimit throws 403 for Tier 0 or exceeded daily cap.
-  const { dailyLimitKobo } = await enforceWalletLimit(userId, input.amountKobo, input.tier0Allowance);
+  // enforceWalletLimit throws 403 for Tier 0 or exceeded daily cap. Callers
+  // spending funds charged externally in this same operation opt out (see
+  // skipTierLimit): the RPC treats a NULL limit as unlimited.
+  let dailyLimitKobo: number | null = null;
+  if (!input.skipTierLimit) {
+    ({ dailyLimitKobo } = await enforceWalletLimit(userId, input.amountKobo, input.tier0Allowance));
+  }
 
   const accountId = await getOrCreateAccount(userId);
   await migrateLegacyMobileBalanceIfNeeded(userId, accountId);

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, StyleProp, ViewStyle } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, StyleProp, ViewStyle, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -49,13 +49,13 @@ const CUISINE_FILTERS = [
 type Cuisine = (typeof CUISINE_FILTERS)[number]['key'];
 
 /**
- * There is no restaurant photography pipeline (no image field on Restaurant,
- * no upload flow) — the discovery cards never had a photo to show. This
- * palette stands in for that: each restaurant gets a deterministic gradient
- * "cover" (same card always gets the same one, no flicker on reload) so the
- * list has the visual variety a photo grid would, without inventing images
- * that don't exist. A stable string hash, not Math.random — id order must
- * not affect the pick.
+ * Only some outlets have an uploaded storefront banner (merchant set-up is
+ * optional), and the ones that do send a signed banner_url — that image wins and
+ * the card shows the restaurant as it actually looks. This palette is the
+ * fallback for an outlet with no banner or logo: each gets a deterministic
+ * gradient (same card always gets the same one, no flicker on reload) so the
+ * list still has the visual variety a photo grid would. A stable string hash,
+ * not Math.random — id order must not affect the pick.
  */
 const COVER_GRADIENTS: [string, string][] = [
   ['#F97316', '#C2410C'], // tomato
@@ -106,6 +106,9 @@ function RestaurantCard({
   style?: StyleProp<ViewStyle>;
 }) {
   const [coverStart, coverEnd] = coverGradient(item.id);
+  // The owner's own storefront picture wins over the derived cuisine gradient.
+  // Wide cover → prefer the banner; fall back to the square logo, then the icon.
+  const coverUrl = item.bannerUrl || item.logoUrl || null;
   return (
     <Pressable
       onPress={onPress}
@@ -113,10 +116,20 @@ function RestaurantCard({
       style={({ pressed }) => [rc.card, shadow2, pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] }, !item.isOpen && { opacity: 0.7 }, style]}
       accessibilityRole="button"
     >
-      <LinearGradient colors={[coverStart, coverEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={rc.cover}>
-        <View style={rc.coverIconRing}>
-          <DynamicIcon name={item.icon} color={Colors.white} size={30} strokeWidth={1.6} />
-        </View>
+      <View style={rc.cover}>
+        <LinearGradient colors={[coverStart, coverEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+        {coverUrl ? (
+          <Image
+            source={{ uri: coverUrl }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            accessibilityIgnoresInvertColors
+          />
+        ) : (
+          <View style={rc.coverIconRing}>
+            <DynamicIcon name={item.icon} color={Colors.white} size={30} strokeWidth={1.6} />
+          </View>
+        )}
 
         <View style={rc.ratingBadge}>
           <Icons.Star size={11} color={Colors.gold} fill={Colors.gold} strokeWidth={0} />
@@ -153,7 +166,7 @@ function RestaurantCard({
             <Text style={rc.closedLabel}>Closed</Text>
           </View>
         ) : null}
-      </LinearGradient>
+      </View>
 
       <View style={rc.body}>
         <View style={rc.nameRow}>

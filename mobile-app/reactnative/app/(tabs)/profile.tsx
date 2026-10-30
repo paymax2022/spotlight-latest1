@@ -32,6 +32,8 @@ import {
 } from 'lucide-react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import TextInputField from '@/components/TextInputField';
+import IdNumberField from '@/features/kycverify/components/IdNumberField';
+import { validateIdNumber } from '@/features/kycverify/idFormats';
 import DatePickerField from '@/components/DatePickerField';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -363,8 +365,9 @@ export default function ProfileScreen() {
       setKycError('Save your date of birth before submitting KYC.');
       return;
     }
-    if (documentNumber.trim().length < 6) {
-      setKycError('Enter a valid document number (minimum 6 characters).');
+    const idCheck = validateIdNumber(documentType, documentNumber);
+    if (!idCheck.ok) {
+      setKycError(idCheck.error ?? 'Enter a valid document number.');
       return;
     }
     submitKycRequest.mutate();
@@ -648,17 +651,11 @@ export default function ProfileScreen() {
                       </View>
                     </>
                   )}
-                  <TextInputField
+                  <IdNumberField
+                    idType={documentType}
                     label={`${docLabels[documentType] || 'Document'} number`}
                     value={documentNumber}
                     onChangeText={setDocumentNumber}
-                    autoCapitalize="characters"
-                    placeholder={
-                      documentType === 'BVN' ? '11-digit BVN' :
-                      documentType === 'NIN' ? '11-digit NIN' :
-                      documentType === 'PASSPORT' ? 'Passport number' :
-                      'Licence number'
-                    }
                   />
                 </>
               );

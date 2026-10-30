@@ -125,9 +125,21 @@ func (h *Handler) RegisterAdmin(g *gin.RouterGroup, guard func(permission string
 	g.POST("/reservations/:id/cancel", guard("stays.admin.reservation"), h.AdminCancelReservation)
 }
 
-// GetVerificationStatus: GET /verification — the caller's go-live checklist.
+// routePropertyID is the property a go-live call names: the property-scoped
+// routes carry it as :propertyId, the account-level routes accept ?property_id
+// and otherwise fall back to the caller's primary property.
+func routePropertyID(c *gin.Context) string {
+	if id := c.Param("propertyId"); id != "" {
+		return id
+	}
+	return c.Query("property_id")
+}
+
+// GetVerificationStatus: GET /verification or GET /properties/:propertyId/verification —
+// the go-live checklist. A route that names a property is checked against the
+// caller's grants; the account-level route falls back to the primary property.
 func (h *Handler) GetVerificationStatus(c *gin.Context) {
-	out, err := h.svc.GetVerificationStatus(c.Request.Context(), ginutil.UserID(c), c.Query("property_id"))
+	out, err := h.svc.GetVerificationStatus(c.Request.Context(), ginutil.UserID(c), routePropertyID(c))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -135,9 +147,10 @@ func (h *Handler) GetVerificationStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
-// GetBusinessVerification: GET /verification/business — the caller's KYC record.
+// GetBusinessVerification: GET /verification/business or
+// GET /properties/:propertyId/verification/business — the property's KYC record.
 func (h *Handler) GetBusinessVerification(c *gin.Context) {
-	out, err := h.svc.GetBusinessVerification(c.Request.Context(), ginutil.UserID(c))
+	out, err := h.svc.GetBusinessVerification(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -145,11 +158,12 @@ func (h *Handler) GetBusinessVerification(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
-// SubmitForReview: POST /verification/submit — re-validates required checklist
-// items server-side (the frontend's own gate is convenience only) before moving
-// the record to 'submitted'.
+// SubmitForReview: POST /verification/submit or
+// POST /properties/:propertyId/verification/submit — re-validates required
+// checklist items server-side (the frontend's own gate is convenience only)
+// before moving the record to 'submitted'.
 func (h *Handler) SubmitForReview(c *gin.Context) {
-	out, err := h.svc.SubmitForReview(c.Request.Context(), ginutil.UserID(c), c.Query("property_id"))
+	out, err := h.svc.SubmitForReview(c.Request.Context(), ginutil.UserID(c), routePropertyID(c))
 	if err != nil {
 		if errors.Is(err, ErrVerificationIncomplete) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
@@ -244,21 +258,6 @@ func (r *Repository) GetKYB(ctx context.Context, propertyID string) (kyb, bool, 
 	return k, true, nil
 }
 
-// HasUpcomingAvailability reports whether the property has any open (allotment>0)
-// availability in the next 90 days — the go-live "rates & availability loaded" signal.
-func (r *Repository) HasUpcomingAvailability(ctx context.Context, propertyID string) (bool, error) {
-	var ok bool
-	err := r.db.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM public.stays_availability_day ad
-			JOIN public.stays_room_type rt ON rt.id = ad.room_type_id
-			WHERE rt.property_id = $1
-			  AND ad.date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '90 days'
-			  AND ad.allotment > 0
-		)`, propertyID).Scan(&ok)
-	return ok, err
-}
-
 // SubmitKYB moves the KYB record to 'submitted' (creating it if none exists yet).
 // A record already 'submitted' or 'approved' is left untouched (idempotent resubmit).
 func (r *Repository) SubmitKYB(ctx context.Context, propertyID string) error {
@@ -348,38 +347,40 @@ var (
 	ErrDecisionNoteRequired = errors.New("extranet: a note is required to reject or request changes")
 )
 
-// propertyFor picks the property a go-live call acts on. A requested property must
-// be one the caller holds an active grant on; with none requested, the caller's
-// primary property is used as before.
-func (s *Service) propertyFor(ctx context.Context, userID, requested string) (string, error) {
-	if requested == "" {
+// verificationProperty picks which property a verification call is about: the one
+// the route names (checked against the caller's grants, so hotelier A cannot read
+// or submit hotelier B's checklist), or, on the account-level routes, the caller's
+// primary property. A hotelier with several listings must never see one
+// property's checklist while managing another — that is what made Submit light up
+// on an incomplete listing.
+func (s *Service) verificationProperty(ctx context.Context, userID, propertyID string) (string, error) {
+	if propertyID == "" {
 		return s.repo.ResolvePrimaryProperty(ctx, userID)
 	}
-	if !s.authz.HasProperty(ctx, userID, requested) {
-		return "", ErrForbidden
+	if err := s.guard(ctx, userID, propertyID); err != nil {
+		return "", err
 	}
-	return requested, nil
+	return propertyID, nil
 }
 
-// GetVerificationStatus builds the go-live checklist for the caller's primary
-// property (routes here carry no :propertyId — onboarding is scoped to "my one
-// property in progress").
-func (s *Service) GetVerificationStatus(ctx context.Context, userID, requestedProperty string) (VerificationStatus, error) {
-	propertyID, err := s.propertyFor(ctx, userID, requestedProperty)
+// GetVerificationStatus builds the go-live checklist for the property on screen,
+// falling back to the caller's primary property when the route names none.
+func (s *Service) GetVerificationStatus(ctx context.Context, userID, propertyID string) (VerificationStatus, error) {
+	scoped, err := s.verificationProperty(ctx, userID, propertyID)
 	if err != nil {
 		return VerificationStatus{}, err
 	}
-	return s.buildVerificationStatus(ctx, propertyID)
+	return s.buildVerificationStatus(ctx, scoped)
 }
 
-// GetBusinessVerification returns the caller's business/KYC record (a zero-value,
+// GetBusinessVerification returns the property's business/KYC record (a zero-value,
 // all-pending record if none has been entered yet).
-func (s *Service) GetBusinessVerification(ctx context.Context, userID string) (BusinessVerification, error) {
-	propertyID, err := s.repo.ResolvePrimaryProperty(ctx, userID)
+func (s *Service) GetBusinessVerification(ctx context.Context, userID, propertyID string) (BusinessVerification, error) {
+	scoped, err := s.verificationProperty(ctx, userID, propertyID)
 	if err != nil {
 		return BusinessVerification{}, err
 	}
-	k, _, err := s.repo.GetKYB(ctx, propertyID)
+	k, _, err := s.repo.GetKYB(ctx, scoped)
 	if err != nil {
 		return BusinessVerification{}, err
 	}
@@ -387,19 +388,18 @@ func (s *Service) GetBusinessVerification(ctx context.Context, userID string) (B
 }
 
 // SubmitForReview validates the operationally-required checklist items (property
-// details, content, availability — everything the owner can self-complete) and, if
-// complete, moves the KYB record to 'submitted' for ops review. Business identity/
-// document verification is deliberately NOT gated here (there is no self-serve way
-// to enter it yet — see AdminDecideKYB) but DOES gate go_live_eligible, so a
-// property can be submitted for review without it while still failing closed on
-// actually going live. Re-validates independently of the frontend's own gate (the
-// client's "remaining === 0" check is convenience only).
-func (s *Service) SubmitForReview(ctx context.Context, userID, requestedProperty string) (VerificationStatus, error) {
-	propertyID, err := s.propertyFor(ctx, userID, requestedProperty)
+// details, content, photos — everything the owner can self-complete) and, if
+// complete, moves the KYB record to 'submitted' for ops review. Business
+// identity/document verification is not a host-facing checklist step any more:
+// AdminDecideKYB still records it, and it no longer gates go_live_eligible.
+// Re-validates independently of the frontend's own gate (the client's
+// "remaining === 0" check is convenience only).
+func (s *Service) SubmitForReview(ctx context.Context, userID, propertyID string) (VerificationStatus, error) {
+	scoped, err := s.verificationProperty(ctx, userID, propertyID)
 	if err != nil {
 		return VerificationStatus{}, err
 	}
-	vs, err := s.buildVerificationStatus(ctx, propertyID)
+	vs, err := s.buildVerificationStatus(ctx, scoped)
 	if err != nil {
 		return VerificationStatus{}, err
 	}
@@ -412,10 +412,10 @@ func (s *Service) SubmitForReview(ctx context.Context, userID, requestedProperty
 	if len(missing) > 0 {
 		return VerificationStatus{}, fmt.Errorf("%w: %s", ErrVerificationIncomplete, strings.Join(missing, "; "))
 	}
-	if err := s.repo.SubmitKYB(ctx, propertyID); err != nil {
+	if err := s.repo.SubmitKYB(ctx, scoped); err != nil {
 		return VerificationStatus{}, err
 	}
-	return s.buildVerificationStatus(ctx, propertyID)
+	return s.buildVerificationStatus(ctx, scoped)
 }
 
 // AdminDecideKYB is the ops review action (stays.admin.hotelier-gated, called from
@@ -469,13 +469,16 @@ func toBusinessVerification(k kyb) BusinessVerification {
 	}
 }
 
-// minPhotosForGoLive is the minimum number of photos required for a property
-// to go live. The checklist enforces this requirement.
+// minPhotosForGoLive is the cover-set floor a listing needs before it can be
+// submitted for review. Three is the number a host can always reach on a phone:
+// a cover, a room and one detail shot.
 const minPhotosForGoLive = 3
 
 // buildVerificationStatus computes the checklist from real signals: property
-// content fields, room types + rate plans, photos, policies, upcoming
-// availability, and the KYB record. Nothing here is faked.
+// content fields, room types + rate plans, photos, policies, and the KYB record.
+// Nothing here is faked. Availability is deliberately not a step: listing a room
+// type with a rate plan makes it sellable (see adapters/direct.go), so a host can
+// never be blocked on inventory they have no editor for.
 func (s *Service) buildVerificationStatus(ctx context.Context, propertyID string) (VerificationStatus, error) {
 	prop, err := s.repo.GetProperty(ctx, propertyID)
 	if err != nil {
@@ -526,6 +529,8 @@ func (s *Service) buildVerificationStatus(ctx context.Context, propertyID string
 		overall = k.Status
 	}
 
+	// Only the host-completable steps gate eligibility; publishing stays with ops
+	// moderation, which sets the property status directly.
 	goLiveEligible := true
 	for _, item := range checklist {
 		if item.Required && item.Status != VerifApproved {

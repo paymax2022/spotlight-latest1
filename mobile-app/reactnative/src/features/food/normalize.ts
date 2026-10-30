@@ -35,6 +35,10 @@ function pick(raw: Raw, ...keys: string[]): unknown {
 
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
 
+/** A string, or null when the server sent nothing usable (image refs are optional). */
+const nullableStr = (v: unknown): string | null =>
+  typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+
 const bool = (v: unknown, fallback: boolean): boolean => (typeof v === 'boolean' ? v : fallback);
 
 const num = (v: unknown, fallback = 0): number =>
@@ -103,6 +107,10 @@ export function mapRestaurant(input: unknown): Restaurant {
   return {
     id: str(pick(raw, 'id')),
     name: str(pick(raw, 'name')),
+    // The owner's storefront pictures. The server signs a stored object key into a
+    // viewable URL (or omits the field), so whatever arrives here is renderable.
+    bannerUrl: nullableStr(pick(raw, 'bannerUrl', 'banner_url')),
+    logoUrl: nullableStr(pick(raw, 'logoUrl', 'logo_url')),
     cuisine,
     cuisineRefs: mapCuisineRefs(pick(raw, 'cuisines')),
 

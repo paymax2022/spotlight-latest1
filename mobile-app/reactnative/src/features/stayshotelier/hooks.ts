@@ -10,6 +10,14 @@ import type {
 
 const KEY = 'stays-hotelier';
 
+// The go-live checklist is computed server-side from the very fields these
+// mutations change (photos, content, rates). Without this, saving
+// leaves the card showing its previous answer until the screen remounts — which
+// reads as "my details didn't save".
+function invalidateChecklist(qc: ReturnType<typeof useQueryClient>, propertyId: string) {
+  qc.invalidateQueries({ queryKey: [KEY, 'verification', propertyId] });
+}
+
 export function useMyProperties() {
   return useQuery({ queryKey: [KEY, 'mine'], queryFn: hotelier.myProperties, staleTime: 15_000 });
 }
@@ -43,7 +51,10 @@ export function useCreateRoomType(propertyId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateRoomTypeInput) => hotelier.createRoomType(propertyId, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'room-types', propertyId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'room-types', propertyId] });
+      invalidateChecklist(qc, propertyId);
+    },
   });
 }
 
@@ -59,7 +70,10 @@ export function useCreateRatePlan(propertyId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateRatePlanInput) => hotelier.createRatePlan(propertyId, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'rate-plans', propertyId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'rate-plans', propertyId] });
+      invalidateChecklist(qc, propertyId);
+    },
   });
 }
 
@@ -76,7 +90,10 @@ export function useUpdatePropertyContent(propertyId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: UpdatePropertyContentInput) => hotelier.updatePropertyContent(propertyId, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', propertyId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'detail', propertyId] });
+      invalidateChecklist(qc, propertyId);
+    },
   });
 }
 
@@ -84,7 +101,10 @@ export function useUpdatePropertyDetails(propertyId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: UpdatePropertyDetailsInput) => hotelier.updatePropertyDetails(propertyId, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', propertyId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'detail', propertyId] });
+      invalidateChecklist(qc, propertyId);
+    },
   });
 }
 
@@ -101,7 +121,10 @@ export function useUploadPhoto(propertyId: string) {
   return useMutation({
     mutationFn: (vars: { uri: string; mimeType: string; roomTypeId?: string; caption?: string }) =>
       hotelier.uploadPropertyPhoto(propertyId, { uri: vars.uri, mimeType: vars.mimeType }, { roomTypeId: vars.roomTypeId, caption: vars.caption }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'photos', propertyId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'photos', propertyId] });
+      invalidateChecklist(qc, propertyId);
+    },
   });
 }
 
@@ -117,7 +140,10 @@ export function useDeletePhoto(propertyId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (photoId: string) => hotelier.deletePhoto(propertyId, photoId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'photos', propertyId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'photos', propertyId] });
+      invalidateChecklist(qc, propertyId);
+    },
   });
 }
 

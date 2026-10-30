@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import {
   Plus, QrCode, History, ListChecks, ChevronRight, Bell, BarChart3, PartyPopper,
   Building2, ReceiptText, FileBarChart, Wrench, CalendarCheck, FolderOpen, Megaphone,
-  CalendarDays, Vote, Hammer, Briefcase, Sparkles, Siren, Settings,
+  CalendarDays, Vote, Hammer, Briefcase, Sparkles, Siren, Settings, Lock,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -15,6 +15,9 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
+import EstateAccessGate from '@/components/EstateAccessGate';
+import { useEstateMembership } from '@/features/property/hooks';
+import { hasEstateAccess } from '@/features/property/estateAccess';
 import ElectionHeaderBanner from '@/features/election/components/ElectionHeaderBanner';
 import AccessCodeCard from '@/features/visitor/components/AccessCodeCard';
 import VisitEventRow from '@/features/visitor/components/VisitEventRow';
@@ -50,7 +53,95 @@ const ESTATE_HUB = [
   { key: 'settings',      label: 'Estate Settings', icon: Settings,      route: '/estate-settings' },
 ] as const;
 
+/**
+ * Visitor access is estate-scoped: every /api/v1/visitor route resolves the
+ * caller's estate_residents row and 403s without one. Check that membership
+ * before mounting the dashboard so non-members never fire visitor queries that
+ * cannot succeed — and never see an error screen where a clear next step belongs.
+ */
 export default function VisitorDashboard() {
+  const { data, isLoading, isError, refetch } = useEstateMembership();
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Visitors" subtitle="Manage gate access" />
+        <StateView kind="loading" message="Checking estate access…" />
+      </SafeAreaView>
+    );
+  }
+  if (isError) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Visitors" subtitle="Manage gate access" />
+        <StateView
+          kind="error"
+          title="Couldn't check access"
+          message="Please try again."
+          actionLabel="Retry"
+          onAction={() => refetch()}
+        />
+      </SafeAreaView>
+    );
+  }
+  if (!hasEstateAccess(data)) return <VisitorLocked />;
+  return <VisitorDashboardInner />;
+}
+
+function VisitorLocked() {
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <ScreenHeader title="Visitors" subtitle="Manage gate access" />
+
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <EstateAccessGate />
+
+        {/* Service map stays visible but inert, so the shape of the module is
+            discoverable without offering actions that would 403. */}
+        <View style={styles.actionsRow}>
+          {QUICK_ACTIONS.map((a) => {
+            const Icon = a.icon;
+            return (
+              <View key={a.key} style={[styles.action, styles.disabled]}>
+                <View style={[styles.actionIcon, { backgroundColor: a.bg }]}>
+                  <Icon size={22} color={Colors.onSurfaceVariant} strokeWidth={1.8} />
+                </View>
+                <Text style={styles.actionLabel}>{a.label}</Text>
+              </View>
+            );
+          })}
+        </View>
+
+        <View style={[styles.cta, styles.disabled]}>
+          <View style={styles.ctaIcon}>
+            <Lock size={22} color={Colors.onPrimary} strokeWidth={1.8} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.ctaTitle}>Create an access code</Text>
+            <Text style={styles.ctaSub}>Available once your estate account is active</Text>
+          </View>
+        </View>
+
+        <SectionHeader title="Estate management" style={styles.section} />
+        <View style={styles.estateGrid}>
+          {ESTATE_HUB.map((it) => {
+            const Icon = it.icon;
+            return (
+              <View key={it.key} style={[styles.estateTile, styles.disabled]}>
+                <View style={styles.estateIcon}>
+                  <Icon size={20} color={Colors.onSurfaceVariant} strokeWidth={1.8} />
+                </View>
+                <Text style={styles.estateLabel} numberOfLines={2}>{it.label}</Text>
+              </View>
+            );
+          })}
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function VisitorDashboardInner() {
   const restriction = useRestrictionStatus();
   const codes = useAccessCodes();
   const history = useVisitHistory();
@@ -216,6 +307,7 @@ export default function VisitorDashboard() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.md },
+  disabled: { opacity: 0.45 },
   actionsRow: { flexDirection: 'row', gap: Spacing.md },
   action: { flex: 1, alignItems: 'center', gap: Spacing.xs, paddingVertical: Spacing.sm },
   pressed: { opacity: 0.8 },

@@ -18,6 +18,7 @@ type Handler struct {
 	cards CardStore         // FX virtual cards; nil → handlers fall back to stubs
 	coll  CollectionStore   // FX collections / virtual accounts; nil → handlers fall back to stubs
 	verif VerificationStore // FX customer KYC verification; nil → handlers fall back to stubs
+	ovw   *AdminOverviewSource // FX console overview reader; nil → overview reports 501
 }
 
 // NewHandler builds the orchestration HTTP handler.
@@ -46,6 +47,11 @@ func (h *Handler) WithCollections(s CollectionStore) *Handler { h.coll = s; retu
 // Returns the handler for chaining. When nil, the verification handlers fall back to
 // the contract-shaped stub (submissions are echoed but not persisted).
 func (h *Handler) WithVerification(s VerificationStore) *Handler { h.verif = s; return h }
+
+// WithAdminOverview attaches the read-only source for the FX console overview.
+// Returns the handler for chaining. When nil, AdminOverview answers 501 rather
+// than serving numbers it cannot compute.
+func (h *Handler) WithAdminOverview(s *AdminOverviewSource) *Handler { h.ovw = s; return h }
 
 func tier(c *gin.Context) string {
 	if t := c.GetString("customer_tier"); t != "" {

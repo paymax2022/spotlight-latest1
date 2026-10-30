@@ -189,6 +189,49 @@ describe('mapRestaurant — the offer badge', () => {
   });
 });
 
+describe('mapRestaurant — storefront images', () => {
+  // The server stores an R2 object key and signs it into a viewable URL for
+  // discovery/detail reads (store_images.go finishStoreImages). Whatever arrives
+  // is already renderable, so the mapper must carry it through untouched — and
+  // report a real `null` (not '') when the outlet has no picture, because
+  // <Image source={{uri: ''}}> warns and paints nothing.
+  it('carries the signed banner and logo URLs through', () => {
+    const r = mapRestaurant({
+      ...GO_ROW,
+      banner_url: 'https://cdn.example/banner.png?sig=abc',
+      logo_url: 'https://cdn.example/logo.png?sig=def',
+    });
+    assert.equal(r.bannerUrl, 'https://cdn.example/banner.png?sig=abc');
+    assert.equal(r.logoUrl, 'https://cdn.example/logo.png?sig=def');
+  });
+
+  it('accepts camelCase keys as well', () => {
+    const r = mapRestaurant({ ...GO_ROW, bannerUrl: 'https://cdn.example/b.png', logoUrl: 'https://cdn.example/l.png' });
+    assert.equal(r.bannerUrl, 'https://cdn.example/b.png');
+    assert.equal(r.logoUrl, 'https://cdn.example/l.png');
+  });
+
+  it('yields null when the restaurant has no stored image', () => {
+    const r = mapRestaurant(GO_ROW); // logo_url: null, no banner_url
+    assert.equal(r.bannerUrl, null);
+    assert.equal(r.logoUrl, null);
+
+    const blank = mapRestaurant({ ...GO_ROW, banner_url: '   ', logo_url: '' });
+    assert.equal(blank.bannerUrl, null, 'whitespace is not a URL');
+    assert.equal(blank.logoUrl, null, 'empty string is not a URL');
+  });
+
+  it('survives the detail body, which nests the restaurant', () => {
+    const d = mapRestaurantDetail({
+      ...GO_ROW,
+      restaurant: { ...GO_ROW, banner_url: 'https://cdn.example/b.png', logo_url: 'https://cdn.example/l.png' },
+      categories: [],
+    });
+    assert.equal(d.bannerUrl, 'https://cdn.example/b.png');
+    assert.equal(d.logoUrl, 'https://cdn.example/l.png');
+  });
+});
+
 describe('mapRestaurant — likes and featured placement', () => {
   // Mirrors backend/internal/restaurant/discovery_page.go: like_count is a live
   // COUNT(*) (always present, never optional), liked/is_featured are only ever

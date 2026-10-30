@@ -13,6 +13,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +71,43 @@ func TestSubmitCustomerRejectsEmptyBody(t *testing.T) {
 	r := honestyEngine(NewHandler(nil), "cust_A")
 	if w := doJSONReq(t, r, http.MethodPost, "/customers", `{}`, nil); w.Code != http.StatusBadRequest {
 		t.Fatalf("POST /customers {}: status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// Every consent is required and must be TRUE. An omitted flag is not consent:
+// it decodes as false and is refused, which is the only safe reading of a
+// checkbox the customer never ticked.
+func TestSubmitCustomerRequiresEveryConsent(t *testing.T) {
+	const identity = `"identity":{"docType":"nin","idNumber":"12345678901","dateOfBirth":"1990-01-01"}`
+	r := honestyEngine(NewHandler(nil), "cust_A")
+
+	cases := []struct {
+		name   string
+		body   string
+		param  string // "" means accepted
+	}{
+		{"all consents given", `{"accountType":"individual","consents":{"terms":true,"privacy":true,"fxDisclosure":true},` + identity + `}`, ""},
+		{"terms false", `{"accountType":"individual","consents":{"terms":false,"privacy":true,"fxDisclosure":true},` + identity + `}`, "consents.terms"},
+		{"privacy false", `{"accountType":"individual","consents":{"terms":true,"privacy":false,"fxDisclosure":true},` + identity + `}`, "consents.privacy"},
+		{"fx disclosure false", `{"accountType":"individual","consents":{"terms":true,"privacy":true,"fxDisclosure":false},` + identity + `}`, "consents.fxDisclosure"},
+		{"all consents omitted", `{"accountType":"individual","consents":{},` + identity + `}`, "consents.terms"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := doJSONReq(t, r, http.MethodPost, "/customers", tc.body, nil)
+			if tc.param == "" {
+				if w.Code != http.StatusOK {
+					t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+				}
+				return
+			}
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), `"param":"`+tc.param+`"`) {
+				t.Fatalf("expected param %q in body, got %s", tc.param, w.Body.String())
+			}
+		})
 	}
 }
 

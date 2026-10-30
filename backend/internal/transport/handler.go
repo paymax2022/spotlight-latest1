@@ -18,14 +18,16 @@ import (
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/platform/ws"
+	"spotlight/backend/internal/provider"
 )
 
 type Handler struct {
 	svc           *Service
 	tracker       *TripTracker
 	hub           *ws.Hub
-	presigner     *r2.Presigner // optional; nil/unconfigured disables presigned uploads
+	presigner     *r2.Presigner          // optional; nil/unconfigured disables presigned uploads
 	presignBucket string
+	idVerifier    provider.IdNumberPort // optional; nil disables NIN / licence data-match
 }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
@@ -511,6 +513,7 @@ const driverPresignTTL = 10 * time.Minute
 // transport document vocabulary so newer clients are not rejected.
 var driverDocTypes = map[string]bool{
 	// mobile DocType union
+	"nin":               true,
 	"drivers_licence":   true,
 	"government_id":     true,
 	"proof_of_address":  true,

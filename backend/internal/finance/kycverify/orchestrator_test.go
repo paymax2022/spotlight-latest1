@@ -133,3 +133,41 @@ func TestSessionTransitionGuards(t *testing.T) {
 		t.Error("TIER_VERIFIED is terminal for the target tier")
 	}
 }
+
+// A member who mistyped once must be able to recover on the SAME session. The
+// graph only expresses retry as TIER_FAILED → TIER_PENDING, so a re-run that now
+// passes resolves through that hop instead of jumping TIER_FAILED→TIER_VERIFIED
+// (which used to answer 409 illegal state transition forever).
+func TestRetryHopBefore(t *testing.T) {
+	cases := []struct {
+		from     SessionStatus
+		resolved SessionStatus
+		wantHop  SessionStatus
+		wantOK   bool
+	}{
+		{SessTierFailed, SessTierVerified, SessTierPending, true},
+		{SessRejected, SessTierVerified, SessTierPending, true},
+		// already one edge away — no intermediate write needed
+		{SessTierPending, SessTierVerified, "", false},
+		{SessNeedsReview, SessTierVerified, "", false},
+		{SessUnverified, SessTierVerified, "", false},
+		// a retry that still fails needs no hop (TIER_FAILED→TIER_FAILED is a no-op)
+		{SessTierFailed, SessTierFailed, "", false},
+		{SessTierFailed, SessNeedsReview, "", false},
+		// terminal sessions never move
+		{SessTierVerified, SessTierVerified, "", false},
+		{SessApproved, SessTierVerified, "", false},
+	}
+	for _, c := range cases {
+		hop, ok := retryHopBefore(c.from, c.resolved)
+		if ok != c.wantOK || hop != c.wantHop {
+			t.Errorf("retryHopBefore(%s, %s) = (%q,%v), want (%q,%v)", c.from, c.resolved, hop, ok, c.wantHop, c.wantOK)
+		}
+		if ok && !CanTransitionSession(c.from, hop) {
+			t.Errorf("hop %q from %s is not a legal edge", hop, c.from)
+		}
+		if ok && !CanTransitionSession(hop, c.resolved) {
+			t.Errorf("hop %s → %s is not a legal edge", hop, c.resolved)
+		}
+	}
+}

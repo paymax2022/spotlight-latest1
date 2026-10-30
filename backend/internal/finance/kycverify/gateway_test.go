@@ -158,3 +158,127 @@ func TestGateResult(t *testing.T) {
 		t.Errorf("non-terminal = %q, want PENDING", got)
 	}
 }
+
+// slowIDNumber blocks until the caller's context is cut off — a provider that is
+// up but never answers in time.
+type slowIDNumber struct {
+	name  string
+	delay time.Duration
+	calls int
+}
+
+func (f *slowIDNumber) Name() string { return f.name }
+func (f *slowIDNumber) VerifyIDNumber(ctx context.Context, _ provider.KycVerifyRequest) (provider.KycCheckResult, error) {
+	f.calls++
+	select {
+	case <-time.After(f.delay):
+		return provider.KycCheckResult{Status: provider.KycPassed, Terminal: true}, nil
+	case <-ctx.Done():
+		return provider.KycCheckResult{}, ctx.Err()
+	}
+}
+
+func withTestBudgets(t *testing.T, budget, hop time.Duration) {
+	t.Helper()
+	oldBudget, oldHop := kycGatewayBudget, kycHopTimeout
+	kycGatewayBudget, kycHopTimeout = budget, hop
+	t.Cleanup(func() { kycGatewayBudget, kycHopTimeout = oldBudget, oldHop })
+}
+
+// A provider that never answers is abandoned inside the hop slice, and the
+// failure is reported as a timeout rather than "no provider configured".
+func TestGateway_HopTimeoutBoundsSingleProvider(t *testing.T) {
+	withTestBudgets(t, 5*time.Second, 40*time.Millisecond)
+
+	reg := NewRegistry()
+	reg.register("dojah", &slowIDNumber{name: "dojah", delay: time.Hour})
+
+	gw := NewGateway(reg, idNumberTable("dojah"))
+	start := time.Now()
+	_, err := gw.Run(context.Background(), provider.KycIDNumber, provider.KycVerifyRequest{ClientRef: "t1"})
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrProviderTimeout) {
+		t.Errorf("want ErrProviderTimeout, got %v", err)
+	}
+	if elapsed > time.Second {
+		t.Errorf("walk took %s; the hop slice must cut it off at ~40ms", elapsed)
+	}
+}
+
+// One hanging provider must not strand the chain: the next hop still gets its
+// slice and its result wins.
+func TestGateway_FailsOverPastHangingProvider(t *testing.T) {
+	withTestBudgets(t, 5*time.Second, 40*time.Millisecond)
+
+	reg := NewRegistry()
+	reg.register("dojah", &slowIDNumber{name: "dojah", delay: time.Hour})
+	good := &fakeIDNumber{name: "youverify"}
+	reg.register("youverify", good)
+
+	gw := NewGateway(reg, idNumberTable("dojah", "youverify"))
+	res, err := gw.Run(context.Background(), provider.KycIDNumber, provider.KycVerifyRequest{ClientRef: "t2"})
+	if err != nil {
+		t.Fatalf("expected the second hop to answer, got %v", err)
+	}
+	if res.Provider != "youverify" {
+		t.Errorf("winner = %q, want youverify", res.Provider)
+	}
+	if good.calls != 1 {
+		t.Errorf("second provider calls = %d, want 1", good.calls)
+	}
+	if len(res.FailedOver) != 1 || res.FailedOver[0] != "dojah" {
+		t.Errorf("FailedOver = %v, want [dojah]", res.FailedOver)
+	}
+}
+
+// The whole walk is capped by the budget: a hop slice is truncated to whatever
+// time is left, and once the budget is gone the walk stops rather than calling
+// providers it can no longer give any time to.
+func TestGateway_TotalBudgetStopsTheWalk(t *testing.T) {
+	withTestBudgets(t, 30*time.Millisecond, 200*time.Millisecond)
+
+	reg := NewRegistry()
+	first := &slowIDNumber{name: "dojah", delay: time.Hour}
+	second := &slowIDNumber{name: "smileid", delay: time.Hour}
+	third := &slowIDNumber{name: "youverify", delay: time.Hour}
+	reg.register("dojah", first)
+	reg.register("smileid", second)
+	reg.register("youverify", third)
+
+	gw := NewGateway(reg, idNumberTable("dojah", "smileid", "youverify"))
+	start := time.Now()
+	_, err := gw.Run(context.Background(), provider.KycIDNumber, provider.KycVerifyRequest{ClientRef: "t3"})
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrProviderTimeout) {
+		t.Errorf("want ErrProviderTimeout, got %v", err)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("walk took %s, want under the 30ms budget", elapsed)
+	}
+	if first.calls != 1 {
+		t.Errorf("first hop calls = %d, want 1", first.calls)
+	}
+	if second.calls != 0 || third.calls != 0 {
+		t.Errorf("providers after the exhausted budget must not be called, got (%d,%d)", second.calls, third.calls)
+	}
+}
+
+// Plain adapter errors stay ErrNoProvider — only a deadline reads as a timeout.
+func TestGateway_ErrorFailoverIsNotATimeout(t *testing.T) {
+	withTestBudgets(t, 5*time.Second, 50*time.Millisecond)
+
+	reg := NewRegistry()
+	reg.register("dojah", &fakeIDNumber{name: "dojah", fail: true})
+	reg.register("youverify", &fakeIDNumber{name: "youverify", fail: true})
+
+	gw := NewGateway(reg, idNumberTable("dojah", "youverify"))
+	_, err := gw.Run(context.Background(), provider.KycIDNumber, provider.KycVerifyRequest{ClientRef: "t4"})
+	if !errors.Is(err, ErrNoProvider) {
+		t.Errorf("want ErrNoProvider, got %v", err)
+	}
+	if errors.Is(err, ErrProviderTimeout) {
+		t.Errorf("error failover must not be reported as a timeout: %v", err)
+	}
+}

@@ -9,11 +9,11 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
+import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import { alertAsync } from '@/lib/confirm';
-import AddressAutocompleteInput from '@/components/AddressAutocompleteInput';
 import { useCreateProperty } from '@/features/stayshotelier/hooks';
 import { updatePropertyDetails } from '@/features/stayshotelier/api';
-import { STATE_NAMES } from '@/data/nigeria';
+import { PROPERTY_CITIES } from '@/features/stayshotelier/cities';
 import { PROPERTY_TYPES, type PropertyTypeValue } from '@/features/stayshotelier/types';
 
 const TYPE_LABEL: Record<PropertyTypeValue, string> = {
@@ -30,34 +30,42 @@ export default function CreatePropertyScreen() {
   const [name, setName] = useState('');
   const [propertyType, setPropertyType] = useState<PropertyTypeValue>('shortlet');
   const [address, setAddress] = useState('');
-  // Coordinate from the map-picked address; saved right after the property exists.
-  const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
-  // Filled from the picked address (the provider's locality); editable, and
-  // optional, but it is what puts the listing into city search.
+  // The picked address; its coordinate is saved right after the property exists.
+  const [pin, setPin] = useState<SelectedAddress | null>(null);
+  // Chosen from the property city list; it is what puts the listing into city search.
   const [city, setCity] = useState('');
-  // Dropdown of Nigerian states. A city the provider returned that is not in the
-  // list is added, so an address picked outside it still shows its city.
-  const cityOptions = city && !STATE_NAMES.includes(city) ? [city, ...STATE_NAMES] : STATE_NAMES;
+  const [submitting, setSubmitting] = useState(false);
   const create = useCreateProperty();
 
-  const canSubmit = name.trim().length > 0 && address.trim().length > 0;
+  const canSubmit = name.trim().length > 0 && address.trim().length > 0 && city.length > 0;
 
-  const submit = () => {
-    if (!canSubmit) return;
-    create.mutate(
-      { name: name.trim(), propertyType, address: address.trim(), city: city.trim() || undefined },
-      {
-        onSuccess: async (created) => {
-          if (geo) {
-            await updatePropertyDetails(created.id, geo).catch(() =>
-              alertAsync({ title: 'Map pin not saved', message: 'Your property is listed. Set its map location from the property page.' }),
-            );
-          }
-          router.replace(`/stays/host/${created.id}/manage`);
-        },
-        onError: () => alertAsync({ title: 'Couldn’t list property', message: 'Check your connection and try again.' }),
-      },
-    );
+  // Create carries text only; the coordinate rides on the details PATCH, the same
+  // two-step the manage screen's Location editor uses. A pin that fails to upload
+  // must not throw away a listing the host already named, so it warns rather than
+  // rolls back.
+  const submit = async () => {
+    if (!canSubmit || submitting) return;
+    setSubmitting(true);
+    try {
+      const created = await create.mutateAsync({
+        name: name.trim(), propertyType, address: address.trim(), city,
+      });
+      if (pin) {
+        try {
+          await updatePropertyDetails(created.id, { lat: pin.lat, lng: pin.lng });
+        } catch {
+          await alertAsync({
+            title: 'Listing saved without a map pin',
+            message: 'The address is saved but the pin did not upload. Set it under Location in the next step.',
+          });
+        }
+      }
+      router.replace(`/stays/host/${created.id}/manage`);
+    } catch {
+      await alertAsync({ title: 'Couldn’t list property', message: 'Check your connection and try again.' });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -86,30 +94,36 @@ export default function CreatePropertyScreen() {
           <Text style={styles.label}>Address</Text>
           <AddressAutocompleteInput
             value={address}
-            onChangeText={(text) => { setAddress(text); setGeo(null); }}
-            onSelect={(picked) => {
-              setAddress(picked.label);
-              setGeo({ lat: picked.lat, lng: picked.lng });
-              setCity(picked.city ?? '');
-            }}
-            resolved={!!geo}
-            placeholder="Search the property address"
+            onChangeText={setAddress}
+            onSelect={setPin}
+            resolved={Boolean(pin)}
+            placeholder="12 Admiralty Way — start typing to search the map"
+            // In-flow suggestions: the city picker and the create button sit under
+            // this field, and a floating list would be painted over / un-tappable.
             inlineDropdown
+            // Recents are the customer's saved DELIVERY addresses; a property is
+            // not a place being delivered to.
             enableRecents={false}
+            // The pin decides which guests find this listing in "near me", so an
+            // invented offline coordinate is refused — text or a real pin instead.
             requireVerifiedPin
           />
         </View>
 
         <SelectField
-          label="City (optional)"
-          value={city}
-          options={cityOptions}
+          label="City"
+          placeholder="Select city"
+          value={city || undefined}
+          options={PROPERTY_CITIES}
           onChange={setCity}
-          placeholder="Filled from the address"
         />
 
-
-        <PrimaryButton label="Create property" onPress={submit} loading={create.isPending} disabled={!canSubmit} />
+        <PrimaryButton
+          label="Create property"
+          onPress={submit}
+          loading={submitting}
+          disabled={!canSubmit || submitting}
+        />
       </ScrollView>
     </SafeAreaView>
   );

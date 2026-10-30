@@ -240,9 +240,11 @@ export type VerificationStatus =
   | 'rejected'
   | 'suspended';
 
-export type DocType = 'drivers_licence' | 'government_id' | 'proof_of_address' | 'vehicle_insurance' | 'roadworthiness';
+export type DocType = 'nin' | 'drivers_licence' | 'government_id' | 'proof_of_address' | 'vehicle_insurance' | 'roadworthiness';
 
-export type DocStatus = 'pending' | 'uploaded' | 'verified' | 'rejected' | 'expired';
+// The server stores driver_documents.status as submitted | approved | rejected |
+// expired; the older client-side vocabulary is kept for stored drafts.
+export type DocStatus = 'pending' | 'uploaded' | 'verified' | 'submitted' | 'approved' | 'rejected' | 'expired';
 
 export interface DriverDocument {
   id: string;
@@ -250,6 +252,31 @@ export interface DriverDocument {
   fileUrl: string | null;
   status: DocStatus;
   expiryDate: string | null;
+}
+
+/** Outcome of a NIN / driver's licence data-match. */
+export interface DriverIdentityCheck {
+  docType: DocType;
+  status: DocStatus;
+  verified: boolean;
+  reason?: string;
+  matchedName?: string;
+}
+
+/**
+ * The driver's guarantor. Onboarding captures the details; the guarantee
+ * document itself is issued to this person after the driver is onboarded and is
+ * signed offline, so `documentStatus` starts at `pending_issue`.
+ */
+export interface Guarantor {
+  id: string;
+  fullName: string;
+  phone: string;
+  email?: string | null;
+  relationship: string;
+  documentStatus: string;
+  signedDocumentUrl?: string | null;
+  createdAt: string;
 }
 
 export type CommissionTier = 'standard' | 'silver' | 'gold' | 'platinum';
@@ -272,6 +299,7 @@ export interface DriverProfile {
   serviceCategories: ServiceType[];
   commission: CommissionInfo;
   documents: DriverDocument[];
+  guarantor?: Guarantor | null;
   vehicle: Vehicle | null;
   rating: number;
   serviceInterests?: string[];

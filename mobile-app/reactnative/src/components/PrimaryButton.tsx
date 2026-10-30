@@ -24,6 +24,8 @@ export default function PrimaryButton({ label, onPress, variant = 'primary', loa
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: Boolean(disabled || loading) }}
       style={({ pressed }) => [
         styles.base,
         isPrimary   && styles.primary,

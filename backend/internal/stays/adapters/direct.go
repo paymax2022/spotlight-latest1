@@ -32,7 +32,11 @@ import (
 // it, sees the updated sold count and is correctly rejected. The Book/Cancel legs
 // are idempotent via the public.stays_availability_decrement ledger (one row per
 // supplier_ref) so a retried Book never double-decrements and a retried Cancel
-// never double-releases.
+// never double-releases. A night with no stays_availability_day cell is open at
+// the room type's full unit count — publishing a listing is what makes it
+// sellable, so only a booking, an ARI push or an explicit stop-sell closes a
+// date. The host console has no per-date inventory editor, so requiring opened
+// calendar rows would make a self-listed property unsellable forever.
 type DirectInventoryAdapter struct {
 	db     *pgxpool.Pool
 	photos PhotoReadPresigner // optional; nil ⇒ GetContent returns no photo URLs
@@ -60,11 +64,12 @@ func (a *DirectInventoryAdapter) WithPhotoPresigner(p PhotoReadPresigner) *Direc
 	return a
 }
 
-// ErrOversellBlocked is returned when the requested rooms exceed remaining
-// allotment (allotment - sold) on any night, a night is stop-sell, or no
-// availability row exists for a night. Checked under a row lock — the
-// oversell-impossible invariant (PRD §9). The reservation saga maps this to an
-// auto-release (release the hold, NO debit).
+// ErrOversellBlocked is returned when the requested rooms exceed the remaining
+// allotment (allotment - sold) on any night, or that night is stop-sell. An
+// unlisted night counts its room type's unit count as allotment, so this fires
+// once those units are sold out — never merely because no calendar row exists.
+// Checked under a row lock — the oversell-impossible invariant (PRD §9). The
+// reservation saga maps this to an auto-release (release the hold, NO debit).
 var ErrOversellBlocked = errors.New("direct: OVERSELL_BLOCKED")
 
 // bookTokenPrefix and bookTokenVersion frame the availability context the direct
@@ -131,8 +136,11 @@ func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchR
 		  AND ($5 <= 0 OR rt.occupancy >= $5)
 		  AND ($3::date IS NULL OR NOT EXISTS (
 		    SELECT 1 FROM generate_series($3::date, ($4::date - 1), interval '1 day') AS n
-		    LEFT JOIN public.stays_availability_day ad ON ad.room_type_id = rt.id AND ad.date = n
-		    WHERE NOT (NOT COALESCE(ad.stop_sell, false) AND COALESCE(ad.allotment, rt.units) - COALESCE(ad.sold, 0) >= $2)))
+		    WHERE COALESCE(
+		      (SELECT CASE WHEN ad.stop_sell THEN -1 ELSE ad.allotment - ad.sold END
+		         FROM public.stays_availability_day ad
+		        WHERE ad.room_type_id = rt.id AND ad.date = n),
+		      GREATEST(rt.units, 0)) < $2))
 		ORDER BY rp.base_sell_rate_kobo ASC
 		LIMIT 200`
 	var ci, co any
@@ -676,12 +684,19 @@ func (a *DirectInventoryAdapter) applyARI(ctx context.Context, ev gateway.ARIEve
 
 // checkAvailability row-locks every stay night for the room type and reports
 // whether EVERY night has (allotment - sold) >= rooms and is not stop-sell. It does
-// NOT decrement (hold-only prebook check). A night with no availability row is open at the room type's units;
-// a row is written only once the night is booked or the host changes it. The FOR UPDATE lock is released when the tx commits.
+// NOT decrement (hold-only prebook check); the FOR UPDATE lock is released when the
+// tx rolls back. A night with no calendar cell is open at the room type's unit
+// count — the same implicit allotment commitDecrement materialises — so an
+// unlisted date never blocks a booking on inventory nobody opened.
 func (a *DirectInventoryAdapter) checkAvailability(ctx context.Context, roomTypeID string, checkIn, checkOut time.Time, rooms int) (bool, error) {
 	nights := nightsBetween(checkIn, checkOut)
 	if len(nights) == 0 {
 		return false, nil
+	}
+	// An unknown room type has no implicit allotment, so it stays unbookable.
+	units, err := a.roomUnits(ctx, roomTypeID)
+	if err != nil {
+		return false, err
 	}
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
@@ -689,10 +704,6 @@ func (a *DirectInventoryAdapter) checkAvailability(ctx context.Context, roomType
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var units int
-	if err := tx.QueryRow(ctx, `SELECT units FROM public.stays_room_type WHERE id = $1`, roomTypeID).Scan(&units); err != nil {
-		return false, fmt.Errorf("direct: room units: %w", err)
-	}
 	for _, n := range nights { // ascending date order → deterministic lock order
 		var allotment, sold int
 		var stop bool
@@ -702,11 +713,13 @@ func (a *DirectInventoryAdapter) checkAvailability(ctx context.Context, roomType
 			WHERE room_type_id = $1 AND date = $2::date
 			FOR UPDATE`, roomTypeID, n).Scan(&allotment, &sold, &stop)
 		if err != nil {
-			if !errors.Is(err, pgx.ErrNoRows) {
-				return false, fmt.Errorf("direct: lock availability: %w", err)
+			if errors.Is(err, pgx.ErrNoRows) {
+				if units < rooms {
+					return false, nil // more rooms than the room type has units
+				}
+				continue
 			}
-			// A night with no row has never been booked or closed: it is open at the room type's units.
-			allotment, sold, stop = units, 0, false
+			return false, fmt.Errorf("direct: lock availability: %w", err)
 		}
 		if stop || allotment-sold < rooms {
 			return false, nil
@@ -716,12 +729,28 @@ func (a *DirectInventoryAdapter) checkAvailability(ctx context.Context, roomType
 	return true, nil
 }
 
+// roomUnits is what a night with no calendar cell is worth: the room type's unit
+// count, floored at zero.
+func (a *DirectInventoryAdapter) roomUnits(ctx context.Context, roomTypeID string) (int, error) {
+	var units int
+	err := a.db.QueryRow(ctx, `
+		SELECT GREATEST(units, 0) FROM public.stays_room_type WHERE id = $1`, roomTypeID).Scan(&units)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("direct: read room units: %w", err)
+	}
+	return units, nil
+}
+
 // commitDecrement performs the oversell-impossible book leg: within one tx it
-// row-locks every stay night, validates headroom under the lock, increments sold by
-// rooms on each night, and records a stays_availability_decrement ledger row for
-// idempotency. If the supplier_ref already has a committed decrement row, it is a
-// no-op (safe Book replay). Any night without headroom → ErrOversellBlocked (the
-// whole tx rolls back; no partial decrement).
+// opens every unlisted stay night at the room type's unit count, row-locks every
+// night, validates headroom under the lock, increments sold by rooms on each
+// night, and records a stays_availability_decrement ledger row for idempotency. If
+// the supplier_ref already has a committed decrement row, it is a no-op (safe Book
+// replay). Any night without headroom → ErrOversellBlocked (the whole tx rolls
+// back; no partial decrement).
 func (a *DirectInventoryAdapter) commitDecrement(ctx context.Context, supplierRef, roomTypeID string, checkIn, checkOut time.Time, rooms int) error {
 	nights := nightsBetween(checkIn, checkOut)
 	if len(nights) == 0 {
@@ -754,15 +783,18 @@ func (a *DirectInventoryAdapter) commitDecrement(ctx context.Context, supplierRe
 		return tx.Commit(ctx)
 	}
 
-	// Write the default row for each night that has none yet, so the lock and the
-	// decrement below always find one. Nights that already have a row keep their own.
-	for _, n := range nights {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO public.stays_availability_day (room_type_id, date, allotment, sold, stop_sell)
-			SELECT $1::uuid, $2::date, units, 0, false FROM public.stays_room_type WHERE id = $1::uuid
-			ON CONFLICT (room_type_id, date) DO NOTHING`, roomTypeID, n); err != nil {
-			return fmt.Errorf("direct: default availability: %w", err)
-		}
+	// Open every unlisted night at the room type's unit count so the lock below has
+	// a cell to guard. Cells that already exist (ARI-pushed or earlier bookings) are
+	// left untouched by DO NOTHING, and the materialised row keeps sold accurate.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO public.stays_availability_day (room_type_id, date, allotment, sold, stop_sell)
+		SELECT rt.id, d::date, GREATEST(rt.units, 0), 0, FALSE
+		FROM public.stays_room_type rt
+		CROSS JOIN generate_series($2::date, ($3::date - 1), interval '1 day') AS d
+		WHERE rt.id = $1
+		ON CONFLICT (room_type_id, date) DO NOTHING`,
+		roomTypeID, checkIn.Format(dateLayout), checkOut.Format(dateLayout)); err != nil {
+		return fmt.Errorf("direct: open unlisted nights: %w", err)
 	}
 
 	// Lock + validate every night under FOR UPDATE before any write. Ascending date
@@ -777,6 +809,7 @@ func (a *DirectInventoryAdapter) commitDecrement(ctx context.Context, supplierRe
 			FOR UPDATE`, roomTypeID, n).Scan(&allotment, &sold, &stop)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
+				// The room type itself is gone — unlisted nights were just opened.
 				return fmt.Errorf("%w: no availability for %s on %s", ErrOversellBlocked, roomTypeID, n)
 			}
 			return fmt.Errorf("direct: lock availability: %w", err)
@@ -994,4 +1027,3 @@ func applyLongStayDiscount(total int64, nights, minNights, pct int) int64 {
 	}
 	return total - (total*int64(pct)+50)/100
 }
-

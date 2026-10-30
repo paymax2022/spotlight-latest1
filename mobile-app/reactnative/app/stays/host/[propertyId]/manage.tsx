@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import StateView from '@/components/StateView';
 import { alertAsync } from '@/lib/confirm';
+import { showToast } from '@/store/toastStore';
 import { useCurrentLocation } from '@/features/location/useCurrentLocation';
 import PhotoGrid from '@/features/stayshotelier/components/PhotoGrid';
 import DateRangeCalendar from '@/features/stays/components/DateRangeCalendar';
@@ -40,10 +41,12 @@ const STATUS_LABEL: Record<string, string> = {
   ACTIVE: 'Live — bookable now',
   SUSPENDED: 'Suspended',
 };
+const SUBMITTED_LABEL = 'Submitted — Paymax is reviewing your listing';
 
 export default function ManagePropertyScreen() {
   const { propertyId } = useLocalSearchParams<{ propertyId: string }>();
   const detail = usePropertyDetail(propertyId);
+  const verification = useVerificationStatus(propertyId);
   const roomTypes = useRoomTypes(propertyId);
   const ratePlans = useRatePlans(propertyId);
   const reservations = useHotelierReservations(propertyId);
@@ -61,6 +64,10 @@ export default function ManagePropertyScreen() {
     );
   }
   const property = detail.data;
+  // Submitting for review does not move stays_property off DRAFT — the submission lives on the KYB
+  // record — so the summary line reads the submission, not the listing status, or it calls a
+  // submitted listing a draft.
+  const submittedForReview = Boolean(verification.data?.submittedForReviewAt);
 
   return (
     <Shell>
@@ -69,7 +76,11 @@ export default function ManagePropertyScreen() {
         <Card>
           <Text style={styles.cardTitle}>{property.name}</Text>
           <Text style={styles.muted}>{property.propertyType} · {property.address}, {property.city}</Text>
-          <Text style={styles.statusLine}>{STATUS_LABEL[property.status] ?? property.status}</Text>
+          <Text style={styles.statusLine}>
+            {submittedForReview && property.status === 'DRAFT'
+              ? SUBMITTED_LABEL
+              : STATUS_LABEL[property.status] ?? property.status}
+          </Text>
         </Card>
 
         {/* Go-live checklist */}
@@ -266,14 +277,30 @@ function VerificationCard({ propertyId, propertyStatus }: { propertyId: string; 
   if (vs.isLoading) return <Card><Text style={styles.muted}>Loading checklist…</Text></Card>;
   if (vs.isError || !vs.data) return <Card><Text style={styles.muted}>Couldn't load your go-live checklist.</Text></Card>;
 
-  const requiredRemaining = vs.data.checklist.filter((c) => c.required && c.status !== 'approved');
+  // Submission is a fact about the KYB record, not the listing: the backend leaves stays_property on
+  // DRAFT when a host submits. Keying the button off the listing status alone leaves it enabled after
+  // a successful submit, and a second tap no-ops because SubmitKYB only moves pending/needs_changes.
   const submittedAt = vs.data.submittedForReviewAt ?? null;
-  const canSubmit = requiredRemaining.length === 0 && propertyStatus === 'DRAFT' && !submittedAt;
+  const submitted = submittedAt !== null;
+  const showSubmit = propertyStatus === 'DRAFT' && !submitted;
+
+  // go_live_eligible is the backend's own verdict on the required rows it just
+  // sent. The id check matters: a checklist that belongs to another listing must
+  // never enable Submit here, however green it looks.
+  const canSubmit = vs.data.propertyId === propertyId && vs.data.goLiveEligible;
 
   const submitForReview = () => {
     submit.mutate(undefined, {
       onError: (e) => alertAsync({ title: 'Could not submit', message: e instanceof Error ? e.message : 'Complete every required step first.' }),
-      onSuccess: () => alertAsync({ title: 'Submitted', message: 'Paymax will review your listing shortly.' }),
+      onSuccess: async () => {
+        // A 2xx is the request landing, not the record moving. Re-read the checklist and only claim
+        // success once the backend reports submitted_for_review_at.
+        const fresh = await vs.refetch();
+        const confirmed = Boolean(fresh.data?.submittedForReviewAt);
+        showToast(confirmed
+          ? { variant: 'success', title: 'Submitted', message: 'Paymax will review your listing shortly.' }
+          : { variant: 'error', title: 'Submission not confirmed', message: 'Paymax has no record of this submission yet. Please try again.' });
+      },
     });
   };
 
@@ -292,17 +319,27 @@ function VerificationCard({ propertyId, propertyStatus }: { propertyId: string; 
           </View>
         </View>
       ))}
-      {propertyStatus === 'DRAFT' && submittedAt ? (
-        <Text style={styles.muted}>
-          Submitted for review on {new Date(submittedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}. Paymax will review your listing shortly.
-        </Text>
-      ) : propertyStatus === 'DRAFT' ? (
+      {showSubmit ? (
         <PrimaryButton
           label={submit.isPending ? 'Submitting…' : 'Submit for review'}
           onPress={submitForReview}
           loading={submit.isPending}
           disabled={!canSubmit}
         />
+      ) : submitted && (propertyStatus === 'DRAFT' || propertyStatus === 'PENDING_REVIEW') ? (
+        <>
+          <PrimaryButton
+            label="Submitted"
+            onPress={() => {}}
+            disabled
+            style={styles.submittedButton}
+          />
+          <Text style={styles.muted}>
+            {submittedAt
+              ? `Sent for review on ${new Date(submittedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.`
+              : 'Sent for review.'} Paymax will check your listing shortly.
+          </Text>
+        </>
       ) : (
         <Text style={styles.muted}>{STATUS_LABEL[propertyStatus] ?? propertyStatus}</Text>
       )}
@@ -759,6 +796,9 @@ const styles = StyleSheet.create({
   sheetBody: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl },
   checkRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
   checkLabel: { color: Colors.onSurface, fontSize: 13.5, fontWeight: '600' as const },
+  // PrimaryButton dims a disabled button to 50% opacity; "Submitted" is a settled state, not an
+  // unavailable action, so it keeps full strength in the success colour.
+  submittedButton: { backgroundColor: Colors.teal, opacity: 1 },
   locationBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 },
   locationBtnText: { ...Typography.labelSm, color: Colors.primary, fontWeight: '600' as const },
   amenityGroup: { color: Colors.onSurfaceVariant, fontSize: 12, fontWeight: '700' as const, textTransform: 'uppercase', letterSpacing: 0.3 },

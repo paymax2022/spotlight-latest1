@@ -5,7 +5,8 @@
 // The KYC form no longer collects the holder's name or date of birth: the
 // provider (Dojah) returns the authoritative legal name + DOB from the NIN/BVN
 // lookup, and the backend persists those server-side. The client sends ONLY the
-// session id and the ID number.
+// session id and the ID number. Consent is NOT part of this body — it is the
+// separate POST /api/finance/kyc/consent row the service gates every check on.
 import type { IdType } from './types';
 
 export interface IdNumberCheckInput {
@@ -18,18 +19,10 @@ export function idNumberRequestBody(input: IdNumberCheckInput): {
   session_id: string;
   id_type: IdType;
   id_number: string;
-  consent: {
-    value: boolean;
-    description: string;
-  };
 } {
   return {
     session_id: input.sessionId,
     id_type: input.idType,
     id_number: input.idNumber,
-    consent: {
-      value: true,
-      description: 'The user has consented to this verification check.',
-    },
   };
 }

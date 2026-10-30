@@ -173,15 +173,11 @@ const VERIFICATION: VerificationStatus = {
   reviewed_at: iso(120),
   reviewer_note: 'All documents verified. Bank account confirmed via NIBSS name enquiry.',
   checklist: [
-    { key: 'signup', label: 'Hotelier account created (SSO → Hotelier capability)', stage: 'signup', status: 'approved', required: true },
-    { key: 'property', label: 'Property registered (name, type, address, geo)', stage: 'property', status: 'approved', required: true },
-    { key: 'kyc', label: 'Director identity verified (KYC)', stage: 'verification', status: 'approved', required: true },
-    { key: 'business_docs', label: 'CAC certificate & business docs uploaded', stage: 'verification', status: 'approved', required: true },
-    { key: 'bank', label: 'Bank / payout account verified (Naira)', stage: 'verification', status: 'approved', required: true },
-    { key: 'photos', label: 'At least 8 photos uploaded (cover set)', stage: 'content', status: 'approved', required: true },
-    { key: 'room_types', label: 'At least 1 room type with rate plan', stage: 'content', status: 'approved', required: true },
-    { key: 'policies', label: 'Policies configured (check-in/out, cancellation)', stage: 'policies', status: 'approved', required: true },
-    { key: 'rates', label: '90 days of availability & rates loaded', stage: 'go_live', status: 'approved', required: true },
+    { key: 'signup', label: 'Hotelier account created', stage: 'signup', status: 'approved', required: true },
+    { key: 'property', label: 'Property registered (name, type, address, city)', stage: 'property', status: 'approved', required: true },
+    { key: 'content', label: 'Property description and at least one room type with a rate plan', stage: 'content', status: 'approved', required: true },
+    { key: 'photos', label: 'At least 3 photos uploaded (cover set)', stage: 'content', status: 'approved', required: true },
+    { key: 'policies', label: 'Policies configured (check-in/out, cancellation, house rules)', stage: 'policies', status: 'approved', required: false },
   ],
 };
 
@@ -433,21 +429,22 @@ const SETTINGS: ExtranetSettings = {
 
 // Public API — mock-backed with live fallthrough
 
-// A · Onboarding & verification
+// A · Onboarding & verification — all three follow the listing this console is
+// acting on (activePropertyId), the same one its photo, rate-plan and calendar
+// writes target. /me/properties and the backend's primary-property fallback can
+// disagree about which property that is, so the checklist, the KYB record and the
+// submission all name it explicitly.
 export async function getVerificationStatus(): Promise<VerificationStatus> {
   if (USE_MOCK) { await delay(); return VERIFICATION; }
-  return getJson<VerificationStatus>('/verification');
+  return getJson<VerificationStatus>(`/properties/${await activePropertyId()}/verification`);
 }
 export async function getBusinessVerification(): Promise<BusinessVerification> {
   if (USE_MOCK) { await delay(); return BUSINESS_VERIFICATION; }
-  return getJson<BusinessVerification>('/verification/business');
+  return getJson<BusinessVerification>(`/properties/${await activePropertyId()}/verification/business`);
 }
 export async function submitForReview(): Promise<VerificationStatus> {
-  // No backend at all: there is no verification/submit route anywhere in
-  // backend/internal/stays/extranet (confirmed by grep) — not just missing
-  // property scoping like most of this file's other writes.
   if (USE_MOCK) throw new Error(`Submitting for review ${NOT_IN_FIXTURE_MODE}`);
-  return sendJson<VerificationStatus>('POST', '/verification/submit', {});
+  return sendJson<VerificationStatus>('POST', `/properties/${await activePropertyId()}/verification/submit`, {});
 }
 
 // Self-list a new property via POST /properties (no propertyId in the path —

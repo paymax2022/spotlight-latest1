@@ -136,12 +136,12 @@ export default function FxLayout() {
 }
 
 const styles = StyleSheet.create({
+  // The bar takes its own space below the Stack rather than overlaying it, as
+  // ModuleTabBar does for the other modules. Overlaid, it sat on top of every
+  // screen's bottom footer and hid the primary CTA (e.g. Start verification on
+  // /fx/kyc) with no way to scroll it clear.
   tabBar: {
     flexDirection: 'row',
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     height: Platform.OS === 'ios' ? 84 : 66,
     paddingBottom: Platform.OS === 'ios' ? 24 : 8,
     paddingTop: 8,

@@ -5,6 +5,7 @@
 import type {
   AccountType, KycConsents, KycIdentity, KybBusiness, DirectorUbo, IdDocType,
 } from '../types/fx.types';
+import { resetFxKycSession } from './fxKycSession';
 
 export interface KycDraft {
   accountType: AccountType;
@@ -23,8 +24,6 @@ function emptyDraft(): KycDraft {
       docType: 'nin' as IdDocType,
       idNumber: '',
       dateOfBirth: '',
-      frontUploaded: false,
-      backUploaded: false,
       selfieUploaded: false,
     },
     business: { legalName: '', rcNumber: '', businessType: '', country: 'Nigeria', address: '' },
@@ -38,4 +37,8 @@ export const kycDraft: { current: KycDraft } = { current: emptyDraft() };
 export function resetKycDraft(accountType: AccountType = 'individual') {
   kycDraft.current = emptyDraft();
   kycDraft.current.accountType = accountType;
+  // A fresh FX attempt gets a fresh verification session; the server keys checks
+  // to it, so a reused id would drag the previous attempt's consent/check history
+  // into the new run.
+  resetFxKycSession();
 }

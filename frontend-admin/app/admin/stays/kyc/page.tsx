@@ -58,13 +58,13 @@ export default function StaysKycPage() {
     <Page>
       <PageHeader
         title="Hotelier KYC & verification"
-        subtitle="Review business (KYB) verification for direct-rail hoteliers before they can go live and receive Naira payouts."
+        subtitle="Review business (KYB) verification for direct-rail hoteliers before they receive Naira payouts."
         actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="trust" />
 
       <DisclosureNote>
-        Approval gates go-live eligibility. RC numbers, director names and BVNs are masked here;
+        Approval gates payouts, not the go-live checklist. RC numbers, director names and BVNs are masked here;
         the hotelier&apos;s documents are the source of truth. Rejecting or requesting changes requires a reason.
       </DisclosureNote>
 

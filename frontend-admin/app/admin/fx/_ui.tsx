@@ -70,6 +70,7 @@ export function FxTabs({ active }: { active: string }) {
     { href: '/admin/fx/spread', label: 'Spread', key: 'spread' },
     { href: '/admin/fx/reconciliation', label: 'Reconciliation', key: 'reconciliation' },
     { href: '/admin/fx/customers', label: 'Customers', key: 'customers' },
+    { href: '/admin/fx/kyc', label: 'KYC queue', key: 'kyc' },
     { href: '/admin/fx/compliance', label: 'Compliance', key: 'compliance' },
     { href: '/admin/fx/webhooks', label: 'Webhooks', key: 'webhooks' },
     { href: '/admin/fx/analytics', label: 'Analytics', key: 'analytics' },

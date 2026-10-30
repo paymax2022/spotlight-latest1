@@ -94,7 +94,16 @@ function RestaurantCard({
       accessibilityRole="button"
     >
       <View style={[rc.iconBox, { backgroundColor: item.iconBg }]}>
-        <DynamicIcon name={item.icon} color={item.iconColor} size={26} />
+        {item.logoUrl || item.bannerUrl ? (
+          <Image
+            source={{ uri: (item.logoUrl ?? item.bannerUrl) as string }}
+            style={rc.storefrontImg}
+            resizeMode="cover"
+            accessibilityIgnoresInvertColors
+          />
+        ) : (
+          <DynamicIcon name={item.icon} color={item.iconColor} size={26} />
+        )}
       </View>
 
       <View style={rc.body}>
@@ -160,7 +169,9 @@ const rc = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+    overflow: 'hidden',
   },
+  storefrontImg: { width: '100%', height: '100%' },
   body:     { flex: 1, gap: 4 },
   nameRow:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flexWrap: 'wrap' },
   name:     { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },

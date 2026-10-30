@@ -22,7 +22,11 @@ export default function FxCustomersPage() {
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Customers (KYC/KYB)" subtitle={`${queue} awaiting verification`} action={<Button variant="outline" onClick={load}>Refresh</Button>} />
+      <PageHeader
+        title="Customers (KYC/KYB)"
+        subtitle={`${queue} awaiting verification — the table below is sample data; live submissions are in the KYC queue.`}
+        action={<div style={{ display: 'flex', gap: '0.4rem' }}><Link href="/admin/fx/kyc"><Button variant="primary">Open KYC queue →</Button></Link><Button variant="outline" onClick={load}>Refresh</Button></div>}
+      />
       <FxTabs active="customers" />
 
       <Card>

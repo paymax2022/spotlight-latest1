@@ -14,18 +14,25 @@ export interface CorridorVolumeRow {
   corridor: string;       // 'USD-NGN'
   volumeUsdCents: number;
   marginUsdCents: number;
-  successRate: number;    // 0-100
+  successRate: number | null; // null: no terminal rows on this corridor yet
 }
 
 export interface FxOverview {
   gmvUsdCents: number;            // 24h gross money moved (USD-equiv)
   marginUsdCents: number;         // spread captured (USD-equiv)
   txCount24h: number;
-  successRate: number;            // 0-100
-  failureRate: number;            // 0-100
-  reconBreaks: number;
-  openIncidents: number;
-  floatHealthPct: number;         // 0-100 aggregate
+  // Nullable: the backend reports null where it has no source rather than a
+  // fabricated 0, which on a money screen would read as "all clear".
+  successRate: number | null;     // 0-100, conversions + payouts with a terminal outcome
+  failureRate: number | null;     // 0-100
+  reconBreaks: number | null;     // null: reconciliation results are not persisted yet
+  openIncidents: number | null;   // null: no incident register
+  floatHealthPct: number | null;  // 0-100 aggregate
+  floatBuckets?: number;          // provider/currency float buckets behind the health figure
+  floatBelowLow?: number;         // buckets at/below their low-water mark
+  unpricedRows?: number;          // window rows excluded from USD totals (no USD rate)
+  windowHours?: number;
+  generatedAt?: string;           // ISO timestamp the figures were computed at
   providerMix: ProviderMixRow[];
   topCorridors: CorridorVolumeRow[];
   breakers: { provider: Provider; state: BreakerState }[];
@@ -189,6 +196,27 @@ export interface AdminCustomer {
 }
 
 export interface KybDoc { id: string; label: string; type: 'pdf' | 'image'; verified: boolean }
+
+/**
+ * One FX KYC submission in the live review queue
+ * (GET /api/finance/admin/fx/verifications). Mirrors orchestration.AdminVerificationRow.
+ */
+export interface FxKycSubmission {
+  customerId: string;
+  email?: string;
+  status: 'unstarted' | 'pending' | 'review' | 'approved' | 'rejected';
+  accountType: 'individual' | 'business';
+  tier: number;
+  docType?: string;
+  idNumber?: string;
+  /** Business legal name (business submissions only). */
+  legalName?: string;
+  submittedAt?: string | null;
+  reviewedAt?: string | null;
+  rejectionReason?: string | null;
+}
+
+export type FxKycDecision = 'approved' | 'rejected';
 
 export interface CustomerDetail extends AdminCustomer {
   rcNumber?: string;
