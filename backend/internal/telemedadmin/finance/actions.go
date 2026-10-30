@@ -24,9 +24,9 @@ import (
 const actionPrefix = "admin.finance."
 
 const (
-	ActionPayoutApprove   = actionPrefix + "payout.approve"
-	ActionPayoutHold      = actionPrefix + "payout.hold"
-	ActionDisputeResolve  = actionPrefix + "dispute.resolve"
+	ActionPayoutApprove    = actionPrefix + "payout.approve"
+	ActionPayoutHold       = actionPrefix + "payout.hold"
+	ActionDisputeResolve   = actionPrefix + "dispute.resolve"
 	ActionCommissionUpdate = actionPrefix + "commission.update"
 )
 
