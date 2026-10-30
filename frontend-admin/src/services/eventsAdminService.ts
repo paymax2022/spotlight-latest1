@@ -402,9 +402,10 @@ export async function listEventFraud(opts?: { status?: string; kind?: string; q?
   if (opts?.q) qs.set('q', opts.q);
   return getJson<EventFraudSignal[]>(`/fraud${qs.toString() ? `?${qs}` : ''}`);
 }
+// Live: backend/internal/top5events/admin_fraud.go derives signals on read and
+// records decisions append-only (event_fraud_reviews). Clear/block need a note;
+// block on a vendor self-charge also deactivates the vendor.
 export async function decideEventFraud(id: string, action: EventFraudAction, note?: string): Promise<EventFraudActionResult> {
-  // No backend at all: grepped backend/internal/top5events for "fraud" — zero
-  // matches. No fraud queue or action verb exists anywhere in the module.
-  if (USE_MOCK) throw new Error(`Actioning an event fraud signal ${NO_BACKEND_YET}`);
-  return sendJson<EventFraudActionResult>('POST', `/fraud/${id}/action`, { action, note });
+  if (USE_MOCK) throw new Error(`Actioning an event fraud signal ${NOT_IN_FIXTURE_MODE}`);
+  return sendJson<EventFraudActionResult>('POST', `/fraud/${encodeURIComponent(id)}/action`, { action, note: note ?? '' });
 }
