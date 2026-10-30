@@ -1893,6 +1893,63 @@ paths:
         '409': { description: Schedule already departed/completed }
   /admin/transport/bus/manifest:
     get: { tags: [mobility-admin], summary: Bus manifest (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/bus/tickets:
+    get:
+      tags: [mobility-admin]
+      summary: Search bus tickets (admin, paginated)
+      description: Ordered created_at DESC, id DESC. q matches ticket id / QR exactly or passenger name / phone (substring).
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: refund_status, in: query, schema: { type: string, enum: [none, pending, refunded, failed, manual_required] } }
+        - { name: schedule_id, in: query, schema: { type: string } }
+        - { name: from, in: query, description: Created on/after (YYYY-MM-DD), schema: { type: string, format: date } }
+        - { name: to, in: query, description: Created on/before (YYYY-MM-DD), schema: { type: string, format: date } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200': { description: '{ tickets[], total, limit, offset } — money fields in kobo' }
+        '403': { description: Missing mobility.view }
+  /admin/transport/bus/refunds/manual:
+    get:
+      tags: [mobility-admin]
+      summary: Bus refund queue (manual_required + stuck pending/failed)
+      parameters:
+        - { name: stuck_minutes, in: query, description: Pending/failed refunds older than this are included, schema: { type: integer, default: 30 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200': { description: '{ tickets[], total, limit, offset }' }
+        '403': { description: Missing mobility.view }
+  /admin/transport/bus/tickets/{id}/resolve-refund:
+    post:
+      tags: [mobility-admin]
+      summary: Resolve a manual_required bus refund (admin, audited, idempotent)
+      description: >-
+        wallet_refund reverses the settlement's frozen legs into the passenger wallet (operator wallet → passenger for
+        provider_kobo, platform revenue → passenger for fee_kobo); amounts come from the settlement, never the request.
+        offline records an out-of-band refund reference and moves no ledger money. The method is claimed before any money
+        moves and is sticky (409 METHOD_LOCKED). A resolved ticket replays its stored outcome (replayed=true).
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method, reason]
+              properties:
+                method: { type: string, enum: [wallet_refund, offline] }
+                reference: { type: string, description: Required for offline }
+                reason: { type: string }
+      responses:
+        '200': { description: '{ ok, ticketId, refundStatus, method, reference, resolvedAt, refundedKobo, replayed }' }
+        '400': { description: 'Missing Idempotency-Key / reason / reference, or invalid method' }
+        '403': { description: Missing mobility.bus.manage }
+        '404': { description: Ticket not found }
+        '409': { description: 'Not awaiting manual refund, METHOD_LOCKED, OPERATOR_INSUFFICIENT_FUNDS, SETTLEMENT_LEGS_MISMATCH' }
   /admin/transport/towing:
     get: { tags: [mobility-admin], summary: List towing jobs (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/towing/{id}/status:

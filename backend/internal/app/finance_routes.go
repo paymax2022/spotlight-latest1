@@ -2655,6 +2655,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			adminTr.POST("/bus/schedules/:id/approve-fare", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusApproveFare)
 			adminTr.POST("/bus/schedules/:id/cancel", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCancelSchedule)
 			adminTr.GET("/bus/manifest", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusManifest)
+			// Ticket search + stuck/manual refund queue (fare already paid out to the operator).
+			adminTr.GET("/bus/tickets", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusTickets)
+			adminTr.GET("/bus/refunds/manual", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusManualRefunds)
+			adminTr.POST("/bus/tickets/:id/resolve-refund", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusResolveRefund)
 			// Provider verification workflow (ADR-020 go-live gate): list operators +
 			// verify/suspend. Verified-only discovery is enforced in SearchBusTrips.
 			adminTr.GET("/bus/operators", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusListOperators)
