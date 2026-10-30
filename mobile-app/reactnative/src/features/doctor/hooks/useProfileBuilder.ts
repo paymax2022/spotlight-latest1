@@ -35,6 +35,7 @@ import type {
   RenewLicenceInput,
   PublishProfileInput,
 } from '@/types/doctor.profile';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useProfileDraft(draftId?: string) {
   return useQuery({
@@ -83,7 +84,7 @@ export function useLicenceExpiryWarning() {
   return useQuery({
     queryKey:        ['doctor', 'profile', 'licence-expiry'],
     queryFn:         getLicenceExpiryWarning,
-    placeholderData: DEMO_LICENCE_EXPIRY_WARNING,
+    placeholderData: doctorPlaceholder(DEMO_LICENCE_EXPIRY_WARNING),
     staleTime:       30_000,
   });
 }
@@ -92,7 +93,7 @@ export function useVerificationDecision(submissionId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'profile', 'verification-decision', submissionId],
     queryFn:         () => getVerificationDecision(submissionId),
-    placeholderData: DEMO_VERIFICATION_DECISION,
+    placeholderData: doctorPlaceholder(DEMO_VERIFICATION_DECISION),
     staleTime:       30_000,
   });
 }

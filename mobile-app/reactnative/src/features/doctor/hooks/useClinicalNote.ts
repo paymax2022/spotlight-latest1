@@ -19,6 +19,7 @@ import type {
   FinalizeNoteInput,
   ShareSummaryInput,
 } from '@/types/doctor.batch2';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 // hooks barrel alongside the clinical-note hooks.
 export { searchDiagnosisCodes } from '@/api/doctor.batch2.api';
@@ -28,7 +29,7 @@ export function useClinicalNote(appointmentId: string) {
     queryKey:        ['doctor', 'clinical-note', appointmentId],
     queryFn:         () => getClinicalNote(appointmentId),
     enabled:         !!appointmentId,
-    placeholderData: DEMO_CLINICAL_NOTE,
+    placeholderData: doctorPlaceholder(DEMO_CLINICAL_NOTE),
     staleTime:       30_000,
   });
 }
