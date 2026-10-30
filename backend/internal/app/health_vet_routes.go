@@ -160,7 +160,8 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	ag.GET("/payouts", guard("health.vet.payouts"), h.AdminConsolePayouts)
 	ag.POST("/payouts/:id/decision", guard("health.vet.payouts"), h.AdminDecidePayout) // idempotent, audited attestation
 	ag.GET("/moderation", guard("health.vet.moderation"), h.AdminConsoleModeration)
-	ag.GET("/reporting", guard("health.vet.reporting"), h.AdminConsoleReporting)
+	ag.GET("/reporting", guard("health.vet.reporting"), h.AdminConsoleReporting) // ?period=7d|30d|90d|ytd|all
+	ag.GET("/reporting/export.csv", guard("health.vet.reporting"), h.AdminReportingExportCSV)
 
 	log.Println("[health.vet] vet routes registered — pets/vets/appointments/consults/dispatch/sos + admin")
 }
