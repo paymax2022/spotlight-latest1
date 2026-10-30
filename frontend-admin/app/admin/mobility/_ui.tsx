@@ -101,6 +101,7 @@ export function MobilityTabs({ active }: { active: string }) {
     { href: '/admin/mobility/reports', label: 'Reports', key: 'reports' },
     { href: '/admin/mobility/parcels', label: 'Parcels', key: 'parcels' },
     { href: '/admin/mobility/bus', label: 'Bus', key: 'bus' },
+    { href: '/admin/mobility/bus/tickets', label: 'Bus Tickets', key: 'bus-tickets' },
     { href: '/admin/mobility/towing', label: 'Towing', key: 'towing' },
     { href: '/admin/mobility/movers', label: 'Movers', key: 'movers' },
     { href: '/admin/mobility/car-hire', label: 'Car Hire', key: 'car-hire' },
