@@ -10,13 +10,14 @@ import {
   getPatientFullProfile,
   DEMO_PATIENT_FULL_PROFILE,
 } from '@/api/doctor.batch2.api';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function usePatientFullProfile(patientId: string) {
   return useQuery({
     queryKey:        ['doctor', 'patient-full-profile', patientId],
     queryFn:         () => getPatientFullProfile(patientId),
     enabled:         !!patientId,
-    placeholderData: DEMO_PATIENT_FULL_PROFILE,
+    placeholderData: doctorPlaceholder(DEMO_PATIENT_FULL_PROFILE),
     staleTime:       30_000,
   });
 }

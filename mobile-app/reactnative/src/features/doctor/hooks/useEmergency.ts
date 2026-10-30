@@ -27,12 +27,13 @@ import type {
   DocumentEmergencyCaseInput,
   ScheduleEmergencyFollowUpInput,
 } from '@/types/doctor.batch4';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useEmergencyFacilities(kind?: EmergencyFacility['kind']) {
   return useQuery({
     queryKey:        ['doctor', 'emergency-facilities', kind],
     queryFn:         () => getEmergencyFacilities(kind),
-    placeholderData: DEMO_EMERGENCY_FACILITIES,
+    placeholderData: doctorPlaceholder(DEMO_EMERGENCY_FACILITIES),
     staleTime:       60_000,
   });
 }
@@ -41,7 +42,7 @@ export function useRedFlagAlerts(patientId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'red-flag-alerts', patientId],
     queryFn:         () => getRedFlagAlerts(patientId),
-    placeholderData: DEMO_RED_FLAG_ALERTS,
+    placeholderData: doctorPlaceholder(DEMO_RED_FLAG_ALERTS),
     staleTime:       30_000,
   });
 }
@@ -50,7 +51,7 @@ export function useEmergencyEscalations(patientId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'emergency-escalations', patientId],
     queryFn:         () => getEmergencyEscalations(patientId),
-    placeholderData: DEMO_EMERGENCY_ESCALATIONS,
+    placeholderData: doctorPlaceholder(DEMO_EMERGENCY_ESCALATIONS),
     staleTime:       15_000,
   });
 }
@@ -59,7 +60,7 @@ export function useEmergencyCaseRecords(patientId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'emergency-cases', patientId],
     queryFn:         () => getEmergencyCaseRecords(patientId),
-    placeholderData: DEMO_EMERGENCY_CASE_RECORDS,
+    placeholderData: doctorPlaceholder(DEMO_EMERGENCY_CASE_RECORDS),
     staleTime:       30_000,
   });
 }

@@ -28,6 +28,7 @@ import type {
   RescheduleAppointmentInput,
   CancelAppointmentInput,
 } from '@/types/doctor.batch1';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 // barrel alongside the schedule hooks.
 export { checkOverbooking } from '@/api/doctor.batch1.api';
@@ -36,7 +37,7 @@ export function useScheduleSettings() {
   return useQuery({
     queryKey:        ['doctor', 'schedule', 'settings'],
     queryFn:         getScheduleSettings,
-    placeholderData: DEMO_SCHEDULE_SETTINGS,
+    placeholderData: doctorPlaceholder(DEMO_SCHEDULE_SETTINGS),
     staleTime:       30_000,
   });
 }
@@ -45,7 +46,7 @@ export function useBlockedDates() {
   return useQuery({
     queryKey:        ['doctor', 'schedule', 'blocked-dates'],
     queryFn:         getBlockedDates,
-    placeholderData: DEMO_BLOCKED_DATES,
+    placeholderData: doctorPlaceholder(DEMO_BLOCKED_DATES),
     staleTime:       30_000,
   });
 }

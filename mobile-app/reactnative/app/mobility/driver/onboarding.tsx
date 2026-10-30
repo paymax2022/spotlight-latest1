@@ -20,7 +20,7 @@ import { errKind } from '@/features/mobility/utils/errKind';
 import { useAuthStore } from '@/store/authStore';
 import { useDriverMe, useDriverOnboarding, useDriverOnboardingOptions } from '@/features/mobility/hooks/useMobility';
 import { pickFileForField } from '@/features/registration/utils/filePicker';
-import { SERVICE_TYPES, REQUIRED_DOCUMENTS } from '@/features/mobility/constants/mobility.constants';
+import { SERVICE_TYPES, REQUIRED_DOCUMENTS, VEHICLE_MAKES, VEHICLE_COLORS, vehicleYears } from '@/features/mobility/constants/mobility.constants';
 import type { ServiceType, DocType } from '@/features/mobility/types/mobility.types';
 import {
   requiredDocumentsFor,
@@ -40,6 +40,9 @@ const STEP_ORDER: Step[] = DELIVERY_ONBOARDING
   : ['details', 'documents', 'vehicle', 'status'];
 const STEP_TITLE: Record<Step, string> = { details: 'Your details', services: 'Services & coverage', documents: 'Upload documents', vehicle: 'Add your vehicle', status: 'Application status' };
 const DOC_META: Record<string, { label: string; hint: string }> = Object.fromEntries(REQUIRED_DOCUMENTS.map((d) => [d.docType, { label: d.label, hint: d.hint }]));
+
+const modelsForMake = (make: string): string[] =>
+  VEHICLE_MAKES.find((m) => m.make === make)?.models ?? [];
 
 // A failed submit used to leave the button spinning back to idle with nothing
 // shown, so Continue looked dead. Say what the server (or the network) said.
@@ -330,13 +333,32 @@ export default function DriverOnboardingScreen() {
             {(!DELIVERY_ONBOARDING || vehicleType !== 'bicycle') && (
               <>
                 <TextInputField label="Plate number" placeholder="LND-238-KJA" value={plate} onChangeText={setPlate} autoCapitalize="characters" />
+                <SelectField
+                  label="Make"
+                  placeholder="Select make"
+                  value={make}
+                  options={VEHICLE_MAKES.map((m) => m.make)}
+                  onChange={(next) => {
+                    setMake(next);
+                    // Models are per make — a Corolla does not belong under Lexus.
+                    if (!modelsForMake(next).includes(model)) setModel('');
+                  }}
+                />
+                <SelectField
+                  label="Model"
+                  placeholder={make ? 'Select model' : 'Select a make first'}
+                  value={model}
+                  options={modelsForMake(make)}
+                  onChange={setModel}
+                  disabled={!make}
+                />
                 <View style={styles.row2}>
-                  <View style={styles.col}><TextInputField label="Make" placeholder="Toyota" value={make} onChangeText={setMake} /></View>
-                  <View style={styles.col}><TextInputField label="Model" placeholder="Corolla" value={model} onChangeText={setModel} /></View>
-                </View>
-                <View style={styles.row2}>
-                  <View style={styles.col}><TextInputField label="Year" placeholder="2021" value={year} onChangeText={setYear} keyboardType="number-pad" /></View>
-                  <View style={styles.col}><TextInputField label="Color" placeholder="Silver" value={color} onChangeText={setColor} /></View>
+                  <View style={styles.col}>
+                    <SelectField label="Year" placeholder="Select year" value={year} options={vehicleYears()} onChange={setYear} />
+                  </View>
+                  <View style={styles.col}>
+                    <SelectField label="Color" placeholder="Select color" value={color} options={[...VEHICLE_COLORS]} onChange={setColor} />
+                  </View>
                 </View>
               </>
             )}

@@ -493,34 +493,69 @@ func (a *AdminService) CreateBusRoute(ctx context.Context, adminID string, req B
 }
 
 // ListBusRoutes returns all routes (admin).
-func (a *AdminService) ListBusRoutes(ctx context.Context) ([]map[string]any, error) {
+func (a *AdminService) ListBusRoutes(ctx context.Context) ([]busAdminRouteRow, error) {
 	return a.svc.SearchBusRoutesAll(ctx)
 }
 
+// busAdminRouteRow is one row of GET /admin/transport/bus/routes.
+type busAdminRouteRow struct {
+	ID               string    `json:"id"`
+	OperatorID       string    `json:"operatorId"`
+	ProviderID       *string   `json:"providerId"`
+	OperatorName     string    `json:"operatorName"`
+	Origin           string    `json:"origin"`
+	Destination      string    `json:"destination"`
+	OriginTerminal   string    `json:"originTerminal"`
+	DestTerminal     string    `json:"destTerminal"`
+	FromState        *string   `json:"fromState"`
+	ToState          *string   `json:"toState"`
+	DistanceM        *int      `json:"distanceM"`
+	EstDurationS     *int      `json:"estDurationS"`
+	Category         string    `json:"category"`
+	Status           string    `json:"status"`
+	Active           bool      `json:"active"`
+	CreatedAt        time.Time `json:"createdAt"`
+	FareKobo         int64     `json:"fareKobo"`
+	FareApproved     bool      `json:"fareApproved"`
+	PendingFareCount int       `json:"pendingFareCount"`
+}
+
 // SearchBusRoutesAll returns every route regardless of status (admin view).
-func (s *Service) SearchBusRoutesAll(ctx context.Context) ([]map[string]any, error) {
+// Shaped for the admin console: operatorName resolves the marketplace provider
+// (else the legacy operator profile); fareKobo is the route base fare, else the
+// lowest schedule fare; fareApproved is false while any still-bookable schedule
+// on the route has an unapproved fare (pendingFareCount > 0).
+func (s *Service) SearchBusRoutesAll(ctx context.Context) ([]busAdminRouteRow, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, operator_id, origin_terminal, dest_terminal, distance_m, est_duration_s, category, status, created_at
-		FROM bus_routes ORDER BY created_at DESC LIMIT 200`)
+		SELECT r.id::text, r.operator_id::text, r.provider_id::text, `+busOperatorNameSQL+`,
+		       r.origin_terminal, r.dest_terminal, r.from_state, r.to_state,
+		       r.distance_m, r.est_duration_s, r.category, r.status, COALESCE(r.active, TRUE), r.created_at,
+		       COALESCE(r.base_fare_kobo, (SELECT MIN(s.fare_kobo) FROM bus_schedules s WHERE s.route_id = r.id), 0),
+		       (SELECT COUNT(*) FROM bus_schedules s
+		         WHERE s.route_id = r.id AND s.fare_approved = FALSE AND s.status IN ('scheduled','boarding'))
+		FROM bus_routes r
+		LEFT JOIN bus_providers p ON p.id = r.provider_id
+		LEFT JOIN user_profiles up ON up.id = r.operator_id
+		ORDER BY r.created_at DESC LIMIT 200`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []busAdminRouteRow{}
 	for rows.Next() {
-		var id, opID, o, d, category, status string
-		var distM, durS *int
-		var createdAt time.Time
-		if err := rows.Scan(&id, &opID, &o, &d, &distM, &durS, &category, &status, &createdAt); err != nil {
+		var r busAdminRouteRow
+		var active bool
+		if err := rows.Scan(&r.ID, &r.OperatorID, &r.ProviderID, &r.OperatorName, &r.Origin, &r.Destination,
+			&r.FromState, &r.ToState, &r.DistanceM, &r.EstDurationS, &r.Category, &r.Status, &active,
+			&r.CreatedAt, &r.FareKobo, &r.PendingFareCount); err != nil {
 			return nil, err
 		}
-		out = append(out, map[string]any{
-			"id": id, "operatorId": opID, "originTerminal": o, "destTerminal": d,
-			"distanceM": distM, "estDurationS": durS, "category": category,
-			"status": status, "createdAt": createdAt,
-		})
+		r.OriginTerminal, r.DestTerminal = r.Origin, r.Destination
+		r.Active = active && r.Status == "active"
+		r.FareApproved = r.PendingFareCount == 0
+		out = append(out, r)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // CreateBusSchedule creates a schedule (admin, fare unapproved until approved).
@@ -635,25 +670,29 @@ func (a *AdminService) ListBusProvidersAdmin(ctx context.Context) ([]map[string]
 // BusManifest lists passengers for a schedule (admin/operator).
 func (a *AdminService) BusManifest(ctx context.Context, scheduleID string) ([]map[string]any, error) {
 	rows, err := a.svc.db.Query(ctx, `
-		SELECT id, user_id, seat_number, passenger_name, passenger_phone, boarding_status, status, qr_code
+		SELECT id, user_id, seat_number, passenger_name, passenger_phone, boarding_status, status, qr_code,
+		       fare_kobo, created_at
 		FROM bus_tickets WHERE schedule_id=$1 AND status NOT IN ('cancelled','refunded')
 		ORDER BY seat_number`, scheduleID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, uid, pname, boardStatus, status, qr string
 		var pphone *string
 		var seat int
-		if err := rows.Scan(&id, &uid, &seat, &pname, &pphone, &boardStatus, &status, &qr); err != nil {
+		var fare int64
+		var bookedAt time.Time
+		if err := rows.Scan(&id, &uid, &seat, &pname, &pphone, &boardStatus, &status, &qr, &fare, &bookedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, map[string]any{
 			"ticketId": id, "userId": uid, "seatNumber": seat, "passengerName": pname,
 			"passengerPhone": pphone, "boardingStatus": boardStatus, "status": status, "qrCode": qr,
+			"fareKobo": fare, "bookedAt": bookedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	return out, nil
+	return out, rows.Err()
 }

@@ -9,12 +9,13 @@ import {
 } from '@/api/doctor.phase2.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type { AcknowledgePolicyInput } from '@/types/doctor.phase2';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useComplianceDashboard() {
   return useQuery({
     queryKey:        ['doctor', 'compliance'],
     queryFn:         getComplianceDashboard,
-    placeholderData: DEMO_COMPLIANCE,
+    placeholderData: doctorPlaceholder(DEMO_COMPLIANCE),
     staleTime:       30_000,
   });
 }

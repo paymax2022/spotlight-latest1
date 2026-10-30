@@ -7,7 +7,7 @@ import {
 } from '@/services/telemedicineAdminService';
 import { PageHeader, TelemedTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, th, td, input, label, select, fmtDate } from '../_ui';
 import { colors } from '@/components/ui/vuexy';
-import { toCsv, downloadCsv, fetchAllPages } from '@/lib/csv';
+import { toCsvColumns, downloadCsv, fetchAllPages } from '@/lib/csv';
 
 const PAGE_SIZE = 25;
 type Filters = { status: string; search: string; from: string; to: string };
@@ -43,7 +43,7 @@ export default function ConsultationsPage() {
     setExporting(true);
     try {
       const all = await fetchAllPages((limit, off) => query(limit, off));
-      downloadCsv(`telemedicine-consultations-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(all, [
+      downloadCsv(`telemedicine-consultations-${new Date().toISOString().slice(0, 10)}.csv`, toCsvColumns(all, [
         { header: 'id', value: (c) => c.id },
         { header: 'patient', value: (c) => c.patient_masked },
         { header: 'clinician', value: (c) => c.clinician_name },

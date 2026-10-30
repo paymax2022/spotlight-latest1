@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getReporting, formatNaira } from '@/services/healthVetAdminService';
+import { getReporting, exportReportingCsv, formatNaira } from '@/services/healthVetAdminService';
 import type { VetReportingData } from '@/types/healthVetAdmin';
 import { PageHeader, VetTabs, Card, Kpi, DisclosureNote, StateBlock, FilterBar, btn, btnPrimary, th, td, select, label, pct } from '../../_ui';
 import { colors } from '@/components/ui/vuexy';
@@ -10,6 +10,7 @@ const PERIODS = [
   { value: '30d', label: 'Last 30 days' },
   { value: '90d', label: 'Last 90 days' },
   { value: 'ytd', label: 'Year to date' },
+  { value: 'all', label: 'All time' },
 ];
 
 export default function VetReportingPage() {
@@ -46,6 +47,7 @@ export default function VetReportingPage() {
           </select>
         </div>
         <button style={btnPrimary()} onClick={load}>Apply</button>
+        <button style={btn()} onClick={() => { exportReportingCsv(period).catch((e) => setError(String(e))); }}>Export CSV</button>
       </FilterBar>
 
       <StateBlock loading={loading} error={error} empty={!data} emptyText="No reporting data available.">

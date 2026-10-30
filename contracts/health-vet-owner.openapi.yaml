@@ -219,6 +219,27 @@ paths:
         - { name: lng, in: query, schema: { type: number } }
       responses:
         '200': { description: Vets, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/EmergencyVet' } } } } }
+  /lab-requests:
+    post:
+      summary: Owner requests lab tests on their own CONFIRMED/IN_PROGRESS/COMPLETED appointment (no payment; the lab books and charges)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appointmentId, testNames]
+              properties:
+                appointmentId: { type: string, format: uuid }
+                petId: { type: string, format: uuid, description: Optional; must match the appointment's pet }
+                testNames: { type: array, minItems: 1, maxItems: 20, items: { type: string, maxLength: 120 } }
+                note: { type: string, maxLength: 1000 }
+      responses:
+        '201': { description: Requested, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, labOrderId: { type: string, format: uuid } } } } } }
+        '400': { description: Bad appointmentId, petId mismatch, or test list/note out of range }
+        '401': { description: Not authenticated }
+        '404': { description: Not the caller's appointment }
+        '409': { description: Appointment not confirmed yet }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }

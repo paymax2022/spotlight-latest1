@@ -3,7 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQueries } from '@tanstack/react-query';
-import { Calendar, ChevronRight } from 'lucide-react-native';
+import { Calendar, ChevronRight, ReceiptText, Inbox } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -53,7 +53,19 @@ export default function MyTickets() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="My tickets" />
+      <ScreenHeader
+        title="My tickets"
+        rightSlot={
+          <View style={styles.headerActions}>
+            <Pressable onPress={() => router.push('/events/orders')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="My orders">
+              <ReceiptText size={20} color={Colors.onSurface} strokeWidth={2} />
+            </Pressable>
+            <Pressable onPress={() => router.push('/events/refunds')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="My refunds">
+              <Inbox size={20} color={Colors.onSurface} strokeWidth={2} />
+            </Pressable>
+          </View>
+        }
+      />
       <View style={{ marginBottom: Spacing.md }}>
         <SegmentedControl options={FILTERS as any} value={tab} onChange={setTab} />
       </View>
@@ -99,6 +111,8 @@ export default function MyTickets() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  iconBtn: { width: 36, height: 36, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   scroll: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: EventColors.surface, borderRadius: Radius.lg, padding: Spacing.md, ...shadow1 },
   thumb: { width: 56, height: 56, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },

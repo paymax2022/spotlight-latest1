@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { fetchAllPages, toCsv } from './csv';
+import { fetchAllPages, toCsvColumns } from './csv';
 
-describe('toCsv', () => {
+describe('toCsvColumns', () => {
   it('quotes separators and neutralises formula cells', () => {
-    const csv = toCsv([{ a: 'x,"y"', b: '=SUM(A1)', c: null }], [
+    const csv = toCsvColumns([{ a: 'x,"y"', b: '=SUM(A1)', c: null }], [
       { header: 'a', value: (r) => r.a },
       { header: 'b', value: (r) => r.b },
       { header: 'c', value: (r) => r.c },
     ]);
-    expect(csv).toBe('a,b,c\r\n"x,""y""",\'=SUM(A1),');
+    expect(csv).toBe('a,b,c\r\n"x,""y""","\'=SUM(A1)",');
   });
 });
 

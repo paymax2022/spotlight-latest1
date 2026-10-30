@@ -17,12 +17,13 @@ import type {
   SetActiveClinicInput,
   UpdateClinicScheduleInput,
 } from '@/types/doctor.phase3';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useQualityAnalytics(period?: AnalyticsPeriod) {
   return useQuery({
     queryKey:        ['doctor', 'analytics', period ?? '30d'],
     queryFn:         () => getQualityAnalytics(period),
-    placeholderData: DEMO_QUALITY_ANALYTICS,
+    placeholderData: doctorPlaceholder(DEMO_QUALITY_ANALYTICS),
     staleTime:       60_000,
   });
 }
@@ -31,7 +32,7 @@ export function useClinicPortfolio() {
   return useQuery({
     queryKey:        ['doctor', 'clinics', 'portfolio'],
     queryFn:         getClinicPortfolio,
-    placeholderData: DEMO_CLINIC_PORTFOLIO,
+    placeholderData: doctorPlaceholder(DEMO_CLINIC_PORTFOLIO),
     staleTime:       30_000,
   });
 }

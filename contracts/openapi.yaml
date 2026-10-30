@@ -10638,6 +10638,97 @@ paths:
           description: Vendor has not completed KYC (fail-closed, NL-10)
         '404': { description: Event or vendor not found }
 
+  /api/events/admin/vendors/{id}/payout:
+    post:
+      operationId: adminDecideEventVendorPayout
+      summary: Approve (settle now) or reject (hold) a vendor's unsettled float (events.settle)
+      description: >-
+        approve runs the same KYC-gated SettleVendor path as
+        /{id}/vendors/{vendorId}/settle (NL-10, net of the event fee) and needs
+        an Idempotency-Key; replaying the same key returns the original result
+        without settling again. reject needs a note, records a hold and moves no
+        money; new takings after a rejection return the vendor to pending.
+        Every decision is appended to event_settlement_reviews and audited.
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: Vendor id }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                note: { type: string, maxLength: 1000 }
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      payout_status: { type: string, enum: [paid, rejected] }
+                      audit_id: { type: string, format: uuid }
+                      message: { type: string }
+                      net_kobo: { type: integer, format: int64 }
+        '400': { description: "Unknown decision, missing Idempotency-Key on approve, missing note on reject, or nothing to settle" }
+        '403': { description: Vendor has not completed KYC (fail-closed, NL-10) }
+        '404': { description: Vendor not found }
+
+  /api/events/admin/settlement/{id}/resolve:
+    post:
+      operationId: adminResolveEventSettlementBreak
+      summary: Record a reviewer decision on a derived settlement break (events.settle)
+      description: >-
+        A break is the absolute delta across an event's vendors of three
+        invariants: vendor charges vs vendor float, settled float vs settled
+        gross, and gross vs fee + net per settlement row. The decision is
+        append-only (event_settlement_reviews) and audited and moves no money;
+        a correction is a reversing ledger entry. A decision applies only while
+        the break amount is unchanged; if it moves, the line reopens.
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, example: 'set_<event uuid>' }, description: Settlement line id from GET /api/events/admin/settlement }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [investigate, resolve, reconcile] }
+                note: { type: string, maxLength: 1000 }
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string, enum: [investigating, resolved, reconciled] }
+                      audit_id: { type: string, format: uuid }
+                      message: { type: string }
+        '400': { description: Unknown action, or note missing for resolve/reconcile }
+        '404': { description: No settlement break on that line }
+
   /api/events/admin/payouts:
     get:
       operationId: adminListEventPayouts
@@ -10788,6 +10879,90 @@ paths:
         '400': { description: Reason required }
         '404': { description: Payout not found }
         '409': { description: Payout is not pending }
+
+  /api/events/admin/fraud:
+    get:
+      operationId: adminListEventFraudSignals
+      summary: Fraud queue — signals derived on read from scans, top-ups, vendor charges and refunds (events.admin.view)
+      description: >-
+        Signals are derived from the module's append-only records over the last
+        30 days: dup_scan (ticket credential rejected 2+ times at the gate),
+        abnormal_topup (5+ event-wallet top-ups in one hour), vendor_self_charge
+        (a vendor charging its own operator's wallet) and rapid_refund (3+
+        refund requests by one buyer on one event; commerce only). Ids are
+        deterministic, so a reviewer decision stays attached. Status is the
+        newest review, or open.
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [open, investigating, cleared, blocked] } }
+        - { name: kind, in: query, required: false, schema: { type: string, enum: [dup_scan, abnormal_topup, vendor_self_charge, rapid_refund] } }
+        - { name: q, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Signals, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, example: 'vendor_self_charge:3f1c…' }
+                        event_id: { type: string, format: uuid }
+                        event_title: { type: string }
+                        kind: { type: string, enum: [dup_scan, abnormal_topup, vendor_self_charge, rapid_refund] }
+                        subject_masked: { type: string }
+                        detail: { type: string }
+                        severity: { type: string, enum: [low, medium, high, critical] }
+                        amount_kobo: { type: integer, format: int64 }
+                        status: { type: string, enum: [open, investigating, cleared, blocked] }
+                        created_at: { type: string, format: date-time }
+
+  /api/events/admin/fraud/{id}/action:
+    post:
+      operationId: adminActionEventFraudSignal
+      summary: Record a reviewer decision on a fraud signal (events.moderate)
+      description: >-
+        Append-only (event_fraud_reviews) and audited. clear and block need a
+        note. block on a vendor_self_charge signal also deactivates the vendor;
+        on other kinds it records the verdict only. No money moves.
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [investigate, clear, block] }
+                note: { type: string, maxLength: 1000 }
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string, enum: [investigating, cleared, blocked] }
+                      audit_id: { type: string, format: uuid }
+                      message: { type: string }
+        '400': { description: Unknown action, or note missing for clear/block }
+        '404': { description: No such signal (not currently derived) }
 
   # ── Crowdfunding ──────────────────────────────────────────────────────────────
   /crowdfunding/campaigns:

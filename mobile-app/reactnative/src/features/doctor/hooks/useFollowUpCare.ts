@@ -26,13 +26,14 @@ import type {
   RecordAdherenceCheckInput,
   SaveCarePlanInput,
 } from '@/types/doctor.batch4';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useFollowUpEligibility(patientId: string, appointmentId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'follow-up-eligibility', patientId, appointmentId],
     queryFn:         () => getFollowUpEligibility(patientId, appointmentId),
     enabled:         !!patientId,
-    placeholderData: DEMO_FOLLOW_UP_ELIGIBILITY,
+    placeholderData: doctorPlaceholder(DEMO_FOLLOW_UP_ELIGIBILITY),
     staleTime:       30_000,
   });
 }
@@ -41,7 +42,7 @@ export function useLongTermCarePlans(patientId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'care-plans', patientId],
     queryFn:         () => getLongTermCarePlans(patientId),
-    placeholderData: DEMO_LONG_TERM_CARE_PLANS,
+    placeholderData: doctorPlaceholder(DEMO_LONG_TERM_CARE_PLANS),
     staleTime:       30_000,
   });
 }
@@ -59,7 +60,7 @@ export function useChronicMonitoring(patientId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'chronic-monitoring', patientId],
     queryFn:         () => getChronicMonitoring(patientId),
-    placeholderData: DEMO_CHRONIC_MONITORING,
+    placeholderData: doctorPlaceholder(DEMO_CHRONIC_MONITORING),
     staleTime:       30_000,
   });
 }
@@ -68,7 +69,7 @@ export function useAdherenceChecks(patientId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'adherence-checks', patientId],
     queryFn:         () => getAdherenceChecks(patientId),
-    placeholderData: DEMO_ADHERENCE_CHECKS,
+    placeholderData: doctorPlaceholder(DEMO_ADHERENCE_CHECKS),
     staleTime:       30_000,
   });
 }

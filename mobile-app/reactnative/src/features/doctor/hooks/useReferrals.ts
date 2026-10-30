@@ -14,12 +14,13 @@ import type {
   ReferralStatus,
   CreateReferralInput,
 } from '@/types/doctor.phase2';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useSpecialists(specialty?: string) {
   return useQuery({
     queryKey:        ['doctor', 'specialists', specialty],
     queryFn:         () => getSpecialists(specialty),
-    placeholderData: DEMO_SPECIALISTS,
+    placeholderData: doctorPlaceholder(DEMO_SPECIALISTS),
     staleTime:       60_000,
   });
 }
@@ -28,7 +29,7 @@ export function useReferrals(status?: ReferralStatus) {
   return useQuery({
     queryKey:        ['doctor', 'referrals', status],
     queryFn:         () => getReferrals(status),
-    placeholderData: DEMO_REFERRALS,
+    placeholderData: doctorPlaceholder(DEMO_REFERRALS),
     staleTime:       30_000,
   });
 }

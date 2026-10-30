@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -294,18 +295,31 @@ func (s *Service) ListAdminAppointments(ctx context.Context, q AdminAppointmentL
 	if q.Status != "" {
 		status = &q.Status
 	}
+	// search matches an id/ref prefix or a doctor-name substring; LIKE
+	// metacharacters are escaped so user input is matched literally.
+	var search *string
+	if t := strings.TrimSpace(q.Search); t != "" {
+		if len(t) > 100 {
+			return nil, 0, errors.New("telemedicine: search is too long")
+		}
+		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(t)
+		search = &esc
+	}
 
-	const countQ = `
-		SELECT COUNT(*) FROM appointments a
+	const where = `
 		WHERE ($1::text IS NULL OR a.status = $1)
 		  AND ($2::timestamptz IS NULL OR a.scheduled_at >= $2)
-		  AND ($3::timestamptz IS NULL OR a.scheduled_at < $3)`
+		  AND ($3::timestamptz IS NULL OR a.scheduled_at < $3)
+		  AND ($6::text IS NULL OR a.id::text ILIKE $6 || '%' OR COALESCE(a.ref, '') ILIKE $6 || '%'
+		       OR COALESCE(d.name, '') ILIKE '%' || $6 || '%')`
+	countQ := `SELECT COUNT(*) FROM appointments a LEFT JOIN doctors d ON d.id = a.doctor_id` +
+		strings.ReplaceAll(where, "$6", "$4")
 	var total int
-	if err := s.db.QueryRow(ctx, countQ, status, fromT, toT).Scan(&total); err != nil {
+	if err := s.db.QueryRow(ctx, countQ, status, fromT, toT, search).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("telemedicine: count admin appointments: %w", err)
 	}
 
-	const listQ = `
+	listQ := `
 		SELECT a.id, a.patient_id, a.doctor_id, COALESCE(d.name, ''), a.scheduled_at,
 		       a.status, a.fee_kobo, COALESCE(a.platform_fee_kobo, 0),
 		       COALESCE(NULLIF(a.total_kobo, 0), a.fee_kobo), a.created_at,
@@ -313,13 +327,10 @@ func (s *Service) ListAdminAppointments(ctx context.Context, q AdminAppointmentL
 		       EXISTS (SELECT 1 FROM prescriptions p WHERE p.appointment_id = a.id),
 		       a.consultation_type
 		FROM appointments a
-		LEFT JOIN doctors d ON d.id = a.doctor_id
-		WHERE ($1::text IS NULL OR a.status = $1)
-		  AND ($2::timestamptz IS NULL OR a.scheduled_at >= $2)
-		  AND ($3::timestamptz IS NULL OR a.scheduled_at < $3)
-		ORDER BY a.created_at DESC
+		LEFT JOIN doctors d ON d.id = a.doctor_id` + where + `
+		ORDER BY a.created_at DESC, a.id
 		LIMIT $4 OFFSET $5`
-	rows, err := s.db.Query(ctx, listQ, status, fromT, toT, limit, offset)
+	rows, err := s.db.Query(ctx, listQ, status, fromT, toT, limit, offset, search)
 	if err != nil {
 		return nil, 0, fmt.Errorf("telemedicine: list admin appointments: %w", err)
 	}
@@ -658,8 +669,9 @@ type AdminAppointment struct {
 // appointment list.
 type AdminAppointmentListQuery struct {
 	Status string `form:"status"`
-	From   string `form:"from"` // RFC3339; filters scheduled_at >= From
-	To     string `form:"to"`   // RFC3339; filters scheduled_at <  To
+	From   string `form:"from"`   // RFC3339; filters scheduled_at >= From
+	To     string `form:"to"`     // RFC3339; filters scheduled_at <  To
+	Search string `form:"search"` // id/ref prefix or doctor-name substring
 	Limit  int    `form:"limit,default=20"`
 	Offset int    `form:"offset,default=0"`
 }

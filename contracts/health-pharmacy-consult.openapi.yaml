@@ -1,0 +1,61 @@
+openapi: 3.0.3
+info:
+  title: Health pharmacy — patient pharmacist-consult thread
+  version: 1.0.0
+  description: >
+    One append-only thread per patient. Only the patient side is exposed; pharmacist
+    replies (from_pharmacist=true) have no API surface yet.
+servers:
+  - url: /api/finance/health/pharmacy
+paths:
+  /consult/messages:
+    get:
+      operationId: listPharmacyConsultMessages
+      summary: The caller's thread, oldest first (latest 200)
+      responses:
+        '200':
+          description: Thread
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  messages:
+                    type: array
+                    items: { $ref: '#/components/schemas/ConsultMessage' }
+        '401': { description: Unauthenticated }
+    post:
+      operationId: sendPharmacyConsultMessage
+      summary: Append a patient message to the caller's thread
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        '201':
+          description: Message stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { $ref: '#/components/schemas/ConsultMessage' }
+        '400': { description: Invalid JSON, or body blank / over 2000 characters }
+        '401': { description: Unauthenticated }
+components:
+  schemas:
+    ConsultMessage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        from_pharmacist: { type: boolean }
+        author_name: { type: string }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
