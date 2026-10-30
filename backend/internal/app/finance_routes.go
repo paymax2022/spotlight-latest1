@@ -2649,7 +2649,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 			adminTr.GET("/bus/routes", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusListRoutes)
 			adminTr.POST("/bus/routes", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCreateRoute)
+			adminTr.GET("/bus/schedules", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusListSchedules)
 			adminTr.POST("/bus/schedules", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCreateSchedule)
+			adminTr.PATCH("/bus/routes/:id/approve-fare", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusApproveRouteFares)
 			adminTr.POST("/bus/schedules/:id/approve-fare", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusApproveFare)
 			adminTr.POST("/bus/schedules/:id/cancel", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCancelSchedule)
 			adminTr.GET("/bus/manifest", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusManifest)
