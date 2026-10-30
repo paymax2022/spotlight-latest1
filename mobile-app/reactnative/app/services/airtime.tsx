@@ -31,6 +31,8 @@ import { generateIdempotencyKey } from '@/utils/idempotency';
 import { sanitizeMoneyInput } from '@/utils/money';
 import { Network } from '@/types/billing';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import ContactPickerModal from '@/features/visitor/components/ContactPickerModal';
+import { toE164, toNsn } from '@/lib/phone/phone';
 
 const AMOUNTS = [100, 200, 500, 1000, 2000, 5000];
 
@@ -57,6 +59,7 @@ export default function AirtimeScreen() {
   const [paymentMethod,     setPaymentMethod]      = useState<PaymentMethod>('WALLET');
   const [paystackLoading,   setPaystackLoading]    = useState(false);
   const [paystackError,     setPaystackError]      = useState('');
+  const [contactsOpen,      setContactsOpen]       = useState(false);
   const [formError,         setFormError]          = useState('');
 
   const idemKeyRef         = useRef('');
@@ -268,8 +271,19 @@ export default function AirtimeScreen() {
             name="phoneNumber"
             control={control}
             render={({ field }) => (
-              <PhoneNumberInput label="Phone Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} error={errors.phoneNumber?.message} />
+              <PhoneNumberInput label="Phone Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} onPickContact={() => setContactsOpen(true)} error={errors.phoneNumber?.message} />
             )}
+          />
+
+          <ContactPickerModal
+            visible={contactsOpen}
+            onClose={() => setContactsOpen(false)}
+            onSelect={(contact) => {
+              // Device numbers arrive as "+234 801…", "0801…" or "0801-…"; toNsn strips
+              // the country code, trunk zero and separators before the form sees them.
+              const nsn = toNsn(contact.phone);
+              setValue('phoneNumber', toE164(nsn) || nsn, { shouldValidate: true });
+            }}
           />
 
           <Text style={[styles.sectionTitle, { marginTop: Spacing.md }]}>Amount</Text>

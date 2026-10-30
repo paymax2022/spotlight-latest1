@@ -31,7 +31,8 @@ refund nets to exactly one refund).
 
 Two guards, each pinned by a test:
 
-- **Spend refused** (Tier 0 / daily limit) leaves the collected funds in the
+- **Spend refused** (Tier 0 / daily limit — *no longer applies to a card spend; see the
+  Amendment below. It still holds for any other refusal, e.g. an RPC failure*) leaves the collected funds in the
   wallet. `settleFailedUtilityTransaction` detects `collectPosted && !debitPosted`
   and does **not** post `PAYSTACK_REFUND` — that would pay the customer twice.
 - **Callers that assumed "any throw = nothing posted".**
@@ -47,7 +48,7 @@ Two guards, each pinned by a test:
 
 ## Consequences
 
-- Enabling the flag changes behaviour for Tier-0 and over-limit card payers: the
+- *(Superseded by the 2026-10-25 Amendment below.)* Enabling the flag changes behaviour for Tier-0 and over-limit card payers: the
   bill is refused at the spend and their money stays in the wallet. This is a
   product decision to make before enabling.
 - Historical card payments are not backfilled.
@@ -70,3 +71,42 @@ Two guards, each pinned by a test:
   collect credit is not counted; the spend is, which is the intended behaviour.
 - Other card-only modules with the same gap (contest votes, school fees, Open
   Mic votes, application fee, registration fee) are separate changes.
+
+## Amendment (2026-10-25) — a direct card purchase is exempt from the wallet KYC-tier limit
+
+**Decision owner:** product (recorded 2026-10-25). A bill paid directly by card is a
+purchase, not a wallet top-up and not a spend of a wallet the payer holds, so it must not
+depend on the payer being KYC-verified.
+
+The "Consequences" note above ("Tier-0 and over-limit card payers are refused at the spend
+and their money stays in the wallet") is **superseded**. Verified on a tier-0 test user:
+with the flag on, the collect posted, the spend was refused ("Wallet is disabled for
+unverified accounts"), the bill was never bought, and the card money sat in a wallet the
+user could not use.
+
+- `payUtility` passes `bypassTierLimits: true` (and `metadata.funded_by_card_collect: true`)
+  on the spend of a **paystack-sourced** bill only. `debitWallet` then skips
+  `enforceWalletLimit` (tier-0 "wallet disabled" and the tier daily cap) and passes a
+  null daily limit to `debit_wallet_atomic`.
+- The **balance check is unchanged**: the RPC still refuses a spend larger than the
+  account holds, and the same-event `CARD_COLLECT` credit funds exactly that amount.
+- `bypassTierLimits` is a server-internal field on `WalletMutationInput`; no request body
+  reaches it. Wallet-sourced bills keep the limit (pinned by a test).
+- **Residual:** `enforceWalletLimit` sums `DEBIT` rows for a Tier-1/2 user's daily cap, so
+  a card-funded spend still counts toward that user's *later wallet* spends that day.
+  `funded_by_card_collect` marks those rows so a later change can exclude them.
+- **Decision owner:** the repo owner (Patrick Egbuji), instruction recorded 2026-10-25.
+- **Exposure to name before the flag is enabled outside local dev:** a tier-0 payer has no
+  per-day cap on card-bought utilities. This matches flag-off behaviour, which never
+  tier-checked card bills, so it is not a new exposure. The controls that apply instead are
+  Paystack's own card risk checks and the provider-side per-category limits; there is **no**
+  KYC-tier velocity limit on this path. Finance/risk should confirm that is acceptable.
+- **Known consequence — refund to a wallet the payer cannot use:** if the vend fails for 30
+  minutes (ADR-PR701), a tier-0 payer is now refunded into their wallet, which the tier gate
+  keeps disabled for spending until KYC. `hasActiveWallet` checks account status, not KYC
+  tier, so the "hold with admin" branch does not fire. The ledger is correct; the customer
+  copy ("refunded to your wallet") should tell a tier-0 payer to complete KYC to use it.
+  A card (Paystack) refund for tier-0 payers is the better follow-up.
+- **Follow-ups (not in this change):** exclude `funded_by_card_collect` debits from the tier
+  daily-cap sums (TS `enforceWalletLimit` **and** a SQL change to `debit_wallet_atomic`; the
+  TS-only change would not bind); record a limit event when the check is bypassed.

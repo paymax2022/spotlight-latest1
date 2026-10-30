@@ -39,11 +39,37 @@ fi
 log() { printf "%b%s%b\n" "$C_BOLD" "$*" "$C_RESET"; }
 err() { printf "%b%s%b\n" "$C_ERR" "$*" "$C_RESET" >&2; }
 
+# free_port <port> — kill whatever is LISTENing on the port. `kill 0` only reaches
+# this shell's process group; on Windows (Git Bash) the compiled `go run` child
+# (server.exe) and node children survive it and keep the port, so the next run
+# fails with "bind: Only one usage of each socket address".
+free_port() {
+  local port="$1"
+  if command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -Command "Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id \$_.OwningProcess -Force -ErrorAction SilentlyContinue }" >/dev/null 2>&1
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null
+  fi
+  return 0
+}
+
+# Ports owned by each service (respecting the SKIP_* flags).
+stack_ports() {
+  [ "${SKIP_BACKEND:-0}" != "1" ] && echo 8091
+  [ "${SKIP_WEB:-0}" != "1" ] && echo 3000
+  [ "${SKIP_ADMIN:-0}" != "1" ] && echo 3001
+  [ "${SKIP_MOBILE:-0}" != "1" ] && echo 8083
+  return 0
+}
+
+free_stack_ports() { local p; for p in $(stack_ports); do free_port "$p"; done; }
+
 cleanup() {
   printf "\n%bShutting down dev stack…%b\n" "$C_BOLD" "$C_RESET"
   # Kill the whole process group so child go/node/expo processes die too.
   trap - EXIT INT TERM
   kill 0 2>/dev/null
+  free_stack_ports
   wait 2>/dev/null
 }
 trap cleanup EXIT INT TERM
@@ -89,6 +115,9 @@ log "  Frontend web → http://localhost:3000"
 log "  Mobile (web) → http://localhost:8083"
 log "  Backend API  → http://localhost:8091"
 log ""
+
+# Clear stale listeners left by a previous run before binding.
+free_stack_ports
 
 # 1. Go backend
 if [ "${SKIP_BACKEND:-0}" != "1" ]; then
