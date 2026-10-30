@@ -76,7 +76,7 @@ export default function PhotoGrid({ propertyId }: { propertyId: string }) {
         <Text style={styles.muted}>Loading photos…</Text>
       ) : list.length === 0 ? (
         <Text style={styles.muted}>
-          No photos yet. Guests are far more likely to book a listing with real photos — add at least 8.
+          No photos yet. Guests are far more likely to book a listing with real photos — add at least 3.
         </Text>
       ) : (
         <View style={styles.grid}>

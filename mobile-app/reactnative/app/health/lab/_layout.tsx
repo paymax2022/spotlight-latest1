@@ -1,5 +1,6 @@
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/tokens';
+import ProviderRouteGuard from '@/features/providerPortal/ProviderRouteGuard';
 
 /**
  * Laboratory vertical stack (HEALTH-BUILD Phase 2). Mounts under the shared
@@ -7,8 +8,13 @@ import { Colors } from '@/constants/tokens';
  * provider screens under ./provider/*, phlebotomist under ./phlebotomist/*.
  * Legacy app/laboratory is untouched.
  */
+const PROVIDER_RULES = [
+  { type: 'lab', prefix: '/health/lab/provider', open: ['onboarding'] },
+] as const;
+
 export default function LabLayout() {
   return (
+    <ProviderRouteGuard rules={PROVIDER_RULES}>
     <Stack
       screenOptions={{
         headerShown: false,
@@ -52,5 +58,6 @@ export default function LabLayout() {
       <Stack.Screen name="phlebotomist/chain-of-custody" />
       <Stack.Screen name="phlebotomist/drop-off" />
     </Stack>
+    </ProviderRouteGuard>
   );
 }

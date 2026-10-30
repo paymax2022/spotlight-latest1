@@ -115,7 +115,7 @@
       ],
       "cwd": "backend",
       "port": 8092,
-      "description": "Go backend on :8092 — the binary has no godotenv autoload, so .env must be shell-sourced before `go run`; this worktree's .env sets APP_PORT=8092 so it doesn't collide with the main checkout's :8091."
+      "description": "Go backend on :8092 \u2014 the binary has no godotenv autoload, so .env must be shell-sourced before `go run`; this worktree's .env sets APP_PORT=8092 so it doesn't collide with the main checkout's :8091."
     },
     {
       "name": "backend-auth-uat",
@@ -232,7 +232,21 @@
       ],
       "cwd": "mobile-app/reactnative",
       "port": 8123,
-      "description": "Expo web on :8123, unique to this worktree (nifty-jackson-0dd0f0) — :8083/:8085/:8086 were all found occupied by other worktrees' dev servers sharing the same launch.json port numbers. No -c: keep the Metro cache warm across restarts (cold rebuild is ~2min)."
+      "description": "Expo web on :8123, unique to this worktree (nifty-jackson-0dd0f0) \u2014 :8083/:8085/:8086 were all found occupied by other worktrees' dev servers sharing the same launch.json port numbers. No -c: keep the Metro cache warm across restarts (cold rebuild is ~2min)."
+    },
+    {
+      "name": "admin-overview-uat",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "next",
+        "dev",
+        "--webpack",
+        "--port",
+        "3011"
+      ],
+      "cwd": "frontend-admin",
+      "port": 3011,
+      "description": "Worktree admin console on :3011 (invoking next directly; `npm run dev -- --port` fights the -p 3001 baked into the dev script). Same .env.local as :3001, pointed at the shared :8190 backend, for verifying the revoked-session handling without touching the main checkout's :3001. --webpack because Turbopack refuses a node_modules symlink that points outside the worktree."
     }
   ]
 }

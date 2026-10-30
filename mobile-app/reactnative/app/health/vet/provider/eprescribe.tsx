@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StateView from '@/components/StateView';
 import { useIssuePrescription } from '@/features/health/vet/hooks';
+import MissingContext from '@/features/health/vet/components/MissingContext';
 
 interface DraftItem {
   drugName: string;
@@ -59,7 +60,7 @@ export default function EprescribeScreen() {
     setError('');
     issue.mutate(
       {
-        appointmentId: appointmentId ?? 'appt',
+        appointmentId: appointmentId!,
         petId,
         notes: notes.trim() || undefined,
         items: valid.map((it) => ({
@@ -73,9 +74,11 @@ export default function EprescribeScreen() {
           instructions: it.instructions.trim() || undefined,
         })),
       },
-      { onSuccess: () => setDone(true) },
+      { onSuccess: () => setDone(true), onError: () => setError('Couldn’t issue the prescription. Please try again.') },
     );
   };
+
+  if (!appointmentId || !petId) return <MissingContext title="Issue e-prescription" fallback="/health/vet/provider/requests" />;
 
   if (done) {
     return (

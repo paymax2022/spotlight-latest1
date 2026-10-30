@@ -112,6 +112,7 @@ export const ADMIN_ACTIONS: AdminAction[] = [
   { id: 'facilities',    label: 'Bookings',       icon: 'CalendarCheck',route: '/facilities', badgeKey: 'pendingBookings' },
   { id: 'reports',       label: 'Reports',        icon: 'FileBarChart', route: '/reports' },
   { id: 'documents',     label: 'Documents',      icon: 'FolderOpen',   route: '/documents' },
+  { id: 'retention',     label: 'Retention',      icon: 'Archive',      route: '/estate-admin/notifications' },
   { id: 'ai',            label: 'AI notes',       icon: 'Sparkles',     route: '/ai-notes' },
   { id: 'vendors',       label: 'Vendors',        icon: 'Hammer',       route: '/vendors' },
 ];

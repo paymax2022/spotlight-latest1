@@ -11,7 +11,7 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import TextInputField from '@/components/TextInputField';
+import AddressAutocompleteInput from '@/components/AddressAutocompleteInput';
 import { useVet, useAvailability } from '@/features/health/vet/hooks';
 import { APPT_TYPE_META } from '@/features/health/vet/constants';
 import { formatNaira } from '@/features/health/constants/health.constants';
@@ -27,6 +27,7 @@ export default function BookScreen() {
   const [slotIso, setSlotIso] = useState<string | null>(null);
   const [slotLabel, setSlotLabel] = useState<string>('');
   const [address, setAddress] = useState('');
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   // default type to vet's first supported once loaded
   React.useEffect(() => {
@@ -73,6 +74,8 @@ export default function BookScreen() {
         slotLabel,
         reason: reason ?? 'Consultation',
         location: type === 'home' ? address.trim() : '',
+        destLat: type === 'home' && coords ? String(coords.lat) : '',
+        destLng: type === 'home' && coords ? String(coords.lng) : '',
         feeKobo: String(vet.consultFeeKobo),
         homeFeeKobo: String(vet.homeVisitFeeKobo),
       },
@@ -143,12 +146,13 @@ export default function BookScreen() {
         {/* Home address */}
         {type === 'home' ? (
           <View style={styles.addrBlock}>
-            <TextInputField
-              label="Home visit address"
+            <Text style={styles.sectionTitle}>Home visit address</Text>
+            <AddressAutocompleteInput
               placeholder="Where should the vet come?"
               value={address}
-              onChangeText={setAddress}
-              multiline
+              onChangeText={(t) => { setAddress(t); setCoords(null); }}
+              onSelect={(a) => { setAddress(a.label); setCoords({ lat: a.lat, lng: a.lng }); }}
+              resolved={!!coords}
             />
           </View>
         ) : null}

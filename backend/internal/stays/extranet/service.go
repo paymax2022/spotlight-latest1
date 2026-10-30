@@ -171,11 +171,11 @@ func (s *Service) ListRoomTypes(ctx context.Context, userID, propertyID string) 
 	return s.repo.ListRoomTypes(ctx, propertyID)
 }
 
-func (s *Service) CreateRoomType(ctx context.Context, userID, propertyID, name string, occ int, bedding string) (string, error) {
+func (s *Service) CreateRoomType(ctx context.Context, userID, propertyID, name string, occ int, bedding string, units int) (string, error) {
 	if err := s.guard(ctx, userID, propertyID); err != nil {
 		return "", err
 	}
-	return s.repo.CreateRoomType(ctx, propertyID, name, occ, bedding)
+	return s.repo.CreateRoomType(ctx, propertyID, name, occ, bedding, units)
 }
 
 // ListRatePlans / CreateRatePlan (object-scoped).
@@ -186,11 +186,17 @@ func (s *Service) ListRatePlans(ctx context.Context, userID, propertyID string) 
 	return s.repo.ListRatePlans(ctx, propertyID)
 }
 
-func (s *Service) CreateRatePlan(ctx context.Context, userID, propertyID, roomTypeID, planType, board string, refundable bool, baseKobo int64, currency string) (string, error) {
+func (s *Service) CreateRatePlan(ctx context.Context, userID, propertyID, roomTypeID, planType, board string, refundable bool, baseKobo int64, currency string, longStayMinNights, longStayDiscountPct int) (string, error) {
 	if err := s.guard(ctx, userID, propertyID); err != nil {
 		return "", err
 	}
-	return s.repo.CreateRatePlan(ctx, propertyID, roomTypeID, planType, board, refundable, baseKobo, currency)
+	if longStayDiscountPct < 0 || longStayDiscountPct > 100 {
+		return "", fmt.Errorf("%w: long-stay discount must be 0-100 percent", ErrValidation)
+	}
+	if longStayDiscountPct > 0 && longStayMinNights <= 0 {
+		return "", fmt.Errorf("%w: a long-stay discount needs a minimum number of nights", ErrValidation)
+	}
+	return s.repo.CreateRatePlan(ctx, propertyID, roomTypeID, planType, board, refundable, baseKobo, currency, longStayMinNights, longStayDiscountPct)
 }
 
 func (s *Service) ListReservations(ctx context.Context, userID, propertyID, state string, limit, offset int) ([]ReservationRow, error) {

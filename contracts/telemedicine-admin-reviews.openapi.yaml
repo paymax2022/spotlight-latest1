@@ -1,0 +1,268 @@
+openapi: 3.0.3
+info:
+  title: Telemedicine admin — review moderation and review disputes
+  version: 1.0.0
+  description: >
+    Platform-side moderation of patient reviews and the doctor review-dispute
+    queue. Mounted under /api/v1/telemedicine/admin. Reads need
+    telemedicine.admin.view; every mutation needs telemedicine.admin.manage and
+    writes a doctor_compliance_audit row in the same transaction (fail closed).
+    Two review sources are unified: `telemedicine` (telemedicine_reviews, has
+    is_hidden, drives the doctors.rating projection) and `doctor_module`
+    (doctor_reviews, hidden via detail.moderation.hidden).
+servers:
+  - url: /api/v1/telemedicine/admin
+security:
+  - bearerAuth: []
+paths:
+  /reviews/summary:
+    get:
+      summary: Moderation KPIs
+      operationId: reviewsSummary
+      responses:
+        '200':
+          description: Counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Summary' }
+  /reviews:
+    get:
+      summary: List reviews from both sources
+      operationId: listReviews
+      parameters:
+        - { name: source, in: query, schema: { type: string, enum: [telemedicine, doctor_module] } }
+        - { name: rating, in: query, schema: { type: integer, minimum: 1, maximum: 5 } }
+        - { name: hidden, in: query, schema: { type: boolean } }
+        - { name: doctor_id, in: query, description: doctors.id, schema: { type: string, format: uuid } }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Page of reviews
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Review' }
+                  total: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+  /reviews/{source}/{id}:
+    get:
+      summary: One review with its disputes
+      operationId: getReview
+      parameters:
+        - { $ref: '#/components/parameters/Source' }
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: Review detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ReviewDetail' }
+        '404': { $ref: '#/components/responses/Error' }
+  /reviews/{source}/{id}/hide:
+    post:
+      summary: Hide a review (idempotent)
+      operationId: hideReview
+      parameters:
+        - { $ref: '#/components/parameters/Source' }
+        - { $ref: '#/components/parameters/Id' }
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200':
+          description: Updated review
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Review' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /reviews/{source}/{id}/unhide:
+    post:
+      summary: Restore a hidden review (idempotent)
+      operationId: unhideReview
+      parameters:
+        - { $ref: '#/components/parameters/Source' }
+        - { $ref: '#/components/parameters/Id' }
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200':
+          description: Updated review
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Review' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /reviews/disputes:
+    get:
+      summary: Review dispute / removal-request / report queue
+      operationId: listReviewDisputes
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, upheld, rejected] } }
+        - { name: kind, in: query, schema: { type: string, enum: [dispute, removal_request, report] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Page of disputes, oldest open first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Dispute' }
+                  total: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+  /reviews/disputes/{id}:
+    get:
+      summary: One dispute with the disputed review
+      operationId: getReviewDispute
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: Dispute detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DisputeDetail' }
+        '404': { $ref: '#/components/responses/Error' }
+  /reviews/disputes/{id}/resolve:
+    post:
+      summary: Resolve a dispute
+      description: >
+        `upheld` means the complaint is valid and the disputed review is hidden in
+        the same transaction; `rejected` leaves the review visible. Allowed only
+        from `open`. Repeating the same decision is a no-op; the opposite decision
+        on a resolved dispute is 409.
+      operationId: resolveReviewDispute
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, reason]
+              properties:
+                decision: { type: string, enum: [upheld, rejected] }
+                reason: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        '200':
+          description: Resolved dispute
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Dispute' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    Source:
+      name: source
+      in: path
+      required: true
+      schema: { type: string, enum: [telemedicine, doctor_module] }
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  requestBodies:
+    Reason:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason: { type: string, minLength: 5, maxLength: 500 }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+  schemas:
+    Summary:
+      type: object
+      properties:
+        total_reviews: { type: integer }
+        hidden_reviews: { type: integer }
+        low_rated_visible: { type: integer, description: visible reviews rated 1 or 2 }
+        open_disputes: { type: integer }
+        resolved_disputes_30d: { type: integer }
+        reported_reviews: { type: integer }
+    Review:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        source: { type: string, enum: [telemedicine, doctor_module] }
+        doctor_id: { type: string, format: uuid, nullable: true, description: doctors.id when resolvable }
+        doctor_user_id: { type: string, format: uuid, nullable: true }
+        doctor_name: { type: string }
+        patient_ref: { type: string, description: masked patient id; never a name }
+        appointment_id: { type: string, format: uuid, nullable: true }
+        rating: { type: integer, nullable: true }
+        comment: { type: string }
+        hidden: { type: boolean }
+        hidden_reason: { type: string, nullable: true }
+        reported: { type: boolean }
+        open_disputes: { type: integer }
+        created_at: { type: string, format: date-time }
+    Dispute:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [dispute, removal_request, report] }
+        status: { type: string, enum: [open, upheld, rejected] }
+        reason: { type: string, nullable: true }
+        review_id: { type: string, format: uuid, nullable: true }
+        doctor_user_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        resolution_reason: { type: string, nullable: true }
+        resolved_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+    ReviewDetail:
+      allOf:
+        - $ref: '#/components/schemas/Review'
+        - type: object
+          properties:
+            disputes:
+              type: array
+              items: { $ref: '#/components/schemas/Dispute' }
+    DisputeDetail:
+      allOf:
+        - $ref: '#/components/schemas/Dispute'
+        - type: object
+          properties:
+            review: { $ref: '#/components/schemas/Review' }

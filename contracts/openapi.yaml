@@ -44,6 +44,36 @@ components:
         within 24 hours return the cached response without side effects.
 
   schemas:
+    ProviderCapability:
+      type: object
+      required: [type, provider_id, display_name, status, approved]
+      properties:
+        type:
+          type: string
+          enum: [doctor, vet, pharmacy, lab, restaurant, rider, driver, marketplace_seller,
+                 event_organiser, estate_manager, property_manager,
+                 association_creator, crowdfunding_creator, bus_owner]
+          description: >
+            Which portal this record opens. Sources, one entry per owned record unless noted:
+            doctor (`doctor_profiles`), vet/pharmacy/lab (`health_providers`),
+            restaurant (`restaurants`), rider and driver (both from the owner's `drivers`
+            row — the same driver identity powers the mobility console and the food
+            delivery console), marketplace_seller (aggregate: at least one `mkt_listings`
+            row), event_organiser (aggregate: at least one `events` row),
+            estate_manager (`estates.admin_id`), property_manager
+            (`property_role_profiles`, role estate_manager),
+            association_creator (`assoc_organisations.created_by`),
+            crowdfunding_creator (`campaigns.creator_id`) and
+            bus_owner (`bus_providers`).
+        provider_id: { type: string, format: uuid }
+        display_name: { type: string }
+        status:
+          type: string
+          description: Provider lifecycle as stored (PENDING | APPROVED | SUSPENDED; doctors map from verification).
+        approved:
+          type: boolean
+          description: True only for an APPROVED record. The sole flag that unlocks management screens.
+
     SuccessResponse:
       description: Generic success acknowledgement for state-transition/action endpoints with no payload.
       type: object
@@ -1095,6 +1125,41 @@ components:
         sender_display_name:
           type: string
           nullable: true
+        receiver_display_name:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    CryptoWalletTransfer:
+      type: object
+      required: [id, reference, asset, units, fee_units, ngn_value_kobo, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reference:
+          type: string
+        asset:
+          type: string
+          example: USDT
+        units:
+          type: string
+          description: Amount moved, whole-asset units as a decimal string
+        fee_units:
+          type: string
+          description: Fee charged in the same asset, decimal string ("0" until a fee schedule is approved)
+        ngn_value_kobo:
+          type: integer
+          format: int64
+          description: NGN mark of the transfer at execution time, in kobo (used for tier-limit checks)
+        narration:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [successful, failed, reversed]
         receiver_display_name:
           type: string
           nullable: true
@@ -8742,6 +8807,175 @@ paths:
         # MONEY-PATH AGENT 1 — go-live gate: FEATURE_WALLET_TRANSFERS_ENABLED=false → 503
         '503':
           description: Wallet transfers feature disabled (FEATURE_WALLET_TRANSFERS_ENABLED=false)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /health/provider-portal/me:
+    get:
+      operationId: getProviderPortalCapabilities
+      summary: The business capabilities the authenticated user holds, for the provider portal.
+      description: |
+        Answers "which provider portals may this caller open?". One entry per provider
+        record the caller OWNS across health (doctor, vet, pharmacy, lab), food
+        (restaurant, rider), mobility (driver, bus), marketplace, events, estate,
+        property, association and crowdfunding. Read-only.
+
+        Authorization:
+          - Object-scoped to the caller: only rows whose owner is the authenticated user
+            are read. There is no way to ask about another user.
+          - A caller with no provider records gets `200` with `capabilities: []`
+            (not 404), so the client cannot tell a non-provider from a provider of
+            another type by probing.
+          - `approved` is the only field a portal may use to unlock management screens;
+            `status` is shown to the provider verbatim. A `PENDING` or `SUSPENDED`
+            record yields `approved: false` and the portal shows its status screen only.
+          - This endpoint is a UX gate. Provider-side routes enforce ownership server-side;
+            hiding a screen never grants access. Approval enforcement is not yet uniform
+            across routes (see the ADR follow-ups), so do not treat this as the only check.
+          - Only OWNER records are listed: health_providers rows of provider_type vet,
+            pharmacy or lab (staff types such as pharmacist or phlebotomist are excluded).
+          - Aggregate entries (marketplace_seller, event_organiser) use the caller's own
+            user id as `provider_id`; there is no profile row to point at.
+          - A single `drivers` row yields two entries — `driver` and `rider` — because the
+            mobility console and the food delivery console are separate businesses over
+            the same identity; both share the row's `provider_id` and approval.
+
+        Gated by FEATURE_PROVIDER_PORTAL_ENABLED (default off) → 503 when off. Member route.
+      tags: [Providers]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Capabilities (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, capabilities]
+                properties:
+                  success: { type: boolean }
+                  capabilities:
+                    type: array
+                    items: { $ref: '#/components/schemas/ProviderCapability' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503':
+          description: Provider portal disabled (feature flag off).
+
+  /transfers/paymax/crypto:
+    post:
+      operationId: initiateCryptoWalletToWalletTransfer
+      summary: >
+        Instantly transfer a crypto holding from the authenticated user's wallet to
+        another Paymax user. Atomic and idempotent on the provided key.
+      description: |
+        Moves `units` of `asset` from the caller's crypto holding to the recipient's
+        holding in a single DB transaction (internal transfer — no on-chain movement,
+        no provider call). Complements `POST /transfers/paymax`, which moves NGN.
+
+        Money rules:
+          - REQUIRES an `Idempotency-Key`. Replaying the same key with the same body
+            returns the prior result (`already_processed: true`); the same key with a
+            different body is 409. A key is scoped to the caller.
+          - `units` is a decimal STRING in whole-asset units (e.g. "12.5"), never a
+            float. Precision beyond the asset's minor-unit scale is 422. The server
+            converts to integer asset minor units; no float math anywhere.
+          - Posts a balanced asset-unit ledger pair (crypto_ledger_entries, in asset minor units, not the NGN finance ledger) and moves both holding
+            projections atomically; ledger rows are immutable (a reversal is a new
+            pair). Emits an audit event. Never updates a holding column directly.
+          - REQUIRES the caller's transaction PIN in the body. A missing PIN is 400 and
+            is never verified (it must not count toward the PIN lockout); a wrong PIN
+            is 403 and counts.
+          - Tier limits are checked fail-closed against the NGN mark of the transfer
+            (`ngn_value_kobo`, from the latest quote at execution time).
+          - The transfer is crypto AML-screened BEFORE any debit (sender, recipient and
+            amount). A screening refusal moves no money.
+          - Sender and recipient must be different accounts (422 `self_transfer`).
+          - Gated by FEATURE_CRYPTO_ENABLED and FEATURE_CRYPTO_WALLET_TRANSFERS_ENABLED
+            (default off); either off → 503. Member route; needs `crypto.trade`.
+      tags: [Transfers, Crypto]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipient_identifier, asset, units, pin]
+              additionalProperties: false
+              properties:
+                recipient_identifier:
+                  type: string
+                  description: Recipient's phone, email, or Paymax username (same resolution rules as `/transfers/paymax`)
+                asset:
+                  type: string
+                  example: USDT
+                  description: Asset symbol; must be enabled for transfers
+                units:
+                  type: string
+                  pattern: '^[0-9]+(\.[0-9]+)?$'
+                  example: '12.5'
+                  description: Amount in whole-asset units as a decimal string; must be greater than zero
+                pin:
+                  type: string
+                  description: Caller's transaction PIN (verified server-side, never logged)
+                narration:
+                  type: string
+                  maxLength: 100
+      responses:
+        '200':
+          description: Transfer successful (or already processed — idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, transfer]
+                properties:
+                  success: { type: boolean }
+                  already_processed: { type: boolean }
+                  transfer: { $ref: '#/components/schemas/CryptoWalletTransfer' }
+        '400':
+          description: Malformed body, missing `pin`, or missing Idempotency-Key
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Insufficient crypto holding (code `insufficient_holdings`). No money moves.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: >
+            Wrong PIN, tier limit exceeded, caller lacks `crypto.trade`, or the transfer
+            was refused by AML screening. No money moves.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Recipient not found, or the asset is unknown / not enabled for transfers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            Either `ambiguous_recipient` (more than one account carries this phone
+            number; refused before any debit), or the Idempotency-Key was reused with a
+            different request body.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: >
+            `units` is zero, negative or finer than the asset's minor-unit scale, or
+            the recipient is the caller (`self_transfer`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Crypto wallet transfers disabled (FEATURE_CRYPTO_ENABLED or FEATURE_CRYPTO_WALLET_TRANSFERS_ENABLED is false)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

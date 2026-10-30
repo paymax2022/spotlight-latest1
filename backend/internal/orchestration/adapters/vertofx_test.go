@@ -334,6 +334,14 @@ func TestCollectionDefault_RealVertoFX(t *testing.T) {
 		{"", "iban", "EUR", "eversend"},
 	} {
 		va, e := mk(tc.def).CreateCollection(ctx, "c1", orch.CollectionRequest{Currency: tc.cur, Type: tc.typ})
+		if tc.want == "eversend" {
+			// The deterministic Eversend adapter no longer fabricates an IBAN: reaching
+			// it (and being refused) proves the default routed to eversend.
+			if e == nil || !strings.Contains(e.Error(), ErrNoCollectionAccount.Error()) {
+				t.Errorf("%+v: want ErrNoCollectionAccount from eversend, got va=%+v err=%v", tc, va, e)
+			}
+			continue
+		}
 		if e != nil {
 			t.Fatalf("%+v: %v", tc, e)
 		}

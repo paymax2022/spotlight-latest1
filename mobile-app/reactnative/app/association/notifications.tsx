@@ -40,7 +40,7 @@ export default function NotificationsCenter() {
           contentContainerStyle={styles.list}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           renderItem={({ item }) => {
-            const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[NOTIFICATION_ICON[item.kind]] ?? Icons.Bell;
+            const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[NOTIFICATION_ICON[String(item.kind).toLowerCase() as keyof typeof NOTIFICATION_ICON]] ?? Icons.Bell;
             return (
               <Pressable
                 onPress={() => item.route && router.push(item.route as never)}

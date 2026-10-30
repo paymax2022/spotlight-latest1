@@ -12,6 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import AddressAutocompleteInput from '@/components/AddressAutocompleteInput';
 import CredentialBadge from '@/features/health/components/CredentialBadge';
 import { UploadField } from '@/features/doctor/components';
 import type { UploadFieldState } from '@/features/doctor/components';
@@ -26,6 +27,14 @@ export default function ProviderOnboardingScreen() {
   const [displayName, setDisplayName] = useState('');
   const [vcn, setVcn] = useState('');
   const [clinic, setClinic] = useState('');
+  const [clinicAddress, setClinicAddress] = useState('');
+  const [clinicCity, setClinicCity] = useState('');
+  const [clinicState, setClinicState] = useState('');
+  // True when the picked place came with a state from the provider (field then read-only);
+  // the field stays editable only as a fallback when the provider returned none.
+  const [stateFromProvider, setStateFromProvider] = useState(false);
+  const [clinicPoint, setClinicPoint] = useState<{ lat: number; lng: number } | null>(null);
+  const [submitErr, setSubmitErr] = useState<string>();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [uploadState, setUploadState] = useState<UploadFieldState>('empty');
   const [licenceFile, setLicenceFile] = useState<PickedUpload>();
@@ -100,19 +109,31 @@ export default function ProviderOnboardingScreen() {
     if (!displayName.trim()) e.displayName = 'Required';
     if (!vcn.trim()) e.vcn = 'VCN number is required';
     if (!clinic.trim()) e.clinic = 'Required';
+    if (!clinicPoint) e.location = 'Search for your clinic address and pick it from the list so pet owners can find you.';
     setErrors(e);
-    if (Object.keys(e).length) return;
+    if (Object.keys(e).length || !clinicPoint) return;
     setUploadErr(undefined);
+    setSubmitErr(undefined);
     submit.mutate(
       {
         displayName: displayName.trim(),
         vcnLicenseNo: vcn.trim(),
         clinicName: clinic.trim(),
+        location: {
+          address: clinicAddress.trim(),
+          city: clinicCity.trim() || undefined,
+          state: clinicState.trim() || undefined,
+          lat: clinicPoint.lat,
+          lng: clinicPoint.lng,
+        },
         licenceFile: licenceFile ? { uri: licenceFile.uri, fileName: licenceFile.name, mimeType: licenceFile.mimeType } : undefined,
       },
       {
         onSuccess: () => refetch(),
-        onError: () => setUploadErr('Could not submit your licence document. Please try again.'),
+        onError: (err) => {
+          const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+          setSubmitErr(msg ?? 'Could not submit your application. Please try again.');
+        },
       },
     );
   };
@@ -132,6 +153,38 @@ export default function ProviderOnboardingScreen() {
         <TextInputField label="Display name *" placeholder="Dr. …" value={displayName} onChangeText={setDisplayName} error={errors.displayName} />
         <TextInputField label="VCN registration number *" placeholder="e.g. VCN-2014-0912" value={vcn} onChangeText={setVcn} error={errors.vcn} />
         <TextInputField label="Clinic / practice name *" placeholder="Your clinic" value={clinic} onChangeText={setClinic} error={errors.clinic} />
+        <Text style={styles.sectionLabel}>Clinic location *</Text>
+        <AddressAutocompleteInput
+          value={clinicAddress}
+          onChangeText={(t) => {
+            setClinicAddress(t);
+            // Typing again invalidates the pinned point until a place is picked.
+            setClinicPoint(null);
+          }}
+          onSelect={(a) => {
+            setClinicAddress(a.label);
+            setClinicCity(a.city ?? '');
+            setClinicState(a.state ?? '');
+            setStateFromProvider(!!a.state);
+            setClinicPoint({ lat: a.lat, lng: a.lng });
+            setErrors((prev) => ({ ...prev, location: '' }));
+          }}
+          placeholder="Search for your clinic address"
+          resolved={clinicPoint != null}
+          surface="delivery"
+          inlineDropdown
+        />
+        {errors.location ? <Text style={styles.errorText}>{errors.location}</Text> : null}
+        {clinicPoint ? (
+          <View style={styles.locRow}>
+            <View style={styles.locCol}>
+              <TextInputField label="City" placeholder="Lagos" value={clinicCity} onChangeText={setClinicCity} maxLength={100} />
+            </View>
+            <View style={styles.locCol}>
+              <TextInputField label="State" placeholder="Lagos" value={clinicState} onChangeText={setClinicState} maxLength={100} editable={!stateFromProvider} />
+            </View>
+          </View>
+        ) : null}
         <UploadField
           label="VCN licence document"
           state={uploadState}
@@ -140,6 +193,7 @@ export default function ProviderOnboardingScreen() {
           hint="PDF, JPG or PNG"
           onPick={pickLicence}
         />
+        {submitErr ? <Text style={styles.errorText}>{submitErr}</Text> : null}
       </ScrollView>
 
       <View style={styles.footer}>
@@ -154,6 +208,10 @@ const styles = StyleSheet.create({
   content: { padding: Spacing.containerMargin, gap: Spacing.md, paddingBottom: 40 },
   intro: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, backgroundColor: Colors.iconBgTeal, borderRadius: Radius.md, padding: Spacing.md },
   introText: { ...Typography.bodySm, color: Colors.tertiaryContainer, flex: 1, lineHeight: 18 },
+  sectionLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
+  errorText: { ...Typography.labelSm, color: Colors.error },
+  locRow: { flexDirection: 'row', gap: Spacing.sm },
+  locCol: { flex: 1 },
   statusCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.lg, gap: Spacing.sm, alignItems: 'center' },
   statusIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
   statusTitle: { ...Typography.headlineMd, fontSize: 20, color: Colors.onSurface },

@@ -47,6 +47,7 @@ import (
 	ptrx "spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/provider"
 )
@@ -161,6 +162,9 @@ type Deps struct {
 	Providers *ProviderRegistry
 	Wallet    *wallet.Service
 	Ledger    *ledger.Service
+	// Tiers enforces transaction amount and daily limits based on KYC verification.
+	// Required for tier-limit checks on all payments >= ₦20k.
+	Tiers *tiers.Service
 	// Commission is optional (nil ⇒ no earning is recorded and no revenue leg is
 	// posted; the payment is unaffected). When wired it MUST have been built with
 	// a real ledger — that is what fills ledger_ref.
@@ -199,6 +203,7 @@ type Service struct {
 	providers      *ProviderRegistry
 	wallet         *wallet.Service
 	ledger         *ledger.Service
+	tiers          *tiers.Service
 	commission     *commission.Service
 	timeoutMs      int
 	sandboxValid   bool
@@ -220,6 +225,7 @@ func NewService(d Deps) *Service {
 		providers:      d.Providers,
 		wallet:         d.Wallet,
 		ledger:         d.Ledger,
+		tiers:          d.Tiers,
 		commission:     d.Commission,
 		timeoutMs:      timeout,
 		sandboxValid:   d.SandboxValidation,
@@ -808,7 +814,17 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 	transaction := inserted
 	s.event(ctx, transactionID, "initiated", "Utility payment initiated.", map[string]any{"pricing": pricing})
 
-	// (4) Wallet debit → provider clearing (a PASS-THROUGH liability, not revenue).
+	// (4) Transaction amount check for all payment methods.
+	// Transactions < ₦20k are allowed for any user (Tier 0+).
+	// Transactions >= ₦20k require KYC (Tier 1+).
+	// Also enforces ₦50k daily limit for Tier 0 users.
+	if err := s.tiers.EnforceSmallTransactionLimit(ctx, userID, pricing.RetailAmountKobo); err != nil {
+		s.markFailed(ctx, transactionID, err.Error())
+		s.event(ctx, transactionID, "tier_check_failed", err.Error(), nil)
+		return nil, fmt.Errorf("utilitybills: transaction blocked by tier limit: %w", err)
+	}
+
+	// (5) Wallet debit → provider clearing (a PASS-THROUGH liability, not revenue).
 	clearing, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 	if err != nil {
 		return nil, fmt.Errorf("utilitybills: resolve clearing account: %w", err)

@@ -1,38 +1,52 @@
--- Estate occupancy and unit rules (UAT module M03) — close-out Phase 2.4.
+-- Estate occupancy integrity (UAT lane estate-a, module M03) — close-out Phase 2.4.
 -- Additive only — no DROP, no RENAME, no type narrowing, no backfill that can lose data.
--- Re-appliable: every statement is IF NOT EXISTS / OR REPLACE / DROP-then-CREATE.
 --
--- PROVENANCE: this file was reconstructed on 2026-10-30 from the objects already live in the local
--- database (estate_unit_occupants, the three guard functions, the two SECURITY DEFINER writers,
--- estate_properties.capacity and the four *_override columns on estate_dues_invoices). The original
--- copy of this migration was never committed, which meant a fresh environment could not replay it —
--- and the lease ledger that follows (20271099000080) references these objects. Definitions here are
--- the applied ones, extracted rather than retyped.
+-- M03 held four rows the code could not answer, and the reason was the same in every case: nothing in
+-- the schema recorded *who occupies which unit*. `estate_residents` is one row per (estate, user) with
+-- a free-text `unit` label and no foreign key, so occupancy was not countable; `estate_properties` had
+-- no capacity; a tenancy approval threw away the lease dates it had just been given; a unit's owner and
+-- its tenant were two UUID columns with no rule between them; and dues took whatever amount the caller
+-- typed. That is these four cases:
 --
---   EST-UAT-0044  duplicate / over-capacity occupancy → estate_unit_occupants plus
---                                                       estate_enforce_unit_capacity (capacity, one
---                                                       live tenant, one live owner per unit)
---   EST-UAT-0048  billing a vacant unit              → estate_enforce_vacant_unit_exemption and the
---                                                       vacancy_override pair that excuses it
---   EST-UAT-0045  billing outside an occupant's term → estate_enforce_out_of_term_billing and the
---                                                       term_override pair that excuses it
+--   EST-UAT-0044  owner and tenant overlap validated   → estate_unit_occupants + two partial uniques
+--                                                        (one live owner, one live tenant per unit) +
+--                                                        capacity on the unit + one admitting writer
+--                                                        estate_occupancy_admit()
+--   EST-UAT-0045  move-in effective date gates things  → effective_from / effective_until on the
+--                                                        occupancy row, read by the membership check
+--                                                        (access) and by estate_enforce_out_of_term_billing
+--                                                        (dues)
+--   EST-UAT-0048  vacant-unit fee policy               → a vacant unit cannot be billed unless the
+--                                                        invoice carries an explicit override and a
+--                                                        reason (the product rule chosen: exemption,
+--                                                        not a discount)
+--   EST-UAT-0051  occupancy proof verification         → resident_profiles.proof_* state, and the
+--                                                        reviewer identity tenancy_requests was missing
 --
--- Design decisions worth stating:
---   * `estate_properties.tenant_id` / `landlord_id` record who is on the deed *now*; they cannot say
---     from when, until when, or that a person lived there last year. This table is that history.
---   * Rules live in triggers, not services, so the BFF mirror, the importer and any future writer all
---     pass the same gate — the party columns cannot be moved by a path that skipped a service.
---   * Admission is a transaction: membership, registration, party columns, profile label and audit row
---     all move together, so a unit cannot be 'occupied' with nobody on the deed.
---   * Exemptions are recorded, not silent: both dues overrides require a reason and are audited
---     (INVOICE_VACANCY_OVERRIDE / INVOICE_TERM_OVERRIDE).
+-- Design decision worth stating: occupancy is a NEW relation, not a column on `estate_residents`.
+-- Adding `property_id` there cannot work — that table is `UNIQUE (estate_id, user_id)`, so one account
+-- could only ever be attached to one unit, which is the opposite of EST-UAT-0043 (one customer,
+-- multiple units, records kept per unit). One row per (unit, person) is also what makes "overlap beyond
+-- capacity" a countable predicate instead of a string comparison.
+--
+-- Deliberate limits, recorded rather than hidden:
+--   * capacity counts *occupancy registrations*. Household members and domestic staff recorded on a
+--     profile are dependants listed in `household_members`/`domestic_staff`; they are not occupancy
+--     rows and do not consume a bed. A manager who needs dependants counted has to register them.
+--   * Existing `estate_residents` rows get no occupancy row from this migration. A member with no
+--     registration is treated exactly as today (EST-UAT-0045's "NULL = unrestricted" rule) — backfilling
+--     one from a free-text `unit` label would invent occupancy data the ledger then has to disbelieve.
+--   * A unit that becomes vacant after being billed keeps its existing receivable. The exemption is a
+--     rule about *raising* a charge, enforced on INSERT only; arrears do not evaporate because somebody
+--     moved out.
 
 -- ─── unit capacity ────────────────────────────────────────────────────────────
 
--- EST-UAT-0044: how many occupancy registrations a unit accepts. 6 is a household, not a hotel room;
--- an estate that genuinely houses more raises it on the unit rather than the rule being softened.
 ALTER TABLE estate_properties
     ADD COLUMN IF NOT EXISTS capacity INTEGER NOT NULL DEFAULT 6;
+
+COMMENT ON COLUMN estate_properties.capacity IS
+    'EST-UAT-0044: how many occupancy registrations the unit accepts. Default 6 — a household, not a hotel room. Enforced by estate_enforce_unit_capacity and by estate_occupancy_admit.';
 
 DO $$
 BEGIN
@@ -42,42 +56,32 @@ BEGIN
     END IF;
 END $$;
 
-COMMENT ON COLUMN estate_properties.capacity IS
-    'EST-UAT-0044: how many occupancy registrations the unit accepts. Default 6 — a household, not a hotel room. Enforced by estate_enforce_unit_capacity and by estate_occupancy_admit.';
-
--- ─── who is behind which door ─────────────────────────────────────────────────
+-- ─── occupancy registrations (EST-UAT-0044 / 0045 / 0043) ─────────────────────
 
 CREATE TABLE IF NOT EXISTS estate_unit_occupants (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    estate_id       UUID NOT NULL REFERENCES estates(id) ON DELETE CASCADE,
-    property_id     UUID NOT NULL REFERENCES estate_properties(id) ON DELETE CASCADE,
-    user_id         UUID NOT NULL REFERENCES auth.users(id),
-    occupancy_type  TEXT NOT NULL DEFAULT 'resident'
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    estate_id      UUID NOT NULL REFERENCES estates(id) ON DELETE CASCADE,
+    property_id    UUID NOT NULL REFERENCES estate_properties(id) ON DELETE CASCADE,
+    user_id        UUID NOT NULL REFERENCES auth.users(id),
+    occupancy_type TEXT NOT NULL DEFAULT 'resident'
                         CHECK (occupancy_type IN ('resident', 'tenant', 'homeowner')),
-    effective_from  DATE,
+    effective_from DATE,
     effective_until DATE,
-    admitted_by     UUID,
-    note            TEXT,
-    ended_at        TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- A registration is one row per person per unit; a re-admission reopens it rather than stacking a
-    -- second live row, which is what makes the "one live tenant" index below total.
-    CONSTRAINT estate_unit_occupants_property_id_user_id_key UNIQUE (property_id, user_id),
-    -- EST-UAT-0045: a term that ends before it starts is a data-entry error, not an exemption.
+    admitted_by    UUID,
+    note           TEXT,
+    ended_at       TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (property_id, user_id),
+    -- A registration whose move-out precedes its move-in is a data-entry error that would silently
+    -- never admit anybody; refuse it here rather than in one service.
     CONSTRAINT estate_unit_occupants_window_ordered
         CHECK (effective_from IS NULL OR effective_until IS NULL OR effective_until >= effective_from)
 );
 
-COMMENT ON TABLE estate_unit_occupants IS
-    'Who occupies which unit, from when to when, as owner, tenant or plain resident. The estate membership row (estate_residents) says a person belongs to the estate; this says which door they belong to.';
-
-CREATE INDEX IF NOT EXISTS estate_unit_occupants_live_idx
-    ON estate_unit_occupants (property_id) WHERE ended_at IS NULL;
-CREATE INDEX IF NOT EXISTS estate_unit_occupants_user_idx
-    ON estate_unit_occupants (estate_id, user_id);
--- EST-UAT-0044: a unit has at most one live owner and at most one live tenant. Plain residents are
--- bounded by capacity instead, so a household can hold several.
+-- One live owner and one live tenant per unit, in the database. These two indexes ARE the overlap rule
+-- of EST-UAT-0044: no service, BFF or psql session can create a second current owner of a unit, and a
+-- released registration (ended_at) frees the slot for its successor without deleting the history.
 CREATE UNIQUE INDEX IF NOT EXISTS estate_unit_occupants_one_live_owner
     ON estate_unit_occupants (property_id)
     WHERE occupancy_type = 'homeowner' AND ended_at IS NULL;
@@ -85,25 +89,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS estate_unit_occupants_one_live_tenant
     ON estate_unit_occupants (property_id)
     WHERE occupancy_type = 'tenant' AND ended_at IS NULL;
 
-ALTER TABLE estate_unit_occupants ENABLE ROW LEVEL SECURITY;
+-- EST-UAT-0043: "one customer, multiple units" is a lookup on the person, per estate.
+CREATE INDEX IF NOT EXISTS estate_unit_occupants_user_idx
+    ON estate_unit_occupants (estate_id, user_id);
+CREATE INDEX IF NOT EXISTS estate_unit_occupants_live_idx
+    ON estate_unit_occupants (property_id) WHERE ended_at IS NULL;
 
-DO $$ BEGIN
-    -- Readers go through the estate surface (service role). There is deliberately no authenticated
-    -- policy: the console and the app both read occupancy through the BFF, which carries the actor's
-    -- authority check itself.
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public'
-                   AND tablename = 'estate_unit_occupants' AND policyname = 'occupancy_service') THEN
-        CREATE POLICY "occupancy_service" ON estate_unit_occupants TO service_role
-            USING (TRUE) WITH CHECK (TRUE);
-    END IF;
-END $$;
+COMMENT ON TABLE estate_unit_occupants IS
+    'Who occupies which unit, from when to when, as owner, tenant or plain resident. The estate membership row (estate_residents) says a person belongs to the estate; this says which door they belong to.';
 
--- ─── capacity, where the write happens ────────────────────────────────────────
-
-CREATE OR REPLACE FUNCTION public.estate_enforce_unit_capacity()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
+-- Capacity is enforced where the write happens, so no caller path can skip it.
+CREATE OR REPLACE FUNCTION estate_enforce_unit_capacity()
+RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     v_capacity INTEGER;
     v_archived BOOLEAN;
@@ -143,118 +140,37 @@ BEGIN
         RAISE EXCEPTION 'unit is full (% occupancy registrations)', v_capacity USING ERRCODE = '23514';
     END IF;
     RETURN NEW;
-END $function$;
+END $$;
 
 DROP TRIGGER IF EXISTS estate_enforce_unit_capacity_on_write ON estate_unit_occupants;
 CREATE TRIGGER estate_enforce_unit_capacity_on_write
     BEFORE INSERT OR UPDATE ON estate_unit_occupants
     FOR EACH ROW EXECUTE FUNCTION estate_enforce_unit_capacity();
 
--- ─── the two dues exemptions ──────────────────────────────────────────────────
-
--- Both exemptions follow the same posture: absent information (no unit, no registration) means the
--- rule has nothing to say; a deliberate waiver carries a reason and is audited.
-ALTER TABLE estate_dues_invoices
-    ADD COLUMN IF NOT EXISTS vacancy_override BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS vacancy_override_reason TEXT,
-    ADD COLUMN IF NOT EXISTS term_override BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS term_override_reason TEXT;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'estate_dues_invoices_vacancy_override_reason') THEN
-        ALTER TABLE estate_dues_invoices
-            ADD CONSTRAINT estate_dues_invoices_vacancy_override_reason
-            CHECK (NOT vacancy_override OR btrim(COALESCE(vacancy_override_reason, '')) <> '');
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'estate_dues_invoices_term_override_reason') THEN
-        ALTER TABLE estate_dues_invoices
-            ADD CONSTRAINT estate_dues_invoices_term_override_reason
-            CHECK (NOT term_override OR btrim(COALESCE(term_override_reason, '')) <> '');
-    END IF;
-END $$;
-
-COMMENT ON COLUMN estate_dues_invoices.vacancy_override IS
-    'EST-UAT-0048: bill a vacant unit anyway. Requires vacancy_override_reason; audited as INVOICE_VACANCY_OVERRIDE.';
-
-CREATE OR REPLACE FUNCTION public.estate_enforce_vacant_unit_exemption()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
-DECLARE
-    v_status TEXT;
-BEGIN
-    -- The rule needs a unit to speak about; an invoice with no property is out of its scope, which is
-    -- recorded as a limit of EST-UAT-0048 rather than a loophole in the code.
-    IF NEW.property_id IS NULL THEN
-        RETURN NEW;
-    END IF;
-    SELECT ep.occupancy_status INTO v_status FROM estate_properties ep WHERE ep.id = NEW.property_id;
-    IF v_status IS DISTINCT FROM 'vacant' THEN
-        RETURN NEW;
-    END IF;
-    IF NEW.vacancy_override THEN
-        RETURN NEW;
-    END IF;
-    RAISE EXCEPTION 'unit is vacant — dues are exempt; bill it only with an explicit override and a reason'
-        USING ERRCODE = '23514';
-END $function$;
-
-DROP TRIGGER IF EXISTS estate_enforce_vacant_unit_exemption_on_create ON estate_dues_invoices;
-CREATE TRIGGER estate_enforce_vacant_unit_exemption_on_create
-    BEFORE INSERT ON estate_dues_invoices
-    FOR EACH ROW EXECUTE FUNCTION estate_enforce_vacant_unit_exemption();
-
-CREATE OR REPLACE FUNCTION public.estate_enforce_out_of_term_billing()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
-DECLARE
-    v_out_of_term BOOLEAN;
-BEGIN
-    -- No unit named, or no registration for the billed person on this unit: the rule has nothing to
-    -- say, which is the "NULL = unrestricted" posture of EST-UAT-0045 rather than a permission.
-    IF NEW.property_id IS NULL OR NEW.resident_id IS NULL THEN
-        RETURN NEW;
-    END IF;
-    IF NEW.term_override THEN
-        RETURN NEW;
-    END IF;
-
-    SELECT EXISTS (
-        SELECT 1 FROM estate_unit_occupants o
-        WHERE o.property_id = NEW.property_id
-          AND o.user_id     = NEW.resident_id
-          AND o.ended_at IS NULL
-          -- The registration exists and is live, yet today falls outside its term.
-          AND (o.effective_from IS NOT NULL AND o.effective_from > CURRENT_DATE
-               OR o.effective_until IS NOT NULL AND o.effective_until < CURRENT_DATE)
-    ) INTO v_out_of_term;
-
-    IF v_out_of_term THEN
-        RAISE EXCEPTION 'this occupant''s term on the unit does not run today — dues are exempt; bill only with an explicit term override and a reason'
-            USING ERRCODE = '23514';
-    END IF;
-    RETURN NEW;
-END $function$;
-
-DROP TRIGGER IF EXISTS estate_enforce_out_of_term_billing_on_create ON estate_dues_invoices;
-CREATE TRIGGER estate_enforce_out_of_term_billing_on_create
-    BEFORE INSERT ON estate_dues_invoices
-    FOR EACH ROW EXECUTE FUNCTION estate_enforce_out_of_term_billing();
-
--- ─── admission and release writers ───────────────────────────────────────────
+-- ─── one admitting writer (EST-UAT-0044) ──────────────────────────────────────
 --
--- Membership, registration, party columns, profile label and the audit row move in one transaction;
--- the guards above decide whether the write is allowed. Approval of a tenancy request is the landlord
--- admitting a tenant — the only occupancy type a non-admin may create.
-
-CREATE OR REPLACE FUNCTION public.estate_occupancy_admit(p_estate uuid, p_property uuid, p_user uuid, p_actor uuid, p_kind text, p_from date, p_until date, p_note text, p_replace_owner boolean)
- RETURNS TABLE(out_occupant_id uuid, out_resident_id uuid, out_role text, out_occupancy_type text)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
+-- Admitting an occupant is four writes that only make sense together: the residency (so the person can
+-- act in the estate), the occupancy registration (capacity + overlap), the unit's party column
+-- (owner/tenant, which the voting roll and the analytics read), and the profile label the resident card
+-- prints. Before this, each caller did a subset: a tenancy approval wrote the first two and could
+-- DEMOTE an estate_admin to resident while doing it, an ownership-claim approval wrote none of them,
+-- and an admin assignment wrote only the third. One writer means one rule set.
+DROP FUNCTION IF EXISTS estate_occupancy_admit(UUID, UUID, UUID, UUID, TEXT, DATE, DATE, TEXT);
+CREATE OR REPLACE FUNCTION estate_occupancy_admit(
+    p_estate        UUID,
+    p_property      UUID,
+    p_user          UUID,
+    p_actor         UUID,
+    p_kind          TEXT,
+    p_from          DATE,
+    p_until         DATE,
+    p_note          TEXT,
+    p_replace_owner BOOLEAN
+) RETURNS TABLE (out_occupant_id UUID, out_resident_id UUID, out_role TEXT, out_occupancy_type TEXT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_prop     estate_properties%ROWTYPE;
     v_admin    BOOLEAN;
@@ -368,14 +284,28 @@ BEGIN
                                'replaced_owner', p_replace_owner));
 
     RETURN QUERY SELECT v_occupant.id, v_res_id, v_role, p_kind::TEXT;
-END $function$;
+END $$;
 
-CREATE OR REPLACE FUNCTION public.estate_occupancy_release(p_estate uuid, p_property uuid, p_user uuid, p_actor uuid, p_reason text)
- RETURNS TABLE(out_occupant_id uuid, out_occupancy_status text)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
+REVOKE ALL ON FUNCTION estate_occupancy_admit(UUID, UUID, UUID, UUID, TEXT, DATE, DATE, TEXT, BOOLEAN) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION estate_occupancy_admit(UUID, UUID, UUID, UUID, TEXT, DATE, DATE, TEXT, BOOLEAN) TO service_role, authenticated;
+
+-- ─── one releasing writer (EST-UAT-0046) ──────────────────────────────────────
+--
+-- Move-out was, until here, account deletion. Ending an occupancy has to keep the history (the ledger
+-- and the audit trail both point at it) while freeing the unit's owner/tenant slot and recomputing
+-- whether anybody is still in the unit.
+DROP FUNCTION IF EXISTS estate_occupancy_release(UUID, UUID, UUID, UUID, TEXT);
+CREATE OR REPLACE FUNCTION estate_occupancy_release(
+    p_estate   UUID,
+    p_property UUID,
+    p_user     UUID,
+    p_actor    UUID,
+    p_reason   TEXT
+) RETURNS TABLE (out_occupant_id UUID, out_occupancy_status TEXT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_occ     estate_unit_occupants%ROWTYPE;
     v_admin   BOOLEAN;
@@ -428,18 +358,211 @@ BEGIN
             jsonb_build_object('user_id', p_user, 'occupancy_type', v_occ.occupancy_type, 'reason', p_reason));
 
     RETURN QUERY SELECT v_occ.id, v_status;
-END $function$;
+END $$;
 
--- ─── privileges ───────────────────────────────────────────────────────────────
+REVOKE ALL ON FUNCTION estate_occupancy_release(UUID, UUID, UUID, UUID, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION estate_occupancy_release(UUID, UUID, UUID, UUID, TEXT) TO service_role, authenticated;
+
+-- ─── vacant units are exempt from dues (EST-UAT-0048) ─────────────────────────
 --
--- SECURITY DEFINER functions are executable by PUBLIC until told otherwise; both writers are revoked
--- from anon and handed back to the API roles explicitly. The trigger guards keep the default ACL —
--- PostgreSQL refuses to call a trigger function outside a trigger anyway.
-REVOKE ALL ON FUNCTION estate_occupancy_admit(UUID, UUID, UUID, UUID, TEXT, DATE, DATE, TEXT, BOOLEAN)
-    FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION estate_occupancy_release(UUID, UUID, UUID, UUID, TEXT)
-    FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION estate_occupancy_admit(UUID, UUID, UUID, UUID, TEXT, DATE, DATE, TEXT, BOOLEAN)
-    TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION estate_occupancy_release(UUID, UUID, UUID, UUID, TEXT)
-    TO authenticated, service_role;
+-- The product rule adopted here is exemption rather than a discounted rate: an invoice may not be
+-- raised against a unit that is recorded as vacant. The escape hatch is explicit and auditable — an
+-- override flag that requires a reason — because a managing agent does legitimately bill an empty unit
+-- sometimes (a levy that funds the vacant unit's security, a charge raised before the vacancy date).
+
+ALTER TABLE estate_dues_invoices
+    ADD COLUMN IF NOT EXISTS vacancy_override        BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS vacancy_override_reason TEXT;
+
+COMMENT ON COLUMN estate_dues_invoices.vacancy_override IS
+    'EST-UAT-0048: bill a vacant unit anyway. Requires vacancy_override_reason; audited as INVOICE_VACANCY_OVERRIDE.';
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'estate_dues_invoices_vacancy_override_reason') THEN
+        ALTER TABLE estate_dues_invoices
+            ADD CONSTRAINT estate_dues_invoices_vacancy_override_reason
+            CHECK (NOT vacancy_override OR btrim(COALESCE(vacancy_override_reason, '')) <> '');
+    END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION estate_enforce_vacant_unit_exemption()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    v_status TEXT;
+BEGIN
+    -- The rule needs a unit to speak about; an invoice with no property is out of its scope, which is
+    -- recorded as a limit of EST-UAT-0048 rather than a loophole in the code.
+    IF NEW.property_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT ep.occupancy_status INTO v_status FROM estate_properties ep WHERE ep.id = NEW.property_id;
+    IF v_status IS DISTINCT FROM 'vacant' THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.vacancy_override THEN
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'unit is vacant — dues are exempt; bill it only with an explicit override and a reason'
+        USING ERRCODE = '23514';
+END $$;
+
+-- INSERT only, on purpose: a receivable raised while the unit was occupied is still owed after the
+-- occupant leaves, and refusing the payment update would make the arrear unpayable.
+DROP TRIGGER IF EXISTS estate_enforce_vacant_unit_exemption_on_create ON estate_dues_invoices;
+CREATE TRIGGER estate_enforce_vacant_unit_exemption_on_create
+    BEFORE INSERT ON estate_dues_invoices
+    FOR EACH ROW EXECUTE FUNCTION estate_enforce_vacant_unit_exemption();
+
+-- The other half of the same product decision (EST-UAT-0045: "outside the window a member is not
+-- charged"). A unit can still be occupied — by a co-resident, a family member, the owner — while the
+-- person being billed has a registration on it whose term excludes today. The vacancy rule cannot see
+-- that, because the unit is not vacant.
+--
+-- Separate column pair and separate trigger rather than one broadened rule, so each exemption names the
+-- product decision it implements and an override is never ambiguous about which rule it waived.
+ALTER TABLE estate_dues_invoices
+    ADD COLUMN IF NOT EXISTS term_override        BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS term_override_reason TEXT;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'estate_dues_invoices_term_override_reason') THEN
+        ALTER TABLE estate_dues_invoices
+            ADD CONSTRAINT estate_dues_invoices_term_override_reason
+            CHECK (NOT term_override OR btrim(COALESCE(term_override_reason, '')) <> '');
+    END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION estate_enforce_out_of_term_billing()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    v_out_of_term BOOLEAN;
+BEGIN
+    -- No unit named, or no registration for the billed person on this unit: the rule has nothing to
+    -- say, which is the "NULL = unrestricted" posture of EST-UAT-0045 rather than a permission.
+    IF NEW.property_id IS NULL OR NEW.resident_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.term_override THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT EXISTS (
+        SELECT 1 FROM estate_unit_occupants o
+        WHERE o.property_id = NEW.property_id
+          AND o.user_id     = NEW.resident_id
+          AND o.ended_at IS NULL
+          -- The registration exists and is live, yet today falls outside its term.
+          AND (o.effective_from IS NOT NULL AND o.effective_from > CURRENT_DATE
+               OR o.effective_until IS NOT NULL AND o.effective_until < CURRENT_DATE)
+    ) INTO v_out_of_term;
+
+    IF v_out_of_term THEN
+        RAISE EXCEPTION 'this occupant''s term on the unit does not run today — dues are exempt; bill only with an explicit term override and a reason'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS estate_enforce_out_of_term_billing_on_create ON estate_dues_invoices;
+CREATE TRIGGER estate_enforce_out_of_term_billing_on_create
+    BEFORE INSERT ON estate_dues_invoices
+    FOR EACH ROW EXECUTE FUNCTION estate_enforce_out_of_term_billing();
+
+-- ─── occupancy proof verification (EST-UAT-0051) ──────────────────────────────
+--
+-- Before this the module stored a document URL and nothing else: `resident_profiles.occupancy_type`
+-- (the word printed on the resident ID card a guard reads) was pure self-declaration, changeable at
+-- will, with no state between "the resident said so" and "the estate checked". These columns make that
+-- distinction exist in the database instead of in a comment.
+
+ALTER TABLE resident_profiles
+    ADD COLUMN IF NOT EXISTS proof_status       TEXT    NOT NULL DEFAULT 'unverified',
+    ADD COLUMN IF NOT EXISTS proof_verified_by  UUID    REFERENCES auth.users(id),
+    ADD COLUMN IF NOT EXISTS proof_verified_at  TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS proof_review_note  TEXT;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'resident_profiles_proof_status_check') THEN
+        ALTER TABLE resident_profiles
+            ADD CONSTRAINT resident_profiles_proof_status_check
+            CHECK (proof_status IN ('unverified', 'pending', 'verified', 'rejected'));
+    END IF;
+END $$;
+
+COMMENT ON COLUMN resident_profiles.proof_status IS
+    'EST-UAT-0051: what the estate has done about the declared documents. unverified/pending/verified/rejected; reset whenever a document is replaced.';
+
+CREATE OR REPLACE FUNCTION estate_reset_proof_on_redeclaration()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    -- A fresh document is a fresh claim. The previous approval covered the old file, so it must not
+    -- survive the swap — otherwise 'verified' would certify a document nobody reviewed.
+    IF NEW.ownership_doc_url IS DISTINCT FROM OLD.ownership_doc_url
+       OR NEW.agreement_url IS DISTINCT FROM OLD.agreement_url THEN
+        NEW.proof_status      := 'unverified';
+        NEW.proof_verified_by := NULL;
+        NEW.proof_verified_at := NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS estate_reset_proof_on_redeclaration_on_write ON resident_profiles;
+CREATE TRIGGER estate_reset_proof_on_redeclaration_on_write
+    BEFORE UPDATE ON resident_profiles
+    FOR EACH ROW EXECUTE FUNCTION estate_reset_proof_on_redeclaration();
+
+-- The tenancy review path could set a status but could not say who did it or why it was refused;
+-- `estate_join_requests` and `property_ownership_claims` both already carried these.
+ALTER TABLE tenancy_requests
+    ADD COLUMN IF NOT EXISTS reviewed_by  UUID REFERENCES auth.users(id),
+    ADD COLUMN IF NOT EXISTS reject_reason TEXT;
+
+-- Ownership claims are reviewed from a queue, and the queue was un-indexable (there was no reader of
+-- this table at all, so no query shape existed for it).
+CREATE INDEX IF NOT EXISTS property_ownership_claims_pending_idx
+    ON property_ownership_claims (status, created_at);
+
+-- ─── RLS: service-role only ──────────────────────────────────────────────────
+
+ALTER TABLE estate_unit_occupants ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS occupancy_service ON estate_unit_occupants;
+CREATE POLICY occupancy_service ON estate_unit_occupants TO service_role USING (true) WITH CHECK (true);
+
+-- ─── take the writers off the anon role ──────────────────────────────────────
+--
+-- Supabase's default privileges grant EXECUTE on every function created in `public` to the named roles
+-- `anon`, `authenticated` and `service_role`. `REVOKE ALL ... FROM PUBLIC` above does not remove a
+-- *named* grant, so both SECURITY DEFINER writers stayed callable by an unauthenticated REST caller —
+-- verified before this block existed: as `anon`, estate_occupancy_admit() ran far enough to raise
+-- 'unit not found in this estate' from inside its own body.
+--
+-- That matters more here than the ACL alone suggests, because `auth.uid()` is NULL for `anon`, and the
+-- "the actor must be the authenticated caller" guard is deliberately conditional — it has to be, since
+-- the Go service calls these writers as service_role with no JWT at all. Removing anon closes the only
+-- path where a NULL auth.uid() meant "no caller to check" rather than "trusted backend caller".
+-- `estate_owner_transfer_decide` shipped the same way in 20271099000040; it is fixed forward here
+-- rather than by editing an applied migration.
+REVOKE ALL ON FUNCTION estate_occupancy_admit(UUID, UUID, UUID, UUID, TEXT, DATE, DATE, TEXT, BOOLEAN) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION estate_occupancy_admit(UUID, UUID, UUID, UUID, TEXT, DATE, DATE, TEXT, BOOLEAN) TO service_role, authenticated;
+
+REVOKE ALL ON FUNCTION estate_occupancy_release(UUID, UUID, UUID, UUID, TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION estate_occupancy_release(UUID, UUID, UUID, UUID, TEXT) TO service_role, authenticated;
+
+REVOKE ALL ON FUNCTION estate_owner_transfer_decide(UUID, UUID, UUID, BOOLEAN, TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION estate_owner_transfer_decide(UUID, UUID, UUID, BOOLEAN, TEXT) TO service_role, authenticated;
+
+-- estate_cast_vote is different in kind, and the difference is worth spelling out: it takes p_voter_id as
+-- an argument and never compares it to auth.uid(), because the Go service and the BFF admin client both
+-- call it as service_role and pass the voter deliberately. Leaving it executable by anon or authenticated
+-- therefore let any REST caller cast a ballot *as somebody else* in an open election — a P0 voting
+-- integrity hole, not a defence-in-depth nit. Those two grants are removed outright. Both callers run as
+-- service_role (backend/internal/estate/service.go:410 and frontend-web/app/api/v1/elections/[id]/vote/route.ts:86
+-- via createAdminClient), and no mobile or contract caller exists, so no supported path loses access.
+REVOKE ALL ON FUNCTION estate_cast_vote(UUID, UUID, UUID, UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION estate_cast_vote(UUID, UUID, UUID, UUID) TO service_role;
+REVOKE ALL ON FUNCTION estate_cast_vote(UUID, UUID, UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION estate_cast_vote(UUID, UUID, UUID) TO service_role;

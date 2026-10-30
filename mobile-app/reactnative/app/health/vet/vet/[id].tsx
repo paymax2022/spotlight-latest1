@@ -40,6 +40,16 @@ export default function VetProfileScreen() {
     );
   }
 
+  // Per-visit-type price from the vet's active services; the clinic price falls
+  // back to the tele price only for a backend that predates clinicFeeKobo.
+  const feeFor = (t: (typeof vet.types)[number]) =>
+    t === 'home'
+      ? vet.homeVisitFeeKobo + vet.consultFeeKobo
+      : t === 'clinic'
+        ? vet.clinicFeeKobo || vet.consultFeeKobo
+        : vet.consultFeeKobo;
+  const fromFeeKobo = vet.types.length ? Math.min(...vet.types.map(feeFor)) : vet.consultFeeKobo;
+
   const goBook = () =>
     router.push({ pathname: '/health/vet/triage', params: { vetId: vet.id, petId: petId ?? '' } });
 
@@ -58,7 +68,7 @@ export default function VetProfileScreen() {
               <StarRating rating={vet.rating} count={vet.reviewCount} size={15} />
             </View>
           </View>
-          <CredentialBadge credential={vet.credential} showLicense />
+          <CredentialBadge credential={vet.credential} showLicense={!!vet.credential.licenseNo} />
           <View style={styles.metaItem}>
             <MapPin size={14} color={Colors.onSurfaceVariant} strokeWidth={2} />
             <Text style={styles.metaText}>{vet.clinicName} · {vet.address}</Text>
@@ -73,7 +83,7 @@ export default function VetProfileScreen() {
           {vet.types.map((t) => {
             const m = APPT_TYPE_META[t];
             const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[m.icon] ?? Icons.Video;
-            const fee = t === 'home' ? vet.homeVisitFeeKobo + vet.consultFeeKobo : vet.consultFeeKobo;
+            const fee = feeFor(t);
             return (
               <View key={t} style={[styles.typeCard, shadow1]}>
                 <View style={[styles.typeIcon, { backgroundColor: m.bg }]}>
@@ -100,6 +110,7 @@ export default function VetProfileScreen() {
         <View style={styles.reviewHead}>
           <Text style={styles.sectionTitle}>Reviews</Text>
         </View>
+        {reviews && reviews.length === 0 ? <Text style={styles.metaText}>No reviews yet.</Text> : null}
         {(reviews ?? []).map((r) => (
           <View key={r.id} style={[styles.review, shadow1]}>
             <View style={styles.reviewTop}>
@@ -116,7 +127,7 @@ export default function VetProfileScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label={`Book · from ${formatNaira(vet.consultFeeKobo)}`} onPress={goBook} />
+        <PrimaryButton label={`Book · from ${formatNaira(fromFeeKobo)}`} onPress={goBook} />
       </View>
     </SafeAreaView>
   );

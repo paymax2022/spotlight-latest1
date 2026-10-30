@@ -1,0 +1,380 @@
+openapi: 3.0.3
+info:
+  title: Telemedicine admin - finance oversight
+  version: 1.0.0
+  description: |
+    READ-ONLY oversight of doctor earnings and payouts for the admin console.
+    No endpoint here moves money, writes a wallet balance or posts to the ledger.
+    Settlement disputes are read-only because the doctor module defines only the
+    `open` state; there is no admin workflow state to mutate.
+
+    Money is always an integer in kobo (minor units). Never a float, never a string.
+
+    Derivation (matches telemedicine CompleteAppointment's settlement.Split):
+    for each COMPLETED appointment, commission = floor(fee_kobo * 15 / 100) and the
+    doctor net = fee_kobo - commission. The platform booking fee (platform_fee_kobo)
+    is a separate 100%-platform leg on top. Figures are derived from the appointments
+    table for oversight; the ledger remains the source of truth for balances.
+servers:
+  - url: /api/v1/telemedicine/admin
+security:
+  - bearerAuth: []
+paths:
+  /finance/summary:
+    get:
+      summary: KPI strip - consult fees, commission, payouts by status, open disputes
+      description: Requires permission telemedicine.admin.view.
+      parameters:
+        - $ref: '#/components/parameters/from'
+        - $ref: '#/components/parameters/to'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/FinanceSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /finance/payouts:
+    get:
+      summary: Payout list across all doctors
+      description: Requires permission telemedicine.admin.view.
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, processing, paid, failed, reversed] }
+        - name: doctor_user_id
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/from'
+        - $ref: '#/components/parameters/to'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Payout' }
+                      total: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /finance/payouts/{id}:
+    get:
+      summary: One payout with its settlement disputes
+      description: Requires permission telemedicine.admin.view.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PayoutDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /finance/earnings:
+    get:
+      summary: Per-doctor earnings derived from completed appointments
+      description: |
+        Requires permission telemedicine.admin.view. Earnings are windowed by
+        from/to (appointment created_at); paid_out_kobo and in_flight_kobo are
+        all-time payout totals. No balance is computed here - the ledger is
+        authoritative.
+      parameters:
+        - name: doctor_user_id
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/from'
+        - $ref: '#/components/parameters/to'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/DoctorEarnings' }
+                      total: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /finance/invoices:
+    get:
+      summary: Doctor invoices
+      description: Requires permission telemedicine.admin.view.
+      parameters:
+        - name: doctor_user_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/from'
+        - $ref: '#/components/parameters/to'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Invoice' }
+                      total: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /finance/disputes:
+    get:
+      summary: Settlement-dispute queue (read-only)
+      description: Requires permission telemedicine.admin.view.
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Dispute' }
+                      total: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /finance/disputes/{id}:
+    get:
+      summary: One dispute with its payout
+      description: Requires permission telemedicine.admin.view.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DisputeDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /finance/commission-config:
+    get:
+      summary: Platform commission default and per-doctor overrides
+      description: |
+        Requires permission telemedicine.admin.view. The settlement split is fixed
+        at 85/15 in code; per-doctor rows are the stored configuration the doctor
+        app displays and are reported as-is.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/CommissionConfigView' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    from:
+      name: from
+      in: query
+      description: Inclusive lower bound, RFC 3339 or YYYY-MM-DD
+      schema: { type: string }
+    to:
+      name: to
+      in: query
+      description: Exclusive upper bound, RFC 3339 or YYYY-MM-DD
+      schema: { type: string }
+    limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 25 }
+    offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+  responses:
+    BadRequest:
+      description: Invalid query or path parameter
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Missing telemedicine.admin.view
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    Kobo:
+      type: integer
+      format: int64
+      description: Integer minor units (kobo)
+    PayoutStatusTotal:
+      type: object
+      properties:
+        status: { type: string }
+        count: { type: integer }
+        amount_kobo: { $ref: '#/components/schemas/Kobo' }
+    FinanceSummary:
+      type: object
+      properties:
+        currency: { type: string, example: NGN }
+        completed_consultations: { type: integer }
+        gross_consult_fees_kobo: { $ref: '#/components/schemas/Kobo' }
+        platform_commission_kobo: { $ref: '#/components/schemas/Kobo' }
+        platform_booking_fees_kobo: { $ref: '#/components/schemas/Kobo' }
+        doctor_net_kobo: { $ref: '#/components/schemas/Kobo' }
+        payouts_by_status:
+          type: array
+          items: { $ref: '#/components/schemas/PayoutStatusTotal' }
+        open_disputes: { type: integer }
+    BankAccountMasked:
+      type: object
+      description: Account number is never returned in full - last four digits only.
+      properties:
+        bank_name: { type: string, nullable: true }
+        account_last4: { type: string, nullable: true }
+        is_verified: { type: boolean }
+    Payout:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        doctor_user_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        ref: { type: string, nullable: true }
+        amount_kobo: { $ref: '#/components/schemas/Kobo' }
+        currency: { type: string }
+        status: { type: string, enum: [pending, processing, paid, failed, reversed] }
+        consult_count: { type: integer }
+        period_label: { type: string, nullable: true }
+        failure_reason: { type: string, nullable: true }
+        requested_at: { type: string, format: date-time }
+        paid_at: { type: string, format: date-time, nullable: true }
+        bank_account: { $ref: '#/components/schemas/BankAccountMasked' }
+        open_disputes: { type: integer }
+    PayoutDetail:
+      allOf:
+        - $ref: '#/components/schemas/Payout'
+        - type: object
+          properties:
+            ledger_ref: { type: string, nullable: true }
+            provider_reference: { type: string, nullable: true }
+            disputes:
+              type: array
+              items: { $ref: '#/components/schemas/Dispute' }
+    DoctorEarnings:
+      type: object
+      properties:
+        doctor_id: { type: string, format: uuid }
+        doctor_user_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        specialty: { type: string }
+        completed_consultations: { type: integer }
+        gross_kobo: { $ref: '#/components/schemas/Kobo' }
+        commission_kobo: { $ref: '#/components/schemas/Kobo' }
+        platform_booking_fees_kobo: { $ref: '#/components/schemas/Kobo' }
+        net_kobo: { $ref: '#/components/schemas/Kobo' }
+        paid_out_kobo: { $ref: '#/components/schemas/Kobo' }
+        in_flight_kobo: { $ref: '#/components/schemas/Kobo' }
+    Invoice:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        doctor_user_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        ref: { type: string, nullable: true }
+        appointment_id: { type: string, format: uuid, nullable: true }
+        gross_kobo: { $ref: '#/components/schemas/Kobo' }
+        commission_kobo: { $ref: '#/components/schemas/Kobo' }
+        vat_kobo: { $ref: '#/components/schemas/Kobo' }
+        net_kobo: { $ref: '#/components/schemas/Kobo' }
+        currency: { type: string }
+        status: { type: string }
+        issued_at: { type: string, format: date-time }
+    Dispute:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        doctor_user_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        payout_id: { type: string, format: uuid, nullable: true }
+        status: { type: string }
+        reason: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    DisputeDetail:
+      allOf:
+        - $ref: '#/components/schemas/Dispute'
+        - type: object
+          properties:
+            detail:
+              type: object
+              additionalProperties: true
+            payout: { $ref: '#/components/schemas/Payout' }
+    DoctorCommissionOverride:
+      type: object
+      properties:
+        doctor_user_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        commission_bps: { type: integer }
+        vat_bps: { type: integer }
+        payout_cycle: { type: string }
+        updated_at: { type: string, format: date-time }
+    CommissionConfigView:
+      type: object
+      properties:
+        platform_commission_bps: { type: integer, example: 1500 }
+        doctor_share_bps: { type: integer, example: 8500 }
+        overrides:
+          type: array
+          items: { $ref: '#/components/schemas/DoctorCommissionOverride' }

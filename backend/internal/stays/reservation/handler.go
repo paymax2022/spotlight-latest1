@@ -308,6 +308,30 @@ func (h *Handler) Modify(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": h.enrich(c.Request.Context(), res)})
 }
 
+// ModifyQuote (member): POST /reservations/:id/modify/quote {check_in, check_out} — the price
+// of the new dates. Read-only: nothing is held, charged or changed.
+func (h *Handler) ModifyQuote(c *gin.Context) {
+	var body struct {
+		CheckIn  string `json:"check_in" binding:"required"`
+		CheckOut string `json:"check_out" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	ci, err1 := time.Parse("2006-01-02", body.CheckIn)
+	co, err2 := time.Parse("2006-01-02", body.CheckOut)
+	if err1 != nil || err2 != nil || !co.After(ci) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid check_in/check_out"})
+		return
+	}
+	q, err := h.svc.QuoteModify(c.Request.Context(), ginutil.UserID(c), c.Param("id"), ci, co)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": q})
+}
 // AdminSearch (admin): GET /reservations?state=&city=
 func (h *Handler) AdminSearch(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
@@ -316,6 +340,10 @@ func (h *Handler) AdminSearch(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
+	}
+	// A nil slice serializes to null, which the admin console cannot list: send [] for "no results".
+	if rs == nil {
+		rs = []Reservation{}
 	}
 	c.JSON(http.StatusOK, gin.H{"data": rs})
 }

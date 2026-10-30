@@ -2,13 +2,15 @@
 
 // A-EST-OV-06 — Platform election integrity (estate.admin.election).
 // Election list + per-election results tally and integrity audit
-// (ballots cast vs distinct voters; DB-enforced one-vote-per-resident).
+// (ballots cast vs distinct voters; DB-enforced one-vote-per-resident), plus the
+// governance workflow for the selected election (Phase 2.2: EST-UAT-0203…0230).
 
 import { useCallback, useEffect, useState } from 'react';
 import {
   listOversightElections, getElectionResults, getElectionAudit,
 } from '@/services/estateAdminService';
 import type { OversightElection, ElectionResultRow, ElectionAudit } from '@/types/estateAdmin';
+import ElectionGovernancePanel from './_governance';
 import { EstateOversightTabs, Restricted, useEstatePermissions, ESTATE_ADMIN_PERMS, timeAgo } from '../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
@@ -45,6 +47,7 @@ export default function ElectionIntegrityPage() {
   }, []);
 
   const totalVotes = results.reduce((s, r) => s + r.votes, 0);
+  const selectedElection = elections.find((e) => e.id === selected) ?? null;
 
   return (
     <Page>
@@ -109,6 +112,14 @@ export default function ElectionIntegrityPage() {
                     </>
                   )}
                 </Card>
+              )}
+
+              {selected && selectedElection && (
+                <ElectionGovernancePanel
+                  estateId={selectedElection.estateId}
+                  electionId={selected}
+                  onMoved={(status) => setElections((prev) => prev.map((e) => (e.id === selected ? { ...e, status } : e)))}
+                />
               )}
             </>
           )}

@@ -86,7 +86,7 @@ export function usePublishResults() {
 export function useCastVote() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { electionId: string; positionId: string; candidateId: string }) =>
+    mutationFn: (vars: { electionId: string; positionId: string; candidateId: string; abstain?: boolean; unitId?: string }) =>
       api.castVote({ ...vars, idempotencyKey: generateIdempotencyKey() }),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: electionKeys.detail(vars.electionId) });

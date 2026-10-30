@@ -5,6 +5,11 @@ import { MarketplaceMenuProvider } from '@/features/marketplace/components/Marke
 import MarketTabBar from '@/features/marketplace/components/MarketTabBar';
 import { useMarketplaceRealtime } from '@/features/marketplace/realtime/useMarketplaceRealtime';
 
+// No provider gate here on purpose: a seller exists only once they own a
+// listing, and the Sell tab (compose → publish) is how they become one. Gating
+// it would lock first-time sellers out of their own acquisition funnel. The
+// seller console still shows only the caller's listings — the API scopes them.
+
 // The 3-tab bottom nav inside the Marketplace tab (connect model):
 //   [ Discover ] [ Sell ] [ Deals ]
 // The Deals tab is the conversation list (chat inbox). The old escrow "Orders"

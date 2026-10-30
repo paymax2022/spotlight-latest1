@@ -38,3 +38,22 @@ export function countdownLabel(e: Election): string {
 export function totalVotesFor(positionCandidates: { votes: number }[]): number {
   return positionCandidates.reduce((s, c) => s + c.votes, 0);
 }
+
+// A one_vote_per_unit election keys each ballot `${positionId}:${unitId}` (the unit is the
+// voter's own holding, never a choice), so a household with three units has three sealed
+// lines for the same position. Plain elections key by position alone.
+export interface BallotLine {
+  unitId?: string;
+  value: string;
+}
+
+export function ballotsForPosition(choices: Record<string, string>, positionId: string): BallotLine[] {
+  const prefix = `${positionId}:`;
+  return Object.entries(choices)
+    .filter(([key]) => key === positionId || key.startsWith(prefix))
+    .map(([key, value]) => ({ unitId: key.startsWith(prefix) ? key.slice(prefix.length) : undefined, value }));
+}
+
+export function castBallotCount(choices: Record<string, string>): number {
+  return Object.keys(choices).length;
+}

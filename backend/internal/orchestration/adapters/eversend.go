@@ -10,12 +10,24 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"math"
 	orch "spotlight/backend/internal/orchestration"
 	"spotlight/backend/internal/provider/eversend"
 	"strings"
 
 	"github.com/google/uuid"
+)
+
+// maxSlippageBPS is the largest adverse move (50 bps) tolerated between the
+// rate quoted to the customer and the live provider rate at execution.
+const maxSlippageBPS = 50
+
+var (
+	// ErrNoCollectionAccount: no real collection account could be provisioned.
+	ErrNoCollectionAccount = errors.New("eversend: no collection account available")
+	// ErrRateMoved: the live rate moved beyond tolerance since the quote (HTTP 409).
+	ErrRateMoved = orch.NewError(orch.ErrRateExpired, "rate_moved", "eversend: live rate moved beyond tolerance since quote")
 )
 
 // Eversend favours wholesale FX and USD/EUR inbound (spec §3). Tighter spreads,
@@ -93,13 +105,9 @@ func (e *Eversend) ExecuteTransfer(ctx context.Context, q *orch.Quote, dest orch
 }
 
 func (e *Eversend) CreateCollection(ctx context.Context, currency, accountType, customerID string) (*orch.CollectionResult, error) {
-	details := map[string]any{
-		"account_name": "Paymax / Customer",
-		"iban":         "GB29NWBK60161331926819",
-		"bic":          "NWBKGB2L",
-		"rails":        railsForCurrency(currency),
-	}
-	return &orch.CollectionResult{ProviderRef: "evs_col_" + uuid.New().String()[:8], Details: details}, nil
+	// The deterministic adapter has no real account to hand out. It must never
+	// fabricate bank details (a customer could wire real money to them).
+	return nil, ErrNoCollectionAccount
 }
 
 // VerifyWebhookSignature always fails closed: this deterministic adapter has no
@@ -147,6 +155,13 @@ func (e *EversendLive) Quote(ctx context.Context, source, dest string, amountMin
 	}
 	q, err := e.client.CreateQuotation(ctx, source, dest, minorToMajor(amountMinor))
 	if err != nil || q == nil || q.Rate == 0 {
+		if e.fallback.prod {
+			// Fail closed in production: a synthetic rate must never price real money.
+			if err == nil {
+				err = errors.New("eversend: empty quotation")
+			}
+			return nil, err
+		}
 		return e.fallback.Quote(ctx, source, dest, amountMinor, amountType, rail)
 	}
 	var railFee int64
@@ -169,11 +184,21 @@ func (e *EversendLive) ExecuteConversion(ctx context.Context, q *orch.Quote, ide
 	if e.client == nil {
 		return e.fallback.ExecuteConversion(ctx, q, idempotencyKey)
 	}
+	if idempotencyKey == "" {
+		return nil, errors.New("eversend: idempotency key required")
+	}
 	quote, err := e.client.CreateQuotation(ctx, q.Source.Currency, q.Destination.Currency, minorToMajor(q.Source.AmountMinor))
 	if err != nil {
 		return nil, err
 	}
-	res, err := e.client.Exchange(ctx, quote.Token)
+	// Bound execution-time slippage: q.AllInRate is the customer rate already
+	// promised (post spread+fees), so a live provider rate that has fallen more
+	// than maxSlippageBPS below it would execute at a loss. Fail before any
+	// money moves (409). Skipped only when no quoted rate is available.
+	if q.AllInRate > 0 && quote.Rate < q.AllInRate*(1-float64(maxSlippageBPS)/10_000.0) {
+		return nil, ErrRateMoved
+	}
+	res, err := e.client.Exchange(ctx, quote.Token, idempotencyKey)
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +217,9 @@ func (e *EversendLive) ExecuteTransfer(ctx context.Context, q *orch.Quote, dest 
 	if e.client == nil {
 		return e.fallback.ExecuteTransfer(ctx, q, dest, idempotencyKey)
 	}
+	if idempotencyKey == "" {
+		return nil, errors.New("eversend: idempotency key required")
+	}
 	res, err := e.client.Payout(ctx, dest.Currency, dest.AccountNumber, dest.Counterparty.Name, minorToMajor(q.Destination.AmountMinor), idempotencyKey)
 	if err != nil {
 		return nil, err
@@ -205,11 +233,14 @@ func (e *EversendLive) ExecuteTransfer(ctx context.Context, q *orch.Quote, dest 
 
 func (e *EversendLive) CreateCollection(ctx context.Context, currency, accountType, customerID string) (*orch.CollectionResult, error) {
 	if e.client == nil || accountType != "iban" {
-		return e.fallback.CreateCollection(ctx, currency, accountType, customerID)
+		return nil, ErrNoCollectionAccount
 	}
 	iban, err := e.client.CreateIBAN(ctx, currency)
-	if err != nil || iban == nil {
-		return e.fallback.CreateCollection(ctx, currency, accountType, customerID)
+	if err != nil {
+		return nil, err
+	}
+	if iban == nil {
+		return nil, ErrNoCollectionAccount
 	}
 	return &orch.CollectionResult{
 		ProviderRef: iban.IBAN,

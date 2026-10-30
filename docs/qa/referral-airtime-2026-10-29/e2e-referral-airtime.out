@@ -1,0 +1,48 @@
+== 1. identities (stamp 20261029150235)
+PASS referrer created 68e3a54f-a957-4818-b50c-41c9ed71d1ee
+PASS referee created f11e8b0f-d1da-41c3-b30c-1ce8e4a3ed08
+PASS referrer signed in
+PASS referee signed in
+== 2. referrer's code
+PASS GET /v1/referrals/me/dashboard (referrer) (=200)
+PASS code minted PVUJ4
+PASS invited before signup (=0)
+== 3. referee attributes the code
+PASS POST /v1/referrals/attribute (=200)
+PASS attribution row → referrer (=68e3a54f-a957-4818-b50c-41c9ed71d1ee)
+PASS invited after signup (=1)
+PASS activated before any purchase (=0)
+== 4. fund referee wallet ₦5,000 (balanced journal, provider_clearing → wallet)
+PASS GET /api/finance/wallet/balance (referee) (=200)
+     referee wallet: {"user_id":"f11e8b0f-d1da-41c3-b30c-1ce8e4a3ed08","balance_kobo":500000,"balance_naira":5000}
+== 5. referee buys ₦1,000 MTN airtime from the wallet
+PASS POST /api/finance/utilitybills/pay (200)
+     transaction 9c6178ef-85e5-4456-956d-d8d55879f783 status successful
+PASS commission_earnings row, Spotlight revenue 3000 kobo
+== 6. referrer sees it — no app restart, no manual step
+PASS referral_rewards for the purchase (=CREDITED:600)
+PASS reward ledger row is withdrawable (=eligible:600)
+PASS dashboard lifetime_earned_kobo (Amount earned) (=600)
+PASS dashboard invited_count (=1)
+PASS dashboard activated_count (=1)
+PASS GET /api/finance/referral/my-rewards (=200)
+PASS my-rewards eligible_kobo (=600)
+PASS GET /v1/referrals/me/referrals (=200)
+PASS tracked invitee is activated (=true)
+PASS GET /v1/referrals/me/earnings (=200)
+PASS activity shows the airtime reward (=utility:600)
+== 7. referrer withdraws to wallet
+PASS GET /api/finance/referral/withdraw-eligible (=200)
+PASS withdraw-eligible eligible_kobo (=600)
+PASS POST /api/finance/referral/withdraw (=200)
+PASS withdrawn_kobo (=600)
+PASS remaining_eligible_kobo (=0)
+PASS referrer wallet delta (=600)
+PASS reward ledger row now paid (=paid)
+PASS second withdraw moves nothing (=0)
+PASS payout journal is balanced (=0)
+PASS withdraw audit event that moved money (=1)
+PASS every withdraw request is audited (incl. the empty one) (=2)
+PASS commission-split credit audit event (=1)
+
+RESULT PASS=37 FAIL=0 (stamp 20261029150235, referrer 68e3a54f-a957-4818-b50c-41c9ed71d1ee, referee f11e8b0f-d1da-41c3-b30c-1ce8e4a3ed08, code PVUJ4)

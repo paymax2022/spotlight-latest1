@@ -391,6 +391,10 @@ type Config struct {
 	// parcel is picked up, text the receiver their drop-off PIN (Termii), at most
 	// once per parcel. Needs TERMII_API_KEY; off or unconfigured = no SMS.
 	FeatureParcelReceiverPinSMSEnabled bool
+	// FeatureParcelReceiverPinNotifyEnabled (FEATURE_PARCEL_RECEIVER_PIN_NOTIFY):
+	// email the parcel receiver their drop-off PIN after pickup, to the
+	// receiver_email given at booking (needs RESEND_API_KEY). Free.
+	FeatureParcelReceiverPinNotifyEnabled bool
 	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) ride-hailing checkout path
 	// (transport/paystackcheckout): a ride paid directly via Paystack, escrowed
@@ -688,6 +692,7 @@ type Config struct {
 	FeatureSocialPayEnabled bool // Social Payments & P2P Escrow
 	FeatureP2PMarketEnabled bool // P2P Marketplace
 	FeatureSavingsEnabled   bool // Group & Goal Savings (Ajo/Esusu)
+	FeatureRecurringSettlementEnabled bool // Task 5.2 recurring settlement processor (asynq + Redlock)
 
 	// SavingsEarlyBreakPenaltyBps is the fee for breaking a LOCK vault before
 	// maturity, in basis points (1000 = 10%). MUST stay server-side: a
@@ -703,7 +708,11 @@ type Config struct {
 	FeatureHealthEnabled         bool
 	FeatureHealthPharmacyEnabled bool
 	FeatureHealthLabEnabled      bool
+	// Pay a lab order from a crypto holding (sell-to-wallet, then escrow hold).
+	// DEFAULT OFF; also requires FeatureCryptoEnabled.
+	FeatureHealthLabCryptoPayment bool
 	FeatureHealthVetEnabled      bool
+	FeatureProviderPortalEnabled bool
 	// Pre-Consultation Health Intake (ADR-010). DEFAULT OFF. Gates the member
 	// /api/finance/health/intake/* + admin /api/health/admin/intake surface.
 	FeatureHealthIntakeEnabled bool
@@ -1116,6 +1125,7 @@ func Load() Config {
 		FeatureParcelRateCardEnabled:                 getEnvBool("FEATURE_PARCEL_RATE_CARD_ENABLED", false),
 		FeatureParcelPrepaidInsuranceEnabled:         getEnvBool("FEATURE_PARCEL_PREPAID_INSURANCE", false),
 		FeatureParcelReceiverPinSMSEnabled:           getEnvBool("FEATURE_PARCEL_RECEIVER_PIN_SMS", false),
+		FeatureParcelReceiverPinNotifyEnabled:        getEnvBool("FEATURE_PARCEL_RECEIVER_PIN_NOTIFY", false),
 		ParcelInsuranceMinPremiumKobo:                getEnvInt("PARCEL_INSURANCE_MIN_PREMIUM_KOBO", 200000),
 		FeatureTransportPaystackCheckoutEnabled:      getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureTransportPaystackParcelEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_PARCEL_ENABLED", false),
@@ -1202,6 +1212,7 @@ func Load() Config {
 		FeatureSocialPayEnabled:            getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
 		FeatureP2PMarketEnabled:            getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
 		FeatureSavingsEnabled:              getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		FeatureRecurringSettlementEnabled: getEnvBool("FEATURE_RECURRING_SETTLEMENT_ENABLED", false),
 		FeatureTradingEnabled:              getEnvBool("FEATURE_TRADING_ENABLED", false),
 		FeatureAITradingEnabled:            getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
 		TradingFeeBps:                      getEnvInt("TRADING_FEE_BPS", 2000),
@@ -1213,7 +1224,9 @@ func Load() Config {
 		FeatureHealthEnabled:               getEnvBool("FEATURE_HEALTH_ENABLED", false),
 		FeatureHealthPharmacyEnabled:       getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
 		FeatureHealthLabEnabled:            getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
+		FeatureHealthLabCryptoPayment:      getEnvBool("FEATURE_HEALTH_LAB_CRYPTO_PAYMENT", false),
 		FeatureHealthVetEnabled:            getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
+		FeatureProviderPortalEnabled:       getEnvBool("FEATURE_PROVIDER_PORTAL_ENABLED", false),
 		FeatureHealthIntakeEnabled:         getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
 		FeatureHealthTriageEnabled:         getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
 		FeatureHealthTriageWhatsAppEnabled: getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),

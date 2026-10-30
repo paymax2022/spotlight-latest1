@@ -1,8 +1,14 @@
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/tokens';
+import ProviderRouteGuard from '@/features/providerPortal/ProviderRouteGuard';
+
+const PROVIDER_RULES = [
+  { type: 'event_organiser', prefix: '/events/organiser', open: ['create'] },
+] as const;
 
 export default function EventsLayout() {
   return (
+    <ProviderRouteGuard rules={PROVIDER_RULES}>
     <Stack
       screenOptions={{
         headerShown: false,
@@ -35,5 +41,6 @@ export default function EventsLayout() {
       <Stack.Screen name="wallet/withdraw" />
       <Stack.Screen name="wallet/venue-map" />
     </Stack>
+    </ProviderRouteGuard>
   );
 }

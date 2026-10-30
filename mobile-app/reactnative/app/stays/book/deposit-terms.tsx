@@ -23,10 +23,11 @@ export default function DepositTermsScreen() {
   const [agree, setAgree] = useState(false);
 
   const total = preview.data?.totalKobo ?? 0;
+  const nights = draft?.nights ?? 0;
   const isDeposit = paymentMethod === 'deposit';
-  const depositNow = Math.round(total * 0.3);
+  // The minimum deposit is one night's share of the stay; the balance is requested later by the property.
+  const depositNow = nights > 1 ? Math.min(Math.round(total / nights), total) : total;
   const balance = total - depositNow;
-  const guarantee = Math.round(total * 0.15);
 
   const Icon = isDeposit ? Banknote : Building2;
 
@@ -43,20 +44,20 @@ export default function DepositTermsScreen() {
             <View style={styles.head}>
               <View style={styles.headIcon}><Icon size={24} color={StaysColors.brand} strokeWidth={2} /></View>
               <Text style={styles.headTitle}>
-                {isDeposit ? 'Pay a deposit now, the rest at check-in' : 'Confirm now, pay at the hotel'}
+                {isDeposit ? 'Pay one night now, the balance later' : 'Held in escrow until you confirm'}
               </Text>
             </View>
 
             <View style={styles.card}>
               {isDeposit ? (
                 <>
-                  <Line label="Deposit now (30%)" value={formatNaira(depositNow)} bold />
-                  <Line label="Balance at check-in (70%)" value={formatNaira(balance)} />
+                  <Line label="Deposit now (1 night)" value={formatNaira(depositNow)} bold />
+                  <Line label="Balance, requested by the property" value={formatNaira(balance)} />
                 </>
               ) : (
                 <>
-                  <Line label="Refundable guarantee hold (15%)" value={formatNaira(guarantee)} bold />
-                  <Line label="Pay at the hotel" value={formatNaira(total)} />
+                  <Line label="Held in escrow from your wallet" value={formatNaira(total)} bold />
+                  <Line label="Released to the hotel only when you confirm" value="" />
                 </>
               )}
               <View style={styles.divider} />
@@ -65,9 +66,12 @@ export default function DepositTermsScreen() {
 
             <View style={styles.terms}>
               <Bullet text={isDeposit
-                ? 'The deposit is charged from your wallet now and applied to your bill.'
-                : 'A small refundable hold guarantees your room; nothing is charged unless you no-show.'} />
-              <Bullet text="If the hotel cannot confirm, the hold/deposit is released or refunded — no loss." />
+                ? 'Your deposit is one night, charged from your wallet now and applied to your bill.'
+                : 'Your wallet amount is held in escrow, not paid to the hotel.'} />
+              <Bullet text={isDeposit
+                ? 'The property will request the balance. Pay it to keep your full stay, or use only the nights you booked.'
+                : 'After you inspect the property and are happy, confirm the transfer to release the money. If not, cancel and the escrow is returned in full, with no charge.'} />
+              <Bullet text="If the hotel cannot confirm, any escrow or deposit is returned in full." />
               <Bullet text="The cancellation policy snapshot applies as shown on your rate plan." />
             </View>
 

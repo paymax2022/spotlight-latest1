@@ -4,11 +4,14 @@ import type { AdminListMeta } from '@/src/server/admin/query';
 
 export class ApiError extends Error {
   status: number;
+  /** Machine-readable reason, surfaced to clients as `code`. */
+  code?: string;
 
-  constructor(message: string, status = 500) {
+  constructor(message: string, status = 500, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -40,7 +43,7 @@ export function errorResponse(message: string, status = 500, code?: string) {
 
 export function handleApiError(error: unknown, fallbackMessage = 'Internal server error') {
   if (error instanceof ApiError) {
-    return errorResponse(error.message, error.status);
+    return errorResponse(error.message, error.status, error.code);
   }
 
   if (error instanceof Error && error.message === 'UNAUTHORIZED') {

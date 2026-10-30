@@ -7,7 +7,7 @@ export default function FilmAcademyLayout() {
   return (
     <View style={{ flex: 1 }}>
       <Stack screenOptions={{ headerShown: false }} />
-      <ModuleTabBar tabs={FILM_ACADEMY_TABS} />
+      <ModuleTabBar tabs={FILM_ACADEMY_TABS} alsoVisibleOn={['/film-academy/topic', '/film-academy/practical']} />
     </View>
   );
 }

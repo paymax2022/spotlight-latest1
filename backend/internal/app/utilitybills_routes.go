@@ -14,6 +14,7 @@ import (
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/commission"
 	financeledger "spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/middleware"
 	providerInterfaces "spotlight/backend/internal/provider"
@@ -60,6 +61,7 @@ func RegisterUtilityBills(
 	authMW gin.HandlerFunc,
 	ledgerSvc *financeledger.Service,
 	walletSvc *wallet.Service,
+	tiersSvc *tiers.Service,
 	auditSink services.AuditService,
 ) {
 	if !cfg.FeatureUtilityBillsEnabled || pool == nil {
@@ -96,6 +98,7 @@ func RegisterUtilityBills(
 		Providers:        providers,
 		Wallet:           walletSvc,
 		Ledger:           ledgerSvc,
+		Tiers:            tiersSvc,
 		Commission:       commissionSvc,
 		DefaultTimeoutMs: utilityProviderTimeoutMs(),
 		// The sandbox validation safety net exists so the documented VTpass test

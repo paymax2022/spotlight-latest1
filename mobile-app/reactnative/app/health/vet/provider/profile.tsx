@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { CalendarClock, Wallet, Star, ChevronRight, Check } from 'lucide-react-native';
+import { CalendarClock, Wallet, Star, ChevronRight, Check, MapPin } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -12,6 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import AddressAutocompleteInput from '@/components/AddressAutocompleteInput';
 import { sanitizeMoneyInput } from '@/utils/money';
 import CredentialBadge from '@/features/health/components/CredentialBadge';
 import { useProviderProfile, useUpdateProviderProfile } from '@/features/health/vet/hooks';
@@ -33,6 +34,13 @@ export default function ProviderProfileScreen() {
   const [consultFee, setConsultFee] = useState('');
   const [homeFee, setHomeFee] = useState('');
   const [types, setTypes] = useState<AppointmentType[]>([]);
+  const [clinicAddress, setClinicAddress] = useState('');
+  const [clinicCity, setClinicCity] = useState('');
+  const [clinicState, setClinicState] = useState('');
+  // True when the last picked place came with a state from the provider: the field is
+  // then read-only. It stays editable only as a fallback when the provider had none.
+  const [stateFromProvider, setStateFromProvider] = useState(false);
+  const [clinicPoint, setClinicPoint] = useState<{ lat: number; lng: number } | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -41,6 +49,14 @@ export default function ProviderProfileScreen() {
       setConsultFee(String(profile.consultFeeKobo / 100));
       setHomeFee(String(profile.homeVisitFeeKobo / 100));
       setTypes(profile.types);
+      setClinicAddress(profile.clinicAddress ?? '');
+      setClinicCity(profile.clinicCity ?? '');
+      setClinicState(profile.clinicState ?? '');
+      setClinicPoint(
+        typeof profile.clinicLat === 'number' && typeof profile.clinicLng === 'number'
+          ? { lat: profile.clinicLat, lng: profile.clinicLng }
+          : null,
+      );
       setHydrated(true);
     }
   }, [profile, hydrated]);
@@ -71,6 +87,10 @@ export default function ProviderProfileScreen() {
       consultFeeKobo: Math.round(Number(consultFee) * 100),
       homeVisitFeeKobo: Math.round(Number(homeFee) * 100),
       types,
+      ...(clinicAddress.trim() ? { clinicAddress: clinicAddress.trim() } : {}),
+      ...(clinicCity.trim() ? { clinicCity: clinicCity.trim() } : {}),
+      ...(clinicState.trim() ? { clinicState: clinicState.trim() } : {}),
+      ...(clinicPoint ? { clinicLat: clinicPoint.lat, clinicLng: clinicPoint.lng } : {}),
     });
 
   return (
@@ -107,6 +127,54 @@ export default function ProviderProfileScreen() {
           })}
         </View>
 
+        <Text style={styles.sectionTitle}>Clinic location</Text>
+        {clinicPoint ? (
+          <View style={styles.locationOk}>
+            <MapPin size={16} color={Colors.teal} strokeWidth={2.2} />
+            <Text style={styles.locationOkText}>
+              Pinned on the map{profile.clinicLat == null ? ' — save to publish this location' : ''}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.locationMissing}>
+            <MapPin size={16} color={Colors.error} strokeWidth={2.2} />
+            <Text style={styles.locationMissingText}>
+              Add your clinic location so pet owners can find you nearby.
+            </Text>
+          </View>
+        )}
+        <AddressAutocompleteInput
+          value={clinicAddress}
+          onChangeText={(t) => {
+            setClinicAddress(t);
+            // Typing again invalidates the pinned point until a place is picked.
+            setClinicPoint(null);
+          }}
+          onSelect={(a) => {
+            setClinicAddress(a.label);
+            if (a.city) setClinicCity(a.city);
+            if (a.state) {
+              setClinicState(a.state);
+              setStateFromProvider(true);
+            } else {
+              setStateFromProvider(false);
+            }
+            setClinicPoint({ lat: a.lat, lng: a.lng });
+          }}
+          placeholder="Search for your clinic address"
+          resolved={clinicPoint != null}
+          surface="delivery"
+          inlineDropdown
+        />
+        <View style={styles.feeRow}>
+          <View style={styles.feeCol}>
+            <TextInputField label="City" placeholder="Lagos" value={clinicCity} onChangeText={setClinicCity} maxLength={100} />
+          </View>
+          <View style={styles.feeCol}>
+            <TextInputField label="State" placeholder="Lagos" value={clinicState} onChangeText={setClinicState} maxLength={100} editable={!stateFromProvider} />
+          </View>
+        </View>
+
         <PrimaryButton label="Save changes" onPress={onSave} loading={update.isPending} variant="secondary" />
 
         <Text style={styles.sectionTitle}>Manage</Text>
@@ -128,6 +196,10 @@ const styles = StyleSheet.create({
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, gap: Spacing.sm },
   name: { ...Typography.titleLg, color: Colors.onSurface },
   clinic: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  locationOk: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  locationOkText: { ...Typography.labelMd, color: Colors.teal },
+  locationMissing: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  locationMissingText: { ...Typography.labelMd, color: Colors.error, flex: 1 },
   feeRow: { flexDirection: 'row', gap: Spacing.sm },
   feeCol: { flex: 1 },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.xs },

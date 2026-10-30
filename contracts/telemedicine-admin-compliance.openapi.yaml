@@ -1,0 +1,365 @@
+openapi: 3.0.3
+info:
+  title: Telemedicine admin — clinician compliance
+  version: 1.0.0
+  description: |
+    Licence-expiry tracking, suspend / reinstate, compliance audit log, mandatory
+    training, quality scores and read-only access-log viewers for the telemedicine
+    admin console. Mounted under /api/v1/telemedicine/admin (bearer auth + RBAC).
+    Reads need telemedicine.admin.view; suspend/reinstate need telemedicine.admin.manage.
+    Success bodies are wrapped as {"data": ...}; errors as {"error": "..."}.
+    Suspension state is doctor_profiles.verification = 'suspended' (the status the
+    mobile doctor app reads), plus doctors.is_available / is_online forced false.
+servers:
+  - url: /api/v1/telemedicine/admin
+security:
+  - bearerAuth: []
+paths:
+  /compliance/summary:
+    get:
+      summary: KPI strip for the compliance console
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Summary' }
+  /compliance/licences:
+    get:
+      summary: Approved clinicians with a recorded licence expiry
+      parameters:
+        - { name: bucket, in: query, schema: { type: string, enum: [all, expired, 30d, 90d] } }
+        - { name: q, in: query, schema: { type: string, maxLength: 80 } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200': { $ref: '#/components/responses/LicenceList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /compliance/suspended:
+    get:
+      summary: Clinicians currently suspended
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/SuspendedClinician' }
+                      total: { type: integer }
+  /compliance/doctors/{userId}/suspend:
+    post:
+      summary: Suspend a clinician (de-list, block booking)
+      parameters:
+        - { $ref: '#/components/parameters/UserId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReasonBody' }
+      responses:
+        '200':
+          description: Suspended
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/StatusChange' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /compliance/doctors/{userId}/reinstate:
+    post:
+      summary: Reinstate a suspended clinician (refused while the licence is expired)
+      parameters:
+        - { $ref: '#/components/parameters/UserId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReasonBody' }
+      responses:
+        '200':
+          description: Reinstated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/StatusChange' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /compliance/audit:
+    get:
+      summary: Compliance audit log (doctor_compliance_audit)
+      parameters:
+        - { name: action, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: user_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/AuditEvent' }
+                      total: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /compliance/training:
+    get:
+      summary: Mandatory training progress per clinician
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, completed] } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/TrainingRow' }
+                      total: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /compliance/quality:
+    get:
+      summary: Latest quality score per clinician (lowest first)
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/QualityRow' }
+                      total: { type: integer }
+  /compliance/record-access:
+    get:
+      summary: Read-only viewer of clinician patient-record access (doctor_record_access_log)
+      parameters:
+        - { name: user_id, in: query, schema: { type: string, format: uuid } }
+        - { name: action, in: query, schema: { type: string, maxLength: 120 } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/RecordAccessRow' }
+                      total: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /compliance/doc-access:
+    get:
+      summary: Read-only viewer of verification-document access (doctor_verification_doc_access_log)
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/DocAccessRow' }
+                      total: { type: integer }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+  responses:
+    BadRequest:
+      description: Invalid parameter or body
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Clinician not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Illegal state transition (already suspended, not suspended, or licence expired)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    LicenceList:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/LicenceRow' }
+                  total: { type: integer }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    ReasonBody:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 5, maxLength: 500 }
+    Summary:
+      type: object
+      properties:
+        licences_expired: { type: integer }
+        licences_expiring_30d: { type: integer }
+        licences_expiring_90d: { type: integer }
+        suspended: { type: integer }
+        training_pending: { type: integer }
+        training_completed: { type: integer }
+        audit_events_7d: { type: integer }
+    LicenceRow:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid, nullable: true }
+        name: { type: string }
+        specialty: { type: string }
+        mdcn_number: { type: string, nullable: true }
+        licence_expiry: { type: string, format: date }
+        days_to_expiry: { type: integer, description: Negative when already expired }
+        bucket: { type: string, enum: [expired, 30d, 90d, later] }
+        profile_status: { type: string, description: doctor_profiles.verification }
+    SuspendedClinician:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid, nullable: true }
+        name: { type: string }
+        specialty: { type: string }
+        mdcn_number: { type: string, nullable: true }
+        licence_expiry: { type: string, format: date, nullable: true }
+        licence_expired: { type: boolean }
+        suspended_at: { type: string, format: date-time, nullable: true }
+        suspended_by: { type: string, enum: [system, admin], nullable: true }
+        reason: { type: string, nullable: true }
+    StatusChange:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        status: { type: string, enum: [suspended, approved] }
+        audit_id: { type: string, format: uuid }
+    AuditEvent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        user_name: { type: string, nullable: true }
+        action: { type: string }
+        entity_type: { type: string, nullable: true }
+        entity_id: { type: string, nullable: true }
+        detail: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+    TrainingRow:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        user_name: { type: string, nullable: true }
+        module_id: { type: string }
+        title: { type: string, nullable: true }
+        status: { type: string }
+        completed_at: { type: string, format: date-time, nullable: true }
+        age_days: { type: integer, description: Days since the module was assigned (created_at) }
+    QualityRow:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        user_name: { type: string, nullable: true }
+        score: { type: number }
+        period_label: { type: string, nullable: true }
+        updated_at: { type: string, format: date-time }
+    RecordAccessRow:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        user_name: { type: string, nullable: true }
+        patient_ref: { type: string, nullable: true, description: Masked patient id }
+        action: { type: string }
+        created_at: { type: string, format: date-time }
+    DocAccessRow:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        doc_id: { type: string, format: uuid }
+        accessor_id: { type: string, format: uuid }
+        basis: { type: string }
+        accessed_at: { type: string, format: date-time }

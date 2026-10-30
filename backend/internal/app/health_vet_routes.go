@@ -22,6 +22,8 @@ import (
 	healthrx "spotlight/backend/internal/health/rx"
 	healthscheduling "spotlight/backend/internal/health/scheduling"
 	healthvet "spotlight/backend/internal/health/vet"
+	vetowner "spotlight/backend/internal/health/vetapi/owner"
+	vetprovider "spotlight/backend/internal/health/vetapi/provider"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/scheduler"
@@ -114,16 +116,19 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg.GET("/provider/availability", h.ProviderAvailability) // the vet's own weekly hours
 	vg.PUT("/provider/availability", h.SaveProviderAvailability)
 	vg.POST("/services", h.UpsertService)                // verified vet owner; fee governance
-	vg.POST("/appointments", h.Book)                     // tele/home/clinic; payment HELD (HL-9)
-	vg.GET("/appointments", h.ListMyAppointments)        // owner's own appointment history
-	vg.GET("/appointments/:id", h.Get)                   // object-level authZ
+	// POST/GET /appointments, GET /appointments/:id and POST .../cancel are served by
+	// vetowner.RegisterAppointmentAdapters below (app wire shape; same service underneath).
 	vg.POST("/appointments/:id/accept", h.Accept)        // verified vet (HL-2)
 	vg.POST("/appointments/:id/confirm", h.Confirm)      // ACCEPTED → CONFIRMED
-	vg.POST("/appointments/:id/cancel", h.Cancel)        // owner/vet → refund HELD (HL-9)
 	vg.POST("/appointments/:id/dispatch", h.Dispatch)    // home visit on transport rail
 	vg.POST("/consults/:id/start", h.StartConsult)       // verified vet; consult engine (HL-2)
 	vg.POST("/consults/:id/complete", h.CompleteConsult) // SOAP + e-Rx/lab handoff; RELEASE (HL-9)
 	vg.POST("/sos", h.EmergencySOS)                      // HL-11: nearest in-person vet + disclaimer
+
+	// Pet-owner and vet-provider API surfaces (persisted; contracts/health-vet-*.openapi.yaml).
+	vetowner.Register(vg, pool)
+	vetowner.RegisterAppointmentAdapters(vg, pool, svc)
+	vetprovider.Register(vg, pool, vetprovider.WithVetService(svc))
 
 	ag := admin.Group("")
 	// Identical bug to PHARMACY-006/LAB-003: `admin` here is adminGroupTop5
@@ -144,6 +149,17 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	ag.GET("/vcn-audit", guard("health.vet.vcn"), h.AdminVCNAudit)                              // VCN credential audit (HL-2)
 	ag.GET("/erx-audit", guard("health.vet.erx"), h.AdminERxAudit)                              // e-prescription audit (HL-3)
 	ag.POST("/services/:id/deactivate", guard("health.vet.services"), h.AdminDeactivateService) // service/fee governance
+
+	// Console read views (frontend-admin /admin/health/vet/*): read-only, shaped
+	// for the console's types. See healthvet/admin_console.go.
+	ag.GET("/appointments/console", guard("health.vet.appointments"), h.AdminConsoleAppointments)
+	ag.GET("/appointments/:id", guard("health.vet.appointments"), h.AdminConsoleAppointment)
+	ag.GET("/vcn/applications", guard("health.vet.vcn"), h.AdminConsoleVCN)
+	ag.GET("/eprescriptions", guard("health.vet.erx"), h.AdminConsoleERx)
+	ag.GET("/services", guard("health.vet.services"), h.AdminConsoleServices)
+	ag.GET("/payouts", guard("health.vet.payouts"), h.AdminConsolePayouts)
+	ag.GET("/moderation", guard("health.vet.moderation"), h.AdminConsoleModeration)
+	ag.GET("/reporting", guard("health.vet.reporting"), h.AdminConsoleReporting)
 
 	log.Println("[health.vet] vet routes registered — pets/vets/appointments/consults/dispatch/sos + admin")
 }

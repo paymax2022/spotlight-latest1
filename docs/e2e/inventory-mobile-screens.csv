@@ -495,10 +495,12 @@ reactnative,/featured/promotions,mobile-app/reactnative/app/featured/promotions/
 reactnative,/featured/promotions/[id],mobile-app/reactnative/app/featured/promotions/[id].tsx
 reactnative,/film-academy,mobile-app/reactnative/app/film-academy/index.tsx
 reactnative,/film-academy/apply,mobile-app/reactnative/app/film-academy/apply.tsx
-reactnative,/film-academy/assignments,mobile-app/reactnative/app/film-academy/assignments.tsx
-reactnative,/film-academy/learn,mobile-app/reactnative/app/film-academy/learn.tsx
-reactnative,/film-academy/lesson/[lessonId],mobile-app/reactnative/app/film-academy/lesson/[lessonId].tsx
+reactnative,/film-academy/certificate,mobile-app/reactnative/app/film-academy/certificate.tsx
+reactnative,/film-academy/path,mobile-app/reactnative/app/film-academy/path.tsx
+reactnative,/film-academy/practical/[topicId],mobile-app/reactnative/app/film-academy/practical/[topicId].tsx
 reactnative,/film-academy/status,mobile-app/reactnative/app/film-academy/status.tsx
+reactnative,/film-academy/topic/[topicId],mobile-app/reactnative/app/film-academy/topic/[topicId].tsx
+reactnative,/film-academy/topic-attempt/[attemptId],mobile-app/reactnative/app/film-academy/topic-attempt/[attemptId].tsx
 reactnative,/film-academy/tuition,mobile-app/reactnative/app/film-academy/tuition.tsx
 reactnative,/finance,mobile-app/reactnative/app/finance/index.tsx
 reactnative,/follow-ups,mobile-app/reactnative/app/(doctor)/follow-ups/index.tsx

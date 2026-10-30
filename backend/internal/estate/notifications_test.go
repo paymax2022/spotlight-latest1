@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// TestEstateNotificationTaxonomy verifies the full Block 43 set of 18 types is
-// defined and unique.
+// TestEstateNotificationTaxonomy verifies the full set of types is defined and unique: the 18 of
+// Block 43 plus the three occupancy notices M03 adds (estate-a EST-UAT-0043, 0046, 0051).
 func TestEstateNotificationTaxonomy(t *testing.T) {
-	if len(EstateNotificationTypes) != 18 {
-		t.Fatalf("expected 18 estate notification types, got %d", len(EstateNotificationTypes))
+	if len(EstateNotificationTypes) != 21 {
+		t.Fatalf("expected 21 estate notification types, got %d", len(EstateNotificationTypes))
 	}
 	seen := map[string]bool{}
 	for _, ty := range EstateNotificationTypes {

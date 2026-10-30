@@ -38,19 +38,29 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/referrals"
 	referralevents "spotlight/backend/internal/referral/events"
+	referralledger "spotlight/backend/internal/referral/ledger"
 )
 
 // RateBps is the flat referral commission-split rate: 20% of Spotlight's
 // realized commission on the purchase. Never tiered, unlike the older engine.
 const RateBps = 2000
 
-// ledgerService is the minimal slice of the finance ledger this package needs.
-// Kept as an interface for the same reason commission.ledgerService is: nil-safe
-// wiring and independent testability.
-type ledgerService interface {
-	GetOrCreateStandingAccount(ctx context.Context, accountType ledger.AccountType) (*ledger.Account, error)
-	Credit(ctx context.Context, userID, reference, idempotencyKey, debitAccountID string, amountKobo int64) error
+// rewardLedger is the slice of the RB0 referral reward ledger
+// (referral_reward_ledger) this package needs. A split is accrued there and
+// walked to 'eligible', so the referrer sees it as withdrawable and moves it to
+// their wallet through POST /api/finance/referral/withdraw — the wallet credit
+// (balanced double-entry against the standing referral-reward account, KYC and
+// account-status gates, Idempotency-Key) happens in that one place, at
+// withdraw time, never here. Kept as an interface for testability.
+type rewardLedger interface {
+	Accrue(ctx context.Context, in referralledger.AccrueInput) (string, error)
+	Transition(ctx context.Context, rewardID, nextState, idempotencyKey string) error
 }
+
+// accrualPath is the forward walk from a fresh accrual to withdrawable. A
+// commission split is paid on an already-settled purchase, so there is no
+// qualifying action or vesting period left to wait for.
+var accrualPath = []string{referralledger.StatePending, referralledger.StateVesting, referralledger.StateEligible}
 
 // eventTypeCredited is the referral_engine_events row appended after a split
 // actually lands (CREDITED). Money mutations must emit an audit event; the
@@ -61,7 +71,7 @@ const eventTypeCredited = "commission_split_reward_credited"
 // Service implements commission.ReferralHook.
 type Service struct {
 	pool    *pgxpool.Pool
-	ledger  ledgerService
+	rewards rewardLedger
 	events  *referralevents.Service
 	enabled bool
 }
@@ -70,12 +80,19 @@ type Service struct {
 // config.FeatureReferralCommissionSplitEnabled — checked here (not just at the
 // call site) so a caller that forgets the flag check still gets a safe no-op,
 // never a live payout.
-func NewService(pool *pgxpool.Pool, ledgerSvc ledgerService, enabled bool) *Service {
+//
+// financeLedger is the finance ledger the RB0 reward ledger pays out through at
+// withdraw time; nil leaves the split record-only (no accrual).
+func NewService(pool *pgxpool.Pool, financeLedger *ledger.Service, enabled bool) *Service {
 	var ev *referralevents.Service
+	var rewards rewardLedger
 	if pool != nil {
 		ev = referralevents.NewService(pool)
+		if financeLedger != nil {
+			rewards = referralledger.NewService(pool, financeLedger)
+		}
 	}
-	return &Service{pool: pool, ledger: ledgerSvc, events: ev, enabled: enabled}
+	return &Service{pool: pool, rewards: rewards, events: ev, enabled: enabled}
 }
 
 // OnEarningRecorded implements commission.ReferralHook. Called exactly once per
@@ -250,31 +267,32 @@ func (s *Service) reserveReward(ctx context.Context, referrerID, referredID, sou
 	return rewardID, nil
 }
 
-// creditReward credits the referrer's wallet for a reserved reward, debiting
-// the standing referral-reward account — the same account type the older
-// engine posts against, so every referral payout (whichever engine produced it)
-// lands in one place for reporting. The ledger idempotency key is derived from
-// the reward id, so calling this again for the same reward (RetryPending) can
-// never post twice: a duplicate is treated as already paid. On success the row
-// flips to CREDITED and an audit event is appended; on any other failure it
-// stays PENDING and the error is returned.
+// creditReward credits a reserved reward to the referrer's referral balance:
+// it accrues one referral_reward_ledger row (idempotency key derived from the
+// reward id, so a retry finds the same row) and walks it forward to
+// 'eligible'. No wallet money moves here — those transitions are state-only in
+// the RB0 ledger; the balanced wallet credit is posted when the referrer
+// withdraws. On success the referral_rewards row flips to CREDITED ("credited
+// to the referral balance") and an audit event is appended; on any failure it
+// stays PENDING and RetryPending re-drives it from wherever the walk stopped.
 func (s *Service) creditReward(ctx context.Context, r pendingReward) error {
-	if s.ledger == nil {
+	if s.rewards == nil {
 		return nil
 	}
-	rewardAcct, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountReferralReward)
+	ledgerKey := "referral:commission-split:" + r.ID
+	ledgerID, err := s.rewards.Accrue(ctx, referralledger.AccrueInput{
+		BeneficiaryID:  r.ReferrerID,
+		ReferredUserID: r.ReferredUserID,
+		Kind:           referralledger.KindReferrer,
+		AmountKobo:     r.RewardKobo,
+		Currency:       "NGN",
+		IdempotencyKey: ledgerKey,
+	})
 	if err != nil {
 		return err
 	}
-	// ErrDuplicate is read as "already paid". That holds only because every
-	// ledger handed to this package is built WITHOUT Redis (withReferralSplit,
-	// finance_routes.go): there, ErrDuplicate can only come from the DB's unique
-	// idempotency key, i.e. a committed post. A Redis-backed ledger can return it
-	// from a short-lived lock while the DB post failed — wiring one in here would
-	// let a retry mark an unpaid reward CREDITED. Keep these ledgers Redis-free.
-	creditErr := s.ledger.Credit(ctx, r.ReferrerID, r.SourceTransactionID, "referral:commission-split:"+r.ID, rewardAcct.ID, r.RewardKobo)
-	if creditErr != nil && !errors.Is(creditErr, ledger.ErrDuplicate) {
-		return creditErr
+	if err := s.walkToEligible(ctx, ledgerID, ledgerKey); err != nil {
+		return err
 	}
 	if _, err := s.pool.Exec(ctx,
 		`UPDATE public.referral_rewards SET status = 'CREDITED', credited_at = now() WHERE id = $1 AND status = 'PENDING'`,
@@ -284,9 +302,9 @@ func (s *Service) creditReward(ctx context.Context, r pendingReward) error {
 	}
 
 	// Audit event — append-only referral_engine_events row, keyed on the reward
-	// id so a replay dedupes instead of double-recording. Best-effort: the money
-	// is already committed, so a failed event write is logged, never treated as
-	// a split failure.
+	// id so a replay dedupes instead of double-recording. Best-effort: the
+	// accrual is already committed, so a failed event write is logged, never
+	// treated as a split failure.
 	if s.events != nil {
 		if err := s.events.Record(ctx, referralevents.Input{
 			EventType:  eventTypeCredited,
@@ -294,6 +312,7 @@ func (s *Service) creditReward(ctx context.Context, r pendingReward) error {
 			ReferrerID: r.ReferrerID,
 			Payload: map[string]any{
 				"reward_id":             r.ID,
+				"reward_ledger_id":      ledgerID,
 				"earning_id":            strings.TrimPrefix(r.SourceTransactionID, "commission:"),
 				"source_transaction_id": r.SourceTransactionID,
 				"module":                r.Module,
@@ -304,6 +323,39 @@ func (s *Service) creditReward(ctx context.Context, r pendingReward) error {
 			IdempotencyKey: "commission-split:credited:" + r.ID,
 		}); err != nil {
 			log.Printf("[referral/commissionsplit] audit event failed (reward=%s): %v", r.ID, err)
+		}
+	}
+	return nil
+}
+
+// walkToEligible moves an accrual from wherever it currently is to 'eligible'.
+// It starts from the row's CURRENT state so a retry after a partial walk only
+// takes the remaining steps (Transition refuses a backward move, so replaying
+// the whole path would fail). A row already eligible, paid or clawed back is
+// left alone: paid means the referrer already withdrew it, and a clawback is
+// final.
+func (s *Service) walkToEligible(ctx context.Context, ledgerID, ledgerKey string) error {
+	var state string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT state FROM public.referral_reward_ledger WHERE id = $1`, ledgerID,
+	).Scan(&state); err != nil {
+		return err
+	}
+	step := -1
+	if state == referralledger.StateEarned {
+		step = 0
+	}
+	for i, st := range accrualPath {
+		if st == state {
+			step = i + 1
+		}
+	}
+	if step < 0 {
+		return nil // eligible-or-beyond (paid / clawed_back): nothing to do
+	}
+	for _, next := range accrualPath[step:] {
+		if err := s.rewards.Transition(ctx, ledgerID, next, ledgerKey+":"+next); err != nil {
+			return err
 		}
 	}
 	return nil

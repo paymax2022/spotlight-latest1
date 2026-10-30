@@ -2,8 +2,8 @@ package estate
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,14 +28,14 @@ func validTransferType(t string) bool { return t == "ownership" || t == "tenancy
 // validTransferDecision reports whether d is a permitted review decision. Pure.
 func validTransferDecision(d string) bool { return d == "approved" || d == "rejected" }
 
-const propertyCols = `id, estate_id, unit_label, property_type, COALESCE(floor,''), COALESCE(block,''), occupancy_status, landlord_id, tenant_id, archived, created_at`
+const propertyCols = `id, estate_id, unit_label, property_type, COALESCE(floor,''), COALESCE(block,''), occupancy_status, landlord_id, tenant_id, archived, capacity, created_at`
 
 func scanProperty(row interface {
 	Scan(dest ...any) error
 }) (*EstateProperty, error) {
 	var p EstateProperty
 	if err := row.Scan(&p.ID, &p.EstateID, &p.UnitLabel, &p.PropertyType, &p.Floor, &p.Block,
-		&p.OccupancyStatus, &p.LandlordID, &p.TenantID, &p.Archived, &p.CreatedAt); err != nil {
+		&p.OccupancyStatus, &p.LandlordID, &p.TenantID, &p.Archived, &p.Capacity, &p.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -49,7 +49,7 @@ func (s *Service) GetProperty(ctx context.Context, estateID, memberID, propertyI
 	row := s.db.QueryRow(ctx, `SELECT `+propertyCols+` FROM estate_properties WHERE id=$1 AND estate_id=$2`, propertyID, estateID)
 	p, err := scanProperty(row)
 	if err != nil {
-		return nil, errors.New("estate: property not found in this estate")
+		return nil, ErrUnitNotFound
 	}
 	return p, nil
 }
@@ -58,6 +58,15 @@ func (s *Service) GetProperty(ctx context.Context, estateID, memberID, propertyI
 func (s *Service) UpdateProperty(ctx context.Context, estateID, adminID, propertyID string, req UpdatePropertyRequest) (*EstateProperty, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
+	}
+	// The column carries a CHECK, so an out-of-domain type would otherwise reach the caller as a
+	// database violation instead of as the caller's mistake (ESTA-D032).
+	if req.PropertyType != nil {
+		trimmed := strings.TrimSpace(*req.PropertyType)
+		if !PropertyTypes[trimmed] {
+			return nil, ErrInvalidPropertyType
+		}
+		req.PropertyType = &trimmed
 	}
 	const q = `
 		UPDATE estate_properties SET
@@ -70,59 +79,76 @@ func (s *Service) UpdateProperty(ctx context.Context, estateID, adminID, propert
 	row := s.db.QueryRow(ctx, q, propertyID, estateID, req.UnitLabel, req.PropertyType, req.Floor, req.Block)
 	p, err := scanProperty(row)
 	if err != nil {
-		return nil, errors.New("estate: property not found in this estate")
+		return nil, ErrUnitNotFound
 	}
 	_ = s.audit(ctx, estateID, adminID, "PROPERTY_UPDATE", "property", propertyID, nil)
 	return p, nil
 }
 
-// AssignLandlord sets a property's landlord (estate admin only).
+// AssignLandlord records a member as this unit's owner (estate admin only).
 func (s *Service) AssignLandlord(ctx context.Context, estateID, adminID, propertyID, landlordUserID string) (*EstateProperty, error) {
-	return s.assignParty(ctx, estateID, adminID, propertyID, "landlord_id", landlordUserID, "")
+	return s.assignOccupancy(ctx, estateID, adminID, propertyID, landlordUserID, OccupancyHomeowner)
 }
 
-// AssignTenant sets a property's tenant and marks it occupied (estate admin only).
+// AssignTenant records a member as this unit's tenant (estate admin only).
 func (s *Service) AssignTenant(ctx context.Context, estateID, adminID, propertyID, tenantUserID string) (*EstateProperty, error) {
-	return s.assignParty(ctx, estateID, adminID, propertyID, "tenant_id", tenantUserID, "occupied")
+	return s.assignOccupancy(ctx, estateID, adminID, propertyID, tenantUserID, OccupancyTenant)
 }
 
-// assignParty sets landlord_id or tenant_id (column is a trusted internal literal,
-// never user input), optionally forcing an occupancy status.
-func (s *Service) assignParty(ctx context.Context, estateID, adminID, propertyID, column, userID, forceOccupancy string) (*EstateProperty, error) {
+// assignOccupancy is the admin's direct assignment path. It used to be a single UPDATE of one UUID
+// column, which is exactly how a unit could read 'occupied' with nobody admitted, how a second owner
+// could be written over the first with no record of the change, and how the two party columns could
+// disagree with the residency that gates what the person may do. Every assignment now goes through
+// estate_occupancy_admit(), so capacity, the one-owner/one-tenant overlap, the archived-unit rule and
+// the "membership must still be active" rule are the same ones a tenancy approval passes.
+func (s *Service) assignOccupancy(ctx context.Context, estateID, adminID, propertyID, userID, kind string) (*EstateProperty, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
-	if userID == "" {
-		return nil, errors.New("estate: user id is required")
+	if strings.TrimSpace(userID) == "" {
+		return nil, ErrInvalidOccupantUser
 	}
-	q := `UPDATE estate_properties SET ` + column + `=$3`
-	if forceOccupancy != "" {
-		q += `, occupancy_status='` + forceOccupancy + `'`
+	if _, err := s.AdmitOccupant(ctx, estateID, adminID, propertyID, AdmitOccupantRequest{
+		UserID: userID, OccupancyType: kind,
+	}); err != nil {
+		return nil, err
 	}
-	q += ` WHERE id=$1 AND estate_id=$2 RETURNING ` + propertyCols
-	row := s.db.QueryRow(ctx, q, propertyID, estateID, userID)
+	row := s.db.QueryRow(ctx, `SELECT `+propertyCols+` FROM estate_properties WHERE id=$1 AND estate_id=$2`,
+		propertyID, estateID)
 	p, err := scanProperty(row)
 	if err != nil {
-		return nil, errors.New("estate: property not found in this estate")
+		return nil, ErrUnitNotFound
 	}
-	_ = s.audit(ctx, estateID, adminID, "PROPERTY_ASSIGN", "property", propertyID, map[string]any{"column": column, "user_id": userID})
 	return p, nil
 }
 
-// SetOccupancyStatus sets a property's occupancy status (estate admin only).
+// SetOccupancyStatus sets a property's occupancy status (estate admin only). The register outranks the
+// flag: an admin cannot declare a unit vacant while people are still recorded in it, because every
+// billing and access rule that reads 'vacant' would then start exempting a populated unit.
 func (s *Service) SetOccupancyStatus(ctx context.Context, estateID, adminID, propertyID, status string) (*EstateProperty, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
 	if !validOccupancyStatus(status) {
-		return nil, fmt.Errorf("estate: invalid occupancy status %q", status)
+		return nil, fmt.Errorf("%w: %q", ErrInvalidOccupancyStatus, status)
+	}
+	if status != "occupied" {
+		var live int
+		if err := s.db.QueryRow(ctx,
+			`SELECT COUNT(*) FROM estate_unit_occupants WHERE property_id=$1 AND estate_id=$2 AND ended_at IS NULL`,
+			propertyID, estateID).Scan(&live); err != nil {
+			return nil, fmt.Errorf("estate: count occupants: %w", err)
+		}
+		if live > 0 {
+			return nil, fmt.Errorf("%w: %d recorded", ErrUnitHasLiveOccupants, live)
+		}
 	}
 	row := s.db.QueryRow(ctx,
 		`UPDATE estate_properties SET occupancy_status=$3 WHERE id=$1 AND estate_id=$2 RETURNING `+propertyCols,
 		propertyID, estateID, status)
 	p, err := scanProperty(row)
 	if err != nil {
-		return nil, errors.New("estate: property not found in this estate")
+		return nil, ErrUnitNotFound
 	}
 	_ = s.audit(ctx, estateID, adminID, "PROPERTY_OCCUPANCY", "property", propertyID, map[string]any{keyStatus: status})
 	return p, nil
@@ -136,15 +162,27 @@ func (s *Service) ArchiveProperty(ctx context.Context, estateID, adminID, proper
 		return err
 	}
 	var occupancy string
-	var tenantID *string
+	var tenantID, landlordID *string
 	if err := s.db.QueryRow(ctx,
-		`SELECT occupancy_status, tenant_id::TEXT FROM estate_properties WHERE id=$1 AND estate_id=$2 AND archived=FALSE`,
+		`SELECT occupancy_status, tenant_id::TEXT, landlord_id::TEXT FROM estate_properties WHERE id=$1 AND estate_id=$2 AND archived=FALSE`,
 		propertyID, estateID,
-	).Scan(&occupancy, &tenantID); err != nil {
-		return errors.New("estate: property not found in this estate")
+	).Scan(&occupancy, &tenantID, &landlordID); err != nil {
+		return ErrUnitNotFound
 	}
-	if occupancy == "occupied" || tenantID != nil {
-		return errors.New("estate: cannot archive a unit with an active occupant — end the tenancy first")
+	// The register is the authoritative count from Phase 2.4 on; the flag and the two party columns are
+	// still read because a unit recorded before the registry existed has no rows to count, and an
+	// owner-on-the-deed with nobody renting is still a unit somebody owns.
+	var live int
+	if err := s.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM estate_unit_occupants WHERE property_id=$1 AND estate_id=$2 AND ended_at IS NULL`,
+		propertyID, estateID).Scan(&live); err != nil {
+		return fmt.Errorf("estate: check property occupants: %w", err)
+	}
+	if live > 0 || occupancy == "occupied" || tenantID != nil {
+		return fmt.Errorf("%w: %d recorded — end every occupancy first", ErrUnitHasLiveOccupants, live)
+	}
+	if landlordID != nil {
+		return ErrUnitHasDeedOwner
 	}
 	var openInvoices int
 	if err := s.db.QueryRow(ctx,
@@ -154,14 +192,14 @@ func (s *Service) ArchiveProperty(ctx context.Context, estateID, adminID, proper
 		return fmt.Errorf("estate: check property liabilities: %w", err)
 	}
 	if openInvoices > 0 {
-		return fmt.Errorf("estate: cannot archive a unit with %d open invoice(s) — settle or waive them first", openInvoices)
+		return fmt.Errorf("%w: %d pending or overdue", ErrUnitHasOpenInvoices, openInvoices)
 	}
 	ct, err := s.db.Exec(ctx, `UPDATE estate_properties SET archived=TRUE WHERE id=$1 AND estate_id=$2`, propertyID, estateID)
 	if err != nil {
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return errors.New("estate: property not found in this estate")
+		return ErrUnitNotFound
 	}
 	_ = s.audit(ctx, estateID, adminID, "PROPERTY_ARCHIVE", "property", propertyID, nil)
 	return nil
@@ -174,7 +212,7 @@ func (s *Service) RequestPropertyTransfer(ctx context.Context, estateID, request
 		return nil, err
 	}
 	if !validTransferType(body.TransferType) {
-		return nil, fmt.Errorf("estate: invalid transfer type %q", body.TransferType)
+		return nil, fmt.Errorf("%w: %q", ErrInvalidTransferType, body.TransferType)
 	}
 	// Property must belong to this estate.
 	var exists bool
@@ -182,7 +220,7 @@ func (s *Service) RequestPropertyTransfer(ctx context.Context, estateID, request
 		return nil, err
 	}
 	if !exists {
-		return nil, errors.New("estate: property not found in this estate")
+		return nil, ErrUnitNotFound
 	}
 	r := &PropertyTransferRequest{
 		ID: uuid.New().String(), EstateID: estateID, PropertyID: propertyID,
@@ -231,14 +269,19 @@ func (s *Service) ListTransferRequests(ctx context.Context, estateID, adminID, s
 }
 
 // ReviewPropertyTransfer approves/rejects a transfer request (estate admin only).
-// On approval the property's landlord (ownership) or tenant (tenancy) is updated
-// in the same transaction.
+//
+// Approval used to write the destination user straight into the unit's landlord_id/tenant_id column and
+// stop there: no occupancy registration, so the new owner was invisible to the capacity count, the
+// resident card still called them a resident, and the person they displaced kept a live registration on
+// a unit they no longer own. Approval now admits through the same writer every other occupancy change
+// uses, ending the displaced party's registration first where the transfer is a tenancy (an ownership
+// displacement is what the writer's replace-owner flag is for).
 func (s *Service) ReviewPropertyTransfer(ctx context.Context, estateID, adminID, requestID, decision string) (*PropertyTransferRequest, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
 	if !validTransferDecision(decision) {
-		return nil, fmt.Errorf("estate: invalid decision %q", decision)
+		return nil, ErrInvalidReviewDecision
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -252,10 +295,10 @@ func (s *Service) ReviewPropertyTransfer(ctx context.Context, estateID, adminID,
 	if err := tx.QueryRow(ctx, load, requestID, estateID).Scan(
 		&r.ID, &r.EstateID, &r.PropertyID, &r.RequestedBy, &r.ToUserID, &r.TransferType, &r.Reason, &r.Status,
 	); err != nil {
-		return nil, errors.New("estate: transfer request not found in this estate")
+		return nil, ErrPropertyTransferNotFound
 	}
 	if r.Status != "pending" {
-		return nil, fmt.Errorf("estate: transfer request already %s", r.Status)
+		return nil, fmt.Errorf("%w: %s", ErrTransferAlreadyReviewed, r.Status)
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE property_transfer_requests SET status=$1, reviewed_by=$2, reviewed_at=NOW() WHERE id=$3`,
@@ -264,14 +307,36 @@ func (s *Service) ReviewPropertyTransfer(ctx context.Context, estateID, adminID,
 		return nil, err
 	}
 	if decision == "approved" {
-		col := "tenant_id"
+		kind := OccupancyTenant
 		if r.TransferType == "ownership" {
-			col = "landlord_id"
+			kind = OccupancyHomeowner
 		}
-		if _, err := tx.Exec(ctx,
-			`UPDATE estate_properties SET `+col+`=$1 WHERE id=$2 AND estate_id=$3`,
-			r.ToUserID, r.PropertyID, estateID,
-		); err != nil {
+		if kind == OccupancyTenant {
+			// One current tenant per unit is the overlap rule (EST-UAT-0044), so the person being
+			// transferred out has to be released before the incoming one can be admitted. Through the
+			// releasing writer rather than an UPDATE, so the history survives and the unit's status is
+			// recomputed by the same code every other move-out uses.
+			var previous *string
+			if err := tx.QueryRow(ctx,
+				`SELECT tenant_id FROM estate_properties WHERE id=$1 AND estate_id=$2`, r.PropertyID, estateID,
+			).Scan(&previous); err != nil {
+				return nil, fmt.Errorf("estate: read current tenant: %w", err)
+			}
+			if previous != nil && *previous != "" && *previous != r.ToUserID {
+				if _, err := releaseOccupancy(ctx, tx, occupancyRelease{
+					estateID: estateID, propertyID: r.PropertyID, userID: *previous,
+					actorID: adminID, reason: "tenancy transferred to another resident",
+				}); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if _, err := admitOccupancy(ctx, tx, occupancyAdmission{
+			estateID: estateID, propertyID: r.PropertyID, userID: r.ToUserID,
+			actorID: adminID, kind: kind,
+			note:         "transfer request " + r.ID,
+			replaceOwner: kind == OccupancyHomeowner,
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -285,6 +350,10 @@ func (s *Service) ReviewPropertyTransfer(ctx context.Context, estateID, adminID,
 	r.ReviewedBy = &adminID
 	s.notify(ctx, estateID, r.RequestedBy, NotifAdminApprovalRequired, "Property transfer "+decision,
 		"Your property transfer request was "+decision+".", map[string]any{"request_id": requestID})
+	if decision == "approved" {
+		s.notify(ctx, estateID, r.ToUserID, NotifEstateOccupancyAdmitted, "A unit has been transferred to you",
+			"Your occupancy of this unit is now on record.", map[string]any{"property_id": r.PropertyID})
+	}
 	return &r, nil
 }
 
@@ -310,7 +379,7 @@ SELECT
 		return nil, fmt.Errorf("estate: property analytics: %w", err)
 	}
 	if a.OccupancyStatus == "" {
-		return nil, errors.New("estate: property not found in this estate")
+		return nil, ErrUnitNotFound
 	}
 	return a, nil
 }

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
-import { CheckCircle2, Circle, Lock, ShieldCheck, Trophy, Info, AlertTriangle } from 'lucide-react-native';
+import { CheckCircle2, Circle, Lock, ShieldCheck, Trophy, Info, AlertTriangle, UserPlus } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -11,8 +11,17 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useElection, useCastVote } from '@/features/association/hooks';
+import { useElection, useCastVote, useAdminAccess, useAddElectionCandidates, useElectionTransition } from '@/features/association/hooks';
+import CommitteeMemberPicker from '@/features/association/components/CommitteeMemberPicker';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import type { ElectionPosition, PositionResult, VoteReceipt } from '@/features/association/types/association.types';
+
+const NEXT_STEP: Record<string, { action: 'open' | 'close' | 'publish'; label: string; confirm: string }> = {
+  DRAFT: { action: 'open', label: 'Open voting', confirm: 'Members will be notified and can start voting. You can still add candidates only before this point.' },
+  NOMINATION: { action: 'open', label: 'Open voting', confirm: 'Members will be able to vote. Candidates can no longer be added.' },
+  VOTING: { action: 'close', label: 'Close voting', confirm: 'No more votes will be accepted. You can then publish the results.' },
+  CLOSED: { action: 'publish', label: 'Publish results', confirm: 'Results become visible to every member and are final.' },
+};
 
 export default function ElectionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -27,6 +36,49 @@ export default function ElectionDetailScreen() {
   const d = election.data;
   const votingOpen = d?.status === 'VOTING';
 
+  // Organiser controls. The server decides who may act (any admin role in the
+  // organisation — the creator has one); this only decides what to show.
+  const isAdmin = Boolean(useAdminAccess().data?.isAdmin);
+  const addCandidates = useAddElectionCandidates(id);
+  const transition = useElectionTransition(id);
+  const [pickFor, setPickFor] = useState<string | null>(null);
+  const editable = isAdmin && (d?.status === 'DRAFT' || d?.status === 'NOMINATION');
+  const next = d ? NEXT_STEP[d.status] : undefined;
+  const everyPositionHasCandidate = Boolean(d?.positions.length) && d!.positions.every((p) => p.candidates.length > 0);
+  const positionsWithoutCandidates = (d?.positions ?? []).filter((p) => p.candidates.length === 0).map((p) => p.title);
+  const blockedOpen = editable && next?.action === 'open' && !everyPositionHasCandidate;
+
+  const submitCandidates = async (membershipIds: string[]) => {
+    if (!pickFor) return;
+    try {
+      const res = await addCandidates.mutateAsync({ positionId: pickFor, membershipIds });
+      setPickFor(null);
+      if (res.added < res.requested) {
+        await alertAsync({
+          title: res.added === 0 ? 'No candidates were added' : `Added ${res.added} of ${res.requested}`,
+          message: 'Candidates must be active members in good standing, and can only stand once per position.',
+        });
+      }
+    } catch {
+      await alertAsync({ title: "Couldn't add candidates", message: 'Please try again.' });
+    }
+  };
+
+  const advance = async () => {
+    if (!next || transition.isPending) return;
+    if (next.action === 'open' && !everyPositionHasCandidate) {
+      await alertAsync({ title: 'Add candidates first', message: 'Every position needs at least one candidate before voting can open.' });
+      return;
+    }
+    const ok = await confirmAsync({ title: `${next.label}?`, message: next.confirm, confirmLabel: next.label });
+    if (!ok) return;
+    try {
+      await transition.mutateAsync(next.action);
+    } catch {
+      await alertAsync({ title: `Couldn't ${next.label.toLowerCase()}`, message: 'The election may have changed. Refresh and try again.' });
+    }
+  };
+
   const doCast = (position: ElectionPosition) => {
     const candidateId = selected[position.id];
     if (!candidateId) return;
@@ -38,7 +90,19 @@ export default function ElectionDetailScreen() {
           setConfirming((prev) => ({ ...prev, [position.id]: false }));
           setErrors((prev) => ({ ...prev, [position.id]: '' }));
         },
-        onError: () => setErrors((prev) => ({ ...prev, [position.id]: 'Your vote could not be recorded. Please try again.' })),
+        onError: (err) => {
+          // Show the server's reason (voting window ended, not eligible, …) rather
+          // than a generic line, so the voter knows whether retrying can help.
+          const reason = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+          const known = reason && /window has ended/i.test(reason)
+            ? 'Voting for this election has ended.'
+            : reason && /not eligible/i.test(reason)
+              ? 'You are not eligible to vote in this election.'
+              : reason && /not open/i.test(reason)
+                ? 'Voting is not open for this election.'
+                : 'Your vote could not be recorded. Please try again.';
+          setErrors((prev) => ({ ...prev, [position.id]: known }));
+        },
       },
     );
   };
@@ -54,6 +118,30 @@ export default function ElectionDetailScreen() {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <Text style={styles.title}>{d.title}</Text>
           {!!d.description && <Text style={styles.desc}>{d.description}</Text>}
+
+          {/* Organiser: where this election is, and the next step */}
+          {isAdmin && (
+            <View style={[styles.adminCard, shadow1]}>
+              <Text style={styles.adminTitle}>
+                {d.status === 'DRAFT' ? 'Draft — members can’t see this yet'
+                  : d.status === 'NOMINATION' ? 'Nominations open'
+                  : d.status === 'VOTING' ? 'Voting is open'
+                  : d.status === 'CLOSED' ? 'Voting closed — results not published'
+                  : d.status === 'PUBLISHED' ? 'Results published' : d.status}
+              </Text>
+              {editable ? <Text style={styles.adminHelp}>Add candidates to each position, then open voting.</Text> : null}
+              {blockedOpen ? (
+                <Text style={styles.adminBlocked}>
+                  {d.positions.length === 0
+                    ? 'This election has no positions yet.'
+                    : `Voting can’t open yet — no candidates for: ${positionsWithoutCandidates.join(', ')}.`}
+                </Text>
+              ) : null}
+              {next ? (
+                <PrimaryButton label={next.label} onPress={advance} loading={transition.isPending} disabled={transition.isPending} />
+              ) : null}
+            </View>
+          )}
 
           {/* Eligibility */}
           {!d.eligible && (
@@ -81,6 +169,12 @@ export default function ElectionDetailScreen() {
                   <Text style={styles.posTitle}>{p.title}</Text>
                   <Text style={styles.posSeats}>{p.seats} seat{p.seats === 1 ? '' : 's'}</Text>
                 </View>
+                {editable ? (
+                  <Pressable onPress={() => setPickFor(p.id)} style={styles.addCand} accessibilityRole="button" accessibilityLabel={`Add candidates for ${p.title}`}>
+                    <UserPlus size={15} color={Colors.primary} strokeWidth={2.2} />
+                    <Text style={styles.addCandText}>Add candidates</Text>
+                  </Pressable>
+                ) : null}
 
                 {result ? (
                   <ResultList result={result} />
@@ -158,6 +252,14 @@ export default function ElectionDetailScreen() {
           })}
         </ScrollView>
       )}
+
+      <CommitteeMemberPicker
+        visible={pickFor !== null}
+        excludeIds={[]}
+        busy={addCandidates.isPending}
+        onCancel={() => setPickFor(null)}
+        onSubmit={(ids) => void submitCandidates(ids)}
+      />
     </SafeAreaView>
   );
 }
@@ -189,6 +291,12 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: 120, gap: Spacing.md },
   title: { ...Typography.titleLg, color: Colors.onSurface },
   desc: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  adminCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.primary, padding: Spacing.md, gap: Spacing.sm },
+  adminTitle: { ...Typography.labelLg, color: Colors.primary },
+  adminBlocked: { ...Typography.labelMd, color: Colors.error },
+  adminHelp: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  addCand: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', paddingVertical: 2 },
+  addCandText: { ...Typography.labelMd, color: Colors.primary },
   banner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, borderRadius: Radius.lg, padding: Spacing.md },
   bannerOk: { backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.teal },
   bannerBad: { backgroundColor: Colors.errorContainer },

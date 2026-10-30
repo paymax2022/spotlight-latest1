@@ -64,3 +64,54 @@ describe('adminApiClient — calls the session-cookie proxy, never sends a beare
     localStorage.removeItem('spotlight_admin_access_token');
   });
 });
+
+describe('loadAdminOverview — tells a rejected session apart from an unreachable backend', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reports a 401 as unauthorized, never as the API not answering', async () => {
+    // The backend answered — it rejected the session (GoTrue no longer knows
+    // it: revoked by a password reset, or signed out elsewhere). Telling the
+    // operator to "check the backend is running" sends them to the wrong place.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 401, json: async () => ({ success: false, error: 'invalid token' }),
+    })));
+    const mod = await import('@/services/adminApiClient');
+    expect(await mod.loadAdminOverview()).toEqual({ status: 'unauthorized' });
+  });
+
+  it('reports a 403 as unauthorized too', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 403, json: async () => ({ success: false, error: 'forbidden' }),
+    })));
+    const mod = await import('@/services/adminApiClient');
+    expect(await mod.loadAdminOverview()).toEqual({ status: 'unauthorized' });
+  });
+
+  it('reports a network failure or 5xx as unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    let mod = await import('@/services/adminApiClient');
+    expect(await mod.loadAdminOverview()).toEqual({ status: 'unavailable' });
+
+    vi.resetModules();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 504, json: async () => ({ success: false, error: 'The admin API could not be reached.' }),
+    })));
+    mod = await import('@/services/adminApiClient');
+    expect(await mod.loadAdminOverview()).toEqual({ status: 'unavailable' });
+  });
+
+  it('returns the overview on success', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200, json: async () => ({ success: true, generated_at: '2026-10-23T13:00:00Z', modules: [] }),
+    })));
+    const mod = await import('@/services/adminApiClient');
+    expect(await mod.loadAdminOverview()).toEqual({
+      status: 'ok', overview: { generated_at: '2026-10-23T13:00:00Z', modules: [] },
+    });
+  });
+});

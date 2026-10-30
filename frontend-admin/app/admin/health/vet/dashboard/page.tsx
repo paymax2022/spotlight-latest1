@@ -55,28 +55,28 @@ export default function VetDashboardPage() {
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Appointments (total)" value={(data.appointments_total ?? 0).toLocaleString('en-NG')} accent={colors.primary} />
-              <Kpi label="Platform revenue (7d)" value={formatNaira(data.platform_revenue_kobo_week ?? 0)} accent={colors.success} />
-              <Kpi label="Vets active" value={data.vets_active.toLocaleString('en-NG')} sub="APPROVED (HL-2)" />
-              <Kpi label="Appointments today" value={data.appointments_today.toLocaleString('en-NG')} sub={`${data.appointments_30d.toLocaleString('en-NG')} (30d) — not computed`} accent={colors.primary} />
-              <Kpi label="Consults completed (30d)" value={data.consults_completed_30d.toLocaleString('en-NG')} sub="not computed" />
-              <Kpi label="No-show rate" value={pct(data.no_show_rate)} sub="not computed" />
-              <Kpi label="GMV today" value={formatNaira(data.gmv_today_kobo)} sub={`${formatNaira(data.gmv_30d_kobo)} (30d) — not computed`} />
-              <Kpi label="Net revenue (30d)" value={formatNaira(data.net_revenue_30d_kobo)} accent={colors.success} sub="not computed" />
-              <Kpi label="Take rate" value={pct(data.take_rate)} sub="Net ÷ GMV — not computed" />
-              <Kpi label="Avg appointment value" value={formatNaira(data.avg_appointment_value_kobo)} sub="not computed" />
-              <Kpi label="Held balance" value={formatNaira(data.held_balance_kobo)} sub="not computed" />
-              <Kpi label="Released (30d) ₦" value={formatNaira(data.released_30d_kobo)} sub="not computed" />
-              <Kpi label="Refunded (30d) ₦" value={formatNaira(data.refunded_30d_kobo)} sub="not computed" />
-              <Kpi label="VCN pending" value={data.vcn_pending_review.toLocaleString('en-NG')} sub="HL-2 credential gate — not computed" />
-              <Kpi label="VCN expiring (30d)" value={data.vcn_expiring_30d.toLocaleString('en-NG')} sub="not computed" />
-              <Kpi label="Vets suspended" value={data.vets_suspended.toLocaleString('en-NG')} sub="not computed" />
-              <Kpi label="e-Prescriptions (30d)" value={data.eprescriptions_30d.toLocaleString('en-NG')} sub="not computed" />
-              <Kpi label="e-Rx flags open" value={data.eprescription_flags_open.toLocaleString('en-NG')} sub="not computed" />
-              <Kpi label="Services pending" value={data.services_pending_governance.toLocaleString('en-NG')} sub="not computed" />
-              <Kpi label="Moderation open" value={data.moderation_open.toLocaleString('en-NG')} sub="not computed" />
-              <Kpi label="Payouts KYC hold" value={data.payouts_kyc_hold.toLocaleString('en-NG')} sub="not computed" />
-              <Kpi label="SOS routed (30d)" value={data.sos_routed_30d.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Appointments (total)" href="/admin/health/vet/appointments" value={(data.appointments_total ?? 0).toLocaleString('en-NG')} accent={colors.primary} />
+              <Kpi label="Platform revenue (7d)" href="/admin/health/vet/reporting" value={formatNaira(data.platform_revenue_kobo_week ?? 0)} accent={colors.success} />
+              <Kpi label="Vets active" href="/admin/health/vet/verification" value={data.vets_active.toLocaleString('en-NG')} sub="APPROVED (HL-2)" />
+              <Kpi label="Appointments today" href="/admin/health/vet/appointments" value={data.appointments_today.toLocaleString('en-NG')} sub={`${data.appointments_30d.toLocaleString('en-NG')} (30d) — not computed`} accent={colors.primary} />
+              <Kpi label="Consults completed (30d)" href="/admin/health/vet/appointments" value={data.consults_completed_30d.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="No-show rate" href="/admin/health/vet/appointments" value={pct(data.no_show_rate)} sub="not computed" />
+              <Kpi label="GMV today" href="/admin/health/vet/reporting" value={formatNaira(data.gmv_today_kobo)} sub={`${formatNaira(data.gmv_30d_kobo)} (30d) — not computed`} />
+              <Kpi label="Net revenue (30d)" href="/admin/health/vet/reporting" value={formatNaira(data.net_revenue_30d_kobo)} accent={colors.success} sub="not computed" />
+              <Kpi label="Take rate" href="/admin/health/vet/reporting" value={pct(data.take_rate)} sub="Net ÷ GMV — not computed" />
+              <Kpi label="Avg appointment value" href="/admin/health/vet/reporting" value={formatNaira(data.avg_appointment_value_kobo)} sub="not computed" />
+              <Kpi label="Held balance" href="/admin/health/vet/payouts" value={formatNaira(data.held_balance_kobo)} sub="not computed" />
+              <Kpi label="Released (30d) ₦" href="/admin/health/vet/payouts" value={formatNaira(data.released_30d_kobo)} sub="not computed" />
+              <Kpi label="Refunded (30d) ₦" href="/admin/health/vet/payouts" value={formatNaira(data.refunded_30d_kobo)} sub="not computed" />
+              <Kpi label="VCN pending" href="/admin/health/vet/verification" value={data.vcn_pending_review.toLocaleString('en-NG')} sub="HL-2 credential gate — not computed" />
+              <Kpi label="VCN expiring (30d)" href="/admin/health/vet/vcn-audit" value={data.vcn_expiring_30d.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Vets suspended" href="/admin/health/vet/vcn-audit" value={data.vets_suspended.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="e-Prescriptions (30d)" href="/admin/health/vet/eprescription-audit" value={data.eprescriptions_30d.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="e-Rx flags open" href="/admin/health/vet/eprescription-audit" value={data.eprescription_flags_open.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Services pending" href="/admin/health/vet/services" value={data.services_pending_governance.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Moderation open" href="/admin/health/vet/moderation" value={data.moderation_open.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Payouts KYC hold" href="/admin/health/vet/payouts" value={data.payouts_kyc_hold.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="SOS routed (30d)" href="/admin/health/vet/appointments" value={data.sos_routed_30d.toLocaleString('en-NG')} sub="not computed" />
             </div>
 
             <Card title="Appointments by state (live)">

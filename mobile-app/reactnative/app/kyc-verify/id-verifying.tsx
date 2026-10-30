@@ -63,6 +63,7 @@ export default function KycIdVerifyingScreen() {
 
   const pending = run.isPending || (!result && !run.isError);
   const passed = result?.status === 'PASSED';
+  const idTypeReused = (run.error as { response?: { data?: { code?: string } } } | null)?.response?.data?.code === 'id_type_already_used';
 
   const proceed = () => router.replace(nextStepRoute(kycVerifyDraft.current));
 
@@ -78,8 +79,12 @@ export default function KycIdVerifyingScreen() {
         ) : run.isError ? (
           <>
             <View style={[styles.ring, styles.ringError]}><XCircle size={56} color={Colors.error} strokeWidth={1.8} /></View>
-            <Text style={styles.title}>Couldn't run the check</Text>
-            <Text style={styles.sub}>Something went wrong reaching the verification service. Please try again.</Text>
+            <Text style={styles.title}>{idTypeReused ? 'Use a different ID' : "Couldn't run the check"}</Text>
+            <Text style={styles.sub}>
+              {idTypeReused
+                ? `Your ${draft.idType} was already used for an earlier verification level. Choose a different ID to continue.`
+                : 'Something went wrong reaching the verification service. Please try again.'}
+            </Text>
           </>
         ) : passed ? (
           <>
@@ -104,7 +109,10 @@ export default function KycIdVerifyingScreen() {
       {!pending ? (
         <SafeAreaView edges={['bottom']} style={styles.footer}>
           {run.isError ? (
-            <PrimaryButton label="Back" onPress={() => goBack('/kyc-verify')} />
+            <PrimaryButton
+              label={idTypeReused ? 'Choose a different ID' : 'Back'}
+              onPress={() => (idTypeReused ? router.replace('/kyc-verify/id-type') : goBack('/kyc-verify'))}
+            />
           ) : passed ? (
             <PrimaryButton label="Continue" onPress={proceed} />
           ) : null}

@@ -4,6 +4,7 @@
 // are the offline fallback, and the service icons are mapped here by value.
 
 import type { DocType } from '@/features/mobility/types/mobility.types';
+import { NIGERIA_STATES } from '@/data/nigeria';
 
 export type VehicleType = 'car' | 'motorcycle' | 'bicycle';
 
@@ -16,6 +17,11 @@ export interface ServiceOption extends Option {
   icon: string;
 }
 
+/** A coverage area is always scoped to one state. */
+export interface AreaOption extends Option {
+  state: string;
+}
+
 export const SERVICE_INTERESTS: ServiceOption[] = [
   { value: 'rides', label: 'Rides', icon: 'Car' },
   { value: 'parcel_delivery', label: 'Parcel delivery', icon: 'Package' },
@@ -26,25 +32,47 @@ export const SERVICE_INTERESTS: ServiceOption[] = [
   { value: 'bus_shuttle', label: 'Bus hailing / shuttle', icon: 'Route' },
 ];
 
-export const COVERAGE_FALLBACK: Option[] = [
-  { value: 'ikeja', label: 'Ikeja' },
-  { value: 'surulere', label: 'Surulere' },
-  { value: 'yaba', label: 'Yaba' },
-  { value: 'lekki', label: 'Lekki' },
-  { value: 'victoria_island', label: 'Victoria Island' },
-  { value: 'ikoyi', label: 'Ikoyi' },
-  { value: 'lagos_island', label: 'Lagos Island' },
-  { value: 'apapa', label: 'Apapa' },
-  { value: 'ajah', label: 'Ajah' },
-  { value: 'oshodi_isolo', label: 'Oshodi-Isolo' },
-  { value: 'alimosho', label: 'Alimosho' },
-  { value: 'gbagada', label: 'Gbagada' },
-  { value: 'agege', label: 'Agege' },
-  { value: 'mushin', label: 'Mushin' },
-  { value: 'ikorodu', label: 'Ikorodu' },
-  { value: 'badagry', label: 'Badagry' },
-  { value: 'epe', label: 'Epe' },
-];
+// Same rule as the Go server's areaSlug (backend/internal/transport/
+// service_profile.go). Both sides derive their ids from this one dataset, so a
+// drift here means the server rejects values the app just offered.
+export function areaSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+export const STATE_OPTIONS: Option[] = NIGERIA_STATES.map((s) => ({
+  value: areaSlug(s.name),
+  label: s.name,
+}));
+
+// Coverage ids are namespaced "<state>/<lga>" because six LGA names repeat
+// across states (e.g. Bassa in Kogi and Plateau); a bare name is ambiguous.
+export const COVERAGE_FALLBACK: AreaOption[] = NIGERIA_STATES.flatMap((s) => {
+  const state = areaSlug(s.name);
+  return s.lgas.map((lga) => ({ value: `${state}/${areaSlug(lga)}`, label: lga, state }));
+});
+
+/** The cities of one state. Empty until a state is picked. */
+export function areasForState(areas: AreaOption[], state: string): AreaOption[] {
+  return state ? areas.filter((a) => a.state === state) : [];
+}
+
+/** State slug of a stored coverage value; '' for a legacy unqualified value. */
+export function coverageStateOf(value: string): string {
+  const i = value.indexOf('/');
+  return i > 0 ? value.slice(0, i) : '';
+}
+
+/** Human label for a stored coverage value, including legacy bare slugs. */
+export function coverageAreaLabel(value: string, areas: AreaOption[]): string {
+  const exact = areas.find((a) => a.value === value);
+  if (exact) return exact.label;
+  const lga = value.slice(value.indexOf('/') + 1);
+  return areas.find((a) => a.value.endsWith('/' + lga))?.label ?? value;
+}
+
 
 const DOCS_BY_VEHICLE: Record<VehicleType, DocType[]> = {
   bicycle: ['government_id', 'proof_of_address'],
@@ -75,7 +103,8 @@ export function pickStringArray(raw: Record<string, unknown> | null | undefined,
 
 export interface OnboardingOptions {
   services: ServiceOption[];
-  coverageAreas: Option[];
+  states: Option[];
+  coverageAreas: AreaOption[];
 }
 
 // Return the server options when the fetch succeeds and is non-empty; otherwise
@@ -85,11 +114,16 @@ export async function resolveOnboardingOptions(
 ): Promise<OnboardingOptions> {
   try {
     const r = await fetcher();
-    if (r && Array.isArray(r.services) && r.services.length > 0 && Array.isArray(r.coverageAreas) && r.coverageAreas.length > 0) {
+    if (
+      r &&
+      Array.isArray(r.services) && r.services.length > 0 &&
+      Array.isArray(r.states) && r.states.length > 0 &&
+      Array.isArray(r.coverageAreas) && r.coverageAreas.length > 0
+    ) {
       return r;
     }
   } catch {
     // fall through to the fallback
   }
-  return { services: SERVICE_INTERESTS, coverageAreas: COVERAGE_FALLBACK };
+  return { services: SERVICE_INTERESTS, states: STATE_OPTIONS, coverageAreas: COVERAGE_FALLBACK };
 }

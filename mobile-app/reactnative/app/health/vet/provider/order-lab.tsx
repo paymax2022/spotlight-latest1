@@ -13,6 +13,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { useOrderLabForPet } from '@/features/health/vet/hooks';
+import MissingContext from '@/features/health/vet/components/MissingContext';
 
 const TESTS = [
   'Complete Blood Count (CBC)',
@@ -36,9 +37,11 @@ export default function ProviderOrderLabScreen() {
 
   const onSubmit = () =>
     orderLab.mutate(
-      { appointmentId: appointmentId ?? 'appt', petId, testNames: selected, note: note.trim() || undefined },
+      { appointmentId: appointmentId!, petId, testNames: selected, note: note.trim() || undefined },
       { onSuccess: () => setDone(true) },
     );
+
+  if (!appointmentId || !petId) return <MissingContext title="Order lab test" fallback="/health/vet/provider/requests" />;
 
   if (done) {
     return (

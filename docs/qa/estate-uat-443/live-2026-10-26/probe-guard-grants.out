@@ -1,0 +1,55 @@
+=== estate guard-grants API_LIVE probe @ 2026-10-26T20:16:40Z base=http://127.0.0.1:8093
+estate=0a1e5701-0000-4000-8000-000000000001 guard=2448c98f-d030-4e58-a1f3-75c5a4348630 resident=f30648f3-1e07-48f8-9cdf-d458799946d7 admin=7945fbd0-24bf-4ee0-9de4-de37aa51fa21
+--- 0. reset: revoke any leftover grant so the ungranted baseline is real
+reset revoke -> HTTP 200 ({"ok":true})
+--- 1. flag ON: a member with no grant is refused the gate surface
+PASS want=403 got=403  [unguarded member lookup as resident] — estate: insufficient role
+PASS want=403 got=403  [ungranted guard lookup as guard] — estate: insufficient role
+PASS want=403 got=403  [ungranted guard checkin as guard] — estate: insufficient role
+--- 2. estate_admin delegates gate_officer
+PASS want=201 got=201  [grant gate_officer as admin] 
+grant id=ce5dc1a7-a97d-4fa1-a47e-13d4f1565256
+PASS want=200 got=200  [admin lists grants as admin] 
+grants body: {"data":[{"id":"b45bbbd4-8305-4a1a-b8e7-0c21a6f53540","estate_id":"0a1e5701-0000-4000-8000-000000000001","user_id":"2448c98f-d030-4e58-a1f3-75c5a4348630","role":"gate_officer","granted_by":"7945fbd0-24bf-4ee0-9de4-de37aa51fa21","granted_at":"2026-10-26T21:14:39.48868+01:00"}]}
+--- 3. non-admin cannot delegate (fail closed)
+PASS want=403 got=403  [member tries to grant as resident] — estate: insufficient role
+--- 4. granted officer now reaches the gate surface
+PASS want=200 got=200  [officer lists gates (member-visible by design: assertResident) as guard] 
+PASS want=200 got=200  [granted officer expected visitors (grant-gated) as guard] 
+--- 5. estate_admin always passes
+PASS want=200 got=200  [admin expected visitors as admin] 
+--- 6. visitor golden path through the granted guard
+PASS want=201 got=201  [host issues one-time code as resident] 
+code id=16b49843-5f5e-4944-88e0-002cccd593aa numeric=901870 qr=6c839c84-9b46-41fc-910c-da9b70c68cc1
+PASS want=200 got=200  [guard resolves the code as guard] 
+PASS want=201 got=201  [guard admits visitor #1 as guard] 
+PASS want=201 got=201  [guard admits visitor #2 (qr) as guard] 
+PASS want=403 got=403  [third admit denied (max_uses=2) as guard] — entry denied: code has reached maximum uses
+PASS want=201 got=201  [guard checks the visitor out as guard] 
+--- 7. host-approval-gated code: guard must raise a request, host decides
+PASS want=201 got=201  [host issues approval-gated code as resident] 
+gated code id=daf9ed7a-4feb-4327-9633-12c9ac710048 numeric=522647 (2 uses available, so a refusal here is the approval gate, not exhaustion)
+PASS want=403 got=403  [admit without approval refused as guard] — entry denied: awaiting host approval
+PASS want=201 got=201  [guard raises arrival request as guard] 
+arrival request id=d1c2f388-a168-4846-bcf1-d7349d3f1d02
+PASS want=200 got=200  [host approves arrival as resident] 
+PASS want=201 got=201  [admit after host approval as guard] 
+PASS want=403 got=403  [second admit refused: approval is consumed, one per visit as guard] — entry denied: awaiting host approval
+PASS want=400 got=400  [arrival request refused for a code that needs no approval as guard] — estate: this code does not require host approval
+--- 8. revocation cuts gate access immediately (grant-gated surfaces)
+PASS want=200 got=200  [admin revokes gate_officer as admin] 
+PASS want=403 got=403  [revoked guard checkin as guard] — estate: insufficient role
+PASS want=403 got=403  [revoked guard expected visitors as guard] — estate: insufficient role
+PASS want=403 got=403  [revoked guard lookup as guard] — estate: insufficient role
+--- 9. expired grant is refused (past expires_at)
+PASS want=201 got=201  [grant with past expiry as admin] 
+PASS want=403 got=403  [expired-grant officer expected visitors as guard] — estate: insufficient role
+--- 10. future-dated grant is live until expires_at
+PASS want=201 got=201  [grant expiring in 1h as admin] 
+PASS want=200 got=200  [live-until-expiry officer expected visitors as guard] 
+--- 11. estate_admin is not a delegable staff role
+PASS want=400 got=400  [attempt to grant estate_admin as admin] — estate: unknown staff role
+--- 12. caller-scoped estate discovery
+guard sees: {"data":[{"id":"0a1e5701-0000-4000-8000-000000000001","name":"UAT Gate Estate Alpha","admin_id":"7945fbd0-24bf-4ee0-9de4-de37aa51fa21","created_at":"2026-10-26T21:08:56.891654+01:00"}]}
+resident sees: {"data":[{"id":"0a1e5701-0000-4000-8000-000000000001","name":"UAT Gate Estate Alpha","admin_id":"7945fbd0-24bf-4ee0-9de4-de37aa51fa21","created_at":"2026-10-26T21:08:56.891654+01:00"}]}
+=== summary: PASS=31 FAIL=0

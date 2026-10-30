@@ -46,7 +46,7 @@ export default function ConsentScreen() {
     try {
       // Versioned acceptance: send the exact version the user is accepting.
       await accept.mutateAsync({ kind, version: doc.version });
-      goBack('/onboarding');
+      goBack('/(doctor)/onboarding/consents');
     } catch {
       setError('Could not record your acceptance. Please try again.');
     }
@@ -108,7 +108,7 @@ export default function ConsentScreen() {
           <View style={styles.footer}>
             <PrimaryButton
               label={alreadyAccepted ? 'Accepted — done' : 'Accept & continue'}
-              onPress={alreadyAccepted ? () => goBack('/onboarding') : handleAccept}
+              onPress={alreadyAccepted ? () => goBack('/(doctor)/onboarding/consents') : handleAccept}
               loading={accept.isPending}
               disabled={!alreadyAccepted && !agreed}
             />

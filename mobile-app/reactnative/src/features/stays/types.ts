@@ -134,6 +134,9 @@ export interface RatePlan {
   currency: Currency;
   /** Loyalty-discounted variant present. */
   loyaltyDiscountPct?: number;
+  /** Creator's long-stay rule: stays of at least this many nights get the % off. */
+  longStayMinNights?: number;
+  longStayDiscountPct?: number;
 }
 
 export interface Review {
@@ -195,6 +198,9 @@ export interface Occupant {
 
 /** A selected, priced offer the user is taking through checkout. */
 export interface BookingDraft {
+  /** Creator's long-stay rule carried from the rate plan (see RatePlan). */
+  longStayMinNights?: number;
+  longStayDiscountPct?: number;
   propertyId: string;
   propertyName: string;
   coverUrl: string;
@@ -302,6 +308,8 @@ export interface StaysHome {
   recentSearches: SearchQuery[];
   deals: Deal[];
   trendingDestinations: DestinationSuggestion[];
+  /** Newest active listings, for the "Recently added" rail. */
+  recentListings: PropertyCard[];
   saved: PropertyCard[];
 }
 

@@ -405,7 +405,8 @@ export async function listReservations(opts?: { state?: string; rail?: string; s
   if (opts?.supplier_code) qs.set('supplier_code', opts.supplier_code);
   if (opts?.q) qs.set('q', opts.q);
   const s = qs.toString();
-  return getJson<ReservationSummary[]>(`/reservations${s ? `?${s}` : ''}`);
+  const rows = await getJson<ReservationSummary[] | null>(`/reservations${s ? `?${s}` : ''}`);
+  return Array.isArray(rows) ? rows : [];
 }
 export async function getReservation(id: string): Promise<ReservationDetail> {
   if (USE_MOCK) { await delay(); const r = RESERVATIONS.find((x) => x.id === id) ?? RESERVATIONS[0]; return { ...r, timeline: r.timeline.map((t) => ({ ...t })), ledger: r.ledger.map((l) => ({ ...l })) }; }

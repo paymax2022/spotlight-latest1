@@ -271,10 +271,11 @@ func voteCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, electionID
 // recorded; the loser gets "already voted". This exercises both layers
 // CastVote relies on: the Redlock (s.redis is nil in this test wiring, so the
 // lock is a no-op per CastVote's own `if s.redis != nil` guard) and the
-// UNIQUE(election_id, voter_id) DB constraint via
-// `ON CONFLICT (election_id, voter_id) DO NOTHING ... RETURNING id` +
-// pgx.ErrNoRows detection — which is therefore the ONLY safety net actually
-// exercised here, proving the DB constraint alone is sufficient.
+// UNIQUE(election_id, voter_id) constraint inside estate_cast_vote, which raises
+// 23505 for the loser — so the DB constraint is the ONLY safety net actually
+// exercised here, proving it alone is sufficient. Since ESTB-D003 the same run
+// also proves the split holds under concurrency: one participation row with no
+// choice column value, and one anonymous ballot carrying the choice.
 func TestLiveDB_Vote_ConcurrentDuplicateVote_ResultsInOneBallot(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
 	ctx := context.Background()
@@ -332,11 +333,119 @@ func TestLiveDB_Vote_ConcurrentDuplicateVote_ResultsInOneBallot(t *testing.T) {
 	if successVote == nil {
 		t.Fatal("no successful vote returned")
 	}
+
+	// ESTB-D003: CastVote returns the anonymous ballot id, and the participation
+	// row must carry no choice at all. Asserting candidate_id IS NULL here is the
+	// executed proof that the voter→choice link is gone from the schema, not just
+	// hidden by the API.
 	var dbVoteID string
-	if err := pool.QueryRow(ctx, `SELECT id FROM election_votes WHERE election_id=$1 AND voter_id=$2`, electionID, voter).Scan(&dbVoteID); err != nil {
-		t.Fatalf("read persisted vote: %v", err)
+	var persistedCandidate *string
+	if err := pool.QueryRow(ctx,
+		`SELECT id, candidate_id FROM election_votes WHERE election_id=$1 AND voter_id=$2`, electionID, voter).
+		Scan(&dbVoteID, &persistedCandidate); err != nil {
+		t.Fatalf("read persisted participation row: %v", err)
 	}
-	if successVote.ID != dbVoteID {
-		t.Errorf("returned vote ID %s does not match persisted election_votes row id %s", successVote.ID, dbVoteID)
+	if persistedCandidate != nil {
+		t.Errorf("election_votes.candidate_id = %q, want NULL — the registry must not link a voter to a choice", *persistedCandidate)
+	}
+	if successVote.ID == dbVoteID {
+		t.Errorf("returned ballot id %s equals the participation row id; CastVote must return the election_ballots id", successVote.ID)
+	}
+	var ballotCount int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM election_ballots WHERE id=$1 AND election_id=$2 AND candidate_id=$3`,
+		successVote.ID, electionID, candidateID).Scan(&ballotCount); err != nil {
+		t.Fatalf("read persisted ballot: %v", err)
+	}
+	if ballotCount != 1 {
+		t.Fatalf("election_ballots row for the returned receipt = %d, want 1 (ballot must be stored, choice recorded anonymously)", ballotCount)
+	}
+	var ballotsForVoter int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM election_ballots WHERE election_id=$1`, electionID).Scan(&ballotsForVoter); err != nil {
+		t.Fatalf("count ballots: %v", err)
+	}
+	if ballotsForVoter != 1 {
+		t.Errorf("ballots cast = %d, want 1 (one participant produced exactly one ballot)", ballotsForVoter)
+	}
+}
+
+// TestLiveDB_Vote_BallotCannotBeJoinedToVoter is the executed proof for
+// EST-UAT-0213 / EST-UAT-0216 (ESTB-D003): after estate_cast_vote writes, no
+// query available to the schema can recover which participant made which choice.
+// It checks the three ways the link could survive — a voter column on the ballot
+// table, a choice column left on the participation registry, and the timing
+// channel (a cast_at on the ballot that matches a participation row exactly).
+func TestLiveDB_Vote_BallotCannotBeJoinedToVoter(t *testing.T) {
+	pool := estateMeetingsTestPool(t)
+	ctx := context.Background()
+	svc := newMeetingsTestService(pool)
+
+	admin := seedDuesUser(t, ctx, pool)
+	voter := seedDuesUser(t, ctx, pool)
+	estateID := seedEstate(t, ctx, pool, admin)
+	seedResident(t, ctx, pool, estateID, voter, "resident")
+	electionID, candidateID := seedOpenElection(t, ctx, pool, estateID, admin)
+
+	if _, err := svc.CastVote(ctx, estateID, electionID, voter, CastVoteRequest{CandidateID: candidateID}); err != nil {
+		t.Fatalf("CastVote: %v", err)
+	}
+
+	var voterCols int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema='public' AND table_name='election_ballots'
+		  AND (column_name ILIKE '%voter%' OR column_name ILIKE '%user%'
+		       OR column_name ILIKE '%member%' OR column_name ILIKE '%identity%'
+		       OR column_name ILIKE '%cast%' OR column_name ILIKE '%time%'
+		       OR column_name ILIKE '%_at')`).
+		Scan(&voterCols); err != nil {
+		t.Fatalf("inspect ballot columns: %v", err)
+	}
+	if voterCols != 0 {
+		t.Errorf("election_ballots exposes %d voter/timestamp-linking column(s); a secret ballot table may hold none", voterCols)
+	}
+
+	var linkedRows int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM election_votes WHERE candidate_id IS NOT NULL`).Scan(&linkedRows); err != nil {
+		t.Fatalf("inspect registry: %v", err)
+	}
+	if linkedRows != 0 {
+		t.Errorf("election_votes rows still carrying a choice = %d, want 0 across the whole registry", linkedRows)
+	}
+
+	// The join that used to be trivially available: participation row -> ballot.
+	var rejoinable int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM election_votes v
+		JOIN election_ballots b ON b.election_id = v.election_id AND b.candidate_id = v.candidate_id
+		WHERE v.election_id=$1`, electionID).Scan(&rejoinable); err != nil {
+		t.Fatalf("attempt voter→choice rejoin: %v", err)
+	}
+	if rejoinable != 0 {
+		t.Errorf("voter→choice rejoin returned %d rows; the split must make it return none", rejoinable)
+	}
+
+	// The choice is still counted — secrecy must not cost accuracy.
+	results, err := svc.GetResults(ctx, estateID, electionID, voter)
+	if err != nil {
+		// GetResults gates on the election being closed/tallied; close it directly.
+		if _, cerr := pool.Exec(ctx, `UPDATE elections SET status='closed' WHERE id=$1`, electionID); cerr != nil {
+			t.Fatalf("close election: %v", cerr)
+		}
+		results, err = svc.GetResults(ctx, estateID, electionID, voter)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+	}
+	var total int
+	for _, c := range results {
+		if c.ID == candidateID && c.Votes != 1 {
+			t.Errorf("chosen candidate has %d votes, want 1", c.Votes)
+		}
+		total += c.Votes
+	}
+	if total != 1 {
+		t.Errorf("tally total = %d, want 1 (one ballot cast, counted once)", total)
 	}
 }

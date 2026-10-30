@@ -5,8 +5,8 @@
 
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { SERVICE_INTERESTS, resolveOnboardingOptions, pickStringArray } from '../deliveryOnboarding';
-import type { Option, OnboardingOptions } from '../deliveryOnboarding';
+import { SERVICE_INTERESTS, COVERAGE_FALLBACK, STATE_OPTIONS, resolveOnboardingOptions, pickStringArray } from '../deliveryOnboarding';
+import type { AreaOption, OnboardingOptions } from '../deliveryOnboarding';
 import type {
   MobilityHome,
   PricingConfig,
@@ -854,18 +854,34 @@ export async function setDriverServiceProfile(
   interests: string[],
   areas: string[],
 ): Promise<{ service_interests: string[]; coverage_areas: string[] }> {
+  // Guarded like every other onboarding call: when the module is mocked,
+  // submitDriverOnboarding never creates a driver row server-side, so letting
+  // this one call through 403s with "not a registered driver" and the provider
+  // cannot finish onboarding.
+  if (USE_MOCK) {
+    await delay(250);
+    mockDriver.profile = { ...mockDriver.profile, serviceInterests: interests, coverageAreas: areas };
+    return { service_interests: interests, coverage_areas: areas };
+  }
   return unwrap<{ service_interests: string[]; coverage_areas: string[] }>(
     await api.put(`${BASE}/driver/service-profile`, { service_interests: interests, coverage_areas: areas }),
   );
 }
 
 async function fetchDriverOnboardingOptions(): Promise<OnboardingOptions> {
-  const data = unwrap<{ services: Option[]; coverage_areas: Option[] }>(
-    await api.get(`${BASE}/driver/onboarding-options`),
-  );
+  if (USE_MOCK) {
+    await delay(120);
+    return { services: SERVICE_INTERESTS, states: STATE_OPTIONS, coverageAreas: COVERAGE_FALLBACK };
+  }
+  const data = unwrap<{
+    services: { value: string; label: string }[];
+    states: { value: string; label: string }[];
+    coverage_areas: AreaOption[];
+  }>(await api.get(`${BASE}/driver/onboarding-options`));
   const iconByValue: Record<string, string> = Object.fromEntries(SERVICE_INTERESTS.map((s) => [s.value, s.icon]));
   return {
     services: (data.services ?? []).map((s) => ({ value: s.value, label: s.label, icon: iconByValue[s.value] ?? 'Circle' })),
+    states: data.states ?? [],
     coverageAreas: data.coverage_areas ?? [],
   };
 }

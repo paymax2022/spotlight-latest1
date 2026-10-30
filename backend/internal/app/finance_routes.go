@@ -20,7 +20,7 @@ import (
 	"spotlight/backend/internal/association"
 	"spotlight/backend/internal/business"
 	"spotlight/backend/internal/config"
-	// healthportal "spotlight/backend/internal/health/portal" // TODO: deferred to phase 2
+	healthportal "spotlight/backend/internal/health/portal"
 	"spotlight/backend/internal/crowdfunding"
 	cfadminext "spotlight/backend/internal/crowdfunding/adminext"
 	cfcreator "spotlight/backend/internal/crowdfunding/creator"
@@ -673,11 +673,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// the same way).
 			RegisterHealthLab(finance, r.Group("/api/health/lab/admin"), pool, rbac, auditSink, cfg, supabase)
 		}
-		// if cfg.FeatureProviderPortalEnabled {
-		// 	// Read-only capabilities for the mobile provider portal (ADR-PR<pr-number>).
-		// 	// TODO: health/portal module not yet implemented — deferred to phase 2.
-		// 	healthportal.Register(finance, pool)
-		// }
+		// Read-only capabilities for the mobile provider portal (ADR-PR915).
+		// Always mounted; answers 503 while FEATURE_PROVIDER_PORTAL_ENABLED is off.
+		healthportal.Register(finance, pool, cfg.FeatureProviderPortalEnabled)
 		if cfg.FeatureHealthVetEnabled {
 			// PHARMACY-006/LAB-003-shaped bug: NOT adminGroupTop5 — see the
 			// comment on RegisterHealthVet's own ag.Use(RequireAuthContext(...))
@@ -756,7 +754,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureFXOrchestrationEnabled {
 		orchStore := orchestration.NewSQLStore(pool)
 
-		providers := buildFXProviders(&cfg)
+		providers, err := buildFXProviders(&cfg)
+		if err != nil {
+			log.Fatalf("[fx] failed to build providers: %v", err)
+		}
 		// Spread rule card comes from public.fx_markup_rates — the SAME table the
 		// legacy wallet FX service prices from — so one admin change at
 		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-032).
@@ -923,7 +924,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// goes through walletSvc, so the tier/daily-limit check fires exactly as it
 	// does for every other module rather than being reimplemented here. The
 	// hourly requery-sweep job (Phase 3) runs on the same ctx as the other finance jobs.
-	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, auditSink)
+	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, tiersSvc, auditSink)
 
 	// --- Multi-provider KYC verification gateway (ADR-013) ---
 	// Gated by FEATURE_KYC_VERIFY_ENABLED (default off). Builds the adapter
@@ -2308,6 +2309,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				transportSvc = transportSvc.WithReceiverPinSMS(termii)
 			} else {
 				log.Println("[transport] FEATURE_PARCEL_RECEIVER_PIN_SMS is on but TERMII_API_KEY is unset — receivers will not be texted their drop-off PIN")
+			}
+		}
+		// Free receiver PIN channel: email to the booking's receiver_email (Resend;
+		// nil without a key — never put a nil *ResendClient in the interface).
+		if cfg.FeatureParcelReceiverPinNotifyEnabled {
+			if rc := integrations.NewResendClient(cfg.ResendAPIKey, cfg.ResendFromEmail); rc != nil {
+				transportSvc = transportSvc.WithReceiverPinNotify(rc)
+			} else {
+				log.Println("[transport] FEATURE_PARCEL_RECEIVER_PIN_NOTIFY is on but RESEND_API_KEY is unset — receivers will not be emailed their drop-off PIN")
 			}
 		}
 		// Bridge transport dispatch/estimation onto the provider-agnostic

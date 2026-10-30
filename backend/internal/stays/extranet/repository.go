@@ -186,11 +186,11 @@ func (r *Repository) ListRoomTypes(ctx context.Context, propertyID string) ([]Ro
 // offers can address THIS room type distinctly — an empty ref (the column
 // default) collapses every self-listed room type into one unaddressable offer
 // and makes prebook pick an arbitrary rate plan.
-func (r *Repository) CreateRoomType(ctx context.Context, propertyID, name string, occupancy int, bedding string) (string, error) {
+func (r *Repository) CreateRoomType(ctx context.Context, propertyID, name string, occupancy int, bedding string, units int) (string, error) {
 	var id string
 	err := r.db.QueryRow(ctx, `
-		INSERT INTO public.stays_room_type (property_id, name, occupancy, bedding)
-		VALUES ($1,$2,$3,$4) RETURNING id`, propertyID, name, occupancy, bedding).Scan(&id)
+		INSERT INTO public.stays_room_type (property_id, name, occupancy, bedding, units)
+		VALUES ($1,$2,$3,$4,$5) RETURNING id`, propertyID, name, occupancy, bedding, units).Scan(&id)
 	if err != nil {
 		return "", err
 	}
@@ -210,13 +210,16 @@ type RatePlan struct {
 	Refundable       bool   `json:"refundable"`
 	BaseSellRateKobo int64  `json:"base_sell_rate_kobo"`
 	Currency         string `json:"currency"`
+	LongStayMinNights   int    `json:"long_stay_min_nights"`
+	LongStayDiscountPct int    `json:"long_stay_discount_pct"`
 }
 
 // ListRatePlans returns the property's rate plans (joined via room type).
 func (r *Repository) ListRatePlans(ctx context.Context, propertyID string) ([]RatePlan, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT rp.id, rp.room_type_id, rp.rate_plan_type, rp.board, rp.refundable,
-		       rp.base_sell_rate_kobo, rp.currency
+		       rp.base_sell_rate_kobo, rp.currency,
+		       COALESCE(rp.long_stay_min_nights, 0), rp.long_stay_discount_pct
 		FROM public.stays_rate_plan rp
 		JOIN public.stays_room_type rt ON rt.id = rp.room_type_id
 		WHERE rt.property_id = $1 ORDER BY rp.base_sell_rate_kobo`, propertyID)
@@ -228,7 +231,7 @@ func (r *Repository) ListRatePlans(ctx context.Context, propertyID string) ([]Ra
 	for rows.Next() {
 		var rp RatePlan
 		if err := rows.Scan(&rp.ID, &rp.RoomTypeID, &rp.Type, &rp.Board, &rp.Refundable,
-			&rp.BaseSellRateKobo, &rp.Currency); err != nil {
+			&rp.BaseSellRateKobo, &rp.Currency, &rp.LongStayMinNights, &rp.LongStayDiscountPct); err != nil {
 			return nil, err
 		}
 		out = append(out, rp)
@@ -237,7 +240,7 @@ func (r *Repository) ListRatePlans(ctx context.Context, propertyID string) ([]Ra
 }
 
 // CreateRatePlan inserts a rate plan under a room type belonging to the property.
-func (r *Repository) CreateRatePlan(ctx context.Context, propertyID, roomTypeID, planType, board string, refundable bool, baseKobo int64, currency string) (string, error) {
+func (r *Repository) CreateRatePlan(ctx context.Context, propertyID, roomTypeID, planType, board string, refundable bool, baseKobo int64, currency string, longStayMinNights, longStayDiscountPct int) (string, error) {
 	// Ensure the room type belongs to the property (object scope).
 	var owns bool
 	if err := r.db.QueryRow(ctx, `
@@ -251,9 +254,9 @@ func (r *Repository) CreateRatePlan(ctx context.Context, propertyID, roomTypeID,
 	var id string
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO public.stays_rate_plan
-			(room_type_id, rate_plan_type, board, refundable, base_sell_rate_kobo, currency)
-		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		roomTypeID, strutil.FirstNonEmpty(planType, "BAR"), strutil.FirstNonEmpty(board, "room_only"), refundable, baseKobo, strutil.FirstNonEmpty(currency, "NGN")).Scan(&id)
+			(room_type_id, rate_plan_type, board, refundable, base_sell_rate_kobo, currency, long_stay_min_nights, long_stay_discount_pct)
+		VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7::integer, 0),$8::integer) RETURNING id`,
+		roomTypeID, strutil.FirstNonEmpty(planType, "BAR"), strutil.FirstNonEmpty(board, "room_only"), refundable, baseKobo, strutil.FirstNonEmpty(currency, "NGN"), longStayMinNights, longStayDiscountPct).Scan(&id)
 	if err != nil {
 		return "", err
 	}

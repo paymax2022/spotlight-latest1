@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { AdminMenuCounts } from '@/types/admin';
 import type { AdminOverview, OverviewModule } from '@/types/adminOverview';
-import { getAdminMenuCounts, getAdminOverview } from '@/services/adminApiClient';
+import { getAdminMenuCounts, loadAdminOverview } from '@/services/adminApiClient';
 import { canManageStem, canReadStem, useStemRoles } from '@/config/stemAccess';
 type QuickLink = {
   label: string;
@@ -111,7 +111,8 @@ export function AdminDashboard() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [counts, setCounts] = useState<AdminMenuCounts | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
+  /** Why there is no overview: the backend rejected the session, or it did not answer. */
+  const [failed, setFailed] = useState<false | 'unauthorized' | 'unavailable'>(false);
 
   const stemRoles = useStemRoles();
   const visibleQuickLinks = quickLinks.filter((item) => {
@@ -125,11 +126,11 @@ export function AdminDashboard() {
     setFailed(false);
     // Independent on purpose: the legacy programme counters come from a different
     // endpoint, and one being down must not blank the other.
-    Promise.allSettled([getAdminOverview(), getAdminMenuCounts()]).then(([o, c]) => {
-      const ov = o.status === 'fulfilled' ? o.value : null;
-      setOverview(ov);
+    Promise.allSettled([loadAdminOverview(), getAdminMenuCounts()]).then(([o, c]) => {
+      const result = o.status === 'fulfilled' ? o.value : { status: 'unavailable' as const };
+      setOverview(result.status === 'ok' ? result.overview : null);
       setCounts(c.status === 'fulfilled' ? c.value : null);
-      setFailed(!ov);
+      setFailed(result.status === 'ok' ? false : result.status);
       setLoaded(true);
     });
   }, []);
@@ -222,6 +223,13 @@ export function AdminDashboard() {
 
         {!loaded ? (
           <p style={{ color: C.muted, margin: '12px 0 0', fontSize: 13 }}>Reading queues…</p>
+        ) : failed === 'unauthorized' ? (
+          <p style={{ color: C.red, margin: '12px 0 0', fontSize: 13 }}>
+            Your admin session is no longer valid — the backend answered but rejected it, which happens when
+            the account's sessions are revoked (for example by a password reset). No queue is being reported
+            here. <Link href="/admin/login" style={{ color: C.red, fontWeight: 600 }}>Sign in again</Link> to
+            see the queues.
+          </p>
         ) : failed ? (
           <p style={{ color: C.red, margin: '12px 0 0', fontSize: 13 }}>
             The overview API did not answer, so no queue is being reported here. This is not an all-clear —
@@ -326,7 +334,7 @@ export function AdminDashboard() {
             <li>
               Overview API:{' '}
               <strong style={{ color: failed ? C.red : C.green }}>
-                {!loaded ? 'loading…' : failed ? 'unreachable' : 'connected'}
+                {!loaded ? 'loading…' : failed === 'unauthorized' ? 'session rejected' : failed ? 'unreachable' : 'connected'}
               </strong>
             </li>
             <li>

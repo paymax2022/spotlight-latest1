@@ -33,6 +33,10 @@ export interface MapGeoResult {
   lat: number;
   lng: number;
   address: string;
+  /** Locality for the coordinate (e.g. "Lagos"); absent when the provider had none. */
+  city?: string;
+  /** State/region for the coordinate (e.g. "Lagos"); absent when the provider had none. */
+  state?: string;
   plus_code: string;
   provider: string;
   source: MapSource;

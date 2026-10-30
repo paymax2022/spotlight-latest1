@@ -13,23 +13,13 @@ concurrency:
 
 jobs:
   deploy:
-    # Skip (not fail) unless the deploy is explicitly switched on — same pattern as
-    # deploy.yml's GCP gate. Set repo variable CPANEL_DEPLOY_ENABLED=true to activate.
-    #
-    # Why this exists: this job uploads a built frontend straight onto the live host
-    # and restarts the app, with no environment/approval gate. It had been failing
-    # harmlessly at `npm ci` (main's lockfile was out of sync) since 2026-08-10, so
-    # a fix to that lockfile would silently resume real production deploys on every
-    # push to main. The gate makes going live a deliberate act instead of a
-    # side effect of an unrelated merge.
-    if: ${{ vars.CPANEL_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
@@ -42,7 +32,7 @@ jobs:
           npm run build
 
       - name: Upload built frontend to cPanel
-        uses: appleboy/scp-action@v1.0.0
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.CPANEL_SSH_HOST }}
           username: ${{ secrets.CPANEL_SSH_USER }}
@@ -55,7 +45,7 @@ jobs:
           rm: false
 
       - name: Finalize on server
-        uses: appleboy/ssh-action@v1.2.5
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.CPANEL_SSH_HOST }}
           username: ${{ secrets.CPANEL_SSH_USER }}

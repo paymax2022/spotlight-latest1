@@ -1,0 +1,4 @@
+# cross-check: same request, flag ON (8093) vs flag OFF (8094) — 2026-10-26T20:24Z
+ON  POST /guard/checkin as plain member (no grant)  -> 403 {"error":"estate: insufficient role"}
+OFF POST /guard/checkin as plain member (no grant)  -> 403 {"error":"access code not found","payload":null}  (guard authz passed; the lookup failed)
+ON  GET /gates as member whose grant was revoked    -> 200 (ListGates is assertResident, not grant-gated)

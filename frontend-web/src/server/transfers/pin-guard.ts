@@ -62,10 +62,13 @@ export async function requireTransactionPin(
   };
 
   if (body.code === 'pin_not_set') {
-    throw new ApiError('You have not set a transaction PIN yet.', 403);
+    // Keep the Go backend's code: the client offers "set a PIN" only when it
+    // can tell this apart from a wrong one. Without it the app kept asking for
+    // a PIN that did not exist.
+    throw new ApiError('You have not set a transaction PIN yet.', 403, 'pin_not_set');
   }
   if (body.code === 'pin_locked') {
-    throw new ApiError('Your transaction PIN is locked. Try again later.', 403);
+    throw new ApiError('Your transaction PIN is locked. Try again later.', 403, 'pin_locked');
   }
   if (body.code === 'pin_invalid') {
     const remaining = body.attempts_remaining;
@@ -74,6 +77,7 @@ export async function requireTransactionPin(
         ? `Incorrect PIN. ${remaining} attempt(s) remaining.`
         : 'Incorrect PIN.',
       403,
+      'pin_invalid',
     );
   }
   throw new ApiError('Could not verify transaction PIN.', 403);
