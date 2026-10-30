@@ -89,6 +89,8 @@ export default function BusProviderDashboardScreen() {
           {provider.description ? <Text style={styles.desc}>{provider.description}</Text> : null}
         </View>
 
+        <PrimaryButton label="Scan tickets to board" variant="secondary" onPress={() => router.push('/mobility/bus/provider/scan')} />
+
         {/* Routes */}
         <View style={styles.sectionHead}>
           <Text style={styles.sectionTitle}>Routes</Text>
