@@ -82,6 +82,21 @@ components:
       schema: { type: string }
       description: Trip id.
   schemas:
+    BusRevenueRow:
+      type: object
+      description: One report group (a YYYY-MM-DD day or an operator id). Amounts are integer kobo.
+      properties:
+        key: { type: string }
+        label: { type: string }
+        ticketsCount: { type: integer, format: int64 }
+        grossBookedKobo: { type: integer, format: int64 }
+        cancelledCount: { type: integer, format: int64 }
+        refundedKobo: { type: integer, format: int64 }
+        manualRefundKobo: { type: integer, format: int64, description: Cancelled after payout; awaiting manual refund }
+        heldKobo: { type: integer, format: int64, description: Still escrowed (not yet released to the operator) }
+        releasedCount: { type: integer, format: int64 }
+        netToOperatorKobo: { type: integer, format: int64 }
+        platformCommissionKobo: { type: integer, format: int64 }
     Money: { type: integer, format: int64, description: Amount in kobo (minor units) }
     LatLng:
       type: object
@@ -2321,7 +2336,28 @@ paths:
         '409': { description: Parcel has no proof of delivery }
   /admin/transport/bus/routes:
     get: { tags: [mobility-admin], summary: List bus routes (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
-    post: { tags: [mobility-admin], summary: Create a bus route (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.bus.manage } } }
+    post:
+      tags: [mobility-admin]
+      summary: Create a bus route (admin, audited)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operator_id, origin_terminal, dest_terminal]
+              properties:
+                operator_id: { type: string, format: uuid, description: Operator user id (paid on settle for legacy routes) }
+                origin_terminal: { type: string }
+                dest_terminal: { type: string }
+                distance_m: { type: integer }
+                est_duration_s: { type: integer }
+                category: { type: string, default: standard }
+                reason: { type: string }
+      responses:
+        '201': { description: 'Created ({ id, status: active })' }
+        '400': { description: Validation error }
+        '403': { description: Missing mobility.bus.manage }
   /admin/transport/bus/routes/{id}/approve-fare:
     patch:
       tags: [mobility-admin]
@@ -2393,7 +2429,28 @@ paths:
                         status: { type: string }
         '400': { description: Invalid status or date filter }
         '403': { description: Missing mobility.view }
-    post: { tags: [mobility-admin], summary: Create a bus schedule (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.bus.manage } } }
+    post:
+      tags: [mobility-admin]
+      summary: Create a bus schedule (admin, audited; fare unapproved until approve-fare)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [route_id, departure_time, total_seats, fare_kobo]
+              properties:
+                route_id: { type: string, format: uuid }
+                departure_time: { type: string, format: date-time, description: RFC3339 }
+                arrival_estimate: { type: string, format: date-time }
+                total_seats: { type: integer, minimum: 1, maximum: 80 }
+                fare_kobo: { type: integer, format: int64, minimum: 0, description: Integer kobo }
+                cancel_cutoff_minutes: { type: integer, minimum: 60, maximum: 1440 }
+                reason: { type: string }
+      responses:
+        '201': { description: 'Created ({ id, fareApproved: false, status: scheduled })' }
+        '400': { description: Validation error / INVALID_TIME }
+        '403': { description: Missing mobility.bus.manage }
   /admin/transport/bus/schedules/{id}/approve-fare:
     post:
       tags: [mobility-admin]
@@ -2419,6 +2476,38 @@ paths:
         '409': { description: Schedule already departed/completed }
   /admin/transport/bus/manifest:
     get: { tags: [mobility-admin], summary: Bus manifest (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/bus/reports/revenue:
+    get:
+      tags: [mobility-admin]
+      summary: Bus revenue report by day or operator (admin; JSON or CSV)
+      description: >-
+        Aggregates bus tickets booked in [from, to] (inclusive, UTC, by bus_tickets.created_at; max 366 days;
+        default last 30 days). All amounts are integer kobo. netToOperatorKobo / platformCommissionKobo are the
+        settlement legs that actually posted (settlements.provider_kobo / fee_kobo) for tickets with
+        payout_state=released. format=csv returns text/csv as an attachment (formula-injection-safe cells,
+        totals row last). Requires mobility.view.
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: group_by, in: query, schema: { type: string, enum: [day, operator], default: day } }
+        - { name: format, in: query, schema: { type: string, enum: [json, csv], default: json } }
+      responses:
+        '200':
+          description: Report (application/json) or CSV attachment (text/csv)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  from: { type: string, format: date }
+                  to: { type: string, format: date }
+                  groupBy: { type: string, enum: [day, operator] }
+                  rows: { type: array, items: { $ref: '#/components/schemas/BusRevenueRow' } }
+                  totals: { $ref: '#/components/schemas/BusRevenueRow' }
+            text/csv:
+              schema: { type: string }
+        '400': { description: INVALID_DATE / INVALID_RANGE / INVALID_GROUP_BY }
+        '403': { description: Missing mobility.view }
   /admin/transport/bus/operators:
     get:
       tags: [mobility-admin]

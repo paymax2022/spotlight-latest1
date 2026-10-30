@@ -2692,6 +2692,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			adminTr.POST("/bus/schedules/:id/approve-fare", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusApproveFare)
 			adminTr.POST("/bus/schedules/:id/cancel", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCancelSchedule)
 			adminTr.GET("/bus/manifest", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusManifest)
+			adminTr.GET("/bus/reports/revenue", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusRevenueReport)
 			// Ticket search + stuck/manual refund queue (fare already paid out to the operator).
 			adminTr.GET("/bus/tickets", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusTickets)
 			adminTr.GET("/bus/refunds/manual", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusManualRefunds)
