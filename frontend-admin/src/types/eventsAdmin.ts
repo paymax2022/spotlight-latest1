@@ -8,7 +8,7 @@
 //           refund, fraud action).
 
 export type EventStatus = 'draft' | 'submitted' | 'approved' | 'live' | 'closed' | 'suspended';
-export type EventApprovalDecision = 'approve' | 'reject' | 'request_changes' | 'suspend';
+export type EventApprovalDecision = 'approve' | 'reject' | 'request_changes' | 'suspend' | 'reinstate';
 export type TicketTierStatus = 'on_sale' | 'sold_out' | 'paused' | 'scheduled' | 'ended';
 export type EventWalletStatus = 'open' | 'spending' | 'closed';
 export type VendorKycTier = 'tier0' | 'tier1' | 'tier2' | 'tier3';
@@ -62,11 +62,11 @@ export interface EventApprovalItem {
   status: EventStatus;
   starts_at: string;
   capacity: number;
-  tiers_count: number;
+  tiers_count: number | null;    // null = not reported by the backend list
   cashless_enabled: boolean;
   submitted_at: string | null;
-  cms_complete: boolean;        // banner, description, venue map present
-  flagged_terms: boolean;       // content/policy flags from screening
+  cms_complete: boolean | null;  // banner, description, venue map present; null = not tracked
+  flagged_terms: boolean | null; // content/policy flags from screening; null = not tracked
   created_at: string;
 }
 export interface EventDecisionResult {

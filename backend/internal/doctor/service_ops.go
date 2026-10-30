@@ -512,8 +512,8 @@ type SendChatMessageRequest struct {
 }
 
 // CallSession mirrors public.doctor_call_sessions (OpenAPI schema CallSession).
-// RoomToken is the provider (VideoSDK) join token — issuance is an
-// integration TODO, so it is persisted as the stored placeholder for now.
+// RoomToken is a short-lived signed RTC join token minted per request by
+// annotateCallToken; it is empty (never fabricated) when the provider is unconfigured.
 type CallSession struct {
 	ID            string          `json:"id"`
 	UserID        string          `json:"userId"`

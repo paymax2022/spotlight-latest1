@@ -31,13 +31,14 @@ import type {
   RaiseCallDisputeInput,
   ReportTechnicalIssueInput,
 } from '@/types/doctor.batch2';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useCallSessionRich(appointmentId: string) {
   return useQuery({
     queryKey:        ['doctor', 'call-rich', appointmentId],
     queryFn:         () => getCallSessionRich(appointmentId),
     enabled:         !!appointmentId,
-    placeholderData: DEMO_CALL_SESSION_RICH,
+    placeholderData: doctorPlaceholder(DEMO_CALL_SESSION_RICH),
     staleTime:       3_000,
   });
 }
@@ -47,7 +48,7 @@ export function usePreCallCheck(appointmentId: string) {
     queryKey:        ['doctor', 'precall-check', appointmentId],
     queryFn:         () => getPreCallCheck(appointmentId),
     enabled:         !!appointmentId,
-    placeholderData: DEMO_PRECALL_CHECK,
+    placeholderData: doctorPlaceholder(DEMO_PRECALL_CHECK),
     staleTime:       5_000,
   });
 }
@@ -56,7 +57,7 @@ export function useCallDisputes() {
   return useQuery({
     queryKey:        ['doctor', 'call-disputes'],
     queryFn:         getCallDisputes,
-    placeholderData: DEMO_CALL_DISPUTES,
+    placeholderData: doctorPlaceholder(DEMO_CALL_DISPUTES),
     staleTime:       30_000,
   });
 }

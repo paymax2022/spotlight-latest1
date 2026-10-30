@@ -14,12 +14,13 @@ import type {
   SubmitVerificationInput,
   UpdateAvailabilityInput,
 } from '@/types/doctor';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useDoctorProfile() {
   return useQuery({
     queryKey:        ['doctor', 'profile'],
     queryFn:         getDoctorProfile,
-    placeholderData: DEMO_DOCTOR_PROFILE,
+    placeholderData: doctorPlaceholder(DEMO_DOCTOR_PROFILE),
     staleTime:       30_000,
   });
 }
@@ -39,7 +40,7 @@ export function useAvailability(doctorId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'availability', doctorId],
     queryFn:         () => getAvailability(doctorId),
-    placeholderData: DEMO_AVAILABILITY,
+    placeholderData: doctorPlaceholder(DEMO_AVAILABILITY),
     staleTime:       30_000,
   });
 }

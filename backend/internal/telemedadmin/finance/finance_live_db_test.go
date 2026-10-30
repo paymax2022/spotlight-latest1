@@ -30,6 +30,10 @@ func TestLiveDB_FinanceQueries(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	mig, err := os.ReadFile("../../../../supabase/migrations/20271400000210_telemed_admin_payout_hold.sql")
+	must(t, err)
+	_, err = tx.Exec(ctx, string(mig))
+	must(t, err)
 
 	// Two real auth users that are not already doctors: one doctor, one patient.
 	var docUser, patient string

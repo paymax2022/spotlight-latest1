@@ -12,7 +12,7 @@ import {
   btn, th, td, input, label, select, fmtDate,
 } from '../_ui';
 import { colors } from '@/components/ui/vuexy';
-import { toCsv, downloadCsv, fetchAllPages } from '@/lib/csv';
+import { toCsvColumns, downloadCsv, fetchAllPages } from '@/lib/csv';
 
 type Section = 'payouts' | 'earnings' | 'invoices' | 'disputes' | 'commission';
 const SECTIONS: { key: Section; label: string }[] = [
@@ -163,7 +163,7 @@ function PayoutsSection({ from, to }: { from: string; to: string }) {
         from: from || undefined, to: to || undefined, limit, offset: off,
       }));
       // Amounts stay integer kobo in the file so no float rounding leaks into finance reconciliations.
-      downloadCsv(`telemedicine-payouts-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(all, [
+      downloadCsv(`telemedicine-payouts-${new Date().toISOString().slice(0, 10)}.csv`, toCsvColumns(all, [
         { header: 'id', value: (p) => p.id },
         { header: 'ref', value: (p) => p.ref },
         { header: 'doctor_user_id', value: (p) => p.doctor_user_id },

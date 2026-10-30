@@ -30,13 +30,14 @@ import type {
   ReportMessageInput,
   EndChatInput,
 } from '@/types/doctor.batch2';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useRichMessages(threadId: string) {
   return useQuery({
     queryKey:        ['doctor', 'chat-rich-messages', threadId],
     queryFn:         () => getRichMessages(threadId),
     enabled:         !!threadId,
-    placeholderData: DEMO_RICH_MESSAGES.filter((m) => m.base.threadId === threadId),
+    placeholderData: doctorPlaceholder(DEMO_RICH_MESSAGES.filter((m) => m.base.threadId === threadId)),
     staleTime:       10_000,
   });
 }
@@ -46,7 +47,7 @@ export function useThreadState(threadId: string) {
     queryKey:        ['doctor', 'chat-thread-state', threadId],
     queryFn:         () => getThreadState(threadId),
     enabled:         !!threadId,
-    placeholderData: DEMO_THREAD_STATE,
+    placeholderData: doctorPlaceholder(DEMO_THREAD_STATE),
     staleTime:       5_000,
   });
 }

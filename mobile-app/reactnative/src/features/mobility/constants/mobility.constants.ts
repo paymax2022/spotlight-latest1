@@ -132,3 +132,55 @@ export const STATE_COPY = {
     icon: 'CloudOff',
   },
 } as const;
+
+// Vehicle make/model options for driver onboarding. Models are scoped to their
+// make on purpose: a single flat model list would offer a Corolla under Lexus.
+// "Other" is the escape hatch so an unlisted vehicle can still be registered —
+// the backend stores make/model as free text, so nothing is rejected.
+export interface VehicleMake {
+  make: string;
+  models: string[];
+}
+
+export const VEHICLE_MAKES: VehicleMake[] = [
+  { make: 'Toyota', models: ['Corolla', 'Camry', 'Avensis', 'Yaris', 'Sienna', 'Highlander', 'RAV4', 'Land Cruiser', 'Prado', 'Hiace', 'Hilux'] },
+  { make: 'Honda', models: ['Accord', 'Civic', 'CR-V', 'City', 'Pilot', 'Odyssey'] },
+  { make: 'Lexus', models: ['RX 350', 'RX 450h', 'ES 350', 'GX 460', 'LX 570', 'NX 300'] },
+  { make: 'Mercedes-Benz', models: ['C-Class', 'E-Class', 'S-Class', 'GLE', 'GLC', 'ML', 'Sprinter'] },
+  { make: 'Nissan', models: ['Almera', 'Altima', 'Sentra', 'X-Trail', 'Pathfinder', 'Navara', 'Urvan'] },
+  { make: 'Hyundai', models: ['Elantra', 'Accent', 'Sonata', 'Tucson', 'Santa Fe', 'Creta', 'i10'] },
+  { make: 'Kia', models: ['Rio', 'Cerato', 'Optima', 'Sportage', 'Sorento', 'Seltos', 'Picanto'] },
+  { make: 'Ford', models: ['Focus', 'Fusion', 'Explorer', 'Escape', 'Ranger', 'Transit'] },
+  { make: 'Peugeot', models: ['301', '308', '406', '407', '508', '3008', 'Partner'] },
+  { make: 'Volkswagen', models: ['Golf', 'Jetta', 'Passat', 'Tiguan', 'Polo', 'Transporter'] },
+  { make: 'BMW', models: ['3 Series', '5 Series', '7 Series', 'X3', 'X5', 'X6'] },
+  { make: 'Mitsubishi', models: ['Lancer', 'Outlander', 'Pajero', 'L200', 'Space Wagon'] },
+  { make: 'Mazda', models: ['Mazda3', 'Mazda6', 'CX-5', 'CX-7', 'MPV'] },
+  { make: 'Chevrolet', models: ['Cruze', 'Malibu', 'Captiva', 'Aveo'] },
+  { make: 'Innoson', models: ['IVM G6', 'IVM G4', 'IVM Fox', 'IVM Umu'] },
+  { make: 'GAC', models: ['GS3', 'GS4', 'GS8', 'GN8'] },
+  { make: 'MG', models: ['MG5', 'MG6', 'ZS', 'HS', 'RX5'] },
+  { make: 'Other', models: ['Other'] },
+];
+
+export const VEHICLE_COLORS = [
+  'Black',
+  'Silver',
+  'Grey',
+  'White',
+  'Blue',
+  'Red',
+  'Green',
+  'Brown',
+  'Gold',
+  'Beige',
+  'Orange',
+  'Yellow',
+  'Purple',
+  'Other',
+] as const;
+
+/** Model years offered in onboarding: the next model year back to 1990. */
+export function vehicleYears(now: number = new Date().getFullYear()): string[] {
+  return Array.from({ length: now + 1 - 1990 }, (_, i) => String(now + 1 - i));
+}

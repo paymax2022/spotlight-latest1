@@ -224,6 +224,7 @@ export function mapLiveAppointment(raw: unknown): Appointment {
     slotDate,
     slotTime,
     createdAt:   created,
+    scheduledAt: str(r.scheduled_at) || undefined,
     reason:      str(r.notes),
   };
 }

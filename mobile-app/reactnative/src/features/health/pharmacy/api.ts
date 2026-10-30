@@ -383,6 +383,29 @@ function tintForId(id: string): string {
 // Fields the backend does not (yet) store — brand/form/description/rating/
 // detail screens already guard on these. pharmacyId/pharmacyName carry the
 // owning-pharmacy attribution added in ADR-017.
+// Backend catalog enum (pharmacy_products.category CHECK) <-> mobile buckets.
+// 'wellness' has no backend value of its own; it maps onto 'vitamins'.
+function toBackendCategory(c: ProductCategory): string {
+  return c === 'wellness' ? 'vitamins' : c;
+}
+function fromBackendCategory(raw: unknown, rxRequired: boolean): ProductCategory {
+  switch (raw) {
+    case 'prescription':
+    case 'otc':
+    case 'first_aid':
+    case 'baby':
+    case 'devices':
+      return raw;
+    case 'vitamins':
+      return 'wellness';
+    case 'pain':
+    case 'skincare':
+      return 'otc';
+    default:
+      return rxRequired ? 'prescription' : 'otc';
+  }
+}
+
 function mapProduct(raw: any): PharmacyProduct {
   return {
     id: raw.id,
@@ -391,8 +414,7 @@ function mapProduct(raw: any): PharmacyProduct {
     name: raw.name ?? '',
     brand: raw.brand ?? '',
     form: raw.form ?? '',
-    // category filter still buckets sensibly until the catalog model is enriched.
-    category: raw.rx_required ? 'prescription' : 'otc',
+    category: fromBackendCategory(raw.category, !!raw.rx_required),
     priceKobo: raw.price_kobo ?? 0,
     nafdacReg: raw.nafdac_ref ?? '',
     rxRequired: !!raw.rx_required,
@@ -423,7 +445,10 @@ export async function getProducts(opts?: { q?: string; category?: ProductCategor
     }
     return out;
   }
-  const { data } = await api.get<{ products?: unknown[] }>(`${PHARMACY_API}/products`, { params: opts });
+  const params: Record<string, string> = {};
+  if (opts?.q) params.q = opts.q;
+  if (opts?.category) params.category = toBackendCategory(opts.category);
+  const { data } = await api.get<{ products?: unknown[] }>(`${PHARMACY_API}/products`, { params });
   return (data.products ?? []).map(mapProduct);
 }
 
@@ -535,8 +560,23 @@ export async function getPrescriptions(): Promise<Prescription[]> {
     await delay();
     return [...MOCK_PRESCRIPTIONS].sort((a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt));
   }
-  const { data } = await api.get<{ prescriptions?: unknown[] }>(`${PHARMACY_API}/prescriptions`);
-  return (data.prescriptions ?? []).map(mapPrescriptionSummary);
+  // Patient photo/PDF uploads come back alongside e-Rx summaries under `uploads`.
+  const { data } = await api.get<{ prescriptions?: unknown[]; uploads?: unknown[] }>(`${PHARMACY_API}/prescriptions`);
+  return [...(data.prescriptions ?? []).map(mapPrescriptionSummary), ...(data.uploads ?? []).map(mapRxUpload)].sort(
+    (a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt),
+  );
+}
+
+function mapRxUpload(raw: any): Prescription {
+  return {
+    id: raw.id,
+    source: 'upload',
+    status: RX_STATUS_FROM_STATE[raw.state] ?? 'verifying',
+    uploadedAt: raw.created_at,
+    patientName: raw.patient_name ?? '',
+    items: [],
+    docColor: tintForId(String(raw.id ?? '')),
+  };
 }
 
 // mapPrescription maps the rx package's flat, uppercase-state Prescription
@@ -579,8 +619,17 @@ export async function getPrescription(id: string): Promise<Prescription> {
   return mapPrescription(data.prescription);
 }
 
-/** Upload an Rx for pharmacist verification (HL-3) → enters VERIFYING. */
-export async function uploadPrescription(input: { patientName: string; note?: string }): Promise<Prescription> {
+export interface RxUploadFile {
+  uri: string;
+  fileName: string;
+  mimeType: string;
+}
+
+/**
+ * Upload an Rx photo/PDF for pharmacist verification (HL-3) → enters VERIFYING.
+ * Presign → PUT the bytes straight to R2 → record the object server-side.
+ */
+export async function uploadPrescription(input: { patientName: string; note?: string; file: RxUploadFile }): Promise<Prescription> {
   if (USE_MOCK) {
     await delay(600);
     const rx: Prescription = {
@@ -595,8 +644,26 @@ export async function uploadPrescription(input: { patientName: string; note?: st
     MOCK_PRESCRIPTIONS.unshift(rx);
     return rx;
   }
-  const { data } = await api.post<Prescription>(`${PHARMACY_API}/prescriptions/upload`, input);
-  return data;
+  const { data: pre } = await api.post<{ presign?: { upload_url: string; storage_key: string; content_type: string } }>(
+    `${PHARMACY_API}/prescriptions/upload/presign`,
+    { file_name: input.file.fileName, content_type: input.file.mimeType },
+  );
+  if (!pre.presign) throw new Error('Upload is not available right now.');
+  const blob = await (await fetch(input.file.uri)).blob();
+  const res = await fetch(pre.presign.upload_url, {
+    method: 'PUT',
+    body: blob,
+    headers: { 'Content-Type': pre.presign.content_type },
+  });
+  if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+  const { data } = await api.post<{ upload?: unknown }>(`${PHARMACY_API}/prescriptions/upload`, {
+    storage_key: pre.presign.storage_key,
+    content_type: pre.presign.content_type,
+    patient_name: input.patientName,
+    note: input.note ?? '',
+  });
+  if (!data.upload) throw new Error('Upload was not recorded.');
+  return mapRxUpload(data.upload);
 }
 
 const ORDER_STATUS_FROM_STATE: Record<string, OrderStatus> = {
@@ -671,6 +738,32 @@ export async function getOrder(id: string): Promise<PharmacyOrder> {
     return o;
   }
   const { data } = await api.get<{ order?: unknown }>(`${PHARMACY_API}/orders/${id}`);
+  if (!data.order) throw new Error('Order not found');
+  return mapOrder(data.order);
+}
+
+// Mirrors the backend isPreDispense gate (model.go): refund-on-cancel is only
+// legal before the pharmacist dispenses.
+const CANCELLABLE: OrderStatus[] = ['created', 'rx_pending', 'confirmed'];
+export function isCancellable(status: OrderStatus): boolean {
+  return CANCELLABLE.includes(status);
+}
+
+/** Patient cancels a pre-dispense order; the held payment is refunded (HL-9). */
+export async function cancelOrder(orderId: string, idempotencyKey: string, reason?: string): Promise<PharmacyOrder> {
+  if (USE_MOCK) {
+    await delay(400);
+    const o = ORDERS.find((x) => x.id === orderId);
+    if (!o) throw new Error('Order not found');
+    if (!isCancellable(o.status)) throw new Error('This order can no longer be cancelled.');
+    o.status = 'cancelled';
+    return { ...o };
+  }
+  const { data } = await api.post<{ order?: unknown }>(
+    `${PHARMACY_API}/orders/${orderId}/cancel`,
+    { reason: reason ?? '' },
+    { headers: { 'Idempotency-Key': idempotencyKey } },
+  );
   if (!data.order) throw new Error('Order not found');
   return mapOrder(data.order);
 }
@@ -753,8 +846,20 @@ export async function reorder(orderId: string): Promise<PharmacyOrder['lines']> 
     if (!o) throw new Error('Order not found');
     return o.lines;
   }
-  const { data } = await api.post<PharmacyOrder['lines']>(`${PHARMACY_API}/orders/${orderId}/reorder`, {});
-  return data;
+  // Lines are re-priced against the live catalog; unavailable ones are dropped
+  // so checkout never re-submits a product that can no longer be sold.
+  const { data } = await api.post<{ lines?: any[] }>(`${PHARMACY_API}/orders/${orderId}/reorder`, {});
+  return (data.lines ?? [])
+    .filter((l) => l.available)
+    .map((l) => ({
+      productId: l.product_id,
+      name: l.product_name ?? '',
+      form: '',
+      priceKobo: l.unit_price_kobo ?? 0,
+      qty: l.quantity ?? 1,
+      rxRequired: !!l.rx_required,
+      imageColor: tintForId(String(l.product_id ?? '')),
+    }));
 }
 
 export async function getMedications(): Promise<MedicationItem[]> {
@@ -762,8 +867,29 @@ export async function getMedications(): Promise<MedicationItem[]> {
     await delay();
     return MOCK_MEDS;
   }
-  const { data } = await api.get<MedicationItem[]>(`${PHARMACY_API}/medications`);
-  return data;
+  // The backend has no adherence/supply tracking yet — those default to 0.
+  const { data } = await api.get<{ medications?: any[] }>(`${PHARMACY_API}/medications`);
+  return (data.medications ?? []).map((m) => ({
+    id: m.id,
+    name: m.drug_name ?? '',
+    form: '',
+    schedule: m.dosage ?? '',
+    adherence: 0,
+    daysLeft: 0,
+    rxRequired: !!m.is_pom,
+  }));
+}
+
+function mapRefill(r: any): Refill {
+  return {
+    id: r.id,
+    medicationName: r.drug_name ?? '',
+    form: r.dosage ?? '',
+    dueAt: r.due_at,
+    scheduled: !!r.scheduled,
+    autoRefill: !!r.auto_refill,
+    rxId: r.prescription_id ?? undefined,
+  };
 }
 
 export async function getRefills(): Promise<Refill[]> {
@@ -771,8 +897,8 @@ export async function getRefills(): Promise<Refill[]> {
     await delay();
     return MOCK_REFILLS;
   }
-  const { data } = await api.get<Refill[]>(`${PHARMACY_API}/refills`);
-  return data;
+  const { data } = await api.get<{ refills?: any[] }>(`${PHARMACY_API}/refills`);
+  return (data.refills ?? []).map(mapRefill);
 }
 
 export async function scheduleRefill(id: string, autoRefill: boolean): Promise<Refill> {
@@ -784,8 +910,9 @@ export async function scheduleRefill(id: string, autoRefill: boolean): Promise<R
     rf.autoRefill = autoRefill;
     return { ...rf };
   }
-  const { data } = await api.post<Refill>(`${PHARMACY_API}/refills/${id}/schedule`, { autoRefill });
-  return data;
+  const { data } = await api.post<{ refill?: any }>(`${PHARMACY_API}/refills/${id}/schedule`, { auto_refill: autoRefill });
+  if (!data.refill) throw new Error('Refill not found');
+  return mapRefill(data.refill);
 }
 
 // GET /pharmacy/pharmacies/{id}/reviews (ADR-017) — the live surface is always
@@ -836,13 +963,24 @@ let CONSULT_THREAD: PharmacistConsultMessage[] = [
   { id: 'pc_1', fromPharmacist: true, author: 'Pharm. Grace E.', body: 'Hello! How can I help with your medication today?', at: new Date(Date.now() - 8 * 60_000).toISOString() },
 ];
 
+function mapConsultMessage(m: any): PharmacistConsultMessage {
+  const fromPharmacist = !!m.from_pharmacist;
+  return {
+    id: m.id,
+    fromPharmacist,
+    author: fromPharmacist ? m.author_name || 'Pharmacist' : 'You',
+    body: m.body ?? '',
+    at: m.created_at,
+  };
+}
+
 export async function getConsultThread(): Promise<PharmacistConsultMessage[]> {
   if (USE_MOCK) {
     await delay(200);
     return [...CONSULT_THREAD];
   }
-  const { data } = await api.get<PharmacistConsultMessage[]>(`${PHARMACY_API}/consult/messages`);
-  return data;
+  const { data } = await api.get<{ messages?: any[] }>(`${PHARMACY_API}/consult/messages`);
+  return (data.messages ?? []).map(mapConsultMessage);
 }
 
 export async function sendConsultMessage(body: string): Promise<PharmacistConsultMessage> {
@@ -852,8 +990,9 @@ export async function sendConsultMessage(body: string): Promise<PharmacistConsul
     CONSULT_THREAD = [...CONSULT_THREAD, msg];
     return msg;
   }
-  const { data } = await api.post<PharmacistConsultMessage>(`${PHARMACY_API}/consult/messages`, { body });
-  return data;
+  const { data } = await api.post<{ message?: any }>(`${PHARMACY_API}/consult/messages`, { body });
+  if (!data.message) throw new Error('Message was not sent');
+  return mapConsultMessage(data.message);
 }
 
 // `${PHARMACY_API}/provider/onboarding[/submit]` was never implemented backend
@@ -1011,8 +1150,14 @@ export async function getStockAlerts(): Promise<StockAlert[]> {
       .filter((c) => c.stock <= c.reorderLevel)
       .map((c) => ({ productId: c.productId, name: c.name, stock: c.stock, reorderLevel: c.reorderLevel, severity: c.stock === 0 ? 'out' : 'low' }));
   }
-  const { data } = await api.get<StockAlert[]>(`${PHARMACY_API}/provider/stock-alerts`);
-  return data;
+  const { data } = await api.get<{ alerts?: any[] }>(`${PHARMACY_API}/provider/stock-alerts`);
+  return (data.alerts ?? []).map((a) => ({
+    productId: a.product_id,
+    name: a.name ?? '',
+    stock: a.stock_qty ?? 0,
+    reorderLevel: a.reorder_level ?? 0,
+    severity: a.severity === 'out' ? 'out' : 'low',
+  }));
 }
 
 // GET /orders (h.ListMine) — the pharmacist's owner-scoped fulfilment inbox.
@@ -1027,7 +1172,27 @@ export async function getProviderOrders(): Promise<PharmacyOrder[]> {
   return (data.orders ?? []).map(mapOrder);
 }
 
-/** Pharmacist marks an order dispensed & packed (consumes Rx dispense-once, HL-3). */
+/**
+ * Pharmacist accepts an order (CREATED/RX_PENDING -> CONFIRMED). The backend FSM
+ * only allows DISPENSED from CONFIRMED, and Confirm is where the verified-Rx
+ * gate (HL-3) runs — dispensing without this step always 409'd.
+ */
+export async function confirmOrder(orderId: string, idempotencyKey: string): Promise<PharmacyOrder> {
+  if (USE_MOCK) {
+    await delay(400);
+    const o = ORDERS.find((x) => x.id === orderId);
+    if (!o) throw new Error('Order not found');
+    o.status = 'confirmed';
+    return { ...o };
+  }
+  const { data } = await api.post<{ order?: unknown }>(`${PHARMACY_API}/orders/${orderId}/confirm`, {}, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  });
+  if (!data.order) throw new Error('Order not found');
+  return mapOrder(data.order);
+}
+
+/** Pharmacist marks a CONFIRMED order dispensed & packed (consumes Rx dispense-once, HL-3). */
 export async function dispenseOrder(orderId: string, idempotencyKey: string): Promise<PharmacyOrder> {
   if (USE_MOCK) {
     await delay(400);
@@ -1036,10 +1201,13 @@ export async function dispenseOrder(orderId: string, idempotencyKey: string): Pr
     o.status = 'dispensed';
     return { ...o };
   }
-  const { data } = await api.post<PharmacyOrder>(`${PHARMACY_API}/orders/${orderId}/dispense`, {}, {
+  // The backend wraps the order as { success, order } — returning the raw body
+  // handed callers an object with no id/status.
+  const { data } = await api.post<{ order?: unknown }>(`${PHARMACY_API}/orders/${orderId}/dispense`, {}, {
     headers: { 'Idempotency-Key': idempotencyKey },
   });
-  return data;
+  if (!data.order) throw new Error('Order not found');
+  return mapOrder(data.order);
 }
 
 /** Hand off to last-mile delivery or mark ready for pickup. */
@@ -1074,8 +1242,15 @@ export async function getProviderRxQueue(): Promise<ProviderRxQueueItem[]> {
       status: r.status,
     }));
   }
-  const { data } = await api.get<ProviderRxQueueItem[]>(`${PHARMACY_API}/provider/rx-queue`);
-  return data;
+  const { data } = await api.get<{ queue?: any[] }>(`${PHARMACY_API}/provider/rx-queue`);
+  return (data.queue ?? []).map((q) => ({
+    rxId: q.rx_id,
+    patientName: q.patient_name ?? '',
+    prescriberName: q.prescriber_name || undefined,
+    uploadedAt: q.created_at,
+    itemCount: q.item_count ?? 0,
+    status: RX_STATUS_FROM_STATE[q.state] ?? 'verifying',
+  }));
 }
 
 export async function decideRx(rxId: string, decision: RxDecision, note?: string): Promise<Prescription> {
@@ -1118,8 +1293,18 @@ export async function getControlledLog(): Promise<ControlledLogEntry[]> {
       { id: 'cl_1', drugName: 'Codeine syrup (restricted)', patientName: 'Withheld', quantity: '1 × 100ml', pharmacistName: 'Pharm. Grace E.', registerRef: 'CR-2026-0042', at: new Date(Date.now() - 86_400_000).toISOString() },
     ];
   }
-  const { data } = await api.get<ControlledLogEntry[]>(`${PHARMACY_API}/provider/controlled-log`);
-  return data;
+  // HL-4: controlled substances are excluded at MVP, so the live register is
+  // normally empty — it is a real query, not a placeholder.
+  const { data } = await api.get<{ entries?: any[] }>(`${PHARMACY_API}/provider/controlled-log`);
+  return (data.entries ?? []).map((e) => ({
+    id: e.id,
+    drugName: e.drug_name ?? '',
+    patientName: e.patient_name ?? '',
+    quantity: String(e.quantity ?? ''),
+    pharmacistName: e.pharmacist_name ?? '',
+    registerRef: e.order_id ?? '',
+    at: e.dispensed_at,
+  }));
 }
 
 export async function getProviderEarnings(): Promise<ProviderEarnings> {

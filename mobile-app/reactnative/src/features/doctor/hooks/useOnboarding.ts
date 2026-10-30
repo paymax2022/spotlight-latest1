@@ -38,13 +38,14 @@ import type {
   AcceptConsentInput,
   RecordPermissionDecisionInput,
 } from '@/types/doctor.onboarding';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 // Entry 2 — intro carousel
 export function useOnboardingSlides() {
   return useQuery({
     queryKey:        ['doctor', 'onboarding', 'slides'],
     queryFn:         getOnboardingSlides,
-    placeholderData: DEMO_ONBOARDING_SLIDES,
+    placeholderData: doctorPlaceholder(DEMO_ONBOARDING_SLIDES),
     staleTime:       300_000,
   });
 }
@@ -54,7 +55,7 @@ export function useMerchantUpgradeStatus() {
   return useQuery({
     queryKey:        ['doctor', 'onboarding', 'merchant-upgrade'],
     queryFn:         getMerchantUpgradeStatus,
-    placeholderData: DEMO_MERCHANT_UPGRADE_STATUS,
+    placeholderData: doctorPlaceholder(DEMO_MERCHANT_UPGRADE_STATUS),
     staleTime:       30_000,
   });
 }
@@ -64,7 +65,7 @@ export function useLegalDocument(kind: LegalDocKind) {
   return useQuery({
     queryKey:        ['doctor', 'onboarding', 'legal', kind],
     queryFn:         () => getLegalDocument(kind),
-    placeholderData: DEMO_LEGAL_DOCUMENTS[kind],
+    placeholderData: doctorPlaceholder(DEMO_LEGAL_DOCUMENTS[kind]),
     staleTime:       300_000,
   });
 }
@@ -74,7 +75,7 @@ export function useConsentStatus() {
   return useQuery({
     queryKey:        ['doctor', 'onboarding', 'consents'],
     queryFn:         getConsentStatus,
-    placeholderData: DEMO_CONSENT_STATUS,
+    placeholderData: doctorPlaceholder(DEMO_CONSENT_STATUS),
     staleTime:       30_000,
   });
 }
@@ -84,7 +85,7 @@ export function usePermissionStates() {
   return useQuery({
     queryKey:        ['doctor', 'onboarding', 'permissions'],
     queryFn:         getPermissionStates,
-    placeholderData: DEMO_PERMISSION_STATES,
+    placeholderData: doctorPlaceholder(DEMO_PERMISSION_STATES),
     staleTime:       30_000,
   });
 }

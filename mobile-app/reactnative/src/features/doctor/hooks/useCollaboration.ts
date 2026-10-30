@@ -30,12 +30,13 @@ import type {
   RequestOpinionInput,
   SendCareTeamMessageInput,
 } from '@/types/doctor.batch4';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useIncomingReferrals(status?: IncomingReferralStatus) {
   return useQuery({
     queryKey:        ['doctor', 'incoming-referrals', status],
     queryFn:         () => getIncomingReferrals(status),
-    placeholderData: DEMO_INCOMING_REFERRALS,
+    placeholderData: doctorPlaceholder(DEMO_INCOMING_REFERRALS),
     staleTime:       30_000,
   });
 }
@@ -53,7 +54,7 @@ export function useOpinionRequests(status?: OpinionStatus) {
   return useQuery({
     queryKey:        ['doctor', 'opinion-requests', status],
     queryFn:         () => getOpinionRequests(status),
-    placeholderData: DEMO_OPINION_REQUESTS,
+    placeholderData: doctorPlaceholder(DEMO_OPINION_REQUESTS),
     staleTime:       30_000,
   });
 }
@@ -72,7 +73,7 @@ export function useCareTeamThread(threadId: string) {
     queryKey:        ['doctor', 'care-team-thread', threadId],
     queryFn:         () => getCareTeamThread(threadId),
     enabled:         !!threadId,
-    placeholderData: DEMO_CARE_TEAM_THREAD,
+    placeholderData: doctorPlaceholder(DEMO_CARE_TEAM_THREAD),
     staleTime:       15_000,
   });
 }
@@ -82,7 +83,7 @@ export function useSharedCaseSummary(caseRef: string) {
     queryKey:        ['doctor', 'shared-case-summary', caseRef],
     queryFn:         () => getSharedCaseSummary(caseRef),
     enabled:         !!caseRef,
-    placeholderData: DEMO_SHARED_CASE_SUMMARY,
+    placeholderData: doctorPlaceholder(DEMO_SHARED_CASE_SUMMARY),
     staleTime:       30_000,
   });
 }

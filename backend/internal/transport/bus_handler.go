@@ -117,10 +117,13 @@ func (h *AdminHandler) AdminBusCancelSchedule(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// BusSearch returns bookable interstate trips (state pair / provider filters).
+// BusSearch returns bookable trips (state pair, tripKind, city, provider, date filters).
 func (h *Handler) BusSearch(c *gin.Context) {
-	trips, err := h.svc.SearchBusTrips(c.Request.Context(),
-		c.Query("fromState"), c.Query("toState"), c.Query("providerId"), c.Query("date"))
+	trips, err := h.svc.SearchBusTrips(c.Request.Context(), BusTripSearch{
+		FromState: c.Query("fromState"), ToState: c.Query("toState"), TripKind: c.Query("tripKind"),
+		FromCity: c.Query("fromCity"), ToCity: c.Query("toCity"),
+		ProviderID: c.Query("providerId"), Date: c.Query("date"),
+	})
 	if err != nil {
 		respondErr(c, err)
 		return

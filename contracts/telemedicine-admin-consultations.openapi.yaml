@@ -1,0 +1,176 @@
+openapi: 3.0.3
+info:
+  title: Telemedicine admin - consultations (appointments)
+  version: 1.0.0
+  description: |
+    System-wide appointment oversight for the admin console
+    (backend/internal/telemedicine/admin_service.go, admin_appointments.go).
+    Reads need telemedicine.admin.view; actions need telemedicine.admin.manage,
+    an Idempotency-Key (a repeated key replays the first result), and write a
+    doctor_compliance_audit row (action admin.telemedicine.appointment.*).
+    Money is integer kobo. Cancel refunds the patient's escrow through
+    settlement.Refund (balanced reversal); completed appointments are already
+    settled to the doctor and cannot be refunded here.
+servers:
+  - url: /api/v1/telemedicine/admin
+security:
+  - bearerAuth: []
+paths:
+  /appointments:
+    get:
+      summary: Paged system-wide appointment list
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [booked, confirmed, completed, cancelled] } }
+        - { name: from, in: query, description: 'RFC 3339; scheduled_at >= from', schema: { type: string, format: date-time } }
+        - { name: to, in: query, description: 'RFC 3339; scheduled_at < to', schema: { type: string, format: date-time } }
+        - { name: search, in: query, description: 'id/ref prefix or doctor-name substring (max 100 chars, matched literally)', schema: { type: string, maxLength: 100 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/AdminAppointment' } }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+  /appointments/{id}:
+    get:
+      summary: One appointment with settlement state and admin audit trail
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AdminAppointmentDetail' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /appointments/{id}/cancel:
+    post:
+      summary: Cancel a booked/confirmed appointment and refund the escrow
+      parameters:
+        - $ref: '#/components/parameters/id'
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '200': { $ref: '#/components/responses/Action' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /appointments/{id}/reassign:
+    post:
+      summary: Move a booked/confirmed appointment to another available doctor (same slot, no money moves)
+      parameters:
+        - $ref: '#/components/parameters/id'
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doctor_id, reason]
+              properties:
+                doctor_id: { type: string, format: uuid, description: doctors.id of the new doctor }
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '200': { $ref: '#/components/responses/Action' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 200 }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+    Action:
+      description: Applied (or replayed for a repeated Idempotency-Key)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { $ref: '#/components/schemas/AdminActionResult' }
+  schemas:
+    AdminAppointment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        scheduled_at: { type: string, format: date-time }
+        status: { type: string }
+        fee_kobo: { type: integer, format: int64 }
+        platform_fee_kobo: { type: integer, format: int64 }
+        total_kobo: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        specialty: { type: string }
+        prescription_issued: { type: boolean }
+        consultation_type: { type: string }
+    AdminAppointmentDetail:
+      allOf:
+        - $ref: '#/components/schemas/AdminAppointment'
+        - type: object
+          properties:
+            ref: { type: string }
+            notes: { type: string }
+            doctor_user_id: { type: string }
+            settlement_id: { type: string }
+            settlement_status: { type: string }
+            audit:
+              type: array
+              items:
+                type: object
+                properties:
+                  action: { type: string }
+                  actor_id: { type: string }
+                  at: { type: string, format: date-time }
+                  detail: { type: object, additionalProperties: true }
+    AdminActionResult:
+      type: object
+      properties:
+        action: { type: string }
+        appointment_id: { type: string, format: uuid }
+        status: { type: string }
+        refunded: { type: boolean }
+        doctor_id: { type: string }
+        at: { type: string, format: date-time }
+        replayed: { type: boolean }

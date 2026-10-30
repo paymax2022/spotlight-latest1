@@ -37,7 +37,9 @@ import (
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/notifications"
 	platformDB "spotlight/backend/internal/platform/db"
+	"spotlight/backend/internal/platform/queue"
 	"spotlight/backend/internal/transport"
 )
 
@@ -83,6 +85,16 @@ func main() {
 	svc := transport.NewService(pool, settlementSvc).
 		WithBusConfig(transport.NewBusConfig(busSettleOn, cfg.TransportBusSettleGraceMinutes,
 			cfg.TransportBusCancelCutoffMinutes, cfg.TransportBusMinBookingLeadMinutes))
+	// Reminder / dispatch-failure pushes go through the shared notifications
+	// queue when Redis is configured; otherwise notifyUser stays log-only.
+	if cfg.RedisURL != "" {
+		if qc, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
+			defer func() { _ = qc.Close() }()
+			svc = svc.WithUserNotifier(transport.NewPushUserNotifier(pool, notifications.NewService(qc)))
+		} else {
+			log.Printf("transport-scheduler: user notifier not wired — queue client init failed: %v", qerr)
+		}
+	}
 	// NOTE: MockMaps is used for dispatch fare computation here (no MapService is
 	// wired into the worker). Fares/escrow at dispatch are computed by the same
 	// per-mode path the API uses; in production the maps provider should be wired

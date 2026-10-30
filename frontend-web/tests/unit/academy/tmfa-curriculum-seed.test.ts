@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 const MIGRATION = join(
   __dirname, '..', '..', '..', '..',
-  'supabase/migrations/20271099000000_academy_tmfa_curriculum.sql',
+  'supabase/migrations/20271400000200_academy_tmfa_curriculum.sql',
 );
 const raw = readFileSync(MIGRATION, 'utf8');
 const sql = raw.replace(/^\s*--.*$/gm, '');

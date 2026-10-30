@@ -1692,8 +1692,7 @@ func (s *Service) SettleVendor(ctx context.Context, eventID, vendorID, idemKey s
 	if gross <= 0 {
 		return 0, errors.New("events: nothing to settle")
 	}
-	fee := (gross * int64(ev.FeeBps)) / 10000 // integer bps, truncates toward zero (favours vendor); net+fee==gross exactly
-	net := gross - fee
+	fee, net := vendorFeeSplit(gross, ev.FeeBps) // integer bps, truncates toward zero (favours vendor); net+fee==gross exactly
 
 	// ── Money legs FIRST, then finalize (crash-safe ordering) ──
 	// Post the idempotent escrow→vendor (net) and escrow→revenue (fee) legs

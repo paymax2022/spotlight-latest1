@@ -123,12 +123,18 @@ export function EventsTabs({ active }: { active: string }) {
   return <Tabs active={active} tabs={[
     { href: '/admin/events/dashboard', label: 'Overview', key: 'overview' },
     { href: '/admin/events/approval', label: 'Approvals', key: 'approval' },
+    { href: '/admin/events/moderation', label: 'Moderation', key: 'moderation' },
+    { href: '/admin/events/organisers', label: 'Organisers', key: 'organisers' },
+    { href: '/admin/events/fees', label: 'Fees', key: 'fees' },
+    { href: '/admin/events/support', label: 'Support', key: 'support' },
     { href: '/admin/events/events', label: 'Events', key: 'events' },
     { href: '/admin/events/tickets', label: 'Tickets', key: 'tickets' },
     { href: '/admin/events/cashless', label: 'Cashless', key: 'cashless' },
     { href: '/admin/events/vendors', label: 'Vendors', key: 'vendors' },
     { href: '/admin/events/settlement', label: 'Settlement', key: 'settlement' },
     { href: '/admin/events/fraud', label: 'Fraud', key: 'fraud' },
+    { href: '/admin/events/refunds', label: 'Refunds', key: 'refunds' },
+    { href: '/admin/events/payouts', label: 'Payouts', key: 'payouts' },
   ]} />;
 }
 

@@ -199,16 +199,12 @@ func TestRoutes_AllGETAndAllGuardedByView(t *testing.T) {
 	}
 }
 
-func TestRegister_NilDBAndManageNeverUsed(t *testing.T) {
+func TestRegister_NilDBMountsReadsAndDecisions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	manageCalled := false
-	Register(r.Group("/api/v1/telemedicine/admin"), nil, allowAll, func(c *gin.Context) { manageCalled = true })
-	if len(r.Routes()) != 8 {
-		t.Errorf("Register mounted %d routes, want 8", len(r.Routes()))
-	}
-	if manageCalled {
-		t.Error("manage middleware must not be attached to a read-only surface")
+	Register(r.Group("/api/v1/telemedicine/admin"), nil, allowAll, allowAll)
+	if len(r.Routes()) != 12 {
+		t.Errorf("Register mounted %d routes, want 12 (8 reads + 4 decisions)", len(r.Routes()))
 	}
 }
 
