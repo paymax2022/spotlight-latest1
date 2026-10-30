@@ -81,7 +81,7 @@ type AdminDashboard struct {
 	EventsPending       int                      `json:"events_pending_approval"`
 	VendorsActive       int                      `json:"vendors_active"`
 	VendorPayoutsHold   int                      `json:"vendor_payouts_kyc_hold"`
-	SettlementBreaks    int                      `json:"settlement_breaks_open"` // no break-detection exists; always 0
+	SettlementBreaks    int                      `json:"settlement_breaks_open"` // derived breaks still open or investigating (admin_settlement_review.go)
 	SettlementBreakKobo int64                    `json:"settlement_break_value_kobo"`
 	FraudOpen           int                      `json:"fraud_open"` // derived signals still open or investigating (admin_fraud.go)
 	RefundsPending      int                      `json:"refunds_pending"`
@@ -367,7 +367,7 @@ func (s *Service) adminDashboardQueues(ctx context.Context, d *AdminDashboard) e
 	for _, r := range rows {
 		d.Activity = append(d.Activity, r.a)
 	}
-	return nil
+	return s.adminDashboardBreaks(ctx, d)
 }
 
 // --- C. Event catalog + detail ---
@@ -883,6 +883,10 @@ func (s *Service) AdminListVendors(ctx context.Context, payoutStatus, q string) 
 	}
 	defer rows.Close()
 
+	rejected, err := s.rejectedVendorPayouts(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := []AdminVendorRecord{}
 	for rows.Next() {
 		var v AdminVendorRecord
@@ -906,6 +910,8 @@ func (s *Service) AdminListVendors(ctx context.Context, payoutStatus, q string) 
 		switch {
 		case !verified:
 			v.PayoutStatus = "kyc_hold"
+		case unsettled > 0 && rejected[v.ID]:
+			v.PayoutStatus = payoutStatusRejected
 		case unsettled > 0:
 			v.PayoutStatus = "pending"
 		case hasSettled:
@@ -939,7 +945,7 @@ type AdminSettlementLine struct {
 	OrganiserNetKobo    int64   `json:"organiser_net_kobo"`
 	ResidualRefundsKobo int64   `json:"residual_refunds_kobo"` // cashless residual refunded to attendees' main wallets (event_wallet_ledger REFUND)
 	Status              string  `json:"status"`
-	BreakKobo           int64   `json:"break_kobo"` // no reconciliation-break detection exists; always 0
+	BreakKobo           int64   `json:"break_kobo"` // derived invariant delta across the event's vendors; 0 == clean
 	SettledAt           *string `json:"settled_at"`
 }
 
@@ -949,8 +955,8 @@ type AdminSettlement struct {
 	TotalFeesKobo          int64                 `json:"total_fees_kobo"`
 	TotalOrganiserNetKobo  int64                 `json:"total_organiser_net_kobo"`
 	TotalVendorPayoutsKobo int64                 `json:"total_vendor_payouts_kobo"`
-	TotalBreakKobo         int64                 `json:"total_break_kobo"` // always 0, see AdminSettlementLine.BreakKobo
-	BreaksOpen             int                   `json:"breaks_open"`      // always 0, no break-detection exists
+	TotalBreakKobo         int64                 `json:"total_break_kobo"`
+	BreaksOpen             int                   `json:"breaks_open"` // breaks still open or investigating
 	Lines                  []AdminSettlementLine `json:"lines"`
 }
 
@@ -991,7 +997,14 @@ func (s *Service) AdminGetSettlement(ctx context.Context) (*AdminSettlement, err
 		out.TotalVendorPayoutsKobo += l.VendorPayoutsKobo
 		out.TotalOrganiserNetKobo += l.OrganiserNetKobo
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if err := s.applySettlementBreaks(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // residualPendingSQL sums float still held by CLOSED event wallets

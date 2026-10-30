@@ -69,8 +69,8 @@ async function getJson<T>(path: string): Promise<T> {
   const j = await res.json();
   return (j?.data ?? j) as T;
 }
-async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminBase()}${path}`, { method, headers: authHeaders(), body: JSON.stringify(body) });
+async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  const res = await fetch(`${adminBase()}${path}`, { method, headers: { ...authHeaders(), ...extraHeaders }, body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   const j = await res.json();
   return (j?.data ?? j) as T;
@@ -335,17 +335,15 @@ export async function listVendors(opts?: { payout_status?: string; q?: string })
   if (opts?.q) qs.set('q', opts.q);
   return getJson<VendorRecord[]>(`/vendors${qs.toString() ? `?${qs}` : ''}`);
 }
+// Live: POST /vendors/:id/payout (admin_settlement_review.go). approve settles
+// the vendor's unsettled float now via SettleVendor (KYC-gated, NL-10) and is
+// a money mutation, so it carries an Idempotency-Key minted once per click;
+// reject records a hold and moves no money.
 export async function decideVendorPayout(id: string, decision: 'approve' | 'reject', note?: string): Promise<VendorPayoutResult> {
-  // No "decide" concept exists: the real capability is POST
-  // /:eventId/vendors/:vendorId/settle (top5events.Handler.SettleVendor) — an
-  // UNCONDITIONAL, irreversible pay-now action requiring BOTH the event id and
-  // vendor id plus an Idempotency-Key header, with no request body and no
-  // "decision" parameter at all (it fails closed on missing KYC, but there is
-  // scope, and "reject" has no backend equivalent regardless. Treated as a
-  // genuine gap rather than silently firing an irreversible settlement in
-  // place of what the UI presents as a reviewable decision.
-  if (USE_MOCK) throw new Error(`Deciding a vendor payout ${NO_BACKEND_YET}`);
-  return sendJson<VendorPayoutResult>('POST', `/vendors/${id}/payout`, { decision, note });
+  if (USE_MOCK) throw new Error(`Deciding a vendor payout ${NOT_IN_FIXTURE_MODE}`);
+  if (decision === 'reject' && !note?.trim()) throw new Error('Rejecting a payout needs a note.');
+  const headers = decision === 'approve' ? { 'Idempotency-Key': crypto.randomUUID() } : undefined;
+  return sendJson<VendorPayoutResult>('POST', `/vendors/${encodeURIComponent(id)}/payout`, { decision, note: note ?? '' }, headers);
 }
 
 // G · Settlement + reconciliation
@@ -367,14 +365,12 @@ export async function getSettlement(): Promise<Settlement> {
   if (USE_MOCK) { await delay(); return { ...SETTLEMENT, lines: [...SETTLEMENT.lines] }; }
   return getJson<Settlement>('/settlement');
 }
+// Live: POST /settlement/:id/resolve records a reviewer decision on a derived
+// break (append-only); it never moves money — corrections are reversing
+// ledger entries. resolve/reconcile need a note.
 export async function resolveSettlementBreak(id: string, action: 'investigate' | 'resolve' | 'reconcile', note?: string): Promise<SettlementResolveResult> {
-  // No backend at all: grepped backend/internal/top5events for "settlement
-  // break"/"break"/"reconcil" — only order-payment reconciliation exists
-  // (StartPendingOrderReconciler), unrelated to settlement breaks. No GET
-  // /settlement either — the events admin group has exactly 3 routes total
-  // (approve/suspend/vendor-settle).
-  if (USE_MOCK) throw new Error(`Resolving a settlement break ${NO_BACKEND_YET}`);
-  return sendJson<SettlementResolveResult>('POST', `/settlement/${id}/resolve`, { action, note });
+  if (USE_MOCK) throw new Error(`Resolving a settlement break ${NOT_IN_FIXTURE_MODE}`);
+  return sendJson<SettlementResolveResult>('POST', `/settlement/${encodeURIComponent(id)}/resolve`, { action, note: note ?? '' });
 }
 
 // H · Fraud — dup-scan / abnormal top-up
