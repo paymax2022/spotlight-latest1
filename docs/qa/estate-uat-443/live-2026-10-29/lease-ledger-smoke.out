@@ -1,0 +1,17 @@
+BEGIN
+CREATE TABLE
+DO
+                        step                         |                                                           outcome                                                            
+-----------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------
+ record lease                                        | status=active
+ rent with no lease refused (lease rule)             | OK: this unit has an active lease — a rent charge against it must name the lease, or carry an explicit override and a reason
+ rent naming the lease accepted                      | OK
+ lease override with no reason refused               | OK: new row for relation "estate_dues_invoices" violates check constraint "estate_dues_invoices_lease_override_reason"
+ rent for a resident who is not the tenant refused   | OK: a rent charge must name the lease of the resident it bills
+ deposit held through the disposition writer         | OK
+ terminate and refund through the disposition writer | OK
+ reopening a terminated lease refused                | OK: a closed lease cannot be reopened
+ audit rows for the lease                            | 3
+(9 rows)
+
+ROLLBACK
