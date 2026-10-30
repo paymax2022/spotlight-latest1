@@ -2298,6 +2298,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		transportSvc := transport.NewService(pool, settlementSvcTr).WithTiers(tiersSvc).WithLedger(ledgerSvc).
 			WithBusConfig(transport.NewBusConfig(cfg.FeatureTransportBusDeferredSettlementEnabled,
 				cfg.TransportBusSettleGraceMinutes, cfg.TransportBusCancelCutoffMinutes, cfg.TransportBusMinBookingLeadMinutes))
+		transportSvc = transportSvc.WithShareBaseURL(cfg.TransportShareBaseURL)
+		// Member transport notifications (scheduled reminders, dispatch failures,
+		// insurance refunds) ride the shared asynq push queue; no Redis = log only.
+		if cfg.RedisURL != "" {
+			if nClient, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
+				transportSvc = transportSvc.WithUserNotifier(transport.NewPushUserNotifier(pool, notifications.NewService(nClient)))
+			} else {
+				log.Printf("[transport] user notifier not wired — queue client init failed: %v", qerr)
+			}
+		}
 		transportSvc = transportSvc.WithParcelRateCard(cfg.FeatureParcelRateCardEnabled).
 			WithParcelInsuranceMinPremium(int64(cfg.ParcelInsuranceMinPremiumKobo)).
 			WithPrepaidInsurance(cfg.FeatureParcelPrepaidInsuranceEnabled)
