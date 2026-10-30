@@ -1,0 +1,113 @@
+openapi: 3.0.3
+info:
+  title: Health pharmacy — catalog + pharmacist fulfilment
+  version: 1.0.0
+  description: >
+    Member-authenticated pharmacy routes (backend/internal/health/pharmacy). Order state machine:
+    CREATED/RX_PENDING_VERIFICATION -> CONFIRMED -> DISPENSED -> IN_DELIVERY|READY_FOR_PICKUP.
+    Confirm and dispense are separate steps; dispense is only legal from CONFIRMED. Every
+    transition is written to the shared audit sink (HL-12). Amounts are integer kobo.
+servers:
+  - url: /api/finance/health/pharmacy
+paths:
+  /products:
+    get:
+      operationId: listPharmacyProducts
+      summary: Browse the NAFDAC-registered, active catalog
+      parameters:
+        - name: pharmacy_provider_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: q
+          in: query
+          description: Case-insensitive match on medicine name or owning pharmacy name
+          schema: { type: string }
+        - name: category
+          in: query
+          description: Exact match on pharmacy_products.category
+          schema:
+            type: string
+            enum: [pain, vitamins, first_aid, baby, skincare, devices, prescription, otc]
+      responses:
+        '200':
+          description: Up to 200 products, ordered by name
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  products:
+                    type: array
+                    items: { $ref: '#/components/schemas/Product' }
+        '400':
+          description: Malformed pharmacy_provider_id or unknown category
+  /orders/{id}/confirm:
+    post:
+      operationId: confirmPharmacyOrder
+      summary: Owning pharmacist accepts an order (runs the verified-Rx gate, HL-3)
+      parameters:
+        - $ref: '#/components/parameters/OrderID'
+      responses:
+        '200': { $ref: '#/components/responses/OrderEnvelope' }
+        '400': { description: Malformed order id }
+        '409': { description: Illegal transition, Rx not verified, or caller does not own the pharmacy }
+  /orders/{id}/dispense:
+    post:
+      operationId: dispensePharmacyOrder
+      summary: Owning pharmacist marks a CONFIRMED order dispensed (Rx dispense-once, HL-3)
+      parameters:
+        - $ref: '#/components/parameters/OrderID'
+      responses:
+        '200': { $ref: '#/components/responses/OrderEnvelope' }
+        '400': { description: Malformed order id }
+        '401': { description: Unauthenticated }
+        '409': { description: Illegal transition (order not CONFIRMED) or dispense mismatch }
+components:
+  parameters:
+    OrderID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    OrderEnvelope:
+      description: The order after the transition
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean }
+              order: { $ref: '#/components/schemas/Order' }
+  schemas:
+    Product:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        pharmacy_provider_id: { type: string }
+        pharmacy_name: { type: string }
+        name: { type: string }
+        nafdac_ref: { type: string }
+        nafdac_status: { type: string }
+        rx_required: { type: boolean }
+        is_controlled: { type: boolean }
+        price_kobo: { type: integer, format: int64 }
+        stock_qty: { type: integer }
+        active: { type: boolean }
+        category: { type: string }
+        created_at: { type: string, format: date-time }
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        pharmacy_provider_id: { type: string, format: uuid }
+        prescription_id: { type: string, format: uuid, nullable: true }
+        state:
+          type: string
+          enum: [CREATED, RX_PENDING_VERIFICATION, CONFIRMED, DISPENSED, IN_DELIVERY, READY_FOR_PICKUP, DELIVERED, COLLECTED, CLOSED, CANCELLED, REFUNDED]
+        fulfilment_method: { type: string, enum: [PICKUP, DELIVERY] }
+        total_kobo: { type: integer, format: int64 }
+        escrow_id: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }

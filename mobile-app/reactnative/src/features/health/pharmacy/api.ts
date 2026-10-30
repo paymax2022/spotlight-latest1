@@ -383,6 +383,29 @@ function tintForId(id: string): string {
 // Fields the backend does not (yet) store — brand/form/description/rating/
 // detail screens already guard on these. pharmacyId/pharmacyName carry the
 // owning-pharmacy attribution added in ADR-017.
+// Backend catalog enum (pharmacy_products.category CHECK) <-> mobile buckets.
+// 'wellness' has no backend value of its own; it maps onto 'vitamins'.
+function toBackendCategory(c: ProductCategory): string {
+  return c === 'wellness' ? 'vitamins' : c;
+}
+function fromBackendCategory(raw: unknown, rxRequired: boolean): ProductCategory {
+  switch (raw) {
+    case 'prescription':
+    case 'otc':
+    case 'first_aid':
+    case 'baby':
+    case 'devices':
+      return raw;
+    case 'vitamins':
+      return 'wellness';
+    case 'pain':
+    case 'skincare':
+      return 'otc';
+    default:
+      return rxRequired ? 'prescription' : 'otc';
+  }
+}
+
 function mapProduct(raw: any): PharmacyProduct {
   return {
     id: raw.id,
@@ -391,8 +414,7 @@ function mapProduct(raw: any): PharmacyProduct {
     name: raw.name ?? '',
     brand: raw.brand ?? '',
     form: raw.form ?? '',
-    // category filter still buckets sensibly until the catalog model is enriched.
-    category: raw.rx_required ? 'prescription' : 'otc',
+    category: fromBackendCategory(raw.category, !!raw.rx_required),
     priceKobo: raw.price_kobo ?? 0,
     nafdacReg: raw.nafdac_ref ?? '',
     rxRequired: !!raw.rx_required,
@@ -423,7 +445,10 @@ export async function getProducts(opts?: { q?: string; category?: ProductCategor
     }
     return out;
   }
-  const { data } = await api.get<{ products?: unknown[] }>(`${PHARMACY_API}/products`, { params: opts });
+  const params: Record<string, string> = {};
+  if (opts?.q) params.q = opts.q;
+  if (opts?.category) params.category = toBackendCategory(opts.category);
+  const { data } = await api.get<{ products?: unknown[] }>(`${PHARMACY_API}/products`, { params });
   return (data.products ?? []).map(mapProduct);
 }
 
@@ -1027,7 +1052,27 @@ export async function getProviderOrders(): Promise<PharmacyOrder[]> {
   return (data.orders ?? []).map(mapOrder);
 }
 
-/** Pharmacist marks an order dispensed & packed (consumes Rx dispense-once, HL-3). */
+/**
+ * Pharmacist accepts an order (CREATED/RX_PENDING -> CONFIRMED). The backend FSM
+ * only allows DISPENSED from CONFIRMED, and Confirm is where the verified-Rx
+ * gate (HL-3) runs — dispensing without this step always 409'd.
+ */
+export async function confirmOrder(orderId: string, idempotencyKey: string): Promise<PharmacyOrder> {
+  if (USE_MOCK) {
+    await delay(400);
+    const o = ORDERS.find((x) => x.id === orderId);
+    if (!o) throw new Error('Order not found');
+    o.status = 'confirmed';
+    return { ...o };
+  }
+  const { data } = await api.post<{ order?: unknown }>(`${PHARMACY_API}/orders/${orderId}/confirm`, {}, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  });
+  if (!data.order) throw new Error('Order not found');
+  return mapOrder(data.order);
+}
+
+/** Pharmacist marks a CONFIRMED order dispensed & packed (consumes Rx dispense-once, HL-3). */
 export async function dispenseOrder(orderId: string, idempotencyKey: string): Promise<PharmacyOrder> {
   if (USE_MOCK) {
     await delay(400);
@@ -1036,10 +1081,13 @@ export async function dispenseOrder(orderId: string, idempotencyKey: string): Pr
     o.status = 'dispensed';
     return { ...o };
   }
-  const { data } = await api.post<PharmacyOrder>(`${PHARMACY_API}/orders/${orderId}/dispense`, {}, {
+  // The backend wraps the order as { success, order } — returning the raw body
+  // handed callers an object with no id/status.
+  const { data } = await api.post<{ order?: unknown }>(`${PHARMACY_API}/orders/${orderId}/dispense`, {}, {
     headers: { 'Idempotency-Key': idempotencyKey },
   });
-  return data;
+  if (!data.order) throw new Error('Order not found');
+  return mapOrder(data.order);
 }
 
 /** Hand off to last-mile delivery or mark ready for pickup. */
