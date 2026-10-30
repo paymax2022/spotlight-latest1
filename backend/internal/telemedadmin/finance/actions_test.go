@@ -130,7 +130,7 @@ func TestActions_ErrorMapping(t *testing.T) {
 	for err, want := range map[error]int{
 		errNotFound: http.StatusNotFound,
 		fmt.Errorf("%w: payout is paid", errConflict): http.StatusConflict,
-		errKeyReuse: http.StatusUnprocessableEntity,
+		errKeyReuse:        http.StatusUnprocessableEntity,
 		fmt.Errorf("boom"): http.StatusInternalServerError,
 	} {
 		r := actionRouter(&fakeActor{err: err}, allowAll)

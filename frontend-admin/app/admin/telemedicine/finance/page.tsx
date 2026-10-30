@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   getFinanceSummary, listPayouts, getPayout, listEarnings, listInvoices, listDisputes, getDispute,
-  getCommissionConfig, formatKobo, bpsToPercent,
+  getCommissionConfig, formatKobo, bpsToPercent, approvePayout, holdPayout, resolveDispute, updateCommission,
   type FinanceSummary, type Payout, type PayoutDetail, type DoctorEarnings, type Invoice, type Dispute,
   type DisputeDetail, type CommissionConfigView,
 } from '@/services/telemedAdminFinanceService';
@@ -12,6 +12,7 @@ import {
   btn, th, td, input, label, select, fmtDate,
 } from '../_ui';
 import { colors } from '@/components/ui/vuexy';
+import { toCsvColumns, downloadCsv, fetchAllPages } from '@/lib/csv';
 
 type Section = 'payouts' | 'earnings' | 'invoices' | 'disputes' | 'commission';
 const SECTIONS: { key: Section; label: string }[] = [
@@ -84,7 +85,8 @@ export default function TelemedFinancePage() {
       />
       <TelemedTabs active="finance" />
       <DisclosureNote>
-        Read-only oversight. Nothing on this page moves money, edits a payout, or posts to the ledger. Consult
+        Payout approve/hold, dispute resolution and commission overrides are audited decisions; none of them posts
+        to the ledger (the doctor&apos;s wallet was debited when the payout was requested). Consult
         figures are derived from completed appointments with the fixed 85/15 settlement split; the ledger remains
         the source of truth for balances. Bank account numbers are shown as the last four digits only.
       </DisclosureNote>
@@ -152,9 +154,42 @@ function PayoutsSection({ from, to }: { from: string; to: string }) {
     [status, doctorApplied, from, to, offset],
   );
   const rows = data?.items ?? [];
+  const [exporting, setExporting] = useState(false);
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const all = await fetchAllPages((limit, off) => listPayouts({
+        status: status || undefined, doctor_user_id: doctorApplied || undefined,
+        from: from || undefined, to: to || undefined, limit, offset: off,
+      }));
+      // Amounts stay integer kobo in the file so no float rounding leaks into finance reconciliations.
+      downloadCsv(`telemedicine-payouts-${new Date().toISOString().slice(0, 10)}.csv`, toCsvColumns(all, [
+        { header: 'id', value: (p) => p.id },
+        { header: 'ref', value: (p) => p.ref },
+        { header: 'doctor_user_id', value: (p) => p.doctor_user_id },
+        { header: 'doctor_name', value: (p) => p.doctor_name },
+        { header: 'amount_kobo', value: (p) => p.amount_kobo },
+        { header: 'currency', value: (p) => p.currency },
+        { header: 'status', value: (p) => p.status },
+        { header: 'held_at', value: (p) => p.held_at },
+        { header: 'consult_count', value: (p) => p.consult_count },
+        { header: 'requested_at', value: (p) => p.requested_at },
+        { header: 'paid_at', value: (p) => p.paid_at },
+        { header: 'bank_account_last4', value: (p) => p.bank_account.account_last4 },
+        { header: 'open_disputes', value: (p) => p.open_disputes },
+      ]));
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
-    <Card title="Payouts" right={<button style={btn()} onClick={reload}>Reload</button>}>
+    <Card title="Payouts" right={<div style={{ display: 'flex', gap: '0.4rem' }}>
+      <button style={btn()} disabled={exporting} onClick={exportCsv}>{exporting ? 'Exporting…' : 'Export CSV'}</button>
+      <button style={btn()} onClick={reload}>Reload</button>
+    </div>}>
       <FilterBar>
         <div>
           <label style={label()}>Status</label>
@@ -192,7 +227,7 @@ function PayoutsSection({ from, to }: { from: string; to: string }) {
         </table>
         <Pager total={data?.total ?? 0} offset={offset} onChange={setOffset} />
       </StateBlock>
-      {openId && <PayoutDetailPanel id={openId} onClose={() => setOpenId(null)} />}
+      {openId && <PayoutDetailPanel id={openId} onClose={() => setOpenId(null)} onChanged={reload} />}
     </Card>
   );
 }
@@ -206,8 +241,29 @@ function KV({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-function PayoutDetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
-  const { data, loading, error } = useLoader<PayoutDetail>(() => getPayout(id), [id]);
+/** Runs one decision, surfacing its error inline and refreshing on success. */
+function useDecision(onDone: () => void) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true); setErr(null);
+    try { await fn(); onDone(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+  return { busy, err, run };
+}
+
+function PayoutDetailPanel({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
+  const { data, loading, error, reload } = useLoader<PayoutDetail>(() => getPayout(id), [id]);
+  const decide = useDecision(() => { reload(); onChanged(); });
+  const approve = () => {
+    if (!window.confirm('Approve this payout for disbursement? It moves to processing.')) return;
+    decide.run(() => approvePayout(id));
+  };
+  const hold = () => {
+    const reason = window.prompt('Reason for holding this payout')?.trim();
+    if (reason) decide.run(() => holdPayout(id, reason));
+  };
   return (
     <div style={{ marginTop: '1rem', padding: '1rem', border: `1px solid ${colors.border}`, borderRadius: '0.5rem', background: colors.bg }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
@@ -227,6 +283,15 @@ function PayoutDetailPanel({ id, onClose }: { id: string; onClose: () => void })
             <KV k="Ledger ref" v={data.ledger_ref} />
             <KV k="Provider reference" v={data.provider_reference} />
             {data.failure_reason && <KV k="Failure reason" v={data.failure_reason} />}
+            {data.held_at && <KV k="On hold" v={`${fmtDate(data.held_at)} — ${data.hold_reason ?? ''}`} />}
+            {data.approved_at && <KV k="Approved" v={fmtDate(data.approved_at)} />}
+            {data.status === 'pending' && (
+              <div style={{ display: 'flex', gap: '0.5rem', margin: '0.6rem 0' }}>
+                <button style={btn()} disabled={decide.busy} onClick={approve}>Approve</button>
+                {!data.held_at && <button style={btn()} disabled={decide.busy} onClick={hold}>Hold</button>}
+              </div>
+            )}
+            {decide.err && <p style={{ color: '#9a3412', fontSize: '0.82rem' }}>{decide.err}</p>}
             <div style={{ marginTop: '0.6rem', fontWeight: 600, fontSize: '0.85rem' }}>Disputes ({data.disputes.length})</div>
             {data.disputes.length === 0 ? <p style={{ color: colors.muted, fontSize: '0.82rem' }}>None.</p> : data.disputes.map((d) => (
               <div key={d.id} style={{ fontSize: '0.82rem', padding: '0.25rem 0' }}>
@@ -330,8 +395,8 @@ function DisputesSection() {
   return (
     <Card title="Settlement disputes" right={<button style={btn()} onClick={reload}>Reload</button>}>
       <DisclosureNote>
-        Disputes are raised by doctors from the app and only have an “open” state today, so this queue is
-        read-only. Resolve them with the doctor and finance outside this console.
+        Disputes are raised by doctors from the app. Closing one records the decision only; any money correction
+        is a separate reversing ledger entry made by finance.
       </DisclosureNote>
       <FilterBar>
         <div>
@@ -339,6 +404,8 @@ function DisputesSection() {
           <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
             <option value="open">Open</option>
+            <option value="resolved">Resolved</option>
+            <option value="rejected">Rejected</option>
           </select>
         </div>
       </FilterBar>
@@ -361,13 +428,18 @@ function DisputesSection() {
         </table>
         <Pager total={data?.total ?? 0} offset={offset} onChange={setOffset} />
       </StateBlock>
-      {openId && <DisputeDetailPanel id={openId} onClose={() => setOpenId(null)} />}
+      {openId && <DisputeDetailPanel id={openId} onClose={() => setOpenId(null)} onChanged={reload} />}
     </Card>
   );
 }
 
-function DisputeDetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
-  const { data, loading, error } = useLoader<DisputeDetail>(() => getDispute(id), [id]);
+function DisputeDetailPanel({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
+  const { data, loading, error, reload } = useLoader<DisputeDetail>(() => getDispute(id), [id]);
+  const decide = useDecision(() => { reload(); onChanged(); });
+  const close = (outcome: 'resolved' | 'rejected') => {
+    const note = window.prompt(`Note for marking this dispute ${outcome}`)?.trim();
+    if (note) decide.run(() => resolveDispute(id, outcome, note));
+  };
   return (
     <div style={{ marginTop: '1rem', padding: '1rem', border: `1px solid ${colors.border}`, borderRadius: '0.5rem', background: colors.bg }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
@@ -381,6 +453,13 @@ function DisputeDetailPanel({ id, onClose }: { id: string; onClose: () => void }
             <KV k="Reason" v={data.reason} />
             <KV k="Raised" v={fmtDate(data.created_at)} />
             <KV k="Last updated" v={fmtDate(data.updated_at)} />
+            {data.status === 'open' && (
+              <div style={{ display: 'flex', gap: '0.5rem', margin: '0.6rem 0' }}>
+                <button style={btn()} disabled={decide.busy} onClick={() => close('resolved')}>Mark resolved</button>
+                <button style={btn()} disabled={decide.busy} onClick={() => close('rejected')}>Reject</button>
+              </div>
+            )}
+            {decide.err && <p style={{ color: '#9a3412', fontSize: '0.82rem' }}>{decide.err}</p>}
             {Object.keys(data.detail).length > 0 && (
               <pre style={{ margin: '0.5rem 0', padding: '0.6rem', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: '0.375rem', fontSize: '0.75rem', overflowX: 'auto' }}>
                 {JSON.stringify(data.detail, null, 2)}
@@ -402,6 +481,47 @@ function DisputeDetailPanel({ id, onClose }: { id: string; onClose: () => void }
   );
 }
 
+const CYCLES = ['weekly', 'biweekly', 'monthly'] as const;
+
+/** Percent text ("12.5") to integer basis points; null when out of 0–100%. */
+function percentToBps(v: string): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+  return Math.round(n * 100);
+}
+
+function CommissionEditor({ onSaved }: { onSaved: () => void }) {
+  const [doctor, setDoctor] = useState('');
+  const [commission, setCommission] = useState('15');
+  const [vat, setVat] = useState('7.5');
+  const [cycle, setCycle] = useState<(typeof CYCLES)[number]>('biweekly');
+  const decide = useDecision(onSaved);
+  const save = () => {
+    const c = percentToBps(commission);
+    const v = percentToBps(vat);
+    if (!doctor || c === null || v === null) { window.alert('Enter a doctor user id and percentages between 0 and 100.'); return; }
+    decide.run(() => updateCommission(doctor, { commission_bps: c, vat_bps: v, payout_cycle: cycle }));
+  };
+  return (
+    <FilterBar>
+      <div style={{ minWidth: 280 }}>
+        <label style={label()}>Doctor user id</label>
+        <input style={input()} value={doctor} onChange={(e) => setDoctor(e.target.value.trim())} placeholder="UUID" />
+      </div>
+      <div><label style={label()}>Commission %</label><input style={input()} value={commission} onChange={(e) => setCommission(e.target.value)} /></div>
+      <div><label style={label()}>VAT %</label><input style={input()} value={vat} onChange={(e) => setVat(e.target.value)} /></div>
+      <div>
+        <label style={label()}>Payout cycle</label>
+        <select style={select()} value={cycle} onChange={(e) => setCycle(e.target.value as (typeof CYCLES)[number])}>
+          {CYCLES.map((x) => <option key={x} value={x}>{x}</option>)}
+        </select>
+      </div>
+      <button style={btn()} disabled={decide.busy} onClick={save}>Save override</button>
+      {decide.err && <span style={{ color: '#9a3412', fontSize: '0.82rem' }}>{decide.err}</span>}
+    </FilterBar>
+  );
+}
+
 function CommissionSection() {
   const { data, loading, error, reload } = useLoader<CommissionConfigView>(() => getCommissionConfig(), []);
   const overrides = data?.overrides ?? [];
@@ -414,6 +534,7 @@ function CommissionSection() {
               <Kpi label="Platform commission" value={bpsToPercent(data.platform_commission_bps)} sub="Fixed 85/15 settlement split" />
               <Kpi label="Doctor share" value={bpsToPercent(data.doctor_share_bps)} />
             </div>
+            <CommissionEditor onSaved={reload} />
             <div style={{ fontWeight: 600, fontSize: '0.88rem', marginBottom: '0.4rem' }}>Per-doctor stored configuration ({overrides.length})</div>
             <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', color: colors.muted }}>
               These rows are what the doctor app displays on its earnings screen. Settlement itself uses the platform rate above.

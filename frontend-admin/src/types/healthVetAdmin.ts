@@ -97,6 +97,8 @@ export type VcnApplication = {
   vcn_verified: boolean; // VCN licence check passed (HL-2)
   licence_expires_at: string | null; // drives auto-suspend (HL-2)
   docs: VcnCredentialDoc[];
+  /** Latest credential verification record — the id POST /verification/:id/decision takes. */
+  verification_record_id?: string | null;
   submitted_at: string | null;
   created_at: string;
 };
@@ -240,6 +242,7 @@ export type ModerationItem = {
   summary: string;
   severity: ModerationSeverity;
   status: ModerationStatus;
+  subject_id?: string; // provider id the item is about
   vcn_licence_no: string | null; // surfaced where a credential claim is in question
   reporter_masked: string | null;
   created_at: string;

@@ -463,3 +463,53 @@ BEGIN
 
     RETURN QUERY SELECT v_returned_status, v_returned_deposit;
 END $$;
+
+-- ─── privileges and row visibility ────────────────────────────────────────────
+--
+-- The two writers are the only doors into the ledger. A SECURITY DEFINER function is executable by
+-- PUBLIC until told otherwise, so both are revoked from anon/authenticated and handed back explicitly;
+-- the trigger guards are never meant to be called by hand at all. Direct DML is withdrawn from the
+-- PostgREST roles for the same reason: a raw INSERT would skip the audit row the writers pair with the
+-- lease (ESTD-D040), and direct DELETE would skip the deletion guard's reasoning.
+REVOKE ALL ON FUNCTION estate_lease_record(UUID, UUID, UUID, UUID, UUID, UUID, DATE, DATE, BIGINT, TEXT, BIGINT, TEXT)
+    FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION estate_lease_disposition(UUID, UUID, UUID, TEXT, TEXT, TEXT)
+    FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION estate_lease_record(UUID, UUID, UUID, UUID, UUID, UUID, DATE, DATE, BIGINT, TEXT, BIGINT, TEXT)
+    TO service_role, authenticated;
+GRANT EXECUTE ON FUNCTION estate_lease_disposition(UUID, UUID, UUID, TEXT, TEXT, TEXT)
+    TO service_role, authenticated;
+
+REVOKE ALL ON FUNCTION estate_enforce_lease_integrity() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION estate_block_lease_deletion() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION estate_enforce_lease_receivable() FROM PUBLIC, anon, authenticated;
+
+ALTER TABLE estate_leases ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+    -- The parties to the agreement and the estate's admins can read it. Nothing else gets a policy:
+    -- writes go through the two functions above, which run as the definer.
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public'
+                   AND tablename = 'estate_leases' AND policyname = 'estate_leases_select') THEN
+        CREATE POLICY "estate_leases_select" ON estate_leases FOR SELECT TO authenticated
+            USING (
+                tenant_id = auth.uid()
+                OR landlord_id = auth.uid()
+                OR EXISTS (
+                    SELECT 1 FROM estate_residents er
+                    WHERE er.estate_id = estate_leases.estate_id
+                      AND er.user_id = auth.uid()
+                      AND er.role = 'estate_admin'
+                      AND er.deleted_at IS NULL
+                      AND er.banned_at IS NULL
+                )
+            );
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public'
+                   AND tablename = 'estate_leases' AND policyname = 'estate_leases_service') THEN
+        CREATE POLICY "estate_leases_service" ON estate_leases TO service_role
+            USING (TRUE) WITH CHECK (TRUE);
+    END IF;
+END $$;
+
+REVOKE INSERT, UPDATE, DELETE ON estate_leases FROM anon, authenticated;

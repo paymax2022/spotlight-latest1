@@ -12,6 +12,7 @@
 
 import { apiV1 } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
+import { operationKey } from './idempotency';
 
 export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_TELEMEDICINE_ADMIN_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
@@ -312,40 +313,121 @@ const CONSULTS: ConsultationRecord[] = [
   { id: 'cns_7689', patient_masked: 'Tunde B•••', clinician_name: 'Dr. Bola A.', specialty: 'Paediatrics', status: 'cancelled', fee_kobo: 7_500_00, scheduled_at: iso(8), prescription_issued: false, created_at: iso(20) },
   { id: 'cns_7701', patient_masked: 'Aisha M•••', clinician_name: 'Dr. Chuka E.', specialty: 'Dermatology', status: 'booked', fee_kobo: 8_000_00, scheduled_at: iso(-26), prescription_issued: false, created_at: iso(2) },
 ];
-export async function listConsultations(opts?: { status?: string; q?: string }): Promise<ConsultationRecord[]> {
-  if (USE_MOCK) {
-    await delay();
-    let rows = [...CONSULTS];
-    if (opts?.status) rows = rows.filter((c) => c.status === opts.status);
-    if (opts?.q) { const q = opts.q.toLowerCase(); rows = rows.filter((c) => c.clinician_name.toLowerCase().includes(q) || c.patient_masked.toLowerCase().includes(q) || c.id.includes(q)); }
-    return rows;
-  }
-  const qs = new URLSearchParams();
-  qs.set('limit', '200');
-  if (opts?.status) qs.set('status', opts.status);
-  const raw = await getJson<RawAdminAppointment[]>(`/appointments?${qs.toString()}`);
-  let rows: ConsultationRecord[] = raw.map((a) => ({
+export interface ConsultationQuery {
+  status?: string;
+  /** id/ref prefix or doctor-name substring, matched server-side. */
+  search?: string;
+  /** Inclusive start date (YYYY-MM-DD, UTC). */
+  from?: string;
+  /** Exclusive end date (YYYY-MM-DD, UTC). */
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+function mapConsult(a: RawAdminAppointment): ConsultationRecord {
+  return {
     id: a.id,
-    // The backend returns patient_id (a UUID), never a name — platform_users
-    // has no FK to auth.users in this schema, so it cannot be safely joined
-    // here either (see the repo's platform-users-fk-cleanup-gotcha note).
-    // Masking the id itself, rather than fabricating a display name.
+    // The backend returns patient_id (a UUID), never a name; mask the id
+    // rather than fabricate a display name.
     patient_masked: maskPatientId(a.patient_id),
     clinician_name: a.doctor_name || 'Unknown',
-    // Not returned by GET /admin/appointments (would need a doctor join for
-    // specialty too) — empty rather than fabricated.
     specialty: a.specialty ?? '',
     status: (a.status as ConsultStatus) ?? 'booked',
     fee_kobo: a.fee_kobo,
     scheduled_at: a.scheduled_at,
-    // Not returned by GET /admin/appointments — false rather than fabricated
-    // (there is no prescription-issued flag on this list endpoint).
     prescription_issued: a.prescription_issued ?? false,
     created_at: a.created_at,
-  }));
-  if (opts?.q) {
-    const q = opts.q.toLowerCase();
-    rows = rows.filter((c) => c.clinician_name.toLowerCase().includes(q) || c.patient_masked.toLowerCase().includes(q) || c.id.includes(q));
+  };
+}
+
+const dayStart = (d: string) => `${d}T00:00:00Z`;
+
+/** One server-side page of the system-wide appointment list. */
+export async function listConsultations(opts: ConsultationQuery = {}): Promise<{ items: ConsultationRecord[]; total: number }> {
+  const limit = opts.limit ?? 25;
+  const offset = opts.offset ?? 0;
+  if (USE_MOCK) {
+    await delay();
+    let rows = [...CONSULTS];
+    if (opts.status) rows = rows.filter((c) => c.status === opts.status);
+    if (opts.search) { const q = opts.search.toLowerCase(); rows = rows.filter((c) => c.clinician_name.toLowerCase().includes(q) || c.id.includes(q)); }
+    return { items: rows.slice(offset, offset + limit), total: rows.length };
   }
-  return rows;
+  const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (opts.status) qs.set('status', opts.status);
+  if (opts.search?.trim()) qs.set('search', opts.search.trim());
+  if (opts.from) qs.set('from', dayStart(opts.from));
+  if (opts.to) qs.set('to', dayStart(opts.to));
+  const res = await fetch(`${adminBase()}/appointments?${qs.toString()}`, { headers: authHeaders() });
+  if (!res.ok) {
+    let msg = `Request failed (${res.status})`;
+    try { const j = await res.json(); if (j?.error) msg = String(j.error); } catch { /* keep default */ }
+    throw new Error(msg);
+  }
+  const j = (await res.json()) as { data?: RawAdminAppointment[]; total?: number };
+  const raw = j.data ?? [];
+  return { items: raw.map(mapConsult), total: j.total ?? raw.length };
+}
+
+export interface ConsultationAudit { action: string; actor_id: string; at: string; detail: Record<string, unknown> }
+export interface ConsultationDetail extends ConsultationRecord {
+  ref: string;
+  notes: string;
+  doctor_id: string;
+  doctor_user_id: string;
+  platform_fee_kobo: number;
+  total_kobo: number;
+  consultation_type: string;
+  settlement_status: string;
+  audit: ConsultationAudit[];
+}
+
+export async function getConsultation(id: string): Promise<ConsultationDetail> {
+  if (USE_MOCK) throw new Error('Consultation detail needs the live backend (mock mode is on).');
+  const raw = await getJson<RawAdminAppointment & {
+    ref: string; notes: string; doctor_user_id: string; settlement_status: string; audit: ConsultationAudit[];
+  }>(`/appointments/${encodeURIComponent(id)}`);
+  return {
+    ...mapConsult(raw),
+    ref: raw.ref,
+    notes: raw.notes,
+    doctor_id: raw.doctor_id,
+    doctor_user_id: raw.doctor_user_id,
+    platform_fee_kobo: raw.platform_fee_kobo,
+    total_kobo: raw.total_kobo,
+    consultation_type: raw.consultation_type ?? '',
+    settlement_status: raw.settlement_status,
+    audit: raw.audit ?? [],
+  };
+}
+
+async function postAction<T>(path: string, key: string, body: unknown): Promise<T> {
+  const res = await fetch(`${adminBase()}${path}`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json', 'Idempotency-Key': key },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let msg = `Request failed (${res.status})`;
+    if (res.status === 403) msg = 'You do not have permission to act on consultations (telemedicine.admin.manage).';
+    else { try { const j = await res.json(); if (j?.error) msg = String(j.error); } catch { /* keep default */ } }
+    throw new Error(msg);
+  }
+  const j = await res.json();
+  return (j?.data ?? j) as T;
+}
+
+export interface ConsultationActionResult { action: string; appointment_id: string; status: string; refunded: boolean; doctor_id?: string; replayed: boolean }
+
+/** Cancels and refunds the escrow. Keyed on the appointment so a double-click dedupes server-side. */
+export function cancelConsultation(id: string, reason: string): Promise<ConsultationActionResult> {
+  if (USE_MOCK) return Promise.reject(new Error('Cancelling needs the live backend (mock mode is on).'));
+  return postAction(`/appointments/${encodeURIComponent(id)}/cancel`, operationKey('telemed:appointment-cancel', id), { reason });
+}
+
+export function reassignConsultation(id: string, doctorId: string, reason: string): Promise<ConsultationActionResult> {
+  if (USE_MOCK) return Promise.reject(new Error('Reassigning needs the live backend (mock mode is on).'));
+  return postAction(`/appointments/${encodeURIComponent(id)}/reassign`,
+    operationKey('telemed:appointment-reassign', id, doctorId, Date.now()), { doctor_id: doctorId, reason });
 }

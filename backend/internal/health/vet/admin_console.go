@@ -8,8 +8,8 @@ package healthvet
 // Honesty rules, same as AdminDashboard:
 //   - owners are masked (HL-8): "Owner ····" + the last four of the id; vets show
 //     their professional display name, never contact details;
-//   - a field the backend has no source for is omitted or zero, not invented —
-//     there is no vet moderation store, so ListModeration answers an empty list;
+//   - a field the backend has no source for is omitted or zero, not invented
+//     (the moderation queue lives in admin_governance.go);
 //   - the payout view is DERIVED from the escrow legs (vet_appointment_payments
 //     RELEASED) and the commission rows already recorded; payout decisions are
 //     an append-only attestation in admin_payouts.go (vet_payout_decisions).
@@ -138,15 +138,22 @@ type AdminConsoleVCN struct {
 	VCNVerified      bool       `json:"vcn_verified"`
 	LicenceExpiresAt *time.Time `json:"licence_expires_at"`
 	Docs             []string   `json:"docs"`
-	SubmittedAt      *time.Time `json:"submitted_at"`
-	CreatedAt        time.Time  `json:"created_at"`
+	// VerificationRecordID is the latest health_verification_records row for the
+	// vet's application — the id POST /verification/:recordId/decision takes.
+	VerificationRecordID *string    `json:"verification_record_id"`
+	SubmittedAt          *time.Time `json:"submitted_at"`
+	CreatedAt            time.Time  `json:"created_at"`
 }
 
 func (s *Service) AdminConsoleVCN(ctx context.Context) ([]AdminConsoleVCN, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT hp.id::text, hp.display_name,
 		       COALESCE(dv.profile_draft->'draft'->'affiliations'->0->>'name',''),
-		       COALESCE(dv.licence_number,''), hp.status, COALESCE(dv.verification,''), hp.created_at
+		       COALESCE(dv.licence_number,''), hp.status, COALESCE(dv.verification,''), hp.created_at,
+		       (SELECT r.id::text FROM health_verification_records r
+		        JOIN health_provider_applications a ON a.id = r.provider_application_id
+		        WHERE a.owner_user_id = hp.owner_user_id AND a.domain = 'VET'
+		        ORDER BY r.created_at DESC LIMIT 1)
 		FROM health_providers hp
 		LEFT JOIN doctor_vet_profiles dv ON dv.user_id = hp.owner_user_id
 		WHERE hp.domain='VET'
@@ -159,7 +166,7 @@ func (s *Service) AdminConsoleVCN(ctx context.Context) ([]AdminConsoleVCN, error
 	for rows.Next() {
 		var v AdminConsoleVCN
 		var status, verification string
-		if err := rows.Scan(&v.ID, &v.VetNameMasked, &v.ClinicName, &v.VCNLicenceNo, &status, &verification, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.VetNameMasked, &v.ClinicName, &v.VCNLicenceNo, &status, &verification, &v.CreatedAt, &v.VerificationRecordID); err != nil {
 			return nil, err
 		}
 		v.Specialties, v.Docs = []string{}, []string{}
@@ -520,12 +527,6 @@ func (h *Handler) AdminConsoleServices(c *gin.Context) {
 func (h *Handler) AdminConsolePayouts(c *gin.Context) {
 	d, err := h.svc.AdminConsolePayouts(c.Request.Context())
 	consoleOK(c, d, err)
-}
-
-// AdminConsoleModeration: there is no vet moderation store, so the honest
-// answer is an empty queue, not a fabricated one.
-func (h *Handler) AdminConsoleModeration(c *gin.Context) {
-	c.JSON(200, gin.H{"success": true, "data": []any{}})
 }
 
 func (h *Handler) AdminConsoleReporting(c *gin.Context) {

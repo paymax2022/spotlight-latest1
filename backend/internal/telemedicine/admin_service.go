@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -669,8 +669,8 @@ type AdminAppointment struct {
 // appointment list.
 type AdminAppointmentListQuery struct {
 	Status string `form:"status"`
-	From   string `form:"from"` // RFC3339; filters scheduled_at >= From
-	To     string `form:"to"`   // RFC3339; filters scheduled_at <  To
+	From   string `form:"from"`   // RFC3339; filters scheduled_at >= From
+	To     string `form:"to"`     // RFC3339; filters scheduled_at <  To
 	Search string `form:"search"` // id/ref prefix or doctor-name substring
 	Limit  int    `form:"limit,default=20"`
 	Offset int    `form:"offset,default=0"`
