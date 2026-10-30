@@ -159,3 +159,28 @@ export function useProviderManifest(scheduleId?: string) {
     staleTime: 10_000,
   });
 }
+
+// Boarding scan: never retried automatically (a replay of a successful scan
+// would read back as "already boarded" and confuse the operator).
+export function useValidateBoarding(scheduleId?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (qrCode: string) => provider.validateBoarding(qrCode),
+    retry: false,
+    onSuccess: () => {
+      if (scheduleId) qc.invalidateQueries({ queryKey: [BUS_KEY, PROV_KEY, 'manifest', scheduleId] });
+    },
+  });
+}
+
+export function useCancelSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scheduleId, reason }: { scheduleId: string; reason: string }) => provider.cancelSchedule(scheduleId, reason),
+    retry: false,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [BUS_KEY, PROV_KEY] });
+      qc.invalidateQueries({ queryKey: [BUS_KEY, MKT_KEY] });
+    },
+  });
+}

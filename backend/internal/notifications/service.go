@@ -48,6 +48,9 @@ const (
 	// app/health_reminder_jobs.go).
 	EventAppointmentReminder Event = "health.appointment.reminder"
 	EventVaccinationReminder Event = "health.vet.vaccination.reminder"
+	// EventTransportUpdate carries mobility notifications (scheduled reminders,
+	// dispatch failures, parcel insurance refunds); the sub-kind is in Data["event"].
+	EventTransportUpdate Event = "transport.update"
 )
 
 // Notification is the payload enqueued for delivery.

@@ -182,9 +182,14 @@ export async function getConsult(id: string): Promise<VetConsult> {
   return data;
 }
 
-export async function startConsult(id: string): Promise<VetConsult> {
-  const { data } = await api.post<VetConsult>(`${VET_API}/consults/${id}/start`, {});
-  return data;
+/** POST /consults/:appointmentId/start answers {appointment: {consult_id, …}}
+ *  (healthvet.Handler.StartConsult), not a VetConsult — read the consult back. */
+export async function startConsult(appointmentId: string): Promise<VetConsult> {
+  const { data } = await api.post<{ appointment?: { consult_id?: string | null } }>(
+    `${VET_API}/consults/${appointmentId}/start`,
+    {},
+  );
+  return getConsult(data?.appointment?.consult_id || appointmentId);
 }
 
 export async function sendConsultMessage(consultId: string, body: string): Promise<VetConsultMessage> {
@@ -402,6 +407,13 @@ export async function saveSoapNote(input: SaveSoapInput): Promise<{ ok: true; su
 
 export async function issuePrescription(input: IssueRxInput): Promise<EPrescription> {
   const { data } = await api.post<EPrescription>(`${VET_API}/provider/prescriptions`, input);
+  return data;
+}
+
+/** Owner-side lab request (POST /lab-requests): the pet owner asks for tests on their
+ *  own confirmed appointment. /provider/lab-orders is vet-only and 403s for owners. */
+export async function requestLabForPet(input: OrderLabInput): Promise<{ ok: true; labOrderId: string }> {
+  const { data } = await api.post<{ ok: true; labOrderId: string }>(`${VET_API}/lab-requests`, input);
   return data;
 }
 

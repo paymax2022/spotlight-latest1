@@ -79,7 +79,9 @@ describe('tierLabel / moduleLabel', () => {
 describe('mapEarningStatus', () => {
   it('maps engine statuses onto ledger states, case-insensitively', () => {
     assert.equal(mapEarningStatus('PENDING'), 'pending');
-    assert.equal(mapEarningStatus('credited'), 'paid');
+    // CREDITED = credited to the referral balance (still withdrawable), not paid out.
+    assert.equal(mapEarningStatus('credited'), 'earned');
+    assert.equal(mapEarningStatus('paid'), 'paid');
     assert.equal(mapEarningStatus('reversed'), 'clawed_back');
     assert.equal(mapEarningStatus('weird'), 'earned');
   });

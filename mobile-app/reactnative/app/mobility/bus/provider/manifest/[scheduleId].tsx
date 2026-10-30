@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Armchair, Phone } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -9,10 +9,14 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
+import PrimaryButton from '@/components/PrimaryButton';
+import TextInputField from '@/components/TextInputField';
+import { confirmAsync } from '@/lib/confirm';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
-import { useProviderManifest } from '@/features/mobility/hooks/useBusMarketplace';
+import { useProviderManifest, useCancelSchedule } from '@/features/mobility/hooks/useBusMarketplace';
+import { scheduleCancelCopy } from '@/features/mobility/utils/busBoarding';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { BusManifestEntry } from '@/features/mobility/types/busProvider.types';
 
@@ -26,6 +30,13 @@ export default function BusProviderManifestScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Departure manifest" subtitle={manifest.data ? `${manifest.data.length} booked · ${paidCount} paid` : undefined} />
+      <View style={styles.actions}>
+        <PrimaryButton
+          label="Scan tickets to board"
+          onPress={() => router.push({ pathname: '/mobility/bus/provider/scan', params: { scheduleId } })}
+        />
+        <CancelDeparture scheduleId={scheduleId} />
+      </View>
       {manifest.isLoading ? (
         <StateView kind="loading" message="Loading manifest…" />
       ) : manifest.isError ? (
@@ -42,6 +53,59 @@ export default function BusProviderManifestScreen() {
         </ScrollView>
       )}
     </SafeAreaView>
+  );
+}
+
+// Cancelling refunds every active ticket server-side (resumable). The summary
+// shown is the server's count — it never claims a refund that has not posted.
+function CancelDeparture({ scheduleId }: { scheduleId?: string }) {
+  const cancel = useCancelSchedule();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const summary = cancel.data ? scheduleCancelCopy(cancel.data) : null;
+
+  const submit = async () => {
+    if (!scheduleId) return;
+    const ok = await confirmAsync({
+      title: 'Cancel this departure?',
+      message: 'Every booked passenger will be refunded and the departure removed from search. This cannot be undone.',
+      confirmLabel: 'Cancel departure',
+      cancelLabel: 'Keep departure',
+      destructive: true,
+    });
+    if (!ok) return;
+    setError(null);
+    try {
+      await cancel.mutateAsync({ scheduleId, reason: reason.trim() });
+      setOpen(false);
+    } catch (e) {
+      const err = e as { response?: { data?: { error?: unknown } }; message?: string };
+      const msg = err?.response?.data?.error;
+      setError(typeof msg === 'string' ? msg : err?.message ?? 'Could not cancel this departure.');
+    }
+  };
+
+  if (summary) {
+    // A partial result (refunds still processing) can be resumed by re-calling.
+    return (
+      <View style={[styles.notice, summary.tone === 'success' ? styles.noticeOk : styles.noticeWarn]}>
+        <Text style={styles.noticeText}>{summary.text}</Text>
+        {!cancel.data!.complete ? (
+          <PrimaryButton label="Retry pending refunds" variant="secondary" loading={cancel.isPending}
+            onPress={() => scheduleId && cancel.mutate({ scheduleId, reason: reason.trim() })} />
+        ) : null}
+      </View>
+    );
+  }
+  if (!open) return <PrimaryButton label="Cancel departure" variant="ghost" onPress={() => setOpen(true)} />;
+  return (
+    <View style={styles.cancelBox}>
+      <TextInputField label="Reason (shared with passengers)" placeholder="e.g. Bus breakdown" value={reason} onChangeText={setReason} />
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      <PrimaryButton label="Cancel departure and refund" variant="danger" loading={cancel.isPending} disabled={!reason.trim()} onPress={submit} />
+      <PrimaryButton label="Keep departure" variant="ghost" onPress={() => { setOpen(false); setError(null); }} />
+    </View>
   );
 }
 
@@ -71,6 +135,13 @@ function ManifestRow({ entry }: { entry: BusManifestEntry }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
+  actions: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, gap: Spacing.sm },
+  cancelBox: { gap: Spacing.sm, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.outlineVariant },
+  errorText: { ...Typography.bodySm, color: Colors.error },
+  notice: { borderRadius: Radius.lg, padding: Spacing.md, gap: Spacing.sm },
+  noticeOk: { backgroundColor: Colors.iconBgTeal },
+  noticeWarn: { backgroundColor: Colors.iconBgGold },
+  noticeText: { ...Typography.bodyMd, color: Colors.onSurface },
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.xl, gap: Spacing.sm },
   row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.outlineVariant },
   seatBox: { width: 52, height: 52, borderRadius: Radius.md, backgroundColor: Colors.primaryFixed, alignItems: 'center', justifyContent: 'center' },

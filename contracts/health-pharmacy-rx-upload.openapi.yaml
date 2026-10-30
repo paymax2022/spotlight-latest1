@@ -1,0 +1,87 @@
+openapi: 3.0.3
+info:
+  title: Health pharmacy — patient prescription uploads
+  version: 1.0.0
+  description: >
+    Two-step presigned upload: presign a PUT scoped to pharmacy-rx/<caller>/, PUT the bytes
+    to R2 with exactly the returned Content-Type, then record the object. An upload is
+    review evidence only; it never satisfies the HL-3 verified e-Rx dispense gate.
+    GET /prescriptions additionally returns the caller's uploads under `uploads`.
+servers:
+  - url: /api/finance/health/pharmacy
+paths:
+  /prescriptions/upload/presign:
+    post:
+      operationId: presignPharmacyRxUpload
+      summary: Presign an R2 PUT for a prescription photo or PDF
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content_type]
+              properties:
+                file_name: { type: string, description: Extension must be jpg/jpeg/png/webp/heic/pdf }
+                content_type:
+                  type: string
+                  enum: [image/jpeg, image/png, image/webp, image/heic, application/pdf]
+      responses:
+        '200':
+          description: Presigned PUT (expires in 600s)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  presign:
+                    type: object
+                    properties:
+                      upload_url: { type: string }
+                      storage_key: { type: string }
+                      content_type: { type: string }
+                      method: { type: string, enum: [PUT] }
+                      expires_in: { type: integer }
+        '400': { description: Invalid body, content type or extension }
+        '401': { description: Unauthenticated }
+        '503': { description: R2 uploads are not configured }
+  /prescriptions/upload:
+    post:
+      operationId: recordPharmacyRxUpload
+      summary: Record an uploaded prescription (state VERIFYING); idempotent on storage_key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [storage_key, content_type, patient_name]
+              properties:
+                storage_key: { type: string, description: Must be under pharmacy-rx/<caller>/ }
+                content_type: { type: string }
+                patient_name: { type: string, minLength: 1, maxLength: 120 }
+                note: { type: string, maxLength: 1000 }
+      responses:
+        '201':
+          description: Upload recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  upload: { $ref: '#/components/schemas/RxUpload' }
+        '400': { description: Key out of scope, bad content type, or field length }
+        '401': { description: Unauthenticated }
+components:
+  schemas:
+    RxUpload:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        patient_name: { type: string }
+        note: { type: string }
+        content_type: { type: string }
+        state: { type: string, enum: [VERIFYING, VERIFIED, REJECTED] }
+        created_at: { type: string, format: date-time }

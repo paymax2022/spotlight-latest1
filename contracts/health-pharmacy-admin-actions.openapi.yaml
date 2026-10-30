@@ -1,0 +1,178 @@
+openapi: 3.0.3
+info:
+  title: Health pharmacy — admin console write actions
+  version: 1.0.0
+  description: >
+    Admin writes behind RequireAuthContext + per-route RBAC, audited (HL-12). None moves money.
+    Envelope {success, data}. 400 = unsupported action / invalid input, 404 = target missing
+    (or not a PHARMACY application), 503 = provider-review seam not wired.
+servers:
+  - url: /api/health/pharmacy/admin
+paths:
+  /pcn/applications/{id}/decision:
+    post:
+      operationId: adminDecidePharmacyPcnApplication
+      summary: Decide a PHARMACY provider application (RBAC health.admin.providers)
+      description: >
+        Delegates to the shared provider-review service (same FSM + capability grant as
+        /api/health/admin/providers/applications/{id}/decision). suspend / reinstate are not
+        supported by that service yet and answer 400.
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, reject, need_info] }
+                note: { type: string }
+      responses:
+        '200':
+          description: Decision applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      status: { type: string }
+                      capability_granted: { type: boolean }
+                      audit_id: { type: string }
+                      message: { type: string }
+        '400': { description: Malformed id/body or unsupported decision }
+        '401': { description: Unauthenticated }
+        '403': { description: Missing permission }
+        '404': { description: Application missing or not a PHARMACY application }
+        '409': { description: Illegal transition for the application's current state }
+        '503': { description: Provider review not available }
+  /catalog/{id}/govern:
+    post:
+      operationId: adminGovernPharmacyCatalogItem
+      summary: Approve / reject / suspend a catalog product (RBAC health.pharmacy.recall)
+      description: >
+        approve → nafdac_status REGISTERED + active (requires a NAFDAC reference and a
+        non-controlled product); reject → BANNED + inactive; suspend → SUSPENDED + inactive.
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [approve, reject, suspend] }
+                note: { type: string }
+      responses:
+        '200':
+          description: Governance applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      status: { type: string, enum: [approved, rejected, suspended] }
+                      audit_id: { type: string }
+                      message: { type: string }
+        '400': { description: Malformed id/body, unsupported action, or approve without NAFDAC ref / on a controlled product }
+        '401': { description: Unauthenticated }
+        '403': { description: Missing permission }
+        '404': { description: Product not found }
+  /recalls:
+    get:
+      operationId: adminListPharmacyRecalls
+      summary: Recall records, newest first (RBAC health.pharmacy.recall)
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, investigating, resolved, closed] } }
+        - { name: severity, in: query, schema: { type: string, enum: [low, medium, high, critical] } }
+        - { name: q, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Up to 500 recalls
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Recall' }
+        '400': { description: Unknown status or severity }
+        '401': { description: Unauthenticated }
+        '403': { description: Missing permission }
+    post:
+      operationId: adminCreatePharmacyRecall
+      summary: Open a recall; optional product_id deactivates that product in the same transaction
+      description: Complements POST /products/{id}/recall (deactivate only, no record).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_name, batch_no, severity, reason]
+              properties:
+                product_id: { type: string, format: uuid }
+                product_name: { type: string, maxLength: 200 }
+                nafdac_reg_no: { type: string }
+                batch_no: { type: string, maxLength: 100 }
+                severity: { type: string, enum: [low, medium, high, critical] }
+                reason: { type: string, maxLength: 2000 }
+      responses:
+        '201':
+          description: Recall opened
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      status: { type: string }
+                      audit_id: { type: string }
+                      message: { type: string }
+                      recall: { $ref: '#/components/schemas/Recall' }
+        '400': { description: Invalid body or field }
+        '401': { description: Unauthenticated }
+        '403': { description: Missing permission }
+        '404': { description: product_id not found }
+components:
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    Recall:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid, nullable: true }
+        product_name: { type: string }
+        nafdac_reg_no: { type: string, nullable: true }
+        batch_no: { type: string }
+        pharmacy_masked: { type: string }
+        severity: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        units_affected: { type: integer }
+        patients_notified: { type: integer }
+        created_at: { type: string, format: date-time }

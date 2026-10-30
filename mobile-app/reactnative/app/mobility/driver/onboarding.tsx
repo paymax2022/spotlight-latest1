@@ -13,15 +13,25 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import SelectField from '@/components/SelectField';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
 import { useAuthStore } from '@/store/authStore';
 import { useDriverMe, useDriverOnboarding, useDriverOnboardingOptions } from '@/features/mobility/hooks/useMobility';
 import { pickFileForField } from '@/features/registration/utils/filePicker';
-import { SERVICE_TYPES, REQUIRED_DOCUMENTS } from '@/features/mobility/constants/mobility.constants';
+import { SERVICE_TYPES, REQUIRED_DOCUMENTS, VEHICLE_MAKES, VEHICLE_COLORS, vehicleYears } from '@/features/mobility/constants/mobility.constants';
 import type { ServiceType, DocType } from '@/features/mobility/types/mobility.types';
-import { requiredDocumentsFor, canContinueServicesStep, SERVICE_INTERESTS, COVERAGE_FALLBACK, type VehicleType } from '@/features/mobility/deliveryOnboarding';
+import {
+  requiredDocumentsFor,
+  canContinueServicesStep,
+  areasForState,
+  coverageAreaLabel,
+  SERVICE_INTERESTS,
+  STATE_OPTIONS,
+  COVERAGE_FALLBACK,
+  type VehicleType,
+} from '@/features/mobility/deliveryOnboarding';
 
 type Step = 'details' | 'services' | 'documents' | 'vehicle' | 'status';
 const DELIVERY_ONBOARDING = process.env.EXPO_PUBLIC_DELIVERY_ONBOARDING !== 'false' && process.env.EXPO_PUBLIC_DELIVERY_ONBOARDING !== '0';
@@ -30,6 +40,9 @@ const STEP_ORDER: Step[] = DELIVERY_ONBOARDING
   : ['details', 'documents', 'vehicle', 'status'];
 const STEP_TITLE: Record<Step, string> = { details: 'Your details', services: 'Services & coverage', documents: 'Upload documents', vehicle: 'Add your vehicle', status: 'Application status' };
 const DOC_META: Record<string, { label: string; hint: string }> = Object.fromEntries(REQUIRED_DOCUMENTS.map((d) => [d.docType, { label: d.label, hint: d.hint }]));
+
+const modelsForMake = (make: string): string[] =>
+  VEHICLE_MAKES.find((m) => m.make === make)?.models ?? [];
 
 // A failed submit used to leave the button spinning back to idle with nothing
 // shown, so Continue looked dead. Say what the server (or the network) said.
@@ -45,6 +58,7 @@ export default function DriverOnboardingScreen() {
   const { submit, uploadDocFile, addVehicle, setServiceProfile } = useDriverOnboarding();
   const onboardingOptions = useDriverOnboardingOptions();
   const serviceOptions = onboardingOptions.data?.services ?? SERVICE_INTERESTS;
+  const stateOptions = onboardingOptions.data?.states ?? STATE_OPTIONS;
   const areaOptions = onboardingOptions.data?.coverageAreas ?? COVERAGE_FALLBACK;
   const { service } = useLocalSearchParams<{ service?: string }>();
   const isTowing = service === 'towing';
@@ -74,8 +88,10 @@ export default function DriverOnboardingScreen() {
   const [vehError, setVehError] = useState<string | null>(null);
   const [vehicleType, setVehicleType] = useState<VehicleType>('car');
   const [serviceInterests, setServiceInterests] = useState<string[]>([]);
+  const [coverageState, setCoverageState] = useState('');
   const [coverageAreas, setCoverageAreas] = useState<string[]>([]);
   const [servicesError, setServicesError] = useState<string | null>(null);
+  const stateAreas = useMemo(() => areasForState(areaOptions, coverageState), [areaOptions, coverageState]);
 
   const profile = me.data;
   const uploadedDocs = useMemo(() => new Set((profile?.documents ?? []).map((d) => d.docType)), [profile]);
@@ -128,7 +144,8 @@ export default function DriverOnboardingScreen() {
 
   const onServicesContinue = () => {
     setServicesError(null);
-    if (!canContinueServicesStep(serviceInterests, coverageAreas)) { setServicesError('Pick at least one service and one coverage area.'); return; }
+    if (!coverageState) { setServicesError('Choose the state you operate in first.'); return; }
+    if (!canContinueServicesStep(serviceInterests, coverageAreas)) { setServicesError('Pick at least one service and one area in that state.'); return; }
     setServiceProfile.mutate(
       { interests: serviceInterests, areas: coverageAreas },
       {
@@ -230,18 +247,39 @@ export default function DriverOnboardingScreen() {
                 );
               })}
             </View>
+            {/* State first: a driver covers ONE state, and the city list only
+                makes sense inside it (six LGA names repeat across states). */}
+            <SelectField
+              label="State you operate in"
+              placeholder="Choose a state"
+              value={stateOptions.find((s) => s.value === coverageState)?.label}
+              options={stateOptions.map((s) => s.label)}
+              onChange={(label) => {
+                const next = stateOptions.find((s) => s.label === label)?.value ?? '';
+                if (next === coverageState) return;
+                setCoverageState(next);
+                // Areas are namespaced per state, so a city picked in the old
+                // state is not a valid value for the new one.
+                setCoverageAreas([]);
+                setServicesError(null);
+              }}
+            />
             <Text style={styles.fieldLabel}>Areas you cover</Text>
-            <View style={styles.chips}>
-              {areaOptions.map((a) => {
-                const active = coverageAreas.includes(a.value);
-                return (
-                  <Pressable key={a.value} style={[styles.chip, active && styles.chipActive]} onPress={() => setCoverageAreas((prev) => (prev.includes(a.value) ? prev.filter((x) => x !== a.value) : [...prev, a.value]))}>
-                    {active && <Check size={14} color={Colors.primary} strokeWidth={2.5} />}
-                    <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{a.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            {coverageState ? (
+              <View style={styles.chips}>
+                {stateAreas.map((a) => {
+                  const active = coverageAreas.includes(a.value);
+                  return (
+                    <Pressable key={a.value} style={[styles.chip, active && styles.chipActive]} onPress={() => setCoverageAreas((prev) => (prev.includes(a.value) ? prev.filter((x) => x !== a.value) : [...prev, a.value]))}>
+                      {active && <Check size={14} color={Colors.primary} strokeWidth={2.5} />}
+                      <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{a.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={styles.help}>Choose a state above to see its cities.</Text>
+            )}
             {servicesError ? <Text style={styles.error}>{servicesError}</Text> : null}
           </>
         )}
@@ -295,13 +333,32 @@ export default function DriverOnboardingScreen() {
             {(!DELIVERY_ONBOARDING || vehicleType !== 'bicycle') && (
               <>
                 <TextInputField label="Plate number" placeholder="LND-238-KJA" value={plate} onChangeText={setPlate} autoCapitalize="characters" />
+                <SelectField
+                  label="Make"
+                  placeholder="Select make"
+                  value={make}
+                  options={VEHICLE_MAKES.map((m) => m.make)}
+                  onChange={(next) => {
+                    setMake(next);
+                    // Models are per make — a Corolla does not belong under Lexus.
+                    if (!modelsForMake(next).includes(model)) setModel('');
+                  }}
+                />
+                <SelectField
+                  label="Model"
+                  placeholder={make ? 'Select model' : 'Select a make first'}
+                  value={model}
+                  options={modelsForMake(make)}
+                  onChange={setModel}
+                  disabled={!make}
+                />
                 <View style={styles.row2}>
-                  <View style={styles.col}><TextInputField label="Make" placeholder="Toyota" value={make} onChangeText={setMake} /></View>
-                  <View style={styles.col}><TextInputField label="Model" placeholder="Corolla" value={model} onChangeText={setModel} /></View>
-                </View>
-                <View style={styles.row2}>
-                  <View style={styles.col}><TextInputField label="Year" placeholder="2021" value={year} onChangeText={setYear} keyboardType="number-pad" /></View>
-                  <View style={styles.col}><TextInputField label="Color" placeholder="Silver" value={color} onChangeText={setColor} /></View>
+                  <View style={styles.col}>
+                    <SelectField label="Year" placeholder="Select year" value={year} options={vehicleYears()} onChange={setYear} />
+                  </View>
+                  <View style={styles.col}>
+                    <SelectField label="Color" placeholder="Select color" value={color} options={[...VEHICLE_COLORS]} onChange={setColor} />
+                  </View>
                 </View>
               </>
             )}
@@ -345,7 +402,7 @@ export default function DriverOnboardingScreen() {
                     <Text style={styles.statusChipsLabel}>Areas you cover</Text>
                     <View style={styles.chips}>
                       {(profile.coverageAreas ?? []).map((v) => (
-                        <View key={v} style={styles.readonlyChip}><Text style={styles.readonlyChipText}>{areaOptions.find((o) => o.value === v)?.label ?? v}</Text></View>
+                        <View key={v} style={styles.readonlyChip}><Text style={styles.readonlyChipText}>{coverageAreaLabel(v, areaOptions)}</Text></View>
                       ))}
                     </View>
                   </>

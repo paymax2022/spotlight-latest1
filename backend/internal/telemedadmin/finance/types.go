@@ -34,6 +34,9 @@ type Payout struct {
 	PaidAt        *time.Time        `json:"paid_at"`
 	BankAccount   BankAccountMasked `json:"bank_account"`
 	OpenDisputes  int               `json:"open_disputes"`
+	HeldAt        *time.Time        `json:"held_at"`
+	HoldReason    *string           `json:"hold_reason"`
+	ApprovedAt    *time.Time        `json:"approved_at"`
 }
 
 type PayoutDetail struct {

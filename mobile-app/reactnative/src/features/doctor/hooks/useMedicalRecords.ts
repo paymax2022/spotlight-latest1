@@ -25,12 +25,13 @@ import type {
   SharePatientRecordInput,
   RequestRecordAccessInput,
 } from '@/types/doctor.batch6';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useRecordsDashboard() {
   return useQuery({
     queryKey:        ['doctor', 'records', 'dashboard'],
     queryFn:         getRecordsDashboard,
-    placeholderData: DEMO_RECORDS_DASHBOARD,
+    placeholderData: doctorPlaceholder(DEMO_RECORDS_DASHBOARD),
     staleTime:       30_000,
   });
 }
@@ -40,7 +41,7 @@ export function usePatientRecordIndex(patientId: string) {
     queryKey:        ['doctor', 'records', 'index', patientId],
     queryFn:         () => getPatientRecordIndex(patientId),
     enabled:         !!patientId,
-    placeholderData: DEMO_PATIENT_RECORD_INDEX,
+    placeholderData: doctorPlaceholder(DEMO_PATIENT_RECORD_INDEX),
     staleTime:       30_000,
   });
 }
@@ -50,7 +51,7 @@ export function useRecordRestrictions(patientId: string) {
     queryKey:        ['doctor', 'records', 'restrictions', patientId],
     queryFn:         () => getRecordRestrictions(patientId),
     enabled:         !!patientId,
-    placeholderData: DEMO_RECORD_RESTRICTIONS,
+    placeholderData: doctorPlaceholder(DEMO_RECORD_RESTRICTIONS),
     staleTime:       60_000,
   });
 }
@@ -60,7 +61,7 @@ export function useRestrictedRecordWarnings(patientId: string) {
     queryKey:        ['doctor', 'records', 'restricted-warnings', patientId],
     queryFn:         () => getRestrictedRecordWarnings(patientId),
     enabled:         !!patientId,
-    placeholderData: DEMO_RESTRICTED_WARNINGS,
+    placeholderData: doctorPlaceholder(DEMO_RESTRICTED_WARNINGS),
     staleTime:       60_000,
   });
 }
@@ -69,7 +70,7 @@ export function useRecordShares() {
   return useQuery({
     queryKey:        ['doctor', 'records', 'shares'],
     queryFn:         getRecordShares,
-    placeholderData: DEMO_RECORD_SHARES,
+    placeholderData: doctorPlaceholder(DEMO_RECORD_SHARES),
     staleTime:       30_000,
   });
 }

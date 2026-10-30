@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { Colors } from '@/constants/tokens';
 import ModuleTabBar from '@/components/ModuleTabBar';
 import { PHARMACY_TABS } from '@/constants/moduleTabs';
+import ProviderRouteGuard from '@/features/providerPortal/ProviderRouteGuard';
 
 /**
  * Pharmacy vertical stack (HEALTH-BUILD Phase 1). Mounts under the shared health
@@ -12,57 +13,63 @@ import { PHARMACY_TABS } from '@/constants/moduleTabs';
  * The customer tabs draw only on their own paths, so checkout, product and the
  * provider screens stay full-height.
  */
+const PROVIDER_RULES = [
+  { type: 'pharmacy', prefix: '/health/pharmacy/provider', open: ['onboarding'] },
+] as const;
+
 export default function PharmacyLayout() {
   return (
-    <View style={{ flex: 1 }}>
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: Colors.background },
-          animation: 'slide_from_right',
-        }}
-      >
-        {/* Customer */}
-        <Stack.Screen name="index" />
-        <Stack.Screen name="upload-rx" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
-        <Stack.Screen name="rx-status" />
-        <Stack.Screen name="search" />
-        <Stack.Screen name="product/[id]" />
-        <Stack.Screen name="cart" />
-        <Stack.Screen name="pharmacy-select" />
-        <Stack.Screen name="checkout" />
-        <Stack.Screen name="delivery-tracking" />
-        <Stack.Screen name="pickup-code" />
-        <Stack.Screen name="pharmacist-consult" />
-        <Stack.Screen name="medication-list" />
-        <Stack.Screen name="refills" />
-        <Stack.Screen name="rx-wallet" />
-        <Stack.Screen name="orders" />
-        <Stack.Screen name="reorder" />
-        <Stack.Screen name="ratings" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
-        <Stack.Screen name="bnpl" />
+    <ProviderRouteGuard rules={PROVIDER_RULES}>
+      <View style={{ flex: 1 }}>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: Colors.background },
+            animation: 'slide_from_right',
+          }}
+        >
+          {/* Customer */}
+          <Stack.Screen name="index" />
+          <Stack.Screen name="upload-rx" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
+          <Stack.Screen name="rx-status" />
+          <Stack.Screen name="search" />
+          <Stack.Screen name="product/[id]" />
+          <Stack.Screen name="cart" />
+          <Stack.Screen name="pharmacy-select" />
+          <Stack.Screen name="checkout" />
+          <Stack.Screen name="delivery-tracking" />
+          <Stack.Screen name="pickup-code" />
+          <Stack.Screen name="pharmacist-consult" />
+          <Stack.Screen name="medication-list" />
+          <Stack.Screen name="refills" />
+          <Stack.Screen name="rx-wallet" />
+          <Stack.Screen name="orders" />
+          <Stack.Screen name="reorder" />
+          <Stack.Screen name="ratings" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
+          <Stack.Screen name="bnpl" />
 
-        {/* Symptom-based search (addon PRD) — gated by PHARMACY_SYMPTOM_SEARCH_ENABLED */}
-        <Stack.Screen name="symptom/index" />
-        <Stack.Screen name="symptom/refine" />
-        <Stack.Screen name="symptom/results" />
-        <Stack.Screen name="symptom/escalation" options={{ gestureEnabled: false }} />
+          {/* Symptom-based search (addon PRD) — gated by PHARMACY_SYMPTOM_SEARCH_ENABLED */}
+          <Stack.Screen name="symptom/index" />
+          <Stack.Screen name="symptom/refine" />
+          <Stack.Screen name="symptom/results" />
+          <Stack.Screen name="symptom/escalation" options={{ gestureEnabled: false }} />
 
-        {/* Provider */}
-        <Stack.Screen name="provider/index" />
-        <Stack.Screen name="provider/onboarding" />
-        <Stack.Screen name="provider/catalog" />
-        <Stack.Screen name="provider/orders" />
-        <Stack.Screen name="provider/rx-verify" />
-        <Stack.Screen name="provider/controlled-log" />
-        <Stack.Screen name="provider/dispense" />
-        <Stack.Screen name="provider/handoff" />
-        <Stack.Screen name="provider/consult" />
-        <Stack.Screen name="provider/stock-alerts" />
-        <Stack.Screen name="provider/earnings" />
-        <Stack.Screen name="provider/reviews" />
-      </Stack>
-      <ModuleTabBar tabs={PHARMACY_TABS} />
-    </View>
+          {/* Provider */}
+          <Stack.Screen name="provider/index" />
+          <Stack.Screen name="provider/onboarding" />
+          <Stack.Screen name="provider/catalog" />
+          <Stack.Screen name="provider/orders" />
+          <Stack.Screen name="provider/rx-verify" />
+          <Stack.Screen name="provider/controlled-log" />
+          <Stack.Screen name="provider/dispense" />
+          <Stack.Screen name="provider/handoff" />
+          <Stack.Screen name="provider/consult" />
+          <Stack.Screen name="provider/stock-alerts" />
+          <Stack.Screen name="provider/earnings" />
+          <Stack.Screen name="provider/reviews" />
+        </Stack>
+        <ModuleTabBar tabs={PHARMACY_TABS} />
+      </View>
+    </ProviderRouteGuard>
   );
 }

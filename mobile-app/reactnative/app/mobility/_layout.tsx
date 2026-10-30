@@ -1,8 +1,15 @@
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/tokens';
+import ProviderRouteGuard from '@/features/providerPortal/ProviderRouteGuard';
+
+const PROVIDER_RULES = [
+  { type: 'driver', prefix: '/mobility/driver', open: ['onboarding'] },
+  { type: 'bus_owner', prefix: '/mobility/bus/provider', open: ['register'] },
+] as const;
 
 export default function MobilityLayout() {
   return (
+    <ProviderRouteGuard rules={PROVIDER_RULES}>
     <Stack
       screenOptions={{
         headerShown: false,
@@ -90,5 +97,6 @@ export default function MobilityLayout() {
       <Stack.Screen name="scheduled/new" />
       <Stack.Screen name="scheduled/[id]" options={{ gestureEnabled: false }} />
     </Stack>
+    </ProviderRouteGuard>
   );
 }

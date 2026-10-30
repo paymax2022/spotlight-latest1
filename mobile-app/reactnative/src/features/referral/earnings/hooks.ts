@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as earningsApi from './api';
 import { referralKeys } from '../foundation/hooks';
 import { homeKeys } from '../home/hooks';
+import { LIVE_REFRESH } from '../constants/referral.constants';
 import type { RewardCurrency, StatementPeriod, AppealInput } from './types';
 
 export const earningsKeys = {
@@ -17,7 +18,7 @@ export const earningsKeys = {
 };
 
 export function useLedger() {
-  return useQuery({ queryKey: earningsKeys.ledger(), queryFn: earningsApi.getLedger, staleTime: 30_000 });
+  return useQuery({ queryKey: earningsKeys.ledger(), queryFn: earningsApi.getLedger, staleTime: 30_000, ...LIVE_REFRESH });
 }
 
 export function useRewardDetail(id: string) {
@@ -38,7 +39,7 @@ export function useVestingSchedule(id?: string) {
 }
 
 export function useWithdrawQuote() {
-  return useQuery({ queryKey: earningsKeys.withdrawQuote(), queryFn: earningsApi.getWithdrawQuote, staleTime: 15_000 });
+  return useQuery({ queryKey: earningsKeys.withdrawQuote(), queryFn: earningsApi.getWithdrawQuote, staleTime: 15_000, ...LIVE_REFRESH });
 }
 
 export function useWithdraw() {
@@ -50,6 +51,7 @@ export function useWithdraw() {
         qc.invalidateQueries({ queryKey: earningsKeys.withdrawQuote() });
         qc.invalidateQueries({ queryKey: earningsKeys.ledger() });
         qc.invalidateQueries({ queryKey: homeKeys.dashboard() });
+        qc.invalidateQueries({ queryKey: homeKeys.activity() });
       }
     },
   });

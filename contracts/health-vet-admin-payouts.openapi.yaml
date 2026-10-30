@@ -1,0 +1,107 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight Health — Veterinary admin payouts
+  version: 1.0.0
+  description: >
+    Admin payout review for the vet vertical, served under /api/health/vet/admin
+    (backend/internal/app/health_vet_routes.go; healthvet/admin_payouts.go).
+    A payout row is one accrual per vet, derived from RELEASED escrow legs. Escrow
+    release has already credited the vet (HL-9), so a decision posts no ledger
+    entries: it is an append-only, idempotent attestation of the reviewed accrual
+    snapshot (vet_payout_decisions), written to the audit log (HL-12). Approving a
+    vet below the payout KYC tier is recorded as kyc_hold (HL-10, fail-closed).
+    Amounts are integer kobo.
+servers:
+  - url: /api/health/vet/admin
+paths:
+  /payouts:
+    get:
+      operationId: listVetPayouts
+      summary: Per-vet released accruals with the latest decision on the current snapshot
+      tags: [Health Vet Admin]
+      security: [{ bearerAuth: [] }]
+      x-permission: health.vet.payouts
+      responses:
+        '200':
+          description: Accrual rows (at most 200)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/VetPayoutRecord' }
+        '401': { description: Not authenticated }
+        '403': { description: Missing health.vet.payouts }
+  /payouts/{id}/decision:
+    post:
+      operationId: decideVetPayout
+      summary: Approve or reject a vet's current released accrual
+      tags: [Health Vet Admin]
+      security: [{ bearerAuth: [] }]
+      x-permission: health.vet.payouts
+      parameters:
+        - { name: id, in: path, required: true, description: Provider id (health_providers.id), schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                note: { type: string }
+      responses:
+        '200':
+          description: The recorded decision; a replayed key returns the original with replayed=true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/VetPayoutDecisionResult' }
+        '400': { description: Missing Idempotency-Key, bad id, or decision not approve|reject }
+        '401': { description: Not authenticated }
+        '403': { description: Missing health.vet.payouts }
+        '404': { description: The provider has no released accrual }
+        '409': { description: This accrual snapshot is already decided, or the key was used for a different decision }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    VetPayoutRecord:
+      type: object
+      properties:
+        id: { type: string, description: Provider id }
+        vet_masked: { type: string }
+        clinic_masked: { type: string }
+        kyc_tier: { type: string }
+        kyc_verified: { type: boolean, description: Passes the HL-10 payout KYC gate }
+        released_kobo: { type: integer, format: int64 }
+        fees_kobo: { type: integer, format: int64 }
+        net_payable_kobo: { type: integer, format: int64 }
+        payout_status: { type: string, enum: [pending, approved, rejected, kyc_hold] }
+        aml_flag: { type: boolean }
+        created_at: { type: string, format: date-time }
+    VetPayoutDecisionResult:
+      type: object
+      required: [id, audit_id, payout_status, released_kobo, fees_kobo, net_payable_kobo, replayed, message]
+      properties:
+        id: { type: string, description: Provider id }
+        audit_id: { type: string, description: vet_payout_decisions.id }
+        payout_status: { type: string, enum: [approved, rejected, kyc_hold] }
+        released_kobo: { type: integer, format: int64 }
+        fees_kobo: { type: integer, format: int64 }
+        net_payable_kobo: { type: integer, format: int64 }
+        replayed: { type: boolean }
+        message: { type: string }
+        decided_at: { type: string, format: date-time }

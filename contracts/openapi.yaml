@@ -44,6 +44,36 @@ components:
         within 24 hours return the cached response without side effects.
 
   schemas:
+    ProviderCapability:
+      type: object
+      required: [type, provider_id, display_name, status, approved]
+      properties:
+        type:
+          type: string
+          enum: [doctor, vet, pharmacy, lab, restaurant, rider, driver, marketplace_seller,
+                 event_organiser, estate_manager, property_manager,
+                 association_creator, crowdfunding_creator, bus_owner]
+          description: >
+            Which portal this record opens. Sources, one entry per owned record unless noted:
+            doctor (`doctor_profiles`), vet/pharmacy/lab (`health_providers`),
+            restaurant (`restaurants`), rider and driver (both from the owner's `drivers`
+            row — the same driver identity powers the mobility console and the food
+            delivery console), marketplace_seller (aggregate: at least one `mkt_listings`
+            row), event_organiser (aggregate: at least one `events` row),
+            estate_manager (`estates.admin_id`), property_manager
+            (`property_role_profiles`, role estate_manager),
+            association_creator (`assoc_organisations.created_by`),
+            crowdfunding_creator (`campaigns.creator_id`) and
+            bus_owner (`bus_providers`).
+        provider_id: { type: string, format: uuid }
+        display_name: { type: string }
+        status:
+          type: string
+          description: Provider lifecycle as stored (PENDING | APPROVED | SUSPENDED; doctors map from verification).
+        approved:
+          type: boolean
+          description: True only for an APPROVED record. The sole flag that unlocks management screens.
+
     SuccessResponse:
       description: Generic success acknowledgement for state-transition/action endpoints with no payload.
       type: object
@@ -8781,6 +8811,56 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /health/provider-portal/me:
+    get:
+      operationId: getProviderPortalCapabilities
+      summary: The business capabilities the authenticated user holds, for the provider portal.
+      description: |
+        Answers "which provider portals may this caller open?". One entry per provider
+        record the caller OWNS across health (doctor, vet, pharmacy, lab), food
+        (restaurant, rider), mobility (driver, bus), marketplace, events, estate,
+        property, association and crowdfunding. Read-only.
+
+        Authorization:
+          - Object-scoped to the caller: only rows whose owner is the authenticated user
+            are read. There is no way to ask about another user.
+          - A caller with no provider records gets `200` with `capabilities: []`
+            (not 404), so the client cannot tell a non-provider from a provider of
+            another type by probing.
+          - `approved` is the only field a portal may use to unlock management screens;
+            `status` is shown to the provider verbatim. A `PENDING` or `SUSPENDED`
+            record yields `approved: false` and the portal shows its status screen only.
+          - This endpoint is a UX gate. Provider-side routes enforce ownership server-side;
+            hiding a screen never grants access. Approval enforcement is not yet uniform
+            across routes (see the ADR follow-ups), so do not treat this as the only check.
+          - Only OWNER records are listed: health_providers rows of provider_type vet,
+            pharmacy or lab (staff types such as pharmacist or phlebotomist are excluded).
+          - Aggregate entries (marketplace_seller, event_organiser) use the caller's own
+            user id as `provider_id`; there is no profile row to point at.
+          - A single `drivers` row yields two entries — `driver` and `rider` — because the
+            mobility console and the food delivery console are separate businesses over
+            the same identity; both share the row's `provider_id` and approval.
+
+        Gated by FEATURE_PROVIDER_PORTAL_ENABLED (default off) → 503 when off. Member route.
+      tags: [Providers]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Capabilities (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, capabilities]
+                properties:
+                  success: { type: boolean }
+                  capabilities:
+                    type: array
+                    items: { $ref: '#/components/schemas/ProviderCapability' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503':
+          description: Provider portal disabled (feature flag off).
+
   /transfers/paymax/crypto:
     post:
       operationId: initiateCryptoWalletToWalletTransfer
@@ -10558,6 +10638,97 @@ paths:
           description: Vendor has not completed KYC (fail-closed, NL-10)
         '404': { description: Event or vendor not found }
 
+  /api/events/admin/vendors/{id}/payout:
+    post:
+      operationId: adminDecideEventVendorPayout
+      summary: Approve (settle now) or reject (hold) a vendor's unsettled float (events.settle)
+      description: >-
+        approve runs the same KYC-gated SettleVendor path as
+        /{id}/vendors/{vendorId}/settle (NL-10, net of the event fee) and needs
+        an Idempotency-Key; replaying the same key returns the original result
+        without settling again. reject needs a note, records a hold and moves no
+        money; new takings after a rejection return the vendor to pending.
+        Every decision is appended to event_settlement_reviews and audited.
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: Vendor id }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                note: { type: string, maxLength: 1000 }
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      payout_status: { type: string, enum: [paid, rejected] }
+                      audit_id: { type: string, format: uuid }
+                      message: { type: string }
+                      net_kobo: { type: integer, format: int64 }
+        '400': { description: "Unknown decision, missing Idempotency-Key on approve, missing note on reject, or nothing to settle" }
+        '403': { description: Vendor has not completed KYC (fail-closed, NL-10) }
+        '404': { description: Vendor not found }
+
+  /api/events/admin/settlement/{id}/resolve:
+    post:
+      operationId: adminResolveEventSettlementBreak
+      summary: Record a reviewer decision on a derived settlement break (events.settle)
+      description: >-
+        A break is the absolute delta across an event's vendors of three
+        invariants: vendor charges vs vendor float, settled float vs settled
+        gross, and gross vs fee + net per settlement row. The decision is
+        append-only (event_settlement_reviews) and audited and moves no money;
+        a correction is a reversing ledger entry. A decision applies only while
+        the break amount is unchanged; if it moves, the line reopens.
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, example: 'set_<event uuid>' }, description: Settlement line id from GET /api/events/admin/settlement }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [investigate, resolve, reconcile] }
+                note: { type: string, maxLength: 1000 }
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string, enum: [investigating, resolved, reconciled] }
+                      audit_id: { type: string, format: uuid }
+                      message: { type: string }
+        '400': { description: Unknown action, or note missing for resolve/reconcile }
+        '404': { description: No settlement break on that line }
+
   /api/events/admin/payouts:
     get:
       operationId: adminListEventPayouts
@@ -10708,6 +10879,90 @@ paths:
         '400': { description: Reason required }
         '404': { description: Payout not found }
         '409': { description: Payout is not pending }
+
+  /api/events/admin/fraud:
+    get:
+      operationId: adminListEventFraudSignals
+      summary: Fraud queue — signals derived on read from scans, top-ups, vendor charges and refunds (events.admin.view)
+      description: >-
+        Signals are derived from the module's append-only records over the last
+        30 days: dup_scan (ticket credential rejected 2+ times at the gate),
+        abnormal_topup (5+ event-wallet top-ups in one hour), vendor_self_charge
+        (a vendor charging its own operator's wallet) and rapid_refund (3+
+        refund requests by one buyer on one event; commerce only). Ids are
+        deterministic, so a reviewer decision stays attached. Status is the
+        newest review, or open.
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [open, investigating, cleared, blocked] } }
+        - { name: kind, in: query, required: false, schema: { type: string, enum: [dup_scan, abnormal_topup, vendor_self_charge, rapid_refund] } }
+        - { name: q, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Signals, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, example: 'vendor_self_charge:3f1c…' }
+                        event_id: { type: string, format: uuid }
+                        event_title: { type: string }
+                        kind: { type: string, enum: [dup_scan, abnormal_topup, vendor_self_charge, rapid_refund] }
+                        subject_masked: { type: string }
+                        detail: { type: string }
+                        severity: { type: string, enum: [low, medium, high, critical] }
+                        amount_kobo: { type: integer, format: int64 }
+                        status: { type: string, enum: [open, investigating, cleared, blocked] }
+                        created_at: { type: string, format: date-time }
+
+  /api/events/admin/fraud/{id}/action:
+    post:
+      operationId: adminActionEventFraudSignal
+      summary: Record a reviewer decision on a fraud signal (events.moderate)
+      description: >-
+        Append-only (event_fraud_reviews) and audited. clear and block need a
+        note. block on a vendor_self_charge signal also deactivates the vendor;
+        on other kinds it records the verdict only. No money moves.
+      tags: [Events Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [investigate, clear, block] }
+                note: { type: string, maxLength: 1000 }
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string, enum: [investigating, cleared, blocked] }
+                      audit_id: { type: string, format: uuid }
+                      message: { type: string }
+        '400': { description: Unknown action, or note missing for clear/block }
+        '404': { description: No such signal (not currently derived) }
 
   # ── Crowdfunding ──────────────────────────────────────────────────────────────
   /crowdfunding/campaigns:

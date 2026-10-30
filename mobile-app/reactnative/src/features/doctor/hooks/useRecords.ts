@@ -23,6 +23,7 @@ import type {
   CreateFollowUpInput,
   ReviewFollowUpRequestInput,
 } from '@/types/doctor.phase2';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function usePatientRecordHub(patientId: string) {
   return useQuery({
@@ -37,7 +38,7 @@ export function useHmoClaims(status?: ClaimStatus) {
   return useQuery({
     queryKey:        ['doctor', 'hmo-claims', status],
     queryFn:         () => getHmoClaims(status),
-    placeholderData: DEMO_HMO_CLAIMS,
+    placeholderData: doctorPlaceholder(DEMO_HMO_CLAIMS),
     staleTime:       30_000,
   });
 }
@@ -78,7 +79,7 @@ export function useFollowUps(status?: FollowUpStatus) {
   return useQuery({
     queryKey:        ['doctor', 'follow-ups', status],
     queryFn:         () => getFollowUps(status),
-    placeholderData: DEMO_FOLLOW_UPS,
+    placeholderData: doctorPlaceholder(DEMO_FOLLOW_UPS),
     staleTime:       30_000,
   });
 }

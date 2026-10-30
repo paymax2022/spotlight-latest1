@@ -13,13 +13,14 @@ import {
 } from '@/api/doctor.batch5.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type { ShareProductWithOwnerInput } from '@/types/doctor.batch5';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function usePetProductDetail(productId: string) {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'product-detail', productId],
     queryFn:         () => getPetProductDetail(productId),
     enabled:         !!productId,
-    placeholderData: DEMO_PET_PRODUCT_DETAIL,
+    placeholderData: doctorPlaceholder(DEMO_PET_PRODUCT_DETAIL),
     staleTime:       60_000,
   });
 }
@@ -28,7 +29,7 @@ export function usePetProductFulfilments() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'fulfilments'],
     queryFn:         getPetProductFulfilments,
-    placeholderData: DEMO_PET_PRODUCT_FULFILMENTS,
+    placeholderData: doctorPlaceholder(DEMO_PET_PRODUCT_FULFILMENTS),
     staleTime:       30_000,
   });
 }

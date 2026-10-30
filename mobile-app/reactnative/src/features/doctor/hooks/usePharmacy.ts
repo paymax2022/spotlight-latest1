@@ -22,12 +22,13 @@ import type {
   ReviewSubstituteInput,
   ReviewRefillInput,
 } from '@/types/doctor.phase2';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function usePharmacyFulfilments() {
   return useQuery({
     queryKey:        ['doctor', 'pharmacy-fulfilments'],
     queryFn:         getPharmacyFulfilments,
-    placeholderData: DEMO_PHARMACY_FULFILMENTS,
+    placeholderData: doctorPlaceholder(DEMO_PHARMACY_FULFILMENTS),
     staleTime:       30_000,
   });
 }
@@ -57,7 +58,7 @@ export function useDrugDeliveries() {
   return useQuery({
     queryKey:        ['doctor', 'drug-deliveries'],
     queryFn:         getDrugDeliveries,
-    placeholderData: DEMO_DRUG_DELIVERIES,
+    placeholderData: doctorPlaceholder(DEMO_DRUG_DELIVERIES),
     staleTime:       15_000,
   });
 }
@@ -75,7 +76,7 @@ export function useRefillRequests(status?: RefillStatus) {
   return useQuery({
     queryKey:        ['doctor', 'refill-requests', status],
     queryFn:         () => getRefillRequests(status),
-    placeholderData: DEMO_REFILL_REQUESTS,
+    placeholderData: doctorPlaceholder(DEMO_REFILL_REQUESTS),
     staleTime:       30_000,
   });
 }

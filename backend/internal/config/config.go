@@ -462,6 +462,8 @@ type Config struct {
 	TransportBusSettleGraceMinutes             int // TRANSPORT_BUS_SETTLE_GRACE_MINUTES (default 30)
 	TransportBusCancelCutoffMinutes            int // TRANSPORT_BUS_CANCEL_CUTOFF_MINUTES (default 120, clamped 60-1440)
 	TransportBusMinBookingLeadMinutes          int // TRANSPORT_BUS_MIN_BOOKING_LEAD_MINUTES (default 15)
+	// TransportShareBaseURL (TRANSPORT_SHARE_BASE_URL): base for ride live-share links.
+	TransportShareBaseURL                      string
 	FeatureAICareEnabled                       bool
 	FeatureDisputesEnabled                     bool
 	FeatureRatingsEnabled                      bool
@@ -712,6 +714,7 @@ type Config struct {
 	// DEFAULT OFF; also requires FeatureCryptoEnabled.
 	FeatureHealthLabCryptoPayment bool
 	FeatureHealthVetEnabled      bool
+	FeatureProviderPortalEnabled bool
 	// Pre-Consultation Health Intake (ADR-010). DEFAULT OFF. Gates the member
 	// /api/finance/health/intake/* + admin /api/health/admin/intake surface.
 	FeatureHealthIntakeEnabled bool
@@ -1137,6 +1140,7 @@ func Load() Config {
 		TransportBusSettleGraceMinutes:               getEnvInt("TRANSPORT_BUS_SETTLE_GRACE_MINUTES", 30),
 		TransportBusCancelCutoffMinutes:              getEnvInt("TRANSPORT_BUS_CANCEL_CUTOFF_MINUTES", 120),
 		TransportBusMinBookingLeadMinutes:            getEnvInt("TRANSPORT_BUS_MIN_BOOKING_LEAD_MINUTES", 15),
+		TransportShareBaseURL:                        getEnv("TRANSPORT_SHARE_BASE_URL", "https://spotlight.app/track"),
 		ParcelRouteTokenSecret:                       getEnv("PARCEL_ROUTE_TOKEN_SECRET", ""),
 		FeatureAICareEnabled:                         getEnvBool("FEATURE_AICARE_ENABLED", false),
 		FeatureDisputesEnabled:                       getEnvBool("FEATURE_DISPUTES_ENABLED", false),
@@ -1225,6 +1229,7 @@ func Load() Config {
 		FeatureHealthLabEnabled:            getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
 		FeatureHealthLabCryptoPayment:      getEnvBool("FEATURE_HEALTH_LAB_CRYPTO_PAYMENT", false),
 		FeatureHealthVetEnabled:            getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
+		FeatureProviderPortalEnabled:       getEnvBool("FEATURE_PROVIDER_PORTAL_ENABLED", false),
 		FeatureHealthIntakeEnabled:         getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
 		FeatureHealthTriageEnabled:         getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
 		FeatureHealthTriageWhatsAppEnabled: getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),
