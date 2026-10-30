@@ -1,12 +1,15 @@
 openapi: 3.0.3
 info:
   title: Telemedicine admin - finance oversight
-  version: 1.0.0
+  version: 1.1.0
   description: |
-    READ-ONLY oversight of doctor earnings and payouts for the admin console.
-    No endpoint here moves money, writes a wallet balance or posts to the ledger.
-    Settlement disputes are read-only because the doctor module defines only the
-    `open` state; there is no admin workflow state to mutate.
+    Oversight of doctor earnings and payouts for the admin console, plus four
+    admin workflow decisions (payout approve/hold, dispute resolve, commission
+    override). No endpoint here moves money, writes a wallet balance or posts to
+    the ledger: the doctor's ledger debit is posted when the payout is requested.
+    Every decision requires an Idempotency-Key (a repeated key replays the first
+    result), runs in one transaction with a doctor_compliance_audit row
+    (action `admin.finance.*`), and requires telemedicine.admin.manage.
 
     Money is always an integer in kobo (minor units). Never a float, never a string.
 
@@ -215,10 +218,114 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/CommissionConfigView' }
+  /finance/payouts/{id}/approve:
+    post:
+      summary: Approve a pending payout for disbursement (pending -> processing)
+      description: Requires telemedicine.admin.manage. Clears any hold.
+      parameters:
+        - $ref: '#/components/parameters/idPath'
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 1000 }
+      responses:
+        '200': { $ref: '#/components/responses/Action' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/KeyReuse' }
+  /finance/payouts/{id}/hold:
+    post:
+      summary: Put a pending payout on hold (status stays pending, held_at set)
+      description: Requires telemedicine.admin.manage.
+      parameters:
+        - $ref: '#/components/parameters/idPath'
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '200': { $ref: '#/components/responses/Action' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/KeyReuse' }
+  /finance/disputes/{id}/resolve:
+    post:
+      summary: Close an open settlement dispute as resolved or rejected
+      description: |
+        Requires telemedicine.admin.manage. Records the decision only; any money
+        correction is a separate reversing ledger entry, never made here.
+      parameters:
+        - $ref: '#/components/parameters/idPath'
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome, note]
+              properties:
+                outcome: { type: string, enum: [resolved, rejected] }
+                note: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        '200': { $ref: '#/components/responses/Action' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/KeyReuse' }
+  /finance/commission-config/{doctorUserId}:
+    put:
+      summary: Upsert a doctor's commission override
+      description: Requires telemedicine.admin.manage. The audit row keeps previous and next values.
+      parameters:
+        - name: doctorUserId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [commission_bps, vat_bps, payout_cycle]
+              properties:
+                commission_bps: { type: integer, minimum: 0, maximum: 10000 }
+                vat_bps: { type: integer, minimum: 0, maximum: 10000 }
+                payout_cycle: { type: string, enum: [weekly, biweekly, monthly] }
+      responses:
+        '200': { $ref: '#/components/responses/Action' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/KeyReuse' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
   parameters:
+    idPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 200 }
     from:
       name: from
       in: query
@@ -238,6 +345,24 @@ components:
       in: query
       schema: { type: integer, minimum: 0, default: 0 }
   responses:
+    Action:
+      description: Decision applied (or replayed for a repeated Idempotency-Key)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { $ref: '#/components/schemas/ActionResult' }
+    Conflict:
+      description: The entity is not in a state that allows this decision
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    KeyReuse:
+      description: Idempotency-Key already used for a different action or entity
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     BadRequest:
       description: Invalid query or path parameter
       content:
@@ -251,6 +376,15 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
   schemas:
+    ActionResult:
+      type: object
+      properties:
+        action: { type: string, example: admin.finance.payout.approve }
+        entity_id: { type: string }
+        status: { type: string }
+        audit_id: { type: string, format: uuid }
+        at: { type: string, format: date-time }
+        replayed: { type: boolean }
     Error:
       type: object
       properties:
@@ -302,6 +436,9 @@ components:
         paid_at: { type: string, format: date-time, nullable: true }
         bank_account: { $ref: '#/components/schemas/BankAccountMasked' }
         open_disputes: { type: integer }
+        held_at: { type: string, format: date-time, nullable: true }
+        hold_reason: { type: string, nullable: true }
+        approved_at: { type: string, format: date-time, nullable: true }
     PayoutDetail:
       allOf:
         - $ref: '#/components/schemas/Payout'

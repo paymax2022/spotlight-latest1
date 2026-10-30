@@ -2284,10 +2284,115 @@ paths:
       summary: Set parcel status (admin)
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: OK }, '403': { description: Missing mobility.parcel.manage } }
+  /admin/transport/parcels/{id}/pod-review:
+    patch:
+      tags: [mobility-admin]
+      summary: Approve or reject a parcel proof of delivery (admin, audited)
+      description: >-
+        Records an admin decision on the parcel's proof_url (pod_review_status) with a parcel.pod.review audit row
+        in the same transaction. Record-only: no money moves and the parcel status is unchanged. Re-sending the
+        current decision is a replay (replayed=true, no second audit row). Requires mobility.parcel.manage.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                reason: { type: string, description: Required when decision is rejected }
+      responses:
+        '200':
+          description: Review recorded (or replayed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  parcelId: { type: string }
+                  podStatus: { type: string, enum: [approved, rejected] }
+                  replayed: { type: boolean }
+        '400': { description: Invalid decision, or rejection without a reason }
+        '403': { description: Missing mobility.parcel.manage }
+        '404': { description: Parcel not found }
+        '409': { description: Parcel has no proof of delivery }
   /admin/transport/bus/routes:
     get: { tags: [mobility-admin], summary: List bus routes (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
     post: { tags: [mobility-admin], summary: Create a bus route (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.bus.manage } } }
+  /admin/transport/bus/routes/{id}/approve-fare:
+    patch:
+      tags: [mobility-admin]
+      summary: Approve every pending schedule fare on a route (admin, audited)
+      description: >-
+        Sets fare_approved=true on every scheduled/boarding schedule of the route whose fare is unapproved,
+        in one transaction, writing one bus.fare.approve audit row per schedule plus a bus.route.fares.approve
+        summary row. A route with nothing pending returns approvedCount=0. Requires mobility.bus.manage.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 1 } } }
+      responses:
+        '200':
+          description: Approval summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  routeId: { type: string }
+                  approvedCount: { type: integer }
+                  scheduleIds: { type: array, items: { type: string } }
+        '400': { description: Reason missing }
+        '403': { description: Missing mobility.bus.manage }
+        '404': { description: Route not found }
   /admin/transport/bus/schedules:
+    get:
+      tags: [mobility-admin]
+      summary: List bus schedules (admin, paged)
+      description: Every schedule regardless of status/approval, newest departure first (stable on id). Requires mobility.view.
+      parameters:
+        - { name: route_id, in: query, schema: { type: string } }
+        - { name: provider_id, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [scheduled, boarding, departed, completed, cancelled] } }
+        - { name: fare_approved, in: query, schema: { type: boolean } }
+        - { name: from, in: query, description: Departure date lower bound (inclusive), schema: { type: string, format: date } }
+        - { name: to, in: query, description: Departure date upper bound (inclusive), schema: { type: string, format: date } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Page of schedules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  schedules:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        routeId: { type: string }
+                        routeLabel: { type: string }
+                        operatorName: { type: string }
+                        departAt: { type: string, format: date-time }
+                        fareKobo: { type: integer, format: int64, description: Integer kobo }
+                        fareApproved: { type: boolean }
+                        seatsTotal: { type: integer }
+                        seatsBooked: { type: integer }
+                        status: { type: string }
+        '400': { description: Invalid status or date filter }
+        '403': { description: Missing mobility.view }
     post: { tags: [mobility-admin], summary: Create a bus schedule (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.bus.manage } } }
   /admin/transport/bus/schedules/{id}/approve-fare:
     post:
@@ -2341,6 +2446,63 @@ paths:
         '400': { description: Invalid status / reason required to suspend }
         '403': { description: Missing mobility.bus.manage }
         '404': { description: Bus provider not found }
+  /admin/transport/bus/tickets:
+    get:
+      tags: [mobility-admin]
+      summary: Search bus tickets (admin, paginated)
+      description: Ordered created_at DESC, id DESC. q matches ticket id / QR exactly or passenger name / phone (substring).
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: refund_status, in: query, schema: { type: string, enum: [none, pending, refunded, failed, manual_required] } }
+        - { name: schedule_id, in: query, schema: { type: string } }
+        - { name: from, in: query, description: Created on/after (YYYY-MM-DD), schema: { type: string, format: date } }
+        - { name: to, in: query, description: Created on/before (YYYY-MM-DD), schema: { type: string, format: date } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200': { description: '{ tickets[], total, limit, offset } — money fields in kobo' }
+        '403': { description: Missing mobility.view }
+  /admin/transport/bus/refunds/manual:
+    get:
+      tags: [mobility-admin]
+      summary: Bus refund queue (manual_required + stuck pending/failed)
+      parameters:
+        - { name: stuck_minutes, in: query, description: Pending/failed refunds older than this are included, schema: { type: integer, default: 30 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200': { description: '{ tickets[], total, limit, offset }' }
+        '403': { description: Missing mobility.view }
+  /admin/transport/bus/tickets/{id}/resolve-refund:
+    post:
+      tags: [mobility-admin]
+      summary: Resolve a manual_required bus refund (admin, audited, idempotent)
+      description: >-
+        wallet_refund reverses the settlement's frozen legs into the passenger wallet (operator wallet → passenger for
+        provider_kobo, platform revenue → passenger for fee_kobo); amounts come from the settlement, never the request.
+        offline records an out-of-band refund reference and moves no ledger money. The method is claimed before any money
+        moves and is sticky (409 METHOD_LOCKED). A resolved ticket replays its stored outcome (replayed=true).
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method, reason]
+              properties:
+                method: { type: string, enum: [wallet_refund, offline] }
+                reference: { type: string, description: Required for offline }
+                reason: { type: string }
+      responses:
+        '200': { description: '{ ok, ticketId, refundStatus, method, reference, resolvedAt, refundedKobo, replayed }' }
+        '400': { description: 'Missing Idempotency-Key / reason / reference, or invalid method' }
+        '403': { description: Missing mobility.bus.manage }
+        '404': { description: Ticket not found }
+        '409': { description: 'Not awaiting manual refund, METHOD_LOCKED, OPERATOR_INSUFFICIENT_FUNDS, SETTLEMENT_LEGS_MISMATCH' }
   /admin/transport/towing:
     get: { tags: [mobility-admin], summary: List towing jobs (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/towing/{id}/status:

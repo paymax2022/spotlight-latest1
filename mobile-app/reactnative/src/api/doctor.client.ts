@@ -11,6 +11,12 @@ import { api } from '@/api/client';
 // with no backend. Only the exact string 'false' switches to the live backend.
 export const DOCTOR_USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_DOCTOR_USE_MOCK, true);
 
+// react-query `placeholderData` for doctor queries: a DEMO_* fixture only when
+// mock mode is on, so a live build never renders (or acts on) invented rows.
+export function doctorPlaceholder<T>(demo: T): T | undefined {
+  return DOCTOR_USE_MOCK ? demo : undefined;
+}
+
 // All live doctor endpoints live under this prefix on the API base URL.
 export const DOCTOR_API_PREFIX = '/api/v1/doctor';
 

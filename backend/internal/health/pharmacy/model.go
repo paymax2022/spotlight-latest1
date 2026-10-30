@@ -84,8 +84,19 @@ type Product struct {
 	PriceKobo          int64     `json:"price_kobo"`
 	StockQty           int       `json:"stock_qty"`
 	Active             bool      `json:"active"`
+	Category           string    `json:"category,omitempty"` // legacy catalog enum; populated by ListProducts
 	CreatedAt          time.Time `json:"created_at"`
 }
+
+// productCategories is the pharmacy_products.category CHECK vocabulary
+// (20260617000000_health_premium.sql) — the only values ?category= accepts.
+var productCategories = map[string]bool{
+	"pain": true, "vitamins": true, "first_aid": true, "baby": true,
+	"skincare": true, "devices": true, "prescription": true, "otc": true,
+}
+
+// ValidProductCategory reports whether c is an accepted catalog category ("" = no filter).
+func ValidProductCategory(c string) bool { return c == "" || productCategories[c] }
 
 // OrderLine is a requested product + quantity, priced in kobo at order time.
 type OrderLine struct {

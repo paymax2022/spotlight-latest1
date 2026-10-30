@@ -1,12 +1,9 @@
-// Package finance is the telemedicine admin console's READ-ONLY view of doctor
-// earnings, payouts, invoices, settlement disputes and commission configuration
-// (contracts/telemedicine-admin-finance.openapi.yaml).
-//
-// It never writes: no payout, wallet, ledger or dispute row is created, updated
-// or deleted here. Settlement disputes are read-only because the doctor module
-// only ever defines the "open" state — there is no admin workflow state to move
-// a dispute to, and inventing one would be a schema/behaviour change owned by the
-// doctor module. Money is integer kobo throughout.
+// Package finance is the telemedicine admin console's view of doctor earnings,
+// payouts, invoices, settlement disputes and commission configuration
+// (contracts/telemedicine-admin-finance.openapi.yaml), plus the admin workflow
+// decisions in actions.go (payout approve/hold, dispute resolve, commission
+// override). No wallet or ledger row is ever written here: the doctor's ledger
+// debit is posted when the payout is requested. Money is integer kobo throughout.
 package finance
 
 import (
@@ -35,16 +32,16 @@ type reader interface {
 type handler struct{ rd reader }
 
 // Register mounts the finance oversight routes under g, which is already the
-// /api/v1/telemedicine/admin group with authentication applied. Every route is a
-// GET behind view (telemedicine.admin.view). manage is accepted for the shared
-// admin contract but intentionally unused: this surface has no mutations.
+// /api/v1/telemedicine/admin group with authentication applied. Reads sit behind
+// view (telemedicine.admin.view), decisions behind manage (telemedicine.admin.manage).
 func Register(g *gin.RouterGroup, db *pgxpool.Pool, view, manage gin.HandlerFunc) {
-	_ = manage
 	var q querier
+	var b beginner
 	if db != nil {
-		q = db
+		q, b = db, db
 	}
 	registerRoutes(g, store{db: q}, view)
+	registerActions(g, actionStore{db: b}, manage)
 }
 
 func registerRoutes(g *gin.RouterGroup, rd reader, view gin.HandlerFunc) {

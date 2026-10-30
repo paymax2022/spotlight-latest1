@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
@@ -12,8 +12,10 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { useValidateScan } from '@/features/events/hooks';
+import GatePicker from '@/features/events/components/GatePicker';
+import { makeGate, rememberedGateName, rememberGateName } from '@/features/events/gates';
 import { EventColors } from '@/features/events/constants/events.constants';
-import type { ScanResult, GateToken, Gate } from '@/features/events/types';
+import type { ScanResult, GateToken } from '@/features/events/types';
 
 const OUTCOME: Record<ScanResult['outcome'], { title: string; ok: boolean; color: string; bg: string }> = {
   'valid':       { title: 'Admit guest',     ok: true,  color: EventColors.ok,       bg: EventColors.okBg },
@@ -31,8 +33,12 @@ export default function StewardScan() {
   const [permission, requestPermission] = useCameraPermissions();
   const scanning = useRef(false);
 
-  // organiser configures) is a further feature, not built here.
-  const gate: Gate = { id: `${eventId ?? 'unknown'}:main`, name: 'Main Entrance' };
+  // The steward picks the door they are standing at; the server stores
+  // gate.name as the ticket's checked_in_gate and groups door stats by it. The
+  // choice is remembered per event for this app session (see features/events/gates).
+  const [gateName, setGateName] = useState(() => rememberedGateName(eventId));
+  const gate = useMemo(() => makeGate(eventId, gateName), [eventId, gateName]);
+  const onGateChange = (name: string) => { setGateName(name); rememberGateName(eventId, name); };
 
   const scan = async (token: GateToken) => {
     setResult(null);
@@ -75,8 +81,10 @@ export default function StewardScan() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Scan tickets" subtitle="Steward check-in" />
+      <ScreenHeader title="Scan tickets" subtitle={`Steward check-in · ${gate.name}`} />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <GatePicker value={gateName} onChange={onGateChange} />
+
         <View style={styles.viewfinder}>
           {cameraGranted ? (
             <CameraView

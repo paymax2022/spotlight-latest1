@@ -32,13 +32,14 @@ export {
   searchDrugCatalogue,
   getDrugAlternatives,
 } from '@/api/doctor.batch3.api';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useIssuedPrescription(id: string) {
   return useQuery({
     queryKey:        ['doctor', 'issued-prescription', id],
     queryFn:         () => getIssuedPrescription(id),
     enabled:         !!id,
-    placeholderData: DEMO_ISSUED_PRESCRIPTION,
+    placeholderData: doctorPlaceholder(DEMO_ISSUED_PRESCRIPTION),
     staleTime:       30_000,
   });
 }

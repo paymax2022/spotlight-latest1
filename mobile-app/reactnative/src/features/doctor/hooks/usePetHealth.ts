@@ -32,12 +32,13 @@ import type {
   RecordPetGrowthInput,
   SavePetChronicMonitoringInput,
 } from '@/types/doctor.batch5';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function usePetLabCatalogue(species?: PetSpecies) {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'lab-catalogue', species],
     queryFn:         () => getPetLabCatalogue(species),
-    placeholderData: DEMO_PET_LAB_CATALOGUE,
+    placeholderData: doctorPlaceholder(DEMO_PET_LAB_CATALOGUE),
     staleTime:       60_000,
   });
 }
@@ -46,7 +47,7 @@ export function usePetLabInbox() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'lab-inbox'],
     queryFn:         getPetLabInbox,
-    placeholderData: DEMO_PET_LAB_INBOX,
+    placeholderData: doctorPlaceholder(DEMO_PET_LAB_INBOX),
     staleTime:       30_000,
   });
 }
@@ -56,7 +57,7 @@ export function usePetVaccinationRecommendations(petId: string) {
     queryKey:        ['doctor', 'vet', 'vaccination-recs', petId],
     queryFn:         () => getPetVaccinationRecommendations(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_PET_VACCINATION_RECOMMENDATIONS,
+    placeholderData: doctorPlaceholder(DEMO_PET_VACCINATION_RECOMMENDATIONS),
     staleTime:       30_000,
   });
 }
@@ -66,7 +67,7 @@ export function usePetVaccinationReminders(petId: string) {
     queryKey:        ['doctor', 'vet', 'vaccination-reminders', petId],
     queryFn:         () => getPetVaccinationReminders(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_PET_VACCINATION_REMINDERS,
+    placeholderData: doctorPlaceholder(DEMO_PET_VACCINATION_REMINDERS),
     staleTime:       30_000,
   });
 }
@@ -76,7 +77,7 @@ export function usePetHealthRecord(petId: string) {
     queryKey:        ['doctor', 'vet', 'health-record', petId],
     queryFn:         () => getPetHealthRecord(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_PET_HEALTH_RECORD,
+    placeholderData: doctorPlaceholder(DEMO_PET_HEALTH_RECORD),
     staleTime:       30_000,
   });
 }
@@ -86,7 +87,7 @@ export function usePetGrowthHistory(petId: string) {
     queryKey:        ['doctor', 'vet', 'growth', petId],
     queryFn:         () => getPetGrowthHistory(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_PET_GROWTH_HISTORY,
+    placeholderData: doctorPlaceholder(DEMO_PET_GROWTH_HISTORY),
     staleTime:       30_000,
   });
 }
@@ -96,7 +97,7 @@ export function usePetChronicMonitoring(petId: string) {
     queryKey:        ['doctor', 'vet', 'chronic-monitoring', petId],
     queryFn:         () => getPetChronicMonitoring(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_PET_CHRONIC_MONITORING,
+    placeholderData: doctorPlaceholder(DEMO_PET_CHRONIC_MONITORING),
     staleTime:       30_000,
   });
 }

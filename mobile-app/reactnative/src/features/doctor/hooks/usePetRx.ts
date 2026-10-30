@@ -24,6 +24,7 @@ import type {
   RequestPetRefillInput,
   ReviewPetRefillInput,
 } from '@/types/doctor.batch5';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 // Re-export the pure helpers so UI imports them from the hook layer.
 export { computePetDosage, checkPetRxWarnings } from '@/api/doctor.batch5.api';
@@ -32,7 +33,7 @@ export function usePetPharmacies() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'pharmacies'],
     queryFn:         getPetPharmacies,
-    placeholderData: DEMO_PET_PHARMACIES,
+    placeholderData: doctorPlaceholder(DEMO_PET_PHARMACIES),
     staleTime:       60_000,
   });
 }
@@ -42,7 +43,7 @@ export function useIssuedPetPrescription(prescriptionId: string) {
     queryKey:        ['doctor', 'vet', 'issued-prescription', prescriptionId],
     queryFn:         () => getIssuedPetPrescription(prescriptionId),
     enabled:         !!prescriptionId,
-    placeholderData: DEMO_ISSUED_PET_PRESCRIPTION,
+    placeholderData: doctorPlaceholder(DEMO_ISSUED_PET_PRESCRIPTION),
     staleTime:       30_000,
   });
 }
@@ -51,7 +52,7 @@ export function usePetRefillRequests() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'refills'],
     queryFn:         getPetRefillRequests,
-    placeholderData: DEMO_PET_REFILL_REQUESTS,
+    placeholderData: doctorPlaceholder(DEMO_PET_REFILL_REQUESTS),
     staleTime:       30_000,
   });
 }

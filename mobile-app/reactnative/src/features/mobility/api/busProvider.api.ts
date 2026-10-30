@@ -33,6 +33,7 @@ import {
   mockSetTemplateActive,
   mockDeleteTemplate,
 } from './busProvider.mock';
+import { toScheduleCancelResult, type ScheduleCancelResult } from '../utils/busBoarding';
 
 const BASE = '/api/v1/mobility';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
@@ -189,4 +190,29 @@ export async function getManifest(scheduleId: string): Promise<BusManifestEntry[
   }
   const res = await api.get(`${BASE}/bus/provider/bookings`, { params: { scheduleId } });
   return (res.data?.bookings ?? res.data?.data ?? res.data ?? []) as BusManifestEntry[];
+}
+
+// Boarding validate + departure cancel are NOT simulated in mock mode: a
+// fabricated "boarded" or "refunded" result would let an operator admit a
+// passenger or tell them their money moved when nothing happened.
+const NOT_IN_MOCK = 'is unavailable in demo mode: connect to the live backend to perform it.';
+
+// POST /driver/bus/validate {qr_code} → { ok, ticketId, boardingStatus }.
+// Reached via the frontend-web /api/v1/driver/[...path] proxy. Only the route
+// operator may validate, inside the boarding window; failures are classified
+// with classifyValidateError() (utils/busBoarding).
+export async function validateBoarding(qrCode: string): Promise<{ ticketId: string; boardingStatus: string }> {
+  if (USE_MOCK) throw new Error(`Validating a boarding pass ${NOT_IN_MOCK}`);
+  const res = await api.post('/api/v1/driver/bus/validate', { qr_code: qrCode });
+  const d = (res.data?.data ?? res.data) as { ticketId?: string; boardingStatus?: string };
+  return { ticketId: d?.ticketId ?? '', boardingStatus: d?.boardingStatus ?? 'boarded' };
+}
+
+// POST /bus/provider/schedules/:id/cancel {reason} → BusScheduleCancelResult.
+// Owner-gated; refunds every active ticket (idempotent + resumable server-side,
+// so re-calling after a partial result only processes unfinished tickets).
+export async function cancelSchedule(scheduleId: string, reason: string): Promise<ScheduleCancelResult> {
+  if (USE_MOCK) throw new Error(`Cancelling a departure ${NOT_IN_MOCK}`);
+  const res = await api.post(`${BASE}/bus/provider/schedules/${scheduleId}/cancel`, { reason });
+  return toScheduleCancelResult((res.data?.data ?? res.data) as Record<string, unknown>, scheduleId);
 }

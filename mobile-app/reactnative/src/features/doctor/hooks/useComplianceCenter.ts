@@ -34,12 +34,13 @@ import type {
   RequestDataExportInput,
   RequestAccountDeletionInput,
 } from '@/types/doctor.batch7';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useVetLicence() {
   return useQuery({
     queryKey:        ['doctor', 'compliance', 'vet-licence'],
     queryFn:         getVetLicence,
-    placeholderData: DEMO_VET_LICENCE,
+    placeholderData: doctorPlaceholder(DEMO_VET_LICENCE),
     staleTime:       60_000,
   });
 }
@@ -48,7 +49,7 @@ export function usePrivacySettings() {
   return useQuery({
     queryKey:        ['doctor', 'compliance', 'privacy'],
     queryFn:         getPrivacySettings,
-    placeholderData: DEMO_PRIVACY_SETTINGS,
+    placeholderData: doctorPlaceholder(DEMO_PRIVACY_SETTINGS),
     staleTime:       60_000,
   });
 }
@@ -57,7 +58,7 @@ export function useAuditTrail(scope: AuditScope) {
   return useQuery({
     queryKey:        ['doctor', 'compliance', 'audit', scope],
     queryFn:         () => getAuditTrail(scope),
-    placeholderData: DEMO_AUDIT_TRAILS[scope],
+    placeholderData: doctorPlaceholder(DEMO_AUDIT_TRAILS[scope]),
     staleTime:       30_000,
   });
 }
@@ -66,7 +67,7 @@ export function useMandatoryTraining() {
   return useQuery({
     queryKey:        ['doctor', 'compliance', 'training'],
     queryFn:         getMandatoryTraining,
-    placeholderData: DEMO_MANDATORY_TRAINING,
+    placeholderData: doctorPlaceholder(DEMO_MANDATORY_TRAINING),
     staleTime:       60_000,
   });
 }
@@ -75,7 +76,7 @@ export function useSafetyIssues() {
   return useQuery({
     queryKey:        ['doctor', 'compliance', 'safety-issues'],
     queryFn:         getSafetyIssues,
-    placeholderData: DEMO_SAFETY_ISSUES,
+    placeholderData: doctorPlaceholder(DEMO_SAFETY_ISSUES),
     staleTime:       30_000,
   });
 }

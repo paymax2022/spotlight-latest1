@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, TextInput, Platform } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, StyleSheet, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-  Mic, MicOff, Video as VideoIcon, VideoOff, PhoneOff, MessageCircle, Send, NotebookPen, ClipboardList,
+  Mic, MicOff, Video as VideoIcon, VideoOff, PhoneOff, MessageCircle, NotebookPen, ClipboardList,
 } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/tokens';
@@ -18,16 +18,16 @@ import SelfVideo from '@/features/telemedicine/SelfVideo';
 import { useApptIntake } from '@/features/health/hooks';
 import PrimaryButton from '@/components/PrimaryButton';
 
-interface ChatMessage { id: string; from: 'me' | 'doctor'; text: string; }
-
-const SEED_CHAT: ChatMessage[] = [
-  { id: 'm1', from: 'doctor', text: "Hello! I'm here. How are you feeling today?" },
-];
-
-// Designated consult length. The session timer counts down from this and stops
-// (and auto-ends the call) at 0. Kept here until the appointment model carries a
-// per-booking duration.
+// Designated consult length. The appointment model carries no per-booking
+// duration, so the window is anchored to the booked slot start instead.
 const SESSION_SECONDS = 20 * 60;
+
+/** Session end (epoch ms): slot start + length once the slot has begun, else entry + length. */
+function sessionEndsAt(scheduledAt: string | undefined, enteredAt: number): number {
+  const start = scheduledAt ? Date.parse(scheduledAt) : NaN;
+  const anchor = Number.isFinite(start) && start <= enteredAt ? start : enteredAt;
+  return anchor + SESSION_SECONDS * 1000;
+}
 
 export default function ConsultRoomScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -36,9 +36,8 @@ export default function ConsultRoomScreen() {
   const [showChat, setShowChat] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [notes, setNotes] = useState('');
-  const [chat, setChat] = useState<ChatMessage[]>(SEED_CHAT);
-  const [draft, setDraft] = useState('');
-  const [seconds, setSeconds] = useState(0);
+  const [enteredAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const [ended, setEnded] = useState(false);
 
   const { data: appt } = useQuery({
@@ -56,18 +55,20 @@ export default function ConsultRoomScreen() {
   // Only requested once the patient is actually in the room.
   const media = useLocalMedia(intakeReady && !ended);
 
-  // Session clock: tick only while live, cap at the session length, and stop.
+  // Session clock: anchored to the appointment slot, so a reload does not reset it.
+  const endsAt = useMemo(() => sessionEndsAt(appt?.scheduledAt, enteredAt), [appt?.scheduledAt, enteredAt]);
   useEffect(() => {
     if (!intakeReady || ended) return;
-    const t = setInterval(() => setSeconds((s) => Math.min(s + 1, SESSION_SECONDS)), 1000);
+    const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [intakeReady, ended]);
+  const remaining = Math.min(SESSION_SECONDS, Math.max(0, Math.ceil((endsAt - now) / 1000)));
 
   // Reaching the designated end stops the clock, releases the camera/mic, and
   // auto-ends the call after a short grace so the patient sees it ended.
   useEffect(() => {
-    if (seconds >= SESSION_SECONDS && !ended) setEnded(true);
-  }, [seconds, ended]);
+    if (intakeReady && appt && remaining <= 0 && !ended) setEnded(true);
+  }, [intakeReady, appt, remaining, ended]);
 
   useEffect(() => {
     if (!ended) return;
@@ -81,19 +82,13 @@ export default function ConsultRoomScreen() {
   useEffect(() => { media.setAudioEnabled(micOn); }, [micOn, media]);
   useEffect(() => { media.setVideoEnabled(camOn); }, [camOn, media]);
 
-  const send = () => {
-    if (!draft.trim()) return;
-    setChat((c) => [...c, { id: `m${c.length + 1}`, from: 'me', text: draft.trim() }]);
-    setDraft('');
-  };
-
+  // Leaving ends only the patient's side. POST /appointments/:id/complete is
+  // doctor-only (it settles the escrowed fee), so the patient never calls it.
   const endCall = () => {
     media.stop();
     router.replace(`/services/telemedicine/appointment/${id}/summary`);
   };
 
-  // Countdown to the designated session end.
-  const remaining = Math.max(0, SESSION_SECONDS - seconds);
   const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
   const ss = String(remaining % 60).padStart(2, '0');
   const doctor = appt?.doctor;
@@ -151,6 +146,8 @@ export default function ConsultRoomScreen() {
         {doctor && <DoctorAvatar initials={doctor.initials} color={doctor.avatarColor} size={120} />}
         <Text style={styles.docName}>{doctor?.name}</Text>
         <Text style={styles.docSpec}>{doctor?.specialties.join(' • ')}</Text>
+        {/* No RTC provider is wired yet, so there is no remote stream to show. */}
+        <Text style={styles.docSpec}>Doctor video not connected</Text>
         <View style={styles.connBadge}>
           <Text style={styles.connText}>
             {ended
@@ -173,17 +170,10 @@ export default function ConsultRoomScreen() {
       {showChat && (
         <View style={styles.chatPanel}>
           <Text style={styles.panelTitle}>Chat</Text>
-          <ScrollView style={{ maxHeight: 180 }} contentContainerStyle={{ gap: Spacing.sm }}>
-            {chat.map((m) => (
-              <View key={m.id} style={[styles.bubble, m.from === 'me' ? styles.bubbleMe : styles.bubbleDoc]}>
-                <Text style={[styles.bubbleText, m.from === 'me' && { color: Colors.white }]}>{m.text}</Text>
-              </View>
-            ))}
-          </ScrollView>
-          <View style={styles.chatInputRow}>
-            <TextInput style={styles.chatInput} placeholder="Type a message" placeholderTextColor={Colors.outline} value={draft} onChangeText={setDraft} />
-            <Pressable style={styles.sendBtn} onPress={send}><Send size={18} color={Colors.white} strokeWidth={2} /></Pressable>
-          </View>
+          {/* No patient-side consult chat endpoint exists yet; never echo unsent messages. */}
+          <Text style={styles.bubbleText}>
+            In-call chat isn’t available yet. Use My notes to keep track of anything you want to ask.
+          </Text>
         </View>
       )}
 
@@ -255,13 +245,7 @@ const styles = StyleSheet.create({
   selfText:   { ...Typography.labelMd, color: Colors.white },
   chatPanel:  { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md, padding: Spacing.md, borderRadius: Radius.xl, backgroundColor: Colors.surfaceContainerLowest, gap: Spacing.sm },
   panelTitle: { ...Typography.titleMd, color: Colors.onSurface },
-  bubble:     { maxWidth: '80%', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: Radius.lg },
-  bubbleMe:   { alignSelf: 'flex-end', backgroundColor: Colors.primary },
-  bubbleDoc:  { alignSelf: 'flex-start', backgroundColor: Colors.surfaceContainerLow },
   bubbleText: { ...Typography.bodySm, color: Colors.onSurface },
-  chatInputRow:{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  chatInput:  { flex: 1, height: 46, borderRadius: Radius.lg, paddingHorizontal: Spacing.md, backgroundColor: Colors.surfaceContainerLow, ...Typography.bodyMd, color: Colors.onSurface },
-  sendBtn:    { width: 46, height: 46, borderRadius: Radius.lg, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   notesInput: { minHeight: 110, borderRadius: Radius.lg, padding: Spacing.md, backgroundColor: Colors.surfaceContainerLow, ...Typography.bodyMd, color: Colors.onSurface },
   controls:   { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: Spacing.md, paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.md },
   ctrl:       { width: 56, height: 56, borderRadius: Radius.full, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },

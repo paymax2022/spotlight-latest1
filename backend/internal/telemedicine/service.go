@@ -48,6 +48,8 @@ type Service struct {
 	// applies the decision but skips the audit row rather than failing the
 	// request over a logging concern.
 	audit AuditWriter
+	// notify sends booking/cancellation notices (notify.go). Nil disables them.
+	notify Notifier
 }
 
 // NewService builds the service with the platform booking fee OFF. The fee is a
@@ -552,6 +554,8 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	); err != nil {
 		return nil, fmt.Errorf("telemedicine: insert appointment: %w", err)
 	}
+	// Only a fresh insert notifies; an Idempotency-Key replay returned above.
+	s.dispatch(ctx, bookedNotices(appt, doctor.UserID))
 	return appt, nil
 }
 
@@ -708,8 +712,11 @@ func (s *Service) CancelAppointment(ctx context.Context, appointmentID, actorID 
 	if err := s.settlement.Refund(ctx, settlementID, "appointment_cancelled"); err != nil {
 		return fmt.Errorf("telemedicine: refund fee: %w", err)
 	}
-	_, err := s.db.Exec(ctx, `UPDATE appointments SET status='cancelled' WHERE id=$1`, appointmentID)
-	return err
+	if _, err := s.db.Exec(ctx, `UPDATE appointments SET status='cancelled' WHERE id=$1`, appointmentID); err != nil {
+		return err
+	}
+	s.notifyCancelled(ctx, appointmentID)
+	return nil
 }
 
 // IssuePrescription creates a prescription for a completed appointment.

@@ -39,7 +39,7 @@ func TestLiveDB_ListProducts_ToleratesAProductWithNoPharmacy(t *testing.T) {
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM pharmacy_products WHERE id=$1::uuid`, id)
 	})
 
-	products, err := svc.ListProducts(ctx, "", "")
+	products, err := svc.ListProducts(ctx, "", "", "")
 	if err != nil {
 		t.Fatalf("ListProducts must not fail because a product has no pharmacy: %v", err)
 	}

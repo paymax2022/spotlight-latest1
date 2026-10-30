@@ -354,18 +354,6 @@ func (s *Service) sendReminderWave(ctx context.Context, col string, window time.
 	return len(out)
 }
 
-// notifyUser is the scheduling module's notification seam. The transport Service
-// has no wired notifications.Service (it takes only a pool + settlement), so this
-// is a log-and-audit outbox: the audit event above is the durable record and the
-// reminder_*_sent_at / status columns are the idempotency guard. A later wiring
-// can replace the body with notifications.Service.Send without changing callers.
-// TODO(notifications): inject *notifications.Service into the transport Service
-// (asynq push/email/SMS) and route these through it. Until then this is
-// intentionally best-effort + idempotent at the DB layer.
-func (s *Service) notifyUser(ctx context.Context, userID, event, bookingID, message string) {
-	log.Printf("[transport-scheduler] notify user=%s event=%s booking=%s: %s", userID, event, bookingID, message)
-}
-
 // placeFromBooking builds a Place from a label + optional lat/lng carried in the
 // booking payload (keys "<which>_lat"/"<which>_lng", e.g. "pickup_lat"). The geo
 // columns are PostGIS; we carry the numeric coords in mode_payload so the mode

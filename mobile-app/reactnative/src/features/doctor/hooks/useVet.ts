@@ -1,6 +1,6 @@
 // Phase 3. Vet dashboard / mode toggle, pet profile, pet prescription, pet lab
 // orders & results, and pet store recommendations. Reads use the DEMO_* exports
-// as placeholderData; mutations auto-generate the Idempotency-Key.
+// as placeholderData in mock mode only; mutations auto-generate the Idempotency-Key.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -24,6 +24,8 @@ import {
   DEMO_PET_RECOMMENDATIONS,
 } from '@/api/doctor.phase3.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+// DEMO_* placeholders only in mock mode: a live build must never render (or act on) invented rows.
+import { DOCTOR_USE_MOCK } from '@/api/doctor.client';
 import type {
   ToggleVetModeInput,
   CreatePetPrescriptionInput,
@@ -36,7 +38,7 @@ export function useVetDashboard() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'dashboard'],
     queryFn:         getVetDashboard,
-    placeholderData: DEMO_VET_DASHBOARD,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_VET_DASHBOARD : undefined,
     staleTime:       30_000,
   });
 }
@@ -57,7 +59,7 @@ export function usePetProfile(petId: string) {
     queryKey:        ['doctor', 'vet', 'pet', petId],
     queryFn:         () => getPetProfile(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_PET_PROFILE,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_PET_PROFILE : undefined,
     staleTime:       30_000,
   });
 }
@@ -67,7 +69,7 @@ export function usePetPrescription(petId: string) {
     queryKey:        ['doctor', 'vet', 'pet', petId, 'prescription'],
     queryFn:         () => getPetPrescription(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_PET_PRESCRIPTION,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_PET_PRESCRIPTION : undefined,
     staleTime:       30_000,
   });
 }
@@ -87,7 +89,7 @@ export function usePetLabOrders() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'lab-orders'],
     queryFn:         getPetLabOrders,
-    placeholderData: DEMO_PET_LAB_ORDERS,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_PET_LAB_ORDERS : undefined,
     staleTime:       30_000,
   });
 }
@@ -128,7 +130,7 @@ export function usePetProducts(category?: string) {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'products', category],
     queryFn:         () => getPetProducts(category),
-    placeholderData: DEMO_PET_PRODUCTS,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_PET_PRODUCTS : undefined,
     staleTime:       60_000,
   });
 }
@@ -138,7 +140,7 @@ export function usePetRecommendations(petId: string) {
     queryKey:        ['doctor', 'vet', 'pet', petId, 'recommendations'],
     queryFn:         () => getPetRecommendations(petId),
     enabled:         !!petId,
-    placeholderData: DEMO_PET_RECOMMENDATIONS,
+    placeholderData: DOCTOR_USE_MOCK ? DEMO_PET_RECOMMENDATIONS : undefined,
     staleTime:       30_000,
   });
 }

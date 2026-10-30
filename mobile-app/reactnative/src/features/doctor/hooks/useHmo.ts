@@ -27,13 +27,14 @@ import type {
   SendHmoSupportMessageInput,
   AcknowledgeFraudWarningInput,
 } from '@/types/doctor.batch4';
+import { doctorPlaceholder } from '@/api/doctor.client';
 
 export function useHmoPlanCoverage(patientId: string) {
   return useQuery({
     queryKey:        ['doctor', 'hmo-plan-coverage', patientId],
     queryFn:         () => getHmoPlanCoverage(patientId),
     enabled:         !!patientId,
-    placeholderData: DEMO_HMO_PLAN_COVERAGE,
+    placeholderData: doctorPlaceholder(DEMO_HMO_PLAN_COVERAGE),
     staleTime:       60_000,
   });
 }
@@ -42,7 +43,7 @@ export function usePreAuthRequests(status?: PreAuthStatus) {
   return useQuery({
     queryKey:        ['doctor', 'pre-auth-requests', status],
     queryFn:         () => getPreAuthRequests(status),
-    placeholderData: DEMO_PRE_AUTH_REQUESTS,
+    placeholderData: doctorPlaceholder(DEMO_PRE_AUTH_REQUESTS),
     staleTime:       30_000,
   });
 }
@@ -60,7 +61,7 @@ export function useCoveredServices(patientId?: string) {
   return useQuery({
     queryKey:        ['doctor', 'covered-services', patientId],
     queryFn:         () => getCoveredServices(patientId),
-    placeholderData: DEMO_COVERED_SERVICES,
+    placeholderData: doctorPlaceholder(DEMO_COVERED_SERVICES),
     staleTime:       30_000,
   });
 }
@@ -70,7 +71,7 @@ export function useHmoSupportThread(threadId: string) {
     queryKey:        ['doctor', 'hmo-support-thread', threadId],
     queryFn:         () => getHmoSupportThread(threadId),
     enabled:         !!threadId,
-    placeholderData: DEMO_HMO_SUPPORT_THREAD,
+    placeholderData: doctorPlaceholder(DEMO_HMO_SUPPORT_THREAD),
     staleTime:       15_000,
   });
 }
@@ -79,7 +80,7 @@ export function useHmoFraudWarnings() {
   return useQuery({
     queryKey:        ['doctor', 'hmo-fraud-warnings'],
     queryFn:         getHmoFraudWarnings,
-    placeholderData: DEMO_HMO_FRAUD_WARNINGS,
+    placeholderData: doctorPlaceholder(DEMO_HMO_FRAUD_WARNINGS),
     staleTime:       30_000,
   });
 }

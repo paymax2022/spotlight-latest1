@@ -25,7 +25,7 @@ func TestLiveDB_AdminConsoleViews_QueriesRunAndNeverReturnNil(t *testing.T) {
 	if v, err := svc.AdminConsolePayouts(ctx); err != nil || v == nil {
 		t.Fatalf("payouts: %v %v", v, err)
 	}
-	r, err := svc.AdminConsoleReporting(ctx)
+	r, err := svc.AdminConsoleReporting(ctx, "")
 	if err != nil || r == nil || r.ByState == nil || r.Monthly == nil {
 		t.Fatalf("reporting: %+v %v", r, err)
 	}
