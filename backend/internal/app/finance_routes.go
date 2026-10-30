@@ -20,7 +20,6 @@ import (
 	"spotlight/backend/internal/association"
 	"spotlight/backend/internal/business"
 	"spotlight/backend/internal/config"
-	healthportal "spotlight/backend/internal/health/portal"
 	"spotlight/backend/internal/crowdfunding"
 	cfadminext "spotlight/backend/internal/crowdfunding/adminext"
 	cfcreator "spotlight/backend/internal/crowdfunding/creator"
@@ -48,6 +47,7 @@ import (
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/fractionalre"
 	"spotlight/backend/internal/groups"
+	healthportal "spotlight/backend/internal/health/portal"
 	"spotlight/backend/internal/insurance/embedded"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/integrations/llm"
@@ -2646,6 +2646,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// mutations use the mode-specific .manage slug).
 			adminTr.GET("/parcels", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminParcelsList)
 			adminTr.PATCH("/parcels/:id/status", middleware.RequirePermission(rbac, mobilityParcelManagePerm), transportAdmin.AdminParcelStatus)
+			adminTr.PATCH("/parcels/:id/pod-review", middleware.RequirePermission(rbac, mobilityParcelManagePerm), transportAdmin.AdminParcelPodReview)
 
 			adminTr.GET("/bus/routes", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusListRoutes)
 			adminTr.POST("/bus/routes", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCreateRoute)

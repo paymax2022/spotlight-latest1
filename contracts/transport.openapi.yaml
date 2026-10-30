@@ -1793,6 +1793,41 @@ paths:
       summary: Set parcel status (admin)
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: OK }, '403': { description: Missing mobility.parcel.manage } }
+  /admin/transport/parcels/{id}/pod-review:
+    patch:
+      tags: [mobility-admin]
+      summary: Approve or reject a parcel proof of delivery (admin, audited)
+      description: >-
+        Records an admin decision on the parcel's proof_url (pod_review_status) with a parcel.pod.review audit row
+        in the same transaction. Record-only: no money moves and the parcel status is unchanged. Re-sending the
+        current decision is a replay (replayed=true, no second audit row). Requires mobility.parcel.manage.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                reason: { type: string, description: Required when decision is rejected }
+      responses:
+        '200':
+          description: Review recorded (or replayed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  parcelId: { type: string }
+                  podStatus: { type: string, enum: [approved, rejected] }
+                  replayed: { type: boolean }
+        '400': { description: Invalid decision, or rejection without a reason }
+        '403': { description: Missing mobility.parcel.manage }
+        '404': { description: Parcel not found }
+        '409': { description: Parcel has no proof of delivery }
   /admin/transport/bus/routes:
     get: { tags: [mobility-admin], summary: List bus routes (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
     post: { tags: [mobility-admin], summary: Create a bus route (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.bus.manage } } }

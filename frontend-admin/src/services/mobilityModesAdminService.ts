@@ -296,10 +296,9 @@ export async function setParcelStatus(id: string, patch: ModeStatusPatch): Promi
 }
 
 export async function reviewParcelPod(id: string, decision: PodStatus, reason: string): Promise<{ ok: boolean }> {
-  // No backend at all: the parcels admin surface only has AdminParcelStatus
-  // (a general status PATCH) — no distinct proof-of-delivery review action
-  // exists in backend/internal/app/finance_routes.go's parcels admin routes.
-  if (USE_MOCK) throw new Error(`Reviewing a parcel proof of delivery ${NO_BACKEND_YET}`);
+  // Record-only, audited (transportAdmin.AdminParcelPodReview); it does not move
+  // money or change the parcel status. Only approved/rejected are accepted.
+  if (USE_MOCK) throw new Error(`Reviewing a parcel proof of delivery ${NOT_IN_FIXTURE_MODE}`);
   return writeOk(`${adminBase()}/parcels/${id}/pod-review`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ decision, reason }) });
 }
 
