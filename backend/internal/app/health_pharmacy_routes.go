@@ -94,6 +94,10 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 
 	pg := member.Group("/health/pharmacy")
 	registerPharmacyProviderMe(pg, pool)
+	// Patient's own pharmacist-consult thread.
+	pg.GET("/consult/messages", h.ConsultMessages)
+	pg.POST("/consult/messages", h.SendConsultMessage)
+
 	pg.GET("/products", h.ListProducts)                         // NAFDAC-gated, Rx flag (HL-5)
 	pg.GET("/products/mine", h.MyProducts)                      // owner shelf incl. off-sale (before :id)
 	pg.GET("/products/:id", h.GetProduct)                       // single product + owning pharmacy

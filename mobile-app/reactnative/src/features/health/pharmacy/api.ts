@@ -921,13 +921,24 @@ let CONSULT_THREAD: PharmacistConsultMessage[] = [
   { id: 'pc_1', fromPharmacist: true, author: 'Pharm. Grace E.', body: 'Hello! How can I help with your medication today?', at: new Date(Date.now() - 8 * 60_000).toISOString() },
 ];
 
+function mapConsultMessage(m: any): PharmacistConsultMessage {
+  const fromPharmacist = !!m.from_pharmacist;
+  return {
+    id: m.id,
+    fromPharmacist,
+    author: fromPharmacist ? m.author_name || 'Pharmacist' : 'You',
+    body: m.body ?? '',
+    at: m.created_at,
+  };
+}
+
 export async function getConsultThread(): Promise<PharmacistConsultMessage[]> {
   if (USE_MOCK) {
     await delay(200);
     return [...CONSULT_THREAD];
   }
-  const { data } = await api.get<PharmacistConsultMessage[]>(`${PHARMACY_API}/consult/messages`);
-  return data;
+  const { data } = await api.get<{ messages?: any[] }>(`${PHARMACY_API}/consult/messages`);
+  return (data.messages ?? []).map(mapConsultMessage);
 }
 
 export async function sendConsultMessage(body: string): Promise<PharmacistConsultMessage> {
@@ -937,8 +948,9 @@ export async function sendConsultMessage(body: string): Promise<PharmacistConsul
     CONSULT_THREAD = [...CONSULT_THREAD, msg];
     return msg;
   }
-  const { data } = await api.post<PharmacistConsultMessage>(`${PHARMACY_API}/consult/messages`, { body });
-  return data;
+  const { data } = await api.post<{ message?: any }>(`${PHARMACY_API}/consult/messages`, { body });
+  if (!data.message) throw new Error('Message was not sent');
+  return mapConsultMessage(data.message);
 }
 
 // `${PHARMACY_API}/provider/onboarding[/submit]` was never implemented backend
