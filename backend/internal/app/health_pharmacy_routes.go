@@ -36,11 +36,12 @@ import (
 //   - member: /api/finance/health/pharmacy/*  (member-authenticated; user_id mirrored)
 //   - admin : /api/health/pharmacy/admin/*    (per-route RBAC health.pharmacy.*)
 //
-// Gated by FeatureHealthPharmacyEnabled at the orchestrator. Auditing is nil-safe.
+// Gated by FeatureHealthPharmacyEnabled at the orchestrator. Every order FSM
+// transition is written to the shared audit sink (nil-safe when absent).
 // Returns the pharmacy service so the orchestrator can hand it optional
 // collaborators (e.g. the symptom-search ReviewCaseOpener seam — PRD §10);
 // nil when the pool is absent.
-func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, supabase *integrations.SupabaseRestClient, redis *platformRedis.Client) *healthpharmacy.Service {
+func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService, cfg config.Config, supabase *integrations.SupabaseRestClient, redis *platformRedis.Client) *healthpharmacy.Service {
 	if pool == nil {
 		log.Println("[health.pharmacy] nil pool — skipping pharmacy routes")
 		return nil
@@ -67,7 +68,7 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		&dispatchAdapter{t: transportSvc, db: pool},
 		&providerGateAdapter{db: pool},
 		&payoutGateAdapter{kyc: kycSvc},
-		nil, // audit sink injected by orchestrator (HL-12) — nil-safe here
+		audit, // shared immutable-audit sink from the orchestrator (HL-12) — nil-safe
 	)
 	svc.SetRxLister(&rxListerAdapter{rx: rxSvc})
 	// DP-002 dispense-match: was left permanently nil (dead check) — the seam

@@ -84,7 +84,6 @@ import (
 	"spotlight/backend/internal/restaurant/taxonomy"
 	"spotlight/backend/internal/services"
 	staysreservation "spotlight/backend/internal/stays/reservation"
-	"spotlight/backend/internal/telemedicine"
 	telemedclaims "spotlight/backend/internal/telemedadmin/claims"
 	telemedcompliance "spotlight/backend/internal/telemedadmin/compliance"
 	telemedfinance "spotlight/backend/internal/telemedadmin/finance"
@@ -92,6 +91,7 @@ import (
 	telemedprescriptions "spotlight/backend/internal/telemedadmin/prescriptions"
 	telemedreviews "spotlight/backend/internal/telemedadmin/reviews"
 	telemedsupport "spotlight/backend/internal/telemedadmin/support"
+	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	transportpaystackcheckout "spotlight/backend/internal/transport/paystackcheckout"
@@ -654,7 +654,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// already rejects a missing/invalid token itself, so requireUserID()
 			// adds nothing here besides that ordering hazard — see
 			// health_pharmacy_routes.go's own comment at ag.Use(...).
-			pharmacySvc := RegisterHealthPharmacy(finance, r.Group("/api/health/pharmacy/admin"), pool, rbac, cfg, supabase, redisClient)
+			pharmacySvc := RegisterHealthPharmacy(finance, r.Group("/api/health/pharmacy/admin"), pool, rbac, auditSink, cfg, supabase, redisClient)
 			// Symptom-based medication search addon — its own flag AND'd with
 			// the pharmacy flag (FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED).
 			if cfg.FeaturePharmacySymptomSearchEnabled {
@@ -2252,7 +2252,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Pharm.DELETE("/cart/:product_id", pharmacyHandler.RemoveFromCart)
 		v1Pharm.DELETE("/cart", pharmacyHandler.ClearCart)
 	}
-
 
 	if cfg.FeatureAICareEnabled {
 		var aicAI aicare.AIProvider
