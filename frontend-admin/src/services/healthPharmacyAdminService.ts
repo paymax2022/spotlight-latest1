@@ -197,10 +197,10 @@ export async function listPcnApplications(opts?: { status?: string; q?: string }
   return getJson<PcnApplication[]>(`/pcn/applications${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePcn(id: string, decision: PcnDecision, note?: string): Promise<PcnDecisionResult> {
-  // No PCN application table, service, or handler exists anywhere in
-  // backend/internal/health/pharmacy — only a "future adapter" comment
-  // reference. There is nothing this can call yet.
-  if (USE_MOCK) throw new Error(`Deciding a PCN application ${NO_BACKEND_YET}`);
+  // Backed by POST /pcn/applications/:id/decision, which delegates to the shared
+  // provider-review service. Only approve / reject / need_info are supported;
+  // suspend / reinstate answer 400 until that service grows those edges.
+  if (USE_MOCK) throw new Error(`Deciding a PCN application is a live-only action — set ${USE_MOCK_ENV}=false`);
   return sendJson<PcnDecisionResult>('POST', `/pcn/applications/${id}/decision`, { decision, note });
 }
 
@@ -233,8 +233,8 @@ export async function listCatalog(opts?: { status?: string; pom?: string; q?: st
   return getJson<CatalogItem[]>(`/catalog${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function governCatalogItem(id: string, action: CatalogGovernanceAction, note?: string): Promise<CatalogGovernanceResult> {
-  // there is no separate governance entity or /catalog/:id/govern route.
-  if (USE_MOCK) throw new Error(`Governing a catalog item ${NO_BACKEND_YET}`);
+  // Backed by POST /catalog/:id/govern (approve | reject | suspend → nafdac_status + active).
+  if (USE_MOCK) throw new Error(`Governing a catalog item is a live-only action — set ${USE_MOCK_ENV}=false`);
   return sendJson<CatalogGovernanceResult>('POST', `/catalog/${id}/govern`, { action, note });
 }
 
@@ -512,10 +512,9 @@ export async function listRecalls(opts?: { status?: string; severity?: string; q
   return getJson<RecallRecord[]>(`/recalls${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function createRecall(input: CreateRecallInput): Promise<CreateRecallResult> {
-  // Only real recall-adjacent capability is AdminRecallProduct (deactivate
-  // by product id, no body). There is no RecallRecord entity, batch/severity
-  // tracking, or /recalls route backing this shape.
-  if (USE_MOCK) throw new Error(`Opening a recall ${NO_BACKEND_YET}`);
+  // Backed by POST /recalls (pharmacy_recalls). An optional product_id ties the
+  // recall to a catalog product, which is deactivated in the same transaction.
+  if (USE_MOCK) throw new Error(`Opening a recall is a live-only action — set ${USE_MOCK_ENV}=false`);
   return sendJson<CreateRecallResult>('POST', '/recalls', input);
 }
 
