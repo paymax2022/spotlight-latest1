@@ -456,14 +456,18 @@ func TestLiveDB_NotificationRetentionPurge(t *testing.T) {
 		t.Errorf("row count after purge = %d, want %d", n, before-1)
 	}
 
-	// The same guard applies to a DELETE that is not the sweep at all.
+	// The same guard applies to a DELETE that is not the sweep at all — and it has to name the reason it
+	// refused. The combined message used to blame the keep list for a pinned row whose category was not
+	// protected, which sends an operator to change a policy that protects nothing.
 	if _, err := pool.Exec(ctx, `DELETE FROM estate_notifications WHERE id=$1`, pinned); err == nil {
 		t.Error("a direct DELETE removed a pinned notice")
-	} else if !strings.Contains(err.Error(), "retained beyond the sweep") {
+	} else if !strings.Contains(err.Error(), "retained beyond the sweep because it is pinned") {
 		t.Errorf("pin guard message = %v", err)
 	}
 	if _, err := pool.Exec(ctx, `DELETE FROM estate_notifications WHERE id=$1`, critical); err == nil {
 		t.Error("a direct DELETE removed a protected-category notice")
+	} else if !strings.Contains(err.Error(), "retained beyond the sweep because its category system is protected") {
+		t.Errorf("category guard message = %v", err)
 	}
 	// Bringing both back within reach of a delete is the only way a purge happens — by decision, not by
 	// accident — and the test's own cleanup relies on it.
@@ -538,6 +542,10 @@ func TestLiveDB_NotificationRetention_PlatformSweep(t *testing.T) {
 		SetNotificationRetentionPolicyRequest{ArchiveAfterDays: &archive}); err != nil {
 		t.Fatalf("policy: %v", err)
 	}
+	// Counted rather than hardcoded at 1: an estate can acquire rows from elsewhere (a lifecycle transition
+	// writes its owner a `system` notice), and this assertion is about nothing being *deleted*, not about
+	// the seed having a particular size.
+	before := countInbox(t, ctx, pool, estateID)
 	counts, err := svc.runRetentionSweep(ctx, "")
 	if err != nil {
 		t.Fatalf("platform sweep: %v", err)
@@ -545,10 +553,26 @@ func TestLiveDB_NotificationRetention_PlatformSweep(t *testing.T) {
 	if counts["notifications_archived"] < 1 {
 		t.Errorf("platform sweep counters = %v, want at least this estate's row archived", counts)
 	}
-	if counts["notifications_purged"] != 0 {
-		t.Errorf("platform sweep purged %d rows on a never-purge policy", counts["notifications_purged"])
+	// The never-purge guarantee is asserted on this estate's rows, not on the flattened total.
+	// runRetentionSweep("") sums every estate it walks — right for a maintenance report, worthless as a
+	// per-estate guarantee: on a shared local database some other estate with an armed purge horizon and old
+	// archived rows (an HTTP lane's leftover, for instance) puts a non-zero number in that total, and the
+	// test then fails over data it never created. It did exactly that on the first re-run of this suite.
+	// Reading `by_estate` instead would not fix it either: asking the function for this estate's document
+	// means calling the function, and the second sweep would archive the row again and report 0.
+	if n := countInbox(t, ctx, pool, estateID); n != before {
+		t.Errorf("platform sweep left %d rows in an estate holding %d before it ran — a never-purge policy deleted something", n, before)
 	}
 	if !boolCol(t, ctx, pool, old, "archived") {
 		t.Error("the platform-wide sweep missed the estate's eligible row")
+	}
+	var purgeDays *int
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
+		`SELECT purge_after_days FROM estate_notification_retention_policies WHERE estate_id=$1`, estateID).
+		Scan(&purgeDays); err != nil {
+		t.Fatalf("read back the policy: %v", err)
+	}
+	if purgeDays != nil {
+		t.Errorf("purge_after_days = %d, want NULL — the sweep is not the only place a schedule can change", *purgeDays)
 	}
 }

@@ -142,9 +142,18 @@ BEGIN
         v_keep := ARRAY['security','system']::text[];
     END IF;
 
-    IF OLD.pinned OR OLD.category = ANY (v_keep) THEN
-        RAISE EXCEPTION 'this notification is retained beyond the sweep (pinned = %, category % is protected for this estate) — unpin it or change the estate retention policy first',
-            OLD.pinned, OLD.category
+    -- Two reasons, named separately. The first live run of the Phase 2.5a HTTP lane showed why: the old
+    -- combined form claimed "category general is protected" about an unpinned row whose category was not
+    -- in any keep list — the row was pinned, and the message blamed the wrong guard. An operator who
+    -- follows that advice changes a policy that protects nothing and still cannot delete the row.
+    IF OLD.pinned THEN
+        RAISE EXCEPTION 'this notification is retained beyond the sweep because it is pinned — unpin it first'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF OLD.category = ANY (v_keep) THEN
+        RAISE EXCEPTION 'this notification is retained beyond the sweep because its category % is protected for this estate — change the estate retention policy first',
+            OLD.category
             USING ERRCODE = '23514';
     END IF;
 

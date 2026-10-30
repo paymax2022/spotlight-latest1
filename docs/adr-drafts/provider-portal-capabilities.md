@@ -25,8 +25,12 @@ admin-granted module visibility, not "what kind of provider am I".
 2. The mobile app has one portal area. A `ProviderGate` wraps every provider-side screen and
    admits a user only when they hold an `approved` capability of the matching type. Anyone else
    is redirected to a status or "apply as a provider" screen.
-3. The gate is a UX control only. Every provider-side API route keeps enforcing ownership and
-   approval server-side; hiding a screen never grants or removes access.
+3. The gate is a UX control only. Provider-side API routes enforce ownership server-side;
+   hiding a screen never grants or removes access. Approval enforcement is NOT uniform today:
+   vet, pharmacy and lab owner write routes check approval, but the doctor routes
+   (`/api/v1/doctor`) check ownership only, and a few vet/pharmacy/lab owner-scoped reads
+   (availability, earnings) do not check approval. Those are follow-ups, listed below; until
+   they land the client guard is the only approval check on those paths.
 4. A caller with no provider records receives `200` with `capabilities: []`, never 404, so a
    non-provider cannot be told apart from a provider of another type by probing.
 5. Further business types are added by extending the `type` enum and the endpoint's source
@@ -39,6 +43,14 @@ admin-granted module visibility, not "what kind of provider am I".
   fail closed.
 - The endpoint is auth/PII-adjacent (it reveals that a user is a provider, to that user only),
   so it needs `security-reviewer` before merge.
+
+## Follow-ups (found by security review, out of scope here)
+- Doctor routes: add a shared approved-doctor check (prescription issue, consult start/end, payout first).
+- Vet `GET/PUT /provider/availability`: require `status='APPROVED'`.
+- Pharmacy / lab owner earnings and product/order reads: decide whether a suspended provider keeps read access.
+- Doctor `rejected` and unsubmitted both surface as PENDING in the portal; distinguish them.
+- Roll the backend flag out before the app build ships: with the flag off the endpoint answers 503
+  and the guard shows its error screen to real providers.
 
 ## Open questions
 - Should a single user holding several provider types see a type switcher (planned) or be
