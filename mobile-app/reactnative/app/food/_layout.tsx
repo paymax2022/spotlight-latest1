@@ -5,26 +5,18 @@ import { useCartSync } from '@/features/food/useCartSync';
 import ModuleTabBar from '@/components/ModuleTabBar';
 import { FOOD_TABS, RESTAURANT_TABS } from '@/constants/moduleTabs';
 import ProviderRouteGuard from '@/features/providerPortal/ProviderRouteGuard';
+import { FOOD_PROVIDER_RULES } from '@/features/providerPortal/gate';
 
-// The owner console and the rider console share the /food tree with customer
-// screens. `/food/restaurant` is the owner console root while
-// `/food/restaurant/<id>` is a customer's view of an outlet, so that one rule is
-// exact-match; the rest are owner-only paths.
-const PROVIDER_RULES = [
-  { type: 'restaurant', prefix: '/food/restaurant', exact: true },
-  { type: 'restaurant', prefix: '/food/restaurant/manage' },
-  { type: 'restaurant', prefix: '/food/restaurant/earnings' },
-  { type: 'restaurant', prefix: '/food/restaurant/staff' },
-  { type: 'restaurant', prefix: '/food/restaurant/order' },
-  { type: 'rider', prefix: '/food/rider' },
-] as const;
+// Rules live in features/providerPortal/gate so the create-store funnel is
+// covered by node:test — see the comment there for why /food/restaurant/manage
+// is not among them.
 
 export default function FoodLayout() {
   // Sync cart with server and localStorage on mount and on changes
   useCartSync();
 
   return (
-    <ProviderRouteGuard rules={PROVIDER_RULES}>
+    <ProviderRouteGuard rules={FOOD_PROVIDER_RULES}>
     <View style={{ flex: 1 }}>
       <Stack
         screenOptions={{
