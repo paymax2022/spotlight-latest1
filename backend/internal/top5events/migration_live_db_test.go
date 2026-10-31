@@ -381,6 +381,10 @@ func TestMigrationEventsSocial_ForeignKeys(t *testing.T) {
 		"organiser_follows.organiser_id":  "auth.users|c",
 		"organiser_follows.follower_id":   "auth.users|c",
 		"organiser_profiles.organiser_id": "auth.users|c",
+		// Added by 20271099000003_events_commerce.sql: who suspended this organiser.
+		// NO ACTION (deltype 'a'), not CASCADE, on purpose — retiring the moderator's
+		// user row must not erase who made the moderation decision.
+		"organiser_profiles.suspended_by": "auth.users|a",
 	}
 	for k, w := range want {
 		if got[k] != w {
