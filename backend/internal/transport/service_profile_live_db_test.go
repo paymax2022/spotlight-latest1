@@ -54,7 +54,11 @@ func TestSetServiceProfile_PersistsDedupedAndReadsBack_Integration(t *testing.T)
 	svc := transport.NewService(pool, nil)
 	userID := seedProfileDriver(t, ctx, pool)
 
-	vi, ca, err := svc.SetServiceProfile(ctx, userID, []string{"rides", "rides", "movers"}, []string{"lagos/ikeja", "lagos/ikeja", "lagos/yaba"})
+	// Two distinct LGAs, one of them duplicated, so the dedupe assertion means
+	// something. Both must come from the embedded canonical list
+	// (data/nigeria_states.json) — "lagos/yaba" looked plausible but Yaba is a
+	// suburb of Lagos Mainland, not an LGA, so the allow-list rightly refused it.
+	vi, ca, err := svc.SetServiceProfile(ctx, userID, []string{"rides", "rides", "movers"}, []string{"lagos/ikeja", "lagos/ikeja", "lagos/mushin"})
 	if err != nil {
 		t.Fatalf("SetServiceProfile: %v", err)
 	}
