@@ -21,7 +21,10 @@ export const SEALED_BALLOT = 'sealed';
 // Every election-row read that ends in mapElection()/isWithinWindow() must
 // select exactly these columns — a missing one maps to an undefined field
 // rather than throwing, so drift shows up as a silently blank ballot.
-export const ELECTION_SELECT = 'id, estate_id, title, description, starts_at, ends_at, status';
+// 'weighting' is part of the contract: it decides whether a ballot is cast per
+// voter or per unit (EST-UAT-0205).
+export const ELECTION_SELECT =
+  'id, estate_id, title, description, starts_at, ends_at, status, weighting';
 
 export type { ResidentContext } from '@/src/server/estate/resident';
 // Canonical membership resolver — this file used to carry a copy that skipped
@@ -97,6 +100,34 @@ export function isWithinWindow(row: any): boolean {
 export interface VoteEligibility {
   eligible: boolean;
   reasons: string[];
+}
+
+export interface VoterUnit {
+  id: string;
+  label: string;
+}
+
+// The units whose ballots a voter may cast in a one_vote_per_unit election
+// (EST-UAT-0205). This is the holding rule estate_cast_vote enforces inside its
+// write — archived = FALSE, landlord or tenant — read here so the ballot UI can
+// offer every ballot the voter is entitled to and none they are not.
+export async function getVoterUnits(
+  supabase: SupabaseClient,
+  estateId: string,
+  userId: string,
+): Promise<VoterUnit[]> {
+  const { data, error } = await supabase
+    .from('estate_properties')
+    .select('id, unit_label, block')
+    .eq('estate_id', estateId)
+    .eq('archived', false)
+    .or(`landlord_id.eq.${userId},tenant_id.eq.${userId}`)
+    .order('unit_label');
+  if (error) throw error;
+  return (data ?? []).map((p: any) => ({
+    id: p.id as string,
+    label: p.block ? `${p.block} / ${p.unit_label}` : (p.unit_label as string),
+  }));
 }
 
 // Mirror of the Go election gate (internal/estate/election_eligibility.go +
