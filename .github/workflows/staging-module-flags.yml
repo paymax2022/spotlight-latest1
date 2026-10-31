@@ -131,6 +131,22 @@ jobs:
           # green, and the mobile Sell tab rendered "Couldn't load your listings"
           # off a gin 404. A new module reachable from the app needs its flag here
           # even when it appears in no gate map.
+          # FEATURE_HEALTH_ENABLED is the umbrella for the WHOLE health block in
+          # internal/app/finance_routes.go (line ~645): the shared platform, the
+          # three verticals, triage, intake — and healthportal.Register, which
+          # mounts GET /api/finance/health/provider-portal/me. It defaults false in
+          # config.go and was set on staging by hand, never here, so the list below
+          # was not a description of reality: reprovision the service from this
+          # workflow's output and the entire health surface disappears.
+          # FEATURE_PROVIDER_PORTAL_ENABLED is narrower and its absence is louder.
+          # The portal route is mounted UNCONDITIONALLY inside that block and
+          # answers 503 while this flag is off, and ProviderRouteGuard treats a
+          # failed capabilities read as fatal — so with the flag unset every gated
+          # provider area in the app (Food owner console, doctor, vet, pharmacy,
+          # lab, mobility, events, estate-admin, crowdfunding, association) shows
+          # "Couldn't check your provider access" to real, approved providers.
+          # ADR-PR915 lists exactly this as a follow-up: "roll the backend flag out
+          # before the app build ships."
           railway variable set \
             APP_ENV=staging \
             FEATURE_WALLET_ENABLED=true \
@@ -151,6 +167,7 @@ jobs:
             FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED=true \
             FEATURE_TRANSPORT_ENABLED=true \
             FEATURE_TELEMEDICINE_ENABLED=true \
+            FEATURE_HEALTH_ENABLED=true \
             FEATURE_HEALTH_PHARMACY_ENABLED=true \
             FEATURE_STAYS_ENABLED=true \
             FEATURE_ESTATE_ENABLED=true \
@@ -165,6 +182,7 @@ jobs:
             FEATURE_UTILITY_PAYMENTS_ENABLED=true \
             FEATURE_HEALTH_LAB_ENABLED=true \
             FEATURE_HEALTH_VET_ENABLED=true \
+            FEATURE_PROVIDER_PORTAL_ENABLED=true \
             FEATURE_AICARE_ENABLED=true \
             FEATURE_BANK_TRANSFERS_ENABLED=true \
             FEATURE_CONTEST_STAGE_EVICTION_ENABLED=true \
@@ -210,7 +228,7 @@ jobs:
               "WALLET","WALLET_TRANSFERS","VIRTUAL_ACCOUNTS","FX","SAVINGS","KYC","REFERRALS","REFERRAL_REWARDS",
               "COMMISSION","REFERRAL_COMMISSION_SPLIT",
               "INSURANCE","INSURANCE_PROVIDER_IMPORT","SOCIAL_PAY","LOYALTY","RESTAURANT","RESTAURANT_PAYSTACK_CHECKOUT","TRANSPORT","TELEMEDICINE",
-              "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
+              "HEALTH","HEALTH_PHARMACY","PROVIDER_PORTAL","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
               "CONTEST_STAGE_EVICTION","CONTESTANT_SOCIAL","CONNECT","MARKETPLACE","PROPERTY_ROLES","ONBOARDING","PLACEMENT",
