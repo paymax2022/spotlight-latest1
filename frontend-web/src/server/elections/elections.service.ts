@@ -18,6 +18,11 @@ export const MAIN_POSITION_SUFFIX = ':main';
 // participation is verifiable, the choice is not (EST-UAT-0213/0216/0228).
 export const SEALED_BALLOT = 'sealed';
 
+// Every election-row read that ends in mapElection()/isWithinWindow() must
+// select exactly these columns — a missing one maps to an undefined field
+// rather than throwing, so drift shows up as a silently blank ballot.
+export const ELECTION_SELECT = 'id, estate_id, title, description, starts_at, ends_at, status';
+
 export type { ResidentContext } from '@/src/server/estate/resident';
 // Canonical membership resolver — this file used to carry a copy that skipped
 // the banned_at/deleted_at fail-closed filter, letting a banned or deleted
