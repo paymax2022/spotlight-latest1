@@ -38,6 +38,11 @@ var checkoutPaths = map[string]string{
 	"internal/transport/service.go":   "rider fare escrow",
 	"internal/estate/service_dues.go": "resident dues payment",
 	"internal/groups/service.go":      "group dues payment — same category as estate dues, not a cash-out or investment path",
+	// TierWalletGate.CheckRider gates the RIDER's fare before the trip is settled,
+	// so the driver's share is credited later from the settlement account, never
+	// from this call. Same purchase path as internal/transport/service.go, split
+	// into the hail adapter by 16a91a535 without being registered here.
+	"internal/transport/hail/adapters.go": "rider fare escrow (hail adapter) — the same consumer purchase as internal/transport/service.go",
 }
 
 func readSource(t *testing.T, rel string) string {
