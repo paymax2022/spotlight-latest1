@@ -187,6 +187,7 @@ func newFixture(t *testing.T, tier int, fundKobo int64, requiresValidation bool)
 		Binds:              utilitybills.NewBindRegistry(pool),
 		Providers:          utilitybills.NewProviderRegistry(map[string]providerInterfaces.BillsProvider{"vtpass": sandbox}),
 		Wallet:             walletSvc,
+		Tiers:              tiersSvc,
 		Ledger:             ledgerSvc,
 		Commission:         commission.NewService(commission.NewRepository(pool), ledgerSvc),
 		DefaultTimeoutMs:   15_000,
