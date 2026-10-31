@@ -373,10 +373,16 @@ func postgrestLiteral(s string) string {
 	}, strings.TrimSpace(s))
 }
 
+// adminUserBaseSelect is the bare platform_users select without profile embeddings.
+const adminUserBaseSelect = "id,first_name,last_name,email,phone,user_type,status,profile_completed,created_at"
+
 // adminUserSelect is the platform_users select shared by ListAdminUsers (a
 // filtered, ordered page) and GetAdminUser (a single row by primary key), so
 // the two never drift on which fields/embeds a domain.AdminUser is built from.
-const adminUserSelect = "id,first_name,last_name,email,phone,user_type,status,profile_completed,created_at,profiles!left(state,country,metadata)"
+// In PostgREST resource embedding, left join is default; "!inner" is only added
+// when scoped profile filters are active. "!left" is not a valid join modifier in
+// PostgREST (it is parsed as a foreign-key hint, failing relationship lookup).
+const adminUserSelect = "id,first_name,last_name,email,phone,user_type,status,profile_completed,created_at,profiles(state,country,metadata)"
 
 const adminUserOrder = "created_at.desc"
 
@@ -464,13 +470,30 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 		}
 	}
 	if scoped {
-		sel = strings.Replace(adminUserSelect, "profiles!left", "profiles!inner", 1)
+		sel = strings.Replace(adminUserSelect, "profiles(", "profiles!inner(", 1)
 	}
 	q["select"] = sel
 
 	var rows []adminUserRow
 	if err := r.client.REST(context.Background(), http.MethodGet, "platform_users", q, nil, &rows); err != nil {
-		return nil, err
+		log.Printf("[rbac.list_admin_users] embedded profiles read failed: %v; falling back to platform_users base columns", err)
+		fallbackQ := map[string]string{
+			"order":  adminUserOrder,
+			"limit":  strconv.Itoa(filter.Limit),
+			"select": adminUserBaseSelect,
+		}
+		if v := strings.TrimSpace(filter.Status); v != "" {
+			fallbackQ["status"] = "eq." + v
+		}
+		if v := strings.TrimSpace(filter.UserType); v != "" {
+			fallbackQ["user_type"] = "eq." + v
+		}
+		if v := strings.TrimSpace(filter.Search); v != "" {
+			fallbackQ["or"] = q["or"]
+		}
+		if fallbackErr := r.client.REST(context.Background(), http.MethodGet, "platform_users", fallbackQ, nil, &rows); fallbackErr != nil {
+			return nil, fmt.Errorf("list platform_users failed: %w (fallback: %v)", err, fallbackErr)
+		}
 	}
 	out := make([]domain.AdminUser, 0, len(rows))
 	for _, row := range rows {
@@ -516,7 +539,15 @@ func (r *RBACSupabaseRepository) GetAdminUser(userID string) (domain.AdminUser, 
 	}
 	var rows []adminUserRow
 	if err := r.client.REST(context.Background(), http.MethodGet, "platform_users", q, nil, &rows); err != nil {
-		return domain.AdminUser{}, err
+		log.Printf("[rbac.get_admin_user] embedded profiles read failed: %v; falling back to platform_users base columns", err)
+		fallbackQ := map[string]string{
+			"select": adminUserBaseSelect,
+			"id":     "eq." + id,
+			"limit":  "1",
+		}
+		if fallbackErr := r.client.REST(context.Background(), http.MethodGet, "platform_users", fallbackQ, nil, &rows); fallbackErr != nil {
+			return domain.AdminUser{}, err
+		}
 	}
 	if len(rows) == 0 {
 		return domain.AdminUser{}, errors.New("user not found")

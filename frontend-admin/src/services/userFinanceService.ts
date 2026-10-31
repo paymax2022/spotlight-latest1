@@ -20,6 +20,7 @@ export type WalletTransactionRow = {
 export async function getWalletBalance(id: string): Promise<{ balanceKobo: number }> {
   const res = await fetch(`${financeBase()}/wallets/${enc(id)}/balance`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading wallet balance');
@@ -29,6 +30,7 @@ export async function getWalletBalance(id: string): Promise<{ balanceKobo: numbe
 export async function getWalletTransactions(id: string): Promise<WalletTransactionRow[]> {
   const res = await fetch(`${financeBase()}/wallets/${enc(id)}/transactions`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading wallet transactions');
@@ -40,6 +42,7 @@ export async function getUserKyc(
 ): Promise<{ tier: number; status: string; openCaseId: string | null }> {
   const res = await fetch(`${financeBase()}/kyc/users/${enc(id)}`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading KYC status');
@@ -55,6 +58,7 @@ export async function getUserKyc(
 async function decide(caseId: string, action: 'approve' | 'reject', body?: unknown): Promise<boolean> {
   const res = await fetch(`${financeBase()}/kyc/cases/${enc(caseId)}/${action}`, {
     method: 'POST',
+    credentials: 'include',
     headers: { ...authHeaders(), 'Idempotency-Key': operationKey('kyc', action, caseId) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
@@ -76,6 +80,7 @@ export async function getUserTier(
 ): Promise<{ tier: number; dailyDebitLimitKobo: number; maxBalanceKobo: number }> {
   const res = await fetch(`${financeBase()}/tiers/${enc(id)}`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading account tier');

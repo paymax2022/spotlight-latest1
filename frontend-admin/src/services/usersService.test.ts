@@ -24,6 +24,8 @@ describe('usersService read errors', () => {
   it('returns the users on success', async () => {
     respond(200, { success: true, users: [{ id: 'u1' }] });
     await expect(listAdminUsers({})).resolves.toEqual([{ id: 'u1' }]);
+    const { init } = lastCall();
+    expect(init.credentials).toBe('include');
   });
 
   it('returns an empty list only for a genuinely empty result', async () => {
@@ -72,6 +74,7 @@ describe('usersService profile reads', () => {
     const { url, init } = lastCall();
     expect(url).toBe(full(path));
     expect(init.method ?? 'GET').toBe('GET');
+    expect(init.credentials).toBe('include');
   });
   it.each(cases)('%s throws AdminUsersRequestError(403) on forbidden', async (_n, fn, _p, _b, _e) => {
     respond(403, { success: false, error: 'forbidden' });
@@ -88,6 +91,7 @@ describe('usersService role writes', () => {
     const { url, init } = lastCall();
     expect(url).toBe(full('/api/admin/users/u1/roles'));
     expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('include');
     expect(JSON.parse(String(init.body))).toEqual({ roleId: 'r1' });
   });
   it('assignUserRole returns false on failure', async () => {
@@ -100,6 +104,7 @@ describe('usersService role writes', () => {
     const { url, init } = lastCall();
     expect(url).toBe(full('/api/admin/users/u1/roles/r1'));
     expect(init.method).toBe('DELETE');
+    expect(init.credentials).toBe('include');
   });
   it('removeUserRole returns false on failure', async () => {
     respond(500, { success: false });
@@ -114,6 +119,7 @@ describe('usersService audit logs and sessions', () => {
     const { url, init } = lastCall();
     expect(url).toBe(full('/api/admin/audit-logs?targetUser=u1&limit=20'));
     expect(init.method ?? 'GET').toBe('GET');
+    expect(init.credentials).toBe('include');
   });
 
   it('getAuditLogsForUser defaults the limit to 50', async () => {

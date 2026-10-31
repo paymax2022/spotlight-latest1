@@ -31,6 +31,7 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
 export async function getUserReferralCode(id: string): Promise<ReferralCode | null> {
   const res = await fetch(`${adminApiBase()}/finance/admin/referrals/${encodeURIComponent(id)}/code`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   if (res.status === 404) return null;
@@ -44,6 +45,7 @@ export async function getUserReferralCode(id: string): Promise<ReferralCode | nu
 export async function getReferral360(id: string): Promise<Referral360> {
   const res = await fetch(`${adminApiBase()}/referral/admin/users/${encodeURIComponent(id)}/referral-360`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const p = await readOrThrow(res, 'Loading referral summary');
@@ -62,6 +64,7 @@ export async function getReferral360(id: string): Promise<Referral360> {
 export async function getReferralLedger(id: string): Promise<ReferralLedgerEntry[]> {
   const res = await fetch(`${adminApiBase()}/referral/admin/ledger?beneficiary=${encodeURIComponent(id)}`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const p = await readOrThrow(res, 'Loading referral ledger');

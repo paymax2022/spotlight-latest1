@@ -113,4 +113,13 @@ describe('AdminUsersPage', () => {
       expect(screen.getByDisplayValue('Ada')).toBeTruthy()
     })
   })
+
+  it('renders retry and error detail when loading fails', async () => {
+    mockListAdminUsers.mockRejectedValue(new Error('HTTP 401 Not authenticated'))
+    render(<AdminUsersPage />)
+    await waitFor(() => {
+      expect(screen.getByText(/— failed to load: HTTP 401 Not authenticated/)).toBeTruthy()
+    })
+    expect(screen.getByRole('button', { name: /retry/i })).toBeTruthy()
+  })
 })

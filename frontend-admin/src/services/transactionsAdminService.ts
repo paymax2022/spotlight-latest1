@@ -148,7 +148,7 @@ export async function listAdminTransactions(filters: AdminTransactionFilters = {
   qs.set('limit', String(filters.limit ?? 50));
   qs.set('offset', String(filters.offset ?? 0));
 
-  const res = await fetch(`${adminBase()}?${qs.toString()}`, { cache: 'no-store', headers: authHeaders() });
+  const res = await fetch(`${adminBase()}?${qs.toString()}`, { cache: 'no-store', credentials: 'include', headers: authHeaders() });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
   return {
@@ -162,7 +162,7 @@ export async function listAdminTransactions(filters: AdminTransactionFilters = {
 /** Comprehensive single-transaction detail, incl. every other ledger_entries
  * row sharing the same reference (the transaction's other leg(s)). */
 export async function getAdminTransaction(id: string): Promise<AdminTransactionDetail> {
-  const res = await fetch(`${adminBase()}/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  const res = await fetch(`${adminBase()}/${encodeURIComponent(id)}`, { cache: 'no-store', credentials: 'include', headers: authHeaders() });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
   return body.transaction as AdminTransactionDetail;
