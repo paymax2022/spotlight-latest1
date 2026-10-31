@@ -512,12 +512,60 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
+        estateId: { type: string, format: uuid }
         category: { type: string, enum: [general, payment, meeting, election, security, maintenance, facility, announcement, system] }
         title: { type: string }
         body: { type: string, nullable: true }
         deepLink: { type: string, nullable: true }
         readAt: { type: string, format: date-time, nullable: true }
+        # Personal to the recipient: archive/pin answers with the caller's own copy,
+        # and archived_at is what the retention sweep has its horizon on.
+        archivedAt: { type: string, format: date-time, nullable: true }
+        pinned: { type: boolean, description: 'True keeps the row out of the archive sweep and, through the guard trigger, out of a purge.' }
         createdAt: { type: string, format: date-time }
+
+    # Snake_case throughout — the same document the Go service's
+    # NotificationRetentionPolicy answers with, so a console written against either
+    # surface reads one shape.
+    RetentionPolicy:
+      type: object
+      properties:
+        estate_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        archive_after_days: { type: integer, minimum: 1 }
+        purge_after_days: { type: integer, minimum: 1, nullable: true, description: 'null (or 0 on the wire) = never purge; purging has to be opted into.' }
+        keep_categories:
+          type: array
+          items: { type: string }
+          description: 'Categories the sweep never archives. Empty on the wire resolves to the documented defaults.'
+        defaulted: { type: boolean, description: 'True when the estate has never written a policy and these are the defaults the sweep applies.' }
+        updated_by: { type: string, format: uuid }
+        updated_at: { type: string, format: date-time }
+    RetentionPolicyPatch:
+      type: object
+      description: A patch, not a replace — an absent field keeps its current value.
+      properties:
+        enabled: { type: boolean }
+        archive_after_days: { type: integer, minimum: 1 }
+        purge_after_days: { type: integer, minimum: 0, nullable: true }
+        keep_categories:
+          type: array
+          items: { type: string }
+    RetentionRunResult:
+      type: object
+      properties:
+        estate_id: { type: string, format: uuid }
+        notifications_archived: { type: integer }
+        notifications_purged: { type: integer }
+
+    # ── Estate membership (the pre-flight gate) ──
+    EstateMembership:
+      type: object
+      properties:
+        isResident: { type: boolean }
+        estateId: { type: string, format: uuid, description: 'Absent when isResident is false.' }
+        unit: { type: string, description: 'The caller’s unit label; absent when isResident is false.' }
+        role: { type: string, enum: [estate_admin, member], description: 'Absent when isResident is false.' }
 
     # ── Reports (Block 44) ──
     ReportsResponse:
@@ -1183,6 +1231,130 @@ paths:
       tags: [Notifications]
       responses:
         '200': { description: Unread count, content: { application/json: { schema: { type: object, properties: { count: { type: integer } } } } } }
+
+  /estate/notifications/retention:
+    get:
+      operationId: getNotificationRetentionPolicy
+      summary: The estate's inbox retention schedule (estate admin only)
+      description: >
+        A member cannot read or move this setting: the schedule decides how long a
+        dispute's evidence stays readable. The estate is derived from the admin's
+        own membership, never taken from the caller.
+      tags: [Notifications]
+      responses:
+        '200': { description: Policy, content: { application/json: { schema: { $ref: '#/components/schemas/RetentionPolicy' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      operationId: updateNotificationRetentionPolicy
+      summary: Patch the estate's inbox retention schedule (estate admin only)
+      description: >
+        Patch semantics, not replace: an absent field keeps its current value, so a
+        console that sends one number cannot zero the others. 0 and null are both
+        the wire spelling of "never purge".
+      tags: [Notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RetentionPolicyPatch' }
+      responses:
+        '200': { description: The policy as now in force, content: { application/json: { schema: { $ref: '#/components/schemas/RetentionPolicy' } } } }
+        '400': { description: 'Unknown category in keep_categories, or a non-numeric window', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /estate/notifications/retention/run:
+    post:
+      operationId: runNotificationRetention
+      summary: Apply the estate's retention schedule now (estate admin only)
+      description: >
+        The sweep runs in the database (estate_notifications_apply_retention,
+        SECURITY DEFINER) and this route only calls it and reports the counters, so
+        the guard that refuses to purge a pinned row, a protected category or a
+        held estate has exactly one home. Idempotent — archiving is reversible, so
+        pressing this twice in a meeting is safe. What is not reversible is a purge
+        past the horizon, which is why a policy has to opt into purging at all.
+      tags: [Notifications]
+      responses:
+        '200': { description: Counters, content: { application/json: { schema: { $ref: '#/components/schemas/RetentionRunResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /estate/notifications/{id}/archive:
+    post:
+      operationId: archiveNotification
+      summary: Move one of the caller's own notices between the inbox and the archive (EST-UAT-0359)
+      description: >
+        Personal and reversible: it stamps archived_at on the recipient's copy and
+        touches nobody else's. Un-archiving keeps read_at exactly as it was —
+        pulling a notice back into the inbox is not the same act as making somebody
+        forget they read it, and read_at is the date the sweep archives on.
+      tags: [Notifications]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                archived: { type: boolean, default: true, description: 'Absent means archive.' }
+      responses:
+        '200': { description: The caller's copy, content: { application/json: { schema: { $ref: '#/components/schemas/Notification' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /estate/notifications/{id}/pin:
+    post:
+      operationId: pinNotification
+      summary: Mark one notice must-not-sweep
+      description: >
+        A member pins their own copy. An estate admin may pin a member's copy by
+        naming them in user_id, because a pin is a retention decision, not a
+        personal tidying of somebody's inbox. A member naming somebody else is
+        refused, and a row that is not that recipient's in this estate answers
+        "not found" — the same as a row that does not exist, because telling them
+        apart would confirm somebody's inbox contents.
+      tags: [Notifications]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pinned]
+              properties:
+                pinned: { type: boolean }
+                user_id: { type: string, format: uuid, description: 'Admin-only: the recipient whose copy to pin. Omit to pin your own.' }
+      responses:
+        '200': { description: The recipient's copy, content: { application/json: { schema: { $ref: '#/components/schemas/Notification' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Estate membership — the pre-flight gate ──
+  /estate/membership:
+    get:
+      operationId: getEstateMembership
+      summary: Whether the caller belongs to an estate at all, and in what role
+      description: >
+        Every route under /api/v1/estate and /api/v1/visitor resolves an
+        estate_residents row and refuses without one, so this is the question the
+        screens ask before showing any estate feature. It is deliberately backed by
+        the same resolver the real handlers use (banned and soft-deleted rows
+        excluded) rather than by the property-context envelope, which is a
+        switchable UI hint and mocked outright in local development — a gate reading
+        a mock can never lock, and a gate reading a hint is not an authorization
+        decision.
+      tags: [EstateSettings]
+      responses:
+        '200': { description: 'isResident false when the caller has no estate_residents row', content: { application/json: { schema: { $ref: '#/components/schemas/EstateMembership' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   # ── Reports (Block 44) ──
   /estate/reports:
