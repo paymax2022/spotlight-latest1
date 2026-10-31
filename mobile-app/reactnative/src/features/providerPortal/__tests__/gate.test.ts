@@ -70,14 +70,12 @@ test('an exact rule gates only its own path, never a customer child route', () =
 });
 
 test('the rider and restaurant consoles are gated by their own capabilities', () => {
-  const rules: GateRule[] = [
-    { type: 'restaurant', prefix: '/food/restaurant/manage' },
-    { type: 'rider', prefix: '/food/rider' },
-  ];
-  assert.deepEqual(decideGate('/food/restaurant/manage', rules, [cap('rider', true)]), { kind: 'deny', type: 'restaurant' });
-  assert.deepEqual(decideGate('/food/rider', rules, [cap('restaurant', true)]), { kind: 'deny', type: 'rider' });
-  assert.deepEqual(decideGate('/food/restaurant/manage', rules, [cap('restaurant', true)]), { kind: 'allow' });
-  assert.deepEqual(decideGate('/food/rider', rules, [cap('rider', true)]), { kind: 'allow' });
+  // The owner console root, not /food/restaurant/manage: that one is the
+  // create-store funnel and stays open (see the funnel case below).
+  assert.deepEqual(decideGate('/food/restaurant', FOOD_PROVIDER_RULES, [cap('rider', true)]), { kind: 'deny', type: 'restaurant' });
+  assert.deepEqual(decideGate('/food/rider', FOOD_PROVIDER_RULES, [cap('restaurant', true)]), { kind: 'deny', type: 'rider' });
+  assert.deepEqual(decideGate('/food/restaurant', FOOD_PROVIDER_RULES, [cap('restaurant', true)]), { kind: 'allow' });
+  assert.deepEqual(decideGate('/food/rider', FOOD_PROVIDER_RULES, [cap('rider', true)]), { kind: 'allow' });
 });
 
 test('every business type gates its own area', () => {
