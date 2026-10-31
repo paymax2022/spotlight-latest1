@@ -350,7 +350,7 @@ describe('/api/v1/estate/notifications/retention — estate admin plane', () => 
     expect(client.upserts[0]).toMatchObject({ estate_id: ESTATE, archive_after_days: 200, purge_after_days: 300, updated_by: USER });
     const audit = client.inserts.find((i) => i.action === 'NOTIFICATION_RETENTION_SET');
     expect(audit).toBeTruthy();
-    expect(audit.subject_type).toBe('estate');
+    expect(audit?.subject_type).toBe('estate');
   });
 
   it('replaces the protected categories rather than merging them', async () => {
