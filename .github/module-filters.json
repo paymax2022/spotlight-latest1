@@ -262,6 +262,7 @@
     "frontend-web/src/server/meetings/**",
     "frontend-web/src/server/estate/**",
     "backend/internal/estate/**",
-    "backend/internal/app/estate_admin_routes.go"
+    "backend/internal/app/estate_admin_routes.go",
+    ".github/workflows/visitor-election-ci.yml"
   ]
 }
