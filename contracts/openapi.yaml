@@ -10682,7 +10682,7 @@ paths:
                       message: { type: string }
                       net_kobo: { type: integer, format: int64 }
         '400': { description: "Unknown decision, missing Idempotency-Key on approve, missing note on reject, or nothing to settle" }
-        '403': { description: Vendor has not completed KYC (fail-closed, NL-10) }
+        '403': { description: "Vendor has not completed KYC (fail-closed, NL-10)" }
         '404': { description: Vendor not found }
 
   /api/events/admin/settlement/{id}/resolve:
@@ -10726,7 +10726,7 @@ paths:
                       status: { type: string, enum: [investigating, resolved, reconciled] }
                       audit_id: { type: string, format: uuid }
                       message: { type: string }
-        '400': { description: Unknown action, or note missing for resolve/reconcile }
+        '400': { description: "Unknown action, or note missing for resolve/reconcile" }
         '404': { description: No settlement break on that line }
 
   /api/events/admin/payouts:
@@ -10961,7 +10961,7 @@ paths:
                       status: { type: string, enum: [investigating, cleared, blocked] }
                       audit_id: { type: string, format: uuid }
                       message: { type: string }
-        '400': { description: Unknown action, or note missing for clear/block }
+        '400': { description: "Unknown action, or note missing for clear/block" }
         '404': { description: No such signal (not currently derived) }
 
   # ── Crowdfunding ──────────────────────────────────────────────────────────────
