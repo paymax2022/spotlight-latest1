@@ -121,9 +121,28 @@ jobs:
       - name: Reject destructive DDL in visitor/election migrations (additive-only)
         run: |
           set -e
-          FILES=$(ls supabase/migrations/*visitor*.sql supabase/migrations/*election*.sql supabase/migrations/*estate_modules*.sql supabase/migrations/*estate_modules_38_46*.sql supabase/migrations/*estate_indexes*.sql 2>/dev/null || true)
+          FILES=$(ls supabase/migrations/*visitor*.sql supabase/migrations/*election*.sql supabase/migrations/*estate_modules*.sql supabase/migrations/*estate_modules_38_46*.sql supabase/migrations/*estate_indexes*.sql 2>/dev/null | sort -u || true)
           if [ -z "$FILES" ]; then echo "no visitor/election migrations yet"; exit 0; fi
-          if grep -iE '\b(drop\s+(table|column)|alter\s+column|drop\s+not\s+null)\b' $FILES; then
-            echo "::error::Destructive DDL found (must be additive-only)"; exit 1;
+          # Policy identical to _reusable-migration-guard.yml: a constraint WIDENING is an
+          # additive change, a narrowing is not. The previous pattern matched the words
+          # "ALTER COLUMN" and "DROP NOT NULL" themselves, so it rejected the shape of the
+          # statement rather than its effect, and it read SQL comments as DDL.
+          DESTRUCTIVE='\b(drop\s+(table|column|type|schema|database)|alter\s+[a-z0-9_."]+\s+drop|rename\s+(column|to)|set\s+not\s+null)\b'
+          # Idempotent re-create drops and constraint widenings move no data out of reach.
+          ALLOW='drop\s+(policy|trigger|index|function|view|materialized\s+view|publication|rule)\s+if\s+exists|drop\s+not\s+null'
+
+          FAIL=0
+          for f in $FILES; do
+            [ -f "$f" ] || continue
+            HITS=$(sed -E 's/--.*$//' "$f" | grep -iEn "$DESTRUCTIVE" | grep -ivE "$ALLOW" || true)
+            if [ -n "$HITS" ]; then
+              echo "::error file=$f::Destructive/narrowing DDL found (migrations must be additive-only)"
+              echo "$HITS"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::Additive-only guard FAILED. Use expand/contract; corrections are new additive migrations only."
+            exit 1
           fi
-          echo "Additive-only guard passed for: $FILES"
+          echo "Additive-only guard passed."
