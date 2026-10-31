@@ -384,11 +384,11 @@ func TestLiveDB_SubmitForReviewNeedsNoCalendar(t *testing.T) {
 	if err := f.svc.UpdateContent(ctx, f.owner, f.property, "", "Coside hotel with a quiet courtyard.", "", "", 4, "hotel"); err != nil {
 		t.Fatalf("UpdateContent: %v", err)
 	}
-	roomType, err := f.svc.CreateRoomType(ctx, f.owner, f.property, "Deluxe King", 2, "1 king bed")
+	roomType, err := f.svc.CreateRoomType(ctx, f.owner, f.property, "Deluxe King", 2, "1 king bed", 1)
 	if err != nil {
 		t.Fatalf("CreateRoomType: %v", err)
 	}
-	if _, err := f.svc.CreateRatePlan(ctx, f.owner, f.property, roomType, "BAR", "room_only", true, 45_000_00, "NGN"); err != nil {
+	if _, err := f.svc.CreateRatePlan(ctx, f.owner, f.property, roomType, "BAR", "room_only", true, 45_000_00, "NGN", 0, 0); err != nil {
 		t.Fatalf("CreateRatePlan: %v", err)
 	}
 	for i := range minPhotosForGoLive {
