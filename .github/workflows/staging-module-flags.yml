@@ -147,6 +147,15 @@ jobs:
           # "Couldn't check your provider access" to real, approved providers.
           # ADR-PR915 lists exactly this as a follow-up: "roll the backend flag out
           # before the app build ships."
+          # FEATURE_UTILITY_BILLS_ENABLED and FEATURE_MAPS_ENABLED are recorded
+          # here, not introduced: probing the staging backend directly shows
+          # GET /api/finance/utilitybills/billers and GET /api/finance/maps/basemap
+          # both answering 401, i.e. mounted. They were only ever set in the
+          # dashboard, so the list below was not the whole truth and either one
+          # would silently disappear on a reprovision — the same drift as
+          # FEATURE_HEALTH_ENABLED. Bills is the bill-payment surface (the registry
+          # key utilityPayments gates the tile, this flag gates the routes), and
+          # maps is the address autocomplete the restaurant create-store form uses.
           railway variable set \
             APP_ENV=staging \
             FEATURE_WALLET_ENABLED=true \
@@ -180,6 +189,8 @@ jobs:
             FEATURE_DISPUTES_ENABLED=true \
             FEATURE_RATINGS_ENABLED=true \
             FEATURE_UTILITY_PAYMENTS_ENABLED=true \
+            FEATURE_UTILITY_BILLS_ENABLED=true \
+            FEATURE_MAPS_ENABLED=true \
             FEATURE_HEALTH_LAB_ENABLED=true \
             FEATURE_HEALTH_VET_ENABLED=true \
             FEATURE_PROVIDER_PORTAL_ENABLED=true \
@@ -230,7 +241,7 @@ jobs:
               "INSURANCE","INSURANCE_PROVIDER_IMPORT","SOCIAL_PAY","LOYALTY","RESTAURANT","RESTAURANT_PAYSTACK_CHECKOUT","TRANSPORT","TELEMEDICINE",
               "HEALTH","HEALTH_PHARMACY","PROVIDER_PORTAL","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
-              "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
+              "UTILITY_PAYMENTS","UTILITY_BILLS","MAPS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
               "CONTEST_STAGE_EVICTION","CONTESTANT_SOCIAL","CONNECT","MARKETPLACE","PROPERTY_ROLES","ONBOARDING","PLACEMENT",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
