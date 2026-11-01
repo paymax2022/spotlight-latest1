@@ -21,7 +21,10 @@ export JAVA_HOME
 # Expo picks its .env files from NODE_ENV. Set it explicitly: if it is unset,
 # @expo/env falls back to only `.env.local` and `.env` and silently skips
 # `.env.production` entirely.
-export NODE_ENV="${NODE_ENV:-production}"
+if [[ -n "${1:-}" ]]; then
+  export NODE_ENV="$1"
+fi
+NODE_ENV_EXPLICIT="${NODE_ENV:-}"
 
 # arm64-v8a only: Play devices are all arm64 now. Override for a local
 # multi-ABI test bundle: REACT_NATIVE_ARCHS=arm64-v8a,x86_64 ./build-aab.sh
@@ -97,9 +100,27 @@ fi
 cd "$(dirname "$0")"
 PROJECT_DIR="$PWD"
 
+# Auto-detect environment: if neither $1 nor NODE_ENV was explicitly given,
+# default to production if .env.production exists, or fallback to staging if .env.staging exists.
+if [[ -z "$NODE_ENV_EXPLICIT" ]]; then
+  if [[ -f .env.production ]]; then
+    export NODE_ENV="production"
+  elif [[ -f .env.staging ]]; then
+    export NODE_ENV="staging"
+    echo "ℹ️  NODE_ENV unset; defaulting to NODE_ENV=staging (.env.staging found)"
+  else
+    export NODE_ENV="production"
+  fi
+else
+  export NODE_ENV="$NODE_ENV_EXPLICIT"
+fi
+
 ENV_FILE=".env.${NODE_ENV}"
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "❌ $ENV_FILE not found — a release build has no API URLs to bake in." >&2
+  if [[ "$ENV_FILE" == ".env.production" && -f .env.staging ]]; then
+    echo "   Tip: To build staging, run: ./build-aab.sh staging (or NODE_ENV=staging ./build-aab.sh)" >&2
+  fi
   exit 1
 fi
 
@@ -130,6 +151,39 @@ done
 if ! node scripts/check-env-mocks.mjs "$ENV_FILE"; then
   echo "❌ $ENV_FILE fails the mock-data gate above — fix it before building." >&2
   exit 1
+fi
+
+# A release AAB's configured base URLs must be reachable from a device. Checked
+# here, at the source of truth and before the build, rather than only by grepping
+# the finished bundle: Expo bakes exactly the values in $ENV_FILE (shadowing files
+# were refused above), and the historic failure was a loopback value baked as the
+# API base. `EXPO_PUBLIC_LOCAL_*` is exempt: those are the runtime server switch's
+# Local URL *templates*, whose host the developer edits on the device (see
+# src/lib/serverProfile.ts and the bundle check below for why they cannot be caught
+# by a string scan).
+LOOPBACK_RE='(localhost|127\.0\.0\.1|10\.0\.2\.2):[0-9]+'
+BAKED_LOOPBACK=""
+while IFS= read -r line; do
+  key="${line%%=*}"
+  [[ "$key" == EXPO_PUBLIC_LOCAL_* ]] && continue
+  pair="$(printf '%s' "${line#*=}" | grep -oE "$LOOPBACK_RE" | head -1 || true)"
+  if [[ -n "$pair" ]]; then
+    BAKED_LOOPBACK="${BAKED_LOOPBACK}${key} = ${pair}"$'\n'
+  fi
+done < <(grep -E '^EXPO_PUBLIC_[A-Z0-9_]+=' "$ENV_FILE" || true)
+
+if [[ -n "$BAKED_LOOPBACK" ]]; then
+  if [[ "${ALLOW_LOOPBACK_CONFIG:-0}" == "1" ]]; then
+    echo "⚠️  $ENV_FILE bakes loopback base URLs (ALLOW_LOOPBACK_CONFIG=1, install will not" >&2
+    echo "    reach the backend from a real device):" >&2
+    printf '%s' "$BAKED_LOOPBACK" | sed 's/^/      /' >&2
+  else
+    echo "❌ $ENV_FILE bakes loopback base URLs — a device cannot reach them:" >&2
+    printf '%s' "$BAKED_LOOPBACK" | sed 's/^/      /' >&2
+    echo "   This is the \"internet connection issue\" bug. Set the remote URLs in $ENV_FILE," >&2
+    echo "   or, for a deliberate on-device dev build, ALLOW_LOOPBACK_CONFIG=1 ./build-aab.sh." >&2
+    exit 1
+  fi
 fi
 
 echo "🔨 Building React Native AAB..."
@@ -197,15 +251,50 @@ else
   fail=1
 fi
 
-# 2. No loopback host may survive as a *configured base URL* — see
-#    build-apk.sh's identical check for why this matches host:port pairs only.
-if grep -aoE '(localhost|127\.0\.0\.1|10\.0\.2\.2):(8091|54321|3000|3001)' "$BUNDLE" | sort -u | grep -q .; then
+# 2. No loopback backend URL may survive as a *configured base URL*.
+#
+#    A plain "any loopback host:port" scan is no longer satisfiable: since PR #799
+#    (runtime Remote/Local server switch) the Local URL *templates* are
+#    compile-time constants — DEFAULT_LOCAL_* in src/lib/serverProfile.ts and
+#    resolveApiBaseUrl()'s default argument — so Metro interns "http://localhost:3000",
+#    ":8091" and ":54321" into EVERY release bundle, production included, where they
+#    are inert because isSwitchAvailable() only ever enables the switch for an
+#    explicitly non-production EXPO_PUBLIC_APP_ENV. So the pairs the app itself
+#    declares as Local templates are allowed here, and the check stays pointed at
+#    rogue loopback on a known backend port (the admin console's 3001 has no
+#    template excuse). `getDevUrl()` also contains the bare literals "127.0.0.1" and
+#    "10.0.2.2" as replace() arguments, which is why only host:port pairs match.
+#    What the values actually baked as *config* are is checked before the build
+#    above — that is the check that catches the original bug; a bundle scan cannot,
+#    because a baked loopback is indistinguishable from a template literal.
+LOCAL_TEMPLATE_PAIRS="$(grep -hoE '(localhost|127\.0\.0\.1|10\.0\.2\.2):[0-9]{1,5}' \
+  src/lib/serverProfile.ts src/lib/apiBaseUrl.ts | sort -u || true)"
+while IFS= read -r line; do
+  pair="$(printf '%s' "${line#*=}" | grep -oE '(localhost|127\.0\.0\.1|10\.0\.2\.2):[0-9]{1,5}' | head -1 || true)"
+  if [[ -n "$pair" ]]; then
+    LOCAL_TEMPLATE_PAIRS="${LOCAL_TEMPLATE_PAIRS}${LOCAL_TEMPLATE_PAIRS:+$'\n'}${pair}"
+  fi
+done < <(grep -E '^EXPO_PUBLIC_LOCAL_[A-Z0-9_]+=' "$ENV_FILE" || true)
+
+BACKEND_LOOPBACK="$(grep -aoE '(localhost|127\.0\.0\.1|10\.0\.2\.2):(3000|3001|8091|54321)([^0-9]|$)' "$BUNDLE" \
+  | sed -E 's/[^0-9]+$//' | sort -u || true)"
+ROGUE_LOOPBACK=""
+if [[ -n "$BACKEND_LOOPBACK" ]]; then
+  if [[ -z "$LOCAL_TEMPLATE_PAIRS" ]]; then
+    ROGUE_LOOPBACK="$BACKEND_LOOPBACK"
+  else
+    ROGUE_LOOPBACK="$(printf '%s\n' "$BACKEND_LOOPBACK" | grep -vxF -f <(printf '%s\n' "$LOCAL_TEMPLATE_PAIRS") || true)"
+  fi
+fi
+
+if [[ -n "$ROGUE_LOOPBACK" ]]; then
   echo "   ❌ Loopback backend URLs baked into the release bundle:" >&2
-  grep -aoE '(localhost|127\.0\.0\.1|10\.0\.2\.2):(8091|54321|3000|3001)' "$BUNDLE" | sort -u | sed 's/^/      /' >&2
+  printf '%s\n' "$ROGUE_LOOPBACK" | sed 's/^/      /' >&2
   echo "      A device cannot reach these — this is the \"internet connection issue\" bug." >&2
+  echo "      (Local server-switch templates are exempt; here: $(printf '%s\n' "$LOCAL_TEMPLATE_PAIRS" | sort -u | tr '\n' ' '))" >&2
   fail=1
 else
-  echo "   ✅ No loopback backend URLs in bundle"
+  echo "   ✅ No loopback backend URLs beyond the Local server-switch templates"
 fi
 
 # 3. Only the requested ABIs may ship. Native libs live under a module prefix

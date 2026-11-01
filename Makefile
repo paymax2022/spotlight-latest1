@@ -13,7 +13,8 @@ SHA ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
         rls-check db-push help \
         marketplace-build marketplace-indexer-run marketplace-cron-run \
         marketplace-test marketplace-loadtest marketplace-up marketplace-down \
-        transport-scheduler-run transport-scheduling-test transport-scheduling-loadtest
+        transport-scheduler-run transport-scheduling-test transport-scheduling-loadtest \
+        build-apk build-apk-prod build-aab build-aab-prod
 
 # ── Marketplace (feature-flagged; see docs/prd/marketplace/RUNBOOK.md) ──────────
 ELASTICSEARCH_URL ?= http://localhost:9200
@@ -55,6 +56,18 @@ bootstrap: # install deps (Go modules + frontend node_modules)
 
 build: # go build ./... (backend)
 	cd backend && go build ./...
+
+build-apk: # build mobile release APK (staging default)
+	cd $(MOBILE_DIR) && ./build-apk.sh
+
+build-apk-prod: # build mobile release APK (production)
+	cd $(MOBILE_DIR) && NODE_ENV=production ./build-apk.sh
+
+build-aab: # build mobile release AAB for Play Console (staging default)
+	cd $(MOBILE_DIR) && ./build-aab.sh
+
+build-aab-prod: # build mobile release AAB for Play Console (production)
+	cd $(MOBILE_DIR) && NODE_ENV=production ./build-aab.sh
 
 vet: # go vet ./... (backend static analysis)
 	cd backend && go vet ./...

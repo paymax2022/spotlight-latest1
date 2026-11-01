@@ -66,7 +66,8 @@
             "enableMinifyInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
             "enableBundleCompression": true,
-            "enablePngCrunchInReleaseBuilds": true
+            "enablePngCrunchInReleaseBuilds": true,
+            "extraProguardRules": "# @livekit/react-native 3.x calls livekit.org.jni_zero.JniZeroJni, which is generated into the native library and never lands on R8's classpath, so :app:minifyReleaseWithR8 fails on it. -dontwarn only: there is no class here to keep.\n-dontwarn livekit.org.jni_zero.**"
           }
         }
       ],
