@@ -822,7 +822,10 @@ func applyOccupancy(ctx context.Context, tx dbtx, unitID, userID, relationship s
 	var q string
 	switch relationship {
 	case "owner":
-		q = `UPDATE estate_properties SET landlord_id=$2 WHERE id=$1`
+		// A homeowner occupies the unit, the same rule as estate_occupancy_admit and the tenant
+		// branch below. Without the flag the later opening-balance insert hits the vacant-unit
+		// exemption trigger and the whole import rolls back.
+		q = `UPDATE estate_properties SET landlord_id=$2, occupancy_status='occupied' WHERE id=$1`
 		if fillOnly {
 			q += ` AND landlord_id IS NULL`
 		}
