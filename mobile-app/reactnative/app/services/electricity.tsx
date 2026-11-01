@@ -371,11 +371,11 @@ export default function ElectricityScreen() {
             {transactionsData.items.map((tx) => (
               <View key={tx.id} style={styles.transactionRow}>
                 <View style={styles.transactionInfo}>
-                  <Text style={styles.transactionTitle}>{tx.biller_name}</Text>
-                  <Text style={styles.transactionDate}>{new Date(tx.created_at).toLocaleDateString('en-NG')}</Text>
+                  <Text style={styles.transactionTitle}>{tx.productName || tx.providerName || 'Electricity Purchase'}</Text>
+                  <Text style={styles.transactionDate}>{new Date(tx.createdAt || '').toLocaleDateString('en-NG')}</Text>
                 </View>
                 <View style={styles.transactionAmount}>
-                  <Text style={[styles.transactionValue, { color: tx.status === 'successful' ? Colors.green : Colors.muted }]}>
+                  <Text style={[styles.transactionValue, { color: tx.status === 'SUCCESSFUL' ? '#16A34A' : Colors.onSurfaceVariant }]}>
                     ₦{Number(tx.amount).toLocaleString('en-NG')}
                   </Text>
                   <Text style={styles.transactionStatus}>{tx.status}</Text>

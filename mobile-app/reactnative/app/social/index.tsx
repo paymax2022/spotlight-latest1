@@ -151,6 +151,6 @@ const styles = StyleSheet.create({
   bottomNav: { flexDirection: 'row', backgroundColor: SocialColors.surface, borderTopWidth: 1, borderTopColor: SocialColors.border, paddingHorizontal: Spacing.xs, paddingVertical: Spacing.sm },
   navButton: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: Spacing.sm },
   navButtonActive: { opacity: 1 },
-  navLabel: { ...Typography.labelXs, color: SocialColors.muted },
+  navLabel: { ...Typography.labelSm, color: SocialColors.muted },
   navLabelActive: { color: SocialColors.brand },
 });
