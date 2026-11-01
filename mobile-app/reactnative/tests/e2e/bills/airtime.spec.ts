@@ -13,7 +13,12 @@ test.describe('Bills E2E - Airtime purchase', () => {
 
   test('navigates from bills hub and completes a wallet-funded airtime purchase', async ({ page }) => {
     await openBillsHome(page);
-    await page.getByRole('button', { name: 'Airtime' }).click();
+    // Two buttons carry aria-label="Airtime" on this screen: the hub tile
+    // (TILE_LABELS) and the utility tab bar entry (UTILITY_TABS), which match by
+    // design — see the comment on TILE_LABELS in app/services/bills.tsx. Neither
+    // exposes a distinguishing ARIA state, so the order is what separates them:
+    // the screen renders inside the Stack and the tab bar comes after it.
+    await page.locator('button[aria-label="Airtime"]').first().click();
     await expect(page.getByText('Buy Airtime').first()).toBeVisible();
 
     await completeAirtimePurchase(page);
