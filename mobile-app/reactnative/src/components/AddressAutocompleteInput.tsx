@@ -46,6 +46,10 @@ export interface SelectedAddress {
   label: string;
   lat: number;
   lng: number;
+  /** Locality from the provider, when it gave one. */
+  city?: string;
+  /** State/region from the provider, when it gave one. */
+  state?: string;
   /** Open location code, when the provider resolved one (delivery accuracy). */
   plusCode?: string;
   /** Which stack answered ('proxy' | 'mock'). */
@@ -200,7 +204,7 @@ export default function AddressAutocompleteInput({
       setPin({ lat: r.lat, lng: r.lng });
       setPlusCode(r.plusCode ?? '');
       onSelect({
-        label: r.label, lat: r.lat, lng: r.lng, plusCode: r.plusCode,
+        label: r.label, lat: r.lat, lng: r.lng, city: r.city, state: r.state, plusCode: r.plusCode,
         source: r.source, precise: r.precise, estimated: r.estimated,
       });
       void addRecentAddress(r).then(() => getRecentAddresses().then(setRecents).catch(() => {}));
@@ -294,7 +298,7 @@ export default function AddressAutocompleteInput({
       if (r) {
         setPlusCode(r.plusCode ?? '');
         onChangeText(r.label);
-        onSelect({ label: r.label, lat: r.lat, lng: r.lng, plusCode: r.plusCode, source: r.source, precise: true });
+        onSelect({ label: r.label, lat: r.lat, lng: r.lng, city: r.city, state: r.state, plusCode: r.plusCode, source: r.source, precise: true });
       } else {
         onSelect({ label: value, lat, lng, precise: true });
       }
