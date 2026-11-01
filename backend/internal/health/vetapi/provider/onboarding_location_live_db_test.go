@@ -154,6 +154,14 @@ func TestLive_OnboardingLocationFlow(t *testing.T) {
 		t.Errorf("geo = (%v,%v), want the latest saved point (6.4510, 3.4320)", lat, lng)
 	}
 
+	// The public listing needs a verified, published profile as well as an approved
+	// provider (see TestLiveDB_VetListings_OnlyFullyApprovedAndPublishedVetsAreShown).
+	// The workspace publishes it through doctor.PublishVetProfile, which refuses until
+	// verification is approved; the fixture marks that review step done.
+	if _, err := f.pool.Exec(ctx, `UPDATE doctor_vet_profiles SET verification='approved', is_published=true WHERE user_id=$1`, withLoc); err != nil {
+		t.Fatalf("publish profile: %v", err)
+	}
+
 	// The vet shows up in near-me discovery with those coordinates.
 	dh := healthvet.NewHandler(f.h.vet, nil)
 	f.engine.GET("/v/vets", func(c *gin.Context) { c.Set("user_id", f.ownerID); dh.DiscoverVets(c) })

@@ -82,15 +82,18 @@ var visitTypeToListing = map[string]string{"TELE": "tele", "HOME": "home", "CLIN
 
 // listingSQL selects every listed vet. The optional geo columns are NULL when the
 // provider has no location. Callers add the WHERE tail.
+// A vet is listed only once its profile is published AND approved, the same gate
+// vetapi/owner/rx.go applies to the home/clinic search: an incomplete or pending
+// profile must not be bookable by strangers.
 const listingSQL = `
 	SELECT hp.id::text, hp.display_name, hp.owner_user_id::text,
 	       COALESCE(dvp.profile_draft::text, '{}'),
 	       ST_Y(hp.geo::geometry), ST_X(hp.geo::geometry)
 	FROM health_providers hp
-	LEFT JOIN doctor_vet_profiles dvp ON dvp.user_id = hp.owner_user_id
+	JOIN doctor_vet_profiles dvp ON dvp.user_id = hp.owner_user_id
 	WHERE hp.domain = 'VET' AND hp.provider_type = 'vet'
 	  AND hp.status = 'APPROVED' AND hp.discoverable = true
-	  AND (dvp.user_id IS NULL OR dvp.verification NOT IN ('suspended', 'rejected'))`
+	  AND dvp.is_published AND dvp.verification = 'approved'`
 
 // ListVetListings returns the listed vets, nearest first when lat/lng are given,
 // otherwise by name. The filter is applied after the query: the listed set is small.
