@@ -511,9 +511,17 @@ export async function openBillsHome(page: Page) {
   await expect(page.getByText('Bill Payments', { exact: true })).toBeVisible();
 }
 
+/**
+ * The airtime picker shows brand logos and no brand text, so a network is chosen
+ * by the accessible name on its tile rather than by visible text.
+ */
+export async function selectAirtimeNetwork(page: Page, name: string) {
+  await page.getByRole('button', { name }).click();
+}
+
 export async function completeAirtimePurchase(page: Page) {
   await page.goto('/services/airtime');
-  await page.getByText('MTN').first().click();
+  await selectAirtimeNetwork(page, 'MTN');
   await page.getByPlaceholder('801 234 5678').fill(validIdentifiers.phone);
   await page.getByText('₦500').first().click();
   await page.getByText('Review Purchase').click();

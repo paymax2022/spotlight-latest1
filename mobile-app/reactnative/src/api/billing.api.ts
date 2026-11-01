@@ -251,7 +251,10 @@ export async function getAirtimeNetworks(): Promise<Network[]> {
     .from('utility_billers')
     .select('id, name, code, status')
     .eq('category', 'airtime')
-    .eq('status', 'active');
+    .eq('status', 'active')
+    // Without an ORDER the picker's first card is whatever Postgres happens to
+    // return first, so the grid reshuffles between launches.
+    .order('name', { ascending: true });
 
   if (error) throw error;
   return (data ?? []).map((row) => mapNetworkFromApi(row));

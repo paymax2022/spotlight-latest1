@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { loginAs } from '../helpers/auth';
-import { mockBillsCatalog } from '../helpers/bills';
+import { mockBillsCatalog, selectAirtimeNetwork } from '../helpers/bills';
 import { providerResponses } from '../helpers/testData';
 import { mockWallet } from '../helpers/wallet';
 
@@ -24,7 +24,7 @@ test.describe('Bills E2E - Provider switching and redundancy', () => {
     });
 
     await page.goto('/services/airtime');
-    await page.getByText('MTN').first().click();
+    await selectAirtimeNetwork(page, 'MTN');
     await page.getByPlaceholder('801 234 5678').fill('08031234567');
     await page.getByText('₦500').first().click();
     await page.getByText('Review Purchase').click();
@@ -38,7 +38,7 @@ test.describe('Bills E2E - Provider switching and redundancy', () => {
 
   test('provider failover state is visible during payment review', async ({ page }) => {
     await page.goto('/services/airtime');
-    await page.getByText('MTN').first().click();
+    await selectAirtimeNetwork(page, 'MTN');
     await page.getByPlaceholder('801 234 5678').fill('08031234567');
     await page.getByText('₦500').first().click();
     await page.getByText('Review Purchase').click();
