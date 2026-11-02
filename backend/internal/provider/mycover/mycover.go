@@ -717,6 +717,13 @@ func providerBody(p gateway.ProviderProduct, inputs map[string]any) (map[string]
 	if body == nil {
 		body = map[string]any{}
 	}
+	// Dropdown answers still have the provider's type. payment_plan and
+	// bought_for_self reach us as the option labels; compute-price validates
+	// "/payment_plan must be number", so the type is restored here — once, on
+	// the way out — for exactly the paths the published schema typed.
+	if err := coerceTypedInputs(body, p.NumberInputPaths, p.BooleanInputPaths); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", gateway.ErrProviderRejected, p.Code, err)
+	}
 	return body, nil
 }
 

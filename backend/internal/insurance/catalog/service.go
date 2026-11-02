@@ -253,6 +253,8 @@ func (s *Service) ResolveProduct(ctx context.Context, productCode string) (strin
 	if schema := decodeStoredSchema(schemaJSON); schema != nil {
 		gateway.NormalizeMoneyBounds(schema)
 		pp.MoneyInputPaths = gateway.MoneyInputPaths(schema)
+		pp.NumberInputPaths = gateway.NumberInputPaths(schema)
+		pp.BooleanInputPaths = gateway.BooleanInputPaths(schema)
 		pp.FormSchemaKnown = hasSchemaFields(schema)
 	}
 	return provider, pp, true
