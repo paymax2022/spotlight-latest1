@@ -208,9 +208,15 @@ func (s *Service) loadKYB(ctx context.Context, restaurantID string) (KYB, bool, 
 		&k.LegalName, &k.BusinessType, &k.RCNumber, &k.TIN, &k.ContactEmail, &k.ContactPhone,
 		&k.BankCode, &k.AccountNumber, &k.AccountName, &k.Status, &k.DecisionReason,
 		&k.BankAccountVerifiedAt, &k.BankAccountVerified, &k.BankAccountVerificationError)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// No row yet → an empty draft (not an error).
 		return KYB{RestaurantID: restaurantID, Status: KYBDraft}, false, nil
+	}
+	if err != nil {
+		// A failed read (missing column, connection loss) is NOT an empty
+		// application: returning a draft here made submit answer "fill in your
+		// KYB details" against data that was saved correctly.
+		return KYB{}, false, err
 	}
 	return k, true, nil
 }
