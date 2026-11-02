@@ -500,14 +500,16 @@ export async function submitKYB(id: string): Promise<RestaurantKYB> {
   return mapKYB(raw?.kyb ?? raw);
 }
 
-// Admin-managed taxonomy (read-only for owners). Returns [] in mock mode AND
-// when the backend FEATURE_RESTAURANT_ADMIN_CATEGORIES flag is off (route 404s).
-// The 404 is a documented default-off state, not a bug — the caller falls back
-// to the legacy per-category add — so swallow it quietly instead of letting
-// axios log a console-level HTTP error. Any OTHER status is still thrown so
-// genuine server errors stay visible.
-export async function getMenuTaxonomy(): Promise<TaxonomyCategory[]> {
-  if (USE_MOCK) return [];
+// Admin-managed taxonomy (read-only for owners). `null` means the route is not
+// mounted (FEATURE_RESTAURANT_ADMIN_CATEGORIES off: 404, or mock mode), so the
+// caller may fall back to the legacy per-category add. An ARRAY — even an empty
+// one — means taxonomy is mounted and owns category management; the backend
+// 403s any owner category write in that mode. The 404 is a documented default-off
+// state, not a bug, so swallow it quietly instead of letting axios log a
+// console-level HTTP error. Any OTHER status is still thrown so genuine server
+// errors stay visible.
+export async function getMenuTaxonomy(): Promise<TaxonomyCategory[] | null> {
+  if (USE_MOCK) return null;
   let raw: unknown;
   try {
     raw = unwrap<any>(await api.get(`${BASE}/menu-taxonomy/categories`, {
@@ -517,7 +519,7 @@ export async function getMenuTaxonomy(): Promise<TaxonomyCategory[]> {
       skipAuthRedirect: true,
     }));
   } catch (e: any) {
-    if (e?.response?.status === 404) return [];
+    if (e?.response?.status === 404) return null;
     throw e;
   }
   const list: any[] = Array.isArray(raw) ? raw : [];

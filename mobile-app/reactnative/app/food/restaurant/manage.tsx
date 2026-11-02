@@ -20,7 +20,8 @@ import {
 } from '@/features/restaurantmerchant/hooks';
 import type { MerchantMenuCategory, MerchantMenuItem, MerchantStore, StoreGeoPoint } from '@/features/restaurantmerchant/types';
 import {
-  subcategoriesFor, validateItemDraft, type ItemDraft, type ItemDraftErrors, type TaxonomyCategory,
+  categoryEditingMode, subcategoriesFor, validateItemDraft,
+  type ItemDraft, type ItemDraftErrors, type TaxonomyCategory,
 } from '@/features/restaurantmerchant/taxonomy';
 import { parsePackagingPrice, packagingPriceInput } from '@/features/restaurantmerchant/packagingPrice';
 import { formatNaira, parseNaira, ITEM_PRICE_BOUNDS } from '@/features/restaurantmerchant/money';
@@ -584,7 +585,13 @@ function PackagingPrice({ storeId, store }: { storeId: string; store: MerchantSt
 
 function MenuBuilder({ storeId, categories }: { storeId: string; categories: MerchantMenuCategory[] }) {
   const taxonomy = useMenuTaxonomy();
-  const taxonomyOn = taxonomy.isSuccess && taxonomy.data.length > 0;
+  // Legacy category management is only legal when the taxonomy route is not
+  // mounted (a confirmed 404). Offering it while the read is pending or failed —
+  // or merely because the tree is empty — surfaced a form whose POST always 403s.
+  const mode = categoryEditingMode(taxonomy);
+  const taxonomyOn = mode === 'taxonomy';
+  const legacyOn = mode === 'legacy';
+  const tree = taxonomy.data ?? [];
   const [newCat, setNewCat] = useState('');
   const createCat = useCreateCategory(storeId);
   const deleteCat = useDeleteCategory(storeId);
@@ -607,9 +614,15 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
 
   return (
     <View style={{ gap: Spacing.md }}>
-      {taxonomyOn ? <TaxonomyAddItem storeId={storeId} tree={taxonomy.data ?? []} /> : null}
+      {taxonomyOn && tree.length > 0 ? <TaxonomyAddItem storeId={storeId} tree={tree} /> : null}
 
-      {categories.length === 0 ? (
+      {taxonomyOn && tree.length === 0 ? (
+        <Text style={styles.muted}>
+          Spotlight manages menu categories. None are available yet — check back shortly.
+        </Text>
+      ) : null}
+
+      {legacyOn && categories.length === 0 ? (
         <Text style={styles.muted}>No categories yet. Add one below to start building your menu.</Text>
       ) : null}
 
@@ -617,7 +630,7 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
         <Card key={cat.id}>
           <View style={styles.rowBetween}>
             <Text style={styles.cardTitle}>{cat.name}</Text>
-            {taxonomyOn ? null : (
+            {legacyOn ? (
               <Pressable
                 onPress={() =>
                   cat.items.length > 0
@@ -628,7 +641,7 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
               >
                 <Trash2 size={18} color={Colors.error} />
               </Pressable>
-            )}
+            ) : null}
           </View>
 
           {cat.items.map((it) => (
@@ -663,12 +676,12 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
             </View>
           ))}
 
-          {taxonomyOn ? null : <AddItem storeId={storeId} categoryId={cat.id} />}
+          {legacyOn ? <AddItem storeId={storeId} categoryId={cat.id} /> : null}
         </Card>
       ))}
 
       {/* Add category: owners cannot create categories once the admin taxonomy is on */}
-      {taxonomyOn ? null : (
+      {legacyOn ? (
       <Card>
         <Text style={styles.cardTitle}>Add a category</Text>
         <View style={styles.inlineRow}>
@@ -681,7 +694,7 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
           </Pressable>
         </View>
       </Card>
-      )}
+      ) : null}
     </View>
   );
 }

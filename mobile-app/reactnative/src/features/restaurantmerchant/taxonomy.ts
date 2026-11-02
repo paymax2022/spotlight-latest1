@@ -45,6 +45,21 @@ export function pickableCategories(tree: TaxonomyCategory[]): TaxonomyCategory[]
   return tree.filter((c) => c && c.id);
 }
 
+export type CategoryEditingMode = 'legacy' | 'taxonomy' | 'unknown';
+
+// Once the taxonomy route is mounted the backend answers every owner category
+// write with 403, so the legacy create form is only safe after a confirmed 404
+// (data === null). An empty tree still means taxonomy is on. Until the read
+// settles — loading or a transient failure — offer neither flow: rendering the
+// legacy form on an error is what surfaced a button that always 403s.
+export function categoryEditingMode(q: {
+  status: 'pending' | 'error' | 'success';
+  data: TaxonomyCategory[] | null | undefined;
+}): CategoryEditingMode {
+  if (q.status !== 'success') return 'unknown';
+  return q.data === null ? 'legacy' : 'taxonomy';
+}
+
 // Sub-categories depend on the chosen category. A sub from another category is not
 // offered, so the form cannot produce a mismatch.
 export function subcategoriesFor(tree: TaxonomyCategory[], categoryId: string | null): TaxonomyChild[] {
