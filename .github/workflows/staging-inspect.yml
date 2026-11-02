@@ -313,8 +313,8 @@ jobs:
               req.on("error", (e) => { console.log(`  ${label}: error ${e.code ?? e.message}`); resolve(); });
             });
             (async () => {
-              await probe("frontend-web  (control)", "https://frontend-web-staging.up.railway.app/");
-              await probe("frontend-admin (domain) ", "https://frontend-admin-staging.up.railway.app/");
+              await probe("frontend-web  (control)", "https://frontend-web-staging-new.up.railway.app/");
+              await probe("frontend-admin (domain) ", "https://frontend-admin-staging-new.up.railway.app/");
               if (process.env.ADMIN_DEPLOY_URL) await probe("frontend-admin (deploy) ", process.env.ADMIN_DEPLOY_URL);
             })();
           '
@@ -485,7 +485,7 @@ jobs:
       RAILWAY_TOKEN: ${{ inputs.environment == 'production' && secrets.RAILWAY_TOKEN_PRODUCTION || secrets.RAILWAY_TOKEN_STAGING }}
       PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
       ENVIRONMENT: ${{ inputs.environment }}
-      WEB_BASE: ${{ inputs.environment == 'production' && 'https://frontend-web-production-9259.up.railway.app' || 'https://frontend-web-staging-ec46.up.railway.app' }}
+      WEB_BASE: ${{ inputs.environment == 'production' && 'https://frontend-web-production-9259.up.railway.app' || 'https://frontend-web-staging-new.up.railway.app' }}
     steps:
       - name: Check the Railway token is present
         run: ': "${RAILWAY_TOKEN:?missing Railway token secret}"'

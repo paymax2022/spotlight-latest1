@@ -381,7 +381,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ inputs.proxy_target }}" = "public" ]; then
-            TARGET=https://backend-staging-d9bb.up.railway.app
+            TARGET=https://backend-staging-new.up.railway.app
           else
             TARGET=http://backend.railway.internal:8080
           fi
@@ -627,7 +627,7 @@ jobs:
       ENVIRONMENT: staging
       # frontend-web's public staging origin. The admin console links out to the
       # Film Academy pages that live there.
-      WEB_BASE: https://frontend-web-staging-ec46.up.railway.app
+      WEB_BASE: https://frontend-web-staging-new.up.railway.app
     steps:
       - name: Check the Railway token is present
         run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'

@@ -48,7 +48,7 @@ jobs:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
       PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
       ENVIRONMENT: staging
-      WEB_BASE: https://frontend-web-staging-ec46.up.railway.app
+      WEB_BASE: https://frontend-web-staging-new.up.railway.app
       FUND_KOBO: ${{ inputs.fund_naira }}00
       PAY_KOBO: ${{ inputs.airtime_naira }}00
     steps:
