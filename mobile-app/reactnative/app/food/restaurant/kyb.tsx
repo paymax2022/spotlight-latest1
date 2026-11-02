@@ -167,6 +167,23 @@ export default function KYBScreen() {
   if (needsRegistration && !hasCertDoc) missing.push('CAC certificate document');
   const readyToSubmit = missing.length === 0;
 
+  // A tab can sit on the editable form while the application is submitted or decided
+  // elsewhere (another device, or a submit that already went through). Re-read before
+  // writing: a save of that stale copy is refused with "cannot be edited while
+  // submitted", which reads like a failed action even though the application is
+  // safely on file. Returns true when the screen has already resynced to that state.
+  const lockedSinceLoaded = async (): Promise<boolean> => {
+    const fresh = await kyb.refetch();
+    const current = fresh.data?.status;
+    if (!current || EDITABLE_STATUSES.has(current)) return false;
+    const copy = STATUS_COPY[current];
+    alertAsync({
+      title: copy?.title ?? 'Application locked',
+      message: copy?.message ?? 'Your business verification has already been submitted.',
+    });
+    return true;
+  };
+
   const saveForm = (onSuccess?: () => void) => {
     save.mutate(
       { legalName: legalName.trim(), businessType, rcNumber: rcNumber.trim(), tin: tin.trim(),
@@ -174,9 +191,20 @@ export default function KYBScreen() {
         bankCode, accountNumber, accountName: accountName.trim() },
       {
         onSuccess,
-        onError: (e) => alertAsync({ title: "Couldn't save", message: (e as Error)?.message ?? 'Please try again.' }),
+        onError: (e) => {
+          // The status may have moved on between the check above and this write
+          // (or the user saved without the check). Resync so the form is replaced
+          // by the real status instead of staying editable.
+          kyb.refetch();
+          alertAsync({ title: "Couldn't save", message: (e as Error)?.message ?? 'Please try again.' });
+        },
       },
     );
+  };
+
+  const saveDetails = async () => {
+    if (await lockedSinceLoaded()) return;
+    saveForm();
   };
 
   const attachCert = () => {
@@ -234,11 +262,12 @@ export default function KYBScreen() {
     );
   };
 
-  const doSubmit = () => {
+  const doSubmit = async () => {
     if (!readyToSubmit) {
       alertAsync({ title: 'A few things are missing', message: `Still needed: ${missing.join(', ')}.` });
       return;
     }
+    if (await lockedSinceLoaded()) return;
     // Save whatever's currently typed first, so submit reviews the latest details —
     // then submit. Matches backend SubmitKYB, which reviews the row as saved.
     saveForm(() =>
@@ -372,7 +401,7 @@ export default function KYBScreen() {
               />
             </Card>
 
-            <PrimaryButton label="Save" variant="secondary" onPress={() => saveForm()} loading={save.isPending} />
+            <PrimaryButton label="Save" variant="secondary" onPress={saveDetails} loading={save.isPending} />
             <PrimaryButton label="Submit for review" onPress={doSubmit} loading={submit.isPending || save.isPending} />
             {!readyToSubmit && (
               <Text style={styles.missingText}>Still needed: {missing.join(', ')}.</Text>
