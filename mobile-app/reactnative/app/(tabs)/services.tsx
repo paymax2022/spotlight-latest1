@@ -181,7 +181,10 @@ const styles = StyleSheet.create({
   },
   chipActive:      { backgroundColor: Colors.primaryContainer, borderColor: Colors.primaryContainer },
   chipLabel:       { ...Typography.labelMd, color: Colors.onSurfaceVariant },
-  chipLabelActive: { color: Colors.onPrimaryContainer },
+  // onPrimaryContainer (#B994FF) on this fill is only 4.56:1, so the selected chip —
+  // which is 'All' by default, i.e. the one always on screen — read as washed out.
+  // White keeps the fill and lifts it to 10.95:1.
+  chipLabelActive: { color: Colors.onPrimary },
 
   scroll: { paddingBottom: Platform.OS === 'ios' ? 100 : 80, paddingTop: Spacing.md },
 
