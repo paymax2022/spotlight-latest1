@@ -1,5 +1,6 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
+import { Eye, EyeOff } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -13,9 +14,14 @@ interface Props {
   autoFocus?: boolean;
 }
 
-/** 4-digit trip PIN entry (driver verifies the rider's PIN before starting). */
+/**
+ * 4-digit PIN entry (setup, payment authorisation, and the driver/courier
+ * verification of the rider's PIN). Digits are masked by default like a password
+ * and the eye button reveals them; the boxes only ever render one glyph per cell.
+ */
 export default function TripPinInput({ value, onChange, length = 4, error, autoFocus }: Props) {
   const inputRef = useRef<TextInput>(null);
+  const [revealed, setRevealed] = useState(false);
   const digits = value.padEnd(length).slice(0, length).split('');
 
   return (
@@ -23,12 +29,26 @@ export default function TripPinInput({ value, onChange, length = 4, error, autoF
       <Pressable style={styles.boxes} onPress={() => inputRef.current?.focus()}>
         {digits.map((d, i) => {
           const active = i === value.length;
+          const filled = d.trim() !== '';
           return (
             <View key={i} style={[styles.box, active && styles.boxActive, !!error && styles.boxError]}>
-              <Text style={styles.digit}>{d.trim()}</Text>
+              <Text style={styles.digit}>{filled ? (revealed ? d.trim() : '•') : ''}</Text>
             </View>
           );
         })}
+      </Pressable>
+
+      <Pressable
+        onPress={() => { setRevealed((r) => !r); inputRef.current?.focus(); }}
+        style={styles.toggle}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={revealed ? 'Hide PIN' : 'Show PIN'}
+      >
+        {revealed
+          ? <EyeOff size={18} color={Colors.outline} />
+          : <Eye    size={18} color={Colors.outline} />
+        }
       </Pressable>
 
       {/* Hidden controlling input */}
@@ -56,6 +76,7 @@ const styles = StyleSheet.create({
   boxActive: { borderColor: Colors.secondary, backgroundColor: Colors.surfaceContainerLowest },
   boxError: { borderColor: Colors.error },
   digit: { ...Typography.headlineMd, color: Colors.onSurface },
+  toggle: { alignSelf: 'center', marginTop: Spacing.sm, padding: 4 },
   hidden: { position: 'absolute', opacity: 0, height: 1, width: 1 },
   error: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.sm, textAlign: 'center' },
 });

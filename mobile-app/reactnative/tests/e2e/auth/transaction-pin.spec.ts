@@ -4,7 +4,7 @@ import { mockWallet } from '../helpers/wallet';
 import { mockBillsCatalog } from '../helpers/bills';
 
 /**
- * TripPinInput renders visible digit boxes over a deliberately hidden
+ * TripPinInput renders masked digit boxes over a deliberately hidden
  * TextInput (opacity 0, 1x1) that owns the value. Playwright's fill() refuses
  * to act on it, so focus the control and send real key events instead — that
  * drives the same onChangeText the user's keyboard would.
@@ -92,5 +92,42 @@ test.describe('Auth E2E - Transaction PIN gate', () => {
 
     await expect(page.getByText('Explore Services')).toBeVisible();
     await expect(page.getByText('Create your transaction PIN')).toBeHidden();
+  });
+
+  test('the typed PIN is masked in the boxes by default', async ({ page }) => {
+    await mockWallet(page);
+    await mockBillsCatalog(page);
+    await loginAs(page, undefined, { withPin: false });
+    // Same widen loginAs uses for its home anchor: dev Metro's first paint on a
+    // cold route bundle exceeds the default 10s expect timeout.
+    await expect(page.getByText('Create your transaction PIN')).toBeVisible({ timeout: 30_000 });
+
+    await enterPin(page, TEST_TXN_PIN);
+
+    // The four cells show a dot each and no digit — this is the code that
+    // authorises money movements, typed in queues and shared screens.
+    await expect(page.getByText('•', { exact: true })).toHaveCount(4);
+    for (const d of TEST_TXN_PIN) {
+      await expect(page.getByText(d, { exact: true })).toHaveCount(0);
+    }
+  });
+
+  test('the eye button reveals the PIN and masks it again', async ({ page }) => {
+    await mockWallet(page);
+    await mockBillsCatalog(page);
+    await loginAs(page, undefined, { withPin: false });
+    await expect(page.getByText('Create your transaction PIN')).toBeVisible({ timeout: 30_000 });
+
+    await enterPin(page, TEST_TXN_PIN);
+    await expect(page.getByText('•', { exact: true })).toHaveCount(4);
+
+    await page.getByRole('button', { name: 'Show PIN', exact: true }).click();
+    await expect(page.getByText('•', { exact: true })).toHaveCount(0);
+    for (const d of TEST_TXN_PIN) {
+      await expect(page.getByText(d, { exact: true })).toHaveCount(1);
+    }
+
+    await page.getByRole('button', { name: 'Hide PIN', exact: true }).click();
+    await expect(page.getByText('•', { exact: true })).toHaveCount(4);
   });
 });
