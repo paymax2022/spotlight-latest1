@@ -827,7 +827,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			WithBusiness(orchestration.NewBusinessStore(pool)).
 			WithCollections(orchestration.NewCollectionStore(pool)).
 			WithVerification(orchestration.NewVerificationStore(pool)).
-			WithAdminOverview(orchestration.NewAdminOverviewSource(pool))
+			WithAdminOverview(orchestration.NewAdminOverviewSource(pool)).
+			// nil issuer: no card-issuing provider is configured, so the store keeps
+			// synthesized card material (the same behaviour as before Maplerad).
+			WithCards(orchestration.NewCardStore(pool, nil))
 
 		og := r.Group("/api/v1/fx")
 		// RequireAuthContext populates the user_id that requireUserID fail-closes
@@ -895,8 +898,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		og.GET("/notifications", orchHandler.ListNotifications)
 		og.PATCH("/notifications/:id", orchHandler.MarkNotificationRead)
 		og.POST("/notifications/read-all", orchHandler.MarkAllNotificationsRead)
-		// FX virtual cards are disabled: no card-issuing provider is configured, so
-		// the /cards routes are intentionally not mounted.
+		// FX virtual cards. No card-issuing provider is configured, so the store
+		// runs with a nil issuer (synthesized card material); the mobile Cards
+		// screens still list, create, fund and control cards from orch_fx_cards.
+		og.GET("/cards", orchHandler.ListCards)
+		og.POST("/cards", orchHandler.CreateCard)
+		og.GET("/cards/:id", orchHandler.GetCard)
+		og.GET("/cards/:id/transactions", orchHandler.ListCardTransactions)
+		og.POST("/cards/:id/reveal", orchHandler.RevealCard)
+		og.POST("/cards/:id/fund", transferRate, orchHandler.FundCard)
+		og.POST("/cards/:id/freeze", orchHandler.FreezeCard)
+		og.POST("/cards/:id/unfreeze", orchHandler.UnfreezeCard)
+		og.POST("/cards/:id/terminate", orchHandler.TerminateCard)
+		og.PATCH("/cards/:id/controls", orchHandler.UpdateCardControls)
 		// FX console read surface. The overview is the one console page with a real
 		// backend: it aggregates the same ledger rows this block serves plus the live
 		// treasury snapshot, so the operator sees actual volume instead of the
