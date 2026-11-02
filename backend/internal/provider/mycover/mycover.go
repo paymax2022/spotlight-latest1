@@ -1458,16 +1458,23 @@ func (c *Client) FetchUtilityOptions(ctx context.Context, optionsURL, query stri
 	if err != nil {
 		return nil, err
 	}
-	var opts []Option
-	if err := json.Unmarshal(env.Data, &opts); err != nil {
+	// `value` is a string for most utilities ({"value":"Abia"}) but a NUMBER for
+	// numeric ones — payment_plan answers {"value":1}. Decoding straight into
+	// Option.Value (string) rejected that whole list, so the quote form's plan
+	// picker failed with a provider error while the provider was answering fine.
+	var raw []struct {
+		Value json.RawMessage `json:"value"`
+		Label string          `json:"label"`
+	}
+	if err := json.Unmarshal(env.Data, &raw); err != nil {
 		return nil, fmt.Errorf("mycover: utility options: unexpected shape: %w", err)
 	}
 	// Drop blanks rather than render an empty row the user can select. A value is
 	// what gets submitted, so an option without one is unusable; label falls back
 	// to the value so a list that omits labels still reads.
-	out := make([]Option, 0, len(opts))
-	for _, o := range opts {
-		v := strings.TrimSpace(o.Value)
+	out := make([]Option, 0, len(raw))
+	for _, o := range raw {
+		v := strings.TrimSpace(utilityOptionValue(o.Value))
 		if v == "" {
 			continue
 		}
@@ -1478,6 +1485,26 @@ func (c *Client) FetchUtilityOptions(ctx context.Context, optionsURL, query stri
 		out = append(out, Option{Value: v, Label: l})
 	}
 	return out, nil
+}
+
+// utilityOptionValue renders an option's raw JSON value as the string the client
+// contract carries. json.Number keeps "12" as "12" rather than re-formatting a
+// float64.
+func utilityOptionValue(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var n json.Number
+	if err := dec.Decode(&n); err == nil {
+		return n.String()
+	}
+	return ""
 }
 
 // utilityTarget validates the stored options_url against the configured provider
