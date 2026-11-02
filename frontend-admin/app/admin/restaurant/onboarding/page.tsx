@@ -1,8 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { listApplications, decideApplication } from '@/services/restaurantAdminService';
-import type { RestaurantApplication, OnboardingStatus } from '@/types/restaurantAdmin';
+import {
+  listApplications,
+  decideApplication,
+  getRestaurantCuisines,
+  setRestaurantCuisines,
+} from '@/services/restaurantAdminService';
+import type { RestaurantApplication, OnboardingStatus, RestaurantCuisineAssignment } from '@/types/restaurantAdmin';
 import { RESTAURANT_PERMS, useRestaurantPermissions, AccessNotice } from '../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
@@ -40,6 +45,15 @@ function KpiTile({ label, value, accent }: { label: string; value: string; accen
   );
 }
 
+/** The merchant never got to this KYB step, which is not the same as a check that
+ *  failed — a red dash on a never-required field reads as grounds to reject. */
+function NotFiled() {
+  return <span style={{ color: colors.muted }}>not filed</span>;
+}
+
+const businessTypeLabel = (t: string) =>
+  t.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
 export default function OnboardingReviewPage() {
   const { can } = useRestaurantPermissions();
   const canView = can(RESTAURANT_PERMS.manage) || can(RESTAURANT_PERMS.onboarding);
@@ -53,6 +67,81 @@ export default function OnboardingReviewPage() {
   const [selected, setSelected] = useState<RestaurantApplication | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [cuisines, setCuisines] = useState<RestaurantCuisineAssignment | null>(null);
+  const [cuisinePick, setCuisinePick] = useState<string[]>([]);
+  const [cuisineLoading, setCuisineLoading] = useState(false);
+  const [cuisineSaving, setCuisineSaving] = useState(false);
+  const [cuisineError, setCuisineError] = useState<string | null>(null);
+  const [cuisineNotice, setCuisineNotice] = useState<string | null>(null);
+
+  // Cuisine tags are restaurant-level (restaurant_cuisines) and drive discovery's
+  // cuisine filter. The GET is behind restaurant.admin.onboarding, the same slug
+  // the decision buttons use, so only fetch when the reviewer may act.
+  useEffect(() => {
+    if (!selected || !canReview) return;
+    let cancelled = false;
+    setCuisineLoading(true);
+    setCuisineError(null);
+    setCuisineNotice(null);
+    setCuisinePick([]);
+    getRestaurantCuisines(selected.id)
+      .then((v) => {
+        if (cancelled) return;
+        setCuisines(v);
+        setCuisinePick(v.selected);
+      })
+      .catch((e) => {
+        if (!cancelled) setCuisineError(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setCuisineLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, canReview]);
+
+  function openReview(a: RestaurantApplication) {
+    setCuisines(null);
+    setCuisinePick([]);
+    setCuisineError(null);
+    setCuisineNotice(null);
+    setSelected(a);
+    setNote(a.review_note ?? '');
+  }
+
+  function closeReview() {
+    setSelected(null);
+    setNote('');
+    setCuisines(null);
+    setCuisinePick([]);
+  }
+
+  function toggleCuisine(id: string) {
+    setCuisineNotice(null);
+    setCuisinePick((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  }
+
+  async function saveCuisines() {
+    if (!selected) return;
+    setCuisineSaving(true);
+    setCuisineError(null);
+    setCuisineNotice(null);
+    try {
+      const next = await setRestaurantCuisines(selected.id, cuisinePick);
+      setCuisines(next);
+      setCuisinePick(next.selected);
+      setCuisineNotice(
+        next.selected.length === 0
+          ? 'Cuisine tags cleared.'
+          : `Saved ${next.selected.length} cuisine tag${next.selected.length === 1 ? '' : 's'}.`,
+      );
+    } catch (e) {
+      setCuisineError(String(e));
+    } finally {
+      setCuisineSaving(false);
+    }
+  }
 
   const load = useCallback(async (s: OnboardingStatus | '') => {
     setLoading(true);
@@ -82,8 +171,7 @@ export default function OnboardingReviewPage() {
     try {
       await decideApplication(selected.id, decision, note);
       setMessage(`Application ${selected.restaurant_name} ${decision === 'approve' ? 'approved' : 'rejected'}.`);
-      setSelected(null);
-      setNote('');
+      closeReview();
       await load(status);
     } catch (e) {
       setError(String(e));
@@ -98,6 +186,12 @@ export default function OnboardingReviewPage() {
   const pending = apps.filter((a) => a.kyb_status === 'submitted' || a.kyb_status === 'under_review').length;
   const approved = apps.filter((a) => a.status === 'approved').length;
   const rejected = apps.filter((a) => a.status === 'rejected').length;
+  // The merchant form gates both the CAC number and its certificate on the business
+  // type, so a sole proprietor legitimately has none and the row must not appear.
+  const requiresRegistration = !!selected?.business_type && selected.business_type !== 'sole_proprietor';
+  const savedCuisines = new Set(cuisines?.selected ?? []);
+  const cuisinesDirty =
+    cuisinePick.length !== savedCuisines.size || cuisinePick.some((id) => !savedCuisines.has(id));
 
   if (!canView) {
     return (
@@ -150,9 +244,6 @@ export default function OnboardingReviewPage() {
                 <tr>
                   <th style={thCell}>Restaurant</th>
                   <th style={thCell}>Owner</th>
-                  <th style={thCell}>Cuisine</th>
-                  <th style={thCell}>CAC</th>
-                  <th style={thCell}>Docs</th>
                   <th style={thCell}>Status</th>
                   <th style={thCell}>Submitted</th>
                   <th style={thCell}></th>
@@ -163,13 +254,10 @@ export default function OnboardingReviewPage() {
                   <tr key={a.id}>
                     <td style={tdCell}><strong>{a.restaurant_name}</strong><div style={{ color: colors.muted, fontSize: '0.75rem' }}>{a.address}</div></td>
                     <td style={tdCell}>{a.owner_name ?? a.owner_id}<div style={{ color: colors.muted, fontSize: '0.75rem' }}>{a.email}</div></td>
-                    <td style={tdCell}>{a.cuisine ?? '—'}</td>
-                    <td style={tdCell}>{a.cac_number ?? <span style={{ color: colors.danger }}>missing</span>}</td>
-                    <td style={tdCell}>{a.documents.filter((d) => d.verified).length}/{a.documents.length} verified</td>
                     <td style={tdCell}><StatusBadge status={a.status} label={onboardingLabel(a)} /></td>
                     <td style={tdCell}>{new Date(a.submitted_at).toLocaleDateString('en-NG')}</td>
                     <td style={tdCell}>
-                      <Button sm variant="outline" onClick={() => { setSelected(a); setNote(a.review_note ?? ''); }}>Review</Button>
+                      <Button sm variant="outline" onClick={() => openReview(a)}>Review</Button>
                     </td>
                   </tr>
                 ))}
@@ -184,59 +272,132 @@ export default function OnboardingReviewPage() {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
               <strong style={{ fontSize: 16 }}>Review — {selected.restaurant_name}</strong>
-              <Button sm variant="outline" onClick={() => { setSelected(null); setNote(''); }}>Close</Button>
+              <Button sm variant="outline" onClick={closeReview}>Close</Button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem', fontSize: '0.85rem', marginBottom: '1rem' }}>
-              <div><span style={{ color: colors.muted }}>Owner</span><div>{selected.owner_name} ({selected.owner_id})</div></div>
-              <div><span style={{ color: colors.muted }}>Phone</span><div>{selected.phone ?? '—'}</div></div>
-              <div><span style={{ color: colors.muted }}>CAC</span><div>{selected.cac_number ?? '—'}</div></div>
-              <div><span style={{ color: colors.muted }}>Bank</span><div>{selected.bank_name ?? '—'} · {selected.bank_account_number ?? '—'}</div></div>
-              <div><span style={{ color: colors.muted }}>Account name</span><div>{selected.bank_account_name ?? '—'}</div></div>
-              <div>
-                <span style={{ color: colors.muted }}>Bank verified</span>
+              <div><span style={{ color: colors.muted }}>Owner</span><div>{selected.owner_name ?? selected.owner_id}</div></div>
+              <div><span style={{ color: colors.muted }}>Legal name</span><div>{selected.legal_name ?? <NotFiled />}</div></div>
+              <div><span style={{ color: colors.muted }}>Business type</span><div>{selected.business_type ? businessTypeLabel(selected.business_type) : <NotFiled />}</div></div>
+              {/* A sole proprietor is never asked for a CAC number, so showing the
+                  row for one invites a rejection over a check that doesn't apply. */}
+              {(selected.cac_number || requiresRegistration) && (
                 <div>
-                  {selected.bank_account_verified === true ? (
-                    <span style={{ color: colors.success }}>✓ Verified</span>
-                  ) : selected.bank_account_verified === false ? (
-                    <span style={{ color: colors.danger }}>✗ Mismatch</span>
-                  ) : selected.bank_account_verified_at ? (
-                    <span style={{ color: colors.warning }}>Pending review</span>
-                  ) : (
-                    <span style={{ color: colors.muted }}>Not verified</span>
+                  <span style={{ color: colors.muted }}>CAC / RC number</span>
+                  <div>{selected.cac_number ?? <span style={{ color: colors.danger }}>not filed</span>}</div>
+                </div>
+              )}
+              <div><span style={{ color: colors.muted }}>Contact phone</span><div>{selected.phone ?? <NotFiled />}</div></div>
+              <div><span style={{ color: colors.muted }}>Contact email</span><div>{selected.email ?? <NotFiled />}</div></div>
+              {selected.bank_account_number && (
+                <>
+                  <div>
+                    <span style={{ color: colors.muted }}>Settlement bank</span>
+                    <div>{selected.bank_name ?? 'code not recognised'} · {selected.bank_account_number}</div>
+                  </div>
+                  <div><span style={{ color: colors.muted }}>Account name</span><div>{selected.bank_account_name ?? <NotFiled />}</div></div>
+                  <div>
+                    <span style={{ color: colors.muted }}>Bank verified</span>
+                    <div>
+                      {selected.bank_account_verified === true ? (
+                        <span style={{ color: colors.success }}>✓ Verified</span>
+                      ) : selected.bank_account_verified === false ? (
+                        <span style={{ color: colors.danger }}>✗ Mismatch</span>
+                      ) : selected.bank_account_verified_at ? (
+                        <span style={{ color: colors.warning }}>Pending review</span>
+                      ) : (
+                        <span style={{ color: colors.muted }}>Not verified</span>
+                      )}
+                    </div>
+                    {selected.bank_account_verification_error && (
+                      <div style={{ color: colors.danger, fontSize: '0.75rem', marginTop: 4 }}>
+                        {selected.bank_account_verification_error}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {selected.documents.length > 0 && (
+              <>
+                <strong style={{ fontSize: '0.85rem' }}>Documents</strong>
+                <ul style={{ margin: '0.5rem 0 1rem', paddingLeft: '1.1rem', fontSize: '0.85rem' }}>
+                  {selected.documents.map((d, i) => (
+                    <li key={i}>
+                      <a href={d.url} target="_blank" rel="noreferrer">{d.label}</a>{' '}
+                      {d.verified ? <StatusBadge status="verified" label="verified" /> : <StatusBadge status="unverified" label="unverified" />}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            <strong style={{ fontSize: '0.85rem' }}>Cuisines</strong>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0.25rem 0 0.75rem' }}>
+              Tag what this restaurant serves. These tags are restaurant-level and drive cuisine
+              filters in discovery. Menu categories are per dish and are assigned from the
+              store&apos;s menu, not here.
+            </p>
+            {!canReview ? (
+              <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 1rem' }}>
+                Requires <code>restaurant.admin.onboarding</code> — cuisine assignment is disabled.
+              </p>
+            ) : cuisineLoading ? (
+              <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 1rem' }}>Loading cuisines…</p>
+            ) : (
+              <>
+                {cuisineError && (
+                  <p style={{ fontSize: '0.8rem', color: colors.danger, margin: '0 0 0.5rem' }}>{cuisineError}</p>
+                )}
+                {cuisines && cuisines.available.length === 0 ? (
+                  <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 1rem' }}>
+                    No cuisines are configured yet. Add them under Restaurant → Menu Taxonomy, then
+                    reopen this application.
+                  </p>
+                ) : cuisines ? (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                      gap: '0.5rem',
+                      marginBottom: '0.75rem',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    {cuisines.available.map((c) => {
+                      const checked = cuisinePick.includes(c.id);
+                      return (
+                        <label
+                          key={c.id}
+                          style={{ opacity: !c.is_active && !checked ? 0.5 : 1 }}
+                          title={!c.is_active ? 'Inactive cuisine — still selectable to clear an existing tag' : undefined}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={cuisineSaving || (!c.is_active && !checked)}
+                            onChange={() => toggleCuisine(c.id)}
+                          />{' '}
+                          {c.name}
+                          {!c.is_active ? ' (inactive)' : ''}
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem' }}>
+                  <Button sm variant="primary" disabled={!cuisinesDirty || cuisineSaving} onClick={() => void saveCuisines()}>
+                    {cuisineSaving ? 'Saving…' : 'Save cuisines'}
+                  </Button>
+                  {cuisinesDirty && !cuisineSaving && (
+                    <span style={{ fontSize: '0.78rem', color: colors.warning }}>Unsaved changes</span>
+                  )}
+                  {cuisineNotice && (
+                    <span style={{ fontSize: '0.78rem', color: colors.success }}>{cuisineNotice}</span>
                   )}
                 </div>
-                {selected.bank_account_verification_error && (
-                  <div style={{ color: colors.danger, fontSize: '0.75rem', marginTop: 4 }}>
-                    {selected.bank_account_verification_error}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <strong style={{ fontSize: '0.85rem' }}>Documents</strong>
-            <ul style={{ margin: '0.5rem 0 1rem', paddingLeft: '1.1rem', fontSize: '0.85rem' }}>
-              {selected.documents.map((d, i) => (
-                <li key={i}>
-                  <a href={d.url} target="_blank" rel="noreferrer">{d.label}</a>{' '}
-                  {d.verified ? <StatusBadge status="verified" label="verified" /> : <StatusBadge status="unverified" label="unverified" />}
-                </li>
-              ))}
-            </ul>
-
-            <strong style={{ fontSize: '0.85rem' }}>Menu Categories</strong>
-            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0.25rem 0 0.75rem' }}>
-              Assign categories and cuisines the restaurant offers. This helps organize their menu for discovery.
-            </p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '0.5rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
-              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Nigerian'} disabled /> Nigerian</label>
-              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Fast Food'} disabled /> Fast Food</label>
-              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Chinese'} disabled /> Chinese</label>
-              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Indian'} disabled /> Indian</label>
-              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Italian'} disabled /> Italian</label>
-              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Seafood'} disabled /> Seafood</label>
-              <label><input type="checkbox" defaultChecked={selected.cuisine === 'BBQ & Grills'} disabled /> BBQ & Grills</label>
-              <label><input type="checkbox" defaultChecked={selected.cuisine === 'Healthy'} disabled /> Healthy</label>
-            </div>
+              </>
+            )}
 
             <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Reviewer note (required to reject)</label>
             <textarea
@@ -271,10 +432,10 @@ export default function OnboardingReviewPage() {
       )}
 
       <p style={{ marginTop: '1.5rem', fontSize: '0.8rem', color: colors.muted }}>
-        Mock-first. Target routes: <code>GET /api/restaurant/admin/onboarding</code> and{' '}
-        <code>POST /api/restaurant/admin/onboarding/:id/&#123;approve|reject&#125;</code> (RBAC{' '}
-        <code>restaurant.admin.onboarding</code>). Flip{' '}
-        <code>NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK=false</code> when live.
+        Live routes: <code>GET /api/restaurant/admin/onboarding</code>,{' '}
+        <code>POST /api/restaurant/admin/onboarding/:id/&#123;approve|reject&#125;</code> and{' '}
+        <code>GET|PUT /api/restaurant/admin/restaurants/:id/cuisines</code> (RBAC{' '}
+        <code>restaurant.admin.onboarding</code>).
       </p>
     </Page>
   );

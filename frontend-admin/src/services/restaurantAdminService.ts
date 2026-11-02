@@ -36,6 +36,8 @@ import type {
   DisputeStatus,
   ResolveDisputeRequest,
   RestaurantDetail,
+  RestaurantCuisineAssignment,
+  CuisineOption,
   MenuCategory,
   MenuItem,
   UpdateRestaurantRequest,
@@ -381,6 +383,41 @@ export async function setRestaurantAvailability(id: string, isOpen: boolean): Pr
   });
 }
 
+const MOCK_CUISINES: CuisineOption[] = [
+  'Nigerian', 'Fast Food', 'Chinese', 'Indian', 'Italian', 'Seafood', 'BBQ & Grills', 'Healthy',
+].map((name, i) => ({
+  id: `cuisine-${i + 1}`,
+  name,
+  slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+  sort_order: i + 1,
+  is_active: true,
+}));
+
+/**
+ * The restaurant's cuisine tags plus everything assignable.
+ * GET /api/restaurant/admin/restaurants/:id/cuisines (restaurant.admin.onboarding).
+ * Cuisines are the restaurant-level tags discovery's ?cuisine_id= filter reads;
+ * they are NOT menu categories, which belong to individual menu items.
+ */
+export async function getRestaurantCuisines(restaurantId: string): Promise<RestaurantCuisineAssignment> {
+  if (USE_MOCK) {
+    await delay();
+    return { available: MOCK_CUISINES, selected: [] };
+  }
+  return reqAt<RestaurantCuisineAssignment>(`${storeBase()}/${encodeURIComponent(restaurantId)}/cuisines`);
+}
+
+/** Replace the restaurant's cuisine tags with exactly `cuisineIds` ([] clears). */
+export async function setRestaurantCuisines(
+  restaurantId: string,
+  cuisineIds: string[],
+): Promise<RestaurantCuisineAssignment> {
+  if (USE_MOCK) throw new Error(`Assigning cuisines ${NOT_IN_FIXTURE_MODE}`);
+  return reqAt<RestaurantCuisineAssignment>(`${storeBase()}/${encodeURIComponent(restaurantId)}/cuisines`, {
+    method: 'PUT', body: JSON.stringify({ cuisine_ids: cuisineIds }),
+  });
+}
+
 export async function createMenuCategory(restaurantId: string, name: string): Promise<MenuCategory> {
   if (USE_MOCK) throw new Error(`Creating a menu category ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<MenuCategory>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories`, {
@@ -605,10 +642,14 @@ export async function redispatchOrder(orderId: string): Promise<{ ok: true }> {
 }
 
 const MOCK_APPLICATIONS: RestaurantApplication[] = [
-  { id: 'app-1', restaurant_name: 'Ofada Republic', owner_id: 'u-9001', owner_name: 'Adaeze N.', email: 'adaeze@ofada.ng', phone: '+2348040000001', cuisine: 'Nigerian', address: '4 Isaac John, Ikeja GRA', cac_number: 'RC-1849221', bank_account_name: 'Ofada Republic Ltd', bank_account_number: '0123456789', bank_name: 'GTBank', documents: [{ kind: 'cac', label: 'CAC certificate', url: '#', verified: true }, { kind: 'food_permit', label: 'NAFDAC food permit', url: '#' }, { kind: 'id', label: "Owner's NIN", url: '#', verified: true }, { kind: 'bank_proof', label: 'Bank statement', url: '#' }], status: 'pending', submitted_at: new Date(Date.now() - 86_400_000 * 2).toISOString() },
-  { id: 'app-2', restaurant_name: 'Shawarma King', owner_id: 'u-9002', owner_name: 'Yusuf B.', email: 'yusuf@shawarmaking.ng', phone: '+2348040000002', cuisine: 'Middle Eastern', address: '11 Allen Ave, Ikeja', cac_number: 'RC-2201933', bank_account_name: 'Shawarma King Ent', bank_account_number: '2233445566', bank_name: 'Access', documents: [{ kind: 'cac', label: 'CAC certificate', url: '#' }, { kind: 'menu', label: 'Menu & pricing', url: '#' }], status: 'in_review', submitted_at: new Date(Date.now() - 86_400_000 * 5).toISOString(), reviewer_id: 'admin-77' },
-  { id: 'app-3', restaurant_name: 'Green Bowl', owner_id: 'u-9003', owner_name: 'Femi T.', email: 'femi@greenbowl.ng', phone: '+2348040000003', cuisine: 'Healthy', address: '2 Admiralty, Lekki', cac_number: 'RC-3390011', bank_account_name: 'Green Bowl Foods', bank_account_number: '9988776655', bank_name: 'Zenith', documents: [{ kind: 'cac', label: 'CAC certificate', url: '#', verified: true }, { kind: 'food_permit', label: 'NAFDAC food permit', url: '#', verified: true }, { kind: 'id', label: "Owner's NIN", url: '#', verified: true }, { kind: 'bank_proof', label: 'Bank statement', url: '#', verified: true }], status: 'approved', submitted_at: new Date(Date.now() - 86_400_000 * 12).toISOString(), reviewed_at: new Date(Date.now() - 86_400_000 * 10).toISOString(), reviewer_id: 'admin-77', review_note: 'All docs verified.' },
-  { id: 'app-4', restaurant_name: 'Quick Bites Unverified', owner_id: 'u-9004', owner_name: 'Ola D.', email: 'ola@quickbites.ng', phone: '+2348040000004', cuisine: 'Fast food', address: '7 Opebi, Ikeja', documents: [{ kind: 'id', label: "Owner's ID", url: '#' }], status: 'rejected', submitted_at: new Date(Date.now() - 86_400_000 * 8).toISOString(), reviewed_at: new Date(Date.now() - 86_400_000 * 7).toISOString(), reviewer_id: 'admin-77', review_note: 'Missing CAC and food permit; resubmit with full KYC.' },
+  // Shaped to what GET /admin/onboarding actually sends — including the filed KYB.
+  // The old fixtures carried a `cuisine` the server never had (and a queue column
+  // built on it), which is how the console came to render a check no merchant is
+  // ever asked for.
+  { id: 'app-1', restaurant_name: 'Ofada Republic', owner_id: 'u-9001', owner_name: 'Adaeze N.', email: 'adaeze@ofada.ng', phone: '+2348040000001', address: '4 Isaac John, Ikeja GRA', legal_name: 'Ofada Republic Ltd', business_type: 'limited_company', cac_number: 'RC-1849221', bank_account_name: 'Ofada Republic Ltd', bank_account_number: '0123456789', bank_name: 'GTBank', documents: [{ kind: 'cac', label: 'CAC certificate', url: '#', verified: true }, { kind: 'food_permit', label: 'NAFDAC food permit', url: '#' }, { kind: 'id', label: "Owner's NIN", url: '#', verified: true }, { kind: 'bank_proof', label: 'Bank statement', url: '#' }], status: 'pending', submitted_at: new Date(Date.now() - 86_400_000 * 2).toISOString() },
+  { id: 'app-2', restaurant_name: 'Shawarma King', owner_id: 'u-9002', owner_name: 'Yusuf B.', email: 'yusuf@shawarmaking.ng', phone: '+2348040000002', address: '11 Allen Ave, Ikeja', legal_name: 'Shawarma King Enterprises', business_type: 'partnership', cac_number: 'RC-2201933', bank_account_name: 'Shawarma King Ent', bank_account_number: '2233445566', bank_name: 'Access', documents: [{ kind: 'cac', label: 'CAC certificate', url: '#' }, { kind: 'menu', label: 'Menu & pricing', url: '#' }], status: 'in_review', submitted_at: new Date(Date.now() - 86_400_000 * 5).toISOString(), reviewer_id: 'admin-77' },
+  { id: 'app-3', restaurant_name: 'Green Bowl', owner_id: 'u-9003', owner_name: 'Femi T.', email: 'femi@greenbowl.ng', phone: '+2348040000003', address: '2 Admiralty, Lekki', legal_name: 'Green Bowl Foods Ltd', business_type: 'limited_company', cac_number: 'RC-3390011', bank_account_name: 'Green Bowl Foods', bank_account_number: '9988776655', bank_name: 'Zenith', documents: [{ kind: 'cac', label: 'CAC certificate', url: '#', verified: true }, { kind: 'food_permit', label: 'NAFDAC food permit', url: '#', verified: true }, { kind: 'id', label: "Owner's NIN", url: '#', verified: true }, { kind: 'bank_proof', label: 'Bank statement', url: '#', verified: true }], status: 'approved', submitted_at: new Date(Date.now() - 86_400_000 * 12).toISOString(), reviewed_at: new Date(Date.now() - 86_400_000 * 10).toISOString(), reviewer_id: 'admin-77', review_note: 'All docs verified.' },
+  { id: 'app-4', restaurant_name: 'Quick Bites Unverified', owner_id: 'u-9004', owner_name: 'Ola D.', email: 'ola@quickbites.ng', phone: '+2348040000004', address: '7 Opebi, Ikeja', legal_name: 'Quick Bites', business_type: 'sole_proprietor', documents: [{ kind: 'id', label: "Owner's ID", url: '#' }], status: 'rejected', submitted_at: new Date(Date.now() - 86_400_000 * 8).toISOString(), reviewed_at: new Date(Date.now() - 86_400_000 * 7).toISOString(), reviewer_id: 'admin-77', review_note: 'Missing CAC and food permit; resubmit with full KYC.' },
 ];
 
 export async function listApplications(status?: OnboardingStatus | ''): Promise<RestaurantApplication[]> {

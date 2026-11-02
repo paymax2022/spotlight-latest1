@@ -2081,6 +2081,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// FOOD-UAT-H-002: permit renewal / compliance-hold lift. Under the static
 		// "restaurants" segment so it cannot collide with the sibling ":id" params.
 		restAdmin.PUT("/restaurants/:id/permit", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminSetPermit)
+		// Restaurant cuisine tags (restaurant_cuisines). The onboarding console
+		// showed hardcoded disabled checkboxes and nothing anywhere wrote this
+		// table, so no restaurant could be tagged and discovery's ?cuisine_id=
+		// filter had nothing to match. RBAC restaurant.admin.onboarding (the
+		// reviewer's slug; restaurant-ops does not hold restaurant.manage).
+		restAdmin.GET("/restaurants/:id/cuisines", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminGetRestaurantCuisines)
+		restAdmin.PUT("/restaurants/:id/cuisines", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminSetRestaurantCuisines)
 		// FOOD-UAT-H-002 rollout gap: one-shot stamp of a default permit expiry on
 		// currently-open restaurants whose permit_expires_at is still NULL (capped, audited per row).
 		restAdmin.POST("/permits/backfill-null", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminBackfillNullPermits)
