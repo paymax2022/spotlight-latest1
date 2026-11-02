@@ -31,6 +31,7 @@ expecting a deploy effect, and do not delete them without checking this list:
 | `backend/railway.json`, `frontend-web/railway.json` | Railway hosts staging frontend-web; backend/admin Railway configs are leftovers from the Render→Railway→GCP drift. |
 | `backend/app.yaml`, `frontend-admin/app.yaml`, `mobile-app/reactnative/app.yaml` | cPanel Passenger manifests; only frontend-admin's is believed live. |
 | `deploy-gcp.sh`, `deploy-render.sh`, `deploy-mobile.sh` | Ad-hoc scripts predating the GitHub-Actions lanes; use the workflows instead. |
+| `.github/workflows/deploy-railway-action.yml` | Optional manual alternative to the `ci.yml` dispatch jobs, using the `bervProject/railway-deploy` action. Installed dark behind `vars.RAILWAY_ACTION_DEPLOY_ENABLED` (unset); enabling it creates a second Railway writer, so keep it off unless intentionally replacing the `ci.yml` path. |
 | `mobile-app/reactnative/vercel.json` | For the Expo **web export** preview, not native builds. |
 
 ## Promotion model
@@ -63,6 +64,11 @@ expecting a deploy effect, and do not delete them without checking this list:
 - Full CI gates run on `develop`, `staging`, `prod`, and `main`
   (AUD-TEST-003); `integration-verify.yml` (heaviest suite) additionally runs
   on pushes to `main` and all PRs.
+- `.github/workflows/deploy-railway-action.yml` is an optional, manual-only
+  alternative to the `ci.yml` dispatch jobs (bervProject/railway-deploy). It is
+  installed dark: `vars.RAILWAY_ACTION_DEPLOY_ENABLED` is unset, so `ci.yml`
+  remains the single live writer. Enabling that switch creates a second writer;
+  see "one path per service per environment" below.
 
 ## Reconciliation checklist (when adding a deploy path)
 
