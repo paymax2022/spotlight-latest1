@@ -120,10 +120,43 @@ func NewService(d Deps) *Service {
 // routingTable loads the admin-editable rules from the DB, folded over the env
 // seed / ADR defaults, so provider swaps take effect without a redeploy.
 func (s *Service) routingTable(ctx context.Context) RoutingTable {
-	if t, err := s.repo.LoadRoutingTable(ctx); err == nil && t != nil {
+	t, err := s.repo.LoadRoutingTable(ctx)
+	if err != nil || t == nil {
+		t = TableFromSeed(s.seed)
+	}
+	return withDevMockFallback(t, s.reg)
+}
+
+// withDevMockFallback appends the development-only mock provider to every
+// enabled chain that doesn't already list it. The seeded DB rules name
+// production providers only, so without this the mock registered for
+// APP_ENV=development is unreachable — one provider outage then surfaces as
+// "no provider available" instead of falling through to the deterministic dev
+// result. Production never registers a mock port, so its chains are unchanged.
+func withDevMockFallback(t RoutingTable, reg *Registry) RoutingTable {
+	if reg == nil {
 		return t
 	}
-	return TableFromSeed(s.seed)
+	for ct, rule := range t {
+		if !rule.Enabled || hasProvider(rule.OrderedProviders, "mock") {
+			continue
+		}
+		if _, ok := reg.PortFor("mock", ct); !ok {
+			continue
+		}
+		rule.OrderedProviders = append(append([]string(nil), rule.OrderedProviders...), "mock")
+		t[ct] = rule
+	}
+	return t
+}
+
+func hasProvider(list []string, name string) bool {
+	for _, p := range list {
+		if p == name {
+			return true
+		}
+	}
+	return false
 }
 
 // StartSession creates a verification session for a target CBN tier (1..3).
