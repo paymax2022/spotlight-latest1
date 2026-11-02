@@ -85,6 +85,14 @@ var overviewSpecs = []moduleSpec{
 		Volume: "Sessions approved", VolSQL: `SELECT count(*) FROM public.verification_session WHERE status='APPROVED'`,
 		Attn: "Needs a human review", AttnSQL: `SELECT count(*) FROM public.verification_session WHERE status='NEEDS_REVIEW'`,
 		AttnNote: "Verification is fully automated — no admin review surface (ADR-PR808)", Severity: "critical"},
+	// FX KYC is a human decision: pending/review rows wait on a reviewer before the
+	// customer's FX tier lifts. The queue is served by GET /api/finance/admin/fx/
+	// verifications and decided from /admin/fx/kyc; without this row the dashboard
+	// showed an all-clear while applications sat unreviewed.
+	{Key: "fx-kyc", Label: "FX KYC", Group: "Money", Href: "/admin/fx/kyc",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.orch_fx_customer_verifications WHERE status='approved'`,
+		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.orch_fx_customer_verifications WHERE status IN ('pending','review')`,
+		AttnHref: "/admin/fx/kyc", Severity: "critical"},
 	{Key: "trading-kyc", Label: "Trading KYC", Group: "Money", Href: "/admin/trading/kyc",
 		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.trading_kyc WHERE status='APPROVED'`,
 		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.trading_kyc WHERE status IN ('SUBMITTED','UNDER_REVIEW')`,

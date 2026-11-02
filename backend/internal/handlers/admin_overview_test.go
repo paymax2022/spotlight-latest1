@@ -94,6 +94,36 @@ func TestOverviewSpecs_LinksResolveToRealAdminPages(t *testing.T) {
 	}
 }
 
+// FX KYC is an approval queue with a working review screen. Without a registry
+// row its pending/review submissions exist only on /admin/fx/kyc, so the
+// dashboard reports an all-clear while the queue fills.
+func TestOverviewSpecs_FxKycQueueIsRegistered(t *testing.T) {
+	var spec *moduleSpec
+	for i := range overviewSpecs {
+		if overviewSpecs[i].Key == "fx-kyc" {
+			spec = &overviewSpecs[i]
+			break
+		}
+	}
+	if spec == nil {
+		t.Fatal("fx-kyc is not registered — FX KYC submissions never reach Needs attention")
+	}
+	if spec.AttnHref != "/admin/fx/kyc" {
+		t.Errorf("attention href %q, want /admin/fx/kyc", spec.AttnHref)
+	}
+	if spec.Severity != "critical" {
+		t.Errorf("severity %q, want critical — FX tier access is blocked until reviewed", spec.Severity)
+	}
+	for _, status := range []string{"'pending'", "'review'"} {
+		if !strings.Contains(spec.AttnSQL, status) {
+			t.Errorf("attention SQL %q omits %s, a status the KYC page can decide", spec.AttnSQL, status)
+		}
+	}
+	if !strings.Contains(spec.AttnSQL, "orch_fx_customer_verifications") {
+		t.Errorf("attention SQL %q does not read the FX KYC queue", spec.AttnSQL)
+	}
+}
+
 // ---- live-DB: the predicates against the real, migrated schema ----------------
 // Skipped unless TEST_DATABASE_URL is set (never falls back to DATABASE_URL).
 // A table that does not exist FAILS here: CI replays every migration, so an absent
