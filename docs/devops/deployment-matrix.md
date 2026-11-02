@@ -11,7 +11,7 @@ file a docs PR to correct it rather than silently re-pointing a config.
 
 | Service | Production | Staging | Mechanism | Evidence |
 |---|---|---|---|---|
-| `frontend-web` (Next.js) | cPanel Passenger (`spotlightng.com`) | Railway (`frontend-web-staging-new`) | `.github/workflows/deploy-cpanel.yml` on push to `main` (prod); Railway native git deploy from `staging` branch (staging) | `deploy-cpanel.yml`, `frontend-web/server.js`, `frontend-web/railway.json`, `eas.json` staging API URL |
+| `frontend-web` (Next.js) | cPanel Passenger (`spotlightng.com`) | Railway (`frontend-web-staging-new`) | `.github/workflows/deploy-cpanel.yml` on push to `main` (prod) — currently inert, gated on `vars.CPANEL_DEPLOY_ENABLED`, see Promotion model; Railway native git deploy from `staging` branch (staging) | `deploy-cpanel.yml`, `frontend-web/server.js`, `frontend-web/railway.json`, `eas.json` staging API URL |
 | `backend` (Go API) | Railway `production` service `backend` (`backend-production-1b33d.up.railway.app`) | Railway `staging` service `backend` (`backend-staging-new.up.railway.app`) | `ci.yml`'s dispatch-only `deploy-{development,staging,production}` jobs `railway up` the folder — no push deploys it. GCP Cloud Run is the **intended** target of `.github/workflows/deploy.yml` (sha-tagged image → staging → 10% canary → human-gated promotion), but every one of its jobs is skipped while `vars.GCP_PROJECT_ID` is unset | live `GET /api/v1/public/health` 200 on both Railway hosts and `NXDOMAIN` for `api.spotlightng.com`; `deploy.yml:34` gate, 100/100 `skipped` runs in its history; `infra/terraform/cloud-run.tf` |
 | Backend workers (asynq) | Render `spotlight-notification-worker` | Render | `render.yaml` worker service (AUD-INFRA-006) | `render.yaml` |
 | `frontend-admin` (Next.js) | `admin.spotlightng.com` (cPanel) | Railway (`frontend-admin-staging-new`) | cPanel Passenger host; `frontend-admin/railway.json` for staging | `backend/internal/config/config.go` `ADMIN_APP_BASE_URL` default, `frontend-admin/railway.json` |
@@ -47,15 +47,19 @@ expecting a deploy effect, and do not delete them without checking this list:
   branch test above says which branch a dispatch must be run *from*, not what
   the hosts track, so staging drifts behind `main` until someone re-deploys.
 - Production is **not** deployed by any lane today.
-  `deploy-cpanel.yml` fires on every push to `main` and has never completed a
-  successful run (0 successes in its 843-run history): it reads
-  `CPANEL_SSH_HOST/USER/KEY/PORT` and `DEPLOY_PATH`, and none of those secrets
-  exist at repo level — the only level the job can read, since it declares no
-  `environment:` — so it dies at the scp step with "can't connect without a
-  private SSH key or password". `spotlightng.com` is updated by hand.
-  The backend's `deploy.yml` canary → promote gate never runs either
-  (`vars.GCP_PROJECT_ID` unset skips every job); the Railway `production` env
-  was last written by a `prod` dispatch on 2026-10-17.
+  `deploy-cpanel.yml` runs on every push to `main` but is inert by design: its
+  job is gated on `vars.CPANEL_DEPLOY_ENABLED == 'true'`, which is unset, so the
+  run reports `skipped`. That gate is what the lane is supposed to do — it had
+  been removed on 2026-10-28 (`1e1e44f45`), which is why every push since then
+  carried a red deploy check: the job dies at the scp step with "can't connect
+  without a private SSH key or password", because the five secrets it reads
+  (`CPANEL_SSH_HOST/USER/KEY/PORT`, `DEPLOY_PATH`) exist at no level the job can
+  see (it declares no `environment:`). It has never completed a successful run —
+  0 successes in 843 runs — so `spotlightng.com` is updated by hand; read the
+  workflow's own header before turning the lane on, since its build also has no
+  production env to bake. The backend's `deploy.yml` canary → promote gate never
+  runs either (`vars.GCP_PROJECT_ID` unset skips every job); the Railway
+  `production` env was last written by a `prod` dispatch on 2026-10-17.
 - Full CI gates run on `develop`, `staging`, `prod`, and `main`
   (AUD-TEST-003); `integration-verify.yml` (heaviest suite) additionally runs
   on pushes to `main` and all PRs.
