@@ -217,7 +217,7 @@ export interface Quote {
   currency: 'NGN';
   underwriter: string;
   expiresAt: string | null;
-  terms: string;
+  terms: Record<string, any> | string | null;
 }
 
 export type PolicyStatus = 'pending' | 'active' | 'expired' | 'cancelled' | 'lapsed';
