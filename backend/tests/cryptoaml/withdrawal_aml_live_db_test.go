@@ -68,12 +68,12 @@ func newLiveLedgerService(pool *pgxpool.Pool) *ledger.Service {
 	return ledger.NewService(ledRepo, (*goredis.Client)(nil))
 }
 
-// newLiveCryptoService builds the crypto service exactly as production does, with
-// nil price (→ deterministic MockPriceProvider) and the built-in
+// newLiveCryptoService builds the crypto service with a fixed test quote for
+// synthetic asset symbols and the built-in
 // MockWithdrawalProvider broadcast seam (no network; always Accepted). This lets
 // the approve→broadcast STATE TRANSITION run end-to-end without a real dispatch.
 func newLiveCryptoService(pool *pgxpool.Pool, led *ledger.Service) *crypto.Service {
-	return crypto.NewService(pool, led, nil)
+	return crypto.NewService(pool, led, testsupport.StaticPriceProvider{PriceKoboPerUnit: 100_000})
 }
 
 func newIdemKey(t *testing.T, label string) string {
