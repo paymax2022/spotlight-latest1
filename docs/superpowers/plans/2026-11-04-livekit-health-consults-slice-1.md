@@ -1414,6 +1414,36 @@ func TestCompleteIsIdempotentAndParticipantOnly(t *testing.T) {
 		t.Fatalf("close calls = %v, want exactly one", f.media.closed)
 	}
 }
+
+func TestCompleteDoesNotRewriteATerminalState(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	if _, err := f.pool.Exec(context.Background(),
+		`UPDATE consult_sessions SET state='cancelled' WHERE id=$1`, sess.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := f.svc.Complete(context.Background(), sess.ID, f.providerID); err != nil {
+		t.Fatalf("complete cancelled: %v", err)
+	}
+	got, err := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.State != StateCancelled {
+		t.Fatalf("state = %q, want cancelled (Complete must not rewrite a terminal state)", got.State)
+	}
+	if len(f.media.closed) != 0 {
+		t.Fatalf("Complete closed the room of a cancelled session: %v", f.media.closed)
+	}
+}
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -1441,11 +1471,24 @@ func (s *Service) Join(ctx context.Context, sessionID, callerID string) (Join, e
 		return Join{}, ErrMediaUnavailable
 	}
 	if sess.State == StateScheduled {
-		if _, err := s.db.Exec(ctx, `UPDATE consult_sessions SET state='live', updated_at=$2
-		                              WHERE id=$1 AND state='scheduled'`, sess.ID, now); err != nil {
+		tag, err := s.db.Exec(ctx, `UPDATE consult_sessions SET state='live', updated_at=$2
+		                              WHERE id=$1 AND state='scheduled'`, sess.ID, now)
+		if err != nil {
 			return Join{}, fmt.Errorf("consult: mark live: %w", err)
 		}
-		sess.State = StateLive
+		if tag.RowsAffected() == 0 {
+			// A concurrent join may have moved it live, or a sweeper ended it.
+			cur, err := s.load(ctx, sess.ID)
+			if err != nil {
+				return Join{}, err
+			}
+			if cur.State != StateLive || !now.Before(cur.EndsAt) {
+				return Join{}, ErrState
+			}
+			sess = cur
+		} else {
+			sess.State = StateLive
+		}
 	}
 	if err := s.media.EnsureRoom(ctx, sess.RoomName); err != nil {
 		return Join{}, fmt.Errorf("consult: ensure room: %w", err)
@@ -1474,7 +1517,7 @@ func (s *Service) endSession(ctx context.Context, sess Session) error {
 	}
 	now := s.now()
 	tag, err := s.db.Exec(ctx, `UPDATE consult_sessions SET state='ended', ended_at=$2, updated_at=$2
-	                            WHERE id=$1 AND state <> 'ended'`, sess.ID, now)
+	                            WHERE id=$1 AND state IN ('scheduled','live')`, sess.ID, now)
 	if err != nil {
 		return fmt.Errorf("consult: mark ended: %w", err)
 	}
