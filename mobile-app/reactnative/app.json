@@ -72,13 +72,14 @@
         }
       ],
       "./plugins/withAndroidReleaseSigning",
-      "./plugins/withAndroidSizeOptimizations"
+      "./plugins/withAndroidSizeOptimizations",
+      "./plugins/withAndroidVersionCode"
     ],
     "experiments": {
       "typedRoutes": false
     },
     "android": {
-      "package": "com.anonymous.paymaxreactnativeapp",
+      "package": "com.spotlight.paymax",
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
