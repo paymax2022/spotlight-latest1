@@ -19,12 +19,16 @@ import (
 )
 
 type fakeConsultAPI struct {
-	lastCaller string
-	joinErr    error
-	extErr     error
-	payErr     error
-	session    consultengine.Session
-	join       consultengine.Join
+	lastCaller  string
+	joinErr     error
+	extErr      error
+	payErr      error
+	session     consultengine.Session
+	join        consultengine.Join
+	lastPackage string
+	lastSession string
+	packageErr  error
+	extListErr  error
 }
 
 func (f *fakeConsultAPI) PublishPackage(_ context.Context, callerID string, p consultengine.Package) (consultengine.Package, error) {
@@ -34,6 +38,23 @@ func (f *fakeConsultAPI) PublishPackage(_ context.Context, callerID string, p co
 }
 func (f *fakeConsultAPI) ListPackages(context.Context, consultengine.Vertical, consultengine.OwnerKind, string) ([]consultengine.Package, error) {
 	return []consultengine.Package{{ID: "pkg-1", DurationMinutes: 30, PriceKobo: 500_000}}, nil
+}
+func (f *fakeConsultAPI) GetPackage(_ context.Context, id string) (consultengine.Package, error) {
+	f.lastPackage = id
+	if f.packageErr != nil {
+		return consultengine.Package{}, f.packageErr
+	}
+	return consultengine.Package{
+		ID: id, Vertical: consultengine.VerticalTelemedicine, Mode: consultengine.ModeVideo,
+		DurationMinutes: 30, PriceKobo: 500_000, Active: true,
+	}, nil
+}
+func (f *fakeConsultAPI) ListExtensions(_ context.Context, sessionID, callerID string) ([]consultengine.Extension, error) {
+	f.lastCaller, f.lastSession = callerID, sessionID
+	if f.extListErr != nil {
+		return nil, f.extListErr
+	}
+	return []consultengine.Extension{{ID: "ext-1", AddedMinutes: 10, Status: consultengine.ExtPending}}, nil
 }
 func (f *fakeConsultAPI) Get(_ context.Context, _, callerID string) (consultengine.Session, error) {
 	f.lastCaller = callerID
@@ -69,7 +90,8 @@ func (f *fakeConsultAPI) ListMessages(context.Context, string, string, time.Time
 func consultTestRouter(api consultAPI) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/api/v1/consult/packages", (&consultHandler{svc: api}).listPackages) // public
+	r.GET("/api/v1/consult/packages", (&consultHandler{svc: api}).listPackages)     // public
+	r.GET("/api/v1/consult/packages/:id", (&consultHandler{svc: api}).getPackage) // public
 	g := r.Group("/api/v1/consult")
 	g.Use(func(c *gin.Context) { c.Set("user_id", c.GetHeader("X-User")); c.Next() })
 	registerConsultHandlers(g, api)
@@ -250,5 +272,78 @@ func TestConsultRoutesRejectMalformedIDs(t *testing.T) {
 	}
 	if f.lastCaller != "" {
 		t.Fatalf("engine was called with a malformed owner_id: caller = %q", f.lastCaller)
+	}
+}
+
+func TestConsultPackageGetIsPublic(t *testing.T) {
+	id := uuid.NewString()
+	f := &fakeConsultAPI{}
+	r := consultTestRouter(f)
+	w := doJSON(r, http.MethodGet, "/api/v1/consult/packages/"+id, "", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("get package: %d %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Success bool                  `json:"success"`
+		Package consultengine.Package `json:"package"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Success || body.Package.ID != id {
+		t.Fatalf("body = %+v", body)
+	}
+	if f.lastPackage != id {
+		t.Fatalf("engine got %q, want %q", f.lastPackage, id)
+	}
+}
+
+func TestConsultPackageGetFoldsInactiveTo404(t *testing.T) {
+	f := &fakeConsultAPI{packageErr: consultengine.ErrNotFound}
+	r := consultTestRouter(f)
+	w := doJSON(r, http.MethodGet, "/api/v1/consult/packages/"+uuid.NewString(), "", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("inactive package: %d, want 404 (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestConsultListExtensionsUsesTheAuthenticatedCaller(t *testing.T) {
+	sessionID := uuid.NewString()
+	f := &fakeConsultAPI{}
+	r := consultTestRouter(f)
+	w := doJSON(r, http.MethodGet, "/api/v1/consult/sessions/"+sessionID+"/extensions", "user-1", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("list extensions: %d %s", w.Code, w.Body.String())
+	}
+	if f.lastCaller != "user-1" || f.lastSession != sessionID {
+		t.Fatalf("caller/session = %q/%q", f.lastCaller, f.lastSession)
+	}
+	var body struct {
+		Success    bool                      `json:"success"`
+		Extensions []consultengine.Extension `json:"extensions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Success || len(body.Extensions) != 1 || body.Extensions[0].ID != "ext-1" {
+		t.Fatalf("body = %+v", body)
+	}
+}
+
+func TestConsultListExtensionsRejectsMalformedAndForeignSessions(t *testing.T) {
+	f := &fakeConsultAPI{extListErr: consultengine.ErrNotFound}
+	r := consultTestRouter(f)
+
+	w := doJSON(r, http.MethodGet, "/api/v1/consult/sessions/not-a-uuid/extensions", "user-1", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("malformed id: %d, want 404", w.Code)
+	}
+	if f.lastCaller != "" {
+		t.Fatalf("engine called with a malformed id: caller = %q", f.lastCaller)
+	}
+
+	w = doJSON(r, http.MethodGet, "/api/v1/consult/sessions/"+uuid.NewString()+"/extensions", "user-1", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("foreign session: %d, want 404 (%s)", w.Code, w.Body.String())
 	}
 }

@@ -38,6 +38,7 @@ var consultErrMap = httperr.New(http.StatusInternalServerError,
 type consultAPI interface {
 	PublishPackage(ctx context.Context, callerID string, pkg consultengine.Package) (consultengine.Package, error)
 	ListPackages(ctx context.Context, vertical consultengine.Vertical, ownerKind consultengine.OwnerKind, ownerID string) ([]consultengine.Package, error)
+	GetPackage(ctx context.Context, id string) (consultengine.Package, error)
 	Get(ctx context.Context, sessionID, callerID string) (consultengine.Session, error)
 	Join(ctx context.Context, sessionID, callerID string) (consultengine.Join, error)
 	Complete(ctx context.Context, sessionID, callerID string) error
@@ -46,6 +47,7 @@ type consultAPI interface {
 	PayExtension(ctx context.Context, sessionID, extID, callerID string) (consultengine.Extension, consultengine.Session, error)
 	PostMessage(ctx context.Context, sessionID, callerID, body string) (consultengine.Message, error)
 	ListMessages(ctx context.Context, sessionID, callerID string, after time.Time) ([]consultengine.Message, error)
+	ListExtensions(ctx context.Context, sessionID, callerID string) ([]consultengine.Extension, error)
 }
 
 var _ consultAPI = (*consultengine.Service)(nil)
@@ -74,6 +76,38 @@ func (h *consultHandler) listPackages(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "packages": items})
+}
+
+func (h *consultHandler) getPackage(c *gin.Context) {
+	id, ok := consultPathID(c, "id")
+	if !ok {
+		return
+	}
+	pkg, err := h.svc.GetPackage(c.Request.Context(), id)
+	if err != nil {
+		consultErrMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "package": pkg})
+}
+
+// listExtensions is participant-scoped inside the engine: a stranger's session
+// id answers ErrNotFound, never an empty list that would confirm existence.
+func (h *consultHandler) listExtensions(c *gin.Context) {
+	caller, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
+	sessionID, ok := consultPathID(c, "id")
+	if !ok {
+		return
+	}
+	items, err := h.svc.ListExtensions(c.Request.Context(), sessionID, caller)
+	if err != nil {
+		consultErrMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "extensions": items})
 }
 
 type publishPackageBody struct {
@@ -306,6 +340,7 @@ func registerConsultHandlers(g *gin.RouterGroup, api consultAPI) {
 	g.POST("/sessions/:id/extensions", h.requestExtension)
 	g.POST("/sessions/:id/extensions/:ext/decide", h.decideExtension)
 	g.POST("/sessions/:id/extensions/:ext/pay", h.payExtension)
+	g.GET("/sessions/:id/extensions", h.listExtensions)
 	g.GET("/sessions/:id/messages", h.listMessages)
 	g.POST("/sessions/:id/messages", h.postMessage)
 	g.POST("/packages", h.publishPackage) // provider, still user-scoped
@@ -355,6 +390,7 @@ func RegisterConsult(r *gin.Engine, authMW gin.HandlerFunc, pool *pgxpool.Pool, 
 	pub := r.Group("/api/v1/consult")
 	h := &consultHandler{svc: svc}
 	pub.GET("/packages", h.listPackages)
+	pub.GET("/packages/:id", h.getPackage)
 
 	authed := r.Group("/api/v1/consult")
 	authed.Use(authMW, requireUserID())
