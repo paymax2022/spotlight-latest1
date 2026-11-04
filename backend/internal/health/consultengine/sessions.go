@@ -323,7 +323,3 @@ func (s *Service) RunSweeper(ctx context.Context, interval time.Duration) {
 		}
 	}
 }
-
-// releaseExtensions is a temporary no-op; Task 6 replaces it with the escrow
-// release over paid extension requests.
-func (s *Service) releaseExtensions(context.Context, Session) error { return nil }

@@ -367,3 +367,181 @@ func TestCompleteDoesNotRewriteATerminalState(t *testing.T) {
 		t.Fatalf("Complete closed the room of a cancelled session: %v", f.media.closed)
 	}
 }
+
+func TestPatientExtensionNeedsApprovalThenPaymentBeforeItApplies(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	_, _ = f.svc.Join(context.Background(), sess.ID, f.patientID)
+
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if ext.Status != ExtPending || ext.PriceKobo != 166_667 {
+		t.Fatalf("request = %+v, want pending at 166667 kobo", ext)
+	}
+	if len(f.escrow.holds) != 0 {
+		t.Fatal("a request must not move money")
+	}
+	unchanged, _ := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if !unchanged.EndsAt.Equal(sess.EndsAt) {
+		t.Fatal("a pending request changed ends_at")
+	}
+
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.patientID, true, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("patient approving their own request: err = %v, want ErrNotFound", err)
+	}
+	approved, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, "")
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if approved.Status != ExtAwaitingPayment || approved.PaymentExpiresAt == nil {
+		t.Fatalf("approval = %+v, want awaiting payment with a deadline", approved)
+	}
+	still, _ := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if !still.EndsAt.Equal(sess.EndsAt) {
+		t.Fatal("approval alone changed ends_at")
+	}
+
+	if _, _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.providerID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("provider paying: err = %v, want ErrNotFound", err)
+	}
+	paid, extended, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("pay: %v", err)
+	}
+	if paid.Status != ExtPaid || paid.EscrowID == nil {
+		t.Fatalf("paid = %+v, want paid with escrow", paid)
+	}
+	if welcome := "consult-ext:" + ext.ID; f.escrow.holds[0] != welcome {
+		t.Fatalf("idempotency key = %q, want %q", f.escrow.holds[0], welcome)
+	}
+	if want := sess.EndsAt.Add(10 * time.Minute); !extended.EndsAt.Equal(want) {
+		t.Fatalf("ends_at = %v, want %v", extended.EndsAt, want)
+	}
+	if !extended.WarnAt.Before(extended.EndsAt) {
+		t.Fatal("warn_at was not recomputed")
+	}
+	if extended.WarningSentAt != nil {
+		t.Fatal("the warning flag must reset so the new end is announced")
+	}
+
+	// Paying twice is idempotent: the escrow key is the extension id.
+	if _, _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID); !errors.Is(err, ErrExtensionNotPayable) {
+		t.Fatalf("second pay: err = %v, want ErrExtensionNotPayable", err)
+	}
+	if len(f.escrow.holds) != 1 {
+		t.Fatalf("holds = %v, want one", f.escrow.holds)
+	}
+}
+
+func TestExtensionApprovalExpiresAfterFiveMinutes(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	ext, _ := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 5)
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	f.clock = f.clock.Add(ExtensionPaymentWindow + time.Second)
+	if _, _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID); !errors.Is(err, ErrPaymentExpired) && !errors.Is(err, ErrExtensionNotPayable) {
+		t.Fatalf("late pay: err = %v, want ErrPaymentExpired", err)
+	}
+	if len(f.escrow.holds) != 0 {
+		t.Fatalf("late payment moved money: %v", f.escrow.holds)
+	}
+}
+
+func TestProviderExtensionAppliesImmediatelyAndFree(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.providerID, 15)
+	if err != nil {
+		t.Fatalf("provider extend: %v", err)
+	}
+	if ext.Status != ExtPaid || ext.PriceKobo != 0 || ext.EscrowID != nil {
+		t.Fatalf("provider extension = %+v, want paid/free/no escrow", ext)
+	}
+	after, _ := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if want := sess.EndsAt.Add(15 * time.Minute); !after.EndsAt.Equal(want) {
+		t.Fatalf("ends_at = %v, want %v", after.EndsAt, want)
+	}
+	if len(f.escrow.holds) != 0 {
+		t.Fatal("a provider extension charged the patient")
+	}
+}
+
+func TestExtensionCannotPushPastFourHoursAndEndReleasesEscrow(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	if _, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 240); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("4h extension: err = %v, want ErrInvalid", err)
+	}
+	if _, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 0); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("zero extension: err = %v, want ErrInvalid", err)
+	}
+
+	ext, _ := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	_, _ = f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, "")
+	if _, _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID); err != nil {
+		t.Fatalf("pay: %v", err)
+	}
+	extended, _ := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	f.clock = extended.EndsAt.Add(time.Second)
+	if err := f.svc.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(f.escrow.released) != 1 || f.escrow.released[0] != "escrow-consult-ext:"+ext.ID {
+		t.Fatalf("released = %v, want the one extension escrow", f.escrow.released)
+	}
+}
+
+func TestASecondOpenExtensionRequestIsRefused(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	if _, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 5); err != nil {
+		t.Fatalf("first request: %v", err)
+	}
+	if _, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 5); !errors.Is(err, ErrState) {
+		t.Fatalf("second request: err = %v, want ErrState", err)
+	}
+}
