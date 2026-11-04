@@ -20,7 +20,7 @@
 - Room names are `consult-<vertical>-<session uuid>`; the rail refuses any name without the `consult-` prefix.
 - Every task ends with `go build ./... && go vet ./...` green; live-DB tests skip when `TEST_DATABASE_URL` is unset.
 - Stage only files named in the task; never `frontend-web/node_modules`, never `frontend-admin/next-env.d.ts`.
-- Work in `/Users/paymax/Documents/spotlight/main`; the shell cwd resets after each command, so pass absolute paths.
+- Work in the isolated worktree (this file lives in it). Where a step's command says `cd /Users/paymax/Documents/spotlight/main`, substitute the worktree root; commit there, never in the main checkout. The shell cwd resets after each command, so pass absolute paths.
 
 ## File Structure
 
@@ -58,8 +58,8 @@ backend/internal/app/finance_routes.go                    one hoisted LiveKit cl
 
 - [ ] **Step 1: Confirm the migration version is still free**
 
-Run: `ls /Users/paymax/Documents/spotlight/main/supabase/migrations | tail -3`
-Expected: latest is `20271404000000_group_pool_goal_details.sql`. If `20271405000000_consult_sessions.sql` already exists or a newer version was merged, bump the number by `10000` and use that filename everywhere in this task.
+Run: `ls supabase/migrations | tail -3` and `ls supabase/migrations | grep '^20271405' || true`.
+Expected: `20271405000000_consult_sessions.sql` does not exist. (The repo may carry a newer uncommitted migration in another checkout; only the worktree's tree matters here.) If `20271405000000_consult_sessions.sql` already exists or a newer version that sorts after it was merged, bump the number by `10000` and use that filename everywhere in this task.
 
 - [ ] **Step 2: Write the migration**
 
@@ -260,7 +260,7 @@ In `grantFor`:
 		g.CanPublish, g.CanPublishData = boolp(true), boolp(true)
 	case RolePeerAdmin:
 		g.CanPublish, g.CanPublishData = boolp(true), boolp(true)
-		g.RoomAdmin = boolp(true)
+		g.RoomAdmin = true
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
