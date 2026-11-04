@@ -27,7 +27,8 @@ Social Pay is peer-to-peer money over cashtags: **direct send**, **money request
 | Get split | `GET /social/splits/:id` | member; **participant only** | no |
 | Pay share | `POST /social/splits/:id/shares/:shareId/pay` + `Idempotency-Key` | member; **only that share's owner** | **yes** |
 | List pools | `GET /social/pools?limit=` | member (own) | no |
-| Create pool | `POST /social/pools` `{title, beneficiary_id?}` | member (organiser = token) | no |
+| Create pool | `POST /social/pools` `{title, description?, goal_kobo?, payout_rule?, beneficiary_id?}` | member (organiser = token) | no |
+| Get pool | `GET /social/pools/:id` | member; **stakeholder only** (organiser/beneficiary/contributor) | no |
 | Pool balance | `GET /social/pools/:id/balance` | member | no (read) |
 | Contribute pool | `POST /social/pools/:id/contribute` `{amount_kobo}` + `Idempotency-Key` | member | **yes** |
 | Pay out pool | `POST /social/pools/:id/payout` + `Idempotency-Key` | member; **organiser only** | **yes** |
