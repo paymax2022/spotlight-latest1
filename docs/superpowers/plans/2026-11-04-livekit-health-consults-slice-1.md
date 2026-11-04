@@ -1737,7 +1737,7 @@ func TestPatientExtensionNeedsApprovalThenPaymentBeforeItApplies(t *testing.T) {
 		t.Fatal("approval alone changed ends_at")
 	}
 
-	if _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.providerID); !errors.Is(err, ErrNotFound) {
+	if _, _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.providerID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("provider paying: err = %v, want ErrNotFound", err)
 	}
 	paid, extended, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID)
