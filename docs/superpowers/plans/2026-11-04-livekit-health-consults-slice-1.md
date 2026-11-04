@@ -3123,7 +3123,7 @@ Write the command outputs into the task report: role tests, engine tests, rail t
 
 **Type consistency**
 - `consultengine.RoomMedia` methods (`EnsureRoom`, `CloseRoom`, `JoinToken`, `URL`, `TokenTTL`) match the rail and the unavailable implementation.
-- `Escrow.HoldWithPayee/Release` match the app adapter and the `fakeEscrow` test double.
+- `Escrow.HoldWithPayee/Release/Refund` match the app adapter and the `fakeEscrow` test double.
 - `consultAPI` in Task 9 matches `*consultengine.Service` method signatures from Tasks 4–7; `var _ consultAPI = (*consultengine.Service)(nil)` enforces it at compile time.
 - `OwnerKind`/`OwnerDoctor` vs `OwnerHealthProvider` are consistent across `verifyOwner`, `verifyProviderUser`, and the schema CHECK values.
 - `MediaPeer`/`MediaPeerAdmin` map to `livekit.RolePeer`/`RolePeerAdmin` in Task 8.
@@ -3132,3 +3132,50 @@ Write the command outputs into the task report: role tests, engine tests, rail t
 **Known risk to watch at execution**
 - Task 4's live test uses `auth.users`, `health_providers`, and the new tables; the migration must be applied to `TEST_DATABASE_URL` first (Task 1, Step 3).
 - `escrow` live tests are intentionally not written: the engine is tested against `fakeEscrow` so Slice 1 never seeds wallets or moves money in CI.
+
+---
+
+## Post-review amendment: money-safe extension payment (2026-11-04)
+
+Task 6's `PayExtension` / `releaseExtensions` code blocks are **superseded** by
+the shipped implementation in commits `36e7d41cd`, `6384b7a77`, and `ecaa93064`.
+The code review chain established that refund-then-rehold under a deterministic
+escrow key is unsafe (escrow's idempotent replay returns the REFUNDED row), and
+that every compensation must win a status-guarded claim before moving money.
+The shipped invariants:
+
+- `Escrow` declares `Refund(ctx, escrowID) error` alongside `HoldWithPayee` and
+  `Release`.
+- A recorded `escrow_id` on an `approved_awaiting_payment` row **is** this
+  request's hold: adopt it. Never refund it and re-hold under
+  `consult-ext:<extension id>`.
+- `markPaid` requires `status='approved_awaiting_payment' AND escrow_id IS NOT
+  DISTINCT FROM <this attempt's hold>`, and grants the minutes in the same
+  transaction via `applyExtensionOn` (`ends_at = GREATEST(ends_at, now) +
+  minutes`, then recompute `warn_at` and reset `warning_sent_at`).
+- Every failure path goes through `retireUnapplied`, which claims the row with a
+  status-guarded update (`status IN ('approved_awaiting_payment','expired')` and
+  the hold-id guard) **before** refunding. Zero affected rows means another
+  attempt owns the outcome: no refund, no adoption. A successful refund clears
+  `escrow_id` and stamps `released_at`; a failed refund leaves `expired` plus
+  `escrow_id` for the sweep's refund lane.
+- The escrow-stamp error branch (`extensions.go`, the `record extension hold`
+  failure) follows the same rule: it claims the row before refunding, because
+  the failed stamp may have landed and a concurrent attempt may have committed
+  the row `paid`. Only a claim of exactly one row permits the refund.
+- `releaseExtensions` settles `paid` rows with `Release` to the provider and
+  `expired` rows with `Refund` to the patient, stamping `released_at` after each
+  so nothing settles twice (escrow forbids `REFUNDED → REFUNDED`).
+- Provider grants are free (`price_kobo=0`, status `paid`) and are applied
+  atomically with the row insert. Free patient extensions never require escrow
+  wiring (`PriceKobo > 0 && s.esc == nil` is the only unavailability check).
+
+Tests pinning these invariants: `TestPayExtensionRefundsWhenTheSessionEndsMidPayment`,
+`TestConcurrentProviderGrantAndPaidExtensionKeepBothIncrements`,
+`TestExtensionPaymentIsRefusedAfterComplete`,
+`TestApprovalIsRefusedAfterComplete`, `TestFreePriceExtensionNeedsNoEscrow`,
+`TestExpiredHeldExtensionIsRefundedAtSessionEnd`,
+`TestPayReusesARecordedHoldAfterACrash`,
+`TestTwoConcurrentPaymentsChargeOnceAndApplyOnce`, and
+`TestFailedStampClaimsThenRefundsTheHold` (a `BEFORE UPDATE` trigger rejects
+only the stamp, deterministically driving the branch).
