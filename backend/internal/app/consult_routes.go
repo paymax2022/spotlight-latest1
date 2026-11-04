@@ -25,6 +25,9 @@ var consultErrMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusNotFound, consultengine.ErrNotFound),
 	httperr.R(http.StatusConflict, consultengine.ErrState,
 		consultengine.ErrExtensionNotPayable, consultengine.ErrPaymentExpired),
+	// PayExtension debits the payer's wallet; an underfunded patient must get a
+	// payment-required answer, not a 500. The escrow layer wraps this sentinel.
+	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),
 	httperr.R(http.StatusServiceUnavailable, consultengine.ErrMediaUnavailable,
 		consultengine.ErrEscrowUnavailable))
 

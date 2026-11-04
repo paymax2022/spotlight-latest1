@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/health/consultengine"
 )
 
@@ -19,6 +21,7 @@ type fakeConsultAPI struct {
 	lastCaller string
 	joinErr    error
 	extErr     error
+	payErr     error
 	session    consultengine.Session
 	join       consultengine.Join
 }
@@ -52,7 +55,7 @@ func (f *fakeConsultAPI) DecideExtension(_ context.Context, _, extID, callerID s
 	return consultengine.Extension{ID: extID, Status: consultengine.ExtAwaitingPayment}, nil
 }
 func (f *fakeConsultAPI) PayExtension(context.Context, string, string, string) (consultengine.Extension, consultengine.Session, error) {
-	return consultengine.Extension{ID: "ext-1", Status: consultengine.ExtPaid}, f.session, nil
+	return consultengine.Extension{ID: "ext-1", Status: consultengine.ExtPaid}, f.session, f.payErr
 }
 func (f *fakeConsultAPI) PostMessage(_ context.Context, _, callerID, body string) (consultengine.Message, error) {
 	f.lastCaller = callerID
@@ -139,6 +142,26 @@ func TestConsultRoutesMapSentinelsToStatuses(t *testing.T) {
 	w = doJSON(r3, http.MethodPost, "/api/v1/consult/sessions/"+sessionID+"/join", "user-1", "")
 	if w.Code != http.StatusConflict {
 		t.Fatalf("ended session: %d, want 409", w.Code)
+	}
+}
+
+// TestConsultPayMapsInsufficientFundsTo402 pins the wallet-debit failure path:
+// the escrow layer wraps ledger.ErrInsufficientFunds with %w, so the shared
+// consult error map must answer 402 Payment Required rather than the 500
+// default. Path ids are real UUIDs — the handler folds malformed ids to 404
+// before the engine is ever called.
+func TestConsultPayMapsInsufficientFundsTo402(t *testing.T) {
+	sessionID := uuid.NewString()
+	extID := uuid.NewString()
+	f := &fakeConsultAPI{
+		payErr: fmt.Errorf("consult: hold extension payment: %w", ledger.ErrInsufficientFunds),
+	}
+	r := consultTestRouter(f)
+
+	w := doJSON(r, http.MethodPost,
+		"/api/v1/consult/sessions/"+sessionID+"/extensions/"+extID+"/pay", "user-1", "")
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("insufficient funds: %d, want 402 (%s)", w.Code, w.Body.String())
 	}
 }
 
