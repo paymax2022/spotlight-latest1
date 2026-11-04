@@ -22,7 +22,7 @@ function maskAddress(value: string): string {
  * request is accepted, funds are locked, and the user is told what happens next.
  */
 export default function WithdrawPendingScreen() {
-  const p = useLocalSearchParams<{ reference: string; symbol: string; amount: string; address: string; networkName: string; mins: string }>();
+  const p = useLocalSearchParams<{ reference: string; symbol: string; amount: string; address: string; networkName: string }>();
   const assets = useAssets();
   const decimals = assets.data?.find((a) => a.symbol === p.symbol)?.decimals ?? 8;
 
@@ -34,7 +34,7 @@ export default function WithdrawPendingScreen() {
         </View>
         <Text style={styles.title}>Withdrawal submitted</Text>
         <Text style={styles.sub}>
-          {formatCrypto(Number(p.amount), p.symbol, decimals)} is pending compliance review. We'll broadcast it to {p.networkName} once approved — usually within {p.mins ?? 30} minutes.
+          {formatCrypto(Number(p.amount), p.symbol, decimals)} is parked and pending compliance review. We’ll notify you when it is approved and broadcast to {p.networkName}.
         </Text>
 
         <View style={styles.detailCard}>

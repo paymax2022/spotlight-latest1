@@ -257,42 +257,22 @@ func (r *Repository) DeleteAddress(ctx context.Context, userID, id string) error
 	return nil
 }
 
-// GetOrCreateDepositAddress returns the persisted deposit address for (user,asset),
-// generating + persisting one via the supplied deriver on first request. The
-// UNIQUE(user_id,asset_id) constraint keeps it stable across calls.
-func (r *Repository) GetOrCreateDepositAddress(
-	ctx context.Context, userID string, asset *Asset, network, provider string,
-	derive func(userID, symbol, network string) (string, string),
-) (*DepositAddress, error) {
-	// Fast path: return an existing row.
+// GetDepositAddress returns the persisted deposit address for (user,asset), or
+// ErrNotFound when none exists. It never generates one: an address only enters this
+// table when a custody provider allocates it. The former GetOrCreateDepositAddress
+// derived a plausible-looking bc1q/T/0x string from a SHA-256 of the user id, which
+// no one controlled — funds sent there were unrecoverable.
+func (r *Repository) GetDepositAddress(ctx context.Context, userID string, asset *Asset) (*DepositAddress, error) {
 	const sel = `SELECT network, address, memo, provider FROM crypto_deposit_addresses
 	             WHERE user_id=$1 AND asset_id=$2`
 	var d DepositAddress
 	var memo *string
 	err := r.db.QueryRow(ctx, sel, userID, asset.ID).Scan(&d.Network, &d.Address, &memo, &d.Provider)
-	if err == nil {
-		d.AssetID, d.Symbol = asset.ID, asset.Symbol
-		if memo != nil {
-			d.Memo = *memo
-		}
-		return &d, nil
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil {
 		return nil, err
-	}
-	// Generate + persist (idempotent on the unique constraint).
-	addr, m := derive(userID, asset.Symbol, network)
-	const ins = `INSERT INTO crypto_deposit_addresses (user_id, asset_id, network, address, memo, provider)
-	             VALUES ($1,$2,$3,$4,$5,$6)
-	             ON CONFLICT (user_id, asset_id) DO UPDATE SET user_id=EXCLUDED.user_id
-	             RETURNING network, address, memo, provider`
-	var memoArg any
-	if m != "" {
-		memoArg = m
-	}
-	if err := r.db.QueryRow(ctx, ins, userID, asset.ID, network, addr, memoArg, provider).Scan(
-		&d.Network, &d.Address, &memo, &d.Provider); err != nil {
-		return nil, fmt.Errorf("crypto: deposit address: %w", err)
 	}
 	d.AssetID, d.Symbol = asset.ID, asset.Symbol
 	if memo != nil {

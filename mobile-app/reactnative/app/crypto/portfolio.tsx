@@ -75,7 +75,11 @@ export default function CryptoPortfolioScreen() {
                 <View style={styles.heroPill}>
                   <PriceChange pct={d.totalGainLossPct} showIcon textStyle={styles.heroPillText} />
                 </View>
-                <Text style={styles.heroChangeText}>{formatFiatObj(d.totalGainLoss)} all-time</Text>
+                {/* No fill history means no basis to gain against — say "all-time" only
+                    when there is an actual figure behind it. */}
+                {d.totalGainLoss ? (
+                  <Text style={styles.heroChangeText}>{formatFiatObj(d.totalGainLoss)} all-time</Text>
+                ) : null}
               </View>
 
               <View style={styles.heroDivider} />

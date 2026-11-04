@@ -37,7 +37,7 @@ var errMap = httperr.New(http.StatusBadRequest,
 	// Tier-limit refusals: 403 — the same mapping the canonical transfer rail
 	// uses (E2E-FIN-046). An unwired/degraded gate is a dependency failure: 503.
 	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
-	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired, ErrLedgerReconPending),
+	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired, ErrLedgerReconPending, ErrDepositsUnavailable),
 	httperr.R(http.StatusNotFound, ErrNotFound, ErrAddressNotFound),
 	httperr.R(http.StatusConflict, ErrInsufficient, ErrAssetInactive, ErrAmountTooSmall,
 		ErrSameAsset, ErrInvalidTransition, ErrWithdrawTooSmall, ErrAddressExists,
@@ -46,18 +46,37 @@ var errMap = httperr.New(http.StatusBadRequest,
 )
 
 // ListAssets GET /assets and /markets (members see active only).
+//
+// The member list is the enriched AssetView (catalogue row + live ticker + what the
+// server will actually allow), because the app renders price, 24h window and trading
+// controls from this one call. The admin route keeps the raw catalogue rows.
 func (h *Handler) ListAssets(c *gin.Context) {
 	assets, err := h.svc.ListAssets(c.Request.Context(), true)
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "assets": assets})
+	c.JSON(http.StatusOK, gin.H{"success": true, "assets": h.svc.AssetViewsOf(c.Request.Context(), assets)})
 }
 
-// Quote GET /assets/:id/quote.
+// Asset GET /assets/:id — one asset by id OR symbol. The app used to pull the whole
+// catalogue and filter client-side because this route did not exist.
+func (h *Handler) Asset(c *gin.Context) {
+	v, err := h.svc.AssetViewFor(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "asset": v})
+}
+
+// Quote GET /assets/:id/quote — the current price, plus the projected fill when the
+// caller passes ?side=&basis=&amount= (the buy/sell preview screens). Same ref rules
+// as the asset routes: an asset id or a ticker symbol.
 func (h *Handler) Quote(c *gin.Context) {
-	q, err := h.svc.Quote(c.Request.Context(), c.Param("id"))
+	amount, _ := strconv.ParseInt(strings.TrimSpace(c.Query("amount")), 10, 64)
+	q, err := h.svc.QuoteFor(c.Request.Context(), c.Param("id"),
+		c.Query("side"), c.Query("basis"), amount)
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
@@ -65,7 +84,7 @@ func (h *Handler) Quote(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "quote": q})
 }
 
-// Chart GET /assets/:id/quote-history (price history series).
+// Chart GET /assets/:id/chart (price history series).
 func (h *Handler) Chart(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	points, err := h.svc.PriceHistory(c.Request.Context(), c.Param("id"), limit)
@@ -140,9 +159,10 @@ func (h *Handler) Sell(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
 }
 
-// Portfolio GET /portfolio.
+// Portfolio GET /portfolio — marked-to-market totals with the average-cost basis
+// derived from the caller's fills, plus the wallet cash they could deploy.
 func (h *Handler) Portfolio(c *gin.Context) {
-	p, err := h.svc.Portfolio(c.Request.Context(), ginutil.UserID(c))
+	p, err := h.svc.PortfolioView(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
@@ -150,9 +170,9 @@ func (h *Handler) Portfolio(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "portfolio": p})
 }
 
-// Holdings GET /portfolio/holdings.
+// Holdings GET /portfolio/holdings — the same positions without the totals.
 func (h *Handler) Holdings(c *gin.Context) {
-	hs, err := h.svc.Holdings(c.Request.Context(), ginutil.UserID(c))
+	hs, err := h.svc.PositionViews(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
@@ -253,6 +273,7 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		// Catalogue / markets / quotes (read → crypto.view).
 		member.GET("/assets", rp(PermView), h.ListAssets)
 		member.GET("/markets", rp(PermView), h.ListAssets)
+		member.GET("/assets/:id", rp(PermView), h.Asset)
 		member.GET("/assets/:id/quote", rp(PermView), h.Quote)
 		member.GET("/assets/:id/chart", rp(PermView), h.Chart)
 
@@ -294,6 +315,18 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		member.GET("/withdrawals", rp(PermView), h.Withdrawals)
 		member.GET("/withdrawals/:id", rp(PermView), h.Withdrawal)
 		member.POST("/withdrawals/:id/confirm", rp(PermTrade), h.ConfirmWithdrawal)
+
+		// Eligibility + watchlist + price alerts (watch.go). The handlers and the
+		// crypto_watchlist / crypto_price_alerts tables were both complete but never
+		// mounted, so the app fell back to the invest module's stock watchlist routes
+		// and wrote crypto asset ids into them.
+		member.GET("/eligibility", rp(PermView), h.Eligibility)
+		member.GET("/watchlist", rp(PermView), h.Watchlist)
+		member.POST("/watchlist", rp(PermView), h.AddWatchlist)
+		member.DELETE("/watchlist/:assetId", rp(PermView), h.RemoveWatchlist)
+		member.GET("/alerts", rp(PermView), h.Alerts)
+		member.POST("/alerts", rp(PermView), h.CreateAlert)
+		member.DELETE("/alerts/:id", rp(PermView), h.DeleteAlert)
 
 		// Integration seam a custody provider (Fireblocks/BitGo/Anchorage) calls to
 		// report on-chain balances, feeding reconciliation. Guarded ONLY by the

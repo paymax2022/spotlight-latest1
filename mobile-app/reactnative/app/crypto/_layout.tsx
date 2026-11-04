@@ -45,10 +45,9 @@ export default function CryptoLayout() {
       <Stack.Screen name="addresses/index" />
       <Stack.Screen name="addresses/new" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
 
-      {/* Withdrawal flow: entry → review → OTP → processing → pending/failed */}
+      {/* Withdrawal flow: entry → review (PIN) → processing → pending/failed */}
       <Stack.Screen name="withdraw/index" />
       <Stack.Screen name="withdraw/review" />
-      <Stack.Screen name="withdraw/otp" />
       <Stack.Screen name="withdraw/processing" options={{ gestureEnabled: false }} />
       <Stack.Screen name="withdraw/pending" options={{ gestureEnabled: false, animation: 'fade' }} />
       <Stack.Screen name="withdraw/failed" options={{ gestureEnabled: false, animation: 'fade' }} />

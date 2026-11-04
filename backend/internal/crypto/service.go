@@ -8,6 +8,7 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -50,15 +51,21 @@ var ErrSwapUnwound = errors.New("crypto: swap key unwound — retry with a fresh
 // event. All amounts are integer minor units (kobo for cash; asset minor units
 // for holdings) — no float math anywhere.
 type Service struct {
-	db             *pgxpool.Pool
-	repo           *Repository
-	led            *ledger.Service
-	price          PriceProvider
-	audit          *auditLogger
-	withdraw       WithdrawalProvider // pluggable on-chain broadcast seam (mock default)
-	tiers          walletDebitLimiter
-	swap           SwapProvider      // Quidax Instant Swap adapter (CR-009)
-	quidaxSecret   string             // HMAC secret for Quidax webhook verification
+	db           *pgxpool.Pool
+	repo         *Repository
+	led          *ledger.Service
+	price        PriceProvider
+	audit        *auditLogger
+	withdraw     WithdrawalProvider // pluggable on-chain broadcast seam (mock default)
+	tiers        walletDebitLimiter
+	swap         SwapProvider // Quidax Instant Swap adapter (CR-009)
+	quidaxSecret string       // HMAC secret for Quidax webhook verification
+
+	// Cached bulk ticker book (market.go). Read by the market list, the asset
+	// detail and the portfolio view on every page load.
+	marketMu        sync.Mutex
+	marketBook      map[string]MarketSnapshot
+	marketFetchedAt time.Time
 }
 
 // NewService builds the crypto service. If price is nil the deterministic
@@ -78,7 +85,7 @@ func NewService(db *pgxpool.Pool, led *ledger.Service, price PriceProvider) *Ser
 		price:    price,
 		audit:    newAuditLogger(db),
 		withdraw: NewMockWithdrawalProvider(),
-		swap:     newMockSwapProvider(), // CR-011: Quidax adapter (mock by default)
+		swap:     newMockSwapProvider(), // internal quote seam; swaps settle in the ledger, never at the exchange
 	}
 	if db != nil {
 		s.tiers = tiers.NewService(db)
@@ -124,9 +131,16 @@ func (s *Service) ListAssets(ctx context.Context, activeOnly bool) ([]Asset, err
 	return s.repo.ListAssets(ctx, activeOnly)
 }
 
-// Quote returns the current price for an asset (member read).
-func (s *Service) Quote(ctx context.Context, assetID string) (*Quote, error) {
-	a, err := s.repo.GetAsset(ctx, assetID)
+// quoteDisplayTTL is how long a projected quote is presented as fresh. It is a
+// display contract only — the fill always re-prices, which is why an expired quote
+// costs the member a re-tap and never a wrong price.
+const quoteDisplayTTL = 30 * time.Second
+
+// QuoteFor prices an asset and, when side/basis/amount describe a trade, projects the
+// fill that exact trade would get. The projection reuses the money-path helpers, so
+// the app's preview and the executed order are computed identically.
+func (s *Service) QuoteFor(ctx context.Context, assetID, side, basis string, amount int64) (*Quote, error) {
+	a, err := s.assetByRef(ctx, assetID)
 	if err != nil {
 		return nil, err
 	}
@@ -134,10 +148,43 @@ func (s *Service) Quote(ctx context.Context, assetID string) (*Quote, error) {
 	if !ok || priceKobo <= 0 {
 		return nil, ErrNotFound
 	}
-	return &Quote{
+	q := &Quote{
 		AssetID: a.ID, Symbol: a.Symbol, PriceKobo: priceKobo,
-		Source: s.price.Name(), AsOf: time.Now(),
-	}, nil
+		Source: s.price.Name(), AsOf: time.Now().UTC(),
+		MinorUnitScale: a.MinorUnitScale,
+	}
+	side = strings.ToLower(strings.TrimSpace(side))
+	if side == "" {
+		return q, nil
+	}
+	if side != "buy" && side != "sell" {
+		return nil, ErrBadRequest
+	}
+	if amount <= 0 {
+		return nil, ErrBadRequest
+	}
+	switch strings.ToLower(strings.TrimSpace(basis)) {
+	case "crypto":
+		q.Units = amount
+		q.CashKobo = cashForUnits(amount, priceKobo, a.MinorUnitScale)
+	case "fiat", "":
+		q.CashKobo = amount
+		q.Units = unitsForCash(amount, priceKobo, a.MinorUnitScale)
+	default:
+		return nil, ErrBadRequest
+	}
+	if q.Units <= 0 {
+		return nil, ErrAmountTooSmall
+	}
+	q.Side, q.Basis = side, strings.ToLower(strings.TrimSpace(basis))
+	if q.Basis == "" {
+		q.Basis = "fiat"
+	}
+	// This plane charges nothing on a buy/sell — the fee is stated as zero rather
+	// than left off, so the client renders "No fee" instead of guessing a margin.
+	q.FeeKobo = 0
+	q.ExpiresAt = q.AsOf.Add(quoteDisplayTTL)
+	return q, nil
 }
 
 // Holdings returns the user's positions marked at the latest quote (kobo).
@@ -190,12 +237,12 @@ func (s *Service) Orders(ctx context.Context, userID string, limit, offset int) 
 // PriceHistory returns an asset's recorded price snapshots (chart series), newest
 // first. The current live quote is prepended so an active asset always yields at
 // least one point even before its first fill snapshot exists.
-func (s *Service) PriceHistory(ctx context.Context, assetID string, limit int) ([]PricePoint, error) {
-	a, err := s.repo.GetAsset(ctx, assetID)
+func (s *Service) PriceHistory(ctx context.Context, assetRef string, limit int) ([]PricePoint, error) {
+	a, err := s.assetByRef(ctx, assetRef)
 	if err != nil {
 		return nil, err
 	}
-	hist, err := s.repo.PriceHistory(ctx, assetID, limit)
+	hist, err := s.repo.PriceHistory(ctx, a.ID, limit)
 	if err != nil {
 		return nil, err
 	}

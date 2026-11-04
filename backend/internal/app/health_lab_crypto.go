@@ -17,7 +17,7 @@ func (a labCryptoAdapter) AssetPrice(ctx context.Context, assetID string) (*heal
 	if err != nil {
 		return nil, err
 	}
-	q, err := a.c.Quote(ctx, assetID)
+	q, err := a.c.QuoteFor(ctx, assetID, "", "", 0)
 	if err != nil {
 		return nil, err
 	}

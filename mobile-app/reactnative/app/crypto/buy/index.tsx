@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -13,9 +13,9 @@ import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
 import { AssetIcon } from '@/features/crypto/components';
 import { VolatilityWarning } from '@/features/crypto/components';
-import { useAsset, useCryptoPortfolio } from '@/features/crypto/hooks/useCrypto';
+import { useAsset, useCryptoPortfolio, useDebouncedValue, useQuote } from '@/features/crypto/hooks/useCrypto';
 import {
-  buildQuote, formatFiat, formatFiatObj, formatCrypto, formatPrice,
+  formatFiat, formatFiatObj, formatCrypto, formatPrice,
   parseFiatToMinor, parseCryptoToMinor, fiatMinorToInput,
 } from '@/features/crypto/utils/cryptoFormatters';
 import { SUGGESTED_FIAT_AMOUNTS, DEFAULT_FIAT } from '@/features/crypto/constants/crypto.constants';
@@ -31,12 +31,13 @@ export default function BuyEntryScreen() {
 
   const fiat = DEFAULT_FIAT;
   const decimals = asset.data?.decimals ?? 8;
-  const amount = basis === 'fiat' ? parseFiatToMinor(input, fiat) : parseCryptoToMinor(input, decimals);
+  const typed = basis === 'fiat' ? parseFiatToMinor(input, fiat) : parseCryptoToMinor(input, decimals);
+  const amount = useDebouncedValue(typed);
 
-  const quote = useMemo(() => {
-    if (!asset.data || !amount) return null;
-    return buildQuote(asset.data, { assetId: asset.data.id, side: 'buy', basis, amount, currency: fiat });
-  }, [asset.data, amount, basis, fiat]);
+  // The server projects the fill, so the "you receive" line and the review screen
+  // downstream are the same money the order will move — never a client-side guess.
+  const quoteQ = useQuote({ assetId: symbol, side: 'buy', basis, amount: amount > 0 ? amount : null, currency: fiat });
+  const quote = quoteQ.data;
 
   if (asset.isLoading) {
     return (
@@ -57,22 +58,24 @@ export default function BuyEntryScreen() {
 
   const a = asset.data;
   const investable = portfolio.data?.investableBalance.amount ?? 0;
-  const belowMin = quote ? quote.totalFiat.amount < a.minOrderAmount : false;
-  const aboveMax = quote ? quote.totalFiat.amount > a.maxOrderAmount : false;
-  const insufficient = quote ? quote.totalFiat.amount > investable : false;
+  // A 0 max is "no ceiling", not "nothing allowed": the server publishes no per-asset
+  // maximum, so only a real limit can block the order here.
+  const aboveMax = !!quote && a.maxOrderAmount > 0 && quote.totalFiat.amount > a.maxOrderAmount;
+  const insufficient = !!quote && quote.totalFiat.amount > investable;
   const suggestions = SUGGESTED_FIAT_AMOUNTS[fiat] ?? [];
 
   const error =
     insufficient ? `Not enough investable cash. Available: ${formatFiat(investable, fiat)}.`
-    : belowMin ? `Minimum order is ${formatFiat(a.minOrderAmount, fiat)}.`
     : aboveMax ? `Maximum order is ${formatFiat(a.maxOrderAmount, fiat)}.`
+    : quoteQ.isError ? ((quoteQ.error as Error)?.message ?? 'This amount cannot be quoted right now.')
     : null;
 
   const otherSide = quote
     ? (basis === 'fiat' ? formatCrypto(quote.crypto.amount, a.symbol, decimals) : formatFiatObj(quote.totalFiat))
+    : amount > 0 ? '…'
     : (basis === 'fiat' ? `0 ${a.symbol}` : formatFiat(0, fiat));
 
-  const disabled = !quote || amount <= 0 || !!error;
+  const disabled = amount <= 0 || !quote || !!error;
 
   const onContinue = () => {
     if (!quote) return;
@@ -118,6 +121,9 @@ export default function BuyEntryScreen() {
             />
           </View>
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {!error && basis === 'fiat' && a.minOrderAmount > 0 ? (
+            <Text style={styles.hintText}>Smallest order the market can fill: {formatFiat(a.minOrderAmount, fiat)}</Text>
+          ) : null}
         </View>
 
         {/* Swap basis */}
@@ -156,9 +162,9 @@ export default function BuyEntryScreen() {
         {quote ? (
           <View style={styles.rateLine}>
             <Text style={styles.rateText}>{formatPrice(a.symbol, quote.allInRate)}</Text>
-            <Text style={styles.rateSub}>Includes spread · Paymax & provider fees itemised on the next screen</Text>
+            <Text style={styles.rateSub}>Live market price · no trading fee on this order</Text>
           </View>
-        ) : (
+        ) : amount > 0 ? null : (
           <StateView kind="empty" icon="Coins" title="Enter an amount" message="We'll show a live, all-in price before you confirm." compact />
         )}
 
@@ -193,6 +199,7 @@ const styles = StyleSheet.create({
   amountInput: { flex: 1, textAlign: 'right', ...Typography.headlineMd, color: Colors.onSurface, padding: 0 },
   computed: { color: Colors.onSurfaceVariant },
   errorText: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
+  hintText: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   swapWrap: { alignItems: 'center', justifyContent: 'center', height: 36, marginVertical: 2 },
   swapLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: Colors.surfaceContainerHigh },
   swapBtn: { width: 40, height: 40, borderRadius: Radius.full, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },

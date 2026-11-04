@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -12,9 +12,9 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
 import { AssetIcon } from '@/features/crypto/components';
-import { useAsset, useCryptoPortfolio } from '@/features/crypto/hooks/useCrypto';
+import { useAsset, useCryptoPortfolio, useDebouncedValue, useQuote } from '@/features/crypto/hooks/useCrypto';
 import {
-  buildQuote, formatFiat, formatFiatObj, formatCrypto, formatPrice,
+  formatFiat, formatFiatObj, formatCrypto, formatPrice,
   parseFiatToMinor, parseCryptoToMinor,
 } from '@/features/crypto/utils/cryptoFormatters';
 import { DEFAULT_FIAT } from '@/features/crypto/constants/crypto.constants';
@@ -35,12 +35,12 @@ export default function SellEntryScreen() {
   const position = portfolio.data?.positions.find((p) => p.symbol === symbol);
   const heldMinor = position?.quantity.amount ?? 0;
 
-  const amount = basis === 'crypto' ? parseCryptoToMinor(input, decimals) : parseFiatToMinor(input, fiat);
+  const typed = basis === 'crypto' ? parseCryptoToMinor(input, decimals) : parseFiatToMinor(input, fiat);
+  const amount = useDebouncedValue(typed);
 
-  const quote = useMemo(() => {
-    if (!asset.data || !amount) return null;
-    return buildQuote(asset.data, { assetId: asset.data.id, side: 'sell', basis, amount, currency: fiat });
-  }, [asset.data, amount, basis, fiat]);
+  // The server projects the fill, so the cash line here is the cash the order moves.
+  const quoteQ = useQuote({ assetId: symbol, side: 'sell', basis, amount: amount > 0 ? amount : null, currency: fiat });
+  const quote = quoteQ.data;
 
   if (asset.isLoading || portfolio.isLoading) {
     return (
@@ -81,10 +81,13 @@ export default function SellEntryScreen() {
   const overHolding = cryptoMinor > heldMinor;
   const sellable = !a.sellEnabled
     ? `Selling ${a.symbol} is temporarily paused.`
-    : overHolding ? `You only hold ${formatCrypto(heldMinor, a.symbol, decimals)}.` : null;
+    : overHolding ? `You only hold ${formatCrypto(heldMinor, a.symbol, decimals)}.`
+    : quoteQ.isError ? ((quoteQ.error as Error)?.message ?? 'This amount cannot be quoted right now.')
+    : null;
 
   const otherSide = quote
     ? (basis === 'crypto' ? formatFiatObj(quote.totalFiat) : formatCrypto(quote.crypto.amount, a.symbol, decimals))
+    : amount > 0 ? '…'
     : (basis === 'crypto' ? formatFiat(0, fiat) : `0 ${a.symbol}`);
 
   const setPercent = (pct: number) => {
@@ -93,7 +96,7 @@ export default function SellEntryScreen() {
     setInput((qty / 10 ** decimals).toString());
   };
 
-  const disabled = !quote || amount <= 0 || !!sellable;
+  const disabled = amount <= 0 || !quote || !!sellable;
 
   const onContinue = () => {
     if (!quote) return;
@@ -171,9 +174,9 @@ export default function SellEntryScreen() {
         {quote ? (
           <View style={styles.rateLine}>
             <Text style={styles.rateText}>{formatPrice(a.symbol, quote.allInRate)}</Text>
-            <Text style={styles.rateSub}>Net of spread & fees · final quote locks on the next screen</Text>
+            <Text style={styles.rateSub}>Live market price · no trading fee on this order</Text>
           </View>
-        ) : (
+        ) : amount > 0 ? null : (
           <StateView kind="empty" icon="Coins" title="Enter an amount" message="We'll show how much cash you'll receive before you confirm." compact />
         )}
       </ScrollView>

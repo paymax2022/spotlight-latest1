@@ -42,6 +42,14 @@ export default function DepositScreen() {
       </SafeAreaView>
     );
   }
+  if (assets.isError) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Deposit crypto" />
+        <StateView kind="error" title="Couldn't load the markets" message="Check your connection and try again." actionLabel="Retry" onAction={() => assets.refetch()} />
+      </SafeAreaView>
+    );
+  }
   if (!selected || !activeNetwork) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -89,7 +97,16 @@ export default function DepositScreen() {
         {deposit.isLoading || !d ? (
           <StateView kind="loading" message="Generating your address…" />
         ) : deposit.isError ? (
-          <StateView kind="error" title="Couldn't load address" message="Please try again." actionLabel="Retry" onAction={() => deposit.refetch()} />
+          // The server answers 503 while no custody provider has allocated addresses.
+          // That refusal is the fact to show — an address nobody controls would send a
+          // member's money nowhere.
+          <StateView
+            kind="error"
+            title="No deposit address yet"
+            message={(deposit.error as Error)?.message ?? 'Deposit addresses are not available yet.'}
+            actionLabel="Retry"
+            onAction={() => deposit.refetch()}
+          />
         ) : (
           <>
             <View style={styles.qrWrap}>

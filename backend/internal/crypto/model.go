@@ -43,13 +43,27 @@ type CryptoAccount struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
-// Quote is a point-in-time price for an asset.
+// Quote is a point-in-time price for an asset, plus — when the caller described a
+// trade — the exact fill the server would produce for it. The projection is computed
+// with the same integer helpers Buy/Sell use (unitsForCash / cashForUnits), so a
+// preview can never promise money the order then fails to deliver. Fee fields are
+// real zeroes, not hidden margin: this plane charges no fee on a buy/sell and the
+// quote says so rather than letting a client invent a breakdown.
 type Quote struct {
 	AssetID   string    `json:"asset_id"`
 	Symbol    string    `json:"symbol"`
 	PriceKobo int64     `json:"price_kobo"` // NGN kobo per 1 whole unit
 	Source    string    `json:"source"`
 	AsOf      time.Time `json:"as_of"`
+
+	// Projection — set only when side/basis/amount were supplied.
+	Side           string    `json:"side,omitempty"`   // buy|sell
+	Basis          string    `json:"basis,omitempty"`  // fiat|crypto
+	CashKobo       int64     `json:"cash_kobo"`        // fiat leg, kobo
+	Units          int64     `json:"units"`            // crypto leg, asset minor units
+	FeeKobo        int64     `json:"fee_kobo"`         // charged on top of CashKobo (0 today)
+	MinorUnitScale int64     `json:"minor_unit_scale"` // minor units per whole asset
+	ExpiresAt      time.Time `json:"expires_at"`       // display TTL; execution re-prices
 }
 
 // Order is an immutable money-path record of a filled buy/sell.
@@ -118,12 +132,16 @@ func cashForUnits(units, priceKobo, scale int64) int64 {
 
 // Sentinel errors.
 var (
-	ErrNotFound       = errors.New("crypto: not found")
-	ErrForbidden      = errors.New("crypto: forbidden")
-	ErrAssetInactive  = errors.New("crypto: asset is not tradable")
-	ErrInsufficient   = errors.New("crypto: insufficient holdings")
-	ErrAmountTooSmall = errors.New("crypto: amount too small for a whole minor unit")
-	ErrBadRequest     = errors.New("crypto: invalid request")
+	ErrNotFound  = errors.New("crypto: not found")
+	ErrForbidden = errors.New("crypto: forbidden")
+	// ErrDepositsUnavailable is returned when a member asks for a deposit address the
+	// platform has not allocated. It is a dependency gap, not a caller error: the
+	// address a user sends money to must be one custody actually controls.
+	ErrDepositsUnavailable = errors.New("crypto: deposit addresses are not available yet")
+	ErrAssetInactive       = errors.New("crypto: asset is not tradable")
+	ErrInsufficient        = errors.New("crypto: insufficient holdings")
+	ErrAmountTooSmall      = errors.New("crypto: amount too small for a whole minor unit")
+	ErrBadRequest          = errors.New("crypto: invalid request")
 )
 
 // This file defines the admin-oversight view models that back the crypto admin
@@ -303,7 +321,7 @@ type SwapQuote struct {
 	Source        string    `json:"source"`
 	AsOf          time.Time `json:"as_of"`
 	// CR-011: Quidax quote fields
-	QuotationID string    `json:"quotation_id,omitempty"`  // Quidax quote ID (15-sec TTL)
+	QuotationID string    `json:"quotation_id,omitempty"` // Quidax quote ID (15-sec TTL)
 	ExpiresAt   time.Time `json:"expires_at,omitempty"`   // Quote expiry timestamp
 	Provider    string    `json:"provider,omitempty"`     // "quidax" or "internal"
 }
@@ -328,12 +346,12 @@ type SwapOrder struct {
 	CreatedAt     time.Time `json:"created_at"`
 
 	// CR-012: Quidax integration fields
-	QuotationID      string `json:"quotation_id,omitempty"`      // From SwapQuote (15-sec TTL)
+	QuotationID       string `json:"quotation_id,omitempty"`        // From SwapQuote (15-sec TTL)
 	SwapTransactionID string `json:"swap_transaction_id,omitempty"` // From ConfirmQuotation (async execution)
-	ProviderStatus   string `json:"provider_status,omitempty"`    // Raw Quidax status for audit
+	ProviderStatus    string `json:"provider_status,omitempty"`     // Raw Quidax status for audit
 
 	// CR-014: Ledger settlement tracking
-	LedgerSettled bool       `json:"ledger_settled"`     // Whether final journals posted
+	LedgerSettled bool       `json:"ledger_settled"`       // Whether final journals posted
 	SettledAt     *time.Time `json:"settled_at,omitempty"` // When settlement completed
 
 	idem string

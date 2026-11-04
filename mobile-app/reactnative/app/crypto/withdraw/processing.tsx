@@ -11,7 +11,7 @@ import { useQuoteWithdrawal, useInitiateWithdrawal } from '@/features/crypto/hoo
 import type { WithdrawalDraft } from '@/features/crypto/types/crypto.types';
 
 export default function WithdrawProcessingScreen() {
-  const p = useLocalSearchParams<{ assetId: string; symbol: string; networkId: string; addressId: string; amount: string; otp: string }>();
+  const p = useLocalSearchParams<{ assetId: string; symbol: string; networkId: string; addressId: string; amount: string }>();
   const quoteM = useQuoteWithdrawal();
   const initiate = useInitiateWithdrawal();
   const fired = useRef(false);
@@ -24,14 +24,14 @@ export default function WithdrawProcessingScreen() {
       addressId: p.addressId, amount: Number(p.amount),
     };
     quoteM.mutateAsync(draft)
-      .then((quote) => initiate.mutateAsync({ draft, quote, otp: p.otp ?? '' }))
+      .then((quote) => initiate.mutateAsync({ draft, quote }))
       .then((result) => {
         router.replace({
           pathname: '/crypto/withdraw/pending',
           params: {
             reference: result.reference, symbol: result.symbol,
             amount: String(result.amount.amount), address: result.address,
-            networkName: result.networkName, mins: String(result.estimatedReviewMins),
+            networkName: result.networkName,
           },
         });
       })
