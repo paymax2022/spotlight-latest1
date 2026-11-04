@@ -20,7 +20,7 @@
 - Room names are `consult-<vertical>-<session uuid>`; the rail refuses any name without the `consult-` prefix.
 - Every task ends with `go build ./... && go vet ./...` green; live-DB tests skip when `TEST_DATABASE_URL` is unset.
 - Stage only files named in the task; never `frontend-web/node_modules`, never `frontend-admin/next-env.d.ts`.
-- Work in `/Users/paymax/Documents/spotlight/main`; the shell cwd resets after each command, so pass absolute paths.
+- Work in the isolated worktree (this file lives in it). Where a step's command says `cd /Users/paymax/Documents/spotlight/main`, substitute the worktree root; commit there, never in the main checkout. The shell cwd resets after each command, so pass absolute paths.
 
 ## File Structure
 
@@ -58,8 +58,8 @@ backend/internal/app/finance_routes.go                    one hoisted LiveKit cl
 
 - [ ] **Step 1: Confirm the migration version is still free**
 
-Run: `ls /Users/paymax/Documents/spotlight/main/supabase/migrations | tail -3`
-Expected: latest is `20271404000000_group_pool_goal_details.sql`. If `20271405000000_consult_sessions.sql` already exists or a newer version was merged, bump the number by `10000` and use that filename everywhere in this task.
+Run: `ls supabase/migrations | tail -3` and `ls supabase/migrations | grep '^20271405' || true`.
+Expected: `20271405000000_consult_sessions.sql` does not exist. (The repo may carry a newer uncommitted migration in another checkout; only the worktree's tree matters here.) If `20271405000000_consult_sessions.sql` already exists or a newer version that sorts after it was merged, bump the number by `10000` and use that filename everywhere in this task.
 
 - [ ] **Step 2: Write the migration**
 
@@ -206,7 +206,7 @@ Append to `backend/internal/integrations/livekit/livekit_test.go`:
 
 ```go
 func TestPeerRoleMayPublishSubscribeAndSendData(t *testing.T) {
-	c := newTestClient(t)
+	c := newTestClient(t, "wss://rtc.example.com")
 	tok, err := c.JoinToken(JoinRequest{Room: "consult-vet-s1", Identity: "u1", Role: RolePeer})
 	if err != nil {
 		t.Fatalf("join token: %v", err)
@@ -216,26 +216,26 @@ func TestPeerRoleMayPublishSubscribeAndSendData(t *testing.T) {
 		t.Fatalf("peer grants publish=%v subscribe=%v data=%v, want all true",
 			isTrue(v.CanPublish), isTrue(v.CanSubscribe), isTrue(v.CanPublishData))
 	}
-	if isTrue(v.RoomAdmin) {
+	if v.RoomAdmin {
 		t.Fatal("a plain peer must not be room admin")
 	}
 }
 
 func TestPeerAdminRoleAlsoGetsRoomAdmin(t *testing.T) {
-	c := newTestClient(t)
+	c := newTestClient(t, "wss://rtc.example.com")
 	tok, err := c.JoinToken(JoinRequest{Room: "consult-vet-s1", Identity: "doc", Role: RolePeerAdmin})
 	if err != nil {
 		t.Fatalf("join token: %v", err)
 	}
 	v := verify(t, tok.JWT).Video
-	if !isTrue(v.CanPublish) || !isTrue(v.CanPublishData) || !isTrue(v.RoomAdmin) {
+	if !isTrue(v.CanPublish) || !isTrue(v.CanPublishData) || !v.RoomAdmin {
 		t.Fatalf("peer admin grants publish=%v data=%v admin=%v, want all true",
-			isTrue(v.CanPublish), isTrue(v.CanPublishData), isTrue(v.RoomAdmin))
+			isTrue(v.CanPublish), isTrue(v.CanPublishData), v.RoomAdmin)
 	}
 }
 ```
 
-If `newTestClient` does not exist in that file, reuse the constructor already used by the existing role test (the function that produced `c` before line 147) and keep the same name it uses.
+The existing helper is `newTestClient(t *testing.T, url string)`; use it as the existing role test does (`newTestClient(t, "wss://rtc.example.com")`).
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -260,7 +260,7 @@ In `grantFor`:
 		g.CanPublish, g.CanPublishData = boolp(true), boolp(true)
 	case RolePeerAdmin:
 		g.CanPublish, g.CanPublishData = boolp(true), boolp(true)
-		g.RoomAdmin = boolp(true)
+		g.RoomAdmin = true
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -591,8 +591,11 @@ func JoinTTL(now, endsAt time.Time, configured time.Duration) time.Duration {
 	if configured <= 0 {
 		configured = DefaultJoinTTL
 	}
-	remaining := endsAt.Sub(now) + time.Minute
-	if remaining < time.Minute {
+	remaining := endsAt.Sub(now)
+	if remaining >= time.Minute {
+		remaining += time.Minute
+	} else {
+		// A last-second join gets the floor itself, not the floor plus slack.
 		remaining = time.Minute
 	}
 	if remaining > configured {
@@ -1411,6 +1414,36 @@ func TestCompleteIsIdempotentAndParticipantOnly(t *testing.T) {
 		t.Fatalf("close calls = %v, want exactly one", f.media.closed)
 	}
 }
+
+func TestCompleteDoesNotRewriteATerminalState(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	if _, err := f.pool.Exec(context.Background(),
+		`UPDATE consult_sessions SET state='cancelled' WHERE id=$1`, sess.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := f.svc.Complete(context.Background(), sess.ID, f.providerID); err != nil {
+		t.Fatalf("complete cancelled: %v", err)
+	}
+	got, err := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.State != StateCancelled {
+		t.Fatalf("state = %q, want cancelled (Complete must not rewrite a terminal state)", got.State)
+	}
+	if len(f.media.closed) != 0 {
+		t.Fatalf("Complete closed the room of a cancelled session: %v", f.media.closed)
+	}
+}
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -1438,11 +1471,24 @@ func (s *Service) Join(ctx context.Context, sessionID, callerID string) (Join, e
 		return Join{}, ErrMediaUnavailable
 	}
 	if sess.State == StateScheduled {
-		if _, err := s.db.Exec(ctx, `UPDATE consult_sessions SET state='live', updated_at=$2
-		                              WHERE id=$1 AND state='scheduled'`, sess.ID, now); err != nil {
+		tag, err := s.db.Exec(ctx, `UPDATE consult_sessions SET state='live', updated_at=$2
+		                              WHERE id=$1 AND state='scheduled'`, sess.ID, now)
+		if err != nil {
 			return Join{}, fmt.Errorf("consult: mark live: %w", err)
 		}
-		sess.State = StateLive
+		if tag.RowsAffected() == 0 {
+			// A concurrent join may have moved it live, or a sweeper ended it.
+			cur, err := s.load(ctx, sess.ID)
+			if err != nil {
+				return Join{}, err
+			}
+			if cur.State != StateLive || !now.Before(cur.EndsAt) {
+				return Join{}, ErrState
+			}
+			sess = cur
+		} else {
+			sess.State = StateLive
+		}
 	}
 	if err := s.media.EnsureRoom(ctx, sess.RoomName); err != nil {
 		return Join{}, fmt.Errorf("consult: ensure room: %w", err)
@@ -1471,7 +1517,7 @@ func (s *Service) endSession(ctx context.Context, sess Session) error {
 	}
 	now := s.now()
 	tag, err := s.db.Exec(ctx, `UPDATE consult_sessions SET state='ended', ended_at=$2, updated_at=$2
-	                            WHERE id=$1 AND state <> 'ended'`, sess.ID, now)
+	                            WHERE id=$1 AND state IN ('scheduled','live')`, sess.ID, now)
 	if err != nil {
 		return fmt.Errorf("consult: mark ended: %w", err)
 	}
@@ -1691,7 +1737,7 @@ func TestPatientExtensionNeedsApprovalThenPaymentBeforeItApplies(t *testing.T) {
 		t.Fatal("approval alone changed ends_at")
 	}
 
-	if _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.providerID); !errors.Is(err, ErrNotFound) {
+	if _, _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.providerID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("provider paying: err = %v, want ErrNotFound", err)
 	}
 	paid, extended, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID)
@@ -2374,8 +2420,17 @@ type consultLiveKitRail struct {
 
 var _ consultengine.RoomMedia = consultLiveKitRail{}
 
+// consultRoomOK reports whether room is a complete consult room name of the
+// form consult-<vertical>-<session id>. The bare prefix, a name with no session
+// id (for example "consult-vet"), and anything outside the namespace are
+// refused, so a partial name cannot provision or mint against a shared room.
 func consultRoomOK(room string) bool {
-	return strings.HasPrefix(room, consultRoomPrefix) && len(room) > len(consultRoomPrefix)
+	rest, ok := strings.CutPrefix(room, consultRoomPrefix)
+	if !ok {
+		return false
+	}
+	vertical, session, found := strings.Cut(rest, "-")
+	return found && vertical != "" && session != ""
 }
 
 func (c consultLiveKitRail) EnsureRoom(ctx context.Context, room string) error {
@@ -3068,7 +3123,7 @@ Write the command outputs into the task report: role tests, engine tests, rail t
 
 **Type consistency**
 - `consultengine.RoomMedia` methods (`EnsureRoom`, `CloseRoom`, `JoinToken`, `URL`, `TokenTTL`) match the rail and the unavailable implementation.
-- `Escrow.HoldWithPayee/Release` match the app adapter and the `fakeEscrow` test double.
+- `Escrow.HoldWithPayee/Release/Refund` match the app adapter and the `fakeEscrow` test double.
 - `consultAPI` in Task 9 matches `*consultengine.Service` method signatures from Tasks 4–7; `var _ consultAPI = (*consultengine.Service)(nil)` enforces it at compile time.
 - `OwnerKind`/`OwnerDoctor` vs `OwnerHealthProvider` are consistent across `verifyOwner`, `verifyProviderUser`, and the schema CHECK values.
 - `MediaPeer`/`MediaPeerAdmin` map to `livekit.RolePeer`/`RolePeerAdmin` in Task 8.
@@ -3077,3 +3132,50 @@ Write the command outputs into the task report: role tests, engine tests, rail t
 **Known risk to watch at execution**
 - Task 4's live test uses `auth.users`, `health_providers`, and the new tables; the migration must be applied to `TEST_DATABASE_URL` first (Task 1, Step 3).
 - `escrow` live tests are intentionally not written: the engine is tested against `fakeEscrow` so Slice 1 never seeds wallets or moves money in CI.
+
+---
+
+## Post-review amendment: money-safe extension payment (2026-11-04)
+
+Task 6's `PayExtension` / `releaseExtensions` code blocks are **superseded** by
+the shipped implementation in commits `36e7d41cd`, `6384b7a77`, and `ecaa93064`.
+The code review chain established that refund-then-rehold under a deterministic
+escrow key is unsafe (escrow's idempotent replay returns the REFUNDED row), and
+that every compensation must win a status-guarded claim before moving money.
+The shipped invariants:
+
+- `Escrow` declares `Refund(ctx, escrowID) error` alongside `HoldWithPayee` and
+  `Release`.
+- A recorded `escrow_id` on an `approved_awaiting_payment` row **is** this
+  request's hold: adopt it. Never refund it and re-hold under
+  `consult-ext:<extension id>`.
+- `markPaid` requires `status='approved_awaiting_payment' AND escrow_id IS NOT
+  DISTINCT FROM <this attempt's hold>`, and grants the minutes in the same
+  transaction via `applyExtensionOn` (`ends_at = GREATEST(ends_at, now) +
+  minutes`, then recompute `warn_at` and reset `warning_sent_at`).
+- Every failure path goes through `retireUnapplied`, which claims the row with a
+  status-guarded update (`status IN ('approved_awaiting_payment','expired')` and
+  the hold-id guard) **before** refunding. Zero affected rows means another
+  attempt owns the outcome: no refund, no adoption. A successful refund clears
+  `escrow_id` and stamps `released_at`; a failed refund leaves `expired` plus
+  `escrow_id` for the sweep's refund lane.
+- The escrow-stamp error branch (`extensions.go`, the `record extension hold`
+  failure) follows the same rule: it claims the row before refunding, because
+  the failed stamp may have landed and a concurrent attempt may have committed
+  the row `paid`. Only a claim of exactly one row permits the refund.
+- `releaseExtensions` settles `paid` rows with `Release` to the provider and
+  `expired` rows with `Refund` to the patient, stamping `released_at` after each
+  so nothing settles twice (escrow forbids `REFUNDED → REFUNDED`).
+- Provider grants are free (`price_kobo=0`, status `paid`) and are applied
+  atomically with the row insert. Free patient extensions never require escrow
+  wiring (`PriceKobo > 0 && s.esc == nil` is the only unavailability check).
+
+Tests pinning these invariants: `TestPayExtensionRefundsWhenTheSessionEndsMidPayment`,
+`TestConcurrentProviderGrantAndPaidExtensionKeepBothIncrements`,
+`TestExtensionPaymentIsRefusedAfterComplete`,
+`TestApprovalIsRefusedAfterComplete`, `TestFreePriceExtensionNeedsNoEscrow`,
+`TestExpiredHeldExtensionIsRefundedAtSessionEnd`,
+`TestPayReusesARecordedHoldAfterACrash`,
+`TestTwoConcurrentPaymentsChargeOnceAndApplyOnce`, and
+`TestFailedStampClaimsThenRefundsTheHold` (a `BEFORE UPDATE` trigger rejects
+only the stamp, deterministically driving the branch).

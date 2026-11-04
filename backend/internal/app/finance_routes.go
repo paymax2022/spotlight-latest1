@@ -206,6 +206,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	ledgerRepo := ledger.NewRepository(pool)
 	ledgerSvc := ledger.NewService(ledgerRepo, redisClient)
 
+	// One LiveKit client shared by academy live classes and paid health consults.
+	// The constructor no-ops when FEATURE_LIVEKIT_ENABLED is off.
+	lkClient := registerLiveKit(r, cfg, rbac, mapsAuth())
+
 	// Wires REAL per-module detail (Service, Category, Service bought, Payment
 	// method, Status, Provider) into the centralized admin Transactions detail
 	// endpoint for the modules that currently have a resolvable reference
@@ -720,6 +724,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 	}
 
+	// Paid consult sessions (telemedicine, vet, pharmacy, lab). Inert until a
+	// module books a session; media fails closed when LiveKit is off.
+	if pool != nil {
+		if consultSvc := RegisterConsult(r, mapsAuth(), pool, ledgerSvc, lkClient, cfg, auditSink); consultSvc != nil {
+			go consultSvc.RunSweeper(context.Background(), 30*time.Second)
+		}
+	}
+
 	// Reuses wallet ledger (reward credits), KYC/tiers, RBAC academy.*; exam
 	// beachhead behind its own sub-flag. Member /api/finance/academy/*,
 	// admin /api/academy/admin/* (+ /api/academy for identity/curriculum/commerce).
@@ -735,7 +747,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Self-hosted LiveKit (FEATURE_LIVEKIT_ENABLED) replaces the dev stub / VideoSDK for live
 		// classes when it is configured and valid; flag off leaves the previous provider in place.
 		// With the flag on but LiveKit unusable, live classes refuse (they do not fall back to the stub).
-		academyLive := academyLiveRoomsFor(cfg, registerLiveKit(r, cfg, rbac, mapsAuth()))
+		academyLive := academyLiveRoomsFor(cfg, lkClient)
 		RegisterAcademy(r, finance, pool, rbac, mapsAuth(), ledgerSvc, academyRTC, academyLive, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler, cfg.FeatureInternalAcademyAPIEnabled, cfg.LedgerServiceToken)
 
 		// EdTech PLATFORM super-admin oversight (SU-01..SU-12): read-only cross-tenant
