@@ -3,6 +3,7 @@ package consultengine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -38,7 +39,14 @@ func (f *fakeMedia) JoinToken(_ context.Context, room, identity string, role Med
 func (f *fakeMedia) URL() string             { return "wss://rtc.test" }
 func (f *fakeMedia) TokenTTL() time.Duration { return 10 * time.Minute }
 
+// fakeEscrow models the escrow service's replay and state-machine semantics:
+// a repeated idempotency key returns the same hold without moving money again,
+// and a hold may only be refunded or released from HELD. Seeded ids with no
+// recorded state (a crash before the fake knew about them) are allowed.
 type fakeEscrow struct {
+	mu        sync.Mutex
+	byKey     map[string]string // idempotency key -> escrow id
+	state     map[string]string // escrow id -> HELD/REFUNDED/RELEASED
 	holds     []string
 	released  []string
 	refunded  []string
@@ -48,23 +56,56 @@ type fakeEscrow struct {
 }
 
 func (f *fakeEscrow) HoldWithPayee(_ context.Context, payerID, payeeID, reference, moduleType, idemKey string, amountKobo int64) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.err != nil {
 		return "", f.err
 	}
+	if f.byKey == nil {
+		f.byKey = map[string]string{}
+	}
+	if f.state == nil {
+		f.state = map[string]string{}
+	}
+	if id, ok := f.byKey[idemKey]; ok {
+		// Replay: same hold, no second debit, no side effects.
+		return id, nil
+	}
+	id := "escrow-" + idemKey
+	f.byKey[idemKey] = id
+	f.state[id] = "HELD"
 	f.holds = append(f.holds, idemKey)
 	if f.afterHold != nil {
 		f.afterHold()
 	}
-	return "escrow-" + idemKey, nil
+	return id, nil
 }
 func (f *fakeEscrow) Release(_ context.Context, escrowID, payeeID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if st, ok := f.state[escrowID]; ok && st != "HELD" {
+		return fmt.Errorf("escrow: cannot release %s from %s", escrowID, st)
+	}
+	if f.state == nil {
+		f.state = map[string]string{}
+	}
+	f.state[escrowID] = "RELEASED"
 	f.released = append(f.released, escrowID)
 	return nil
 }
 func (f *fakeEscrow) Refund(_ context.Context, escrowID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.refundErr != nil {
 		return f.refundErr
 	}
+	if st, ok := f.state[escrowID]; ok && st != "HELD" {
+		return fmt.Errorf("escrow: cannot refund %s from %s", escrowID, st)
+	}
+	if f.state == nil {
+		f.state = map[string]string{}
+	}
+	f.state[escrowID] = "REFUNDED"
 	f.refunded = append(f.refunded, escrowID)
 	return nil
 }
@@ -664,6 +705,102 @@ func TestPayExtensionRefundsWhenTheSessionEndsMidPayment(t *testing.T) {
 	}
 	if !after.EndsAt.Equal(sess.EndsAt) {
 		t.Fatalf("ends_at = %v, want the unchanged %v", after.EndsAt, sess.EndsAt)
+	}
+
+	// The retired request can never be paid again, and a retry must not refund
+	// the same hold twice (escrow forbids REFUNDED → REFUNDED).
+	if _, _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID); !errors.Is(err, ErrExtensionNotPayable) {
+		t.Fatalf("retry after the refund: err = %v, want ErrExtensionNotPayable", err)
+	}
+	if len(f.escrow.refunded) != 1 {
+		t.Fatalf("refunded = %v, want the one refund", f.escrow.refunded)
+	}
+}
+
+// TestPayReusesARecordedHoldAfterACrash pins that a hold recorded on the row is
+// this request's hold: payment adopts it instead of refunding and re-holding.
+func TestPayReusesARecordedHoldAfterACrash(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess := f.bookVetVideo(t, pkg)
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if _, err := f.pool.Exec(context.Background(),
+		`UPDATE consult_extension_requests SET escrow_id='esc-crash' WHERE id=$1`, ext.ID); err != nil {
+		t.Fatalf("seed recorded hold: %v", err)
+	}
+
+	paid, extended, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("pay: %v", err)
+	}
+	if len(f.escrow.holds) != 0 {
+		t.Fatalf("a recorded hold was held again: %v", f.escrow.holds)
+	}
+	if paid.Status != ExtPaid || paid.EscrowID == nil || *paid.EscrowID != "esc-crash" {
+		t.Fatalf("paid = %+v, want paid on esc-crash", paid)
+	}
+	if want := sess.BookedStart.Add(40 * time.Minute); !extended.EndsAt.Equal(want) {
+		t.Fatalf("ends_at = %v, want %v (30 + 10 minutes)", extended.EndsAt, want)
+	}
+}
+
+// TestTwoConcurrentPaymentsChargeOnceAndApplyOnce pins the replay + claim race:
+// both callers may take the same escrow hold, but only one may stamp the row
+// paid and advance the session.
+func TestTwoConcurrentPaymentsChargeOnceAndApplyOnce(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess := f.bookVetVideo(t, pkg)
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for i := range errs {
+		i := i
+		go func() {
+			defer wg.Done()
+			_, _, errs[i] = f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID)
+		}()
+	}
+	wg.Wait()
+	winners := 0
+	for _, err := range errs {
+		if err == nil {
+			winners++
+			continue
+		}
+		if !errors.Is(err, ErrExtensionNotPayable) && !errors.Is(err, ErrPaymentExpired) {
+			t.Fatalf("loser err = %v, want ErrExtensionNotPayable or ErrPaymentExpired", err)
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("payments succeeded = %d (%v), want exactly one", winners, errs)
+	}
+	if len(f.escrow.holds) != 1 {
+		t.Fatalf("holds = %v, want one", f.escrow.holds)
+	}
+	if len(f.escrow.refunded) != 0 {
+		t.Fatalf("a concurrent payment refunded a winner's hold: %v", f.escrow.refunded)
+	}
+	got, err := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if want := sess.BookedStart.Add(40 * time.Minute); !got.EndsAt.Equal(want) {
+		t.Fatalf("ends_at = %v, want %v (30 base + 10 applied once)", got.EndsAt, want)
 	}
 }
 

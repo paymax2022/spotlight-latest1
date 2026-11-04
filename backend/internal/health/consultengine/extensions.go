@@ -223,25 +223,15 @@ func (s *Service) PayExtension(ctx context.Context, sessionID, extID, callerID s
 	if sess.State == StateEnded || sess.State == StateCancelled {
 		return Extension{}, Session{}, ErrState
 	}
-	if s.esc == nil {
+	// A zero-price extension moves no money and must not depend on escrow.
+	if ext.PriceKobo > 0 && s.esc == nil {
 		return Extension{}, Session{}, ErrEscrowUnavailable
 	}
-	// A previous attempt may have held money and failed before recording it.
-	// Refund that hold before taking another one.
-	if ext.EscrowID != nil {
-		if err := s.esc.Refund(ctx, *ext.EscrowID); err != nil {
-			return Extension{}, Session{}, fmt.Errorf("consult: refund stale extension hold: %w", err)
-		}
-		if _, err := s.db.Exec(ctx, `UPDATE consult_extension_requests SET escrow_id=NULL, updated_at=$2
-		                             WHERE id=$1 AND status='approved_awaiting_payment'`, extID, now); err != nil {
-			return Extension{}, Session{}, fmt.Errorf("consult: clear stale extension hold: %w", err)
-		}
-		ext.EscrowID = nil
-	}
-
-	// A zero-price extension moves no money and must not touch escrow.
-	var escrowID *string
-	if ext.PriceKobo > 0 {
+	// A recorded escrow_id on a row that is still awaiting payment IS this
+	// request's hold — reuse it. Refunding and re-holding under the same key is
+	// never safe: the escrow replay would hand back the REFUNDED row.
+	escrowID := ext.EscrowID
+	if escrowID == nil && ext.PriceKobo > 0 {
 		id, err := s.esc.HoldWithPayee(ctx, sess.PatientID, sess.ProviderUserID,
 			sess.SourceRef, "consult_extension", "consult-ext:"+ext.ID, ext.PriceKobo)
 		if err != nil {
@@ -250,14 +240,20 @@ func (s *Service) PayExtension(ctx context.Context, sessionID, extID, callerID s
 		escrowID = &id
 		if _, err := s.db.Exec(ctx, `UPDATE consult_extension_requests SET escrow_id=$2, updated_at=$3
 		                             WHERE id=$1 AND status='approved_awaiting_payment'`, extID, id, now); err != nil {
-			_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+			if rerr := s.esc.Refund(ctx, id); rerr != nil {
+				// Money is out and the refund failed: leave the hold id on an
+				// expired row so the sweep's refund lane can find it.
+				_, _ = s.db.Exec(ctx, `UPDATE consult_extension_requests
+				                       SET status='expired', escrow_id=$2, updated_at=$3
+				                       WHERE id=$1 AND status='approved_awaiting_payment'`, extID, id, now)
+			}
 			return Extension{}, Session{}, fmt.Errorf("consult: record extension hold: %w", err)
 		}
 	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+		s.retireUnapplied(ctx, extID, escrowID, now)
 		return Extension{}, Session{}, fmt.Errorf("consult: begin extension payment: %w", err)
 	}
 	defer tx.Rollback(ctx)
@@ -265,54 +261,77 @@ func (s *Service) PayExtension(ctx context.Context, sessionID, extID, callerID s
 	const markPaid = `UPDATE consult_extension_requests
 	                  SET status='paid', paid_at=$2, escrow_id=$3, updated_at=$2
 	                  WHERE id=$1 AND status='approved_awaiting_payment'
+	                    AND escrow_id IS NOT DISTINCT FROM $3
 	                  RETURNING ` + extColumns
 	paid, err := scanExtension(tx.QueryRow(ctx, markPaid, extID, now, escrowID))
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		if errors.Is(err, pgx.ErrNoRows) {
 			// The request left the payable state underneath us. A concurrent
-			// winner's paid row owns the hold, so only compensate an unclaimed one.
-			if cur, lerr := s.loadExtension(ctx, sessionID, extID); lerr != nil || cur.Status != ExtPaid {
-				_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+			// winner's paid row owns the hold, so leave its escrow untouched.
+			if cur, lerr := s.loadExtension(ctx, sessionID, extID); lerr == nil && cur.Status == ExtPaid {
+				return Extension{}, Session{}, ErrExtensionNotPayable
 			}
+			s.retireUnapplied(ctx, extID, escrowID, now)
 			return Extension{}, Session{}, ErrPaymentExpired
 		}
-		_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+		s.retireUnapplied(ctx, extID, escrowID, now)
 		return Extension{}, Session{}, fmt.Errorf("consult: mark extension paid: %w", err)
 	}
 	if _, _, err := applyExtensionOn(ctx, tx, sess.ID, ext.AddedMinutes, now); err != nil {
 		_ = tx.Rollback(ctx)
-		_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+		s.retireUnapplied(ctx, extID, escrowID, now)
 		return Extension{}, Session{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+		// Guarded claim: if the commit actually landed as paid, retireUnapplied
+		// does nothing and the hold stays releasable.
+		s.retireUnapplied(ctx, extID, escrowID, now)
 		return Extension{}, Session{}, fmt.Errorf("consult: commit extension payment: %w", err)
 	}
 	updated, err := s.load(ctx, sess.ID)
 	if err != nil {
 		return Extension{}, Session{}, err
 	}
+	var esc any
+	if escrowID != nil {
+		esc = *escrowID
+	}
 	s.audited(callerID, sess.ProviderUserID, "health.consult.extension.pay", extID, nil,
-		map[string]any{"price_kobo": ext.PriceKobo, "escrow_id": escrowID})
+		map[string]any{"price_kobo": ext.PriceKobo, "escrow_id": esc})
 	return paid, s.view(updated), nil
 }
 
-// compensateFailedPayment refunds a hold whose minutes were not applied, then
-// retires the request. A failed refund keeps escrow_id so the sweep's refund
-// lane retries it; the update is status-guarded so a concurrently committed
-// payment is never rewritten.
-func (s *Service) compensateFailedPayment(ctx context.Context, extID string, escrowID *string, now time.Time) error {
-	if escrowID != nil {
-		if err := s.esc.Refund(ctx, *escrowID); err != nil {
-			_, _ = s.db.Exec(ctx, `UPDATE consult_extension_requests SET status='expired', updated_at=$2
-			                       WHERE id=$1 AND status IN ('approved_awaiting_payment','expired')`, extID, now)
-			return err
-		}
+// retireUnapplied retires a request whose extension was not applied and returns
+// its hold to the patient. The status flip is the claim that decides ownership:
+// a row another attempt committed as paid is left alone and its hold is not
+// refunded. A failed refund leaves the row expired with escrow_id set so the
+// sweep refund lane retries it; a successful refund stamps released_at so the
+// lane cannot refund the same hold twice (escrow forbids REFUNDED → REFUNDED).
+func (s *Service) retireUnapplied(ctx context.Context, extID string, escrowID *string, now time.Time) {
+	var tag pgconn.CommandTag
+	var err error
+	if escrowID == nil {
+		tag, err = s.db.Exec(ctx, `UPDATE consult_extension_requests
+		                           SET status='expired', updated_at=$2
+		                           WHERE id=$1 AND status IN ('approved_awaiting_payment','expired')
+		                             AND escrow_id IS NULL`, extID, now)
+	} else {
+		tag, err = s.db.Exec(ctx, `UPDATE consult_extension_requests
+		                           SET status='expired', updated_at=$3
+		                           WHERE id=$1 AND status IN ('approved_awaiting_payment','expired')
+		                             AND escrow_id IS NOT DISTINCT FROM $2`, extID, escrowID, now)
 	}
-	_, err := s.db.Exec(ctx, `UPDATE consult_extension_requests SET status='expired', escrow_id=NULL, updated_at=$2
-	                          WHERE id=$1 AND status IN ('approved_awaiting_payment','expired')`, extID, now)
-	return err
+	if err != nil || tag.RowsAffected() == 0 {
+		return // lost the claim: another attempt owns the outcome, or the DB is down
+	}
+	if escrowID == nil {
+		return
+	}
+	if err := s.esc.Refund(ctx, *escrowID); err != nil {
+		return // lane retries: expired + escrow_id still set
+	}
+	_, _ = s.db.Exec(ctx, `UPDATE consult_extension_requests SET escrow_id=NULL, released_at=$2 WHERE id=$1`, extID, now)
 }
 
 // releaseExtensions settles every extension hold for an ended session, once:
