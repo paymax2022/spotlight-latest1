@@ -72,3 +72,64 @@ func TestAssertSameBooking(t *testing.T) {
 		t.Fatalf("changed package: err = %v, want ErrState", err)
 	}
 }
+
+func TestAssertSameRequest(t *testing.T) {
+	pkg := "pkg-1"
+	base := Session{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: "patient-1",
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: "owner-1",
+		ProviderUserID: "provider-1", SourceRef: "vet:appt-1", PackageID: &pkg,
+		DurationMinutes: 30, PriceKobo: 500_000,
+	}
+	req := BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: "patient-1",
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: "owner-1",
+		ProviderUserID: "provider-1", SourceRef: "vet:appt-1", PackageID: pkg,
+	}
+
+	// The stored row is canonical: a request that names only the package
+	// converges even though the package price may have moved since booking.
+	if err := assertSameRequest(base, req); err != nil {
+		t.Fatalf("stored row is canonical: %v", err)
+	}
+
+	otherPatient := req
+	otherPatient.PatientID = "patient-2"
+	if err := assertSameRequest(base, otherPatient); !errors.Is(err, ErrState) {
+		t.Fatalf("changed patient: err = %v, want ErrState", err)
+	}
+
+	otherPackage := req
+	otherPackage.PackageID = "pkg-2"
+	if err := assertSameRequest(base, otherPackage); !errors.Is(err, ErrState) {
+		t.Fatalf("changed package: err = %v, want ErrState", err)
+	}
+
+	snapReq := BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: "patient-1",
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: "owner-1",
+		ProviderUserID: "provider-1", SourceRef: "vet:appt-1",
+		Snapshot: &PriceSnapshot{DurationMinutes: 30, PriceKobo: 500_000},
+	}
+	if err := assertSameRequest(base, snapReq); err != nil {
+		t.Fatalf("matching snapshot: %v", err)
+	}
+
+	badPrice := snapReq
+	badPrice.Snapshot = &PriceSnapshot{DurationMinutes: 30, PriceKobo: 400_000}
+	if err := assertSameRequest(base, badPrice); !errors.Is(err, ErrState) {
+		t.Fatalf("snapshot price mismatch: err = %v, want ErrState", err)
+	}
+
+	badDuration := snapReq
+	badDuration.Snapshot = &PriceSnapshot{DurationMinutes: MinDurationMinutes - 1, PriceKobo: 500_000}
+	if err := assertSameRequest(base, badDuration); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("snapshot below the duration floor: err = %v, want ErrInvalid", err)
+	}
+
+	neither := req
+	neither.PackageID = ""
+	if err := assertSameRequest(base, neither); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("neither package nor snapshot: err = %v, want ErrInvalid", err)
+	}
+}

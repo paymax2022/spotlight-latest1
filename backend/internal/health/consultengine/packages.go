@@ -85,7 +85,7 @@ func (s *Service) PublishPackage(ctx context.Context, callerID string, pkg Packa
 	if pkg.DurationMinutes < MinDurationMinutes || pkg.DurationMinutes > MaxDurationMinutes {
 		return Package{}, ErrInvalid
 	}
-	if pkg.PriceKobo < 0 || pkg.PriceKobo > 100_000_000 {
+	if pkg.PriceKobo < 0 || pkg.PriceKobo > MaxPriceKobo {
 		return Package{}, ErrInvalid
 	}
 	if err := s.verifyOwner(ctx, callerID, pkg.OwnerKind, pkg.OwnerID); err != nil {

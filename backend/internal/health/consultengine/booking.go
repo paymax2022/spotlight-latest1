@@ -9,6 +9,17 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// validateSnapshot enforces the bounds a pinned price must satisfy.
+func validateSnapshot(snap *PriceSnapshot) error {
+	if snap.DurationMinutes < MinDurationMinutes || snap.DurationMinutes > MaxDurationMinutes {
+		return ErrInvalid
+	}
+	if snap.PriceKobo <= 0 || snap.PriceKobo > MaxPriceKobo {
+		return ErrInvalid
+	}
+	return nil
+}
+
 // resolveBookPrice decides what a session costs. A snapshot wins over the
 // package price because the module already moved that money; it must still
 // agree with the pinned package's duration. A package that went inactive
@@ -16,11 +27,8 @@ import (
 // price anyone can buy.
 func resolveBookPrice(pkgDuration int, pkgPrice int64, pkgActive bool, snap *PriceSnapshot) (int, int64, error) {
 	if snap != nil {
-		if snap.DurationMinutes < MinDurationMinutes || snap.DurationMinutes > MaxDurationMinutes {
-			return 0, 0, ErrInvalid
-		}
-		if snap.PriceKobo <= 0 || snap.PriceKobo > 100_000_000 {
-			return 0, 0, ErrInvalid
+		if err := validateSnapshot(snap); err != nil {
+			return 0, 0, err
 		}
 		if pkgDuration > 0 && snap.DurationMinutes != pkgDuration {
 			return 0, 0, ErrInvalid
@@ -89,6 +97,43 @@ func assertSameBooking(existing Session, req BookRequest, duration int, price in
 		existing.PriceKobo == price
 	if !same {
 		return ErrState
+	}
+	return nil
+}
+
+// assertSameRequest proves a repeat open is the SAME booking rather than a
+// second attempt at a different one. It compares the request's intent against
+// the stored row: the row is canonical, so a package that was repriced or
+// deactivated after the appointment was booked must not turn a retry into a
+// state conflict.
+func assertSameRequest(existing Session, req BookRequest) error {
+	if strings.TrimSpace(req.PackageID) == "" && req.Snapshot == nil {
+		return ErrInvalid
+	}
+	existingPackage := ""
+	if existing.PackageID != nil {
+		existingPackage = *existing.PackageID
+	}
+	same := existing.Vertical == req.Vertical &&
+		existing.Mode == req.Mode &&
+		existing.PatientID == req.PatientID &&
+		existing.ProviderUserID == req.ProviderUserID &&
+		existing.ProviderOwnerKind == req.ProviderOwnerKind &&
+		existing.ProviderOwnerID == req.ProviderOwnerID &&
+		existing.SourceRef == req.SourceRef
+	if !same {
+		return ErrState
+	}
+	if strings.TrimSpace(req.PackageID) != "" && existingPackage != req.PackageID {
+		return ErrState
+	}
+	if req.Snapshot != nil {
+		if err := validateSnapshot(req.Snapshot); err != nil {
+			return err
+		}
+		if existing.DurationMinutes != req.Snapshot.DurationMinutes || existing.PriceKobo != req.Snapshot.PriceKobo {
+			return ErrState
+		}
 	}
 	return nil
 }

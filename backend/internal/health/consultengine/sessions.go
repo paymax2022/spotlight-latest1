@@ -114,11 +114,7 @@ func (s *Service) EnsureSession(ctx context.Context, req BookRequest) (Session, 
 	if strings.TrimSpace(string(req.Vertical)) != "" && strings.TrimSpace(req.SourceRef) != "" {
 		existing, err := s.loadBySource(ctx, req.Vertical, req.SourceRef)
 		if err == nil {
-			duration, price, rerr := s.resolveBooking(ctx, req)
-			if rerr != nil {
-				return Session{}, rerr
-			}
-			if aerr := assertSameBooking(existing, req, duration, price); aerr != nil {
+			if aerr := assertSameRequest(existing, req); aerr != nil {
 				return Session{}, aerr
 			}
 			return s.view(existing), nil

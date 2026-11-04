@@ -209,3 +209,90 @@ func TestListExtensionsIsParticipantScopedAndNewestFirst(t *testing.T) {
 		t.Fatalf("stranger list: err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestEnsureSessionConvergesAfterThePackageIsRepriced(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	req := BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet:appt-repriced", PackageID: pkg.ID,
+	}
+	first, err := f.svc.EnsureSession(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first ensure: %v", err)
+	}
+	repriced, err := f.svc.PublishPackage(context.Background(), f.providerID, Package{
+		OwnerKind: OwnerHealthProvider, OwnerID: f.providerRow, Vertical: VerticalVet,
+		Mode: ModeVideo, DurationMinutes: 30, PriceKobo: 600_000, Active: true,
+	})
+	if err != nil {
+		t.Fatalf("reprice: %v", err)
+	}
+	if repriced.ID != pkg.ID {
+		t.Fatalf("reprice minted a new package: %s vs %s", repriced.ID, pkg.ID)
+	}
+	second, err := f.svc.EnsureSession(context.Background(), req)
+	if err != nil {
+		t.Fatalf("retry after reprice: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("a retry minted a second session: %s vs %s", second.ID, first.ID)
+	}
+	got, err := f.svc.Get(context.Background(), first.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.PriceKobo != 500_000 {
+		t.Fatalf("stored price = %d, want 500000", got.PriceKobo)
+	}
+}
+
+func TestEnsureSessionConvergesAfterThePackageIsDeactivated(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	req := BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet:appt-deactivated", PackageID: pkg.ID,
+	}
+	first, err := f.svc.EnsureSession(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first ensure: %v", err)
+	}
+	deactivated, err := f.svc.PublishPackage(context.Background(), f.providerID, Package{
+		OwnerKind: OwnerHealthProvider, OwnerID: f.providerRow, Vertical: VerticalVet,
+		Mode: ModeVideo, DurationMinutes: 30, PriceKobo: 500_000, Active: false,
+	})
+	if err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+	if deactivated.ID != pkg.ID {
+		t.Fatalf("deactivation minted a new package: %s vs %s", deactivated.ID, pkg.ID)
+	}
+	second, err := f.svc.EnsureSession(context.Background(), req)
+	if err != nil {
+		t.Fatalf("retry after deactivate: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("a retry minted a second session: %s vs %s", second.ID, first.ID)
+	}
+}
+
+func TestEnsureSessionRejectsAChangedParticipant(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	base := BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet:appt-participant", PackageID: pkg.ID,
+	}
+	if _, err := f.svc.EnsureSession(context.Background(), base); err != nil {
+		t.Fatalf("first ensure: %v", err)
+	}
+	other := base
+	other.PatientID = uuid.NewString() // no such user: identity is checked before any lookup
+	if _, err := f.svc.EnsureSession(context.Background(), other); !errors.Is(err, ErrState) {
+		t.Fatalf("changed participant: err = %v, want ErrState", err)
+	}
+}

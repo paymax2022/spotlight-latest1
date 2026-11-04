@@ -81,6 +81,9 @@ const (
 	EarlyJoinWindow        = 10 * time.Minute
 )
 
+// MaxPriceKobo is the ceiling for a session price (and a price snapshot).
+const MaxPriceKobo int64 = 100_000_000
+
 type Package struct {
 	ID              string    `json:"id"`
 	OwnerKind       OwnerKind `json:"owner_kind"`
