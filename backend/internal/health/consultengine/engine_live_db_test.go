@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -747,6 +748,88 @@ func TestPayReusesARecordedHoldAfterACrash(t *testing.T) {
 	}
 	if want := sess.BookedStart.Add(40 * time.Minute); !extended.EndsAt.Equal(want) {
 		t.Fatalf("ends_at = %v, want %v (30 + 10 minutes)", extended.EndsAt, want)
+	}
+}
+
+// TestFailedStampClaimsThenRefundsTheHold pins the failed-stamp branch: the row
+// is claimed with the same status guard before any money moves, so a hold is
+// refunded only when this attempt wins the claim, and a successful refund clears
+// escrow_id so the sweep can never refund the same hold twice.
+func TestFailedStampClaimsThenRefundsTheHold(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess := f.bookVetVideo(t, pkg)
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	ctx := context.Background()
+	// Reject only the stamp update (awaiting-payment row gaining an escrow id);
+	// the claim update that flips the row expired stays legal.
+	if _, err := f.pool.Exec(ctx, `CREATE OR REPLACE FUNCTION consult_test_fail_stamp() RETURNS trigger AS $$
+BEGIN
+    IF NEW.status = 'approved_awaiting_payment' AND NEW.escrow_id IS NOT NULL AND OLD.escrow_id IS NULL THEN
+        RAISE EXCEPTION 'consult test: stamp fault';
+    END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;`); err != nil {
+		t.Fatalf("install stamp fault function: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `CREATE TRIGGER consult_test_fail_stamp_trg BEFORE UPDATE ON consult_extension_requests
+    FOR EACH ROW EXECUTE FUNCTION consult_test_fail_stamp();`); err != nil {
+		t.Fatalf("install stamp fault trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = f.pool.Exec(bg, `DROP TRIGGER IF EXISTS consult_test_fail_stamp_trg ON consult_extension_requests`)
+		_, _ = f.pool.Exec(bg, `DROP FUNCTION IF EXISTS consult_test_fail_stamp()`)
+	})
+
+	_, _, err = f.svc.PayExtension(ctx, sess.ID, ext.ID, f.patientID)
+	if err == nil || !strings.Contains(err.Error(), "record extension hold") {
+		t.Fatalf("err = %v, want a record extension hold failure", err)
+	}
+
+	f.escrow.mu.Lock()
+	holds := append([]string(nil), f.escrow.holds...)
+	refunded := append([]string(nil), f.escrow.refunded...)
+	states := make([]string, len(refunded))
+	for i, id := range refunded {
+		states[i] = f.escrow.state[id]
+	}
+	f.escrow.mu.Unlock()
+	if len(holds) != 1 {
+		t.Fatalf("holds = %v, want exactly one", holds)
+	}
+	if len(refunded) != 1 {
+		t.Fatalf("refunded = %v, want exactly one", refunded)
+	}
+	if states[0] != "REFUNDED" {
+		t.Fatalf("hold state = %q, want REFUNDED", states[0])
+	}
+
+	var status string
+	var escrowID *string
+	var released *time.Time
+	if err := f.pool.QueryRow(ctx,
+		`SELECT status, escrow_id, released_at FROM consult_extension_requests WHERE id=$1`, ext.ID).
+		Scan(&status, &escrowID, &released); err != nil {
+		t.Fatalf("reload extension: %v", err)
+	}
+	if status != string(ExtExpired) || escrowID != nil || released == nil {
+		t.Fatalf("extension = %s / escrow %v / released %v, want expired, no hold, released", status, escrowID, released)
+	}
+
+	after, err := f.svc.Get(ctx, sess.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !after.EndsAt.Equal(sess.EndsAt) {
+		t.Fatalf("ends_at = %v, want the unchanged %v", after.EndsAt, sess.EndsAt)
 	}
 }
 

@@ -240,12 +240,18 @@ func (s *Service) PayExtension(ctx context.Context, sessionID, extID, callerID s
 		escrowID = &id
 		if _, err := s.db.Exec(ctx, `UPDATE consult_extension_requests SET escrow_id=$2, updated_at=$3
 		                             WHERE id=$1 AND status='approved_awaiting_payment'`, extID, id, now); err != nil {
-			if rerr := s.esc.Refund(ctx, id); rerr != nil {
-				// Money is out and the refund failed: leave the hold id on an
-				// expired row so the sweep's refund lane can find it.
-				_, _ = s.db.Exec(ctx, `UPDATE consult_extension_requests
-				                       SET status='expired', escrow_id=$2, updated_at=$3
-				                       WHERE id=$1 AND status='approved_awaiting_payment'`, extID, id, now)
+			// The stamp may have landed despite the error, and another attempt may
+			// have committed the row paid meanwhile. Claim the row with the same
+			// status guard used everywhere else before touching money; a zero-row
+			// claim means a paid winner owns the hold and it must not be refunded.
+			tag, cerr := s.db.Exec(ctx, `UPDATE consult_extension_requests
+			                             SET status='expired', escrow_id=$2, updated_at=$3
+			                             WHERE id=$1 AND status='approved_awaiting_payment'`, extID, id, now)
+			if cerr == nil && tag.RowsAffected() == 1 {
+				if rerr := s.esc.Refund(ctx, id); rerr == nil {
+					_, _ = s.db.Exec(ctx, `UPDATE consult_extension_requests
+					                       SET escrow_id=NULL, released_at=$3 WHERE id=$1 AND escrow_id=$2`, extID, id, now)
+				}
 			}
 			return Extension{}, Session{}, fmt.Errorf("consult: record extension hold: %w", err)
 		}
