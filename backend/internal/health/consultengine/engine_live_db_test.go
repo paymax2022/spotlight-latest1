@@ -337,3 +337,33 @@ func TestCompleteIsIdempotentAndParticipantOnly(t *testing.T) {
 		t.Fatalf("close calls = %v, want exactly one", f.media.closed)
 	}
 }
+
+func TestCompleteDoesNotRewriteATerminalState(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	if _, err := f.pool.Exec(context.Background(),
+		`UPDATE consult_sessions SET state='cancelled' WHERE id=$1`, sess.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := f.svc.Complete(context.Background(), sess.ID, f.providerID); err != nil {
+		t.Fatalf("complete cancelled: %v", err)
+	}
+	got, err := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.State != StateCancelled {
+		t.Fatalf("state = %q, want cancelled (Complete must not rewrite a terminal state)", got.State)
+	}
+	if len(f.media.closed) != 0 {
+		t.Fatalf("Complete closed the room of a cancelled session: %v", f.media.closed)
+	}
+}

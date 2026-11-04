@@ -143,11 +143,24 @@ func (s *Service) Join(ctx context.Context, sessionID, callerID string) (Join, e
 		return Join{}, ErrMediaUnavailable
 	}
 	if sess.State == StateScheduled {
-		if _, err := s.db.Exec(ctx, `UPDATE consult_sessions SET state='live', updated_at=$2
-		                              WHERE id=$1 AND state='scheduled'`, sess.ID, now); err != nil {
+		tag, err := s.db.Exec(ctx, `UPDATE consult_sessions SET state='live', updated_at=$2
+		                              WHERE id=$1 AND state='scheduled'`, sess.ID, now)
+		if err != nil {
 			return Join{}, fmt.Errorf("consult: mark live: %w", err)
 		}
-		sess.State = StateLive
+		if tag.RowsAffected() == 0 {
+			// A concurrent join may have moved it live, or a sweeper ended it.
+			cur, err := s.load(ctx, sess.ID)
+			if err != nil {
+				return Join{}, err
+			}
+			if cur.State != StateLive || !now.Before(cur.EndsAt) {
+				return Join{}, ErrState
+			}
+			sess = cur
+		} else {
+			sess.State = StateLive
+		}
 	}
 	if err := s.media.EnsureRoom(ctx, sess.RoomName); err != nil {
 		return Join{}, fmt.Errorf("consult: ensure room: %w", err)
@@ -176,7 +189,7 @@ func (s *Service) endSession(ctx context.Context, sess Session) error {
 	}
 	now := s.now()
 	tag, err := s.db.Exec(ctx, `UPDATE consult_sessions SET state='ended', ended_at=$2, updated_at=$2
-	                            WHERE id=$1 AND state <> 'ended'`, sess.ID, now)
+	                            WHERE id=$1 AND state IN ('scheduled','live')`, sess.ID, now)
 	if err != nil {
 		return fmt.Errorf("consult: mark ended: %w", err)
 	}
