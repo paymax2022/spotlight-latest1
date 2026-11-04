@@ -37,34 +37,17 @@ func (s *Service) verifyProviderUser(ctx context.Context, req BookRequest) error
 	}
 }
 
-// Book prices a session from a published package, snapshots it, provisions the
-// room and stores the row. Media is required: a patient is never sold a session
-// that cannot start.
+// Book prices a session, snapshots it, provisions the room and stores the row.
+// It is replay-safe per (vertical, source_ref): a concurrent or retried call
+// converges on the first row instead of creating a second room, and a retry
+// that disagrees on price or participants is a state conflict.
 func (s *Service) Book(ctx context.Context, req BookRequest) (Session, error) {
-	if !validVertical(req.Vertical) || !validMode(req.Mode) {
-		return Session{}, ErrInvalid
-	}
-	if strings.TrimSpace(req.PatientID) == "" || strings.TrimSpace(req.SourceRef) == "" || strings.TrimSpace(req.PackageID) == "" {
-		return Session{}, ErrInvalid
-	}
-	if err := s.verifyProviderUser(ctx, req); err != nil {
+	duration, price, err := s.resolveBooking(ctx, req)
+	if err != nil {
 		return Session{}, err
 	}
 	if s.media == nil {
 		return Session{}, ErrMediaUnavailable
-	}
-
-	const pq = `SELECT duration_minutes, price_kobo
-	            FROM consult_session_packages
-	            WHERE id=$1 AND owner_kind=$2 AND owner_id=$3 AND vertical=$4 AND mode=$5 AND active=true`
-	var duration int
-	var price int64
-	err := s.db.QueryRow(ctx, pq, req.PackageID, req.ProviderOwnerKind, req.ProviderOwnerID, req.Vertical, req.Mode).Scan(&duration, &price)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Session{}, ErrInvalid
-	}
-	if err != nil {
-		return Session{}, fmt.Errorf("consult: load package: %w", err)
 	}
 
 	now := s.now()
@@ -89,14 +72,31 @@ func (s *Service) Book(ctx context.Context, req BookRequest) (Session, error) {
 	              provider_user_id, source_ref, package_id, duration_minutes, price_kobo,
 	              booked_start, ends_at, warn_at, state, room_name, base_hold_id)
 	           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'scheduled',$15,$16)
+	           ON CONFLICT (vertical, source_ref) DO NOTHING
 	           RETURNING ` + sessionColumns
-	var hold *string
+	var hold, pkgID *string
 	if strings.TrimSpace(req.BaseHoldID) != "" {
 		hold = &req.BaseHoldID
 	}
+	if strings.TrimSpace(req.PackageID) != "" {
+		pkgID = &req.PackageID
+	}
 	sess, err := scanSession(s.db.QueryRow(ctx, q, id, req.Vertical, req.Mode, req.PatientID,
 		req.ProviderOwnerKind, req.ProviderOwnerID, req.ProviderUserID, req.SourceRef,
-		req.PackageID, duration, price, start, ends, warn, room, hold))
+		pkgID, duration, price, start, ends, warn, room, hold))
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Another attempt won the unique index. Its room is the live one; the
+		// room this attempt just created is empty and must not linger.
+		existing, lerr := s.loadBySource(ctx, req.Vertical, req.SourceRef)
+		if lerr != nil {
+			return Session{}, lerr
+		}
+		_ = s.media.CloseRoom(ctx, room)
+		if aerr := assertSameBooking(existing, req, duration, price); aerr != nil {
+			return Session{}, aerr
+		}
+		return s.view(existing), nil
+	}
 	if err != nil {
 		return Session{}, fmt.Errorf("consult: book session: %w", err)
 	}
@@ -105,6 +105,47 @@ func (s *Service) Book(ctx context.Context, req BookRequest) (Session, error) {
 		"duration_minutes": duration, "price_kobo": price,
 	})
 	return s.view(sess), nil
+}
+
+// EnsureSession converges every open of one appointment on a single session.
+// The first call creates the room; every retry — either party, any device,
+// even after a crash between insert and response — returns the same row.
+func (s *Service) EnsureSession(ctx context.Context, req BookRequest) (Session, error) {
+	if strings.TrimSpace(string(req.Vertical)) != "" && strings.TrimSpace(req.SourceRef) != "" {
+		existing, err := s.loadBySource(ctx, req.Vertical, req.SourceRef)
+		if err == nil {
+			duration, price, rerr := s.resolveBooking(ctx, req)
+			if rerr != nil {
+				return Session{}, rerr
+			}
+			if aerr := assertSameBooking(existing, req, duration, price); aerr != nil {
+				return Session{}, aerr
+			}
+			return s.view(existing), nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return Session{}, err
+		}
+	}
+	return s.Book(ctx, req)
+}
+
+// CompleteBySource ends the session pinned to a module appointment, if one
+// exists. A module calls this from its own completion path. A missing session
+// is not an error (pre-Slice-2 appointments have none); a caller outside the
+// session gets the uniform not-found fold.
+func (s *Service) CompleteBySource(ctx context.Context, vertical Vertical, sourceRef, callerID string) error {
+	sess, err := s.loadBySource(ctx, vertical, sourceRef)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if callerID != sess.PatientID && callerID != sess.ProviderUserID {
+		return ErrNotFound
+	}
+	return s.endSession(ctx, sess)
 }
 
 // Get returns one session to a participant, folded to not-found otherwise.
@@ -125,6 +166,12 @@ func (s *Service) Join(ctx context.Context, sessionID, callerID string) (Join, e
 	}
 	now := s.now()
 	if sess.State == StateEnded || sess.State == StateCancelled || !now.Before(sess.EndsAt) {
+		return Join{}, ErrState
+	}
+	// Slice 2 is the first slice that books future sessions. A party who opens
+	// the room early gets the lobby, not a token: joining starts the clock and
+	// moves the session live, so an hour-early tap would burn the appointment.
+	if sess.State == StateScheduled && now.Before(sess.BookedStart.Add(-EarlyJoinWindow)) {
 		return Join{}, ErrState
 	}
 	if s.media == nil {

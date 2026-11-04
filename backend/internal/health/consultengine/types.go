@@ -78,6 +78,7 @@ const (
 	ExtensionPaymentWindow = 5 * time.Minute
 	WarningCap             = 5 * time.Minute
 	DefaultJoinTTL         = 10 * time.Minute
+	EarlyJoinWindow        = 10 * time.Minute
 )
 
 type Package struct {
@@ -90,6 +91,15 @@ type Package struct {
 	PriceKobo       int64     `json:"price_kobo"`
 	Active          bool      `json:"active"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+// PriceSnapshot pins the price a module already charged or escrowed, for a
+// session with no published package behind it (an appointment booked before the
+// provider priced timed sessions). The module computes it from its own committed
+// money row; the engine records that number instead of inventing one.
+type PriceSnapshot struct {
+	DurationMinutes int
+	PriceKobo       int64
 }
 
 type Session struct {
@@ -148,9 +158,12 @@ type BookRequest struct {
 	ProviderOwnerID   string
 	ProviderUserID    string
 	SourceRef         string
-	PackageID         string
-	BaseHoldID        string
-	Start             time.Time // zero => now
+	// PackageID is the price point the patient picked. Empty is allowed only
+	// when Snapshot is set (legacy appointment pricing).
+	PackageID  string
+	Snapshot   *PriceSnapshot
+	BaseHoldID string
+	Start      time.Time // zero => now
 }
 
 type RTC struct {

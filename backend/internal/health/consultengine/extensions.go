@@ -43,7 +43,7 @@ func applyExtensionOn(ctx context.Context, q sqlExecer, sessionID string, minute
 	return end, warn, nil
 }
 
-func scanExtension(row pgx.Row) (Extension, error) {
+func scanExtension(row rowScanner) (Extension, error) {
 	var e Extension
 	var status string
 	err := row.Scan(&e.ID, &e.SessionID, &e.RequestedBy, &e.AddedMinutes, &e.PriceKobo,
@@ -382,4 +382,30 @@ func (s *Service) releaseExtensions(ctx context.Context, sess Session) error {
 		}
 	}
 	return nil
+}
+
+// ListExtensions returns the session's extension requests, newest first, to a
+// participant only. Both sides poll this while the warning is up, so a patient
+// sees an approval without a manual refresh and a provider sees the request
+// that needs a decision.
+func (s *Service) ListExtensions(ctx context.Context, sessionID, callerID string) ([]Extension, error) {
+	if _, _, err := s.loadForCaller(ctx, sessionID, callerID); err != nil {
+		return nil, err
+	}
+	q := `SELECT ` + extColumns + ` FROM consult_extension_requests
+	      WHERE session_id=$1 ORDER BY created_at DESC LIMIT 50`
+	rows, err := s.db.Query(ctx, q, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("consult: list extensions: %w", err)
+	}
+	defer rows.Close()
+	out := []Extension{}
+	for rows.Next() {
+		ext, err := scanExtension(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ext)
+	}
+	return out, rows.Err()
 }
