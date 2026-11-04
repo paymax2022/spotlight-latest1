@@ -2420,8 +2420,17 @@ type consultLiveKitRail struct {
 
 var _ consultengine.RoomMedia = consultLiveKitRail{}
 
+// consultRoomOK reports whether room is a complete consult room name of the
+// form consult-<vertical>-<session id>. The bare prefix, a name with no session
+// id (for example "consult-vet"), and anything outside the namespace are
+// refused, so a partial name cannot provision or mint against a shared room.
 func consultRoomOK(room string) bool {
-	return strings.HasPrefix(room, consultRoomPrefix) && len(room) > len(consultRoomPrefix)
+	rest, ok := strings.CutPrefix(room, consultRoomPrefix)
+	if !ok {
+		return false
+	}
+	vertical, session, found := strings.Cut(rest, "-")
+	return found && vertical != "" && session != ""
 }
 
 func (c consultLiveKitRail) EnsureRoom(ctx context.Context, room string) error {
