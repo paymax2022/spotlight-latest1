@@ -101,16 +101,16 @@ const Footer: React.FC = () => {
               Legal
             </p>
             {[
-              { label: 'Privacy Policy', href: '#' },
-              { label: 'Terms of Use', href: '#' },
+              { label: 'Privacy Policy', href: '/privacy-policy' },
+              { label: 'Terms of Use', href: '/terms-and-conditions' },
             ].map((link) => (
-              <a
+              <Link
                 key={link.label}
                 href={link.href}
                 className="text-sm text-foreground/50 hover:text-foreground transition-colors w-fit"
               >
                 {link.label}
-              </a>
+              </Link>
             ))}
             <div className="mt-4 pt-4 border-t border-border/40">
               <a
