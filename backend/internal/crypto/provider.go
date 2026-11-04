@@ -408,15 +408,15 @@ type ProviderConfig struct {
 // internal one. Provider-driven swaps (a real order at Quidax, reconciled by webhook
 // + poller) live in internal/cryptosvc over internal/cryptoprov/quidax.
 type SwapProvider interface {
-	// CreateQuotation requests a swap quote from Quidax, returning the quotation ID
-	// and expiry. Expires in 15 seconds per Quidax docs.
+	// CreateQuotation opens an indicative quote for a member swap and returns its
+	// id + expiry. This is the ledger-side seam — it does not place an order at an
+	// exchange; the id only keys the quote the member saw.
 	CreateQuotation(ctx context.Context, userID, fromCurrency, toCurrency string, fromAmount int64) (quotationID string, expiresAt time.Time, err error)
 
-	// ConfirmQuotation confirms an accepted quotation, triggering async provider execution.
-	// Returns the swap transaction ID and an error if the quote expired or is invalid.
+	// ConfirmQuotation accepts the quote so Swap can settle it in the ledger.
 	ConfirmQuotation(ctx context.Context, userID, quotationID string) (swapTransactionID string, err error)
 
-	// GetSwapTransaction retrieves the status of a swap, returning raw provider metadata.
+	// GetSwapTransaction reports the status of a settled swap.
 	GetSwapTransaction(ctx context.Context, userID, swapTransactionID string) (status string, rawMeta map[string]any, err error)
 
 	// Name identifies the provider for logs/audit.
