@@ -223,3 +223,117 @@ func TestGetFoldsNonParticipantsToNotFound(t *testing.T) {
 		t.Fatalf("missing session must fold to ErrNotFound, got %v", err)
 	}
 }
+
+func TestJoinMintsAPeerTokenCappedByTheRemainingWindow(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+
+	patientJoin, err := f.svc.Join(context.Background(), sess.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("patient join: %v", err)
+	}
+	if patientJoin.Token != "tok-"+f.patientID || patientJoin.RTC.Provider != "livekit" || patientJoin.RTC.URL != "wss://rtc.test" {
+		t.Fatalf("bad join payload: %+v", patientJoin)
+	}
+	if patientJoin.Session.State != StateLive {
+		t.Fatalf("first join must move the session live, got %q", patientJoin.Session.State)
+	}
+	if got := f.media.tokens[len(f.media.tokens)-1]; got != MediaPeer {
+		t.Fatalf("patient role = %q, want %q", got, MediaPeer)
+	}
+	if f.media.ttl != 10*time.Minute {
+		t.Fatalf("ttl = %v, want the 10m client default", f.media.ttl)
+	}
+
+	if _, err := f.svc.Join(context.Background(), sess.ID, f.providerID); err != nil {
+		t.Fatalf("provider join: %v", err)
+	}
+	if got := f.media.tokens[len(f.media.tokens)-1]; got != MediaPeerAdmin {
+		t.Fatalf("provider role = %q, want %q", got, MediaPeerAdmin)
+	}
+
+	// Late in the session the token shrinks to the remaining time + 1m.
+	f.clock = sess.EndsAt.Add(-90 * time.Second)
+	if _, err := f.svc.Join(context.Background(), sess.ID, f.patientID); err != nil {
+		t.Fatalf("late join: %v", err)
+	}
+	if f.media.ttl != 150*time.Second {
+		t.Fatalf("late ttl = %v, want 150s", f.media.ttl)
+	}
+}
+
+func TestSweepWarnsThenEndsAndIsIdempotent(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	_, _ = f.svc.Join(context.Background(), sess.ID, f.patientID)
+
+	f.clock = sess.WarnAt.Add(time.Second)
+	if err := f.svc.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep at warning: %v", err)
+	}
+	warned, _ := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if warned.WarningSentAt == nil {
+		t.Fatal("the warning was not recorded")
+	}
+
+	f.clock = sess.EndsAt.Add(time.Second)
+	if err := f.svc.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep at end: %v", err)
+	}
+	ended, _ := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if ended.State != StateEnded || ended.EndedAt == nil {
+		t.Fatalf("state = %q ended_at = %v, want ended", ended.State, ended.EndedAt)
+	}
+	if len(f.media.closed) != 1 || f.media.closed[0] != sess.RoomName {
+		t.Fatalf("room close calls = %v, want [%s]", f.media.closed, sess.RoomName)
+	}
+	if err := f.svc.Sweep(context.Background()); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if len(f.media.closed) != 1 {
+		t.Fatalf("sweep closed the room twice: %v", f.media.closed)
+	}
+	if _, err := f.svc.Join(context.Background(), sess.ID, f.patientID); !errors.Is(err, ErrState) {
+		t.Fatalf("join after end: err = %v, want ErrState", err)
+	}
+}
+
+func TestCompleteIsIdempotentAndParticipantOnly(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	if err := f.svc.Complete(context.Background(), sess.ID, uuid.NewString()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stranger complete: err = %v, want ErrNotFound", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := f.svc.Complete(context.Background(), sess.ID, f.providerID); err != nil {
+			t.Fatalf("complete #%d: %v", i+1, err)
+		}
+	}
+	if len(f.media.closed) != 1 {
+		t.Fatalf("close calls = %v, want exactly one", f.media.closed)
+	}
+}
