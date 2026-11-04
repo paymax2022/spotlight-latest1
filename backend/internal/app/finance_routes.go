@@ -2268,6 +2268,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Tele.POST("/appointments/:id/confirm", telemedHandler.ConfirmAppointment)
 		v1Tele.POST("/appointments/:id/reschedule", telemedHandler.RescheduleAppointment)
 		v1Tele.POST("/appointments/:id/complete", telemedHandler.CompleteAppointment)
+		v1Tele.POST("/appointments/:id/consult-session", telemedHandler.OpenConsultSession)
 		v1Tele.POST("/appointments/:id/cancel", telemedHandler.CancelAppointment)
 		v1Tele.POST("/appointments/:id/review", telemedHandler.AddReview)
 		v1Tele.DELETE("/appointments/:id", telemedHandler.CancelAppointment)

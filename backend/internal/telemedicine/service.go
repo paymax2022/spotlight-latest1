@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/health/consultengine"
 	"strings"
 	"time"
 
@@ -50,6 +51,9 @@ type Service struct {
 	audit AuditWriter
 	// notify sends booking/cancellation notices (notify.go). Nil disables them.
 	notify Notifier
+	// consult is the shared LiveKit consult engine. Nil means timed sessions are
+	// not wired; the legacy booking path is untouched.
+	consult ConsultEngine
 }
 
 // NewService builds the service with the platform booking fee OFF. The fee is a
@@ -250,7 +254,13 @@ func (s *Service) GetDoctor(ctx context.Context, id string) (*Doctor, error) {
 	if len(doctors) == 0 {
 		return nil, ErrDoctorNotFound
 	}
-	return &doctors[0], nil
+	doctor := &doctors[0]
+	packages, err := s.listDoctorPackages(ctx, doctor.UserID)
+	if err != nil {
+		return nil, err
+	}
+	doctor.Packages = packages
+	return doctor, nil
 }
 
 // ToggleDoctorAvailability sets a doctor's online status.
@@ -471,11 +481,19 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 		return nil, err
 	}
 
-	// Price the booking SERVER-SIDE from the doctor's own consultation fee. The
-	// client sends no amount it can be charged on: the platform fee is derived here
-	// from PlatformFeeBp, so the figure displayed to the patient, the figure charged
-	// and the figure escrowed are all the same number by construction (ADR-044).
+	// Price the booking SERVER-SIDE (ADR-044). A picked package supplies both
+	// the mode and the priced amount; the platform booking fee still rides on
+	// top. Without a package the doctor's legacy fee prices the booking, and
+	// resolveConsultPackage has already refused that path if this doctor sells
+	// a timed package for the requested mode.
+	pkg, hasPkg, err := s.resolveConsultPackage(ctx, doctor.UserID, req.PackageID, req.ConsultationType)
+	if err != nil {
+		return nil, err
+	}
 	quote := s.quote(doctor.ConsultFeeKobo)
+	if hasPkg {
+		quote = s.quote(pkg.PriceKobo)
+	}
 	if !quote.Priceable() {
 		// Fail closed. A doctor whose stored fee is non-positive or absurd cannot be
 		// booked — escrowing the zero total would give away a consultation free.
@@ -517,8 +535,16 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	}
 
 	ct := req.ConsultationType
+	if hasPkg {
+		ct = moduleConsultType(pkg.Mode)
+	}
 	if ct == "" {
 		ct = "video"
+	}
+	mode := string(pkg.Mode)
+	var pkgID *string
+	if hasPkg {
+		pkgID = &pkg.ID
 	}
 
 	appt := &Appointment{
@@ -544,13 +570,14 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 		INSERT INTO appointments
 		    (id, patient_id, doctor_id, doctor_name, doctor_specialty, consultation_type,
 		     scheduled_at, status, notes, fee_kobo, platform_fee_kobo, total_kobo,
-		     idempotency_key, settlement_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,'booked',$8,$9,$10,$11,$12,$13)`
+		     idempotency_key, settlement_id, consult_package_id, consult_mode,
+		     consult_duration_minutes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'booked',$8,$9,$10,$11,$12,$13,$14,$15,$16)`
 	if _, err := s.db.Exec(ctx, q,
 		appt.ID, appt.PatientID, appt.DoctorID, appt.DoctorName, appt.DoctorSpecialty,
 		appt.ConsultationType, appt.ScheduledAt, appt.Notes,
 		appt.FeeKobo, appt.PlatformFeeKobo, appt.TotalKobo,
-		appt.IdempotencyKey, appt.SettlementID,
+		appt.IdempotencyKey, appt.SettlementID, pkgID, mode, pkg.DurationMinutes,
 	); err != nil {
 		return nil, fmt.Errorf("telemedicine: insert appointment: %w", err)
 	}
@@ -679,8 +706,19 @@ func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctor
 	if err := s.settlement.Settle(ctx, appt.SettlementID, split); err != nil {
 		return fmt.Errorf("telemedicine: settle fee: %w", err)
 	}
-	_, err := s.db.Exec(ctx, `UPDATE appointments SET status='completed' WHERE id=$1`, appointmentID)
-	return err
+	if _, err := s.db.Exec(ctx, `UPDATE appointments SET status='completed' WHERE id=$1`, appointmentID); err != nil {
+		return err
+	}
+	// The money has moved; ending the pinned session is best-effort. The
+	// sweeper still ends it at ends_at, so an engine or media hiccup must not
+	// fail an appointment that is already settled.
+	if s.consult != nil {
+		if cerr := s.consult.CompleteBySource(ctx, consultengine.VerticalTelemedicine,
+			"appointment:"+appointmentID, doctorUserID); cerr != nil {
+			fmt.Printf("[telemedicine] complete consult session %s: %v\n", appointmentID, cerr)
+		}
+	}
+	return nil
 }
 
 // CancelAppointment refunds the patient if the appointment has not been completed.

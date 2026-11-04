@@ -9,6 +9,7 @@ import (
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/health/consultengine"
 )
 
 type Handler struct{ svc *Service }
@@ -153,6 +154,10 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 			// server fault — previously indistinguishable from a real outage.
 			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 			return
+		case errors.Is(err, ErrPackageRequired), errors.Is(err, ErrPackageInvalid),
+			errors.Is(err, ErrConsultModeInvalid):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
+			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
@@ -188,6 +193,32 @@ func (h *Handler) CompleteAppointment(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// OpenConsultSession starts (or returns) the LiveKit session pinned to this
+// appointment. Both participants may call it; a stranger gets 404 so existence
+// is never confirmed.
+func (h *Handler) OpenConsultSession(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	sess, err := h.svc.OpenConsultSession(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrAppointmentNotFound):
+			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		case errors.Is(err, ErrSessionNotOpenable):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		case errors.Is(err, ErrConsultUnavailable),
+			errors.Is(err, consultengine.ErrMediaUnavailable),
+			errors.Is(err, consultengine.ErrEscrowUnavailable):
+			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
+		case errors.Is(err, consultengine.ErrInvalid), errors.Is(err, consultengine.ErrState):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": sess})
 }
 
 func (h *Handler) CancelAppointment(c *gin.Context) {
