@@ -61,8 +61,8 @@ fi
 # (CN=Android Debug): Play rejects those uploads outright. The keystore lives
 # in $HOME — never in android/, which `expo prebuild --clean` deletes in full,
 # and never in the repo, because it is the one file that must not leak.
-# Credentials are read into the environment here and passed to gradle as
-# project properties; nothing in this script prints them.
+# Credentials are exported from the private properties file and read by
+# Gradle from its environment; nothing in this script prints them.
 RELEASE_SIGNING_PROPS="${PAYMAX_RELEASE_SIGNING_PROPS:-$HOME/.android-keystores/paymax-release.properties}"
 if [[ -f "$RELEASE_SIGNING_PROPS" ]]; then
   set -a
@@ -196,10 +196,30 @@ echo "   Sentry:    $SENTRY_UPLOAD"
 echo "   Signing:   $SIGNING_DESC"
 echo ""
 
+EXPECTED_ANDROID_PACKAGE="com.spotlight.paymax"
+CONFIGURED_ANDROID_PACKAGE="$(node -e 'process.stdout.write(require("./app.json").expo.android.package)')"
+if [[ "$CONFIGURED_ANDROID_PACKAGE" != "$EXPECTED_ANDROID_PACKAGE" ]]; then
+  echo "❌ app.json Android package must be $EXPECTED_ANDROID_PACKAGE (found $CONFIGURED_ANDROID_PACKAGE)." >&2
+  exit 1
+fi
+
 if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" && ! -f android/local.properties ]]; then
   echo "❌ Android SDK not found. Set ANDROID_HOME, or put sdk.dir=<path> in android/local.properties." >&2
   exit 1
 fi
+
+# Keep generated native identifiers in sync with app.json on both APK and AAB
+# build paths; otherwise Gradle can package a stale applicationId.
+npx expo prebuild --platform android --no-install
+GENERATED_ANDROID_PACKAGE="$(sed -nE "s/^[[:space:]]*applicationId ['\"]([^'\"]+)['\"].*/\\1/p" android/app/build.gradle | tail -1)"
+if [[ "$GENERATED_ANDROID_PACKAGE" != "$EXPECTED_ANDROID_PACKAGE" ]]; then
+  echo "❌ Generated Android applicationId is ${GENERATED_ANDROID_PACKAGE:-missing}; expected $EXPECTED_ANDROID_PACKAGE." >&2
+  exit 1
+fi
+
+# React Native caches autolinking config without hashing app.json, so a package
+# change can leave its generated entry point referring to the previous package.
+rm -rf android/build/generated/autolinking
 
 # See build-apk.sh's identical step for why .cxx is dropped before `clean`.
 rm -rf android/app/.cxx
@@ -209,13 +229,9 @@ if [[ "${ALLOW_DEBUG_SIGNING:-0}" == "1" ]]; then
 fi
 
 cd android
-./gradlew clean bundleRelease \
+./gradlew --no-daemon clean bundleRelease \
   -PreactNativeArchitectures="$REACT_NATIVE_ARCHS" \
-  -PreleaseAbis="$REACT_NATIVE_ARCHS" \
-  -PPAYMAX_RELEASE_STORE_FILE="${PAYMAX_RELEASE_STORE_FILE:-}" \
-  -PPAYMAX_RELEASE_KEY_ALIAS="${PAYMAX_RELEASE_KEY_ALIAS:-}" \
-  -PPAYMAX_RELEASE_STORE_PASSWORD="${PAYMAX_RELEASE_STORE_PASSWORD:-}" \
-  -PPAYMAX_RELEASE_KEY_PASSWORD="${PAYMAX_RELEASE_KEY_PASSWORD:-}"
+  -PreleaseAbis="$REACT_NATIVE_ARCHS"
 cd "$PROJECT_DIR"
 
 AAB="$(find android/app/build/outputs/bundle/release -name '*.aab' -type f | head -1 || true)"
@@ -229,6 +245,13 @@ echo "🔍 Verifying baked-in configuration: $AAB"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+
+AAB_PACKAGE="$(unzip -p "$AAB" base/manifest/AndroidManifest.xml | strings | awk 'previous == "package" && package == "" { if (match($0, /^[[:alnum:]_.]+/)) package = substr($0, RSTART, RLENGTH) } { previous = $0 } END { print package }')"
+if [[ "$AAB_PACKAGE" != "$EXPECTED_ANDROID_PACKAGE" ]]; then
+  echo "❌ AAB package is ${AAB_PACKAGE:-missing}; expected $EXPECTED_ANDROID_PACKAGE." >&2
+  exit 1
+fi
+echo "   ✅ Android package: $AAB_PACKAGE"
 
 # The JS bundle lives under a module prefix (base/, not the archive root like
 # an APK) — find it by name rather than assuming the exact path.
@@ -341,6 +364,9 @@ else
   # jarsigner indents this line under each entry — no anchor, since the exact
   # leading whitespace is an implementation detail, not something to pin.
   SIGNER_LINE="$(printf '%s\n' "$SIGNER_REPORT" | grep -m1 'X\.509,' | sed 's/^[[:space:]]*//' || true)"
+  CERT_REPORT="$(keytool -printcert -jarfile "$AAB" 2>&1 || true)"
+  SIGNER_SHA1="$(printf '%s\n' "$CERT_REPORT" | grep -m1 -E 'SHA1:' | sed -E 's/.*SHA1:[[:space:]]*//' | tr -d ':' | tr '[:lower:]' '[:upper:]' || true)"
+  EXPECTED_UPLOAD_CERT_SHA1="A455D923C471689ED3127ED327548ABBDA1B2799"
   if [[ "$JARSIGNER_RC" -ne 0 || -z "$SIGNER_LINE" ]]; then
     echo "   ❌ jarsigner could not verify the AAB's signature:" >&2
     tail -20 "$WORK/jarsigner-verify.txt" | sed 's/^/      /' >&2
@@ -353,8 +379,12 @@ else
       echo "      Play rejects debug uploads. Check $RELEASE_SIGNING_PROPS." >&2
       fail=1
     fi
+  elif [[ "$SIGNER_SHA1" != "$EXPECTED_UPLOAD_CERT_SHA1" ]]; then
+    echo "   ❌ Wrong upload certificate SHA-1: ${SIGNER_SHA1:-unavailable}" >&2
+    echo "      Play expects A4:55:D9:23:C4:71:68:9E:D3:12:7E:D3:27:54:8A:BB:DA:1B:27:99." >&2
+    fail=1
   else
-    echo "   ✅ Signed with: $SIGNER_LINE"
+    echo "   ✅ Signed with Play upload certificate (SHA-1 A4:55:D9:23:C4:71:68:9E:D3:12:7E:D3:27:54:8A:BB:DA:1B:27:99): $SIGNER_LINE"
   fi
 fi
 
