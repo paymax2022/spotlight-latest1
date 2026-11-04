@@ -216,7 +216,7 @@ func TestPeerRoleMayPublishSubscribeAndSendData(t *testing.T) {
 		t.Fatalf("peer grants publish=%v subscribe=%v data=%v, want all true",
 			isTrue(v.CanPublish), isTrue(v.CanSubscribe), isTrue(v.CanPublishData))
 	}
-	if isTrue(v.RoomAdmin) {
+	if v.RoomAdmin {
 		t.Fatal("a plain peer must not be room admin")
 	}
 }
@@ -228,9 +228,9 @@ func TestPeerAdminRoleAlsoGetsRoomAdmin(t *testing.T) {
 		t.Fatalf("join token: %v", err)
 	}
 	v := verify(t, tok.JWT).Video
-	if !isTrue(v.CanPublish) || !isTrue(v.CanPublishData) || !isTrue(v.RoomAdmin) {
+	if !isTrue(v.CanPublish) || !isTrue(v.CanPublishData) || !v.RoomAdmin {
 		t.Fatalf("peer admin grants publish=%v data=%v admin=%v, want all true",
-			isTrue(v.CanPublish), isTrue(v.CanPublishData), isTrue(v.RoomAdmin))
+			isTrue(v.CanPublish), isTrue(v.CanPublishData), v.RoomAdmin)
 	}
 }
 ```
