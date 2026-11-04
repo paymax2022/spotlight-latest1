@@ -206,7 +206,7 @@ Append to `backend/internal/integrations/livekit/livekit_test.go`:
 
 ```go
 func TestPeerRoleMayPublishSubscribeAndSendData(t *testing.T) {
-	c := newTestClient(t)
+	c := newTestClient(t, "wss://rtc.example.com")
 	tok, err := c.JoinToken(JoinRequest{Room: "consult-vet-s1", Identity: "u1", Role: RolePeer})
 	if err != nil {
 		t.Fatalf("join token: %v", err)
@@ -222,7 +222,7 @@ func TestPeerRoleMayPublishSubscribeAndSendData(t *testing.T) {
 }
 
 func TestPeerAdminRoleAlsoGetsRoomAdmin(t *testing.T) {
-	c := newTestClient(t)
+	c := newTestClient(t, "wss://rtc.example.com")
 	tok, err := c.JoinToken(JoinRequest{Room: "consult-vet-s1", Identity: "doc", Role: RolePeerAdmin})
 	if err != nil {
 		t.Fatalf("join token: %v", err)
@@ -235,7 +235,7 @@ func TestPeerAdminRoleAlsoGetsRoomAdmin(t *testing.T) {
 }
 ```
 
-If `newTestClient` does not exist in that file, reuse the constructor already used by the existing role test (the function that produced `c` before line 147) and keep the same name it uses.
+The existing helper is `newTestClient(t *testing.T, url string)`; use it as the existing role test does (`newTestClient(t, "wss://rtc.example.com")`).
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
