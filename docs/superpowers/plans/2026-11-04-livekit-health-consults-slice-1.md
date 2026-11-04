@@ -591,8 +591,11 @@ func JoinTTL(now, endsAt time.Time, configured time.Duration) time.Duration {
 	if configured <= 0 {
 		configured = DefaultJoinTTL
 	}
-	remaining := endsAt.Sub(now) + time.Minute
-	if remaining < time.Minute {
+	remaining := endsAt.Sub(now)
+	if remaining >= time.Minute {
+		remaining += time.Minute
+	} else {
+		// A last-second join gets the floor itself, not the floor plus slack.
 		remaining = time.Minute
 	}
 	if remaining > configured {
