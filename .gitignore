@@ -136,3 +136,6 @@ task-tracker.json
 
 # Film Academy assessment bank = the answer key. Never commit it (public repo); see tests/fixtures/academy/README.md.
 frontend-web/tests/fixtures/academy/*.csv
+
+# superpowers worktrees
+.worktrees/
