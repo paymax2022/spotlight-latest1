@@ -1,0 +1,98 @@
+name: Deploy frontend-web to staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_deploy:
+        description: 'Type DEPLOY to verify and release frontend-web to staging'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-frontend-web-deploy
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: ${{ inputs.confirm_deploy == 'DEPLOY' && github.ref == 'refs/heads/staging' }}
+    uses: ./.github/workflows/_reusable-frontend-web.yml
+
+  deploy:
+    name: frontend-web -> staging
+    needs: verify
+    if: ${{ inputs.confirm_deploy == 'DEPLOY' && github.ref == 'refs/heads/staging' && vars.RAILWAY_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+    steps:
+      - name: Require the staging Railway token
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Upload and deploy frontend-web
+        run: |
+          set -euo pipefail
+          railway up --no-gitignore \
+            --service frontend-web \
+            --environment staging \
+            --project "$PROJECT" \
+            --detach \
+            --message "$GITHUB_SHA"
+
+      - name: Wait for this deployment to succeed
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 40); do
+            row="$(railway deployment list \
+              --service frontend-web \
+              --environment staging \
+              --project "$PROJECT" \
+              --limit 10 \
+              --json | jq -c --arg message "$GITHUB_SHA" \
+                '[.[] | select(.meta.cliMessage == $message)] | first // {}')"
+            status="$(jq -r '.status // empty' <<<"$row")"
+            case "$status" in
+              SUCCESS) echo "frontend-web deployment succeeded"; exit 0 ;;
+              FAILED|CRASHED|REMOVED)
+                echo "::error::frontend-web deployment ended with $status"
+                exit 1
+                ;;
+            esac
+            echo "Waiting for frontend-web deployment (attempt $attempt/40; status: ${status:-not-found})"
+            sleep 15
+          done
+          echo "::error::timed out waiting for frontend-web deployment"
+          exit 1
+
+      - name: Verify the new privacy policy is serving
+        run: |
+          set -euo pipefail
+          url=https://frontend-web-staging-new.up.railway.app/privacy-policy
+          for attempt in $(seq 1 20); do
+            if html="$(curl --fail --silent --show-error "$url")" &&
+              grep -Fq 'This Privacy Policy explains how we collect, use, store, disclose, protect and delete personal information' <<<"$html" &&
+              ! grep -Fq 'Full legal privacy policy text should be inserted' <<<"$html"; then
+              echo "The full privacy policy is live at $url"
+              exit 0
+            fi
+            echo "Waiting for the privacy policy route to serve the new content (attempt $attempt/20)"
+            sleep 15
+          done
+          echo "::error::staging is not serving the expected privacy policy content"
+          exit 1
