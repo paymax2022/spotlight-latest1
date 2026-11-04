@@ -45,6 +45,13 @@ type Config struct {
 	SecretAccessKey string
 	// Region: R2 ignores region but SigV4 requires one; "auto" is the R2 convention.
 	Region string
+	// PublicBaseURL is the optional public-access base for this bucket, e.g.
+	// "https://pub-<hash>.r2.dev" (Cloudflare managed public domain) or a
+	// custom domain bound via Cloudflare. When set, PublicURL returns a plain
+	// unauthenticated URL — no SigV4 params — that any third party (including
+	// external insurers such as MyCover) can GET without credentials.
+	// Leave empty to keep all read access private (presigned GET only).
+	PublicBaseURL string
 }
 
 // Presigner mints presigned R2 URLs. A zero-value or incompletely-configured
@@ -93,7 +100,27 @@ func normalise(cfg Config) Config {
 	cfg.AccessKeyID = strings.TrimSpace(cfg.AccessKeyID)
 	cfg.SecretAccessKey = strings.TrimSpace(cfg.SecretAccessKey)
 	cfg.Region = strings.TrimSpace(cfg.Region)
+	cfg.PublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
 	return cfg
+}
+
+// PublicURL returns a plain (unauthenticated) GET URL for key using the bucket's
+// public domain. It is only usable when PublicBaseURL is set — i.e. the bucket
+// has Cloudflare public access enabled or a custom public domain bound. Returns
+// ("", false) when no public base URL is configured, so callers can fall back to
+// a presigned GET or return an error.
+//
+// This is the URL format MyCover requires for image_url / id_image_url /
+// device_about_image_url fields: the insurer fetches and content-checks the URL
+// server-to-server at quote and bind time, and it cannot authenticate against a
+// presigned SigV4 URL from a private R2 bucket (returns 403).
+func (p *Presigner) PublicURL(key string) (string, bool) {
+	if p == nil || p.cfg.PublicBaseURL == "" || strings.TrimSpace(key) == "" {
+		return "", false
+	}
+	// Reuse encodePath: encodes each path segment while preserving '/' so
+	// nested prefixes (e.g. "insurance/uploads/<uid>/…") resolve correctly.
+	return p.cfg.PublicBaseURL + "/" + encodePath(key), true
 }
 
 // Configured reports whether all required fields are present.

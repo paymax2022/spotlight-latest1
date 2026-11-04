@@ -576,12 +576,23 @@ func (h *insuranceUploadHandler) Upload(c *gin.Context) {
 		return
 	}
 
-	getURL, err := h.presigner.PresignGet(key, 7*24*time.Hour)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "uploaded, but could not generate an access url"})
-		return
+	// MyCover fetches and content-checks the URL at quote/bind time from their
+	// servers, so it must be a plain publicly-reachable GET — not a presigned
+	// SigV4 URL from a private R2 bucket (those return 403 to third parties).
+	// Use the bucket public domain when one is configured; presign only as a
+	// local-dev / misconfigured-env fallback.
+	var accessURL string
+	if pub, ok := h.presigner.PublicURL(key); ok {
+		accessURL = pub
+	} else {
+		signed, serr := h.presigner.PresignGet(key, 7*24*time.Hour)
+		if serr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "uploaded, but could not generate an access url"})
+			return
+		}
+		accessURL = signed
 	}
-	c.JSON(http.StatusOK, gin.H{"url": getURL})
+	c.JSON(http.StatusOK, gin.H{"url": accessURL})
 }
 
 // insuranceBinderAdapter implements transport.InsuranceBinder over the real

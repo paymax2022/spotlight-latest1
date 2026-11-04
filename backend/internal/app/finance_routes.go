@@ -502,12 +502,26 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		insuranceWebhooks := r.Group("") // provider-signed, no user auth
 		// Backend-owned presigned R2 uploads for application-form identity/evidence
 		// creds → the upload endpoint fails closed with 503 (never a fabricated URL).
+		// Insurance form images get their OWN bucket so it can be public without
+		// exposing the doctor documents and other private objects in R2Bucket.
+		// MyCover fetches these URLs server-to-server — and probes them with HEAD,
+		// which a SigV4 presigned GET rejects with 403 (the method is part of the
+		// signature) — so the URL must be plain and unauthenticated.
+		insuranceBucket := cfg.R2InsuranceBucket
+		if insuranceBucket == "" {
+			insuranceBucket = cfg.R2Bucket
+		}
+		insurancePublicBase := cfg.R2InsurancePublicBaseURL
+		if insurancePublicBase == "" {
+			insurancePublicBase = cfg.R2PublicBaseURL
+		}
 		insurancePresigner := r2.New(r2.Config{
 			AccountEndpoint: cfg.R2AccountEndpoint,
-			Bucket:          cfg.R2Bucket,
+			Bucket:          insuranceBucket,
 			AccessKeyID:     cfg.R2AccessKeyID,
 			SecretAccessKey: cfg.R2SecretAccessKey,
 			Region:          cfg.R2Region,
+			PublicBaseURL:   insurancePublicBase,
 		})
 		// Embedded-cover member notifications ride the shared asynq
 		// notifications queue (same pattern as investNotifier/freNotifier
@@ -528,7 +542,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				})
 			}
 		}
-		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac, insurancePresigner, cfg.R2Bucket, cfg) // gateway/catalog/policy/quote/saga/consent
+		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac, insurancePresigner, insuranceBucket, cfg) // gateway/catalog/policy/quote/saga/consent
 		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac, cfg.LedgerServiceToken,
 			auditSink, embeddedNotifier, cfg.FeatureInsuranceProviderImportEnabled) // claims/embedded/webhooks/reconciliation + audit/notify sinks
 	}

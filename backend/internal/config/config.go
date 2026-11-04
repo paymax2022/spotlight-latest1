@@ -830,6 +830,21 @@ type Config struct {
 	R2AccessKeyID     string
 	R2SecretAccessKey string
 	R2Region          string
+	// R2PublicBaseURL is the public-access origin for the R2 bucket, e.g.
+	// "https://pub-<hash>.r2.dev" (Cloudflare managed public domain) or a
+	// custom domain.  When set the insurance upload handler returns a plain
+	// unauthenticated URL that third-party services such as MyCover can GET
+	// without SigV4 credentials.  Leave empty to keep all objects private.
+	R2PublicBaseURL string
+
+	// R2InsuranceBucket / R2InsurancePublicBaseURL are the dedicated bucket and
+	// its public-access origin for insurance application-form images. They are
+	// separate from R2Bucket because making the shared bucket public would also
+	// expose the doctor documents and other private uploads that live in it.
+	// Both fall back to R2Bucket / R2PublicBaseURL when unset, so a single-bucket
+	// deployment keeps working.
+	R2InsuranceBucket        string
+	R2InsurancePublicBaseURL string
 
 	// The four unbacked academy money rails (BNPL, payout, disbursement, billing)
 	// each sit behind their EXISTING provider-agnostic gateway interface. RailsMode
@@ -1290,6 +1305,10 @@ func Load() Config {
 		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
 		R2Region:          getEnv("R2_REGION", "auto"),
+		R2PublicBaseURL:   getEnv("R2_PUBLIC_BASE_URL", ""),
+
+		R2InsuranceBucket:        getEnv("R2_INSURANCE_BUCKET", ""),
+		R2InsurancePublicBaseURL: getEnv("R2_INSURANCE_PUBLIC_BASE_URL", ""),
 
 		RailsMode: getEnv("RAILS_MODE", "fake"),
 
