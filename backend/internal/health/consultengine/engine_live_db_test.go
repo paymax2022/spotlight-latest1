@@ -527,6 +527,54 @@ func TestExtensionCannotPushPastFourHoursAndEndReleasesEscrow(t *testing.T) {
 	}
 }
 
+func TestSessionChatIsParticipantScopedAndClosesAtZero(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	if _, err := f.svc.PostMessage(context.Background(), sess.ID, f.patientID, "  hello doc  "); err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	if _, err := f.svc.PostMessage(context.Background(), sess.ID, f.providerID, "hello patient"); err != nil {
+		t.Fatalf("provider post: %v", err)
+	}
+	msgs, err := f.svc.ListMessages(context.Background(), sess.ID, f.providerID, time.Time{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(msgs) != 2 || msgs[0].Body != "hello doc" {
+		t.Fatalf("messages = %+v, want two in order with trimmed body", msgs)
+	}
+	if _, err := f.svc.PostMessage(context.Background(), sess.ID, uuid.NewString(), "hi"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stranger post: err = %v, want ErrNotFound", err)
+	}
+	if _, err := f.svc.ListMessages(context.Background(), sess.ID, uuid.NewString(), time.Time{}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stranger list: err = %v, want ErrNotFound", err)
+	}
+	if _, err := f.svc.ListMessages(context.Background(), uuid.NewString(), f.patientID, time.Time{}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing session list: err = %v, want ErrNotFound", err)
+	}
+
+	f.clock = sess.EndsAt.Add(-time.Second)
+	if _, err := f.svc.PostMessage(context.Background(), sess.ID, f.patientID, "still here"); err != nil {
+		t.Fatalf("post before end: %v", err)
+	}
+	f.clock = sess.EndsAt
+	if _, err := f.svc.PostMessage(context.Background(), sess.ID, f.patientID, "too late"); !errors.Is(err, ErrState) {
+		t.Fatalf("post at end: err = %v, want ErrState", err)
+	}
+	// Reading stays open after the end.
+	if _, err := f.svc.ListMessages(context.Background(), sess.ID, f.patientID, time.Time{}); err != nil {
+		t.Fatalf("read after end: %v", err)
+	}
+}
+
 func TestASecondOpenExtensionRequestIsRefused(t *testing.T) {
 	f := newEngineFixture(t)
 	pkg := f.publishVetVideo(t, 30, 500_000)
