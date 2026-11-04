@@ -89,29 +89,17 @@ func (s *Service) Book(ctx context.Context, req BookRequest) (Session, error) {
 	              provider_user_id, source_ref, package_id, duration_minutes, price_kobo,
 	              booked_start, ends_at, warn_at, state, room_name, base_hold_id)
 	           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'scheduled',$15,$16)
-	           RETURNING id, vertical, mode, patient_id, provider_owner_kind, provider_owner_id,
-	                     provider_user_id, source_ref, package_id, duration_minutes, price_kobo,
-	                     booked_start, ends_at, warn_at, warning_sent_at, state, room_name,
-	                     base_hold_id, ended_at`
+	           RETURNING ` + sessionColumns
 	var hold *string
 	if strings.TrimSpace(req.BaseHoldID) != "" {
 		hold = &req.BaseHoldID
 	}
-	var sess Session
-	var vertical, mode, ownerKind, state string
-	err = s.db.QueryRow(ctx, q, id, req.Vertical, req.Mode, req.PatientID, req.ProviderOwnerKind,
-		req.ProviderOwnerID, req.ProviderUserID, req.SourceRef, req.PackageID, duration, price,
-		start, ends, warn, room, hold).Scan(
-		&sess.ID, &vertical, &mode, &sess.PatientID, &ownerKind,
-		&sess.ProviderOwnerID, &sess.ProviderUserID, &sess.SourceRef, &sess.PackageID,
-		&sess.DurationMinutes, &sess.PriceKobo, &sess.BookedStart, &sess.EndsAt,
-		&sess.WarnAt, &sess.WarningSentAt, &state, &sess.RoomName,
-		&sess.BaseHoldID, &sess.EndedAt)
+	sess, err := scanSession(s.db.QueryRow(ctx, q, id, req.Vertical, req.Mode, req.PatientID,
+		req.ProviderOwnerKind, req.ProviderOwnerID, req.ProviderUserID, req.SourceRef,
+		req.PackageID, duration, price, start, ends, warn, room, hold))
 	if err != nil {
 		return Session{}, fmt.Errorf("consult: book session: %w", err)
 	}
-	sess.Vertical, sess.Mode, sess.ProviderOwnerKind = Vertical(vertical), Mode(mode), OwnerKind(ownerKind)
-	sess.State = State(state)
 	s.audited(req.PatientID, req.ProviderUserID, "health.consult.book", sess.ID, nil, map[string]any{
 		"vertical": string(req.Vertical), "mode": string(req.Mode),
 		"duration_minutes": duration, "price_kobo": price,
@@ -226,10 +214,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 		return fmt.Errorf("consult: sweep warnings: %w", err)
 	}
 
-	rows, err := s.db.Query(ctx, `SELECT id, vertical, mode, patient_id, provider_owner_kind,
-	                                     provider_owner_id, provider_user_id, source_ref, package_id,
-	                                     duration_minutes, price_kobo, booked_start, ends_at, warn_at,
-	                                     warning_sent_at, state, room_name, base_hold_id, ended_at
+	rows, err := s.db.Query(ctx, `SELECT `+sessionColumns+`
 	                              FROM consult_sessions
 	                              WHERE state IN ('scheduled','live') AND ends_at <= $1`, now)
 	if err != nil {
@@ -237,18 +222,11 @@ func (s *Service) Sweep(ctx context.Context) error {
 	}
 	var due []Session
 	for rows.Next() {
-		var sess Session
-		var vertical, mode, ownerKind, state string
-		if err := rows.Scan(&sess.ID, &vertical, &mode, &sess.PatientID,
-			&ownerKind, &sess.ProviderOwnerID, &sess.ProviderUserID,
-			&sess.SourceRef, &sess.PackageID, &sess.DurationMinutes, &sess.PriceKobo,
-			&sess.BookedStart, &sess.EndsAt, &sess.WarnAt, &sess.WarningSentAt,
-			&state, &sess.RoomName, &sess.BaseHoldID, &sess.EndedAt); err != nil {
+		sess, err := scanSession(rows)
+		if err != nil {
 			rows.Close()
 			return err
 		}
-		sess.Vertical, sess.Mode = Vertical(vertical), Mode(mode)
-		sess.ProviderOwnerKind, sess.State = OwnerKind(ownerKind), State(state)
 		due = append(due, sess)
 	}
 	rows.Close()

@@ -48,6 +48,34 @@ func (s *Service) verifyOwner(ctx context.Context, callerID string, kind OwnerKi
 	}
 }
 
+const packageColumns = `id, owner_kind, owner_id, vertical, mode, duration_minutes, price_kobo, active, created_at`
+
+func scanPackage(row rowScanner) (Package, error) {
+	var p Package
+	var ownerKind, vertical, mode string
+	if err := row.Scan(&p.ID, &ownerKind, &p.OwnerID, &vertical, &mode,
+		&p.DurationMinutes, &p.PriceKobo, &p.Active, &p.CreatedAt); err != nil {
+		return Package{}, err
+	}
+	p.OwnerKind, p.Vertical, p.Mode = OwnerKind(ownerKind), Vertical(vertical), Mode(mode)
+	return p, nil
+}
+
+// GetPackage returns one ACTIVE price point to any signed-in reader. An inactive
+// package cannot start a session, so it is folded into not-found rather than
+// advertising a price nobody can buy.
+func (s *Service) GetPackage(ctx context.Context, id string) (Package, error) {
+	q := `SELECT ` + packageColumns + ` FROM consult_session_packages WHERE id=$1 AND active=true`
+	p, err := scanPackage(s.db.QueryRow(ctx, q, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Package{}, ErrNotFound
+	}
+	if err != nil {
+		return Package{}, fmt.Errorf("consult: load package: %w", err)
+	}
+	return p, nil
+}
+
 // PublishPackage creates or updates one price point. The caller must own the
 // pricing surface; publishing for someone else is a uniform not-found.
 func (s *Service) PublishPackage(ctx context.Context, callerID string, pkg Package) (Package, error) {
@@ -68,17 +96,12 @@ func (s *Service) PublishPackage(ctx context.Context, callerID string, pkg Packa
 	           VALUES ($1,$2,$3,$4,$5,$6,$7)
 	           ON CONFLICT (owner_kind, owner_id, vertical, mode, duration_minutes)
 	           DO UPDATE SET price_kobo=EXCLUDED.price_kobo, active=EXCLUDED.active, updated_at=now()
-	           RETURNING id, owner_kind, owner_id, vertical, mode, duration_minutes, price_kobo, active, created_at`
-	var out Package
-	var ownerKind, vertical, mode string
-	err := s.db.QueryRow(ctx, q, pkg.OwnerKind, pkg.OwnerID, pkg.Vertical, pkg.Mode,
-		pkg.DurationMinutes, pkg.PriceKobo, pkg.Active).Scan(
-		&out.ID, &ownerKind, &out.OwnerID, &vertical, &mode,
-		&out.DurationMinutes, &out.PriceKobo, &out.Active, &out.CreatedAt)
+	           RETURNING ` + packageColumns
+	out, err := scanPackage(s.db.QueryRow(ctx, q, pkg.OwnerKind, pkg.OwnerID, pkg.Vertical,
+		pkg.Mode, pkg.DurationMinutes, pkg.PriceKobo, pkg.Active))
 	if err != nil {
 		return Package{}, fmt.Errorf("consult: publish package: %w", err)
 	}
-	out.OwnerKind, out.Vertical, out.Mode = OwnerKind(ownerKind), Vertical(vertical), Mode(mode)
 	return out, nil
 }
 
@@ -101,13 +124,10 @@ func (s *Service) ListPackages(ctx context.Context, vertical Vertical, ownerKind
 	defer rows.Close()
 	var out []Package
 	for rows.Next() {
-		var p Package
-		var ownerKind, vertical, mode string
-		if err := rows.Scan(&p.ID, &ownerKind, &p.OwnerID, &vertical, &mode,
-			&p.DurationMinutes, &p.PriceKobo, &p.Active, &p.CreatedAt); err != nil {
+		p, err := scanPackage(rows)
+		if err != nil {
 			return nil, err
 		}
-		p.OwnerKind, p.Vertical, p.Mode = OwnerKind(ownerKind), Vertical(vertical), Mode(mode)
 		out = append(out, p)
 	}
 	return out, rows.Err()
