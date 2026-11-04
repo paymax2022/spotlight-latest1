@@ -21,6 +21,8 @@ type Auditor interface {
 type Escrow interface {
 	HoldWithPayee(ctx context.Context, payerID, payeeID, reference, moduleType, idemKey string, amountKobo int64) (string, error)
 	Release(ctx context.Context, escrowID, payeeID string) error
+	// Refund compensates a hold whose extension could not be applied.
+	Refund(ctx context.Context, escrowID string) error
 }
 
 // RoomMedia provisions rooms and mints join tokens. nil means "media is off":

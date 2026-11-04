@@ -266,7 +266,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 	rows, err = s.db.Query(ctx, `SELECT DISTINCT e.session_id
 	                             FROM consult_extension_requests e
 	                             JOIN consult_sessions s ON s.id=e.session_id
-	                             WHERE s.state='ended' AND e.status='paid'
+	                             WHERE s.state='ended' AND e.status IN ('paid','expired')
 	                               AND e.escrow_id IS NOT NULL AND e.released_at IS NULL`)
 	if err != nil {
 		return fmt.Errorf("consult: list unreleased escrows: %w", err)

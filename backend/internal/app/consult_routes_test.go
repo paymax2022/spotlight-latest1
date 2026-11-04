@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/health/consultengine"
 )
 
@@ -162,6 +163,34 @@ func TestConsultPayMapsInsufficientFundsTo402(t *testing.T) {
 		"/api/v1/consult/sessions/"+sessionID+"/extensions/"+extID+"/pay", "user-1", "")
 	if w.Code != http.StatusPaymentRequired {
 		t.Fatalf("insufficient funds: %d, want 402 (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestConsultPayMapsTierRefusalsTo403(t *testing.T) {
+	sessionID := uuid.NewString()
+	extID := uuid.NewString()
+	for _, sentinel := range []error{tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded} {
+		f := &fakeConsultAPI{
+			payErr: fmt.Errorf("consult: hold extension payment: %w", sentinel),
+		}
+		r := consultTestRouter(f)
+		w := doJSON(r, http.MethodPost,
+			"/api/v1/consult/sessions/"+sessionID+"/extensions/"+extID+"/pay", "user-1", "")
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("%v: %d, want 403 (%s)", sentinel, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestConsultDecideRequiresApproveFlag(t *testing.T) {
+	sessionID := uuid.NewString()
+	extID := uuid.NewString()
+	f := &fakeConsultAPI{}
+	r := consultTestRouter(f)
+	w := doJSON(r, http.MethodPost,
+		"/api/v1/consult/sessions/"+sessionID+"/extensions/"+extID+"/decide", "doc-1", `{}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing approve: %d, want 400 (%s)", w.Code, w.Body.String())
 	}
 }
 

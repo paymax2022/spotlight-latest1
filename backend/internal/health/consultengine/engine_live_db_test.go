@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,9 +39,12 @@ func (f *fakeMedia) URL() string             { return "wss://rtc.test" }
 func (f *fakeMedia) TokenTTL() time.Duration { return 10 * time.Minute }
 
 type fakeEscrow struct {
-	holds    []string
-	released []string
-	err      error
+	holds     []string
+	released  []string
+	refunded  []string
+	err       error
+	refundErr error
+	afterHold func()
 }
 
 func (f *fakeEscrow) HoldWithPayee(_ context.Context, payerID, payeeID, reference, moduleType, idemKey string, amountKobo int64) (string, error) {
@@ -48,10 +52,20 @@ func (f *fakeEscrow) HoldWithPayee(_ context.Context, payerID, payeeID, referenc
 		return "", f.err
 	}
 	f.holds = append(f.holds, idemKey)
+	if f.afterHold != nil {
+		f.afterHold()
+	}
 	return "escrow-" + idemKey, nil
 }
 func (f *fakeEscrow) Release(_ context.Context, escrowID, payeeID string) error {
 	f.released = append(f.released, escrowID)
+	return nil
+}
+func (f *fakeEscrow) Refund(_ context.Context, escrowID string) error {
+	if f.refundErr != nil {
+		return f.refundErr
+	}
+	f.refunded = append(f.refunded, escrowID)
 	return nil
 }
 
@@ -591,5 +605,205 @@ func TestASecondOpenExtensionRequestIsRefused(t *testing.T) {
 	}
 	if _, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 5); !errors.Is(err, ErrState) {
 		t.Fatalf("second request: err = %v, want ErrState", err)
+	}
+}
+
+func (f *engineFixture) bookVetVideo(t *testing.T, pkg Package) Session {
+	t.Helper()
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeVideo, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:abc", PackageID: pkg.ID,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	return sess
+}
+
+// TestPayExtensionRefundsWhenTheSessionEndsMidPayment pins the money-safe
+// order: the hold is placed first, so a session that ends before the minutes
+// commit must give the money back and leave no escrow on the request.
+func TestPayExtensionRefundsWhenTheSessionEndsMidPayment(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess := f.bookVetVideo(t, pkg)
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	wantEscrow := "escrow-consult-ext:" + ext.ID
+	f.escrow.afterHold = func() {
+		if _, err := f.pool.Exec(context.Background(),
+			`UPDATE consult_sessions SET state='ended', ended_at=$2 WHERE id=$1`, sess.ID, f.clock); err != nil {
+			t.Fatalf("end session mid-payment: %v", err)
+		}
+	}
+
+	if _, _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID); !errors.Is(err, ErrState) {
+		t.Fatalf("pay after the session ended: err = %v, want ErrState", err)
+	}
+	if len(f.escrow.refunded) != 1 || f.escrow.refunded[0] != wantEscrow {
+		t.Fatalf("refunded = %v, want [%s]", f.escrow.refunded, wantEscrow)
+	}
+	var status string
+	var escrowID *string
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT status, escrow_id FROM consult_extension_requests WHERE id=$1`, ext.ID).Scan(&status, &escrowID); err != nil {
+		t.Fatalf("reload extension: %v", err)
+	}
+	if status != string(ExtExpired) || escrowID != nil {
+		t.Fatalf("extension = %s / escrow %v, want expired with no hold", status, escrowID)
+	}
+	after, err := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !after.EndsAt.Equal(sess.EndsAt) {
+		t.Fatalf("ends_at = %v, want the unchanged %v", after.EndsAt, sess.EndsAt)
+	}
+}
+
+func TestConcurrentProviderGrantAndPaidExtensionKeepBothIncrements(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess := f.bookVetVideo(t, pkg)
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	var grantErr, payErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, grantErr = f.svc.RequestExtension(context.Background(), sess.ID, f.providerID, 5)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _, payErr = f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID)
+	}()
+	wg.Wait()
+	if grantErr != nil {
+		t.Fatalf("provider grant: %v", grantErr)
+	}
+	if payErr != nil {
+		t.Fatalf("patient payment: %v", payErr)
+	}
+	got, err := f.svc.Get(context.Background(), sess.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	wantEnd := sess.BookedStart.Add(45 * time.Minute)
+	if !got.EndsAt.Equal(wantEnd) {
+		t.Fatalf("ends_at = %v, want %v (30 + 5 + 10 minutes)", got.EndsAt, wantEnd)
+	}
+	if want := WarnAt(sess.BookedStart, wantEnd); !got.WarnAt.Equal(want) {
+		t.Fatalf("warn_at = %v, want %v", got.WarnAt, want)
+	}
+}
+
+func TestExtensionPaymentIsRefusedAfterComplete(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess := f.bookVetVideo(t, pkg)
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if err := f.svc.Complete(context.Background(), sess.ID, f.patientID); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if _, _, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID); !errors.Is(err, ErrState) {
+		t.Fatalf("pay after complete: err = %v, want ErrState", err)
+	}
+	if len(f.escrow.holds) != 0 {
+		t.Fatalf("a refused payment moved money: %v", f.escrow.holds)
+	}
+}
+
+func TestApprovalIsRefusedAfterComplete(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess := f.bookVetVideo(t, pkg)
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if err := f.svc.Complete(context.Background(), sess.ID, f.providerID); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, ""); !errors.Is(err, ErrState) {
+		t.Fatalf("approve after complete: err = %v, want ErrState", err)
+	}
+}
+
+func TestFreePriceExtensionNeedsNoEscrow(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 0)
+	sess := f.bookVetVideo(t, pkg)
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if ext.PriceKobo != 0 {
+		t.Fatalf("price = %d, want 0", ext.PriceKobo)
+	}
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	paid, after, err := f.svc.PayExtension(context.Background(), sess.ID, ext.ID, f.patientID)
+	if err != nil {
+		t.Fatalf("pay: %v", err)
+	}
+	if len(f.escrow.holds) != 0 {
+		t.Fatalf("a free extension held money: %v", f.escrow.holds)
+	}
+	if want := sess.EndsAt.Add(10 * time.Minute); !after.EndsAt.Equal(want) {
+		t.Fatalf("ends_at = %v, want %v", after.EndsAt, want)
+	}
+	if paid.Status != ExtPaid || paid.EscrowID != nil {
+		t.Fatalf("paid = %+v, want paid with no escrow", paid)
+	}
+}
+
+func TestExpiredHeldExtensionIsRefundedAtSessionEnd(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetVideo(t, 30, 500_000)
+	sess := f.bookVetVideo(t, pkg)
+	ext, err := f.svc.RequestExtension(context.Background(), sess.ID, f.patientID, 10)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if _, err := f.svc.DecideExtension(context.Background(), sess.ID, ext.ID, f.providerID, true, ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if _, err := f.pool.Exec(context.Background(),
+		`UPDATE consult_extension_requests SET status='expired', escrow_id='esc-crash', released_at=NULL WHERE id=$1`, ext.ID); err != nil {
+		t.Fatalf("seed crashed hold: %v", err)
+	}
+	if err := f.svc.Complete(context.Background(), sess.ID, f.providerID); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if len(f.escrow.refunded) != 1 || f.escrow.refunded[0] != "esc-crash" {
+		t.Fatalf("refunded = %v, want [esc-crash]", f.escrow.refunded)
+	}
+	var released *time.Time
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT released_at FROM consult_extension_requests WHERE id=$1`, ext.ID).Scan(&released); err != nil {
+		t.Fatalf("reload extension: %v", err)
+	}
+	if released == nil {
+		t.Fatal("released_at stayed NULL after the refund")
 	}
 }

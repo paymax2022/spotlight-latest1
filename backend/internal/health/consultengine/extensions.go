@@ -15,6 +15,34 @@ const extColumns = `id, session_id, requested_by, added_minutes, price_kobo, sta
                     approved_at, payment_expires_at, paid_at, escrow_id, decided_by,
                     decline_reason, created_at`
 
+// sqlExecer is the slice of pgx the extension writers need, so the same helper
+// runs on the pool or inside a transaction.
+type sqlExecer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// applyExtensionOn advances ends_at atomically from whichever is later (now, the
+// row's current ends_at), then recomputes warn_at from the row's booked_start.
+func applyExtensionOn(ctx context.Context, q sqlExecer, sessionID string, minutes int, now time.Time) (end, warn time.Time, err error) {
+	const advance = `UPDATE consult_sessions
+	                 SET ends_at = GREATEST(ends_at, $2) + ($3 * interval '1 minute'), updated_at=$2
+	                 WHERE id=$1 AND state IN ('scheduled','live')
+	                 RETURNING ends_at, booked_start`
+	var bookedStart time.Time
+	if err := q.QueryRow(ctx, advance, sessionID, now, minutes).Scan(&end, &bookedStart); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return time.Time{}, time.Time{}, ErrState
+		}
+		return time.Time{}, time.Time{}, fmt.Errorf("consult: advance session: %w", err)
+	}
+	warn = WarnAt(bookedStart, end)
+	if _, err := q.Exec(ctx, `UPDATE consult_sessions SET warn_at=$2, warning_sent_at=NULL, updated_at=$3 WHERE id=$1`, sessionID, warn, now); err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("consult: rearm warning: %w", err)
+	}
+	return end, warn, nil
+}
+
 func scanExtension(row pgx.Row) (Extension, error) {
 	var e Extension
 	var status string
@@ -69,19 +97,42 @@ func (s *Service) RequestExtension(ctx context.Context, sessionID, callerID stri
 	if isProvider {
 		approved, paid = &now, &now
 	}
-	ext, err := scanExtension(s.db.QueryRow(ctx, q, sessionID, callerID, minutes, price, status, approved, paid))
-	if err != nil {
+	isUnique := func(err error) bool {
 		// The partial unique index allows one open request per session; a
 		// second concurrent request is a state conflict, not a server fault.
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return Extension{}, ErrState
-		}
-		return Extension{}, fmt.Errorf("consult: request extension: %w", err)
+		return errors.As(err, &pgErr) && pgErr.Code == "23505"
 	}
+	var ext Extension
 	if isProvider {
-		if _, err := s.applyExtension(ctx, sess, minutes); err != nil {
+		// The grant row and its minutes commit together, so a free grant can
+		// never exist without the time it granted.
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			return Extension{}, fmt.Errorf("consult: begin extension grant: %w", err)
+		}
+		defer tx.Rollback(ctx)
+		ext, err = scanExtension(tx.QueryRow(ctx, q, sessionID, callerID, minutes, price, status, approved, paid))
+		if err != nil {
+			if isUnique(err) {
+				return Extension{}, ErrState
+			}
+			return Extension{}, fmt.Errorf("consult: request extension: %w", err)
+		}
+		if _, _, err := applyExtensionOn(ctx, tx, sessionID, minutes, now); err != nil {
 			return Extension{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Extension{}, fmt.Errorf("consult: commit extension grant: %w", err)
+		}
+	} else {
+		var err error
+		ext, err = scanExtension(s.db.QueryRow(ctx, q, sessionID, callerID, minutes, price, status, approved, paid))
+		if err != nil {
+			if isUnique(err) {
+				return Extension{}, ErrState
+			}
+			return Extension{}, fmt.Errorf("consult: request extension: %w", err)
 		}
 	}
 	s.audited(callerID, sess.PatientID, "health.consult.extension.request", ext.ID, nil,
@@ -106,12 +157,18 @@ func (s *Service) DecideExtension(ctx context.Context, sessionID, extID, callerI
 		return Extension{}, ErrExtensionNotPayable
 	}
 	now := s.now()
+	if sess.State == StateEnded || sess.State == StateCancelled {
+		return Extension{}, ErrState
+	}
 	if now.Before(sess.EndsAt) == false {
 		return Extension{}, ErrState
 	}
 	var updated Extension
 	if approve {
 		expires := now.Add(ExtensionPaymentWindow)
+		if expires.After(sess.EndsAt) {
+			expires = sess.EndsAt
+		}
 		q := `UPDATE consult_extension_requests
 		      SET status='approved_awaiting_payment', approved_at=$2, payment_expires_at=$3,
 		          decided_by=$4, updated_at=$2
@@ -139,8 +196,9 @@ func (s *Service) DecideExtension(ctx context.Context, sessionID, extID, callerI
 }
 
 // PayExtension moves the patient's approved extension into escrow and applies
-// the added minutes. The escrow key is the extension id, so a retry cannot
-// charge twice.
+// the added minutes in one transaction, so escrow can never fund a session
+// whose minutes were not granted. The escrow key is the extension id, so a
+// retry cannot charge twice.
 func (s *Service) PayExtension(ctx context.Context, sessionID, extID, callerID string) (Extension, Session, error) {
 	sess, _, err := s.loadForCaller(ctx, sessionID, callerID)
 	if err != nil {
@@ -162,23 +220,76 @@ func (s *Service) PayExtension(ctx context.Context, sessionID, extID, callerID s
 		                       WHERE id=$1 AND status='approved_awaiting_payment'`, extID, now)
 		return Extension{}, Session{}, ErrPaymentExpired
 	}
+	if sess.State == StateEnded || sess.State == StateCancelled {
+		return Extension{}, Session{}, ErrState
+	}
 	if s.esc == nil {
 		return Extension{}, Session{}, ErrEscrowUnavailable
 	}
-	escrowID, err := s.esc.HoldWithPayee(ctx, sess.PatientID, sess.ProviderUserID,
-		sess.SourceRef, "consult_extension", "consult-ext:"+ext.ID, ext.PriceKobo)
-	if err != nil {
-		return Extension{}, Session{}, fmt.Errorf("consult: hold extension payment: %w", err)
+	// A previous attempt may have held money and failed before recording it.
+	// Refund that hold before taking another one.
+	if ext.EscrowID != nil {
+		if err := s.esc.Refund(ctx, *ext.EscrowID); err != nil {
+			return Extension{}, Session{}, fmt.Errorf("consult: refund stale extension hold: %w", err)
+		}
+		if _, err := s.db.Exec(ctx, `UPDATE consult_extension_requests SET escrow_id=NULL, updated_at=$2
+		                             WHERE id=$1 AND status='approved_awaiting_payment'`, extID, now); err != nil {
+			return Extension{}, Session{}, fmt.Errorf("consult: clear stale extension hold: %w", err)
+		}
+		ext.EscrowID = nil
 	}
-	q := `UPDATE consult_extension_requests
-	      SET status='paid', paid_at=$2, escrow_id=$3, updated_at=$2
-	      WHERE id=$1 AND status='approved_awaiting_payment'
-	      RETURNING ` + extColumns
-	paid, err := scanExtension(s.db.QueryRow(ctx, q, extID, now, escrowID))
+
+	// A zero-price extension moves no money and must not touch escrow.
+	var escrowID *string
+	if ext.PriceKobo > 0 {
+		id, err := s.esc.HoldWithPayee(ctx, sess.PatientID, sess.ProviderUserID,
+			sess.SourceRef, "consult_extension", "consult-ext:"+ext.ID, ext.PriceKobo)
+		if err != nil {
+			return Extension{}, Session{}, fmt.Errorf("consult: hold extension payment: %w", err)
+		}
+		escrowID = &id
+		if _, err := s.db.Exec(ctx, `UPDATE consult_extension_requests SET escrow_id=$2, updated_at=$3
+		                             WHERE id=$1 AND status='approved_awaiting_payment'`, extID, id, now); err != nil {
+			_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+			return Extension{}, Session{}, fmt.Errorf("consult: record extension hold: %w", err)
+		}
+	}
+
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
+		_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+		return Extension{}, Session{}, fmt.Errorf("consult: begin extension payment: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	const markPaid = `UPDATE consult_extension_requests
+	                  SET status='paid', paid_at=$2, escrow_id=$3, updated_at=$2
+	                  WHERE id=$1 AND status='approved_awaiting_payment'
+	                  RETURNING ` + extColumns
+	paid, err := scanExtension(tx.QueryRow(ctx, markPaid, extID, now, escrowID))
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The request left the payable state underneath us. A concurrent
+			// winner's paid row owns the hold, so only compensate an unclaimed one.
+			if cur, lerr := s.loadExtension(ctx, sessionID, extID); lerr != nil || cur.Status != ExtPaid {
+				_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+			}
+			return Extension{}, Session{}, ErrPaymentExpired
+		}
+		_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
 		return Extension{}, Session{}, fmt.Errorf("consult: mark extension paid: %w", err)
 	}
-	updated, err := s.applyExtension(ctx, sess, ext.AddedMinutes)
+	if _, _, err := applyExtensionOn(ctx, tx, sess.ID, ext.AddedMinutes, now); err != nil {
+		_ = tx.Rollback(ctx)
+		_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+		return Extension{}, Session{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		_ = s.compensateFailedPayment(ctx, extID, escrowID, now)
+		return Extension{}, Session{}, fmt.Errorf("consult: commit extension payment: %w", err)
+	}
+	updated, err := s.load(ctx, sess.ID)
 	if err != nil {
 		return Extension{}, Session{}, err
 	}
@@ -187,49 +298,42 @@ func (s *Service) PayExtension(ctx context.Context, sessionID, extID, callerID s
 	return paid, s.view(updated), nil
 }
 
-// applyExtension moves ends_at forward from whichever is later (now, current
-// end) and resets the warning so the new end is announced.
-func (s *Service) applyExtension(ctx context.Context, sess Session, minutes int) (Session, error) {
-	now := s.now()
-	base := sess.EndsAt
-	if now.After(base) {
-		base = now
+// compensateFailedPayment refunds a hold whose minutes were not applied, then
+// retires the request. A failed refund keeps escrow_id so the sweep's refund
+// lane retries it; the update is status-guarded so a concurrently committed
+// payment is never rewritten.
+func (s *Service) compensateFailedPayment(ctx context.Context, extID string, escrowID *string, now time.Time) error {
+	if escrowID != nil {
+		if err := s.esc.Refund(ctx, *escrowID); err != nil {
+			_, _ = s.db.Exec(ctx, `UPDATE consult_extension_requests SET status='expired', updated_at=$2
+			                       WHERE id=$1 AND status IN ('approved_awaiting_payment','expired')`, extID, now)
+			return err
+		}
 	}
-	ends := base.Add(time.Duration(minutes) * time.Minute)
-	warn := WarnAt(sess.BookedStart, ends)
-	const q = `UPDATE consult_sessions
-	           SET ends_at=$2, warn_at=$3, warning_sent_at=NULL, updated_at=$4
-	           WHERE id=$1 AND state IN ('scheduled','live')
-	           RETURNING ends_at, warn_at`
-	var gotEnd, gotWarn time.Time
-	if err := s.db.QueryRow(ctx, q, sess.ID, ends, warn, now).Scan(&gotEnd, &gotWarn); err != nil {
-		return Session{}, fmt.Errorf("consult: apply extension: %w", err)
-	}
-	updated, err := s.load(ctx, sess.ID)
-	if err != nil {
-		return Session{}, err
-	}
-	return updated, nil
+	_, err := s.db.Exec(ctx, `UPDATE consult_extension_requests SET status='expired', escrow_id=NULL, updated_at=$2
+	                          WHERE id=$1 AND status IN ('approved_awaiting_payment','expired')`, extID, now)
+	return err
 }
 
-// releaseExtensions releases every paid extension hold for an ended session,
-// once. A release failure is retried by the next sweep because released_at
-// stays NULL.
+// releaseExtensions settles every extension hold for an ended session, once:
+// money that bought minutes is released to the provider, money held for an
+// extension that was never granted is refunded to the patient. A failure is
+// retried by the next sweep because released_at stays NULL.
 func (s *Service) releaseExtensions(ctx context.Context, sess Session) error {
 	if s.esc == nil {
 		return nil
 	}
-	rows, err := s.db.Query(ctx, `SELECT id, escrow_id FROM consult_extension_requests
-	                              WHERE session_id=$1 AND status='paid'
+	rows, err := s.db.Query(ctx, `SELECT id, status, escrow_id FROM consult_extension_requests
+	                              WHERE session_id=$1 AND status IN ('paid','expired')
 	                                AND escrow_id IS NOT NULL AND released_at IS NULL`, sess.ID)
 	if err != nil {
 		return fmt.Errorf("consult: list extension escrows: %w", err)
 	}
-	type pending struct{ id, escrow string }
+	type pending struct{ id, status, escrow string }
 	var items []pending
 	for rows.Next() {
 		var p pending
-		if err := rows.Scan(&p.id, &p.escrow); err != nil {
+		if err := rows.Scan(&p.id, &p.status, &p.escrow); err != nil {
 			rows.Close()
 			return err
 		}
@@ -240,7 +344,12 @@ func (s *Service) releaseExtensions(ctx context.Context, sess Session) error {
 		return err
 	}
 	for _, p := range items {
-		if err := s.esc.Release(ctx, p.escrow, sess.ProviderUserID); err != nil {
+		var err error
+		if ExtensionStatus(p.status) == ExtExpired {
+			if err = s.esc.Refund(ctx, p.escrow); err != nil {
+				return fmt.Errorf("consult: refund extension escrow: %w", err)
+			}
+		} else if err = s.esc.Release(ctx, p.escrow, sess.ProviderUserID); err != nil {
 			return fmt.Errorf("consult: release extension escrow: %w", err)
 		}
 		if _, err := s.db.Exec(ctx, `UPDATE consult_extension_requests SET released_at=$2 WHERE id=$1`, p.id, s.now()); err != nil {

@@ -15,6 +15,7 @@ import (
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/health/consultengine"
 	"spotlight/backend/internal/integrations/livekit"
 	"spotlight/backend/internal/services"
@@ -28,8 +29,11 @@ var consultErrMap = httperr.New(http.StatusInternalServerError,
 	// PayExtension debits the payer's wallet; an underfunded patient must get a
 	// payment-required answer, not a 500. The escrow layer wraps this sentinel.
 	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),
+	// The tier gate refuses the debit before it is posted; that is a policy
+	// answer, not a server fault.
+	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
 	httperr.R(http.StatusServiceUnavailable, consultengine.ErrMediaUnavailable,
-		consultengine.ErrEscrowUnavailable))
+		consultengine.ErrEscrowUnavailable, escrow.ErrReconPending))
 
 type consultAPI interface {
 	PublishPackage(ctx context.Context, callerID string, pkg consultengine.Package) (consultengine.Package, error)
@@ -202,14 +206,18 @@ func (h *consultHandler) decideExtension(c *gin.Context) {
 		return
 	}
 	var b struct {
-		Approve bool   `json:"approve"`
+		Approve *bool  `json:"approve"`
 		Reason  string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-	ext, err := h.svc.DecideExtension(c.Request.Context(), sessionID, extID, caller, b.Approve, b.Reason)
+	if b.Approve == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "approve is required"})
+		return
+	}
+	ext, err := h.svc.DecideExtension(c.Request.Context(), sessionID, extID, caller, *b.Approve, b.Reason)
 	if err != nil {
 		consultErrMap.Write(c, err)
 		return
@@ -315,6 +323,10 @@ func (a consultEscrowAdapter) HoldWithPayee(ctx context.Context, payerID, payeeI
 
 func (a consultEscrowAdapter) Release(ctx context.Context, escrowID, payeeID string) error {
 	return a.e.Release(ctx, escrowID, payeeID)
+}
+
+func (a consultEscrowAdapter) Refund(ctx context.Context, escrowID string) error {
+	return a.e.Refund(ctx, escrowID)
 }
 
 type consultAuditor struct{ a services.AuditService }
