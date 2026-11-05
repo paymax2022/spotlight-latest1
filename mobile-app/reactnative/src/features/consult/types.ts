@@ -142,3 +142,34 @@ export function offerFromVetPackage(raw: VetPackageWire): ConsultOffer | null {
     totalKobo: raw.priceKobo,
   };
 }
+
+import type { Track, TrackPublication } from 'livekit-client';
+
+/** What `<ConsultVideo>` expects on both platforms: the publication plus the
+ *  participant that owns it. Native passes this straight to `VideoTrack`
+ *  (`trackRef.publication.track`); web reads `.publication.track` to attach. */
+export interface ConsultVideoTrack {
+  participant: unknown;
+  publication: TrackPublication;
+  source: Track.Source.Camera;
+}
+
+export type ConsultMediaStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
+
+/**
+ * `localVideo` / `remoteVideo` stay opaque to the room: web attaches
+ * `publication.track` to a <video>, native hands the publication to <VideoTrack>.
+ */
+export interface ConsultMediaState {
+  status: ConsultMediaStatus;
+  error: string | null;
+  micOn: boolean;
+  camOn: boolean;
+  localVideo: ConsultVideoTrack | null;
+  remoteVideo: ConsultVideoTrack | null;
+}
+
+export interface ConsultMedia extends ConsultMediaState {
+  setMic: (on: boolean) => Promise<void>;
+  setCam: (on: boolean) => Promise<void>;
+}
