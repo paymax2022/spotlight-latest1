@@ -56,8 +56,11 @@ export default function ConfirmBookingScreen() {
   // A package carries its own quote; using the doctor-level quote here would
   // show (and charge) the legacy fee for a package booking.
   const pickedPackage = doctor?.packages?.find((pkg) => pkg.id === params.packageId);
-  const quote = pickedPackage
-    ? readBookingQuote({ booking: pickedPackage.booking })
+  // A picked package that no longer resolves must fail closed: pricing the
+  // legacy doctor fee here would show and charge a different product than the
+  // one the patient selected. An empty param is the legacy path.
+  const quote = params.packageId
+    ? readBookingQuote({ booking: pickedPackage?.booking })
     : doctor?.booking;
   const feeKobo = quote?.consultFeeKobo ?? 0;
   const serviceFeeKobo = quote?.platformFeeKobo ?? 0;
