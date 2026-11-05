@@ -9,6 +9,7 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/health/clinicalsafety"
 	healthconsult "spotlight/backend/internal/health/consult"
+	"spotlight/backend/internal/health/consultengine"
 	healthrecords "spotlight/backend/internal/health/records"
 	healthrx "spotlight/backend/internal/health/rx"
 	healthscheduling "spotlight/backend/internal/health/scheduling"
@@ -76,13 +77,16 @@ type PayoutGate interface {
 // emergency SOS routing (HL-11). The appointment state machine itself is the
 // shared healthscheduling engine — never reimplemented here.
 type Service struct {
-	db         *pgxpool.Pool
-	escrow     EscrowHolder
-	dispatch   Dispatcher
-	prov       ProviderGate
-	payout     PayoutGate
-	sched      *healthscheduling.Service
-	consult    *healthconsult.Service
+	db       *pgxpool.Pool
+	escrow   EscrowHolder
+	dispatch Dispatcher
+	prov     ProviderGate
+	payout   PayoutGate
+	sched    *healthscheduling.Service
+	consult  *healthconsult.Service
+	// rooms is the shared LiveKit consult engine (consult.go). Nil means timed
+	// tele sessions are not wired — booking and SOAP completion still work.
+	rooms      ConsultRoomEngine
 	rx         *healthrx.Service
 	records    *healthrecords.Service
 	jobs       *scheduler.Service
@@ -403,13 +407,23 @@ func (s *Service) UpsertService(ctx context.Context, ownerID string, v VetServic
 
 // BookInput is the validated appointment-creation payload.
 type BookInput struct {
-	ProviderID     string
-	PetID          string
-	ServiceID      string
-	VisitType      VisitType
-	SlotStart      time.Time
-	SlotEnd        time.Time
-	IdempotencyKey string
+	ProviderID string
+	PetID      string
+	ServiceID  string
+	// PackageID pins a published timed tele-consult package. When set, its
+	// mode, duration and price replace the visit service for a TELE booking.
+	PackageID string
+	// ConsultMode is the requested chat/voice/video mode for a TELE booking
+	// without a package ("" means video).
+	ConsultMode string
+	// ExpectedTotalKobo is the total the client showed the owner. A non-zero
+	// value that disagrees with the server price refuses the booking before any
+	// money moves.
+	ExpectedTotalKobo int64
+	VisitType         VisitType
+	SlotStart         time.Time
+	SlotEnd           time.Time
+	IdempotencyKey    string
 }
 
 // Book creates a PET appointment via the shared scheduling engine (REQUESTED) and
@@ -460,21 +474,76 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 			return nil, errors.New("vet: provider is not an approved VCN vet (HL-2)")
 		}
 	}
-	// Price from the pinned service (server-side, kobo integers).
-	var total int64
-	var active bool
-	const sq = `SELECT price_kobo, active FROM vet_services WHERE id=$1 AND provider_id=$2`
-	if err := s.db.QueryRow(ctx, sq, in.ServiceID, in.ProviderID).Scan(&total, &active); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("vet: service not found for this vet")
+	// Resolve the mode a TELE appointment runs. A package may override it, but
+	// the request must still name a mode the engine understands.
+	var consultMode *string
+	if in.VisitType == VisitTele {
+		m, err := normalizeVetConsultMode(in.ConsultMode)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		ms := string(m)
+		consultMode = &ms
 	}
-	if !active {
-		return nil, errors.New("vet: service is not active")
+
+	// Price from the pinned package or service (server-side, kobo integers). A
+	// timed tele package carries its own duration and price; every other visit
+	// prices from the vet's active service exactly as before.
+	var total int64
+	var packageID *string
+	var durationMinutes *int
+	switch {
+	case strings.TrimSpace(in.PackageID) != "":
+		if in.VisitType != VisitTele {
+			return nil, ErrPackageInvalid
+		}
+		pkg, err := s.loadConsultPackage(ctx, in.ProviderID, in.PackageID)
+		if err != nil {
+			return nil, err
+		}
+		total = pkg.PriceKobo
+		packageID = &pkg.ID
+		ms := string(pkg.Mode)
+		consultMode = &ms
+		durationMinutes = &pkg.DurationMinutes
+	case in.VisitType == VisitTele && strings.TrimSpace(in.ServiceID) == "":
+		// A tele vet may sell packages instead of a visit service. Without one
+		// or the other the price is unknowable; say which is missing.
+		sells, err := s.providerSellsMode(ctx, in.ProviderID, consultengine.Mode(*consultMode))
+		if err != nil {
+			return nil, err
+		}
+		if sells {
+			return nil, ErrPackageRequired
+		}
+		return nil, errors.New("vet: service not found for this vet")
+	default:
+		var active bool
+		const sq = `SELECT price_kobo, active FROM vet_services WHERE id=$1 AND provider_id=$2`
+		if err := s.db.QueryRow(ctx, sq, in.ServiceID, in.ProviderID).Scan(&total, &active); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, errors.New("vet: service not found for this vet")
+			}
+			return nil, err
+		}
+		if !active {
+			return nil, errors.New("vet: service is not active")
+		}
+		if in.VisitType == VisitTele {
+			sells, err := s.providerSellsMode(ctx, in.ProviderID, consultengine.Mode(*consultMode))
+			if err != nil {
+				return nil, err
+			}
+			if sells {
+				return nil, ErrPackageRequired
+			}
+		}
 	}
 	if total <= 0 {
 		return nil, errors.New("vet: appointment total must be positive")
+	}
+	if in.ExpectedTotalKobo > 0 && in.ExpectedTotalKobo != total {
+		return nil, ErrQuoteMismatch
 	}
 
 	// Create the appointment via the shared scheduling engine (subject_type=PET).
@@ -539,6 +608,13 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 	// of the resolution race fix; identical mechanics to healthpharmacy's
 	// lockEscrowForBinding). The tx commits/rolls back BEFORE failBooking's
 	// RefundIf runs so this tx's own hold lock never deadlocks the refund's.
+	// A package-priced tele booking has no visit service; the FK is nullable
+	// for exactly that case.
+	var serviceID *string
+	if strings.TrimSpace(in.ServiceID) != "" {
+		sid := in.ServiceID
+		serviceID = &sid
+	}
 	payErr := func() error {
 		tx, err := s.db.Begin(ctx)
 		if err != nil {
@@ -556,10 +632,12 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 		const insPay = `
 			INSERT INTO vet_appointment_payments
 				(id, appointment_id, owner_id, provider_id, pet_id, service_id, visit_type,
-				 total_kobo, escrow_id, pay_state, idempotency_key)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'HELD',$10)`
+				 total_kobo, escrow_id, pay_state, idempotency_key,
+				 consult_package_id, consult_mode, consult_duration_minutes)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'HELD',$10,$11,$12,$13)`
 		if _, err := tx.Exec(ctx, insPay, uuid.New().String(), appt.ID, ownerID, in.ProviderID,
-			in.PetID, in.ServiceID, string(in.VisitType), total, escrowID, in.IdempotencyKey); err != nil {
+			in.PetID, serviceID, string(in.VisitType), total, escrowID, in.IdempotencyKey,
+			packageID, consultMode, durationMinutes); err != nil {
 			return fmt.Errorf("vet: insert appointment payment: %w", err)
 		}
 		return tx.Commit(ctx)
@@ -568,12 +646,13 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 		return failBooking(payErr)
 	}
 
-	serviceID := in.ServiceID
 	out := &Appointment{
 		ID: appt.ID, ProviderID: in.ProviderID, OwnerID: ownerID, PetID: in.PetID,
-		ServiceID: &serviceID, VisitType: in.VisitType, State: StateRequested,
+		ServiceID: serviceID, VisitType: in.VisitType, State: StateRequested,
 		PayState: PayHeld, TotalKobo: total, EscrowID: &escrowID,
-		SlotStart: in.SlotStart, SlotEnd: in.SlotEnd, CreatedAt: time.Now(),
+		ConsultPackageID: packageID, ConsultMode: consultMode,
+		ConsultDurationMinutes: durationMinutes,
+		SlotStart:              in.SlotStart, SlotEnd: in.SlotEnd, CreatedAt: time.Now(),
 	}
 	s.audited(ownerID, in.ProviderID, "health.vet.appointment.book", appt.ID, nil,
 		map[string]any{"state": string(StateRequested), "pay_state": string(PayHeld),
@@ -927,6 +1006,15 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 		map[string]any{"state": string(StateInProgress), "pay_state": string(PayHeld)},
 		map[string]any{"state": string(StateCompleted), "pay_state": string(a.PayState)})
 	res.Appointment = a
+	// The payment is already released; ending the room is best-effort. The
+	// sweeper still ends it at ends_at, so a media hiccup must not fail a
+	// consult that has already settled.
+	if s.rooms != nil {
+		if cerr := s.rooms.CompleteBySource(ctx, consultengine.VerticalVet,
+			"vet:"+apptID, vetOwnerID); cerr != nil {
+			log.Printf("[vet] complete consult session %s: %v", apptID, cerr)
+		}
+	}
 	return res, nil
 }
 
@@ -1077,13 +1165,15 @@ func (s *Service) load(ctx context.Context, apptID string) (*Appointment, error)
 	var state, visit, payState string
 	const q = `
 		SELECT ap.id, ap.provider_id, ap.patient_id, ap.visit_type, ap.state, ap.slot_start, ap.slot_end,
-		       vp.pet_id, vp.service_id, vp.total_kobo, vp.escrow_id, vp.consult_id, vp.delivery_ref, vp.pay_state, ap.created_at
+		       vp.pet_id, vp.service_id, vp.total_kobo, vp.escrow_id, vp.consult_id, vp.delivery_ref, vp.pay_state,
+		       vp.consult_package_id, vp.consult_mode, vp.consult_duration_minutes, ap.created_at
 		FROM health_appointments ap
 		JOIN vet_appointment_payments vp ON vp.appointment_id = ap.id
 		WHERE ap.id=$1`
 	if err := s.db.QueryRow(ctx, q, apptID).Scan(&a.ID, &a.ProviderID, &a.OwnerID, &visit, &state,
 		&a.SlotStart, &a.SlotEnd, &a.PetID, &a.ServiceID, &a.TotalKobo, &a.EscrowID, &a.ConsultID,
-		&a.DeliveryRef, &payState, &a.CreatedAt); err != nil {
+		&a.DeliveryRef, &payState, &a.ConsultPackageID, &a.ConsultMode, &a.ConsultDurationMinutes,
+		&a.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrAppointmentNotFound
 		}
@@ -1443,17 +1533,22 @@ type Appointment struct {
 	// *string" if this is a plain string. Can't happen via Book() (always
 	// pins a valid service first) but can happen later on a hard-deleted
 	// vet_services row.
-	ServiceID   *string   `json:"service_id,omitempty"`
-	VisitType   VisitType `json:"visit_type"`
-	State       ApptState `json:"state"`
-	PayState    PayState  `json:"pay_state"`
-	TotalKobo   int64     `json:"total_kobo"`
-	EscrowID    *string   `json:"escrow_id,omitempty"`
-	ConsultID   *string   `json:"consult_id,omitempty"`
-	DeliveryRef *string   `json:"delivery_ref,omitempty"` // home-visit dispatch (transport)
-	SlotStart   time.Time `json:"slot_start"`
-	SlotEnd     time.Time `json:"slot_end"`
-	CreatedAt   time.Time `json:"created_at"`
+	ServiceID *string   `json:"service_id,omitempty"`
+	VisitType VisitType `json:"visit_type"`
+	State     ApptState `json:"state"`
+	PayState  PayState  `json:"pay_state"`
+	TotalKobo int64     `json:"total_kobo"`
+	EscrowID  *string   `json:"escrow_id,omitempty"`
+	ConsultID *string   `json:"consult_id,omitempty"`
+	// The pinned consult price point. Nil for legacy appointments and for
+	// HOME/CLINIC visits; a pinned duration wins over the module fallback.
+	ConsultPackageID       *string   `json:"consult_package_id,omitempty"`
+	ConsultMode            *string   `json:"consult_mode,omitempty"`
+	ConsultDurationMinutes *int      `json:"consult_duration_minutes,omitempty"`
+	DeliveryRef            *string   `json:"delivery_ref,omitempty"` // home-visit dispatch (transport)
+	SlotStart              time.Time `json:"slot_start"`
+	SlotEnd                time.Time `json:"slot_end"`
+	CreatedAt              time.Time `json:"created_at"`
 }
 
 // Vaccination is a scheduled/administered vaccine for a pet. DueAt drives the

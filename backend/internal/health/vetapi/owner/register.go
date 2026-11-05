@@ -90,6 +90,7 @@ func RegisterAppointmentAdapters(vg *gin.RouterGroup, pool *pgxpool.Pool, svc *h
 	vg.GET("/appointments/:id", h.GetAppointment)
 	vg.POST("/appointments/:id/cancel", h.CancelAppointment)
 	vg.POST("/appointments/:id/reschedule", h.RescheduleAppointment)
+	vg.POST("/appointments/:id/consult-session", h.OpenConsultSession)
 }
 
 // ---- small shared helpers ----

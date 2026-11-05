@@ -108,7 +108,7 @@ func (h *Handler) credential(ctx context.Context, uid string, p *vetProvider) (w
 }
 
 func (h *Handler) buildProfile(ctx context.Context, uid string, p *vetProvider) (wireProfile, error) {
-	out := wireProfile{Types: []string{}, Species: []string{}, Status: "draft"}
+	out := wireProfile{Types: []string{}, Species: []string{}, Packages: []wirePackage{}, Status: "draft"}
 
 	var appID, appState, appName string
 	err := h.db.QueryRow(ctx, `
@@ -188,6 +188,28 @@ func (h *Handler) buildProfile(ctx context.Context, uid string, p *vetProvider) 
 			return out, err
 		}
 		sort.Strings(out.Types)
+
+		out.ProviderID = p.ID
+		pkgRows, err := h.db.Query(ctx, `
+			SELECT id::text, mode, duration_minutes, price_kobo
+			FROM consult_session_packages
+			WHERE owner_kind='health_provider' AND owner_id=$1
+			  AND vertical='vet' AND active=TRUE
+			ORDER BY mode, price_kobo, duration_minutes`, p.ID)
+		if err != nil {
+			return out, err
+		}
+		defer pkgRows.Close()
+		for pkgRows.Next() {
+			var pkg wirePackage
+			if err := pkgRows.Scan(&pkg.ID, &pkg.Mode, &pkg.DurationMinutes, &pkg.PriceKobo); err != nil {
+				return out, err
+			}
+			out.Packages = append(out.Packages, pkg)
+		}
+		if err := pkgRows.Err(); err != nil {
+			return out, err
+		}
 	}
 	return out, nil
 }
