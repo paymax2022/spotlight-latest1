@@ -6,7 +6,7 @@
 // `server_now`, and the offset is re-derived on each poll, so a device with a
 // wrong clock still sees the same 0:00 the engine enforces.
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -74,11 +74,11 @@ export interface ConsultRoomProps {
 export default function ConsultRoom({ sessionId, role, onEnd, onBack }: ConsultRoomProps) {
   const userId = useAuthStore((s) => s.user?.id);
   const { data: session, dataUpdatedAt, error: sessionError, refetch } = useConsultSession(sessionId);
-  // Polls stop once the session is terminal; the room stays on screen so both
-  // sides keep reading the ended state and the transcript.
+  // The fetch always runs so a terminal session still shows its transcript;
+  // only the interval stops once the session is ended or cancelled.
   const pollsOpen = Boolean(session) && session?.state !== 'ended' && session?.state !== 'cancelled';
-  const extensions = useConsultExtensions(sessionId, pollsOpen);
-  const messages = useConsultMessages(sessionId, pollsOpen);
+  const extensions = useConsultExtensions(sessionId, true, pollsOpen);
+  const messages = useConsultMessages(sessionId, true, pollsOpen);
   const join = useConsultJoin(sessionId);
   const sendMessage = useSendConsultMessage(sessionId);
   const requestExtension = useRequestConsultExtension(sessionId);
@@ -129,8 +129,9 @@ export default function ConsultRoom({ sessionId, role, onEnd, onBack }: ConsultR
     : null;
 
   const expired = timer?.phase === 'expired';
+  const canAct = viewer !== 'observer';
   const joinable = Boolean(
-    session && session.mode !== 'chat' && !expired && canJoinNow(session, projectedNow),
+    session && canAct && session.mode !== 'chat' && !expired && canJoinNow(session, projectedNow),
   );
 
   useEffect(() => {
@@ -140,6 +141,9 @@ export default function ConsultRoom({ sessionId, role, onEnd, onBack }: ConsultR
   }, [joinable, join]);
 
   const joined = Boolean(join.data);
+  const joinFailed = !joined && join.isError;
+  const joinErrorText =
+    join.error instanceof Error ? join.error.message : 'Could not join the session.';
   const media = useConsultMedia(join.data ?? null, session?.mode ?? 'chat', joined && !expired);
 
   useEffect(() => {
@@ -153,9 +157,9 @@ export default function ConsultRoom({ sessionId, role, onEnd, onBack }: ConsultR
 
   const ext = openExtension(extensions.data);
   const action = extensionAction(ext, viewer, projectedNow);
-  const canExtend = Boolean(session?.extendable) && !expired;
+  const canExtend = canAct && Boolean(session?.extendable) && !expired;
   const showChatPanel = session?.mode === 'chat' || chatOpen;
-  const readOnly = expired;
+  const readOnly = expired || !canAct;
 
   const startExtensionPayment = (extension: ConsultExtension) => {
     // PayExtension debits the wallet, so the wallet rail is the only one that
@@ -258,13 +262,15 @@ export default function ConsultRoom({ sessionId, role, onEnd, onBack }: ConsultR
         </View>
       </View>
 
-      {timer?.phase === 'warning' && canExtend && (
+      {timer?.phase === 'warning' && (canExtend || !canAct) && (
         <View style={styles.warnBar}>
           <Clock size={16} color={Colors.onWarning} />
           <Text style={styles.warnText}>Session ends in {timer.label}.</Text>
-          <Pressable onPress={() => setExtensionOpen(true)} hitSlop={8}>
-            <Text style={styles.warnAction}>Extend</Text>
-          </Pressable>
+          {canAct && (
+            <Pressable onPress={() => setExtensionOpen(true)} hitSlop={8}>
+              <Text style={styles.warnAction}>Extend</Text>
+            </Pressable>
+          )}
         </View>
       )}
 
@@ -309,7 +315,19 @@ export default function ConsultRoom({ sessionId, role, onEnd, onBack }: ConsultR
         <View style={styles.stageWrap}>
           <View style={styles.stage}>
             {session.mode === 'video' ? (
-              media.remoteVideo ? (
+              media.status === 'failed' ? (
+                <View style={styles.stageEmpty}>
+                  <VideoIcon size={34} color={Colors.inverseOnSurface} />
+                  <Text style={styles.stageEmptyText}>
+                    {expired ? 'The session has ended.' : media.error ?? 'Could not connect to the room.'}
+                  </Text>
+                  {(media.status === 'failed' || joinFailed) && !expired && (
+                    <Pressable style={styles.retryButton} onPress={() => join.mutate()}>
+                      <Text style={styles.retryLabel}>Reconnect</Text>
+                    </Pressable>
+                  )}
+                </View>
+              ) : media.remoteVideo ? (
                 <ConsultVideo publication={media.remoteVideo} label="Remote video" />
               ) : (
                 <View style={styles.stageEmpty}>
@@ -321,13 +339,13 @@ export default function ConsultRoom({ sessionId, role, onEnd, onBack }: ConsultR
                   <Text style={styles.stageEmptyText}>
                     {expired
                       ? 'The session has ended.'
-                      : media.status === 'failed'
-                        ? media.error ?? 'Could not connect to the room.'
+                      : joinFailed
+                        ? joinErrorText
                         : joined
                           ? 'Waiting for the other person to join…'
                           : 'Connecting to your session…'}
                   </Text>
-                  {media.status === 'failed' && !expired && (
+                  {joinFailed && !expired && (
                     <Pressable style={styles.retryButton} onPress={() => join.mutate()}>
                       <Text style={styles.retryLabel}>Reconnect</Text>
                     </Pressable>
@@ -340,8 +358,21 @@ export default function ConsultRoom({ sessionId, role, onEnd, onBack }: ConsultR
                   <Phone size={34} color={Colors.onPrimary} />
                 </View>
                 <Text style={styles.audioMeta}>
-                  {joined ? 'Voice session in progress' : 'Connecting to your session…'}
+                  {expired
+                    ? 'The session has ended.'
+                    : media.status === 'failed'
+                      ? media.error ?? 'Could not connect to the room.'
+                      : joinFailed
+                        ? joinErrorText
+                        : joined
+                          ? 'Voice session in progress'
+                          : 'Connecting to your session…'}
                 </Text>
+                {(media.status === 'failed' || joinFailed) && !expired && (
+                  <Pressable style={styles.retryButton} onPress={() => join.mutate()}>
+                    <Text style={styles.retryLabel}>Reconnect</Text>
+                  </Pressable>
+                )}
               </View>
             )}
 
@@ -373,52 +404,54 @@ export default function ConsultRoom({ sessionId, role, onEnd, onBack }: ConsultR
             </View>
           )}
 
-          <View style={styles.controls}>
-            <ControlButton
-              active={media.micOn}
-              label={media.micOn ? 'Mute' : 'Unmute'}
-              onPress={() => void media.setMic(!media.micOn)}
-              disabled={expired || !joined}
-            >
-              {media.micOn ? <Mic size={20} color={Colors.onSurface} /> : <MicOff size={20} color={Colors.error} />}
-            </ControlButton>
-
-            {session.mode === 'video' && (
+          {canAct && (
+            <View style={styles.controls}>
               <ControlButton
-                active={media.camOn}
-                label={media.camOn ? 'Camera off' : 'Camera on'}
-                onPress={() => void media.setCam(!media.camOn)}
+                active={media.micOn}
+                label={media.micOn ? 'Mute' : 'Unmute'}
+                onPress={() => void media.setMic(!media.micOn)}
                 disabled={expired || !joined}
               >
-                {media.camOn ? <VideoIcon size={20} color={Colors.onSurface} /> : <VideoOff size={20} color={Colors.error} />}
+                {media.micOn ? <Mic size={20} color={Colors.onSurface} /> : <MicOff size={20} color={Colors.error} />}
               </ControlButton>
-            )}
 
-            <ControlButton
-              active={showChatPanel}
-              label="Chat"
-              onPress={() => setChatOpen((open) => !open)}
-            >
-              <MessageCircle size={20} color={Colors.onSurface} />
-            </ControlButton>
+              {session.mode === 'video' && (
+                <ControlButton
+                  active={media.camOn}
+                  label={media.camOn ? 'Camera off' : 'Camera on'}
+                  onPress={() => void media.setCam(!media.camOn)}
+                  disabled={expired || !joined}
+                >
+                  {media.camOn ? <VideoIcon size={20} color={Colors.onSurface} /> : <VideoOff size={20} color={Colors.error} />}
+                </ControlButton>
+              )}
 
-            <ControlButton
-              active={false}
-              label="Extend"
-              onPress={() => setExtensionOpen(true)}
-              disabled={!canExtend}
-            >
-              <Clock size={20} color={canExtend ? Colors.onSurface : Colors.outline} />
-            </ControlButton>
+              <ControlButton
+                active={showChatPanel}
+                label="Chat"
+                onPress={() => setChatOpen((open) => !open)}
+              >
+                <MessageCircle size={20} color={Colors.onSurface} />
+              </ControlButton>
 
-            <ControlButton active={false} label="End" onPress={() => void end()} disabled={ending}>
-              <PhoneOffIcon />
-            </ControlButton>
-          </View>
+              <ControlButton
+                active={false}
+                label="Extend"
+                onPress={() => setExtensionOpen(true)}
+                disabled={!canExtend}
+              >
+                <Clock size={20} color={canExtend ? Colors.onSurface : Colors.outline} />
+              </ControlButton>
+
+              <ControlButton active={false} label="End" onPress={() => void end()} disabled={ending}>
+                <PhoneOffIcon />
+              </ControlButton>
+            </View>
+          )}
         </View>
       )}
 
-      {session.mode === 'chat' && (
+      {session.mode === 'chat' && canAct && (
         <View style={styles.chatControls}>
           <Pressable
             style={[styles.extendButton, !canExtend && styles.disabled]}

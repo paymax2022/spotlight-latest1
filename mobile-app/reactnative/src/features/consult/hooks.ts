@@ -54,23 +54,23 @@ export function useConsultSession(sessionId?: string) {
   return query;
 }
 
-export function useConsultExtensions(sessionId?: string, enabled = true) {
+export function useConsultExtensions(sessionId?: string, enabled = true, poll = enabled) {
   return useQuery({
     queryKey: KEYS.extensions(sessionId ?? ''),
     queryFn: () => listConsultExtensions(sessionId as string),
     enabled: Boolean(sessionId) && enabled,
     staleTime: 0,
-    refetchInterval: enabled ? CONSULT_POLL_MS : false,
+    refetchInterval: poll ? CONSULT_POLL_MS : false,
   });
 }
 
-export function useConsultMessages(sessionId?: string, enabled = true) {
+export function useConsultMessages(sessionId?: string, enabled = true, poll = enabled) {
   return useQuery({
     queryKey: KEYS.messages(sessionId ?? ''),
     queryFn: () => listConsultMessages(sessionId as string),
     enabled: Boolean(sessionId) && enabled,
     staleTime: 0,
-    refetchInterval: enabled ? CONSULT_MESSAGE_POLL_MS : false,
+    refetchInterval: poll ? CONSULT_MESSAGE_POLL_MS : false,
   });
 }
 
