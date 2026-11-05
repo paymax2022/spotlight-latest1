@@ -184,6 +184,7 @@ func (s *Service) OpenConsultSession(ctx context.Context, callerID, apptID strin
 		PackageID:         packageID,
 		BaseHoldID:        holdID,
 		Start:             start,
+		// Extension price derives from this snapshot, so total_kobo stays the amount the owner paid for the consult (commission is carved from payout, never added here).
 		Snapshot: &consultengine.PriceSnapshot{
 			DurationMinutes: durationMinutes,
 			PriceKobo:       totalKobo,

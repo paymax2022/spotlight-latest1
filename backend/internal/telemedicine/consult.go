@@ -210,6 +210,7 @@ func (s *Service) OpenConsultSession(ctx context.Context, appointmentID, callerI
 		PackageID:         packageID,
 		BaseHoldID:        holdID,
 		Start:             start,
+		// Extension price derives from this snapshot, so fee_kobo stays the paid consult fee alone (platform_fee_kobo is separate).
 		Snapshot: &consultengine.PriceSnapshot{
 			DurationMinutes: durationMinutes,
 			PriceKobo:       feeKobo,

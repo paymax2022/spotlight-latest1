@@ -184,6 +184,19 @@ func (f *engineFixture) publishVetVideo(t *testing.T, minutes int, priceKobo int
 	return pkg
 }
 
+func (f *engineFixture) publishVetChat(t *testing.T, minutes int, priceKobo int64) Package {
+	t.Helper()
+	pkg, err := f.svc.PublishPackage(context.Background(), f.providerID, Package{
+		OwnerKind: OwnerHealthProvider, OwnerID: f.providerRow,
+		Vertical: VerticalVet, Mode: ModeChat,
+		DurationMinutes: minutes, PriceKobo: priceKobo, Active: true,
+	})
+	if err != nil {
+		t.Fatalf("publish chat package: %v", err)
+	}
+	return pkg
+}
+
 func TestBookSnapshotsPriceAndCreatesARoom(t *testing.T) {
 	f := newEngineFixture(t)
 	pkg := f.publishVetVideo(t, 30, 500_000)
@@ -628,6 +641,43 @@ func TestSessionChatIsParticipantScopedAndClosesAtZero(t *testing.T) {
 	// Reading stays open after the end.
 	if _, err := f.svc.ListMessages(context.Background(), sess.ID, f.patientID, time.Time{}); err != nil {
 		t.Fatalf("read after end: %v", err)
+	}
+}
+
+// TestPostMessageRefusesBeforeTheChatWindowOpens pins that a chat thread opens
+// on the same window media does: a scheduled session whose start is beyond the
+// early-join window rejects posting, while reading stays available.
+func TestPostMessageRefusesBeforeTheChatWindowOpens(t *testing.T) {
+	f := newEngineFixture(t)
+	pkg := f.publishVetChat(t, 30, 500_000)
+	// Book a chat session well past the early-join window so "now" is before it opens.
+	start := f.clock.Add(2 * time.Hour)
+	sess, err := f.svc.Book(context.Background(), BookRequest{
+		Vertical: VerticalVet, Mode: ModeChat, PatientID: f.patientID,
+		ProviderOwnerKind: OwnerHealthProvider, ProviderOwnerID: f.providerRow,
+		ProviderUserID: f.providerID, SourceRef: "vet_appointment:chat", PackageID: pkg.ID,
+		Start: start,
+	})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	if sess.State != StateScheduled {
+		t.Fatalf("state = %q, want scheduled", sess.State)
+	}
+
+	// Before the window opens posting is refused...
+	if _, err := f.svc.PostMessage(context.Background(), sess.ID, f.patientID, "too early"); !errors.Is(err, ErrState) {
+		t.Fatalf("post before window: err = %v, want ErrState", err)
+	}
+	// ...but reading the thread still works.
+	if _, err := f.svc.ListMessages(context.Background(), sess.ID, f.patientID, time.Time{}); err != nil {
+		t.Fatalf("list before window: %v", err)
+	}
+
+	// Once the window opens, posting succeeds.
+	f.clock = sess.BookedStart.Add(-EarlyJoinWindow)
+	if _, err := f.svc.PostMessage(context.Background(), sess.ID, f.patientID, "window open"); err != nil {
+		t.Fatalf("post once the window opens: %v", err)
 	}
 }
 

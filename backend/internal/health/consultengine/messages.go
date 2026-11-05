@@ -20,6 +20,10 @@ func (s *Service) PostMessage(ctx context.Context, sessionID, callerID, body str
 	if sess.State == StateEnded || sess.State == StateCancelled || !now.Before(sess.EndsAt) {
 		return Message{}, ErrState
 	}
+	// Chat is a timed paid session: its thread opens on the same window Join fences media to, not at booking time.
+	if sess.State == StateScheduled && now.Before(sess.BookedStart.Add(-EarlyJoinWindow)) {
+		return Message{}, ErrState
+	}
 	body = strings.TrimSpace(body)
 	if body == "" || len(body) > maxMessageLen {
 		return Message{}, ErrInvalid
