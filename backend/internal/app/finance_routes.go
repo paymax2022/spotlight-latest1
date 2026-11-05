@@ -47,7 +47,9 @@ import (
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/fractionalre"
 	"spotlight/backend/internal/groups"
+	"spotlight/backend/internal/health/consultengine"
 	healthportal "spotlight/backend/internal/health/portal"
+	healthvet "spotlight/backend/internal/health/vet"
 	"spotlight/backend/internal/insurance/embedded"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/integrations/llm"
@@ -660,6 +662,24 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// flag. Member /api/finance/health/<vertical>/* (auth via finance group);
 	// admin /api/health/<vertical>/admin/* (RBAC health.<vertical>.*). Reuses
 	// escrow (HELD→RELEASE→REFUND), scheduler, transport last-mile, wallet/ledger.
+	// Paid consult sessions (telemedicine, vet, pharmacy, lab). Built BEFORE the
+	// health modules so the vet and telemedicine services receive the same
+	// engine at construction time; the HTTP surface stays inert until a module
+	// books a session, and media fails closed when LiveKit is off.
+	var consultRooms *consultengine.Service
+	if pool != nil {
+		consultRooms = RegisterConsult(r, mapsAuth(), pool, ledgerSvc, lkClient, cfg, auditSink)
+		if consultRooms != nil {
+			go consultRooms.RunSweeper(context.Background(), 30*time.Second)
+		}
+	}
+	// Compile-time proof that the engine satisfies both module seams. If either
+	// interface drifts, this file stops building rather than a booking failing
+	// at runtime.
+	var (
+		_ healthvet.ConsultRoomEngine = consultRooms
+		_ telemedicine.ConsultEngine  = consultRooms
+	)
 	if cfg.FeatureHealthEnabled && pool != nil {
 		RegisterHealth(finance, adminGroupTop5(r, "/api/health/admin", mapsAuth()), pool, rbac, cfg, auditSink) // shared platform
 		if cfg.FeatureHealthPharmacyEnabled {
@@ -698,7 +718,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// PHARMACY-006/LAB-003-shaped bug: NOT adminGroupTop5 — see the
 			// comment on RegisterHealthVet's own ag.Use(RequireAuthContext(...))
 			// call for why (identical ordering hazard, fixed the same way).
-			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase, auditSink)
+			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase, auditSink, consultRooms)
 			// Mode-B (assisted) VCN verification: vet gets verified without ever
 			// seeing the VCN portal; ops confirms out-of-band; capability granted
 			// only on approval. Member /api/finance/health/vet/verification/*,
@@ -721,14 +741,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			RegisterHealthTriage(r, finance, pool, rbac, mapsAuth(), ledgerSvc, mapSvc,
 				cfg.AnthropicAPIKey, cfg.RedisURL, cfg.TriageEngine, cfg.InfermedicaAppID,
 				cfg.InfermedicaAppKey, cfg.TriageWhatsAppSecret, cfg.FeatureHealthTriageWhatsAppEnabled, auditSink)
-		}
-	}
-
-	// Paid consult sessions (telemedicine, vet, pharmacy, lab). Inert until a
-	// module books a session; media fails closed when LiveKit is off.
-	if pool != nil {
-		if consultSvc := RegisterConsult(r, mapsAuth(), pool, ledgerSvc, lkClient, cfg, auditSink); consultSvc != nil {
-			go consultSvc.RunSweeper(context.Background(), 30*time.Second)
 		}
 	}
 
@@ -2238,6 +2250,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 					UserID: userID, Event: notifications.Event(event), Title: title, Body: body, Data: data,
 				})
 			}))
+		// Timed consults run on the shared engine when LiveKit is the selected
+		// media rail. The videosdk rollback leaves the module on its legacy
+		// VideoSDK room and the consult-session endpoint answers 503.
+		if consultRooms != nil && cfg.ConsultUsesLiveKit() {
+			telemedSvc = telemedSvc.WithConsultEngine(consultRooms)
+		}
 		telemedHandler := telemedicine.NewHandler(telemedSvc)
 
 		// Legacy /api/finance/telemedicine/... (kept for backward compat)

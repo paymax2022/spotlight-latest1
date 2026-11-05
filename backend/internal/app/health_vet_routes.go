@@ -19,6 +19,7 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	healthconsult "spotlight/backend/internal/health/consult"
+	"spotlight/backend/internal/health/consultengine"
 	healthproviders "spotlight/backend/internal/health/providers"
 	healthrecords "spotlight/backend/internal/health/records"
 	healthrx "spotlight/backend/internal/health/rx"
@@ -48,7 +49,7 @@ import (
 //   - admin : /api/health/vet/admin/*    (per-route RBAC health.vet.*)
 //
 // Gated by FeatureHealthVetEnabled at the orchestrator. Auditing is nil-safe.
-func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, supabase *integrations.SupabaseRestClient, audit services.AuditService) {
+func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, supabase *integrations.SupabaseRestClient, audit services.AuditService, consultRooms *consultengine.Service) {
 	if pool == nil {
 		log.Println("[health.vet] nil pool — skipping vet routes")
 		return
@@ -101,6 +102,13 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 
 	// Admin suspend/reinstate reuse the providers state machine + idempotent grant.
 	svc.SetCapabilityStatusSetter(vetCapabilityAdapter{p: healthproviders.NewService(pool, newCapabilityGranter(rbac), nil)})
+
+	// Timed tele-consults run on the shared engine when LiveKit is the selected
+	// media rail. The videosdk rollback leaves it unwired: booking keeps its
+	// legacy shape and the room endpoint fails closed with ErrConsultUnavailable.
+	if consultRooms != nil && cfg.ConsultUsesLiveKit() {
+		svc = svc.WithConsultRoomEngine(consultRooms)
+	}
 
 	isAdmin := func(c *gin.Context) bool { return isHealthVetAdmin(c, rbac) }
 	h := healthvet.NewHandler(svc, isAdmin)

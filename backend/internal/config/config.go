@@ -813,6 +813,11 @@ type Config struct {
 	LiveKitAPISecret       string
 	LiveKitTokenTTLSeconds int // join-token lifetime; 1..21600
 
+	// ConsultMediaProvider selects the media rail for timed health consults:
+	// "livekit" (the default) or "videosdk" (rollback — modules keep their
+	// legacy VideoSDK room and no consult engine is wired).
+	ConsultMediaProvider string
+
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
 	// Raw documents / biometric payloads are NEVER stored or logged — only the
 	// hash + a provider reference (mirrors the KYC bvn_hash/nin_hash pattern).
@@ -1292,6 +1297,7 @@ func Load() Config {
 		LiveKitAPIKey:          strings.TrimSpace(getEnv("LIVEKIT_API_KEY", "")),
 		LiveKitAPISecret:       strings.TrimSpace(getEnv("LIVEKIT_API_SECRET", "")),
 		LiveKitTokenTTLSeconds: getEnvInt("LIVEKIT_TOKEN_TTL_SECONDS", 600),
+		ConsultMediaProvider:   getEnv("CONSULT_MEDIA_PROVIDER", "livekit"),
 
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 
@@ -1379,6 +1385,14 @@ func (c Config) MocksAllowed() bool {
 		return true
 	}
 	return false
+}
+
+// ConsultUsesLiveKit reports whether timed health consults run on LiveKit.
+// "videosdk" is the explicit rollback. Any other value — including unset —
+// selects LiveKit; with FEATURE_LIVEKIT_ENABLED off the engine still fails
+// closed with ErrMediaUnavailable rather than fabricating a room.
+func (c Config) ConsultUsesLiveKit() bool {
+	return strings.ToLower(strings.TrimSpace(c.ConsultMediaProvider)) != "videosdk"
 }
 
 // isPlaceholder treats empty values and the common template markers as "unset"
