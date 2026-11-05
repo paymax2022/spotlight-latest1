@@ -1,0 +1,110 @@
+
+name: Spotlight Frontend Web Auto Sync
+
+on:
+  push:
+    branches:
+      - main
+      - development
+    paths:
+      - "frontend-web/**"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-sync-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync frontend-web directory
+
+    if: github.repository == 'paymax2022/spotlight-latest1'
+
+    runs-on: ubuntu-latest
+
+    env:
+      SYNC_BRANCH: ${{ github.ref_name }}
+      SYNC_ENABLED: ${{ vars.SPOTLIGHT_FRONTEND_SYNC_ENABLED }}
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          repository: paymax2022/spotlight-latest1
+          ref: ${{ github.ref_name }}
+          path: source
+          persist-credentials: false
+
+      - name: Checkout destination repository
+        uses: actions/checkout@v4
+        with:
+          repository: paymax2022/spotlight-latest
+          ref: ${{ github.ref_name }}
+          token: ${{ secrets.SPOTLIGHT_FRONTEND_SYNC_TOKEN }}
+          path: destination
+
+      - name: Synchronize frontend-web
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p source/frontend-web
+          mkdir -p destination/frontend-web
+
+          rsync -av --delete \
+            --exclude=".git" \
+            source/frontend-web/ \
+            destination/frontend-web/
+
+          echo "Frontend synchronization prepared."
+
+      - name: Preview changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git -C destination add -A -- frontend-web
+
+          git -C destination diff --cached --check
+
+          echo "Files to be synchronized:"
+          git -C destination diff --cached --name-status
+
+          echo "Summary:"
+          git -C destination diff --cached --stat
+
+      - name: Commit and push
+        if: env.SYNC_ENABLED == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git -C destination config \
+            user.name "Spotlight Sync Bot"
+
+          git -C destination config \
+            user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git -C destination diff --cached --quiet; then
+            echo "No frontend changes detected."
+            exit 0
+          fi
+
+          git -C destination commit \
+            -m "sync: update frontend-web from spotlight-latest1"
+
+          git -C destination push origin \
+            "HEAD:refs/heads/${SYNC_BRANCH}"
+
+          echo "Frontend synchronization successful."
+
+      - name: Dry-run status
+        if: env.SYNC_ENABLED != 'true'
+        run: |
+          echo "DRY RUN MODE"
+          echo "No changes were pushed."
+          echo "Set SPOTLIGHT_FRONTEND_SYNC_ENABLED=true after review."
