@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, TextInput, Platform, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -10,8 +10,19 @@ import { Typography } from '@/constants/tokens';
 import { ClipboardList, ShieldCheck, CheckCircle2 } from 'lucide-react-native';
 import { getDoctor, getDoctorAvailability, PLACEHOLDER_DOCTORS } from '@/api/telemedicine.api';
 import { TeleHeader, SlotPicker, ConsultTypePicker } from '@/features/telemedicine/components';
+import {
+  PackagePicker,
+  offerFromDoctorPackage,
+  type ConsultMode,
+  type ConsultOffer,
+} from '@/features/consult';
 import type { ConsultType, Slot } from '@/types/telemedicine';
 import PrimaryButton from '@/components/PrimaryButton';
+
+/** The module still spells a voice consult "audio". */
+function consultTypeFor(mode: ConsultMode): ConsultType {
+  return mode === 'voice' ? 'audio' : mode;
+}
 
 // What the post-booking health intake covers (PRD M4–M12) — shown so the patient
 // knows the triage step is coming and that the doctor reviews it before the consult.
@@ -24,6 +35,7 @@ export default function BookSlotScreen() {
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   // When the pre-consultation triage ran first, the chief complaint pre-fills here.
   const [reason, setReason] = useState(typeof reasonParam === 'string' ? reasonParam : '');
+  const [selectedOffer, setSelectedOffer] = useState<ConsultOffer | null>(null);
   const intakeDone = intakeReady === '1';
 
   const { data: doctor } = useQuery({
@@ -32,12 +44,25 @@ export default function BookSlotScreen() {
     placeholderData: PLACEHOLDER_DOCTORS?.find((d) => d.id === id),
   });
 
+  // The doctor's timed price points, when they sell any. A package's `total_kobo`
+  // is the server's quote for that price point, so the picker never adds a fee.
+  const offers = useMemo(
+    () =>
+      (doctor?.packages ?? [])
+        .map(offerFromDoctorPackage)
+        .filter((offer): offer is ConsultOffer => offer !== null),
+    [doctor?.packages],
+  );
+
   const { data: slots = [], isLoading } = useQuery({
     queryKey: ['tele-availability', id],
     queryFn:  () => getDoctorAvailability(String(id)),
   });
 
-  const canContinue = !!selectedSlot && reason.trim().length > 0;
+  const canContinue =
+    !!selectedSlot &&
+    reason.trim().length > 0 &&
+    (offers.length === 0 || selectedOffer !== null);
 
   const onContinue = () => {
     if (!selectedSlot || !doctor) return;
@@ -48,7 +73,8 @@ export default function BookSlotScreen() {
         slotId: selectedSlot.id,
         slotDate: selectedSlot.date,
         slotTime: selectedSlot.time,
-        consultType,
+        consultType: selectedOffer ? consultTypeFor(selectedOffer.mode) : consultType,
+        packageId: selectedOffer?.id ?? '',
         reason: reason.trim(),
       },
     });
@@ -66,8 +92,21 @@ export default function BookSlotScreen() {
           </View>
         )}
 
-        <Text style={styles.label}>Consultation type</Text>
-        <ConsultTypePicker selected={consultType} onSelect={setConsultType} />
+        {offers.length > 0 ? (
+          <>
+            <Text style={styles.label}>Consultation package</Text>
+            <PackagePicker
+              offers={offers}
+              selectedId={selectedOffer?.id ?? null}
+              onSelect={setSelectedOffer}
+            />
+          </>
+        ) : (
+          <>
+            <Text style={styles.label}>Consultation type</Text>
+            <ConsultTypePicker selected={consultType} onSelect={setConsultType} />
+          </>
+        )}
 
         <Text style={[styles.label, { marginTop: Spacing.lg }]}>Choose a time</Text>
         {isLoading ? (
