@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { CalendarClock, Wallet, Star, ChevronRight, Check, MapPin } from 'lucide-react-native';
+import { CalendarClock, Wallet, Star, ChevronRight, Check, MapPin, Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -22,6 +22,7 @@ import type { AppointmentType } from '@/features/health/vet/types';
 
 const SHORTCUTS = [
   { key: 'avail', label: 'Availability & calendar', icon: CalendarClock, href: '/health/vet/provider/availability' },
+  { key: 'prices', label: 'Consultation prices', icon: Clock, href: '/health/vet/provider/packages' },
   { key: 'earn', label: 'Earnings & payouts', icon: Wallet, href: '/health/vet/provider/earnings' },
   { key: 'rev', label: 'Reviews', icon: Star, href: '/health/vet/provider/reviews' },
 ] as const;

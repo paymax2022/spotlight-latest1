@@ -17,7 +17,7 @@ import { useVet, usePet, useCreateAppointment } from '@/features/health/vet/hook
 import { newIdempotencyKey } from '@/features/health/vet/api';
 import { formatNaira } from '@/features/health/constants/health.constants';
 import { PAYMENT_HELD_COPY, APPT_TYPE_META } from '@/features/health/vet/constants';
-import type { AppointmentType, Appointment } from '@/features/health/vet/types';
+import type { AppointmentType, Appointment, VetConsultMode } from '@/features/health/vet/types';
 
 export default function CheckoutScreen() {
   const params = useLocalSearchParams<{
@@ -32,8 +32,15 @@ export default function CheckoutScreen() {
     destLng?: string;
     feeKobo?: string;
     homeFeeKobo?: string;
+    packageId?: string;
+    consultMode?: string;
+    packageLabel?: string;
+    expectedTotalKobo?: string;
   }>();
   const type = (params.type as AppointmentType) ?? 'tele';
+  const packageId = params.packageId || undefined;
+  const consultMode = (params.consultMode as VetConsultMode) || undefined;
+  const expectedTotalKobo = Number(params.expectedTotalKobo ?? 0) || 0;
   const { data: vet, isLoading } = useVet(params.vetId);
   const { data: pet } = usePet(params.petId);
   const createAppt = useCreateAppointment();
@@ -41,7 +48,8 @@ export default function CheckoutScreen() {
 
   const feeKobo = Number(params.feeKobo ?? vet?.consultFeeKobo ?? 0);
   const homeFeeKobo = type === 'home' ? Number(params.homeFeeKobo ?? vet?.homeVisitFeeKobo ?? 0) : 0;
-  const totalKobo = feeKobo + homeFeeKobo;
+  // A package names its own total. Legacy visits keep the fee + home fee split.
+  const totalKobo = packageId && expectedTotalKobo > 0 ? expectedTotalKobo : feeKobo + homeFeeKobo;
 
   const typeMeta = APPT_TYPE_META[type];
   const TypeIcon = (Icons as unknown as Record<string, Icons.LucideIcon>)[typeMeta.icon] ?? Icons.Video;
@@ -61,6 +69,9 @@ export default function CheckoutScreen() {
           reason: params.reason ?? 'Consultation',
           feeKobo,
           homeVisitFeeKobo: homeFeeKobo,
+          packageId,
+          consultMode: type === 'tele' ? consultMode ?? 'video' : undefined,
+          expectedTotalKobo: packageId ? totalKobo : undefined,
           location: params.location || undefined,
           destLat: params.destLat ? Number(params.destLat) : undefined,
           destLng: params.destLng ? Number(params.destLng) : undefined,
@@ -123,8 +134,10 @@ export default function CheckoutScreen() {
         <Text style={styles.sectionTitle}>Payment summary</Text>
         <View style={[styles.summary, shadow1]}>
           <View style={styles.sumRow}>
-            <Text style={styles.sumLabel}>Consult fee</Text>
-            <Text style={styles.sumVal}>{formatNaira(feeKobo)}</Text>
+            <Text style={styles.sumLabel}>
+              {packageId ? params.packageLabel ?? 'Timed consult' : 'Consult fee'}
+            </Text>
+            <Text style={styles.sumVal}>{formatNaira(packageId ? totalKobo : feeKobo)}</Text>
           </View>
           {homeFeeKobo ? (
             <View style={styles.sumRow}>

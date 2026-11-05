@@ -5,7 +5,7 @@
 // still has a licenseNo field, and nothing on the vet screens displays it, so it
 // is set to '' here rather than invented.
 
-import type { Vet } from './types';
+import type { Vet, VetPackage } from './types';
 
 export interface ListedVetWire {
   id: string;
@@ -21,6 +21,7 @@ export interface ListedVetWire {
   consultFeeKobo?: number;
   homeVisitFeeKobo?: number;
   clinicFeeKobo?: number;
+  packages?: VetPackage[];
   types?: string[];
   species?: string[];
   specialties?: string[];
@@ -58,6 +59,7 @@ export function mapListedVet(raw: ListedVetWire): Vet {
     consultFeeKobo: raw.consultFeeKobo ?? 0,
     homeVisitFeeKobo: raw.homeVisitFeeKobo ?? 0,
     clinicFeeKobo: raw.clinicFeeKobo ?? 0,
+    packages: raw.packages ?? [],
     types: (raw.types ?? []) as Vet['types'],
     species: (raw.species ?? []) as Vet['species'],
     specialties: raw.specialties ?? [],
