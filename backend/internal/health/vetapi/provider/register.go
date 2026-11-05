@@ -76,14 +76,7 @@ func (h *Handler) mount(vg *gin.RouterGroup) {
 	vg.POST("/provider/appointments/:id/decision", h.Decide)
 	vg.GET("/provider/appointments/:id/nav", h.Nav)
 	vg.POST("/provider/appointments/:id/soap", h.SaveSoap)
-	// The consult-room route is only meaningful with the booking spine wired
-	// (the appointment pins the session); an unwired engine still answers 503
-	// from the handler when the spine exists but no media engine does. Mounting
-	// it only with the spine mirrors RegisterAppointmentAdapters's nil-svc
-	// early return and keeps Register's route inventory exact.
-	if h.vet != nil {
-		vg.POST("/provider/appointments/:id/consult-session", h.OpenConsultSession)
-	}
+	vg.POST("/provider/appointments/:id/consult-session", h.OpenConsultSession)
 
 	vg.GET("/provider/pets/:petId/chart", h.Chart)
 

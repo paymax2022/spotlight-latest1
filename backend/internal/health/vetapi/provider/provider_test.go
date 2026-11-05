@@ -22,6 +22,7 @@ var expectedRoutes = []string{
 	"POST /v/provider/appointments/:id/decision",
 	"GET /v/provider/appointments/:id/nav",
 	"POST /v/provider/appointments/:id/soap",
+	"POST /v/provider/appointments/:id/consult-session",
 	"GET /v/provider/pets/:petId/chart",
 	"POST /v/provider/prescriptions",
 	"POST /v/provider/lab-orders",
