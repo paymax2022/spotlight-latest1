@@ -9,8 +9,9 @@ import (
 
 const maxMessageLen = 4000
 
-// PostMessage appends one message to a session's thread. Posting closes at
-// ends_at; the thread stays readable to participants afterwards.
+// PostMessage appends one message to a session's thread. Posting opens with the
+// join window and closes at ends_at; the thread stays readable to participants
+// before and after.
 func (s *Service) PostMessage(ctx context.Context, sessionID, callerID, body string) (Message, error) {
 	sess, _, err := s.loadForCaller(ctx, sessionID, callerID)
 	if err != nil {
@@ -20,7 +21,8 @@ func (s *Service) PostMessage(ctx context.Context, sessionID, callerID, body str
 	if sess.State == StateEnded || sess.State == StateCancelled || !now.Before(sess.EndsAt) {
 		return Message{}, ErrState
 	}
-	// Chat is a timed paid session: its thread opens on the same window Join fences media to, not at booking time.
+	// Chat is a timed paid session: its thread opens on the same window Join
+	// fences media to, not at booking time.
 	if sess.State == StateScheduled && now.Before(sess.BookedStart.Add(-EarlyJoinWindow)) {
 		return Message{}, ErrState
 	}
