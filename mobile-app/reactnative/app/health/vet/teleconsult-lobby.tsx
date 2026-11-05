@@ -43,9 +43,11 @@ export default function TeleconsultLobbyScreen() {
   const state = poll.data?.state ?? session?.state;
   const timed = Boolean(session);
   const ready = timed ? state === 'live' : Boolean(consult?.providerReady);
-  // Hold Join until the open-session call settles, so a fast tap can never race
-  // the engine and land in the legacy room while a timed session was created.
-  const routingSettled = !open.isPending;
+  // Hold Join until the open-session call has actually answered. `isPending` is
+  // false while the mutation is still `idle`, so a warm-cache mount would paint
+  // an enabled button before the effect fires and a fast tap could land in the
+  // legacy room after the engine created a timed one.
+  const routingSettled = open.isSuccess || open.isError;
 
   const status = !timed
     ? consult?.providerReady
