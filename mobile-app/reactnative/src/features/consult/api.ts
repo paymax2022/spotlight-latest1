@@ -8,8 +8,11 @@ import type {
   ConsultExtension,
   ConsultJoin,
   ConsultMessage,
+  ConsultPackageWire,
   ConsultRtc,
   ConsultSession,
+  ConsultVertical,
+  PublishConsultPackageInput,
 } from './types';
 
 const CONSULT_BASE = '/api/v1/consult';
@@ -136,4 +139,40 @@ export async function openVetConsultSession(appointmentId: string, asProvider = 
     : `${VET_BASE}/appointments/${appointmentId}/consult-session`;
   const { data } = await api.post(path, {});
   return sessionOf(data);
+}
+
+export async function listConsultPackages(input: {
+  vertical: ConsultVertical;
+  ownerKind: 'doctor' | 'health_provider';
+  ownerId: string;
+}): Promise<ConsultPackageWire[]> {
+  const { data } = await api.get<{ success?: boolean; packages?: ConsultPackageWire[] }>(
+    `${CONSULT_BASE}/packages`,
+    {
+      params: {
+        vertical: input.vertical,
+        owner_kind: input.ownerKind,
+        owner_id: input.ownerId,
+      },
+    },
+  );
+  return data?.packages ?? [];
+}
+
+export async function publishConsultPackage(
+  input: PublishConsultPackageInput,
+): Promise<ConsultPackageWire> {
+  const { data } = await api.post<{ package?: ConsultPackageWire; error?: string }>(
+    `${CONSULT_BASE}/packages`,
+    {
+      owner_kind: input.ownerKind,
+      owner_id: input.ownerId,
+      vertical: input.vertical,
+      mode: input.mode,
+      duration_minutes: input.durationMinutes,
+      price_kobo: input.priceKobo,
+    },
+  );
+  if (!data?.package) throw new Error(data?.error ?? 'The package could not be saved.');
+  return data.package;
 }

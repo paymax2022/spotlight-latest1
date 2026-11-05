@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   Bell, CalendarDays, Wallet, Stethoscope, ClipboardList, FlaskConical, Settings, ChevronRight, PawPrint, BarChart3,
-  Inbox, Users, MessageSquare, Smile, Video, AlertTriangle, ShieldAlert, UserCog, CalendarClock, Pill, RefreshCw, BadgeCheck,
+  Inbox, Users, MessageSquare, Smile, Video, AlertTriangle, ShieldAlert, UserCog, CalendarClock, Pill, RefreshCw, BadgeCheck, Clock,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
@@ -271,6 +271,19 @@ export default function DoctorDashboardScreen() {
           <QuickAction icon={Settings} label="Settings" color={Colors.onSurfaceVariant} bg={Colors.surfaceContainerLow} onPress={() => router.push('/(doctor)/settings')} />
         </View>
 
+        <Pressable
+          style={styles.consultPrices}
+          onPress={() => router.push('/(doctor)/consult/packages')}
+          accessibilityRole="button"
+          accessibilityLabel="Consultation prices"
+        >
+          <View style={[styles.phase3Icon, { backgroundColor: Colors.iconBgTeal }]}>
+            <Clock size={18} color={Colors.teal} strokeWidth={2} />
+          </View>
+          <Text style={styles.consultPricesLabel}>Consultation prices</Text>
+          <ChevronRight size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
+        </Pressable>
+
         {/* Phase 3 entry points */}
         <View style={styles.phase3Row}>
           <Pressable style={styles.phase3Link} onPress={() => router.push('/(doctor)/vet')} accessibilityRole="button" accessibilityLabel="Veterinary mode">
@@ -370,6 +383,8 @@ const styles = StyleSheet.create({
   list:          { gap: Spacing.sm },
   phase3Row:     { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
   phase3Link:    { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
+  consultPrices:      { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.md, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
+  consultPricesLabel: { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },
   phase3Icon:    { width: 36, height: 36, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   phase3Label:   { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
   verifyBanner:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm, marginTop: Spacing.lg, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.secondary },

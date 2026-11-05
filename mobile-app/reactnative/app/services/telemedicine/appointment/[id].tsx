@@ -182,7 +182,7 @@ export default function AppointmentDetailScreen() {
                     ? 'Join consultation'
                     : 'Awaiting doctor confirmation'
               }
-              onPress={() => router.push(`/services/telemedicine/consult/${appt.id}`)}
+              onPress={() => router.push(`/services/telemedicine/consult/${appt.id}/room`)}
               disabled={!canJoin}
               variant={!intakeReady ? 'secondary' : 'primary'}
             />

@@ -173,3 +173,24 @@ export interface ConsultMedia extends ConsultMediaState {
   setMic: (on: boolean) => Promise<void>;
   setCam: (on: boolean) => Promise<void>;
 }
+
+/** One price point as the engine's package routes send it. */
+export interface ConsultPackageWire {
+  id: string;
+  owner_kind: 'doctor' | 'health_provider';
+  owner_id: string;
+  vertical: ConsultVertical;
+  mode: ConsultMode;
+  duration_minutes: number;
+  price_kobo: number;
+  active: boolean;
+}
+
+export interface PublishConsultPackageInput {
+  ownerKind: 'doctor' | 'health_provider';
+  ownerId: string;
+  vertical: ConsultVertical;
+  mode: ConsultMode;
+  durationMinutes: number;
+  priceKobo: number;
+}
