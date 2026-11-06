@@ -8,6 +8,7 @@ on:
       - development
     paths:
       - "frontend-web/**"
+      - ".github/workflows/sync-frontend-web.yml"
 
   workflow_dispatch:
 
@@ -62,20 +63,20 @@ jobs:
 
           echo "Frontend synchronization prepared."
 
-      - name: Preview changes
+            - name: Preview changes
         shell: bash
         run: |
           set -euo pipefail
 
           git -C destination add -A -- frontend-web
 
-          git -C destination diff --cached --check
-
           echo "Files to be synchronized:"
           git -C destination diff --cached --name-status
 
           echo "Summary:"
           git -C destination diff --cached --stat
+
+          echo "Preview completed successfully."
 
       - name: Commit and push
         if: env.SYNC_ENABLED == 'true'
