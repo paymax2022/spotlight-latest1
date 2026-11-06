@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   sync:
-    name: Sync frontend-web directory
+    name: Synchronize Frontend Web
 
     if: github.repository == 'paymax2022/spotlight-latest1'
 
@@ -47,8 +47,9 @@ jobs:
           ref: ${{ github.ref_name }}
           token: ${{ secrets.SPOTLIGHT_FRONTEND_SYNC_TOKEN }}
           path: destination
+          persist-credentials: true
 
-      - name: Synchronize frontend-web
+      - name: Synchronize frontend-web directory
         shell: bash
         run: |
           set -euo pipefail
@@ -61,9 +62,9 @@ jobs:
             source/frontend-web/ \
             destination/frontend-web/
 
-          echo "Frontend synchronization prepared."
+          echo "Frontend files copied into staging checkout."
 
-            - name: Preview changes
+      - name: Preview changes
         shell: bash
         run: |
           set -euo pipefail
@@ -73,12 +74,12 @@ jobs:
           echo "Files to be synchronized:"
           git -C destination diff --cached --name-status
 
-          echo "Summary:"
+          echo "Change summary:"
           git -C destination diff --cached --stat
 
           echo "Preview completed successfully."
 
-      - name: Commit and push
+      - name: Commit and push frontend changes
         if: env.SYNC_ENABLED == 'true'
         shell: bash
         run: |
@@ -91,7 +92,7 @@ jobs:
             user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if git -C destination diff --cached --quiet; then
-            echo "No frontend changes detected."
+            echo "No changes detected."
             exit 0
           fi
 
@@ -101,11 +102,11 @@ jobs:
           git -C destination push origin \
             "HEAD:refs/heads/${SYNC_BRANCH}"
 
-          echo "Frontend synchronization successful."
+          echo "Frontend synchronization completed successfully."
 
-      - name: Dry-run status
+      - name: Dry-run notification
         if: env.SYNC_ENABLED != 'true'
         run: |
           echo "DRY RUN MODE"
-          echo "No changes were pushed."
-          echo "Set SPOTLIGHT_FRONTEND_SYNC_ENABLED=true after review."
+          echo "No files were pushed to spotlight-latest."
+          echo "Review the preview before enabling synchronization."
