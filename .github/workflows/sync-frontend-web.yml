@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   merge:
-    name: Merge Frontend Web Without Deletions
+    name: Merge Frontend Web, Clearing Route Shadows
 
     if: github.repository == 'paymax2022/spotlight-latest1'
 
@@ -52,7 +52,9 @@ jobs:
           persist-credentials: true
 
       # STEP 3: Merge additions and updates
-      # No --delete option is used
+      # No --delete option is used: destination-only files (this repo's own admin
+      # console among them) must survive the overlay. STEP 5 removes only the
+      # duplicates that this very choice creates.
       - name: Merge frontend-web without deleting files
         shell: bash
         run: |
@@ -80,28 +82,87 @@ jobs:
 
           git -C destination add -A -- frontend-web
 
-      # STEP 5: Block all deletions
-      - name: Prevent file deletions
+      # STEP 5: Clear the route shadows the overlay creates
+      - name: Clear route-shadow duplicates
         shell: bash
         run: |
           set -euo pipefail
 
-          DELETED_FILES="$(git -C destination diff \
+          # An overlay that never deletes leaves a segment holding both files when
+          # this repo renames a route file — app/page.js beside app/page.tsx — and
+          # Next refuses to build ("two parallel pages that resolve to the same
+          # path"). The old safeguard could never see it: rsync without --delete
+          # stages no deletion, so it passed, and the broken build landed in
+          # spotlight-latest's ungated deploy lane instead.
+          #
+          # So delete exactly the shadowed siblings this overlay created, and
+          # nothing else: same directory, same stem, a Next special route filename.
+          # A destination-only page under a path this repo does not have is not a
+          # shadow and stays.
+          ROUTE_NAMES="page layout template not-found error global-error loading default route"
+          SHADOWS=route-shadow-deletions.txt
+          : > "${SHADOWS}"
+
+          while IFS= read -r added; do
+            [[ -z "${added}" ]] && continue
+            case "${added}" in frontend-web/app/*) ;; *) continue ;; esac
+
+            dir="${added%/*}"
+            base="${added##*/}"
+            stem="${base%.*}"
+            [[ "${stem}" != "${base}" ]] || continue
+
+            is_route=0
+            for name in ${ROUTE_NAMES}; do
+              [[ "${stem}" == "${name}" ]] && { is_route=1; break; }
+            done
+            [[ "${is_route}" == 1 ]] || continue
+
+            while IFS= read -r sibling; do
+              [[ -z "${sibling}" || "${sibling}" == "${added}" ]] && continue
+              git -C destination rm -q -- "${sibling}"
+              printf '%s\n' "${sibling}" >> "${SHADOWS}"
+              echo "Cleared shadow: ${sibling} (kept ${added})"
+            done < <(git -C destination ls-files -- "${dir}/${stem}.*")
+          done < <(git -C destination diff \
+            --cached \
+            --name-only \
+            --diff-filter=A \
+            -- frontend-web)
+
+          echo "Route shadows cleared: $(grep -c . "${SHADOWS}" || true)"
+
+      # STEP 6: Block every other deletion
+      - name: Block deletions outside route shadows
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SHADOWS=route-shadow-deletions.txt
+
+          DELETED="$(git -C destination diff \
             --cached \
             --name-only \
             --diff-filter=D \
-            -- frontend-web)"
+            -- frontend-web | sort)"
 
-          if [[ -n "${DELETED_FILES}" ]]; then
-            echo "::error::Deletion detected. Merge blocked."
-            printf '%s\n' "${DELETED_FILES}"
+          if [[ -s "${SHADOWS}" ]]; then
+            UNEXPECTED="$(comm -23 <(printf '%s\n' "${DELETED}" | grep .) \
+              <(sort "${SHADOWS}") || true)"
+          else
+            UNEXPECTED="${DELETED}"
+          fi
+
+          if [[ -n "${UNEXPECTED}" ]]; then
+            echo "::error::Deletion outside route shadows detected. Merge blocked."
+            printf '%s\n' "${UNEXPECTED}"
             exit 1
           fi
 
           echo "Deletion safeguard passed."
-          echo "No files are scheduled for deletion."
+          echo "Scheduled deletions: $(printf '%s\n' "${DELETED}" | grep -c . || true), all of them route shadows."
 
-      # STEP 6: Preview merged files
+      # STEP 7: Preview merged files
       - name: Preview merged changes
         shell: bash
         run: |
@@ -121,7 +182,7 @@ jobs:
 
           echo "Merge preview completed."
 
-      # STEP 7: Commit and push when enabled
+      # STEP 8: Commit and push when enabled
       - name: Commit and push merged frontend
         if: env.SYNC_ENABLED == 'true'
         shell: bash
@@ -140,18 +201,19 @@ jobs:
           fi
 
           git -C destination commit \
-            -m "merge: update frontend-web without deletions"
+            -m "merge: update frontend-web from spotlight-latest1" \
+            -m "Route shadows cleared: $(tr '\n' ' ' < "${SHADOWS:-route-shadow-deletions.txt}")"
 
           git -C destination push origin \
             "HEAD:refs/heads/${SYNC_BRANCH}"
 
           echo "Frontend merge completed successfully."
 
-      # STEP 8: Dry-run notification
+      # STEP 9: Dry-run notification
       - name: Dry-run notification
         if: env.SYNC_ENABLED != 'true'
         run: |
           echo "DRY RUN MODE"
           echo "No files were pushed to spotlight-latest."
           echo "Review additions and modifications."
-          echo "All deletions are blocked."
+          echo "Only route-shadow duplicates would be deleted; every other deletion is blocked."
