@@ -566,10 +566,10 @@
 }
 
 /*
- * The top-right hamburger and the drawer it opens. The mock's nav only links to
- * sections of this page, so the toggle is this page's only route to sign in and
- * register — it stays on screen at every width, and the drawer below it carries
- * the nav again plus the account group.
+ * The top-right hamburger. The mock's nav only links to sections of this page,
+ * so the toggle is this page's only route to sign in and register — it stays on
+ * screen at every width, and the drawer it opens carries the nav again plus the
+ * account group.
  */
 .sp-season2 .header-actions { display: flex; align-items: center; gap: 12px; }
 
@@ -590,43 +590,18 @@
 .sp-season2 .menu-toggle:hover { border-color: var(--orange); }
 .sp-season2 .menu-toggle:hover span { background: var(--orange); }
 
-.sp-season2 .mobile-nav {
-  display: grid;
-  gap: 2px;
-  padding: 14px max(44px, calc((100vw - min(1280px, 100vw - 88px)) / 2)) 22px;
-  background: var(--night);
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 14px;
-}
-/* `display: grid` would otherwise beat the [hidden] attribute's own rule. */
-.sp-season2 .mobile-nav[hidden] { display: none; }
-.sp-season2 .mobile-nav > a { padding-block: 9px; border-bottom: 1px solid var(--line); }
-.sp-season2 .mobile-nav > a:hover { color: var(--orange); }
-.sp-season2 .mobile-nav > .text-link { margin-top: 14px; align-self: start; }
-.sp-season2 .mobile-nav > .button:not(.text-link),
-.sp-season2 .mobile-nav > button:not(.text-link) {
-  padding: 9px 0;
-  background: none;
-  border: 0;
-  text-align: left;
-  color: var(--muted);
-  font: 700 14px/1.5 var(--head);
-  font-family: var(--head) !important;
-  cursor: pointer;
-}
-.sp-season2 .mobile-nav > button:not(.text-link):hover { color: var(--orange); }
-
-.sp-season2 .nav-rule { margin: 18px 0 6px; border: 0; border-top: 1px solid var(--line); }
-.sp-season2 .nav-group {
-  font: 800 9px/1.6 var(--head);
-  font-family: var(--head) !important;
-  letter-spacing: .14em;
-  color: #d2a8dc;
-}
-
-@media (max-width: 1000px) {
-  .sp-season2 .mobile-nav { padding-inline: 27px; }
+/* Tokens for the hamburger drawer (components/marketing/header-drawer.css). */
+.sp-season2 {
+  --hdr-bg: var(--panel);
+  --hdr-fg: var(--paper);
+  --hdr-muted: var(--muted);
+  --hdr-accent: var(--orange);
+  --hdr-on-accent: var(--night);
+  --hdr-label: #d2a8dc;
+  --hdr-line: var(--line);
+  --hdr-head: var(--head);
+  --hdr-scrim: #0b0611;
+  --hdr-focus: #b36aec;
 }
 
 @media (max-width: 700px) {
@@ -635,7 +610,6 @@
      .header-actions, so the same treatment is restated here. */
   .sp-season2 .header-actions > .button { min-height: 39px; padding: 8px 11px; gap: 9px; font-size: 11px; }
   .sp-season2 .menu-toggle { min-width: 39px; min-height: 39px; padding: 10px; gap: 4px; }
-  .sp-season2 .mobile-nav { padding-inline: 17px; font-size: 13px; }
 }
 
 /* ── Outside the wrapper, on purpose ─────────────────────────────────── */

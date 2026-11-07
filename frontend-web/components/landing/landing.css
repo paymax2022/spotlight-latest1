@@ -118,6 +118,21 @@
   }
 }
 
+/* Tokens for the hamburger drawer (components/marketing/header-drawer.css).
+   Same mechanism as the template offcanvas, this page's own palette. */
+.sp-home {
+  --hdr-bg: var(--bg2);
+  --hdr-fg: var(--paper);
+  --hdr-muted: var(--muted);
+  --hdr-accent: var(--orange);
+  --hdr-on-accent: #251324;
+  --hdr-label: #cfabd9;
+  --hdr-line: var(--line);
+  --hdr-head: var(--ui);
+  --hdr-scrim: #05030a;
+  --hdr-focus: #b87fff;
+}
+
 /* ── Outside the wrapper, on purpose ─────────────────────────────────── */
 
 /* Applied to document.body while a native <dialog> is open. */

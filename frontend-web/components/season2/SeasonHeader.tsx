@@ -1,19 +1,25 @@
 'use client';
 
-import Link from 'next/link';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
+import Link from 'next/link';
 import { useRegistrationPanel } from './RegistrationPanel';
 import { ArrowIcon } from './Icons';
 import { LOGO, seasonNav } from './content';
-import { accountLinks, useHeaderMenu } from '@/components/landing/useHeaderMenu';
+import HeaderDrawer from '@/components/marketing/HeaderDrawer';
 
 /**
  * The mock's own sticky chrome, kept instead of the shared template header so
- * this page can carry the type and colour system it was designed around.
+ * this page can carry the type and colour system it was designed around. The
+ * hamburger opens HeaderDrawer — the sliding modal drawer, in this page's
+ * palette — which is the only route to sign in and register here.
  */
 export default function SeasonHeader() {
   const { open } = useRegistrationPanel();
-  const { menuOpen, toggleMenu, closeMenu, menuRef, toggleRef, signedIn, signOut } = useHeaderMenu();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const toggleMenu = () => setMenuOpen((current) => !current);
+  const closeMenu = () => setMenuOpen(false);
 
   function registerTrigger(className: string, children: ReactNode) {
     return (
@@ -31,72 +37,43 @@ export default function SeasonHeader() {
   }
 
   return (
-    <header className="site-header">
-      <div className="wrap header-inner">
-        <Link className="brand" href="/" aria-label="Spotlight home">
-          <img src={LOGO} alt="Spotlight" width={200} height={72} />
-          <small>REALITY TV SHOW</small>
-        </Link>
-        <nav aria-label="Season navigation">
-          {seasonNav.map((item) => (
-            <a key={item.href} href={item.href}>
-              {item.label}
-            </a>
-          ))}
-        </nav>
-        <div className="header-actions">
-          {registerTrigger('button light', <>Register <ArrowIcon /></>)}
-          <button
-            ref={toggleRef}
-            type="button"
-            className="menu-toggle"
-            aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
-            aria-controls="season-menu"
-            aria-expanded={menuOpen}
-            onClick={toggleMenu}
-          >
-            <span />
-            <span />
-          </button>
-        </div>
-      </div>
-      <nav
-        ref={menuRef}
-        className="mobile-nav"
-        id="season-menu"
-        aria-label="Season menu"
-        hidden={!menuOpen}
-      >
-        {seasonNav.map((item) => (
-          <a key={item.href} href={item.href} onClick={closeMenu}>
-            {item.label}
-          </a>
-        ))}
-        {registerTrigger('text-link', <>Register for Season 2 <ArrowIcon /></>)}
-        <hr className="nav-rule" />
-        <p className="nav-group">Account</p>
-        {signedIn ? (
-          <>
-            {accountLinks.map((item) => (
-              <Link key={item.href} href={item.href} onClick={closeMenu}>
+    <>
+      <header className="site-header">
+        <div className="wrap header-inner">
+          <Link className="brand" href="/" aria-label="Spotlight home">
+            <img src={LOGO} alt="Spotlight" width={200} height={72} />
+            <small>REALITY TV SHOW</small>
+          </Link>
+          <nav aria-label="Season navigation">
+            {seasonNav.map((item) => (
+              <a key={item.href} href={item.href}>
                 {item.label}
-              </Link>
+              </a>
             ))}
-            <button type="button" onClick={signOut}>
-              Sign out
+          </nav>
+          <div className="header-actions">
+            {registerTrigger('button light', <>Register <ArrowIcon /></>)}
+            <button
+              type="button"
+              className="menu-toggle"
+              aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
+              aria-controls="season-menu"
+              aria-expanded={menuOpen}
+              onClick={toggleMenu}
+            >
+              <span />
+              <span />
             </button>
-          </>
-        ) : (
-          <>
-            <Link href="/login" onClick={closeMenu}>
-              Sign in
-            </Link>
-            <Link href="/login?tab=signup" onClick={closeMenu}>
-              Create an account
-            </Link>
-          </>
-        )}
-      </nav>
-    </header>
+          </div>
+        </div>
+      </header>
+      <HeaderDrawer
+        id="season-menu"
+        open={menuOpen}
+        onClose={closeMenu}
+        groups={[{ label: 'The show', links: seasonNav }]}
+        action={registerTrigger('text-link', <>Register for Season 2 <ArrowIcon /></>)}
+      />
+    </>
   );
 }
