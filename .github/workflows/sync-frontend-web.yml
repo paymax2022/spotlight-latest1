@@ -99,9 +99,21 @@ jobs:
           # nothing else: same directory, same stem, a Next special route filename.
           # A destination-only page under a path this repo does not have is not a
           # shadow and stays.
+          #
+          # Siblings are matched in bash, not with a `dir/stem.*` pathspec: git
+          # reads the brackets in a dynamic segment as a character class, so a
+          # pathspec glob misses every `[id]`/`[slug]` route — most of app/ here.
           ROUTE_NAMES="page layout template not-found error global-error loading default route"
           SHADOWS=route-shadow-deletions.txt
+          ADDED=route-shadow-additions.txt
           : > "${SHADOWS}"
+
+          git -C destination ls-files -- frontend-web/app > all-routes.txt
+          git -C destination diff \
+            --cached \
+            --name-only \
+            --diff-filter=A \
+            -- frontend-web > "${ADDED}"
 
           while IFS= read -r added; do
             [[ -z "${added}" ]] && continue
@@ -120,15 +132,25 @@ jobs:
 
             while IFS= read -r sibling; do
               [[ -z "${sibling}" || "${sibling}" == "${added}" ]] && continue
+              [[ "${sibling%/*}" == "${dir}" ]] || continue
+
+              sib_base="${sibling##*/}"
+              [[ "${sib_base}" != "${sib_base%.*}" ]] || continue
+              [[ "${sib_base%.*}" == "${stem}" ]] || continue
+
+              # Both files coming from this repo is a source-side duplicate:
+              # Next rejects it, so block the merge instead of picking a winner.
+              if grep -qxF -- "${sibling}" "${ADDED}"; then
+                echo "::error::${added} and ${sibling} resolve to the same path."
+                echo "Fix this repo before the overlay runs; nothing was pushed."
+                exit 1
+              fi
+
               git -C destination rm -q -- "${sibling}"
               printf '%s\n' "${sibling}" >> "${SHADOWS}"
               echo "Cleared shadow: ${sibling} (kept ${added})"
-            done < <(git -C destination ls-files -- "${dir}/${stem}.*")
-          done < <(git -C destination diff \
-            --cached \
-            --name-only \
-            --diff-filter=A \
-            -- frontend-web)
+            done < all-routes.txt
+          done < "${ADDED}"
 
           echo "Route shadows cleared: $(grep -c . "${SHADOWS}" || true)"
 
