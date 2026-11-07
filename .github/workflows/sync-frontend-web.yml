@@ -1,5 +1,5 @@
 
-name: Spotlight Frontend Web Auto Sync
+name: Spotlight Frontend Web Safe Merge
 
 on:
   push:
@@ -16,12 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: frontend-sync-${{ github.ref_name }}
+  group: frontend-safe-merge-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  sync:
-    name: Sync frontend-web directory
+  merge:
+    name: Merge Frontend Web Without Deletions
 
     if: github.repository == 'paymax2022/spotlight-latest1'
 
@@ -32,6 +32,7 @@ jobs:
       SYNC_ENABLED: ${{ vars.SPOTLIGHT_FRONTEND_SYNC_ENABLED }}
 
     steps:
+      # STEP 1: Checkout source repository
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -40,6 +41,7 @@ jobs:
           path: source
           persist-credentials: false
 
+      # STEP 2: Checkout destination repository
       - name: Checkout destination repository
         uses: actions/checkout@v4
         with:
@@ -47,38 +49,80 @@ jobs:
           ref: ${{ github.ref_name }}
           token: ${{ secrets.SPOTLIGHT_FRONTEND_SYNC_TOKEN }}
           path: destination
+          persist-credentials: true
 
-      - name: Synchronize frontend-web
+      # STEP 3: Merge additions and updates
+      # No --delete option is used
+      - name: Merge frontend-web without deleting files
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p source/frontend-web
+          if [[ ! -d source/frontend-web ]]; then
+            echo "::error::Source frontend-web directory not found."
+            exit 1
+          fi
+
           mkdir -p destination/frontend-web
 
-          rsync -av --delete \
+          rsync -av \
             --exclude=".git" \
             source/frontend-web/ \
             destination/frontend-web/
 
-          echo "Frontend synchronization prepared."
+          echo "Frontend overlay merge prepared."
 
-            - name: Preview changes
+      # STEP 4: Stage frontend-web changes only
+      - name: Stage frontend changes
         shell: bash
         run: |
           set -euo pipefail
 
           git -C destination add -A -- frontend-web
 
-          echo "Files to be synchronized:"
-          git -C destination diff --cached --name-status
+      # STEP 5: Block all deletions
+      - name: Prevent file deletions
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          echo "Summary:"
-          git -C destination diff --cached --stat
+          DELETED_FILES="$(git -C destination diff \
+            --cached \
+            --name-only \
+            --diff-filter=D \
+            -- frontend-web)"
 
-          echo "Preview completed successfully."
+          if [[ -n "${DELETED_FILES}" ]]; then
+            echo "::error::Deletion detected. Merge blocked."
+            printf '%s\n' "${DELETED_FILES}"
+            exit 1
+          fi
 
-      - name: Commit and push
+          echo "Deletion safeguard passed."
+          echo "No files are scheduled for deletion."
+
+      # STEP 6: Preview merged files
+      - name: Preview merged changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Files to be added or updated:"
+          git -C destination diff \
+            --cached \
+            --name-status \
+            -- frontend-web
+
+          echo "Change summary:"
+          git -C destination diff \
+            --cached \
+            --stat \
+            -- frontend-web
+
+          echo "Merge preview completed."
+
+      # STEP 7: Commit and push when enabled
+      - name: Commit and push merged frontend
         if: env.SYNC_ENABLED == 'true'
         shell: bash
         run: |
@@ -91,21 +135,23 @@ jobs:
             user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if git -C destination diff --cached --quiet; then
-            echo "No frontend changes detected."
+            echo "No new frontend changes."
             exit 0
           fi
 
           git -C destination commit \
-            -m "sync: update frontend-web from spotlight-latest1"
+            -m "merge: update frontend-web without deletions"
 
           git -C destination push origin \
             "HEAD:refs/heads/${SYNC_BRANCH}"
 
-          echo "Frontend synchronization successful."
+          echo "Frontend merge completed successfully."
 
-      - name: Dry-run status
+      # STEP 8: Dry-run notification
+      - name: Dry-run notification
         if: env.SYNC_ENABLED != 'true'
         run: |
           echo "DRY RUN MODE"
-          echo "No changes were pushed."
-          echo "Set SPOTLIGHT_FRONTEND_SYNC_ENABLED=true after review."
+          echo "No files were pushed to spotlight-latest."
+          echo "Review additions and modifications."
+          echo "All deletions are blocked."
