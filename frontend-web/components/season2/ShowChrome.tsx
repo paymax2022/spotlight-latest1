@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import MarketingDrawer from '@/components/layout/MarketingDrawer';
+import HeaderDrawer from '@/components/marketing/HeaderDrawer';
 import { ArrowIcon } from './Icons';
 import { LOGO } from './content';
 
@@ -20,6 +20,7 @@ const APPLICATION_NAV = [
 export function ApplicationHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
   const toggleMenu = () => setMenuOpen((current) => !current);
+  const closeMenu = () => setMenuOpen(false);
 
   return (
     <>
@@ -44,6 +45,7 @@ export function ApplicationHeader() {
               type="button"
               className="menu-toggle"
               aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
+              aria-controls="application-menu"
               aria-expanded={menuOpen}
               onClick={toggleMenu}
             >
@@ -53,7 +55,12 @@ export function ApplicationHeader() {
           </div>
         </div>
       </header>
-      <MarketingDrawer open={menuOpen} onToggle={toggleMenu} />
+      <HeaderDrawer
+        id="application-menu"
+        open={menuOpen}
+        onClose={closeMenu}
+        groups={[{ label: 'Applications', links: APPLICATION_NAV }]}
+      />
     </>
   );
 }
