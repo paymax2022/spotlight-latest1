@@ -58,6 +58,43 @@ test.describe('landing home header', () => {
   });
 });
 
+test.describe('season-2 header', () => {
+  test.use({ viewport: WIDTHS[0] });
+
+  for (const viewport of WIDTHS) {
+    test(`shows the hamburger at ${viewport.width}px`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.goto('/season-2');
+      await expect(page.locator('.sp-season2 .menu-toggle')).toBeVisible();
+    });
+  }
+
+  test('hamburger panel links to sign in and register', async ({ page }) => {
+    await page.goto('/season-2');
+    await page.locator('.sp-season2 .menu-toggle').click();
+    const panel = page.locator('.sp-season2 .mobile-nav');
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole('link', { name: /sign in/i })).toHaveAttribute('href', '/login');
+    await expect(panel.getByRole('link', { name: /create an account/i })).toHaveAttribute(
+      'href',
+      '/login?tab=signup',
+    );
+  });
+
+  test('signed-in member gets account links instead of sign in', async ({ page, context, request }) => {
+    await loginViaApi(context, request);
+    await page.goto('/season-2');
+    await page.locator('.sp-season2 .menu-toggle').click();
+    const panel = page.locator('.sp-season2 .mobile-nav');
+    await expect(panel.getByRole('link', { name: /my dashboard/i })).toHaveAttribute(
+      'href',
+      '/user-dashboard',
+    );
+    await expect(panel.getByRole('button', { name: /sign out/i })).toBeVisible();
+    await expect(panel.getByRole('link', { name: /^sign in$/i })).toHaveCount(0);
+  });
+});
+
 test.describe('template header', () => {
   test.use({ viewport: WIDTHS[0] });
 

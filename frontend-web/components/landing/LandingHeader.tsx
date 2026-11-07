@@ -1,68 +1,19 @@
 'use client';
 
 import Link from 'next/link';
-import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import type { ReactNode } from 'react';
 import { ArrowIcon } from './Icons';
 import { LOGO, siteNav } from './content';
 import { useJoinDialog } from './JoinDialog';
-
-const accountLinks = [
-  { label: 'My dashboard', href: '/user-dashboard' },
-  { label: 'My applications', href: '/user-dashboard?tab=applications' },
-];
+import { accountLinks, useHeaderMenu } from './useHeaderMenu';
 
 /**
  * The mock's own sticky chrome, kept instead of the shared template header so
  * this page can carry the type and colour system it was designed around.
  */
 export default function LandingHeader() {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [signedIn, setSignedIn] = useState(false);
   const { open } = useJoinDialog();
-  const menuRef = useRef<HTMLElement>(null);
-  const toggleRef = useRef<HTMLButtonElement>(null);
-  const supabase = useMemo(() => createClient(), []);
-  const closeMenu = useCallback(() => setMenuOpen(false), []);
-
-  useEffect(() => {
-    let mounted = true;
-    supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
-      if (mounted) setSignedIn(!!data.session);
-    });
-    const { data: authData } = supabase.auth.onAuthStateChange(
-      (_event: AuthChangeEvent, session: Session | null) => {
-        if (mounted) setSignedIn(!!session);
-      },
-    );
-    return () => {
-      mounted = false;
-      authData.subscription.unsubscribe();
-    };
-  }, [supabase]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeMenu();
-    };
-    const onClick = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (!menuRef.current?.contains(target) && !toggleRef.current?.contains(target)) closeMenu();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    document.addEventListener('click', onClick);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      document.removeEventListener('click', onClick);
-    };
-  }, [menuOpen, closeMenu]);
-
-  async function handleSignOut() {
-    await supabase.auth.signOut();
-    closeMenu();
-  }
+  const { menuOpen, toggleMenu, closeMenu, menuRef, toggleRef, signedIn, signOut } = useHeaderMenu();
 
   function joinTrigger(className: string | undefined, children: ReactNode) {
     return (
@@ -101,7 +52,7 @@ export default function LandingHeader() {
             aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
             aria-controls="mobile-menu"
             aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((current) => !current)}
+            onClick={toggleMenu}
           >
             <span />
             <span />
@@ -124,7 +75,7 @@ export default function LandingHeader() {
                 {item.label}
               </Link>
             ))}
-            <button type="button" onClick={handleSignOut}>
+            <button type="button" onClick={signOut}>
               Sign out
             </button>
           </>
