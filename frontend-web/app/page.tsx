@@ -23,8 +23,10 @@ import { formatNaira } from './service-details/film-academy/format';
 import '@/components/landing/landing.css';
 
 // Tuition on the Film Academy tile is the one figure here that comes from the
-// database; an hourly window keeps it honest without a query per visitor.
-export const revalidate = 3600;
+// database, so the page renders per request. On the prerendered/ISR path that
+// read comes back empty in production and the tile silently loses its price;
+// /service-details/film-academy already renders this same read dynamically.
+export const dynamic = 'force-dynamic';
 
 const display = Barlow_Condensed({
   weight: ['500', '600', '700', '800'],
