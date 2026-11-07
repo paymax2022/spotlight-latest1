@@ -1,26 +1,38 @@
-import Layout from '@/components/layout/Layout';
-import UtilityPaymentClient from '@/src/components/utility/UtilityPaymentClient';
+import type { Metadata } from 'next';
+import UtilityDesk from '@/src/components/utility/UtilityDesk';
+import { UtilityFooter, UtilityHeader, UtilitySprite } from '@/src/components/utility/UtilityChrome';
+import '@/src/components/utility/utility.css';
 
-export const metadata = {
-  title: 'Utility Bills | Spotlight',
-  description: 'Buy airtime, data, electricity, cable TV, internet and education services with your Spotlight wallet.',
+export const metadata: Metadata = {
+  title: 'Spotlight Utility — Pay Bills',
+  description: 'Pay airtime, data, electricity, cable TV, internet and education bills from your Spotlight wallet.',
 };
 
 export default function UtilityPage() {
   return (
-    <Layout
-      headerStyle={1}
-      footerStyle={2}
-      onePageNav={false}
-      breadcrumbTitle="Utility Bills"
-      breadcrumbClassName=""
-      breadcrumbPadding={undefined}
-    >
-      <section className="about-section section-padding fix bg-cover" style={{ backgroundImage: 'url("/assets/img/service/service-bg-2.jpg")' }}>
-        <div className="container">
-          <UtilityPaymentClient />
-        </div>
-      </section>
-    </Layout>
+    <div className="sp-utility">
+      <UtilitySprite />
+      <a className="u-skip" href="#payment">Skip to bill payment</a>
+      <UtilityHeader />
+
+      <main>
+        <section className="u-wrap u-intro" aria-labelledby="utility-title">
+          <div>
+            <p className="u-eyebrow"><i /> SPOTLIGHT / PERSONAL UTILITIES</p>
+            <h1 id="utility-title">Pay your bills.</h1>
+            <p className="u-lede">Manage airtime, data, electricity and other everyday payments from one place.</p>
+          </div>
+          <div className="u-intro-index" aria-hidden="true">
+            <span>UTILITY DESK</span>
+            <strong>NG<span> / </span>01</strong>
+            <span>NIGERIA · NAIRA</span>
+          </div>
+        </section>
+
+        <UtilityDesk />
+      </main>
+
+      <UtilityFooter />
+    </div>
   );
 }
