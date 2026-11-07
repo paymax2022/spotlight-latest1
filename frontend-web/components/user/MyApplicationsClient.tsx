@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { authHeaders } from '@/src/lib/auth/client';
 import { ArrowIcon } from '@/components/season2/Icons';
+import { programmeTitle } from './programmeNames';
 
 interface ApplicationRow {
   id: string;
@@ -19,19 +20,6 @@ interface ApplicationRow {
 
 type View = 'loading' | 'ready' | 'error' | 'auth';
 
-/**
- * The API returns the contest slug in programName; the ledger names the
- * programme a person applied to instead. Unknown slugs fall back to title case
- * rather than leaking a slug onto the page.
- */
-const PROGRAMME_NAMES: Record<string, string> = {
-  'reality-tv-show': 'Spotlight Reality TV Show',
-  'stem-contest': 'STEM Contest',
-  'film-academy': 'Spotlight Film Academy',
-  'sme-pitch-contest': 'SME Pitch Contest',
-  'open-mic-competition': 'Open Mic Competition',
-};
-
 const STATUS_LABELS: Record<string, { label: string; tone: 'draft' | 'go' | 'stop' | 'none' }> = {
   draft: { label: 'Draft · in progress', tone: 'draft' },
   awaiting_payment: { label: 'Awaiting payment', tone: 'draft' },
@@ -46,16 +34,6 @@ const STATUS_LABELS: Record<string, { label: string; tone: 'draft' | 'go' | 'sto
   declined: { label: 'Not selected', tone: 'stop' },
   withdrawn: { label: 'Withdrawn', tone: 'stop' },
 };
-
-function programmeName(item: ApplicationRow): string {
-  const slug = String(item.programName || '');
-  if (PROGRAMME_NAMES[slug]) return PROGRAMME_NAMES[slug];
-  if (!slug) return 'Application';
-  return slug
-    .split('-')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
 
 function statusMeta(status?: string) {
   const key = String(status || '').toLowerCase();
@@ -208,7 +186,7 @@ export default function MyApplicationsClient() {
                 {String(index + 1).padStart(2, '0')}
               </span>
               <div>
-                <h3 className="ledger-name">{programmeName(item)}</h3>
+                <h3 className="ledger-name">{programmeTitle(item.programName)}</h3>
                 <p className="ledger-meta">
                   {item.programType ? <span>{item.programType}</span> : null}
                   {item.reference ? <span>Ref {item.reference}</span> : null}

@@ -1,11 +1,15 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { authHeaders } from '@/src/lib/auth/client';
+import { ArrowIcon } from '@/components/season2/Icons';
+import { programmeTitle } from './programmeNames';
 
 type Profile = Record<string, any>;
 type Completion = { percentage: number; missingRequired: string[] };
+
 type Opportunity = {
   id: string;
   slug: string;
@@ -23,6 +27,7 @@ type Opportunity = {
   detailsHref: string;
   source: string;
 };
+
 type Application = {
   id: string;
   programId: string;
@@ -37,23 +42,45 @@ type Application = {
   editHref?: string;
   source: string;
 };
+
 type Summary = Record<string, number>;
 
-type Tab = 'contests' | 'applications' | 'overview';
+export type Tab = 'contests' | 'applications' | 'overview';
+type Tone = 'draft' | 'warn' | 'go' | 'stop' | 'none';
+type Status = { label: string; tone: Tone };
 
-const STATUS_COLOR: Record<string, string> = {
-  draft:        'background:#e5e7eb;color:#374151',
-  submitted:    'background:#dbeafe;color:#1d4ed8',
-  under_review: 'background:#fef3c7;color:#92400e',
-  approved:     'background:#d1fae5;color:#065f46',
-  rejected:     'background:#fee2e2;color:#991b1b',
-  shortlisted:  'background:#ede9fe;color:#5b21b6',
-  correction_requested: 'background:#ffedd5;color:#9a3412',
+const STATUSES: Record<string, Status> = {
+  draft: { label: 'Draft', tone: 'draft' },
+  awaiting_payment: { label: 'Awaiting payment', tone: 'draft' },
+  submitted: { label: 'Submitted', tone: 'none' },
+  under_review: { label: 'In review', tone: 'none' },
+  shortlisted: { label: 'Shortlisted', tone: 'go' },
+  approved: { label: 'Approved', tone: 'go' },
+  accepted: { label: 'Accepted', tone: 'go' },
+  rejected: { label: 'Not selected', tone: 'stop' },
+  withdrawn: { label: 'Withdrawn', tone: 'stop' },
+  correction_requested: { label: 'Corrections asked', tone: 'warn' },
 };
 
-function statusStyle(raw: string) {
-  const key = raw.toLowerCase().replace(/\s+/g, '_');
-  return STATUS_COLOR[key] || STATUS_COLOR.submitted;
+const FILTER_STATUS_KEYS = [
+  'draft',
+  'submitted',
+  'under_review',
+  'shortlisted',
+  'approved',
+  'rejected',
+  'correction_requested',
+];
+
+function statusKey(raw?: string) {
+  return String(raw || '').toLowerCase().replace(/\s+/g, '_');
+}
+
+function statusMeta(raw?: string): Status {
+  return STATUSES[statusKey(raw)] ?? {
+    label: statusKey(raw).replace(/_/g, ' ') || 'Filed',
+    tone: 'none',
+  };
 }
 
 function statusLabel(raw: string) {
@@ -63,327 +90,128 @@ function statusLabel(raw: string) {
 function daysUntil(iso?: string) {
   if (!iso) return null;
   const diff = Date.parse(iso) - Date.now();
-  const days = Math.ceil(diff / 86_400_000);
-  return days;
+  if (Number.isNaN(diff)) return null;
+  return Math.ceil(diff / 86_400_000);
+}
+
+function dayCount(days: number) {
+  return `${days} day${days === 1 ? '' : 's'} left`;
 }
 
 function feeLabel(fee: number) {
-  if (!fee || fee === 0) return 'Free';
+  if (!fee || fee === 0) return 'Free entry';
   return `₦${fee.toLocaleString()}`;
 }
 
-const TYPE_ICON: Record<string, string> = {
-  'open mic contest':  '🎤',
-  'stem contest':      '🔬',
-  'sme pitch':         '💼',
-  'football':          '⚽',
-  'acting':            '🎭',
-  'film':              '🎬',
-  'beauty':            '💄',
-  'dance':             '💃',
-  'comedy':            '😂',
-};
-
-function programIcon(type: string) {
-  const t = type.toLowerCase();
-  for (const [key, icon] of Object.entries(TYPE_ICON)) {
-    if (t.includes(key)) return icon;
-  }
-  return '🏆';
+function formatDate(value?: string) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-type QuickLink = {
-  href: string;
-  icon: string;
-  title: string;
-  description: string;
-  accent: string;
-};
+function monthShort(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-NG', { month: 'short' }).toUpperCase();
+}
 
-const QUICK_LINKS: QuickLink[] = [
-  {
-    href: '/utility',
-    icon: '🧾',
-    title: 'Pay Bills',
-    description: 'Airtime, data, electricity & TV — paid straight from your wallet',
-    accent: '#0ea5e9',
-  },
-  {
-    href: '/restaurant',
-    icon: '🍽️',
-    title: 'Order Food',
-    description: 'Browse restaurants near you and get your order delivered',
-    accent: '#f97316',
-  },
-  {
-    href: '/crowdfunding',
-    icon: '🤝',
-    title: 'Fund a Cause',
-    description: 'Discover campaigns to support, or start your own',
-    accent: '#14b8a6',
-  },
-  {
-    href: '/open-mic',
-    icon: '🎤',
-    title: 'Open Mic Voting',
-    description: 'Back your favorite contestants and follow live results',
-    accent: '#f59e0b',
-  },
-  {
-    href: '/film-academy/dashboard',
-    icon: '🎬',
-    title: 'Film Academy',
-    description: 'Track your enrollment, courses and tuition',
-    accent: '#8b5cf6',
-  },
-  {
-    href: '/stem/contests',
-    icon: '🔬',
-    title: 'STEM Contests',
-    description: 'Discover STEM competitions for schools and students',
-    accent: '#10b981',
-  },
-  {
-    href: '/earn',
-    icon: '🎁',
-    title: 'Refer & Earn',
-    description: 'Invite friends to Spotlight and earn rewards',
-    accent: '#ec4899',
-  },
-  {
-    href: '/profile',
-    icon: '👤',
-    title: 'My Profile',
-    description: 'Manage your personal details and verification',
-    accent: '#6366f1',
-  },
+function dayOfMonth(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return String(date.getDate()).padStart(2, '0');
+}
+
+/** completion.missingRequired arrives as field keys; the page shows labels. */
+function fieldLabel(field: string) {
+  const words = field
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/_/g, ' ')
+    .trim()
+    .toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const QUICK_LINKS = [
+  { href: '/utility', title: 'Pay Bills', description: 'Airtime, data, electricity and TV, straight from your wallet.' },
+  { href: '/restaurant', title: 'Order Food', description: 'Restaurants near you, delivered to your door.' },
+  { href: '/crowdfunding', title: 'Fund a Cause', description: 'Back a campaign or start one of your own.' },
+  { href: '/open-mic', title: 'Open Mic Voting', description: 'Back your favourites and follow the live tallies.' },
+  { href: '/film-academy/dashboard', title: 'Film Academy', description: 'Enrolment, courses and tuition in one place.' },
+  { href: '/stem/contests', title: 'STEM Contests', description: 'Competitions for schools, teams and students.' },
+  { href: '/earn', title: 'Refer and Earn', description: 'Invite friends to Spotlight, get rewarded.' },
+  { href: '/profile', title: 'My Profile', description: 'Personal details and verification status.' },
 ];
 
-function QuickAccessTile({ item }: { item: QuickLink }) {
-  const [hover, setHover] = useState(false);
+type BoardItem = {
+  key: string;
+  name: string;
+  why: string;
+  href: string;
+  cta: string;
+  urgent: boolean;
+};
 
-  return (
-    <Link
-      href={item.href}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 14,
-        padding: '16px',
-        borderRadius: 14,
-        textDecoration: 'none',
-        background: '#fff',
-        border: `1px solid ${hover ? item.accent : '#e5e7eb'}`,
-        boxShadow: hover ? `0 8px 20px ${item.accent}26` : '0 1px 2px rgba(0,0,0,0.03)',
-        transform: hover ? 'translateY(-2px)' : 'translateY(0)',
-        transition: 'all .18s ease',
-      }}
-    >
-      <span
-        style={{
-          flexShrink: 0,
-          width: 44,
-          height: 44,
-          borderRadius: 12,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 22,
-          background: `${item.accent}1a`,
-        }}
-      >
-        {item.icon}
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: '#111827' }}>{item.title}</p>
-        <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280', lineHeight: 1.4 }}>{item.description}</p>
-      </div>
-      <span
-        style={{
-          flexShrink: 0,
-          fontSize: 16,
-          color: hover ? item.accent : '#d1d5db',
-          transform: hover ? 'translateX(2px)' : 'translateX(0)',
-          transition: 'all .18s ease',
-        }}
-        aria-hidden
-      >
-        →
-      </span>
-    </Link>
-  );
+function Kicker({ children }: { children: ReactNode }) {
+  return <p className="hub-eyebrow">{children}</p>;
 }
 
-function QuickAccessGrid() {
-  return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
-        <h5 style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>Quick Access</h5>
-        <span style={{ fontSize: 12, color: '#9ca3af' }}>Jump straight into any Spotlight service</span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))', gap: 12 }}>
-        {QUICK_LINKS.map((item) => (
-          <QuickAccessTile key={item.href} item={item} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ContestCard({
-  item,
-  userApp,
-}: {
-  item: Opportunity;
-  userApp: Application | undefined;
-}) {
+function ContestCard({ item, userApp }: { item: Opportunity; userApp?: Application }) {
   const days = daysUntil(item.deadline);
   const applied = !!userApp;
-  const isDraft = userApp?.status?.toLowerCase().includes('draft');
-  const isRejected = userApp?.status?.toLowerCase().includes('reject');
+  const isOpenMic = item.programType.toLowerCase().includes('open mic');
+  const status = applied ? statusMeta(userApp!.status) : null;
+  const isDraft = statusKey(userApp?.status).includes('draft');
 
   return (
-    <div
-      style={{
-        border: applied ? '1.5px solid #3b82f6' : '1px solid #e5e7eb',
-        borderRadius: 12,
-        padding: '16px',
-        background: '#fff',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 10,
-        position: 'relative',
-      }}
-    >
-      {/* Applied badge (top-right) */}
-      {applied && (
-        <span
-          style={{
-            position: 'absolute', top: 12, right: 12,
-            fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
-            ...Object.fromEntries(statusStyle(userApp!.status).split(';').map((s) => s.split(':').map((x) => x.trim()))),
-          }}
-        >
-          {statusLabel(userApp!.status)}
-        </span>
-      )}
-
-      {/* Header */}
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <span style={{ fontSize: 28, lineHeight: 1 }}>{programIcon(item.programType)}</span>
-        <div style={{ flex: 1, minWidth: 0, paddingRight: applied ? 80 : 0 }}>
-          <p style={{ fontSize: 10, textTransform: 'uppercase', color: '#6b7280', marginBottom: 2, fontWeight: 600 }}>
-            {item.programType}
-          </p>
-          <h5 style={{ margin: 0, fontWeight: 700, fontSize: 15, lineHeight: 1.3 }}>{item.title}</h5>
-        </div>
+    <article className={`hub-call${applied ? ' is-applied' : ''}`}>
+      <div className="hub-call-top">
+        <p className="hub-call-type">{item.programType}</p>
+        {status ? (
+          <span className="hub-tag" data-tone={status.tone}>
+            {status.label}
+          </span>
+        ) : null}
       </div>
 
-      {/* Description */}
-      <p style={{ margin: 0, fontSize: 13, color: '#4b5563', lineHeight: 1.5 }}>
-        {item.shortDescription}
-      </p>
+      <h3>{item.title}</h3>
+      <p className="hub-call-copy">{item.shortDescription}</p>
+      {item.prizeOrBenefit ? <p className="hub-call-prize">{item.prizeOrBenefit}</p> : null}
 
-      {/* Meta row */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 11, color: '#6b7280' }}>
-        {item.location && (
-          <span>📍 {item.location}</span>
-        )}
-        <span style={{
-          fontWeight: 700,
-          color: item.applicationFee ? '#92400e' : '#065f46',
-        }}>
+      <p className="hub-call-meta">
+        {item.location ? <span className="is-loc">{item.location}</span> : null}
+        {item.deliveryMode ? <span>{item.deliveryMode}</span> : null}
+        <span className={item.applicationFee ? 'is-fee' : 'is-free'}>
           {feeLabel(item.applicationFee)}
         </span>
-        {days !== null && (
-          <span style={{ color: days <= 3 ? '#dc2626' : days <= 7 ? '#d97706' : '#6b7280', fontWeight: days <= 7 ? 700 : 400 }}>
-            {days > 0 ? `⏱ ${days}d left` : days === 0 ? '⏱ Closes today' : '⛔ Closed'}
-          </span>
-        )}
-      </div>
+        {days !== null ? <span>{days > 0 ? dayCount(days) : days === 0 ? 'Closes today' : 'Closed'}</span> : null}
+      </p>
 
-      {/* Prize */}
-      {item.prizeOrBenefit && (
-        <p style={{ margin: 0, fontSize: 12, color: '#7c3aed', fontWeight: 500 }}>
-          🎁 {item.prizeOrBenefit}
-        </p>
-      )}
-
-      {/* Actions */}
-      <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-        {!applied && (
-          <Link
-            href={item.applyHref}
-            style={{
-              background: '#f59e0b', color: '#000', fontWeight: 700, fontSize: 12,
-              padding: '7px 16px', borderRadius: 8, textDecoration: 'none', display: 'inline-block',
-            }}
-          >
-            Apply Now →
+      <div className="hub-call-actions">
+        {!applied ? (
+          <Link className="button orange" href={item.applyHref}>
+            Apply now <ArrowIcon />
+          </Link>
+        ) : isDraft && userApp?.editHref ? (
+          <Link className="button orange" href={userApp.editHref}>
+            Continue <ArrowIcon />
+          </Link>
+        ) : isOpenMic ? (
+          <Link className="button dark" href={`/open-mic/${item.slug}/entries`}>
+            Vote now <ArrowIcon />
+          </Link>
+        ) : (
+          <Link className="button dark" href={userApp!.detailsHref}>
+            Track status <ArrowIcon />
           </Link>
         )}
-        {applied && isDraft && userApp?.editHref && (
-          <Link
-            href={userApp.editHref}
-            style={{
-              background: '#f59e0b', color: '#000', fontWeight: 700, fontSize: 12,
-              padding: '7px 16px', borderRadius: 8, textDecoration: 'none',
-            }}
-          >
-            Continue Application →
-          </Link>
-        )}
-        {applied && !isDraft && !isRejected && (
-          <>
-            {item.programType.toLowerCase().includes('open mic') ? (
-              <Link
-                href={`/open-mic/${item.slug}/entries`}
-                style={{
-                  background: 'linear-gradient(135deg,#f59e0b,#d97706)', color: '#000',
-                  fontWeight: 800, fontSize: 12, padding: '7px 18px', borderRadius: 8,
-                  textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4,
-                  boxShadow: '0 2px 8px rgba(245,158,11,0.35)',
-                }}
-              >
-                👍 Vote Now
-              </Link>
-            ) : (
-              <Link
-                href={userApp!.detailsHref}
-                style={{
-                  background: '#3b82f6', color: '#fff', fontWeight: 700, fontSize: 12,
-                  padding: '7px 16px', borderRadius: 8, textDecoration: 'none',
-                }}
-              >
-                Track Status →
-              </Link>
-            )}
-          </>
-        )}
-        {applied && isRejected && (
-          <Link
-            href={item.applyHref}
-            style={{
-              background: 'transparent', border: '1px solid #d1d5db', color: '#6b7280',
-              fontSize: 12, padding: '7px 16px', borderRadius: 8, textDecoration: 'none',
-            }}
-          >
-            View Details
-          </Link>
-        )}
-        <Link
-          href={item.detailsHref}
-          style={{
-            background: 'transparent', border: '1px solid #d1d5db', color: '#374151',
-            fontSize: 12, padding: '7px 14px', borderRadius: 8, textDecoration: 'none',
-          }}
-        >
-          Details
+        <Link className="text-link" href={item.detailsHref}>
+          Details <ArrowIcon />
         </Link>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -391,213 +219,338 @@ function ShareButton({ url, label }: { url: string; label?: string }) {
   const [copied, setCopied] = useState(false);
 
   function handleShare() {
-    const fullUrl = typeof window !== 'undefined' ? `${window.location.origin}${url}` : url;
+    const fullUrl = `${window.location.origin}${url}`;
     if (navigator.share) {
       void navigator.share({ title: label || 'Spotlight Open Mic', url: fullUrl });
-    } else {
-      void navigator.clipboard.writeText(fullUrl).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      });
+      return;
     }
+    void navigator.clipboard.writeText(fullUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   }
 
   return (
-    <button
-      onClick={handleShare}
-      style={{
-        background: 'transparent', border: '1px solid #d1d5db', color: '#374151',
-        fontSize: 11, padding: '6px 12px', borderRadius: 7, cursor: 'pointer',
-        fontWeight: 600, whiteSpace: 'nowrap',
-      }}
-    >
-      {copied ? '✓ Copied!' : '↗ Share'}
+    <button type="button" className="hub-share" onClick={handleShare}>
+      {copied ? 'Link copied' : 'Share'}
     </button>
   );
 }
 
-function ApplicationRow({ item }: { item: Application }) {
+function LedgerRow({
+  item,
+  index,
+}: {
+  item: Application;
+  index: number;
+}) {
+  const status = statusMeta(item.status);
+  const filed = formatDate(item.submittedAt);
   const isOpenMic = item.source.startsWith('open_mic');
   const voteHref = `/open-mic/${item.programName}/entries`;
+  // A draft's next step is the editor, so the details link must not repeat the
+  // server's own instruction ("Continue application") next to Continue.
+  const detailsLabel = item.editHref ? 'View' : item.nextAction || 'View';
 
   return (
-    <div
-      style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-        padding: '14px 0', borderBottom: '1px solid #f3f4f6', gap: 12, flexWrap: 'wrap',
-      }}
-    >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-          <span style={{ fontWeight: 700, fontSize: 14 }}>{item.programName}</span>
-          <span
-            style={{
-              fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
-              ...Object.fromEntries(statusStyle(item.status).split(';').map((s) => s.split(':').map((x) => x.trim()))),
-            }}
-          >
-            {statusLabel(item.status)}
-          </span>
-        </div>
-        <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>
-          {item.programType}
-          {item.reference ? ` · Ref: ${item.reference}` : ''}
-          {item.submittedAt ? ` · ${new Date(item.submittedAt).toLocaleDateString()}` : ''}
+    <article className="hub-ledger-row">
+      <span className="hub-ledger-no" aria-hidden="true">
+        {String(index + 1).padStart(2, '0')}
+      </span>
+      <div>
+        <h3 className="hub-ledger-name">{programmeTitle(item.programName)}</h3>
+        <p className="hub-ledger-meta">
+          {item.programType ? <span>{item.programType}</span> : null}
+          {item.reference ? <span>Ref {item.reference}</span> : null}
+          {filed ? <span>Filed {filed}</span> : null}
         </p>
+        <span className="hub-tag" data-tone={status.tone}>
+          {status.label}
+        </span>
       </div>
-      <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-        {item.editHref && (
-          <Link
-            href={item.editHref}
-            style={{
-              background: '#f59e0b', color: '#000', fontWeight: 700, fontSize: 11,
-              padding: '6px 12px', borderRadius: 7, textDecoration: 'none',
-            }}
-          >
-            Continue
+      <div className="hub-ledger-actions">
+        {item.editHref ? (
+          <Link className="text-link" href={item.editHref}>
+            Continue <ArrowIcon />
           </Link>
-        )}
+        ) : null}
         {isOpenMic ? (
           <>
-            <Link
-              href={voteHref}
-              style={{
-                background: '#f59e0b', color: '#000', fontWeight: 700, fontSize: 11,
-                padding: '6px 14px', borderRadius: 7, textDecoration: 'none', whiteSpace: 'nowrap',
-              }}
-            >
-              Vote
+            <Link className="text-link" href={voteHref}>
+              Vote <ArrowIcon />
             </Link>
             <ShareButton url={voteHref} label={item.programName} />
           </>
         ) : (
-          <Link
-            href={item.detailsHref}
-            style={{
-              background: 'transparent', border: '1px solid #d1d5db', color: '#374151',
-              fontSize: 11, padding: '6px 12px', borderRadius: 7, textDecoration: 'none',
-            }}
-          >
-            {item.nextAction || 'View'}
+          <Link className="text-link" href={item.detailsHref}>
+            {detailsLabel} <ArrowIcon />
           </Link>
         )}
       </div>
+    </article>
+  );
+}
+
+function DueRow({ item, userApp }: { item: Opportunity; userApp?: Application }) {
+  const days = daysUntil(item.deadline) ?? 0;
+  const level = days <= 2 ? 'now' : days <= 7 ? 'soon' : 'none';
+  const status = userApp ? statusMeta(userApp.status) : null;
+
+  return (
+    <div className="hub-due-row">
+      <p className="hub-due-when">
+        <b>{dayOfMonth(item.deadline)}</b>
+        <small>{monthShort(item.deadline)}</small>
+      </p>
+      <div>
+        <p className="hub-due-name">{item.title}</p>
+        <p className="hub-due-type">{item.programType}</p>
+      </div>
+      {status ? (
+        <span className="hub-tag" data-tone={status.tone}>
+          {status.label}
+        </span>
+      ) : (
+        <span className="hub-countdown" data-level={level}>
+          {days === 0 ? 'Today' : dayCount(days)}
+        </span>
+      )}
     </div>
   );
 }
 
-export default function UserDashboardClient() {
-  const [profile,      setProfile]      = useState<Profile | null>(null);
-  const [completion,   setCompletion]   = useState<Completion | null>(null);
+export default function UserDashboardClient({ initialTab }: { initialTab: Tab }) {
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [completion, setCompletion] = useState<Completion | null>(null);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
-  const [summary,      setSummary]      = useState<Summary>({});
-  const [authError,    setAuthError]    = useState(false);
-  const [dataError,    setDataError]    = useState<string | null>(null);
-  const [loading,      setLoading]      = useState(true);
+  const [summary, setSummary] = useState<Summary>({});
+  const [view, setView] = useState<'loading' | 'ready' | 'error' | 'auth'>('loading');
+  const [message, setMessage] = useState('');
+  const [attempt, setAttempt] = useState(0);
 
-  const [activeTab,    setActiveTab]    = useState<Tab>('contests');
-  const [search,       setSearch]       = useState('');
-  const [typeFilter,   setTypeFilter]   = useState('');
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [showApplied,  setShowApplied]  = useState(false);
+  const [showApplied, setShowApplied] = useState(false);
 
-  async function load() {
-    setLoading(true);
-    setDataError(null);
-    try {
-      const headers = await authHeaders();
-      const [meRes, appsRes, oppRes] = await Promise.all([
-        fetch('/api/me', { headers, cache: 'no-store' }),
-        fetch('/api/me/applications', { headers, cache: 'no-store' }),
-        fetch('/api/opportunities', { cache: 'no-store' }),
-      ]);
-
-      if (meRes.status === 401) { setAuthError(true); return; }
-
-      const [me, apps, opps] = await Promise.all([meRes.json(), appsRes.json(), oppRes.json()]);
-      if (!meRes.ok) { setAuthError(true); return; }
-
-      const warns: string[] = [];
-      if (!appsRes.ok) warns.push('Some applications could not be loaded.');
-      if (!oppRes.ok)  warns.push('Opportunities could not be loaded.');
-      if (warns.length) setDataError(warns.join(' '));
-
-      setProfile(me.profile ?? null);
-      setCompletion(me.completion ?? null);
-      setApplications(apps.applications ?? []);
-      setSummary(apps.summary ?? {});
-      // Load ALL contests — no artificial cap
-      setOpportunities(opps.opportunities ?? []);
-    } catch (e) {
-      setDataError(e instanceof Error ? e.message : 'Unable to load dashboard.');
-    } finally {
-      setLoading(false);
-    }
+  // The site menu's "My applications" entry arrives as ?tab=applications. Clicking
+  // it while already here re-renders with a new initialTab without remounting, so
+  // the link wins over local state during render rather than through an effect.
+  const [linkedTab, setLinkedTab] = useState(initialTab);
+  if (linkedTab !== initialTab) {
+    setLinkedTab(initialTab);
+    setActiveTab(initialTab);
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    let cancelled = false;
 
-  // Build a quick lookup: contestSlug/id → application
-  const appsByProgramId = useMemo(() => {
-    const map: Record<string, Application> = {};
-    for (const a of applications) {
-      map[a.programId] = a;
+    async function load() {
+      setView('loading');
+      setMessage('');
+      try {
+        const headers = await authHeaders();
+        const [meRes, appsRes, oppRes] = await Promise.all([
+          fetch('/api/me', { headers, cache: 'no-store' }),
+          fetch('/api/me/applications', { headers, cache: 'no-store' }),
+          fetch('/api/opportunities', { cache: 'no-store' }),
+        ]);
+
+        if (meRes.status === 401) {
+          if (!cancelled) setView('auth');
+          return;
+        }
+
+        const [me, apps, opps] = await Promise.all([
+          meRes.json().catch(() => ({})),
+          appsRes.json().catch(() => ({})),
+          oppRes.json().catch(() => ({})),
+        ]);
+
+        if (!meRes.ok) {
+          if (!cancelled) setView('auth');
+          return;
+        }
+
+        const partial: string[] = [];
+        if (!appsRes.ok) partial.push('Some applications could not be loaded.');
+        if (!oppRes.ok) partial.push('Opportunities could not be loaded.');
+        if (!cancelled) setMessage(partial.join(' '));
+
+        if (!cancelled) {
+          setProfile(me.profile ?? null);
+          setCompletion(me.completion ?? null);
+          setApplications(Array.isArray(apps.applications) ? apps.applications : []);
+          setSummary(apps.summary ?? {});
+          setOpportunities(Array.isArray(opps.opportunities) ? opps.opportunities : []);
+          setView('ready');
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setMessage(e instanceof Error ? e.message : 'Unable to load your dashboard.');
+          setView('error');
+        }
+      }
     }
-    return map;
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
+
+  const appFor = useMemo(() => {
+    const byProgram: Record<string, Application> = {};
+    for (const item of applications) byProgram[item.programId] = item;
+    return (opportunity: Opportunity) =>
+      byProgram[opportunity.id] || byProgram[opportunity.slug];
   }, [applications]);
 
-  // Contest type options for filter
-  const contestTypes = useMemo(() => {
-    const s = new Set(opportunities.map((o) => o.programType));
-    return Array.from(s).sort();
-  }, [opportunities]);
+  const contestTypes = useMemo(
+    () => Array.from(new Set(opportunities.map((o) => o.programType))).sort(),
+    [opportunities],
+  );
 
-  // Filtered contest list
   const filteredContests = useMemo(() => {
     const q = search.toLowerCase();
     return opportunities.filter((o) => {
-      if (q && !`${o.title} ${o.programType} ${o.location || ''}`.toLowerCase().includes(q)) return false;
+      if (q && !`${o.title} ${o.programType} ${o.location || ''}`.toLowerCase().includes(q))
+        return false;
       if (typeFilter && o.programType !== typeFilter) return false;
-      if (showApplied && !appsByProgramId[o.id] && !appsByProgramId[o.slug]) return false;
+      if (showApplied && !appFor(o)) return false;
       return true;
     });
-  }, [opportunities, search, typeFilter, showApplied, appsByProgramId]);
+  }, [opportunities, search, typeFilter, showApplied, appFor]);
 
-  // Filtered applications list
   const filteredApps = useMemo(() => {
     const q = search.toLowerCase();
     return applications.filter((a) => {
-      if (statusFilter && !a.status.toLowerCase().includes(statusFilter.toLowerCase())) return false;
-      if (q && !`${a.programName} ${a.programType} ${a.reference || ''}`.toLowerCase().includes(q)) return false;
+      if (statusFilter && statusKey(a.status) !== statusFilter) return false;
+      if (
+        q &&
+        !`${a.programName} ${a.programType} ${a.reference || ''}`.toLowerCase().includes(q)
+      )
+        return false;
       return true;
     });
   }, [applications, search, statusFilter]);
 
-  if (!loading && authError) {
+  const needsAction = useMemo<BoardItem[]>(() => {
+    const items: BoardItem[] = [];
+    for (const a of applications) {
+      const key = statusKey(a.status);
+      if (key.includes('correction')) {
+        items.push({
+          key: a.id,
+          name: programmeTitle(a.programName),
+          why: 'Reviewers asked for changes to your file.',
+          href: a.detailsHref,
+          cta: 'Respond',
+          urgent: true,
+        });
+      } else if (key.includes('draft') && a.editHref) {
+        items.push({
+          key: a.id,
+          name: programmeTitle(a.programName),
+          why: 'Draft — every finished step is already saved.',
+          href: a.editHref,
+          cta: 'Continue',
+          urgent: false,
+        });
+      }
+    }
+    for (const o of opportunities) {
+      const days = daysUntil(o.deadline);
+      if (days === null || days < 0 || days > 7 || appFor(o)) continue;
+      items.push({
+        key: o.id,
+        name: o.title,
+        why:
+          days === 0
+            ? 'Entries close today.'
+            : `Entries close in ${days} day${days === 1 ? '' : 's'}.`,
+        href: o.applyHref,
+        cta: 'Apply now',
+        urgent: days <= 3,
+      });
+    }
+    return items.sort((a, b) => Number(b.urgent) - Number(a.urgent)).slice(0, 6);
+  }, [applications, opportunities, appFor]);
+
+  const closingSoon = useMemo(
+    () =>
+      opportunities
+        .filter((o) => {
+          const d = daysUntil(o.deadline);
+          return d !== null && d >= 0 && d <= 14;
+        })
+        .sort((a, b) => Date.parse(String(a.deadline)) - Date.parse(String(b.deadline)))
+        .slice(0, 6),
+    [opportunities],
+  );
+
+  if (view === 'auth') {
     return (
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '40px 20px', textAlign: 'center' }}>
-        <div style={{ fontSize: 56, marginBottom: 16 }}>🔒</div>
-        <h3 style={{ marginBottom: 8 }}>Sign in to view your dashboard</h3>
-        <p style={{ color: '#6b7280', marginBottom: 24 }}>
-          Browse active contests, track your applications, and manage your Spotlight profile.
-        </p>
-        <Link href="/login?next=/user-dashboard" className="theme-btn">Sign In</Link>
-        <p style={{ fontSize: 13, color: '#9ca3af', marginTop: 16 }}>
-          No account?{' '}
-          <Link href="/login?tab=signup&next=/user-dashboard" style={{ textDecoration: 'underline' }}>Create one free</Link>
-        </p>
-      </div>
+      <section className="hub-desk" aria-label="Sign in">
+        <div className="wrap hub-solo">
+          <div className="hub-state">
+            <Kicker>
+              <span>00</span> SESSION NEEDED
+            </Kicker>
+            <h3>Sign in to your desk.</h3>
+            <p>
+              Browse active contests, track your applications and manage your Spotlight profile.
+              Your drafts are attached to your account, so picking up where you left off takes one
+              sign in.
+            </p>
+            <Link className="button orange" href="/login?next=/user-dashboard">
+              Sign in <ArrowIcon />
+            </Link>
+            <Link className="text-link" href="/login?tab=signup&next=/user-dashboard">
+              Create an account free <ArrowIcon />
+            </Link>
+          </div>
+        </div>
+      </section>
     );
   }
 
-  if (loading) {
+  if (view === 'error') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {[100, 60, 300, 200].map((h, i) => (
-          <div key={i} style={{ height: h, background: 'rgba(0,0,0,0.06)', borderRadius: 10, animation: 'pulse 1.5s infinite' }} />
-        ))}
-      </div>
+      <section className="hub-desk" aria-label="Could not load">
+        <div className="wrap hub-solo">
+          <div className="hub-state is-alert" role="alert">
+            <Kicker>
+              <span>00</span> COULD NOT LOAD
+            </Kicker>
+            <h3>Try that again.</h3>
+            <p>{message}</p>
+            <button
+              type="button"
+              className="button orange"
+              onClick={() => setAttempt((n) => n + 1)}
+            >
+              Retry <ArrowIcon />
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (view === 'loading') {
+    return (
+      <section className="hub-desk" aria-label="Loading your dashboard">
+        <div className="wrap hub-skeleton" aria-busy="true">
+          <div className="skeleton" style={{ height: 54, width: '58%' }} />
+          <div className="skeleton" style={{ height: 16, width: '34%' }} />
+          <div className="skeleton" style={{ height: 120, width: '100%' }} />
+          <div className="skeleton" style={{ height: 16, width: '72%' }} />
+          <div className="skeleton" style={{ height: 16, width: '64%' }} />
+        </div>
+      </section>
     );
   }
 
@@ -605,276 +558,373 @@ export default function UserDashboardClient() {
     profile?.firstName ||
     profile?.displayName ||
     (profile?.raw?.full_name as string | undefined) ||
-    (profile?.email ? (profile.email as string).split('@')[0].replace(/[._-]+/g, ' ') : undefined);
+    (profile?.email ? String(profile.email).split('@')[0].replace(/[._-]+/g, ' ') : undefined);
   const firstName = rawName ? rawName.charAt(0).toUpperCase() + rawName.slice(1) : 'there';
 
-  const completionPct = Number(completion?.percentage || 0);
+  const completionPct = Math.min(100, Math.max(0, Number(completion?.percentage || 0)));
+  const missing = Array.isArray(completion?.missingRequired) ? completion.missingRequired : [];
+  const filledCells = Math.round(completionPct / 10);
+
+  const tabs: [Tab, string][] = [
+    ['contests', `Contests (${opportunities.length})`],
+    ['applications', `My Applications (${applications.length})`],
+    ['overview', 'Overview'],
+  ];
+
+  function pickTab(tab: Tab) {
+    setActiveTab(tab);
+    setSearch('');
+    setTypeFilter('');
+    setStatusFilter('');
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', tab);
+    window.history.replaceState(null, '', url);
+  }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-      {/* Warning banner */}
-      {dataError && (
-        <div style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.35)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#92400e', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>⚠️ {dataError}</span>
-          <button onClick={load} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', fontSize: 12, color: 'inherit' }}>Retry</button>
-        </div>
-      )}
-
-      {/* Welcome bar */}
-      <div className="glass-card rounded-md" style={{ padding: '20px 20px 16px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+    <>
+      <section className="hub-desk" aria-labelledby="desk-title">
+        <div className="wrap hub-desk-inner">
           <div>
-            <h2 style={{ margin: '0 0 4px', fontSize: 22 }}>Welcome back, {firstName} 👋</h2>
-            <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>
-              {opportunities.length} active contest{opportunities.length !== 1 ? 's' : ''} open
-              {applications.length > 0 ? ` · ${applications.length} application${applications.length !== 1 ? 's' : ''}` : ''}
+            <p className="eyebrow">
+              <i></i> MEMBER DESK <b></b> YOUR FILE
+            </p>
+            <h2 className="hub-hello" id="desk-title">
+              Welcome back, <em>{firstName}</em>.
+            </h2>
+            <p className="hub-line">
+              {opportunities.length} active contest{opportunities.length === 1 ? '' : 's'} open
+              {applications.length > 0
+                ? ` · ${applications.length} application${applications.length === 1 ? '' : 's'} on file`
+                : ''}
             </p>
           </div>
-          <Link href="/profile" className="theme-btn" style={{ fontSize: 13, padding: '8px 16px' }}>
-            {completionPct >= 80 ? 'Edit Profile' : `Complete Profile (${completionPct}%)`}
-          </Link>
-        </div>
 
-        {/* Compact progress bar */}
-        {completionPct < 100 && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ height: 6, borderRadius: 6, background: 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
-              <div style={{
-                height: 6, borderRadius: 6,
-                width: `${completionPct}%`,
-                background: completionPct >= 80 ? '#10b981' : '#f59e0b',
-                transition: 'width .4s ease',
-              }} />
+          <div className="hub-meter">
+            <p className="hub-meter-head">
+              Profile completion <span>{completionPct}%</span>
+            </p>
+            <div className="hub-meter-cells" aria-hidden="true">
+              {Array.from({ length: 10 }, (_, i) => (
+                <i key={i} className={i < filledCells ? 'is-on' : undefined} />
+              ))}
             </div>
-            {Array.isArray(completion?.missingRequired) && completion.missingRequired.length > 0 && (
-              <p style={{ margin: '5px 0 0', fontSize: 11, color: '#9ca3af' }}>
-                Profile incomplete — missing: {completion.missingRequired.slice(0, 4).join(', ')}
-                {completion.missingRequired.length > 4 ? ` +${completion.missingRequired.length - 4} more` : ''}
+            {missing.length > 0 ? (
+              <p className="hub-meter-foot">
+                {missing.slice(0, 4).map((field) => (
+                  <span className="hub-chip" key={field}>
+                    {fieldLabel(field)}
+                  </span>
+                ))}
+                {missing.length > 4 ? <span>+{missing.length - 4} more</span> : null}
               </p>
+            ) : (
+              <p className="hub-meter-foot">Your file is complete — nothing outstanding.</p>
             )}
+            <Link className="button light" href="/profile">
+              {completionPct >= 80 ? 'Edit profile' : `Finish profile (${completionPct}%)`}{' '}
+              <ArrowIcon />
+            </Link>
           </div>
-        )}
-      </div>
-
-      {/* Stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
-        {([
-          ['Contests Open', opportunities.length, '#7c3aed'],
-          ['Total Applied', summary.total || 0, '#3b82f6'],
-          ['Submitted', summary.submitted || 0, '#10b981'],
-          ['Needs Action', summary.pendingCorrections || 0, '#f59e0b'],
-        ] as [string, number, string][]).map(([label, value, color]) => (
-          <div key={label} className="glass-card rounded-md" style={{ padding: '12px 14px' }}>
-            <p style={{ margin: '0 0 2px', fontSize: 10, color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600 }}>{label}</p>
-            <p style={{ margin: 0, fontSize: 24, fontWeight: 700, color }}>{value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Quick Access */}
-      <QuickAccessGrid />
-
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid #e5e7eb' }}>
-        {([
-          ['contests',     `Contests (${opportunities.length})`],
-          ['applications', `My Applications (${applications.length})`],
-          ['overview',     'Overview'],
-        ] as [Tab, string][]).map(([t, label]) => (
-          <button
-            key={t}
-            onClick={() => { setActiveTab(t); setSearch(''); setTypeFilter(''); setStatusFilter(''); }}
-            style={{
-              border: 'none', background: 'none', cursor: 'pointer',
-              padding: '10px 16px', fontSize: 13, fontWeight: 600,
-              borderBottom: activeTab === t ? '2px solid #f59e0b' : '2px solid transparent',
-              color: activeTab === t ? '#f59e0b' : '#6b7280',
-              marginBottom: -2,
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* ── TAB: All Contests ─────────────────────────────────────────────── */}
-      {activeTab === 'contests' && (
-        <div>
-          {/* Search + filters */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              placeholder="Search contests…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{
-                flex: '1 1 180px', border: '1px solid #d1d5db', borderRadius: 8,
-                padding: '8px 12px', fontSize: 13, outline: 'none',
-              }}
-            />
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              style={{ border: '1px solid #d1d5db', borderRadius: 8, padding: '8px 12px', fontSize: 13, background: '#fff' }}
-            >
-              <option value="">All Types</option>
-              {contestTypes.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', userSelect: 'none' }}>
-              <input
-                type="checkbox"
-                checked={showApplied}
-                onChange={(e) => setShowApplied(e.target.checked)}
-                style={{ accentColor: '#f59e0b' }}
-              />
-              Applied only
-            </label>
-          </div>
-
-          {filteredContests.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#9ca3af' }}>
-              <p style={{ fontSize: 32, marginBottom: 8 }}>🔍</p>
-              <p>{search || typeFilter ? 'No contests match your search.' : 'No open contests right now. Check back soon.'}</p>
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: 14 }}>
-              {filteredContests.map((item) => {
-                const userApp = appsByProgramId[item.id] || appsByProgramId[item.slug];
-                return <ContestCard key={item.id} item={item} userApp={userApp} />;
-              })}
-            </div>
-          )}
         </div>
-      )}
+      </section>
 
-      {/* ── TAB: My Applications ─────────────────────────────────────────── */}
-      {activeTab === 'applications' && (
-        <div>
-          {/* Search + status filter */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              placeholder="Search applications…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{
-                flex: '1 1 180px', border: '1px solid #d1d5db', borderRadius: 8,
-                padding: '8px 12px', fontSize: 13, outline: 'none',
-              }}
-            />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              style={{ border: '1px solid #d1d5db', borderRadius: 8, padding: '8px 10px', fontSize: 13, background: '#fff' }}
-            >
-              <option value="">All Statuses</option>
-              {['draft', 'submitted', 'under_review', 'shortlisted', 'approved', 'rejected', 'correction_requested'].map((s) => (
-                <option key={s} value={s}>{statusLabel(s)}</option>
-              ))}
-            </select>
+      <section aria-label="Your account at a glance">
+        <dl className="hub-stats wrap">
+          <div>
+            <dt>Open calls</dt>
+            <dd>{opportunities.length}</dd>
           </div>
+          <div>
+            <dt>Applied</dt>
+            <dd>{summary.total || 0}</dd>
+          </div>
+          <div>
+            <dt>Submitted</dt>
+            <dd>{summary.submitted || 0}</dd>
+          </div>
+          <div>
+            {/* The board below is the same count, so the tile has to agree with it:
+                summary.pendingCorrections alone would read 0 next to a live draft. */}
+            <dt>Needs action</dt>
+            <dd className={needsAction.length > 0 ? 'is-accent' : undefined}>
+              {needsAction.length}
+            </dd>
+          </div>
+        </dl>
+      </section>
 
-          {filteredApps.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#9ca3af' }}>
-              <p style={{ fontSize: 32, marginBottom: 8 }}>📋</p>
-              {applications.length === 0
-                ? <p>You haven't applied to any contests yet. <button onClick={() => setActiveTab('contests')} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: 'pointer', textDecoration: 'underline', fontSize: 'inherit' }}>Browse contests →</button></p>
-                : <p>No applications match your filter.</p>
-              }
+      <section className="hub-sheet" aria-label="Your dashboard">
+        <div className="wrap">
+          {message ? (
+            <div className="hub-banner" role="status">
+              <span>{message}</span>
+              <button type="button" onClick={() => setAttempt((n) => n + 1)}>
+                Retry
+              </button>
             </div>
-          ) : (
-            <div className="glass-card rounded-md" style={{ padding: '0 16px' }}>
-              {filteredApps.map((item) => (
-                <ApplicationRow key={item.id} item={item} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+          ) : null}
 
-      {/* ── TAB: Overview ────────────────────────────────────────────────── */}
-      {activeTab === 'overview' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Application breakdown by type */}
-          {applications.length > 0 && (
-            <div className="glass-card rounded-md" style={{ padding: 16 }}>
-              <h5 style={{ marginBottom: 12, fontWeight: 700 }}>Application Breakdown</h5>
-              {(['draft', 'submitted', 'under_review', 'shortlisted', 'approved', 'rejected', 'correction_requested'] as const).map((s) => {
-                const count = applications.filter((a) => a.status.toLowerCase().replace(/\s+/g, '_') === s).length;
-                if (!count) return null;
-                return (
-                  <div key={s} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', fontSize: 13 }}>
-                    <span>{statusLabel(s)}</span>
-                    <span
-                      style={{
-                        fontWeight: 700, padding: '1px 10px', borderRadius: 20, fontSize: 11,
-                        ...Object.fromEntries(statusStyle(s).split(';').map((x) => x.split(':').map((y) => y.trim()))),
-                      }}
-                    >
-                      {count}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Recent 5 applications */}
-          {applications.length > 0 && (
-            <div className="glass-card rounded-md" style={{ padding: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <h5 style={{ margin: 0, fontWeight: 700 }}>Recent Applications</h5>
-                <button onClick={() => setActiveTab('applications')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f59e0b', fontSize: 12, textDecoration: 'underline' }}>View all</button>
-              </div>
-              {applications.slice(0, 5).map((item) => (
-                <ApplicationRow key={item.id} item={item} />
-              ))}
-            </div>
-          )}
-
-          {/* Upcoming deadlines */}
-          {(() => {
-            const upcoming = opportunities
-              .filter((o) => {
-                const d = daysUntil(o.deadline);
-                return d !== null && d >= 0 && d <= 14;
-              })
-              .sort((a, b) => Date.parse(a.deadline!) - Date.parse(b.deadline!))
-              .slice(0, 5);
-            if (!upcoming.length) return null;
-            return (
-              <div className="glass-card rounded-md" style={{ padding: 16 }}>
-                <h5 style={{ margin: '0 0 12px', fontWeight: 700 }}>⏱ Closing Soon</h5>
-                {upcoming.map((o) => {
-                  const d = daysUntil(o.deadline)!;
-                  const userApp = appsByProgramId[o.id] || appsByProgramId[o.slug];
-                  return (
-                    <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f3f4f6', gap: 8 }}>
-                      <div>
-                        <p style={{ margin: 0, fontWeight: 600, fontSize: 13 }}>{o.title}</p>
-                        <p style={{ margin: 0, fontSize: 11, color: d <= 3 ? '#dc2626' : '#d97706', fontWeight: 600 }}>
-                          {d === 0 ? 'Closes today' : `${d} day${d !== 1 ? 's' : ''} left`}
-                        </p>
-                      </div>
-                      {!userApp ? (
-                        <Link href={o.applyHref} style={{ background: '#f59e0b', color: '#000', fontWeight: 700, fontSize: 11, padding: '5px 12px', borderRadius: 7, textDecoration: 'none', whiteSpace: 'nowrap' }}>
-                          Apply Now
-                        </Link>
-                      ) : (
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 20, ...Object.fromEntries(statusStyle(userApp.status).split(';').map((x) => x.split(':').map((y) => y.trim()))) }}>
-                          {statusLabel(userApp.status)}
-                        </span>
-                      )}
+          {needsAction.length > 0 || closingSoon.length > 0 ? (
+            <div className="hub-board">
+              {needsAction.length > 0 ? (
+                <div>
+                  <div className="hub-board-head">
+                    <div>
+                      <Kicker>
+                        <span>01</span> NEEDS YOU
+                      </Kicker>
+                      <h2 className="hub-h2">
+                        Do these <em>first.</em>
+                      </h2>
                     </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-        </div>
-      )}
+                  </div>
+                  <div className="hub-do">
+                    {needsAction.map((item, index) => (
+                      <div
+                        className={`hub-do-row${item.urgent ? ' is-urgent' : ''}`}
+                        key={item.key}
+                      >
+                        <span className="hub-do-no" aria-hidden="true">
+                          {String(index + 1).padStart(2, '0')}
+                        </span>
+                        <div>
+                          <p className="hub-do-name">{item.name}</p>
+                          <p className="hub-do-why">{item.why}</p>
+                        </div>
+                        <Link className="text-link" href={item.href}>
+                          {item.cta} <ArrowIcon />
+                        </Link>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
-    </div>
+              {closingSoon.length > 0 ? (
+                <div>
+                  <div className="hub-board-head">
+                    <div>
+                      <Kicker>
+                        <span>02</span> CLOSING SOON
+                      </Kicker>
+                      <h2 className="hub-h2">
+                        Next <em>fortnight.</em>
+                      </h2>
+                    </div>
+                  </div>
+                  <div className="hub-do">
+                    {closingSoon.map((item) => (
+                      <DueRow key={item.id} item={item} userApp={appFor(item)} />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="hub-tabs" role="group" aria-label="Dashboard views">
+            {tabs.map(([tab, label]) => (
+              <button
+                type="button"
+                key={tab}
+                className="hub-tab"
+                aria-pressed={activeTab === tab}
+                onClick={() => pickTab(tab)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {activeTab === 'contests' ? (
+            <section aria-label="Open calls">
+              <div className="hub-filters">
+                <label className="hub-field">
+                  Search
+                  <input
+                    type="text"
+                    placeholder="Title, type or place"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </label>
+                <label className="hub-field">
+                  Programme type
+                  <select
+                    value={typeFilter}
+                    onChange={(e) => setTypeFilter(e.target.value)}
+                  >
+                    <option value="">All types</option>
+                    {contestTypes.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="hub-check">
+                  <input
+                    type="checkbox"
+                    checked={showApplied}
+                    onChange={(e) => setShowApplied(e.target.checked)}
+                  />
+                  Applied only
+                </label>
+              </div>
+
+              {filteredContests.length === 0 ? (
+                <div className="hub-state">
+                  <Kicker>
+                    <span>00</span> NOTHING MATCHES
+                  </Kicker>
+                  <h3>{search || typeFilter || showApplied ? 'No calls match.' : 'No open calls.'}</h3>
+                  <p>
+                    {search || typeFilter || showApplied
+                      ? 'Widen the filters to see more of the schedule.'
+                      : 'Nothing is taking entries right now. Check back soon.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="hub-calls">
+                  {filteredContests.map((item) => (
+                    <ContestCard key={item.id} item={item} userApp={appFor(item)} />
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          {activeTab === 'applications' ? (
+            <section aria-label="Your applications">
+              <div className="hub-filters">
+                <label className="hub-field">
+                  Search
+                  <input
+                    type="text"
+                    placeholder="Programme or reference"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </label>
+                <label className="hub-field">
+                  Status
+                  <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                    <option value="">All statuses</option>
+                    {FILTER_STATUS_KEYS.map((s) => (
+                      <option key={s} value={s}>
+                        {statusLabel(s)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {filteredApps.length === 0 ? (
+                <div className="hub-state">
+                  <Kicker>
+                    <span>{String(applications.length).padStart(2, '0')}</span> NO FILINGS
+                  </Kicker>
+                  <h3>Nothing filed yet.</h3>
+                  {applications.length === 0 ? (
+                    <p>
+                      You haven&apos;t applied to any contests yet.{' '}
+                      <button
+                        type="button"
+                        className="hub-link"
+                        onClick={() => pickTab('contests')}
+                      >
+                        Browse open calls
+                      </button>
+                    </p>
+                  ) : (
+                    <p>No application matches this filter.</p>
+                  )}
+                </div>
+              ) : (
+                <div className="hub-ledger">
+                  {filteredApps.map((item, index) => (
+                    <LedgerRow key={item.id} item={item} index={index} />
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          {activeTab === 'overview' ? (
+            <section aria-label="Overview">
+              <div className="hub-split">
+                <div>
+                  <Kicker>
+                    <span>03</span> STATUS BREAKDOWN
+                  </Kicker>
+                  <h2 className="hub-h2">
+                    Where things <em>stand.</em>
+                  </h2>
+                  <dl className="hub-tally">
+                    {FILTER_STATUS_KEYS.map((key) => {
+                      const count = applications.filter((a) => statusKey(a.status) === key).length;
+                      if (!count) return null;
+                      return (
+                        <div key={key}>
+                          <dt>{statusMeta(key).label}</dt>
+                          <dd>{count}</dd>
+                        </div>
+                      );
+                    })}
+                    {applications.length === 0 ? (
+                      <div>
+                        <dt>Filed applications</dt>
+                        <dd>0</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                </div>
+
+                <div>
+                  <Kicker>
+                    <span>04</span> RECENT FILINGS
+                  </Kicker>
+                  <h2 className="hub-h2">
+                    Last <em>five.</em>
+                  </h2>
+                  {applications.length === 0 ? (
+                    <p className="hub-note">
+                      Filings appear here the moment you start one, saved after every step.
+                    </p>
+                  ) : (
+                    <div className="hub-ledger">
+                      {applications.slice(0, 5).map((item, index) => (
+                        <LedgerRow key={item.id} item={item} index={index} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="hub-access" aria-label="Spotlight services">
+        <div className="wrap">
+          <Kicker>
+            <span>08</span> EVERY SERVICE
+          </Kicker>
+          <h2 className="hub-h2">
+            The rest of <em>Spotlight.</em>
+          </h2>
+          <div className="hub-access-grid">
+            {QUICK_LINKS.map((item, index) => (
+              <Link className="hub-access-cell" href={item.href} key={item.href}>
+                <i aria-hidden="true">{String(index + 1).padStart(2, '0')}</i>
+                <strong>{item.title}</strong>
+                <span>{item.description}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
+    </>
   );
 }
