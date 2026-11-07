@@ -821,10 +821,10 @@
                 }
 
                 .header__hamburger {
-                    display: none !important;
-
-                    @include breakpoint (max-lg) {
-                        display: block !important;
+                    // The toggle is the only route to the sign in / register
+                    // drawer, so it stays reachable in the sticky header too.
+                    .sidebar__toggle {
+                        color: $theme-color;
                     }
                 }
             }

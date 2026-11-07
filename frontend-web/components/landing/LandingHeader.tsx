@@ -1,10 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import Link from 'next/link';
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createClient } from '@/lib/supabase/client';
 import { ArrowIcon } from './Icons';
 import { LOGO, siteNav } from './content';
 import { useJoinDialog } from './JoinDialog';
 
+const accountLinks = [
+  { label: 'My dashboard', href: '/user-dashboard' },
+  { label: 'My applications', href: '/user-dashboard?tab=applications' },
+];
 
 /**
  * The mock's own sticky chrome, kept instead of the shared template header so
@@ -12,10 +19,28 @@ import { useJoinDialog } from './JoinDialog';
  */
 export default function LandingHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
   const { open } = useJoinDialog();
   const menuRef = useRef<HTMLElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const supabase = useMemo(() => createClient(), []);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
+      if (mounted) setSignedIn(!!data.session);
+    });
+    const { data: authData } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, session: Session | null) => {
+        if (mounted) setSignedIn(!!session);
+      },
+    );
+    return () => {
+      mounted = false;
+      authData.subscription.unsubscribe();
+    };
+  }, [supabase]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -26,18 +51,18 @@ export default function LandingHeader() {
       const target = event.target as Node;
       if (!menuRef.current?.contains(target) && !toggleRef.current?.contains(target)) closeMenu();
     };
-    const onResize = () => {
-      if (window.innerWidth > 920) closeMenu();
-    };
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('click', onClick);
-    window.addEventListener('resize', onResize);
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('click', onClick);
-      window.removeEventListener('resize', onResize);
     };
   }, [menuOpen, closeMenu]);
+
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    closeMenu();
+  }
 
   function joinTrigger(className: string | undefined, children: ReactNode) {
     return (
@@ -90,6 +115,29 @@ export default function LandingHeader() {
           </a>
         ))}
         {joinTrigger(undefined, 'Find your Spotlight ↗')}
+        <hr className="nav-rule" />
+        <p className="nav-group">Account</p>
+        {signedIn ? (
+          <>
+            {accountLinks.map((item) => (
+              <Link key={item.href} href={item.href} onClick={closeMenu}>
+                {item.label}
+              </Link>
+            ))}
+            <button type="button" onClick={handleSignOut}>
+              Sign out
+            </button>
+          </>
+        ) : (
+          <>
+            <Link href="/login" onClick={closeMenu}>
+              Sign in
+            </Link>
+            <Link href="/login?tab=signup" onClick={closeMenu}>
+              Create an account
+            </Link>
+          </>
+        )}
       </nav>
     </header>
   );
