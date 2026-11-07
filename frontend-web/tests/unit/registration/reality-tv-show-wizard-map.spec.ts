@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildRealityTvShowSteps } from '@/src/features/registration/forms/reality-tv-show';
 import {
+  GUARDIAN_RELATIONSHIP_OPTIONS,
   REALITY_TV_WIZARD_INITIAL,
   REALITY_TV_WIZARD_STEP_SAVE_KEY,
   flatErrorKeyToFormKey,
@@ -101,6 +102,24 @@ function completeAdultForm(): RealityTvWizardForm {
 function requiredKeysForAge(age: number): string[] {
   return buildRealityTvShowSteps(draftForAge(age))
     .flatMap((step) => step.fields.filter((f) => f.required).map((f) => f.key));
+}
+
+function completeMinorForm(): RealityTvWizardForm {
+  return {
+    ...completeAdultForm(),
+    personal_dateOfBirth: dobForAge(16),
+    identity_idType: '',
+    identity_idNumber: '',
+    identity_idUploadUrl: '',
+    identity_idUploadName: '',
+    guardian_fullName: 'Ngozi Obi',
+    guardian_relationship: 'Mother',
+    guardian_phone: '08076543210',
+    guardian_email: 'ngozi@example.com',
+    guardian_address: '12 Bourdillon Rd, Ikoyi',
+    guardian_digitalSignature: 'Ngozi Obi',
+    guardian_consentGranted: true,
+  };
 }
 
 describe('reality-tv-show wizard field map (AUD-FE-009)', () => {
@@ -216,5 +235,70 @@ describe('reality-tv-show wizard field map (AUD-FE-009)', () => {
     expect(form.publicProfile_publicVotingConsent).toBe(true);
     expect(uploadMeta['identity.idUpload']?.fileName).toBe('passport.png');
     expect(flatErrorKeyToFormKey('identity.idType')).toBe('identity_idType');
+  });
+
+  it('drops government-ID verification from the schema for minors', () => {
+    const minorKeys = buildRealityTvShowSteps(draftForAge(16)).flatMap((s) => s.fields.map((f) => f.key));
+    expect(minorKeys.some((key) => key.startsWith('identity.'))).toBe(false);
+    expect(minorKeys).not.toContain('guardian.idUpload');
+
+    const adultKeys = buildRealityTvShowSteps(draftForAge(30)).flatMap((s) => s.fields.map((f) => f.key));
+    expect(adultKeys).toContain('identity.idType');
+    expect(adultKeys).toContain('identity.idUpload');
+  });
+
+  it('a minor does not need identity values to pass step 3 or full schema validation', () => {
+    const minor = completeMinorForm();
+    expect(requiredKeysForAge(16).some((key) => key.startsWith('identity.'))).toBe(false);
+    expect(validateRealityTvWizardStep(3, minor)).toEqual({});
+    expect(realityTvWizardSchemaErrors(minor)).toEqual({});
+  });
+
+  it('an adult still needs identity values for step 3 and full schema validation', () => {
+    const adult = {
+      ...completeAdultForm(),
+      identity_idType: '',
+      identity_idUploadUrl: '',
+    };
+    expect(validateRealityTvWizardStep(3, adult)).toHaveProperty('identity_idType');
+    expect(validateRealityTvWizardStep(3, adult)).toHaveProperty('identity_idUploadUrl');
+    expect(realityTvWizardSchemaErrors(adult)).toHaveProperty('identity.idType');
+    expect(realityTvWizardSchemaErrors(adult)).toHaveProperty('identity.idUpload');
+  });
+
+  it('offers a fixed relationship list for minor applicants', () => {
+    expect(GUARDIAN_RELATIONSHIP_OPTIONS).toContain('Mother');
+    expect(new Set(GUARDIAN_RELATIONSHIP_OPTIONS).size).toBe(GUARDIAN_RELATIONSHIP_OPTIONS.length);
+  });
+
+  it('sanitises every phone number to E.164 when saving', () => {
+    const flat = realityTvWizardFormToFlat({
+      ...completeAdultForm(),
+      personal_primaryPhone: '0801 234 5678',
+      personal_whatsapp: '+234 (802) 345-6789',
+      guardian_phone: '0703 123 4567',
+      emergency_phone: '0909-876-5432',
+      emergency_altPhone: '0812.345.6789',
+    });
+    expect(flat['personal.primaryPhone']).toBe('+2348012345678');
+    expect(flat['personal.whatsapp']).toBe('+2348023456789');
+    expect(flat['guardian.phone']).toBe('+2347031234567');
+    expect(flat['emergency.phone']).toBe('+2349098765432');
+    expect(flat['emergency.altPhone']).toBe('+2348123456789');
+  });
+
+  it('validates WhatsApp when provided but leaves it optional', () => {
+    const form = completeAdultForm();
+    expect(validateRealityTvWizardStep(1, form)).not.toHaveProperty('personal_whatsapp');
+    expect(validateRealityTvWizardStep(1, { ...form, personal_whatsapp: 'not-a-number' }))
+      .toHaveProperty('personal_whatsapp');
+    expect(realityTvWizardSchemaErrors({ ...form, personal_whatsapp: '12345' }))
+      .toHaveProperty('personal.whatsapp');
+  });
+
+  it('rejects a malformed primary phone at both client and schema level', () => {
+    const form = { ...completeAdultForm(), personal_primaryPhone: '0801234' };
+    expect(validateRealityTvWizardStep(1, form)).toHaveProperty('personal_primaryPhone');
+    expect(realityTvWizardSchemaErrors(form)).toHaveProperty('personal.primaryPhone');
   });
 });

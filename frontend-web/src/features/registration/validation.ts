@@ -2,7 +2,34 @@ import type { RegistrationDraft, RegistrationField, RegistrationStep } from './t
 import { NIGERIA_CITIES_BY_STATE } from './config';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
-const E164ish_RE = /^\+?[0-9][0-9\-\s]{6,}$/;
+// Nigerian mobile numbers: 0 + 7/8/9 + 9 digits locally, i.e. +234 7/8/9…
+// after the trunk 0 is dropped. Landline prefixes are not accepted.
+const NG_MOBILE_AFTER_CC_RE = /^[789]\d{9}$/;
+
+/**
+ * Canonicalise a Nigerian mobile number to E.164 (+234XXXXXXXXXX). Accepts
+ * local (0801…), bare international (234801…), +234 and 10-digit spellings
+ * with spaces, dashes, dots or parentheses. Returns '' when the input cannot
+ * be a Nigerian mobile number, so callers can tell "blank" from "invalid"
+ * only by checking the raw value first.
+ */
+export function normaliseNigerianPhone(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const cleaned = value.trim().replace(/[\s\-.()]/g, '');
+  if (!cleaned) return '';
+
+  let digits = cleaned;
+  if (digits.startsWith('+234')) digits = digits.slice(4);
+  else if (digits.startsWith('234')) digits = digits.slice(3);
+  else if (digits.startsWith('0')) digits = digits.slice(1);
+
+  if (!/^\d{10}$/.test(digits) || !NG_MOBILE_AFTER_CC_RE.test(digits)) return '';
+  return `+234${digits}`;
+}
+
+export function isValidNigerianPhone(value: unknown): boolean {
+  return normaliseNigerianPhone(value) !== '';
+}
 
 function getString(value: unknown) {
   if (typeof value !== 'string') return '';
@@ -79,8 +106,8 @@ function validateField(field: RegistrationField, value: unknown): string | null 
   if (field.type === 'email' && !EMAIL_RE.test(text)) {
     return `Please enter a valid email for ${field.label}.`;
   }
-  if (field.type === 'tel' && !E164ish_RE.test(text)) {
-    return `Please enter a valid phone number for ${field.label}.`;
+  if (field.type === 'tel' && !isValidNigerianPhone(text)) {
+    return `Please enter a valid Nigerian mobile number for ${field.label}.`;
   }
   if (field.type === 'url') {
     try {
@@ -129,7 +156,11 @@ export function validateStepData(step: RegistrationStep, formData: Record<string
   if (step.key === 'emergency_contact') {
     const applicantPhone = getString(formData['personal.primaryPhone']);
     const emergencyPhone = getString(formData['emergency.phone']);
-    if (applicantPhone && emergencyPhone && applicantPhone === emergencyPhone) {
+    // Compare canonical forms so '0801 234 5678' and '+2348012345678' are
+    // recognised as the same number.
+    const a = normaliseNigerianPhone(applicantPhone) || applicantPhone;
+    const b = normaliseNigerianPhone(emergencyPhone) || emergencyPhone;
+    if (a && b && a === b) {
       errors['emergency.phone'] = 'Emergency contact phone should be different from applicant phone.';
     }
   }

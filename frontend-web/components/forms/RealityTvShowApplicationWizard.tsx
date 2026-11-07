@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/client';
 import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
@@ -8,6 +8,7 @@ import { NIGERIA_STATES, NIGERIA_CITIES_BY_STATE } from '@/src/features/registra
 import { buildStepSaveBody, draftSaveSucceeded } from '@/src/features/registration/draft-save';
 import { loadPaystackClient } from '@/src/lib/payments';
 import {
+  GUARDIAN_RELATIONSHIP_OPTIONS,
   REALITY_TV_WIZARD_INITIAL,
   REALITY_TV_WIZARD_STEP_SAVE_KEY,
   flatErrorKeyToFormKey,
@@ -20,7 +21,9 @@ import {
   type RealityTvUploadMeta,
   type RealityTvWizardForm,
 } from '@/src/features/registration/reality-tv-show-wizard-map';
+import { normaliseNigerianPhone } from '@/src/features/registration/validation';
 import type { RegistrationStepKey } from '@/src/features/registration/types';
+import { ArrowIcon } from '@/components/season2/Icons';
 
 // Option lists come from the LIVE schema (realityTvFieldOptions reads
 // forms/reality-tv-show.ts) so a wizard select can never offer a value the
@@ -38,12 +41,14 @@ const MEDICAL_CONDITION_OPTIONS = realityTvFieldOptions('medical.knownConditions
 const ALLERGY_OPTIONS = realityTvFieldOptions('medical.allergies');
 const ENTRY_MODES = ['Individual', 'Group'];
 
+// Each step is a stage of one application, so the numerals carry real order —
+// they are the page's structure, not decoration.
 const STEPS = [
-  { id: 1, label: 'About You',    icon: '👤' },
-  { id: 2, label: 'Your Talent',  icon: '⭐' },
-  { id: 3, label: 'Show Profile', icon: '🎬' },
-  { id: 4, label: 'Readiness',    icon: '✅' },
-  { id: 5, label: 'Submit',       icon: '🚀' },
+  { id: 1, label: 'About You' },
+  { id: 2, label: 'Your Talent' },
+  { id: 3, label: 'Show Profile' },
+  { id: 4, label: 'Readiness' },
+  { id: 5, label: 'Submit' },
 ];
 
 const REGISTRATION_FEE = 5000;
@@ -51,33 +56,37 @@ const REGISTRATION_FEE = 5000;
 type FormData = RealityTvWizardForm;
 const INITIAL: FormData = REALITY_TV_WIZARD_INITIAL;
 
+// The Season 2 type and colour system: ink on cream, Manrope labels,
+// condensed numerals, and one orange action per screen.
 const c = {
-  pageBg: '#F4F6FB',
-  white: '#FFFFFF',
-  border: '#E2E8F0',
-  primary: '#F59E0B',
-  primaryDark: '#D97706',
-  textDark: '#111827',
-  textMid: '#374151',
-  textMuted: '#6B7280',
-  success: '#059669',
-  successBg: '#ECFDF5',
-  danger: '#DC2626',
-  dangerBg: '#FEF2F2',
-  inputBg: '#FAFAFA',
-  shadow: '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)',
-  shadowMd: '0 4px 16px rgba(0,0,0,0.08)',
+  pageBg: '#F2ECE4',
+  white: '#FFFDF8',
+  border: '#C9B8C9',
+  primary: '#FF8949',
+  primaryDark: '#E86A2B',
+  textDark: '#261833',
+  textMid: '#4A3554',
+  textMuted: '#6F5C79',
+  success: '#2F7D5A',
+  successBg: '#E7F1EA',
+  danger: '#A83A34',
+  dangerBg: '#F7E4E1',
+  inputBg: '#FBF6EF',
+  shadow: 'none',
+  shadowMd: 'none',
 };
 
 const inp: React.CSSProperties = {
   width: '100%',
   padding: '12px 14px',
-  borderRadius: 10,
+  borderRadius: 2,
   boxSizing: 'border-box',
-  background: '#FFFFFF',
-  border: '1.5px solid #94A3B8',
-  color: '#111827',
-  WebkitTextFillColor: '#111827',
+  background: '#FFFDF8',
+  borderWidth: 1,
+  borderStyle: 'solid',
+  borderColor: '#C9B8C9',
+  color: '#261833',
+  WebkitTextFillColor: '#261833',
   fontSize: 15,
   lineHeight: 1.5,
   outline: 'none',
@@ -86,15 +95,15 @@ const inp: React.CSSProperties = {
 };
 const lbl: React.CSSProperties = {
   display: 'block',
-  fontSize: 14,
-  fontWeight: 600,
-  color: '#1F2937',
+  fontSize: 12.5,
+  fontWeight: 700,
+  color: '#261833',
   marginBottom: 7,
   letterSpacing: 0,
 };
 const fieldWrap: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 0 };
-const hint: React.CSSProperties = { fontSize: 12.5, color: '#6B7280', marginTop: 5 };
-const errTxt: React.CSSProperties = { fontSize: 12.5, color: c.danger, marginTop: 5, fontWeight: 600 };
+const hint: React.CSSProperties = { fontSize: 12, color: '#6F5C79', marginTop: 5 };
+const errTxt: React.CSSProperties = { fontSize: 12, color: '#A83A34', marginTop: 5, fontWeight: 600 };
 
 function Field({ label, required, children, help, error }: {
   label: string; required?: boolean; children: React.ReactNode; help?: string; error?: string;
@@ -107,8 +116,8 @@ function Field({ label, required, children, help, error }: {
         {!required && <span style={{ color: '#9CA3AF', fontSize: 12, fontWeight: 400, marginLeft: 6 }}>(optional)</span>}
       </label>
       {children}
-      {help && !error && <span style={hint}>💡 {help}</span>}
-      {error && <span style={errTxt}>⚠ {error}</span>}
+      {help && !error && <span style={hint}>{help}</span>}
+      {error && <span style={errTxt}>{error}</span>}
     </div>
   );
 }
@@ -123,8 +132,8 @@ function Input(props: React.InputHTMLAttributes<HTMLInputElement> & { error?: st
       onBlur={(e) => { setFocused(false); onBlur?.(e); }}
       style={{
         ...inp,
-        ...(error ? { borderColor: c.danger, boxShadow: `0 0 0 3px rgba(220,38,38,0.12)` } : {}),
-        ...(focused && !error ? { borderColor: c.primary, boxShadow: `0 0 0 3px rgba(245,158,11,0.18)` } : {}),
+        ...(error ? { borderColor: c.danger, boxShadow: `0 0 0 3px rgba(168,58,52,0.10)` } : {}),
+        ...(focused && !error ? { borderColor: c.primary, boxShadow: `0 0 0 3px rgba(232,106,43,0.16)` } : {}),
         ...style,
       }}
     />
@@ -143,8 +152,8 @@ function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { e
         ...inp,
         minHeight: 100,
         resize: 'vertical',
-        ...(error ? { borderColor: c.danger, boxShadow: `0 0 0 3px rgba(220,38,38,0.12)` } : {}),
-        ...(focused && !error ? { borderColor: c.primary, boxShadow: `0 0 0 3px rgba(245,158,11,0.18)` } : {}),
+        ...(error ? { borderColor: c.danger, boxShadow: `0 0 0 3px rgba(168,58,52,0.10)` } : {}),
+        ...(focused && !error ? { borderColor: c.primary, boxShadow: `0 0 0 3px rgba(232,106,43,0.16)` } : {}),
         ...style,
       }}
     />
@@ -162,8 +171,8 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement> & { error?:
       style={{
         ...inp,
         cursor: 'pointer',
-        ...(error ? { borderColor: c.danger, boxShadow: `0 0 0 3px rgba(220,38,38,0.12)` } : {}),
-        ...(focused && !error ? { borderColor: c.primary, boxShadow: `0 0 0 3px rgba(245,158,11,0.18)` } : {}),
+        ...(error ? { borderColor: c.danger, boxShadow: `0 0 0 3px rgba(168,58,52,0.10)` } : {}),
+        ...(focused && !error ? { borderColor: c.primary, boxShadow: `0 0 0 3px rgba(232,106,43,0.16)` } : {}),
         ...style,
       }}
     >
@@ -176,9 +185,9 @@ function Checkbox({ label, checked, onChange, required }: {
   label: string; checked: boolean; onChange: (v: boolean) => void; required?: boolean;
 }) {
   return (
-    <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', padding: '10px 14px', background: checked ? 'rgba(245,158,11,0.06)' : c.inputBg, border: `1.5px solid ${checked ? c.primary : c.border}`, borderRadius: 10, transition: 'all 0.15s' }}>
+    <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', padding: '11px 13px', background: checked ? 'rgba(255,137,73,0.10)' : c.inputBg, border: `1px solid ${checked ? c.primary : c.border}`, borderRadius: 2, transition: 'all 0.15s' }}>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)}
-        style={{ width: 18, height: 18, accentColor: c.primary, flexShrink: 0, marginTop: 1 }} />
+        style={{ width: 17, height: 17, accentColor: c.primaryDark, flexShrink: 0, marginTop: 1 }} />
       <span style={{ fontSize: 13.5, color: c.textMid, lineHeight: 1.5 }}>
         {label}{required && <span style={{ color: c.danger, marginLeft: 3 }}>*</span>}
       </span>
@@ -198,10 +207,11 @@ function MultiSelect({ options, selected, onChange }: {
         const active = selected.includes(opt);
         return (
           <button key={opt} type="button" onClick={() => toggle(opt)} style={{
-            padding: '7px 16px', borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-            border: `1.5px solid ${active ? c.primary : c.border}`,
-            background: active ? c.primary : c.white,
-            color: active ? '#000' : c.textMid, transition: 'all 0.15s',
+            padding: '7px 13px', borderRadius: 2, fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+            fontFamily: 'var(--head)',
+            border: `1px solid ${active ? c.textDark : c.border}`,
+            background: active ? c.textDark : 'transparent',
+            color: active ? c.white : c.textMid, transition: 'all 0.15s',
           }}>
             {opt}
           </button>
@@ -213,33 +223,33 @@ function MultiSelect({ options, selected, onChange }: {
 
 function StepProgress({ current }: { current: number }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 32 }}>
+    <div className="apply-steps" aria-label={`Step ${current} of ${STEPS.length}`}>
       {STEPS.map((step, i) => {
         const done = current > step.id;
         const active = current === step.id;
         return (
-          <div key={step.id} style={{ display: 'flex', alignItems: 'center', flex: i < STEPS.length - 1 ? '1' : undefined }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, minWidth: 52 }}>
-              <div style={{
-                width: 40, height: 40, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontWeight: 800, fontSize: done ? 16 : 13, transition: 'all 0.25s',
-                background: done ? c.success : active ? c.primary : c.border,
-                color: done || active ? '#fff' : c.textMuted,
-                boxShadow: active ? `0 0 0 4px rgba(245,158,11,0.2)` : 'none',
-              }}>
-                {done ? '✓' : step.icon}
-              </div>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: active ? c.primary : done ? c.success : c.textMuted, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
-                {step.label}
-              </span>
+          <Fragment key={step.id}>
+            <div className={`step${active ? ' is-active' : ''}${done ? ' is-done' : ''}`}>
+              <span className="step-no">{done ? '✓' : String(step.id).padStart(2, '0')}</span>
+              <span className="step-label">{step.label}</span>
             </div>
-            {i < STEPS.length - 1 && (
-              <div style={{ flex: 1, height: 2, background: done ? c.success : c.border, margin: '0 4px', marginBottom: 22, transition: 'background 0.3s' }} />
-            )}
-          </div>
+            {i < STEPS.length - 1 && <span className="step-line" aria-hidden="true" />}
+          </Fragment>
         );
       })}
     </div>
+  );
+}
+
+function StepHead({ step, title, intro }: { step: number; title: string; intro: string }) {
+  return (
+    <>
+      <p className="form-kicker">
+        <span>{String(step).padStart(2, '0')}</span> STEP {step} OF {STEPS.length}
+      </p>
+      <h3 className="form-title">{title}</h3>
+      <p className="form-intro">{intro}</p>
+    </>
   );
 }
 
@@ -348,6 +358,16 @@ export default function RealityTvShowApplicationWizard() {
   function set(key: keyof FormData, value: unknown) {
     setForm((prev) => ({ ...prev, [key]: value }));
     setErrors((prev) => { const n = { ...prev }; delete n[key as string]; return n; });
+  }
+
+  // Numbers are typed in whatever shape feels natural; on blur they collapse
+  // to +234XXXXXXXXXX (the shape the validator and saved draft use). Invalid
+  // text is left alone so the user can see and correct it.
+  function setPhone(key: 'personal_primaryPhone' | 'personal_whatsapp' | 'guardian_phone' | 'emergency_phone' | 'emergency_altPhone') {
+    return (e: React.FocusEvent<HTMLInputElement>) => {
+      const canonical = normaliseNigerianPhone(e.target.value);
+      if (canonical) set(key, canonical);
+    };
   }
 
   // Uploads go through POST /api/registration/uploads (multipart body), which
@@ -607,18 +627,20 @@ export default function RealityTvShowApplicationWizard() {
     }
   }
 
+  // The cream sheet is the card; a second bordered box around every step would
+  // read as a template. Only the sub-sections get a tint and a hairline.
   const card: React.CSSProperties = {
-    background: c.white, borderRadius: 16, padding: '28px 32px',
-    boxShadow: c.shadowMd, border: `1px solid ${c.border}`,
+    background: 'transparent', padding: 0, borderRadius: 0, border: 0,
   };
 
   const section: React.CSSProperties = {
-    background: '#F8FAFC', borderRadius: 12, padding: '20px 20px', border: `1px solid ${c.border}`,
+    background: c.inputBg, borderRadius: 2, padding: '16px 16px', border: '1px solid #E4D8DF',
   };
 
   const sectionTitle: React.CSSProperties = {
-    fontSize: 13, fontWeight: 700, color: c.textMid, margin: '0 0 16px',
-    textTransform: 'uppercase', letterSpacing: '0.06em',
+    fontFamily: 'var(--head)',
+    fontSize: 11, fontWeight: 800, color: c.textMuted, margin: '0 0 16px',
+    textTransform: 'uppercase', letterSpacing: '0.12em',
   };
 
   function filePicker(
@@ -626,24 +648,22 @@ export default function RealityTvShowApplicationWizard() {
     urlKey: keyof FormData,
     nameKey: keyof FormData,
     accept: string,
-    icon = '📎',
   ) {
     const uploadedUrl = String(form[urlKey] || '');
     const uploadedName = String(form[nameKey] || '');
     const busy = Boolean(uploading[flatKey]);
     return (
       <label style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-        padding: '14px 18px', border: `2px dashed ${errors[urlKey as string] ? c.danger : c.border}`,
-        borderRadius: 12, cursor: 'pointer', background: '#FAFAFA', transition: 'border-color 0.2s',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+        padding: '14px 18px', border: `1px dashed ${errors[urlKey as string] ? c.danger : c.border}`,
+        borderRadius: 2, cursor: 'pointer', background: c.inputBg, transition: 'border-color 0.2s',
       }}>
         <input type="file" accept={accept} style={{ display: 'none' }}
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) void uploadFile(flatKey, urlKey, nameKey, file);
           }} />
-        <span style={{ fontSize: 18 }}>{icon}</span>
-        <span style={{ fontSize: 13, fontWeight: 600, color: c.textMid }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: c.textMid }}>
           {busy ? 'Uploading…' : uploadedName || 'Click to upload'}
         </span>
         {uploadedUrl && !busy && (
@@ -672,19 +692,16 @@ export default function RealityTvShowApplicationWizard() {
 
   if (done) {
     return (
-      <div ref={topRef} style={{ ...card, textAlign: 'center', padding: '48px 32px' }}>
-        <div style={{ fontSize: 56, marginBottom: 20 }}>🎉</div>
-        <h2 style={{ color: c.textDark, fontWeight: 900, fontSize: 24, marginBottom: 10 }}>Application Submitted!</h2>
-        <p style={{ color: c.textMuted, fontSize: 15, maxWidth: 440, margin: '0 auto 28px' }}>
-          Thank you, {form.personal_firstName}! Your application for the Spotlight Reality TV Show has been received. We&apos;ll reach out via email about next steps.
+      <div ref={topRef} className="apply-done">
+        <p className="form-kicker"><span>05</span> SENT TO THE REVIEW TEAM</p>
+        <h2 className="done-title">You&apos;re in the running.</h2>
+        <p className="done-copy">
+          Thank you, {form.personal_firstName}. Your application for the Spotlight Reality TV Show
+          has been received. We&apos;ll reach out by email about next steps.
         </p>
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <a href="/user-dashboard" style={{ background: `linear-gradient(135deg, ${c.primary}, ${c.primaryDark})`, color: '#000', fontWeight: 800, padding: '12px 28px', borderRadius: 10, textDecoration: 'none', fontSize: 14 }}>
-            Go to My Dashboard
-          </a>
-          <a href="/service-details/reality-tv-show" style={{ background: c.white, border: `1.5px solid ${c.border}`, color: c.textMid, fontWeight: 700, padding: '12px 28px', borderRadius: 10, textDecoration: 'none', fontSize: 14 }}>
-            View Programme Details
-          </a>
+        <div className="done-actions">
+          <a href="/user-dashboard" className="done-primary">Go to my dashboard</a>
+          <a href="/service-details/reality-tv-show" className="done-secondary">View programme details</a>
         </div>
       </div>
     );
@@ -692,34 +709,28 @@ export default function RealityTvShowApplicationWizard() {
 
   return (
     <div ref={topRef}>
-      {/* Header */}
-      <div style={{ marginBottom: 28 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-          <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: c.primary }}>🎥 Season 1 — Now Open</span>
-        </div>
-        <h2 style={{ color: c.textDark, fontWeight: 900, fontSize: 'clamp(1.4rem, 3vw, 1.8rem)', margin: 0, lineHeight: 1.25 }}>
-          Apply for the Reality TV Show
-        </h2>
+      {/* The sheet's letterhead: who is applying, and under what programme. */}
+      <div className="sheet-head">
+        <p className="form-kicker" style={{ margin: 0 }}>
+          SPOTLIGHT REALITY TV · SEASON 02 APPLICATION
+        </p>
         {userName && (
-          <p style={{ color: c.textMuted, fontSize: 13, marginTop: 6, marginBottom: 0 }}>
-            Applying as <strong style={{ color: c.textDark }}>{userName}</strong>
+          <p className="sheet-applicant" style={{ margin: 0 }}>
+            Applying as <strong>{userName}</strong>
           </p>
         )}
       </div>
 
       {/* Fee notice */}
-      <div style={{ background: 'rgba(245,158,11,0.08)', border: `1.5px solid rgba(245,158,11,0.3)`, borderRadius: 12, padding: '12px 16px', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 18 }}>💳</span>
-        <div>
-          <span style={{ fontSize: 13, fontWeight: 800, color: c.textDark }}>Registration fee: ₦5,000 </span>
-          <span style={{ fontSize: 12.5, color: c.textMuted }}>— payment is processed at the final step via Paystack.</span>
-        </div>
+      <div className="fee-note">
+        <strong>Entry fee: ₦5,000</strong>
+        <span>Paid at step 05 through Paystack. Nothing is charged until you submit.</span>
       </div>
 
       {/* Global error */}
       {globalError && (
-        <div style={{ background: c.dangerBg, border: `1.5px solid ${c.danger}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20, color: c.danger, fontSize: 13.5, fontWeight: 600 }}>
-          ⚠ {globalError}
+        <div style={{ background: c.dangerBg, borderLeft: `3px solid ${c.danger}`, padding: '12px 16px', marginBottom: 20, color: c.danger, fontSize: 13.5, fontWeight: 600 }}>
+          {globalError}
         </div>
       )}
 
@@ -729,8 +740,7 @@ export default function RealityTvShowApplicationWizard() {
       {/* ── Step 1: About You ──────────────────────────────────────────────── */}
       {step === 1 && (
         <div style={card}>
-          <h3 style={{ color: c.textDark, fontWeight: 800, fontSize: 18, marginBottom: 4 }}>👤 About You</h3>
-          <p style={{ color: c.textMuted, fontSize: 13.5, marginBottom: 24 }}>Your basic personal details. All starred fields are required.</p>
+          <StepHead step={1} title="The basics." intro="Your personal details. Starred fields are required." />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
@@ -768,7 +778,7 @@ export default function RealityTvShowApplicationWizard() {
               </Field>
               <Field label="Nationality" required help="The Reality TV Show is currently open to Nigerian applicants.">
                 <Input value={form.personal_nationality} readOnly disabled
-                  style={{ background: '#F3F4F6', color: c.textMuted }} />
+                  style={{ background: '#F1E8E0', color: c.textMuted }} />
               </Field>
             </div>
 
@@ -802,13 +812,17 @@ export default function RealityTvShowApplicationWizard() {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
-              <Field label="Phone Number" required error={errors.personal_primaryPhone}>
+              <Field label="Phone Number" required error={errors.personal_primaryPhone}
+                help="Nigerian mobile — e.g. 0801 234 5678">
                 <Input type="tel" value={form.personal_primaryPhone} error={errors.personal_primaryPhone}
-                  onChange={(e) => set('personal_primaryPhone', e.target.value)} placeholder="+234 80X XXX XXXX" />
+                  onChange={(e) => set('personal_primaryPhone', e.target.value)}
+                  onBlur={setPhone('personal_primaryPhone')} placeholder="+234 80X XXX XXXX" />
               </Field>
-              <Field label="WhatsApp Number" error={errors.personal_whatsapp}>
+              <Field label="WhatsApp Number" error={errors.personal_whatsapp}
+                help="If different from your phone number">
                 <Input type="tel" value={form.personal_whatsapp} error={errors.personal_whatsapp}
-                  onChange={(e) => set('personal_whatsapp', e.target.value)} placeholder="+234 80X XXX XXXX" />
+                  onChange={(e) => set('personal_whatsapp', e.target.value)}
+                  onBlur={setPhone('personal_whatsapp')} placeholder="+234 80X XXX XXXX" />
               </Field>
             </div>
 
@@ -821,13 +835,13 @@ export default function RealityTvShowApplicationWizard() {
               help="Clear, well-lit headshot. JPG or PNG, max 5 MB.">
               <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 {/* Preview */}
-                <div style={{ width: 88, height: 88, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', border: `2px solid ${errors.media_profilePhotoUrl ? c.danger : c.border}`, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: 88, height: 88, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', border: `1px solid ${errors.media_profilePhotoUrl ? c.danger : c.border}`, background: '#F1E8E0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {form.media_profilePhotoPreview
                     ? <img src={form.media_profilePhotoPreview} alt="Profile preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    : <span style={{ fontSize: 32, color: '#D1D5DB' }}>👤</span>}
+                    : <span style={{ fontFamily: 'var(--head)', fontSize: 9, letterSpacing: '.12em', textTransform: 'uppercase', color: '#A79BAE' }}>No photo</span>}
                 </div>
                 {/* Dropzone / file input */}
-                <label style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '18px 20px', border: `2px dashed ${errors.media_profilePhotoUrl ? c.danger : c.border}`, borderRadius: 12, cursor: 'pointer', background: '#FAFAFA', transition: 'border-color 0.2s' }}
+                <label style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '18px 20px', border: `1px dashed ${errors.media_profilePhotoUrl ? c.danger : c.border}`, borderRadius: 2, cursor: 'pointer', background: c.inputBg, transition: 'border-color 0.2s' }}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => {
                     e.preventDefault();
@@ -839,8 +853,7 @@ export default function RealityTvShowApplicationWizard() {
                       const file = e.target.files?.[0];
                       if (file) pickProfilePhoto(file);
                     }} />
-                  <span style={{ fontSize: 22 }}>📷</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: c.textMid }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: c.textMid }}>
                     {uploading['media.profilePhoto']
                       ? 'Uploading…'
                       : (form.media_profilePhotoName || (form.media_profilePhoto as File | null)?.name || 'Click to upload or drag & drop')}
@@ -870,8 +883,8 @@ export default function RealityTvShowApplicationWizard() {
               <div style={{ display: 'flex', gap: 10 }}>
                 {ENTRY_MODES.map((mode) => (
                   <button key={mode} type="button" onClick={() => set('contest_entryMode', mode)}
-                    style={{ flex: 1, padding: '10px', borderRadius: 10, border: `1.5px solid ${form.contest_entryMode === mode ? c.primary : c.border}`, background: form.contest_entryMode === mode ? 'rgba(245,158,11,0.07)' : c.white, color: form.contest_entryMode === mode ? c.textDark : c.textMuted, fontWeight: 700, cursor: 'pointer', fontSize: 13.5, transition: 'all 0.15s' }}>
-                    {mode === 'Individual' ? '🧑 Individual' : '👥 Group'}
+                    style={{ flex: 1, padding: '11px', borderRadius: 2, border: `1px solid ${form.contest_entryMode === mode ? c.textDark : c.border}`, background: form.contest_entryMode === mode ? 'rgba(255,137,73,0.12)' : 'transparent', color: form.contest_entryMode === mode ? c.textDark : c.textMuted, fontFamily: 'var(--head)', fontWeight: 800, cursor: 'pointer', fontSize: 12, letterSpacing: '.06em', textTransform: 'uppercase', transition: 'all 0.15s' }}>
+                    {mode}
                   </button>
                 ))}
               </div>
@@ -880,7 +893,7 @@ export default function RealityTvShowApplicationWizard() {
             {/* Guardian consent — schema-required whenever derived.age < 18. */}
             {isMinor && (
               <div style={section}>
-                <p style={sectionTitle}>🛡 Parent / Guardian Consent <span style={{ fontWeight: 400, color: c.danger, textTransform: 'none', letterSpacing: 0 }}>(required — applicant is under 18)</span></p>
+                <p style={sectionTitle}>Parent / guardian consent <span style={{ fontWeight: 400, color: c.danger, textTransform: 'none', letterSpacing: 0 }}>(required — applicant is under 18)</span></p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
                     <Field label="Parent/Guardian Full Name" required error={errors.guardian_fullName}>
@@ -888,14 +901,20 @@ export default function RealityTvShowApplicationWizard() {
                         onChange={(e) => set('guardian_fullName', e.target.value)} placeholder="e.g. Mrs. Ngozi Obi" />
                     </Field>
                     <Field label="Relationship to Applicant" required error={errors.guardian_relationship}>
-                      <Input value={form.guardian_relationship} error={errors.guardian_relationship}
-                        onChange={(e) => set('guardian_relationship', e.target.value)} placeholder="e.g. Mother" />
+                      <Select value={form.guardian_relationship} error={errors.guardian_relationship}
+                        onChange={(e) => set('guardian_relationship', e.target.value)}>
+                        <option value="">Select relationship…</option>
+                        {GUARDIAN_RELATIONSHIP_OPTIONS.map((relationship) => (
+                          <option key={relationship}>{relationship}</option>
+                        ))}
+                      </Select>
                     </Field>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
                     <Field label="Parent/Guardian Phone" required error={errors.guardian_phone}>
                       <Input type="tel" value={form.guardian_phone} error={errors.guardian_phone}
-                        onChange={(e) => set('guardian_phone', e.target.value)} placeholder="+234 80X XXX XXXX" />
+                        onChange={(e) => set('guardian_phone', e.target.value)}
+                        onBlur={setPhone('guardian_phone')} placeholder="+234 80X XXX XXXX" />
                     </Field>
                     <Field label="Parent/Guardian Email" required error={errors.guardian_email}>
                       <Input type="email" value={form.guardian_email} error={errors.guardian_email}
@@ -906,17 +925,11 @@ export default function RealityTvShowApplicationWizard() {
                     <Textarea value={form.guardian_address} error={errors.guardian_address} rows={2}
                       onChange={(e) => set('guardian_address', e.target.value)} placeholder="Street, area, city" />
                   </Field>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
-                    <Field label="Digital Signature (typed name)" required error={errors.guardian_digitalSignature}
-                      help="The parent/guardian should type their full legal name">
-                      <Input value={form.guardian_digitalSignature} error={errors.guardian_digitalSignature}
-                        onChange={(e) => set('guardian_digitalSignature', e.target.value)} placeholder="Full legal name" />
-                    </Field>
-                    <Field label="Parent/Guardian ID Upload" error={errors.guardian_idUploadUrl}
-                      help="JPG, PNG or PDF">
-                      {filePicker('guardian.idUpload', 'guardian_idUploadUrl', 'guardian_idUploadName', '.jpg,.jpeg,.png,.pdf', '🪪')}
-                    </Field>
-                  </div>
+                  <Field label="Digital Signature (typed name)" required error={errors.guardian_digitalSignature}
+                    help="The parent/guardian should type their full legal name">
+                    <Input value={form.guardian_digitalSignature} error={errors.guardian_digitalSignature}
+                      onChange={(e) => set('guardian_digitalSignature', e.target.value)} placeholder="Full legal name" />
+                  </Field>
                   <Checkbox
                     label="I authorize this applicant to participate in Spotlight programme activities."
                     checked={form.guardian_consentGranted}
@@ -934,8 +947,7 @@ export default function RealityTvShowApplicationWizard() {
       {/* ── Step 2: Your Talent ────────────────────────────────────────────── */}
       {step === 2 && (
         <div style={card}>
-          <h3 style={{ color: c.textDark, fontWeight: 800, fontSize: 18, marginBottom: 4 }}>⭐ Your Talent</h3>
-          <p style={{ color: c.textMuted, fontSize: 13.5, marginBottom: 24 }}>Tell us about your skills and what you bring to the show.</p>
+          <StepHead step={2} title="What you bring." intro="Your skills, your experience, and the story behind them." />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             <Field label="Primary Talent / Skills" required error={errors.talent_primarySkill}
@@ -995,8 +1007,10 @@ export default function RealityTvShowApplicationWizard() {
       {/* ── Step 3: Show Profile ───────────────────────────────────────────── */}
       {step === 3 && (
         <div style={card}>
-          <h3 style={{ color: c.textDark, fontWeight: 800, fontSize: 18, marginBottom: 4 }}>🎬 Your Show Profile</h3>
-          <p style={{ color: c.textMuted, fontSize: 13.5, marginBottom: 24 }}>Identity, media, and how you&apos;d like to audition — help us see you beyond the form.</p>
+          <StepHead step={3} title="How you&apos;ll be seen."
+            intro={isMinor
+              ? 'Media and how you would like to audition — your guardian’s consent covers identity verification.'
+              : 'Identity, media, and how you would like to audition — help the team see you beyond the form.'} />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             <Field label="Why would you make a great TV contestant?" required error={errors.category_uniqueStory}
@@ -1006,28 +1020,30 @@ export default function RealityTvShowApplicationWizard() {
                 placeholder="e.g. I'm naturally entertaining and drama-free but I speak my truth. Viewers would relate to my authenticity and root for me…" rows={4} />
             </Field>
 
-            <div style={section}>
-              <p style={sectionTitle}>Identity Verification</p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
-                <Field label="Government-issued ID type" required error={errors.identity_idType}>
-                  <Select value={form.identity_idType} error={errors.identity_idType}
-                    onChange={(e) => set('identity_idType', e.target.value)}>
-                    <option value="">Select…</option>
-                    {ID_TYPE_OPTIONS.map((t) => <option key={t}>{t}</option>)}
-                  </Select>
-                </Field>
-                <Field label="ID Number">
-                  <Input value={form.identity_idNumber}
-                    onChange={(e) => set('identity_idNumber', e.target.value)} placeholder="e.g. NIN / passport no." />
-                </Field>
+            {!isMinor && (
+              <div style={section}>
+                <p style={sectionTitle}>Identity Verification</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                  <Field label="Government-issued ID type" required error={errors.identity_idType}>
+                    <Select value={form.identity_idType} error={errors.identity_idType}
+                      onChange={(e) => set('identity_idType', e.target.value)}>
+                      <option value="">Select…</option>
+                      {ID_TYPE_OPTIONS.map((t) => <option key={t}>{t}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label="ID Number">
+                    <Input value={form.identity_idNumber}
+                      onChange={(e) => set('identity_idNumber', e.target.value)} placeholder="e.g. NIN / passport no." />
+                  </Field>
+                </div>
+                <div style={{ marginTop: 14 }}>
+                  <Field label="ID Upload" required error={errors.identity_idUploadUrl}
+                    help="JPG, PNG or PDF — a clear photo or scan of the document">
+                    {filePicker('identity.idUpload', 'identity_idUploadUrl', 'identity_idUploadName', '.jpg,.jpeg,.png,.pdf')}
+                  </Field>
+                </div>
               </div>
-              <div style={{ marginTop: 14 }}>
-                <Field label="ID Upload" required error={errors.identity_idUploadUrl}
-                  help="JPG, PNG or PDF — a clear photo or scan of the document">
-                  {filePicker('identity.idUpload', 'identity_idUploadUrl', 'identity_idUploadName', '.jpg,.jpeg,.png,.pdf', '🪪')}
-                </Field>
-              </div>
-            </div>
+            )}
 
             <Field label="Performance / Audition Link" error={errors.media_performanceLink}
               help="YouTube, TikTok, Instagram Reel, or Google Drive link to a recent performance or audition clip">
@@ -1038,7 +1054,7 @@ export default function RealityTvShowApplicationWizard() {
 
             <Field label="Short intro / audition video" error={errors.media_introVideoUrl}
               help="Optional — MP4 or MOV, a short clip introducing yourself">
-              {filePicker('media.introVideo', 'media_introVideoUrl', 'media_introVideoName', '.mp4,.mov', '🎥')}
+              {filePicker('media.introVideo', 'media_introVideoUrl', 'media_introVideoName', '.mp4,.mov')}
             </Field>
 
             <Field label="Preferred audition format" required error={errors.audition_format}>
@@ -1114,8 +1130,7 @@ export default function RealityTvShowApplicationWizard() {
       {/* ── Step 4: Readiness ──────────────────────────────────────────────── */}
       {step === 4 && (
         <div style={card}>
-          <h3 style={{ color: c.textDark, fontWeight: 800, fontSize: 18, marginBottom: 4 }}>✅ Readiness, Welfare & Emergency Contact</h3>
-          <p style={{ color: c.textMuted, fontSize: 13.5, marginBottom: 24 }}>Confirm you are ready for the show environment, tell us about your health, and provide a contact for emergencies.</p>
+          <StepHead step={4} title="Ready for the house." intro="Show readiness, health and welfare, and who to call in an emergency." />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             <div style={section}>
@@ -1229,11 +1244,13 @@ export default function RealityTvShowApplicationWizard() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
                   <Field label="Phone Number" required error={errors.emergency_phone}>
                     <Input type="tel" value={form.emergency_phone} error={errors.emergency_phone}
-                      onChange={(e) => set('emergency_phone', e.target.value)} placeholder="+234 80X XXX XXXX" />
+                      onChange={(e) => set('emergency_phone', e.target.value)}
+                      onBlur={setPhone('emergency_phone')} placeholder="+234 80X XXX XXXX" />
                   </Field>
                   <Field label="Alternative Phone" help="Optional" error={errors.emergency_altPhone}>
                     <Input type="tel" value={form.emergency_altPhone} error={errors.emergency_altPhone}
-                      onChange={(e) => set('emergency_altPhone', e.target.value)} placeholder="+234 80X XXX XXXX" />
+                      onChange={(e) => set('emergency_altPhone', e.target.value)}
+                      onBlur={setPhone('emergency_altPhone')} placeholder="+234 80X XXX XXXX" />
                   </Field>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
@@ -1308,10 +1325,7 @@ export default function RealityTvShowApplicationWizard() {
       {/* ── Step 5: Legal & Submit ─────────────────────────────────────────── */}
       {step === 5 && (
         <div style={card}>
-          <h3 style={{ color: c.textDark, fontWeight: 800, fontSize: 18, marginBottom: 4 }}>🚀 Review & Submit</h3>
-          <p style={{ color: c.textMuted, fontSize: 13.5, marginBottom: 24 }}>
-            Please read and agree to all declarations below. Your application will only be submitted after the ₦5,000 registration fee is paid.
-          </p>
+          <StepHead step={5} title="Sign off and pay." intro="Read the declarations and confirm. Your application is submitted only after the ₦5,000 fee is paid." />
 
           {/* Summary card */}
           <div style={{ ...section, marginBottom: 24 }}>
@@ -1356,43 +1370,44 @@ export default function RealityTvShowApplicationWizard() {
             ))}
           </div>
 
-          <div style={{ background: 'rgba(245,158,11,0.08)', border: `1.5px solid rgba(245,158,11,0.35)`, borderRadius: 12, padding: '16px 20px', marginBottom: 24 }}>
-            <p style={{ fontSize: 14, fontWeight: 800, color: c.textDark, margin: '0 0 4px' }}>
-              💳 Registration Fee: <span style={{ color: c.primary }}>₦5,000</span>
+          <div style={{ background: '#F7EDE4', border: '1px solid #E4CDBD', borderLeft: `3px solid ${c.primary}`, borderRadius: 2, padding: '16px 20px', marginBottom: 24 }}>
+            <p style={{ fontFamily: 'var(--head)', fontSize: 13, fontWeight: 800, letterSpacing: '.02em', color: c.textDark, margin: '0 0 5px' }}>
+              Registration fee: <span style={{ color: c.danger }}>₦5,000</span>
             </p>
             <p style={{ fontSize: 13, color: c.textMuted, margin: 0 }}>
-              Clicking &ldquo;Submit & Pay&rdquo; will open a secure Paystack checkout. Your application is only submitted after successful payment.
+              &ldquo;Submit and pay&rdquo; opens a secure Paystack checkout. Your application is
+              submitted only after successful payment.
             </p>
           </div>
         </div>
       )}
 
       {/* ── Navigation buttons ─────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 24, gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 26, gap: 12, flexWrap: 'wrap' }}>
         <button type="button" onClick={back} disabled={step === 1}
-          style={{ padding: '12px 24px', borderRadius: 10, border: `1.5px solid ${c.border}`, background: c.white, color: step === 1 ? c.textMuted : c.textMid, fontWeight: 700, cursor: step === 1 ? 'not-allowed' : 'pointer', fontSize: 14, opacity: step === 1 ? 0.5 : 1 }}>
-          ← Back
+          style={{ padding: '13px 20px', borderRadius: 2, border: `1px solid ${c.border}`, background: 'transparent', color: step === 1 ? '#A79BAE' : c.textDark, fontFamily: 'var(--head)', fontWeight: 800, cursor: step === 1 ? 'not-allowed' : 'pointer', fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase' }}>
+          Back
         </button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {saving && <span style={{ fontSize: 12, color: c.textMuted }}>Saving…</span>}
+          {saving && <span style={{ fontSize: 11, color: c.textMuted }}>Saving…</span>}
 
           {step < 5 ? (
             <button type="button" onClick={next}
-              style={{ padding: '12px 28px', borderRadius: 10, border: 'none', background: `linear-gradient(135deg, ${c.primary}, ${c.primaryDark})`, color: '#000', fontWeight: 800, cursor: 'pointer', fontSize: 14, boxShadow: '0 4px 14px rgba(245,158,11,0.35)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              Continue →
+              style={{ padding: '13px 20px', borderRadius: 2, border: 0, background: c.primary, color: '#150E1C', fontFamily: 'var(--head)', fontWeight: 800, cursor: 'pointer', fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 14 }}>
+              Continue <ArrowIcon />
             </button>
           ) : (
             <button type="button" onClick={handleSubmit} disabled={submitting}
-              style={{ padding: '12px 32px', borderRadius: 10, border: 'none', background: submitting ? '#9CA3AF' : `linear-gradient(135deg, ${c.primary}, ${c.primaryDark})`, color: submitting ? 'rgba(255,255,255,0.7)' : '#000', fontWeight: 800, cursor: submitting ? 'not-allowed' : 'pointer', fontSize: 14, boxShadow: submitting ? 'none' : '0 4px 14px rgba(245,158,11,0.35)', display: 'flex', alignItems: 'center', gap: 8 }}>
-              {submitting ? <><SpinnerIcon /> Processing…</> : '💳 Submit & Pay ₦5,000'}
+              style={{ padding: '13px 22px', borderRadius: 2, border: 0, background: submitting ? '#C9B8C9' : c.primary, color: submitting ? '#5E4965' : '#150E1C', fontFamily: 'var(--head)', fontWeight: 800, cursor: submitting ? 'not-allowed' : 'pointer', fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 10 }}>
+              {submitting ? <><SpinnerIcon /> Processing…</> : <>Submit and pay ₦5,000 <ArrowIcon /></>}
             </button>
           )}
         </div>
       </div>
 
-      <p style={{ textAlign: 'center', fontSize: 12, color: c.textMuted, marginTop: 18 }}>
-        Step {step} of {STEPS.length} · Your progress is automatically saved
+      <p style={{ fontFamily: 'var(--head)', textAlign: 'center', fontSize: 9, letterSpacing: '.14em', textTransform: 'uppercase', color: c.textMuted, marginTop: 20 }}>
+        Step {step} of {STEPS.length} · Progress saved after each step
       </p>
     </div>
   );

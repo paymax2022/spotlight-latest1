@@ -50,7 +50,6 @@ const guardianConsentFields: RegistrationField[] = [
   { key: 'guardian.phone', label: 'Parent/guardian phone number', type: 'tel', required: true },
   { key: 'guardian.email', label: 'Parent/guardian email', type: 'email', required: true },
   { key: 'guardian.address', label: 'Parent/guardian address', type: 'textarea', required: true },
-  { key: 'guardian.idUpload', label: 'Parent/guardian government ID upload', type: 'file', accept: '.jpg,.jpeg,.png,.pdf' },
   { key: 'guardian.digitalSignature', label: 'Digital signature (typed name)', type: 'text', required: true },
   { key: 'guardian.consentGranted', label: 'I authorize this applicant to participate in Spotlight programme activities', type: 'checkbox', required: true },
 ];
@@ -151,14 +150,17 @@ const reviewFields: RegistrationField[] = [
 ];
 
 export function buildRealityTvShowSteps(draft: RegistrationDraft): RegistrationStep[] {
+  const minor = isMinor(draft);
   const personalStepFields = [
     ...personalInformationFields,
     ...talentProfileFields,
-    ...(isMinor(draft) ? guardianConsentFields : []),
+    ...(minor ? guardianConsentFields : []),
   ];
 
   const contestRequirementFields = [
-    ...identityFields,
+    // Minors are verified through the guardian's signed consent; they are not
+    // asked for a government ID of their own.
+    ...(minor ? [] : identityFields),
     ...mediaFields,
     ...categoryFields,
     ...socialFields,
