@@ -533,9 +533,9 @@ function LoginPageInner() {
 
         <p style={{ textAlign: 'center', fontSize: '0.78rem', color: '#475569', marginTop: '1.25rem' }}>
           By signing in you agree to Spotlight&apos;s{' '}
-          <Link href="/terms" style={{ color: '#64748b', textDecoration: 'underline' }}>Terms of Service</Link>
+          <Link href="/terms-and-conditions" style={{ color: '#64748b', textDecoration: 'underline' }}>Terms of Service</Link>
           {' '}and{' '}
-          <Link href="/privacy" style={{ color: '#64748b', textDecoration: 'underline' }}>Privacy Policy</Link>.
+          <Link href="/privacy-policy" style={{ color: '#64748b', textDecoration: 'underline' }}>Privacy Policy</Link>.
         </p>
       </div>
     </main>
