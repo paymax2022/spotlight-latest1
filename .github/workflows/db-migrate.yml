@@ -12,14 +12,7 @@ name: DB Migrate (Supabase db push)
 # To enable (after reconciliation):
 #   1. Add repo secrets (Settings → Secrets and variables → Actions):
 #        SUPABASE_ACCESS_TOKEN   personal/CI access token (account API)
-#        SUPABASE_PROJECT_ID     the PRODUCTION project ref (20-char). Per
-#                               docs/devops/staging-environment-setup.md that is
-#                               nmseefdlliejmdbxytej (spotlight-prod) — the older
-#                               refs ptczqwfokydsdafpscex (retired) and
-#                               wnicsubiznmishkmunsv (now staging) are NOT it.
-#                               Pair it with the matching spotlight-prod DB
-#                               password; a prod ref + old password just fails
-#                               at the link step.
+#        SUPABASE_PROJECT_ID     the project ref (20-char, e.g. ptczqwfokydsdafpscex)
 #        SUPABASE_DB_PASSWORD    the database password
 #   2. Add repo variable:  DB_MIGRATE_ENABLED = true
 #   3. (Recommended) Configure the `production` environment with required
