@@ -136,6 +136,11 @@ NEXT_PUBLIC_SUPABASE_URL=https://ptczqwfokydsdafpscex.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=[valid JWT token]
 ```
 
+> Historical record: that run used `ptczqwfokydsdafpscex`, since retired. Current
+> refs (see `docs/devops/staging-environment-setup.md`, which is authoritative):
+> production `nmseefdlliejmdbxytej`, staging `wnicsubiznmishkmunsv`. Do not
+> configure from the URL above.
+
 ## Architecture After Setup
 
 ```
