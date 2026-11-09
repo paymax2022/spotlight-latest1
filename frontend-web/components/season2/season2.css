@@ -209,7 +209,6 @@
 .sp-season2 .mansion-intro { padding-bottom: 4px; max-width: 395px; color: var(--muted); font-size: 14px; }
 .sp-season2 .montage { position: relative; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
 .sp-season2 .montage img { aspect-ratio: 2.45; object-fit: cover; object-position: 50% 44%; }
-.sp-season2 .montage figcaption { position: absolute; right: 12px; bottom: 12px; padding: 5px 8px; background: #150e1ced; color: var(--paper); font: 700 8px/1.45 var(--head); font-family: var(--head) !important; letter-spacing: .10em; }
 .sp-season2 .scene-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0; border: 1px solid var(--line); border-top: 0; }
 .sp-season2 .scene-strip a { display: flex; gap: 9px; align-items: center; padding: 14px 11px; border-right: 1px solid var(--line); color: var(--orange); font-size: 10px; }
 .sp-season2 .scene-strip a:last-child { border-right: 0; }
@@ -238,7 +237,6 @@
   .sp-season2 .mansion-heading h1 { font-size: clamp(46px, 11vw, 74px); }
   .sp-season2 .mansion-intro { font-size: 13px; }
   .sp-season2 .montage img { aspect-ratio: 2; }
-  .sp-season2 .montage figcaption { font-size: 6px; bottom: 6px; right: 6px; }
   .sp-season2 .scene-strip { grid-template-columns: repeat(3, 1fr); }
   .sp-season2 .scene-strip a { padding: 10px 7px; gap: 5px; font-size: 9px; }
   .sp-season2 .scene-strip a:nth-child(-n+3) { border-bottom: 1px solid var(--line); }

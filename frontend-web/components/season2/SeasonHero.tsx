@@ -42,7 +42,6 @@ export default function SeasonHero() {
           alt="Illustrative montage of mansion life, voice coaching, house tasks, group battles, a farewell and a live singer"
           fetchPriority="high"
         />
-        <figcaption>ILLUSTRATIVE RECREATION OF SEASON 1 THEMES</figcaption>
       </figure>
 
       <SceneStrip />
