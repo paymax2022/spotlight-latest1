@@ -152,7 +152,6 @@ export default function RealityTvShowPage() {
                   Explore the audition route <span aria-hidden="true">↓</span>
                 </a>
               </div>
-              <span className="reality-tv-hero-note">ILLUSTRATIVE PERFORMANCE IMAGE</span>
             </div>
           </section>
 
@@ -475,16 +474,6 @@ export default function RealityTvShowPage() {
           flex-wrap: wrap;
           margin-top: 25px;
         }
-        .reality-tv-page .reality-tv-hero-note {
-          position: absolute;
-          right: 0;
-          bottom: 20px;
-          color: var(--paper);
-          font-size: 8px;
-          letter-spacing: 0.17em;
-          background: rgba(20,14,26,0.6);
-          padding: 3px 7px;
-        }
         .reality-tv-page .reality-tv-numbers { background: var(--plum); border-block: 1px solid var(--line); }
         .reality-tv-page .reality-tv-numbers-grid {
           display: grid;
@@ -696,7 +685,6 @@ export default function RealityTvShowPage() {
             background: linear-gradient(90deg, rgba(21,14,28,0.9), rgba(21,14,28,0.6)), linear-gradient(0deg, rgba(21,14,28,0.9), transparent 86%);
           }
           .reality-tv-page .reality-tv-hero h1 { font-size: clamp(55px, 12vw, 83px); }
-          .reality-tv-page .reality-tv-hero-note { bottom: 10px; }
           .reality-tv-page .reality-tv-lead { font-size: 13px; }
           .reality-tv-page .reality-tv-numbers-grid { grid-template-columns: 1fr 1fr; }
           .reality-tv-page .reality-tv-numbers-grid > div,
