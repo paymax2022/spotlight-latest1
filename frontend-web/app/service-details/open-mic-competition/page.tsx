@@ -3,6 +3,10 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
+import {
+  NIGERIA_CITIES_BY_STATE,
+  NIGERIA_STATES,
+} from '@/src/features/registration/reference-data';
 import './open-mic.css';
 
 const stages = [
@@ -177,24 +181,76 @@ function ArrowIcon({ down = false }: { down?: boolean }) {
   );
 }
 
+type LoungeForm = {
+  loungeName: string;
+  contactPerson: string;
+  email: string;
+  phone: string;
+  state: string;
+  city: string;
+  capacity: string;
+  proposal: string;
+};
+
+const EMPTY_LOUNGE_FORM: LoungeForm = {
+  loungeName: '',
+  contactPerson: '',
+  email: '',
+  phone: '',
+  state: '',
+  city: '',
+  capacity: '',
+  proposal: '',
+};
+
 function LoungeApplication() {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [emailDraft, setEmailDraft] = useState('');
-  const [status, setStatus] = useState('');
+  const [form, setForm] = useState<LoungeForm>(EMPTY_LOUNGE_FORM);
+  const [phase, setPhase] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [error, setError] = useState('');
 
-  function prepareApplication(event: FormEvent<HTMLFormElement>) {
+  const cities = form.state ? NIGERIA_CITIES_BY_STATE[form.state] ?? [] : [];
+  const busy = phase === 'sending';
+
+  function update<K extends keyof LoungeForm>(key: K, value: string) {
+    setForm((current) =>
+      key === 'state' ? { ...current, state: value, city: '' } : { ...current, [key]: value },
+    );
+    if (error) setError('');
+  }
+
+  function reset() {
+    setForm(EMPTY_LOUNGE_FORM);
+    setPhase('idle');
+    setError('');
+  }
+
+  async function submitApplication(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const body = Array.from(formData.entries())
-      .map(([label, value]) => `${label}: ${String(value).trim()}`)
-      .join('\n');
+    if (busy) return;
+    setPhase('sending');
+    setError('');
 
-    setEmailDraft(
-      `mailto:info@spotlightng.com?subject=${encodeURIComponent('Spotlight Open Mic lounge application')}&body=${encodeURIComponent(body)}`,
-    );
-    setStatus(
-      'Your application draft is ready. Open it in your email app to review and send.',
-    );
+    try {
+      const response = await fetch('/api/open-mic/lounge-applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | { ok?: boolean; message?: string }
+        | null;
+
+      if (response.ok && data?.ok) {
+        setPhase('sent');
+      } else {
+        setPhase('idle');
+        setError(data?.message || 'We could not send your application. Please try again.');
+      }
+    } catch {
+      setPhase('idle');
+      setError('We could not reach Spotlight right now. Check your connection and try again.');
+    }
   }
 
   return (
@@ -202,7 +258,10 @@ function LoungeApplication() {
       <button
         className="openMic-button openMic-buttonPrimary"
         type="button"
-        onClick={() => dialogRef.current?.showModal()}
+        onClick={() => {
+          reset();
+          dialogRef.current?.showModal();
+        }}
       >
         Apply as a lounge <ArrowIcon />
       </button>
@@ -210,10 +269,7 @@ function LoungeApplication() {
         className="openMic-dialog"
         ref={dialogRef}
         aria-labelledby="lounge-title"
-        onClose={() => {
-          setEmailDraft('');
-          setStatus('');
-        }}
+        onClose={reset}
       >
         <button
           className="openMic-dialogClose"
@@ -224,86 +280,164 @@ function LoungeApplication() {
           ×
         </button>
         <p className="openMic-kicker">OPEN MIC / VENUE PARTNERS</p>
-        <h2 id="lounge-title">Apply as a lounge.</h2>
-        <p className="openMic-dialogIntro">
-          Tell Spotlight what you can host. This form prepares an email for you
-          to review and send.
-        </p>
-        <form
-          className="openMic-loungeForm"
-          onSubmit={prepareApplication}
-          onInput={() => {
-            setEmailDraft('');
-            setStatus('');
-          }}
-        >
-          <div className="openMic-fields">
-            <label>
-              Lounge name
-              <input name="Lounge name" required maxLength={100} />
-            </label>
-            <label>
-              Contact person
-              <input
-                name="Contact person"
-                required
-                maxLength={100}
-                autoComplete="name"
-              />
-            </label>
-            <label>
-              Email
-              <input
-                name="Email"
-                type="email"
-                required
-                maxLength={120}
-                autoComplete="email"
-              />
-            </label>
-            <label>
-              Phone
-              <input
-                name="Phone"
-                type="tel"
-                required
-                maxLength={30}
-                autoComplete="tel"
-              />
-            </label>
-            <label>
-              City and state
-              <input name="City and state" required maxLength={100} />
-            </label>
-            <label>
-              Seated capacity
-              <input
-                name="Seated capacity"
-                type="number"
-                min={1}
-                max={100000}
-                required
-              />
-            </label>
+        {phase === 'sent' ? (
+          <div className="openMic-dialogSuccess" role="status">
+            <h2 id="lounge-title">Sent. Thank you.</h2>
+            <p className="openMic-dialogIntro">
+              We’ve received your lounge application and emailed you a copy. The
+              Spotlight venues team reviews applications weekly and will reply to{' '}
+              <strong>{form.email}</strong>.
+            </p>
+            <div className="openMic-dialogSuccessActions">
+              <button type="button" className="openMic-button openMic-buttonPrimary" onClick={reset}>
+                Send another
+              </button>
+              <button
+                type="button"
+                className="openMic-button openMic-buttonOutline"
+                onClick={() => dialogRef.current?.close()}
+              >
+                Close
+              </button>
+            </div>
           </div>
-          <label>
-            Sound setup and event proposal
-            <textarea
-              name="Sound setup and event proposal"
-              required
-              maxLength={750}
-              rows={3}
-            />
-          </label>
-          <button className="openMic-button openMic-buttonPrimary" type="submit">
-            Prepare application
-          </button>
-        </form>
-        <p className="openMic-status" role="status">{status}</p>
-        {emailDraft && (
-          <a className="openMic-button openMic-buttonPrimary" href={emailDraft}>
-            Open email draft <ArrowIcon />
-          </a>
+        ) : (
+          <>
+            <h2 id="lounge-title">Apply as a lounge.</h2>
+            <p className="openMic-dialogIntro">
+              Tell Spotlight what you can host. We’ll send your venue details to
+              the Open Mic team and email you a copy.
+            </p>
+            <form className="openMic-loungeForm" onSubmit={submitApplication} aria-busy={busy}>
+              <div className="openMic-fields">
+                <label>
+                  Lounge name
+                  <input
+                    name="loungeName"
+                    value={form.loungeName}
+                    onChange={(event) => update('loungeName', event.target.value)}
+                    required
+                    maxLength={100}
+                    autoComplete="organization"
+                    disabled={busy}
+                  />
+                </label>
+                <label>
+                  Contact person
+                  <input
+                    name="contactPerson"
+                    value={form.contactPerson}
+                    onChange={(event) => update('contactPerson', event.target.value)}
+                    required
+                    maxLength={100}
+                    autoComplete="name"
+                    disabled={busy}
+                  />
+                </label>
+                <label>
+                  Email
+                  <input
+                    name="email"
+                    type="email"
+                    value={form.email}
+                    onChange={(event) => update('email', event.target.value)}
+                    required
+                    maxLength={120}
+                    autoComplete="email"
+                    disabled={busy}
+                  />
+                </label>
+                <label>
+                  Phone
+                  <input
+                    name="phone"
+                    type="tel"
+                    value={form.phone}
+                    onChange={(event) => update('phone', event.target.value)}
+                    required
+                    maxLength={30}
+                    autoComplete="tel"
+                    disabled={busy}
+                  />
+                </label>
+                <label>
+                  State
+                  <select
+                    name="state"
+                    value={form.state}
+                    onChange={(event) => update('state', event.target.value)}
+                    required
+                    disabled={busy}
+                  >
+                    <option value="" disabled>
+                      Select a state
+                    </option>
+                    {NIGERIA_STATES.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  City
+                  <select
+                    name="city"
+                    value={form.city}
+                    onChange={(event) => update('city', event.target.value)}
+                    required
+                    disabled={busy || !form.state}
+                  >
+                    <option value="" disabled>
+                      {form.state ? 'Select a city' : 'Choose a state first'}
+                    </option>
+                    {cities.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Seated capacity
+                  <input
+                    name="capacity"
+                    type="number"
+                    value={form.capacity}
+                    onChange={(event) => update('capacity', event.target.value)}
+                    min={1}
+                    max={100000}
+                    required
+                    disabled={busy}
+                  />
+                </label>
+              </div>
+              <label>
+                Sound setup and event proposal
+                <textarea
+                  name="proposal"
+                  value={form.proposal}
+                  onChange={(event) => update('proposal', event.target.value)}
+                  required
+                  maxLength={750}
+                  rows={3}
+                  disabled={busy}
+                />
+              </label>
+              {error && (
+                <p className="openMic-status openMic-statusError" role="alert">
+                  {error}
+                </p>
+              )}
+              <button
+                className="openMic-button openMic-buttonPrimary"
+                type="submit"
+                disabled={busy}
+              >
+                {busy ? 'Sending…' : 'Send application'}
+              </button>
+            </form>
+          </>
         )}
       </dialog>
     </>
