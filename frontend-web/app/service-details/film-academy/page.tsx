@@ -268,7 +268,6 @@ export default async function FilmAcademyPage() {
                 <br />
                 classroom.
               </h2>
-              <small>Illustrative image — not footage from a Spotlight cohort</small>
             </div>
           </div>
 
