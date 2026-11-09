@@ -160,8 +160,13 @@ export function tuitionPlanShape(input: {
   feeFrequency: string | null;
   oneOffDiscountPct: number | null;
 }) {
+  // A batch with no cadence configured has no plan to charge from: its tuition
+  // is recorded at submit and invoiced later by admin.
+  if (input.feeFrequency === null) {
+    return { count: 0, discountPct: 0, discounted: input.tuition, unit: 0, firstDueNgn: 0 };
+  }
   const payUpfront =
-    input.preference === 'one_off' || !PLAN_CADENCES.has(String(input.feeFrequency ?? 'monthly'));
+    input.preference === 'one_off' || !PLAN_CADENCES.has(String(input.feeFrequency));
   const count = payUpfront ? 1 : Math.min(12, Math.max(1, Number(input.installmentsCount ?? 1)));
   const discountPct = input.preference === 'one_off' ? Number(input.oneOffDiscountPct ?? 0) : 0;
   const discounted = Math.round(input.tuition * (1 - discountPct / 100) * 100) / 100;

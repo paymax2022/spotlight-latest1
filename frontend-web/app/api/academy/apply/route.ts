@@ -336,8 +336,7 @@ export async function POST(request: Request) {
     // academy_settings.application_fee_refundable.
     const requiredFee = Number(settings.application_fee ?? 0);
 
-    const registrationFeeRequired =
-      settings.registration_type === 'paid' && requiredFee > 0;
+    const registrationFeeRequired = settings.registration_type === 'paid';
     let paidRegistrationFee = 0;
     let registrationFeeReference = '';
     // Set when application_fee_reference resolves to a server-minted intent —
@@ -410,7 +409,11 @@ export async function POST(request: Request) {
       oneOffDiscountPct: batchRow.one_off_discount_pct,
     });
     const applicationFeeDue = registrationFeeRequired ? requiredFee : 0;
-    const expectedTotalPayment = applicationFeeDue + planShape.firstDueNgn;
+    // A free-registration applicant owes nothing at submit, even when the batch
+    // has tuition due upfront — admin invoices that later.
+    const expectedTotalPayment = registrationFeeRequired
+      ? applicationFeeDue + planShape.firstDueNgn
+      : 0;
 
     if (expectedTotalPayment > 0) {
       registrationFeeReference = String(body.application_fee_reference ?? '').trim();
