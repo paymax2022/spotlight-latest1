@@ -11,6 +11,12 @@ const CAPTIONS = [
   'School STEM & youth hackathon',
 ];
 
+const SLIDES = [
+  { src: 'campaign-1', alt: 'Illustrative montage of a singer, school STEM team, founder and indoor football players' },
+  { src: 'campaign-2', alt: 'Illustrative montage of a vocalist, robotics team, product pitch and futsal match' },
+  { src: 'campaign-3', alt: 'Illustrative scenes of school STEM projects, youth hackathon teams and an awards presentation' },
+];
+
 const CONTESTS = [
   {
     id: 'reality',
@@ -121,7 +127,7 @@ function Reel() {
 
   const showBanner = useCallback(
     (index: number) => {
-      const next = (index + 3) % 3;
+      const next = (index + SLIDES.length) % SLIDES.length;
       setCurrent(next);
       if (trackRef.current) {
         trackRef.current.style.transform = `translateX(${-100 * next}%)`;
@@ -157,21 +163,23 @@ function Reel() {
     <div className="reel" role="region" aria-roledescription="carousel" aria-label="Spotlight programme banners">
       <div className="reel-window">
         <div className="reel-track" ref={trackRef}>
-          <figure>
-            <img src="/assets/img/about/campaign-1.webp" alt="Illustrative montage of a singer, school STEM team, founder and indoor football players" width={1774} height={887} fetchPriority="high" />
-          </figure>
-          <figure inert aria-hidden="true">
-            <img src="/assets/img/about/campaign-2.webp" alt="Illustrative montage of a vocalist, robotics team, product pitch and futsal match" width={1774} height={887} loading="lazy" />
-          </figure>
-          <figure inert aria-hidden="true">
-            <img src="/assets/img/about/campaign-3.webp" alt="Illustrative scenes of school STEM projects, youth hackathon teams and an awards presentation" width={1774} height={887} loading="lazy" />
-          </figure>
+          {SLIDES.map((slide, i) => (
+            <figure key={slide.src} inert={i !== current} aria-hidden={i !== current}>
+              <img
+                src={`/assets/img/about/${slide.src}.webp`}
+                alt={slide.alt}
+                width={1774}
+                height={887}
+                {...(i === 0 ? { fetchPriority: 'high' } : { loading: 'lazy' })}
+              />
+            </figure>
+          ))}
         </div>
       </div>
       <div className="reel-controls">
         <div>
           <span className="reel-index" aria-hidden="true">
-            {String(current + 1).padStart(2, '0')} / 03
+            {String(current + 1).padStart(2, '0')} / {String(SLIDES.length).padStart(2, '0')}
           </span>{' '}
           <span id="reel-caption">{CAPTIONS[current]}</span>
           <small> / CAMPAIGN ARTWORK</small>
