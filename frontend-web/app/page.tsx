@@ -1,12 +1,11 @@
 import type { Metadata } from 'next';
 import { Barlow_Condensed, DM_Sans, Manrope } from 'next/font/google';
+import Layout from '@/components/layout/Layout';
 import Closing from '@/components/landing/Closing';
 import Faq from '@/components/landing/Faq';
 import Hero from '@/components/landing/Hero';
 import { JoinDialogProvider } from '@/components/landing/JoinDialog';
 import Journey from '@/components/landing/Journey';
-import LandingFooter from '@/components/landing/LandingFooter';
-import LandingHeader from '@/components/landing/LandingHeader';
 import Network from '@/components/landing/Network';
 import Opportunities from '@/components/landing/Opportunities';
 import Partnership from '@/components/landing/Partnership';
@@ -97,30 +96,37 @@ export default async function HomePage() {
   return (
     // `#top` has to sit on the document's first box: the header is sticky, so
     // scrolling to it leaves the page exactly where it was.
-    <div id="top" className={`sp-home ${display.variable} ${ui.variable} ${body.variable}`}>
-      <a className="skip" href="#main">
-        Skip to content
-      </a>
-      <JoinDialogProvider>
-        <LandingHeader />
-        <main id="main">
-          <Hero />
-          <Network />
-          <Programmes />
-          <Opportunities academyFrom={academyFrom} />
-          <Season />
-          <Journey />
-          <PeopleRail />
-          <Voices />
-          <Recognition />
-          <PhotoGallery />
-          <Testimonials />
-          <Partnership />
-          <Faq />
-          <Closing />
-        </main>
-        <LandingFooter />
-      </JoinDialogProvider>
-    </div>
+    <Layout
+      headerStyle={1}
+      footerStyle={2}
+      onePageNav={false}
+      breadcrumbTitle={null}
+      breadcrumbClassName={undefined}
+      breadcrumbPadding={undefined}
+    >
+      <div id="top" className={`sp-home ${display.variable} ${ui.variable} ${body.variable}`}>
+        <a className="skip" href="#main">
+          Skip to content
+        </a>
+        <JoinDialogProvider>
+          <main id="main">
+            <Hero />
+            <Network />
+            <Programmes />
+            <Opportunities academyFrom={academyFrom} />
+            <Season />
+            <Journey />
+            <PeopleRail />
+            <Voices />
+            <Recognition />
+            <PhotoGallery />
+            <Testimonials />
+            <Partnership />
+            <Faq />
+            <Closing />
+          </main>
+        </JoinDialogProvider>
+      </div>
+    </Layout>
   );
 }
