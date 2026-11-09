@@ -1,0 +1,1610 @@
+/*
+ * Spotlight STEM & Tech competition page.
+ * Translation of the supplied stem.html / style.css design export.
+ *
+ * Two rules of translation, both load-bearing:
+ *  1. Every selector is scoped under `.stemContest` so the app's global
+ *     (bootstrap) element styles cannot reach this design and this design
+ *     cannot leak into other routes.
+ *  2. Declaration order follows the export exactly. The export interleaves
+ *     410/620/680/780/900px breakpoints and re-declares .wrap, .pad,
+ *     .hero-inner, .stats and .story-grid several times over; sorting them
+ *     by breakpoint or merging them would change which rule wins.
+ *
+ * Selectors the export reserves for the Open Mic page (.infographic, .route,
+ * .stage, dialog, #lounge-*, .hero-frame, .photo-label, .frame-*, .open-mic,
+ * .hero small) are left out — this page ships none of that markup.
+ */
+
+/* Anchor jumps need scroll-padding on the scroll container itself, and the site
+   header stacked above this page is measured in JS (--stem-chrome-top). */
+html:has(.stemContest) {
+  scroll-behavior: smooth;
+  scroll-padding-top: var(--stem-chrome-top, 160px);
+}
+
+/*
+ * Tokens. The export declares two :root blocks — the later "programme covers"
+ * palette is the one that survives, so the values below are already resolved.
+ * Custom properties are looked up at use time, so hoisting them into one block
+ * is behaviour-preserving.
+ */
+.stemContest {
+  --bg: #14101a;
+  --panel: #24182e;
+  --paper: #f6efe8;
+  --ink: #281f2e;
+  --muted: #dacbdf;
+  --line: #ffffff30;
+  --accent: #efad83;
+  --programme: #d8bdf4;
+  --programme-ink: #302041;
+  --signal: #e8d5f7;
+  color: var(--paper);
+  background: var(--bg);
+  font: 16px/1.58 system-ui, sans-serif;
+}
+
+.stemContest * {
+  box-sizing: border-box;
+}
+
+/*
+ * Two site-wide sheets outrank this design's plain declarations, so the
+ * export's faces and heading inks are re-asserted here — the same answer
+ * components/season2/season2.css and app/service-details/sports/sports.css give:
+ *  - src/styles/tailwind.css pins Kumbh Sans !important on
+ *    html/body/button/input/textarea/p/span/a/li/div/h1-h6, erasing both the
+ *    system-ui body face and the Georgia display face.
+ *  - public/assets/css/main.css paints every heading with the site's dark
+ *    header ink and title-cases it, so "Build it here." renders "Build It
+ *    Here." in near-black on the dark hero, and its `input { color: white }`
+ *    hides the enrollment text on the cream form.
+ * strong/em/b and label/figcaption are left out: neither sheet claims them, so
+ * they inherit, which is what the export relies on.
+ */
+.stemContest,
+.stemContest div,
+.stemContest p,
+.stemContest span,
+.stemContest a,
+.stemContest li,
+.stemContest button,
+.stemContest input,
+.stemContest select,
+.stemContest textarea,
+.stemContest h1,
+.stemContest h2,
+.stemContest h3,
+.stemContest h4,
+.stemContest h5,
+.stemContest h6 {
+  font-family: system-ui, sans-serif !important;
+}
+
+/* Every export rule that names Georgia, mirrored as an opt-in. It has to sit
+   below the list above: both reach (0,1,1) on a bare `h2`, so source order is
+   the decider. The shorthand `font:` declarations further down still set size,
+   weight and leading — only the family is pinned here. */
+.stemContest h2,
+.stemContest .hero h1,
+.stemContest .stats strong,
+.stemContest .seal strong,
+.stemContest .track-steps span,
+.stemContest .track-lead h3,
+.stemContest .prep-aside h3,
+.stemContest .paper .features article h3 {
+  font-family: Georgia, serif !important;
+}
+
+/* Undoing main.css's heading defaults. Where the export states a weight or a
+   leading it does so with a shorthand on a more specific, later selector. */
+.stemContest h1,
+.stemContest h2,
+.stemContest h3,
+.stemContest h4,
+.stemContest h5,
+.stemContest h6 {
+  color: inherit;
+  text-transform: none;
+  font-weight: 700;
+  line-height: 1.58;
+}
+
+.stemContest .enrollment-form :is(input, textarea) {
+  color: #000;
+}
+
+/* bootstrap's sheet hides every <br> below 575px, which would run each caption
+   into its credit line. The breaks here are content, not layout. Kept
+   un-pinned so the export's own `.hero-copy h1 br { display: none }` further
+   down still wins on specificity. */
+.stemContest br {
+  display: inline;
+}
+
+/* main.css declares `a { outline: none !important }`, which erases the export's
+   keyboard ring from every link on the page. The ring is restated here for
+   :focus-visible only, at a specificity that outranks it. */
+.stemContest a:focus-visible {
+  outline: 3px solid #b976e8 !important;
+  outline-offset: 3px !important;
+}
+
+/* bootstrap.min.css claims the same .lead class the export uses and lights it
+   at 300; the export leaves it at the body's normal weight. */
+.stemContest .lead {
+  font-weight: 400;
+}
+
+.stemContest h1,
+.stemContest h2,
+.stemContest h3,
+.stemContest p {
+  margin: 0;
+}
+
+.stemContest a {
+  color: inherit;
+  text-decoration: none;
+  transition: none;
+}
+
+.stemContest button,
+.stemContest input,
+.stemContest textarea {
+  font: inherit;
+}
+
+.stemContest button,
+.stemContest summary {
+  cursor: pointer;
+}
+
+.stemContest :focus-visible {
+  outline: 3px solid #b976e8;
+  outline-offset: 3px;
+}
+
+.stemContest [hidden] {
+  display: none !important;
+}
+
+.stemContest .wrap {
+  width: min(1190px, calc(100% - 90px));
+  margin-inline: auto;
+}
+
+.stemContest .pad {
+  padding-block: 70px;
+}
+
+.stemContest .skip {
+  position: fixed;
+  z-index: 2;
+  left: 12px;
+  top: 12px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 8px;
+  transform: translateY(-180%);
+}
+
+.stemContest .skip:focus {
+  transform: none;
+}
+
+/* main.css makes #header-sticky position:fixed once scrolled, which drops it out
+   of flow and yanks the page up by its own height mid-scroll. The spacer puts
+   that height back in the same frame so nothing jumps. */
+.stemContest .header-spacer {
+  height: var(--stem-rail-top, 92px);
+}
+
+.stemContest .section-rail {
+  position: sticky;
+  top: var(--stem-rail-top, 92px);
+  z-index: 5;
+  background: #170f20;
+  border-block: 1px solid var(--line);
+}
+
+.stemContest .section-rail .wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  min-height: 60px;
+}
+
+.stemContest .section-rail nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(12px, 2vw, 29px);
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.stemContest .section-rail nav a {
+  padding-block: 9px;
+  text-decoration: none;
+}
+
+.stemContest .section-rail nav a:hover {
+  color: var(--accent);
+}
+
+.stemContest .section-rail .button {
+  background: none;
+}
+
+/* A wrapped rail is three rows tall at phone width and it sticks there for the
+   whole page — one swipeable row keeps every link reachable in a fraction of it. */
+@media (max-width: 620px) {
+  .stemContest .section-rail .wrap {
+    gap: 14px;
+  }
+
+  .stemContest .section-rail nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    /* The row clips at the right edge; that fade says there is more to swipe. */
+    mask-image: linear-gradient(90deg, #000 82%, transparent);
+  }
+
+  .stemContest .section-rail nav a {
+    white-space: nowrap;
+  }
+
+  .stemContest .section-rail nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .stemContest .section-rail .button {
+    flex: none;
+  }
+}
+
+.stemContest .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  min-height: 44px;
+  padding: 9px 13px;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.stemContest .outline {
+  border-color: #bda1ca99;
+  background: #251832a0;
+}
+
+.stemContest .outline:hover {
+  background: #422954;
+}
+
+.stemContest .primary {
+  background: var(--accent);
+  color: #24162e;
+}
+
+.stemContest .primary:hover {
+  background: #ffc6a3;
+}
+
+.stemContest .hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.stemContest .hero img,
+.stemContest .hero::after {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+}
+
+.stemContest .hero img {
+  object-fit: cover;
+  object-position: 70% 47%;
+}
+
+.stemContest .hero::after {
+  content: '';
+  background: linear-gradient(90deg, #170f20 5%, #170f20e8 33%, #170f2077 61%, #170f201a 85%),
+    linear-gradient(0deg, #170f20dc, transparent 42%);
+}
+
+.stemContest .hero-inner {
+  position: relative;
+  padding-block: 92px 99px;
+}
+
+.stemContest .k {
+  font-size: 10px;
+  font-weight: 820;
+  letter-spacing: 0.18em;
+  color: var(--signal);
+}
+
+.stemContest .k::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 9px;
+  background: var(--accent);
+  vertical-align: 1px;
+}
+
+.stemContest .hero h1 {
+  font: 400 clamp(56px, 9vw, 124px) / 0.88 Georgia, serif;
+  letter-spacing: -0.071em;
+  margin: 15px 0 24px;
+}
+
+.stemContest .hero h1 em {
+  color: var(--accent);
+  font-weight: 400;
+}
+
+.stemContest .lead {
+  max-width: 470px;
+  color: #fff0ed;
+  font-size: 17px;
+}
+
+.stemContest .actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 22px;
+}
+
+.stemContest .stats {
+  background: var(--panel);
+  border-block: 1px solid var(--line);
+}
+
+.stemContest .stats .wrap {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.stemContest .stats .wrap div {
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  padding: 15px 12px;
+  border-right: 1px solid var(--line);
+}
+
+.stemContest .stats .wrap div:last-child {
+  border: 0;
+}
+
+.stemContest .stats strong {
+  font: 400 clamp(31px, 5vw, 55px) / 1 Georgia, serif;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.stemContest .stats span {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.stemContest h2 {
+  font: 400 clamp(38px, 5.7vw, 72px) / 1 Georgia, serif;
+  letter-spacing: -0.064em;
+  margin: 10px 0 16px;
+}
+
+.stemContest h3 {
+  font-size: 21px;
+  letter-spacing: -0.04em;
+  margin: 4px 0;
+}
+
+.stemContest .pad > p:not(.k),
+.stemContest .media .pad > p:not(.k) {
+  color: var(--muted);
+  max-width: 700px;
+}
+
+.stemContest .faq details {
+  border-bottom: 1px solid var(--line);
+}
+
+.stemContest summary {
+  padding: 12px 2px;
+  font-weight: 690;
+}
+
+.stemContest .paper {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.stemContest .paper .k,
+.stemContest .paper article b {
+  color: #6d3d76;
+}
+
+.stemContest .paper .k::before {
+  background: #a75132;
+}
+
+.stemContest .features {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.stemContest .features article {
+  border-top: 2px solid #ac749a;
+  padding: 12px 0 0;
+}
+
+.stemContest .features b {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--signal);
+}
+
+.stemContest .features p {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.stemContest .paper .features p {
+  color: #5e4e62;
+}
+
+.stemContest .exchange {
+  display: grid;
+  grid-template-columns: 0.68fr 1fr;
+  align-items: center;
+  gap: 32px;
+}
+
+.stemContest .exchange p:not(.k) {
+  color: var(--muted);
+  max-width: 650px;
+}
+
+.stemContest .exchange .button {
+  margin-top: 14px;
+}
+
+.stemContest .fine {
+  font-size: 12px;
+  margin-top: 9px;
+}
+
+.stemContest .seal {
+  display: grid;
+  gap: 9px;
+  text-align: center;
+  place-content: center;
+  min-height: 238px;
+  background: repeating-linear-gradient(135deg, #322040, #322040 20px, #342242 21px, #342242 23px);
+  border: 1px solid #8a6694;
+  border-radius: 7px;
+}
+
+.stemContest .seal span {
+  font-size: 10px;
+  letter-spacing: 0.19em;
+  font-weight: 750;
+}
+
+.stemContest .seal span i {
+  display: inline-block;
+  width: 20px;
+  height: 1px;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+.stemContest .seal strong {
+  font: 400 clamp(49px, 9vw, 100px) / 1 Georgia, serif;
+  color: var(--accent);
+}
+
+.stemContest .media,
+.stemContest .closing {
+  background: var(--panel);
+  border-block: 1px solid var(--line);
+}
+
+.stemContest .textlink {
+  display: inline-block;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  margin-top: 15px;
+  font-size: 13px;
+}
+
+.stemContest .faq {
+  max-width: 720px;
+}
+
+.stemContest .faq p {
+  color: var(--muted);
+  padding-bottom: 12px;
+  font-size: 14px;
+}
+
+.stemContest .fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.stemContest .fields input,
+.stemContest textarea {
+  width: 100%;
+  background: #fffdf9;
+  border: 1px solid #b9a9be;
+  border-radius: 5px;
+  padding: 7px;
+  min-height: 40px;
+}
+
+@media (max-width: 780px) {
+  .stemContest .wrap {
+    width: calc(100% - 46px);
+  }
+
+  .stemContest .pad {
+    padding-block: 47px;
+  }
+
+  .stemContest .hero-inner {
+    padding-block: 79px;
+  }
+}
+
+@media (max-width: 620px) {
+  .stemContest .wrap {
+    width: calc(100% - 28px);
+  }
+
+  .stemContest .hero-inner {
+    padding-block: 94px 55px;
+  }
+
+  .stemContest .hero::after {
+    background: linear-gradient(90deg, #170f20e3, #170f2060), linear-gradient(0deg, #170f20e8, transparent 85%);
+  }
+
+  .stemContest .stats .wrap div {
+    display: grid;
+    gap: 3px;
+    padding: 8px 5px;
+  }
+
+  .stemContest .stats span {
+    font-size: 11px;
+  }
+
+  .stemContest .features,
+  .stemContest .exchange {
+    grid-template-columns: 1fr;
+  }
+
+  .stemContest .seal {
+    min-height: 140px;
+  }
+
+  .stemContest .exchange {
+    gap: 15px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.stemContest) {
+    scroll-behavior: auto;
+  }
+}
+
+/* Field notes, prep list and programme desk */
+.stemContest .fieldnotes {
+  background: #211629;
+  border-block: 1px solid var(--line);
+}
+
+.stemContest .story-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.stemContest .story-grid figure {
+  margin: 0;
+  background: #2b1e35;
+  border: 1px solid #ffffff22;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.stemContest .still {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 1;
+  background: #302039;
+}
+
+.stemContest .still img {
+  position: absolute;
+  max-width: none;
+  width: 300%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  top: 0;
+}
+
+.stemContest .story-grid figcaption {
+  padding: 17px 16px 19px;
+}
+
+.stemContest .story-grid figcaption span {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  font-weight: 780;
+  color: var(--signal);
+}
+
+.stemContest .story-grid figcaption p {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.stemContest .fieldnotes .image-note {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.stemContest .prep-grid {
+  display: grid;
+  grid-template-columns: 1fr 0.85fr;
+  gap: 38px;
+}
+
+.stemContest .prep-grid ol {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: prep;
+}
+
+.stemContest .prep-grid li {
+  counter-increment: prep;
+  display: flex;
+  gap: 13px;
+  border-top: 1px solid var(--line);
+  padding: 11px 0;
+}
+
+.stemContest .prep-grid li::before {
+  content: counter(prep, decimal-leading-zero);
+  color: var(--accent);
+  font-size: 11px;
+  margin-top: 5px;
+}
+
+.stemContest .prep-grid li h3 {
+  font-size: 16px;
+  margin: 0 0 3px;
+}
+
+.stemContest .prep-grid li p {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.stemContest .prep-aside {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  align-self: start;
+  border-radius: 7px;
+  padding: 20px;
+}
+
+.stemContest .prep-aside h3 {
+  font: 400 30px/1.13 Georgia, serif;
+  margin-top: 7px;
+}
+
+@media (max-width: 760px) {
+  .stemContest .prep-grid {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}
+
+@media (max-width: 620px) {
+  .stemContest .story-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stemContest .still {
+    aspect-ratio: 1;
+  }
+
+  .stemContest .story-grid figure {
+    max-width: 480px;
+  }
+}
+
+.stemContest .still img {
+  position: static;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The export marks the STEM document with body.stem; this page is always it. */
+.stemContest .story-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stemContest .still {
+  aspect-ratio: 1.56;
+}
+
+.stemContest .still-robot img {
+  object-position: 50% 55%;
+}
+
+.stemContest .photo-credit a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.stemContest .story-grid figcaption .photo-credit {
+  border-top: 1px solid var(--line);
+  padding-top: 9px;
+  margin-top: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #e6d5e9;
+}
+
+@media (max-width: 620px) {
+  .stemContest .story-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/*
+ * Programme covers and editorial layout — the second half of the export's
+ * stylesheet. It re-declares much of the block above: programme lavender takes
+ * over the primary action, and the stats band, field notes and closing panel
+ * all flip to light ground.
+ */
+.stemContest .wrap {
+  width: min(1240px, calc(100% - 96px));
+}
+
+.stemContest .button {
+  border-radius: 4px;
+  padding-inline: 16px;
+}
+
+.stemContest .primary {
+  background: var(--programme);
+  color: var(--programme-ink);
+}
+
+.stemContest .primary:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.stemContest .hero {
+  background: radial-gradient(ellipse at 78% 26%, #322441 0%, transparent 62%), var(--bg);
+}
+
+.stemContest .hero::after {
+  display: none;
+}
+
+.stemContest .hero-inner {
+  padding-block: 37px 38px;
+  display: grid;
+  grid-template-columns: 1fr 1.04fr;
+  align-items: center;
+  gap: clamp(25px, 5.2vw, 81px);
+}
+
+.stemContest .hero-copy {
+  min-width: 0;
+  padding: 7px 0 15px;
+}
+
+.stemContest .edition {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border-block: 1px solid var(--line);
+  padding: 8px 0;
+  color: #e0cfe4;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  margin-bottom: 35px;
+}
+
+.stemContest .edition span:last-child {
+  color: var(--programme);
+  text-align: right;
+}
+
+.stemContest .hero .k {
+  font-size: 10px;
+}
+
+.stemContest .hero h1 {
+  font-size: clamp(48px, 6.35vw, 98px);
+  letter-spacing: -0.076em;
+  line-height: 0.92;
+  margin: 12px 0 21px;
+}
+
+.stemContest .hero h1 em {
+  color: var(--programme);
+}
+
+.stemContest .hero .lead {
+  font-size: 15px;
+  max-width: 420px;
+  color: #e8dce9;
+}
+
+.stemContest .stats {
+  background: var(--paper);
+  color: var(--ink);
+  border: 0;
+}
+
+.stemContest .stats .wrap div {
+  padding: 14px 22px;
+  border-color: #d6c6d5;
+}
+
+.stemContest .stats .wrap div:first-child {
+  padding-left: 0;
+}
+
+.stemContest .stats strong {
+  color: #633d73;
+  letter-spacing: -0.055em;
+}
+
+.stemContest .stats span {
+  color: #533e57;
+  font-weight: 650;
+}
+
+.stemContest .pad {
+  padding-block: 76px;
+}
+
+.stemContest .fieldnotes h2,
+.stemContest .paper h2 {
+  max-width: 900px;
+}
+
+.stemContest .fieldnotes {
+  background: #f1e9e1;
+  color: #241928;
+}
+
+.stemContest .fieldnotes .k,
+.stemContest .fieldnotes .pad > p:not(.k),
+.stemContest .fieldnotes .image-note {
+  color: #573d5a;
+}
+
+.stemContest .fieldnotes .k::before {
+  background: #815b8c;
+}
+
+.stemContest .story-grid {
+  gap: 20px;
+}
+
+.stemContest .story-grid figure {
+  background: #fff8f1;
+  color: var(--ink);
+  border: 0;
+  border-radius: 0;
+}
+
+.stemContest .story-grid .still {
+  aspect-ratio: 1.53;
+}
+
+.stemContest .story-grid figcaption {
+  padding: 15px 17px 17px;
+}
+
+.stemContest .story-grid figcaption span {
+  color: #714f79;
+}
+
+.stemContest .story-grid figcaption p,
+.stemContest .story-grid figcaption .photo-credit {
+  color: #5d4b5e;
+}
+
+.stemContest .story-grid figcaption .photo-credit {
+  border-color: #e0d0df;
+}
+
+.stemContest .prep-grid {
+  gap: 44px;
+}
+
+.stemContest .prep-aside {
+  border-radius: 0;
+  padding: 23px;
+}
+
+.stemContest .paper .features article {
+  border-top: 1px solid #977294;
+}
+
+.stemContest .paper .features article h3 {
+  font: 400 clamp(24px, 3.2vw, 38px) / 1.05 Georgia, serif;
+  letter-spacing: -0.04em;
+  margin: 8px 0;
+}
+
+.stemContest .exchange .seal {
+  border-radius: 0;
+}
+
+.stemContest .closing {
+  background: var(--programme);
+  color: var(--programme-ink);
+  border: 0;
+}
+
+.stemContest .closing .k {
+  color: var(--programme-ink);
+}
+
+.stemContest .closing .k::before {
+  background: var(--programme-ink);
+}
+
+.stemContest .closing .primary {
+  background: var(--programme-ink);
+  color: var(--paper);
+}
+
+.stemContest .closing .outline {
+  background: none;
+  border-color: var(--programme-ink);
+}
+
+.stemContest .closing .outline:hover {
+  background: #ffffff62;
+}
+
+@media (max-width: 900px) {
+  .stemContest .wrap {
+    width: calc(100% - 52px);
+  }
+
+  .stemContest .hero-inner {
+    gap: 25px;
+  }
+
+  .stemContest .edition {
+    margin-bottom: 23px;
+  }
+
+  .stemContest .pad {
+    padding-block: 53px;
+  }
+}
+
+@media (max-width: 680px) {
+  .stemContest .wrap {
+    width: calc(100% - 32px);
+  }
+
+  .stemContest .hero-inner {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding-block: 21px 19px;
+  }
+
+  .stemContest .hero-copy {
+    padding-bottom: 5px;
+  }
+
+  .stemContest .hero h1 {
+    font-size: clamp(48px, 12vw, 76px);
+  }
+
+  .stemContest .pad {
+    padding-block: 42px;
+  }
+
+  .stemContest .stats .wrap div {
+    padding: 11px 8px;
+  }
+
+  .stemContest .stats span {
+    font-size: 11px;
+  }
+
+  .stemContest .prep-grid {
+    gap: 20px;
+  }
+}
+
+.stemContest .link-icon {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+  vertical-align: -2px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+
+/* STEM competition tracks */
+.stemContest .tracks-intro {
+  padding-block: 72px 35px;
+}
+
+.stemContest .tracks-intro > p:not(.k) {
+  max-width: 660px;
+  color: var(--muted);
+}
+
+.stemContest .track-jumps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 21px;
+}
+
+.stemContest .track-jumps a {
+  border: 1px solid #aa89bd73;
+  padding: 9px 13px;
+  color: var(--paper);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.stemContest .track-jumps a:hover {
+  background: #3b284b;
+}
+
+.stemContest .track-jumps span {
+  color: var(--programme);
+  margin-right: 6px;
+  font-size: 10px;
+}
+
+.stemContest .track {
+  scroll-margin-top: 14px;
+}
+
+.stemContest .track-school {
+  background: #f3ebe1;
+  color: #2b2030;
+  --track-muted: #5a465e;
+  --track-line: #ccb8cc;
+  --track-accent: #6d407f;
+}
+
+.stemContest .track-youth {
+  background: #2d1d3b;
+  color: #fff4f8;
+  --track-muted: #e0cfe9;
+  --track-line: #ffffff35;
+  --track-accent: #e3c1fd;
+}
+
+.stemContest .track-inner {
+  padding-block: 38px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 25px 42px;
+  align-items: center;
+}
+
+.stemContest .track-lead h3 {
+  font: 400 clamp(38px, 5vw, 70px) / 0.98 Georgia, serif;
+  letter-spacing: -0.067em;
+  margin: 10px 0 14px;
+}
+
+.stemContest .track-lead > p:not(.k) {
+  color: var(--track-muted);
+  max-width: 480px;
+}
+
+.stemContest .track .k {
+  color: var(--track-accent);
+}
+
+.stemContest .track .k::before {
+  background: var(--track-accent);
+}
+
+.stemContest .track-school .primary {
+  background: #4d2c5a;
+  color: #fff8ef;
+}
+
+.stemContest .track-school .primary:hover {
+  background: #653b77;
+}
+
+.stemContest .track-link {
+  align-self: center;
+  color: var(--track-accent);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  font-weight: 700;
+}
+
+.stemContest .track-photo {
+  margin: 0;
+  min-width: 0;
+}
+
+.stemContest .track-photo img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.84;
+  object-fit: cover;
+  object-position: center 45%;
+  border: 1px solid var(--track-line);
+}
+
+.stemContest .track-photo figcaption {
+  font-size: 10px;
+  color: var(--track-muted);
+  padding-top: 7px;
+}
+
+.stemContest .track-photo figcaption a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.stemContest .track-steps {
+  grid-column: 1 / -1;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-block: 1px solid var(--track-line);
+}
+
+.stemContest .track-steps li {
+  padding: 14px 15px 16px;
+  border-right: 1px solid var(--track-line);
+}
+
+.stemContest .track-steps li:first-child {
+  padding-left: 0;
+}
+
+.stemContest .track-steps li:last-child {
+  border-right: 0;
+}
+
+.stemContest .track-steps span {
+  font: 400 27px/1 Georgia, serif;
+  color: var(--track-accent);
+}
+
+.stemContest .track-steps h4 {
+  margin: 4px 0;
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.stemContest .track-steps p {
+  font-size: 13px;
+  color: var(--track-muted);
+}
+
+.stemContest .tracks-note {
+  padding-block: 16px 23px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 680px) {
+  .stemContest .tracks-intro {
+    padding-block: 42px 24px;
+  }
+
+  .stemContest .track-inner {
+    grid-template-columns: 1fr;
+    padding-block: 25px;
+    gap: 18px;
+  }
+
+  .stemContest .track-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .stemContest .track-steps li,
+  .stemContest .track-steps li:first-child {
+    padding: 10px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--track-line);
+    display: grid;
+    grid-template-columns: 33px 1fr;
+    column-gap: 9px;
+  }
+
+  .stemContest .track-steps li:last-child {
+    border-bottom: 0;
+  }
+
+  .stemContest .track-steps li p {
+    grid-column: 2;
+  }
+}
+
+/* STEM campaign carousel, enrollment and collaborator network */
+.stemContest .hero-inner {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.stemContest .hero-copy {
+  max-width: 850px;
+}
+
+.stemContest .hero-copy h1 br {
+  display: none;
+}
+
+.stemContest .hero-copy h1 em {
+  display: block;
+}
+
+.stemContest .hero-carousel {
+  min-width: 0;
+}
+
+.stemContest .carousel-window {
+  overflow: hidden;
+  border: 1px solid #ac7fb87a;
+}
+
+.stemContest .carousel-track {
+  display: flex;
+  transition: transform 0.55s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.stemContest .hero-slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.stemContest .hero-slide img {
+  display: block;
+  position: static;
+  width: 100%;
+  height: auto;
+  z-index: auto;
+}
+
+.stemContest .carousel-bar,
+.stemContest .carousel-choices,
+.stemContest .carousel-controls {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.stemContest .carousel-bar {
+  justify-content: space-between;
+  padding: 9px 0;
+}
+
+.stemContest .carousel-bar button {
+  color: var(--paper);
+  background: #2d1d39;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  min-height: 42px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stemContest .carousel-bar button:hover,
+.stemContest .carousel-bar button[aria-pressed='true'] {
+  background: var(--programme);
+  color: var(--ink);
+}
+
+.stemContest .carousel-choices span {
+  margin-right: 4px;
+}
+
+.stemContest .campaign-credit {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.stemContest .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.stemContest .track-steps.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.stemContest .enrollment-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr;
+  gap: 30px;
+  align-items: start;
+}
+
+.stemContest .enrollment-form {
+  background: #fff8f1;
+  border: 1px solid #d1bdd0;
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.stemContest .enrollment-form label {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.stemContest .enrollment-form .primary {
+  justify-self: start;
+  background: #4d2c5a;
+  color: #fff8ef;
+}
+
+.stemContest .enrollment-form p:empty {
+  display: none;
+}
+
+.stemContest #network h3 {
+  margin-top: 27px;
+}
+
+.stemContest .platform-grid,
+.stemContest .logo-grid,
+.stemContest .creator-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.stemContest .platform-grid {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.stemContest .platform-grid span {
+  padding: 14px;
+  border: 1px dashed #a481b4;
+  font-weight: 650;
+  font-size: 13px;
+}
+
+.stemContest .logo-grid {
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.stemContest .logo-grid figure,
+.stemContest .creator-grid figure {
+  margin: 0;
+  min-width: 0;
+}
+
+.stemContest .logo-grid img {
+  display: block;
+  width: 100%;
+  height: 72px;
+  object-fit: contain;
+  background: white;
+  padding: 7px;
+}
+
+.stemContest .logo-grid figcaption,
+.stemContest .creator-grid figcaption {
+  font-size: 12px;
+  padding: 6px 0;
+}
+
+.stemContest .logo-grid figcaption span {
+  display: block;
+  color: var(--muted);
+}
+
+.stemContest .creator-grid {
+  grid-template-columns: repeat(3, minmax(0, 180px));
+}
+
+.stemContest .creator-grid img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.25;
+  object-fit: cover;
+  object-position: 50% 32%;
+}
+
+@media (max-width: 680px) {
+  .stemContest .track-steps.four,
+  .stemContest .enrollment-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stemContest .logo-grid,
+  .stemContest .platform-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 410px) {
+  .stemContest .enrollment-form .fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stemContest .carousel-track {
+    transition: none;
+  }
+}
+
+/*
+ * Brand loader. The export ships this as an inline <style> in the head with
+ * #spotlight-loader; the id and the sp- keyframe names are kept so the markup
+ * stays a line-for-line read of stem.html.
+ */
+.stemContest #spotlight-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at 50% 45%, #301d3d 0%, #1d1327 40%, #130e19 76%);
+  color: #f5f0e9;
+  font: 600 11px/1.5 system-ui, sans-serif;
+  transition: opacity 280ms ease, visibility 280ms;
+  animation: sp-failsafe 1ms 6s forwards;
+}
+
+.stemContest #spotlight-loader[hidden] {
+  display: none;
+}
+
+.stemContest #spotlight-loader[data-exit] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.stemContest .sp-lockup {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+}
+
+.stemContest .sp-lockup svg {
+  width: clamp(146px, 34vw, 214px);
+  height: auto;
+  overflow: visible;
+}
+
+.stemContest .sp-wordmark {
+  letter-spacing: 0.27em;
+  font-size: 14px;
+  padding-left: 0.27em;
+  margin: 12px 0 0;
+}
+
+.stemContest .sp-status {
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: #d1bed9;
+  margin: 9px 0 0;
+  font-size: 9px;
+}
+
+.stemContest .sp-rotor {
+  transform-origin: 90px 90px;
+  animation: sp-orbit 2.15s linear infinite;
+}
+
+.stemContest .sp-sweep {
+  animation: sp-scan 2.15s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes sp-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes sp-scan {
+  0%,
+  7% {
+    transform: translateX(-57px);
+    opacity: 0.15;
+  }
+  28%,
+  65% {
+    opacity: 1;
+  }
+  82%,
+  100% {
+    transform: translateX(57px);
+    opacity: 0.15;
+  }
+}
+
+@keyframes sp-failsafe {
+  to {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stemContest .sp-rotor,
+  .stemContest .sp-sweep {
+    animation: none;
+  }
+
+  .stemContest #spotlight-loader {
+    transition: none;
+  }
+}

@@ -174,54 +174,87 @@ function marketingDrawerSpecs(
 marketingDrawerSpecs('landing home header', '/', '.sp-home', /find your spotlight/i, /our programmes/i);
 marketingDrawerSpecs('season-2 header', '/season-2', '.sp-season2', /register for season 2/i, /the mansion/i);
 
-test.describe('template header', () => {
+function templateHeaderSpecs(title: string, path: string) {
   const panel = '.offcanvas__info';
+  test.describe(title, () => {
+    test.use({ viewport: WIDTHS[0] });
+
+    for (const viewport of WIDTHS) {
+      test(`shows the hamburger at ${viewport.width}px`, async ({ page }) => {
+        await page.setViewportSize(viewport);
+        await page.goto(path);
+        const toggle = '.header__hamburger .sidebar__toggle';
+        await expect(page.locator(toggle)).toBeVisible();
+        await expectFurthestRight(page, toggle);
+      });
+    }
+
+    test('hamburger slides the offcanvas in with a sign in link', async ({ page }) => {
+      await page.goto(path);
+      await page.locator('.header__hamburger .sidebar__toggle').click();
+      await expect(page.locator(panel)).toHaveClass(/info-open/);
+      await expect(page.locator('.offcanvas__overlay')).toHaveClass(/overlay-open/);
+      await expect(page.locator(panel).getByRole('link', { name: /sign in/i })).toHaveAttribute(
+        'href',
+        '/login',
+      );
+    });
+
+    test('offcanvas close button and overlay shut it', async ({ page }) => {
+      await page.goto(path);
+      await page.locator('.header__hamburger .sidebar__toggle').click();
+      await page.locator('.offcanvas__close').click();
+      await expect(page.locator(panel)).not.toHaveClass(/info-open/);
+
+      await page.locator('.header__hamburger .sidebar__toggle').click();
+      await page.locator('.offcanvas__overlay').click({ position: { x: 100, y: 300 } });
+      await expect(page.locator(panel)).not.toHaveClass(/info-open/);
+    });
+
+    test('hamburger is still visible once the header is sticky', async ({ page }) => {
+      await page.goto(path);
+      // The sticky class only lands on a scroll event the hydrated header hears,
+      // so keep scrolling until it takes — one scroll can race past hydration.
+      let top = 800;
+      await expect
+        .poll(async () => {
+          top += 20;
+          await page.evaluate((offset) => window.scrollTo(0, offset), top);
+          return (await page.locator('#header-sticky').getAttribute('class')) ?? '';
+        })
+        .toContain('sticky');
+      await expect(page.locator('.header__hamburger .sidebar__toggle')).toBeVisible();
+    });
+  });
+}
+
+templateHeaderSpecs('template header /about', '/about');
+templateHeaderSpecs('template header /service-details/stem-contest', '/service-details/stem-contest');
+
+// The page keeps its own jump links in a rail below the site header, so the
+// header turning fixed must not cover the section an anchor lands on.
+test.describe('stem-contest section rail', () => {
   test.use({ viewport: WIDTHS[0] });
 
-  for (const viewport of WIDTHS) {
-    test(`shows the hamburger on /about at ${viewport.width}px`, async ({ page }) => {
-      await page.setViewportSize(viewport);
-      await page.goto('/about');
-      const toggle = '.header__hamburger .sidebar__toggle';
-      await expect(page.locator(toggle)).toBeVisible();
-      await expectFurthestRight(page, toggle);
-    });
-  }
+  test('rail links land their section below the header', async ({ page }) => {
+    await page.goto('/service-details/stem-contest');
+    const rail = page.locator('.section-rail');
+    await expect(rail).toBeVisible();
 
-  test('hamburger slides the offcanvas in with a sign in link', async ({ page }) => {
-    await page.goto('/about');
-    await page.locator('.header__hamburger .sidebar__toggle').click();
-    await expect(page.locator(panel)).toHaveClass(/info-open/);
-    await expect(page.locator('.offcanvas__overlay')).toHaveClass(/overlay-open/);
-    await expect(page.locator(panel).getByRole('link', { name: /sign in/i })).toHaveAttribute(
-      'href',
-      '/login',
-    );
-  });
-
-  test('offcanvas close button and overlay shut it', async ({ page }) => {
-    await page.goto('/about');
-    await page.locator('.header__hamburger .sidebar__toggle').click();
-    await page.locator('.offcanvas__close').click();
-    await expect(page.locator(panel)).not.toHaveClass(/info-open/);
-
-    await page.locator('.header__hamburger .sidebar__toggle').click();
-    await page.locator('.offcanvas__overlay').click({ position: { x: 100, y: 300 } });
-    await expect(page.locator(panel)).not.toHaveClass(/info-open/);
-  });
-
-  test('hamburger is still visible once the header is sticky', async ({ page }) => {
-    await page.goto('/about');
-    // The sticky class only lands on a scroll event the hydrated header hears,
-    // so keep scrolling until it takes — one scroll can race past hydration.
-    let top = 800;
-    await expect
-      .poll(async () => {
-        top += 20;
-        await page.evaluate((offset) => window.scrollTo(0, offset), top);
-        return (await page.locator('#header-sticky').getAttribute('class')) ?? '';
-      })
-      .toContain('sticky');
-    await expect(page.locator('.header__hamburger .sidebar__toggle')).toBeVisible();
+    for (const label of ['Competition route', 'School enrollment', 'Partners', 'Opportunities']) {
+      await rail.getByRole('link', { name: label }).click();
+      const target = await page.evaluate(() => {
+        const hash = window.location.hash.slice(1);
+        const section = document.getElementById(hash);
+        const header = document.getElementById('header-sticky');
+        if (!section || !header) return null;
+        return {
+          headingTop: Math.round(section.getBoundingClientRect().top),
+          headerBottom: Math.round(header.getBoundingClientRect().bottom),
+        };
+      });
+      expect(target, `#${label} resolved to nothing`).not.toBeNull();
+      expect(target!.headingTop).toBeGreaterThanOrEqual(target!.headerBottom - 2);
+    }
   });
 });
