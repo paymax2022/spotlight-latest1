@@ -28,7 +28,7 @@ const routeStages = [
     step: '01',
     label: 'Statewide auditions',
     text: 'Apply through Spotlight and choose your discipline. Check the Season 2 page for your state’s announced schedule, eligibility and audition instructions. Prepare one strong piece and be ready for a short introduction or follow-up.',
-    link: 'https://www.spotlightng.com/season-2',
+    link: '/season-2',
     linkText: 'Check the Season 2 rollout ↗',
   },
   {
@@ -145,7 +145,7 @@ export default function RealityTvShowPage() {
                 Music, comedy and acting. A competition built to discover talent across Nigeria and help standout performers build a career beyond the finale.
               </p>
               <div className="reality-tv-actions">
-                <a className="reality-tv-button reality-tv-button-primary" href="https://www.spotlightng.com/apply">
+                <a className="reality-tv-button reality-tv-button-primary" href="/season-2">
                   Apply to audition <span aria-hidden="true">↗</span>
                 </a>
                 <a className="reality-tv-button reality-tv-button-outline" href="#road">
@@ -179,7 +179,7 @@ export default function RealityTvShowPage() {
                   <i>one mansion</i>
                 </span>
               </div>
-              <a href="https://www.spotlightng.com/season-2">
+              <a href="/season-2">
                 SEASON 2 FORMAT <span aria-hidden="true">↗</span>
                 <small>See the official rollout</small>
               </a>
@@ -325,7 +325,7 @@ export default function RealityTvShowPage() {
                 </article>
               ))}
             </div>
-            <a className="reality-tv-text-link" href="https://www.spotlightng.com/sponsors-partners">
+            <a className="reality-tv-text-link" href="/sponsors-partners">
               Explore Spotlight’s partner network ↗
             </a>
           </section>
@@ -338,10 +338,10 @@ export default function RealityTvShowPage() {
               <h2>Bring your best performance.</h2>
               <p>Check audition details, prepare your piece and take the first step.</p>
               <div className="reality-tv-actions">
-                <a className="reality-tv-button reality-tv-button-primary" href="https://www.spotlightng.com/apply">
+                <a className="reality-tv-button reality-tv-button-primary" href="/season-2">
                   Apply to audition ↗
                 </a>
-                <a className="reality-tv-button reality-tv-button-outline" href="https://www.spotlightng.com/sponsors-partners">
+                <a className="reality-tv-button reality-tv-button-outline" href="/sponsors-partners">
                   Partner with Spotlight ↗
                 </a>
               </div>
