@@ -17,6 +17,7 @@
 - **Never print the contents of `.env.local`** or any credential — presence/length only.
 - **Other sessions are working in this tree.** `frontend-web/app/service-details/open-mic-competition/page.tsx` (+231 uncommitted lines) and `.../open-mic.css` carry an in-flight lounge-application feature, along with the untracked `frontend-web/app/api/open-mic/lounge-applications/`. Tasks 1–9 must not touch those files. Task 10 starts with a hard gate.
 - Stage only this session's files, by explicit path, one commit per logical change. Never `git add -A`. Never stage `next-env.d.ts`. Do not push without the user's go-ahead.
+- **The index already holds another task's staged deletion** — `D frontend-web/app/service/page.js` (the `/service` menu removal, parked mid-work). A plain `git commit` would sweep it in. Every commit in this plan is therefore a **pathspec commit**: stage your paths, then `git commit -m "…" -- <the same paths>`. Verify with `git diff --cached --name-only -- <your paths>` before and after; the unrelated staged deletion must still be there when you finish.
 - Copy rules: no dead affordances, no fabricated numbers. Where the platform cannot honour a step (no edition, window closed, signed out), say so plainly instead of showing a control that fails.
 - vitest runs with `environment: 'node'` — there is no jsdom, so component *rendering* is proven by Playwright and component *logic* lives in testable plain modules.
 - Playwright for this app must run with `--workers=1` (parallel workers hammer one `next dev` and false-fail on timeouts).
@@ -1063,7 +1064,6 @@ Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx tsc --noEmit
 ```bash
 git -C /Users/paymax/Documents/spotlight/main add frontend-web/src/features/openmic/active-edition.ts \
   frontend-web/tests/unit/openmic/edition-steps-data.spec.ts
-git -C /Users/paymax/Documents/spotlight/main add frontend-web/tests/unit/openmic/active-edition.test.ts 2>/dev/null; \
 git -C /Users/paymax/Documents/spotlight/main commit -m "feat(open-mic): build the competition steps data server-side
 
 Availability, the admin's board display switches and the top-five cut are all
@@ -1957,7 +1957,7 @@ Open `http://localhost:3000/service-details/open-mic-competition` and click thro
 ```bash
 cd /Users/paymax/Documents/spotlight/main && git add \
   frontend-web/app/service-details/open-mic-competition/page.tsx \
-  frontend-web/components/openmic/competition/OpenMicCompetitionView.tsx && git status --porcelain --cached | head
+  frontend-web/components/openmic/competition/OpenMicCompetitionView.tsx && git diff --cached --name-only -- frontend-web/app/service-details/open-mic-competition/page.tsx frontend-web/components/openmic/competition/OpenMicCompetitionView.tsx
 git -C /Users/paymax/Documents/spotlight/main commit -m "feat(open-mic): drive the programme page steps from the current edition
 
 The page reads the database once and hands a serialisable snapshot to the
