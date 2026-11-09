@@ -6,21 +6,39 @@ import HeaderDrawer from '@/components/marketing/HeaderDrawer';
 import { ArrowIcon } from './Icons';
 import { LOGO } from './content';
 
-const APPLICATION_NAV = [
-  { href: '/season-2', label: 'The show' },
-  { href: '/apply', label: 'All programmes' },
-  { href: '/my-applications', label: 'My applications' },
-] as const;
+/**
+ * Which programme's application routes this chrome is carrying. The defaults
+ * are the reality show's; every other programme passes its own tagline and
+ * programme link so the header, drawer and footer never advertise the wrong
+ * show.
+ */
+export interface ApplicationChrome {
+  brandTag?: string;
+  programmeHref?: string;
+  programmeLabel?: string;
+  ctaLabel?: string;
+  footerTag?: string;
+}
 
 /**
  * The Season 2 chrome, carried onto the application routes. It keeps the same
  * sticky header and drawer as the recap page but never opens the registration
  * panel: on these pages the next step is the form itself.
  */
-export function ApplicationHeader() {
+export function ApplicationHeader({
+  brandTag = 'REALITY TV SHOW',
+  programmeHref = '/season-2',
+  programmeLabel = 'The show',
+  ctaLabel = 'Season 2',
+}: ApplicationChrome = {}) {
   const [menuOpen, setMenuOpen] = useState(false);
   const toggleMenu = () => setMenuOpen((current) => !current);
   const closeMenu = () => setMenuOpen(false);
+  const nav = [
+    { href: programmeHref, label: programmeLabel },
+    { href: '/apply', label: 'All programmes' },
+    { href: '/my-applications', label: 'My applications' },
+  ];
 
   return (
     <>
@@ -28,18 +46,18 @@ export function ApplicationHeader() {
         <div className="wrap header-inner">
           <Link className="brand" href="/" aria-label="Spotlight home">
             <img src={LOGO} alt="Spotlight" width={200} height={72} />
-            <small>REALITY TV SHOW</small>
+            <small>{brandTag}</small>
           </Link>
           <nav aria-label="Application navigation">
-            {APPLICATION_NAV.map((item) => (
+            {nav.map((item) => (
               <Link key={item.href} href={item.href}>
                 {item.label}
               </Link>
             ))}
           </nav>
           <div className="header-actions">
-            <Link className="button light" href="/season-2">
-              Season 2 <ArrowIcon />
+            <Link className="button light" href={programmeHref}>
+              {ctaLabel} <ArrowIcon />
             </Link>
             <button
               type="button"
@@ -59,19 +77,23 @@ export function ApplicationHeader() {
         id="application-menu"
         open={menuOpen}
         onClose={closeMenu}
-        groups={[{ label: 'Applications', links: APPLICATION_NAV }]}
+        groups={[{ label: 'Applications', links: nav }]}
       />
     </>
   );
 }
 
-export function ApplicationFooter() {
+export function ApplicationFooter({
+  programmeHref = '/season-2',
+  programmeLabel = 'Season 2',
+  footerTag = 'SPOTLIGHT REALITY TV / APPLICATIONS',
+}: ApplicationChrome = {}) {
   return (
     <footer>
       <div className="wrap">
-        <span>SPOTLIGHT REALITY TV / APPLICATIONS</span>
+        <span>{footerTag}</span>
         <div>
-          <Link href="/season-2">Season 2</Link>
+          <Link href={programmeHref}>{programmeLabel}</Link>
           <Link href="/apply">All programmes</Link>
           <Link href="/my-applications">My applications</Link>
           <Link href="/contact">Contact</Link>

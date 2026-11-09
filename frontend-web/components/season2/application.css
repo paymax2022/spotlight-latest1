@@ -476,3 +476,399 @@
   .sp-season2.sp-apply .step-label { font-size: 8px; letter-spacing: .06em; }
   .sp-season2.sp-apply .step-line { flex: 0 1 12px; min-width: 8px; margin-inline: 5px; }
 }
+
+/* ── SME Pitch Contest: the founder edition of the call sheet ────────── */
+
+/* The headline is two punchy sentences; at the desktop display size the first
+   one soft-wraps, and left alone it orphans "IT." on a line of its own. Balance
+   keeps the wrapped lines even ("BUILD IT. / PITCH IT.") so the hero reads as a
+   composed poster rather than a ragged paragraph. */
+.sp-season2.sp-apply.sp-sme .apply-hero h1 {
+  text-wrap: balance;
+}
+
+/* The process rail sits between the dark hero and the paper sheet — a slightly
+   lifted night panel so the five stages read as a band of their own. The
+   numerals are a real sequence (apply → follow through), not decoration. */
+.sp-season2.sp-apply .sme-process {
+  background: #1d1226;
+  border-bottom: 1px solid var(--line);
+  padding-block: 32px 38px;
+}
+
+.sp-season2.sp-apply .sme-process-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 24px;
+  margin-bottom: 26px;
+}
+
+.sp-season2.sp-apply .sme-process-head h2 {
+  font: 800 clamp(22px, 3vw, 30px)/1.05 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: -.04em;
+  color: var(--paper);
+}
+
+.sp-season2.sp-apply .sme-route {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.sp-season2.sp-apply .sme-route li {
+  padding-inline: 18px;
+  border-left: 1px solid var(--line);
+}
+
+.sp-season2.sp-apply .sme-route li:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.sp-season2.sp-apply .sme-route span {
+  display: block;
+  margin-bottom: 10px;
+  font: 700 40px/.9 var(--display);
+  font-family: var(--display) !important;
+  color: var(--orange);
+}
+
+.sp-season2.sp-apply .sme-route h3 {
+  margin-bottom: 6px;
+  font: 800 14px/1.3 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: -.02em;
+  color: var(--paper);
+}
+
+.sp-season2.sp-apply .sme-route p {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* The form grid: two columns on the sheet, full-width rows for the long
+   answers, uploads and declarations. */
+.sp-season2.sp-apply .sme-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 18px;
+}
+
+.sp-season2.sp-apply .sme-wide {
+  grid-column: 1 / -1;
+}
+
+.sp-season2.sp-apply .form-subhead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 28px 0 14px;
+  font: 800 11px/1.4 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #754c80;
+}
+
+.sp-season2.sp-apply .form-subhead::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #d6c7d2;
+}
+
+.sp-season2.sp-apply section:first-of-type > .form-subhead {
+  margin-top: 0;
+}
+
+/* Entry type: two cards, one chosen. The pressed card carries the orange ring
+   so the selection is unmistakable without a radio dot. */
+.sp-season2.sp-apply .sme-entry-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.sp-season2.sp-apply .sme-entry-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  text-align: left;
+  border: 1px solid #c9b8c9;
+  border-radius: 2px;
+  background: #fbf6ef;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+
+.sp-season2.sp-apply .sme-entry-card strong {
+  font: 800 16px/1.2 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: -.02em;
+  color: var(--ink);
+}
+
+.sp-season2.sp-apply .sme-entry-card span {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #5e4965;
+}
+
+.sp-season2.sp-apply .sme-entry-card em {
+  margin-top: 2px;
+  font: 800 9px/1.4 var(--head);
+  font-family: var(--head) !important;
+  font-style: normal;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #9b87a3;
+}
+
+.sp-season2.sp-apply .sme-entry-card:hover {
+  border-color: #b36aec;
+}
+
+.sp-season2.sp-apply .sme-entry-card[aria-pressed="true"] {
+  border-color: #e86a2b;
+  background: rgba(255, 137, 73, .10);
+  box-shadow: inset 0 0 0 1px #e86a2b;
+}
+
+.sp-season2.sp-apply .sme-entry-card[aria-pressed="true"] em {
+  color: var(--accent-ink);
+}
+
+/* Upload rows: a dashed drop target that firms up and turns green once a file
+   lands. The real input is visually hidden but stays keyboard-focusable, so the
+   row draws the focus ring on :focus-within. */
+.sp-season2.sp-apply .sme-upload {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border: 1px dashed #c9b8c9;
+  border-radius: 2px;
+  background: #fbf6ef;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+
+.sp-season2.sp-apply .sme-upload:hover {
+  border-color: #b36aec;
+}
+
+.sp-season2.sp-apply .sme-upload:focus-within {
+  border-color: #e86a2b;
+  box-shadow: 0 0 0 3px rgba(232, 106, 43, .16);
+}
+
+.sp-season2.sp-apply .sme-upload.has-error {
+  border-style: solid;
+  border-color: #a83a34;
+}
+
+.sp-season2.sp-apply .sme-upload.is-filled {
+  border-style: solid;
+  border-color: #2f7d5a66;
+  background: #f3f7f1;
+}
+
+.sp-season2.sp-apply .sme-upload-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.sp-season2.sp-apply .sme-upload-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a3554;
+}
+
+.sp-season2.sp-apply .sme-upload-label > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sp-season2.sp-apply .sme-upload-state {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #2f7d5a;
+}
+
+.sp-season2.sp-apply .sme-upload-actions {
+  display: flex;
+  gap: 12px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.sp-season2.sp-apply .sme-upload-actions a,
+.sp-season2.sp-apply .sme-upload-actions button {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: 700 11px/1.4 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.sp-season2.sp-apply .sme-upload-actions a { color: var(--accent-ink); }
+.sp-season2.sp-apply .sme-upload-actions button { color: #a83a34; }
+
+/* Review: a tinted panel that reads back the answers before the declarations,
+   with edit jumps back to the step that owns each answer. */
+.sp-season2.sp-apply .sme-review {
+  margin: 0 0 24px;
+  padding: 18px 20px;
+  border: 1px solid #d6c7d2;
+  border-radius: 2px;
+  background: #fbf6ef;
+}
+
+.sp-season2.sp-apply .sme-review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.sp-season2.sp-apply .sme-review-head .form-subhead::after {
+  display: none;
+}
+
+.sp-season2.sp-apply .sme-review-edits {
+  display: flex;
+  gap: 14px;
+}
+
+.sp-season2.sp-apply .sme-review-edits button {
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  background: none;
+  cursor: pointer;
+  font: 800 10px/1.4 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+
+.sp-season2.sp-apply .sme-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
+  margin: 0;
+}
+
+.sp-season2.sp-apply .sme-review-grid > div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.sp-season2.sp-apply .sme-review-grid dt {
+  font: 800 9px/1.5 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #9b87a3;
+}
+
+.sp-season2.sp-apply .sme-review-grid dd {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.sp-season2.sp-apply .sme-review-excerpt {
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid #e4d8df;
+  font-size: 13px;
+  line-height: 1.6;
+  font-style: italic;
+  color: #5e4965;
+}
+
+.sp-season2.sp-apply .sme-loading {
+  display: grid;
+  gap: 16px;
+  padding: 20px 0 8px;
+}
+
+.sp-season2.sp-apply .sme-loading .skeleton {
+  height: 16px;
+}
+
+/* The page scrolls in its own colours rather than the browser default. */
+html:has(.sp-sme) {
+  scrollbar-width: thin;
+  scrollbar-color: #734687 #150e1c;
+}
+
+html:has(.sp-sme)::-webkit-scrollbar { width: 10px; }
+html:has(.sp-sme)::-webkit-scrollbar-track { background: #150e1c; }
+html:has(.sp-sme)::-webkit-scrollbar-thumb {
+  background: #734687;
+  border: 2px solid #150e1c;
+}
+html:has(.sp-sme)::-webkit-scrollbar-thumb:hover { background: #ff8949; }
+
+@media (max-width: 1000px) {
+  .sp-season2.sp-apply .sme-route li { padding-inline: 12px; }
+  .sp-season2.sp-apply .sme-route span { font-size: 34px; }
+}
+
+@media (max-width: 760px) {
+  .sp-season2.sp-apply .sme-process { padding-block: 26px 30px; }
+  .sp-season2.sp-apply .sme-route { grid-template-columns: 1fr; }
+  .sp-season2.sp-apply .sme-route li {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 3px 14px;
+    padding: 14px 0;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .sp-season2.sp-apply .sme-route li:first-child { border-top: 0; padding-top: 0; }
+  .sp-season2.sp-apply .sme-route span {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    margin: 0;
+    font-size: 30px;
+  }
+  .sp-season2.sp-apply .sme-route h3 { grid-column: 2; margin: 0; align-self: end; }
+  .sp-season2.sp-apply .sme-route p { grid-column: 2; }
+  .sp-season2.sp-apply .sme-field-grid { grid-template-columns: 1fr; }
+  .sp-season2.sp-apply .sme-entry-cards { grid-template-columns: 1fr; }
+  .sp-season2.sp-apply .sme-review-grid { grid-template-columns: 1fr; }
+  .sp-season2.sp-apply .sme-upload { flex-wrap: wrap; }
+  .sp-season2.sp-apply .sme-upload-actions { width: 100%; margin-left: 0; }
+}

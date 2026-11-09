@@ -4,6 +4,7 @@ import { notFound, redirect } from 'next/navigation';
 import ContestRegistrationWizard from '@/components/forms/ContestRegistrationWizard';
 import StemContestApplicationWizard from '@/components/forms/StemContestApplicationWizard';
 import RealityShowApply from '@/components/season2/RealityShowApply';
+import SmePitchApply from '@/components/season2/SmePitchApply';
 import AcademyApplyPage from '@/app/film-academy/apply/page';
 import { programPageBySlug, programPages } from '@/src/data/programPages';
 import { createClient } from '@/lib/supabase/server';
@@ -37,10 +38,14 @@ export default async function ProgramApplicationPage({ params }) {
     notFound();
   }
 
-  // The reality show was the first programme rebuilt on the Season 2 type and
-  // colour system; the other programmes still use the shared template shell.
+  // The reality show and the SME pitch contest are rebuilt on the Season 2 type
+  // and colour system; the other programmes still use the shared template shell.
   if (program.slug === 'reality-tv-show') {
     return <RealityShowApply program={program} />;
+  }
+
+  if (program.slug === 'sme-pitch-contest') {
+    return <SmePitchApply program={program} />;
   }
 
   return (
