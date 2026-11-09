@@ -3,8 +3,9 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { programPageBySlug, programPages } from '@/src/data/programPages';
 
-export function generateMetadata({ params }) {
-  const program = programPageBySlug[params.slug];
+export async function generateMetadata({ params }) {
+  const { slug } = await params;
+  const program = programPageBySlug[slug];
   if (!program) {
     return { title: 'Service Details | Spotlight' };
   }
@@ -15,8 +16,9 @@ export function generateMetadata({ params }) {
   };
 }
 
-export default function ServiceDetailBySlug({ params }) {
-  const program = programPageBySlug[params.slug];
+export default async function ServiceDetailBySlug({ params }) {
+  const { slug } = await params;
+  const program = programPageBySlug[slug];
   const hideProgramMedia = program?.slug === 'stem-contest';
   const applyHref = program?.slug === 'open-mic-competition' ? '/open-mic' : `/apply/${program?.slug}`;
 
