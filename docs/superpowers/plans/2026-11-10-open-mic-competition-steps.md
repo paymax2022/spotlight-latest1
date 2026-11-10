@@ -289,7 +289,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ fileKey: st
         // Canonical, from the extension — never the uploader's client-supplied
         // type (SEC-007).
         'Content-Type': contentTypeForKey(objectKey),
-        'Content-Disposition': `${disposition}; filename="${fileName}"`,
+        // Bare `inline` for playback — the `<audio>` element needs no filename,
+        // and Step 1's assertion pins the header to exactly `inline`. Only
+        // `attachment` carries a name, and because decision D stores nothing but
+        // the encoded key, that name is the object's last segment (a uuid), not
+        // the beat title: the reader has no database read, and it must not grow
+        // one just to answer a download. A titled download stays available on the
+        // terms-gated `/api/open-mic/contests/[slug]/beat/download` route, which
+        // does know the title.
+        'Content-Disposition': wantsDownload ? `attachment; filename="${fileName}"` : 'inline',
         // Public and immutable: the key carries a uuid, so a given URL always
         // addresses the same bytes.
         'Cache-Control': 'public, max-age=31536000, immutable',
