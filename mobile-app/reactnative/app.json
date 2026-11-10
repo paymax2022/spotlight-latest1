@@ -72,14 +72,14 @@
         }
       ],
       "./plugins/withAndroidReleaseSigning",
-      "./plugins/withAndroidSizeOptimizations",
-      "./plugins/withAndroidVersionCode"
+      "./plugins/withAndroidSizeOptimizations"
     ],
     "experiments": {
       "typedRoutes": false
     },
     "android": {
       "package": "com.spotlight.paymax",
+      "versionCode": 20,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",

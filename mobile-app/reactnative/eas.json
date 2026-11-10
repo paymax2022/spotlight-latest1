@@ -22,7 +22,7 @@
       "distribution": "internal",
       "credentialsSource": "remote",
       "channel": "staging",
-      "autoIncrement": true,
+      "autoIncrement": false,
       "android": {
         "buildType": "apk"
       },
@@ -55,7 +55,7 @@
       "distribution": "store",
       "credentialsSource": "remote",
       "channel": "production",
-      "autoIncrement": true,
+      "autoIncrement": false,
       "android": {
         "buildType": "app-bundle"
       },
