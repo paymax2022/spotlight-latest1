@@ -174,10 +174,23 @@ function marketingDrawerSpecs(
 marketingDrawerSpecs('landing home header', '/', '.sp-home', /find your spotlight/i, /our programmes/i);
 marketingDrawerSpecs('season-2 header', '/season-2', '.sp-season2', /register for season 2/i, /the mansion/i);
 
-function templateHeaderSpecs(title: string, path: string) {
+function templateHeaderSpecs(
+  title: string,
+  path: string,
+  { auth = false, account = { name: /^sign in$/i, href: '/login' } }: {
+    auth?: boolean;
+    account?: { name: RegExp; href: string };
+  } = {},
+) {
   const panel = '.offcanvas__info';
   test.describe(title, () => {
     test.use({ viewport: WIDTHS[0] });
+
+    if (auth) {
+      test.beforeEach(async ({ context, request }) => {
+        await loginViaApi(context, request);
+      });
+    }
 
     for (const viewport of WIDTHS) {
       test(`shows the hamburger at ${viewport.width}px`, async ({ page }) => {
@@ -189,14 +202,14 @@ function templateHeaderSpecs(title: string, path: string) {
       });
     }
 
-    test('hamburger slides the offcanvas in with a sign in link', async ({ page }) => {
+    test('hamburger slides the offcanvas in with its account link', async ({ page }) => {
       await page.goto(path);
       await page.locator('.header__hamburger .sidebar__toggle').click();
       await expect(page.locator(panel)).toHaveClass(/info-open/);
       await expect(page.locator('.offcanvas__overlay')).toHaveClass(/overlay-open/);
-      await expect(page.locator(panel).getByRole('link', { name: /sign in/i })).toHaveAttribute(
+      await expect(page.locator(panel).getByRole('link', { name: account.name })).toHaveAttribute(
         'href',
-        '/login',
+        account.href,
       );
     });
 
@@ -230,6 +243,84 @@ function templateHeaderSpecs(title: string, path: string) {
 
 templateHeaderSpecs('template header /about', '/about');
 templateHeaderSpecs('template header /service-details/stem-contest', '/service-details/stem-contest');
+
+// /apply/sme-pitch-contest used to carry the bespoke Season 2 ApplicationHeader;
+// it now uses the site Header1 + offcanvas like every other marketing page. The
+// route is auth-gated (it redirects to /login), so these cases sign in first, and
+// the signed-in drawer offers the profile link rather than sign in / register.
+templateHeaderSpecs('template header /apply/sme-pitch-contest', '/apply/sme-pitch-contest', {
+  auth: true,
+  account: { name: /view full profile/i, href: '/user-dashboard' },
+});
+
+// The page keeps only its skip link as in-page nav, and it has no season rail, so
+// the header going fixed must not cover the top of the form it lands on.
+test.describe('sme-pitch apply skip link', () => {
+  test.use({ viewport: WIDTHS[0] });
+
+  test('lands the form below the sticky header', async ({ page, context, request }) => {
+    await loginViaApi(context, request);
+    await page.goto('/apply/sme-pitch-contest');
+    await expect(page.locator('#header-sticky')).toBeVisible();
+    // The wizard paints its first step after it has the saved entry, which
+    // makes the page considerably taller. Jumping before that settles measures
+    // a layout nobody sees.
+    await expect(page.getByRole('heading', { name: /how are you entering/i })).toBeVisible();
+
+    // Past 100px the header has switched to fixed and taken its 92px out of the
+    // flow, which is the state the skip link has to land cleanly in.
+    await page.evaluate(() => window.scrollTo({ top: 300, behavior: 'instant' }));
+
+    // The skip link sits off-screen until it takes focus, so it is used the way a
+    // keyboard user reaches it rather than clicked.
+    await page.locator('a.skip').focus();
+    const before = await page.evaluate(() => Math.round(window.scrollY));
+    await page.keyboard.press('Enter');
+
+    // The jump is smooth, so a single read can catch it mid-flight; wait for
+    // scrollY to stop changing rather than trusting a fixed delay.
+    let last = -1;
+    let same = 0;
+    for (let i = 0; i < 60; i += 1) {
+      await page.waitForTimeout(120);
+      const y = await page.evaluate(() => Math.round(window.scrollY));
+      if (y === last) {
+        same += 1;
+        if (same >= 5) break;
+      } else {
+        same = 0;
+        last = y;
+      }
+    }
+
+    const landed = await page.evaluate(() => {
+      const target = document.querySelector('#apply-form')!;
+      const header = document.getElementById('header-sticky')!;
+      return {
+        y: Math.round(window.scrollY),
+        top: Math.round(target.getBoundingClientRect().top),
+        headerHeight: header.offsetHeight,
+        headerFixed: getComputedStyle(header).position === 'fixed',
+        spacer: Math.round(
+          Array.from(document.querySelectorAll<HTMLElement>('.site-header-spacer')).reduce(
+            (t, el) => t + el.offsetHeight,
+            0,
+          ),
+        ),
+      };
+    });
+
+    expect(landed.headerFixed).toBe(true);
+    expect(landed.y).toBeGreaterThan(before);
+    // The spacer holds the 92px the fixed header took out of the flow and the
+    // 104px scroll-padding aligns the form to it, so its top comes to rest just
+    // under the header — neither behind it, which was the bug, nor stranded a
+    // screenful below, which is what a jump that ignored the padding gives.
+    expect(landed.spacer).toBeGreaterThanOrEqual(landed.headerHeight);
+    expect(landed.top).toBeGreaterThanOrEqual(landed.headerHeight);
+    expect(landed.top).toBeLessThanOrEqual(landed.headerHeight + 30);
+  });
+});
 
 // The page keeps its own jump links in a rail below the site header, so the
 // header turning fixed must not cover the section an anchor lands on.

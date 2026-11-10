@@ -627,6 +627,14 @@ html:has(.sp-season2) {
    shifts and anchor jumps stay where scroll-padding-top put them. */
 .site-header-spacer { height: var(--season-rail-top, 92px); }
 
+/* /apply/sme-pitch-contest carries the template header but no season rail, so
+   --season-chrome-top is never published and the 153px fallback above would
+   leave the skip link landing ~50px short. Two classes outrank
+   html:has(.sp-season2) at every width, including the 700px override below. */
+html:has(.sp-season2.sp-sme) {
+  scroll-padding-top: 104px;
+}
+
 body:has(.sp-season2) {
   background: #150e1c;
 }
