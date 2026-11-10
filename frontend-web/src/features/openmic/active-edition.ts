@@ -31,8 +31,9 @@ export const CURRENT_OPEN_MIC_STATUSES = [
 
 /**
  * The one current edition, or null. listContests() already restricts rows to
- * contest_type = 'one_beat_one_verse', drops hidden ones and returns [] when
- * Supabase reads are unconfigured, so nothing here re-filters — and nothing
+ * contest_type = 'one_beat_one_verse', drops hidden ones, returns [] when
+ * Supabase reads are unconfigured and orders `created_at desc`, so "first live
+ * row" is "the newest live edition" and nothing here re-filters — and nothing
  * here falls back to "the newest row whatever it is", which is how the apply
  * page used to redirect artists into an ended edition.
  */

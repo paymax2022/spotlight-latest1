@@ -898,8 +898,7 @@ Create `frontend-web/tests/unit/openmic/active-edition.test.ts`:
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const listContests = vi.hoisted(() => vi.fn());
-const getLeaderboard = vi.hoisted(() => vi.fn());
-vi.mock('@/src/server/openmic/persistence', () => ({ listContests, getLeaderboard }));
+vi.mock('@/src/server/openmic/persistence', () => ({ listContests }));
 
 import { getActiveOpenMicEdition } from '@/src/features/openmic/active-edition';
 import type { OpenMicContest } from '@/src/features/openmic/types';
@@ -942,8 +941,28 @@ function contest(overrides: Partial<OpenMicContest> = {}): OpenMicContest {
 
 beforeEach(() => {
   listContests.mockReset();
-  getLeaderboard.mockReset();
 });
+
+// The selector's contract is that it classifies the whole status vocabulary,
+// and the union in `types.ts` is the only place that vocabulary is written
+// down — nothing in this repo enumerates it at runtime. So completeness can
+// only be checked by the compiler: drop any status from the two lists below
+// and `tsc` fails on the assertion after them, which is the mistake that made
+// the finale statuses look ended. Exported so it reads as deliberate rather
+// than an unused local.
+const LIVE_STATUSES = [
+  'published', 'registration_open', 'beat_available', 'submission_open',
+  'submission_closed', 'under_review', 'voting_live', 'voting_closed',
+  'finalists_selected', 'grand_finale_scheduled', 'grand_finale_live',
+] as const satisfies readonly OpenMicContest['status'][];
+
+const ENDED_STATUSES = [
+  'draft', 'scheduled', 'winner_announced', 'completed', 'archived', 'suspended', 'cancelled',
+] as const satisfies readonly OpenMicContest['status'][];
+
+type Unclassified = Exclude<OpenMicContest['status'], typeof LIVE_STATUSES[number] | typeof ENDED_STATUSES[number]>;
+
+export const EVERY_STATUS_IS_CLASSIFIED: [Unclassified] extends [never] ? true : ['status classified nowhere', Unclassified] = true;
 
 describe('getActiveOpenMicEdition', () => {
   it('returns the newest row whose status is still live', async () => {
@@ -953,15 +972,15 @@ describe('getActiveOpenMicEdition', () => {
   });
 
   it('counts every status in which a step of the route is still live', async () => {
-    for (const status of ['published', 'registration_open', 'beat_available', 'submission_open', 'submission_closed', 'under_review', 'voting_live', 'voting_closed', 'finalists_selected', 'grand_finale_scheduled', 'grand_finale_live']) {
-      listContests.mockResolvedValue([contest({ status: status as OpenMicContest['status'] })]);
+    for (const status of LIVE_STATUSES) {
+      listContests.mockResolvedValue([contest({ status })]);
       expect(await getActiveOpenMicEdition()).not.toBeNull();
     }
   });
 
   it('ignores editions that never started, finished, or were called off', async () => {
-    for (const status of ['draft', 'scheduled', 'winner_announced', 'completed', 'archived', 'suspended', 'cancelled']) {
-      listContests.mockResolvedValue([contest({ status: status as OpenMicContest['status'] })]);
+    for (const status of ENDED_STATUSES) {
+      listContests.mockResolvedValue([contest({ status })]);
       expect(await getActiveOpenMicEdition()).toBeNull();
     }
   });
@@ -1022,8 +1041,9 @@ export const CURRENT_OPEN_MIC_STATUSES = [
 
 /**
  * The one current edition, or null. listContests() already restricts rows to
- * contest_type = 'one_beat_one_verse', drops hidden ones and returns [] when
- * Supabase reads are unconfigured, so nothing here re-filters — and nothing
+ * contest_type = 'one_beat_one_verse', drops hidden ones, returns [] when
+ * Supabase reads are unconfigured and orders `created_at desc`, so "first live
+ * row" is "the newest live edition" and nothing here re-filters — and nothing
  * here falls back to "the newest row whatever it is", which is how the apply
  * page used to redirect artists into an ended edition.
  */
@@ -1051,9 +1071,9 @@ export const dynamic = 'force-dynamic';
 
 export default async function LegacyOpenMicApplyPage() {
   const edition = await getActiveOpenMicEdition();
-  // No `|| contests[0]`: when nothing is live there is nothing to apply to, and
-  // pointing someone at a draft or ended edition is worse than the honest
-  // "no live edition right now" on /open-mic.
+  // No `|| contests[0]`: pointing someone straight at a draft or ended edition
+  // is worse than the editions list on /open-mic, which at least names the
+  // month and shows each edition's own status badge.
   redirect(edition ? `/open-mic/${edition.slug}/apply` : '/open-mic');
 }
 ```

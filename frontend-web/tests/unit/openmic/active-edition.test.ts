@@ -51,6 +51,27 @@ beforeEach(() => {
   listContests.mockReset();
 });
 
+// The selector's contract is that it classifies the whole status vocabulary,
+// and the union in `types.ts` is the only place that vocabulary is written
+// down — nothing in this repo enumerates it at runtime. So completeness can
+// only be checked by the compiler: drop any status from the two lists below
+// and `tsc` fails on the assertion after them, which is the mistake that made
+// the finale statuses look ended. Exported so it reads as deliberate rather
+// than an unused local.
+const LIVE_STATUSES = [
+  'published', 'registration_open', 'beat_available', 'submission_open',
+  'submission_closed', 'under_review', 'voting_live', 'voting_closed',
+  'finalists_selected', 'grand_finale_scheduled', 'grand_finale_live',
+] as const satisfies readonly OpenMicContest['status'][];
+
+const ENDED_STATUSES = [
+  'draft', 'scheduled', 'winner_announced', 'completed', 'archived', 'suspended', 'cancelled',
+] as const satisfies readonly OpenMicContest['status'][];
+
+type Unclassified = Exclude<OpenMicContest['status'], typeof LIVE_STATUSES[number] | typeof ENDED_STATUSES[number]>;
+
+export const EVERY_STATUS_IS_CLASSIFIED: [Unclassified] extends [never] ? true : ['status classified nowhere', Unclassified] = true;
+
 describe('getActiveOpenMicEdition', () => {
   it('returns the newest row whose status is still live', async () => {
     listContests.mockResolvedValue([contest({ slug: 'newest', status: 'submission_open' }), contest({ slug: 'oldest', status: 'voting_live' })]);
@@ -58,19 +79,16 @@ describe('getActiveOpenMicEdition', () => {
     expect(picked?.slug).toBe('newest');
   });
 
-  // These two loops together must name all 18 members of OpenMicContestStatus.
-  // A status missing from both is unclassified, and the selector silently
-  // treats it as ended — which is how the finale statuses went blank.
   it('counts every status in which a step of the route is still live', async () => {
-    for (const status of ['published', 'registration_open', 'beat_available', 'submission_open', 'submission_closed', 'under_review', 'voting_live', 'voting_closed', 'finalists_selected', 'grand_finale_scheduled', 'grand_finale_live']) {
-      listContests.mockResolvedValue([contest({ status: status as OpenMicContest['status'] })]);
+    for (const status of LIVE_STATUSES) {
+      listContests.mockResolvedValue([contest({ status })]);
       expect(await getActiveOpenMicEdition()).not.toBeNull();
     }
   });
 
   it('ignores editions that never started, finished, or were called off', async () => {
-    for (const status of ['draft', 'scheduled', 'winner_announced', 'completed', 'archived', 'suspended', 'cancelled']) {
-      listContests.mockResolvedValue([contest({ status: status as OpenMicContest['status'] })]);
+    for (const status of ENDED_STATUSES) {
+      listContests.mockResolvedValue([contest({ status })]);
       expect(await getActiveOpenMicEdition()).toBeNull();
     }
   });
