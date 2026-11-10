@@ -42,6 +42,10 @@ describe('Open Mic pages unwrap params before use', () => {
     expect(sources.get('app/open-mic/[slug]/entries/page.tsx')).toContain('getContestBySlug(slug)');
     expect(sources.get('app/open-mic/[slug]/finale/page.tsx')).toContain('getContestBySlug(slug)');
     expect(sources.get('app/open-mic/[slug]/entry/[artistSlug]/page.tsx')).toContain('getContestBySlug(slug)');
+    // Pinned per file because a wrong-variable read stays type-correct: `slug`
+    // and `artistSlug` are both strings, so only this assertion tells them apart.
+    expect(sources.get('app/dashboard/open-mic/[slug]/page.tsx')).toContain('getContestBySlug(slug)');
+    expect(sources.get('app/open-mic/[slug]/entry/[artistSlug]/page.tsx')).toContain('=== artistSlug');
     expect(sources.get('app/open-mic/[slug]/entry/page.tsx')).toContain('redirect(`/open-mic/${slug}/entries`)');
   });
 });

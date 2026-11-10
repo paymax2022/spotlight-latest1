@@ -698,6 +698,11 @@ describe('Open Mic pages unwrap params before use', () => {
     expect(sources.get('app/open-mic/[slug]/entries/page.tsx')).toContain('getContestBySlug(slug)');
     expect(sources.get('app/open-mic/[slug]/finale/page.tsx')).toContain('getContestBySlug(slug)');
     expect(sources.get('app/open-mic/[slug]/entry/[artistSlug]/page.tsx')).toContain('getContestBySlug(slug)');
+    // Two holes the Task 3b review found, both invisible to the other two tests:
+    // a wrong-variable read in the dashboard file, and a slug/artistSlug swap in
+    // the two-segment page — `string` compared to `string` still type-checks.
+    expect(sources.get('app/dashboard/open-mic/[slug]/page.tsx')).toContain('getContestBySlug(slug)');
+    expect(sources.get('app/open-mic/[slug]/entry/[artistSlug]/page.tsx')).toContain('=== artistSlug');
     expect(sources.get('app/open-mic/[slug]/entry/page.tsx')).toContain('redirect(`/open-mic/${slug}/entries`)');
   });
 });
