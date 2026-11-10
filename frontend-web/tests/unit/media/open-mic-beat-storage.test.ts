@@ -14,6 +14,10 @@ const readLocalUpload = vi.hoisted(() => vi.fn());
 const hasR2Config = vi.hoisted(() => vi.fn(() => false));
 const assertR2ObjectExists = vi.hoisted(() => vi.fn());
 const createR2DownloadUrl = vi.hoisted(() => vi.fn());
+// Hoisted for the same reason as hasR2Config: production is the R2 write branch,
+// so the route's `uploadR2Object({ key, body, contentType })` argument has to be
+// assertable, not an anonymous fn the admin suite cannot reach.
+const uploadR2Object = vi.hoisted(() => vi.fn());
 const assertAdminPermission = vi.hoisted(() => vi.fn());
 const saveLocalUpload = vi.hoisted(() => vi.fn());
 vi.mock('@/src/server/admin/auth', () => ({ assertAdminPermission }));
@@ -27,7 +31,7 @@ vi.mock('@/src/lib/storage/local-uploads', () => ({
 vi.mock('@/src/lib/storage/r2', () => ({
   hasR2Config,
   createR2UploadUrl: vi.fn(),
-  uploadR2Object: vi.fn(),
+  uploadR2Object,
   assertR2ObjectExists,
   createR2DownloadUrl,
   sanitizeObjectFileName: (name: string) => name.replace(/[^a-zA-Z0-9._-]+/g, '-'),
@@ -233,6 +237,12 @@ function beatUploadRequest(opts: { name?: string; type?: string; contestId?: str
 
 describe('POST /api/admin/open-mic/beats', () => {
   beforeEach(() => {
+    // vitest.config.ts sets no clearMocks/mockReset, so mock state persists
+    // across every test in this file: both the flag and the call history are
+    // set explicitly here rather than inherited from whichever describe ran
+    // last, which is what makes --sequence.shuffle safe.
+    hasR2Config.mockReturnValue(false);
+    uploadR2Object.mockReset();
     assertAdminPermission.mockReset();
     assertAdminPermission.mockResolvedValue({ role: 'admin', actorId: 'user-1' });
     saveLocalUpload.mockReset();
@@ -305,5 +315,68 @@ describe('POST /api/admin/open-mic/beats', () => {
     );
     expect(res.status).toBe(403);
     expect(saveLocalUpload).not.toHaveBeenCalled();
+  });
+
+  // The other half of the gate: assertAdminPermission throws 401 for a caller
+  // with no session at all, and handleApiError must surface that status rather
+  // than turning it into a 500 — with nothing written to either backend.
+  it('maps an unsigned caller to 401 and stores nothing', async () => {
+    assertAdminPermission.mockRejectedValue(new ApiError('Unauthorized', 401));
+    const res = await POST(beatUploadRequest());
+    expect(res.status).toBe(401);
+    expect(saveLocalUpload).not.toHaveBeenCalled();
+    expect(uploadR2Object).not.toHaveBeenCalled();
+  });
+});
+
+// The write branch production actually takes: deployed has R2 credentials, so
+// without this describe the `uploadR2Object(...)` call that puts the bytes in
+// the bucket has never been executed by a test — and the key it is handed is
+// the one thing that must equal the objectKey the 201 returns.
+describe('POST /api/admin/open-mic/beats with R2 configured', () => {
+  beforeEach(() => {
+    hasR2Config.mockReturnValue(true);
+    uploadR2Object.mockReset().mockResolvedValue(undefined);
+    saveLocalUpload.mockReset();
+    assertAdminPermission.mockReset();
+    assertAdminPermission.mockResolvedValue({ role: 'admin', actorId: 'user-1' });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    // Never leak the flag into the local-disk suites.
+    hasR2Config.mockReturnValue(false);
+  });
+
+  it('writes the bytes to R2 under exactly the key it returns, and touches no disk', async () => {
+    const res = await POST(beatUploadRequest());
+    expect(res.status).toBe(201);
+    const { beat } = await res.json();
+
+    expect(uploadR2Object).toHaveBeenCalledTimes(1);
+    expect(uploadR2Object).toHaveBeenCalledWith({
+      key: beat.objectKey,
+      body: expect.any(Buffer),
+      contentType: 'audio/mpeg',
+    });
+    // Configured R2 means this server's upload directory is not the storage:
+    // writing there as well would leave a private copy nothing can serve.
+    expect(saveLocalUpload).not.toHaveBeenCalled();
+  });
+
+  // Store/serve pairing, stated as the property itself: the URL a public surface
+  // embeds must decode back to the object that actually landed in the bucket. A
+  // refactor that gives the upload key a folder prefix the way
+  // src/lib/storage/r2.ts:158-229 does for other uploads keeps every status code
+  // green while 404ing every beat forever — this is the assertion that catches
+  // it, and it also catches the prefix silently appearing in the response key.
+  it('mints a previewUrl that decodes back to the object it wrote', async () => {
+    const res = await POST(beatUploadRequest());
+    const { beat } = await res.json();
+    const writtenKey = uploadR2Object.mock.calls[0][0].key;
+
+    expect(writtenKey).toMatch(/^openmic-beats\/contest-9\/[0-9a-f-]+\.mp3$/);
+    expect(beat.previewUrl).toBe(`/api/open-mic/beats/${encodeBeatFileKey(writtenKey)}`);
+    expect(beat.downloadUrl).toBe(`${beat.previewUrl}?download=1`);
   });
 });
