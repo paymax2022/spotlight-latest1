@@ -5,6 +5,7 @@ import type { Metadata } from 'next';
 import { getAcademyCatalogue } from '@/src/server/services/academy/catalogue';
 import AcademyMotion from './AcademyMotion';
 import HeaderSpacer from './HeaderSpacer';
+import AcademyApplyProvider, { ApplyLink } from './ApplyDrawer';
 import AreaExplorer from './AreaExplorer';
 import TuitionPlanner from './TuitionPlanner';
 import { ACADEMY_CONTACT, whatsappEnquiry } from './contact';
@@ -100,6 +101,7 @@ export default async function FilmAcademyPage() {
       breadcrumbClassName={undefined}
       breadcrumbPadding={undefined}
     >
+      <AcademyApplyProvider fontClassName={`${oswald.variable} ${manrope.variable} ${dmSans.variable}`}>
       <div
         className={`${styles.page} ${oswald.variable} ${manrope.variable} ${dmSans.variable}`}
         data-academy-root
@@ -166,9 +168,9 @@ export default async function FilmAcademyPage() {
               </h2>
             </div>
             <div className={styles.heroActions}>
-              <Link className={`${styles.btn} ${styles.btnPrimary}`} href="/film-academy/apply">
+              <ApplyLink className={`${styles.btn} ${styles.btnPrimary}`}>
                 Apply to the academy <span aria-hidden="true">↗</span>
-              </Link>
+              </ApplyLink>
               {/* The pricing section only renders once areas are published, so the
                   jump link is dropped rather than left pointing at an empty target. */}
               {areas.length > 0 ? (
@@ -375,12 +377,9 @@ export default async function FilmAcademyPage() {
                           <li key={slug}>{areaLabel.get(slug) ?? slug}</li>
                         ))}
                       </ul>
-                      <Link
-                        className={styles.action}
-                        href={`/film-academy/apply?batch=${encodeURIComponent(intake.id)}`}
-                      >
+                      <ApplyLink className={styles.action} batch={intake.id}>
                         Apply for {intake.batch_name} <span aria-hidden="true">↗</span>
-                      </Link>
+                      </ApplyLink>
                     </article>
                   );
                 })}
@@ -542,10 +541,10 @@ export default async function FilmAcademyPage() {
                 How do I apply? <span aria-hidden="true">+</span>
               </summary>
               <p>
-                Sign in to your Spotlight account and open the application — if you are not signed in, the apply button
-                takes you to sign in first and returns you here afterwards. You choose an intake, then up to {maxAreas}{' '}
-                areas of study and a format for each, and pay the application fee to submit. Admissions then reviews the
-                application.
+                The apply button opens the application right here, over this page. You choose an intake, then up
+                to {maxAreas} areas of study and a format for each, and see what is charged before you commit. Sign
+                in when you are ready to submit — it returns you here afterwards — and admissions reviews the
+                application from there.
               </p>
             </details>
 
@@ -587,9 +586,9 @@ export default async function FilmAcademyPage() {
                 craft is yours? Talk to admissions first — it costs nothing.
               </p>
               <div className={styles.heroActions}>
-                <Link className={`${styles.btn} ${styles.btnPrimary}`} href="/film-academy/apply">
+                <ApplyLink className={`${styles.btn} ${styles.btnPrimary}`}>
                   Start an application <span aria-hidden="true">↗</span>
-                </Link>
+                </ApplyLink>
                 <a
                   className={`${styles.btn} ${styles.btnOutline}`}
                   href={whatsappEnquiry('Hello Spotlight Film Academy, I would like help choosing an area of study.')}
@@ -640,6 +639,7 @@ export default async function FilmAcademyPage() {
           </div>
         </section>
       </div>
+      </AcademyApplyProvider>
     </Layout>
   );
 }

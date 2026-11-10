@@ -1,10 +1,10 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
 import type { AcademyCatalogueArea } from '@/src/server/services/academy/catalogue';
 import type { AcademyPricingKey } from '@/src/server/services/academy/pricing';
 import styles from './academy.module.css';
+import { ApplyLink } from './ApplyDrawer';
 import { formatNaira } from './format';
 
 type Selections = Record<string, AcademyPricingKey>;
@@ -142,9 +142,9 @@ export default function TuitionPlanner({
               'Application is free — no payment is taken to apply.'
             ) : (
               <>
-                <b>{formatNaira(applicationFeeNgn)}</b> application fee is what you pay to submit this
-                application{applicationFeeRefundable === false ? ' (non-refundable)' : ''}. The tuition above is
-                payable once you are accepted.
+                <b>{formatNaira(applicationFeeNgn)}</b> application fee
+                {applicationFeeRefundable === false ? ' (non-refundable)' : ''} is charged with your first tuition
+                instalment when you submit — one payment, and your lessons open straight away.
               </>
             )}
           </p>
@@ -157,9 +157,9 @@ export default function TuitionPlanner({
           </div>
 
           <div className={styles.panelActions}>
-            <Link className={styles.action} href="/film-academy/apply">
+            <ApplyLink className={styles.action}>
               Apply for a training plan <span aria-hidden="true">↗</span>
-            </Link>
+            </ApplyLink>
           </div>
         </aside>
       </div>

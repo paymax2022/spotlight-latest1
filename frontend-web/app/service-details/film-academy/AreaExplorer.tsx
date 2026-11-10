@@ -1,9 +1,9 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
 import type { AcademyCatalogueArea } from '@/src/server/services/academy/catalogue';
 import styles from './academy.module.css';
+import { ApplyLink } from './ApplyDrawer';
 import { whatsappEnquiry } from './contact';
 import { formatNaira } from './format';
 
@@ -100,9 +100,9 @@ export default function AreaExplorer({ areas }: { areas: AcademyCatalogueArea[] 
             >
               Enquire about {area.label} <span aria-hidden="true">↗</span>
             </a>
-            <Link className={`${styles.action} ${styles.actionGhost}`} href="/film-academy/apply">
+            <ApplyLink className={`${styles.action} ${styles.actionGhost}`}>
               Apply <span aria-hidden="true">↗</span>
-            </Link>
+            </ApplyLink>
           </div>
         </div>
       </article>
