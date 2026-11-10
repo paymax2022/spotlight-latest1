@@ -16,6 +16,7 @@ const PAGES = [
   'app/open-mic/[slug]/finale/page.tsx',
   'app/open-mic/[slug]/entry/page.tsx',
   'app/open-mic/[slug]/entry/[artistSlug]/page.tsx',
+  'app/dashboard/open-mic/[slug]/page.tsx',
 ];
 
 const sources = new Map(PAGES.map((rel) => [rel, readFileSync(path.join(ROOT, rel), 'utf8')]));
