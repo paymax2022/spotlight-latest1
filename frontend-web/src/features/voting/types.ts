@@ -422,6 +422,8 @@ export interface InitiatePaidVoteResponse {
   paymentReference: string;
   authorizationUrl: string;     // redirect to payment page
   amountExpected: number;
+  amountKobo: number;           // amountExpected × 100 — Paystack inline charges in kobo
+  publicKey: string;            // Paystack public key so the browser can open the inline SDK
   currency: string;
   votesToCredit: number;
   bonusVotes: number;
