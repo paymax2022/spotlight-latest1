@@ -605,6 +605,219 @@ git -C /Users/paymax/Documents/spotlight/main commit -m "fix(open-mic): hide the
 
 ---
 
+### Task 3b: Await `params` on the seven Open Mic pages (blocks every later verification)
+
+**Why this task exists (root cause, already proven — do not re-investigate it):**
+Next 16 passes page `params` as a Promise, and seven pages under `app/open-mic/`
+read `params.slug` synchronously. Next says so in the dev log verbatim:
+
+```
+Error: Route "/open-mic/[slug]/entry" used `params.slug`. `params` is a Promise and must be
+unwrapped with `await` or `React.use()` before accessing its properties.
+    at OpenMicEntryIndexPage (app/open-mic/[slug]/entry/page.tsx:4:32)
+```
+
+Every one of these routes therefore resolves the slug as `undefined`, calls
+`getContestBySlug(undefined)`, and renders the not-found boundary (observed: HTTP 200 whose
+body contains "This page could not be found", and 61 literal `undefined` strings in the
+`/entry` HTML). Their local prop types (`{ params: { slug: string } }`) are what keep
+`npx tsc --noEmit` green on a lie, so no type gate catches it.
+
+The spec's steps #02–#05 link straight into these pages — #02 is the edition page, #03 is
+`/open-mic/[slug]/enter`, #04 is `/open-mic/[slug]/entry/<artist>`, #05 is
+`/open-mic/[slug]/entries` — so nothing in this plan can be verified in a browser until they
+render. This is a pre-existing defect, not one Task 3 introduced; Task 3's beat gate is
+already correct and shipped.
+
+**Files:** (all Modify; each is the same one-to-three-line mechanical change)
+- `frontend-web/app/open-mic/[slug]/page.tsx:9-10`
+- `frontend-web/app/open-mic/[slug]/apply/page.tsx:10-11`
+- `frontend-web/app/open-mic/[slug]/enter/page.tsx:9-10`
+- `frontend-web/app/open-mic/[slug]/entries/page.tsx:8-9`
+- `frontend-web/app/open-mic/[slug]/finale/page.tsx:7-8`
+- `frontend-web/app/open-mic/[slug]/entry/page.tsx:3-4`
+- `frontend-web/app/open-mic/[slug]/entry/[artistSlug]/page.tsx:9-18`
+- Test: `frontend-web/tests/unit/openmic/open-mic-params.spec.ts`
+
+**Interfaces:**
+- Consumes: nothing new. `app/vote/[contestSlug]/[contestantSlug]/layout.tsx:54-56` is the
+  working in-repo reference for the pattern (`params: Promise<…>` then `const { … } = await params`).
+- Produces: `getContestBySlug(slug)` called with a real string on all seven routes. No export
+  changes; Tasks 5, 9 and 10 consume these pages only as URLs.
+
+- [ ] **Step 1: Write the failing guard test**
+
+Create `frontend-web/tests/unit/openmic/open-mic-params.spec.ts`. It reads the seven sources from
+disk — the same hermetic idiom as `tests/unit/voting/contract-presence.spec.ts` — because the
+property under test is a runtime contract no node-environment suite can exercise:
+
+```ts
+// Next 16 hands pages a Promise for params. Reading `params.slug` without awaiting yields
+// undefined, getContestBySlug(undefined) yields null, and the page renders its not-found
+// boundary at HTTP 200 — every Open Mic route did exactly that. The local prop type
+// `{ params: { slug: string } }` compiles fine against the lie, so tsc cannot catch it and
+// this guard is what does.
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
+const ROOT = path.resolve(__dirname, '../../..');
+const PAGES = [
+  'app/open-mic/[slug]/page.tsx',
+  'app/open-mic/[slug]/apply/page.tsx',
+  'app/open-mic/[slug]/enter/page.tsx',
+  'app/open-mic/[slug]/entries/page.tsx',
+  'app/open-mic/[slug]/finale/page.tsx',
+  'app/open-mic/[slug]/entry/page.tsx',
+  'app/open-mic/[slug]/entry/[artistSlug]/page.tsx',
+];
+
+const sources = new Map(PAGES.map((rel) => [rel, readFileSync(path.join(ROOT, rel), 'utf8')]));
+
+describe('Open Mic pages unwrap params before use', () => {
+  it('declares params as a Promise', () => {
+    for (const [rel, src] of sources) {
+      expect(src, `${rel} must type params as Promise`).toMatch(/params:\s*Promise<\{[^}]*slug:\s*string/);
+    }
+  });
+
+  it('awaits params on every path that reads a segment', () => {
+    for (const [rel, src] of sources) {
+      expect(src, `${rel} must await params`).toMatch(/await params/);
+      expect(src, `${rel} must not read params sync`).not.toMatch(/params\.(slug|artistSlug)/);
+    }
+  });
+
+  it('passes the destructured segment, not params, to the read', () => {
+    expect(sources.get('app/open-mic/[slug]/page.tsx')).toContain('getContestBySlug(slug)');
+    expect(sources.get('app/open-mic/[slug]/apply/page.tsx')).toContain('getContestBySlug(slug)');
+    expect(sources.get('app/open-mic/[slug]/enter/page.tsx')).toContain('getContestBySlug(slug)');
+    expect(sources.get('app/open-mic/[slug]/entries/page.tsx')).toContain('getContestBySlug(slug)');
+    expect(sources.get('app/open-mic/[slug]/finale/page.tsx')).toContain('getContestBySlug(slug)');
+    expect(sources.get('app/open-mic/[slug]/entry/[artistSlug]/page.tsx')).toContain('getContestBySlug(slug)');
+    expect(sources.get('app/open-mic/[slug]/entry/page.tsx')).toContain('redirect(`/open-mic/${slug}/entries`)');
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic/open-mic-params.spec.ts`
+Expected: FAIL — every file matches `params\.(slug|artistSlug)` and none has `await params`.
+
+- [ ] **Step 3: Fix the five single-segment pages**
+
+Each file below changes the same two lines. In `app/open-mic/[slug]/page.tsx`:
+
+```tsx
+export default async function OpenMicContestDetailsPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
+```
+
+In `app/open-mic/[slug]/apply/page.tsx` (function name `OpenMicApplyPage`, and its own local
+`contest` uses follow at whatever lines they appear — replace every `params.slug` with `slug`):
+
+```tsx
+export default async function OpenMicApplyPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  let contest = await getContestBySlug(slug);
+```
+
+In `app/open-mic/[slug]/enter/page.tsx` (function name `OpenMicContestEntryPage`):
+
+```tsx
+export default async function OpenMicContestEntryPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
+```
+
+In `app/open-mic/[slug]/entries/page.tsx` (function name `OpenMicEntriesPage`):
+
+```tsx
+export default async function OpenMicEntriesPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
+```
+
+In `app/open-mic/[slug]/finale/page.tsx` (function name `OpenMicFinalePage`):
+
+```tsx
+export default async function OpenMicFinalePage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
+```
+
+- [ ] **Step 4: Fix the redirect page and the two-segment page**
+
+`app/open-mic/[slug]/entry/page.tsx` is currently a synchronous component — it must become async,
+or use `React.use`. Take the async form, matching its siblings:
+
+```tsx
+import { redirect } from 'next/navigation';
+
+export default async function OpenMicEntryIndexPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  redirect(`/open-mic/${slug}/entries`);
+}
+```
+
+`app/open-mic/[slug]/entry/[artistSlug]/page.tsx` destructures across a multi-line signature and
+uses both segments (`params.slug` at line 14, `params.artistSlug` at line 18):
+
+```tsx
+export default async function OpenMicArtistVotingPage({
+  params,
+}: {
+  params: Promise<{ slug: string; artistSlug: string }>;
+}) {
+  const { slug, artistSlug } = await params;
+  const contest = await getContestBySlug(slug);
+  if (!contest) notFound();
+
+  const entries = await getLeaderboard(contest.id);
+  const entry = entries.find((e) => slugifyArtist(e.stageName) === artistSlug);
+```
+
+- [ ] **Step 5: Run the guard, the type gate, and prove it at runtime**
+
+Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic && npx tsc --noEmit && npx eslint "app/open-mic/[slug]"`
+Expected: guard PASSes (4 cases), tsc exit 0, eslint exit 0.
+
+Then prove the runtime actually renders, because a green guard on a rewritten source is still
+just a string match. With the dev server on :3000 (start `npm run dev` from `frontend-web` if
+nothing is listening), re-request the route that produced the log error and check the server's
+own log for the sync-dynamic-apis message:
+
+```bash
+curl -s -o /dev/null --max-time 60 "http://localhost:3000/open-mic/probe-slug-xyz/entry"
+grep -c "must be unwrapped" /tmp/spotlight-fe-dev.log   # or whichever log file your server writes
+```
+
+Expected: the count does NOT increase after the request. Before the fix it incremented on every
+hit — that is the before/after evidence this task needs, and the number must be recorded in the
+report. Do not restart the server to make the grep look clean; compare against the pre-fix log
+growth.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git -C /Users/paymax/Documents/spotlight/main add "frontend-web/app/open-mic/[slug]/page.tsx" \
+  "frontend-web/app/open-mic/[slug]/apply/page.tsx" \
+  "frontend-web/app/open-mic/[slug]/enter/page.tsx" \
+  "frontend-web/app/open-mic/[slug]/entries/page.tsx" \
+  "frontend-web/app/open-mic/[slug]/finale/page.tsx" \
+  "frontend-web/app/open-mic/[slug]/entry/page.tsx" \
+  "frontend-web/app/open-mic/[slug]/entry/[artistSlug]/page.tsx" \
+  frontend-web/tests/unit/openmic/open-mic-params.spec.ts
+git -C /Users/paymax/Documents/spotlight/main commit -m "fix(open-mic): await params so the edition routes resolve their slug"
+```
+Stage and commit in one shell invocation with the literal pathspecs on both — see the Global
+Constraints on commits. The bracketed directory names need quoting; `\[slug]` inside double
+quotes is a literal pathspec.
+
+---
+
 ### Task 4: One definition of the current edition
 
 **Files:**
