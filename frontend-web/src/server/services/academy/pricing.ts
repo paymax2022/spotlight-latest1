@@ -37,7 +37,7 @@ export const ACADEMY_PRICING_STRUCTURE: AcademyPricingOption[] = [
 
 /** What an applicant pays at application time. */
 export const ACADEMY_DELIVERABLES = [
-  '2 movie projects',
+  '4 weeks with 80% Practical Movie projects',
   'Potential talent management contract and signing into Timeless Movies Production',
   'Assistance to produce your own movie, and to set up & manage a YouTube channel',
 ];

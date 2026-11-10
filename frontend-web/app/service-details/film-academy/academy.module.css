@@ -60,6 +60,14 @@
   outline-offset: 4px;
 }
 
+/* Once past 100px main.css flips #header-sticky to position:fixed, so it stops
+   taking up flow space and overlays the top of the viewport instead (92px at
+   every width we measured). Anchor jumps to a section land its heading under
+   that bar without this clearance. */
+:global(html):has(.page) {
+  scroll-padding-top: 104px;
+}
+
 /* ── Shared scaffolding ─────────────────────────────────────────────── */
 
 .wrap {
