@@ -1,0 +1,563 @@
+/* Spotlight Voting - The Audience Floor */
+/* Creative voting experience styles */
+
+.voting-page {
+  --ink: #211827;
+  --night: #17101f;
+  --plum: #30203b;
+  --copper: #f4ab81;
+  --paper: #f7f0e8;
+  --line: #d9cad7;
+  --muted: #67556d;
+}
+
+.voting-page * {
+  box-sizing: border-box;
+}
+
+.voting-page {
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/1.56 system-ui, sans-serif;
+}
+
+.voting-page h1,
+.voting-page h2,
+.voting-page h3,
+.voting-page h4,
+.voting-page p,
+.voting-page figure {
+  margin: 0;
+}
+
+.voting-page a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.voting-page button,
+.voting-page input {
+  font: inherit;
+}
+
+.voting-page button {
+  cursor: pointer;
+}
+
+.voting-page :focus-visible {
+  outline: 3px solid #9961c4;
+  outline-offset: 4px;
+}
+
+.voting-page [hidden] {
+  display: none !important;
+}
+
+.voting-page .wrap {
+  width: min(1210px, calc(100% - 88px));
+  margin-inline: auto;
+}
+
+/* Hero Section */
+.voting-page .hero {
+  color: var(--paper);
+  background: radial-gradient(ellipse at 74% 30%, #40284a, transparent 63%), var(--night);
+}
+
+.voting-page .hero-grid {
+  display: grid;
+  grid-template-columns: 1.12fr 0.88fr;
+  gap: 37px;
+  align-items: center;
+  padding-block: 33px 38px;
+}
+
+.voting-page .k {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: #744d7d;
+}
+
+.voting-page .hero .k {
+  color: #edc9e7;
+}
+
+.voting-page .k i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #b46a53;
+  display: inline-block;
+  margin-right: 5px;
+  vertical-align: 1px;
+}
+
+.voting-page .hero h1 {
+  font: 400 clamp(51px, 7.4vw, 104px) / 0.91 Georgia, serif;
+  letter-spacing: -0.073em;
+  margin: 14px 0 20px;
+}
+
+.voting-page .hero h1 em {
+  color: var(--copper);
+  font-weight: 400;
+}
+
+.voting-page .hero-copy > p:not(.k) {
+  color: #efdef0;
+  max-width: 400px;
+  margin-bottom: 19px;
+}
+
+.voting-page .hero-photo {
+  position: relative;
+  border: 1px solid #a477aa;
+  overflow: hidden;
+}
+
+.voting-page .hero-photo img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1.64;
+  display: block;
+  object-fit: cover;
+  object-position: 50% 45%;
+}
+
+.voting-page .hero-photo figcaption {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  background: #23152e;
+  color: #f5e4f2;
+  padding: 6px 8px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+/* Buttons */
+.voting-page .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 9px 13px;
+  min-height: 43px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.voting-page .button.outline {
+  border-color: #cbb1d27d;
+}
+
+.voting-page .button.outline:hover {
+  background: #ffffff16;
+}
+
+.voting-page .button.primary {
+  background: var(--copper);
+  color: #26182c;
+}
+
+.voting-page .button.primary:hover {
+  background: #ffd0b2;
+}
+
+/* Ballot Section */
+.voting-page .ballot {
+  padding-block: 39px 52px;
+}
+
+.voting-page .section-head,
+.voting-page .lineup-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 18px;
+}
+
+.voting-page h2 {
+  font: 400 clamp(37px, 5.7vw, 68px) / 1 Georgia, serif;
+  letter-spacing: -0.065em;
+  margin: 8px 0 11px;
+}
+
+.voting-page .preview {
+  font-size: 11px;
+  font-weight: 720;
+  background: #eee2ef;
+  color: #603b6b;
+  border: 1px solid #d6c1d8;
+  border-radius: 5px;
+  padding: 5px 8px;
+  white-space: nowrap;
+  margin-bottom: 9px;
+}
+
+.voting-page .notice {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Contest Picker */
+.voting-page .contest-picker {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  margin: 16px 0 10px;
+}
+
+.voting-page .contest {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  background: #fffaf4;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 10px 12px;
+}
+
+.voting-page .contest .number {
+  font: 400 24px / 1 Georgia, serif;
+  color: #734780;
+}
+
+.voting-page .contest strong {
+  font-size: 15px;
+}
+
+.voting-page .contest .state {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.voting-page .contest:hover {
+  border-color: #9464a0;
+}
+
+.voting-page .contest[aria-pressed='true'] {
+  background: #ebddef;
+  border-color: #9464a0;
+  box-shadow: inset 0 -2px #80548c;
+}
+
+/* Lineup */
+.voting-page .lineup {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffaf5;
+  padding: 19px;
+}
+
+.voting-page .lineup-head {
+  margin-bottom: 15px;
+}
+
+.voting-page .lineup-head h3 {
+  font: 400 27px / 1.2 Georgia, serif;
+  letter-spacing: -0.045em;
+}
+
+.voting-page .card h4 {
+  font: 400 19px / 1.3 Georgia, serif;
+  letter-spacing: -0.04em;
+  margin: 3px 0 7px;
+}
+
+.voting-page .lineup-head p:not(.k) {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.voting-page label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.voting-page input {
+  padding: 8px 10px;
+  border: 1px solid #bdacc1;
+  border-radius: 5px;
+  min-height: 42px;
+  min-width: 0;
+  color: var(--ink);
+  background: #fff;
+}
+
+/* Cards */
+.voting-page .cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.voting-page .card {
+  border: 1px solid var(--line);
+  overflow: hidden;
+  border-radius: 5px;
+  min-width: 0;
+}
+
+.voting-page .monogram {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: var(--tone, #34213d);
+  color: #ffe1c9;
+  font: 400 clamp(30px, 6vw, 63px) / 1 Georgia, serif;
+  display: grid;
+  place-items: center;
+  min-height: 102px;
+}
+
+.voting-page .monogram:before,
+.voting-page .monogram:after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  border: 1px solid #ffffff50;
+  border-radius: 50%;
+  width: 130px;
+  height: 130px;
+}
+
+.voting-page .monogram:before {
+  left: -18px;
+  top: 15px;
+}
+
+.voting-page .monogram:after {
+  right: -18px;
+  bottom: 14px;
+}
+
+.voting-page .tone-1 {
+  --tone: #5a3848;
+}
+
+.voting-page .tone-2 {
+  --tone: #4a3865;
+}
+
+.voting-page .card-copy {
+  padding: 11px;
+}
+
+.voting-page .discipline {
+  font-size: 11px;
+  color: #684874;
+  font-weight: 700;
+}
+
+.voting-page .card-vote {
+  background: #35223f;
+  color: #fff5ed;
+  width: 100%;
+}
+
+.voting-page .card-vote:hover {
+  background: #583766;
+}
+
+.voting-page .card-vote:disabled {
+  background: #eee5ec;
+  color: #5b465e;
+  cursor: default;
+}
+
+.voting-page .feedback {
+  margin-top: 11px;
+  color: #4f3960;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.voting-page .feedback:empty {
+  display: none;
+}
+
+/* Guide Section */
+.voting-page .guide {
+  background: var(--plum);
+  color: var(--paper);
+  padding-block: 40px;
+}
+
+.voting-page .guide .k {
+  color: #edc9e7;
+}
+
+.voting-page .guide ol {
+  list-style: none;
+  margin: 17px 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 17px;
+}
+
+.voting-page .guide li {
+  border-top: 1px solid #ffffff45;
+  padding-top: 8px;
+}
+
+.voting-page .guide li span,
+.voting-page .text-link {
+  color: #ffc4a2;
+}
+
+.voting-page .guide h3 {
+  font-size: 17px;
+}
+
+.voting-page .guide p:not(.k) {
+  color: #e9d9ec;
+  font-size: 13px;
+}
+
+.voting-page .text-link {
+  text-decoration: underline;
+  font-size: 13px;
+}
+
+.voting-page .official-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 17px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.voting-page .official-links a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Dialog */
+.voting-page dialog {
+  background: #fff8f1;
+  color: var(--ink);
+  width: min(455px, calc(100% - 26px));
+  border: 1px solid #bfacc5;
+  border-radius: 8px;
+  padding: 22px;
+}
+
+.voting-page dialog::backdrop {
+  background: #170f20d9;
+}
+
+.voting-page dialog h2 {
+  font-size: 41px;
+}
+
+.voting-page dialog dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  border-bottom: 1px solid var(--line);
+  padding: 7px 0;
+}
+
+.voting-page dialog dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 750;
+}
+
+.voting-page dialog dt,
+.voting-page .dialog-note {
+  color: var(--muted);
+}
+
+.voting-page .dialog-note,
+.voting-page #review-error {
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.voting-page .close {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+}
+
+.voting-page .close button {
+  background: #efe3f0;
+  border: 1px solid #d7c6db;
+  border-radius: 4px;
+  min-width: 38px;
+  min-height: 38px;
+  font-size: 22px;
+  color: var(--ink);
+}
+
+/* Responsive */
+@media (max-width: 800px) {
+  .voting-page .wrap {
+    width: calc(100% - 46px);
+  }
+  .voting-page .hero-grid {
+    gap: 19px;
+  }
+}
+
+@media (max-width: 620px) {
+  .voting-page .wrap {
+    width: calc(100% - 28px);
+  }
+  .voting-page .hero-grid,
+  .voting-page .guide ol {
+    grid-template-columns: 1fr;
+  }
+  .voting-page .hero-grid {
+    padding-block: 23px;
+  }
+  .voting-page .section-head,
+  .voting-page .lineup-head {
+    align-items: start;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .voting-page .lineup-head label {
+    width: 100%;
+  }
+  .voting-page .contest-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .voting-page .cards {
+    grid-template-columns: 1fr;
+  }
+  .voting-page .card {
+    display: grid;
+    grid-template-columns: 85px 1fr;
+  }
+  .voting-page .monogram {
+    font-size: 35px;
+  }
+  .voting-page .lineup {
+    padding: 11px;
+  }
+  .voting-page .ballot {
+    padding-block: 24px;
+  }
+}
+
+@media (min-width: 621px) {
+  .voting-page .contest-picker {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voting-page {
+    scroll-behavior: auto;
+  }
+}
