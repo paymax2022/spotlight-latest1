@@ -4,6 +4,7 @@ import { DM_Sans, Manrope, Oswald } from 'next/font/google';
 import type { Metadata } from 'next';
 import { getAcademyCatalogue } from '@/src/server/services/academy/catalogue';
 import AcademyMotion from './AcademyMotion';
+import HeaderSpacer from './HeaderSpacer';
 import AreaExplorer from './AreaExplorer';
 import TuitionPlanner from './TuitionPlanner';
 import { ACADEMY_CONTACT, whatsappEnquiry } from './contact';
@@ -104,6 +105,7 @@ export default async function FilmAcademyPage() {
         data-academy-root
       >
         <AcademyMotion />
+        <HeaderSpacer />
 
         {/* ── Hero ─────────────────────────────────────────────────────── */}
         <section className={styles.hero} aria-label="Spotlight Film Academy, Lekki Lagos">
@@ -167,9 +169,13 @@ export default async function FilmAcademyPage() {
               <Link className={`${styles.btn} ${styles.btnPrimary}`} href="/film-academy/apply">
                 Apply to the academy <span aria-hidden="true">↗</span>
               </Link>
-              <Link className={`${styles.btn} ${styles.btnOutline}`} href="#plan">
-                Price your training <span aria-hidden="true">↓</span>
-              </Link>
+              {/* The pricing section only renders once areas are published, so the
+                  jump link is dropped rather than left pointing at an empty target. */}
+              {areas.length > 0 ? (
+                <Link className={`${styles.btn} ${styles.btnOutline}`} href="#plan">
+                  Price your training <span aria-hidden="true">↓</span>
+                </Link>
+              ) : null}
             </div>
           </div>
         </section>
@@ -248,10 +254,7 @@ export default async function FilmAcademyPage() {
               <AreaExplorer areas={areas} />
             ) : (
               <p className={styles.lede}>
-                The areas offered for the next intake are confirmed by admissions.{' '}
-                <a className={styles.inlineLink} href={whatsappEnquiry('Hello Spotlight, which areas of study are open for the next Film Academy intake?')}>
-                  Ask on WhatsApp <span aria-hidden="true">↗</span>
-                </a>
+                The areas offered for the next intake are confirmed by admissions.
               </p>
             )}
           </div>
