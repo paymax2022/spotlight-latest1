@@ -616,9 +616,6 @@ export default function OpenMicCompetitionPage() {
             <a href="#opportunities">Opportunities</a>
             <Link href="/service-details/stem-contest">STEM &amp; Tech <ArrowIcon /></Link>
           </nav>
-          <a className="openMic-button openMic-buttonOutline" href="/apply">
-            Register as an artist <ArrowIcon />
-          </a>
         </div>
       </header>
 
@@ -668,8 +665,8 @@ export default function OpenMicCompetitionPage() {
         <div className="openMic-stats">
           <div className="openMic-wrap openMic-statsGrid">
             <div><strong>₦1M</strong><span>Monthly cash prize</span></div>
-            <div><strong>01</strong><span>Studio recording session</span></div>
-            <div><strong>01</strong><span>Music video shoot</span></div>
+            <div><strong>1</strong><span>Studio recording session</span></div>
+            <div><strong>1</strong><span>Music video shoot</span></div>
           </div>
         </div>
 
@@ -723,9 +720,7 @@ export default function OpenMicCompetitionPage() {
             <div className="openMic-testimonialsHead">
               <div>
                 <p className="openMic-kicker">OPEN MIC / ARTIST VOICES</p>
-                <h2 id="testimonials-title">
-                  Testimonials of Artists Participation in Open Mic
-                </h2>
+                <h2 id="testimonials-title">Testimonials</h2>
               </div>
               <p className="openMic-sectionLead">
                 Five artists describe the rounds, the feedback and the work that
