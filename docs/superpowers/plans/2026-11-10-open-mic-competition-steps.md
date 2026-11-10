@@ -842,6 +842,8 @@ quotes is a literal pathspec.
 **Files:**
 - Create: `frontend-web/src/features/openmic/active-edition.ts`
 - Modify: `frontend-web/app/apply/open-mic-competition/page.tsx`
+- Modify: `frontend-web/app/open-mic/[slug]/apply/page.tsx:13-23` (the second inline copy of the
+  same judgement, found by the controller after Task 3b started — see Step 5b)
 - Test: `frontend-web/tests/unit/openmic/active-edition.test.ts`
 
 **Interfaces:**
@@ -1016,6 +1018,29 @@ export default async function LegacyOpenMicApplyPage() {
 }
 ```
 
+- [ ] **Step 5b: Adopt it on the slug-scoped apply page too**
+
+`app/open-mic/[slug]/apply/page.tsx` holds a *second* copy of the same decision: when the requested
+slug does not resolve, it picks the current edition to redirect to using the very same narrow list
+plus the same `|| contests[0]` escape hatch (lines 14-18). A task called "one definition of the
+current edition" that leaves that literal behind re-creates the defect on the page step #03 links
+to. Replace the body of the `if (!contest)` block:
+
+```ts
+  if (!contest) {
+    const fallback = await getActiveOpenMicEdition();
+    if (fallback) {
+      redirect(`/open-mic/${fallback.slug}/apply`);
+    }
+    notFound();
+  }
+```
+
+Add `getActiveOpenMicEdition` to the `@/src/features/openmic/active-edition` import and **drop
+`listContests` from the `@/src/server/openmic/persistence` import** — line 14 is its only use in
+the file, so leaving it is an unused import and `npm run lint` says so. Do not otherwise reformat
+this page; Task 3b owns its `params` signature.
+
 - [ ] **Step 6: Verify, then commit**
 
 Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic && npx tsc --noEmit && npm run lint`
@@ -1024,6 +1049,7 @@ Expected: PASS, exit 0, no lint errors.
 ```bash
 git -C /Users/paymax/Documents/spotlight/main add frontend-web/src/features/openmic/active-edition.ts \
   frontend-web/app/apply/open-mic-competition/page.tsx \
+  "frontend-web/app/open-mic/[slug]/apply/page.tsx" \
   frontend-web/tests/unit/openmic/active-edition.test.ts
 git -C /Users/paymax/Documents/spotlight/main commit -m "feat(open-mic): give the current edition one definition
 
