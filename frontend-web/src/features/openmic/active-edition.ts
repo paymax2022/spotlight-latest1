@@ -96,6 +96,10 @@ export function buildOpenMicEditionStepsData(
   const beat = contest.beat;
   const previewUrl = beat ? publicBeatUrl(beat.previewUrl) : null;
   const downloadUrl = beat ? publicBeatUrl(beat.downloadUrl) : null;
+  // A beat is offered for download only when the admin left it active
+  // (is_active -> allowDownload) AND the stored path is one the public reader
+  // will actually serve.
+  const downloadable = beat ? beat.allowDownload === true && downloadUrl !== null : false;
 
   return {
     id: contest.id,
@@ -119,11 +123,10 @@ export function buildOpenMicEditionStepsData(
           usageRules: beat.usageRules || '',
           previewUrl,
           downloadUrl,
-          // A beat is offered for download only when the admin left it active
-          // (is_active -> allowDownload) AND the stored path is one the public
-          // reader will actually serve.
-          downloadable: beat.allowDownload === true && downloadUrl !== null,
-          requiresPaidEntry: beat.requiresPaidEntryForDownload === true && downloadUrl !== null,
+          downloadable,
+          // One rule, not two: a lock on a download this object has already
+          // decided not to offer would tell an artist to pay for nothing.
+          requiresPaidEntry: beat.requiresPaidEntryForDownload === true && downloadable,
         }
       : null,
     board: board === null

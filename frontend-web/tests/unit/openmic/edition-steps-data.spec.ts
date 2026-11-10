@@ -105,6 +105,15 @@ describe('buildOpenMicEditionStepsData', () => {
     expect(unserveable.beat?.requiresPaidEntry).toBe(false);
   });
 
+  it('drops the paid-entry lock when the admin deactivated the beat too', () => {
+    const data = buildOpenMicEditionStepsData(
+      contest({ beat: { ...contest().beat!, allowDownload: false, requiresPaidEntryForDownload: true } }),
+      [],
+    );
+    expect(data.beat?.downloadable).toBe(false);
+    expect(data.beat?.requiresPaidEntry).toBe(false);
+  });
+
   it('omits the beat object when the edition has none', () => {
     const data = buildOpenMicEditionStepsData(contest({ beat: undefined }), []);
     expect(data.beat).toBeNull();
