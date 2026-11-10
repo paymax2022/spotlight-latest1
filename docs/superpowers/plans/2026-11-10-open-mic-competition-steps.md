@@ -1129,7 +1129,7 @@ dropped an edition as soon as its beat went up or its window closed."
 
 **Interfaces:**
 - Consumes: Task 4's `getActiveOpenMicEdition`, `getLeaderboard` + `mapSubmissionRow` shapes (`voteCount ← public_vote_count`, `songTitle ← entry_title`, `stageName ← lyrical_concept_summary.stageName`), Task 1's `publicBeatUrl`, `slugifyArtist` from `@/src/features/openmic/workflow`, `contest.beat.{beatTitle,producerCredit,producerName,usageRules,previewUrl,downloadUrl,allowDownload,requiresPaidEntryForDownload}` (`persistence.ts:215-232`, where `allowDownload = is_active === true` and `previewOnly` is inert on the DB path).
-- Produces: `OpenMicEditionStepsData` and `buildOpenMicEditionStepsData(contest, board)`, `loadOpenMicEditionSteps()`. Task 9's component and Task 10's page consume the type; the field names below are the contract.
+- Produces: `OpenMicEditionStepsData` (its `board` is `null` when the read failed and `{rows: [], entryCount: 0, totalVotes: 0}` when the contest really has no entries) and `buildOpenMicEditionStepsData(contest, board | null)`, `loadOpenMicEditionSteps()`. Task 9's component and Task 10's page consume the type; the field names below are the contract.
 
 - [ ] **Step 1: Write the failing builder tests**
 
@@ -1198,7 +1198,9 @@ describe('buildOpenMicEditionStepsData', () => {
     expect(bare.registrationStartAt).toBeNull();
     expect(bare.submissionEndAt).toBeNull();
     expect(bare.votingStartAt).toBe(START);
-    expect(JSON.parse(JSON.stringify(bare))).toEqual(bare);
+    // toStrictEqual, not toEqual: a stray `undefined`-valued key would survive
+    // toEqual and be silently dropped on the way to the client.
+    expect(JSON.parse(JSON.stringify(bare))).toStrictEqual(bare);
   });
 
   it('exposes the beat that is publicly playable', () => {
@@ -1226,18 +1228,53 @@ describe('buildOpenMicEditionStepsData', () => {
     expect(data.beat?.downloadable).toBe(false);
   });
 
-  it('truncates the board to five in the order given, with canonical artist slugs', () => {
+  it('never promises a paid-entry lock on a download it cannot serve', () => {
+    const locked = buildOpenMicEditionStepsData(
+      contest({ beat: { ...contest().beat!, requiresPaidEntryForDownload: true } }),
+      [],
+    );
+    expect(locked.beat?.requiresPaidEntry).toBe(true);
+
+    const unserveable = buildOpenMicEditionStepsData(
+      contest({ beat: { ...contest().beat!, downloadUrl: '/api/registration/uploads/x.mp3', requiresPaidEntryForDownload: true } }),
+      [],
+    );
+    expect(unserveable.beat?.downloadUrl).toBeNull();
+    expect(unserveable.beat?.requiresPaidEntry).toBe(false);
+  });
+
+  it('omits the beat object when the edition has none', () => {
+    const data = buildOpenMicEditionStepsData(contest({ beat: undefined }), []);
+    expect(data.beat).toBeNull();
+  });
+
+  it('truncates the board to five, with canonical artist slugs and the store\'s totals', () => {
     const board = Array.from({ length: 8 }, (_, i) => entry(i + 1));
     const data = buildOpenMicEditionStepsData(contest(), board);
-    expect(data.leaderboard.map((row) => row.rank)).toEqual([1, 2, 3, 4, 5]);
-    expect(data.leaderboard[0]).toEqual({ rank: 1, artistSlug: 'artist-1', stageName: 'Artist 1', songTitle: 'Track 1', voteCount: 10 });
-    expect(data.entryCount).toBe(8);
-    expect(data.totalVotes).toBe(360);
+    expect(data.board?.rows.map((row) => row.rank)).toEqual([1, 2, 3, 4, 5]);
+    expect(data.board?.rows[0]).toStrictEqual({ rank: 1, artistSlug: 'artist-1', stageName: 'Artist 1', songTitle: 'Track 1', voteCount: 10 });
+    expect(data.board?.entryCount).toBe(8);
+    expect(data.board?.totalVotes).toBe(360);
+  });
+
+  it('numbers rows by store position, never re-sorting by votes', () => {
+    // getLeaderboard orders by leaderboard_score (a judge-weighted composite),
+    // which need not track public_vote_count. Re-sorting here would contradict
+    // the full leaderboard the "Vote now" button links to.
+    const mixed = [entry(1, { voteCount: 5 }), entry(2, { voteCount: 90 }), entry(3, { voteCount: 40 })];
+    const rows = buildOpenMicEditionStepsData(contest(), mixed).board?.rows;
+    expect(rows?.map((row) => row.voteCount)).toEqual([5, 90, 40]);
+    expect(rows?.map((row) => row.rank)).toEqual([1, 2, 3]);
   });
 
   it('slugifies a name with punctuation exactly as the entry page looks it up', () => {
     const data = buildOpenMicEditionStepsData(contest(), [entry(1, { stageName: 'K1ng$hoota' })]);
-    expect(data.leaderboard[0].artistSlug).toBe('k1nghoota');
+    expect(data.board?.rows[0].artistSlug).toBe('k1nghoota');
+  });
+
+  it('tells a board that is genuinely empty apart from one it could not read', () => {
+    expect(buildOpenMicEditionStepsData(contest(), []).board).toStrictEqual({ rows: [], entryCount: 0, totalVotes: 0 });
+    expect(buildOpenMicEditionStepsData(contest(), null).board).toBeNull();
   });
 
   it('carries the two admin display switches through as booleans', () => {
@@ -1257,12 +1294,19 @@ describe('loadOpenMicEditionSteps', () => {
     expect(getLeaderboard).not.toHaveBeenCalled();
   });
 
-  it('degrades to an empty board when the leaderboard read throws, so the page still renders', async () => {
+  it('degrades to an unreadable board when the leaderboard read throws', async () => {
     listContests.mockResolvedValue([contest()]);
     getLeaderboard.mockRejectedValue(new Error('db down'));
     const data: OpenMicEditionStepsData | null = await loadOpenMicEditionSteps();
-    expect(data?.leaderboard).toEqual([]);
+    expect(data?.board).toBeNull();
     expect(data?.slug).toBe('open-mic-dev');
+  });
+
+  it('keeps a zeroed board when the read succeeds and returns nothing', async () => {
+    listContests.mockResolvedValue([contest()]);
+    getLeaderboard.mockResolvedValue([]);
+    const data: OpenMicEditionStepsData | null = await loadOpenMicEditionSteps();
+    expect(data?.board).toStrictEqual({ rows: [], entryCount: 0, totalVotes: 0 });
   });
 });
 ```
@@ -1283,13 +1327,15 @@ import type { OpenMicContest, OpenMicSubmission } from '@/src/features/openmic/t
 import { slugifyArtist } from '@/src/features/openmic/workflow';                      // new
 import { publicBeatUrl } from '@/src/features/openmic/beat-storage';                  // new
 
-/** Everything the steps block renders, decided server-side so the client only
- *  ever tests for `null`. No Date objects: it crosses the server/client boundary. */
+/** Everything the steps block renders. Availability, the display switches and
+ *  the board's numbers are decided server-side; the only thing the browser
+ *  recomputes is which side of a window `Date.now()` falls on, from the ISO
+ *  strings below. No Date objects: this crosses the server/client boundary. */
 export type OpenMicEditionStepsData = {
   id: string;
   slug: string;
   title: string;
-  status: string;
+  status: OpenMicContest['status'];
   registrationStartAt: string | null;
   registrationEndAt: string | null;
   submissionStartAt: string | null;
@@ -1309,9 +1355,13 @@ export type OpenMicEditionStepsData = {
     downloadable: boolean;
     requiresPaidEntry: boolean;
   } | null;
-  leaderboard: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
-  entryCount: number;
-  totalVotes: number;
+  /** `null` means the board could not be read — which is not the same fact as
+   *  "0 entries", and the page must never render a number for it. */
+  board: {
+    rows: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
+    entryCount: number;
+    totalVotes: number;
+  } | null;
 };
 
 function at(value: string | undefined): string | null {
@@ -1319,10 +1369,11 @@ function at(value: string | undefined): string | null {
 }
 
 /** `board` arrives already ordered by the store (leaderboard_score, then
- *  public_vote_count) — this only projects, truncates and totals. */
+ *  public_vote_count) — this only projects, truncates and totals. Pass `null`
+ *  for "the board could not be read"; `[]` means it was read and is empty. */
 export function buildOpenMicEditionStepsData(
   contest: OpenMicContest,
-  board: OpenMicSubmission[],
+  board: OpenMicSubmission[] | null,
 ): OpenMicEditionStepsData {
   const beat = contest.beat;
   const previewUrl = beat ? publicBeatUrl(beat.previewUrl) : null;
@@ -1354,34 +1405,42 @@ export function buildOpenMicEditionStepsData(
           // (is_active -> allowDownload) AND the stored path is one the public
           // reader will actually serve.
           downloadable: beat.allowDownload === true && downloadUrl !== null,
-          requiresPaidEntry: beat.requiresPaidEntryForDownload === true,
+          requiresPaidEntry: beat.requiresPaidEntryForDownload === true && downloadUrl !== null,
         }
       : null,
-    leaderboard: board.slice(0, 5).map((row, index) => ({
-      rank: index + 1,
-      artistSlug: slugifyArtist(row.stageName),
-      stageName: row.stageName,
-      songTitle: row.songTitle,
-      voteCount: row.voteCount,
-    })),
-    entryCount: board.length,
-    totalVotes: board.reduce((sum, row) => sum + row.voteCount, 0),
+    board: board === null
+      ? null
+      : {
+          rows: board.slice(0, 5).map((row, index) => ({
+            rank: index + 1,
+            artistSlug: slugifyArtist(row.stageName),
+            stageName: row.stageName,
+            songTitle: row.songTitle,
+            voteCount: row.voteCount,
+          })),
+          // Totals are of the whole board, not the five rows shown.
+          entryCount: board.length,
+          totalVotes: board.reduce((sum, row) => sum + row.voteCount, 0),
+        },
   };
 }
 
 /**
- * One server read for the programme page. A leaderboard failure must not take
- * the page down: getLeaderboard already returns [] when the DB is unconfigured,
- * and this keeps that promise for the throwing case too.
+ * One server read for the programme page. A failed leaderboard read does not
+ * take the page down and does not invent a number either: getLeaderboard
+ * already returns [] when the DB is unconfigured and for a genuinely empty
+ * contest, so only a thrown error reaches `null`.
  */
 export async function loadOpenMicEditionSteps(): Promise<OpenMicEditionStepsData | null> {
   const contest = await getActiveOpenMicEdition();
   if (!contest) return null;
-  let board: OpenMicSubmission[] = [];
+  let board: OpenMicSubmission[] | null = [];
   try {
     board = await getLeaderboard(contest.id);
   } catch {
-    board = [];
+    // A read that failed is not a contest with no entries: `null` is the only
+    // value that stops the page printing "0 entries".
+    board = null;
   }
   return buildOpenMicEditionStepsData(contest, board);
 }
@@ -1390,7 +1449,7 @@ export async function loadOpenMicEditionSteps(): Promise<OpenMicEditionStepsData
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic`
-Expected: PASS (Task 4's 5 + this file's 9).
+Expected: PASS (Task 4's 5 + this file's 14).
 
 - [ ] **Step 5: Typecheck and commit**
 
@@ -1886,7 +1945,7 @@ disposition, no ranked board."
 - Create: `frontend-web/components/openmic/competition/edition-steps.module.css`
 
 **Interfaces:**
-- Consumes: Task 5's `OpenMicEditionStepsData`; Task 1's `publicBeatUrl` (already applied server-side — this component never re-derives availability); `createClient` from `@/lib/supabase/client` for the signed-in entry lookup; `slugifyArtist` from `@/src/features/openmic/workflow`; `GET /api/open-mic/submissions?contestId=<id>` (bearer, already filtered to `user.id`).
+- Consumes: Task 5's `OpenMicEditionStepsData`, including that `data.board` is `null` when the board could not be read, `{rows: [], …}` when the edition has no entries yet, and otherwise already cut to five in the store's standing order — the four render branches at step #05 map those three facts plus "standings hidden" one-to-one, and no branch may print a number for a `null` board. `rank` is the store's composite standing (judges + votes), so nothing here may call it "most voted". Task 1's `publicBeatUrl` (already applied server-side — this component never re-derives availability); `createClient` from `@/lib/supabase/client` for the signed-in entry lookup; `slugifyArtist` from `@/src/features/openmic/workflow`; `GET /api/open-mic/submissions?contestId=<id>` (bearer, already filtered to `user.id`).
 - Produces: `OpenMicEditionSteps({ data })`, a client component rendering `<section id="route">` with `#step-1…#step-5`. Task 10 renders it from the view.
 
 - [ ] **Step 1: Write the styles for what today's CSS has no rule for**
@@ -2053,7 +2112,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
   const submission = windowState(data?.submissionStartAt ?? null, data?.submissionEndAt ?? null, now);
   const voting = windowState(data?.votingStartAt ?? null, data?.votingEndAt ?? null, now);
   const beat = data?.beat ?? null;
-  const board = data?.leaderboard ?? [];
+  const board = data?.board ?? null;
 
   return (
     <section className="openMic-wrap openMic-sectionPad openMic-route" id="route">
@@ -2164,14 +2223,20 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                   data ? (
                     <>
                       <WindowLine label="Voting window" start={data.votingStartAt} end={data.votingEndAt} state={voting} />
-                      {data.showLeaderboard && board.length > 0 ? (
+                      {!data.showLeaderboard ? (
+                        <p className={styles.note}>This edition keeps its standings private until the results are announced.</p>
+                      ) : !board ? (
+                        <p className={styles.note}>Standings are unavailable right now. Try the leaderboard again in a moment.</p>
+                      ) : board.rows.length === 0 ? (
+                        <p className={styles.note}>The board fills in when entries go live for voting.</p>
+                      ) : (
                         <>
                           <p className={styles.tally}>
-                            {data.entryCount} {data.entryCount === 1 ? 'entry' : 'entries'} on the board
-                            {data.showVoteCounts ? ` · ${data.totalVotes.toLocaleString()} votes counted` : ''}
+                            {board.entryCount} {board.entryCount === 1 ? 'entry' : 'entries'} on the board
+                            {data.showVoteCounts ? ` · ${board.totalVotes.toLocaleString()} votes counted` : ''}
                           </p>
                           <ol className={styles.board}>
-                            {board.map((row) => (
+                            {board.rows.map((row) => (
                               <li key={row.artistSlug} data-rank={row.rank}>
                                 <span className={styles.rank}>{row.rank}</span>
                                 <span className={styles.who}>
@@ -2189,12 +2254,6 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                             <Link className="openMic-button openMic-buttonPrimary" href={`/open-mic/${data.slug}/entries`}>Vote now <span aria-hidden="true">→</span></Link>
                           </div>
                         </>
-                      ) : (
-                        <p className={styles.note}>
-                          {!data.showLeaderboard
-                            ? 'This edition keeps its standings private until the results are announced.'
-                            : 'The board fills in when entries go live for voting.'}
-                        </p>
                       )}
                       <div className="openMic-actions">
                         <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
