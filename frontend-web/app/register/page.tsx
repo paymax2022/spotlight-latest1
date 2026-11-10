@@ -3,9 +3,10 @@
 // re-exporting /apply's (which previously leaked "Apply" copy into
 // registration share unfurls).
 
+import { SITE_URL } from '@/src/lib/site-url';
+
 export { default } from '../apply/page';
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
 const title = 'Register for Spotlight | Contestant Sign-Up';
 const description =
   'Register for Spotlight. Create your contestant entry for auditions, talent categories, public voting, and national reality TV exposure.';
@@ -13,11 +14,11 @@ const description =
 export const metadata = {
   title,
   description,
-  alternates: { canonical: `${siteUrl}/register` },
+  alternates: { canonical: `${SITE_URL}/register` },
   openGraph: {
     title,
     description,
-    url: `${siteUrl}/register`,
+    url: `${SITE_URL}/register`,
     siteName: 'Spotlight',
     type: 'website',
   },

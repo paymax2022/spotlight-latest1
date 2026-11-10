@@ -11,8 +11,8 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { createAdminClient } from '@/lib/supabase/server';
 import { resolveContestantPhotoUrl } from '@/src/lib/storage/contestant-photo';
+import { SITE_URL } from '@/src/lib/site-url';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEFAULT_OG_IMAGE = '/assets/img/shape/banner-home.png';
 
