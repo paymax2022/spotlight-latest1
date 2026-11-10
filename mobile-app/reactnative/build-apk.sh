@@ -37,8 +37,12 @@ export REACT_NATIVE_ARCHS
 # "SDK location not found. Define a valid SDK location with an ANDROID_HOME
 # environment variable or by setting the sdk.dir path in .../local.properties".
 if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
-  for sdk_candidate in "$HOME/Library/Android/sdk" "$HOME/Android/Sdk" /usr/local/share/android-sdk; do
-    if [[ -d "$sdk_candidate" ]]; then
+  # Capture sdk.dir before the prebuild --clean below deletes the file: it is
+  # often the only place the SDK path is recorded, and the candidates underneath
+  # do not cover a custom install location.
+  SDK_DIR_FROM_PROPS="$(sed -n 's/^sdk\.dir=//p' android/local.properties 2>/dev/null | tail -1 || true)"
+  for sdk_candidate in "$SDK_DIR_FROM_PROPS" "$HOME/Library/Android/sdk" "$HOME/Android/Sdk" /usr/local/share/android-sdk; do
+    if [[ -n "$sdk_candidate" && -d "$sdk_candidate" ]]; then
       export ANDROID_HOME="$sdk_candidate"
       break
     fi
@@ -216,7 +220,12 @@ fi
 
 # Keep generated native identifiers in sync with app.json on both APK and AAB
 # build paths; otherwise Gradle can package a stale applicationId.
-npx expo prebuild --platform android --no-install
+# --clean is what makes this deterministic. android/ is regenerated from app.json
+# plus plugins/, so a block written by a config plugin that no longer exists
+# cannot ride along. Without it, removing plugins/withAndroidVersionCode.js left
+# its `versionCode last+1` block in the existing build.gradle, which overrode
+# app.json and emitted versionCode 2 into a release meant to be 20.
+npx expo prebuild --platform android --no-install --clean
 GENERATED_ANDROID_PACKAGE="$(sed -nE "s/^[[:space:]]*applicationId ['\"]([^'\"]+)['\"].*/\\1/p" android/app/build.gradle | tail -1)"
 if [[ "$GENERATED_ANDROID_PACKAGE" != "$EXPECTED_ANDROID_PACKAGE" ]]; then
   echo "❌ Generated Android applicationId is ${GENERATED_ANDROID_PACKAGE:-missing}; expected $EXPECTED_ANDROID_PACKAGE." >&2
