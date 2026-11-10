@@ -36,7 +36,9 @@
 | `frontend-web/app/apply/open-mic-competition/page.tsx` | Uses the shared selector; loses `|| contests[0]`. | Task 4 |
 | `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx`<br>`frontend-web/components/openmic/OpenMicAdminContestEditor.tsx` | Upload to the new route, store reader paths, warn on a legacy beat. | Task 6 |
 | `frontend-web/tests/unit/media/open-mic-beat-storage.test.ts` | Reader allowlist, dispositions, upload validation, availability rule. | Tasks 1–3 |
-| `frontend-web/tests/unit/openmic/active-edition.test.ts` | Selector + data builder. | Tasks 4–5 |
+| `frontend-web/tests/unit/openmic/open-mic-params.spec.ts` | Hermetic guard: every Open Mic page awaits `params`. | Task 3b |
+| `frontend-web/tests/unit/openmic/active-edition.test.ts` | The edition selector, incl. the compile-time status-classification pin. | Task 4 |
+| `frontend-web/tests/unit/openmic/edition-steps-data.spec.ts` | The steps view-model builder and loader. | Task 5 |
 | `frontend-web/tests/unit/openmic/admin-beat-wiring.spec.ts` | Hermetic source guard for the two admin forms. | Task 6 |
 | `frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx`<br>`.../edition-steps.module.css` | The five accordions with live content, beat player, own-entry lookup, top-5 board. | Task 9 |
 | `frontend-web/app/service-details/open-mic-competition/page.tsx` | Server component: resolve data, render the view. | Task 10 |
@@ -1243,6 +1245,15 @@ describe('buildOpenMicEditionStepsData', () => {
     expect(unserveable.beat?.requiresPaidEntry).toBe(false);
   });
 
+  it('drops the paid-entry lock when the admin deactivated the beat too', () => {
+    const data = buildOpenMicEditionStepsData(
+      contest({ beat: { ...contest().beat!, allowDownload: false, requiresPaidEntryForDownload: true } }),
+      [],
+    );
+    expect(data.beat?.downloadable).toBe(false);
+    expect(data.beat?.requiresPaidEntry).toBe(false);
+  });
+
   it('omits the beat object when the edition has none', () => {
     const data = buildOpenMicEditionStepsData(contest({ beat: undefined }), []);
     expect(data.beat).toBeNull();
@@ -1378,6 +1389,10 @@ export function buildOpenMicEditionStepsData(
   const beat = contest.beat;
   const previewUrl = beat ? publicBeatUrl(beat.previewUrl) : null;
   const downloadUrl = beat ? publicBeatUrl(beat.downloadUrl) : null;
+  // A beat is offered for download only when the admin left it active
+  // (is_active -> allowDownload) AND the stored path is one the public reader
+  // will actually serve.
+  const downloadable = beat ? beat.allowDownload === true && downloadUrl !== null : false;
 
   return {
     id: contest.id,
@@ -1401,11 +1416,10 @@ export function buildOpenMicEditionStepsData(
           usageRules: beat.usageRules || '',
           previewUrl,
           downloadUrl,
-          // A beat is offered for download only when the admin left it active
-          // (is_active -> allowDownload) AND the stored path is one the public
-          // reader will actually serve.
-          downloadable: beat.allowDownload === true && downloadUrl !== null,
-          requiresPaidEntry: beat.requiresPaidEntryForDownload === true && downloadUrl !== null,
+          downloadable,
+          // One rule, not two: a lock on a download this object has already
+          // decided not to offer would tell an artist to pay for nothing.
+          requiresPaidEntry: beat.requiresPaidEntryForDownload === true && downloadable,
         }
       : null,
     board: board === null
@@ -1449,7 +1463,7 @@ export async function loadOpenMicEditionSteps(): Promise<OpenMicEditionStepsData
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic`
-Expected: PASS (Task 4's 5 + this file's 14).
+Expected: PASS — 23 tests: Task 3b's `open-mic-params.spec.ts` (3) + Task 4's 5 + this file's 15. (Count the directory, not just this task: `tests/unit/openmic` already holds other tasks' specs.)
 
 - [ ] **Step 5: Typecheck and commit**
 
