@@ -14,9 +14,13 @@ const readLocalUpload = vi.hoisted(() => vi.fn());
 const hasR2Config = vi.hoisted(() => vi.fn(() => false));
 const assertR2ObjectExists = vi.hoisted(() => vi.fn());
 const createR2DownloadUrl = vi.hoisted(() => vi.fn());
+const assertAdminPermission = vi.hoisted(() => vi.fn());
+const saveLocalUpload = vi.hoisted(() => vi.fn());
+vi.mock('@/src/server/admin/auth', () => ({ assertAdminPermission }));
 
 vi.mock('@/src/lib/storage/local-uploads', () => ({
   readLocalUpload,
+  saveLocalUpload,
   contentTypeForKey: (key: string) => (key.endsWith('.mp3') ? 'audio/mpeg' : 'application/octet-stream'),
 }));
 
@@ -212,5 +216,94 @@ describe('GET /api/open-mic/beats/[fileKey] with R2 configured', () => {
     expect(res.status).toBe(404);
     expect(res.headers.get('location')).toBeNull();
     expect(createR2DownloadUrl).not.toHaveBeenCalled();
+  });
+});
+
+import { ApiError } from '@/src/lib/api/responses';
+import { POST } from '@/app/api/admin/open-mic/beats/route';
+
+function beatUploadRequest(opts: { name?: string; type?: string; contestId?: string | null; bytes?: number } = {}) {
+  const form = new FormData();
+  const body = new Uint8Array(opts.bytes ?? 3);
+  form.append('file', new File([body], opts.name ?? 'beat.mp3', { type: opts.type ?? 'audio/mpeg' }));
+  if (opts.contestId !== null) form.append('contestId', opts.contestId ?? 'contest-9');
+  const query = opts.contestId ? `?contestId=${encodeURIComponent(opts.contestId)}` : '';
+  return new Request(`https://web.example.test/api/admin/open-mic/beats${query}`, { method: 'POST', body: form });
+}
+
+describe('POST /api/admin/open-mic/beats', () => {
+  beforeEach(() => {
+    assertAdminPermission.mockReset();
+    assertAdminPermission.mockResolvedValue({ role: 'admin', actorId: 'user-1' });
+    saveLocalUpload.mockReset();
+    saveLocalUpload.mockResolvedValue(undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  it('stores the bytes under openmic-beats/<contestId>/ and returns relative reader paths', async () => {
+    const res = await POST(beatUploadRequest());
+    expect(res.status).toBe(201);
+    const { beat } = await res.json();
+    expect(beat.objectKey).toMatch(/^openmic-beats\/contest-9\/[0-9a-f-]+\.mp3$/);
+    expect(beat.previewUrl).toBe(`/api/open-mic/beats/${encodeBeatFileKey(beat.objectKey)}`);
+    expect(beat.downloadUrl).toBe(`${beat.previewUrl}?download=1`);
+    expect(saveLocalUpload.mock.calls[0][0]).toBe(beat.objectKey);
+    expect(saveLocalUpload.mock.calls[0][1]).toBeInstanceOf(Buffer);
+  });
+
+  it('namespaces under "unassigned" when no contest id is sent, because the builder has no id yet', async () => {
+    const res = await POST(beatUploadRequest({ contestId: null }));
+    expect((await res.json()).beat.objectKey).toMatch(/^openmic-beats\/unassigned\//);
+  });
+
+  it('refuses a contestId that is not a safe path token', async () => {
+    const res = await POST(beatUploadRequest({ contestId: '../../registration' }));
+    expect(res.status).toBe(400);
+    expect(saveLocalUpload).not.toHaveBeenCalled();
+  });
+
+  // A dot-dot id survives the character class but not the public reader's own
+  // `!key.includes('..')` check, so accepting it would 201 a beat URL that 404s
+  // forever — the store/serve pairing is the one thing this route must keep.
+  it('refuses a contestId the public reader would not serve', async () => {
+    for (const contestId of ['..', 'a..b']) {
+      expect((await POST(beatUploadRequest({ contestId }))).status).toBe(400);
+    }
+    expect(saveLocalUpload).not.toHaveBeenCalled();
+  });
+
+  it('accepts both mp3 spellings a browser reports', async () => {
+    expect((await POST(beatUploadRequest({ type: 'audio/mpeg' }))).status).toBe(201);
+    expect((await POST(beatUploadRequest({ type: 'audio/mp3' }))).status).toBe(201);
+  });
+
+  it('rejects a non-mp3 name, a mismatched declared type, and anything over 50MB', async () => {
+    expect((await POST(beatUploadRequest({ name: 'beat.wav' }))).status).toBe(400);
+    expect((await POST(beatUploadRequest({ type: 'text/html' }))).status).toBe(400);
+    expect((await POST(beatUploadRequest({ bytes: 51 * 1024 * 1024 }))).status).toBe(400);
+    expect(saveLocalUpload).not.toHaveBeenCalled();
+  });
+
+  it('gates BEFORE reading the body: a forbidden caller stores nothing', async () => {
+    assertAdminPermission.mockRejectedValue(new ApiError('Forbidden', 403));
+    const res = await POST(beatUploadRequest());
+    expect(res.status).toBe(403);
+    expect(saveLocalUpload).not.toHaveBeenCalled();
+  });
+
+  // The observable half of "before reading the body": a forbidden caller with a
+  // malformed request gets the auth status, never the 415 that parsing the body
+  // would have produced — so nothing about our payload rules leaks to them.
+  it('answers 403 rather than 415 when a forbidden caller sends a non-multipart body', async () => {
+    assertAdminPermission.mockRejectedValue(new ApiError('Forbidden', 403));
+    const res = await POST(
+      new Request('https://web.example.test/api/admin/open-mic/beats', {
+        method: 'POST',
+        headers: { 'content-type': 'text/plain' },
+        body: 'not a form',
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(saveLocalUpload).not.toHaveBeenCalled();
   });
 });
