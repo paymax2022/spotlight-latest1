@@ -32,6 +32,12 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* public/assets/css/main.css hides every <br> below 575px, which would run the
+   sixteen deliberate breaks on this page into single lines. */
+.page br {
+  display: inline;
+}
+
 .page a {
   color: inherit;
   text-decoration: none;
@@ -545,6 +551,7 @@
 }
 
 .panelArt::after {
+  pointer-events: none;
   content: '';
   position: absolute;
   inset: 0;
@@ -706,6 +713,7 @@
 }
 
 .setImage::after {
+  pointer-events: none;
   content: '';
   position: absolute;
   inset: 0;
@@ -1319,6 +1327,7 @@
 }
 
 .closing::before {
+  pointer-events: none;
   content: '';
   position: absolute;
   top: -30%;
