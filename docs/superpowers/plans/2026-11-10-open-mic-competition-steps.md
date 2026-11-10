@@ -779,7 +779,26 @@ export default async function OpenMicArtistVotingPage({
   const entry = entries.find((e) => slugifyArtist(e.stageName) === artistSlug);
 ```
 
-- [ ] **Step 5: Run the guard, the type gate, and prove it at runtime**
+- [ ] **Step 5: Fix the fallback copy that promises a control this page has none of**
+
+Task 3's review found a plan defect in the sentence shipped at
+`app/open-mic/[slug]/page.tsx:107-110`: it says *"download and usage stay available once it is
+published"*, but the edition page renders no download button and no usage file — the download CTA
+is Task 9's job inside the steps block. A shipped page must not advertise a control that is not on
+it. Replace the body of that `<p>` (lines 108-109 only; the element, its inline style and the
+`:114` "Beat not uploaded yet" branch stay as they are):
+
+```tsx
+                    <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 0 }}>
+                      Playback will be available once this edition&#39;s beat is published.
+                    </p>
+```
+
+Ride along reason: this file is already open for Steps 1–4, so it is one logical change (make the
+edition route honest) rather than two commits. Task 9 owns the real download CTA and Task 10
+re-reads this sentence in the browser.
+
+- [ ] **Step 6: Run the guard, the type gate, and prove it at runtime**
 
 Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic && npx tsc --noEmit && npx eslint "app/open-mic/[slug]"`
 Expected: guard PASSes (4 cases), tsc exit 0, eslint exit 0.
@@ -799,7 +818,7 @@ hit — that is the before/after evidence this task needs, and the number must b
 report. Do not restart the server to make the grep look clean; compare against the pre-fix log
 growth.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git -C /Users/paymax/Documents/spotlight/main add "frontend-web/app/open-mic/[slug]/page.tsx" \
