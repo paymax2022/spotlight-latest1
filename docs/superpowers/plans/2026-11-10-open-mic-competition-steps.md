@@ -605,7 +605,7 @@ git -C /Users/paymax/Documents/spotlight/main commit -m "fix(open-mic): hide the
 
 ---
 
-### Task 3b: Await `params` on the seven Open Mic pages (blocks every later verification)
+### Task 3b: Await `params` on the eight Open Mic edition pages (blocks every later verification)
 
 **Why this task exists (root cause, already proven — do not re-investigate it):**
 Next 16 passes page `params` as a Promise, and seven pages under `app/open-mic/`
@@ -637,6 +637,8 @@ already correct and shipped.
 - `frontend-web/app/open-mic/[slug]/finale/page.tsx:7-8`
 - `frontend-web/app/open-mic/[slug]/entry/page.tsx:3-4`
 - `frontend-web/app/open-mic/[slug]/entry/[artistSlug]/page.tsx:9-18`
+- `frontend-web/app/dashboard/open-mic/[slug]/page.tsx:8-9` (added by the controller after the
+  first commit — Step 4b)
 - Test: `frontend-web/tests/unit/openmic/open-mic-params.spec.ts`
 
 **Interfaces:**
@@ -670,6 +672,7 @@ const PAGES = [
   'app/open-mic/[slug]/finale/page.tsx',
   'app/open-mic/[slug]/entry/page.tsx',
   'app/open-mic/[slug]/entry/[artistSlug]/page.tsx',
+  'app/dashboard/open-mic/[slug]/page.tsx',
 ];
 
 const sources = new Map(PAGES.map((rel) => [rel, readFileSync(path.join(ROOT, rel), 'utf8')]));
@@ -779,6 +782,32 @@ export default async function OpenMicArtistVotingPage({
   const entry = entries.find((e) => slugifyArtist(e.stageName) === artistSlug);
 ```
 
+- [ ] **Step 4b: The eighth page — `app/dashboard/open-mic/[slug]/page.tsx`**
+
+Found by the Task 3b implementer and confirmed by the controller: the artist-facing Open Mic
+dashboard carries the identical defect at `:8-9`
+
+```ts
+export default async function ArtistOpenMicDashboardPage({ params }: { params: { slug: string } }) {
+  const contest = await getContestBySlug(params.slug);
+```
+
+and was, at the time of writing, the last synchronous `params.slug` read anywhere under an
+Open Mic path. It is not linked from steps #02–#05, so it does not gate this plan's verification —
+but a guard whose value is "no Open Mic page reads `params` synchronously" must not be written to
+notice seven of eight. Same mechanical fix:
+
+```ts
+export default async function ArtistOpenMicDashboardPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
+```
+
+Two sibling routes reported in the same breath — `app/talent-vault/[slug]/page.tsx:6-7` and
+`app/services/[slug]/page.tsx:10-11,27-28` — have the same defect and are deliberately **out of
+scope here**: unrelated feature areas, no bearing on this spec, and pulling them in would make a
+targeted fix into a sweep. They belong to the final whole-branch review as a reported finding.
+
 - [ ] **Step 5: Fix the fallback copy that promises a control this page has none of**
 
 Task 3's review found a plan defect in the sentence shipped at
@@ -801,7 +830,7 @@ re-reads this sentence in the browser.
 - [ ] **Step 6: Run the guard, the type gate, and prove it at runtime**
 
 Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic && npx tsc --noEmit && npx eslint "app/open-mic/[slug]"`
-Expected: guard PASSes (4 cases), tsc exit 0, eslint exit 0.
+Expected: guard PASSes (3 cases — the spec has three `it` blocks), tsc exit 0, eslint exit 0.
 
 Then prove the runtime actually renders, because a green guard on a rewritten source is still
 just a string match. With the dev server on :3000 (start `npm run dev` from `frontend-web` if
@@ -828,6 +857,7 @@ git -C /Users/paymax/Documents/spotlight/main add "frontend-web/app/open-mic/[sl
   "frontend-web/app/open-mic/[slug]/finale/page.tsx" \
   "frontend-web/app/open-mic/[slug]/entry/page.tsx" \
   "frontend-web/app/open-mic/[slug]/entry/[artistSlug]/page.tsx" \
+  "frontend-web/app/dashboard/open-mic/[slug]/page.tsx" \
   frontend-web/tests/unit/openmic/open-mic-params.spec.ts
 git -C /Users/paymax/Documents/spotlight/main commit -m "fix(open-mic): await params so the edition routes resolve their slug"
 ```
