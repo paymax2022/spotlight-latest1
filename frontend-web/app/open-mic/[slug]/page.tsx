@@ -6,8 +6,9 @@ import OpenMicProgressTracker from '@/components/openmic/OpenMicProgressTracker'
 
 export const dynamic = 'force-dynamic';
 
-export default async function OpenMicContestDetailsPage({ params }: { params: { slug: string } }) {
-  const contest = await getContestBySlug(params.slug);
+export default async function OpenMicContestDetailsPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
   if (!contest) notFound();
   const leaderboard = await getLeaderboard(contest.id);
 
@@ -105,8 +106,7 @@ export default async function OpenMicContestDetailsPage({ params }: { params: { 
                     </audio>
                   ) : (
                     <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 0 }}>
-                      The playable beat for this edition is being prepared — download and usage stay available
-                      once it is published.
+                      Playback will be available once this edition&#39;s beat is published.
                     </p>
                   )}
                 </>

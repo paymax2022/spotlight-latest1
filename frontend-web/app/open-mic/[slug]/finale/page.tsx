@@ -4,8 +4,9 @@ import { getContestBySlug, getFinalePlaylist } from '@/src/server/openmic/persis
 
 export const dynamic = 'force-dynamic';
 
-export default async function OpenMicFinalePage({ params }: { params: { slug: string } }) {
-  const contest = await getContestBySlug(params.slug);
+export default async function OpenMicFinalePage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
   if (!contest) notFound();
   const playlist = await getFinalePlaylist(contest.id);
 

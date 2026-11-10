@@ -5,8 +5,9 @@ import OpenMicEntriesBoard from '@/components/openmic/OpenMicEntriesBoard';
 
 export const dynamic = 'force-dynamic';
 
-export default async function OpenMicEntriesPage({ params }: { params: { slug: string } }) {
-  const contest = await getContestBySlug(params.slug);
+export default async function OpenMicEntriesPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
   if (!contest) notFound();
   const leaderboard = await getLeaderboard(contest.id);
 

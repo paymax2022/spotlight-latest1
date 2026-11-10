@@ -7,8 +7,9 @@ import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
-export default async function OpenMicApplyPage({ params }: { params: { slug: string } }) {
-  let contest = await getContestBySlug(params.slug);
+export default async function OpenMicApplyPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  let contest = await getContestBySlug(slug);
   if (!contest) {
     const contests = await listContests();
     const fallback =
