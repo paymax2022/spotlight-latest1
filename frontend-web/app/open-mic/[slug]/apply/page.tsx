@@ -1,5 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
-import { getContestBySlug, listContests } from '@/src/server/openmic/persistence';
+import { getContestBySlug } from '@/src/server/openmic/persistence';
+import { getActiveOpenMicEdition } from '@/src/features/openmic/active-edition';
 import OpenMicEntryForm from '@/components/openmic/OpenMicEntryForm';
 import OpenMicProgressTracker from '@/components/openmic/OpenMicProgressTracker';
 import OpenMicAuthGate from '@/components/openmic/OpenMicAuthGate';
@@ -11,11 +12,7 @@ export default async function OpenMicApplyPage({ params }: { params: Promise<{ s
   const { slug } = await params;
   let contest = await getContestBySlug(slug);
   if (!contest) {
-    const contests = await listContests();
-    const fallback =
-      contests.find((row) =>
-        ['registration_open', 'published', 'submission_open', 'voting_live'].includes(row.status)
-      ) || contests[0];
+    const fallback = await getActiveOpenMicEdition();
     if (fallback) {
       redirect(`/open-mic/${fallback.slug}/apply`);
     }
