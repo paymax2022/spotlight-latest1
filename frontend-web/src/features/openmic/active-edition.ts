@@ -1,11 +1,14 @@
-import { getLeaderboard, listContests } from '@/src/server/openmic/persistence';
-import type { OpenMicContest, OpenMicSubmission } from '@/src/features/openmic/types';
+import { listContests } from '@/src/server/openmic/persistence';
+import type { OpenMicContest } from '@/src/features/openmic/types';
 
 /**
  * An edition is current from the moment it is published until its result is
- * announced. Everything outside that either never started (`draft`,
- * `scheduled`), finished (`winner_announced`, `completed`, `archived`) or was
- * called off (`suspended`, `cancelled`) — none of which has a live step to show.
+ * announced. The finale (`grand_finale_scheduled`, `grand_finale_live`) is
+ * inside that window — it is the step the edition is on, and an artist who
+ * opens `/apply` during it still has a live edition to apply to. Everything
+ * outside either never started (`draft`, `scheduled`), finished
+ * (`winner_announced`, `completed`, `archived`) or was called off (`suspended`,
+ * `cancelled`) — none of which has a live step to show.
  *
  * The narrow list this replaces (`registration_open`, `published`,
  * `submission_open`, `voting_live`) dropped an edition the moment its beat was
@@ -22,6 +25,8 @@ export const CURRENT_OPEN_MIC_STATUSES = [
   'voting_live',
   'voting_closed',
   'finalists_selected',
+  'grand_finale_scheduled',
+  'grand_finale_live',
 ] as const satisfies readonly OpenMicContest['status'][];
 
 /**

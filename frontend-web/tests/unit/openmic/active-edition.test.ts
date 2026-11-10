@@ -6,8 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const listContests = vi.hoisted(() => vi.fn());
-const getLeaderboard = vi.hoisted(() => vi.fn());
-vi.mock('@/src/server/openmic/persistence', () => ({ listContests, getLeaderboard }));
+vi.mock('@/src/server/openmic/persistence', () => ({ listContests }));
 
 import { getActiveOpenMicEdition } from '@/src/features/openmic/active-edition';
 import type { OpenMicContest } from '@/src/features/openmic/types';
@@ -50,7 +49,6 @@ function contest(overrides: Partial<OpenMicContest> = {}): OpenMicContest {
 
 beforeEach(() => {
   listContests.mockReset();
-  getLeaderboard.mockReset();
 });
 
 describe('getActiveOpenMicEdition', () => {
@@ -60,8 +58,11 @@ describe('getActiveOpenMicEdition', () => {
     expect(picked?.slug).toBe('newest');
   });
 
+  // These two loops together must name all 18 members of OpenMicContestStatus.
+  // A status missing from both is unclassified, and the selector silently
+  // treats it as ended — which is how the finale statuses went blank.
   it('counts every status in which a step of the route is still live', async () => {
-    for (const status of ['published', 'registration_open', 'beat_available', 'submission_open', 'submission_closed', 'under_review', 'voting_live', 'voting_closed', 'finalists_selected']) {
+    for (const status of ['published', 'registration_open', 'beat_available', 'submission_open', 'submission_closed', 'under_review', 'voting_live', 'voting_closed', 'finalists_selected', 'grand_finale_scheduled', 'grand_finale_live']) {
       listContests.mockResolvedValue([contest({ status: status as OpenMicContest['status'] })]);
       expect(await getActiveOpenMicEdition()).not.toBeNull();
     }
