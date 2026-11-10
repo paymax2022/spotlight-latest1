@@ -485,7 +485,12 @@ export async function POST(request: Request) {
     // The builder uploads the beat before the contest row exists, so an id is
     // optional — but it becomes part of the object key, so it must be a token.
     const contestId = rawContestId || 'unassigned';
-    if (rawContestId && !SAFE_TOKEN.test(rawContestId)) {
+    // `..` is refused on top of the token class because the public reader
+    // (app/api/open-mic/beats/[fileKey]) checks `!key.includes('..')`: a key
+    // carrying it would be stored happily and 404 forever, which is the one
+    // pairing this route must never break. SAFE_TOKEN's class contains `.`
+    // and `.`, so the bare pattern accepts the literal `..` unaided.
+    if (rawContestId && (!SAFE_TOKEN.test(rawContestId) || rawContestId.includes('..'))) {
       return errorResponse('contestId is not a valid identifier', 400);
     }
 
@@ -1084,8 +1089,8 @@ re-deriving them in the browser."
 ### Task 6: Point the two admin beat forms at the new route
 
 **Files:**
-- Modify: `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx:87-115` (upload), `:83` (required-field copy), `:314-334` (URL fields + warning)
-- Modify: `frontend-web/components/openmic/OpenMicAdminContestEditor.tsx:58-80` (upload), `:199-213` (URL fields + warning)
+- Modify: `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx:87-115` (upload), `:83` (required-field copy), `:314-334` (URL fields + warning), `:319`/`:323` (label + `accept`)
+- Modify: `frontend-web/components/openmic/OpenMicAdminContestEditor.tsx:58-80` (upload), `:199-213` (URL fields + warning), `:204`/`:208` (label + `accept`)
 - Test: `frontend-web/tests/unit/openmic/admin-beat-wiring.spec.ts`
 
 **Interfaces:**
@@ -1130,6 +1135,19 @@ describe('admin beat upload wiring', () => {
     expect(BUILDER).toContain('isLegacyBeatUrl');
     expect(EDITOR).toContain('isLegacyBeatUrl');
     expect(EDITOR).toMatch(/re-upload/i);
+  });
+
+  it('offers only the format the route actually accepts', () => {
+    // Task 2's route answers 400 for any extension that is not .mp3 and any
+    // declared type outside {'', audio/mp3, audio/mpeg}. Both pickers still
+    // advertise .wav and .m4a, which invites an admin to upload a file the
+    // server refuses — and the legacy-URL warning cannot explain that, because
+    // the field stays empty, so isLegacyBeatUrl('') is false.
+    for (const source of [BUILDER, EDITOR]) {
+      expect(source).toMatch(/accept="\.mp3"/);
+      expect(source).not.toMatch(/accept="[^"]*\.(wav|m4a)/);
+      expect(source).not.toContain('(MP3/WAV)');
+    }
   });
 });
 ```
@@ -1176,6 +1194,16 @@ Add the import beside the existing `@/src/features/openmic` imports (Task 6 need
 
 ```tsx
 import { isLegacyBeatUrl } from '@/src/features/openmic/beat-storage';
+```
+
+Narrow the picker to the one format the route accepts — the label at line 319 says `(MP3/WAV)` and line 323 invites `.wav` and `.m4a`, both of which `app/api/admin/open-mic/beats/route.ts` answers with a 400 the form has no copy for. Leave `type="file"` alone (it is a file input; only `accept` narrows it):
+
+```tsx
+            <label className="form-label">Upload Beat File (MP3)</label>
+            <input
+              className="form-input h-[44px] file:mr-3 file:rounded-sm file:border file:border-white/60 file:bg-transparent file:px-2 file:py-1 file:text-xs file:text-foreground"
+              type="file"
+              accept=".mp3"
 ```
 
 Change the required-field copy at line 83 so it names the action, not a URL:
@@ -1240,6 +1268,16 @@ and below the download-URL input (line 201) the same warning, phrased for an exi
                 and save.
               </p>
             ) : null}
+```
+
+Narrow this picker exactly as in Step 3 — the label at line 204 says `(MP3/WAV)` and line 208 invites `.wav` and `.m4a`, both of which the route 400s:
+
+```tsx
+            <label className="form-label">Upload Beat File (MP3)</label>
+            <input
+              className="form-input h-[44px]"
+              type="file"
+              accept=".mp3"
 ```
 
 - [ ] **Step 5: Run the guard and the gates**
@@ -1984,9 +2022,14 @@ client shell; the wrong /voting hand-off is repointed at the edition's board."
 cd /Users/paymax/Documents/spotlight/main/frontend-web && \
 npx vitest run tests/unit/media/open-mic-beat-storage.test.ts tests/unit/openmic && \
 npm run test:regression && npm run test:money && npx vitest run tests/unit/config && \
-npm run contract:check && npx tsc --noEmit && npm run lint
+npm run contract:check && npx tsc --noEmit && npm run lint && \
+npx eslint tests/unit/media/open-mic-beat-storage.test.ts tests/unit/openmic tests/e2e/openmic
 ```
 Expected: every command exits 0.
+
+`npm run lint` is `eslint app components lib src` — it never looks at `tests/**`, so the specs this plan
+adds are linted only by the explicit final command above. Keep both: dropping the last one leaves four new
+test files outside every CI lane's lint step.
 
 - [ ] **Step 2: Production build into a scratch dir (never clobber the shared dev `.next`)**
 
