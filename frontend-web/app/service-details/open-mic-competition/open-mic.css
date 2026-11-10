@@ -18,6 +18,96 @@
   box-sizing: border-box;
 }
 
+/*
+ * The two site-wide sheets that forced stem-contest to re-assert its own faces
+ * outrank this page's plain declarations, so they are neutralised here the way
+ * app/service-details/sports/sports.css and components/season2/season2.css do:
+ *  - src/styles/tailwind.css pins Kumbh Sans !important on
+ *    html/body/button/input/textarea/p/span/a/li/div/h1-h6, erasing both the
+ *    system-ui body face and the Georgia display face.
+ *  - public/assets/css/main.css title-cases every heading, paints it with the
+ *    site's dark header ink, sizes h3 at 22px/600, and removes every keyboard
+ *    ring with `a { outline: none !important }`.
+ * strong/em/b, summary and figcaption stay out of the face list: neither sheet
+ * claims them, so they inherit, which is what the design relies on.
+ */
+.openMicPage,
+.openMicPage div,
+.openMicPage p,
+.openMicPage span,
+.openMicPage a,
+.openMicPage li,
+.openMicPage button,
+.openMicPage input,
+.openMicPage select,
+.openMicPage textarea,
+.openMicPage h1,
+.openMicPage h2,
+.openMicPage h3,
+.openMicPage h4,
+.openMicPage h5,
+.openMicPage h6 {
+  font-family: system-ui, sans-serif !important;
+}
+
+/* Undoing main.css's heading defaults. This has to sit above the page's own
+ * Georgia rules: `.openMicPage h2` matches the list above on an h2, so source
+ * order is the decider. */
+.openMicPage h1,
+.openMicPage h2,
+.openMicPage h3,
+.openMicPage h4,
+.openMicPage h5,
+.openMicPage h6 {
+  color: inherit;
+  text-transform: none;
+}
+
+/* Every Georgia site in this sheet, mirrored as an opt-in. The face list above
+ * is !important, so the page's own `font:` shorthands cannot beat it on their
+ * own; this block is important too and comes later, so it wins. */
+.openMicPage h1,
+.openMicPage h2,
+.openMicPage .openMic-statsGrid strong,
+.openMicPage .openMic-infographic a span,
+.openMicPage .openMic-testimonialNumber,
+.openMicPage .openMic-testimonialBody blockquote p,
+.openMicPage .openMic-prepAside h3,
+.openMicPage .openMic-prizes h3,
+.openMicPage .openMic-seal strong {
+  font-family: Georgia, serif !important;
+}
+
+/* main.css sizes every h3 at 22px/600; the design leaves them at the body's
+ * bold 21px and inherits its line-height. */
+.openMicPage h3 {
+  font-size: 21px;
+  font-weight: 700;
+  line-height: inherit;
+  letter-spacing: -0.04em;
+}
+
+/* main.css paints input text white, which disappears on the cream lounge
+ * dialog's #fffdf9 fields. */
+.openMicPage input,
+.openMicPage textarea,
+.openMicPage select {
+  color: inherit;
+}
+
+/* bootstrap.min.css hides every <br> below 575px, running "One beat." and
+ * "Make it yours." onto one line. */
+.openMicPage br {
+  display: inline;
+}
+
+/* main.css's `a { outline: none !important }` erases the design's keyboard
+ * ring from every link on the page. */
+.openMicPage a:focus-visible {
+  outline: 3px solid #c17dde !important;
+  outline-offset: 3px !important;
+}
+
 .openMicPage h1,
 .openMicPage h2,
 .openMicPage h3,
@@ -37,6 +127,7 @@
 .openMicPage a {
   color: inherit;
   text-decoration: none;
+  transition: none;
 }
 
 .openMicPage button,
