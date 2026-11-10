@@ -15,13 +15,13 @@ import { decodeBeatFileKey, isPublicBeatObjectKey } from '@/src/features/openmic
 export async function GET(request: Request, ctx: { params: Promise<{ fileKey: string }> }) {
   const { fileKey } = await ctx.params;
   // No decodeURIComponent: base64url is already URL-safe, and decoding twice
-  // would throw on a hostile value instead of 404ing it.
-  const objectKey = decodeBeatFileKey(fileKey || '');
+  // would throw on a hostile value instead of 404ing it. An empty segment is
+  // already refused inside decodeBeatFileKey.
+  const objectKey = decodeBeatFileKey(fileKey);
   if (!objectKey || !isPublicBeatObjectKey(objectKey)) return new NextResponse('Not found', { status: 404 });
 
   const wantsDownload = new URL(request.url).searchParams.get('download') === '1';
   const disposition: 'inline' | 'attachment' = wantsDownload ? 'attachment' : 'inline';
-  const fileName = sanitizeObjectFileName(objectKey.split('/').pop() || 'beat.mp3');
 
   if (!hasR2Config()) {
     const buffer = await readLocalUpload(objectKey);
@@ -33,8 +33,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ fileKey: st
         // type (SEC-007).
         'Content-Type': contentTypeForKey(objectKey),
         // A bare `inline` is what the banner reader has always sent and what the
-        // <audio> element needs; only a download names a file.
-        'Content-Disposition': wantsDownload ? `attachment; filename="${fileName}"` : 'inline',
+        // <audio> element needs; only a download names a file, so only a download
+        // needs a name at all.
+        'Content-Disposition': wantsDownload
+          ? `attachment; filename="${sanitizeObjectFileName(objectKey.split('/').pop() || 'beat.mp3')}"`
+          : 'inline',
         // Public and immutable: the key carries a uuid, so a given URL always
         // addresses the same bytes.
         'Cache-Control': 'public, max-age=31536000, immutable',
@@ -48,6 +51,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ fileKey: st
     return new NextResponse('Not found', { status: 404 });
   }
 
+  // The signed GET names the file on both dispositions, so this one is not wasted.
+  const fileName = sanitizeObjectFileName(objectKey.split('/').pop() || 'beat.mp3');
   const signedUrl = await createR2DownloadUrl({ key: objectKey, fileName, disposition });
   return NextResponse.redirect(signedUrl, { status: 302 });
 }

@@ -29,7 +29,9 @@ export function encodeBeatFileKey(objectKey: string) {
 
 /**
  * base64url decoding never throws — it yields garbage — so require an exact
- * round trip. `%%%` must not resolve to an object.
+ * round trip. `%%%` must not resolve to an object, and neither must a valid key
+ * with hand-added `=` padding: encodeBeatFileKey never emits padding, so the
+ * re-encode cannot match.
  */
 export function decodeBeatFileKey(fileKey: string): string | null {
   if (!fileKey) return null;
@@ -46,12 +48,27 @@ export function beatReaderUrl(objectKey: string, opts: { download?: boolean } = 
   return opts.download ? `${url}?download=1` : url;
 }
 
-/** The URL a public surface may use, or null when it cannot play or download. */
+/**
+ * The one URL shape a public surface may use: a root-relative reader URL under
+ * BEAT_READER_BASE, or null when the stored value cannot play or download.
+ *
+ * An allowlist on purpose. The admin builder's beat URL field is free text, so
+ * an exclusion list would happily pass an absolute off-origin host, an http
+ * downgrade of an https one, or a protocol-relative `//host/…` straight through
+ * to `<source src>` on the edition page — none of which this reader serves.
+ */
 export function publicBeatUrl(stored: string | null | undefined): string | null {
   if (!stored) return null;
-  return stored.startsWith(LEGACY_UPLOAD_PREFIX) ? null : stored;
+  return stored.startsWith(`${BEAT_READER_BASE}/`) ? stored : null;
 }
 
+/**
+ * Admin-facing diagnostic, and only that: "is this a pre-fix, owner-only
+ * registration path?". It deliberately does not answer "is this URL safe to
+ * render?" — that is publicBeatUrl's job — so an absolute third-party URL is
+ * false here while still being unusable. Two different problems, two different
+ * warnings.
+ */
 export function isLegacyBeatUrl(stored: string | null | undefined): boolean {
   return Boolean(stored && stored.startsWith(LEGACY_UPLOAD_PREFIX));
 }
