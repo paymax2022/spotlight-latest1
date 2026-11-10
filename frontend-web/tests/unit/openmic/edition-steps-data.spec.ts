@@ -60,7 +60,9 @@ describe('buildOpenMicEditionStepsData', () => {
     expect(bare.registrationStartAt).toBeNull();
     expect(bare.submissionEndAt).toBeNull();
     expect(bare.votingStartAt).toBe(START);
-    expect(JSON.parse(JSON.stringify(bare))).toEqual(bare);
+    // toStrictEqual, not toEqual: a stray `undefined`-valued key would survive
+    // toEqual and be silently dropped on the way to the client.
+    expect(JSON.parse(JSON.stringify(bare))).toStrictEqual(bare);
   });
 
   it('exposes the beat that is publicly playable', () => {
@@ -88,18 +90,53 @@ describe('buildOpenMicEditionStepsData', () => {
     expect(data.beat?.downloadable).toBe(false);
   });
 
-  it('truncates the board to five in the order given, with canonical artist slugs', () => {
+  it('never promises a paid-entry lock on a download it cannot serve', () => {
+    const locked = buildOpenMicEditionStepsData(
+      contest({ beat: { ...contest().beat!, requiresPaidEntryForDownload: true } }),
+      [],
+    );
+    expect(locked.beat?.requiresPaidEntry).toBe(true);
+
+    const unserveable = buildOpenMicEditionStepsData(
+      contest({ beat: { ...contest().beat!, downloadUrl: '/api/registration/uploads/x.mp3', requiresPaidEntryForDownload: true } }),
+      [],
+    );
+    expect(unserveable.beat?.downloadUrl).toBeNull();
+    expect(unserveable.beat?.requiresPaidEntry).toBe(false);
+  });
+
+  it('omits the beat object when the edition has none', () => {
+    const data = buildOpenMicEditionStepsData(contest({ beat: undefined }), []);
+    expect(data.beat).toBeNull();
+  });
+
+  it('truncates the board to five, with canonical artist slugs and the store\'s totals', () => {
     const board = Array.from({ length: 8 }, (_, i) => entry(i + 1));
     const data = buildOpenMicEditionStepsData(contest(), board);
-    expect(data.leaderboard.map((row) => row.rank)).toEqual([1, 2, 3, 4, 5]);
-    expect(data.leaderboard[0]).toEqual({ rank: 1, artistSlug: 'artist-1', stageName: 'Artist 1', songTitle: 'Track 1', voteCount: 10 });
-    expect(data.entryCount).toBe(8);
-    expect(data.totalVotes).toBe(360);
+    expect(data.board?.rows.map((row) => row.rank)).toEqual([1, 2, 3, 4, 5]);
+    expect(data.board?.rows[0]).toStrictEqual({ rank: 1, artistSlug: 'artist-1', stageName: 'Artist 1', songTitle: 'Track 1', voteCount: 10 });
+    expect(data.board?.entryCount).toBe(8);
+    expect(data.board?.totalVotes).toBe(360);
+  });
+
+  it('numbers rows by store position, never re-sorting by votes', () => {
+    // getLeaderboard orders by leaderboard_score (a judge-weighted composite),
+    // which need not track public_vote_count. Re-sorting here would contradict
+    // the full leaderboard the "Vote now" button links to.
+    const mixed = [entry(1, { voteCount: 5 }), entry(2, { voteCount: 90 }), entry(3, { voteCount: 40 })];
+    const rows = buildOpenMicEditionStepsData(contest(), mixed).board?.rows;
+    expect(rows?.map((row) => row.voteCount)).toEqual([5, 90, 40]);
+    expect(rows?.map((row) => row.rank)).toEqual([1, 2, 3]);
   });
 
   it('slugifies a name with punctuation exactly as the entry page looks it up', () => {
     const data = buildOpenMicEditionStepsData(contest(), [entry(1, { stageName: 'K1ng$hoota' })]);
-    expect(data.leaderboard[0].artistSlug).toBe('k1nghoota');
+    expect(data.board?.rows[0].artistSlug).toBe('k1nghoota');
+  });
+
+  it('tells a board that is genuinely empty apart from one it could not read', () => {
+    expect(buildOpenMicEditionStepsData(contest(), []).board).toStrictEqual({ rows: [], entryCount: 0, totalVotes: 0 });
+    expect(buildOpenMicEditionStepsData(contest(), null).board).toBeNull();
   });
 
   it('carries the two admin display switches through as booleans', () => {
@@ -119,11 +156,18 @@ describe('loadOpenMicEditionSteps', () => {
     expect(getLeaderboard).not.toHaveBeenCalled();
   });
 
-  it('degrades to an empty board when the leaderboard read throws, so the page still renders', async () => {
+  it('degrades to an unreadable board when the leaderboard read throws', async () => {
     listContests.mockResolvedValue([contest()]);
     getLeaderboard.mockRejectedValue(new Error('db down'));
     const data: OpenMicEditionStepsData | null = await loadOpenMicEditionSteps();
-    expect(data?.leaderboard).toEqual([]);
+    expect(data?.board).toBeNull();
     expect(data?.slug).toBe('open-mic-dev');
+  });
+
+  it('keeps a zeroed board when the read succeeds and returns nothing', async () => {
+    listContests.mockResolvedValue([contest()]);
+    getLeaderboard.mockResolvedValue([]);
+    const data: OpenMicEditionStepsData | null = await loadOpenMicEditionSteps();
+    expect(data?.board).toStrictEqual({ rows: [], entryCount: 0, totalVotes: 0 });
   });
 });

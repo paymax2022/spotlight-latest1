@@ -45,13 +45,15 @@ export async function getActiveOpenMicEdition(): Promise<OpenMicContest | null> 
   return contests.find((row) => live.has(row.status)) ?? null;
 }
 
-/** Everything the steps block renders, decided server-side so the client only
- *  ever tests for `null`. No Date objects: it crosses the server/client boundary. */
+/** Everything the steps block renders. Availability, the display switches and
+ *  the board's numbers are decided server-side; the only thing the browser
+ *  recomputes is which side of a window `Date.now()` falls on, from the ISO
+ *  strings below. No Date objects: this crosses the server/client boundary. */
 export type OpenMicEditionStepsData = {
   id: string;
   slug: string;
   title: string;
-  status: string;
+  status: OpenMicContest['status'];
   registrationStartAt: string | null;
   registrationEndAt: string | null;
   submissionStartAt: string | null;
@@ -71,9 +73,13 @@ export type OpenMicEditionStepsData = {
     downloadable: boolean;
     requiresPaidEntry: boolean;
   } | null;
-  leaderboard: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
-  entryCount: number;
-  totalVotes: number;
+  /** `null` means the board could not be read — which is not the same fact as
+   *  "0 entries", and the page must never render a number for it. */
+  board: {
+    rows: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
+    entryCount: number;
+    totalVotes: number;
+  } | null;
 };
 
 function at(value: string | undefined): string | null {
@@ -81,10 +87,11 @@ function at(value: string | undefined): string | null {
 }
 
 /** `board` arrives already ordered by the store (leaderboard_score, then
- *  public_vote_count) — this only projects, truncates and totals. */
+ *  public_vote_count) — this only projects, truncates and totals. Pass `null`
+ *  for "the board could not be read"; `[]` means it was read and is empty. */
 export function buildOpenMicEditionStepsData(
   contest: OpenMicContest,
-  board: OpenMicSubmission[],
+  board: OpenMicSubmission[] | null,
 ): OpenMicEditionStepsData {
   const beat = contest.beat;
   const previewUrl = beat ? publicBeatUrl(beat.previewUrl) : null;
@@ -116,34 +123,42 @@ export function buildOpenMicEditionStepsData(
           // (is_active -> allowDownload) AND the stored path is one the public
           // reader will actually serve.
           downloadable: beat.allowDownload === true && downloadUrl !== null,
-          requiresPaidEntry: beat.requiresPaidEntryForDownload === true,
+          requiresPaidEntry: beat.requiresPaidEntryForDownload === true && downloadUrl !== null,
         }
       : null,
-    leaderboard: board.slice(0, 5).map((row, index) => ({
-      rank: index + 1,
-      artistSlug: slugifyArtist(row.stageName),
-      stageName: row.stageName,
-      songTitle: row.songTitle,
-      voteCount: row.voteCount,
-    })),
-    entryCount: board.length,
-    totalVotes: board.reduce((sum, row) => sum + row.voteCount, 0),
+    board: board === null
+      ? null
+      : {
+          rows: board.slice(0, 5).map((row, index) => ({
+            rank: index + 1,
+            artistSlug: slugifyArtist(row.stageName),
+            stageName: row.stageName,
+            songTitle: row.songTitle,
+            voteCount: row.voteCount,
+          })),
+          // Totals are of the whole board, not the five rows shown.
+          entryCount: board.length,
+          totalVotes: board.reduce((sum, row) => sum + row.voteCount, 0),
+        },
   };
 }
 
 /**
- * One server read for the programme page. A leaderboard failure must not take
- * the page down: getLeaderboard already returns [] when the DB is unconfigured,
- * and this keeps that promise for the throwing case too.
+ * One server read for the programme page. A failed leaderboard read does not
+ * take the page down and does not invent a number either: getLeaderboard
+ * already returns [] when the DB is unconfigured and for a genuinely empty
+ * contest, so only a thrown error reaches `null`.
  */
 export async function loadOpenMicEditionSteps(): Promise<OpenMicEditionStepsData | null> {
   const contest = await getActiveOpenMicEdition();
   if (!contest) return null;
-  let board: OpenMicSubmission[] = [];
+  let board: OpenMicSubmission[] | null = [];
   try {
     board = await getLeaderboard(contest.id);
   } catch {
-    board = [];
+    // A read that failed is not a contest with no entries: `null` is the only
+    // value that stops the page printing "0 entries".
+    board = null;
   }
   return buildOpenMicEditionStepsData(contest, board);
 }
