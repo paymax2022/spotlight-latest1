@@ -953,7 +953,7 @@ describe('getActiveOpenMicEdition', () => {
   });
 
   it('counts every status in which a step of the route is still live', async () => {
-    for (const status of ['published', 'registration_open', 'beat_available', 'submission_open', 'submission_closed', 'under_review', 'voting_live', 'voting_closed', 'finalists_selected']) {
+    for (const status of ['published', 'registration_open', 'beat_available', 'submission_open', 'submission_closed', 'under_review', 'voting_live', 'voting_closed', 'finalists_selected', 'grand_finale_scheduled', 'grand_finale_live']) {
       listContests.mockResolvedValue([contest({ status: status as OpenMicContest['status'] })]);
       expect(await getActiveOpenMicEdition()).not.toBeNull();
     }
@@ -989,14 +989,17 @@ Expected: FAIL — `Failed to load …/src/features/openmic/active-edition`.
 Create `frontend-web/src/features/openmic/active-edition.ts`:
 
 ```ts
-import { getLeaderboard, listContests } from '@/src/server/openmic/persistence';
-import type { OpenMicContest, OpenMicSubmission } from '@/src/features/openmic/types';
+import { listContests } from '@/src/server/openmic/persistence';
+import type { OpenMicContest } from '@/src/features/openmic/types';
 
 /**
  * An edition is current from the moment it is published until its result is
- * announced. Everything outside that either never started (`draft`,
- * `scheduled`), finished (`winner_announced`, `completed`, `archived`) or was
- * called off (`suspended`, `cancelled`) — none of which has a live step to show.
+ * announced. The finale (`grand_finale_scheduled`, `grand_finale_live`) is
+ * inside that window — it is the step the edition is on, and an artist who
+ * opens `/apply` during it still has a live edition to apply to. Everything
+ * outside either never started (`draft`, `scheduled`), finished
+ * (`winner_announced`, `completed`, `archived`) or was called off (`suspended`,
+ * `cancelled`) — none of which has a live step to show.
  *
  * The narrow list this replaces (`registration_open`, `published`,
  * `submission_open`, `voting_live`) dropped an edition the moment its beat was
@@ -1013,6 +1016,8 @@ export const CURRENT_OPEN_MIC_STATUSES = [
   'voting_live',
   'voting_closed',
   'finalists_selected',
+  'grand_finale_scheduled',
+  'grand_finale_live',
 ] as const satisfies readonly OpenMicContest['status'][];
 
 /**
@@ -1073,8 +1078,9 @@ to. Replace the body of the `if (!contest)` block:
 
 Add `getActiveOpenMicEdition` to the `@/src/features/openmic/active-edition` import and **drop
 `listContests` from the `@/src/server/openmic/persistence` import** — line 14 is its only use in
-the file, so leaving it is an unused import and `npm run lint` says so. Do not otherwise reformat
-this page; Task 3b owns its `params` signature.
+the file. (Checked: this repo's eslint config does not flag unused imports, so nothing fails if you
+leave it — drop it anyway.) Do not otherwise reformat this page; Task 3b owns its `params`
+signature.
 
 - [ ] **Step 6: Verify, then commit**
 
@@ -1248,11 +1254,14 @@ Expected: FAIL — `buildOpenMicEditionStepsData` / `loadOpenMicEditionSteps` / 
 
 - [ ] **Step 3: Write the builder and loader**
 
-Append to `frontend-web/src/features/openmic/active-edition.ts` (and add `slugifyArtist` + `publicBeatUrl` to its imports):
+Append to `frontend-web/src/features/openmic/active-edition.ts`. Task 4 deliberately left that file
+importing only what the selector reads, so all four dependencies this builder needs are added here:
 
 ```ts
-import { slugifyArtist } from '@/src/features/openmic/workflow';
-import { publicBeatUrl } from '@/src/features/openmic/beat-storage';
+import { getLeaderboard, listContests } from '@/src/server/openmic/persistence';      // widen: +getLeaderboard
+import type { OpenMicContest, OpenMicSubmission } from '@/src/features/openmic/types'; // widen: +OpenMicSubmission
+import { slugifyArtist } from '@/src/features/openmic/workflow';                      // new
+import { publicBeatUrl } from '@/src/features/openmic/beat-storage';                  // new
 
 /** Everything the steps block renders, decided server-side so the client only
  *  ever tests for `null`. No Date objects: it crosses the server/client boundary. */
