@@ -90,9 +90,6 @@ function mapKYB(r: any, documents: string[] = []): RestaurantKYB {
     tin: r?.tin ?? '',
     contactEmail: r?.contact_email ?? '',
     contactPhone: r?.contact_phone ?? '',
-    bankCode: r?.bank_code ?? '',
-    accountNumber: r?.account_number ?? '',
-    accountName: r?.account_name ?? '',
     status: r?.status ?? 'draft',
     decisionReason: r?.decision_reason ?? undefined,
     documents,
@@ -110,7 +107,7 @@ let seq = 0;
 // in the offline demo would be noise, not a warning).
 let mockKYB: RestaurantKYB = {
   restaurantId: mockStore.id, legalName: '', businessType: '', rcNumber: '', tin: '',
-  contactEmail: '', contactPhone: '', bankCode: '', accountNumber: '', accountName: '',
+  contactEmail: '', contactPhone: '',
   status: 'approved', documents: [],
 };
 const nextId = (p: string) => `${p}-${(seq += 1)}`;
@@ -359,7 +356,6 @@ export async function getEarnings(): Promise<MerchantEarnings> {
 export type SaveKYBInput = Pick<
   RestaurantKYB,
   'legalName' | 'businessType' | 'rcNumber' | 'tin' | 'contactEmail' | 'contactPhone'
-  | 'bankCode' | 'accountNumber' | 'accountName'
 >;
 
 export async function getKYB(id: string): Promise<RestaurantKYB> {
@@ -377,9 +373,6 @@ export async function saveKYB(id: string, input: SaveKYBInput): Promise<Restaura
     tin: input.tin,
     contact_email: input.contactEmail,
     contact_phone: input.contactPhone,
-    bank_code: input.bankCode,
-    account_number: input.accountNumber,
-    account_name: input.accountName,
   };
   const raw = unwrap<any>(await api.put(`${BASE}/${enc(id)}/kyb`, body));
   return mapKYB(raw?.kyb ?? raw);
