@@ -30,12 +30,34 @@ Two independent faults were found on 2026-11-11:
 2. **Production schema is missing the composite-pricing chain** — verified by
    probing the prod project directly (see §3). This document covers fault 2.
 
-Prerequisite for fault 1 (host access required): in
-`/home/specenpo/public_html/spotlightng_v2/frontend-web`, confirm the runtime
-`NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` /
-`SUPABASE_SERVICE_ROLE_KEY` all belong to the live project
-`nmseefdlliejmdbxytej` and the service key is current, then
-`touch tmp/restart.txt`. Re-run the §6 post-check before concluding.
+### 1.1 Fault 1 remediation (host access required)
+
+The project itself is healthy and reachable: the publishable key in the page's
+own bundle reads `academy_batches` (200 + row), `academy_settings` (200) and
+`contests` (200) from the internet. Only the **server-side** path fails, so the
+defect is the runtime credential (or host egress), not the schema, not RLS, not
+the code. In `/home/specenpo/public_html/spotlightng_v2/frontend-web`:
+
+1. `NEXT_PUBLIC_SUPABASE_URL` must be `https://nmseefdlliejmdbxytej.supabase.co`.
+   Any other ref is a different database, and every academy read 404s while the
+   browser — built earlier with the right value baked in — looks fine.
+2. `SUPABASE_SERVICE_ROLE_KEY` must be the **current** secret for that project.
+   A legacy `service_role` JWT is rejected once the project disables legacy API
+   keys or rotates its JWT secret; the browser is unaffected because it uses the
+   publishable key. This is the most likely cause here.
+3. Prove credential + egress from the host before touching anything else:
+
+   ```bash
+   set -a; . ./.env.production; set +a
+   curl -s -o /dev/null -w '%{http_code}\n' -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+     "$NEXT_PUBLIC_SUPABASE_URL/rest/v1/academy_batches?select=id&limit=1"
+   # 200 → credential and network are fine; look elsewhere
+   # 401 {"message":"Invalid API key"} → replace the key (step 2)
+   # 000 / timeout → the host cannot reach supabase.co
+   ```
+
+4. `touch tmp/restart.txt` after any env change (Passenger holds the old
+   process env otherwise), then run the §6 post-checks.
 
 ---
 
