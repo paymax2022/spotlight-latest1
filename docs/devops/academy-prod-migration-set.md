@@ -1,8 +1,10 @@
 # Film Academy — production migration set (review package)
 
-**Status:** prepared, awaiting review · **Prepared:** 2026-11-11
+**Status:** fault 2 **APPLIED to production 2026-11-11** (scoped lane, run
+42983104867 — verified in §5) · fault 1 **root-caused, awaiting an operator on
+the host** (§1.1) · **Prepared:** 2026-11-11
 **Owner:** DevOps/DBA · **Scope:** the four academy migrations the public Film
-Academy catalogue and its application pricing depend on and that are **absent
+Academy catalogue and its application pricing depend on and that **were absent
 from production**.
 
 > This is a *subset* review package, not a reconciliation of the whole pending
@@ -30,34 +32,87 @@ Two independent faults were found on 2026-11-11:
 2. **Production schema is missing the composite-pricing chain** — verified by
    probing the prod project directly (see §3). This document covers fault 2.
 
-### 1.1 Fault 1 remediation (host access required)
+### 1.1 Fault 1 remediation (host access required) — ROOT CAUSE FOUND 2026-11-11
 
 The project itself is healthy and reachable: the publishable key in the page's
-own bundle reads `academy_batches` (200 + row), `academy_settings` (200) and
-`contests` (200) from the internet. Only the **server-side** path fails, so the
-defect is the runtime credential (or host egress), not the schema, not RLS, not
-the code. In `/home/specenpo/public_html/spotlightng_v2/frontend-web`:
+own bundle reads `academy_batches` (200 + real rows) and
+`academy_area_pricing_options` (200, `[]` to the publishable key because RLS
+denies it — the admin client sees the 40 seeded rows) from the internet. Only
+the **server-side** path fails, so this was never a schema, RLS or code defect.
 
-1. `NEXT_PUBLIC_SUPABASE_URL` must be `https://nmseefdlliejmdbxytej.supabase.co`.
-   Any other ref is a different database, and every academy read 404s while the
-   browser — built earlier with the right value baked in — looks fine.
-2. `SUPABASE_SERVICE_ROLE_KEY` must be the **current** secret for that project.
-   A legacy `service_role` JWT is rejected once the project disables legacy API
-   keys or rotates its JWT secret; the browser is unaffected because it uses the
-   publishable key. This is the most likely cause here.
-3. Prove credential + egress from the host before touching anything else:
+**It is the host's app environment, and it points at a retired project.** The
+`Probe prod Supabase runtime env (read-only)` step of
+`deploy-cpanel.yml` in the shipping repo (`paymax2022/spotlight-latest`) ran on
+the box during run **42924134372** (2026-11-10T23:32Z) and measured:
+
+| where the value lives | URL | service key |
+|---|---|---|
+| **app process env** — wins | `ptczqwfokydsdafpscex` (retired 2026, see [`docs/supabase-go-live.md`](../supabase-go-live.md)) | len 219, legacy JWT |
+| `.env.production.local` on the host | `nmseefdlliejmdbxytej` ✓ | len 41, `sb_secret_…` ✓ |
+| CI repo vars → the shipped bundle | `nmseefdlliejmdbxytej` ✓ | (never baked) |
+
+`@next/env` refuses to overwrite a key already in `process.env`, so the correct
+file — which Finalize rewrites from the reviewed vars on **every** deploy —
+loses, and the correct build loses with it. The stale trio is *not* dead
+either: the same probe read `academy_batches` and `academy_settings` as rows
+against `ptcz…` with those keys, and got `PGRST205` for the three pricing
+tables. That is exactly what `ptcz…` should contain — the 2026-07-06 push of
+273 migrations went to **that** project, not prod
+([`docs/e2e/results/prod-schema-drift-2026-10-05.md`](../e2e/results/prod-schema-drift-2026-10-05.md)),
+so it is an unrelated July snapshot, **not** a copy or backup of production.
+The server is sending those retired credentials, which is why all four catalogue
+reads, `/api/v1/contests` and `GET /api/academy/apply` fail together.
+
+**Where it is injected:** the app process is spawned by the web server (ppid 1,
+`lsnode:/home/specenpo/public_html/spotlightng_v2/frontend-web/`), not by the
+SSH session or a shell profile (`none` of `.bashrc`/`.profile`/`.bash_profile`
+name these vars), and the only config-shaped file under `$HOME` naming the
+retired ref is `~/.cl.selector/node-selector.json` — cPanel's **Setup Node.js
+App** definition. The `.htaccess` Passenger block holds only `PassengerAppRoot`
+/`BaseURI`/`Nodejs`/`AppType`/`StartupFile`, no env, so there is nothing to
+edit there and **no restart or redeploy can clear the injected values.**
+
+Steps, in order:
+
+1. Confirm before changing anything (values stay masked; a `219`-char service
+   key here is the stale one):
 
    ```bash
-   set -a; . ./.env.production; set +a
-   curl -s -o /dev/null -w '%{http_code}\n' -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-     "$NEXT_PUBLIC_SUPABASE_URL/rest/v1/academy_batches?select=id&limit=1"
-   # 200 → credential and network are fine; look elsewhere
-   # 401 {"message":"Invalid API key"} → replace the key (step 2)
-   # 000 / timeout → the host cannot reach supabase.co
+   APP_DIR=/home/specenpo/public_html/spotlightng_v2/frontend-web
+   PID=$(pgrep -f lsnode | head -1)
+   tr '\0' '\n' < /proc/$PID/environ | grep -E '^(NEXT_PUBLIC_SUPABASE|SUPABASE_SERVICE_ROLE)' \
+     | awk -F= '{ v=substr($0,index($0,"=")+1); print $1" [len "length(v)"]" }'
+   grep -o 'ptczqwfokydsdafpscex' ~/.cl.selector/node-selector.json | head -1
    ```
 
-4. `touch tmp/restart.txt` after any env change (Passenger holds the old
-   process env otherwise), then run the §6 post-checks.
+2. In **cPanel → Setup Node.js App**, open the application rooted at
+   `public_html/spotlightng_v2/frontend-web` and **delete** these three
+   environment variables (or set them to the `nmseefdlliejmdbxytej` values from
+   Supabase → Settings → API, matching that screen): `NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`. Save.
+3. Reload the app — the cPanel save usually does it; otherwise
+   `touch "$APP_DIR/tmp/restart.txt"` **and** make one request
+   (`curl -o /dev/null https://www.spotlightng.com/login`), then re-run step 1:
+   those names must now be absent from the process env, which is what lets
+   `.env.production.local` supply them.
+4. Run the §6 post-checks. Expected: no banner, `area-tab-0` and `₦` present,
+   `/api/v1/contests` 200, `GET /api/academy/apply` returning batches.
+
+Do **not** spend time on these — each was checked and ruled out:
+
+- `set -a; . ./.env.production` then a `curl` to prove the credential. The file
+  that exists is `.env.production.local`, its values are already correct, and
+  such a probe returns **200** while the app still fails. It is a false pass.
+- Replacing `SUPABASE_SERVICE_ROLE_KEY` in GitHub secrets, or rebuilding. Both
+  are already correct; the deploy re-pins them and the injected env still wins.
+- More migrations. The pricing chain landed on prod on 2026-11-11 (§3, §5) and
+  `nmseefdlliejmdbxytej` answers every read in this document.
+- A "legacy keys got revoked" theory — the stale keys work fine, just for the
+  wrong project.
+
+Housekeeping once prod is green: the retired project's legacy JWT anon and
+service-role keys are still live credentials for `ptcz…`. Rotate or revoke them
+so nothing can pick them up again.
 
 ---
 
