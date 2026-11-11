@@ -73,24 +73,24 @@ jobs:
           set -euo pipefail
           command -v psql >/dev/null || { echo "::error::psql is not on this runner; refusing to start."; exit 1; }
           supabase --version
-          # GitHub-hosted runners publish no IPv6 default route, but Supabase's
-          # direct db.<ref>.supabase.co host has an AAAA record, and libpq dials
-          # getaddrinfo's first answer — so a plain psql here dies with
-          # "Network is unreachable" before it ever reaches the password check.
-          # Raising the IPv4-mapped precedence above the IPv6 site-local default
-          # restores IPv4 for every psql in this job. The repo's other psql lanes
-          # miss this because they dial aws-0-…pooler… hosts, which are A-only,
-          # and the Supabase CLI misses it because Go falls back through the
-          # address list on an unreachable family.
-          echo 'precedence ::ffff:0:0/96 100' | sudo tee -a /etc/gai.conf >/dev/null
-          v4="$(getent ahostsv4 "db.${PROJECT_ID}.supabase.co" | awk '{print $1; exit}')"
-          if [ -z "$v4" ]; then
-            echo "::error::the direct db host has no A record on this runner; nothing to dial."
+          # Not an IPv6 problem to be tuned away: db.<prod-ref>.supabase.co has
+          # no A record at all (AAAA-only on 1.1.1.1 and 8.8.8.8), so a GitHub
+          # runner — which has no IPv6 route — cannot reach the direct host by
+          # any address family. The DSN step therefore uses the session pooler.
+          if v4="$(getent ahostsv4 "db.${PROJECT_ID}.supabase.co" | awk '{print $1; exit}')"; then
+            echo "  direct db host A record: $v4"
+          else
+            echo "  direct db host: no A record (AAAA-only) — unreachable from this runner"
+          fi
+          if v4p="$(getent ahostsv4 aws-0-eu-north-1.pooler.supabase.com | awk '{print $1; exit}')" \
+             && [ -n "$v4p" ]; then
+            echo "  session pooler IPv4: $v4p"
+          else
+            echo "::error::the session pooler has no A record here; nothing to dial."
             exit 1
           fi
-          echo "  direct host resolves to IPv4 $v4"
 
-      - name: Resolve the production DSN (values never printed)
+      - name: Resolve the production DSN (session pooler; values never printed)
         run: |
           set -euo pipefail
           : "${ACCESS_TOKEN:?missing repo secret SUPABASE_ACCESS_TOKEN}"
@@ -103,9 +103,14 @@ jobs:
             exit 1
           fi
           enc_pw="$(RAW_PW="$DB_PASSWORD" python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["RAW_PW"],safe=""))')"
-          dsn="postgres://postgres:${enc_pw}@db.${PROJECT_ID}.supabase.co:5432/postgres?sslmode=require"
+          # Session mode on :5432, `postgres.<ref>` as the role — the same shape
+          # ops-db-url-repair.yml composes, and the reason the academy review
+          # package's §5.1 says "session-mode connection, not the 6543 txn
+          # pooler": DDL through 6543 can be handed a different backend between
+          # statements, and `psql -1` around a whole file needs one real session.
+          dsn="postgres://postgres.${PROJECT_ID}:${enc_pw}@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require"
           echo "::add-mask::$dsn"
-          printf 'DIRECT_URL_VALUE=%s\n' "$dsn" >> "$GITHUB_ENV"
+          printf 'SCOPED_DB_URL=%s\n' "$dsn" >> "$GITHUB_ENV"
           unset enc_pw RAW_PW dsn
 
       - name: Validate the version list
@@ -162,11 +167,11 @@ jobs:
       - name: Prove the connection and read history state (read-only)
         run: |
           set -euo pipefail
-          total="$(psql "$DIRECT_URL_VALUE" -tAc \
+          total="$(psql "$SCOPED_DB_URL" -tAc \
             'select count(*) from supabase_migrations.schema_migrations;')"
           echo "  remote history rows: $total"
           while read -r v; do
-            if [ -n "$(psql "$DIRECT_URL_VALUE" -tAc \
+            if [ -n "$(psql "$SCOPED_DB_URL" -tAc \
               "select 1 from supabase_migrations.schema_migrations where version = '${v}';")" ]; then
               echo "  $v: RECORDED on remote (may still be absent — the drift case)"
             else
@@ -175,7 +180,7 @@ jobs:
           done < /tmp/scoped_versions.txt
 
       - name: Classify remote state (read-only)
-        run: bash scripts/db/reconcile-pending.sh --db-url "$DIRECT_URL_VALUE" --dry-run
+        run: bash scripts/db/reconcile-pending.sh --db-url "$SCOPED_DB_URL" --dry-run
 
       # academy-prod-migration-set.md §5.1: the pricing seed is a CROSS JOIN over
       # active areas, so an area count of 0 means #1 writes no rows and the page
@@ -183,7 +188,7 @@ jobs:
       - name: Active interest-area count (read-only)
         run: |
           set -euo pipefail
-          count="$(psql "$DIRECT_URL_VALUE" -tAc \
+          count="$(psql "$SCOPED_DB_URL" -tAc \
             'select count(*) filter (where is_active) from public.academy_interest_areas;')"
           echo "  active academy_interest_areas = $count"
           if [ "$count" = "0" ]; then
@@ -204,7 +209,7 @@ jobs:
           set -euo pipefail
           while read -r v; do
             echo "== applying $v =="
-            bash scripts/db/reconcile-pending.sh --db-url "$DIRECT_URL_VALUE" --apply-one "$v" --yes
+            bash scripts/db/reconcile-pending.sh --db-url "$SCOPED_DB_URL" --apply-one "$v" --yes
           done < /tmp/scoped_versions.txt
 
       - name: Verify history rows and remaining pending
@@ -212,10 +217,10 @@ jobs:
         run: |
           set -euo pipefail
           while read -r v; do
-            present="$(psql "$DIRECT_URL_VALUE" -tAc \
+            present="$(psql "$SCOPED_DB_URL" -tAc \
               "select 1 from supabase_migrations.schema_migrations where version = '$v'" || true)"
             if [ "$present" = "1" ]; then echo "  recorded: $v"; else
               echo "::error::$v has no schema_migrations row — DDL may have run without history."; exit 1
             fi
           done < /tmp/scoped_versions.txt
-          bash scripts/db/reconcile-pending.sh --db-url "$DIRECT_URL_VALUE" --verify
+          bash scripts/db/reconcile-pending.sh --db-url "$SCOPED_DB_URL" --verify
