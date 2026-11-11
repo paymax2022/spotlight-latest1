@@ -163,10 +163,6 @@ export interface RestaurantKYB {
   tin: string;
   contactEmail: string;
   contactPhone: string;
-  /** Settlement (payout) account — the merchant's OWN bank account, not a credential. */
-  bankCode: string;
-  accountNumber: string;
-  accountName: string;
   status: string; // 'draft' | 'submitted' | 'under_review' | 'needs_more_info' | 'approved' | 'rejected'
   decisionReason?: string;
   documents: string[];
