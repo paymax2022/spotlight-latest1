@@ -1,0 +1,183 @@
+name: Ops DB Push (scoped)
+
+# Narrow sibling of ops-db-push.yml. It exists so one known migration can reach
+# production without a human parked on an approval gate, while every big red
+# button keeps its gate.
+#
+# Why a separate GitHub environment instead of dropping the reviewers off
+# `Production`: that environment is bound by ops-db-push (--include-all sweep),
+# ops-db-rotate (rewrites the production DB password through the Management
+# API), ops-db-url-repair, db-migrate.yml's push-on-merge and deploy.yml's
+# backend promotion. Deleting its required reviewers to automate a migration
+# would have disarmed all five at once, for anyone with write on the repo.
+# `production-db-scoped` has no reviewers and does only what is below.
+#
+# The scope is enforced by construction, not by instructions: the only remote
+# write this job can issue is `reconcile-pending.sh --apply-one <version>`, so
+# there is no path to --include-all (the 87-file sweep) or to --apply (every
+# migration the remote is missing). Repo-level secrets are readable from any job
+# in this repo, so this environment needs no secret of its own.
+#
+# It carries the same pre-flight and post-checks as
+# docs/devops/academy-prod-migration-set.md — the additive re-grep against the
+# exact bytes, §5.1's active-area count and §6's history rows — so a run of this
+# lane is the reviewed package, executed by a machine instead of typed by hand.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'plan = classify and validate only (mutates nothing); apply = run the listed versions one at a time'
+        type: choice
+        options: [plan, apply]
+        default: plan
+      versions:
+        description: 'Migration versions, in apply order (e.g. "20271060000000 20271095000000 20271095000001")'
+        type: string
+        default: ''
+      confirm:
+        description: 'Type SCOPED to allow apply mode'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-db-push-scoped
+  cancel-in-progress: false
+
+jobs:
+  scoped:
+    name: supabase db ${{ inputs.mode }} (scoped, production)
+    runs-on: ubuntu-latest
+    environment: production-db-scoped
+    env:
+      ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      VERSIONS: ${{ inputs.versions }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # PINNED — same pin as ops-db-push.yml and db-migrate.yml, deliberately: the
+      # CLI that writes to production is the one a reviewed commit chose, not
+      # whatever setup-cli resolves this morning. Bump all three together.
+      - uses: supabase/setup-cli@v3
+        with:
+          version: 2.114.0
+
+      - name: Preflight (runner tooling)
+        run: |
+          set -euo pipefail
+          command -v psql >/dev/null || { echo "::error::psql is not on this runner; refusing to start."; exit 1; }
+          supabase --version
+
+      - name: Resolve the production DSN (values never printed)
+        run: |
+          set -euo pipefail
+          : "${ACCESS_TOKEN:?missing repo secret SUPABASE_ACCESS_TOKEN}"
+          : "${PROJECT_ID:?missing repo secret SUPABASE_PROJECT_ID}"
+          : "${DB_PASSWORD:?missing repo secret SUPABASE_DB_PASSWORD}"
+          # A no-review lane must not be pointable at the wrong project by a
+          # copy-pasted secret — that is how "staging" ends up meaning production.
+          if [ "$PROJECT_ID" = "wnicsubiznmishkmunsv" ]; then
+            echo "::error::SUPABASE_PROJECT_ID is the staging project ref; this lane is production-only."
+            exit 1
+          fi
+          enc_pw="$(RAW_PW="$DB_PASSWORD" python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["RAW_PW"],safe=""))')"
+          dsn="postgres://postgres:${enc_pw}@db.${PROJECT_ID}.supabase.co:5432/postgres?sslmode=require"
+          echo "::add-mask::$dsn"
+          printf 'DIRECT_URL_VALUE=%s\n' "$dsn" >> "$GITHUB_ENV"
+          unset enc_pw RAW_PW dsn
+
+      - name: Validate the version list
+        run: |
+          set -euo pipefail
+          : > /tmp/scoped_versions.txt
+          n=0
+          for v in ${VERSIONS//,/ }; do
+            if ! printf '%s' "$v" | grep -qxE '[0-9]{14}'; then
+              echo "::error::'$v' is not a 14-digit migration version."; exit 1
+            fi
+            f="$(ls supabase/migrations/${v}_*.sql 2>/dev/null | head -1 || true)"
+            if [ -z "$f" ]; then
+              echo "::error::no migration file for $v in this checkout."; exit 1
+            fi
+            echo "  $v -> $(basename "$f")"
+            printf '%s\n' "$v" >> /tmp/scoped_versions.txt
+            n=$((n + 1))
+          done
+          if [ "$n" -eq 0 ]; then echo "::error::versions is empty."; exit 1; fi
+          # Twelve is deliberate: past this the list is a migration sweep wearing
+          # a scoped label, and a sweep is ops-db-push's reviewed job.
+          if [ "$n" -gt 12 ]; then
+            echo "::error::refusing to apply $n versions unreviewed in one run (max 12)."; exit 1
+          fi
+          echo "validated=$n" >> "$GITHUB_OUTPUT"
+
+      - name: Re-check every selected file is additive-only
+        run: |
+          set -euo pipefail
+          # Passing the guard when it merged is not enough: this lane writes to
+          # production with no reviewer, so the destructive shapes are rejected
+          # again here, against the exact bytes about to run. Idempotent
+          # IF EXISTS drops (policy/trigger/index/function/view) are the allowed
+          # re-create pattern and are not in the reject set.
+          while read -r v; do
+            f="$(ls supabase/migrations/${v}_*.sql | head -1)"
+            bad="$(grep -inE 'drop[[:space:]]+(table|column|schema|database|type|domain|sequence)|truncate[[:space:]]|rename[[:space:]]+(to|column)|alter[[:space:]]+table[^;]*drop' "$f" || true)"
+            if [ -n "$bad" ]; then
+              echo "::error::$(basename "$f") is not additive-only:"
+              printf '%s\n' "$bad"
+              exit 1
+            fi
+            echo "  additive: $(basename "$f")"
+          done < /tmp/scoped_versions.txt
+
+      - name: Classify remote state (read-only)
+        run: bash scripts/db/reconcile-pending.sh --db-url "$DIRECT_URL_VALUE" --dry-run
+
+      # academy-prod-migration-set.md §5.1: the pricing seed is a CROSS JOIN over
+      # active areas, so an area count of 0 means #1 writes no rows and the page
+      # stays degraded. Reporting it here is what tells an operator to stop.
+      - name: Active interest-area count (read-only)
+        run: |
+          set -euo pipefail
+          count="$(psql "$DIRECT_URL_VALUE" -tAc \
+            "select count(*) filter (where is_active) from public.academy_interest_areas;" || echo 'unavailable')'
+          echo "  active academy_interest_areas = $count"
+          if [ "$count" = "0" ]; then
+            echo "::warning::zero active areas — the pricing seed will write no rows."
+          fi
+
+      - name: Require the typed confirm before any write
+        if: ${{ inputs.mode == 'apply' }}
+        run: |
+          if [ "$CONFIRM" != "SCOPED" ]; then
+            echo "::error::mode=apply requires confirm=SCOPED (got: '${CONFIRM}')."
+            exit 1
+          fi
+
+      - name: Apply the selected versions one at a time
+        if: ${{ inputs.mode == 'apply' }}
+        run: |
+          set -euo pipefail
+          while read -r v; do
+            echo "== applying $v =="
+            bash scripts/db/reconcile-pending.sh --db-url "$DIRECT_URL_VALUE" --apply-one "$v" --yes
+          done < /tmp/scoped_versions.txt
+
+      - name: Verify history rows and remaining pending
+        if: ${{ inputs.mode == 'apply' }}
+        run: |
+          set -euo pipefail
+          while read -r v; do
+            present="$(psql "$DIRECT_URL_VALUE" -tAc \
+              "select 1 from supabase_migrations.schema_migrations where version = '$v'" || true)"
+            if [ "$present" = "1" ]; then echo "  recorded: $v"; else
+              echo "::error::$v has no schema_migrations row — DDL may have run without history."; exit 1
+            fi
+          done < /tmp/scoped_versions.txt
+          bash scripts/db/reconcile-pending.sh --db-url "$DIRECT_URL_VALUE" --verify
