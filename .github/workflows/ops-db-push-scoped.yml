@@ -157,13 +157,14 @@ jobs:
             echo "  additive: $(basename "$f")"
           done < /tmp/scoped_versions.txt
 
-      # reconcile-pending.sh pipes `supabase migration list` through
-      # 2>/dev/null, so a dead DSN and a fully-recorded history both print
-      # "APPLIED=0 MISSING=0 REVIEW=0". This step cannot be satisfied by an
-      # empty result: it runs bare psql under set -e, so a wrong password or a
-      # closed direct connection stops the run BEFORE any write, and the
-      # per-version lines below say which of our files the remote already
-      # claims — the recorded-but-absent drift this repo keeps hitting.
+      # The first version of this lane leaned on reconcile-pending.sh --dry-run,
+      # which sends `supabase migration list` to /dev/null. A dead DSN, a DSN the
+      # CLI cannot use, and a fully-recorded history all print the same
+      # "APPLIED=0 MISSING=0 REVIEW=0" — two prod runs proved it, because the
+      # buckets stayed empty on a connection that could read 663 history rows.
+      # State is therefore read here with bare psql under set -e, which cannot be
+      # satisfied by an empty result, and every selected version is named
+      # individually: recorded-but-absent is the drift this repo keeps hitting.
       - name: Prove the connection and read history state (read-only)
         run: |
           set -euo pipefail
@@ -179,8 +180,27 @@ jobs:
             fi
           done < /tmp/scoped_versions.txt
 
-      - name: Classify remote state (read-only)
-        run: bash scripts/db/reconcile-pending.sh --db-url "$SCOPED_DB_URL" --dry-run
+      # apply_one() books history with `supabase migration repair --db-url`, and
+      # reconcile-pending.sh filters that command's stderr out of the log. If the
+      # CLI cannot drive this DSN, psql commits the DDL and the repair fails —
+      # prod then holds an object with no row, which is exactly how the academy
+      # tables got stranded in August. So the CLI's own transport is proved
+      # read-only, with its stderr kept, before this lane is allowed to write.
+      - name: Prove the CLI can book history on this DSN (read-only)
+        run: |
+          set -euo pipefail
+          if ! out="$(supabase migration list --db-url "$SCOPED_DB_URL" 2>&1)"; then
+            printf '%s\n' "$out" | tail -8
+            echo "::error::'supabase migration list --db-url' failed, so 'migration repair' on this DSN would fail the same way — that is DDL applied with no history row. Aborting before any write."
+            exit 1
+          fi
+          rows="$(printf '%s\n' "$out" | grep -cE '[0-9]{14}' || true)"
+          echo "  CLI migration list: $rows rows carrying a version"
+          if [ "$rows" -lt 100 ]; then
+            echo "::error::the CLI saw $rows versions where prod's history table holds hundreds — the DSN works for psql but not for the CLI, so history could not be booked. Do not write with this lane."
+            printf '%s\n' "$out" | head -12
+            exit 1
+          fi
 
       # academy-prod-migration-set.md §5.1: the pricing seed is a CROSS JOIN over
       # active areas, so an area count of 0 means #1 writes no rows and the page
@@ -212,15 +232,32 @@ jobs:
             bash scripts/db/reconcile-pending.sh --db-url "$SCOPED_DB_URL" --apply-one "$v" --yes
           done < /tmp/scoped_versions.txt
 
+      # always(): a half-finished apply is the state this lane must never let
+      # pass silently, so the post-check runs even when the step before it died.
       - name: Verify history rows and remaining pending
-        if: ${{ inputs.mode == 'apply' }}
+        if: ${{ always() && inputs.mode == 'apply' }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          fail=0
           while read -r v; do
             present="$(psql "$SCOPED_DB_URL" -tAc \
-              "select 1 from supabase_migrations.schema_migrations where version = '$v'" || true)"
-            if [ "$present" = "1" ]; then echo "  recorded: $v"; else
-              echo "::error::$v has no schema_migrations row — DDL may have run without history."; exit 1
+              "select 1 from supabase_migrations.schema_migrations where version = '${v}';" 2>/dev/null || true)"
+            if [ "$present" = "1" ]; then
+              echo "  recorded: $v"
+            else
+              echo "::error::$v has no schema_migrations row — DDL may have run without history."
+              fail=1
             fi
           done < /tmp/scoped_versions.txt
-          bash scripts/db/reconcile-pending.sh --db-url "$SCOPED_DB_URL" --verify
+          # Pending count without the CLI: local versions with no history row,
+          # computed in SQL. reconcile-pending.sh --verify derives the same number
+          # from `supabase migration list`, and this lane has already seen that
+          # command report nothing it could be trusted for.
+          vals=""
+          while read -r lv; do vals="${vals}'${lv}',"; done \
+            < <(cd supabase/migrations && ls | grep -oE '^[0-9]{14}' | sort -u)
+          vals="${vals%,}"
+          sql="with l(v) as (select unnest(array[${vals}]::text[])) select count(*) from l left join supabase_migrations.schema_migrations h on h.version = l.v where h.version is null;"
+          pending="$(psql "$SCOPED_DB_URL" -tAc "$sql" 2>/dev/null || echo 'unavailable')"
+          echo "  local migrations still without a history row: $pending"
+          exit "$fail"
