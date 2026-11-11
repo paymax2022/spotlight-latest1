@@ -117,7 +117,7 @@ test.describe('Cluster A · Owner Upgrade', () => {
 // ───────────────────────── Owner KYB (0026-0032) ─────────────────────────
 test.describe('Cluster A · Owner KYB', () => {
   na('RST-UAT-0026', 'Verify mandatory business evidence (per-jurisdiction checklist)', 'no checklist/jurisdiction model in frontend-admin/app/admin/restaurant/onboarding/page.tsx or backend/internal/restaurant/admin_repo.go (reviewer sees docs, records only approve/reject + note) — FOOD-UAT-A-011');
-  na('RST-UAT-0027', 'Review owner/business name match', 'no automated or recorded name-match comparison anywhere in backend/internal/restaurant/kyb*.go or admin_repo.go; manual reviewer judgement only — FOOD-UAT-A-011');
+  na('RST-UAT-0027', 'Review owner/business name match', 'advisory only, not a review step: AdminNameMatchWarning (admin_repo.go:512) compares the storefront name + restaurant_kyb.legal_name with the holder name on the owner\'s default restaurant_bank_accounts row and is returned as name_match_warning on the decision response — no admin UI renders it and nothing records a verdict (FOOD-UAT-A-011)');
   defect('RST-UAT-0028', 'Check approval separation of duties', 'FOOD-UAT-A-002', 'AdminDecideApplication has no applicant != reviewer check (admin_repo.go:215); route is permission-gated only');
   defect('RST-UAT-0029', 'Approve complete KYB', 'FOOD-UAT-A-003/A-004', 'approve works with no KYB submission at all (admin_repo.go:261-276) and writes no audit event, only a best-effort notification');
   blocked('RST-UAT-0030', 'Reject with documented reason', 'needs admin credentials; code enforces a reviewer note on non-approve (admin_repo.go:234) and notifies owner');
