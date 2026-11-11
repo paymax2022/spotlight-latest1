@@ -58,6 +58,7 @@ jobs:
       DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       VERSIONS: ${{ inputs.versions }}
       CONFIRM: ${{ inputs.confirm }}
+      INPUT_MODE: ${{ inputs.mode }}
     steps:
       - uses: actions/checkout@v4
 
@@ -234,6 +235,38 @@ jobs:
 
       # always(): a half-finished apply is the state this lane must never let
       # pass silently, so the post-check runs even when the step before it died.
+      # The review package's §6, and the only check here that cannot be made
+      # through the browser: RLS denies anon reads of these rows, and the page is
+      # down on the host-runtime fault, so until this runs there is no evidence at
+      # all that the seed wrote the money figures visitors are about to see. It
+      # runs in plan mode too — there it is the pre-state, and it is what tells an
+      # operator whether the objects are missing or merely unrecorded.
+      - name: Pricing objects and seeded rows (read-only)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          q(){ psql "$SCOPED_DB_URL" -tAc "$1"; }
+          table="$(q "select to_regclass('public.academy_area_pricing_options') is not null;")"
+          echo "  academy_area_pricing_options exists: $table"
+          echo "  applications.pricing_option_key exists: $(q "select exists(select 1 from information_schema.columns where table_name = 'academy_applications' and column_name = 'pricing_option_key');")"
+          echo "  applications.pricing_selections exists: $(q "select exists(select 1 from information_schema.columns where table_name = 'academy_applications' and column_name = 'pricing_selections');")"
+          if [ "$table" != "t" ]; then
+            if [ "$INPUT_MODE" = "apply" ]; then
+              echo "::error::apply finished and the pricing table is still absent."
+              exit 1
+            fi
+            echo "  (plan mode — nothing to count; the table is created by the first version)"
+            exit 0
+          fi
+          rows="$(q "select count(*) from public.academy_area_pricing_options;")"
+          areas="$(q "select count(*) filter (where is_active) from public.academy_interest_areas;")"
+          echo "  pricing rows: $rows   active areas: $areas   expected: $((5 * areas))"
+          q "select '    ' || key || ' = ' || min(label) || ' , ₦' || min(price_ngn) from public.academy_area_pricing_options group by key order by min(sort_order);"
+          if [ "$INPUT_MODE" = "apply" ] && [ "$rows" -ne "$((5 * areas))" ]; then
+            echo "::error::the seed wrote $rows rows, not 5 per active area ($((5 * areas)))."
+            exit 1
+          fi
+
       - name: Verify history rows and remaining pending
         if: ${{ always() && inputs.mode == 'apply' }}
         run: |
