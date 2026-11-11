@@ -14,11 +14,15 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 )
 
-// Restaurant merchant WITHDRAWAL money path (wallet → saved bank account).
+// Restaurant merchant WITHDRAWAL money path (wallet → any bank account).
 // This is the money-path half of the merchant bank feature (the capture half —
 // bankaccount.go — is NOT money-path). A withdrawal moves a merchant's EARNED
-// wallet balance (credited by paid restaurant_payout_runs; see payout.go) OUT to
-// one of their saved settlement bank accounts.
+// wallet balance (credited by paid restaurant_payout_runs; see payout.go) OUT to a
+// bank account: one they saved earlier, or one they name on the request.
+// The destination is not part of KYB. KYB says who the business is; where its money
+// goes is chosen per withdrawal — which is why an ad-hoc destination is captured
+// through AddBankAccount first, so it carries the same transaction-PIN step-up,
+// bank name-enquiry and holder-name check as a saved account before it can be paid.
 // Money model — mirrors the canonical wallet→bank corridor in
 // finance/transfers.InitiateBankTransfer:
 //	RequestWithdrawal  reserves: DR merchant user_wallet → CR failed_transfer_suspense
@@ -58,8 +62,11 @@ var (
 	ErrWithdrawMissingIdem   = errors.New("restaurant: Idempotency-Key required to request a withdrawal")
 	ErrWithdrawBadAmount     = errors.New("restaurant: withdrawal amount must be a positive integer (kobo)")
 	ErrWithdrawNoBankAccount = errors.New("restaurant: bank account not found for this merchant")
-	ErrWithdrawNotFound      = errors.New("restaurant: withdrawal not found")
-	ErrWithdrawNotReady      = errors.New("restaurant: withdrawal is not in a settleable state")
+	// ErrWithdrawBadDestination: the request names neither a saved payout account nor
+	// a complete bank_code + account_number pair, or names both. HTTP 400.
+	ErrWithdrawBadDestination = errors.New("restaurant: choose a payout account, or give the bank and 10-digit account number to pay, with your transaction PIN")
+	ErrWithdrawNotFound       = errors.New("restaurant: withdrawal not found")
+	ErrWithdrawNotReady       = errors.New("restaurant: withdrawal is not in a settleable state")
 )
 
 // Withdrawal mirrors a row of public.restaurant_withdrawals.
@@ -82,9 +89,22 @@ type Withdrawal struct {
 }
 
 // RequestWithdrawalInput is the validated body for a merchant withdrawal.
+// The destination is exactly one of:
+//   - BankAccountID — a payout account the merchant already saved, or
+//   - BankCode + AccountNumber (+ PIN) — any account, named on this request.
+//
+// The second form is captured through AddBankAccount before the money moves, so it
+// is subject to the same step-up PIN, bank name-enquiry and holder-name checks;
+// AccountName is only a label used when the name-enquiry cannot reach the bank,
+// which then leaves the destination unverified and unable to receive money.
 type RequestWithdrawalInput struct {
 	AmountKobo     int64  `json:"amount_kobo"`
 	BankAccountID  string `json:"bank_account_id"`
+	BankName       string `json:"bank_name"`
+	BankCode       string `json:"bank_code"`
+	AccountNumber  string `json:"account_number"`
+	AccountName    string `json:"account_name"`
+	PIN            string `json:"pin"`
 	IdempotencyKey string `json:"-"` // from the Idempotency-Key header — REQUIRED
 }
 
@@ -144,11 +164,58 @@ func (s *Service) WithDisburser(d WithdrawalDisburser) *Service {
 // at most once regardless of retries. Same convention as transfers.LegKey.
 func withdrawLegKey(base, leg string) string { return base + ":" + leg }
 
+// withdrawDestination picks the payout account a withdrawal should pay, from exactly
+// one of the two ways a request can name it. A destination named on the request is
+// captured through AddBankAccount first — the step-up PIN, the bank name-enquiry and
+// the holder-name verdict all happen there — so "pay any account" cannot become a way
+// around the checks a saved account already had to pass. Capture has no KYB gate of
+// its own (an owner may save a destination at any time); only moving money does, and
+// that gate runs below, in RequestWithdrawal.
+func (s *Service) withdrawDestination(ctx context.Context, ownerID string, in RequestWithdrawalInput) (string, error) {
+	saved := strings.TrimSpace(in.BankAccountID)
+	code := strings.TrimSpace(in.BankCode)
+	number := strings.TrimSpace(in.AccountNumber)
+	switch {
+	case saved != "" && (code != "" || number != ""):
+		return "", ErrWithdrawBadDestination
+	case saved == "" && code == "" && number == "":
+		return "", ErrWithdrawBadDestination
+	case saved != "":
+		return saved, nil
+	case code == "" || number == "":
+		// Half a destination is not one: the pair is what the bank resolves.
+		return "", ErrWithdrawBadDestination
+	}
+	name := strings.TrimSpace(in.BankName)
+	if name == "" {
+		name = s.bankNameForCode(ctx, code)
+	}
+	b, err := s.AddBankAccount(ctx, ownerID, AddBankAccountRequest{
+		BankName: name, BankCode: code, AccountNumber: number,
+		AccountName: in.AccountName, PIN: in.PIN,
+	})
+	if err != nil {
+		return "", err
+	}
+	return b.ID, nil
+}
+
+// bankNameForCode labels a bank from the provider's own list, falling back to the
+// code itself. Read-only display data; an unknown code still pays out.
+func (s *Service) bankNameForCode(ctx context.Context, code string) string {
+	var name string
+	if err := s.db.QueryRow(ctx, `SELECT name FROM payment_banks WHERE code=$1`, code).Scan(&name); err != nil {
+		return code
+	}
+	return name
+}
+
 // RequestWithdrawal reserves a merchant withdrawal: it validates the request
-// fail-closed (feature flag, idempotency key, positive amount, owned bank
-// account, tier limit), then under a per-wallet advisory lock checks the wallet
-// has sufficient funds and posts ONE balanced ledger reserve (DR merchant wallet,
-// CR failed_transfer_suspense) atomically with the `processing` withdrawal row.
+// fail-closed (feature flag, idempotency key, positive amount, an owned bank
+// account — captured first when the request names one — tier limit), then under a
+// per-wallet advisory lock checks the wallet has sufficient funds and posts ONE
+// balanced ledger reserve (DR merchant wallet, CR failed_transfer_suspense)
+// atomically with the `processing` withdrawal row.
 // Idempotent on the Idempotency-Key (a replay returns the existing row and posts
 // no second move). After the reserve, funds are handed to the disbursement
 // adapter — with the default NoopDisburser nothing is executed, so the withdrawal
@@ -179,19 +246,24 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 		return existing, nil
 	}
 
-	// Owner-scope the destination account: a merchant may only withdraw to their
-	// OWN saved bank account (owner-scoping / prevents cross-tenant payout).
+	// Resolve WHERE the money goes: a saved account of this merchant's, or an account
+	// named on this request (captured first, so it is both owned and checked).
+	destID, err := s.withdrawDestination(ctx, ownerID, in)
+	if err != nil {
+		return nil, err
+	}
 	var acctVerified bool
 	var nameStatus *string
+	var acctBankCode, acctNumber, acctName string
 	// The name_match_* columns are only touched while name matching is on, so with
 	// the flag off this query is the pre-feature one and runs on a schema that has
 	// not had migration 20271088000000 yet (backend can deploy before the DB).
-	acctQuery := `SELECT is_verified, NULL::text FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`
+	acctQuery := `SELECT is_verified, bank_code, account_number, account_name, NULL::text FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`
 	if s.nameMatchOn {
-		acctQuery = `SELECT is_verified, name_match_status FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`
+		acctQuery = `SELECT is_verified, bank_code, account_number, account_name, name_match_status FROM restaurant_bank_accounts WHERE id=$1 AND user_id=$2`
 	}
 	if err := s.db.QueryRow(ctx, acctQuery,
-		in.BankAccountID, ownerID).Scan(&acctVerified, &nameStatus); err != nil {
+		destID, ownerID).Scan(&acctVerified, &acctBankCode, &acctNumber, &acctName, &nameStatus); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrWithdrawNoBankAccount
 		}
@@ -299,7 +371,7 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 		ON CONFLICT (idempotency_key) DO NOTHING
 		RETURNING id, user_id, bank_account_id, amount_kobo, currency, status, ledger_ref,
 		          provider_reference, failure_reason, idempotency_key, created_at, updated_at`
-	err = tx.QueryRow(ctx, insertRow, withdrawalID, ownerID, in.BankAccountID, in.AmountKobo, reference, in.IdempotencyKey).Scan(
+	err = tx.QueryRow(ctx, insertRow, withdrawalID, ownerID, destID, in.AmountKobo, reference, in.IdempotencyKey).Scan(
 		&w.ID, &w.UserID, &w.BankAccountID, &w.AmountKobo, &w.Currency, &w.Status, &w.LedgerRef,
 		&w.ProviderReference, &w.FailureReason, &w.IdempotencyKey, &w.CreatedAt, &w.UpdatedAt,
 	)
@@ -329,6 +401,9 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 	res, derr := s.disburse(ctx, WithdrawalDisburseRequest{
 		WithdrawalID:   w.ID,
 		AmountKobo:     w.AmountKobo,
+		BankCode:       acctBankCode,
+		AccountNumber:  acctNumber,
+		AccountName:    acctName,
 		Reference:      reference,
 		IdempotencyKey: in.IdempotencyKey,
 	})
