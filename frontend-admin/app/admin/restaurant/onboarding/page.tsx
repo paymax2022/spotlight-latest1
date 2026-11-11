@@ -290,6 +290,15 @@ export default function OnboardingReviewPage() {
               <div><span style={{ color: colors.muted }}>Contact email</span><div>{selected.email ?? <NotFiled />}</div></div>
               {selected.bank_account_number && (
                 <>
+                  {/* Payouts now land in the owner's wallet and the destination bank is
+                      chosen per withdrawal, so these values only exist on applications
+                      filed before that change. Unlabelled, a stale "✗ Mismatch" reads as
+                      a reason to reject an outlet whose settlement account is no longer
+                      what it gets paid to. */}
+                  <div style={{ gridColumn: '1 / -1', color: colors.muted, fontSize: '0.75rem' }}>
+                    Settlement account filed with an earlier KYB — for history only. Outlets are
+                    paid into the owner&apos;s wallet now, so this is not a review criterion.
+                  </div>
                   <div>
                     <span style={{ color: colors.muted }}>Settlement bank</span>
                     <div>{selected.bank_name ?? 'code not recognised'} · {selected.bank_account_number}</div>
