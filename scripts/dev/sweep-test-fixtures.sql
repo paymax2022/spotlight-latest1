@@ -164,6 +164,53 @@ BEGIN
         END;
     END LOOP;
 
+    -- 4. Utility bills catalogue fixtures — the same class of leak as the
+    --    marketplace categories. tests/utilitybills/live_db_test.go seeds a
+    --    provider → biller → product → mapping chain with a random suffix, and the
+    --    mobile DISCO picker reads utility_billers directly, so 69 rows named
+    --    "Eko Electric Test" rendered as 69 real tiles beside the 12 genuine
+    --    DISCOs on /services/electricity. Neither the test's own teardown nor step 2
+    --    can reach them: catalogue rows are not user-scoped, and the seed user that
+    --    holds their purchase rows is ledger-bound and stays.
+    -- The purchase rows go FIRST: utility_transactions pins the biller, product,
+    -- provider AND mapping with NO ACTION keys, and only its own children cascade.
+    CREATE TEMP TABLE _util_sweep_billers AS
+      SELECT id FROM public.utility_billers WHERE code LIKE 'vtpass-eko-electric-%';
+    CREATE TEMP TABLE _util_sweep_products AS
+      SELECT id FROM public.utility_products
+       WHERE biller_id IN (SELECT id FROM _util_sweep_billers)
+          OR code LIKE 'eko-prepaid-test-%';
+    CREATE TEMP TABLE _util_sweep_providers AS
+      SELECT id FROM public.utility_providers WHERE code LIKE 'vtpass-test-%';
+    CREATE TEMP TABLE _util_sweep_mappings AS
+      SELECT id FROM public.utility_provider_product_mappings
+       WHERE product_id IN (SELECT id FROM _util_sweep_products)
+          OR provider_id IN (SELECT id FROM _util_sweep_providers);
+
+    DELETE FROM public.utility_transactions              WHERE biller_id          IN (SELECT id FROM _util_sweep_billers)
+                                                          OR product_id           IN (SELECT id FROM _util_sweep_products)
+                                                          OR provider_id          IN (SELECT id FROM _util_sweep_providers)
+                                                          OR provider_mapping_id  IN (SELECT id FROM _util_sweep_mappings);
+    DELETE FROM public.utility_paystack_intents          WHERE biller_id  IN (SELECT id FROM _util_sweep_billers)
+                                                          OR product_id  IN (SELECT id FROM _util_sweep_products);
+    DELETE FROM public.saved_utility_beneficiaries       WHERE biller_id  IN (SELECT id FROM _util_sweep_billers);
+    DELETE FROM public.utility_routing_rules             WHERE provider_id IN (SELECT id FROM _util_sweep_providers);
+    DELETE FROM public.utility_provider_attempts         WHERE provider_id         IN (SELECT id FROM _util_sweep_providers)
+                                                          OR provider_mapping_id  IN (SELECT id FROM _util_sweep_mappings);
+    DELETE FROM public.utility_provider_product_mappings WHERE id         IN (SELECT id FROM _util_sweep_mappings);
+    DELETE FROM public.utility_products                  WHERE id         IN (SELECT id FROM _util_sweep_products);
+    DELETE FROM public.utility_billers                   WHERE id         IN (SELECT id FROM _util_sweep_billers);
+    DELETE FROM public.utility_providers                 WHERE id         IN (SELECT id FROM _util_sweep_providers);
+
+    RAISE NOTICE '── utility fixtures: % biller(s) / % provider(s) swept',
+        (SELECT count(*) FROM _util_sweep_billers),
+        (SELECT count(*) FROM _util_sweep_providers);
+
+    DROP TABLE _util_sweep_mappings;
+    DROP TABLE _util_sweep_providers;
+    DROP TABLE _util_sweep_products;
+    DROP TABLE _util_sweep_billers;
+
     SELECT count(*) INTO after_users FROM auth.users WHERE email ~ '@[^@]*\.(test|local|invalid)$';
     SELECT count(*) INTO ledger_bound
       FROM auth.users u
