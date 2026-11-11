@@ -400,6 +400,7 @@ export default function PublicVotingPage() {
           contestId={settings.contestId}
           contestantId={contestant.id}
           contestantName={contestant.name}
+          contestName={contestant.contestName}
           packages={packages}
           settings={settings}
           freeVotesRemaining={freeVotesRemaining}

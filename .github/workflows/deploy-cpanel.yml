@@ -1,9 +1,22 @@
 name: Deploy to Namecheap cPanel (SSH)
 
-# Status: inert lane. It has never completed a run (0 successes in 843 runs since
-# 2026-05-30) because the five secrets below have never existed at repo level,
-# which is the only level this job can read (it declares no `environment:`).
-# spotlightng.com is updated by hand — see docs/devops/deployment-matrix.md.
+# Status: inert lane IN THIS REPO. It has never completed a run (0 successes in
+# 843 runs since 2026-05-30) because the five secrets below have never existed at
+# repo level, which is the only level this job can read (it declares no
+# `environment:`).
+#
+# Do NOT read that as "spotlightng.com is updated by hand" — it isn't, and this
+# job is not the writer either. The production release path for frontend-web is:
+# push to main here -> `.github/workflows/sync-frontend-web.yml`
+# ("Spotlight Frontend Web Safe Merge", gated on
+# vars.SPOTLIGHT_FRONTEND_SYNC_ENABLED) copies frontend-web/ into
+# paymax2022/spotlight-latest main -> that repo's own UNGATED
+# "Deploy to Namecheap cPanel (SSH)" job (which does hold CPANEL_SSH_* +
+# DEPLOY_PATH) builds, rsyncs, purges .next/server/route-cache and restarts
+# Passenger. That lane has been green on every sync, most recently 2026-11-11.
+# So a push to main here IS a production release; turning the gate below on would
+# only add a second, env-less writer to the same host.
+# See docs/devops/deployment-matrix.md.
 #
 # Required config to activate:
 #   secrets:   CPANEL_SSH_HOST, CPANEL_SSH_USER, CPANEL_SSH_KEY,
