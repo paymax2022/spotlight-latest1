@@ -85,11 +85,16 @@ type AdminApplication struct {
 	// The KYB the merchant actually filed. The console's review panel was built
 	// against fixture rows carrying these fields while the queue read only
 	// `restaurants`, so a reviewer saw an empty panel and approved or rejected an
-	// outlet without its legal name, settlement account or verification result ever
-	// appearing. Nil means "not filed", which is not the same as an empty string.
+	// outlet without its legal name or business type ever appearing. Nil means
+	// "not filed", which is not the same as an empty string.
 	LegalName     *string `json:"legal_name,omitempty"`
 	BusinessType  *string `json:"business_type,omitempty"`
 	CACNumber     *string `json:"cac_number,omitempty"` // restaurant_kyb.rc_number; only filed by a registered business
+	// Legacy settlement details. Outlets are now paid into the owner's wallet and
+	// pick the destination bank per withdrawal, so KYB no longer collects these and
+	// SaveKYB no longer writes them. They stay readable for applications filed
+	// before that change, and the console labels them as such — a reviewer must not
+	// reject a modern application over rows that were never asked for.
 	BankName      *string `json:"bank_name,omitempty"`  // payment_banks.name resolved from restaurant_kyb.bank_code
 	BankAccountNumber *string `json:"bank_account_number,omitempty"`
 	BankAccountName   *string `json:"bank_account_name,omitempty"`
@@ -498,14 +503,25 @@ func namesRadicallyDiffer(storefront, legal, accountName string) bool {
 }
 
 // AdminNameMatchWarning reports whether the application's names look unrelated
-// (FOOD-UAT-A-011). The schema has no owner_full_name / business_name columns, so the
-// comparison is storefront name + KYB legal_name vs the settlement account_name — the
-// pairing that matters for payouts. Advisory only: it never blocks a decision.
+// (FOOD-UAT-A-011). The comparison is storefront name + KYB legal_name vs the
+// holder name on the payout account this owner's wallet would actually pay (their
+// default, else the most recent) — the pairing that matters for payouts, now that
+// KYB carries identity only and the destination is chosen per withdrawal. An owner
+// with no registered destination has nothing to compare and never warns.
+// Advisory only: it never blocks a decision.
 func (s *Service) AdminNameMatchWarning(ctx context.Context, restaurantID string) bool {
 	var storefront, legal, acct string
 	err := s.db.QueryRow(ctx,
-		`SELECT COALESCE(r.name,''), COALESCE(k.legal_name,''), COALESCE(k.account_name,'')
-		   FROM restaurants r LEFT JOIN restaurant_kyb k ON k.restaurant_id = r.id WHERE r.id=$1`,
+		`SELECT COALESCE(r.name,''), COALESCE(k.legal_name,''), COALESCE(ba.account_name,'')
+		   FROM restaurants r
+		   LEFT JOIN restaurant_kyb k ON k.restaurant_id = r.id
+		   LEFT JOIN LATERAL (
+		       SELECT account_name FROM restaurant_bank_accounts
+		        WHERE user_id = r.owner_id
+		        ORDER BY is_default DESC, created_at DESC
+		        LIMIT 1
+		   ) ba ON TRUE
+		  WHERE r.id=$1`,
 		restaurantID).Scan(&storefront, &legal, &acct)
 	if err != nil {
 		return false
