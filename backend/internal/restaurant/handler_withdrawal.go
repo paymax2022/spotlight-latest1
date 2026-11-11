@@ -2,9 +2,8 @@ package restaurant
 
 // Merchant bank-account CAPTURE + WITHDRAWAL money-path HTTP handlers, re-applied
 // onto main's restaurant module (see restaurant/bankaccount.go + withdrawal.go).
-// Kept in a dedicated file so it does not collide with main's handler_delivery.go.
-// NOTE: the read-only GET /restaurant/earnings handler is intentionally omitted here
-// (it needs GetMerchantEarnings, a separate merchant-earnings slice not yet on main).
+// Kept in a dedicated file so it does not collide with main's handler_delivery.go,
+// which already serves the read-only GET /restaurant/earnings.
 
 import (
 	"errors"
