@@ -136,6 +136,28 @@ jobs:
             echo "  additive: $(basename "$f")"
           done < /tmp/scoped_versions.txt
 
+      # reconcile-pending.sh pipes `supabase migration list` through
+      # 2>/dev/null, so a dead DSN and a fully-recorded history both print
+      # "APPLIED=0 MISSING=0 REVIEW=0". This step cannot be satisfied by an
+      # empty result: it runs bare psql under set -e, so a wrong password or a
+      # closed direct connection stops the run BEFORE any write, and the
+      # per-version lines below say which of our files the remote already
+      # claims — the recorded-but-absent drift this repo keeps hitting.
+      - name: Prove the connection and read history state (read-only)
+        run: |
+          set -euo pipefail
+          total="$(psql "$DIRECT_URL_VALUE" -tAc \
+            'select count(*) from supabase_migrations.schema_migrations;')"
+          echo "  remote history rows: $total"
+          while read -r v; do
+            if [ -n "$(psql "$DIRECT_URL_VALUE" -tAc \
+              "select 1 from supabase_migrations.schema_migrations where version = '${v}';")" ]; then
+              echo "  $v: RECORDED on remote (may still be absent — the drift case)"
+            else
+              echo "  $v: not recorded"
+            fi
+          done < /tmp/scoped_versions.txt
+
       - name: Classify remote state (read-only)
         run: bash scripts/db/reconcile-pending.sh --db-url "$DIRECT_URL_VALUE" --dry-run
 
@@ -146,7 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           count="$(psql "$DIRECT_URL_VALUE" -tAc \
-            "select count(*) filter (where is_active) from public.academy_interest_areas;" || echo 'unavailable')'
+            'select count(*) filter (where is_active) from public.academy_interest_areas;')"
           echo "  active academy_interest_areas = $count"
           if [ "$count" = "0" ]; then
             echo "::warning::zero active areas — the pricing seed will write no rows."
