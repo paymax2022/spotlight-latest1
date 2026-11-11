@@ -68,8 +68,8 @@
 
 /* Once past 100px main.css flips #header-sticky to position:fixed, so it stops
    taking up flow space and overlays the top of the viewport instead (92px at
-   every width we measured). Anchor jumps to a section land its heading under
-   that bar without this clearance. */
+   every width we measured). Anchor jumps — "Price your training", "Choose a
+   craft" — land their section under it without this clearance. */
 :global(html):has(.page) {
   scroll-padding-top: 104px;
 }
@@ -730,8 +730,7 @@
   justify-content: center;
 }
 
-.viewfinder span,
-.viewfinder small {
+.viewfinder span {
   font-family: var(--font-ui);
   font-size: 9px;
   letter-spacing: 0.17em;
@@ -1870,7 +1869,6 @@
 .page .priceRow dd,
 .page .action,
 .page .viewfinder span,
-.page .viewfinder small,
 .page .deliverables li span,
 .page .pickerHead,
 .page .areaCheck,
