@@ -126,6 +126,11 @@ export interface IntakeField {
    * (e.g. ".jpg,.png,.pdf").
    */
   accept?: string;
+  /**
+   * Safety-critical answer (allergies, current medications, M6/M7): the review
+   * screen renders it in the escalation colour so it cannot be skimmed past.
+   */
+  critical?: boolean;
 }
 
 // A step renders only when its `when` predicate (if any) is satisfied by the
@@ -265,6 +270,11 @@ export interface PreConsultIntake {
   submittedAt?: string;
   /** Doctor the details are prepared for (M15 confirmation copy). */
   doctorName?: string;
+  /**
+   * Files already recorded on the intake (M12/M16). They live OUTSIDE `answers` —
+   * the server stores them in their own column, not in the schema.
+   */
+  attachments?: IntakeAttachment[];
 }
 
 /** Uploaded attachment reference (M12). */
@@ -318,14 +328,15 @@ export interface HealthProfileEntry {
 }
 
 export interface HealthProfile {
-  subjectId: string;
-  subjectName: string;
+  /** The live endpoint is keyed off the caller and names no subject. */
+  subjectId?: string;
+  subjectName?: string;
   conditions: HealthProfileEntry[];
   medications: HealthProfileEntry[];
   allergies: HealthProfileEntry[];
   updatedAt?: string;
   /** Source intakes that fed this profile (for the "from your intakes" note). */
-  sourceCount: number;
+  sourceCount?: number;
 }
 
 export interface ActiveOrderSummary {
