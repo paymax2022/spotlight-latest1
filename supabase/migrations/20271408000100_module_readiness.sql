@@ -34,6 +34,10 @@
 -- rows never lose a value, and nothing changes what any environment displays — that
 -- last property comes from the backfill below, NOT from the default, so it must not be
 -- edited away.
+--
+-- VERSION: 20271408000000 was already taken by 20271408000000_preconsult_intake_schema_ui.sql
+-- on main when this branch merged it. The version is the primary key, so a shared number
+-- makes `db push` apply one file, record the version and skip the other with no error.
 
 ALTER TABLE public.platform_modules
     ADD COLUMN IF NOT EXISTS readiness TEXT NOT NULL DEFAULT 'in_development';

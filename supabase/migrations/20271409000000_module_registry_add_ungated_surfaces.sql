@@ -30,7 +30,7 @@
 -- is the point of the feature — it is the owner's instruction, applied consistently rather
 -- than exempting the seven modules that were missed the first time.
 --
--- Readiness lands on 'in_development' via the column default in 20271408000000. That is
+-- Readiness lands on 'in_development' via the column default in 20271408000100. That is
 -- the honest starting state for work that has never had a readiness decision, and it makes
 -- the production interlock bite immediately: these rows cannot be published to production
 -- until someone marks them ready.

@@ -90,7 +90,7 @@ the other.
   gate resolves the module and logs what it would refuse. Turn it on only after the route map
   has met real traffic, and remember it is mounted on the finance group alone.
 
-Order for a build that newly gates modules (migrations `20271408000000` and
+Order for a build that newly gates modules (migrations `20271408000100` and
 `20271409000000` do exactly this): apply migrations → publish the intended set from the
 console → ship the build. Shipping first leaves the newly registered surfaces hidden.
 
