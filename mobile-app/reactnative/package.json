@@ -48,6 +48,7 @@
     "test:savings": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/savings/*.spec.ts\"",
     "test:telemedicine": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/telemedicine/*.spec.ts\"",
     "test:payments": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/payments/*.spec.ts\"",
+    "test:dev-guard": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/dev/*.spec.ts\"",
     "test:modules": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/modules/*.spec.ts\"",
     "test:emergencies": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/emergencies/*.spec.ts\"",
     "test:food": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/food/*.spec.ts\"",
