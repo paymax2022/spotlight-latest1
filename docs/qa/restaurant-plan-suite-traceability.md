@@ -38,7 +38,7 @@ Supporting **pure** suites (run everywhere, no DB) back the money/logic cores: `
 | RO-005 | Duplicate business registration rejected | — | ➖ still absent |
 | RO-006 | Mandatory field & document validation | S9 | ✅ incomplete-submit blocked; CAC cert + NUBAN + business-type/RC rule |
 | RO-007 | Profile edit (name, cuisine, logo, address) | S7 | 🟡 `PATCH /restaurant/:id` sets cuisine/description/logo (Phase 6) |
-| RO-008 | Bank/payout account requires owner + step-up | S9 | 🟡 settlement account captured, owner-only; **no step-up MFA** |
+| RO-008 | Bank/payout account requires owner + step-up | S9 | ✅ owner-scoped add behind the transaction PIN (FOOD-UAT-B-002), asserted live by `TestBankAccount_StepUpAndVerifiedGate_FoodUATB002B003` in `withdrawal_live_db_test.go`; the step-up is a PIN, not a second factor. Since #981 the destination is named when the merchant withdraws, not collected in KYB — an ad-hoc one still goes through the same `AddBankAccount` capture |
 
 ## TS-2 Menu (MN) + TS-5 Cart (CT) → S4 Modifiers
 

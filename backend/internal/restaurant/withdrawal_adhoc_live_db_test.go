@@ -8,9 +8,13 @@ package restaurant
 //     name-match verdict, audit — and then pays out with ONE balanced reserve.
 //  2. The anti-fraud controls still gate the money: a destination the bank refuses
 //     to confirm (is_verified=false) moves nothing, and so does one with no PIN.
-//  3. Exactly one of {saved account, ad-hoc destination} is required.
+//  3. Exactly one of {saved account, ad-hoc destination} is required, and a malformed
+//     destination is a 400 refused before anything else happens.
 //  4. The disbursement adapter is told WHERE the money goes (it could not be paid
 //     correctly without the recipient triple).
+//  5. A withdrawal that a gate refuses captures nothing: no destination row, no paid
+//     name-enquiry, no owner alert — and a destination the bank could not confirm the
+//     first time can still be recovered on a later request.
 // Skipped unless TEST_DATABASE_URL is set.
 
 import (
@@ -21,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/provider"
 )
@@ -43,6 +48,149 @@ type failingResolver struct{ provider.DisbursementProvider }
 
 func (failingResolver) ResolveAccount(context.Context, string, string) (*provider.AccountResolution, error) {
 	return nil, errors.New("bank name-enquiry unavailable")
+}
+
+// countingResolver is a working name-enquiry that records how many times the bank was
+// asked. The enquiry is a paid provider call, so a withdrawal that is going to be
+// refused must not make one.
+type countingResolver struct {
+	fakeNameResolver
+	asks int
+}
+
+func (c *countingResolver) ResolveAccount(ctx context.Context, code, number string) (*provider.AccountResolution, error) {
+	c.asks++
+	return c.fakeNameResolver.ResolveAccount(ctx, code, number)
+}
+
+func destinationRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, owner, accountNumber string) int {
+	t.Helper()
+	var rows int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM restaurant_bank_accounts WHERE user_id=$1 AND account_number=$2`,
+		owner, accountNumber).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
+// A merchant whose business verification is not approved cannot move money, so the
+// request must be refused BEFORE its destination is captured: no payout-account row,
+// no paid name-enquiry, no "Payout bank account added" alert for a withdrawal that
+// never happened. An attacker with a stolen session and a revoked KYB must not be able
+// to write rows into restaurant_bank_accounts at will.
+func TestRequestWithdrawal_RefusedMerchantCapturesNoDestination(t *testing.T) {
+	pool := withdrawalPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	svc, _, merchant, _ := withdrawalFixture(t, ctx, pool, 1_000_00)
+	counter := &countingResolver{}
+	svc.WithDisbursementProvider(counter)
+
+	if _, err := pool.Exec(ctx, `UPDATE restaurants SET kyb_status='rejected' WHERE owner_id=$1`, merchant); err != nil {
+		t.Fatalf("revoke KYB: %v", err)
+	}
+
+	const acctNo = "4680246813"
+	_, err := svc.RequestWithdrawal(ctx, merchant, RequestWithdrawalInput{
+		AmountKobo: 40_000, BankCode: "057", AccountNumber: acctNo, PIN: "1234",
+		IdempotencyKey: "wd-adhoc-revoked-" + uuid.New().String(),
+	})
+	if !errors.Is(err, ErrKYBNotApproved) {
+		t.Fatalf("err = %v, want ErrKYBNotApproved", err)
+	}
+	if counter.asks != 0 {
+		t.Errorf("%d name-enquiries for a refused withdrawal, want 0", counter.asks)
+	}
+	if rows := destinationRows(t, ctx, pool, merchant, acctNo); rows != 0 {
+		t.Errorf("%d payout destinations written for a refused withdrawal, want 0", rows)
+	}
+}
+
+// A mistyped account number is the caller's mistake, refused on shape alone — before
+// the PIN step-up, before the bank enquiry, and reported as 400 rather than a 5xx that
+// invites a retry.
+func TestRequestWithdrawal_MalformedAdHocNumberIsRefusedEarly(t *testing.T) {
+	pool := withdrawalPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	svc, _, merchant, _ := withdrawalFixture(t, ctx, pool, 1_000_00)
+	counter := &countingResolver{}
+	svc.WithDisbursementProvider(counter)
+
+	for _, number := range []string{"123456789", "12345678901", "012345678a"} {
+		t.Run(number, func(t *testing.T) {
+			_, err := svc.RequestWithdrawal(ctx, merchant, RequestWithdrawalInput{
+				AmountKobo: 40_000, BankCode: "057", AccountNumber: number, PIN: "1234",
+				IdempotencyKey: "wd-adhoc-badno-" + uuid.New().String(),
+			})
+			if !errors.Is(err, ErrBankAccountBadNumber) {
+				t.Fatalf("err = %v, want ErrBankAccountBadNumber", err)
+			}
+			if got := withdrawalErrStatus(err); got != http.StatusBadRequest {
+				t.Errorf("HTTP %d for a mistyped account number, want 400", got)
+			}
+		})
+	}
+	if counter.asks != 0 {
+		t.Errorf("%d name-enquiries for malformed requests, want 0", counter.asks)
+	}
+}
+
+// A destination saved while the bank was unreachable is is_verified=false, which
+// FOOD-UAT-B-003 refuses forever. Re-naming it on a later withdrawal must be able to
+// recover it — otherwise the merchant is locked out of payouts with no way back except
+// deleting the row.
+func TestRequestWithdrawal_AdHocDestinationRecoversAfterAFailedEnquiry(t *testing.T) {
+	pool := withdrawalPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	svc, led, merchant, _ := withdrawalFixture(t, ctx, pool, 1_000_00)
+	const acctNo = "5791357902"
+	first := RequestWithdrawalInput{
+		AmountKobo: 40_000, BankCode: "057", AccountNumber: acctNo, PIN: "1234",
+		IdempotencyKey: "wd-adhoc-softfail-" + uuid.New().String(),
+	}
+
+	svc.WithDisbursementProvider(failingResolver{})
+	if _, err := svc.RequestWithdrawal(ctx, merchant, first); !errors.Is(err, ErrBankAccountUnverified) {
+		t.Fatalf("with the bank unreachable: err = %v, want ErrBankAccountUnverified", err)
+	}
+	if rows := destinationRows(t, ctx, pool, merchant, acctNo); rows != 1 {
+		t.Fatalf("%d destination rows after the soft-fail, want 1 saved unverified", rows)
+	}
+
+	// The bank answers this time: the same request must pay, not stay locked out.
+	svc.WithDisbursementProvider(fakeNameResolver{holder: "MERCHANT TEST"})
+	before, err := led.GetBalance(ctx, merchant)
+	if err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	second := first
+	second.IdempotencyKey = "wd-adhoc-recheck-" + uuid.New().String()
+	if _, err := svc.RequestWithdrawal(ctx, merchant, second); err != nil {
+		t.Fatalf("withdrawal after the bank came back: %v", err)
+	}
+	if after, aerr := led.GetBalance(ctx, merchant); aerr != nil {
+		t.Fatalf("balance after: %v", aerr)
+	} else if want := before - 40_000; after != want {
+		t.Errorf("wallet balance = %d, want %d", after, want)
+	}
+	var verified bool
+	if err := pool.QueryRow(ctx,
+		`SELECT is_verified FROM restaurant_bank_accounts WHERE user_id=$1 AND account_number=$2`,
+		merchant, acctNo).Scan(&verified); err != nil {
+		t.Fatal(err)
+	}
+	if !verified {
+		t.Error("a successful name-enquiry on re-add must clear the unverified flag")
+	}
+	if rows := destinationRows(t, ctx, pool, merchant, acctNo); rows != 1 {
+		t.Errorf("%d destination rows after recovery, want 1", rows)
+	}
 }
 
 func TestRequestWithdrawal_AdHocDestinationPaysAnyAccount(t *testing.T) {
@@ -288,6 +436,7 @@ func TestWithdrawalErrStatus_AdHocDestination(t *testing.T) {
 		ErrStepUpFailed:           http.StatusForbidden,
 		ErrStepUpUnavailable:      http.StatusServiceUnavailable,
 		ErrBankAccountUnverified:  http.StatusBadRequest,
+		ErrBankAccountBadNumber:   http.StatusBadRequest,
 	}
 	for err, status := range want {
 		// Wrapped the way RequestWithdrawal returns it, through AddBankAccount.

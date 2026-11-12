@@ -4,6 +4,15 @@
 **Date:** 2026-09-29  
 **Deciders:** Paymax fintech team
 
+> **Amended 2026-11-12 (PR #981).** The Context premise that restaurant owners "must
+> provide … settlement bank accounts" as part of onboarding no longer holds: KYB is an
+> identity-only record, earnings are credited to the owner's wallet, and the destination
+> is chosen when the merchant withdraws. What this ADR actually decided survives intact —
+> name-enquiry inside `AddBankAccount`, soft-failing to `is_verified=false` — and now also
+> runs for an account named on a withdrawal, because that is captured through the same
+> path rather than a separate one. Only *when* a payout account is collected moved; the
+> verification, and FOOD-UAT-B-003's refusal to pay an unverified destination, did not.
+
 ## Context
 
 Restaurant owners must provide and validate settlement bank accounts for payouts. Currently, the `AddBankAccount` flow captures the account details but **does not verify** them against the actual banking system. This creates friction:
