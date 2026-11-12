@@ -116,12 +116,12 @@ export default function DoctorProfileScreen() {
           label="Book appointment"
           fullWidth={false}
           style={{ flex: 1, marginLeft: Spacing.md }}
-          // Pre-consultation triage (M1–M17) runs FIRST, then booking. Launches the
-          // completion it continues to the booking screen.
+          // The health intake (M1–M17) is keyed to an appointment, so it runs after
+          // booking: the success screen hands the patient straight to it.
           onPress={() =>
             router.push({
-              pathname: '/services/telemedicine/appointment/[id]/intake',
-              params: { id: `pre-${doctor.id}`, prebooking: '1', doctorId: doctor.id },
+              pathname: '/services/telemedicine/doctor/[id]/book',
+              params: { id: doctor.id },
             })
           }
         />
