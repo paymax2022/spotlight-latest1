@@ -115,6 +115,28 @@ describe('mapLiveDoctor', () => {
   });
 });
 
+describe('mapLiveDoctor photo', () => {
+  // doctors.avatar_url is an R2 OBJECT KEY until the server signs it. A key is
+  // not renderable, and handing one to <Image source={{uri}}> is a broken image,
+  // so the avatar has to fall back to initials instead. Same rule the provider
+  // header applies (src/features/doctor/mapping.ts mapAvatarUri).
+  const SIGNED = 'https://acct.r2.cloudflarestorage.com/spotlight/doctor/u1/photo/a.png?X-Amz-Signature=abc';
+  const KEY = 'doctor/u1/photo/a.png';
+
+  it('carries a signed photo URL through to photoUri', () => {
+    assert.equal(mapLiveDoctor({ ...SERVER_DOCTOR, avatar_url: SIGNED }).photoUri, SIGNED);
+  });
+
+  it('refuses to treat a raw storage key as a picture', () => {
+    assert.equal(mapLiveDoctor({ ...SERVER_DOCTOR, avatar_url: KEY }).photoUri, undefined);
+  });
+
+  it('leaves photoUri undefined when no photo exists', () => {
+    assert.equal(mapLiveDoctor(SERVER_DOCTOR).photoUri, undefined);
+    assert.equal(mapLiveDoctor({ ...SERVER_DOCTOR, avatar_url: null }).photoUri, undefined);
+  });
+});
+
 describe('initialsFromName', () => {
   it('strips titles and takes the first and last words', () => {
     assert.equal(initialsFromName('Dr. Amaka Obi'), 'AO');

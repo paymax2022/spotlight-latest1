@@ -55,6 +55,12 @@ export interface Doctor {
   bio:             string;
   initials:        string;
   avatarColor:     string;            // hex used for avatar circle
+  /**
+   * Renderable doctor photo, signed by the server. Absent when the doctor has
+   * uploaded no photo, or when the stored value is still a raw R2 object key —
+   * a key cannot be rendered, and the avatar shows initials instead.
+   */
+  photoUri?:       string;
   feeKobo:         number;            // consultation fee in kobo
   /**
    * Price breakdown for booking this doctor, computed by the server. Optional
