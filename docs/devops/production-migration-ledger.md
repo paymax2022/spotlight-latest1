@@ -298,10 +298,14 @@ Consequences that Tasks 4, 6 and 11 must carry, not discover:
    One trap in that command, learned the hard way in the run above: **`mode=plan`
    is gated by the same additive re-check as `mode=apply`** — dispatching
    `versions="20271408000100"` failed at step 7 (`Re-check every selected file is
-   additive-only`, the only mode-independent step in the job) rather than answering
-   whether the version is recorded. Verified from that run's log: it contains **no**
-   `remote history rows:` line at all, because the re-check aborts the job before
-   the read-only history step runs. So a version the gate blocks cannot be
+   additive-only`, file line `:142`) rather than answering
+   whether the version is recorded. To be exact about the step graph: seven steps
+   carry no mode condition at all (`:72` `:94` `:117` `:142` `:169` `:190` `:209`),
+   and only `:219`, `:227` and `:270-271` are apply-gated — so `:142` is not the
+   only mode-independent step, it is the only mode-independent step that can
+   **abort** the job before the read-only count at `:169` is ever printed. Verified
+   from that run's log: it contains **no**
+   `remote history rows:` line at all. So a version the gate blocks cannot be
    *inspected* through
    this lane either, and the only probe that works is a version you already know is
    clean. Ask for a blocked version's state from a `mode=list` capture or from
@@ -1170,9 +1174,18 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
      lane's grep), it runs as a human with the production DSN in hand, and **no
      production DSN exists on this machine** — `backend/.env` in the live repo
      resolves to `localhost`, `frontend-web/.env.local` to `127.0.0.1:54321/54324`,
-     there is no root `.env`, `~/.supabase` holds only `telemetry.json`, and
-     `supabase/.temp` does not exist — so this route requires the owner to supply
-     the session-pooler URL, which is an R2 credential action.
+     there is no root `.env`, `~/.supabase` holds only `telemetry.json` (243 B, no
+     project ref), and the live repo's `supabase/.temp` holds only a 6-byte
+     `cli-latest` version marker — no ref, no URL — and is absent entirely in the
+     `/tmp/spot-cutover` and `/tmp/rel` trees. A targeted grep for the production
+     project ref across those env files, `supabase/config.toml`, `~/.supabase` and
+     `supabase/.temp` returns nothing. So this route requires the owner to supply
+     the session-pooler URL. It is not one of R2's enumerated items — R2 lists
+     "any prod `db push`", which route 2 is and route 1 is not (route 1 is a host
+     `psql` plus `migration repair`) — but it writes production history and needs a
+     credential this machine does not hold, so it still stops at the human. The
+     plan's own closer warrant is line 52: the scoped lane "is the only prod DB
+     writer this plan uses", which is exactly what choosing route 1 would change.
   2. **Apply them with the `Production`-environment lane**
      (`ops-db-push.yml mode=push`, 2 required reviewers). This is the automated
      route the repo already has for non-additive DDL. Cost: `mode=push` runs
@@ -1214,7 +1227,8 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
      `'executing'` to the value list (`ADD CONSTRAINT` at `:46`, the widened list
      at `:47`), so prod without it rejects a swap in flight;
      `20271401000000` drops `NOT NULL` on `driver_documents.file_url` (`:20`) and
-     replaces the `doc_type` CHECK on the next statement (`:22-24`).
+     replaces the `doc_type` CHECK — drop at `:22-23`, re-`ADD CONSTRAINT` with the
+     widened list at `:24-26`.
      So this route is only safe while every surface those four touch stays
      flag-off — voting abstentions, crypto swaps, driver documents — which is Task
      7's and Task 10's job, and makes route 4 admissible as a *sequenced* choice
