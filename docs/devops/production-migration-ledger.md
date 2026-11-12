@@ -208,14 +208,16 @@ Re-measured **live today** with a read-only HTTP or local-git probe: §3.1, §3.
 §3.3, §3.6, §3.8's captured-log witnesses (re-read from the stored run, not
 re-probed on the host), §3.9's HTTP half (the restaurant 401 and all three
 academy 404s), §3.10 (both halves — the `www.spotlightng.com` half and the staging
-web half at `https://frontend-web-staging-new.up.railway.app`), and the git-side
-half of §3.4. A staging HTTP probe needs no approval and no secret, so deferring
-it would have been a gap, not a limitation.
+web half at `https://frontend-web-staging-new.up.railway.app`), the git-side
+half of §3.4, and the git half of §3.5 (the 111/112 tree difference, which needs
+no production read). A staging HTTP probe needs no approval and no secret, so
+deferring it would have been a gap, not a limitation.
 
 **Not** re-measured at Task 1, because the number lives behind a Supabase
 production read, a Railway production read, or an SSH host probe: §3.4's
-history-table count, §3.5, §3.7, §3.8's live host state (only its stored-log
-witness was re-read), §3.9's Railway env counts, §3.11, §3.12, §3.13, §3.14.
+history-table count, §3.5's history-table half, §3.7, §3.8's live host state
+(only its stored-log witness was re-read), §3.9's Railway env counts, §3.11,
+§3.12, §3.13, §3.14.
 Those rows carry the
 figure **as captured 2026-11-12**, the exact command that re-reads it, and the
 task that owns the re-read. No workflow was dispatched to obtain one —
@@ -269,13 +271,25 @@ worth knowing before Task 4 copies its config. **Target:** the same SHA as prod.
 
 ### 3.4 Prod schema — AS CAPTURED 2026-11-12; git half re-measured
 
-Figure as captured: `supabase_migrations.schema_migrations` = **667** rows
-(read-only scoped run `42983741548`, 2026-11-11T08:01:35Z); `origin/main`
+Figure as captured: `supabase_migrations.schema_migrations` = **667** rows — the
+`Prove the connection and read history state (read-only)` step of run
+**`42983741548`** (`Ops DB Push (scoped)`, `workflow_dispatch`, success,
+headSha `9e8d0c779`) printing `remote history rows: 667` at
+2026-11-11T08:01:35Z; `origin/main`
 carried **750** files in `supabase/migrations/`, every one named
-`20<12 digits>_…sql` → **≈83 pending**. On the last captured table (2026-11-07,
-663 applied) the classifier prints **87 pending = 69 above-max additive + 18
-below-max additive + 0 NON-ADDITIVE**; the 4-version difference is the four
-days between the two reads, not two answers. **Target:** 0 pending.
+`20<12 digits>_…sql` → **≈83 pending**. On the *previous* captured table — run
+**`42367077299`** (`Ops DB Push (manual)`, `workflow_dispatch`, success,
+2026-11-07T11:10:47Z, headSha `87b25a8ab`, production `mode=list`), which
+prints **663** applied rows — the classifier instead prints **87 pending = 69
+above-max additive + 18 below-max additive + 0 NON-ADDITIVE**; the 4-version
+difference between the two table reads is the four days between them
+(663 → 667), not two answers to one question. **Target:** 0 pending.
+
+> Task 16 note, found while attributing the 663: plan line 310 describes this
+> run as "`42367077299`'s successor at that date", but `42367077299` **is** the
+> 2026-11-07 run — there is no successor at that date, and the next
+> `Ops DB Push (manual)` run is `42793519947` (2026-11-10, cancelled). A task
+> that reads the plan literally will go looking for a run that does not exist.
 
 Re-measured today (local git only, against the pinned SHA):
 
@@ -345,12 +359,16 @@ git diff --name-only --diff-filter=A 41c19ea2b97ec216213a0af7b0db79e9edff5767..c
 ```
 
 Observed: **111** against `8436ad005`, **112** against the pin — both reproduced
-at Task 1's fix round. Note the shape of the command: `41c19ea2b9` is **not an
-ancestor** of the pin (`git merge-base --is-ancestor 41c19ea2b9 c49b39564` fails),
-because prod was last built from a commit that is not on `main`'s first-parent
-line. So this is a *tree* difference between what prod runs and what the pin
-carries — which is the right question — but it is not a history walk, and a
-`git log --diff-filter=A` over the same range would answer a different question.
+at Task 1's fix round. Note the shape of the command: `41c19ea2b9` is **not in
+`main`'s history at all** (`git merge-base --is-ancestor 41c19ea2b9 origin/main`
+fails), because prod was last built from a `prod`-branch promotion commit
+(`git branch -a --contains` → `origin/prod`,
+`origin/chore/promote-prod-oct17-2`; subject "chore: promote main to prod
+(…) (#830)"). So this is a *tree* difference between what prod runs and what the
+pin carries — which is the right question — but it is not a history walk, and a
+`git log --diff-filter=A` over the same range would answer a different question
+(it returns 114 unique paths across the 713-commit range, because it walks merge
+history rather than comparing two trees).
 
 The **≈83 unrecorded** half is the classifier's count and genuinely does need
 prod's history table. It comes from `scripts/db/list-pending.sh`, which **does
@@ -365,10 +383,20 @@ bash scripts/db/list-pending.sh --remote-table /tmp/prod_table.txt \
   | grep -c '^pending'
 ```
 
-`/tmp/prod_table.txt` is produced upstream by Task 2 Step 5's read, and the
-`$RELEASE_SHA` in the git commands above by Task 1 Step 2 into
-`/tmp/RELEASE_SHA`. Read both back before using them; an empty `$RELEASE_SHA`
-expands silently and turns a `git diff` into a comparison against nothing.
+`/tmp/prod_table.txt` is produced upstream by Task 2 Step 5's read. Take it from
+that column whole — **never** a `grep -oE '20[0-9]{12}'` sweep of the same log.
+Measured on run `42367077299`'s `Migration list (before)` column: such a sweep
+returns **749** distinct version tokens, while the pipe-rows with a non-empty
+Remote cell number **663** and **86** rows print an empty one (the shape
+`` `20271060000000` | ` ` ``, which the plan calls the LOCAL-ONLY class — note
+the literal string `LOCAL-ONLY` does not appear in that log, so match on the
+empty cell, not on the word). Feeding a 749-row sweep in as "applied" marks every
+pending migration already applied and the classifier prints **0 pending** — the
+false green that would have cancelled this migration on its first run. The git
+commands above spell their SHAs out rather than using `$RELEASE_SHA`; the
+read-it-back rule still binds any later block that substitutes it, since an
+empty `$RELEASE_SHA` expands silently and turns a `git diff` into a comparison
+against nothing.
 
 Why the second half was not re-measured at Task 1: it depends on prod's
 `schema_migrations` state, and the only lane that reads it is the scoped
@@ -453,11 +481,14 @@ Observed re-read today — exactly one line, `--- .env.production.local (mtime
 shape surfaces two of the four keys
 (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, both
 `→ .env.production.local`); by name across the whole job the four appear
-42 / 26 / 11 / 7 times (`NEXT_PUBLIC_SUPABASE_URL`,
+**42 / 26 / 11 / 7** times (`NEXT_PUBLIC_SUPABASE_URL`,
 `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
-`GO_BACKEND_URL`) and nothing else in that family appears. So the "exactly 4
-keys, zero `FEATURE_*`" figure survives re-reading, with the caveat that the
-counts are line occurrences, not distinct keys.
+`GO_BACKEND_URL`) and nothing else in that family appears — re-count with
+`grep -ao "<name>" | wc -l` per name, which is total occurrences; `grep -ac`
+on the same names gives **41 / 25 / 11 / 7** lines — the two differ because
+exactly one line mentions each of the first two names twice. So the "exactly 4 keys,
+zero `FEATURE_*`" figure survives re-reading, with the caveat that these are
+occurrence counts of the log's own echoes, not a distinct-key inventory.
 
 ```bash
 gh run view 43037664704 --repo paymax2022/spotlight-latest --log --job 130580727795 \
