@@ -69,7 +69,30 @@ Template: `frontend-admin/.env.production.example`.
 mobile (Expo): `EXPO_PUBLIC_API_BASE_URL` = prod frontend-web origin; the 51
 `EXPO_PUBLIC_*_USE_MOCK=false`. Source of truth: `mobile-app/reactnative/.env.production`
 (+ `docs/GO-LIVE-CONFIG.md`). A module goes live only when: backend flag ON → `/api/v1/*`
-proxy exists → `USE_MOCK=false` → smoke test.
+proxy exists → `USE_MOCK=false` → smoke test → published for that environment in
+`/admin/modules`.
+
+## 4b. Publication and readiness (`platform_modules`)
+
+The last step above is not a checkbox: since ADR-PR996 the registry decides what a user can
+even see. Each module carries a **readiness** (`in_development` / `testing` / `ready`) and a
+**per-environment status** (`hidden` / `coming_soon` / `visible`), and neither is derived from
+the other.
+
+- Production refuses `visible` until readiness is `ready`. `coming_soon` is exempt — a teaser
+  publishes at any readiness.
+- Demoting readiness below `ready` withdraws a live production module on its own, without
+  touching its tier rows, so marking it Ready again restores exactly the previous state.
+- A store build reads the tier of the backend it is pointed at, not its own build name. So
+  today's production APK, wired to staging, is governed by the **staging** column until it is
+  rewired.
+- `FEATURE_MODULE_GATE_ENFORCE` (Go) is the server-side half. Unset it is observe-only: the
+  gate resolves the module and logs what it would refuse. Turn it on only after the route map
+  has met real traffic, and remember it is mounted on the finance group alone.
+
+Order for a build that newly gates modules (migrations `20271408000000` and
+`20271409000000` do exactly this): apply migrations → publish the intended set from the
+console → ship the build. Shipping first leaves the newly registered surfaces hidden.
 
 ## 5. Smoke test (post-deploy, per enabled module)
 
