@@ -299,11 +299,20 @@ Consequences that Tasks 4, 6 and 11 must carry, not discover:
    is gated by the same additive re-check as `mode=apply`** — dispatching
    `versions="20271408000100"` failed at step 7 (`Re-check every selected file is
    additive-only`, file line `:142`) rather than answering
-   whether the version is recorded. To be exact about the step graph: seven steps
-   carry no mode condition at all (`:72` `:94` `:117` `:142` `:169` `:190` `:209`),
-   and only `:219`, `:227` and `:270-271` are apply-gated — so `:142` is not the
-   only mode-independent step, it is the only mode-independent step that can
-   **abort** the job before the read-only count at `:169` is ever printed. Verified
+   whether the version is recorded. To be exact about the step graph: nine steps
+   carry no mode condition — the two unnamed `uses:` steps (`:63` checkout, `:68`
+   setup-cli) and the seven named ones (`:72` `:94` `:117` `:142` `:169` `:190`
+   `:209`) — while `:245` runs under `!cancelled()` and only `:219`/`:220`,
+   `:227`/`:228` and `:270-271` are apply-gated. `:142` is therefore **not** the
+   only mode-independent step able to abort before the read-only count at `:169`
+   prints: `:72` exits 1 on a missing `psql` or an unreachable pooler (`:75`,
+   `:91`), `:94` on a missing secret or a staging project ref (`:97-99`, `:104`),
+   `:117` on a non-14-digit or fileless version, an empty list or more than 12
+   (`:124`, `:128`, `:134`, `:138`). Of those, only `:117` also varies with the
+   versions named — and only by **identity and count**, never by what a file says.
+   `:142` is the one step before `:169` that reads each selected file's DDL
+   **contents**, so it is the only one that can refuse an otherwise well-formed,
+   present migration; `:72` and `:94` fail identically for every dispatch. Verified
    from that run's log: it contains **no**
    `remote history rows:` line at all. So a version the gate blocks cannot be
    *inspected* through
@@ -1152,9 +1161,10 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
   that also fires in `mode=plan` shows R10's "the reviewer decides per case" cannot
   be executed as stated: there is nothing for the reviewer to approve *through*.
   Four routes exist, and choosing among them is
-  **a user decision, not a ruling this task may make**: routes 1 and 2 both perform
-  a production write that R2 reserves for the human (and route 1 additionally needs
-  a credential this machine does not hold), route 3 edits a safety gate the owner has
+  **a user decision, not a ruling this task may make**: routes 1 and 2 both write to
+  production, which is R2's boundary (route 1 is covered by the rule rather than by
+  R2's wording — see its own entry), and route 1 additionally needs a credential this
+  machine does not hold. Route 3 edits a safety gate the owner has
   a standing position on, and route 4 narrows the plan's declared scope.
 
   1. **The documented host run, one file at a time** —
@@ -1227,8 +1237,8 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
      `'executing'` to the value list (`ADD CONSTRAINT` at `:46`, the widened list
      at `:47`), so prod without it rejects a swap in flight;
      `20271401000000` drops `NOT NULL` on `driver_documents.file_url` (`:20`) and
-     replaces the `doc_type` CHECK — drop at `:22-23`, re-`ADD CONSTRAINT` with the
-     widened list at `:24-26`.
+     replaces the `doc_type` CHECK — drop at `:22-23`, the re-`ADD CONSTRAINT`
+     statement at `:24-33` with its widened value list running `:27-33`.
      So this route is only safe while every surface those four touch stays
      flag-off — voting abstentions, crypto swaps, driver documents — which is Task
      7's and Task 10's job, and makes route 4 admissible as a *sequenced* choice
