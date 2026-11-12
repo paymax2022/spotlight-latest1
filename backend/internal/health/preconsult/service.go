@@ -110,27 +110,62 @@ func (s *Service) WithLLM(g LLMGenerator) *Service { s.llm = g; return s }
 
 const presignTTL = 10 * time.Minute
 
-// loadAppointment returns (patientID, providerID) for an appointment.
-func (s *Service) loadAppointment(ctx context.Context, appointmentID string) (patientID, providerID string, err error) {
-	const q = `SELECT patient_id::text, provider_id::text FROM health_appointments WHERE id=$1`
-	if e := s.db.QueryRow(ctx, q, appointmentID).Scan(&patientID, &providerID); e != nil {
+// appointmentRef is the membership of one appointment, on whichever plane it
+// lives.
+type appointmentRef struct {
+	patientID  string
+	providerID string // health plane: health_providers.id; telemedicine plane: doctors.id
+	source     string
+}
+
+// loadAppointment resolves one appointment id across both appointment planes.
+// `appointments` (internal/telemedicine) and `health_appointments`
+// (internal/health/scheduling) are separate tables with separate provider
+// entities, and a booking only ever writes its own — so looking an id up in one
+// table alone makes the other plane's appointments permanently unresolvable.
+func (s *Service) loadAppointment(ctx context.Context, appointmentID string) (*appointmentRef, error) {
+	const q = `SELECT 'health'::text, patient_id::text, provider_id::text FROM health_appointments WHERE id=$1
+	           UNION ALL
+	           SELECT 'telemedicine'::text, a.patient_id::text, a.doctor_id::text FROM appointments a WHERE a.id=$1
+	           LIMIT 1`
+	var ref appointmentRef
+	if e := s.db.QueryRow(ctx, q, appointmentID).Scan(&ref.source, &ref.patientID, &ref.providerID); e != nil {
 		if errors.Is(e, pgx.ErrNoRows) {
-			return "", "", ErrAppointmentNotFound
+			return nil, ErrAppointmentNotFound
 		}
-		return "", "", e
+		return nil, e
 	}
-	return patientID, providerID, nil
+	return &ref, nil
+}
+
+// assignedProviderOwner returns the login user id of the clinician assigned to
+// the intake's appointment. The health plane has no direct user link on
+// health_appointments, so it keeps resolving through the consult's provider
+// owner; the telemedicine plane carries doctors.user_id.
+func (s *Service) assignedProviderOwner(ctx context.Context, it *Intake) (string, error) {
+	if it.AppointmentSource == SourceTelemedicine {
+		const q = `SELECT COALESCE(d.user_id::text,'')
+		           FROM appointments a JOIN doctors d ON d.id = a.doctor_id
+		           WHERE a.id=$1`
+		var owner string
+		if err := s.db.QueryRow(ctx, q, it.AppointmentID).Scan(&owner); err != nil {
+			return "", err
+		}
+		return owner, nil
+	}
+	_, owner, err := s.consult.LoadByAppointment(ctx, it.AppointmentID)
+	return owner, err
 }
 
 // EnsureIntake creates-or-gets the link row for an appointment (owner = patient).
 // On first creation it prompts intake: it flips the linked consult
 // SCHEDULED→INTAKE_PENDING (best-effort — a consult may not exist yet).
 func (s *Service) EnsureIntake(ctx context.Context, caller, appointmentID string) (*Intake, error) {
-	patientID, providerID, err := s.loadAppointment(ctx, appointmentID)
+	ap, err := s.loadAppointment(ctx, appointmentID)
 	if err != nil {
 		return nil, err
 	}
-	if caller != patientID { // foreign appointment → uniform not-found
+	if caller != ap.patientID { // foreign appointment → uniform not-found
 		return nil, ErrAppointmentNotFound
 	}
 
@@ -145,16 +180,21 @@ func (s *Service) EnsureIntake(ctx context.Context, caller, appointmentID string
 		return nil, err
 	}
 	it := &Intake{
-		ID:            uuid.New().String(),
-		AppointmentID: appointmentID,
-		PatientID:     patientID,
-		ProviderID:    providerID,
-		SchemaID:      &sc.ID,
-		Status:        "DRAFT",
+		ID:                uuid.New().String(),
+		AppointmentID:     appointmentID,
+		AppointmentSource: ap.source,
+		PatientID:         ap.patientID,
+		ProviderID:        ap.providerID,
+		SchemaID:          &sc.ID,
+		Status:            "DRAFT",
 	}
-	// Link the consult (if one exists) and prompt intake.
-	if c, _, cerr := s.consult.LoadByAppointment(ctx, appointmentID); cerr == nil {
-		it.ConsultID = &c.ID
+	// Link the consult (if one exists) and prompt intake. health_consults is a
+	// health-plane table, and telemedicine runs its sessions through
+	// consult_sessions instead — so only the health plane has a gate to prompt.
+	if ap.source == SourceHealth {
+		if c, _, cerr := s.consult.LoadByAppointment(ctx, appointmentID); cerr == nil {
+			it.ConsultID = &c.ID
+		}
 	}
 	if err := s.insertIntake(ctx, it); err != nil {
 		return nil, fmt.Errorf("preconsult: create intake: %w", err)
@@ -163,7 +203,7 @@ func (s *Service) EnsureIntake(ctx context.Context, caller, appointmentID string
 		// Prompt: SCHEDULED → INTAKE_PENDING (guarded; no-op if already past it).
 		_, _ = s.consult.Transition(ctx, caller, *it.ConsultID, healthconsult.StateIntakePending)
 	}
-	s.audited(caller, patientID, "health.preconsult.ensure", it.ID, nil, map[string]any{"status": "DRAFT"})
+	s.audited(caller, ap.patientID, "health.preconsult.ensure", it.ID, nil, map[string]any{"status": "DRAFT"})
 	return s.getIntakeByAppointment(ctx, appointmentID)
 }
 
@@ -369,13 +409,14 @@ func (s *Service) loadDraft(ctx context.Context, intakeID string) map[string]any
 // Prefill merges the patient's profile demographics (don't re-ask) + the most
 // recent prior PRE_CONSULT response's meds/allergies/conditions.
 func (s *Service) Prefill(ctx context.Context, caller, appointmentID string) (map[string]any, error) {
-	patientID, _, err := s.loadAppointment(ctx, appointmentID)
+	ap, err := s.loadAppointment(ctx, appointmentID)
 	if err != nil {
 		return nil, err
 	}
-	if caller != patientID { // foreign appointment → uniform not-found
+	if caller != ap.patientID { // foreign appointment → uniform not-found
 		return nil, ErrAppointmentNotFound
 	}
+	patientID := ap.patientID
 	out := map[string]any{}
 
 	// Profile demographics (read-only context; the form does not re-ask these).
@@ -434,12 +475,11 @@ func (s *Service) GetForDoctor(ctx context.Context, caller, appointmentID string
 		}
 		return nil, err
 	}
-	// Object-level authZ: only the assigned doctor (provider owner) — reuse the
-	// consult provider-owner join. A doctor who is NOT assigned folds to the same
-	// not-found a missing intake returns — "forbidden" would confirm the intake
-	// exists for another doctor.
-	_, providerOwner, cerr := s.consult.LoadByAppointment(ctx, appointmentID)
-	if cerr != nil || !doctorAuthorized(caller, providerOwner) {
+	// Object-level authZ: only the assigned doctor. A doctor who is NOT assigned
+	// folds to the same not-found a missing intake returns — "forbidden" would
+	// confirm the intake exists for another doctor.
+	providerOwner, oerr := s.assignedProviderOwner(ctx, it)
+	if oerr != nil || !doctorAuthorized(caller, providerOwner) {
 		return nil, ErrIntakeNotFound
 	}
 
