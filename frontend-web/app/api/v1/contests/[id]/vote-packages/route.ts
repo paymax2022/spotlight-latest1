@@ -16,21 +16,7 @@ export async function GET(
       return errorResponse('Invalid contest ID', 400);
     }
     const packages = await getActiveVotePackages(contestId);
-    return NextResponse.json(
-      packages.map((p) => ({
-        id: p.id,
-        votes: p.votes,
-        bonusVotes: p.bonusVotes,
-        // vote_packages.amount is NAIRA, not kobo. paid-vote.service.ts is the
-        // "Paystack uses kobo". Passing `amount` straight through under a field
-        // NAMED priceKobo published every package at 1/100th of its price — a
-        // ₦1,000 pack advertised as ₦10, then charged at ₦1,000.
-        // the mock was masking a live-endpoint defect.
-        priceKobo: Math.round(Number(p.amount ?? 0) * 100),
-        label: p.name,
-        popular: p.isRecommended,
-      })),
-    );
+    return NextResponse.json(packages);
   } catch (error) {
     return handleApiError(error, 'Failed to load vote packages');
   }
