@@ -55,7 +55,7 @@ export const MERCHANT_TYPES: MerchantType[] = [
     id: 'mt-restaurant', moduleId: 'mod-food', moduleName: 'Food & Logistics', slug: 'restaurant',
     name: 'Restaurant', description: 'List your restaurant, build a menu and receive delivery orders.',
     icon: 'UtensilsCrossed',
-    requirementsSummary: ['Food handling / NAFDAC permit', "Owner's government ID", 'Settlement account'],
+    requirementsSummary: ['Food handling / NAFDAC permit', "Owner's government ID", 'Payouts land in your wallet — withdraw to any account'],
     expectedReviewLabel: '1–2 business days', requiredKycTier: 1,
     roleToGrant: 'restaurant_merchant', currentFormSchemaId: 'fs-restaurant-v1', status: 'open',
   },
@@ -198,11 +198,10 @@ const RESTAURANT_SCHEMA_V1: FormSchema = {
       ],
     },
     {
-      key: 'settlement', title: 'Contact & settlement', description: 'How we reach you and pay out earnings.',
+      key: 'contact', title: 'Contact', description: 'How we reach you. Earnings are paid into your wallet — you pick the bank account when you withdraw.',
       fields: [
         { key: 'contact_email', type: 'email', label: 'Business email', required: true },
         { key: 'contact_phone', type: 'phone', label: 'Business phone', required: true },
-        { key: 'account_name', type: 'text', label: 'Settlement account name', placeholder: 'As it appears on your bank account', required: true },
       ],
     },
   ],
