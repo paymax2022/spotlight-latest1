@@ -117,6 +117,7 @@ var (
 	ErrIdempotencyRequired = errors.New("doctor: Idempotency-Key header required")
 	ErrInvalidAmount       = errors.New("doctor: amount must be a positive integer (kobo)")
 	ErrDuplicateRequest    = errors.New("doctor: duplicate request (idempotency replay)")
+	ErrScheduleRequired    = errors.New("doctor: schedule is required")
 )
 
 func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, error) {
@@ -213,8 +214,8 @@ func (s *Service) SubmitVerification(ctx context.Context, userID string, req Sub
 	return s.repo.InsertVerification(ctx, userID, req)
 }
 
-func (s *Service) UpdateAvailability(ctx context.Context, userID string, req UpdateAvailabilityRequest) (*Availability, error) {
-	return s.repo.UpsertAvailability(ctx, userID, req)
+func (s *Service) UpdateAvailability(ctx context.Context, userID string, in AvailabilityScheduleInput) (*Availability, error) {
+	return s.repo.UpsertAvailability(ctx, userID, in)
 }
 
 func (s *Service) UpdateAppointmentStatus(ctx context.Context, userID, id string, req UpdateAppointmentStatusRequest) (*Appointment, error) {

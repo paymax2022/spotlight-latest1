@@ -18,7 +18,7 @@ import { NDPA_CONSENT_COPY } from '@/features/health/constants/health.constants'
  * Records the accepted consent version (saved on the draft) before the wizard.
  */
 export default function IntakeConsentScreen() {
-  const { id, prebooking, doctorId } = useLocalSearchParams<{ id: string; prebooking?: string; doctorId?: string }>();
+  const { id } = useLocalSearchParams<{ id: string }>();
   const appointmentId = id ?? '';
   const bundleQ = useApptIntake(appointmentId);
   const saveDraft = useSaveApptDraft(appointmentId);
@@ -31,11 +31,15 @@ export default function IntakeConsentScreen() {
     saveDraft.mutate(
       { answers: {}, consentVersion: consent.version },
       {
-        onSuccess: () => {
-          bundleQ.refetch();
+        // The wizard redirects back here whenever the bundle it mounts with does
+        // not already record this agreement, so the refetch has to land BEFORE the
+        // navigation — otherwise the fresh cache arrives at a screen that has
+        // already bounced away and the patient is stuck on consent.
+        onSuccess: async () => {
+          await bundleQ.refetch();
           router.replace({
             pathname: '/services/telemedicine/appointment/[id]/intake',
-            params: { id: appointmentId, ...(prebooking === '1' && doctorId ? { prebooking: '1', doctorId: String(doctorId) } : {}) },
+            params: { id: appointmentId },
           });
         },
       },

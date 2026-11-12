@@ -10,7 +10,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useHealthProfile } from '@/features/health/hooks';
 import { NDPA_CONSENT_COPY, formatDate } from '@/features/health/constants/health.constants';
-import type { HealthProfileEntry } from '@/features/health/types';
+import type { HealthProfile, HealthProfileEntry } from '@/features/health/types';
 
 /**
  * M17 — My Health Profile. A persistent, longitudinal record of conditions,
@@ -60,14 +60,25 @@ export default function HealthProfileScreen() {
             emptyLabel="No conditions reported"
           />
 
-          <Text style={styles.updated}>
-            Built from {profile.sourceCount} intake{profile.sourceCount === 1 ? '' : 's'}
-            {profile.updatedAt ? ` · updated ${formatDate(profile.updatedAt)}` : ''}
-          </Text>
+          {provenance(profile) ? <Text style={styles.updated}>{provenance(profile)}</Text> : null}
         </ScrollView>
       )}
     </SafeAreaView>
   );
+}
+
+/**
+ * The live endpoint reports neither a source count nor a timestamp
+ * (`LastUpdated` is never assigned in service.go), and both read as padding when
+ * they are missing — so the line only appears when there is something true to say.
+ */
+function provenance(profile: HealthProfile): string {
+  const parts: string[] = [];
+  if (typeof profile.sourceCount === 'number') {
+    parts.push(`Built from ${profile.sourceCount} intake${profile.sourceCount === 1 ? '' : 's'}`);
+  }
+  if (profile.updatedAt) parts.push(`Updated ${formatDate(profile.updatedAt)}`);
+  return parts.join(' · ');
 }
 
 function Section({

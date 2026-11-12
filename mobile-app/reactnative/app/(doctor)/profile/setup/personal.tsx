@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
-import { View, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Colors } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
+import AddressAutocompleteInput from '@/components/AddressAutocompleteInput';
 import SelectField from '@/components/SelectField';
 import DatePickerField from '@/components/DatePickerField';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -82,7 +84,17 @@ export default function PersonalInfoScreen() {
           <SectionCard title="Location" style={styles.card}>
             <SelectField label="State of practice" placeholder="Select state" value={form.state} options={NIGERIAN_STATES} onChange={(state) => set({ state, city: '' })} />
             <SelectField label="City" placeholder="Select city" value={form.city || undefined} options={cities} onChange={(city) => set({ city })} searchable={false} />
-            <TextInputField label="Address" placeholder="Street address of your clinic" value={form.address ?? ''} onChangeText={(address) => set({ address })} />
+            <Text style={styles.fieldLabel}>Address</Text>
+            <AddressAutocompleteInput
+              value={form.address ?? ''}
+              onChangeText={(address) => set({ address })}
+              onSelect={(addr) => set({ address: addr.label })}
+              placeholder="Search for your clinic address"
+              surface="delivery"
+              inlineDropdown
+              enableRecents={false}
+              enableMapConfirm={false}
+            />
           </SectionCard>
 
           <PrimaryButton label="Continue" onPress={handleNext} loading={save.isPending} disabled={!canSubmit} style={styles.btn} />
@@ -97,5 +109,6 @@ const styles = StyleSheet.create({
   flex:    { flex: 1 },
   content: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.xxl },
   card:    { marginBottom: Spacing.md },
+  fieldLabel: { ...Typography.labelMd, color: Colors.onSurface, marginBottom: Spacing.xs },
   btn:     { marginTop: Spacing.sm },
 });

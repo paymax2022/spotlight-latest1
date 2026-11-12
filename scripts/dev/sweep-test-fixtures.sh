@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Sweep synthetic test fixtures ('<uuid>@seed.test' users and the marketplace
-# fixture categories) from a DEVELOPMENT database. See the .sql for what is
-# deliberately left behind.
+# Sweep synthetic test fixtures ('<uuid>@seed.test' users, the marketplace
+# fixture categories and the utility bills catalogue) from a DEVELOPMENT
+# database. See the .sql for what is deliberately left behind.
 #
 #   scripts/dev/sweep-test-fixtures.sh [DATABASE_URL]
 #

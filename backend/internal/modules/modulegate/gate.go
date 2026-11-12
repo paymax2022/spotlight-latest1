@@ -154,6 +154,13 @@ type route struct {
 
 // routes is matched LONGEST PREFIX FIRST, so a more specific entry can override a
 // broader one if the two ever overlap.
+//
+// MOUNTED ON THE FINANCE GROUP ONLY (finance_routes.go), so an entry outside
+// /api/finance cannot fire however correct it is: /api/v1/fx, /api/v1/telemedicine
+// and /api/v1/pharmacy below resolve for nothing today, because those requests never
+// reach this middleware. They are kept as the map the gate WOULD use, not offered as
+// evidence that those surfaces are protected. Widening the mount is not a one-liner —
+// the gate must stay after authentication, and a router-level Use() runs before it.
 var routes = []route{
 	{"/api/finance/wallet", "wallet"},
 	{"/api/finance/transfers", "walletTransfers"},
@@ -188,6 +195,19 @@ var routes = []route{
 //	aiCare, health, healthLab, healthVet, voteBridge, votesBridge, utilityPayments,
 //	beneficiaries   — their routes are nested under paths this table cannot attribute
 //	                  unambiguously yet. Left allowed rather than guessed.
+//	marketplace, crypto, academy, filmAcademy, competitions, arena, connect
+//	                — registered in 20271410000000 and hidden from the public builds,
+//	                  but deliberately NOT gated here yet. Their prefixes, read off
+//	                  Group() calls: /v1/marketplace, /api/v1/crypto, /api/v1/learn,
+//	                  /api/arena, /api/v1/connect — all outside the finance mount, so
+//	                  adding them now would only put dead rows in a security table.
+//	                  Film Academy is the exception worth stating: it has no Go API of
+//	                  its own, and the /api/finance/academy rows inside this mount are
+//	                  its TUITION rails, which live users pay on today under a build
+//	                  that predates the registry. Gating that prefix would refuse real
+//	                  payments before any operator has been asked to publish it. The
+//	                  shipped half is the client gate; server enforcement waits on
+//	                  widening the mount and on publishing the intended set first.
 //	checkoutTopupTier0, tierLimits, fintechAdmin, walletBankTransfers
 //	                — behavioural flags and sub-behaviours, not standalone API surfaces.
 //	                  Each is already gated inside its own handler.

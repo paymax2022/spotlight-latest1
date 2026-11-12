@@ -80,7 +80,14 @@ type Availability struct {
 }
 
 // UpdateAvailabilityRequest is the body for PUT /availability.
+// The schedule is nested, matching contracts/doctor.openapi.yaml
+// (UpdateAvailabilityRequest → required: [schedule]).
 type UpdateAvailabilityRequest struct {
+	Schedule *AvailabilityScheduleInput `json:"schedule"`
+}
+
+// AvailabilityScheduleInput carries the writable columns of doctor_availability.
+type AvailabilityScheduleInput struct {
 	WorkingDays         json.RawMessage `json:"workingDays,omitempty"`
 	Breaks              json.RawMessage `json:"breaks,omitempty"`
 	Rules               json.RawMessage `json:"rules,omitempty"`

@@ -85,7 +85,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate request"})
 	case errors.Is(err, ledger.ErrInsufficientFunds):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "insufficient available balance"})
-	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidAmount):
+	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidAmount), errors.Is(err, ErrScheduleRequired):
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
@@ -302,7 +302,12 @@ func (h *Handler) UpdateAvailability(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	res, err := h.svc.UpdateAvailability(c.Request.Context(), uid, req)
+	if req.Schedule == nil {
+		// Absenting the schedule must not be treated as "clear it".
+		h.fail(c, ErrScheduleRequired)
+		return
+	}
+	res, err := h.svc.UpdateAvailability(c.Request.Context(), uid, *req.Schedule)
 	if err != nil {
 		h.fail(c, err)
 		return

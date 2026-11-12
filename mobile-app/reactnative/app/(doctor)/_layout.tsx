@@ -77,7 +77,6 @@ export default function DoctorLayout() {
       <Stack.Screen name="profile/setup/work-experience" />
       <Stack.Screen name="profile/setup/pricing" />
       <Stack.Screen name="profile/setup/free-follow-up" />
-      <Stack.Screen name="profile/setup/bank-account" />
       <Stack.Screen name="profile/setup/preview" />
       <Stack.Screen name="profile/setup/submit" />
 
