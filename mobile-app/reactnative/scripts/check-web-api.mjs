@@ -15,6 +15,13 @@
  * starts frontend-web detached and waits for it instead of only telling the
  * developer to go start it themselves.
  *
+ * It asks scripts/dev/web-server-state.mjs first and hands the starting to
+ * scripts/dev/web-supervisor.sh, for the reason the supervisor documents: Next 16
+ * refuses a second dev server per checkout (.next/dev/lock), so an unanswered
+ * :3000 is not proof that starting one is safe. Spawning a bare `next dev` here
+ * is how an orphan on :3002 got born on 2026-11-12, and that orphan then blocked
+ * every server the app could actually reach.
+ *
  * Still non-blocking: every path exits 0. It can't tell a genuinely offline
  * machine apart from a merely-not-started server, and gating `npm run web` on it
  * would make the mobile app impossible to load standalone (e.g. against a
@@ -28,12 +35,15 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { devServerState } from '../../../scripts/dev/web-server-state.mjs';
 
 const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3000';
 
 // <repo>/mobile-app/reactnative/scripts -> <repo>/frontend-web, so this follows
 // the checkout a worktree is actually running from.
-const frontendWebDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../frontend-web');
+const here = path.dirname(fileURLToPath(import.meta.url));
+const frontendWebDir = path.resolve(here, '../../../frontend-web');
+const supervisor = path.resolve(here, '../../../scripts/dev/web-supervisor.sh');
 const logPath = path.join(frontendWebDir, 'dev-server.log');
 
 const POLL_MS = 500;
@@ -54,18 +64,18 @@ async function reachable(url) {
   }
 }
 
-/** True only for a loopback URL on the port `next dev` serves, i.e. the gateway. */
-function isLocalGateway(url) {
+/** The gateway port when `url` is the loopback :3000 dev gateway, otherwise null. */
+function localGatewayPort(url) {
   let parsed;
   try {
     parsed = new URL(url);
   } catch {
-    return false;
+    return null;
   }
   const host = parsed.hostname.replace(/^\[|\]$/g, '');
   const loopback = host === 'localhost' || /^127\./.test(host) || host === '::1';
-  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
-  return loopback && port === '3000';
+  const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80));
+  return loopback && port === 3000 ? port : null;
 }
 
 /** Polls until `url` answers, nudging once after SOFT_NOTE_MS. */
@@ -92,13 +102,40 @@ function warnNotReachable() {
   console.warn('');
 }
 
+const gatewayPort = localGatewayPort(apiBase);
+
 if (await reachable(apiBase)) process.exit(0);
 
-if (!isLocalGateway(apiBase)) {
+if (gatewayPort === null) {
   warnNotReachable();
   console.warn('    That is not the local frontend-web gateway (:3000), so nothing was');
   console.warn('    started. Check the URL and that the target is up.');
   console.warn('');
+  process.exit(0);
+}
+
+// No answer on :3000 is only half the question. A live .next/dev/lock means a dev
+// server already owns this checkout, and a second one lands on its own port where
+// the app can never find it.
+const state = await devServerState({ webDir: frontendWebDir, port: gatewayPort });
+if (state.claimed) {
+  console.log('check-web-api: ' + state.detail);
+  if (state.reason === 'lock') {
+    console.warn('');
+    console.warn('    That server is not the URL this app uses, so its requests still fail.');
+    console.warn('    Free the checkout instead of stacking a second server on it:');
+    console.warn('      kill ' + state.lock.pid + '   # then re-run `make dev` or `npm run web`');
+    console.warn('    Leaving it up and pointing EXPO_PUBLIC_API_BASE_URL at it does not work');
+    console.warn('    today — the app is pinned to :3000 — so stopping it is usually right.');
+    console.warn('');
+    process.exit(0);
+  }
+  // Something holds the gateway port but has not served the entry route yet; let it come up.
+  if (await waitForReachable(apiBase, MAX_WAIT_MS)) {
+    console.log('check-web-api: ' + apiBase + ' is up.');
+  } else {
+    warnNotReachable();
+  }
   process.exit(0);
 }
 
@@ -113,16 +150,18 @@ if (!fs.existsSync(path.join(frontendWebDir, 'node_modules/.bin/next'))) {
   process.exit(0);
 }
 
-console.log('check-web-api: ' + apiBase + ' is down — starting frontend-web (log: ' + logPath + ')');
+console.log('check-web-api: ' + apiBase + ' is down — starting the frontend-web supervisor (log: ' + logPath + ')');
 
 let pid;
 try {
   const fd = fs.openSync(logPath, 'a');
-  const child = spawn('npm', ['run', 'dev'], {
-    cwd: frontendWebDir,
+  // The supervisor rather than `npm run dev`: it re-checks the checkout lock before
+  // every start and brings the server back when it dies, so a hand-started Expo
+  // session is supervised the way `make dev` supervises one.
+  const child = spawn(supervisor, [], {
     detached: true,
     stdio: ['ignore', fd, fd],
-    env: process.env,
+    env: { ...process.env, WEB_DIR: frontendWebDir, WEB_PORT: String(gatewayPort) },
   });
   pid = child.pid;
   child.unref();
@@ -132,12 +171,12 @@ try {
 }
 
 if (pid && (await waitForReachable(apiBase, MAX_WAIT_MS))) {
-  console.log('check-web-api: frontend-web is up on :3000 (pid ' + pid + ').');
+  console.log('check-web-api: frontend-web is up on :3000 (supervisor pid ' + pid + ').');
   process.exit(0);
 }
 
 warnNotReachable();
-console.warn('    Started it and it never answered: pid ' + (pid ?? 'unknown') + ', log ' + logPath);
+console.warn('    Started it and it never answered: supervisor pid ' + (pid ?? 'unknown') + ', log ' + logPath);
 console.warn('    (first time in a fresh checkout/worktree, frontend-web needs');
 console.warn('    `npm install` and a gitignored .env.local copied from an existing checkout.)');
 console.warn('');
