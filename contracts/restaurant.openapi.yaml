@@ -521,6 +521,12 @@ components:
         (PATCH /{id}/availability with is_open=true) requires `approved`; closing is always allowed.
     KYB:
       type: object
+      description: >
+        Business identity only. Where payouts go is NOT part of KYB: a payout run
+        credits the owner's wallet, and the destination is chosen on each withdrawal
+        (see /withdrawals). The three bank fields below are read-only legacy data on
+        rows recorded before that split — a save never writes them and a submit never
+        requires them.
       properties:
         restaurant_id: { type: string }
         legal_name: { type: string }
@@ -529,9 +535,9 @@ components:
         tin: { type: string }
         contact_email: { type: string }
         contact_phone: { type: string }
-        bank_code: { type: string }
-        account_number: { type: string, description: 10-digit NUBAN }
-        account_name: { type: string }
+        bank_code: { type: string, deprecated: true, description: Legacy settlement bank on a pre-split KYB row; ignored on save }
+        account_number: { type: string, deprecated: true, description: Legacy settlement account on a pre-split KYB row; ignored on save }
+        account_name: { type: string, deprecated: true, description: Legacy settlement account holder on a pre-split KYB row; ignored on save }
         status: { $ref: '#/components/schemas/KYBStatus' }
         decision_reason: { type: string, nullable: true, description: Reviewer's reason on needs_more_info / rejected }
     KYBDocumentPresign:
@@ -550,6 +556,47 @@ components:
         content_type: { type: string, description: The client MUST send exactly this Content-Type on the PUT }
         expires_in: { type: integer, description: Seconds }
         method: { type: string, enum: [PUT] }
+    WithdrawalRequest:
+      type: object
+      description: >
+        A withdrawal names its destination in exactly one of two forms: a saved
+        payout account (`bank_account_id`) or an ad-hoc account (`bank_code` +
+        `account_number`, with the `pin` that authorises it). Giving both, or
+        neither, is a 400. An ad-hoc destination is captured as a payout account
+        before any money moves, so it passes the same step-up, bank name-enquiry
+        and holder-name checks as a saved one — naming an account is not a way
+        around them.
+      required: [amount_kobo]
+      properties:
+        amount_kobo: { $ref: '#/components/schemas/Money', description: Must be a whole number of kobo above zero and within the wallet tier limits. }
+        bank_account_id: { type: string, format: uuid, description: 'Destination form 1: a payout account already saved by this owner.' }
+        bank_code: { type: string, description: 'Destination form 2: NIP bank code of the account to pay.' }
+        account_number: { type: string, description: 'Destination form 2: the 10-digit NUBAN to pay.' }
+        pin: { type: string, description: 'Transaction PIN authorising the move. Always required with destination form 2 — the account is captured through the same step-up as a manual save, fail-closed: a missing PIN is 400, a wrong one 403, and an unreachable verifier 503 with nothing moved.' }
+        bank_name: { type: string, description: Optional label for an ad-hoc destination; when omitted the server resolves it from the NIP code table. Never trusted over the code. }
+        account_name: { type: string, description: 'Fallback holder-name label used ONLY when the bank name-enquiry is unreachable. The verified name from the enquiry wins; a destination left unverified cannot receive money.' }
+    Withdrawal:
+      type: object
+      description: >
+        One withdrawal row (restaurant_withdrawals). Requesting reserves the money:
+        DR the merchant wallet → CR the failed-transfer suspense account, and the row
+        is written `processing`. Nothing has left the platform until an operator
+        settles it (DR suspense → CR provider clearing, row `paid`); a reversal runs
+        the reserve back and marks the row `failed`.
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid, description: Merchant owner whose wallet was debited. }
+        bank_account_id: { type: string, format: uuid, description: 'The payout account paid — one the owner had saved, or one captured from an ad-hoc destination on this request.' }
+        amount_kobo: { $ref: '#/components/schemas/Money' }
+        currency: { type: string, example: NGN }
+        status: { type: string, enum: [pending, processing, paid, failed, reversed] }
+        ledger_ref: { type: string, nullable: true }
+        provider_reference: { type: string, nullable: true, description: Set by the operator when settling. }
+        failure_reason: { type: string, nullable: true, description: Set by the operator when reversing. }
+        idempotency_key: { type: string, description: 'The Idempotency-Key this request was reserved under — also the ledger leg key, so a replay cannot post twice.' }
+        already_processed: { type: boolean, description: 'Present and true only when this row came back from replaying the same Idempotency-Key (HTTP 200 rather than a fresh 201).' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
 paths:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -739,9 +786,12 @@ paths:
         '403': { description: Not permitted to manage banking for this outlet }
     put:
       tags: [restaurant]
-      summary: Save the KYB business and settlement details (owner)
+      summary: Save the KYB business identity details (owner)
       description: >
-        Full overwrite of the details (send every field). Rejected with 400 once the KYB is
+        Full overwrite of the identity fields (send every field). A settlement account is
+        not part of KYB — any bank_code/account_number/account_name in the body is ignored,
+        and any recorded on a pre-split row stays readable for reviewers rather than being
+        cleared. Rejected with 400 once the KYB is
         submitted, under review or approved. Does not change `status`.
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       requestBody:
@@ -1563,3 +1613,170 @@ paths:
         '400': { description: 'Order is not in a state that can be dispatched' }
         '401': { description: Not authenticated }
         '403': { description: Missing the restaurant.admin.dispatch permission }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # MONEY OUT — wallet → bank
+  #
+  # An approved outlet is paid into its OWNER'S WALLET: a payout run posts
+  # DR the settlement standing account → CR that wallet. Where the money goes
+  # next is the merchant's choice, made on each withdrawal — which is why
+  # /{id}/kyb no longer captures a settlement account.
+  # ═══════════════════════════════════════════════════════════════════════════
+  /withdrawals:
+    post:
+      tags: [restaurant]
+      summary: Withdraw wallet balance to a bank account (owner)
+      description: >
+        Reserves `amount_kobo` out of the caller's wallet and queues it for
+        disbursement: one balanced ledger move (DR merchant wallet → CR
+        failed-transfer suspense) plus the `restaurant_withdrawals` row, under a
+        per-wallet advisory lock. The funds sit in suspense until an operator
+        settles or reverses them.
+
+
+        Destination is exactly one of a saved payout account or an ad-hoc
+        `bank_code` + `account_number` pair — see `WithdrawalRequest`. The ad-hoc
+        form exists so an outlet can be paid to any account without a separate
+        save step; it is captured as a payout account first, so step-up, the bank
+        name-enquiry and the holder-name check all still apply.
+
+
+        Fail-closed on `FEATURE_RESTAURANT_WITHDRAWALS_ENABLED`: with the flag off
+        every request is a 403 and no ledger row is written.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/WithdrawalRequest' } }
+      responses:
+        '201':
+          description: Reserved — the wallet is debited and the row is queued as `processing`.
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } }
+        '200':
+          description: 'Replay of the same Idempotency-Key: the first result, already_processed=true. No second move.'
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } }
+        '400': { description: 'No Idempotency-Key / amount not a positive whole number / destination neither one form nor the other / PIN absent / destination bank account not verified' }
+        '401': { description: Not authenticated }
+        '402': { description: Wallet balance is below the requested amount }
+        '403': { description: 'Withdrawals disabled by feature flag / KYB not approved / wallet disabled for this tier / daily or tier limit exceeded / wrong transaction PIN' }
+        '404': { description: 'Payout account exists but is not this owner’s' }
+        '422': { description: 'The holder-name check needs a verified business name KYB has not supplied' }
+        '503': { description: 'Step-up verification or the name-match service is unavailable — nothing was moved' }
+    get:
+      tags: [restaurant]
+      summary: List this owner's withdrawals
+      description: 'Read-only, owner-scoped, newest first (the 50 most recent). Moves no money.'
+      responses:
+        '200':
+          description: Withdrawal list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Withdrawal' } }
+        '401': { description: Not authenticated }
+  /withdrawals/{withdrawalId}:
+    get:
+      tags: [restaurant]
+      summary: Read one of this owner's withdrawals
+      parameters:
+        - { name: withdrawalId, in: path, required: true, schema: { type: string, format: uuid }, description: Withdrawal id. }
+      responses:
+        '200':
+          description: The withdrawal
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Not this owner's withdrawal }
+        '404': { description: No such withdrawal }
+
+  /admin/withdrawals:
+    servers:
+      - url: /api/restaurant
+        description: Go backend (Gin) — admin surface root
+    get:
+      tags: [admin]
+      summary: 'x-admin: the withdrawal queue (merchants and riders)'
+      description: >
+        Fail-closed behind RBAC `restaurant.admin.withdrawals` — a dedicated slug, so
+        an ops agent who settles payouts does not also need onboarding rights. The
+        settle and reverse actions below are single-actor: whoever is granted this
+        slug can move money out of suspense.
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [pending, processing, paid, failed, reversed] }, description: Filter by withdrawal status. }
+      responses:
+        '200':
+          description: Withdrawal rows
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Withdrawal' } }
+        '400': { description: Unknown status filter }
+        '401': { description: Not authenticated }
+        '403': { description: Missing the restaurant.admin.withdrawals permission }
+  /admin/withdrawals/{withdrawalId}/paid:
+    servers:
+      - url: /api/restaurant
+        description: Go backend (Gin) — admin surface root
+    post:
+      tags: [admin]
+      summary: 'x-admin: settle a withdrawal — money has left the platform'
+      description: >
+        Posts the balanced settle leg (DR failed-transfer suspense → CR provider
+        clearing) and marks the row `paid`. Re-running on an already-paid row is an
+        idempotent no-op. Settle and reverse take a row lock, so a withdrawal can
+        never have both legs posted. KYB is re-checked here: if approval was revoked
+        since the request, this refuses and the funds stay parked in suspense for a
+        later re-run or a reversal.
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: withdrawalId, in: path, required: true, schema: { type: string, format: uuid }, description: Withdrawal id. }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider_reference: { type: string, description: The disbursement provider's reference for the transfer. }
+      responses:
+        '200':
+          description: Settled (or already settled)
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Missing the restaurant.admin.withdrawals permission }
+        '404': { description: No such withdrawal }
+        '409': { description: 'Not settleable from its current status (e.g. already reversed)' }
+  /admin/withdrawals/{withdrawalId}/failed:
+    servers:
+      - url: /api/restaurant
+        description: Go backend (Gin) — admin surface root
+    post:
+      tags: [admin]
+      summary: 'x-admin: reverse a withdrawal — return the funds to the wallet'
+      description: >
+        Posts the balanced reversal of the reservation (suspense drained, merchant
+        wallet credited back) and marks the row `failed` with `reason`. The merchant
+        is made whole exactly once: the reversal is keyed on the withdrawal, and a
+        row already settled answers 409 rather than double-moving.
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: withdrawalId, in: path, required: true, schema: { type: string, format: uuid }, description: Withdrawal id. }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, description: Why the payout failed — stored as failure_reason. }
+      responses:
+        '200':
+          description: Reversed and returned to the merchant wallet
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Missing the restaurant.admin.withdrawals permission }
+        '404': { description: No such withdrawal }
+        '409': { description: 'Already settled — the money left the platform and cannot be reversed here' }

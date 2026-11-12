@@ -3,11 +3,10 @@ import Link from 'next/link';
 import { useState } from 'react';
 
 const serviceMenuItems = [
-  { label: 'Open Mic Contest', href: '/service-details/open-mic-competition' },
-  { label: 'Reality TV Show', href: '/service-details/reality-tv-show' },
-  { label: 'STEM Contest', href: '/service-details/stem-contest' },
-  { label: 'SME Pitch Competition', href: '/service-details/sme-pitch-contest' },
-  { label: 'Film Academy', href: '/service-details/film-academy' },
+  { label: 'STEM & TECH', href: '/service-details/stem-contest' },
+  { label: 'Entertainment', href: '/service-details/reality-tv-show' },
+  { label: 'Sports', href: '/service-details/sports' },
+  { label: 'SME Funding', href: '/service-details/sme-pitch-contest' },
 ];
 
 export default function MobileMenu() {
@@ -41,7 +40,7 @@ export default function MobileMenu() {
 
             <li>
               <Link href="/service">
-                Our Services
+                Programes
                 <i className="fas fa-angle-down" />
               </Link>
               <ul className="submenu" style={{ display: `${activeItem === 2 ? 'block' : 'none'}` }}>
@@ -52,10 +51,6 @@ export default function MobileMenu() {
               <a className={`mean-expand ${activeItem === 2 ? 'mean-clicked' : ''}`} onClick={() => handleActiveItem(2)}>
                 <i className="far fa-plus" />
               </a>
-            </li>
-
-            <li>
-              <Link href="/sponsor">Sponsors</Link>
             </li>
 
             <li className="mean-last">

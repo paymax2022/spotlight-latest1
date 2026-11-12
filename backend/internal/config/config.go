@@ -813,6 +813,11 @@ type Config struct {
 	LiveKitAPISecret       string
 	LiveKitTokenTTLSeconds int // join-token lifetime; 1..21600
 
+	// ConsultMediaProvider selects the media rail for timed health consults:
+	// "livekit" (the default) or "videosdk" (rollback — modules keep their
+	// legacy VideoSDK room and no consult engine is wired).
+	ConsultMediaProvider string
+
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
 	// Raw documents / biometric payloads are NEVER stored or logged — only the
 	// hash + a provider reference (mirrors the KYC bvn_hash/nin_hash pattern).
@@ -830,6 +835,21 @@ type Config struct {
 	R2AccessKeyID     string
 	R2SecretAccessKey string
 	R2Region          string
+	// R2PublicBaseURL is the public-access origin for the R2 bucket, e.g.
+	// "https://pub-<hash>.r2.dev" (Cloudflare managed public domain) or a
+	// custom domain.  When set the insurance upload handler returns a plain
+	// unauthenticated URL that third-party services such as MyCover can GET
+	// without SigV4 credentials.  Leave empty to keep all objects private.
+	R2PublicBaseURL string
+
+	// R2InsuranceBucket / R2InsurancePublicBaseURL are the dedicated bucket and
+	// its public-access origin for insurance application-form images. They are
+	// separate from R2Bucket because making the shared bucket public would also
+	// expose the doctor documents and other private uploads that live in it.
+	// Both fall back to R2Bucket / R2PublicBaseURL when unset, so a single-bucket
+	// deployment keeps working.
+	R2InsuranceBucket        string
+	R2InsurancePublicBaseURL string
 
 	// The four unbacked academy money rails (BNPL, payout, disbursement, billing)
 	// each sit behind their EXISTING provider-agnostic gateway interface. RailsMode
@@ -1277,6 +1297,7 @@ func Load() Config {
 		LiveKitAPIKey:          strings.TrimSpace(getEnv("LIVEKIT_API_KEY", "")),
 		LiveKitAPISecret:       strings.TrimSpace(getEnv("LIVEKIT_API_SECRET", "")),
 		LiveKitTokenTTLSeconds: getEnvInt("LIVEKIT_TOKEN_TTL_SECONDS", 600),
+		ConsultMediaProvider:   getEnv("CONSULT_MEDIA_PROVIDER", "livekit"),
 
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 
@@ -1290,6 +1311,10 @@ func Load() Config {
 		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
 		R2Region:          getEnv("R2_REGION", "auto"),
+		R2PublicBaseURL:   getEnv("R2_PUBLIC_BASE_URL", ""),
+
+		R2InsuranceBucket:        getEnv("R2_INSURANCE_BUCKET", ""),
+		R2InsurancePublicBaseURL: getEnv("R2_INSURANCE_PUBLIC_BASE_URL", ""),
 
 		RailsMode: getEnv("RAILS_MODE", "fake"),
 
@@ -1360,6 +1385,14 @@ func (c Config) MocksAllowed() bool {
 		return true
 	}
 	return false
+}
+
+// ConsultUsesLiveKit reports whether timed health consults run on LiveKit.
+// "videosdk" is the explicit rollback. Any other value — including unset —
+// selects LiveKit; with FEATURE_LIVEKIT_ENABLED off the engine still fails
+// closed with ErrMediaUnavailable rather than fabricating a room.
+func (c Config) ConsultUsesLiveKit() bool {
+	return strings.ToLower(strings.TrimSpace(c.ConsultMediaProvider)) != "videosdk"
 }
 
 // isPlaceholder treats empty values and the common template markers as "unset"

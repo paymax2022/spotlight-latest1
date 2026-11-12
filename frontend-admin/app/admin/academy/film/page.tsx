@@ -1265,7 +1265,8 @@ function SettingsTab({ onNotice }: NoticeProp) {
         </StateBlock>
 
         <AuditNote>
-          What every tuition buys: 2 movie projects; a potential talent management contract and
+          What every tuition buys: 4 weeks with 80% Practical Movie projects; a potential talent
+          management contract and
           signing into Timeless Movies Production; assistance to produce your own movie and to set
           up &amp; manage a YouTube channel. Tuition excludes feeding and project fees (script
           print-out, make-up, props &amp; set design, location — ₦20,000 per movie project). This is

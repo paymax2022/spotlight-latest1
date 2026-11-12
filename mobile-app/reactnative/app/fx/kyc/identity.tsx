@@ -32,7 +32,6 @@ import {
   validateIdNumber,
 } from '@/features/kycverify/idFormats';
 import IdNumberField from '@/features/kycverify/components/IdNumberField';
-import DojahRequirement from '@/features/kycverify/components/DojahRequirement';
 import type { IdType, VerificationCheck } from '@/features/kycverify/types';
 
 const DOC_LABELS = ID_DOC_TYPES.map((d) => d.label);
@@ -54,9 +53,8 @@ type Phase = 'editing' | 'verifying' | 'done';
  * Step 3 — identity. The number is verified FOR REAL through the Go
  * /api/finance/kyc gateway: a session is created once per attempt, NDPA consent
  * is recorded (the service fails every check closed without it), and the check
- * is routed to Dojah. The screen states Dojah's input requirement and the exact
- * masked request, and it never asks for a name/DOB — Dojah returns both and the
- * user affirms them.
+ * is routed to Dojah. The screen never asks for a name/DOB — Dojah returns both
+ * and the user affirms them.
  */
 export default function KycIdentityScreen() {
   const id = kycDraft.current.identity;
@@ -188,7 +186,6 @@ export default function KycIdentityScreen() {
                   onChangeText={setIdNumber}
                   error={showError}
                 />
-                <DojahRequirement idType={idType} idNumber={validation.normalized} />
                 {error ? <Text style={styles.error}>{error}</Text> : null}
               </>
             )}

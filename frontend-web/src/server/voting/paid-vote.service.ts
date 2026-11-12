@@ -157,6 +157,12 @@ export async function initiatePaidVote(
     paymentReference,
     authorizationUrl,
     amountExpected,
+    // Inline SDK charges in kobo; the naira figure above is what the CTA shows.
+    amountKobo: Math.round(amountExpected * 100),
+    // Server-side, the NEXT_PUBLIC var is not auto-fallbacked, so read the
+    // non-prefixed name too — .env.local only defines PAYSTACK_PUBLIC_KEY.
+    publicKey:
+      process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || process.env.PAYSTACK_PUBLIC_KEY || '',
     currency: settings.currency,
     votesToCredit: votesPurchased,
     bonusVotes,

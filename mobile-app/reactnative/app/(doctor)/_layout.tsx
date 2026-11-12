@@ -25,9 +25,11 @@ export default function DoctorLayout() {
       <Stack.Screen name="onboarding/permissions/[kind]" />
       <Stack.Screen name="onboarding/submit" />
       <Stack.Screen name="availability" />
+      <Stack.Screen name="consult/packages" />
       <Stack.Screen name="patient/[id]" />
       <Stack.Screen name="consult/[id]/chat" />
       <Stack.Screen name="consult/[id]/call" />
+      <Stack.Screen name="consult/[id]/room" />
       <Stack.Screen name="consult/[id]/notes" />
       <Stack.Screen name="consult/[id]/pre-call" />
       <Stack.Screen name="consult/[id]/prescription" />
@@ -75,7 +77,6 @@ export default function DoctorLayout() {
       <Stack.Screen name="profile/setup/work-experience" />
       <Stack.Screen name="profile/setup/pricing" />
       <Stack.Screen name="profile/setup/free-follow-up" />
-      <Stack.Screen name="profile/setup/bank-account" />
       <Stack.Screen name="profile/setup/preview" />
       <Stack.Screen name="profile/setup/submit" />
 

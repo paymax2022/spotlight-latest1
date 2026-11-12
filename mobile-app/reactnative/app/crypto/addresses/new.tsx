@@ -44,6 +44,14 @@ export default function NewAddressScreen() {
       </SafeAreaView>
     );
   }
+  if (assets.isError) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Add address" />
+        <StateView kind="error" title="Couldn't load the markets" message="Check your connection and try again." actionLabel="Retry" onAction={() => assets.refetch()} />
+      </SafeAreaView>
+    );
+  }
   if (!selected || !activeNetwork) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>

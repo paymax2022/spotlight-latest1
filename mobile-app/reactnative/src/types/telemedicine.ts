@@ -31,6 +31,21 @@ export interface BookingQuote {
   totalKobo:       number;   // consultFeeKobo + platformFeeKobo
 }
 
+/**
+ * One priced consultation option as `GET /doctors/:id` sends it. snake_case on
+ * purpose: this is the engine's wire row and `offerFromDoctorPackage` reads
+ * exactly this shape. `booking` is the server quote for this price point, so
+ * the picker renders `total_kobo` and never computes the platform fee itself
+ * (ADR-044).
+ */
+export interface DoctorPackage {
+  id:               string;
+  mode:             string;   // video | voice | the module's "audio" | chat
+  duration_minutes: number;
+  price_kobo:       number;
+  booking?:         { total_kobo?: number; totalKobo?: number };
+}
+
 export interface Doctor {
   id:              string;
   name:            string;
@@ -40,6 +55,12 @@ export interface Doctor {
   bio:             string;
   initials:        string;
   avatarColor:     string;            // hex used for avatar circle
+  /**
+   * Renderable doctor photo, signed by the server. Absent when the doctor has
+   * uploaded no photo, or when the stored value is still a raw R2 object key —
+   * a key cannot be rendered, and the avatar shows initials instead.
+   */
+  photoUri?:       string;
   feeKobo:         number;            // consultation fee in kobo
   /**
    * Price breakdown for booking this doctor, computed by the server. Optional
@@ -47,6 +68,11 @@ export interface Doctor {
    * when it is missing rather than pricing the booking locally.
    */
   booking?:        BookingQuote;
+  /**
+   * Timed price points this doctor sells. Empty/absent means the doctor has not
+   * adopted timed consults and the legacy consultation-type picker applies.
+   */
+  packages?:       DoctorPackage[];
   rating:          number;            // 0–5
   reviewCount:     number;
   yearsExperience: number;
@@ -131,6 +157,8 @@ export interface BookAppointmentInput {
   /** ISO datetime for the chosen slot — the backend's required `scheduled_at`. */
   scheduledAt?:   string;
   consultType:    ConsultType;
+  /** The picked `DoctorPackage.id`. Empty keeps the legacy fee-priced booking. */
+  packageId?:     string;
   reason:         string;
   feeKobo:        number;
   /**

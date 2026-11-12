@@ -15,7 +15,7 @@ name: Utility intent sweep
 #      the UTILITY_WORKER_SECRET variable on the frontend-web service the URL
 #      below points at (the route answers 503 without it).
 #   2. Repo variable UTILITY_SWEEP_URL = that service's origin, no trailing
-#      slash, e.g. https://frontend-web-staging-ec46.up.railway.app
+#      slash, e.g. https://frontend-web-staging-new.up.railway.app
 #   3. Repo variable UTILITY_SWEEP_ENABLED = true
 #
 # The stuck-TRANSACTION requery (provider_pending, wallet_debited) is a separate,

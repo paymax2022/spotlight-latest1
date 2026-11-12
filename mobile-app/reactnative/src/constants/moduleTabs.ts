@@ -53,9 +53,18 @@ export const FILM_ACADEMY_TABS: readonly ModuleTab[] = [
  * own rule: it only ever draws on a screen that's actually in `tabs`. The
  * rider and restaurant-owner consoles under /food/rider and /food/restaurant
  * are separate personas with their own navigation, not part of this bar.
+ *
+ * `matchPaths` carries /services/food — the module's nav entry, a screen of the
+ * services stack rather than of app/food, yet it IS discovery. Without the claim
+ * the entry screen drew no footer at all: the services layout mounts only the
+ * utility and transfer bars, and this list was mounted solely by app/food's own
+ * layout, which is not in that path.
  */
 export const FOOD_TABS: readonly ModuleTab[] = [
-  { href: '/food',        label: 'Discover', icon: Compass },
+  {
+    href: '/food', label: 'Discover', icon: Compass,
+    matchPaths: ['/services/food'],
+  },
   { href: '/food/orders', label: 'Orders',   icon: ReceiptText },
 ] as const;
 

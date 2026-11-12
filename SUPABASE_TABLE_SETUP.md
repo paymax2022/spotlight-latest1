@@ -11,9 +11,12 @@
 https://app.supabase.com
 ```
 
-### 2. Select the "spotlight" Project
+### 2. Select the "spotlight-prod" Project
 - Click on the project in the projects list
-- Or navigate to: https://app.supabase.com/project/ptczqwfokydsdafpscex
+- Or navigate to: https://app.supabase.com/project/nmseefdlliejmdbxytej
+- Staging is the separate `spotlight-staging` project
+  (`wnicsubiznmishkmunsv`); the ref map lives in
+  `docs/devops/staging-environment-setup.md`
 
 ### 3. Go to SQL Editor
 - In the left sidebar, click **SQL Editor**

@@ -78,7 +78,8 @@
       "typedRoutes": false
     },
     "android": {
-      "package": "com.anonymous.paymaxreactnativeapp",
+      "package": "com.spotlight.paymax",
+      "versionCode": 20,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",

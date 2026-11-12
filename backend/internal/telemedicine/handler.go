@@ -4,16 +4,68 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/health/consultengine"
+	"spotlight/backend/internal/platform/r2"
 )
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc           *Service
+	presigner     *r2.Presigner
+	presignBucket string
+}
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// WithPresigner enables patient-facing photo reads. Without it (or with R2 env
+// absent) avatars stay exactly as stored, which is the pre-existing behaviour.
+func (h *Handler) WithPresigner(p *r2.Presigner, bucket string) *Handler {
+	h.presigner = p
+	h.presignBucket = bucket
+	return h
+}
+
+// avatarViewTTL bounds how long a signed patient-facing photo link stays live.
+// The link is handed to whoever can read the directory, so it expires; the
+// doctor's own provider header uses the same window (internal/doctor).
+const avatarViewTTL = 10 * time.Minute
+
+// resolveMedia turns a stored doctors.avatar_url into something a client can
+// render: an R2 object key becomes a short-lived signed GET, an absolute URL is
+// returned as it is, and anything that cannot be signed (no creds, unconfigured
+// bucket, signing error) is returned unchanged rather than failing the read.
+// The bucket is private — R2_PUBLIC_BASE_URL is unset — so an unsigned key is
+// exactly what left the doctor profile showing initials where a photo should be.
+func (h *Handler) resolveMedia(stored string) string {
+	if stored == "" || strings.Contains(stored, "://") {
+		return stored
+	}
+	if h.presigner == nil || !h.presigner.Configured() {
+		return stored
+	}
+	signed, err := h.presigner.PresignGet(stored, avatarViewTTL)
+	if err != nil {
+		return stored
+	}
+	return signed
+}
+
+// viewableAvatar signs one doctor's photo in place. A nil AvatarURL — the common
+// case, since the column is nullable — stays nil, so a doctor who never uploaded
+// a photo keeps rendering initials instead of a broken image.
+func (h *Handler) viewableAvatar(d *Doctor) {
+	if d == nil || d.AvatarURL == nil {
+		return
+	}
+	viewable := h.resolveMedia(*d.AvatarURL)
+	d.AvatarURL = &viewable
+}
 
 func (h *Handler) ListSpecialties(c *gin.Context) {
 	specialties, err := h.svc.ListSpecialties(c.Request.Context())
@@ -78,6 +130,9 @@ func (h *Handler) ListDoctors(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
+	for i := range doctors {
+		h.viewableAvatar(&doctors[i])
+	}
 	c.JSON(http.StatusOK, gin.H{"data": doctors})
 }
 
@@ -87,6 +142,7 @@ func (h *Handler) GetDoctor(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
+	h.viewableAvatar(doctor)
 	c.JSON(http.StatusOK, gin.H{"data": doctor})
 }
 
@@ -153,6 +209,10 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 			// server fault — previously indistinguishable from a real outage.
 			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 			return
+		case errors.Is(err, ErrPackageRequired), errors.Is(err, ErrPackageInvalid),
+			errors.Is(err, ErrConsultModeInvalid):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
+			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
@@ -188,6 +248,32 @@ func (h *Handler) CompleteAppointment(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// OpenConsultSession starts (or returns) the LiveKit session pinned to this
+// appointment. Both participants may call it; a stranger gets 404 so existence
+// is never confirmed.
+func (h *Handler) OpenConsultSession(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	sess, err := h.svc.OpenConsultSession(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrAppointmentNotFound):
+			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		case errors.Is(err, ErrSessionNotOpenable):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		case errors.Is(err, ErrConsultUnavailable),
+			errors.Is(err, consultengine.ErrMediaUnavailable),
+			errors.Is(err, consultengine.ErrEscrowUnavailable):
+			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
+		case errors.Is(err, consultengine.ErrInvalid), errors.Is(err, consultengine.ErrState):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": sess})
 }
 
 func (h *Handler) CancelAppointment(c *gin.Context) {

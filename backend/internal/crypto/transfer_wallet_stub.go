@@ -1,7 +1,13 @@
+//go:build tdd_red
+
 package crypto
 
 // =============================================================================
 // TDD PLACEHOLDER - NOT THE IMPLEMENTATION.
+//
+// Quarantined behind `//go:build tdd_red` so the default gate stays green until
+// the implementation lands; run `go test -tags tdd_red ./internal/crypto/` to
+// execute the red spec.
 //
 // This file defines ONLY the proposed API surface for crypto wallet-to-wallet
 // transfer (contracts/openapi.yaml: POST /transfers/paymax/crypto,

@@ -3357,13 +3357,8 @@ span {
 .sticky.header-1 .header-main .header-right .header-button {
   margin-right: 0;
 }
-.sticky.header-1 .header-main .header-right .header__hamburger {
-  display: none !important;
-}
-@media (max-width: 991px) {
-  .sticky.header-1 .header-main .header-right .header__hamburger {
-    display: block !important;
-  }
+.sticky.header-1 .header-main .header-right .header__hamburger .sidebar__toggle {
+  color: var(--theme);
 }
 .sticky.header-2 {
   margin-left: 0;

@@ -140,7 +140,12 @@ export function newIdempotencyKey(prefix = 'cr'): string {
  * Sell: user sells `crypto` → receives `totalFiat` (net after fees).
  */
 export function buildQuote(asset: CryptoAsset, req: QuoteRequest): CryptoQuote {
-  const { side, basis, amount, currency } = req;
+  const { side, basis, currency } = req;
+  // This builder is the MOCK-plane projection only (live builds price through
+  // crypto.api.createQuote, which asks the server). A quote of nothing is not a
+  // quote, so a missing/zero amount fails here instead of rendering ₦0.00.
+  const amount = req.amount ?? 0;
+  if (amount <= 0) throw new Error('An amount is required to build a quote.');
   const decimals = asset.decimals;
   const unitPrice = asset.price.amount;                 // fiat minor units per 1 coin
   const spreadBps = SPREAD_BPS_BY_RISK[asset.riskRating];

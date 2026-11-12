@@ -1,11 +1,13 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { Colors } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
+import PrimaryButton from '@/components/PrimaryButton';
 import { useEarnings } from '@/features/restaurantmerchant/hooks';
 import type { EarningsRun } from '@/features/restaurantmerchant/types';
 
@@ -37,6 +39,10 @@ export default function EarningsScreen() {
           <Text style={styles.note}>
             Pending earnings are settled orders awaiting the next payout run. Paid-out funds are credited to your wallet.
           </Text>
+          <Text style={styles.note}>
+            From your wallet you can transfer to any bank account you choose.
+          </Text>
+          <PrimaryButton label="Withdraw to your bank" variant="secondary" onPress={() => router.push('/wallet/withdraw')} />
 
           <Text style={styles.section}>Payout history</Text>
           {(earnings.data?.runs.length ?? 0) === 0 ? (

@@ -31,6 +31,7 @@
     "test:merchant": "node --experimental-strip-types --test \"src/features/merchant/lib/__tests__/*.test.ts\"",
     "test:billing-email": "node --experimental-strip-types --test \"src/features/payments/__tests__/*.test.ts\"",
     "test:vet-pet": "node --experimental-strip-types --test \"src/features/health/vet/__tests__/*.test.ts\"",
+    "test:consult": "node --experimental-strip-types --test \"src/features/consult/__tests__/*.test.ts\"",
     "test:mobility": "node --experimental-strip-types --test \"src/features/mobility/utils/__tests__/*.test.ts\"",
     "test:delivery-onboarding": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/mobility/__tests__/*.test.ts\"",
     "test:referral-home": "node --experimental-strip-types --test \"src/features/referral/home/__tests__/*.test.ts\"",
@@ -84,6 +85,7 @@
     "@supabase/server": "^1.9.2",
     "@supabase/supabase-js": "^2.117.3",
     "@tanstack/react-query": "^5.104.2",
+    "@react-native-community/cli": "latest",
     "axios": "^1.8.4",
     "expo": "~54.0.37",
     "expo-build-properties": "~1.0.10",
@@ -136,7 +138,9 @@
   "overrides": {
     "browserslist": "^4.28.8",
     "postcss": "^8.5.23",
-    "decode-uri-component": "^0.5.0",
+    "decode-uri-component": "^0.5.1",
+    "node-forge": "^1.4.2",
+    "follow-redirects": "^1.16.2",
     "@xmldom/xmldom": "^0.9.12",
     "uuid": "^11.1.1",
     "@istanbuljs/load-nyc-config": {

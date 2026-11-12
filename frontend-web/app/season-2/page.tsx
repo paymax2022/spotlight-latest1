@@ -1,58 +1,164 @@
-import Layout from "@/components/layout/Layout";
-import { CardGrid, CtaBand, JourneyRoadmap, PageHero, SectionHeader } from '@/src/components/spotlight/site/Sections';
-import { season2Journey, season2Pillars, season2Snapshot } from '@/src/data/websiteExpansion';
+import type { Metadata } from 'next';
+import { Barlow_Condensed, DM_Sans, Manrope } from 'next/font/google';
+import MansionExperience from '@/components/season2/MansionExperience';
+import { ChaptersProvider } from '@/components/season2/MansionChapters';
+import RecapBand from '@/components/season2/RecapBand';
+import { RegistrationPanelProvider, type SeasonFacts } from '@/components/season2/RegistrationPanel';
+import SeasonFooter from '@/components/season2/SeasonFooter';
+import SeasonHero from '@/components/season2/SeasonHero';
+import SeasonSiteChrome from '@/components/season2/SeasonSiteChrome';
+import SeasonSubHeader from '@/components/season2/SeasonSubHeader';
+import SeasonTwoCta from '@/components/season2/SeasonTwoCta';
+import { SEASON2_IMG, recapBands } from '@/components/season2/content';
+import { getRegistrationContestBySlug, listRegistrationContests } from '@/src/server/registration/store';
+import { listSeasons } from '@/src/server/services/reality-show/persistence';
+import type { ShowSeason } from '@/src/server/services/reality-show/store';
+import type { ContestRegistrationDefinition } from '@/src/features/registration/types';
+import { formatNaira, formatProgrammeDate } from '../service-details/film-academy/format';
+import '@/components/season2/season2.css';
 
-export const metadata = {
-  title: 'Spotlight Season 2 | Talent Hunt, Bootcamp & Reality TV Show',
-  description:
-    'Discover Spotlight Season 2 — a national talent hunt and reality TV platform featuring 10-state auditions, 60 contestants, a 60-day bootcamp, public voting, weekly performances, mentorship, evictions, brand activations, and grand finale.',
+/** The application the show's auditions are filed under. */
+const SHOW_SLUG = 'reality-tv-show';
+
+export const dynamic = 'force-dynamic';
+
+const display = Barlow_Condensed({
+  weight: ['500', '600', '700', '800'],
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-display',
+});
+const ui = Manrope({
+  weight: ['400', '500', '600', '700', '800'],
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-ui',
+});
+const body = DM_Sans({
+  weight: ['400', '500', '600', '700'],
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-body',
+});
+
+const TITLE = 'Inside the Spotlight Mansion | Season 1 Recap, Season 2 Registration';
+const DESCRIPTION =
+  'Relive Spotlight Season 1, from mansion life and celebrity visits to the grand finale. Register for Season 2.';
+const HERO_IMAGE = `${SEASON2_IMG}/mansion-hero.webp`;
+
+export const metadata: Metadata = {
+  title: TITLE,
+  description: DESCRIPTION,
   alternates: { canonical: '/season-2' },
-  openGraph: { title: 'Spotlight Season 2 | Talent Hunt, Bootcamp & Reality TV Show', description: 'Discover Spotlight Season 2 — a national talent hunt and reality TV platform featuring 10-state auditions, 60 contestants, a 60-day bootcamp, public voting, weekly performances, mentorship, evictions, brand activations, and grand finale.', url: '/season-2' },
-  twitter: { card: 'summary_large_image', title: 'Spotlight Season 2 | Talent Hunt, Bootcamp & Reality TV Show', description: 'Discover Spotlight Season 2 — a national talent hunt and reality TV platform featuring 10-state auditions, 60 contestants, a 60-day bootcamp, public voting, weekly performances, mentorship, evictions, brand activations, and grand finale.' },
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    url: '/season-2',
+    images: [
+      {
+        url: HERO_IMAGE,
+        width: 1200,
+        height: 630,
+        alt: 'Illustrative montage of mansion life, coaching, house tasks, group battles, a farewell and a live singer.',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: TITLE,
+    description: DESCRIPTION,
+    images: [HERO_IMAGE],
+  },
 };
 
-export default function Season2Page() {
+/**
+ * The page is recap copy plus whatever the platform has actually recorded about
+ * the next season: the season row the show team keeps (its name and audition
+ * window) and the contest definition the application is filed under (its title,
+ * fee and requirements). Both are read server-side so an admin's edits show up
+ * here on the next request.
+ */
+async function readSeasonFacts(): Promise<SeasonFacts> {
+  const contest = getRegistrationContestBySlug(SHOW_SLUG);
+  const season = await readNextSeason();
+
+  return {
+    // A season can be filed against a different contest, but /apply/[slug] only
+    // renders programmes it knows, so the link moves only when the new slug is
+    // registered — otherwise the button would 404.
+    applyHref:
+      season && listRegistrationContests().some((item) => item.slug === season.contestSlug)
+        ? `/apply/${season.contestSlug}`
+        : `/apply/${SHOW_SLUG}`,
+    programmeName: contest?.title ?? 'Spotlight Reality TV Show',
+    seasonName: season?.seasonName ?? null,
+    feeLabel:
+      contest?.isPaid && contest.registrationFeeNgn != null ? formatNaira(contest.registrationFeeNgn) : null,
+    windowLabel: auditionWindow(season),
+    eligibility: eligibilityLines(contest),
+  };
+}
+
+/** The newest season that has not been called finished. listSeasons() is newest first. */
+async function readNextSeason(): Promise<ShowSeason | null> {
+  try {
+    const seasons = await listSeasons();
+    return seasons.find((item) => item.status !== 'completed') ?? null;
+  } catch (error) {
+    // An unreadable season row costs the page its dates, not the page itself.
+    console.warn('[season-2] could not read the recorded seasons:', error);
+    return null;
+  }
+}
+
+function auditionWindow(season: ShowSeason | null): string | null {
+  const start = formatProgrammeDate(season?.auditionStartDate);
+  const end = formatProgrammeDate(season?.auditionEndDate);
+  if (start && end) return `${start} – ${end}`;
+  return start ?? end ?? null;
+}
+
+/**
+ * Only what the form really asks, taken from the same definition the wizard is
+ * built from, so the panel cannot promise a requirement that changed.
+ */
+function eligibilityLines(contest: ContestRegistrationDefinition | null | undefined): string[] {
+  if (!contest) return [];
+  const lines: string[] = [];
+  if (contest.requiresGuardianConsentForMinors) {
+    lines.push(`a parent or guardian’s consent for applicants under ${contest.legalAdultAge}`);
+  }
+  if (contest.requiresMedical) lines.push('a medical history and emergency-treatment consent');
+  if (contest.requiresBootcampReadiness) lines.push('that you can commit to the full bootcamp period');
+  if (contest.supportsVoting) lines.push('comfort with public voting and possible eviction');
+  return lines;
+}
+
+export default async function Season2Page() {
+  const facts = await readSeasonFacts();
+
   return (
-    <Layout headerStyle={1} footerStyle={1} onePageNav={false} breadcrumbTitle={null} breadcrumbClassName={undefined} breadcrumbPadding={undefined}>
-      <PageHero label="Season 2" title="From Audition to Stardom" subtitle="20-State Auditions. 60 Contestants. 60-Day Bootcamp. Public Voting. Reality TV. Grand Finale. Spotlight Season 2 is a national youth entertainment and empowerment campaign designed to discover, develop, promote, and connect emerging talents through auditions, bootcamp training, reality TV exposure, public voting, brand partnerships, and post-show career opportunities." ctas={[{ label: 'Apply Now', href: '/apply' }, { label: 'Become a Sponsor', href: '/sponsor', style: 'outline' }, { label: 'View Voting Process', href: '/voting', style: 'outline' }]} heroImage={{ src: '/assets/img/shape/search.png', alt: 'Spotlight Season 2 campaign visual' }} />
-      <section className="max-w-7xl mx-auto px-4 md:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-10 items-start">
-          <div className="glass-card rounded-md p-3">
-            <img
-              src="/assets/img/shape/image.png"
-              alt="20-State National Audition Rollout map"
-              className="w-full h-auto rounded-md object-cover"
-            />
-          </div>
-          <div>
-            <SectionHeader title="Campaign Snapshot" />
-            <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {season2Snapshot.map((item, index) => (
-                <div
-                  key={item}
-                  className="relative overflow-hidden rounded-xl border border-accent-gold/25 bg-gradient-to-br from-[#0f1730] via-[#111a35] to-[#1a1230] p-5 shadow-[0_0_0_1px_rgba(255,215,128,0.08),0_12px_32px_rgba(17,26,53,0.45)]"
-                >
-                  <div className="pointer-events-none absolute -top-10 -right-10 h-28 w-28 rounded-full bg-accent-gold/20 blur-2xl" />
-                  <div className="pointer-events-none absolute -bottom-10 -left-10 h-24 w-24 rounded-full bg-[#6aa8ff]/20 blur-2xl" />
-                  <p className="text-xs uppercase tracking-[0.16em] text-accent-gold/80">Snapshot {String(index + 1).padStart(2, '0')}</p>
-                  <p className="mt-2 text-foreground leading-relaxed">{item}</p>
-                </div>
+    <>
+      <SeasonSiteChrome />
+      <div id="top" className={`sp-season2 ${display.variable} ${ui.variable} ${body.variable}`}>
+        <a className="skip" href="#main">
+          Skip to content
+        </a>
+        <RegistrationPanelProvider facts={facts}>
+          <ChaptersProvider>
+            <SeasonSubHeader />
+            <main id="main">
+              <SeasonHero />
+              <MansionExperience />
+              {recapBands.map((band) => (
+                <RecapBand key={band.id} {...band} />
               ))}
-            </div>
-          </div>
-        </div>
-      </section>
-      <section className="max-w-7xl mx-auto px-4 md:px-8 py-8"><SectionHeader title="Contestant Journey" /><JourneyRoadmap steps={season2Journey} /></section>
-     <section className="max-w-7xl mx-auto px-4 md:px-8 py-8"><SectionHeader title="Why Season 2 Matters" description="Spotlight Season 2 is more than a show. It is a national youth empowerment engine, a media property, a brand activation platform, a talent discovery pipeline, and a content production ecosystem. Season 2 is structured to leverage a wide media ecosystem, including national TV, radio, digital streaming, social media, press coverage, celebrity engagement, state activations, and partner media platforms such as NTA Network, FRCN, WapTV, DSTV Urban, and other broadcast partners. This gives sponsors a multi-channel campaign platform rather than a single advert placement. Every phase creates sponsor value. Auditions provide regional visibility. Bootcamp offers product placement, branded tasks, and daily content integration. Voting drives digital engagement, traffic, referrals, and measurable participation. Weekly performances deliver broadcast mentions, logo visibility, and branded segments. The grand finale provides premium stage branding, red-carpet exposure, celebrity association, VIP recognition, and post-event media coverage.
-
-From an ROI perspective, Spotlight delivers more than awareness. Sponsors can drive impressions, engagement, lead generation, product trials, app downloads, promo codes, customer acquisition, PR value, social media growth, community goodwill, and youth empowerment credibility.
-
-By supporting Spotlight Season 2, a sponsor is not only buying visibility; it is investing in Nigerian youth, creative talent, entertainment, culture, innovation, and the future of the creative economy.
-
-Spotlight Season 2 matters because it connects media reach, emotional storytelling, youth impact, and measurable brand ROI in one powerful national platform." /></section>
-     
-      <CtaBand title="Put Your Brand Inside the Journey" text="Season 2 gives brands the opportunity to convert entertainment attention into customer acquisition, product activation, public trust, youth loyalty, sales engagement, and measurable ROI." ctas={[{ label: 'Sponsor Partnership', href: '/sponsor' }]} />
-      <CtaBand title="Do You Have the Talent?" ctas={[{ label: 'Apply/Register', href: '/apply' }]} />
-    </Layout>
+              <SeasonTwoCta windowLabel={facts.windowLabel} seasonName={facts.seasonName} />
+            </main>
+            <SeasonFooter />
+          </ChaptersProvider>
+        </RegistrationPanelProvider>
+      </div>
+    </>
   );
 }

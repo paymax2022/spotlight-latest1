@@ -2,9 +2,8 @@ package restaurant
 
 // Merchant bank-account CAPTURE + WITHDRAWAL money-path HTTP handlers, re-applied
 // onto main's restaurant module (see restaurant/bankaccount.go + withdrawal.go).
-// Kept in a dedicated file so it does not collide with main's handler_delivery.go.
-// NOTE: the read-only GET /restaurant/earnings handler is intentionally omitted here
-// (it needs GetMerchantEarnings, a separate merchant-earnings slice not yet on main).
+// Kept in a dedicated file so it does not collide with main's handler_delivery.go,
+// which already serves the read-only GET /restaurant/earnings.
 
 import (
 	"errors"
@@ -137,19 +136,25 @@ func (h *Handler) VerifyBankAccount(c *gin.Context) {
 
 func withdrawalErrStatus(err error) int {
 	switch {
-	case errors.Is(err, ErrWithdrawMissingIdem), errors.Is(err, ErrWithdrawBadAmount), errors.Is(err, ErrBankAccountUnverified), errors.Is(err, ErrBankAccountNameUnchecked):
+	case errors.Is(err, ErrWithdrawMissingIdem), errors.Is(err, ErrWithdrawBadAmount),
+		errors.Is(err, ErrBankAccountUnverified), errors.Is(err, ErrBankAccountNameUnchecked),
+		errors.Is(err, ErrWithdrawBadDestination), errors.Is(err, ErrStepUpRequired):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrWithdrawNoBankAccount), errors.Is(err, ErrWithdrawNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, ErrWithdrawalsDisabled), errors.Is(err, ErrKYBNotApproved),
+		errors.Is(err, ErrStepUpFailed),
 		errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
 		return http.StatusForbidden
 	case errors.Is(err, ledger.ErrInsufficientFunds):
 		return http.StatusPaymentRequired // 402 — not enough wallet balance
 	case errors.Is(err, ErrWithdrawNotReady):
 		return http.StatusConflict
-	case errors.Is(err, ErrTierGateUnwired):
+	case errors.Is(err, ErrTierGateUnwired), errors.Is(err, ErrStepUpUnavailable),
+		errors.Is(err, ErrNameMatchUnavailable):
 		return http.StatusServiceUnavailable // misconfigured deployment, not a bad request
+	case errors.Is(err, ErrKYCNameRequired):
+		return http.StatusUnprocessableEntity
 	default:
 		return http.StatusInternalServerError
 	}
@@ -164,7 +169,14 @@ func (h *Handler) RequestWithdrawal(c *gin.Context) {
 	}
 	var body struct {
 		AmountKobo    int64  `json:"amount_kobo"`
-		BankAccountID string `json:"bank_account_id" binding:"required"`
+		BankAccountID string `json:"bank_account_id"`
+		// An ad-hoc destination, instead of a saved account: where to pay and the
+		// transaction PIN authorising it. Validated (fail-closed) by the service.
+		BankName      string `json:"bank_name"`
+		BankCode      string `json:"bank_code"`
+		AccountNumber string `json:"account_number"`
+		AccountName   string `json:"account_name"`
+		PIN           string `json:"pin"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
@@ -173,6 +185,11 @@ func (h *Handler) RequestWithdrawal(c *gin.Context) {
 	w, err := h.svc.RequestWithdrawal(c.Request.Context(), userID, RequestWithdrawalInput{
 		AmountKobo:     body.AmountKobo,
 		BankAccountID:  body.BankAccountID,
+		BankName:       body.BankName,
+		BankCode:       body.BankCode,
+		AccountNumber:  body.AccountNumber,
+		AccountName:    body.AccountName,
+		PIN:            body.PIN,
 		IdempotencyKey: idem,
 	})
 	if err != nil {

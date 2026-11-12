@@ -230,14 +230,16 @@ func (h *Handler) Eligibility(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "eligibility": e})
 }
 
-// Watchlist GET /watchlist.
+// Watchlist GET /watchlist — the caller's watched assets, marked with the same
+// market view the markets list uses, so a watched row shows the same price as the
+// catalogue row it came from.
 func (h *Handler) Watchlist(c *gin.Context) {
 	list, err := h.svc.Watchlist(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "watchlist": list})
+	c.JSON(http.StatusOK, gin.H{"success": true, "watchlist": h.svc.AssetViewsOf(c.Request.Context(), list)})
 }
 
 // AddWatchlist POST /watchlist {assetId}.

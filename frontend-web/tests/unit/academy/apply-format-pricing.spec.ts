@@ -463,7 +463,7 @@ describe('POST /api/academy/apply — frozen tuition', () => {
   });
 });
 
-describe('POST /api/academy/apply — application fee is separate from tuition', () => {
+describe('POST /api/academy/apply — one payment at submit covers fee and tuition', () => {
   function paystackPaid(naira: number) {
     vi.mocked(verifyPaystackTransaction).mockResolvedValue({
       status: 'success',
@@ -478,9 +478,11 @@ describe('POST /api/academy/apply — application fee is separate from tuition',
     { slug: 'editing', key: 'weekend_boarding' },
   ];
 
-  it('accepts exactly settings.application_fee and records tuition without charging it', async () => {
+  // These batches carry no installment config, so the whole tuition is due
+  // alongside the application fee rather than split into instalments.
+  it('charges the application fee and the full tuition in a single payment', async () => {
     seed({ registration_type: 'paid', application_fee: 5000 });
-    paystackPaid(5000);
+    paystackPaid(5000 + 245000);
 
     const { status } = await apply(body({ area_selections: selections, application_fee_reference: 'ref-5k' }));
 
@@ -492,7 +494,7 @@ describe('POST /api/academy/apply — application fee is separate from tuition',
     expect(payload.tuition_total_ngn).toBe(245000);
   });
 
-  it('rejects a payment below the application fee, quoting the fee and not fee+tuition', async () => {
+  it('rejects a payment short of the combined amount, quoting the total due', async () => {
     seed({ registration_type: 'paid', application_fee: 5000 });
     paystackPaid(4999);
 
@@ -501,8 +503,7 @@ describe('POST /api/academy/apply — application fee is separate from tuition',
     );
 
     expect(status).toBe(400);
-    expect(json.error).toContain('₦5,000');
-    expect(json.error).not.toContain('250,000');
+    expect(json.error).toContain('250,000');
     expect(applicationInserts()).toHaveLength(0);
   });
 });

@@ -2,23 +2,37 @@
 // same caching / loading / error contracts. Money mutations attach an
 // Idempotency-Key (iron rule) and invalidate portfolio + transactions on success.
 
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as crypto from '../api/crypto.api';
 import { newIdempotencyKey } from '../utils/cryptoFormatters';
 import type {
   ChartRange,
-  CryptoQuote,
   NewAddressDraft,
   NewPriceAlertDraft,
   QuoteRequest,
   SwapDraft,
-  SwapQuote,
+  SwapExecution,
   WithdrawalDraft,
   WithdrawalQuote,
 } from '../types/crypto.types';
-// CryptoQuote is used as the mutation argument type for buy/sell.
 
 const KEY = 'crypto';
+
+/**
+ * A settled copy of `value`, `delayMs` after it stopped changing. The buy/sell/swap
+ * entry screens quote against a typed amount, and every keystroke would otherwise be
+ * a round trip to the price feed; keying the query on the settled value lets
+ * react-query cache per settled amount instead of per keystroke.
+ */
+export function useDebouncedValue<T>(value: T, delayMs = 300): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), delayMs);
+    return () => clearTimeout(t);
+  }, [value, delayMs]);
+  return settled;
+}
 
 export function useCryptoEligibility() {
   return useQuery({ queryKey: [KEY, 'eligibility'], queryFn: crypto.getEligibility, staleTime: 60_000 });
@@ -46,14 +60,37 @@ export function useChart(symbol: string | undefined, range: ChartRange) {
   });
 }
 
-export function useCreateQuote() {
-  return useMutation({ mutationFn: (req: QuoteRequest) => crypto.createQuote(req) });
+/**
+ * The projected fill, from the server. A trade preview must be the same money the
+ * order will move, and only the server knows the rate and the fees — so no screen
+ * builds a quote of its own any more. It stays disabled until a positive amount is
+ * typed, because the server refuses to price an empty trade (a ₦0.00 preview is not
+ * information).
+ */
+export function useQuote(req: QuoteRequest | null) {
+  return useQuery({
+    queryKey: [KEY, 'quote', req?.assetId, req?.side, req?.basis, req?.amount ?? null],
+    queryFn: () => crypto.createQuote(req as QuoteRequest),
+    enabled: Boolean(req && req.assetId && req.amount != null && req.amount > 0),
+    staleTime: 0,
+    retry: false,
+  });
 }
 
-export function useExecuteBuy() {
+/**
+ * Place a market order. The fill is priced by the server, so the quote used to
+ * build the request is re-fetched at execution instead of carried over from the
+ * review screen — the preview can expire, the fill cannot be talked into an old
+ * price. Returns the executed order alongside the quote it was built from.
+ */
+export function usePlaceOrder(side: 'buy' | 'sell') {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (quote: CryptoQuote) => crypto.executeBuy(quote, newIdempotencyKey('buy')),
+    mutationFn: async (req: QuoteRequest) => {
+      const quote = await crypto.createQuote(req);
+      const key = newIdempotencyKey(side);
+      return side === 'buy' ? crypto.executeBuy(quote, key) : crypto.executeSell(quote, key);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
       qc.invalidateQueries({ queryKey: [KEY, 'positions'] });
@@ -62,26 +99,28 @@ export function useExecuteBuy() {
   });
 }
 
-export function useExecuteSell() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (quote: CryptoQuote) => crypto.executeSell(quote, newIdempotencyKey('sell')),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
-      qc.invalidateQueries({ queryKey: [KEY, 'positions'] });
-      qc.invalidateQueries({ queryKey: [KEY, 'transactions'] });
-    },
+/**
+ * A firm swap quote. Unlike a buy/sell preview this is a POST that can reserve a
+ * quotation at the exchange for a few seconds, so it runs ONCE, on the review screen
+ * — never per keystroke on the entry screen.
+ */
+export function useSwapQuote(draft: SwapDraft | null) {
+  return useQuery({
+    queryKey: [KEY, 'swap-quote', draft?.fromAssetId, draft?.toAssetId, draft?.fromAmount ?? null],
+    queryFn: () => crypto.createSwapQuote(draft as SwapDraft),
+    enabled: Boolean(draft && draft.fromAssetId && draft.toAssetId && draft.fromAmount > 0),
+    staleTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
-export function useCreateSwapQuote() {
-  return useMutation({ mutationFn: (draft: SwapDraft) => crypto.createSwapQuote(draft) });
-}
-
+/** Fill a swap from the quote the member just reviewed, honouring its quotation id. */
 export function useExecuteSwap() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (quote: SwapQuote) => crypto.executeSwap(quote, newIdempotencyKey('swap')),
+    mutationFn: (exec: SwapExecution) => crypto.executeSwap(exec, newIdempotencyKey('swap')),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
       qc.invalidateQueries({ queryKey: [KEY, 'positions'] });
@@ -214,11 +253,15 @@ export function useQuoteWithdrawal() {
 export function useInitiateWithdrawal() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ draft, quote, otp }: { draft: WithdrawalDraft; quote: WithdrawalQuote; otp: string }) =>
-      crypto.initiateWithdrawal(draft, quote, otp, newIdempotencyKey('wd')),
+    mutationFn: ({ draft, quote }: { draft: WithdrawalDraft; quote: WithdrawalQuote }) =>
+      crypto.initiateWithdrawal(draft, quote, newIdempotencyKey('wd')),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
       qc.invalidateQueries({ queryKey: [KEY, 'transactions'] });
+      // A withdrawal consumes the holding and the remaining allowance, so both
+      // screens have to re-read rather than show a balance that already left.
+      qc.invalidateQueries({ queryKey: [KEY, 'positions'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'withdrawal-eligibility'] });
     },
   });
 }

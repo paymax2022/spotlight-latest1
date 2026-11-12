@@ -34,6 +34,7 @@ export default function VetLayout() {
           <Stack.Screen name="triage" />
           <Stack.Screen name="book" />
           <Stack.Screen name="checkout" />
+          <Stack.Screen name="timed-consult" options={{ gestureEnabled: false }} />
           <Stack.Screen name="teleconsult-lobby" />
           <Stack.Screen name="teleconsult" options={{ gestureEnabled: false }} />
           <Stack.Screen name="consult-summary" />
@@ -54,6 +55,8 @@ export default function VetLayout() {
           <Stack.Screen name="provider/requests" />
           <Stack.Screen name="provider/pet-chart" />
           <Stack.Screen name="provider/teleconsult" options={{ gestureEnabled: false }} />
+          <Stack.Screen name="provider/timed-consult" options={{ gestureEnabled: false }} />
+          <Stack.Screen name="provider/packages" />
           <Stack.Screen name="provider/soap-notes" />
           <Stack.Screen name="provider/eprescribe" />
           <Stack.Screen name="provider/order-lab" />

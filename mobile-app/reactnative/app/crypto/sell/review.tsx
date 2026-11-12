@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -16,9 +16,10 @@ import { AssetIcon } from '@/features/crypto/components';
 import { CryptoQuoteBreakdown } from '@/features/crypto/components';
 import { QuoteCountdown } from '@/features/crypto/components';
 import { VolatilityWarning } from '@/features/crypto/components';
-import { useAsset } from '@/features/crypto/hooks/useCrypto';
-import { buildQuote, formatCrypto, formatFiatObj } from '@/features/crypto/utils/cryptoFormatters';
-import type { AmountBasis, CryptoQuote } from '@/features/crypto/types/crypto.types';
+import { useAsset, useQuote } from '@/features/crypto/hooks/useCrypto';
+import { authorizePin } from '@/features/security/authorizePin';
+import { formatCrypto, formatFiatObj } from '@/features/crypto/utils/cryptoFormatters';
+import type { AmountBasis } from '@/features/crypto/types/crypto.types';
 
 export default function SellReviewScreen() {
   const params = useLocalSearchParams<{ symbol: string; basis: string; amount: string }>();
@@ -26,21 +27,50 @@ export default function SellReviewScreen() {
   const basis = (params.basis as AmountBasis) ?? 'crypto';
   const amount = Number(params.amount);
 
-  const makeQuote = useCallback((): CryptoQuote | null => {
-    if (!asset.data) return null;
-    return buildQuote(asset.data, { assetId: asset.data.id, side: 'sell', basis, amount, currency: 'NGN', lock: true });
-  }, [asset.data, basis, amount]);
-
-  const [quote, setQuote] = useState<CryptoQuote | null>(null);
+  // The server prices the fill; this screen only renders what it returns.
+  const quoteQ = useQuote({ assetId: params.symbol, side: 'sell', basis, amount, currency: 'NGN', lock: true });
+  const quote = quoteQ.data;
   const [expired, setExpired] = useState(false);
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState<string | undefined>();
+  const [authorizing, setAuthorizing] = useState(false);
 
-  React.useEffect(() => { if (asset.data && !quote) setQuote(makeQuote()); }, [asset.data, quote, makeQuote]);
+  const reQuote = () => { setExpired(false); void quoteQ.refetch(); };
 
-  const reQuote = () => { setQuote(makeQuote()); setExpired(false); };
+  if (asset.isLoading || asset.isError || !asset.data) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Review order" />
+        <StateView
+          kind={asset.isError || !asset.data ? 'error' : 'loading'}
+          title={asset.isError ? "Couldn't load this asset" : undefined}
+          message={asset.isError ? 'Please try again.' : 'Preparing your quote…'}
+          actionLabel={asset.isError ? 'Back' : undefined}
+          onAction={asset.isError ? () => goBack('/crypto/sell') : undefined}
+        />
+      </SafeAreaView>
+    );
+  }
 
-  if (asset.isLoading || !quote) {
+  // A quote that failed to arrive is an error, not a spinner: the server refused the
+  // amount (nothing to sell, or the asset is unpriced) and the member has to see why
+  // before authorising anything.
+  if (quoteQ.isError || amount <= 0 || Number.isNaN(amount)) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Review order" />
+        <StateView
+          kind="error"
+          title="No quote for this order"
+          message={(quoteQ.error as Error)?.message ?? 'Enter an amount and try again.'}
+          actionLabel="Back"
+          onAction={() => goBack('/crypto/sell')}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  if (!quote) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Review order" />
@@ -48,24 +78,28 @@ export default function SellReviewScreen() {
       </SafeAreaView>
     );
   }
-  if (asset.isError || !asset.data) {
-    return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Review order" />
-        <StateView kind="error" title="Couldn't prepare your order" message="Please go back and try again." actionLabel="Back" onAction={() => goBack('/crypto/sell')} />
-      </SafeAreaView>
-    );
-  }
 
   const a = asset.data;
 
-  const confirm = () => {
+  const confirm = async () => {
     if (expired) { reQuote(); setPin(''); return; }
     if (pin.length < 4) { setPinError('Enter your 4-digit transaction PIN.'); return; }
+    setAuthorizing(true);
     setPinError(undefined);
+    // The order endpoints take no PIN, so the credential is checked centrally here:
+    // an unverified PIN must not reach a money mutation.
+    const failure = await authorizePin(pin);
+    setAuthorizing(false);
+    if (failure) {
+      setPin('');
+      setPinError(failure);
+      return;
+    }
+    // The processing screen re-quotes before it places the order, so only the trade
+    // itself travels — never a price that may already be stale.
     router.push({
       pathname: '/crypto/sell/processing',
-      params: { symbol: a.symbol, basis, amount: String(amount), expiresAt: quote.expiresAt },
+      params: { symbol: a.symbol, basis, amount: String(amount) },
     });
   };
 
@@ -94,7 +128,7 @@ export default function SellReviewScreen() {
             <Fingerprint size={18} color={Colors.primary} strokeWidth={2} />
             <Text style={styles.pinTitle}>Authorize with your PIN</Text>
           </View>
-          <Text style={styles.pinHint}>For your security, confirm this order with your 4-digit transaction PIN or biometrics.</Text>
+          <Text style={styles.pinHint}>For your security, confirm this order with your 4-digit transaction PIN.</Text>
           <TextInputField
             label="Transaction PIN"
             placeholder="Enter 4-digit PIN"
@@ -112,7 +146,7 @@ export default function SellReviewScreen() {
         {expired ? (
           <PrimaryButton label="Quote expired — refresh" onPress={reQuote} />
         ) : (
-          <PrimaryButton label={`Confirm sell · ${formatFiatObj(quote.totalFiat)}`} onPress={confirm} />
+          <PrimaryButton label={`Confirm sell · ${formatFiatObj(quote.totalFiat)}`} onPress={() => { void confirm(); }} loading={authorizing} />
         )}
       </SafeAreaView>
     </SafeAreaView>

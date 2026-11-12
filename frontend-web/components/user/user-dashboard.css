@@ -1,0 +1,970 @@
+/*
+ * Member desk (/user-dashboard) — the Season 2 visual language carried onto the
+ * signed-in home. Selector scope is `.sp-season2.sp-hub`, so the shared tokens
+ * (--night, --paper, --ink, --orange, --line, --display, --head), the sticky
+ * header and the footer all come from season2.css; nothing here redefines them.
+ *
+ * Two accents are needed rather than one. On the cream band --orange sits at
+ * ~2.4:1, so small text switches to the deeper rust (--accent-ink, 5.1:1); on
+ * the ink band the urgent colour is --hot, because rust on night would disappear.
+ */
+
+.sp-season2.sp-hub {
+  --accent-ink: #a8431a;
+  --hot: #ff6b5e;
+  --rule: #c9b8c9;
+  --field: #fffdf8;
+  --body-ink: #5e4965;
+}
+
+/* ── Hero: the desk headline ─────────────────────────────────────────── */
+
+.sp-season2.sp-hub .hub-hero {
+  display: grid;
+  grid-template-columns: 1.45fr 1fr;
+  align-items: end;
+  gap: 36px;
+  padding-block: 44px 40px;
+}
+
+.sp-season2.sp-hub .hub-hero h1 {
+  margin-top: 16px;
+  font: 800 clamp(58px, 8.4vw, 118px)/.86 var(--display);
+  font-family: var(--display) !important;
+  text-transform: uppercase;
+  letter-spacing: -.02em;
+}
+
+.sp-season2.sp-hub .hub-hero h1 em {
+  color: var(--orange);
+  font-style: normal;
+}
+
+.sp-season2.sp-hub .hub-hero h1 br {
+  display: inline;
+}
+
+.sp-season2.sp-hub .hub-hero-copy > p {
+  max-width: 430px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.sp-season2.sp-hub .hub-hero-copy .actions {
+  margin-top: 24px;
+}
+
+/* ── Desk strip: greeting, counts, completion ────────────────────────── */
+
+.sp-season2.sp-hub .hub-desk {
+  border-block: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.sp-season2.sp-hub .hub-desk-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(280px, 1fr);
+  gap: 34px;
+  align-items: end;
+  padding-block: 30px 34px;
+}
+
+.sp-season2.sp-hub .hub-hello {
+  margin: 0;
+  font: 800 clamp(32px, 4.4vw, 56px)/.94 var(--display);
+  font-family: var(--display) !important;
+  text-transform: uppercase;
+  letter-spacing: -.015em;
+  color: var(--paper);
+}
+
+.sp-season2.sp-hub .hub-hello em {
+  color: var(--orange);
+  font-style: normal;
+}
+
+.sp-season2.sp-hub .hub-line {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.sp-season2.sp-hub .hub-line b {
+  color: var(--paper);
+  font-weight: 700;
+}
+
+/* The meter reads as a call sheet's page bar: ten ruled cells, filled to the
+   percentage, with the outstanding fields named underneath. */
+.sp-season2.sp-hub .hub-meter {
+  display: grid;
+  gap: 9px;
+}
+
+.sp-season2.sp-hub .hub-meter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font: 800 9px/1.6 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: #d2a8dc;
+}
+
+.sp-season2.sp-hub .hub-meter-head span {
+  color: var(--paper);
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.sp-season2.sp-hub .hub-meter-cells {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 3px;
+}
+
+.sp-season2.sp-hub .hub-meter-cells i {
+  height: 12px;
+  border: 1px solid #8a6494;
+}
+
+.sp-season2.sp-hub .hub-meter-cells i.is-on {
+  background: var(--orange);
+  border-color: var(--orange);
+}
+
+.sp-season2.sp-hub .hub-meter-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sp-season2.sp-hub .hub-chip {
+  padding: 3px 8px;
+  border: 1px solid #8a6494;
+  font: 700 8px/1.5 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #e6d3ea;
+}
+
+.sp-season2.sp-hub .hub-meter .button {
+  justify-self: start;
+  min-height: 42px;
+}
+
+/* ── Stats: four figures on the night ────────────────────────────────── */
+
+/* No `margin` here: these elements also carry .wrap, whose margin-inline:auto
+   must survive. season2.css already zeroes the dl/hr margins. */
+.sp-season2.sp-hub .hub-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-bottom: 1px solid var(--line);
+}
+
+.sp-season2.sp-hub .hub-stats > div {
+  padding: 20px 22px 24px;
+  border-right: 1px solid var(--line);
+}
+
+.sp-season2.sp-hub .hub-stats > div:first-child {
+  padding-left: 0;
+}
+
+.sp-season2.sp-hub .hub-stats > div:last-child {
+  border-right: 0;
+}
+
+.sp-season2.sp-hub .hub-stats dt {
+  font: 800 9px/1.6 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: #d2a8dc;
+}
+
+.sp-season2.sp-hub .hub-stats dd {
+  margin: 6px 0 0;
+  font: 700 clamp(42px, 5.4vw, 76px)/.9 var(--display);
+  font-family: var(--display) !important;
+  letter-spacing: -.01em;
+  color: var(--paper);
+}
+
+.sp-season2.sp-hub .hub-stats dd.is-accent {
+  color: var(--orange);
+}
+
+/* ── Paper bands ─────────────────────────────────────────────────────── */
+
+.sp-season2.sp-hub .hub-sheet {
+  background: var(--paper);
+  color: var(--ink);
+  padding-block: 44px 52px;
+}
+
+.sp-season2.sp-hub .hub-h2 {
+  margin: 0 0 10px;
+  font: 800 clamp(30px, 3.8vw, 46px)/.96 var(--display);
+  font-family: var(--display) !important;
+  text-transform: uppercase;
+  letter-spacing: -.012em;
+  color: var(--ink);
+}
+
+.sp-season2.sp-hub .hub-h2 em {
+  color: var(--accent-ink);
+  font-style: normal;
+}
+
+.sp-season2.sp-hub .hub-eyebrow {
+  margin: 0 0 9px;
+  font: 800 9px/1.6 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: #754c80;
+}
+
+.sp-season2.sp-hub .hub-eyebrow span {
+  margin-right: 9px;
+  font: 700 17px/1 var(--display);
+  font-family: var(--display) !important;
+  vertical-align: -1px;
+  color: var(--accent-ink);
+}
+
+.sp-season2.sp-hub .hub-note {
+  max-width: 520px;
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--body-ink);
+}
+
+/* ── Needs you / closing soon, side by side ──────────────────────────── */
+
+.sp-season2.sp-hub .hub-board {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 34px;
+  padding-block: 38px 42px;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* With nothing closing soon, the one half that exists takes the whole band
+   instead of leaving a dead column beside it. */
+.sp-season2.sp-hub .hub-board > div:only-child {
+  grid-column: 1 / -1;
+}
+
+.sp-season2.sp-hub .hub-board-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.sp-season2.sp-hub .hub-do {
+  border-top: 1px solid var(--rule);
+}
+
+.sp-season2.sp-hub .hub-do-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding-block: 14px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.sp-season2.sp-hub .hub-do-no {
+  font: 700 27px/.9 var(--display);
+  font-family: var(--display) !important;
+  color: #b6a5ba;
+}
+
+.sp-season2.sp-hub .hub-do-row.is-urgent .hub-do-no {
+  color: var(--accent-ink);
+}
+
+.sp-season2.sp-hub .hub-do-name {
+  margin: 0;
+  font: 800 15.5px/1.25 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: -.03em;
+  color: var(--ink);
+}
+
+.sp-season2.sp-hub .hub-do-why {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--body-ink);
+}
+
+.sp-season2.sp-hub .hub-do-row .text-link {
+  justify-self: end;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.sp-season2.sp-hub .hub-do-row .text-link:hover {
+  color: var(--accent-ink);
+}
+
+.sp-season2.sp-hub .hub-due-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding-block: 12px 13px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.sp-season2.sp-hub .hub-due-when {
+  display: grid;
+  justify-items: center;
+  line-height: 1;
+}
+
+.sp-season2.sp-hub .hub-due-when b {
+  font: 700 26px/1 var(--display);
+  font-family: var(--display) !important;
+  color: var(--ink);
+}
+
+.sp-season2.sp-hub .hub-due-when small {
+  margin-top: 3px;
+  font: 800 8px/1.4 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #754c80;
+}
+
+.sp-season2.sp-hub .hub-due-name {
+  margin: 0;
+  font: 700 14px/1.3 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: -.02em;
+  color: var(--ink);
+}
+
+.sp-season2.sp-hub .hub-due-type {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: var(--body-ink);
+}
+
+.sp-season2.sp-hub .hub-countdown {
+  justify-self: end;
+  font: 800 9px/1.6 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--body-ink);
+}
+
+.sp-season2.sp-hub .hub-countdown[data-level="soon"] {
+  color: #7c5300;
+}
+
+.sp-season2.sp-hub .hub-countdown[data-level="now"] {
+  color: #a83a34;
+}
+
+/* ── Tabs: ruled, not pill-shaped ────────────────────────────────────── */
+
+.sp-season2.sp-hub .hub-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 26px;
+  margin: 34px 0 22px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.sp-season2.sp-hub .hub-tab {
+  position: relative;
+  padding: 11px 2px 13px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  font: 800 10.5px/1.5 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: #7b6a80;
+}
+
+.sp-season2.sp-hub .hub-tab:hover {
+  color: var(--ink);
+}
+
+/* aria-pressed rather than role="tab": these switch views, and the button role
+   has to survive for the USER-002 counts to be queryable. */
+.sp-season2.sp-hub .hub-tab[aria-pressed="true"] {
+  color: var(--ink);
+}
+
+.sp-season2.sp-hub .hub-tab[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px;
+  border-bottom: 3px solid var(--orange);
+}
+
+/* ── Filter bar ──────────────────────────────────────────────────────── */
+
+.sp-season2.sp-hub .hub-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin-bottom: 22px;
+}
+
+.sp-season2.sp-hub .hub-field {
+  display: grid;
+  gap: 4px;
+  font: 800 8px/1.5 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: #754c80;
+}
+
+.sp-season2.sp-hub .hub-field:first-child {
+  flex: 1 1 240px;
+}
+
+.sp-season2.sp-hub .hub-field :is(input, select) {
+  min-width: 0;
+  height: 42px;
+  padding: 8px 11px;
+  background: var(--field);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  color: var(--ink);
+  font: 14px/1.35 var(--font-body), 'DM Sans', Arial, sans-serif !important;
+}
+
+.sp-season2.sp-hub .hub-field input {
+  width: 100%;
+}
+
+.sp-season2.sp-hub .hub-field :is(input, select):focus-visible {
+  outline: 3px solid #b36aec !important;
+  outline-offset: 2px !important;
+}
+
+.sp-season2.sp-hub .hub-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font: 700 11px/1.5 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--body-ink);
+  cursor: pointer;
+}
+
+.sp-season2.sp-hub .hub-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent-ink);
+}
+
+/* ── Open calls: the contest grid ────────────────────────────────────── */
+
+/* Ruled, but with the 1px seams drawn on the cards rather than by showing the
+   container through a gap: a partly-filled last row then leaves paper, not a
+   coloured hole where the next card would have been. */
+.sp-season2.sp-hub .hub-calls {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  border-top: 1px solid var(--rule);
+  border-left: 1px solid var(--rule);
+}
+
+.sp-season2.sp-hub .hub-call {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  min-width: 0;
+  padding: 20px;
+  background: var(--field);
+  border-right: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.sp-season2.sp-hub .hub-call.is-applied {
+  background: #f8f0e6;
+}
+
+.sp-season2.sp-hub .hub-call-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.sp-season2.sp-hub .hub-call-type {
+  font: 800 8.5px/1.5 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: #754c80;
+}
+
+.sp-season2.sp-hub .hub-call h3 {
+  margin: 0;
+  font: 800 20px/1.15 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: -.04em;
+  color: var(--ink);
+}
+
+.sp-season2.sp-hub .hub-call-copy {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--body-ink);
+}
+
+/* The prize line is the card's hook, so it carries the accent ink rather than
+   reading as another paragraph of body copy. */
+.sp-season2.sp-hub .hub-call-prize {
+  margin: 10px 0 0;
+  font: 700 13px/1.4 var(--display);
+  font-family: var(--display) !important;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+
+.sp-season2.sp-hub .hub-call-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: auto 0 0;
+  padding-top: 12px;
+  border-top: 1px solid #e0d2dd;
+  font-size: 11.5px;
+  color: var(--body-ink);
+}
+
+.sp-season2.sp-hub .hub-call-meta b {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* A coverage list is every state in Nigeria on one line. It gets its own row and
+   two lines of height so a call card stays a card instead of a wall of text. */
+.sp-season2.sp-hub .hub-call-meta .is-loc {
+  flex: 1 1 100%;
+  max-height: 3em;
+  overflow: hidden;
+}
+
+.sp-season2.sp-hub .hub-call-meta .is-fee {
+  color: var(--accent-ink);
+}
+
+.sp-season2.sp-hub .hub-call-meta .is-free {
+  color: #2f7d5a;
+}
+
+.sp-season2.sp-hub .hub-call-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.sp-season2.sp-hub .hub-call-actions .button {
+  min-height: 42px;
+  padding: 9px 15px;
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+/* Statuses are ruled tags, coloured by tone rather than by a fill, so the grid
+   stays monochrome and the eye reads state from the word. */
+.sp-season2.sp-hub .hub-tag {
+  display: inline-block;
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+  font: 800 8px/1.5 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: #67556f;
+  white-space: nowrap;
+}
+
+.sp-season2.sp-hub .hub-tag[data-tone="draft"] { color: var(--accent-ink); }
+.sp-season2.sp-hub .hub-tag[data-tone="warn"]  { color: #7c5300; }
+.sp-season2.sp-hub .hub-tag[data-tone="go"]    { color: #2f7d5a; }
+.sp-season2.sp-hub .hub-tag[data-tone="stop"]  { color: #a83a34; }
+
+/* ── Application ledger ──────────────────────────────────────────────── */
+
+.sp-season2.sp-hub .hub-ledger {
+  border-top: 1px solid var(--rule);
+}
+
+.sp-season2.sp-hub .hub-ledger-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding-block: 18px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.sp-season2.sp-hub .hub-ledger-no {
+  font: 700 42px/.9 var(--display);
+  font-family: var(--display) !important;
+  color: #bda7c4;
+}
+
+.sp-season2.sp-hub .hub-ledger-name {
+  margin: 0;
+  font: 800 19px/1.3 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: -.03em;
+  color: var(--ink);
+}
+
+.sp-season2.sp-hub .hub-ledger-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--body-ink);
+}
+
+.sp-season2.sp-hub .hub-ledger-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sp-season2.sp-hub .hub-ledger-actions .text-link {
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.sp-season2.sp-hub .hub-ledger-actions .text-link:hover {
+  color: var(--accent-ink);
+}
+
+.sp-season2.sp-hub .hub-share {
+  padding: 7px 11px;
+  background: transparent;
+  border: 1px solid var(--rule);
+  cursor: pointer;
+  font: 800 8.5px/1.5 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--body-ink);
+}
+
+.sp-season2.sp-hub .hub-share:hover {
+  border-color: var(--accent-ink);
+  color: var(--accent-ink);
+}
+
+/* ── Overview: breakdown + recent ────────────────────────────────────── */
+
+.sp-season2.sp-hub .hub-split {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 34px;
+  align-items: start;
+}
+
+.sp-season2.sp-hub .hub-tally {
+  margin: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.sp-season2.sp-hub .hub-tally > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 14px;
+  padding-block: 11px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.sp-season2.sp-hub .hub-tally dt {
+  font-size: 12.5px;
+  color: var(--body-ink);
+}
+
+.sp-season2.sp-hub .hub-tally dd {
+  font: 700 24px/.95 var(--display);
+  font-family: var(--display) !important;
+  color: var(--ink);
+}
+
+/* ── Quick access: the service strip, back on night ──────────────────── */
+
+.sp-season2.sp-hub .hub-access {
+  border-top: 1px solid var(--line);
+  padding-block: 40px 46px;
+}
+
+.sp-season2.sp-hub .hub-access-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  margin-top: 22px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.sp-season2.sp-hub .hub-access-cell {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 18px;
+  background: var(--night);
+  color: var(--paper);
+  transition: background .18s ease, transform .18s ease;
+}
+
+.sp-season2.sp-hub .hub-access-cell:hover {
+  background: var(--panel);
+}
+
+.sp-season2.sp-hub .hub-access-cell:hover strong {
+  color: var(--orange);
+}
+
+.sp-season2.sp-hub .hub-access-cell strong {
+  font: 800 13px/1.3 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: -.02em;
+}
+
+.sp-season2.sp-hub .hub-access-cell span {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.sp-season2.sp-hub .hub-access-cell i {
+  font: 700 11px/1 var(--display);
+  font-family: var(--display) !important;
+  letter-spacing: .1em;
+  color: #a580ad;
+}
+
+/* The strip sits on night, so the paper-band headings reverse. */
+.sp-season2.sp-hub .hub-access .hub-h2 { color: var(--paper); }
+.sp-season2.sp-hub .hub-access .hub-h2 em { color: var(--orange); }
+.sp-season2.sp-hub .hub-access .hub-eyebrow { color: #a580ad; }
+.sp-season2.sp-hub .hub-access .hub-eyebrow span { color: var(--orange); }
+
+/* ── Loading, error, signed-out ──────────────────────────────────────── */
+
+.sp-season2.sp-hub .hub-skeleton {
+  display: grid;
+  gap: 22px;
+  padding-block: 34px;
+}
+
+.sp-season2.sp-hub .skeleton {
+  position: relative;
+  overflow: hidden;
+  height: 14px;
+  background: #3a2545;
+}
+
+.sp-season2.sp-hub .skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, #ffffff2b, transparent);
+  animation: hub-shimmer 1.4s infinite;
+}
+
+@keyframes hub-shimmer {
+  to { transform: translateX(100%); }
+}
+
+.sp-season2.sp-hub .hub-state {
+  display: grid;
+  gap: 10px;
+  max-width: 560px;
+  padding: 34px 30px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.sp-season2.sp-hub .hub-state h3 {
+  margin: 0;
+  font: 800 clamp(30px, 4.6vw, 46px)/.92 var(--display);
+  font-family: var(--display) !important;
+  text-transform: uppercase;
+  letter-spacing: -.012em;
+  color: var(--paper);
+}
+
+.sp-season2.sp-hub .hub-state .hub-eyebrow {
+  color: #d2a8dc;
+}
+
+.sp-season2.sp-hub .hub-state .hub-eyebrow span {
+  color: var(--orange);
+}
+
+.sp-season2.sp-hub .hub-state p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.sp-season2.sp-hub .hub-state.is-alert {
+  border-left: 3px solid var(--hot);
+}
+
+.sp-season2.sp-hub .hub-state.is-alert .hub-eyebrow {
+  color: #ffb2a8;
+}
+
+.sp-season2.sp-hub .hub-state .button,
+.sp-season2.sp-hub .hub-state .text-link {
+  justify-self: start;
+  margin-top: 6px;
+}
+
+.sp-season2.sp-hub .hub-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 13px 16px;
+  background: #3a2436;
+  border-left: 3px solid var(--orange);
+  color: #ffd9c2;
+  font-size: 12.5px;
+}
+
+.sp-season2.sp-hub .hub-banner button {
+  margin-left: auto;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid #a887b5;
+  cursor: pointer;
+  font: 800 9px/1.5 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--paper);
+}
+
+/* Inside the cream band the same panel switches to paper: an ink card floating
+   on cream would shout over the schedule it sits in. */
+.sp-season2.sp-hub .hub-sheet .hub-state {
+  background: var(--field);
+  border-color: var(--rule);
+}
+
+.sp-season2.sp-hub .hub-sheet .hub-state h3 { color: var(--ink); }
+.sp-season2.sp-hub .hub-sheet .hub-state p { color: var(--body-ink); }
+.sp-season2.sp-hub .hub-sheet .hub-state .hub-eyebrow { color: #754c80; }
+.sp-season2.sp-hub .hub-sheet .hub-state .hub-eyebrow span { color: var(--accent-ink); }
+
+.sp-season2.sp-hub .hub-link {
+  padding: 0 0 1px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  border-radius: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--accent-ink);
+}
+
+.sp-season2.sp-hub .hub-ledger-row .hub-tag {
+  margin-top: 8px;
+}
+
+.sp-season2.sp-hub .hub-due-row .hub-tag {
+  justify-self: end;
+}
+
+/* ── Narrow screens ─────────────────────────────────────────────────── */
+
+@media (max-width: 1000px) {
+  .sp-season2.sp-hub .hub-hero { gap: 24px; }
+  .sp-season2.sp-hub .hub-stats { grid-template-columns: repeat(2, 1fr); }
+  .sp-season2.sp-hub .hub-stats > div:nth-child(2n) { border-right: 0; }
+  .sp-season2.sp-hub .hub-stats > div:nth-child(3) { padding-left: 0; border-top: 1px solid var(--line); }
+  .sp-season2.sp-hub .hub-stats > div:nth-child(4) { border-top: 1px solid var(--line); }
+  .sp-season2.sp-hub .hub-board { grid-template-columns: 1fr; gap: 30px; }
+  .sp-season2.sp-hub .hub-split { grid-template-columns: 1fr; gap: 26px; }
+  .sp-season2.sp-hub .hub-access-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 760px) {
+  .sp-season2.sp-hub .hub-hero {
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 22px;
+    padding-block: 30px 26px;
+  }
+  .sp-season2.sp-hub .hub-hero h1 { font-size: clamp(46px, 12vw, 76px); }
+  .sp-season2.sp-hub .hub-hero-copy > p { font-size: 13px; }
+  .sp-season2.sp-hub .hub-desk-inner {
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 24px;
+    padding-block: 24px 26px;
+  }
+  .sp-season2.sp-hub .hub-sheet { padding-block: 30px 40px; }
+  .sp-season2.sp-hub .hub-ledger-row {
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 6px 14px;
+    padding-block: 16px;
+  }
+  .sp-season2.sp-hub .hub-ledger-no { font-size: 30px; }
+  .sp-season2.sp-hub .hub-ledger-actions { grid-column: 2; justify-self: start; }
+  .sp-season2.sp-hub .hub-do-row {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 5px 12px;
+  }
+  .sp-season2.sp-hub .hub-do-no { font-size: 21px; }
+  .sp-season2.sp-hub .hub-do-row .text-link { grid-column: 2; justify-self: start; }
+  .sp-season2.sp-hub .hub-due-row { grid-template-columns: 46px minmax(0, 1fr); }
+  .sp-season2.sp-hub .hub-countdown { grid-column: 2; justify-self: start; }
+  .sp-season2.sp-hub .hub-check { margin-left: 0; }
+  .sp-season2.sp-hub .hub-calls { grid-template-columns: 1fr; }
+  .sp-season2.sp-hub .hub-access-grid { grid-template-columns: 1fr; }
+  .sp-season2.sp-hub .hub-stats dd { font-size: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-season2.sp-hub .skeleton::after { animation: none; }
+  .sp-season2.sp-hub .hub-access-cell { transition: none; }
+}

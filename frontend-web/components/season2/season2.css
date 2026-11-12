@@ -1,0 +1,658 @@
+/*
+ * Spotlight Season 2 — ported from the supplied static mock
+ * (spotlight-season-2/dist: season.css + gallery.css + forms.css, 7 November 2026).
+ *
+ * Every selector is scoped under `.sp-season2`, the class this page's wrapper
+ * carries, because the app loads eight theme stylesheets globally
+ * (public/assets/css, wired up in app/layout.js) and they would otherwise fight
+ * these rules. The head and tail below are the parts that cannot be scoped, or
+ * cannot be scoped alone.
+ *
+ * Generated — if the mock changes again, re-run the port rather than editing
+ * the body of this file.
+ */
+
+.sp-season2 :is(h1, h2, h3, h4, h5, h6) {
+  /* main.css gives every heading color: var(--header) and capitalises it; this
+     mock expects headings to inherit the colour of the section they sit in. */
+  color: inherit;
+  text-transform: none;
+}
+
+/* main.css ends with `a { outline: none !important }`, which would delete the
+   mock's focus ring from every link and button on this page. */
+.sp-season2 :is(a, button, summary, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid #b36aec !important;
+  outline-offset: 5px !important;
+}
+
+/* src/styles/tailwind.css forces Kumbh Sans on div, p, span, a, li, button,
+   input and h1–h6 with !important, so an element the mock leaves to its parent
+   has to opt back in by name. `:where()` keeps this at wrapper specificity so
+   every real rule below still outranks it. */
+.sp-season2 :where(*) {
+  font-family: inherit !important;
+}
+
+.sp-season2 {
+  --night: #150e1c;
+  --panel: #24162d;
+  --paper: #f2ece4;
+  --ink: #261833;
+  --muted: #c8b9cf;
+  --orange: #ff8949;
+  --purple: #734687;
+  --line: #ab83ba45;
+  --display: "Barlow Condensed", Impact, "Arial Narrow", sans-serif;
+  --head: Manrope, Arial, sans-serif;
+}
+.sp-season2 * { box-sizing: border-box; }
+.sp-season2 { margin: 0; color: var(--paper); background: var(--night); font: 16px/1.65 "DM Sans", Arial, sans-serif; }
+.sp-season2 a { color: inherit; text-decoration: none; }
+.sp-season2 img { display: block; width: 100%; height: auto; }
+.sp-season2 figure,.sp-season2 h1,.sp-season2 h2,.sp-season2 h3,.sp-season2 p,.sp-season2 dl,.sp-season2 dd { margin: 0; }
+.sp-season2 a:focus-visible,.sp-season2 summary:focus-visible { outline: 3px solid #b36aec; outline-offset: 5px; }
+.sp-season2 .wrap { width: min(1280px, calc(100% - 88px)); margin-inline: auto; }
+.sp-season2 .skip { position: fixed; top: -60px; left: 12px; z-index: 10; background: var(--paper); color: var(--ink); padding: 10px 16px; }
+.sp-season2 .skip:focus { top: 12px; }
+.sp-season2 .site-header { position: sticky; top: 0; z-index: 5; background: #150e1cf4; border-bottom: 1px solid var(--line); backdrop-filter: blur(12px); }
+.sp-season2 .season-subheader { position: sticky; top: var(--season-rail-top, 0px); z-index: 4; background: #150e1cf4; border-bottom: 1px solid var(--line); backdrop-filter: blur(12px); }
+.sp-season2 .season-subheader .wrap { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 24px; min-height: 56px; padding-block: 9px; }
+.sp-season2 .season-subheader .button { min-height: 42px; gap: 14px; padding: 9px 15px; }
+.sp-season2 .header-inner { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 25px; }
+.sp-season2 .brand { display: flex; align-items: center; gap: 10px; font: 800 22px/1 var(--head); font-family: var(--head) !important; letter-spacing: -.045em; }
+.sp-season2 .brand svg { width: 34px; height: 40px; }
+.sp-season2 .brand small { display: block; color: #cfabd9; font-size: 8px; letter-spacing: .24em; margin-top: 6px; }
+.sp-season2 nav { display: flex; align-items: center; gap: 28px; color: var(--muted); font-size: 12px; }
+.sp-season2 nav a:hover,.sp-season2 .text-link:hover { color: var(--orange); }
+.sp-season2 .button { display: inline-flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 48px; padding: 12px 18px; font: 800 12px/1.4 var(--head); font-family: var(--head) !important; border: 1px solid transparent; transition: transform .2s, box-shadow .2s; }
+.sp-season2 .button:hover { transform: translateY(-2px); box-shadow: 0 6px 14px #0003; }
+.sp-season2 .button span,.sp-season2 .text-link span { font: 18px/1 Arial, sans-serif; }
+.sp-season2 .button.light { background: var(--paper); color: var(--ink); }
+.sp-season2 .button.orange { background: var(--orange); color: var(--night); }
+.sp-season2 .button.dark { background: var(--night); color: var(--paper); }
+.sp-season2 .eyebrow { font: 800 10px/1.6 var(--head); font-family: var(--head) !important; letter-spacing: .16em; color: #d2a8dc; }
+.sp-season2 .eyebrow i { display: inline-block; vertical-align: 1px; width: 7px; height: 7px; border-radius: 50%; margin-right: 8px; background: var(--orange); }
+.sp-season2 .eyebrow b { display: inline-block; height: 1px; width: 22px; vertical-align: 3px; margin-inline: 8px; background: #a580ad; }
+.sp-season2 .hero { min-height: min(680px, 77vw); padding-block: 52px; display: grid; grid-template-columns: 1.12fr 1fr; align-items: stretch; gap: 42px; }
+.sp-season2 .hero-copy { align-self: center; position: relative; z-index: 1; padding-block: 22px; }
+.sp-season2 .hero h1 { font: 800 clamp(70px, 8.4vw, 126px)/.84 var(--display); font-family: var(--display) !important; text-transform: uppercase; letter-spacing: -.018em; margin: 26px 0 24px; }
+.sp-season2 h1 em,.sp-season2 h2 em { color: var(--orange); font-style: normal; }
+.sp-season2 .hero-copy > p:not(.eyebrow) { color: var(--muted); max-width: 450px; font-size: 15px; }
+.sp-season2 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 17px 24px; margin-top: 27px; }
+.sp-season2 .text-link { display: inline-flex; align-items: center; gap: 9px; font: 700 12px/1.5 var(--head); font-family: var(--head) !important; border-bottom: 1px solid currentColor; padding-block: 4px; }
+.sp-season2 .hero-frame { position: relative; min-height: 470px; overflow: hidden; isolation: isolate; border: 1px solid #97619a80; background: var(--panel); }
+.sp-season2 .hero-frame img { position: absolute; width: 100%; height: 100%; object-fit: cover; object-position: 53% 42%; }
+.sp-season2 .hero-frame::after { content: ""; position: absolute; inset: 0; background: linear-gradient(0deg,#160c1fe6,transparent 33%),linear-gradient(115deg,#51296b44,transparent 45%); pointer-events: none; }
+.sp-season2 .frame-index { position: absolute; top: 10px; right: 20px; color: #fff9; font: 700 92px/.9 var(--display); font-family: var(--display) !important; z-index: 1; }
+.sp-season2 .hero-frame figcaption { position: absolute; inset: auto 18px 16px; display: flex; justify-content: space-between; gap: 12px; z-index: 1; color: #e8d7ee; font: 700 8px/1.5 var(--head); font-family: var(--head) !important; letter-spacing: .13em; }
+.sp-season2 .paper { background: var(--paper); color: var(--ink); }
+.sp-season2 .paper .eyebrow { color: #795384; }
+.sp-season2 .paper h2 em { color: var(--purple); }
+.sp-season2 .format { padding: 40px 0 26px; }
+.sp-season2 .format-head { display: grid; grid-template-columns: .8fr 1.3fr 1fr; align-items: end; gap: 25px; }
+.sp-season2 h2 { font: 700 clamp(36px, 5vw, 65px)/1.02 var(--head); font-family: var(--head) !important; letter-spacing: -.06em; }
+.sp-season2 .format-head h2 { font-size: clamp(30px,3.4vw,47px); }
+.sp-season2 .format-head > p:last-child,.sp-season2 .paper .section-head > p { color: #67556f; }
+.sp-season2 .stats { display: grid; grid-template-columns: repeat(3, 1fr); margin: 30px 0 20px; border-block: 1px solid #c9b8c9; }
+.sp-season2 .stats > div { padding: 18px 22px 20px; border-right: 1px solid #c9b8c9; }
+.sp-season2 .stats > div:first-child { padding-left: 0; }
+.sp-season2 .stats > div:last-child { border-right: 0; }
+.sp-season2 .stats dt { font: 800 clamp(58px,9vw,122px)/.9 var(--display); font-family: var(--display) !important; color: #613174; }
+.sp-season2 .stats dt span { font-size: .36em; }
+.sp-season2 .stats dd { font-size: 12px; margin-top: 10px; font-weight: 700; }
+.sp-season2 .format-foot { display: flex; justify-content: space-between; align-items: center; gap: 15px; }
+.sp-season2 .format-foot > span { font: 800 8px/1.6 var(--head); font-family: var(--head) !important; letter-spacing: .14em; color: #795384; }
+.sp-season2 .section { padding-block: 80px; }
+.sp-season2 .section-head { display: flex; align-items: end; justify-content: space-between; gap: 40px; margin-bottom: 35px; }
+.sp-season2 .section-head .eyebrow,.sp-season2 .feature-copy .eyebrow,.sp-season2 .faq .eyebrow { margin-bottom: 16px; }
+.sp-season2 .section-head > p { max-width: 340px; color: var(--muted); font-size: 14px; }
+.sp-season2 .chapters { border-top: 1px solid var(--line); }
+.sp-season2 .chapters details { border-bottom: 1px solid var(--line); }
+.sp-season2 summary { cursor: pointer; list-style: none; }
+.sp-season2 summary::-webkit-details-marker { display: none; }
+.sp-season2 .chapters summary { display: grid; grid-template-columns: 105px 1fr auto; align-items: center; gap: 20px; padding: 18px 20px; }
+.sp-season2 .chapters details[open] { background: var(--panel); }
+.sp-season2 .chapter-no { color: var(--orange); font: 700 58px/.9 var(--display); font-family: var(--display) !important; }
+.sp-season2 .chapters summary small { display: block; font: 800 8px/1.5 var(--head); font-family: var(--head) !important; letter-spacing: .15em; color: #c7a1d1; }
+.sp-season2 .chapters summary strong { display: block; font: 700 23px/1.3 var(--head); font-family: var(--head) !important; letter-spacing: -.035em; margin-top: 4px; }
+.sp-season2 .toggle,.sp-season2 .faq summary span { color: var(--orange); font: 400 24px/1 Arial, sans-serif; transition: rotate .2s; }
+.sp-season2 details[open] .toggle,.sp-season2 .faq details[open] summary span { rotate: 45deg; }
+.sp-season2 .chapters ol { margin: 0; padding: 0 30px 23px 163px; color: var(--muted); font-size: 14px; }
+.sp-season2 .chapters li { padding: 5px 0 5px 5px; }
+.sp-season2 .chapters li::marker { color: var(--orange); font-weight: 700; }
+.sp-season2 .journey-foot { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-top: 22px; }
+.sp-season2 .journey-foot > p { color: var(--muted); font-size: 12px; }
+.sp-season2 .fans { background: #2d1740; border-block: 1px solid var(--line); padding-block: 40px; }
+.sp-season2 .feature { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(30px,7vw,100px); align-items: center; }
+.sp-season2 .feature figure { position: relative; overflow: hidden; }
+.sp-season2 .feature figure img { height: 390px; object-fit: cover; object-position: 50% 37%; }
+.sp-season2 .feature figcaption { position: absolute; bottom: 12px; left: 12px; background: var(--night); padding: 5px 9px; font-size: 8px; letter-spacing: .12em; }
+.sp-season2 .feature-copy > p:not(.eyebrow) { color: var(--muted); max-width: 420px; margin: 20px 0 24px; font-size: 14px; }
+.sp-season2 .archive-grid { display: grid; grid-template-columns: .9fr 1.2fr; gap: 18px; }
+.sp-season2 .archive-grid a { position: relative; display: block; overflow: hidden; }
+.sp-season2 .archive-grid img { height: 355px; object-fit: cover; object-position: 50% 29%; transition: transform .3s; }
+.sp-season2 .archive-grid a:hover img { transform: scale(1.03); }
+.sp-season2 .archive-grid figcaption { position: absolute; bottom: 0; width: 100%; background: #150e1ce5; padding: 12px 15px; display: flex; justify-content: space-between; font: 700 9px/1.5 var(--head); font-family: var(--head) !important; letter-spacing: .12em; }
+.sp-season2 .partner-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.sp-season2 .partner-grid article { border-top: 2px solid #9a6ea8; background: #e8dfe8; padding: 22px; }
+.sp-season2 .partner-grid article > span { color: #754c80; font: 800 8px/1.5 var(--head); font-family: var(--head) !important; letter-spacing: .13em; }
+.sp-season2 .partner-grid h3 { font: 800 20px/1.2 var(--head); font-family: var(--head) !important; margin: 17px 0 9px; letter-spacing: -.04em; }
+.sp-season2 .partner-grid p { color: #67556f; font-size: 13px; }
+.sp-season2 .faq { display: grid; grid-template-columns: .8fr 1.2fr; gap: 45px; }
+.sp-season2 .faq details { border-top: 1px solid var(--line); }
+.sp-season2 .faq details:last-child { border-bottom: 1px solid var(--line); }
+.sp-season2 .faq summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 0; font-weight: 700; font-size: 14px; }
+.sp-season2 .faq details p { color: var(--muted); font-size: 13px; padding-bottom: 16px; }
+.sp-season2 .closing { background: var(--orange); color: var(--night); padding-block: 42px; }
+.sp-season2 .closing .eyebrow { color: #592645; }
+.sp-season2 .closing h2 { font: 800 clamp(60px,11vw,145px)/.9 var(--display); font-family: var(--display) !important; text-transform: uppercase; margin-top: 9px; letter-spacing: -.02em; }
+.sp-season2 .closing .text-link:hover { color: #592645; }
+.sp-season2 footer .wrap { min-height: 75px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; padding-block: 18px; }
+.sp-season2 footer span { font: 800 11px/1.5 var(--head); font-family: var(--head) !important; letter-spacing: .14em; }
+.sp-season2 footer .wrap div { display: flex; flex-wrap: wrap; gap: 15px; color: var(--muted); font-size: 11px; }
+@media (max-width: 1000px) {
+  .sp-season2 .wrap { width: calc(100% - 54px); }
+  .sp-season2 .hero { gap: 25px; }
+  .sp-season2 .hero h1 { font-size: clamp(58px,8.6vw,86px); }
+  .sp-season2 .hero-frame { min-height: 400px; }
+  .sp-season2 nav { gap: 15px; }
+}
+@media (max-width: 700px) {
+  .sp-season2 .wrap { width: calc(100% - 34px); }
+  .sp-season2 .header-inner { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; padding-top: 9px; }
+  .sp-season2 .header-inner > .button { min-height: 39px; padding: 8px 11px; gap: 9px; font-size: 11px; }
+  .sp-season2 .brand { font-size: 18px; }
+  .sp-season2 .brand svg { width: 29px; }
+  .sp-season2 nav { grid-row: 2; grid-column: 1/-1; justify-content: space-between; padding-block: 7px 10px; font-size: 11px; gap: 8px; }
+  .sp-season2 .hero { grid-template-columns: 1fr; gap: 24px; padding-block: 28px 24px; }
+  .sp-season2 .hero-copy { padding-block: 0; }
+  .sp-season2 .hero h1 { font-size: clamp(55px,12vw,83px); margin: 19px 0; }
+  .sp-season2 .hero-copy > p:not(.eyebrow) { font-size: 13px; }
+  .sp-season2 .hero-frame { min-height: 0; aspect-ratio: 1.15; }
+  .sp-season2 .frame-index { font-size: 65px; }
+  .sp-season2 .hero-frame figcaption { font-size: 6px; }
+  .sp-season2 .actions { gap: 13px 18px; margin-top: 19px; }
+  .sp-season2 .button { font-size: 11px; padding: 10px 13px; gap: 10px; }
+  .sp-season2 .format-head { grid-template-columns: 1fr; gap: 10px; }
+  .sp-season2 .format-head > p:last-child { font-size: 13px; }
+  .sp-season2 .stats { margin-top: 22px; }
+  .sp-season2 .stats > div { padding: 12px 8px; }
+  .sp-season2 .stats dt { font-size: 50px; }
+  .sp-season2 .stats dd { font-size: 9px; }
+  .sp-season2 .format-foot { align-items: start; flex-direction: column; }
+  .sp-season2 .section { padding-block: 48px; }
+  .sp-season2 .section-head { align-items: start; flex-direction: column; gap: 15px; margin-bottom: 24px; }
+  .sp-season2 .section-head > p { font-size: 13px; }
+  .sp-season2 .chapters summary { grid-template-columns: 42px 1fr auto; gap: 10px; padding: 14px 10px; }
+  .sp-season2 .chapter-no { font-size: 40px; }
+  .sp-season2 .chapters summary strong { font-size: 17px; }
+  .sp-season2 .chapters ol { padding-left: 71px; font-size: 12px; }
+  .sp-season2 .journey-foot { align-items: start; flex-direction: column; }
+  .sp-season2 .feature,.sp-season2 .faq { grid-template-columns: 1fr; gap: 26px; }
+  .sp-season2 .feature figure img { height: 290px; }
+  .sp-season2 .archive-grid { gap: 9px; }
+  .sp-season2 .archive-grid img { height: 210px; }
+  .sp-season2 .archive-grid figcaption { font-size: 7px; padding: 8px; }
+  .sp-season2 .partner-grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sp-season2 *,.sp-season2 *::before,.sp-season2 *::after { scroll-behavior: auto !important; transition: none !important; }
+}
+.sp-season2 .arrow-icon { width: 17px; height: 17px; flex: 0 0 17px; }
+.sp-season2 .archive-grid .arrow-icon { width: 12px; height: 12px; }
+
+/* Season 1 retrospective */
+.sp-season2 .mansion-hero { padding-block: 42px 34px; }
+.sp-season2 .mansion-heading { display: grid; grid-template-columns: 1.6fr 1fr; align-items: end; gap: 35px; margin-bottom: 28px; }
+.sp-season2 .mansion-heading h1 { font: 800 clamp(60px, 7.7vw, 114px)/.86 var(--display); font-family: var(--display) !important; text-transform: uppercase; letter-spacing: -.018em; margin-top: 15px; }
+.sp-season2 .mansion-intro { padding-bottom: 4px; max-width: 395px; color: var(--muted); font-size: 14px; }
+.sp-season2 .montage { position: relative; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
+.sp-season2 .montage img { aspect-ratio: 2.45; object-fit: cover; object-position: 50% 44%; }
+.sp-season2 .scene-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0; border: 1px solid var(--line); border-top: 0; }
+.sp-season2 .scene-strip a { display: flex; gap: 9px; align-items: center; padding: 14px 11px; border-right: 1px solid var(--line); color: var(--orange); font-size: 10px; }
+.sp-season2 .scene-strip a:last-child { border-right: 0; }
+.sp-season2 .scene-strip span { color: var(--paper); font-weight: 700; }
+.sp-season2 .scene-strip a:hover { background: var(--panel); }
+.sp-season2 .mansion-chapters { border-top: 1px solid #c9b8c9; }
+.sp-season2 .mansion-chapters details { border-bottom: 1px solid #c9b8c9; }
+.sp-season2 .mansion-chapters details[open] { background: #e9dfe8; }
+.sp-season2 .mansion-chapters summary { display: grid; grid-template-columns: 195px 1fr auto; align-items: center; gap: 18px; padding: 19px 16px; }
+.sp-season2 .mansion-chapters summary span { font: 800 9px/1.45 var(--head); font-family: var(--head) !important; letter-spacing: .13em; color: #754c80; }
+.sp-season2 .mansion-chapters summary strong { font: 800 20px/1.3 var(--head); font-family: var(--head) !important; letter-spacing: -.03em; }
+.sp-season2 .mansion-chapters summary b { font-size: 23px; color: #754c80; }
+.sp-season2 .mansion-chapters details[open] summary b { rotate: 45deg; }
+.sp-season2 .mansion-chapters details p { color: #5e4965; font-size: 14px; padding: 0 22px 18px 229px; max-width: 950px; }
+.sp-season2 .finale-grid { display: grid; grid-template-columns: .86fr 1.14fr; gap: 18px; }
+.sp-season2 .finale-grid article { position: relative; overflow: hidden; background: var(--panel); border: 1px solid var(--line); }
+.sp-season2 .finale-grid img { height: 425px; object-fit: cover; object-position: 50% 24%; }
+.sp-season2 .finale-grid article > div { position: absolute; inset: auto 0 0; padding: 55px 22px 18px; background: linear-gradient(transparent, #150e1c 65%); }
+.sp-season2 .finale-grid h3 { font: 800 36px/1.1 var(--head); font-family: var(--head) !important; letter-spacing: -.05em; margin: 7px 0; }
+.sp-season2 .finale-grid article p:not(.eyebrow) { color: var(--muted); font-size: 13px; }
+.sp-season2 .season-cta { border-top: 5px solid var(--orange); }
+.sp-season2 .season-cta h2 { margin-top: 15px; }
+@media (max-width: 700px) {
+  .sp-season2 .mansion-hero { padding-block: 27px 24px; }
+  .sp-season2 .mansion-heading { grid-template-columns: 1fr; gap: 14px; margin-bottom: 20px; }
+  .sp-season2 .mansion-heading h1 { font-size: clamp(46px, 11vw, 74px); }
+  .sp-season2 .mansion-intro { font-size: 13px; }
+  .sp-season2 .montage img { aspect-ratio: 2; }
+  .sp-season2 .scene-strip { grid-template-columns: repeat(3, 1fr); }
+  .sp-season2 .scene-strip a { padding: 10px 7px; gap: 5px; font-size: 9px; }
+  .sp-season2 .scene-strip a:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
+  .sp-season2 .mansion-chapters summary { grid-template-columns: 1fr auto; gap: 6px 12px; padding: 13px 12px; }
+  .sp-season2 .mansion-chapters summary span { grid-column: 1; }
+  .sp-season2 .mansion-chapters summary strong { grid-column: 1; font-size: 17px; }
+  .sp-season2 .mansion-chapters summary b { grid-column: 2; grid-row: 1/3; }
+  .sp-season2 .mansion-chapters details p { padding: 0 12px 13px; font-size: 13px; }
+  .sp-season2 .finale-grid { grid-template-columns: 1fr; }
+  .sp-season2 .finale-grid img { height: 320px; }
+}.sp-season2 .gallery-heading {
+  font: 800 21px/1.25 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: -.035em;
+  margin: 26px 0 14px;
+}
+.sp-season2 .photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 225px), 1fr));
+  gap: 16px;
+}
+.sp-season2 .gallery-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--paper);
+}
+.sp-season2 .gallery-card > a {
+  position: relative;
+  display: block;
+}
+.sp-season2 .gallery-frame {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 1.55;
+  background: var(--night);
+}
+.sp-season2 .gallery-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 35%;
+}
+.sp-season2 .gallery-enlarge {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  background: var(--night);
+  color: var(--paper);
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  text-align: center;
+  font: 20px/30px Arial, sans-serif;
+}
+.sp-season2 .gallery-card a:hover .gallery-enlarge { background: var(--orange); color: var(--night); }
+.sp-season2 .gallery-card figcaption {
+  min-height: 62px;
+  padding: 9px 12px 11px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.sp-season2 .gallery-card small {
+  display: block;
+  color: #dcafe3;
+  font: 800 8px/1.4 var(--head);
+  font-family: var(--head) !important;
+  text-transform: uppercase;
+  letter-spacing: .13em;
+  margin-bottom: 5px;
+}
+.sp-season2 .mansion-chapters { margin-top: 24px; }
+.sp-season2 .mansion-chapters .photo-gallery { padding: 0 16px 18px; }
+.sp-season2 .mansion-chapters .gallery-card { max-width: 420px; }
+.sp-season2 .scene-lounge { --scene-x: 10%; }
+.sp-season2 .scene-coaching { --scene-x: 24%; }
+.sp-season2 .scene-tasks { --scene-x: 42%; }
+.sp-season2 .scene-battle { --scene-x: 59%; }
+.sp-season2 .scene-farewell { --scene-x: 76%; }
+.sp-season2 .scene-crop img {
+  position: absolute;
+  width: 500%;
+  height: auto;
+  max-width: none;
+  left: 50%;
+  top: 50%;
+  transform: translate(calc(-1 * var(--scene-x)), -43%);
+}
+.sp-season2 .gallery-invitation {
+  margin-top: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding-top: 17px;
+  border-top: 1px solid var(--line);
+}
+.sp-season2 .gallery-invitation p { font-weight: 700; font-size: 14px; }
+.sp-season2 .photo-dialog {
+  box-sizing: border-box;
+  width: min(920px, calc(100% - 28px));
+  max-height: calc(100dvh - 28px);
+  background: var(--night);
+  color: var(--paper);
+  border: 1px solid #97619a;
+  padding: 14px;
+}
+.sp-season2 .photo-dialog::backdrop { background: #08040de6; }
+.sp-season2 .photo-dialog-header,.sp-season2 .photo-dialog-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.sp-season2 .photo-dialog-controls[hidden] { display: none; }
+.sp-season2 .photo-dialog button {
+  min-height: 40px;
+  padding: 6px 12px;
+  color: var(--paper);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.sp-season2 .photo-dialog button:focus-visible { outline: 2px solid var(--orange); }
+.sp-season2 .photo-dialog-frame {
+  position: relative;
+  overflow: hidden;
+  margin-top: 10px;
+  background: #08040d;
+}
+.sp-season2 .photo-dialog-frame:not(.scene-crop) img {
+  width: 100%;
+  max-height: min(65dvh, 600px);
+  object-fit: contain;
+}
+.sp-season2 .photo-dialog-frame.scene-crop {
+  width: min(100%, 680px);
+  aspect-ratio: 1.55;
+  margin-inline: auto;
+}
+.sp-season2 .photo-caption { margin: 9px 0 12px; font-size: 14px; }
+.sp-season2 .photo-count { color: var(--muted); font-size: 12px; }
+@media (max-width: 700px) {
+  .sp-season2 .photo-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .sp-season2 .gallery-card figcaption { font-size: 11px; padding-inline: 8px; }
+  .sp-season2 .gallery-card small { font-size: 7px; }
+  .sp-season2 .gallery-invitation { align-items: flex-start; flex-direction: column; }
+  .sp-season2 .mansion-chapters .photo-gallery { padding-inline: 10px; }
+}.sp-season2 .sponsor-cta { border: 1px solid #8c559e; background: transparent; color: var(--ink); }
+.sp-season2 .form-panel {
+  position: fixed;
+  inset: 0 0 0 auto;
+  margin: 0;
+  width: min(100%, 760px);
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  padding: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-left: 1px solid #573565;
+  background: var(--night);
+  color: var(--paper);
+  box-shadow: -18px 0 60px #08040d80;
+}
+.sp-season2 .form-panel::backdrop { background: #0b0615c9; backdrop-filter: blur(4px); }
+.sp-season2 .form-panel[open] { animation: panel-in .23s ease-out; }
+@keyframes panel-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+.sp-season2 .form-panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 18px;
+  padding: 21px 30px;
+  background: var(--night);
+  border-bottom: 1px solid var(--line);
+}
+.sp-season2 .form-panel-header h2 { font-size: clamp(26px, 5vw, 42px); margin-top: 5px; }
+.sp-season2 .panel-close,.sp-season2 .panel-secondary {
+  border: 1px solid #a887b56e;
+  background: var(--panel);
+  color: var(--paper);
+  cursor: pointer;
+}
+.sp-season2 .panel-close { min-width: 42px; min-height: 42px; font: 25px/1 Arial, sans-serif; }
+.sp-season2 .panel-secondary { min-height: 38px; padding: 6px 12px; font: 700 12px var(--head); font-family: var(--head) !important; }
+.sp-season2 .panel-form { padding: 24px 30px 32px; }
+.sp-season2 .panel-form [hidden] { display: none; }
+.sp-season2 .panel-intro,.sp-season2 .field-note,.sp-season2 .panel-form small { color: var(--muted); font-size: 12px; }
+.sp-season2 .panel-form fieldset { min-width: 0; padding: 16px; margin: 21px 0 0; border: 1px solid var(--line); }
+.sp-season2 .panel-form legend { padding: 0 8px; font: 800 15px var(--head); font-family: var(--head) !important; }
+.sp-season2 .panel-form legend span { color: var(--orange); font-size: 11px; margin-right: 5px; }
+.sp-season2 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.sp-season2 .social-grid { grid-template-columns: 1fr 1.35fr .65fr; }
+.sp-season2 .form-grid .span-two { grid-column: 1/-1; }
+.sp-season2 .panel-form label { display: grid; gap: 5px; min-width: 0; font: 700 12px/1.5 var(--head); font-family: var(--head) !important; }
+.sp-season2 .panel-form :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 9px;
+  border: 1px solid #a887b56e;
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--paper);
+  color-scheme: dark;
+  font: 14px/1.35 'DM Sans', Arial, sans-serif;
+}
+.sp-season2 .panel-form textarea { resize: vertical; }
+.sp-season2 .panel-form :is(input, select, textarea, button):focus-visible,.sp-season2 .panel-close:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.sp-season2 .panel-form input[type=file] { font-size: 11px; }
+.sp-season2 .profile-preview { margin-top: 12px; width: 82px; height: 82px; object-fit: cover; border: 1px solid var(--line); }
+.sp-season2 .panel-form .social-row { padding: 10px; margin-top: 9px; }
+.sp-season2 .social-row legend { font-size: 11px; color: var(--muted); }
+.sp-season2 .remove-social { margin-top: 9px; }
+.sp-season2 .conditional-fields,.sp-season2 .referral-box { margin-top: 12px; }
+.sp-season2 .referral-box { padding: 14px; background: var(--panel); }
+.sp-season2 .referral-box h3 { font: 800 17px var(--head); font-family: var(--head) !important; }
+.sp-season2 .referral-box p { color: var(--muted); font-size: 12px; margin: 5px 0; overflow-wrap: anywhere; }
+.sp-season2 .panel-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.sp-season2 .panel-actions button { cursor: pointer; }
+.sp-season2 .form-status { margin-top: 10px; color: #ffd0aa; font-size: 13px; }
+@media (max-width: 560px) {
+  .sp-season2 .form-panel-header,.sp-season2 .panel-form { padding-inline: 15px; }
+  .sp-season2 .form-grid,.sp-season2 .social-grid { grid-template-columns: 1fr; }
+  .sp-season2 .panel-form :is(input, select, textarea) { font-size: 16px; }
+  .sp-season2 .panel-form input[type=file] { font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) { .sp-season2 .form-panel[open] { animation: none; } }
+
+/* ── Hand-authored overrides, appended after the generated rules ─────── */
+
+/*
+ * The mock names its three Google families literally. next/font self-hosts each
+ * one under a hashed @font-face name, so the tokens are re-pointed at the
+ * variables app/season-2/page.tsx declares on the same wrapper. Must come after
+ * the generated token block above to win.
+ */
+.sp-season2 {
+  --display: var(--font-display), 'Barlow Condensed', Impact, 'Arial Narrow', sans-serif;
+  --head: var(--font-ui), Manrope, Arial, sans-serif;
+  font-family: var(--font-body), 'DM Sans', Arial, sans-serif !important;
+}
+
+/* Shorthands in the mock that end in a literal family, so the re-assertion pass
+   above cannot see them and tailwind's !important would otherwise win. */
+.sp-season2 .panel-close,
+.sp-season2 .button span,
+.sp-season2 .text-link span,
+.sp-season2 .toggle,
+.sp-season2 .gallery-enlarge {
+  font-family: Arial, sans-serif !important;
+}
+
+.sp-season2 .panel-form :is(input, select, textarea) {
+  font-family: var(--font-body), 'DM Sans', Arial, sans-serif !important;
+}
+
+/* The mock drew its own mark and lettered the word beside it; this site ships
+   its real SVG/PNG wordmark instead, which the .brand>svg rules cannot size.
+   Heights follow the mock's own responsive steps. */
+.sp-season2 .brand img {
+  display: block;
+  width: auto;
+  height: 34px;
+}
+
+.sp-season2 .brand small {
+  /* the wordmark carries the name, so the line beside it is the show format */
+  display: block;
+  margin-top: 3px;
+}
+
+@media (max-width: 1180px) {
+  .sp-season2 .brand img {
+    height: 30px;
+  }
+}
+
+@media (max-width: 640px) {
+  .sp-season2 .brand img {
+    height: 28px;
+  }
+}
+
+/* Tailwind's preflight sets margin:0 on every element, which cancels the UA's
+   margin:auto for a modal <dialog> and pins it to the top-left of its inset:0
+   box. The mock's photo viewer centres itself. */
+.sp-season2 .photo-dialog {
+  margin: auto;
+}
+
+/* The registration panel describes the application rather than reproducing it,
+   so these two blocks are new. They borrow the mock's own vocabulary: numbered
+   markers in the accent colour, hairline-ruled label/value rows. */
+.sp-season2 .panel-steps { margin: 0; padding-left: 22px; }
+.sp-season2 .panel-steps li { padding-block: 4px; font-size: 14px; color: var(--muted); }
+.sp-season2 .panel-steps li strong { display: block; color: var(--paper); font-size: 15px; }
+.sp-season2 .panel-steps li::marker { color: var(--orange); font-weight: 800; }
+
+.sp-season2 .panel-facts { margin: 0; }
+.sp-season2 .panel-facts > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  padding-block: 11px 12px;
+}
+.sp-season2 .panel-facts dt {
+  font: 800 9px/1.6 var(--head);
+  font-family: var(--head) !important;
+  letter-spacing: .14em;
+  color: #d2a8dc;
+}
+.sp-season2 .panel-facts dd { margin: 0; font-size: 13px; text-align: right; }
+
+/* Tailwind preflight gives a <button> a default cursor, and this page's call to
+   action are buttons where the mock used anchors. */
+.sp-season2 .button,
+.sp-season2 .text-link {
+  cursor: pointer;
+}
+
+/*
+ * The top-right hamburger. The mock's nav only links to sections of this page,
+ * so the toggle is this page's only route to sign in and register — it stays on
+ * screen at every width, and the drawer it opens carries the nav again plus the
+ * account group.
+ */
+.sp-season2 .header-actions { display: flex; align-items: center; gap: 12px; }
+
+.sp-season2 .menu-toggle {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  gap: 5px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 12px;
+  background: transparent;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.sp-season2 .menu-toggle span { display: block; height: 2px; background: var(--paper); }
+.sp-season2 .menu-toggle:hover { border-color: var(--orange); }
+.sp-season2 .menu-toggle:hover span { background: var(--orange); }
+
+/* Tokens for the hamburger drawer (components/marketing/header-drawer.css). */
+.sp-season2 {
+  --hdr-bg: var(--panel);
+  --hdr-fg: var(--paper);
+  --hdr-muted: var(--muted);
+  --hdr-accent: var(--orange);
+  --hdr-on-accent: var(--night);
+  --hdr-label: #d2a8dc;
+  --hdr-line: var(--line);
+  --hdr-head: var(--head);
+  --hdr-scrim: #0b0611;
+  --hdr-focus: #b36aec;
+}
+
+@media (max-width: 700px) {
+  .sp-season2 .header-actions { justify-self: end; gap: 9px; }
+  /* The mock sized its header button as a direct child; it now sits in
+     .header-actions, so the same treatment is restated here. */
+  .sp-season2 .header-actions > .button { min-height: 39px; padding: 8px 11px; gap: 9px; font-size: 11px; }
+  .sp-season2 .menu-toggle { min-width: 39px; min-height: 39px; padding: 10px; gap: 4px; }
+}
+
+/* ── Outside the wrapper, on purpose ─────────────────────────────────── */
+
+/* The mock set these on <html> and <body>, which every route shares, so they
+   are re-attached conditionally instead. */
+html:has(.sp-season2) {
+  scroll-behavior: smooth;
+  scroll-padding-top: var(--season-chrome-top, 153px);
+}
+
+/* Fills the gap left by #header-sticky while it is position:fixed. Rendered by
+   SeasonSiteChrome only while the sticky class is on, so the document never
+   shifts and anchor jumps stay where scroll-padding-top put them. */
+.site-header-spacer { height: var(--season-rail-top, 92px); }
+
+/* /apply/sme-pitch-contest carries the template header but no season rail, so
+   --season-chrome-top is never published and the 153px fallback above would
+   leave the skip link landing ~50px short. Two classes outrank
+   html:has(.sp-season2) at every width, including the 700px override below. */
+html:has(.sp-season2.sp-sme) {
+  scroll-padding-top: 104px;
+}
+
+body:has(.sp-season2) {
+  background: #150e1c;
+}
+
+/* forms.css's own scroll lock, re-attached to the wrapper. */
+body:has(.sp-season2 .form-panel[open]),
+body:has(.sp-season2 .photo-dialog[open]) {
+  overflow: hidden;
+}
+
+@media (max-width: 700px) {
+  html:has(.sp-season2) {
+    scroll-padding-top: calc(var(--season-chrome-top, 153px) + 12px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.sp-season2) {
+    scroll-behavior: auto;
+  }
+}

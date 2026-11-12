@@ -34,7 +34,13 @@ export default function CryptoAssetsScreen() {
     if (q) items = items.filter((a) => a.name.toLowerCase().includes(q) || a.symbol.toLowerCase().includes(q));
     if (filter === 'stablecoins') items = items.filter((a) => STABLECOINS.includes(a.symbol));
     if (filter === 'coins') items = items.filter((a) => !STABLECOINS.includes(a.symbol));
-    if (filter === 'gainers') items = [...items].sort((a, b) => b.change24hPct - a.change24hPct);
+    // Gainers needs a 24h open to rank against; an asset the feed cannot compare is
+    // unrankable, so it drops out of this view instead of sorting as 0%.
+    if (filter === 'gainers') {
+      items = items
+        .filter((a) => a.change24hPct != null)
+        .sort((a, b) => (b.change24hPct ?? 0) - (a.change24hPct ?? 0));
+    }
     return items;
   }, [assets.data, query, filter]);
 

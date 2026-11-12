@@ -65,7 +65,7 @@ func TestLiveDB_SocialPayoutPool_StalePaidOut_Heals(t *testing.T) {
 	beneficiary := fundedContributor(t, ctx, pool, led, 10_000_00)
 	contributor := fundedContributor(t, ctx, pool, led, 10_000_00)
 
-	p, err := svc.CreatePool(ctx, organiser, "heal-pool", &beneficiary)
+	p, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "heal-pool", BeneficiaryID: &beneficiary})
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestLiveDB_SocialPayoutPool_PaidOutNoDrain_Heals(t *testing.T) {
 	setKycTier(t, pool, organiser, 1)
 	contributor := fundedContributor(t, ctx, pool, led, 10_000_00)
 
-	p, err := svc.CreatePool(ctx, organiser, "nodrain", nil)
+	p, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "nodrain", BeneficiaryID: nil})
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestLiveDB_SocialPayoutPool_HappyPath_IdempotentReentry(t *testing.T) {
 	a := fundedContributor(t, ctx, pool, led, 10_000_00)
 	b := fundedContributor(t, ctx, pool, led, 10_000_00)
 
-	p, err := svc.CreatePool(ctx, organiser, "happy", nil)
+	p, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "happy", BeneficiaryID: nil})
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestLiveDB_SocialContributePool_CrossUserCollision_Refused(t *testing.T) {
 	alice := fundedContributor(t, ctx, pool, led, 10_000_00)
 	bob := fundedContributor(t, ctx, pool, led, 10_000_00)
 
-	p, err := svc.CreatePool(ctx, organiser, "collide", nil)
+	p, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "collide", BeneficiaryID: nil})
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}
@@ -255,11 +255,11 @@ func TestLiveDB_SocialContributePool_CrossPoolSameKey_Refused(t *testing.T) {
 	setKycTier(t, pool, organiser, 1)
 	alice := fundedContributor(t, ctx, pool, led, 10_000_00)
 
-	p1, err := svc.CreatePool(ctx, organiser, "pool-one", nil)
+	p1, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "pool-one", BeneficiaryID: nil})
 	if err != nil {
 		t.Fatalf("create pool1: %v", err)
 	}
-	p2, err := svc.CreatePool(ctx, organiser, "pool-two", nil)
+	p2, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "pool-two", BeneficiaryID: nil})
 	if err != nil {
 		t.Fatalf("create pool2: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestLiveDB_SocialMoneyPath_EmitsAuditEvents(t *testing.T) {
 	setKycTier(t, pool, organiser, 1)
 	contributor := fundedContributor(t, ctx, pool, led, 10_000_00)
 
-	p, err := svc.CreatePool(ctx, organiser, "audited", nil)
+	p, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "audited", BeneficiaryID: nil})
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}

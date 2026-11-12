@@ -44,3 +44,43 @@ func TestResolveDisabled(t *testing.T) {
 		t.Fatalf("disabled rule must resolve to empty chain, got %v", got)
 	}
 }
+
+// The DB-seeded rules list production providers only. In development the mock
+// adapter is registered but never reachable, so one provider outage surfaced as
+// "no provider available" on the local KYC screens. The fold appends mock only
+// when the registry actually has it (i.e. APP_ENV=development).
+func TestWithDevMockFallback_AppendsWhenRegistered(t *testing.T) {
+	reg := NewRegistry()
+	reg.register("mock", NewMockProvider())
+
+	tbl := withDevMockFallback(idNumberTable("dojah", "youverify"), reg)
+	got := tbl.Resolve(provider.KycIDNumber)
+
+	if len(got) != 3 || got[0] != "dojah" || got[1] != "youverify" || got[2] != "mock" {
+		t.Fatalf("mock not appended as last resort: %v", got)
+	}
+}
+
+func TestWithDevMockFallback_LeavesProductionChainAlone(t *testing.T) {
+	reg := NewRegistry()
+	reg.register("dojah", &fakeIDNumber{name: "dojah"})
+
+	tbl := withDevMockFallback(idNumberTable("dojah", "youverify"), reg)
+	got := tbl.Resolve(provider.KycIDNumber)
+
+	if len(got) != 2 || got[0] != "dojah" || got[1] != "youverify" {
+		t.Fatalf("chain changed without a registered mock: %v", got)
+	}
+}
+
+func TestWithDevMockFallback_DoesNotDuplicateMock(t *testing.T) {
+	reg := NewRegistry()
+	reg.register("mock", NewMockProvider())
+
+	tbl := withDevMockFallback(idNumberTable("dojah", "mock"), reg)
+	got := tbl.Resolve(provider.KycIDNumber)
+
+	if len(got) != 2 || got[1] != "mock" {
+		t.Fatalf("duplicate mock appended: %v", got)
+	}
+}

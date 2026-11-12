@@ -16,7 +16,7 @@ Status legend: ✅ adapter live-ready (just add creds) · 🟡 sandbox-verified 
 
 | Service | Env vars | Test | Live | Used by |
 |---|---|---|---|---|
-| **Supabase** (DB + Auth) | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (publishable), `SUPABASE_SERVICE_ROLE_KEY` (secret), `DATABASE_URL` (session pooler) | a dev project or Supabase **branch** | `https://ptczqwfokydsdafpscex.supabase.co` + pooler `aws-1-eu-central-1.pooler.supabase.com:5432` | ALL |
+| **Supabase** (DB + Auth) | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (publishable), `SUPABASE_SERVICE_ROLE_KEY` (secret), `DATABASE_URL` (session pooler) | staging project `wnicsubiznmishkmunsv` (`spotlight-staging`, eu-west-1) — local dev shares it | `https://nmseefdlliejmdbxytej.supabase.co` (`spotlight-prod`, eu-north-1; pooler for that region) | ALL |
 | **Redis** | `REDIS_URL` | `redis://localhost:6379` | managed Redis (idempotency cache, Redlock, asynq queue) | ALL money-path |
 | **Cloudflare R2** (media) | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | dev bucket | prod bucket `spotlight-open-mic` | marketplace, estate, stays vouchers, KYC docs, media |
 | **Resend** (email) | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | test key | live key + verified domain | notifications (fire-and-forget) |

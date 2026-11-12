@@ -22,6 +22,17 @@ const (
 	SpecialtyOrthopedic   DoctorSpecialty = "orthopedic"
 )
 
+// DoctorPackage is one priced consultation option a doctor sells. Booking is
+// the server quote for that price point, so the picker renders our number and
+// never computes a platform fee of its own (ADR-044).
+type DoctorPackage struct {
+	ID              string       `json:"id"`
+	Mode            string       `json:"mode"`
+	DurationMinutes int          `json:"duration_minutes"`
+	PriceKobo       int64        `json:"price_kobo"`
+	Booking         BookingQuote `json:"booking"`
+}
+
 // Doctor is a registered healthcare provider (base record).
 type Doctor struct {
 	ID             string          `json:"id"`
@@ -36,16 +47,19 @@ type Doctor struct {
 	// (consultation fee + platform booking fee). It is derived from
 	// ConsultFeeKobo, never stored, and is what the app renders on the confirm
 	// screen — the app holds no fee rate of its own. See ADR-044.
-	Booking         *BookingQuote `json:"booking,omitempty"`
-	AvatarURL       *string       `json:"avatar_url,omitempty"`
-	IsAvailable     bool          `json:"is_available"`
-	IsOnline        bool          `json:"is_online"`
-	IsHMOVerified   bool          `json:"is_hmo_verified"`
-	ExperienceYears int           `json:"experience_years"`
-	Rating          float64       `json:"rating"`
-	ReviewCount     int           `json:"review_count"`
-	PatientsCount   int           `json:"patients_count"`
-	SuccessRate     int           `json:"success_rate"`
+	Booking *BookingQuote `json:"booking,omitempty"`
+	// Packages are the timed price points patients can buy. Empty means the
+	// doctor has not adopted timed consults and books at the legacy fee.
+	Packages        []DoctorPackage `json:"packages,omitempty"`
+	AvatarURL       *string         `json:"avatar_url,omitempty"`
+	IsAvailable     bool            `json:"is_available"`
+	IsOnline        bool            `json:"is_online"`
+	IsHMOVerified   bool            `json:"is_hmo_verified"`
+	ExperienceYears int             `json:"experience_years"`
+	Rating          float64         `json:"rating"`
+	ReviewCount     int             `json:"review_count"`
+	PatientsCount   int             `json:"patients_count"`
+	SuccessRate     int             `json:"success_rate"`
 	// IsFeatured is a stored editorial flag, never derived — see
 	// supabase/migrations/20270185000000_telemedicine_featured_doctors.sql.
 	IsFeatured bool        `json:"is_featured"`
@@ -227,6 +241,10 @@ type BookAppointmentRequest struct {
 	// computation the booking is rejected before any money moves. Zero means the
 	// client did not quote a total and skips the check (ADR-044).
 	ExpectedTotalKobo int64 `json:"expected_total_kobo"`
+	// PackageID pins the consultation to one of this doctor's published
+	// packages. Empty is the legacy path: the doctor's consultation fee prices
+	// the booking and the session starts from a price snapshot.
+	PackageID string `json:"package_id"`
 }
 
 // IssuePrescriptionRequest is the body for POST /telemedicine/appointments/:id/prescription.

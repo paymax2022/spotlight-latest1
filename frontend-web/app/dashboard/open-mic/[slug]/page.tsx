@@ -5,8 +5,9 @@ import { getContestBySlug, listSubmissions } from '@/src/server/openmic/persiste
 
 export const dynamic = 'force-dynamic';
 
-export default async function ArtistOpenMicDashboardPage({ params }: { params: { slug: string } }) {
-  const contest = await getContestBySlug(params.slug);
+export default async function ArtistOpenMicDashboardPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
   if (!contest) notFound();
   const submissions = await listSubmissions({ contestId: contest.id });
   const latest = submissions[0];

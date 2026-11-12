@@ -1,12 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
-// What is under test is one entry in the Support section: the create-an-admin
-// form used to exist ONLY inside /admin/login, so nothing in the console linked
-// to it and adding a colleague meant already knowing the signup URL. The entry
-// must appear for the operators routeGuard.ts admits and stay hidden from
-// everyone else — a mismatch between the two either hides the link from an
-// /admin/unauthorized.
+// What is under test is one entry in Service Desk & Governance > Roles &
+// Permissions: the create-an-admin form used to exist ONLY inside /admin/login,
+// so nothing in the console linked to it and adding a colleague meant already
+// knowing the signup URL. The entry must appear for the operators routeGuard.ts
+// admits and stay hidden from everyone else — a mismatch between the two either
+// hides the link from an /admin/unauthorized.
+//
+// The menu folds by default (445 screens cannot all render open), so these tests
+// reach the entry the way an operator with 445 screens does: by searching. Each
+// test gets its own timeout because rendering this console in jsdom costs seconds,
+// not milliseconds.
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/admin',
@@ -38,29 +43,39 @@ function signedIn(permissions: string[]) {
 
 beforeEach(() => localStorage.clear());
 
+function search(value: string) {
+  fireEvent.change(screen.getByLabelText('Search admin screens'), { target: { value } });
+}
+
 describe('Create Admin nav entry', () => {
   it('links a wildcard admin to the standalone create-admin page', async () => {
     signedIn(['*']);
     render(<AdminSidebar />);
 
+    search('Create Admin');
     const link = await screen.findByRole('link', { name: 'Create Admin' });
     expect(link.getAttribute('href')).toBe('/admin/admins/new');
-  });
+  }, 20_000);
 
   it('shows it to an operator who can assign roles', async () => {
     signedIn(['users.roles.assign']);
     render(<AdminSidebar />);
 
+    search('Create Admin');
     expect(await screen.findByRole('link', { name: 'Create Admin' })).toBeDefined();
-  });
+  }, 20_000);
 
   it('hides it from an operator who may only view users', async () => {
     signedIn(['users.view']);
     render(<AdminSidebar />);
 
-    // Assert the Support section rendered before asserting the absence, so a
-    // sidebar that failed to render at all cannot pass this test.
-    expect(await screen.findByRole('link', { name: 'Leads Queue' })).toBeDefined();
+    search('Create Admin');
+    // Wait for the filtered render, then prove the menu is rendering at all —
+    // otherwise an empty sidebar would look like correct gating.
+    await screen.findByText(/No screens match/);
     expect(screen.queryByRole('link', { name: 'Create Admin' })).toBeNull();
-  });
+
+    search('Leads Queue');
+    expect(await screen.findByRole('link', { name: 'Leads Queue' })).toBeDefined();
+  }, 20_000);
 });

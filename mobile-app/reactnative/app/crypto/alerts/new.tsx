@@ -47,6 +47,14 @@ export default function NewCryptoAlertScreen() {
       </SafeAreaView>
     );
   }
+  if (assets.isError) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="New price alert" />
+        <StateView kind="error" title="Couldn't load the markets" message="Check your connection and try again." actionLabel="Retry" onAction={() => assets.refetch()} />
+      </SafeAreaView>
+    );
+  }
   if (!selected) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>

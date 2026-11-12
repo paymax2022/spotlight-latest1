@@ -91,8 +91,14 @@ export default function CryptoHomeScreen() {
 
         {portfolio.isLoading || eligibility.isLoading ? (
           <StateView kind="loading" message="Loading your crypto…" />
-        ) : portfolio.isError ? (
-          <StateView kind="error" title="Couldn't load crypto" message="Please check your connection and try again." actionLabel="Retry" onAction={() => portfolio.refetch()} />
+        ) : portfolio.isError || eligibility.isError ? (
+          <StateView
+            kind="error"
+            title="Couldn't load crypto"
+            message={(portfolio.error as Error)?.message ?? (eligibility.error as Error)?.message ?? 'Please check your connection and try again.'}
+            actionLabel="Retry"
+            onAction={() => { portfolio.refetch(); eligibility.refetch(); }}
+          />
         ) : (
           <>
             {/* Eligibility / KYC gate banner */}
@@ -148,7 +154,7 @@ export default function CryptoHomeScreen() {
             <View style={styles.section}>
               <SectionHeader title="Your holdings" actionLabel={holdings.length ? 'See all' : undefined} onAction={() => router.push('/crypto/portfolio')} />
               {holdings.length === 0 ? (
-                <StateView kind="empty" icon="Wallet" title="No crypto yet" message="Start with as little as ₦1,000 — buy your first asset to see it here." actionLabel="Explore assets" onAction={() => router.push('/crypto/assets')} compact />
+                <StateView kind="empty" icon="Wallet" title="No crypto yet" message="Buy your first asset to see it here." actionLabel="Explore assets" onAction={() => router.push('/crypto/assets')} compact />
               ) : (
                 <View style={styles.card}>
                   {holdings.slice(0, 3).map((p, i, arr) => (
@@ -194,7 +200,7 @@ export default function CryptoHomeScreen() {
             </View>
 
             {/* Learn nudge (education-first) */}
-            <Pressable style={[styles.learn, shadow1]} accessibilityRole="button" onPress={() => router.push('/crypto')}>
+            <Pressable style={[styles.learn, shadow1]} accessibilityRole="button" onPress={() => router.push('/learn')}>
               <View style={styles.learnIcon}><GraduationCap size={18} color={Colors.teal} strokeWidth={2} /></View>
               <View style={styles.flex}>
                 <Text style={styles.alertTitle}>New to crypto?</Text>

@@ -208,13 +208,22 @@ func (h *Handler) CreatePool(c *gin.Context) {
 		// A pool with no title is an unlabeled money pot — require it rather
 		// than persisting an unnamed OPEN pool nobody can identify.
 		Title         string  `json:"title" binding:"required"`
+		Description   string  `json:"description"`
+		GoalKobo      int64   `json:"goal_kobo"`
+		PayoutRule    string  `json:"payout_rule"`
 		BeneficiaryID *string `json:"beneficiary_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
 		return
 	}
-	p, err := h.svc.CreatePool(c.Request.Context(), ginutil.UserID(c), req.Title, req.BeneficiaryID)
+	p, err := h.svc.CreatePool(c.Request.Context(), ginutil.UserID(c), PoolDraft{
+		Title:         req.Title,
+		Description:   req.Description,
+		GoalKobo:      req.GoalKobo,
+		PayoutRule:    req.PayoutRule,
+		BeneficiaryID: req.BeneficiaryID,
+	})
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
@@ -261,6 +270,18 @@ func (h *Handler) PoolBalance(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "balance_kobo": bal})
+}
+
+// GetPool is the CALLER-SCOPED member pool detail (organiser, beneficiary or
+// contributor). The service answers the uniform 404 for everyone else, so the
+// route cannot confirm a pool id exists. NEVER mount AdminGetPool here.
+func (h *Handler) GetPool(c *gin.Context) {
+	p, err := h.svc.GetPoolDetail(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "pool": p})
 }
 
 // AdminGetPool is the pool twin of AdminGetSplit — the RBAC guard
@@ -342,6 +363,7 @@ func (h *Handler) Register(member *gin.RouterGroup, admin *gin.RouterGroup, guar
 	// group pool
 	g.GET("/pools", h.ListPools)
 	g.POST("/pools", h.CreatePool)
+	g.GET("/pools/:id", h.GetPool)
 	g.GET("/pools/:id/balance", h.PoolBalance)
 	g.POST("/pools/:id/contribute", h.ContributePool)
 	g.POST("/pools/:id/payout", h.PayoutPool)
@@ -500,7 +522,8 @@ func (s *Service) ListPools(ctx context.Context, userID string, limit int) ([]Po
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	const q = `SELECT p.id, p.organiser_id, p.title, p.beneficiary_id, p.state, p.created_at, p.updated_at,
+	const q = `SELECT p.id, p.organiser_id, p.title, p.description, p.goal_kobo, p.payout_rule,
+	                  p.beneficiary_id, p.state, p.created_at, p.updated_at,
 	                  COALESCE((SELECT SUM(amount_kobo) FROM pool_contributions c WHERE c.pool_id=p.id),0) AS balance,
 	                  COALESCE((SELECT SUM(amount_kobo) FROM pool_contributions c WHERE c.pool_id=p.id AND c.user_id=$1 AND c.amount_kobo>0),0) AS my_contrib
 	           FROM group_pools p
@@ -516,8 +539,8 @@ func (s *Service) ListPools(ctx context.Context, userID string, limit int) ([]Po
 	for rows.Next() {
 		var r PoolRow
 		var state string
-		if err := rows.Scan(&r.ID, &r.OrganiserID, &r.Title, &r.BeneficiaryID, &state,
-			&r.CreatedAt, &r.UpdatedAt, &r.BalanceKobo, &r.MyContribKobo); err != nil {
+		if err := rows.Scan(&r.ID, &r.OrganiserID, &r.Title, &r.Description, &r.GoalKobo, &r.PayoutRule,
+			&r.BeneficiaryID, &state, &r.CreatedAt, &r.UpdatedAt, &r.BalanceKobo, &r.MyContribKobo); err != nil {
 			return nil, err
 		}
 		r.State = PoolState(state)

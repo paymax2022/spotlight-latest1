@@ -48,7 +48,7 @@ export default function Header4({
                                             </span>
                                         </Link>
                                     </div>
-                                    <div className="header__hamburger d-lg-none my-auto">
+                                    <div className="header__hamburger my-auto">
                                         <div className="sidebar__toggle" onClick={handleOffCanvas}>
                                             <i className="fas fa-bars" />
                                         </div>

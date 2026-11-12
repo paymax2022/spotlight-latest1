@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  nairaToKobo, parsePrepMinutes, subcategoriesFor, validateItemDraft, type TaxonomyCategory,
+  categoryEditingMode, nairaToKobo, parsePrepMinutes, subcategoriesFor, validateItemDraft,
+  type TaxonomyCategory,
 } from '../taxonomy.ts';
 
 const tree: TaxonomyCategory[] = [
@@ -94,4 +95,18 @@ test('a valid prep time is carried in the payload; an empty one is left out', ()
   assert.equal(withPrep.ok && withPrep.payload.prepTimeMinutes, 20);
   const without = validateItemDraft({ categoryId: 'rice', subcategoryId: null, name: 'X', priceNaira: '100', prepMinutes: '' }, tree);
   assert.equal(without.ok && 'prepTimeMinutes' in without.payload, false);
+});
+
+test('category editing stays unknown until the taxonomy read settles', () => {
+  // The legacy "Add a category" form 403s whenever the taxonomy route is mounted,
+  // so it may only appear after a confirmed 404 — never while loading or after a
+  // failed read (a transient failure used to surface the forbidden button).
+  assert.equal(categoryEditingMode({ status: 'pending', data: undefined }), 'unknown');
+  assert.equal(categoryEditingMode({ status: 'error', data: undefined }), 'unknown');
+});
+
+test('a successful read decides: null means taxonomy off, any tree (even empty) means on', () => {
+  assert.equal(categoryEditingMode({ status: 'success', data: null }), 'legacy');
+  assert.equal(categoryEditingMode({ status: 'success', data: [] }), 'taxonomy');
+  assert.equal(categoryEditingMode({ status: 'success', data: tree }), 'taxonomy');
 });

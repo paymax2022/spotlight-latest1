@@ -218,7 +218,7 @@ func (s *Service) loadUnpaidSettlements(ctx context.Context, providerType, provi
 			WHERE st.module_type = 'food_delivery'
 			  AND st.status = 'settled'
 			  AND res.owner_id = $1
-			  AND res.kyb_status = 'approved' -- PY-007: pay out only to a KYB-verified restaurant (verified settlement account)
+			  AND res.kyb_status = 'approved' -- PY-007: pay out only to a business-verified restaurant (KYB proves WHO the business is; funds land in the owner's wallet, so no bank account is part of this gate)
 			  AND st.provider_kobo > 0
 			  AND NOT EXISTS (SELECT 1 FROM restaurant_payout_lines pl WHERE pl.settlement_id = st.id)
 			  -- FOOD-009: settleOrder's Settle() call ALWAYS credits the provider's
@@ -656,9 +656,11 @@ func (s *Service) EarningsStatement(ctx context.Context, restaurantID, userID st
 //	onb_application  — "may this PERSON be a restaurant merchant?"  (capability)
 //	restaurant_kyb   — "may this OUTLET be paid?"                   (payout gate)
 // They are deliberately NOT merged: KYB is per outlet and capability is per
-// person, so an owner's second outlet can carry different banking. Merging would
-// either weaken payout verification or gate the capability behind per-restaurant
-// banking.
+// person, so an owner's second outlet can be verified while the first is not.
+// Merging would either weaken payout verification or gate the capability behind
+// per-restaurant verification. Neither asks where the money goes: a payout run
+// credits the owner's wallet, and the destination of a wallet transfer is chosen
+// per withdrawal (withdrawal.go).
 // What was missing is the join. buildPayoutRun selects
 // `AND res.kyb_status = 'approved'` (PY-007), so an outlet without approved KYB
 // takes orders, settles into provider_kobo, and is then skipped by every payout

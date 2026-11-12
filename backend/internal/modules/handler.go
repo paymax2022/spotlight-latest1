@@ -115,6 +115,35 @@ func (h *Handler) SetLifecycle(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": m})
 }
 
+type setReadinessRequest struct {
+	Readiness string `json:"readiness" binding:"required"`
+	Note      string `json:"note"`
+}
+
+// SetReadiness records how finished the module's own product work is.
+// PATCH /api/v1/admin/modules/:key/readiness
+// The field the brief asked for: the admin states readiness, and that statement —
+// not only the per-tier toggle — is what decides whether production may serve the
+// module at all.
+func (h *Handler) SetReadiness(c *gin.Context) {
+	var req setReadinessRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	r, err := ParseReadiness(req.Readiness)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	m, err := h.svc.SetReadiness(c.Request.Context(), c.Param("key"), r, req.Note, ginutil.UserID(c))
+	if err != nil {
+		h.writeErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": m})
+}
+
 // History returns the audit trail for one module.
 // GET /api/v1/admin/modules/:key/history
 func (h *Handler) History(c *gin.Context) {
@@ -132,10 +161,13 @@ func (h *Handler) writeErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrModuleNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
-	case errors.Is(err, ErrInvalidEnv), errors.Is(err, ErrInvalidStatus), errors.Is(err, ErrInvalidLifecycle):
+	case errors.Is(err, ErrInvalidEnv), errors.Is(err, ErrInvalidStatus),
+		errors.Is(err, ErrInvalidLifecycle), errors.Is(err, ErrInvalidReadiness):
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
-	case errors.Is(err, ErrArchivedModule):
+	case errors.Is(err, ErrArchivedModule), errors.Is(err, ErrNotReadyForProduction):
 		// 409: the request is well-formed, it conflicts with the module's state.
+		// Both are the publish interlocks, and the console must be able to tell an
+		// operator "not yet" from "server broke".
 		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
@@ -250,4 +282,8 @@ func Register(public, admin *gin.RouterGroup, db *pgxpool.Pool, rbac services.RB
 	// Writes change what every user of an environment sees.
 	mods.PATCH("/:key/visibility", middleware.RequirePermission(rbac, "platform.modules.manage"), h.SetVisibility)
 	mods.PATCH("/:key/lifecycle", middleware.RequirePermission(rbac, "platform.modules.manage"), h.SetLifecycle)
+	// Readiness is a manage-level write even though it is not itself a visibility
+	// toggle: it is the precondition production checks, so whoever can set it can
+	// open the door to a production launch.
+	mods.PATCH("/:key/readiness", middleware.RequirePermission(rbac, "platform.modules.manage"), h.SetReadiness)
 }

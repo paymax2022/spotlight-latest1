@@ -48,8 +48,19 @@ export const featureFlags = {
   /** EPIC 4 — Vote bridge: idempotency fix + KYC gate on vote paths */
   votesBridge: () => envFlag('VOTES_BRIDGE_ENABLED'),
 
-  /** EPIC 5 — Referral codes and ledger rewards */
+  /** EPIC 5 — Referral codes and ledger rewards (§7A house system) */
   referrals: () => envFlag('FEATURE_REFERRALS_ENABLED'),
+
+  /**
+   * Direct Referral Rewards ENGINE — MIRRORS the Go backend's
+   * FEATURE_REFERRAL_REWARDS_ENABLED (config.go → FeatureReferralRewardsEnabled
+   * gates RegisterReferralRewards at finance_routes.go:468, which mounts the
+   * user API at /v1/referrals/* on the ROOT engine, independently of the §7A
+   * block above). The BFF proxy /api/v1/referrals/* must gate on THIS flag, not
+   * referrals: an environment running the engine without §7A used to answer 503
+   * on the Earn hub while its upstream was healthy (same class as E2E-SOC-036).
+   */
+  referralRewards: () => envFlag('FEATURE_REFERRAL_REWARDS_ENABLED'),
 
   /** Micro-insurance / Protection module (MyCover + Octamile via gateway) */
   insurance: () => envFlag('FEATURE_INSURANCE_ENABLED'),

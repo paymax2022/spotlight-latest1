@@ -47,8 +47,11 @@ var kybBusinessTypes = map[string]bool{
 	"ngo":             true,
 }
 
-// KYB is a restaurant's business-verification record. Bank fields are the merchant's
-// OWN settlement (payout) account — business data they provide, not a credential.
+// KYB is a restaurant's business-verification record. It proves who the business is;
+// it does not say where the business's money goes. Payout runs credit the owner's
+// wallet and the owner chooses a destination per withdrawal (see withdrawal.go), so
+// the bank triple below is legacy data: read so a settlement account recorded before
+// that split stays visible, never required, and no longer written.
 type KYB struct {
 	RestaurantID                  string    `json:"restaurant_id"`
 	LegalName                     string    `json:"legal_name"`
@@ -57,9 +60,9 @@ type KYB struct {
 	TIN                           string    `json:"tin,omitempty"`
 	ContactEmail                  string    `json:"contact_email"`
 	ContactPhone                  string    `json:"contact_phone"`
-	BankCode                      string    `json:"bank_code"`
-	AccountNumber                 string    `json:"account_number"` // 10-digit NUBAN
-	AccountName                   string    `json:"account_name"`
+	BankCode                      string    `json:"bank_code,omitempty"`
+	AccountNumber                 string    `json:"account_number,omitempty"`
+	AccountName                   string    `json:"account_name,omitempty"`
 	Status                        KYBStatus `json:"status"`
 	DecisionReason                *string   `json:"decision_reason,omitempty"`
 	BankAccountVerifiedAt         *time.Time `json:"bank_account_verified_at,omitempty"`
@@ -102,24 +105,11 @@ func looksLikeEmail(s string) bool {
 	return dot > at+1 && dot < len(s)-1
 }
 
-// isNUBAN reports whether s is a 10-digit Nigerian bank account number.
-func isNUBAN(s string) bool {
-	if len(s) != 10 {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
 // validateKYBForSubmit returns the list of problems that block submission (empty ⇒ OK).
 // It is PURE (no DB): the required business fields, the business-type/RC rule (a
-// registered entity needs its CAC RC number AND certificate), the settlement account
-// format, and a basic contact-email check. `docTypes` is the set of document types the
-// applicant has uploaded, so the "certificate required" rule is testable without a DB.
+// registered entity needs its CAC RC number AND certificate), and a basic
+// contact-email check. `docTypes` is the set of document types the applicant has
+// uploaded, so the "certificate required" rule is testable without a DB.
 func validateKYBForSubmit(k KYB, docTypes map[string]bool) []string {
 	var problems []string
 	req := func(field, val string) {
@@ -129,17 +119,12 @@ func validateKYBForSubmit(k KYB, docTypes map[string]bool) []string {
 	}
 	req("legal_name", k.LegalName)
 	req("contact_phone", k.ContactPhone)
-	req("bank_code", k.BankCode)
-	req("account_name", k.AccountName)
 
 	if !kybBusinessTypes[k.BusinessType] {
 		problems = append(problems, "invalid business_type")
 	}
 	if strings.TrimSpace(k.ContactEmail) == "" || !looksLikeEmail(k.ContactEmail) {
 		problems = append(problems, "invalid contact_email")
-	}
-	if !isNUBAN(k.AccountNumber) {
-		problems = append(problems, "account_number must be a 10-digit NUBAN")
 	}
 	// A registered entity (anything other than a sole proprietor) must supply its CAC
 	// RC/BN number and upload the certificate; a sole proprietor is exempt.
@@ -159,41 +144,6 @@ func kybIncompleteErr(problems []string) error {
 	return fmt.Errorf("%w: %s", ErrKYBIncomplete, strings.Join(problems, "; "))
 }
 
-// verifyBankAccount calls the disbursement provider to resolve the account name and
-// stores the verification result in the database. Returns true if verified successfully.
-func (s *Service) verifyBankAccount(ctx context.Context, restaurantID, bankCode, accountNumber, accountName string) error {
-	if s.disbursement == nil {
-		// Bank verification not configured; skip silently
-		now := time.Now()
-		_, err := s.db.Exec(ctx,
-			`UPDATE restaurant_kyb SET bank_account_verified_at=$2, bank_account_verified=NULL, bank_account_verification_error='bank verification not configured'
-			 WHERE restaurant_id=$1`,
-			restaurantID, now)
-		return err
-	}
-
-	resolved, err := s.disbursement.ResolveAccount(ctx, bankCode, accountNumber)
-	if err != nil {
-		// Verification failed; store the error but don't fail submission
-		errMsg := err.Error()
-		now := time.Now()
-		_, dbErr := s.db.Exec(ctx,
-			`UPDATE restaurant_kyb SET bank_account_verified_at=$2, bank_account_verified=FALSE, bank_account_verification_error=$3
-			 WHERE restaurant_id=$1`,
-			restaurantID, now, errMsg)
-		return dbErr
-	}
-
-	// Account resolved; check if the name matches
-	verified := strings.EqualFold(strings.TrimSpace(resolved.AccountName), strings.TrimSpace(accountName))
-	now := time.Now()
-	_, err = s.db.Exec(ctx,
-		`UPDATE restaurant_kyb SET bank_account_verified_at=$2, bank_account_verified=$3, bank_account_verification_error=NULL
-		 WHERE restaurant_id=$1`,
-		restaurantID, now, verified)
-	return err
-}
-
 // loadKYB returns a restaurant's KYB record, or a zero-value draft when none exists
 // yet (so callers always get a consistent shape). ok is false when there is no row.
 func (s *Service) loadKYB(ctx context.Context, restaurantID string) (KYB, bool, error) {
@@ -208,9 +158,15 @@ func (s *Service) loadKYB(ctx context.Context, restaurantID string) (KYB, bool, 
 		&k.LegalName, &k.BusinessType, &k.RCNumber, &k.TIN, &k.ContactEmail, &k.ContactPhone,
 		&k.BankCode, &k.AccountNumber, &k.AccountName, &k.Status, &k.DecisionReason,
 		&k.BankAccountVerifiedAt, &k.BankAccountVerified, &k.BankAccountVerificationError)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// No row yet → an empty draft (not an error).
 		return KYB{RestaurantID: restaurantID, Status: KYBDraft}, false, nil
+	}
+	if err != nil {
+		// A failed read (missing column, connection loss) is NOT an empty
+		// application: returning a draft here made submit answer "fill in your
+		// KYB details" against data that was saved correctly.
+		return KYB{}, false, err
 	}
 	return k, true, nil
 }
@@ -253,17 +209,20 @@ func (s *Service) SaveKYB(ctx context.Context, restaurantID, userID string, in K
 	if !editableKYB(cur.Status) {
 		return nil, fmt.Errorf("restaurant: KYB cannot be edited while %s", cur.Status)
 	}
+	// The bank triple is deliberately absent: KYB proves who the business is, while
+	// a payout destination belongs to the withdrawal lane. Leaving the columns out
+	// of the write also keeps a settlement account recorded before that split
+	// readable for reviewers instead of being NULLed by a form that no longer asks.
 	const up = `
 		INSERT INTO restaurant_kyb (restaurant_id, legal_name, business_type, rc_number, tin,
-		    contact_email, contact_phone, bank_code, account_number, account_name, status, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',now())
+		    contact_email, contact_phone, status, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'draft',now())
 		ON CONFLICT (restaurant_id) DO UPDATE SET
 		    legal_name=$2, business_type=$3, rc_number=$4, tin=$5, contact_email=$6,
-		    contact_phone=$7, bank_code=$8, account_number=$9, account_name=$10, updated_at=now()`
+		    contact_phone=$7, updated_at=now()`
 	if _, err := s.db.Exec(ctx, up, restaurantID,
 		nullIfEmpty(in.LegalName), nullIfEmpty(in.BusinessType), nullIfEmpty(in.RCNumber), nullIfEmpty(in.TIN),
-		nullIfEmpty(in.ContactEmail), nullIfEmpty(in.ContactPhone), nullIfEmpty(in.BankCode),
-		nullIfEmpty(in.AccountNumber), nullIfEmpty(in.AccountName)); err != nil {
+		nullIfEmpty(in.ContactEmail), nullIfEmpty(in.ContactPhone)); err != nil {
 		return nil, err
 	}
 	// Keep the restaurant snapshot in sync (draft until submitted).
@@ -387,8 +346,6 @@ func (s *Service) SubmitKYB(ctx context.Context, restaurantID, userID string) (*
 	if problems := validateKYBForSubmit(k, docTypes); len(problems) > 0 {
 		return nil, kybIncompleteErr(problems)
 	}
-	// Verify bank account (doesn't fail submission, just records the result)
-	_ = s.verifyBankAccount(ctx, restaurantID, k.BankCode, k.AccountNumber, k.AccountName)
 
 	// Compare-and-set on the editable statuses: two concurrent submits cannot both win.
 	tag, err := s.db.Exec(ctx,
@@ -515,7 +472,7 @@ func (h *Handler) GetKYB(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"kyb": k, "documents": docTypes})
 }
 
-// SaveKYB → PUT /restaurant/:id/kyb (owner). Upserts the business/settlement details.
+// SaveKYB → PUT /restaurant/:id/kyb (owner). Upserts the business identity details.
 func (h *Handler) SaveKYB(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var body KYB

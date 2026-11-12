@@ -1,0 +1,296 @@
+name: Ops DB Push (scoped)
+
+# Narrow sibling of ops-db-push.yml. It exists so one known migration can reach
+# production without a human parked on an approval gate, while every big red
+# button keeps its gate.
+#
+# Why a separate GitHub environment instead of dropping the reviewers off
+# `Production`: that environment is bound by ops-db-push (--include-all sweep),
+# ops-db-rotate (rewrites the production DB password through the Management
+# API), ops-db-url-repair, db-migrate.yml's push-on-merge and deploy.yml's
+# backend promotion. Deleting its required reviewers to automate a migration
+# would have disarmed all five at once, for anyone with write on the repo.
+# `production-db-scoped` has no reviewers and does only what is below.
+#
+# The scope is enforced by construction, not by instructions: the only remote
+# write this job can issue is `reconcile-pending.sh --apply-one <version>`, so
+# there is no path to --include-all (the 87-file sweep) or to --apply (every
+# migration the remote is missing). Repo-level secrets are readable from any job
+# in this repo, so this environment needs no secret of its own.
+#
+# It carries the same pre-flight and post-checks as
+# docs/devops/academy-prod-migration-set.md — the additive re-grep against the
+# exact bytes, §5.1's active-area count and §6's history rows — so a run of this
+# lane is the reviewed package, executed by a machine instead of typed by hand.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'plan = classify and validate only (mutates nothing); apply = run the listed versions one at a time'
+        type: choice
+        options: [plan, apply]
+        default: plan
+      versions:
+        description: 'Migration versions, in apply order (e.g. "20271060000000 20271095000000 20271095000001")'
+        type: string
+        default: ''
+      confirm:
+        description: 'Type SCOPED to allow apply mode'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-db-push-scoped
+  cancel-in-progress: false
+
+jobs:
+  scoped:
+    name: supabase db ${{ inputs.mode }} (scoped, production)
+    runs-on: ubuntu-latest
+    environment: production-db-scoped
+    env:
+      ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      VERSIONS: ${{ inputs.versions }}
+      CONFIRM: ${{ inputs.confirm }}
+      INPUT_MODE: ${{ inputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # PINNED — same pin as ops-db-push.yml and db-migrate.yml, deliberately: the
+      # CLI that writes to production is the one a reviewed commit chose, not
+      # whatever setup-cli resolves this morning. Bump all three together.
+      - uses: supabase/setup-cli@v3
+        with:
+          version: 2.114.0
+
+      - name: Preflight (runner tooling)
+        run: |
+          set -euo pipefail
+          command -v psql >/dev/null || { echo "::error::psql is not on this runner; refusing to start."; exit 1; }
+          supabase --version
+          # Not an IPv6 problem to be tuned away: db.<prod-ref>.supabase.co has
+          # no A record at all (AAAA-only on 1.1.1.1 and 8.8.8.8), so a GitHub
+          # runner — which has no IPv6 route — cannot reach the direct host by
+          # any address family. The DSN step therefore uses the session pooler.
+          if v4="$(getent ahostsv4 "db.${PROJECT_ID}.supabase.co" | awk '{print $1; exit}')"; then
+            echo "  direct db host A record: $v4"
+          else
+            echo "  direct db host: no A record (AAAA-only) — unreachable from this runner"
+          fi
+          if v4p="$(getent ahostsv4 aws-0-eu-north-1.pooler.supabase.com | awk '{print $1; exit}')" \
+             && [ -n "$v4p" ]; then
+            echo "  session pooler IPv4: $v4p"
+          else
+            echo "::error::the session pooler has no A record here; nothing to dial."
+            exit 1
+          fi
+
+      - name: Resolve the production DSN (session pooler; values never printed)
+        run: |
+          set -euo pipefail
+          : "${ACCESS_TOKEN:?missing repo secret SUPABASE_ACCESS_TOKEN}"
+          : "${PROJECT_ID:?missing repo secret SUPABASE_PROJECT_ID}"
+          : "${DB_PASSWORD:?missing repo secret SUPABASE_DB_PASSWORD}"
+          # A no-review lane must not be pointable at the wrong project by a
+          # copy-pasted secret — that is how "staging" ends up meaning production.
+          if [ "$PROJECT_ID" = "wnicsubiznmishkmunsv" ]; then
+            echo "::error::SUPABASE_PROJECT_ID is the staging project ref; this lane is production-only."
+            exit 1
+          fi
+          enc_pw="$(RAW_PW="$DB_PASSWORD" python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["RAW_PW"],safe=""))')"
+          # Session mode on :5432, `postgres.<ref>` as the role — the same shape
+          # ops-db-url-repair.yml composes, and the reason the academy review
+          # package's §5.1 says "session-mode connection, not the 6543 txn
+          # pooler": DDL through 6543 can be handed a different backend between
+          # statements, and `psql -1` around a whole file needs one real session.
+          dsn="postgres://postgres.${PROJECT_ID}:${enc_pw}@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require"
+          echo "::add-mask::$dsn"
+          printf 'SCOPED_DB_URL=%s\n' "$dsn" >> "$GITHUB_ENV"
+          unset enc_pw RAW_PW dsn
+
+      - name: Validate the version list
+        run: |
+          set -euo pipefail
+          : > /tmp/scoped_versions.txt
+          n=0
+          for v in ${VERSIONS//,/ }; do
+            if ! printf '%s' "$v" | grep -qxE '[0-9]{14}'; then
+              echo "::error::'$v' is not a 14-digit migration version."; exit 1
+            fi
+            f="$(ls supabase/migrations/${v}_*.sql 2>/dev/null | head -1 || true)"
+            if [ -z "$f" ]; then
+              echo "::error::no migration file for $v in this checkout."; exit 1
+            fi
+            echo "  $v -> $(basename "$f")"
+            printf '%s\n' "$v" >> /tmp/scoped_versions.txt
+            n=$((n + 1))
+          done
+          if [ "$n" -eq 0 ]; then echo "::error::versions is empty."; exit 1; fi
+          # Twelve is deliberate: past this the list is a migration sweep wearing
+          # a scoped label, and a sweep is ops-db-push's reviewed job.
+          if [ "$n" -gt 12 ]; then
+            echo "::error::refusing to apply $n versions unreviewed in one run (max 12)."; exit 1
+          fi
+          echo "validated=$n" >> "$GITHUB_OUTPUT"
+
+      - name: Re-check every selected file is additive-only
+        run: |
+          set -euo pipefail
+          # Passing the guard when it merged is not enough: this lane writes to
+          # production with no reviewer, so the destructive shapes are rejected
+          # again here, against the exact bytes about to run. Idempotent
+          # IF EXISTS drops (policy/trigger/index/function/view) are the allowed
+          # re-create pattern and are not in the reject set.
+          while read -r v; do
+            f="$(ls supabase/migrations/${v}_*.sql | head -1)"
+            bad="$(grep -inE 'drop[[:space:]]+(table|column|schema|database|type|domain|sequence)|truncate[[:space:]]|rename[[:space:]]+(to|column)|alter[[:space:]]+table[^;]*drop' "$f" || true)"
+            if [ -n "$bad" ]; then
+              echo "::error::$(basename "$f") is not additive-only:"
+              printf '%s\n' "$bad"
+              exit 1
+            fi
+            echo "  additive: $(basename "$f")"
+          done < /tmp/scoped_versions.txt
+
+      # The first version of this lane leaned on reconcile-pending.sh --dry-run,
+      # which sends `supabase migration list` to /dev/null. A dead DSN, a DSN the
+      # CLI cannot use, and a fully-recorded history all print the same
+      # "APPLIED=0 MISSING=0 REVIEW=0" — two prod runs proved it, because the
+      # buckets stayed empty on a connection that could read 663 history rows.
+      # State is therefore read here with bare psql under set -e, which cannot be
+      # satisfied by an empty result, and every selected version is named
+      # individually: recorded-but-absent is the drift this repo keeps hitting.
+      - name: Prove the connection and read history state (read-only)
+        run: |
+          set -euo pipefail
+          total="$(psql "$SCOPED_DB_URL" -tAc \
+            'select count(*) from supabase_migrations.schema_migrations;')"
+          echo "  remote history rows: $total"
+          while read -r v; do
+            if [ -n "$(psql "$SCOPED_DB_URL" -tAc \
+              "select 1 from supabase_migrations.schema_migrations where version = '${v}';")" ]; then
+              echo "  $v: RECORDED on remote (may still be absent — the drift case)"
+            else
+              echo "  $v: not recorded"
+            fi
+          done < /tmp/scoped_versions.txt
+
+      # apply_one() books history with `supabase migration repair --db-url`, and
+      # reconcile-pending.sh filters that command's stderr out of the log. If the
+      # CLI cannot drive this DSN, psql commits the DDL and the repair fails —
+      # prod then holds an object with no row, which is exactly how the academy
+      # tables got stranded in August. So the CLI's own transport is proved
+      # read-only, with its stderr kept, before this lane is allowed to write.
+      - name: Prove the CLI can book history on this DSN (read-only)
+        run: |
+          set -euo pipefail
+          if ! out="$(supabase migration list --db-url "$SCOPED_DB_URL" 2>&1)"; then
+            printf '%s\n' "$out" | tail -8
+            echo "::error::'supabase migration list --db-url' failed, so 'migration repair' on this DSN would fail the same way — that is DDL applied with no history row. Aborting before any write."
+            exit 1
+          fi
+          rows="$(printf '%s\n' "$out" | grep -cE '[0-9]{14}' || true)"
+          echo "  CLI migration list: $rows rows carrying a version"
+          if [ "$rows" -lt 100 ]; then
+            echo "::error::the CLI saw $rows versions where prod's history table holds hundreds — the DSN works for psql but not for the CLI, so history could not be booked. Do not write with this lane."
+            printf '%s\n' "$out" | head -12
+            exit 1
+          fi
+
+      # academy-prod-migration-set.md §5.1: the pricing seed is a CROSS JOIN over
+      # active areas, so an area count of 0 means #1 writes no rows and the page
+      # stays degraded. Reporting it here is what tells an operator to stop.
+      - name: Active interest-area count (read-only)
+        run: |
+          set -euo pipefail
+          count="$(psql "$SCOPED_DB_URL" -tAc \
+            'select count(*) filter (where is_active) from public.academy_interest_areas;')"
+          echo "  active academy_interest_areas = $count"
+          if [ "$count" = "0" ]; then
+            echo "::warning::zero active areas — the pricing seed will write no rows."
+          fi
+
+      - name: Require the typed confirm before any write
+        if: ${{ inputs.mode == 'apply' }}
+        run: |
+          if [ "$CONFIRM" != "SCOPED" ]; then
+            echo "::error::mode=apply requires confirm=SCOPED (got: '${CONFIRM}')."
+            exit 1
+          fi
+
+      - name: Apply the selected versions one at a time
+        if: ${{ inputs.mode == 'apply' }}
+        run: |
+          set -euo pipefail
+          while read -r v; do
+            echo "== applying $v =="
+            bash scripts/db/reconcile-pending.sh --db-url "$SCOPED_DB_URL" --apply-one "$v" --yes
+          done < /tmp/scoped_versions.txt
+
+      # always(): a half-finished apply is the state this lane must never let
+      # pass silently, so the post-check runs even when the step before it died.
+      # The review package's §6, and the only check here that cannot be made
+      # through the browser: RLS denies anon reads of these rows, and the page is
+      # down on the host-runtime fault, so until this runs there is no evidence at
+      # all that the seed wrote the money figures visitors are about to see. It
+      # runs in plan mode too — there it is the pre-state, and it is what tells an
+      # operator whether the objects are missing or merely unrecorded.
+      - name: Pricing objects and seeded rows (read-only)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          q(){ psql "$SCOPED_DB_URL" -tAc "$1"; }
+          table="$(q "select to_regclass('public.academy_area_pricing_options') is not null;")"
+          echo "  academy_area_pricing_options exists: $table"
+          echo "  applications.pricing_option_key exists: $(q "select exists(select 1 from information_schema.columns where table_name = 'academy_applications' and column_name = 'pricing_option_key');")"
+          echo "  applications.pricing_selections exists: $(q "select exists(select 1 from information_schema.columns where table_name = 'academy_applications' and column_name = 'pricing_selections');")"
+          if [ "$table" != "t" ]; then
+            if [ "$INPUT_MODE" = "apply" ]; then
+              echo "::error::apply finished and the pricing table is still absent."
+              exit 1
+            fi
+            echo "  (plan mode — nothing to count; the table is created by the first version)"
+            exit 0
+          fi
+          rows="$(q "select count(*) from public.academy_area_pricing_options;")"
+          areas="$(q "select count(*) filter (where is_active) from public.academy_interest_areas;")"
+          echo "  pricing rows: $rows   active areas: $areas   expected: $((5 * areas))"
+          q "select '    ' || key || ' = ' || min(label) || ' , ₦' || min(price_ngn) from public.academy_area_pricing_options group by key order by min(sort_order);"
+          if [ "$INPUT_MODE" = "apply" ] && [ "$rows" -ne "$((5 * areas))" ]; then
+            echo "::error::the seed wrote $rows rows, not 5 per active area ($((5 * areas)))."
+            exit 1
+          fi
+
+      - name: Verify history rows and remaining pending
+        if: ${{ always() && inputs.mode == 'apply' }}
+        run: |
+          set -uo pipefail
+          fail=0
+          while read -r v; do
+            present="$(psql "$SCOPED_DB_URL" -tAc \
+              "select 1 from supabase_migrations.schema_migrations where version = '${v}';" 2>/dev/null || true)"
+            if [ "$present" = "1" ]; then
+              echo "  recorded: $v"
+            else
+              echo "::error::$v has no schema_migrations row — DDL may have run without history."
+              fail=1
+            fi
+          done < /tmp/scoped_versions.txt
+          # Pending count without the CLI: local versions with no history row,
+          # computed in SQL. reconcile-pending.sh --verify derives the same number
+          # from `supabase migration list`, and this lane has already seen that
+          # command report nothing it could be trusted for.
+          vals=""
+          while read -r lv; do vals="${vals}'${lv}',"; done \
+            < <(cd supabase/migrations && ls | grep -oE '^[0-9]{14}' | sort -u)
+          vals="${vals%,}"
+          sql="with l(v) as (select unnest(array[${vals}]::text[])) select count(*) from l left join supabase_migrations.schema_migrations h on h.version = l.v where h.version is null;"
+          pending="$(psql "$SCOPED_DB_URL" -tAc "$sql" 2>/dev/null || echo 'unavailable')"
+          echo "  local migrations still without a history row: $pending"
+          exit "$fail"

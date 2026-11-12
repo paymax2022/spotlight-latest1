@@ -18,17 +18,21 @@ type wireCredential struct {
 }
 
 type wireProfile struct {
-	Status           string         `json:"status"` // draft | submitted | under_review | needs_info | approved
-	ApplicationID    string         `json:"applicationId,omitempty"`
-	DisplayName      string         `json:"displayName"`
-	VcnLicenseNo     string         `json:"vcnLicenseNo"`
-	ClinicName       string         `json:"clinicName"`
-	Bio              string         `json:"bio"`
-	ConsultFeeKobo   int64          `json:"consultFeeKobo"`
-	HomeVisitFeeKobo int64          `json:"homeVisitFeeKobo"`
-	Types            []string       `json:"types"`
-	Species          []string       `json:"species"`
-	Credential       wireCredential `json:"credential"`
+	Status           string   `json:"status"` // draft | submitted | under_review | needs_info | approved
+	ApplicationID    string   `json:"applicationId,omitempty"`
+	DisplayName      string   `json:"displayName"`
+	VcnLicenseNo     string   `json:"vcnLicenseNo"`
+	ClinicName       string   `json:"clinicName"`
+	Bio              string   `json:"bio"`
+	ConsultFeeKobo   int64    `json:"consultFeeKobo"`
+	HomeVisitFeeKobo int64    `json:"homeVisitFeeKobo"`
+	Types            []string `json:"types"`
+	Species          []string `json:"species"`
+	// ProviderID is the health_providers row id — the owner id the consult
+	// engine keys packages and sessions on. Empty before onboarding exists.
+	ProviderID string         `json:"providerId,omitempty"`
+	Packages   []wirePackage  `json:"packages"`
+	Credential wireCredential `json:"credential"`
 	// Clinic location: address parts live in the profile draft (what the public
 	// listing reads); the map point is health_providers.geo (null until set).
 	ClinicAddress string   `json:"clinicAddress"`
@@ -36,6 +40,15 @@ type wireProfile struct {
 	ClinicState   string   `json:"clinicState"`
 	ClinicLat     *float64 `json:"clinicLat"`
 	ClinicLng     *float64 `json:"clinicLng"`
+}
+
+// wirePackage is one published timed-consult price point shown in the vet's
+// workspace. The patient's copy of the same data comes from the public listing.
+type wirePackage struct {
+	ID              string `json:"id"`
+	Mode            string `json:"mode"`
+	DurationMinutes int    `json:"durationMinutes"`
+	PriceKobo       int64  `json:"priceKobo"`
 }
 
 type wireApptRow struct {

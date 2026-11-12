@@ -433,7 +433,7 @@ export function mapQuote(body: unknown): Quote {
     currency: 'NGN',
     underwriter: str(raw.underwriter),
     expiresAt: strOrNull(raw.expires_at ?? raw.expiresAt),
-    terms: str(raw.terms),
+    terms: raw.terms != null ? raw.terms : null,
   };
 }
 

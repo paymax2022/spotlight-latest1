@@ -1,0 +1,252 @@
+name: deploy-railway-action
+
+# Manual-only alternative to ci.yml's `railway up` deploy jobs, using the
+# bervProject/railway-deploy marketplace action.
+#
+# WHY THE EXTRA STEPS
+# The action is a thin Docker wrapper around `railway up --service <name>`.
+# It accepts only `service` and `detach`; there is no input for --project,
+# --environment, --message, or a source path. That shapes this workflow:
+#
+#   * Root upload. A `uses:` container action always runs with /github/workspace
+#     as the repo root. Six of the nine service instances have rootDirectory
+#     unset (development: all three; production: all three; staging: backend),
+#     so a plain root upload would build the ROOT Dockerfile — the Go backend —
+#     into a frontend service. "Re-root the workspace" copies the selected
+#     service directory over the workspace root first, reproducing the
+#     --path-as-root behavior ci.yml relies on.
+#   * Environment targeting. The action cannot pass --environment. The Railway
+#     CLI inside it resolves the project and environment FROM THE PROJECT TOKEN
+#     (RAILWAY_TOKEN), so each environment keeps using its existing secret.
+#   * No deployment message. The action cannot pass --message, so Railway will
+#     not label the deployment with the commit. The probes after the deploy are
+#     the proof that the intended commit is serving.
+#
+# SAFETY
+# workflow_dispatch only. Requires the matching promotion branch, a typed
+# DEPLOY, the global RAILWAY_DEPLOY_ENABLED switch, the dedicated
+# RAILWAY_ACTION_DEPLOY_ENABLED switch (unset by default, so this path is
+# installed dark and ci.yml remains the single live writer), and the GitHub
+# environment rules. Enable it with:
+#   gh variable set RAILWAY_ACTION_DEPLOY_ENABLED --body true
+#
+# Existing ci.yml and development-deploy.yml are untouched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Railway environment to deploy'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      service:
+        description: 'Railway service to deploy'
+        required: true
+        type: choice
+        options:
+          - backend
+          - frontend-web
+          - frontend-admin
+      confirm:
+        description: 'Type DEPLOY to confirm'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-railway-action-${{ inputs.environment }}-${{ inputs.service }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: ${{ inputs.service }} -> ${{ inputs.environment }}
+    if: >-
+      inputs.confirm == 'DEPLOY' &&
+      vars.RAILWAY_DEPLOY_ENABLED == 'true' &&
+      vars.RAILWAY_ACTION_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.environment }}
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      SERVICE: ${{ inputs.service }}
+    steps:
+      - name: Gate - promotion branch and valid target
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            development) expected=refs/heads/develop ;;
+            staging)     expected=refs/heads/staging ;;
+            production)  expected=refs/heads/prod ;;
+            *) echo "::error::unknown environment '$ENVIRONMENT'"; exit 1 ;;
+          esac
+          if [ "$GITHUB_REF" != "$expected" ]; then
+            echo "::error::$ENVIRONMENT must be dispatched from $expected; this run is $GITHUB_REF"
+            exit 1
+          fi
+          case "$SERVICE" in
+            backend|frontend-web|frontend-admin) ;;
+            *) echo "::error::unknown service '$SERVICE'"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Resolve the per-environment Railway token
+        env:
+          TOK_PRODUCTION: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            production)  tok="$TOK_PRODUCTION" ;;
+            staging)     tok="$TOK_STAGING" ;;
+            development) tok="$TOK_DEVELOPMENT" ;;
+            *) echo "::error::unknown environment $ENVIRONMENT"; exit 1 ;;
+          esac
+          if [ -z "$tok" ]; then
+            echo "::error::missing repo secret RAILWAY_TOKEN_$(printf '%s' "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')"
+            exit 1
+          fi
+          echo "::add-mask::$tok"
+          printf 'RAILWAY_TOKEN=%s\n' "$tok" >> "$GITHUB_ENV"
+          unset tok
+          echo "  token resolved for $ENVIRONMENT (value never printed)"
+
+      # The action's CLI resolves the target from the token, not from the input.
+      # Prove the selected environment and service are the ones this token can
+      # actually reach BEFORE uploading anything, so a mismatched secret fails
+      # here instead of deploying to a different environment.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Confirm the token resolves the intended environment and service
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@5.40.1 >/dev/null
+          railway status --json > /tmp/railway-status.json
+          envs=$(jq -r '.environments.edges[]?.node.name' /tmp/railway-status.json | sort -u)
+          if ! printf '%s\n' "$envs" | grep -qx "$ENVIRONMENT"; then
+            echo "::error::the $ENVIRONMENT token resolves environments [$(printf '%s' "$envs" | paste -sd, -)]; refusing to deploy"
+            exit 1
+          fi
+          svcs=$(jq -r --arg env "$ENVIRONMENT" '.environments.edges[] | select(.node.name == $env) | .node.serviceInstances.edges[]?.node.serviceName' /tmp/railway-status.json | sort -u)
+          if ! printf '%s\n' "$svcs" | grep -qx "$SERVICE"; then
+            echo "::error::service $SERVICE not found in $ENVIRONMENT (found: $(printf '%s' "$svcs" | paste -sd, -))"
+            exit 1
+          fi
+          echo "  token resolves $ENVIRONMENT / $SERVICE"
+
+      - name: Re-root the workspace at the service directory
+        run: |
+          set -euo pipefail
+          case "$SERVICE" in
+            backend)        marker=backend/go.mod ;;
+            frontend-web)   marker=frontend-web/package.json ;;
+            frontend-admin) marker=frontend-admin/package.json ;;
+            *) echo "::error::unknown service $SERVICE"; exit 1 ;;
+          esac
+          [ -f "$marker" ] || { echo "::error::$marker is missing - refusing to deploy an empty context"; exit 1; }
+
+          # The action always uploads /github/workspace, which is the repo root.
+          # Copy the service directory over that root so Railway builds the
+          # service's own Dockerfile, exactly as `railway up <dir> --path-as-root`
+          # does in ci.yml. .git is preserved: the uploader always ignores it,
+          # and actions/checkout's post-job cleanup needs it.
+          rm -rf /tmp/railway-build-context
+          mkdir -p /tmp/railway-build-context
+          cp -a "$SERVICE"/. /tmp/railway-build-context/
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a /tmp/railway-build-context/. .
+          [ -f Dockerfile ] || { echo "::error::no Dockerfile at the service root"; exit 1; }
+          echo "  build context now contains the $SERVICE service"
+
+      # The backend Dockerfile reads BUILD_COMMIT from its build context and
+      # bakes it into the binary, which is what /api/v1/public/build reports.
+      # The action cannot pass a --message, so this stamp is the only way to
+      # prove the running process is this commit.
+      - name: Stamp the build commit (backend only)
+        if: inputs.service == 'backend'
+        run: printf '%s' "${{ github.sha }}" > BUILD_COMMIT
+
+      # SHA-pinned to the 0.2.0-beta tag (published 2025-05-05). This is a
+      # third-party beta action, so an immutable ref is used instead of @main.
+      - name: Deploy ${{ inputs.service }} to ${{ inputs.environment }}
+        uses: bervProject/railway-deploy@4a1cfdb24551aee5c891e0bc716e8de963c4fbe6 # 0.2.0-beta
+        with:
+          service: ${{ inputs.service }}
+        env:
+          RAILWAY_TOKEN: ${{ env.RAILWAY_TOKEN }}
+
+      - name: Warn when deploying a production frontend
+        if: inputs.environment == 'production' && inputs.service != 'backend'
+        run: |
+          echo "::warning::Production frontend-web is served by cPanel at www.spotlightng.com and production frontend-admin is not provisioned at admin.spotlightng.com. This deploy updated a Railway service, not the live site."
+
+      - name: Verify the deployment
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            development)
+              BACKEND_URL=https://backend-development-502c.up.railway.app
+              WEB_URL=https://frontend-web-development.up.railway.app
+              ADMIN_URL=https://frontend-admin-development-5a67.up.railway.app
+              ;;
+            staging)
+              BACKEND_URL=https://backend-staging-new.up.railway.app
+              WEB_URL=https://frontend-web-staging-new.up.railway.app
+              ADMIN_URL=https://frontend-admin-staging-new.up.railway.app
+              ;;
+            production)
+              BACKEND_URL=https://backend-production-1b33d.up.railway.app
+              WEB_URL=https://frontend-web-production-9259.up.railway.app
+              ADMIN_URL=https://frontend-admin-production-5b0c.up.railway.app
+              ;;
+          esac
+
+          case "$SERVICE" in
+            backend)
+              for attempt in $(seq 1 20); do
+                got=$(curl -s -m 20 "$BACKEND_URL/api/v1/public/build" | jq -r '.commit // empty' 2>/dev/null || true)
+                echo "  attempt $attempt: running ${got:-unreachable}"
+                if [ "$got" = "$SHA" ]; then
+                  echo "  backend reports $SHA"
+                  exit 0
+                fi
+                sleep 15
+              done
+              echo "::error::backend did not report $SHA within 5 minutes"
+              exit 1
+              ;;
+            frontend-web)
+              url="$WEB_URL/"
+              path_label="/"
+              ;;
+            frontend-admin)
+              url="$ADMIN_URL/admin/login"
+              path_label="/admin/login"
+              ;;
+          esac
+
+          for attempt in $(seq 1 20); do
+            code=$(curl -sL -o /dev/null -m 20 -w '%{http_code}' "$url" || true)
+            echo "  attempt $attempt: GET $path_label -> ${code:-unreachable}"
+            if [ "$code" = "200" ]; then
+              echo "  $SERVICE is serving"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::$SERVICE did not answer 200 on $path_label within 5 minutes"
+          exit 1

@@ -9,13 +9,14 @@ export const dynamic = 'force-dynamic';
 export default async function OpenMicArtistVotingPage({
   params,
 }: {
-  params: { slug: string; artistSlug: string };
+  params: Promise<{ slug: string; artistSlug: string }>;
 }) {
-  const contest = await getContestBySlug(params.slug);
+  const { slug, artistSlug } = await params;
+  const contest = await getContestBySlug(slug);
   if (!contest) notFound();
 
   const entries = await getLeaderboard(contest.id);
-  const entry = entries.find((e) => slugifyArtist(e.stageName) === params.artistSlug);
+  const entry = entries.find((e) => slugifyArtist(e.stageName) === artistSlug);
   if (!entry) notFound();
 
   const sorted = [...entries].sort((a, b) => b.voteCount - a.voteCount);

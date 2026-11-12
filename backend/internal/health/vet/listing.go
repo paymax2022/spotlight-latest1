@@ -40,6 +40,18 @@ type VetListing struct {
 	ReviewCount      int               `json:"reviewCount"`
 	AvailableNow     bool              `json:"availableNow"`
 	Active           bool              `json:"active"`
+	// Packages are the vet's published timed tele-consult price points. Empty
+	// when the vet sells tele visits through vet_services only.
+	Packages []ListingPackage `json:"packages"`
+}
+
+// ListingPackage is one priced timed consult option in the public listing. The
+// picker sends its id back as packageId; the server re-prices from the row.
+type ListingPackage struct {
+	ID              string `json:"id"`
+	Mode            string `json:"mode"`
+	DurationMinutes int    `json:"durationMinutes"`
+	PriceKobo       int64  `json:"priceKobo"`
 }
 
 // ListingCredential is the public credential: the authority and status only.
@@ -185,6 +197,10 @@ func (s *Service) listingRows(ctx context.Context, q string, args ...any) ([]Vet
 	if err != nil {
 		return nil, err
 	}
+	packages, err := s.listingPackages(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	specialties, err := s.specialtyNames(ctx)
 	if err != nil {
 		return nil, err
@@ -211,6 +227,10 @@ func (s *Service) listingRows(ctx context.Context, q string, args ...any) ([]Vet
 		l.HomeVisitFeeKobo = fee.home
 		l.ClinicFeeKobo = fee.clinic
 		l.Types = fee.types
+		l.Packages = packages[l.ID]
+		if l.Packages == nil {
+			l.Packages = []ListingPackage{}
+		}
 		if rt, ok := ratings[l.ID]; ok {
 			l.Rating, l.ReviewCount = rt.avg, rt.count
 		}
@@ -252,7 +272,7 @@ func (s *Service) listingRatings(ctx context.Context, providerIDs []string) (map
 
 type listingFee struct {
 	consult, home, clinic int64
-	types         []string
+	types                 []string
 }
 
 // listingFees returns the lowest active price per visit type, and the visit types
@@ -291,6 +311,32 @@ func (s *Service) listingFees(ctx context.Context, providerIDs []string) (map[st
 			f.clinic = price
 		}
 		out[pid] = f
+	}
+	return out, rows.Err()
+}
+
+// listingPackages returns the active timed consult packages for each provider,
+// cheapest first, keyed by provider id. Providers selling none are absent.
+func (s *Service) listingPackages(ctx context.Context, providerIDs []string) (map[string][]ListingPackage, error) {
+	const q = `
+		SELECT owner_id::text, id::text, mode, duration_minutes, price_kobo
+		FROM consult_session_packages
+		WHERE active = true AND vertical = 'vet' AND owner_kind = 'health_provider'
+		  AND owner_id = ANY($1::uuid[])
+		ORDER BY owner_id, mode, price_kobo, duration_minutes`
+	rows, err := s.db.Query(ctx, q, providerIDs)
+	if err != nil {
+		return nil, fmt.Errorf("vet: listing packages: %w", err)
+	}
+	defer rows.Close()
+	out := map[string][]ListingPackage{}
+	for rows.Next() {
+		var pid string
+		var pkg ListingPackage
+		if err := rows.Scan(&pid, &pkg.ID, &pkg.Mode, &pkg.DurationMinutes, &pkg.PriceKobo); err != nil {
+			return nil, err
+		}
+		out[pid] = append(out[pid], pkg)
 	}
 	return out, rows.Err()
 }

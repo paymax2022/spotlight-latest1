@@ -76,6 +76,7 @@ func (h *Handler) mount(vg *gin.RouterGroup) {
 	vg.POST("/provider/appointments/:id/decision", h.Decide)
 	vg.GET("/provider/appointments/:id/nav", h.Nav)
 	vg.POST("/provider/appointments/:id/soap", h.SaveSoap)
+	vg.POST("/provider/appointments/:id/consult-session", h.OpenConsultSession)
 
 	vg.GET("/provider/pets/:petId/chart", h.Chart)
 

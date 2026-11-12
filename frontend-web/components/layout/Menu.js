@@ -1,11 +1,10 @@
 import Link from 'next/link';
 
 const serviceMenuItems = [
-  { label: 'Open Mic Contest', href: '/service-details/open-mic-competition' },
-  { label: 'Reality TV Show', href: '/service-details/reality-tv-show' },
-  { label: 'STEM Contest', href: '/service-details/stem-contest' },
-  { label: 'SME Pitch Competition', href: '/service-details/sme-pitch-contest' },
-  { label: 'Film Academy', href: '/service-details/film-academy' },
+  { label: 'STEM & TECH', href: '/service-details/stem-contest' },
+  { label: 'Entertainment', href: '/service-details/reality-tv-show' },
+  { label: 'Sports', href: '/service-details/sports' },
+  { label: 'SME Funding', href: '/service-details/sme-pitch-contest' },
 ];
 
 export default function Menu() {
@@ -16,7 +15,7 @@ export default function Menu() {
       <li><Link href="/season-2">Season 2</Link></li>
       <li className="has-dropdown">
         <Link href="/service">
-          Our Services
+          Programes
           <i className="fas fa-angle-down" />
         </Link>
         <ul className="submenu">
@@ -25,7 +24,6 @@ export default function Menu() {
           ))}
         </ul>
       </li>
-      <li><Link href="/sponsor">Sponsors</Link></li>
       <li><Link href="/contact">Contact Us</Link></li>
     </ul>
   );

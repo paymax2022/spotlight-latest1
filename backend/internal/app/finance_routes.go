@@ -47,7 +47,9 @@ import (
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/fractionalre"
 	"spotlight/backend/internal/groups"
+	"spotlight/backend/internal/health/consultengine"
 	healthportal "spotlight/backend/internal/health/portal"
+	healthvet "spotlight/backend/internal/health/vet"
 	"spotlight/backend/internal/insurance/embedded"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/integrations/llm"
@@ -205,6 +207,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 	ledgerRepo := ledger.NewRepository(pool)
 	ledgerSvc := ledger.NewService(ledgerRepo, redisClient)
+
+	// One LiveKit client shared by academy live classes and paid health consults.
+	// The constructor no-ops when FEATURE_LIVEKIT_ENABLED is off.
+	lkClient := registerLiveKit(r, cfg, rbac, mapsAuth())
 
 	// Wires REAL per-module detail (Service, Category, Service bought, Payment
 	// method, Status, Provider) into the centralized admin Transactions detail
@@ -502,12 +508,26 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		insuranceWebhooks := r.Group("") // provider-signed, no user auth
 		// Backend-owned presigned R2 uploads for application-form identity/evidence
 		// creds → the upload endpoint fails closed with 503 (never a fabricated URL).
+		// Insurance form images get their OWN bucket so it can be public without
+		// exposing the doctor documents and other private objects in R2Bucket.
+		// MyCover fetches these URLs server-to-server — and probes them with HEAD,
+		// which a SigV4 presigned GET rejects with 403 (the method is part of the
+		// signature) — so the URL must be plain and unauthenticated.
+		insuranceBucket := cfg.R2InsuranceBucket
+		if insuranceBucket == "" {
+			insuranceBucket = cfg.R2Bucket
+		}
+		insurancePublicBase := cfg.R2InsurancePublicBaseURL
+		if insurancePublicBase == "" {
+			insurancePublicBase = cfg.R2PublicBaseURL
+		}
 		insurancePresigner := r2.New(r2.Config{
 			AccountEndpoint: cfg.R2AccountEndpoint,
-			Bucket:          cfg.R2Bucket,
+			Bucket:          insuranceBucket,
 			AccessKeyID:     cfg.R2AccessKeyID,
 			SecretAccessKey: cfg.R2SecretAccessKey,
 			Region:          cfg.R2Region,
+			PublicBaseURL:   insurancePublicBase,
 		})
 		// Embedded-cover member notifications ride the shared asynq
 		// notifications queue (same pattern as investNotifier/freNotifier
@@ -528,7 +548,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				})
 			}
 		}
-		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac, insurancePresigner, cfg.R2Bucket, cfg) // gateway/catalog/policy/quote/saga/consent
+		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac, insurancePresigner, insuranceBucket, cfg) // gateway/catalog/policy/quote/saga/consent
 		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac, cfg.LedgerServiceToken,
 			auditSink, embeddedNotifier, cfg.FeatureInsuranceProviderImportEnabled) // claims/embedded/webhooks/reconciliation + audit/notify sinks
 	}
@@ -642,6 +662,24 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// flag. Member /api/finance/health/<vertical>/* (auth via finance group);
 	// admin /api/health/<vertical>/admin/* (RBAC health.<vertical>.*). Reuses
 	// escrow (HELD→RELEASE→REFUND), scheduler, transport last-mile, wallet/ledger.
+	// Paid consult sessions (telemedicine, vet, pharmacy, lab). Built BEFORE the
+	// health modules so the vet and telemedicine services receive the same
+	// engine at construction time; the HTTP surface stays inert until a module
+	// books a session, and media fails closed when LiveKit is off.
+	var consultRooms *consultengine.Service
+	if pool != nil {
+		consultRooms = RegisterConsult(r, mapsAuth(), pool, ledgerSvc, lkClient, cfg, auditSink)
+		if consultRooms != nil {
+			go consultRooms.RunSweeper(context.Background(), 30*time.Second)
+		}
+	}
+	// Compile-time proof that the engine satisfies both module seams. If either
+	// interface drifts, this file stops building rather than a booking failing
+	// at runtime.
+	var (
+		_ healthvet.ConsultRoomEngine = consultRooms
+		_ telemedicine.ConsultEngine  = consultRooms
+	)
 	if cfg.FeatureHealthEnabled && pool != nil {
 		RegisterHealth(finance, adminGroupTop5(r, "/api/health/admin", mapsAuth()), pool, rbac, cfg, auditSink) // shared platform
 		if cfg.FeatureHealthPharmacyEnabled {
@@ -680,7 +718,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// PHARMACY-006/LAB-003-shaped bug: NOT adminGroupTop5 — see the
 			// comment on RegisterHealthVet's own ag.Use(RequireAuthContext(...))
 			// call for why (identical ordering hazard, fixed the same way).
-			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase, auditSink)
+			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase, auditSink, consultRooms)
 			// Mode-B (assisted) VCN verification: vet gets verified without ever
 			// seeing the VCN portal; ops confirms out-of-band; capability granted
 			// only on approval. Member /api/finance/health/vet/verification/*,
@@ -721,7 +759,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Self-hosted LiveKit (FEATURE_LIVEKIT_ENABLED) replaces the dev stub / VideoSDK for live
 		// classes when it is configured and valid; flag off leaves the previous provider in place.
 		// With the flag on but LiveKit unusable, live classes refuse (they do not fall back to the stub).
-		academyLive := academyLiveRoomsFor(cfg, registerLiveKit(r, cfg, rbac, mapsAuth()))
+		academyLive := academyLiveRoomsFor(cfg, lkClient)
 		RegisterAcademy(r, finance, pool, rbac, mapsAuth(), ledgerSvc, academyRTC, academyLive, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler, cfg.FeatureInternalAcademyAPIEnabled, cfg.LedgerServiceToken)
 
 		// EdTech PLATFORM super-admin oversight (SU-01..SU-12): read-only cross-tenant
@@ -827,7 +865,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			WithBusiness(orchestration.NewBusinessStore(pool)).
 			WithCollections(orchestration.NewCollectionStore(pool)).
 			WithVerification(orchestration.NewVerificationStore(pool)).
-			WithAdminOverview(orchestration.NewAdminOverviewSource(pool))
+			WithAdminOverview(orchestration.NewAdminOverviewSource(pool)).
+			// nil issuer: no card-issuing provider is configured, so the store keeps
+			// synthesized card material (the same behaviour as before Maplerad).
+			WithCards(orchestration.NewCardStore(pool, nil))
 
 		og := r.Group("/api/v1/fx")
 		// RequireAuthContext populates the user_id that requireUserID fail-closes
@@ -895,8 +936,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		og.GET("/notifications", orchHandler.ListNotifications)
 		og.PATCH("/notifications/:id", orchHandler.MarkNotificationRead)
 		og.POST("/notifications/read-all", orchHandler.MarkAllNotificationsRead)
-		// FX virtual cards are disabled: no card-issuing provider is configured, so
-		// the /cards routes are intentionally not mounted.
+		// FX virtual cards. No card-issuing provider is configured, so the store
+		// runs with a nil issuer (synthesized card material); the mobile Cards
+		// screens still list, create, fund and control cards from orch_fx_cards.
+		og.GET("/cards", orchHandler.ListCards)
+		og.POST("/cards", orchHandler.CreateCard)
+		og.GET("/cards/:id", orchHandler.GetCard)
+		og.GET("/cards/:id/transactions", orchHandler.ListCardTransactions)
+		og.POST("/cards/:id/reveal", orchHandler.RevealCard)
+		og.POST("/cards/:id/fund", transferRate, orchHandler.FundCard)
+		og.POST("/cards/:id/freeze", orchHandler.FreezeCard)
+		og.POST("/cards/:id/unfreeze", orchHandler.UnfreezeCard)
+		og.POST("/cards/:id/terminate", orchHandler.TerminateCard)
+		og.PATCH("/cards/:id/controls", orchHandler.UpdateCardControls)
 		// FX console read surface. The overview is the one console page with a real
 		// backend: it aggregates the same ledger rows this block serves plus the live
 		// treasury snapshot, so the operator sees actual volume instead of the
@@ -2081,6 +2133,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// FOOD-UAT-H-002: permit renewal / compliance-hold lift. Under the static
 		// "restaurants" segment so it cannot collide with the sibling ":id" params.
 		restAdmin.PUT("/restaurants/:id/permit", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminSetPermit)
+		// Restaurant cuisine tags (restaurant_cuisines). The onboarding console
+		// showed hardcoded disabled checkboxes and nothing anywhere wrote this
+		// table, so no restaurant could be tagged and discovery's ?cuisine_id=
+		// filter had nothing to match. RBAC restaurant.admin.onboarding (the
+		// reviewer's slug; restaurant-ops does not hold restaurant.manage).
+		restAdmin.GET("/restaurants/:id/cuisines", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminGetRestaurantCuisines)
+		restAdmin.PUT("/restaurants/:id/cuisines", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminSetRestaurantCuisines)
 		// FOOD-UAT-H-002 rollout gap: one-shot stamp of a default permit expiry on
 		// currently-open restaurants whose permit_expires_at is still NULL (capped, audited per row).
 		restAdmin.POST("/permits/backfill-null", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminBackfillNullPermits)
@@ -2191,7 +2250,25 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 					UserID: userID, Event: notifications.Event(event), Title: title, Body: body, Data: data,
 				})
 			}))
-		telemedHandler := telemedicine.NewHandler(telemedSvc)
+		// Timed consults run on the shared engine when LiveKit is the selected
+		// media rail. The videosdk rollback leaves the module on its legacy
+		// VideoSDK room and the consult-session endpoint answers 503.
+		if consultRooms != nil && cfg.ConsultUsesLiveKit() {
+			telemedSvc = telemedSvc.WithConsultEngine(consultRooms)
+		}
+		// doctors.avatar_url is an R2 object key, not a link, so a patient reading
+		// the directory or a doctor profile gets a short-lived signed GET for the
+		// photo — the same treatment the provider's own header already has from
+		// doctorHandler below. Unconfigured R2 env leaves the stored value as it
+		// was, so the avatar falls back to initials rather than breaking the read.
+		telemedHandler := telemedicine.NewHandler(telemedSvc).
+			WithPresigner(r2.New(r2.Config{
+				AccountEndpoint: cfg.R2AccountEndpoint,
+				Bucket:          cfg.R2Bucket,
+				AccessKeyID:     cfg.R2AccessKeyID,
+				SecretAccessKey: cfg.R2SecretAccessKey,
+				Region:          cfg.R2Region,
+			}), cfg.R2Bucket)
 
 		// Legacy /api/finance/telemedicine/... (kept for backward compat)
 		teleGroup := finance.Group("/telemedicine")
@@ -2221,6 +2298,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Tele.POST("/appointments/:id/confirm", telemedHandler.ConfirmAppointment)
 		v1Tele.POST("/appointments/:id/reschedule", telemedHandler.RescheduleAppointment)
 		v1Tele.POST("/appointments/:id/complete", telemedHandler.CompleteAppointment)
+		v1Tele.POST("/appointments/:id/consult-session", telemedHandler.OpenConsultSession)
 		v1Tele.POST("/appointments/:id/cancel", telemedHandler.CancelAppointment)
 		v1Tele.POST("/appointments/:id/review", telemedHandler.AddReview)
 		v1Tele.DELETE("/appointments/:id", telemedHandler.CancelAppointment)

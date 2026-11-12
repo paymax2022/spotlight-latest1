@@ -72,3 +72,36 @@ func TestFetchUtilityOptions_ParsesEnvelopeAndForwardsQuery(t *testing.T) {
 		t.Errorf("label fallback: got %+v want value and label both \"Lagos\"", opts[1])
 	}
 }
+
+// Numeric utilities (payment_plan 1..12) send `value` as a JSON number, unlike
+// the string-valued state lists. Decoding it as a string rejected the whole
+// list, so the quote form's Payment Plan picker answered 502 and showed no
+// choices while the provider was answering normally.
+func TestFetchUtilityOptions_AcceptsNumericValues(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"responseCode":1,"responseText":"ok","data":[
+			{"label":"1 Month","value":1},
+			{"label":"12 Months","value":12}
+		]}`))
+	}))
+	defer srv.Close()
+
+	c := New("sk_test", "pk_test", "whsec", srv.URL)
+	c.httpClient = srv.Client()
+
+	opts, err := c.FetchUtilityOptions(context.Background(), srv.URL+"/products/utility/abc", "")
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(opts) != 2 {
+		b, _ := json.Marshal(opts)
+		t.Fatalf("got %d options, want 2: %s", len(opts), b)
+	}
+	if opts[0].Value != "1" || opts[0].Label != "1 Month" {
+		t.Errorf("first option: got %+v want value \"1\" label \"1 Month\"", opts[0])
+	}
+	if opts[1].Value != "12" || opts[1].Label != "12 Months" {
+		t.Errorf("last option: got %+v want value \"12\" label \"12 Months\"", opts[1])
+	}
+}

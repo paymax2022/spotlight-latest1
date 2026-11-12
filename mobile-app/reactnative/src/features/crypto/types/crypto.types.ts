@@ -46,19 +46,26 @@ export interface CryptoAsset {
   iconColor: string;     // brand-palette token for the asset glyph tile
   riskRating: RiskRating;
   status: AssetStatus;
-  // Capability flags (Phase-3: buy/sell on; deposit/withdraw off until Phase-4).
+  // Capability flags — these come from the server, which is what actually enforces
+  // them at fill time. A flag off here means the POST would be refused, not that the
+  // UI chose to hide it.
   buyEnabled: boolean;
   sellEnabled: boolean;
   depositEnabled: boolean;
   withdrawalEnabled: boolean;
   // Limits (minor units of the settlement fiat) — server-config.
   minOrderAmount: number;
+  // 0 means the server publishes no maximum (there is no such limit today). Screens
+  // must read 0 as "no ceiling", never as "you may not trade".
   maxOrderAmount: number;
   // Pricing snapshot (display only; execution price comes from a fresh quote).
   price: FiatMoney;          // current indicative price per 1 coin
-  change24hPct: number;      // signed % move over 24h
-  marketCap: FiatMoney;
-  volume24h: FiatMoney;
+  // Absent when the feed quotes no previous-day open: "no data" is the truth, while
+  // 0% would claim a flat market.
+  change24hPct?: number;
+  // Absent when the feed has no history. There is no market-cap source anywhere in
+  // this stack, so the app never shows one.
+  volume24h?: FiatMoney;
   supportedNetworks: SupportedNetwork[];
   description: string;
   riskDisclosure: string;
@@ -103,12 +110,18 @@ export interface CryptoQuote {
   crypto: CryptoAmount;        // crypto bought/sold
   rate: FiatMoney;             // indicative price per 1 coin
   allInRate: FiatMoney;        // effective price per 1 coin after spread + fees
-  spreadPct: number;           // spread applied, for transparency copy
+  // Absent when the server applies no spread. Displaying "0.50%" for a trade that
+  // carries no spread is a invented number.
+  spreadPct?: number;
   fees: CryptoFee[];
   totalFiat: FiatMoney;
-  liquidityProvider: string;   // opaque provider label (adapter pattern)
-  custodyProvider: string;
-  riskScore: number;           // 0–100, server pre-trade risk score
+  // Absent on the buy/sell plane: the quote carries only a price `source`, and this
+  // platform neither routes the fill to a liquidity venue nor holds the asset with a
+  // custodian — so no screen may name one.
+  liquidityProvider?: string;
+  custodyProvider?: string;
+  // Absent when the server runs no pre-trade risk score.
+  riskScore?: number;
   expiresAt: string;           // ISO — rate-lock countdown derives from this
 }
 
@@ -116,7 +129,9 @@ export interface QuoteRequest {
   assetId: string;
   side: OrderSide;
   basis: AmountBasis;
-  amount: number;              // minor units of the `basis` side
+  // null = the user has typed nothing yet. The screens must not build a quote from 0:
+  // the server refuses a zero amount, and a preview of ₦0.00 is not information.
+  amount: number | null;
   currency: FiatCurrency;
   lock?: boolean;
 }
@@ -125,6 +140,7 @@ export interface QuoteRequest {
 export type CryptoTxStatus =
   | 'QuoteAccepted'
   | 'Processing'
+  | 'pending_review'
   | 'Filled'
   | 'PartiallyFilled'
   | 'Failed'
@@ -158,8 +174,13 @@ export interface CryptoOrder {
   allInRate: FiatMoney;
   fees: CryptoFee[];
   totalFiat: FiatMoney;
-  provider: string;
-  providerReference: string;   // Rule 10: every order traceable to a provider ref
+  // Absent when the server does not name a broker for the fill — the legacy money
+  // plane settles internally and reports no provider.
+  provider?: string;
+  // Absent when the order was settled internally instead of at an exchange — the
+  // server publishes no provider reference for it, and inventing one would break the
+  // rule that every order is traceable to a real provider fill.
+  providerReference?: string;
   idempotencyKey: string;
   transactionId: string;
   failureReason?: string;
@@ -184,10 +205,13 @@ export interface CryptoTransactionDetail extends CryptoTransactionSummary {
   allInRate: FiatMoney;
   fees: CryptoFee[];
   totalFiat: FiatMoney;
-  provider: string;
-  providerReference: string;
-  liquidityProvider: string;
-  custodyProvider: string;
+  // The legacy fill plane records no broker, no liquidity partner and no custody
+  // partner on an order, so all three are absent rather than blank strings; the
+  // receipt hides those rows instead of printing an empty promise.
+  provider?: string;
+  providerReference?: string;
+  liquidityProvider?: string;
+  custodyProvider?: string;
   statusHistory: { status: TxStatus; at: string }[];
   failureReason?: string;
 }
@@ -201,21 +225,24 @@ export interface Position {
   quantity: CryptoAmount;      // held amount
   averageCost: FiatMoney;      // average cost per 1 coin
   marketValue: FiatMoney;      // current value of the holding
-  costBasis: FiatMoney;        // total invested
-  unrealizedGainLoss: FiatMoney;
-  unrealizedPct: number;       // signed %
+  // Absent when the member has no fills for this asset: an unknown basis is not a
+  // basis of zero, and P&L against zero would be a fabricated profit.
+  costBasis?: FiatMoney;
+  unrealizedGainLoss?: FiatMoney;
+  unrealizedPct?: number;      // signed %
   price: FiatMoney;            // current price per coin
-  change24hPct: number;
+  change24hPct?: number;
 }
 
 export interface CryptoPortfolio {
   baseCurrency: FiatCurrency;
   totalValue: FiatMoney;       // crypto holdings market value
   totalCostBasis: FiatMoney;
-  totalGainLoss: FiatMoney;
-  totalGainLossPct: number;
+  totalGainLoss?: FiatMoney;   // absent when no fill history exists to base it on
+  totalGainLossPct?: number;
   dayChange: FiatMoney;
-  dayChangePct: number;
+  // Absent when the feed has no previous-day open to compare against.
+  dayChangePct?: number;
   investableBalance: FiatMoney; // available invest-wallet cash to deploy
   positions: Position[];
 }
@@ -287,6 +314,18 @@ export interface SwapQuote {
   fiatValue: FiatMoney;        // indicative fiat value of the trade
   liquidityProvider: string;
   expiresAt: string;
+  // Set only when the exchange issued a firm quotation (Quidax: a 15-second window the
+  // execution has to reference). Absent on the internal pricer, which quotes without
+  // reserving anything.
+  quotationId?: string;
+}
+
+/** What a swap execution needs: the trade itself, plus the firm quotation to honour. */
+export interface SwapExecution {
+  fromAssetId: string;
+  toAssetId: string;
+  fromUnits: number;
+  quotationId?: string;
 }
 
 export interface SwapResult {
@@ -299,7 +338,9 @@ export interface SwapResult {
   to: CryptoAmount;
   fee: FiatMoney;
   provider: string;
-  providerReference: string;
+  // Absent when the swap settled on the internal ledger instead of at a broker —
+  // the server publishes no exchange fill id for it.
+  providerReference?: string;
   idempotencyKey: string;
   transactionId: string;
   failureReason?: string;
@@ -377,7 +418,7 @@ export type WithdrawalGate =
 
 export interface WithdrawalEligibility {
   gate: WithdrawalGate;
-  kycTier: number;
+  kycTier?: number;              // absent when the server does not report a tier
   manualReviewOnly: boolean;
   dailyLimit: FiatMoney;
   dailyUsed: FiatMoney;
@@ -427,9 +468,8 @@ export interface WithdrawalResult {
   networkFee: CryptoAmount;
   address: string;
   networkName: string;
-  providerReference: string;
+  providerReference?: string;   // absent until the provider actually broadcasts
   idempotencyKey: string;
-  estimatedReviewMins: number;
   createdAt: string;
   failureReason?: string;
 }

@@ -415,16 +415,38 @@ func (r *Repository) GetReputation(ctx context.Context, userID string) (*Reputat
 }
 
 // SetPresence updates doctor_profiles.presence (allowed values online/offline/busy/away).
+//
+// It also projects the same fact onto the patient directory (doctors.is_online),
+// which is the column telemedicine ListDoctors filters "Available now" on
+// (internal/telemedicine/service.go:180,215). doctor_profiles is what the
+// provider's own app reads, so writing only that table left a doctor showing
+// "Online" to themselves and offline to every patient — permanently, since
+// nothing else ever sets doctors.is_online.
+//
+// is_available stays out of it: that is the LISTING flag (approval, refusal and
+// compliance suspension own it), so going offline must not delist the doctor.
+// Zero directory rows affected is normal — an unlisted profile has nothing to
+// list — so the projection's row count is not an error.
 func (r *Repository) SetPresence(ctx context.Context, userID, presence string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	const q = `UPDATE doctor_profiles SET presence = $2, is_online = ($2 = 'online'), updated_at = now() WHERE user_id = $1`
-	tag, err := r.db.Exec(ctx, q, userID, presence)
+	tag, err := tx.Exec(ctx, q, userID, presence)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+
+	if _, err := tx.Exec(ctx, `UPDATE doctors SET is_online = ($2 = 'online') WHERE user_id = $1`, userID, presence); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // SetEmergencySchedule stores the emergency-availability window into

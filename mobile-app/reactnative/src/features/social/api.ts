@@ -278,7 +278,7 @@ export async function getPool(id: string): Promise<GroupPool> {
     return p;
   }
   const res = await api.get(`${API_BASE}/pools/${id}`);
-  const pool = (res.data ?? {}) as { pool?: { id: string; title: string; description: string; status: string; goal_kobo: number; raised_kobo: number; created_at: string; contributors?: Array<{ id: string; name?: string; handle?: string; avatar_color?: string; amount_kobo: number }> } };
+  const pool = (res.data ?? {}) as { pool?: { id: string; title: string; description?: string; status: string; goal_kobo?: number; raised_kobo?: number; payout_rule?: string; created_at: string; contributors?: Array<{ id: string; name?: string; handle?: string; avatar_color?: string; amount_kobo: number }> } };
   const p = pool.pool;
   if (!p) throw new Error('Pool not found');
   return {
@@ -286,9 +286,9 @@ export async function getPool(id: string): Promise<GroupPool> {
     title: p.title,
     description: p.description,
     status: (p.status.toLowerCase() as 'open' | 'closed'),
-    goalKobo: p.goal_kobo,
-    raisedKobo: p.raised_kobo,
-    payoutRule: '',
+    goalKobo: p.goal_kobo ?? null,
+    raisedKobo: p.raised_kobo ?? 0,
+    payoutRule: p.payout_rule ?? '',
     createdAtISO: p.created_at,
     contributors: (p.contributors ?? []).map((c) => ({
       id: c.id,
@@ -405,9 +405,8 @@ export async function paySplitShare(splitId: string, shareId: string, amountKobo
   return { id: `pay_${Date.now()}`, ok: true, status: 'completed' };
 }
 
-// Backend: POST /pools expects { title, beneficiary_id } → { success, pool }.
-// goalKobo/description/payoutRule have no backend field yet (MISSING) — kept
-// client-side for display until the backend adds them.
+// Backend: POST /pools expects { title, description, goal_kobo, payout_rule,
+// beneficiary_id? } → { success, pool }. Goal 0 means "no target".
 export async function createPool(input: CreatePoolInput): Promise<GroupPool> {
   if (USE_MOCK) {
     await delay();
@@ -418,16 +417,21 @@ export async function createPool(input: CreatePoolInput): Promise<GroupPool> {
       contributors: [{ id: 'c1', name: 'You', handle: '@you', avatarColor: '#340075', amountKobo: 0 }],
     };
   }
-  const res = await api.post(`${API_BASE}/pools`, { title: input.title });
-  const pool = (res.data as { pool?: { id?: string; created_at?: string } })?.pool;
+  const res = await api.post(`${API_BASE}/pools`, {
+    title: input.title,
+    description: input.description ?? '',
+    goal_kobo: input.goalKobo ?? 0,
+    payout_rule: input.payoutRule,
+  });
+  const pool = (res.data as { pool?: { id?: string; created_at?: string; description?: string; goal_kobo?: number; payout_rule?: string } })?.pool;
   return {
     id: pool?.id ?? `p_${Date.now()}`,
     title: input.title,
-    description: input.description,
+    description: pool?.description ?? input.description,
     status: 'open',
-    goalKobo: input.goalKobo,
+    goalKobo: pool?.goal_kobo ?? input.goalKobo,
     raisedKobo: 0,
-    payoutRule: input.payoutRule,
+    payoutRule: pool?.payout_rule ?? input.payoutRule,
     createdAtISO: pool?.created_at ?? new Date().toISOString(),
     contributors: [],
   };

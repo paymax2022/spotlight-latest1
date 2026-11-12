@@ -37,8 +37,12 @@ export REACT_NATIVE_ARCHS
 # "SDK location not found. Define a valid SDK location with an ANDROID_HOME
 # environment variable or by setting the sdk.dir path in .../local.properties".
 if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
-  for sdk_candidate in "$HOME/Library/Android/sdk" "$HOME/Android/Sdk" /usr/local/share/android-sdk; do
-    if [[ -d "$sdk_candidate" ]]; then
+  # Capture sdk.dir before the prebuild --clean below deletes the file: it is
+  # often the only place the SDK path is recorded, and the candidates underneath
+  # do not cover a custom install location.
+  SDK_DIR_FROM_PROPS="$(sed -n 's/^sdk\.dir=//p' android/local.properties 2>/dev/null | tail -1 || true)"
+  for sdk_candidate in "$SDK_DIR_FROM_PROPS" "$HOME/Library/Android/sdk" "$HOME/Android/Sdk" /usr/local/share/android-sdk; do
+    if [[ -n "$sdk_candidate" && -d "$sdk_candidate" ]]; then
       export ANDROID_HOME="$sdk_candidate"
       break
     fi
@@ -64,8 +68,8 @@ fi
 # upgrade an install signed with the real key. The keystore lives in $HOME --
 # never in android/, which `expo prebuild --clean` deletes in full, and never in
 # the repo, because it is the one file that must not leak. Credentials are read
-# into the environment here and passed to gradle as project properties; nothing
-# in this script prints them.
+# into the environment here for Gradle to read; nothing in this script prints
+# them.
 RELEASE_SIGNING_PROPS="${PAYMAX_RELEASE_SIGNING_PROPS:-$HOME/.android-keystores/paymax-release.properties}"
 if [[ -f "$RELEASE_SIGNING_PROPS" ]]; then
   set -a
@@ -202,10 +206,35 @@ echo "   Sentry:    $SENTRY_UPLOAD"
 echo "   Signing:   $SIGNING_DESC"
 echo ""
 
+EXPECTED_ANDROID_PACKAGE="com.spotlight.paymax"
+CONFIGURED_ANDROID_PACKAGE="$(node -e 'process.stdout.write(require("./app.json").expo.android.package)')"
+if [[ "$CONFIGURED_ANDROID_PACKAGE" != "$EXPECTED_ANDROID_PACKAGE" ]]; then
+  echo "❌ app.json Android package must be $EXPECTED_ANDROID_PACKAGE (found $CONFIGURED_ANDROID_PACKAGE)." >&2
+  exit 1
+fi
+
 if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" && ! -f android/local.properties ]]; then
   echo "❌ Android SDK not found. Set ANDROID_HOME, or put sdk.dir=<path> in android/local.properties." >&2
   exit 1
 fi
+
+# Keep generated native identifiers in sync with app.json on both APK and AAB
+# build paths; otherwise Gradle can package a stale applicationId.
+# --clean is what makes this deterministic. android/ is regenerated from app.json
+# plus plugins/, so a block written by a config plugin that no longer exists
+# cannot ride along. Without it, removing plugins/withAndroidVersionCode.js left
+# its `versionCode last+1` block in the existing build.gradle, which overrode
+# app.json and emitted versionCode 2 into a release meant to be 20.
+npx expo prebuild --platform android --no-install --clean
+GENERATED_ANDROID_PACKAGE="$(sed -nE "s/^[[:space:]]*applicationId ['\"]([^'\"]+)['\"].*/\\1/p" android/app/build.gradle | tail -1)"
+if [[ "$GENERATED_ANDROID_PACKAGE" != "$EXPECTED_ANDROID_PACKAGE" ]]; then
+  echo "❌ Generated Android applicationId is ${GENERATED_ANDROID_PACKAGE:-missing}; expected $EXPECTED_ANDROID_PACKAGE." >&2
+  exit 1
+fi
+
+# React Native caches autolinking config without hashing app.json, so a package
+# change can leave its generated entry point referring to the previous package.
+rm -rf android/build/generated/autolinking
 
 # -PreactNativeArchitectures is inert here (newArchEnabled=false makes RNGP skip
 # ndk.abiFilters entirely). -PreleaseAbis is what plugins/withAndroidSizeOptimizations.js
@@ -218,24 +247,17 @@ fi
 # the clean step a no-op instead of a failure.
 rm -rf android/app/.cxx
 
-# Signing credentials go through -P, not the environment: a warm gradle daemon
-# keeps the environment it was started with, so System.getenv() in the build
-# script can return a stale value, while project properties always travel with
-# the invocation. (-P values are readable via `ps` on this machine; that is the
-# accepted trade for a working daemon.) plugins/withAndroidReleaseSigning.js
-# reads exactly these names.
+# Use a single-use daemon so it inherits the current credentials from this
+# process rather than reusing a daemon with a stale environment. Avoiding -P
+# also keeps signing passwords out of command-line arguments and `ps`.
 if [[ "${ALLOW_DEBUG_SIGNING:-0}" == "1" ]]; then
   echo "⚠️  ALLOW_DEBUG_SIGNING=1 — the APK will be signed with the debug key and is NOT publishable."
 fi
 
 cd android
-./gradlew clean assembleRelease \
+./gradlew --no-daemon clean assembleRelease \
   -PreactNativeArchitectures="$REACT_NATIVE_ARCHS" \
-  -PreleaseAbis="$REACT_NATIVE_ARCHS" \
-  -PPAYMAX_RELEASE_STORE_FILE="${PAYMAX_RELEASE_STORE_FILE:-}" \
-  -PPAYMAX_RELEASE_KEY_ALIAS="${PAYMAX_RELEASE_KEY_ALIAS:-}" \
-  -PPAYMAX_RELEASE_STORE_PASSWORD="${PAYMAX_RELEASE_STORE_PASSWORD:-}" \
-  -PPAYMAX_RELEASE_KEY_PASSWORD="${PAYMAX_RELEASE_KEY_PASSWORD:-}"
+  -PreleaseAbis="$REACT_NATIVE_ARCHS"
 cd "$PROJECT_DIR"
 
 APK="$(find android/app/build/outputs/apk -name '*.apk' -type f | head -1 || true)"
@@ -243,6 +265,23 @@ if [[ -z "$APK" ]]; then
   echo "❌ Build reported success but produced no APK." >&2
   exit 1
 fi
+
+SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+if [[ -z "$SDK_DIR" && -f android/local.properties ]]; then
+  SDK_DIR="$(sed -n 's/^sdk\.dir=//p' android/local.properties | tail -1)"
+fi
+AAPT="$(ls -1 "$SDK_DIR"/build-tools/*/aapt 2>/dev/null | sort -V | tail -1 || true)"
+if [[ -z "$AAPT" ]]; then
+  echo "❌ aapt not found under ${SDK_DIR:-<no SDK dir>}/build-tools — cannot verify APK package." >&2
+  exit 1
+fi
+AAPT_REPORT="$("$AAPT" dump badging "$APK")"
+APK_PACKAGE="$(printf '%s\n' "$AAPT_REPORT" | sed -nE "s/^package: name='([^']+)'.*/\\1/p" | head -1)"
+if [[ "$APK_PACKAGE" != "$EXPECTED_ANDROID_PACKAGE" ]]; then
+  echo "❌ APK package is ${APK_PACKAGE:-missing}; expected $EXPECTED_ANDROID_PACKAGE." >&2
+  exit 1
+fi
+echo "   ✅ Android package: $APK_PACKAGE"
 
 echo ""
 echo "🔍 Verifying baked-in configuration: $APK"
@@ -354,6 +393,8 @@ else
   APKSIGNER_RC=0
   SIGNER_REPORT="$("$APKSIGNER" verify --print-certs "$APK" 2>&1)" || APKSIGNER_RC=$?
   SIGNER_DN="$(printf '%s\n' "$SIGNER_REPORT" | grep -m1 'certificate DN:' || true)"
+  SIGNER_SHA1="$(printf '%s\n' "$SIGNER_REPORT" | grep -m1 'certificate SHA-1 digest:' | sed 's/.*certificate SHA-1 digest:[[:space:]]*//' | tr -d ':' | tr '[:lower:]' '[:upper:]' || true)"
+  EXPECTED_UPLOAD_CERT_SHA1="A455D923C471689ED3127ED327548ABBDA1B2799"
   if [[ "$APKSIGNER_RC" -ne 0 || -z "$SIGNER_DN" ]]; then
     echo "   ❌ apksigner could not verify the APK's signature:" >&2
     printf '%s\n' "$SIGNER_REPORT" | sed 's/^/      /' >&2
@@ -367,8 +408,12 @@ else
       echo "      with the production key. Check $RELEASE_SIGNING_PROPS." >&2
       fail=1
     fi
+  elif [[ "$SIGNER_SHA1" != "$EXPECTED_UPLOAD_CERT_SHA1" ]]; then
+    echo "   ❌ Wrong upload certificate SHA-1: ${SIGNER_SHA1:-unavailable}" >&2
+    echo "      Play expects A4:55:D9:23:C4:71:68:9E:D3:12:7E:D3:27:54:8A:BB:DA:1B:27:99." >&2
+    fail=1
   else
-    echo "   ✅ Signed with: ${SIGNER_DN#*certificate DN: }"
+    echo "   ✅ Signed with Play upload certificate (SHA-1 A4:55:D9:23:C4:71:68:9E:D3:12:7E:D3:27:54:8A:BB:DA:1B:27:99): ${SIGNER_DN#*certificate DN: }"
   fi
 fi
 

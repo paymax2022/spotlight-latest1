@@ -133,7 +133,7 @@ func TestLiveDB_Swap_NetWalletDeltaZero_SpreadToRevenue_Idempotent(t *testing.T)
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
-	svc := crypto.NewService(pool, led, nil) // nil -> MockPriceProvider (deterministic)
+	svc := crypto.NewService(pool, led, testsupport.StaticPriceProvider{PriceKoboPerUnit: 100_000})
 	ctx := context.Background()
 
 	fromAssetID, toAssetID := seedTradableAssets(t, ctx, svc)
@@ -233,7 +233,7 @@ func TestLiveDB_Swap_OversellRejected_HoldingsUnchanged(t *testing.T) {
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
-	svc := crypto.NewService(pool, led, nil)
+	svc := crypto.NewService(pool, led, testsupport.StaticPriceProvider{PriceKoboPerUnit: 100_000})
 	ctx := context.Background()
 
 	fromAssetID, toAssetID := seedTradableAssets(t, ctx, svc)
@@ -298,7 +298,7 @@ func TestLiveDB_Withdraw_RequiresWhitelistedAddress(t *testing.T) {
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
-	svc := crypto.NewService(pool, led, nil)
+	svc := crypto.NewService(pool, led, testsupport.StaticPriceProvider{PriceKoboPerUnit: 100_000})
 	ctx := context.Background()
 
 	fromAssetID, _ := seedTradableAssets(t, ctx, svc)
@@ -338,7 +338,7 @@ func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
-	svc := crypto.NewService(pool, led, nil)
+	svc := crypto.NewService(pool, led, testsupport.StaticPriceProvider{PriceKoboPerUnit: 100_000})
 	ctx := context.Background()
 
 	fromAssetID, _ := seedTradableAssets(t, ctx, svc)
@@ -417,7 +417,7 @@ func TestLiveDB_Withdraw_IdempotentCreate_ParksUnitsOnce(t *testing.T) {
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
-	svc := crypto.NewService(pool, led, nil)
+	svc := crypto.NewService(pool, led, testsupport.StaticPriceProvider{PriceKoboPerUnit: 100_000})
 	ctx := context.Background()
 
 	fromAssetID, _ := seedTradableAssets(t, ctx, svc)
@@ -479,7 +479,7 @@ func TestLiveDB_Withdraw_OverWithdrawalRejected_HoldingUnchanged(t *testing.T) {
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
-	svc := crypto.NewService(pool, led, nil)
+	svc := crypto.NewService(pool, led, testsupport.StaticPriceProvider{PriceKoboPerUnit: 100_000})
 	ctx := context.Background()
 
 	fromAssetID, _ := seedTradableAssets(t, ctx, svc)

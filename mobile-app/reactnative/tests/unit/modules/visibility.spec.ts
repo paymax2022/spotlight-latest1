@@ -5,7 +5,13 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { visibilityFor, type ModuleVisibility } from '@/features/modules/rules';
+import {
+  visibilityFor,
+  moduleStateFor,
+  resolveModuleState,
+  STABLE_MODULE_KEYS,
+  type ModuleVisibility,
+} from '@/features/modules/rules';
 import {
   SERVICE_MODULE_REGISTRY_KEY,
   registryKeyFor,
@@ -42,18 +48,63 @@ describe('visibilityFor', () => {
     assert.equal(visibilityFor(list(), 'telemedicine'), false);
   });
 
-  test('an unreachable registry shows the module rather than blanking the app', () => {
-    // Deliberate fail-OPEN. The registry decides what to render, not what to
-    // authorise — the API still refuses anything genuinely gated. Failing closed
-    // here would empty the services tab on a flaky network.
-    assert.equal(visibilityFor(null, 'telemedicine'), true);
-    assert.equal(visibilityFor(undefined, 'telemedicine'), true);
+  test('an unreachable registry shows the money rails and hides unreleased work', () => {
+    // Fail-CLOSED, with one exception: the long-live rails that hold a user's
+    // own money. The previous behaviour showed every tile when the registry
+    // could not be read, on the reasoning that this only decides what to render
+    // and the API refuses the rest. That reasoning held only while the registry
+    // route existed; with the route missing it became the normal path, and the
+    // admin's publication decision stopped applying to store builds altogether.
+    // A last-known-good answer (see resolveModuleState) covers the flaky-network
+    // case, so hiding unreleased work no longer means an empty tab.
+    assert.equal(visibilityFor(null, 'wallet'), true);
+    assert.equal(visibilityFor(undefined, 'walletTransfers'), true);
+    assert.equal(visibilityFor(null, 'telemedicine'), false);
+    assert.equal(visibilityFor(undefined, 'restaurant'), false);
+  });
+
+  test('the allowlist only ever contains keys the app knows', () => {
+    // A typo here would permanently show a tile the admin hid, and no other
+    // test would notice because every other case compares against a live list.
+    const known = new Set<string>(Object.keys(MODULE_LABELS));
+    for (const key of STABLE_MODULE_KEYS) {
+      assert.ok(known.has(key), `STABLE_MODULE_KEYS has '${key}', which is not a registry key`);
+    }
   });
 
   test('matching is exact — no prefix or case coercion', () => {
     // modules when an admin published one.
     assert.equal(visibilityFor(list('health'), 'healthLab'), false);
     assert.equal(visibilityFor(list('Telemedicine'), 'telemedicine'), false);
+  });
+});
+
+describe('resolveModuleState — the last known answer beats the allowlist', () => {
+  test('a live registry read wins over anything cached', () => {
+    const cached = list('telemedicine', 'restaurant');
+    const fresh = list('wallet');
+    assert.equal(resolveModuleState(fresh, cached, 'restaurant'), false);
+    assert.equal(resolveModuleState(fresh, cached, 'wallet'), true);
+  });
+
+  test('a failed read falls back to what the device saw last', () => {
+    // This is what makes fail-closed affordable: a user on a flaky network keeps
+    // the grid they had, instead of losing every module nobody unpublished.
+    const cached = list('telemedicine');
+    assert.equal(resolveModuleState(null, cached, 'telemedicine'), true);
+    assert.equal(resolveModuleState(undefined, cached, 'restaurant'), false);
+  });
+
+  test('no read and no cache leaves only the allowlist', () => {
+    assert.equal(resolveModuleState(null, null, 'wallet'), true);
+    assert.equal(resolveModuleState(null, null, 'telemedicine'), false);
+  });
+
+  test('a cached answer listing nothing stays nothing — an empty registry is an answer', () => {
+    // Distinguishes "the admin published nothing here" from "we never asked".
+    // Treating a persisted empty list as absent would resurrect the old leak.
+    assert.equal(resolveModuleState(null, list(), 'telemedicine'), false);
+    assert.equal(resolveModuleState(null, list(), 'wallet'), false);
   });
 });
 
@@ -70,9 +121,31 @@ describe('service-grid mapping', () => {
   test('unmapped tiles are never registry-gated', () => {
     // The safe direction: no mapping ⇒ always render. Returning a key here would
     // gate a tile against a module the registry has never heard of, hiding it
-    // permanently.
-    assert.equal(registryKeyFor('academy'), null);
+    // permanently. 'shopping' is a coming-soon placeholder with no engine and no
+    // registry row; 'academy' USED to belong in this list and became a real module
+    // in 20271410000000.
+    assert.equal(registryKeyFor('shopping'), null);
     assert.equal(registryKeyFor('definitely-not-a-module'), null);
+  });
+
+  test('the seven surfaces registered in 20271410000000 are now gated', () => {
+    // These tiles used to ignore the registry completely — publishing or hiding them
+    // in the admin portal changed nothing, which is how an unfinished module stayed
+    // in the store build.
+    const gates: [string, string][] = [
+      ['marketplace', 'marketplace'],
+      ['crypto', 'crypto'],
+      ['learn', 'academy'],
+      ['academy', 'academy'],
+      ['film-academy', 'filmAcademy'],
+      ['contest', 'competitions'],
+      ['naija-driver', 'arena'],
+      ['connect', 'connect'],
+    ];
+    for (const [id, key] of gates) {
+      assert.equal(registryKeyFor(id), key, `'${id}' must follow the '${key}' module`);
+      assert.ok(REGISTRY_KEYS.has(key), `'${id}' maps to '${key}', which is not a registered module`);
+    }
   });
 
   test('the whole bill-payment family maps to one registry module', () => {
@@ -97,9 +170,13 @@ describe('the gate applied to the grid', () => {
     });
 
   test('hiding one module removes exactly its tiles', () => {
-    const all = gate(null).map((m) => m.id);
+    // Baseline is "every module published", not "registry unknown". Since the
+    // fallback went fail-closed those two are different grids, and what this
+    // test cares about is the one-tile difference an unpublish makes.
+    const everyKey = Object.values(SERVICE_MODULE_REGISTRY_KEY);
+    const all = gate(list(...everyKey)).map((m) => m.id);
     // Publish everything except restaurant.
-    const keys = new Set(Object.values(SERVICE_MODULE_REGISTRY_KEY));
+    const keys = new Set(everyKey);
     keys.delete('restaurant');
     const withoutFood = gate(list(...keys)).map((m) => m.id);
 
@@ -112,7 +189,7 @@ describe('the gate applied to the grid', () => {
 
   test('unmapped tiles survive an empty published list', () => {
     const survivors = gate(list()).map((m) => m.id);
-    assert.ok(survivors.includes('academy'), 'an unmapped tile must not be hidden by the registry');
+    assert.ok(survivors.includes('shopping'), 'an unmapped tile must not be hidden by the registry');
     assert.ok(!survivors.includes('telemedicine'), 'a mapped tile must be hidden when unpublished');
   });
 });
@@ -135,7 +212,9 @@ describe('property hub gate', () => {
     // 'marketplace' means the lifestyle shopping tile in one space and the
     // property buy/rent marketplace in the other. One shared table would gate the
     // shopping tile on the realtor module — the reason these maps are separate.
-    assert.equal(registryKeyFor('marketplace'), null);
+    // Both now resolve, to DIFFERENT modules: the shopping tile got its own registry
+    // key in 20271410000000, while the property pillar still follows realtor.
+    assert.equal(registryKeyFor('marketplace'), 'marketplace');
     assert.equal(propertyRegistryKeyFor('marketplace'), 'realtor');
   });
 
@@ -154,21 +233,27 @@ describe('property hub gate', () => {
     assert.equal(gate(list()).length, 0);
   });
 
-  test('an unreachable registry shows every pillar', () => {
-    assert.equal(gate(null).length, PROPERTY_SUBMODULES.length);
+  test('an unreachable registry shows no property pillar', () => {
+    // Property is a service, not a rail that holds a user's money, so it is not
+    // on the allowlist. The hub goes empty rather than advertising verticals an
+    // admin never published; the last known answer (not tested here) is what
+    // covers a genuinely offline device.
+    assert.equal(gate(null).length, 0);
   });
 });
 
-// Mirrors the keys seeded into platform_modules (supabase migration
-// 20261210000000, generated from frontend-web/src/lib/feature-flags.ts). Keep in
+// Mirrors the keys seeded into platform_modules (supabase migrations 20261210000000,
+// generated from frontend-web/src/lib/feature-flags.ts, and 20271410000000, the app
+// surfaces that had no flag). Keep in
 // a module that can never be published, hiding it forever with no error anywhere.
 const REGISTRY_KEYS = new Set([
-  'aiCare', 'association', 'beneficiaries', 'checkoutTopupTier0', 'creators', 'crowdfunding',
-  'disputes', 'estate', 'events', 'fintechAdmin', 'fx', 'groups', 'health', 'healthLab',
-  'healthPharmacy', 'healthVet', 'insurance', 'kyc', 'loyalty', 'ratings', 'realtor',
-  'referrals', 'restaurant', 'savings', 'socialPay', 'stays', 'telemedicine', 'tierLimits',
-  'transport', 'utilityPayments', 'virtualAccounts', 'voteBridge', 'votesBridge', 'wallet',
-  'walletBankTransfers', 'walletTransfers',
+  'academy', 'aiCare', 'arena', 'association', 'beneficiaries', 'checkoutTopupTier0',
+  'competitions', 'connect', 'creators', 'crypto', 'crowdfunding', 'disputes', 'estate',
+  'events', 'filmAcademy', 'fintechAdmin', 'fx', 'groups', 'health', 'healthLab',
+  'healthPharmacy', 'healthVet', 'insurance', 'kyc', 'loyalty', 'marketplace', 'ratings',
+  'realtor', 'referrals', 'restaurant', 'savings', 'socialPay', 'stays', 'telemedicine',
+  'tierLimits', 'transport', 'utilityPayments', 'virtualAccounts', 'voteBridge',
+  'votesBridge', 'wallet', 'walletBankTransfers', 'walletTransfers',
 ]);
 
 describe('mapped values are real registry modules', () => {
@@ -236,7 +321,7 @@ describe('home tab gates', () => {
     // must disappear, not render a label above an empty grid.
     const groups = [
       { label: 'Financial', modules: SERVICE_MODULES.filter((m) => m.category === 'financial') },
-      { label: 'Learn', modules: SERVICE_MODULES.filter((m) => m.id === 'academy') },
+      { label: 'Learn', modules: SERVICE_MODULES.filter((m) => m.id === 'shopping') },
     ];
     const gated = groups
       .map((g) => ({ ...g, modules: g.modules.filter((m) => {
@@ -247,7 +332,7 @@ describe('home tab gates', () => {
 
     // Financial is entirely registry-mapped, so an empty published list clears it.
     assert.ok(!gated.some((g) => g.label === 'Financial'), 'empty Financial group must be dropped');
-    // Learn is 'academy', which has no registry mapping, so it survives.
+    // Learn is 'shopping', a placeholder tile with no registry module, so it survives.
     assert.ok(gated.some((g) => g.label === 'Learn'), 'ungated group must survive');
   });
 });
@@ -281,8 +366,32 @@ describe('route guard', () => {
   test('ambiguous and unregistered routes are left ungated', () => {
     // Conservative on purpose: gating a route wrongly locks users out of a
     // working screen, which is worse than leaving one merely undiscoverable.
-    for (const seg of [['voting'], ['arena'], ['academy'], ['crypto'], ['dues'], ['properties']]) {
+    // 'academy' here is the TOP-LEVEL /academy, which is not a route — StudyHub
+    // lives at /learn/academy and is gated through 'learn' below.
+    for (const seg of [['academy'], ['dues'], ['properties'], ['investment'], ['invest-ai'], ['shopping'], ['parcel']]) {
       assert.equal(moduleKeyForSegments(seg), null, `${seg[0]} should not be gated`);
+    }
+  });
+
+  test('the surfaces registered in 20271410000000 are now gated by route too', () => {
+    // The guard used to be blind to all seven, so a push notification or a saved
+    // link reached screens the admin portal had no power over.
+    const gated: [string[], string][] = [
+      [['marketplace'], 'marketplace'],
+      [['crypto'], 'crypto'],
+      [['learn'], 'academy'],
+      // Prefix matching: StudyHub needs no entry of its own.
+      [['learn', 'academy', 'lesson', '1'], 'academy'],
+      [['film-academy'], 'filmAcademy'],
+      [['voting'], 'competitions'],
+      [['arena'], 'arena'],
+      [['connect'], 'connect'],
+    ];
+    for (const [seg, key] of gated) {
+      assert.equal(moduleKeyForSegments(seg), key, `/${seg.join('/')} must follow '${key}'`);
+      assert.ok(REGISTRY_KEYS.has(key), `'${key}' is not a registered module`);
+      // And an unpublished one must actually be refused by the guard.
+      assert.equal(visibilityFor(list(), key), false, `${key} must be hidden when unpublished`);
     }
   });
 
@@ -318,8 +427,13 @@ describe('route guard', () => {
     const deep = ['services', 'telemedicine', 'book', 'confirm'];
     assert.equal(blocked(deep, list('wallet')), true, 'unpublished module must block');
     assert.equal(blocked(deep, list('telemedicine')), false, 'published module must pass');
-    // Fail open while the registry is unknown.
-    assert.equal(blocked(deep, null), false, 'unknown registry must not block');
+    // Fail closed while the registry is unknown: a deep link is exactly how an
+    // unpublished vertical got used, because the tile being hidden did not stop
+    // a push notification or a saved link from landing on the screen.
+    assert.equal(blocked(deep, null), true, 'unknown registry must block an allowlist-absent module');
+    // The money rails stay reachable even then, or a fault locks a user out of
+    // their own wallet.
+    assert.equal(blocked(['wallet'], null), false, 'allowlisted module must not block');
   });
 
   test('every label maps to a registered module', () => {

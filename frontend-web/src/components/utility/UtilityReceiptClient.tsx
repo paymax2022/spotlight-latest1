@@ -26,11 +26,17 @@ function formatNaira(kobo: number | null | undefined) {
   }).format((kobo ?? 0) / 100);
 }
 
-function statusClass(status: string) {
-  if (status === 'successful') return 'badge-approved';
-  if (status === 'provider_pending' || status === 'wallet_debited' || status === 'initiated') return 'badge-pending';
-  if (status === 'reversed' || status === 'failed') return 'badge-rejected';
-  return 'badge-paid';
+function statusTone(status: string) {
+  if (status === 'successful') return 'success';
+  if (status === 'provider_pending' || status === 'wallet_debited' || status === 'initiated') return 'pending';
+  if (status === 'reversed' || status === 'failed') return 'failed';
+  return 'neutral';
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 export default function UtilityReceiptClient({ transactionId }: { transactionId: string }) {
@@ -63,77 +69,100 @@ export default function UtilityReceiptClient({ transactionId }: { transactionId:
   }, [transactionId]);
 
   if (loading) {
-    return <div className="glass-card rounded-md p-4 max-w-lg mx-auto"><p className="text-foreground-muted mb-0">Loading receipt…</p></div>;
+    return (
+      <section className="u-wrap u-receipt-shell" id="receipt" aria-live="polite">
+        <div className="u-receipt-message">
+          <p className="u-eyebrow"><i /> PAYMENT RECEIPT</p>
+          <p>Loading receipt…</p>
+        </div>
+      </section>
+    );
   }
 
   if (error || !receipt) {
     return (
-      <div className="glass-card rounded-md p-4 max-w-lg mx-auto">
-        <p className="text-foreground-muted mb-3">{error || 'Receipt not found.'}</p>
-        <Link href="/utility" className="btn-outline py-2 px-3 text-[11px]">Back to Utility Bills</Link>
-      </div>
+      <section className="u-wrap u-receipt-shell" id="receipt">
+        <div className="u-receipt-message">
+          <p className="u-eyebrow"><i /> PAYMENT RECEIPT</p>
+          <h2>We couldn&apos;t find that receipt.</h2>
+          <p>{error || 'This transaction may still be processing.'}</p>
+          <Link className="u-cta u-full" href="/utility">
+            Back to payment desk
+            <svg aria-hidden="true"><use href="#u-arrow" /></svg>
+          </Link>
+        </div>
+      </section>
     );
   }
 
   return (
-    <div className="glass-card rounded-md p-4 md:p-5 max-w-lg mx-auto print:shadow-none">
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div>
-          <p className="section-label mb-2">Utility Bills</p>
-          <h1 className="font-display text-2xl md:text-3xl text-foreground">Payment Receipt</h1>
-        </div>
-        <span className={`inline-flex items-center px-2 py-0.5 rounded-sm text-[11px] font-semibold ${statusClass(receipt.status)}`}>
-          {receipt.status.replace(/_/g, ' ')}
-        </span>
-      </div>
-
-      <dl className="space-y-3">
-        <div className="flex justify-between gap-3 border-b border-border pb-2">
-          <dt className="text-foreground-dim text-[11px] uppercase tracking-[0.12em]">Receipt Number</dt>
-          <dd className="text-foreground font-semibold m-0">{receipt.receipt_number || receipt.transaction_id}</dd>
-        </div>
-        <div className="flex justify-between gap-3 border-b border-border pb-2">
-          <dt className="text-foreground-dim text-[11px] uppercase tracking-[0.12em]">Category</dt>
-          <dd className="text-foreground m-0 capitalize">{receipt.category.replace(/_/g, ' ')}</dd>
-        </div>
-        <div className="flex justify-between gap-3 border-b border-border pb-2">
-          <dt className="text-foreground-dim text-[11px] uppercase tracking-[0.12em]">Customer Reference</dt>
-          <dd className="text-foreground m-0">{receipt.customer_reference}</dd>
-        </div>
-        {receipt.customer_name ? (
-          <div className="flex justify-between gap-3 border-b border-border pb-2">
-            <dt className="text-foreground-dim text-[11px] uppercase tracking-[0.12em]">Customer Name</dt>
-            <dd className="text-foreground m-0">{receipt.customer_name}</dd>
+    <section className="u-wrap u-receipt-shell" id="receipt">
+      <article className="u-receipt">
+        <header className="u-receipt-head">
+          <div>
+            <p className="u-eyebrow"><i /> PAYMENT RECEIPT</p>
+            <h2>{receipt.receipt_number || receipt.transaction_id}</h2>
+            <p className="u-receipt-date">{formatDate(receipt.created_at)}</p>
           </div>
-        ) : null}
-        <div className="flex justify-between gap-3 border-b border-border pb-2">
-          <dt className="text-foreground-dim text-[11px] uppercase tracking-[0.12em]">Amount</dt>
-          <dd className="text-foreground m-0">{formatNaira(receipt.amount_kobo)}</dd>
-        </div>
-        <div className="flex justify-between gap-3 border-b border-border pb-2">
-          <dt className="text-foreground-dim text-[11px] uppercase tracking-[0.12em]">Fee</dt>
-          <dd className="text-foreground m-0">{formatNaira(receipt.convenience_fee_kobo)}</dd>
-        </div>
-        <div className="flex justify-between gap-3 border-b border-border pb-2">
-          <dt className="text-foreground-dim text-[11px] uppercase tracking-[0.12em]">Total Paid</dt>
-          <dd className="text-foreground font-bold text-lg m-0">{formatNaira(receipt.retail_amount_kobo)}</dd>
-        </div>
-        {receipt.token ? (
-          <div className="flex justify-between gap-3 border-b border-border pb-2">
-            <dt className="text-foreground-dim text-[11px] uppercase tracking-[0.12em]">Token</dt>
-            <dd className="text-foreground font-mono font-semibold m-0">{receipt.token}</dd>
-          </div>
-        ) : null}
-        <div className="flex justify-between gap-3">
-          <dt className="text-foreground-dim text-[11px] uppercase tracking-[0.12em]">Date</dt>
-          <dd className="text-foreground m-0">{new Date(receipt.created_at).toLocaleString()}</dd>
-        </div>
-      </dl>
+          <span className="u-status" data-tone={statusTone(receipt.status)}>
+            {receipt.status.replace(/_/g, ' ')}
+          </span>
+        </header>
 
-      <div className="mt-5 flex flex-wrap gap-2 print:hidden">
-        <button type="button" className="btn-outline py-2 px-3 text-[11px]" onClick={() => window.print()}>Print</button>
-        <Link href="/utility" className="btn-primary py-2 px-3 text-[11px]">Back to Utility Bills</Link>
-      </div>
-    </div>
+        <div className="u-receipt-grid">
+          <dl className="u-receipt-rows">
+            <div>
+              <dt>Service</dt>
+              <dd className="u-cap">{receipt.category.replace(/_/g, ' ')}</dd>
+            </div>
+            <div>
+              <dt>Customer reference</dt>
+              <dd>{receipt.customer_reference}</dd>
+            </div>
+            {receipt.customer_name ? (
+              <div>
+                <dt>Customer name</dt>
+                <dd>{receipt.customer_name}</dd>
+              </div>
+            ) : null}
+            <div>
+              <dt>Transaction ID</dt>
+              <dd className="u-mono">{receipt.transaction_id}</dd>
+            </div>
+            {receipt.token ? (
+              <div>
+                <dt>Token</dt>
+                <dd className="u-mono">{receipt.token}</dd>
+              </div>
+            ) : null}
+          </dl>
+
+          <aside className="u-receipt-total" aria-label="Payment total">
+            <p className="u-eyebrow"><i /> AMOUNT</p>
+            <dl>
+              <div>
+                <dt>Bill amount</dt>
+                <dd>{formatNaira(receipt.amount_kobo)}</dd>
+              </div>
+              <div>
+                <dt>Convenience fee</dt>
+                <dd>{formatNaira(receipt.convenience_fee_kobo)}</dd>
+              </div>
+              <div className="u-total">
+                <dt>Total paid</dt>
+                <dd>{formatNaira(receipt.retail_amount_kobo)}</dd>
+              </div>
+            </dl>
+            <div className="u-receipt-actions">
+              <button type="button" className="u-cta u-full" onClick={() => window.print()}>
+                Print receipt
+                <svg aria-hidden="true"><use href="#u-arrow" /></svg>
+              </button>
+              <Link className="u-cta u-ghost u-full" href="/utility">Back to payment desk</Link>
+            </div>
+          </aside>
+        </div>
+      </article>
+    </section>
   );
 }

@@ -242,6 +242,10 @@ const styles: Record<string, React.CSSProperties> = {
   box: {
     flex: 1, minWidth: 0, height: 52, textAlign: 'center', fontSize: 20, fontWeight: 700,
     borderRadius: 8, border: '1px solid rgba(148,163,184,0.4)', background: 'transparent',
+    // main.css:175 forces `input { color: var(--white) }` (and again on :focus)
+    // from the legacy dark theme; this page renders on the light body, so the
+    // digits were white-on-white. An inline color outranks both those rules.
+    color: '#000',
   },
   primary: {
     display: 'block', width: '100%', padding: '12px 16px', borderRadius: 8, border: 'none',

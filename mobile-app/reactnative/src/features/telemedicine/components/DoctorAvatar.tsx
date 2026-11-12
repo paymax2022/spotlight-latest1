@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, Image, StyleSheet } from 'react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
@@ -9,14 +9,22 @@ interface Props {
   color:    string;
   size?:    number;
   online?:  boolean;
+  /** Renderable photo URL; the initials circle shows when it is absent. */
+  uri?:     string;
 }
 
-export default function DoctorAvatar({ initials, color, size = 56, online }: Props) {
+export default function DoctorAvatar({ initials, color, size = 56, online, uri }: Props) {
   return (
     <View style={{ width: size, height: size }}>
-      <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 3, backgroundColor: color }]}>
-        <Text style={[styles.initials, { fontSize: size * 0.34 }]}>{initials}</Text>
-      </View>
+      {uri ? (
+        <View style={{ width: size, height: size, borderRadius: size / 3, overflow: 'hidden' }}>
+          <Image source={{ uri }} resizeMode="cover" style={{ width: '100%', height: '100%' }} />
+        </View>
+      ) : (
+        <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 3, backgroundColor: color }]}>
+          <Text style={[styles.initials, { fontSize: size * 0.34 }]}>{initials}</Text>
+        </View>
+      )}
       {online && <View style={[styles.online, { width: size * 0.26, height: size * 0.26, borderRadius: size * 0.13 }]} />}
     </View>
   );

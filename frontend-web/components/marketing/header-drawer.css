@@ -1,0 +1,202 @@
+/*
+ * Structure for components/marketing/HeaderDrawer.
+ *
+ * Everything visual comes from `--hdr-*` tokens that the host page's theme
+ * supplies (.sp-season2 and .sp-home each define their own set), so one
+ * stylesheet serves all three marketing headers and each page keeps its own
+ * palette and type system. Fallbacks point at the Season 2 theme, the page the
+ * drawer was designed against — including the mock's own footer pair: the
+ * accent-filled "Sign in" beside the outlined "Create an account".
+ */
+
+.hdr-drawer__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: var(--hdr-scrim, #0b0611);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.35s ease-in-out, visibility 0.35s ease-in-out;
+}
+
+.hdr-drawer__backdrop.is-open {
+  opacity: 0.72;
+  visibility: visible;
+}
+
+.hdr-drawer__panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 940;
+  width: min(400px, 86vw);
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 26px 30px;
+  background: var(--hdr-bg, #24162d);
+  border-left: 1px solid var(--hdr-line, #ab83ba45);
+  color: var(--hdr-muted, #c8b9cf);
+  font-size: 14px;
+  transform: translateX(105%);
+  visibility: hidden;
+  transition: transform 0.45s ease-in-out, visibility 0.45s ease-in-out;
+}
+
+.hdr-drawer__panel::-webkit-scrollbar {
+  display: none;
+}
+
+.hdr-drawer__panel.is-open {
+  transform: none;
+  visibility: visible;
+}
+
+/* A modal drawer parks the page under it, the same way the template offcanvas
+   dialogs do. */
+body:has(.hdr-drawer__panel.is-open) {
+  overflow: hidden;
+}
+
+.hdr-drawer__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.hdr-drawer__title,
+.hdr-drawer__group {
+  margin: 0;
+  font: 800 9px/1.6 var(--hdr-head, Manrope, Arial, sans-serif);
+  font-family: var(--hdr-head, Manrope, Arial, sans-serif) !important;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hdr-label, #cfabd9);
+}
+
+.hdr-drawer__group {
+  margin: 18px 0 6px;
+}
+
+.hdr-drawer__close {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--hdr-line, #ab83ba45);
+  color: var(--hdr-fg, #f2ece4);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.hdr-drawer__close:hover {
+  border-color: var(--hdr-accent, #ff8949);
+  color: var(--hdr-accent, #ff8949);
+}
+
+/* The panel's own links, kept off the host page's `a { color: inherit }` reset. */
+.hdr-drawer__panel a {
+  display: block;
+  padding-block: 9px;
+  border-bottom: 1px solid var(--hdr-line, #ab83ba45);
+  color: var(--hdr-fg, #f2ece4);
+  text-decoration: none;
+}
+
+.hdr-drawer__panel a:hover {
+  color: var(--hdr-accent, #ff8949);
+}
+
+.hdr-drawer__rule {
+  margin: 18px 0 0;
+  border: 0;
+  border-top: 1px solid var(--hdr-line, #ab83ba45);
+}
+
+.hdr-drawer__signout {
+  display: block;
+  padding: 9px 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--hdr-line, #ab83ba45);
+  text-align: left;
+  color: var(--hdr-fg, #f2ece4);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hdr-drawer__signout:hover {
+  color: var(--hdr-accent, #ff8949);
+}
+
+.hdr-drawer__action {
+  margin-top: 24px;
+  align-self: flex-start;
+}
+
+/* A visitor's two calls to action, side by side at the foot of the account
+   group. Specificity has to beat the panel's own link styling above. */
+.hdr-drawer__ctas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.hdr-drawer__panel a.hdr-drawer__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--hdr-line, #ab83ba45);
+  color: var(--hdr-fg, #f2ece4);
+  font: 800 11px/1.4 var(--hdr-head, Manrope, Arial, sans-serif);
+  font-family: var(--hdr-head, Manrope, Arial, sans-serif) !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.hdr-drawer__panel a.hdr-drawer__cta:hover {
+  border-color: var(--hdr-accent, #ff8949);
+  color: var(--hdr-accent, #ff8949);
+}
+
+.hdr-drawer__panel a.hdr-drawer__cta--primary {
+  background: var(--hdr-accent, #ff8949);
+  border-color: var(--hdr-accent, #ff8949);
+  color: var(--hdr-on-accent, #1b1020);
+}
+
+.hdr-drawer__panel a.hdr-drawer__cta--primary:hover {
+  color: var(--hdr-on-accent, #1b1020);
+}
+
+.hdr-drawer__panel :focus-visible {
+  outline: 3px solid var(--hdr-focus, #b36aec);
+  outline-offset: 3px;
+}
+
+@media (max-width: 700px) {
+  .hdr-drawer__panel {
+    padding: 16px 20px 24px;
+    font-size: 13px;
+  }
+
+  .hdr-drawer__ctas {
+    gap: 8px;
+  }
+
+  .hdr-drawer__panel a.hdr-drawer__cta {
+    padding: 9px 8px;
+    font-size: 10px;
+  }
+}

@@ -54,3 +54,17 @@ test('mapListedVet fills missing fields with safe defaults', () => {
   assert.deepEqual(v.types, []);
   assert.equal(v.active, true);
 });
+
+test('mapListedVet carries the vet timed packages and defaults to none', () => {
+  const withPackages = mapListedVet({
+    ...wire,
+    packages: [{ id: 'p1', mode: 'video', durationMinutes: 30, priceKobo: 200000 }],
+  });
+  assert.deepEqual(withPackages.packages, [
+    { id: 'p1', mode: 'video', durationMinutes: 30, priceKobo: 200000 },
+  ]);
+  assert.deepEqual(
+    mapListedVet({ id: 'x', name: 'Dr. X', credential: { authority: 'VCN', status: 'verified' } }).packages,
+    [],
+  );
+});

@@ -18,7 +18,6 @@ export const MOCK_ASSETS: CryptoAsset[] = [
     buyEnabled: true, sellEnabled: true, depositEnabled: true, withdrawalEnabled: true,
     minOrderAmount: ngn(1_000), maxOrderAmount: ngn(50_000_000),
     price: { amount: ngn(98_420_000), currency: 'NGN' }, change24hPct: 2.41,
-    marketCap: { amount: ngn(1_940_000_000_000_000), currency: 'NGN' },
     volume24h: { amount: ngn(48_200_000_000_000), currency: 'NGN' },
     supportedNetworks: [{ id: 'bitcoin', name: 'Bitcoin', confirmations: 2 }],
     description:
@@ -33,7 +32,6 @@ export const MOCK_ASSETS: CryptoAsset[] = [
     buyEnabled: true, sellEnabled: true, depositEnabled: true, withdrawalEnabled: true,
     minOrderAmount: ngn(1_000), maxOrderAmount: ngn(30_000_000),
     price: { amount: ngn(5_280_000), currency: 'NGN' }, change24hPct: -1.18,
-    marketCap: { amount: ngn(640_000_000_000_000), currency: 'NGN' },
     volume24h: { amount: ngn(22_400_000_000_000), currency: 'NGN' },
     supportedNetworks: [
       { id: 'ethereum', name: 'Ethereum (ERC-20)', confirmations: 12 },
@@ -51,7 +49,6 @@ export const MOCK_ASSETS: CryptoAsset[] = [
     buyEnabled: true, sellEnabled: true, depositEnabled: true, withdrawalEnabled: true,
     minOrderAmount: ngn(1_000), maxOrderAmount: ngn(20_000_000),
     price: { amount: ngn(1_605), currency: 'NGN' }, change24hPct: 0.05,
-    marketCap: { amount: ngn(180_000_000_000_000), currency: 'NGN' },
     volume24h: { amount: ngn(70_000_000_000_000), currency: 'NGN' },
     supportedNetworks: [
       { id: 'tron', name: 'Tron (TRC-20)', confirmations: 20 },
@@ -69,7 +66,6 @@ export const MOCK_ASSETS: CryptoAsset[] = [
     buyEnabled: true, sellEnabled: true, depositEnabled: true, withdrawalEnabled: true,
     minOrderAmount: ngn(1_000), maxOrderAmount: ngn(20_000_000),
     price: { amount: ngn(1_604), currency: 'NGN' }, change24hPct: 0.02,
-    marketCap: { amount: ngn(56_000_000_000_000), currency: 'NGN' },
     volume24h: { amount: ngn(12_000_000_000_000), currency: 'NGN' },
     supportedNetworks: [
       { id: 'ethereum', name: 'Ethereum (ERC-20)', confirmations: 12 },
@@ -87,7 +83,6 @@ export const MOCK_ASSETS: CryptoAsset[] = [
     buyEnabled: true, sellEnabled: true, depositEnabled: true, withdrawalEnabled: true,
     minOrderAmount: ngn(1_000), maxOrderAmount: ngn(10_000_000),
     price: { amount: ngn(238_500), currency: 'NGN' }, change24hPct: 5.83,
-    marketCap: { amount: ngn(112_000_000_000_000), currency: 'NGN' },
     volume24h: { amount: ngn(9_400_000_000_000), currency: 'NGN' },
     supportedNetworks: [{ id: 'solana', name: 'Solana', confirmations: 32 }],
     description:
@@ -102,7 +97,6 @@ export const MOCK_ASSETS: CryptoAsset[] = [
     buyEnabled: false, sellEnabled: false, depositEnabled: false, withdrawalEnabled: false,
     minOrderAmount: ngn(1_000), maxOrderAmount: ngn(10_000_000),
     price: { amount: ngn(3_640), currency: 'NGN' }, change24hPct: -0.74,
-    marketCap: { amount: ngn(205_000_000_000_000), currency: 'NGN' },
     volume24h: { amount: ngn(6_200_000_000_000), currency: 'NGN' },
     supportedNetworks: [{ id: 'xrpl', name: 'XRP Ledger', confirmations: 1 }],
     description:

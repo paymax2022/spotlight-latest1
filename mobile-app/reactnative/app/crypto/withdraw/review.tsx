@@ -1,9 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowUpFromLine, Info } from 'lucide-react-native';
+import { ArrowUpFromLine, Fingerprint, Info } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -11,9 +11,11 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
+import TextInputField from '@/components/TextInputField';
 import { AssetIcon } from '@/features/crypto/components';
 import { VolatilityWarning } from '@/features/crypto/components';
 import { useAddresses, useAssets, useQuoteWithdrawal } from '@/features/crypto/hooks/useCrypto';
+import { authorizePin } from '@/features/security/authorizePin';
 import { formatCrypto, formatFiatObj } from '@/features/crypto/utils/cryptoFormatters';
 import { WITHDRAWAL_DISCLOSURE, MANUAL_REVIEW_NOTE } from '@/features/crypto/constants/crypto.constants';
 
@@ -40,12 +42,23 @@ export default function WithdrawReviewScreen() {
   }, [asset]);
 
   const quote = quoteM.data;
+  const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState<string | undefined>();
+  const [authorizing, setAuthorizing] = useState(false);
 
-  if (assets.isLoading || !asset || quoteM.isPending || !quote) {
+  // Every read gets its own branch before the spinner: a failed request never
+  // resolves to data, so checking only `isLoading` left the screen spinning for ever.
+  if (assets.isError || addresses.isError) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Review withdrawal" />
-        <StateView kind="loading" message="Estimating network fee…" />
+        <StateView
+          kind="error"
+          title="Couldn't load this withdrawal"
+          message={(assets.error as Error)?.message ?? (addresses.error as Error)?.message ?? 'Please try again.'}
+          actionLabel="Back"
+          onAction={() => goBack('/crypto/withdraw')}
+        />
       </SafeAreaView>
     );
   }
@@ -53,16 +66,67 @@ export default function WithdrawReviewScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Review withdrawal" />
-        <StateView kind="error" title="Couldn't prepare withdrawal" message="Please go back and try again." actionLabel="Back" onAction={() => goBack('/crypto/withdraw')} />
+        <StateView
+          kind="error"
+          title="Couldn't price this withdrawal"
+          message={(quoteM.error as Error)?.message ?? 'The network fee could not be calculated. Your balance is unchanged.'}
+          actionLabel="Back"
+          onAction={() => goBack('/crypto/withdraw')}
+        />
+      </SafeAreaView>
+    );
+  }
+  if (assets.isLoading || addresses.isLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Review withdrawal" />
+        <StateView kind="loading" message="Loading…" />
+      </SafeAreaView>
+    );
+  }
+  // The screen was opened against a reference the server no longer returns — a
+  // deleted address or an asset taken off trade. No quote is ever requested for a
+  // missing asset, so this has to be an answer, not the fee spinner for ever.
+  if (!asset || !address) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Review withdrawal" />
+        <StateView
+          kind="error"
+          title="This withdrawal can't be prepared"
+          message="The asset or destination address is no longer available on your account."
+          actionLabel="Back"
+          onAction={() => goBack('/crypto/withdraw')}
+        />
+      </SafeAreaView>
+    );
+  }
+  if (quoteM.isPending || !quote) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Review withdrawal" />
+        <StateView kind="loading" message="Estimating network fee…" />
       </SafeAreaView>
     );
   }
 
   const decimals = asset.decimals;
 
-  const toOtp = () => {
+  const confirm = async () => {
+    if (pin.length < 4) { setPinError('Enter your 4-digit transaction PIN.'); return; }
+    setAuthorizing(true);
+    setPinError(undefined);
+    // /crypto/withdrawals takes no credential in the body, so the step-up is checked
+    // centrally here rather than trusted to a field that only counted digits.
+    const failure = await authorizePin(pin);
+    setAuthorizing(false);
+    if (failure) {
+      setPin('');
+      setPinError(failure);
+      return;
+    }
     router.push({
-      pathname: '/crypto/withdraw/otp',
+      pathname: '/crypto/withdraw/processing',
       params: { assetId: p.assetId, symbol: p.symbol, networkId: p.networkId, addressId: p.addressId, amount: p.amount },
     });
   };
@@ -101,15 +165,37 @@ export default function WithdrawReviewScreen() {
         {/* Irreversibility warning */}
         <VolatilityWarning message={WITHDRAWAL_DISCLOSURE} />
 
-        {/* Manual-review note */}
-        <View style={styles.note}>
-          <Info size={14} color={Colors.onPrimaryFixedVariant} strokeWidth={2} />
-          <Text style={styles.noteText}>{MANUAL_REVIEW_NOTE}</Text>
+        {/* Manual-review note: the server states whether this withdrawal is parked
+            for compliance, so the promise is made only when it is true. */}
+        {quote.requiresManualReview ? (
+          <View style={styles.note}>
+            <Info size={14} color={Colors.onPrimaryFixedVariant} strokeWidth={2} />
+            <Text style={styles.noteText}>{MANUAL_REVIEW_NOTE}</Text>
+          </View>
+        ) : null}
+
+        {/* Step-up authorisation, verified centrally before the withdrawal is opened. */}
+        <View style={styles.pinCard}>
+          <View style={styles.pinHead}>
+            <Fingerprint size={18} color={Colors.primary} strokeWidth={2} />
+            <Text style={styles.pinTitle}>Authorize with your PIN</Text>
+          </View>
+          <Text style={styles.pinHint}>Confirm this withdrawal with your 4-digit transaction PIN.</Text>
+          <TextInputField
+            label="Transaction PIN"
+            placeholder="Enter 4-digit PIN"
+            keyboardType="number-pad"
+            maxLength={4}
+            secure
+            value={pin}
+            onChangeText={(t) => { setPin(t.replace(/\D/g, '').slice(0, 4)); if (pinError) setPinError(undefined); }}
+            error={pinError}
+          />
         </View>
       </ScrollView>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>
-        <PrimaryButton label="Continue" onPress={toOtp} />
+        <PrimaryButton label="Confirm withdrawal" onPress={() => { void confirm(); }} loading={authorizing} />
       </SafeAreaView>
     </SafeAreaView>
   );
@@ -146,5 +232,9 @@ const styles = StyleSheet.create({
   divider: { height: 1, backgroundColor: Colors.surfaceContainerHigh, marginVertical: 2 },
   note: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: Colors.iconBgPurple, borderRadius: Radius.lg, padding: Spacing.md },
   noteText: { ...Typography.labelSm, color: Colors.onSurface, flex: 1, lineHeight: 18 },
+  pinCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.md },
+  pinHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.xs },
+  pinTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  pinHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginBottom: Spacing.md, lineHeight: 18 },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.md, paddingTop: Spacing.sm },
 });

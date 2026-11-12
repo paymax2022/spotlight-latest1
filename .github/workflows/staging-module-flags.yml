@@ -321,8 +321,15 @@ jobs:
           # FEATURE_FX_ORCHESTRATION_ENABLED is the BFF leaf flag for /api/v1/fx/*
           # (featureFlags.fx); FEATURE_FX_ENABLED gates the legacy Go mount and is
           # only a fallback on the web side.
+          # FEATURE_REFERRAL_REWARDS_ENABLED is the BFF leaf flag for
+          # /api/v1/referrals/* — the Earn hub's dashboard/earnings/referrals calls.
+          # It mirrors Go's mount for /v1/referrals/* (finance_routes.go:468) and is
+          # NOT the same gate as FEATURE_REFERRALS_ENABLED, which the §7A
+          # /api/v1/referral/* proxy tracks. The backend service above already sets
+          # both; the gateway needs both too, or the hub 503s on a live upstream.
           railway variable set \
             FEATURE_REFERRALS_ENABLED=true \
+            FEATURE_REFERRAL_REWARDS_ENABLED=true \
             FEATURE_FX_ORCHESTRATION_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
@@ -335,11 +342,13 @@ jobs:
           node -e '
             let v; try { v = JSON.parse(require("fs").readFileSync("fw-flags.json","utf8")); }
             catch { console.error("Unparseable - refusing to print."); process.exit(1); }
-            if (v.FEATURE_REFERRALS_ENABLED !== "true") {
-              console.error("FEATURE_REFERRALS_ENABLED did not take.");
-              process.exit(1);
+            for (const k of ["FEATURE_REFERRALS_ENABLED", "FEATURE_REFERRAL_REWARDS_ENABLED"]) {
+              if (v[k] !== "true") {
+                console.error(k + " did not take.");
+                process.exit(1);
+              }
+              console.log("  OK   " + k + " = true");
             }
-            console.log("  OK   FEATURE_REFERRALS_ENABLED = true");
           '
 
       - name: Restart so the new variable takes effect
@@ -381,7 +390,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ inputs.proxy_target }}" = "public" ]; then
-            TARGET=https://backend-staging-d9bb.up.railway.app
+            TARGET=https://backend-staging-new.up.railway.app
           else
             TARGET=http://backend.railway.internal:8080
           fi
@@ -627,7 +636,7 @@ jobs:
       ENVIRONMENT: staging
       # frontend-web's public staging origin. The admin console links out to the
       # Film Academy pages that live there.
-      WEB_BASE: https://frontend-web-staging-ec46.up.railway.app
+      WEB_BASE: https://frontend-web-staging-new.up.railway.app
     steps:
       - name: Check the Railway token is present
         run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'

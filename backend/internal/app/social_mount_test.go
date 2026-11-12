@@ -45,6 +45,7 @@ func TestRegisterSocialPay_MountsCanonicalAndLegacyAlias(t *testing.T) {
 		"POST /api/finance/social/requests",
 		"POST /api/finance/social/splits",
 		"POST /api/finance/social/pools",
+		"GET /api/finance/social/pools/:id",
 		"POST /api/finance/social/pools/:id/contribute",
 	} {
 		if !got[want] {

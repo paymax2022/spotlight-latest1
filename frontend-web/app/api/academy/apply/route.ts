@@ -5,12 +5,14 @@ import { ApiError, errorResponse, handleApiError, successResponse } from '@/src/
 import { requireRequestUser, type RequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getActiveAcademySettings, getBatchAreaSlugs } from '@/src/server/services/academy';
+import { isIntakeOpen } from '@/src/server/services/academy/catalogue';
 import { approveAfterPayment } from '@/src/server/services/academy/service';
 import {
   ACADEMY_DELIVERABLES,
   ACADEMY_FEE_EXCLUSIONS,
   ACADEMY_PRICING_FALLBACK_KEY,
   ACADEMY_PRICING_STRUCTURE,
+  MAX_INTEREST_AREAS_PER_APPLICATION,
   attachPricingOptions,
   isPricingKey,
   pricingDefinition,
@@ -209,21 +211,6 @@ async function getOptionalRequestUser(request: Request) {
   }
 }
 
-/**
- * How many priced areas one application may carry, per batch.
- *
- * Enforced on the SERVER because the cap is a commercial rule, not a UI nicety:
- * the mobile form stops at this number, but the form is not what decides. An
- * application that slipped past it would be charged for every area it named.
- *
- * Applied to the DEDUPLICATED list — see the duplicate check below.
- *
- * Existing applications that already exceed it are deliberately left alone; the
- * cap governs new and edited submissions only.
- */
-const MAX_INTEREST_AREAS_PER_APPLICATION = 2;
-
-
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -349,8 +336,7 @@ export async function POST(request: Request) {
     // academy_settings.application_fee_refundable.
     const requiredFee = Number(settings.application_fee ?? 0);
 
-    const registrationFeeRequired =
-      settings.registration_type === 'paid' && requiredFee > 0;
+    const registrationFeeRequired = settings.registration_type === 'paid';
     let paidRegistrationFee = 0;
     let registrationFeeReference = '';
     // Set when application_fee_reference resolves to a server-minted intent —
@@ -423,7 +409,11 @@ export async function POST(request: Request) {
       oneOffDiscountPct: batchRow.one_off_discount_pct,
     });
     const applicationFeeDue = registrationFeeRequired ? requiredFee : 0;
-    const expectedTotalPayment = applicationFeeDue + planShape.firstDueNgn;
+    // A free-registration applicant owes nothing at submit, even when the batch
+    // has tuition due upfront — admin invoices that later.
+    const expectedTotalPayment = registrationFeeRequired
+      ? applicationFeeDue + planShape.firstDueNgn
+      : 0;
 
     if (expectedTotalPayment > 0) {
       registrationFeeReference = String(body.application_fee_reference ?? '').trim();
@@ -649,23 +639,9 @@ export async function GET(request: Request) {
 
     if (error) return errorResponse('Failed to load batches', 500);
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const batches = ((data ?? []) as AcademyBatchRow[]).filter((batch) => {
-      const status = String(batch.status ?? '').toLowerCase();
-      if (status === 'completed' || status === 'cancelled') return false;
-
-      if (!batch.start_date || !batch.duration_weeks || batch.duration_weeks <= 0) {
-        return true;
-      }
-
-      const endDate = new Date(batch.start_date);
-      endDate.setDate(endDate.getDate() + Number(batch.duration_weeks) * 7);
-      endDate.setHours(23, 59, 59, 999);
-
-      return endDate >= today;
-    });
+    // Which intakes are still joinable is one rule, shared with the public
+    // catalogue — see academy/catalogue.ts.
+    const batches = ((data ?? []) as AcademyBatchRow[]).filter((batch) => isIntakeOpen(batch));
 
     const user = await getOptionalRequestUser(request);
     let appliedBatchIds: string[] = [];

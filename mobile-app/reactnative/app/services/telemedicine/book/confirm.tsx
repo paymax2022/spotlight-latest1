@@ -16,10 +16,7 @@ import { TeleHeader } from '@/features/telemedicine/components';
 import type { ConsultType, BookAppointmentResult } from '@/types/telemedicine';
 import PrimaryButton from '@/components/PrimaryButton';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
-import { submitApptIntake } from '@/features/health/api';
-import { CONSENT_VERSION } from '@/features/health/api/preconsult.mock';
-import { getIntakeDraft, clearIntakeDraft } from '@/features/health/intakeDraftStore';
-import { slotToISO } from '@/features/telemedicine/pricing';
+import { readBookingQuote, slotToISO } from '@/features/telemedicine/pricing';
 
 // NOTE: this screen deliberately holds NO fee rate. The platform booking fee is
 // computed by the Go backend and arrives on `doctor.booking` — displaying a fee
@@ -35,7 +32,8 @@ const TYPE_META: Record<ConsultType, { label: string; Icon: typeof Video }> = {
 export default function ConfirmBookingScreen() {
   const qc = useQueryClient();
   const params = useLocalSearchParams<{
-    doctorId: string; slotId: string; slotDate: string; slotTime: string; consultType: ConsultType; reason: string;
+    doctorId: string; slotId: string; slotDate: string; slotTime: string;
+    consultType: ConsultType; reason: string; packageId?: string;
   }>();
 
   const [pin, setPin] = useState('');
@@ -51,10 +49,16 @@ export default function ConfirmBookingScreen() {
 
   const { data: wallet } = useQuery({ queryKey: ['wallet'], queryFn: getWallet });
 
-  // The server's price breakdown. Every figure on this screen — the rows, the
-  // balance check, the Pay button, the amount handed to the payment sheet —
-  // derives from it, so what the patient is shown is what the backend escrows.
-  const quote = doctor?.booking;
+  // The server's price breakdown for the option the patient actually picked.
+  // A package carries its own quote; using the doctor-level quote here would
+  // show (and charge) the legacy fee for a package booking.
+  const pickedPackage = doctor?.packages?.find((pkg) => pkg.id === params.packageId);
+  // A picked package that no longer resolves must fail closed: pricing the
+  // legacy doctor fee here would show and charge a different product than the
+  // one the patient selected. An empty param is the legacy path.
+  const quote = params.packageId
+    ? readBookingQuote({ booking: pickedPackage?.booking })
+    : doctor?.booking;
   const feeKobo = quote?.consultFeeKobo ?? 0;
   const serviceFeeKobo = quote?.platformFeeKobo ?? 0;
   const totalKobo = quote?.totalKobo ?? 0;
@@ -84,6 +88,7 @@ export default function ConfirmBookingScreen() {
           slotId: String(params.slotId),
           scheduledAt: slotToISO(params.slotDate, params.slotTime),
           consultType: params.consultType,
+          packageId: pickedPackage?.id,
           reason: String(params.reason ?? ''),
           feeKobo,
           // The total we quoted the patient. The card rail has already charged
@@ -95,19 +100,6 @@ export default function ConfirmBookingScreen() {
       onPaid: async (result) => {
         qc.invalidateQueries({ queryKey: ['wallet'] });
         qc.invalidateQueries({ queryKey: ['tele-appointments'] });
-        // Carry the pre-booking triage (completed from the doctor profile, saved
-        // under `pre-<doctorId>`) into the real appointment + submit it, so the
-        // consult gate is satisfied and the patient isn't re-asked. Best-effort:
-        // if it fails (e.g. live consent-version mismatch), the post-booking
-        // intake remains the backstop.
-        try {
-          const pre = await getIntakeDraft(`pre-${params.doctorId}`);
-          if (pre && Object.keys(pre).length > 0) {
-            await submitApptIntake(result.appointmentId, pre, CONSENT_VERSION);
-            await clearIntakeDraft(`pre-${params.doctorId}`);
-            qc.invalidateQueries({ queryKey: ['health', 'appt-intake', result.appointmentId] });
-          }
-        } catch { /* non-blocking — booking already succeeded */ }
         router.replace({
           pathname: '/services/telemedicine/book/success',
           params: {

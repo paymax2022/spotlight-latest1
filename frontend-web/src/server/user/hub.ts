@@ -1,4 +1,5 @@
-import { listRegistrationContests, listRegistrationApplications } from '@/src/server/registration/store';
+import { listRegistrationContests } from '@/src/server/registration/store';
+import { listRegistrationApplications } from '@/src/server/registration/supabase-store';
 import { listContests as listOpenMicContests, listApplications as listOpenMicApplications, listSubmissions as listOpenMicSubmissions } from '@/src/server/openmic/persistence';
 import { listContests as listStemContests, listApplications as listStemApplications } from '@/src/server/stem/persistence';
 import type { RequestUser } from '@/src/lib/auth/request';
@@ -120,7 +121,7 @@ export async function listOpenOpportunities(): Promise<SpotlightOpportunity[]> {
 export async function listUserApplications(user: RequestUser): Promise<UnifiedApplication[]> {
   // allSettled prevents one broken data source from failing the entire dashboard.
   const [regResult, openMicAppResult, openMicSubResult, stemResult] = await Promise.allSettled([
-    Promise.resolve(listRegistrationApplications({}).filter((item) => item.userId === user.id)),
+    listRegistrationApplications({}).then((items) => items.filter((item) => item.userId === user.id)),
     listOpenMicApplications({ userId: user.id }),
     listOpenMicSubmissions({ userId: user.id }),
     listStemApplications({ applicantUserId: user.id }),

@@ -72,9 +72,11 @@ func TestRegister_AdminOversightRoutes_MountedAndGuarded(t *testing.T) {
 }
 
 // The member oracle must stay closed: Register must keep mounting the
-// caller-scoped GetSplit on the member group, and must NOT mount any
-// oversight handler there.
-func TestRegister_MemberGroup_KeepsCallerScopedSplitOnly(t *testing.T) {
+// CALLER-SCOPED split and pool detail reads on the member group, and must NOT
+// mount any oversight handler there. Scoping itself is proven at the service
+// layer (authz_live_db_test.go); this pins that both member reads are mounted
+// so the mobile detail screens don't 404.
+func TestRegister_MemberGroup_MountsCallerScopedDetailReads(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	member := r.Group("/api/finance")
@@ -85,13 +87,12 @@ func TestRegister_MemberGroup_KeepsCallerScopedSplitOnly(t *testing.T) {
 	for _, rt := range r.Routes() {
 		routes[rt.Method+" "+rt.Path] = true
 	}
-	if !routes["GET /api/finance/social/splits/:id"] {
-		t.Error("member split read missing: GET /api/finance/social/splits/:id")
-	}
-	// No admin-shaped route may appear under the member prefix.
-	for rt := range routes {
-		if rt == "GET /api/finance/social/pools/:id" {
-			t.Errorf("unscoped pool detail leaked onto member group: %s", rt)
+	for _, want := range []string{
+		"GET /api/finance/social/splits/:id",
+		"GET /api/finance/social/pools/:id",
+	} {
+		if !routes[want] {
+			t.Errorf("member detail read missing: %s", want)
 		}
 	}
 }

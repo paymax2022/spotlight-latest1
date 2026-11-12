@@ -106,7 +106,6 @@ export const PROFILE_BUILDER_STEPS: { step: ProfileBuilderStep; label: string; s
   { step: 'pricing',         label: 'Consultation pricing',         screen: 17 },
   { step: 'free_follow_up',  label: 'Free follow-up policy',        screen: 18 },
   { step: 'availability',    label: 'Availability',                 screen: 19 },
-  { step: 'bank_account',    label: 'Bank account',                 screen: 20 },
 ];
 
 // Section B doc-type labels. Phase 1 VERIFICATION_DOC_TYPES (from the barrel)
