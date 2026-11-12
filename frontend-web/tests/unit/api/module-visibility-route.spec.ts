@@ -19,8 +19,11 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// Typed as fetch, so mock.calls carries the request and its init instead of an
+// empty tuple — the specs below read both.
 const upstream = (body: string, status = 200) =>
-  vi.fn(async () => new Response(body, { status, headers: { 'Content-Type': 'application/json' } }));
+  vi.fn(async (..._args: Parameters<typeof fetch>) =>
+    new Response(body, { status, headers: { 'Content-Type': 'application/json' } }));
 
 const visibilityBody = JSON.stringify({
   data: { environment: 'production', modules: ['wallet', 'telemedicine'], comingSoon: ['estate'] },
