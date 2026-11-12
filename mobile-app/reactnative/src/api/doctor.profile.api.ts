@@ -112,7 +112,7 @@ export const DEMO_PROFILE_DRAFT: DoctorProfileDraft = {
     'personal_info', 'profile_photo', 'bio', 'specialty', 'sub_specialty',
     'experience', 'languages', 'licence_number', 'licence_upload', 'government_id',
     'affiliations', 'education', 'work_experience', 'pricing', 'free_follow_up',
-    'availability', 'bank_account',
+    'availability',
   ],
   status: 'unsubmitted',
   updatedAt: iso(0),
