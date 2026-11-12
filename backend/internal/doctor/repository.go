@@ -137,16 +137,16 @@ func (r *Repository) GetAvailability(ctx context.Context, userID string) (*Avail
 }
 
 // UpsertAvailability writes the single per-doctor availability row (UNIQUE user_id).
-func (r *Repository) UpsertAvailability(ctx context.Context, userID string, req UpdateAvailabilityRequest) (*Availability, error) {
-	workingDays := jsonx.RawOrEmptyArray(req.WorkingDays)
-	breaks := jsonx.RawOrEmptyArray(req.Breaks)
-	rules := jsonx.RawOrEmptyObject(req.Rules)
-	reminders := jsonx.RawOrEmptyObject(req.ReminderSettings)
-	dur := ptr.Deref(req.ConsultDurationMins, 30)
-	buf := ptr.Deref(req.BufferMins, 0)
-	instant := ptr.Deref(req.AcceptsInstant, false)
-	emergency := ptr.Deref(req.EmergencyEnabled, false)
-	tz := strOrDefault(req.Timezone, "Africa/Lagos")
+func (r *Repository) UpsertAvailability(ctx context.Context, userID string, in AvailabilityScheduleInput) (*Availability, error) {
+	workingDays := jsonx.RawOrEmptyArray(in.WorkingDays)
+	breaks := jsonx.RawOrEmptyArray(in.Breaks)
+	rules := jsonx.RawOrEmptyObject(in.Rules)
+	reminders := jsonx.RawOrEmptyObject(in.ReminderSettings)
+	dur := ptr.Deref(in.ConsultDurationMins, 30)
+	buf := ptr.Deref(in.BufferMins, 0)
+	instant := ptr.Deref(in.AcceptsInstant, false)
+	emergency := ptr.Deref(in.EmergencyEnabled, false)
+	tz := strOrDefault(in.Timezone, "Africa/Lagos")
 
 	const q = `
 		INSERT INTO doctor_availability
