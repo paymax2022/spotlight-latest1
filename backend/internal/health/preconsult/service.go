@@ -172,7 +172,7 @@ func (s *Service) EnsureIntake(ctx context.Context, caller, appointmentID string
 // response store (health_intake_responses) — that row is created only on submit,
 // pinned to the schema version. The draft is held on the link row's draft_json
 // column (last write wins) so submit later validates + promotes it to a response.
-func (s *Service) SaveDraft(ctx context.Context, caller, appointmentID string, answers map[string]any) (*Intake, error) {
+func (s *Service) SaveDraft(ctx context.Context, caller, appointmentID string, answers map[string]any, consentVersion *int) (*Intake, error) {
 	it, err := s.EnsureIntake(ctx, caller, appointmentID)
 	if err != nil {
 		return nil, err
@@ -187,9 +187,29 @@ func (s *Service) SaveDraft(ctx context.Context, caller, appointmentID string, a
 	if err != nil {
 		return nil, fmt.Errorf("preconsult: marshal draft: %w", err)
 	}
+	// Consent (M2) is recorded on the draft save, not only at submit: the wizard will
+	// not open the questionnaire until the intake row reports the active version as
+	// accepted, so this write IS the patient's "I agree" and has to be durable. The
+	// version is checked against the active row so a stale client cannot accept a
+	// consent text the patient never saw (Submit would only reject it later).
+	if consentVersion != nil {
+		ct, err := s.activeConsent(ctx, "en")
+		if err != nil {
+			return nil, err
+		}
+		if *consentVersion != ct.Version {
+			return nil, fmt.Errorf("preconsult: consent version %d is not the active version (%d)", *consentVersion, ct.Version)
+		}
+	}
 	// Draft answers persist in a dedicated jsonb column on the link row (additive;
 	// see migration note). Idempotent overwrite — last write wins (auto-save).
-	if _, err := s.db.Exec(ctx, `UPDATE health_preconsult_intake SET draft_json=$2, updated_at=now() WHERE id=$1`, it.ID, raw); err != nil {
+	const upd = `UPDATE health_preconsult_intake
+	SET draft_json      = $2,
+	    consent_version = COALESCE($3, consent_version),
+	    consent_at      = CASE WHEN $3 IS NULL THEN consent_at ELSE COALESCE(consent_at, now()) END,
+	    updated_at      = now()
+	WHERE id = $1`
+	if _, err := s.db.Exec(ctx, upd, it.ID, raw, consentVersion); err != nil {
 		return nil, fmt.Errorf("preconsult: save draft: %w", err)
 	}
 	return s.getIntakeByAppointment(ctx, appointmentID)

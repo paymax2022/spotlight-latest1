@@ -74,6 +74,9 @@ func (h *Handler) SaveDraft(c *gin.Context) {
 	}
 	var req struct {
 		Answers map[string]any `json:"answers"`
+		// Absent (autosave) leaves the recorded consent untouched; present is the
+		// consent screen's "I agree", which Service.SaveDraft validates and stores.
+		ConsentVersion *int `json:"consent_version"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
@@ -82,7 +85,7 @@ func (h *Handler) SaveDraft(c *gin.Context) {
 	if !uuidAppointmentID(c) {
 		return
 	}
-	it, err := h.svc.SaveDraft(c.Request.Context(), id, c.Param("appointmentId"), req.Answers)
+	it, err := h.svc.SaveDraft(c.Request.Context(), id, c.Param("appointmentId"), req.Answers, req.ConsentVersion)
 	if err != nil {
 		preconsultFail(c, err, http.StatusBadRequest)
 		return
