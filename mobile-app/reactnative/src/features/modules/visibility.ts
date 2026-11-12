@@ -1,7 +1,12 @@
-// renders accordingly. The rule itself is NOT reimplemented here — a second copy
-// is how a client and server drift apart, and the drift shows up as a module
-// appearing in production that nobody published.
-// Usage:
+// Module visibility: the fetch, the cache and the hooks. What DECIDES lives in
+// rules.ts, which the server also implements — the client reads the server's answer
+// and renders accordingly. The rule itself is NOT reimplemented here, because a
+// second copy is how a client and server drift apart, and the drift shows up as a
+// module appearing in production that nobody published.
+//
+// The tier is the SERVER's, not the build's: /api/v1/modules/visibility reports the
+// environment the backend runs with, so a store build pointed at staging is governed
+// by staging's publication until it is pointed at production.
 
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
