@@ -5,7 +5,13 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { visibilityFor, type ModuleVisibility } from '@/features/modules/rules';
+import {
+  visibilityFor,
+  moduleStateFor,
+  resolveModuleState,
+  STABLE_MODULE_KEYS,
+  type ModuleVisibility,
+} from '@/features/modules/rules';
 import {
   SERVICE_MODULE_REGISTRY_KEY,
   registryKeyFor,
@@ -42,18 +48,63 @@ describe('visibilityFor', () => {
     assert.equal(visibilityFor(list(), 'telemedicine'), false);
   });
 
-  test('an unreachable registry shows the module rather than blanking the app', () => {
-    // Deliberate fail-OPEN. The registry decides what to render, not what to
-    // authorise — the API still refuses anything genuinely gated. Failing closed
-    // here would empty the services tab on a flaky network.
-    assert.equal(visibilityFor(null, 'telemedicine'), true);
-    assert.equal(visibilityFor(undefined, 'telemedicine'), true);
+  test('an unreachable registry shows the money rails and hides unreleased work', () => {
+    // Fail-CLOSED, with one exception: the long-live rails that hold a user's
+    // own money. The previous behaviour showed every tile when the registry
+    // could not be read, on the reasoning that this only decides what to render
+    // and the API refuses the rest. That reasoning held only while the registry
+    // route existed; with the route missing it became the normal path, and the
+    // admin's publication decision stopped applying to store builds altogether.
+    // A last-known-good answer (see resolveModuleState) covers the flaky-network
+    // case, so hiding unreleased work no longer means an empty tab.
+    assert.equal(visibilityFor(null, 'wallet'), true);
+    assert.equal(visibilityFor(undefined, 'walletTransfers'), true);
+    assert.equal(visibilityFor(null, 'telemedicine'), false);
+    assert.equal(visibilityFor(undefined, 'restaurant'), false);
+  });
+
+  test('the allowlist only ever contains keys the app knows', () => {
+    // A typo here would permanently show a tile the admin hid, and no other
+    // test would notice because every other case compares against a live list.
+    const known = new Set<string>(Object.keys(MODULE_LABELS));
+    for (const key of STABLE_MODULE_KEYS) {
+      assert.ok(known.has(key), `STABLE_MODULE_KEYS has '${key}', which is not a registry key`);
+    }
   });
 
   test('matching is exact — no prefix or case coercion', () => {
     // modules when an admin published one.
     assert.equal(visibilityFor(list('health'), 'healthLab'), false);
     assert.equal(visibilityFor(list('Telemedicine'), 'telemedicine'), false);
+  });
+});
+
+describe('resolveModuleState — the last known answer beats the allowlist', () => {
+  test('a live registry read wins over anything cached', () => {
+    const cached = list('telemedicine', 'restaurant');
+    const fresh = list('wallet');
+    assert.equal(resolveModuleState(fresh, cached, 'restaurant'), false);
+    assert.equal(resolveModuleState(fresh, cached, 'wallet'), true);
+  });
+
+  test('a failed read falls back to what the device saw last', () => {
+    // This is what makes fail-closed affordable: a user on a flaky network keeps
+    // the grid they had, instead of losing every module nobody unpublished.
+    const cached = list('telemedicine');
+    assert.equal(resolveModuleState(null, cached, 'telemedicine'), true);
+    assert.equal(resolveModuleState(undefined, cached, 'restaurant'), false);
+  });
+
+  test('no read and no cache leaves only the allowlist', () => {
+    assert.equal(resolveModuleState(null, null, 'wallet'), true);
+    assert.equal(resolveModuleState(null, null, 'telemedicine'), false);
+  });
+
+  test('a cached answer listing nothing stays nothing — an empty registry is an answer', () => {
+    // Distinguishes "the admin published nothing here" from "we never asked".
+    // Treating a persisted empty list as absent would resurrect the old leak.
+    assert.equal(resolveModuleState(null, list(), 'telemedicine'), false);
+    assert.equal(resolveModuleState(null, list(), 'wallet'), false);
   });
 });
 
@@ -97,9 +148,13 @@ describe('the gate applied to the grid', () => {
     });
 
   test('hiding one module removes exactly its tiles', () => {
-    const all = gate(null).map((m) => m.id);
+    // Baseline is "every module published", not "registry unknown". Since the
+    // fallback went fail-closed those two are different grids, and what this
+    // test cares about is the one-tile difference an unpublish makes.
+    const everyKey = Object.values(SERVICE_MODULE_REGISTRY_KEY);
+    const all = gate(list(...everyKey)).map((m) => m.id);
     // Publish everything except restaurant.
-    const keys = new Set(Object.values(SERVICE_MODULE_REGISTRY_KEY));
+    const keys = new Set(everyKey);
     keys.delete('restaurant');
     const withoutFood = gate(list(...keys)).map((m) => m.id);
 
@@ -154,8 +209,12 @@ describe('property hub gate', () => {
     assert.equal(gate(list()).length, 0);
   });
 
-  test('an unreachable registry shows every pillar', () => {
-    assert.equal(gate(null).length, PROPERTY_SUBMODULES.length);
+  test('an unreachable registry shows no property pillar', () => {
+    // Property is a service, not a rail that holds a user's money, so it is not
+    // on the allowlist. The hub goes empty rather than advertising verticals an
+    // admin never published; the last known answer (not tested here) is what
+    // covers a genuinely offline device.
+    assert.equal(gate(null).length, 0);
   });
 });
 
@@ -318,8 +377,13 @@ describe('route guard', () => {
     const deep = ['services', 'telemedicine', 'book', 'confirm'];
     assert.equal(blocked(deep, list('wallet')), true, 'unpublished module must block');
     assert.equal(blocked(deep, list('telemedicine')), false, 'published module must pass');
-    // Fail open while the registry is unknown.
-    assert.equal(blocked(deep, null), false, 'unknown registry must not block');
+    // Fail closed while the registry is unknown: a deep link is exactly how an
+    // unpublished vertical got used, because the tile being hidden did not stop
+    // a push notification or a saved link from landing on the screen.
+    assert.equal(blocked(deep, null), true, 'unknown registry must block an allowlist-absent module');
+    // The money rails stay reachable even then, or a fault locks a user out of
+    // their own wallet.
+    assert.equal(blocked(['wallet'], null), false, 'allowlisted module must not block');
   });
 
   test('every label maps to a registered module', () => {
