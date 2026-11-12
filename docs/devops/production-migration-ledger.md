@@ -221,11 +221,15 @@ Re-read after the writes:
   then read **`remote history rows: 669`**, and a later `mode=plan` of my own
   (`43311344252`, `2026-11-12T21:33Z`) reads **`670`**. The count this ledger
   carries is **670**; it supersedes §3.4's 667 and the 669 that §2.5 first quoted.
-- The same lane kept writing after that: `43308955575` (`21:18:30Z`,
-  `versions="20271410000000"`, read 669) and `43309595782` (`21:22:19Z`, same
-  version, read 669 before and printed `local migrations still without a history
-  row: 84` after) — so `20271410000000` is recorded on production now, applied by
-  another session, and prod's pending at that tree is 84.
+- The same lane then touched `20271410000000` twice more, and only one of those two
+  wrote: `43308955575` (`21:18:30Z`) was a **`mode=plan`** run of
+  `versions="20271410000000"` that read `remote history rows: 669`, printed
+  `20271410000000: not recorded` and mutated nothing; `43309595782` (`21:22:19Z`)
+  was the **`mode=apply`** run of that same version, which read 669 and `not
+  recorded` before applying and then printed `local migrations still without a
+  history row: 84` in its post-apply "Verify history rows and remaining pending"
+  step. So `20271410000000` is recorded on production because of `43309595782`,
+  applied by another session, and prod's pending at that tree is 84.
 - An earlier batch that tried to carry `20271408000100` and `20271410000000`
   together (`43308617765`, `21:16:29Z`) **failed at the additive re-check** on the
   former — `##[error]20271408000100_module_readiness.sql is not additive-only` —
@@ -252,27 +256,36 @@ without their code, because #996 and #997 are out of this cutover by ruling R9.
 Consequences that Tasks 4, 6 and 11 must carry, not discover:
 
 1. `supabase db push`-style replay of the pinned tree can never reproduce prod's
-   history exactly — a Task 4 fresh-DB replay ends at 668 recorded versions where
-   prod holds 670. The two-version diff is named, not unknown: it is exactly the
-   two files above.
+   history exactly. The two trees' file sets differ by three versions
+   (`20271408000100`, `20271409000000`, `20271410000000`), and two of those three
+   are recorded on prod while the third is not — so a Task 4 fresh-DB replay from
+   the pin writes **751** history rows, prod holds **670**, and the overlap is
+   **668**. Those three numbers, not one, are the divergence: the replay cannot
+   reach 670 (it has no file for `20271409000000`/`20271410000000`), and prod
+   cannot reach 751 (83 of the pin's files are still unapplied there). What the
+   replay *does* prove is that the 668 shared versions replay cleanly.
 2. Production's max applied is now `20271410000000`, above every file at the pin
    (whose highest is `20271408000000`, itself now applied). So the §3.4 below-max
    hazard is total: measured in §2.5, **all** remaining pending files at the pin
    sort below prod's max applied. §2.5 states what does and does not follow from
    that.
-3. **Pending at the pin = 83**, closed two ways. The lane's own SQL gives 84 at
-   the `3654f6b3f` tree against 670 rows and 754 files, and `754 − 670 = 84`
-   closes — which proves every recorded version has a file in that tree, so the
-   only versions missing from the pin's tree are among its three extra files. Two
+3. **Pending at the pin = 83**, closed two ways. The `mode=apply` run
+   `43309595782` printed `local migrations still without a history row: 84` in its
+   post-apply verify step, at the `3654f6b3f` tree, and my `mode=plan` read
+   `43311344252` subsequently measured `remote history rows: 670` — with **754**
+   files in that tree, `754 − 670 = 84` closes. That closure proves every recorded
+   version has a file in that tree, so the only versions missing from the pin's
+   tree are among its three absent files. Two
    of those three are recorded; `20271408000100` is not, because the only two runs
    that ever carried it (`43308617765`, `43311601255`) both died at the additive
    re-check before any write, and no other apply run names it. So
    `751 − (670 − 2) = 83`, and `84 − 1` (the still-pending `module_readiness`)
    agrees. Batches: `ceil(83 / 12) = 7`.
 4. **Prod is a moving number, and this section is already a snapshot.** The chain
-   this evening is `667 → 669 → 670`, each step a different session's write, with
-   my own two reads (`43311344252`, `43311601255`) landing inside eleven minutes of
-   the last apply. Any task quoting a count must re-read, not quote here:
+   this evening is `667 → 669 → 670`, each step a different session's write
+   (`43301433055`, then `43309595782`), with my own successful count read
+   (`43311344252`) landing inside eleven minutes of the last apply. Any task
+   quoting a count must re-read, not quote here:
 
    ```bash
    gh workflow run ops-db-push-scoped.yml --repo paymax2022/spotlight-latest1 \
@@ -284,8 +297,12 @@ Consequences that Tasks 4, 6 and 11 must carry, not discover:
 
    One trap in that command, learned the hard way in the run above: **`mode=plan`
    is gated by the same additive re-check as `mode=apply`** — dispatching
-   `versions="20271408000100"` failed at step 7 rather than answering whether the
-   version is recorded. So a version the gate blocks cannot be *inspected* through
+   `versions="20271408000100"` failed at step 7 (`Re-check every selected file is
+   additive-only`, the only mode-independent step in the job) rather than answering
+   whether the version is recorded. Verified from that run's log: it contains **no**
+   `remote history rows:` line at all, because the re-check aborts the job before
+   the read-only history step runs. So a version the gate blocks cannot be
+   *inspected* through
    this lane either, and the only probe that works is a version you already know is
    clean. Ask for a blocked version's state from a `mode=list` capture or from
    psql, not from `mode=plan`.
@@ -376,7 +393,9 @@ difference between the two table reads is the four days between them
 (663 → 667), not two answers to one question. **Target:** 0 pending.
 
 > **Superseded 2026-11-12 evening — read §1.4 and §2.5 before quoting any number
-> on this line.** Production has moved again: `remote history rows` is now **669**,
+> on this line.** Production has moved again: `remote history rows` is **670**
+> (the `mode=plan` read `43311344252` at 21:33Z, after the `43309595782` apply
+> took it from 669),
 > the pinned tree holds **751** files, and pending at the pin is **83**, not ≈83
 > and not 87. The two figures captured here (667 rows on 750 files; 663 rows on
 > 751 files) are each internally consistent for their own date, and the "83" and
@@ -911,7 +930,9 @@ awk -F'|' '/`20[0-9]{12}`[ ]*\|/ { v = $2; gsub(/[` ]/, "", v); if (v ~ /^20[0-9
 - **Observed:** `remote history rows: 667` on 2026-11-12 — identical to §3.4's
   2026-11-11 read, so prod's history had not moved in that day. **That inference
   did not survive the evening:** §1.4 records two more versions recorded at
-  20:34:16–17Z and a fresh `mode=plan` read of **669** at 20:44:51Z. What the
+  20:33:13–20:34:21Z and a fresh `mode=plan` read of **669** at 20:44:51Z, and the
+  evening did not stop there — `43309595782` applied `20271410000000` at 21:22:19Z
+  and `43311344252` read **670** at 21:33Z. What the
   663-vs-667 reconciliation establishes still holds on its own terms — the gap is
   the date difference, not hidden applied-versions-without-files — but "has not
   moved" was a claim about a quiet system, and this system is not quiet.
@@ -955,15 +976,33 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
   **not** move (18 → 18).
 - **Batch implication for Task 6 — and why every count in this paragraph must be
   re-read, never quoted.** Production has moved twice since the 2026-11-07 table
-  this classifier read, and it is still moving while this plan is executed. The
-  applies observable from this machine: a concurrent session ran
-  `ops-db-push-scoped.yml` in `mode=apply` (run `43301433055`,
-  2026-11-12T20:34:16–17Z, head `3654f6b3f`) and recorded `20271408000000` +
-  `20271409000000`; `mode=plan` on production (run `43303287939`,
-  2026-11-12T20:44:51Z) then measured **`remote history rows: 669`**; a third apply
-  landed `20271410000000` and `mode=plan` in run `43311601255` measured
-  **`remote history rows: 670`**. So the chain is `667 → 669 → 670`, and the §3.4
-  figure of 667 is superseded twice over.
+  this classifier read, and it is still moving while this plan is executed. Every
+  number below is attributed to the one step that printed it, because the two
+  count-printing steps in that lane are not equivalent: `Prove the connection and
+  read history state` (`:169`) runs in both modes and reads the count *before* any
+  write, while `Verify history rows and remaining pending` (`:270-271`) is gated
+  `if: ${{ always() && inputs.mode == 'apply' }}` and therefore prints the pending
+  figure only *after* an apply. A `mode=plan` run cannot supply a pending count at
+  all. The observed chain, run by run:
+
+  - `43301433055` — `mode=apply`, head `3654f6b3f`, started 20:33:13Z, finished
+    20:34:21Z: recorded `20271408000000` + `20271409000000`; `remote history rows:
+    667` before, `local migrations still without a history row: 85` after.
+  - `43303287939` — `mode=plan`, 20:44:51Z: `remote history rows: 669`.
+  - `43308955575` — `mode=plan`, 21:18:30Z: `remote history rows: 669`, and
+    `20271410000000: not recorded`. **Wrote nothing** (plan mode).
+  - `43309595782` — `mode=apply`, 21:22:19Z: 669 before, applied
+    `20271410000000`, then `local migrations still without a history row: 84`.
+    **This is the run that moved prod to 670.**
+  - `43311344252` — `mode=plan`, 21:33Z: `remote history rows: 670`, and
+    `20271410000000: RECORDED on remote` — the read that confirms the apply landed.
+  - `43311601255` — `mode=plan`, started 21:34:35Z, **failure** at step 7 at
+    21:34:54Z (additive
+    re-check of `20271408000100`): its log contains no count line whatsoever, so
+    it is evidence only that the gate fires in plan mode (§1.4).
+
+  So the chain is `667 → 669 → 670`, and the §3.4 figure of 667 is superseded twice
+  over.
 
   Re-running the classifier over the *same pin tree*, adding the three versions
   named above to the applied set, gives the shape it prints today (measured,
@@ -983,9 +1022,12 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
      applies between 2026-11-07 and the 2026-11-11 read that reported 667, and their
      identities exist only in prod's history table. Hence `recorded: 666` and 87
      enumerable pending rows describe what a stale capture *can* list, not what is
-     pending. The true count comes from the lane's own SQL instead: `mode=plan`
-     measured `remote history rows: 670` and `local migrations still without a
-     history row: 84` against the `3654f6b3f` tree, which holds **754** files, and
+     pending. The true count comes from those two steps instead, each from the run
+     that legitimately printed it: the post-apply verify step of `43309595782`
+     gives `local migrations still without a history row: 84` against the
+     `3654f6b3f` tree, and the read-only history step of `mode=plan` run
+     `43311344252` gives `remote history rows: 670`. That tree holds **754** files
+     and
      `754 − 670 = 84` closes — meaning every recorded version has a file in that
      tree. The pin lacks exactly **3** of those 754 files, all three newer than the
      pin's own head (`comm -23` of the two `git ls-tree` sets):
@@ -1105,18 +1147,40 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
   (`mode` / `versions` / `confirm`, no force flag) and the ungated `:142` re-check
   that also fires in `mode=plan` shows R10's "the reviewer decides per case" cannot
   be executed as stated: there is nothing for the reviewer to approve *through*.
-  The four versions therefore have exactly three routes, and choosing among them is
-  **a user decision, not a ruling this task may make**, because two of the three
-  cross an R2 boundary and the third changes the plan's declared scope:
+  Four routes exist, and choosing among them is
+  **a user decision, not a ruling this task may make**: routes 1 and 2 both perform
+  a production write that R2 reserves for the human (and route 1 additionally needs
+  a credential this machine does not hold), route 3 edits a safety gate the owner has
+  a standing position on, and route 4 narrows the plan's declared scope.
 
-  1. **Apply them with the `Production`-environment lane**
-     (`ops-db-push.yml mode=push`, 2 required reviewers). This is the route the repo
-     already has for non-additive DDL, and it is the only one that actually lands
-     the four. Cost: `mode=push` runs `db push --linked --include-all`, which at any
+  1. **The documented host run, one file at a time** —
+     `scripts/db/reconcile-pending.sh --db-url "$PROD_URL" --apply-one <version>
+     --yes`, which is §5.3 of `docs/devops/academy-prod-migration-set.md:232-235`
+     ("Same four commands with `--db-url \"$PROD_URL\"`, in order, stopping on the
+     first failure") and the `--apply-one` recipe in
+     `docs/devops/cloud-migration-reconciliation-runbook.md:138-141`. Verified in
+     the script itself: `--apply-one` (`:35`, `:41`) guards only on `--yes`, runs
+     the file through `psql "$DBURL" -1 -v ON_ERROR_STOP=1` (`:58`) and then books
+     history with `supabase migration repair --status applied` (`:60`) — and there
+     is **no additive regex anywhere in `reconcile-pending.sh`**, so none of the
+     four is blocked
+     here and no 83-file sweep is needed. This is the only route that lands all
+     four *scoped*, which is why the ledger now lists it first. Its cost is the
+     opposite kind: it is unguarded by construction (that is the point of the
+     lane's grep), it runs as a human with the production DSN in hand, and **no
+     production DSN exists on this machine** — `backend/.env` in the live repo
+     resolves to `localhost`, `frontend-web/.env.local` to `127.0.0.1:54321/54324`,
+     there is no root `.env`, `~/.supabase` holds only `telemetry.json`, and
+     `supabase/.temp` does not exist — so this route requires the owner to supply
+     the session-pooler URL, which is an R2 credential action.
+  2. **Apply them with the `Production`-environment lane**
+     (`ops-db-push.yml mode=push`, 2 required reviewers). This is the automated
+     route the repo already has for non-additive DDL. Cost: `mode=push` runs
+     `db push --linked --include-all` (`ops-db-push.yml:136`), which at any
      current head is a sweep of *everything* pending (83 files at the pin, §2.5) —
      not these four — and it needs two named humans to approve.
-  2. **Amend `ops-db-push-scoped.yml:152`** so the reject set permits the
-     idempotent re-create forms it currently swallows by accident — concretely
+  3. **Amend `ops-db-push-scoped.yml:152`** so the reject set stops treating the
+     idempotent drop-and-recreate form as destructive — concretely
      `alter[[:space:]]+table[^;]*drop[[:space:]]+constraint[^;]*if[[:space:]]+exists`
      — and keep `DROP NOT NULL` rejected. That would unblock `20271099000020` only.
      Measured, not asserted: piping each pending file through the lane's reject
@@ -1124,7 +1188,7 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
      count only for `20271099000020` (4 → 0); the other three stay at 1, because
      `20271099000010` and `20271401000000` are blocked by a `DROP NOT NULL` and
      `20271200000064` by a `DROP CONSTRAINT` built through `format(...)` with no
-     `IF EXISTS`. So route 2 unblocks one of four and cannot carry Task 6 alone.
+     `IF EXISTS`. So route 3 unblocks one of four and cannot carry Task 6 alone.
      It weakens the only gate standing between a reviewer-less lane and production,
      so it is a policy change, not a fix: **and project memory records the owner's
      standing position against exactly this** — *"Do not reformat DDL or add a lane
@@ -1134,33 +1198,38 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
      (grepped for `reformat` / `add a lane` / `human gate` across `docs/devops/` and
      the lane — zero hits), so the user must confirm or overrule it rather than
      being quoted back to themselves.
-  3. **Declare the four out of Task 6's scope** and ship the other 79, documenting
+  4. **Declare the four out of Task 6's scope** and ship the other 79, documenting
      the residual as a known prod/staging schema divergence. Each blocked file
      widens a constraint, so prod *stricter than staging* is a live failure mode —
      read from the files, not inferred:
      `20271099000010` drops `NOT NULL` on `election_votes.candidate_id`, which is
-     what makes an abstention row writable (`:50`, after the `:46` guard proving the
-     registry no longer needs it);
+     what makes an abstention row writable (`:50`; the completeness guard that must
+     pass first is the `NOT EXISTS` at `:47`, whose `WHERE` clause is `:46`);
      `20271099000020` replaces three `elections` CHECKs (`:43/:48/:56`, each
      re-`ADD CONSTRAINT`d on the following line) and, at `:201`, drops
      `election_votes_election_id_voter_id_key` in favour of two **partial** unique
      indexes (`:202-205`), i.e. one vote per voter *or* per unit — without it prod
      rejects the second ballot;
      `20271200000064` re-writes `crypto_swap_orders_status_check` to add
-     `'executing'` to the value list (`:48`), so prod without it rejects a swap in
-     flight;
+     `'executing'` to the value list (`ADD CONSTRAINT` at `:46`, the widened list
+     at `:47`), so prod without it rejects a swap in flight;
      `20271401000000` drops `NOT NULL` on `driver_documents.file_url` (`:20`) and
-     replaces the `doc_type` CHECK on the next statement.
+     replaces the `doc_type` CHECK on the next statement (`:22-24`).
      So this route is only safe while every surface those four touch stays
      flag-off — voting abstentions, crypto swaps, driver documents — which is Task
-     7's and Task 10's job, and makes route 3 admissible as a *sequenced* choice
+     7's and Task 10's job, and makes route 4 admissible as a *sequenced* choice
      rather than a shrug.
 
-  There is also a fourth thing the lane's own history already does: **split around
-  the blocked version.** Runs `43308617765` (`versions="20271408000100
-  20271410000000"`) failed while `43308955575` and `43309595782`
-  (`versions="20271410000000"`) succeeded minutes later, so another session today
-  got its clean version applied by dropping the blocked one from the batch. That is
+  Separately from those four routes, and not a substitute for choosing one, the
+  lane's own history today shows a batch-construction rule Task 6 must adopt:
+  **split around the blocked version.** `43308617765`
+  (`mode=plan`, `versions="20271408000100 20271410000000"`, started 21:16:29Z)
+  failed at the
+  re-check — its dry run caught the gate before any write — and the same session
+  then dispatched the clean version alone: `43308955575`
+  (`mode=plan`) to see its state and `43309595782` (`mode=apply`) to write it,
+  both of which succeeded minutes later. So another session today got its clean
+  version applied by dropping the blocked one from the batch. That is
   a *deferral mechanism*, not a remedy — it leaves the blocked file pending forever
   — but it is the pattern Task 6 must use so the 79 clean files are never held
   hostage to 4 blocked ones. Batches should therefore be built from a fresh capture
