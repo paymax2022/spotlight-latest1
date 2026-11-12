@@ -53,7 +53,7 @@ export default function DoctorProfileScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <View style={[styles.headCard, shadow1]}>
-          <DoctorAvatar initials={doctor.initials} color={doctor.avatarColor} size={84} online={doctor.isOnline} />
+          <DoctorAvatar initials={doctor.initials} color={doctor.avatarColor} size={84} online={doctor.isOnline} uri={doctor.photoUri} />
           <Text style={styles.name}>{doctor.name}</Text>
           <Text style={styles.title}>{doctor.title}</Text>
           <Text style={styles.specialties}>{doctor.specialties.join(' • ')}</Text>
