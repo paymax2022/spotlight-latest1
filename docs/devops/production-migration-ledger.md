@@ -200,6 +200,65 @@ Two rules follow, and Task 2 as well as Tasks 4/11/12/14 must obey them:
   count gains a recorded version and §3.5's pending/back-dated split changes.
   Task 2 must not classify against a stale capture.
 
+### 1.4 That rule fired during Task 2 — by a different door (2026-11-12, evening)
+
+Both halves of the rule above triggered, and the parked run was **not** the cause.
+Re-read after the writes:
+
+- `43279570280` (`db-migrate.yml`, push, `648d7bca9`) is now
+  **completed / cancelled** — someone declined it, so the `DB Migrate` lane never
+  wrote prod. §1.3's "do not approve it on someone else's behalf" needed no
+  action from this plan.
+- Production nevertheless gained `20271408000000` **and**
+  `20271409000000`, through the writer that needs no reviewer:
+  `ops-db-push-scoped.yml`, run **`43301433055`** (`workflow_dispatch`,
+  head `3654f6b3f`, `2026-11-12T20:33:13Z`, `mode=apply`,
+  `versions="20271408000000 20271409000000"`, typed confirm present, concluded
+  `success`). Its own SQL read `remote history rows: 667` before applying and
+  printed `local migrations still without a history row: 85` afterwards, at the
+  `3654f6b3f` tree — **754** migration files, three more than the pin.
+- `mode=plan` against production, run **`43303287939`** (`2026-11-12T20:44:51Z`),
+  then read **`remote history rows: 669`**. That is the authoritative prod row
+  count for this ledger, and it supersedes §3.4's 667.
+- `origin/main` moved again in the same window: tip is now **`3654f6b3f`**
+  (`2026-11-12 21:20:36 +0100`, `feat(modules): readiness axis for the admin
+  portal and production (#996)`), whose tree adds
+  `20271408000100_module_readiness.sql` and
+  `20271410000000_module_registry_add_ungated_surfaces.sql` to the three-way
+  delta already recorded in §1.3.
+
+**What this does to the pin, stated plainly.** The pin is not moved by it —
+§1.3's freeze holds, and no task gets to re-pick on the strength of a write it
+did not make. But prod's schema is now **one version ahead of the pinned tree**:
+`20271409000000_preconsult_intake_telemedicine_plane.sql` is recorded in
+production's history and does not exist at `c49b39564`. This is the reverse of
+the drift §1.3 warned about (code shipped without its migration): here the
+migration ran without its code, because #997 is out of this cutover by ruling R9.
+Consequences that Tasks 4, 6 and 11 must carry, not discover:
+
+1. `supabase db push`-style replay of the pinned tree can never reproduce prod's
+   history exactly — a Task 4 fresh-DB replay ends at 668 recorded versions where
+   prod holds 669. The diff is named, not unknown, and it is this one version.
+2. That version became production's **max applied**, and it is higher than every
+   file at the pin (highest `20271408000000`, now also applied). So the §3.4
+   below-max hazard is total: measured in §2.5, **all** remaining pending files
+   at the pin sort below prod's max applied. This is the single strongest
+   argument in this ledger for the scoped lane being the only prod writer.
+3. `754 − 669 = 85`, measured by the lane's own SQL, is what pins down §2.5's
+   count: every recorded version has a file in the `3654f6b3f` tree, so at the
+   pin exactly one recorded version (`20271409000000`) has none. Pending at the
+   pin is therefore **83**, arithmetic that no longer needs a fresh capture to
+   bound — only to *enumerate*, which still does, because four recorded versions
+   are not named by any table this plan holds.
+4. A third `ops-db-push-scoped.yml` run was in flight while this section was
+   written — `43308617765`, dispatched `2026-11-12T21:16:29Z` at the same head,
+   `versions="20271408000100 20271410000000"`. It **concluded `failure` at
+   21:16:57Z at the additive re-check** (`##[error]20271408000100_module_readiness.sql
+   is not additive-only`), so it wrote nothing and prod stays at 669. §2.6 cites
+   that run as today's evidence that the gate still bites on live work. Prod's
+   count is nevertheless a moving number while other sessions hold that lane, and
+   **any task quoting it must re-read rather than quote this section.**
+
 ---
 
 ## 2. What Task 1 re-measured, and what it could not
@@ -284,6 +343,15 @@ prints **663** applied rows — the classifier instead prints **87 pending = 69
 above-max additive + 18 below-max additive + 0 NON-ADDITIVE**; the 4-version
 difference between the two table reads is the four days between them
 (663 → 667), not two answers to one question. **Target:** 0 pending.
+
+> **Superseded 2026-11-12 evening — read §1.4 and §2.5 before quoting any number
+> on this line.** Production has moved again: `remote history rows` is now **669**,
+> the pinned tree holds **751** files, and pending at the pin is **83**, not ≈83
+> and not 87. The two figures captured here (667 rows on 750 files; 663 rows on
+> 751 files) are each internally consistent for their own date, and the "83" and
+> "87" they imply are *different quantities measured against the same stale
+> pairing* — the 69/18 above-max/below-max split in particular is now 0/87, so do
+> not carry it forward.
 
 > Task 16 note, found while attributing the 663: plan line 310 describes this
 > run as "`42367077299`'s successor at that date", but `42367077299` **is** the
@@ -801,7 +869,12 @@ awk -F'|' '/`20[0-9]{12}`[ ]*\|/ { v = $2; gsub(/[` ]/, "", v); if (v ~ /^20[0-9
   date" is that very run.
 - **Probe (psql-side count, no-reviewer lane):** `gh run view 43299979306 --log | grep -oE 'remote history rows: [0-9]+'`
 - **Observed:** `remote history rows: 667` on 2026-11-12 — identical to §3.4's
-  2026-11-11 read, so prod's history has not moved in a day.
+  2026-11-11 read, so prod's history had not moved in that day. **That inference
+  did not survive the evening:** §1.4 records two more versions recorded at
+  20:34:16–17Z and a fresh `mode=plan` read of **669** at 20:44:51Z. What the
+  663-vs-667 reconciliation establishes still holds on its own terms — the gap is
+  the date difference, not hidden applied-versions-without-files — but "has not
+  moved" was a claim about a quiet system, and this system is not quiet.
 - **Reconciliation:** 667 (psql, today) − 663 (table, 2026-11-07) = **4**, and the
   four are accounted for by the date gap §3.4 already records (663 → 667), not by
   hidden applied-versions-without-files. A same-date comparison is **not** available:
@@ -840,16 +913,59 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
   exactly `20271408000000_preconsult_intake_schema_ui.sql` (above-max, additive),
   the file §3.4's arithmetic trap predicted the pin adds; the `below-max` set did
   **not** move (18 → 18).
-- **Batch implication for Task 6:** `ceil(88 / 12) = 8` batches, so the brief's
-  "≈8 batches, not 7" stands and is now measured rather than estimated. If a fresh
-  prod table reads the 667 rows the scoped lane reports today, the same classifier
-  returns `751 − 667 = 84` pending → `ceil(84 / 12) = 7` batches. **Task 6 must
-  re-run §2.5 against an approved prod read before cutting batches**; the 8 is the
-  upper bound and the 4-file difference is elapsed time, not a contradiction.
+- **Batch implication for Task 6 — and why the 88 is already stale.** Production
+  has moved since the 2026-11-07 table this classifier read. A concurrent session
+  ran `ops-db-push-scoped.yml` in `mode=apply` (run `43301433055`,
+  2026-11-12T20:34:16–17Z, head `3654f6b3f`) and recorded
+  `20271408000000` + `20271409000000`; `mode=plan` on production (run
+  `43303287939`, 2026-11-12T20:44:51Z) then measured **`remote history rows: 669`**,
+  so the §3.4 figure of 667 is also superseded.
+  Re-running the classifier over the *same pin tree* with those two versions added
+  to the applied set gives the current shape (measured, exit 0):
 
-### 2.6 Vocabulary: classifier vs `_reusable-migration-guard.yml:102-104`
+  ```
+  87 pending = 0 above-max + 87 below-max + 0 NON-ADDITIVE
+  -- remote max applied: 20271409000000 | recorded: 665
+  ```
 
-- **Probe:** read both regexes; run each against a relaxation fixture.
+  Three things follow, and the third is the one that changes Task 6's plan:
+
+  1. **The 665 above is not 669, and the gap is now closed exactly.** Production
+     reports 4 more applied versions than any capture held here can name (663 from
+     the 2026-11-07 table + the 2 observed today). Those 4 are applies between
+     2026-11-07 and the 2026-11-11 read that reported 667; their identities exist
+     only in prod's history table, so the 87 printed above is what a stale capture
+     *can* enumerate, not what is pending. The exact count comes from the lane's
+     own SQL instead: it measured `remote history rows: 669` and
+     `local migrations still without a history row: 85` against the `3654f6b3f`
+     tree, which holds **754** files, and `754 − 669 = 85` closes — meaning every
+     recorded version has a file in that tree. The pin lacks exactly one of those
+     (`20271409000000`; verified absent from `c49b39564`), so
+     **pending at the pin = `751 − (669 − 1) = 83`**, two independent routes
+     agreeing. What the fresh `mode=list` read is still needed for is
+     *enumeration*, not the count: 4 of those 669 recorded versions cannot be named
+     from any table this plan holds, so the 83 cannot be listed locally, and the
+     run that would name them is parked on the `Production` reviewers (run
+     `43299959109`) — a human action, not one this task may take.
+  2. **Batch count is `ceil(83 / 12) = 7`.** That supersedes both the brief's "≈8"
+     and an earlier line of this ledger, which subtracted 667 from 751: §3.4 forbids
+     that subtraction because 751 is the pin's file count while 667 was production's
+     row count on a different commit, so the difference mixes two trees. It happened
+     to be close (84) and is still wrong by 1.
+  3. **Every pending file now sorts below production's max applied version.** The
+     highest pending file at the pin is `20271407000000_reality_show_season_two.sql`
+     (measured); `20271408000000` — the pin's own highest file — is itself applied
+     now, and prod's max applied is `20271409000000`, which has no file at the pin.
+     `above-max` has gone from 70 to **0**, so a bare `supabase db push` at the pin
+     would apply **nothing at all** — not "some of the backlog", none. This is the
+     §3.4 hazard in its total form, and it is the reason Task 6 uses only the scoped
+     lane's `--apply-one`-by-name and must re-derive its batches from a fresh
+     capture, never from this paragraph.
+
+### 2.6 Vocabulary: classifier, `_reusable-migration-guard.yml:102-104`, `ops-db-push-scoped.yml:152`
+
+- **Probe:** read all three regexes; run the guard's and the classifier's against a
+  relaxation fixture, and run each of the three against the full pending set.
 - **Observed:** the guard's `DESTRUCTIVE` covers
   `drop (table|column|type|schema|database)`, `alter <token> drop`,
   `rename (column|to)`; `ALLOW` is the identical object-kind set
@@ -862,19 +978,79 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
   `TRUNCATE TABLE x` **1/0**, `SET NOT NULL` **1/0**,
   `DROP POLICY IF EXISTS` 0/0, a plpgsql function body 0/0
   (classifier hits/guard hits).
-- **Shared blind spot, recorded not fixed:** `ALTER TABLE x DROP CONSTRAINT y` and
-  `ALTER TABLE c ALTER COLUMN d DROP NOT NULL` score **0 for both** patterns, because
+- **Three vocabularies, not two — and the strictest one is the prod writer.**
+  `ALTER TABLE x DROP CONSTRAINT y` and `ALTER TABLE c ALTER COLUMN d DROP NOT NULL`
+  score **0 for both** the guard and the classifier, because
   `alter[[:space:]]+[a-z0-9_."]+[[:space:]]+drop` cannot match a three-token form —
-  `[a-z0-9_."]+` will not span `TABLE x`. The plan's constraint text forbids
-  `ALTER … DROP` outright, so on that literal wording both tools under-enforce. The
-  guard workflow stays the source of truth and neither regex was rewritten here;
-  the practical exposure is bounded because `DROP COLUMN` (the only truly
-  schema-losing variant) *is* caught by both.
+  `[a-z0-9_."]+` will not span `TABLE x`. But `ops-db-push-scoped.yml:152`, the
+  gate the only production writer in this plan runs before it applies anything,
+  adds `alter[[:space:]]+table[^;]*drop`, and `[^;]*` *does* span those tokens.
+  Measured against the 88 pending files: guard fails 0, classifier prints
+  `NON-ADDITIVE=0`, **the scoped lane refuses 4**:
+
+  | version | line | statement the lane rejects |
+  | --- | --- | --- |
+  | `20271099000010` | :50 | `ALTER TABLE election_votes ALTER COLUMN candidate_id DROP NOT NULL` |
+  | `20271099000020` | :43, :48, :56, :201 | `ALTER TABLE … DROP CONSTRAINT IF EXISTS …` (×4) |
+  | `20271200000064` | :37 | `EXECUTE format('ALTER TABLE public.crypto_swap_orders DROP CONSTRAINT %I', c.conname)` |
+  | `20271401000000` | :20 | `ALTER TABLE public.driver_documents ALTER COLUMN file_url DROP NOT NULL` |
+
+  All four are still pending after the 2026-11-12 concurrent apply, so they are in
+  Task 6's path. This is a **planning input, not a stop-event**: the re-check
+  (`:142`) runs before "Apply the selected versions one at a time" (`:227`), so a
+  batch carrying any of these aborts with exit 1 and writes nothing — it fails
+  safe, but it fails, and a batch that fails is a red production run for nothing.
+  Re-runnable probe (from the pin tree, pending list from §2.5):
+
+  ```bash
+  cd /tmp/rel/supabase/migrations
+  cut -d' ' -f3 /tmp/pending.txt | grep '\.sql$' | while read -r f; do
+    bad="$(grep -inE 'drop[[:space:]]+(table|column|schema|database|type|domain|sequence)|truncate[[:space:]]|rename[[:space:]]+(to|column)|alter[[:space:]]+table[^;]*drop' "$f" || true)"
+    [ -n "$bad" ] && { echo "LANE REFUSES $f"; printf '%s\n' "$bad"; done
+  done
+  ```
+
+- **Ruling R10 — do not unify the three regexes; require the batch lists to name
+  the relaxations.** Tightening the guard and classifier to match the lane (adding
+  `drop[[:space:]]+(constraint|default|not[[:space:]]+null|identity)`) would make
+  `NON-ADDITIVE` fire on this backlog, which the plan defines as a stop-event
+  requiring those versions "rewritten as new additive files" — but these four are
+  already applied on staging and already merged, so rewriting their history is not
+  available; the change would block the cutover on a definitional disagreement
+  rather than on a hazard. Loosening the lane to match the guard would weaken the
+  only gate standing between `mode=apply` and production. So the divergence stands,
+  deliberately, and is handled where it bites: **Task 6's per-batch list must carry
+  a `constraint-relax lines in this batch` section produced by the probe above, and
+  any batch containing one of the four versions above is dispatched only after that
+  section has been read** (the reviewer of that batch decides, per case, whether the
+  relaxation is intended — all four here read as drop-and-replace or as deliberate
+  loosening, and none drops a column or a table). Recorded as a ruling, not as a
+  fix: if this plan is ever re-executed against a tree where the four are still
+  pending, the same probe re-derives them.
+- **The divergence is not hypothetical — it fired on live work today.** Run
+  `43308617765` (`ops-db-push-scoped.yml`, dispatched 2026-11-12T21:16:29Z at head
+  `3654f6b3f`, `versions="20271408000100 20271410000000"`) concluded **`failure`**
+  at the additive re-check: `##[error]20271408000100_module_readiness.sql is not
+  additive-only`. Reproduced locally from that commit's copy of the file — `:86`
+  reads `ALTER TABLE public.platform_module_audit DROP CONSTRAINT
+  platform_module_audit_action_check;`, one line, same statement, same shape as
+  the four above. So another session's production write was refused by this gate
+  roughly forty minutes before this paragraph was written, which is also proof the
+  gate holds: it aborted at step `:142`, before `Apply the selected versions one at
+  a time` at `:227`, and prod's row count did not move.
 - Measured on the pin: 55 files contain `DROP CONSTRAINT`/`DROP NOT NULL` and
-  **none** of them trips either regex. That confirms the brief's claim that the four
-  relaxation files an earlier draft flagged are things the repo's own guard
-  allows, and it also bounds it: 7 of today's 88 pending files carry such a line
-  and classify `additive` (0 hits each), consistent with `NON-ADDITIVE=0`.
+  **none** of them trips the guard or the classifier regex. That confirms the brief's
+  claim that the four relaxation files an earlier draft flagged are things the repo's
+  CI guard allows, and it also bounds it: 7 of today's 88 pending files carry such a
+  line and classify `additive` (0 hits each), consistent with `NON-ADDITIVE=0`. The
+  extra 3 of those 7 (no `ALTER TABLE` token on the *same line* as the `DROP` —
+  grep is line-based, so `[^;]*` cannot reach back to the `ALTER TABLE public.x`
+  that opens the statement on an earlier line) are `20271071000000` (:37),
+  `20271099000002` (:6) and `20271400000100` (:7), each a
+  `ALTER TABLE … \n DROP CONSTRAINT …` pair. The lane would accept them. That is
+  the honest limit of the lane's regex: it is the strictest of the three, and it is
+  still defeated by a line break.
+
 - One known over-match, recorded rather than fixed: the three already-applied
   immutability guards (`20270192000000`, `20270217000000`, `20271038000000`)
   contain `BEFORE TRUNCATE ON …`, which this vocabulary would flag as
@@ -882,3 +1058,41 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
   the stop-event does not fire today; if a future pending set includes a
   `BEFORE TRUNCATE` guard, read it as a false positive before rewriting it.
 - **Verdict:** pass.
+
+### 2.7 Dead `--migrations` input: the classifier's own false green (fix round 1)
+
+- **Probe:** run the classifier against three inputs it cannot actually sweep —
+  a `--migrations` path that is not a directory, a directory holding no `.sql`, and
+  a directory holding one unreadable `.sql` — each with a valid `--remote`.
+- **Observed before the fix** (all three, exit **0**):
+
+  ```
+  refusing: nothing. Output was instead
+  pending *.sql *.sql above-max additive
+  -- remote max applied: 20270000000001 | recorded: 1
+  list-pending.sh: line 45: [: *.sql: integer expression expected
+  ```
+
+  With no nullglob the pattern stays literal, so `basename | cut` yields `*.sql` as
+  a "version", `sed` fails, its stderr leaks, `wc -l` counts the empty stream as 0
+  and the file is printed as `additive`. The unreadable case is worse in kind: no
+  garbage row at all, just `pending 20270000000050 20270000000050_x.sql above-max
+  additive` — `sed: Permission denied` swallowed by the load-bearing `|| true`, so
+  a file whose contents the tool never saw is certified clean. That is the exact
+  silence-is-green failure §2.2 was written to eliminate, reintroduced one input
+  over: the applied set was guarded, the tree being swept was not.
+- **Fix:** `[ -d "$MIG" ]`, then a `shopt -s nullglob` array whose count is checked
+  before it is expanded (bash 3.2 on macOS errors on `"${files[@]}"` under `set -u`
+  when empty), then per file `[ -r "$f" ]` and a 14-digit shape check on the version
+  prefix (it feeds the `-lt` ordering), and an assertion that `$hits` is numeric
+  rather than a leaked error string. Every one of these refuses with exit 2.
+- **Observed after the fix:** the same three probes print
+  `refusing: --migrations '…' is not a directory`,
+  `refusing: '…' holds no .sql migration files`,
+  `refusing: cannot read '…'` respectively, each exit 2; `scripts/db/test-list-pending.sh`
+  prints `PASS` (the unreadable case self-skips with a note when the user reads past
+  mode bits, e.g. root).
+- **No regression:** re-running the fixed classifier over the same pin tree and the
+  same 2026-11-07 applied set yields a diff-identical 88-row pending list and the same
+  summary line — the guards fire only on inputs that previously produced garbage.
+- **Verdict:** pass (fix round 1).

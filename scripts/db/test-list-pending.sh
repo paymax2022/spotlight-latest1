@@ -54,4 +54,36 @@ printf '2027-01-01\n' > "$TMP/bad.txt"
 if bash "$LIST" --remote "$TMP/bad.txt" --migrations "$MIG" >/dev/null 2>&1; then
   echo "FAIL: malformed remote line must be refused"; exit 1
 fi
+# A --migrations path that cannot be swept must be REFUSED, not read as
+# "nothing pending". Without the guard the glob stays literal, every file scan
+# fails on it, and the script prints `pending *.sql *.sql above-max additive`
+# with exit 0 — the same silence-is-green bug that motivated this script.
+morc=0
+mosed="$(bash "$LIST" --remote "$TMP/applied.txt" --migrations "$TMP/no_such_dir" 2>&1)" || morc=$?
+[ "$morc" -ne 0 ] || { echo "FAIL: missing --migrations dir must be refused (got exit 0: $mosed)"; exit 1; }
+printf '%s\n' "$mosed" | grep -q '^\*pending' && { echo "FAIL: unexpanded glob leaked a pending row"; exit 1; }
+printf '%s\n' "$mosed" | grep -qF '*.sql' && { echo "FAIL: unexpanded glob leaked a literal *.sql"; exit 1; }
+mkdir -p "$TMP/nomigs"
+norc=0; bash "$LIST" --remote "$TMP/applied.txt" --migrations "$TMP/nomigs" >/dev/null 2>&1 || norc=$?
+[ "$norc" -ne 0 ] || { echo "FAIL: a migrations dir holding no .sql must be refused"; exit 1; }
+# An unreadable file is a refused scan, not an `additive` verdict: sed's failure
+# is swallowed by `|| true`, so hits would otherwise read as zero matches.
+mkdir -p "$TMP/unreadable"
+printf 'DROP TABLE secrets;\n' > "$TMP/unreadable/20270000000050_x.sql"
+chmod 000 "$TMP/unreadable/20270000000050_x.sql"
+if [ ! -r "$TMP/unreadable/20270000000050_x.sql" ]; then
+  urc=0
+  uout="$(bash "$LIST" --remote "$TMP/applied.txt" --migrations "$TMP/unreadable" 2>&1)" || urc=$?
+  chmod 644 "$TMP/unreadable/20270000000050_x.sql"
+  grep -qE '^pending 20270000000050 .* additive' <<<"$uout" && { echo "FAIL: unreadable file reported additive"; exit 1; }
+  [ "$urc" -ne 0 ] || { echo "FAIL: unreadable migration must be refused, got exit 0 ($uout)"; exit 1; }
+else
+  echo "note: unreadable-file case skipped (this user reads past mode bits, e.g. root)"
+fi
+chmod 644 "$TMP/unreadable/20270000000050_x.sql" 2>/dev/null || true
+# A file whose prefix is not a 14-digit version would make the -lt ordering
+# comparison error out mid-sweep, so it is refused rather than guessed at.
+mkdir -p "$TMP/named"; printf 'CREATE TABLE ok (id int);\n' > "$TMP/named/README.sql"
+nrc=0; bash "$LIST" --remote "$TMP/applied.txt" --migrations "$TMP/named" >/dev/null 2>&1 || nrc=$?
+[ "$nrc" -ne 0 ] || { echo "FAIL: a migration with no 14-digit prefix must be refused"; exit 1; }
 echo "PASS"
