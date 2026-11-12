@@ -582,7 +582,7 @@ components:
         DR the merchant wallet → CR the failed-transfer suspense account, and the row
         is written `processing`. Nothing has left the platform until an operator
         settles it (DR suspense → CR provider clearing, row `paid`); a reversal runs
-        the reserve back and marks the row `failed`.
+        the reserve back and marks the row `reversed`.
       properties:
         id: { type: string, format: uuid }
         user_id: { type: string, format: uuid, description: Merchant owner whose wallet was debited. }
@@ -1687,8 +1687,7 @@ paths:
           description: The withdrawal
           content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } }
         '401': { description: Not authenticated }
-        '403': { description: Not this owner's withdrawal }
-        '404': { description: No such withdrawal }
+        '404': { description: 'No such withdrawal — the read is scoped to the caller, so another owner''s id simply is not found (never 403).' }
 
   /admin/withdrawals:
     servers:
@@ -1758,7 +1757,7 @@ paths:
       summary: 'x-admin: reverse a withdrawal — return the funds to the wallet'
       description: >
         Posts the balanced reversal of the reservation (suspense drained, merchant
-        wallet credited back) and marks the row `failed` with `reason`. The merchant
+        wallet credited back) and marks the row `reversed` with `reason`. The merchant
         is made whole exactly once: the reversal is keyed on the withdrawal, and a
         row already settled answers 409 rather than double-moving.
       parameters:
