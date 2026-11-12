@@ -91,7 +91,7 @@ the other.
   has met real traffic, and remember it is mounted on the finance group alone.
 
 Order for a build that newly gates modules (migrations `20271408000100` and
-`20271409000000` do exactly this): apply migrations → publish the intended set from the
+`20271410000000` do exactly this): apply migrations → publish the intended set from the
 console → ship the build. Shipping first leaves the newly registered surfaces hidden.
 
 ## 5. Smoke test (post-deploy, per enabled module)

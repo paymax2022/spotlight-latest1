@@ -196,7 +196,7 @@ var routes = []route{
 //	beneficiaries   — their routes are nested under paths this table cannot attribute
 //	                  unambiguously yet. Left allowed rather than guessed.
 //	marketplace, crypto, academy, filmAcademy, competitions, arena, connect
-//	                — registered in 20271409000000 and hidden from the public builds,
+//	                — registered in 20271410000000 and hidden from the public builds,
 //	                  but deliberately NOT gated here yet. Their prefixes, read off
 //	                  Group() calls: /v1/marketplace, /api/v1/crypto, /api/v1/learn,
 //	                  /api/arena, /api/v1/connect — all outside the finance mount, so

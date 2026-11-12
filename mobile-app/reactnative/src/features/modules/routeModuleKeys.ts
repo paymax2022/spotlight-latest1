@@ -58,7 +58,7 @@ const ROUTE_MODULE_KEYS: { segments: string[]; key: string }[] = [
   { segments: ['events'], key: 'events' },
   { segments: ['fractionalre'], key: 'realtor' },
 
-  // Registered in 20271409000000. Before that these had no registry key at all, so
+  // Registered in 20271410000000. Before that these had no registry key at all, so
   // neither the grid nor the guard could be told about them.
   { segments: ['marketplace'], key: 'marketplace' },
   { segments: ['crypto'], key: 'crypto' },
@@ -138,7 +138,7 @@ export const MODULE_LABELS: Record<string, string> = {
   association: 'Associations',
   events: 'Events',
 
-  // Registered in 20271409000000 — every key the guard and the grids can now name.
+  // Registered in 20271410000000 — every key the guard and the grids can now name.
   marketplace: 'Marketplace',
   crypto: 'Crypto',
   academy: 'Learn',

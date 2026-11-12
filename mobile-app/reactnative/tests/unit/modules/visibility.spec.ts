@@ -123,12 +123,12 @@ describe('service-grid mapping', () => {
     // gate a tile against a module the registry has never heard of, hiding it
     // permanently. 'shopping' is a coming-soon placeholder with no engine and no
     // registry row; 'academy' USED to belong in this list and became a real module
-    // in 20271409000000.
+    // in 20271410000000.
     assert.equal(registryKeyFor('shopping'), null);
     assert.equal(registryKeyFor('definitely-not-a-module'), null);
   });
 
-  test('the seven surfaces registered in 20271409000000 are now gated', () => {
+  test('the seven surfaces registered in 20271410000000 are now gated', () => {
     // These tiles used to ignore the registry completely — publishing or hiding them
     // in the admin portal changed nothing, which is how an unfinished module stayed
     // in the store build.
@@ -213,7 +213,7 @@ describe('property hub gate', () => {
     // property buy/rent marketplace in the other. One shared table would gate the
     // shopping tile on the realtor module — the reason these maps are separate.
     // Both now resolve, to DIFFERENT modules: the shopping tile got its own registry
-    // key in 20271409000000, while the property pillar still follows realtor.
+    // key in 20271410000000, while the property pillar still follows realtor.
     assert.equal(registryKeyFor('marketplace'), 'marketplace');
     assert.equal(propertyRegistryKeyFor('marketplace'), 'realtor');
   });
@@ -243,7 +243,7 @@ describe('property hub gate', () => {
 });
 
 // Mirrors the keys seeded into platform_modules (supabase migrations 20261210000000,
-// generated from frontend-web/src/lib/feature-flags.ts, and 20271409000000, the app
+// generated from frontend-web/src/lib/feature-flags.ts, and 20271410000000, the app
 // surfaces that had no flag). Keep in
 // a module that can never be published, hiding it forever with no error anywhere.
 const REGISTRY_KEYS = new Set([
@@ -373,7 +373,7 @@ describe('route guard', () => {
     }
   });
 
-  test('the surfaces registered in 20271409000000 are now gated by route too', () => {
+  test('the surfaces registered in 20271410000000 are now gated by route too', () => {
     // The guard used to be blind to all seven, so a push notification or a saved
     // link reached screens the admin portal had no power over.
     const gated: [string[], string][] = [

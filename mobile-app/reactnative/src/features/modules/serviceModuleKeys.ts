@@ -38,7 +38,7 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
   events: 'events',
   marketplace: 'marketplace',
 
-  // Registered in 20271409000000. These seven had no registry key at all, so they
+  // Registered in 20271410000000. These seven had no registry key at all, so they
   // were the tiles the fail-closed rule could not reach — the admin portal's
   // publish/hide changed nothing for them.
   crypto: 'crypto',
