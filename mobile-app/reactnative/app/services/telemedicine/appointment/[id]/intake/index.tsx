@@ -22,6 +22,7 @@ import {
 } from '@/features/health/hooks';
 import { presignAttachment, recordAttachment } from '@/features/health/api';
 import { schemaAnswerNames } from '@/features/health/intakeMapping';
+import { resolveObsoletePrebookingRoute } from '@/features/telemedicine/intakeRoute';
 import {
   visibleSteps, validateStep, validatePreConsult, firstUnansweredStepIndex, formatMedList,
 } from '@/features/health/utils';
@@ -37,12 +38,22 @@ import type {
 type Phase = 'wizard' | 'review' | 'redflag' | 'done';
 
 export default function PreConsultIntakeWizard() {
-  const { id, resume, reason } = useLocalSearchParams<{
-    id: string; resume?: string; reason?: string;
+  const { id, resume, reason, doctorId } = useLocalSearchParams<{
+    id: string; resume?: string; reason?: string; doctorId?: string;
   }>();
   const appointmentId = id ?? '';
 
-  const bundleQ = useApptIntake(appointmentId);
+  // A `pre-<doctorId>` link is the pre-booking intake address this wizard used to
+  // be opened with before the intake moved after payment. The id can never be a
+  // real appointment, so the bundle request would 400 and leave the patient on a
+  // "Please try again" whose Retry fails identically. Booking is where an
+  // appointment id comes from, so that is where the link now goes.
+  const obsoleteBooking = useMemo(
+    () => resolveObsoletePrebookingRoute(appointmentId, doctorId),
+    [appointmentId, doctorId],
+  );
+
+  const bundleQ = useApptIntake(obsoleteBooking ? undefined : appointmentId);
   const saveDraft = useSaveApptDraft(appointmentId);
   const submit = useSubmitApptIntake(appointmentId);
 
@@ -67,6 +78,10 @@ export default function PreConsultIntakeWizard() {
   const [attachBusy, setAttachBusy] = useState(false);
   const hydrated = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (obsoleteBooking) router.replace(obsoleteBooking);
+  }, [obsoleteBooking]);
 
   useEffect(() => {
     if (!bundleQ.data) return;
@@ -179,6 +194,14 @@ export default function PreConsultIntakeWizard() {
     setValue(fieldId, next.filter((a) => a.fieldId === fieldId).map((a) => a.storageKey));
   };
 
+  if (obsoleteBooking) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Health intake" />
+        <StateView kind="loading" message="Taking you to booking…" />
+      </SafeAreaView>
+    );
+  }
   if (bundleQ.isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
