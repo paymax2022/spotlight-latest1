@@ -719,3 +719,166 @@ Each task appends a section here, never edits an earlier measurement:
 
 Rows that a task changes state here rather than deleting, so the "before"
 survives for the parity guard in Task 9 and the final doc correction in Task 16.
+
+---
+
+## Task 2 — Authoritative pending-migration list (2026-11-12)
+
+Owns the re-read deferred by §3.4 ("the **667** history-row count needs a
+Supabase production read") and §3.5 ("Task 2 Step 6 produces the authoritative
+pending set"). Tool: `scripts/db/list-pending.sh` + `scripts/db/test-list-pending.sh`,
+both added this task, plus a `pending-list` Makefile target.
+
+### 2.1 The classifier and its test (TDD order)
+
+- **Probe:** `bash scripts/db/test-list-pending.sh` (run *before* the classifier existed)
+- **Observed:** `bash: /tmp/spot-cutover/scripts/db/list-pending.sh: No such file or directory`
+  then `FAIL: drop not flagged`, exit 1 — i.e. it failed on the assertion, not
+  silently, which is the point of the `|| true` on the capture line.
+- **Probe:** `bash scripts/db/test-list-pending.sh` (after writing the classifier)
+- **Observed:** stdout `PASS`, stderr 0 bytes, exit 0.
+- **Verdict:** pass
+
+### 2.2 The refusal cases, each proven outside the test harness
+
+Migrations dir = the branch's own `supabase/migrations`.
+
+```bash
+: > /tmp/empty_refuse.txt
+bash scripts/db/list-pending.sh --remote /tmp/empty_refuse.txt --migrations supabase/migrations
+# (a table whose every row is LOCAL-ONLY, i.e. Remote = ` `)
+bash scripts/db/list-pending.sh --remote-table /tmp/alllocal_table.txt --migrations supabase/migrations
+printf '2027-01-01\n' > /tmp/badline.txt
+bash scripts/db/list-pending.sh --remote /tmp/badline.txt --migrations supabase/migrations
+bash scripts/db/list-pending.sh --migrations supabase/migrations
+```
+
+- **Observed:** `refusing: remote version list is missing or empty` rc=2;
+  `refusing: remote version list is missing or empty` rc=2 (the all-local-only
+  table parses to zero applied); `refusing: remote list holds a non-14-digit line`
+  rc=2; `refusing: no remote state given` rc=2. `make pending-list` with no
+  variables also refuses with rc=2, so the target cannot false-green either.
+- **Verdict:** pass — all four false-green paths exit non-zero.
+
+### 2.3 Step 5 dispatches (read-only `mode=list`; no writer, no approval given)
+
+```bash
+gh workflow run ops-db-push.yml --repo paymax2022/spotlight-latest1 -f environment=staging -f mode=list
+gh workflow run ops-db-push.yml --repo paymax2022/spotlight-latest1 -f environment=production -f mode=list
+gh workflow run ops-db-push-scoped.yml --repo paymax2022/spotlight-latest1 -f mode=plan -f versions=20271408000000
+```
+
+- **Observed:** run **`43299937814`** (`Ops DB Push (manual)`, job
+  `supabase list (staging)`) `completed/success`; run **`43299959109`**
+  (`Ops DB Push (manual)`, job `supabase list (production)`) **`waiting`** — it is
+  parked on the `Production` required-reviewer gate and was **left parked**; no
+  `gh run approve` was run and none is recorded here, because no reviewer was
+  asked. Run **`43299979306`** (`Ops DB Push (scoped)`, environment
+  `production-db-scoped`, no reviewers) `completed/success`. All three at
+  headSha `3654f6b3f` (the default branch, which still carries the two capture
+  steps at `ops-db-push.yml:131` and `:146`).
+- **Verdict:** deferred-to-a-human for the fresh prod table; prod numbers below
+  come from the newest *successful* prod table that already exists.
+
+### 2.4 The prod table actually classified, and its reconciliation
+
+`42367077299` (`Ops DB Push (manual)`, `workflow_dispatch`, success,
+2026-11-07T11:10:47Z, headSha `87b25a8ab`) — **five days stale as of this writing**.
+
+```bash
+gh run view 42367077299 --repo paymax2022/spotlight-latest1 --log \
+  | awk -F'\t' '$2 == "Migration list (before)"' > /tmp/prod_table.txt
+grep -c '|' /tmp/prod_table.txt
+awk -F'|' '/`20[0-9]{12}`[ ]*\|/ { v = $2; gsub(/[` ]/, "", v); if (v ~ /^20[0-9]{12}$/) print v }' \
+  /tmp/prod_table.txt | sort -u | wc -l
+```
+
+- **Observed:** 771 captured lines, 0 `UNKNOWN STEP`, 753 lines carrying a `|`;
+  **663** applied versions parsed from column 2; **86** rows with an empty
+  `Remote` cell (LOCAL-ONLY); **749** lines carrying a version token.
+  This reproduces the plan's 663 / 86 / 749 triple from **one** run, which also
+  settles §3.4's Task 16 note: plan line 310's "`42367077299`'s successor at that
+  date" is that very run.
+- **Probe (psql-side count, no-reviewer lane):** `gh run view 43299979306 --log | grep -oE 'remote history rows: [0-9]+'`
+- **Observed:** `remote history rows: 667` on 2026-11-12 — identical to §3.4's
+  2026-11-11 read, so prod's history has not moved in a day.
+- **Reconciliation:** 667 (psql, today) − 663 (table, 2026-11-07) = **4**, and the
+  four are accounted for by the date gap §3.4 already records (663 → 667), not by
+  hidden applied-versions-without-files. A same-date comparison is **not** available:
+  it needs the parked run above approved. The "0 rows with a blank `Local`" claim
+  in the plan holds on this capture (753 pipe-lines = 749 + header + separator +
+  2 banner lines; every version line has a filled `Local`).
+- **Verdict:** pass with a named caveat (stale source table).
+
+### 2.5 Step 6 — the classifier against the release tree (R7 form)
+
+`scripts/db/list-pending.sh` does not exist at `c49b39564` (that tree's
+`scripts/db/` holds only `classify-pending-migrations.sh` and
+`reconcile-pending.sh`), so the plan's `cd /tmp/rel && bash scripts/db/list-pending.sh`
+cannot run. Command actually used — classifier from the cutover branch, migration
+**files** from the pin:
+
+```bash
+git -c advice.detachedHead=false worktree add --detach /tmp/rel "$(cat /tmp/RELEASE_SHA)"
+FILES=$(ls /tmp/rel/supabase/migrations/*.sql | wc -l | tr -d ' ')
+bash /tmp/spot-cutover/scripts/db/list-pending.sh \
+  --remote-table /tmp/prod_table.txt --migrations /tmp/rel/supabase/migrations > /tmp/pending.txt
+echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pending.txt
+```
+
+- **Observed:** `repo files at the release SHA: 751`; `classifier exit=0`;
+  **88 pending**; `-- remote max applied: 20271073000000 | recorded: 663`;
+  `above-max=70`, `below-max=18`, `NON-ADDITIVE=0`.
+  Checks: `70 + 18 = 88` and `751 − 663 = 88`.
+  Staging, same classifier against `/tmp/staging_table.txt` (run `43299937814`,
+  745 recorded, max applied `20271402000000`): **6 pending**, exit 0 — that is
+  Task 5's remaining work, not Task 6's.
+- **Expected before running:** plan/brief Step 6 stated **87 = 69 above-max + 18
+  below-max + 0 NON-ADDITIVE** on a 750-file tree.
+- **Verdict:** pass.
+- **Drift vs baseline:** §3.4 `87 → 88`, §3.4 files `750 → 751`. The +1 pending is
+  exactly `20271408000000_preconsult_intake_schema_ui.sql` (above-max, additive),
+  the file §3.4's arithmetic trap predicted the pin adds; the `below-max` set did
+  **not** move (18 → 18).
+- **Batch implication for Task 6:** `ceil(88 / 12) = 8` batches, so the brief's
+  "≈8 batches, not 7" stands and is now measured rather than estimated. If a fresh
+  prod table reads the 667 rows the scoped lane reports today, the same classifier
+  returns `751 − 667 = 84` pending → `ceil(84 / 12) = 7` batches. **Task 6 must
+  re-run §2.5 against an approved prod read before cutting batches**; the 8 is the
+  upper bound and the 4-file difference is elapsed time, not a contradiction.
+
+### 2.6 Vocabulary: classifier vs `_reusable-migration-guard.yml:102-104`
+
+- **Probe:** read both regexes; run each against a relaxation fixture.
+- **Observed:** the guard's `DESTRUCTIVE` covers
+  `drop (table|column|type|schema|database)`, `alter <token> drop`,
+  `rename (column|to)`; `ALLOW` is the identical object-kind set
+  `(policy|trigger|index|function|view|materialized view|publication|rule) … if exists`.
+  The classifier keeps both verbatim (POSIX `[[:space:]]` instead of `\s`) and adds
+  `domain|sequence`, `truncate` and `set not null` — i.e. it is a **strict superset,
+  still in agreement** with the guard's shared core; the guard is the weaker of the
+  two. Measured matrix (each string through both patterns, comment-stripped):
+  `DROP TABLE` 1/1, `ALTER TABLE x DROP COLUMN y` 1/1, `RENAME COLUMN` 1/1,
+  `TRUNCATE TABLE x` **1/0**, `SET NOT NULL` **1/0**,
+  `DROP POLICY IF EXISTS` 0/0, a plpgsql function body 0/0
+  (classifier hits/guard hits).
+- **Shared blind spot, recorded not fixed:** `ALTER TABLE x DROP CONSTRAINT y` and
+  `ALTER TABLE c ALTER COLUMN d DROP NOT NULL` score **0 for both** patterns, because
+  `alter[[:space:]]+[a-z0-9_."]+[[:space:]]+drop` cannot match a three-token form —
+  `[a-z0-9_."]+` will not span `TABLE x`. The plan's constraint text forbids
+  `ALTER … DROP` outright, so on that literal wording both tools under-enforce. The
+  guard workflow stays the source of truth and neither regex was rewritten here;
+  the practical exposure is bounded because `DROP COLUMN` (the only truly
+  schema-losing variant) *is* caught by both.
+- Measured on the pin: 55 files contain `DROP CONSTRAINT`/`DROP NOT NULL` and
+  **none** of them trips either regex. That confirms the brief's claim that the four
+  relaxation files an earlier draft flagged are things the repo's own guard
+  allows, and it also bounds it: 7 of today's 88 pending files carry such a line
+  and classify `additive` (0 hits each), consistent with `NON-ADDITIVE=0`.
+- One known over-match, recorded rather than fixed: the three already-applied
+  immutability guards (`20270192000000`, `20270217000000`, `20271038000000`)
+  contain `BEFORE TRUNCATE ON …`, which this vocabulary would flag as
+  NON-ADDITIVE if those versions were ever pending. They are recorded in prod, so
+  the stop-event does not fire today; if a future pending set includes a
+  `BEFORE TRUNCATE` guard, read it as a false positive before rewriting it.
+- **Verdict:** pass.
