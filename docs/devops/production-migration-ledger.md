@@ -179,10 +179,14 @@ gh run list --repo paymax2022/spotlight-latest1 --workflow db-migrate.yml --limi
 
 Observed: run **`43279570280`**, `648d7bca9`, `event=push`, status **`pending`** —
 a parked production approval sitting there right now, waiting for a named human.
-Every recent push-triggered run of that lane concluded `cancelled`
-(`43272403002` at the pin, `42937731019`, `42423593061`, `42140178659`,
-`41871090397`) — the lane has been declined repeatedly, which is why prod's
-schema is 87-odd versions behind in the first place.
+Re-read over the last 12 runs of that lane, every **push**-triggered one except
+one has concluded `cancelled` — `43272403002` (at the pin), `42423593061`,
+`42140178659`, `41871090397`, `41866807842`, `41475181672`, `41226426121`,
+`41030357056`; the exception is **`41342305462`** (`886d857f1`, push) which
+concluded **`failure`**, and the two `workflow_dispatch` runs in the window
+(`42937731019`, `41440285671`) also concluded `cancelled`. The lane has been
+declined repeatedly, which is why prod's schema is 87-odd versions behind in the
+first place.
 
 Two rules follow, and Task 2 as well as Tasks 4/11/12/14 must obey them:
 
@@ -201,15 +205,18 @@ Two rules follow, and Task 2 as well as Tasks 4/11/12/14 must obey them:
 ## 2. What Task 1 re-measured, and what it could not
 
 Re-measured **live today** with a read-only HTTP or local-git probe: §3.1, §3.2,
-§3.3, §3.6, §3.10 (both halves — the `www.spotlightng.com` half and the staging
+§3.3, §3.6, §3.8's captured-log witnesses (re-read from the stored run, not
+re-probed on the host), §3.9's HTTP half (the restaurant 401 and all three
+academy 404s), §3.10 (both halves — the `www.spotlightng.com` half and the staging
 web half at `https://frontend-web-staging-new.up.railway.app`), and the git-side
 half of §3.4. A staging HTTP probe needs no approval and no secret, so deferring
 it would have been a gap, not a limitation.
 
 **Not** re-measured at Task 1, because the number lives behind a Supabase
 production read, a Railway production read, or an SSH host probe: §3.4's
-history-table count, §3.5, §3.7, §3.8, §3.9's Railway env counts (its two HTTP
-halves *were* re-measured), §3.11, §3.12, §3.13, §3.14. Those rows carry the
+history-table count, §3.5, §3.7, §3.8's live host state (only its stored-log
+witness was re-read), §3.9's Railway env counts, §3.11, §3.12, §3.13, §3.14.
+Those rows carry the
 figure **as captured 2026-11-12**, the exact command that re-reads it, and the
 task that owns the re-read. No workflow was dispatched to obtain one —
 `Production` has required reviewers, and anything dispatched into it (including
@@ -304,11 +311,16 @@ connection and applies nothing. The job runs under
 One arithmetic trap in this row, because Task 6's batch split consumes it: today
 the git side reads **751** files and the history table read **667** rows, so
 naive subtraction gives **≈84**, not the baseline's **≈83**. Neither figure is
-wrong — they were read four days apart, and one commit's worth of files landed
-between them. Use the count Task 2 Step 6 produces from a single
-capture-and-classify pair, never a subtraction across two dates.
+wrong, and the reason is one file, not elapsed time: the baseline's 750 was
+counted at `8436ad005` and the pin adds `20271408000000_preconsult_intake_schema_ui.sql`,
+while the **667** history read came from the same-scoped run on
+2026-11-11T08:01:35Z — a production read Task 1 cannot re-take without the
+lane in §3.4 above. (The separate 87-vs-≈83 gap two rows up *is* a date gap —
+663 rows on 2026-11-07 against 667 on 2026-11-11.) Use the
+count Task 2 Step 6 produces from a single capture-and-classify pair, never a
+subtraction across two captures.
 
-### 3.5 Migrations added prod→main — AS CAPTURED 2026-11-12
+### 3.5 Migrations added prod→main — git half RE-MEASURED 2026-11-12, DB half AS CAPTURED
 
 Figure as captured: **111** files under `supabase/migrations/` newer than
 prod's deployed state, against ≈83 unrecorded — the 28-file difference is
@@ -320,32 +332,47 @@ the 111 today it will read 112 against a different SHA. **Target:** Task 2 Step 
 produces the authoritative pending set, and the ledger must reconcile the two
 numbers before Phase 2.
 
-Re-read command (both halves come out of one capture, which is the only way the
-two numbers are comparable — name the SHA you diff against):
+The two halves have **different** provenance, and conflating them was the error
+this rewrite fixes. The 111 figure is a pure local-git tree difference — it
+needed no production read at all, so it is re-measured here, today:
 
 ```bash
-# 1. prod's applied set is column 2 (Remote) of the CLI table that Task 2 Step 5
-#    captures into /tmp/prod_table.txt — never a `grep -oE '20[0-9]{12}'` sweep
-#    of that log, which also matches the 86 LOCAL-ONLY rows (§3.4's false green).
-awk -F'|' '/`20[0-9]{12}`[ ]*\|/ { v = $2; gsub(/[` ]/, "", v); if (v ~ /^20[0-9]{12}$/) print v }' \
-  /tmp/prod_table.txt | sort -u > /tmp/prod_applied.txt
-# 2. every version present at the release cut:
-git ls-tree -r --name-only "$RELEASE_SHA" -- supabase/migrations/ \
-  | sed -E 's#.*/([0-9]{14})_[^/]*\.sql#\1#' | sort -u > /tmp/release_versions.txt
-# 3. "files newer than prod's deployed state" = the 111 figure:
-comm -13 /tmp/prod_applied.txt /tmp/release_versions.txt | wc -l
-# 4. "unrecorded in prod's history table" = the classifier's own count:
+# prod's deployed commit, from §3.1's own build endpoint (41c19ea2b97ec216213a0af7b0db79e9edff5767)
+git diff --name-only --diff-filter=A 41c19ea2b97ec216213a0af7b0db79e9edff5767..8436ad005 \
+  -- supabase/migrations/ | wc -l      # baseline-era → 111
+git diff --name-only --diff-filter=A 41c19ea2b97ec216213a0af7b0db79e9edff5767..c49b39564 \
+  -- supabase/migrations/ | wc -l      # at the pin → 112
+```
+
+Observed: **111** against `8436ad005`, **112** against the pin — both reproduced
+at Task 1's fix round. Note the shape of the command: `41c19ea2b9` is **not an
+ancestor** of the pin (`git merge-base --is-ancestor 41c19ea2b9 c49b39564` fails),
+because prod was last built from a commit that is not on `main`'s first-parent
+line. So this is a *tree* difference between what prod runs and what the pin
+carries — which is the right question — but it is not a history walk, and a
+`git log --diff-filter=A` over the same range would answer a different question.
+
+The **≈83 unrecorded** half is the classifier's count and genuinely does need
+prod's history table. It comes from `scripts/db/list-pending.sh`, which **does
+not exist at the pin** (at the pin only `scripts/db/reconcile-pending.sh` and
+`scripts/db/classify-pending-migrations.sh` exist); the script is authored by
+**Task 2 Steps 2–4** and run from the `/tmp/rel` worktree at
+**Task 2 Step 6** — so this command is only executable in that context:
+
+```bash
+cd /tmp/rel
 bash scripts/db/list-pending.sh --remote-table /tmp/prod_table.txt \
   | grep -c '^pending'
 ```
 
-Both `/tmp/prod_table.txt` and `$RELEASE_SHA` are produced upstream — the table
-by Task 2 Step 5's read, the SHA by Task 1 Step 2 into `/tmp/RELEASE_SHA` — so
-run those first; this block derives nothing on its own.
+`/tmp/prod_table.txt` is produced upstream by Task 2 Step 5's read, and the
+`$RELEASE_SHA` in the git commands above by Task 1 Step 2 into
+`/tmp/RELEASE_SHA`. Read both back before using them; an empty `$RELEASE_SHA`
+expands silently and turns a `git diff` into a comparison against nothing.
 
-Why not re-measured at Task 1: both halves are derived from prod's
-`schema_migrations` state, i.e. the Supabase production read deferred in §3.4, and
-`mode=plan` on the scoped lane is the vehicle — which Task 2 Step 5 dispatches.
+Why the second half was not re-measured at Task 1: it depends on prod's
+`schema_migrations` state, and the only lane that reads it is the scoped
+`mode=plan` run described in §3.4, which Task 2 Step 5 dispatches.
 Re-read by **Task 2 Step 6** (the classifier run over the pending set), not at
 Task 1.
 
@@ -400,7 +427,7 @@ cPanel (SSH)"` finds nothing, and that is the repo being wrong, not the lane
 being missing. **Re-run by Task 8**, which is the task that changes this file's
 writer.
 
-### 3.8 Host env-file inventory — AS CAPTURED 2026-11-12
+### 3.8 Host env-file inventory — AS CAPTURED 2026-11-12; stored log re-read today
 
 Figure as captured: the `Probe prod Supabase runtime env (read-only)` step of
 the shipping repo's `deploy-cpanel.yml` (run `43037664704`, 2026-11-11T14:23:27Z)
@@ -409,25 +436,68 @@ lists **one** `.env*` file in `APP_DIR` — `.env.production.local`, mtime
 **Target:** unchanged; Task 8's truncate-and-write therefore drops nothing it
 did not itself write.
 
-Why not re-measured here: it is an SSH host probe, so its only witness is a
-deploy's log. The captured run's inventory is still readable today — re-read
-with the job-scoped form, which is the one that works:
+What was and was not re-read: the **live host** was not probed — it is an SSH
+probe, so its only witness is a deploy's log. The **stored** witness is
+readable today, and it still says the same thing:
 
 ```bash
 gh api repos/paymax2022/spotlight-latest/actions/runs/43037664704/jobs \
   --jq '.jobs[] | select(.name=="deploy") | .id'          # → 130580727795
 gh run view 43037664704 --repo paymax2022/spotlight-latest --log --job 130580727795 \
-  | grep -aE '\.env(\.local|\.production(\.local)?)?|FEATURE_'
+  | grep -aoE '\-\-\- \.env[A-Za-z0-9._-]* \(mtime [0-9T:-]+\)'
 ```
 
-**Trap in every `--log` filter in this plan, measured here:** `gh run view
---log` labels each line's step column as `UNKNOWN STEP`, not the step's name. A
-filter written as `awk -F'\t' '$2 == "Migration list (before)"'` — the shape
-Task 2 Step 5 and Task 6 Step 5 use — therefore yields an **empty file** on this
-host, and an empty file classifies as "nothing pending" unless the `grep -c '|'`
-guard beside it stops the run first. Keep that guard; it is the only thing
-between this trap and a false green. Where a step must be isolated, select the
-job by id and `grep -a` its content instead of matching on column 2.
+Observed re-read today — exactly one line, `--- .env.production.local (mtime
+2026-11-11T07:50:07)`, which is the "one `.env*` file" figure, and
+**0** `FEATURE_*` lines. The key half, name-only: the `KEY : file` inventory
+shape surfaces two of the four keys
+(`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, both
+`→ .env.production.local`); by name across the whole job the four appear
+42 / 26 / 11 / 7 times (`NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
+`GO_BACKEND_URL`) and nothing else in that family appears. So the "exactly 4
+keys, zero `FEATURE_*`" figure survives re-reading, with the caveat that the
+counts are line occurrences, not distinct keys.
+
+```bash
+gh run view 43037664704 --repo paymax2022/spotlight-latest --log --job 130580727795 \
+  | grep -aoE '[A-Z0-9_]+ *: ?\.env[A-Za-z0-9._-]*' | sort -u
+gh run view 43037664704 --repo paymax2022/spotlight-latest --log --job 130580727795 \
+  | grep -acoE 'FEATURE_[A-Z0-9_]+'          # → 0
+```
+
+**Read this log through a value-stripping filter, never raw.** The `deploy`
+job's own echoes carry the publishable/anon Supabase key verbatim on **22
+lines** (`grep -ac 'sb_publishable_'` on the raw log; the service-role value is
+not among them — no `eyJhbGci`, no `sb_secret_` match). That is still a
+credential value, so piping the raw output into a reply, a commit, or this
+ledger breaks the plan's "names and lengths only" rule. Use the
+`grep -aoE '<name-shaped pattern>'` forms above: they match identifiers, so
+they cannot emit a value.
+
+**The step-column trap, measured per repo rather than generalized.** `gh run
+view --log` labels each line's step column differently depending on the run:
+
+| Run | repo | `awk -F'\t' '$2 == "Migration list (before)"'` | lines reading `UNKNOWN STEP` |
+|---|---|---|---|
+| `42367077299` | `spotlight-latest1` | **771 lines** | 0 |
+| `43037664704` job `130580727795` | `spotlight-latest` | **0 lines** | all 99,563 |
+
+So the column match is **not** broken universally — it works against precisely
+the runs Task 2 Step 5 and Task 6 Step 5 consume, both in
+`spotlight-latest1`, and **the plan's own capture commands must not be changed
+on the strength of this row.** The `spotlight-latest` deploy lane is the
+exception, which is why the two commands above select the job by id and match on
+content instead. Two consequences for later tasks:
+
+- Keep the `grep -c '|'` guard beside every column-matched capture; it is what
+  turns an empty capture into a failure rather than a "nothing pending" green.
+  The right hardening is that guard plus a sanity floor on the captured row
+  count — not a different capture command.
+- Do **not** substitute a job-scoped content `grep -a` where the plan intends a
+  step-scoped one: on `spotlight-latest1` logs the content match blends
+  "Migration list (before)" with "Migration list (after)", which silently
+  unions two different sets. Column matching is the correct instrument there.
 
 Task 8 re-runs the probe on the next shipping-repo deploy and records its output
 as a `## Task 8` section in §5's format — appends go there, never into this row,
@@ -435,16 +505,22 @@ so the "before" value survives.
 
 ### 3.9 Prod BFF for mobile — HTTP halves RE-MEASURED 2026-11-12; env counts AS CAPTURED
 
-Re-measured live (both are ungated HTTP GETs, so they were in scope all along):
+Re-measured live (all ungated HTTP GETs, so they were in scope all along — the
+three academy paths are probed here as a set because §3.10's claim is about the
+set, not about one URL):
 
 ```bash
 curl -sS -w '\n%{http_code}\n' 'https://frontend-web-production-9259.up.railway.app/api/v1/restaurant/00000000-0000-4000-8000-000000000000'
-curl -sS -w '\n%{http_code}\n' 'https://frontend-web-production-9259.up.railway.app/api/academy/topics'
+for U in /api/academy/topics /api/academy/exams /api/academy/certificates/verify/00000000-0000-0000-0000-000000000000; do
+  curl -sS -w '\n%{http_code}\n' "https://frontend-web-production-9259.up.railway.app$U"
+done
 ```
 
-Observed: **401** on the restaurant route (gate passed, auth refused) and **404**
-with body `"No API route matches GET /api/academy/topics"` — that plane's served
-build has no academy routes at all. Both match the baseline figures exactly.
+Observed: **401** on the restaurant route (gate passed, auth refused), matching
+the baseline. All three academy routes **404**, each with body
+`"No API route matches GET <path>"` — that plane's served build has no academy
+routes at all. Only `/api/academy/topics` was probed when this row was first
+re-measured; the other two are today's additions and agree with it.
 **Target:** unchanged for the 36; but see §3.10 — this build predates some
 routes entirely, which a flag cannot fix.
 
@@ -473,8 +549,11 @@ Observed, all three HTTP **503** on `www.spotlightng.com`:
 
 **The staging half.** Staging's web plane is
 `https://frontend-web-staging-new.up.railway.app` — the
-origin the repo itself uses (8 tracked references at the pin; the plan never
-names it, so it was taken from the tree, not guessed).
+origin the repo itself uses (**10 references across 9 tracked files at the
+pin**, `git grep -c -e frontend-web-staging-new c49b39564` — workflows,
+`docs/devops/deployment-matrix.md`, `mobile-app/reactnative/eas.json`, and
+`staging-crypto-user-steps.sh`; the plan never names it, so it was taken from
+the tree, not guessed).
 
 ```bash
 for U in /api/academy/topics /api/academy/exams /api/academy/certificates/verify/00000000-0000-0000-0000-000000000000; do
@@ -490,9 +569,10 @@ of correct academy configuration, and "copy staging's ON set" ships a broken
 product area, because
 `FEATURE_FILM_ACADEMY_TOPICS_ENABLED`, `FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED`
 and `FEATURE_FILM_ACADEMY_PILOT_DELIVERY_ENABLED` are **absent from staging's
-`frontend-web` env as well**. The mobile-facing prod BFF answers **404** on the
-same paths (§3.9) — a missing route, not a closed gate, and per the plan's rule
-that 404 says nothing about a flag. **Target:** a decision per name in **Task 7
+`frontend-web` env as well**. The mobile-facing prod BFF answers **404** on all
+three of these paths (§3.9, probed as a set today) — a missing route, not a
+closed gate, and per the plan's rule a 404 says nothing about a flag.
+**Target:** a decision per name in **Task 7
 Step 5**, recorded in the flag file as an explicit `=false` unless promoted.
 
 ### 3.11 Full flag sweep (code-derived routes) — AS CAPTURED 2026-11-12
