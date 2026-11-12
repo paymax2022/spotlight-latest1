@@ -1,6 +1,6 @@
-# ADR (draft): Module readiness as a second axis, and a client that fails closed
+# ADR-PR996: Module readiness as a second axis, and a client that fails closed
 
-Status: implemented on `feat/module-readiness`; server enforcement flag
+Status: implemented (server enforcement flag
 `FEATURE_MODULE_GATE_ENFORCE` still defaults to observe-only.
 
 ## Context
