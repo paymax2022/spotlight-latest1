@@ -3,6 +3,7 @@ import { View, Text, Image, StyleSheet } from 'react-native';
 import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { getProviderBrand, providerLogoSources } from '@/constants/providerBrands';
 import { getLocalProviderLogo } from '@/constants/providerLogoAssets';
 
@@ -17,28 +18,35 @@ export default function ProviderLogo({
   name,
   size = 34,
   logoUri,
+  fill = false,
 }: {
   code: string;
   name: string;
   size?: number;
   /** Authoritative logo URL (e.g. the VTPass service `image`). Tried first. */
   logoUri?: string | null;
+  /** Stretch over the whole parent tile instead of a fixed square. */
+  fill?: boolean;
 }) {
   // Hooks first (unconditional, per the Rules of Hooks) — before any early return.
   const [idx, setIdx] = useState(0);
 
   const brand = getProviderBrand(code, name);
-  const box = { width: size, height: size, borderRadius: Radius.md };
+  const box = fill ? styles.fillBox : { width: size, height: size, borderRadius: Radius.md };
+  // In fill mode the tile already draws the frame, so the logo keeps only the
+  // white plate that makes a dark brand mark readable on any card colour.
+  const wrap = fill ? styles.fillWrap : styles.logoWrap;
+  const art = fill ? styles.fillImage : { width: size - 6, height: size - 6, borderRadius: 4 };
 
   // Priority 0: a BUNDLED local logo (instant, offline, no network). If present
   // it wins outright — no fallback chain needed.
   const localLogo = getLocalProviderLogo(brand.key);
   if (localLogo) {
     return (
-      <View style={[styles.box, styles.logoWrap, box]}>
+      <View style={[styles.box, wrap, box]}>
         <Image
           source={localLogo}
-          style={{ width: size - 6, height: size - 6, borderRadius: 4 }}
+          style={art}
           resizeMode="contain"
           accessibilityLabel={`${name} logo`}
         />
@@ -52,10 +60,10 @@ export default function ProviderLogo({
 
   if (uri) {
     return (
-      <View style={[styles.box, styles.logoWrap, box]}>
+      <View style={[styles.box, wrap, box]}>
         <Image
           source={{ uri }}
-          style={{ width: size - 6, height: size - 6, borderRadius: 4 }}
+          style={art}
           resizeMode="contain"
           onError={() => setIdx((i) => i + 1)} // real logo -> favicon -> badge
           accessibilityLabel={`${name} logo`}
@@ -66,7 +74,7 @@ export default function ProviderLogo({
 
   return (
     <View style={[styles.box, box, { backgroundColor: `${brand.color}1A` }]}>
-      <Text style={[styles.abbr, { color: brand.color }]}>{brand.abbr}</Text>
+      <Text style={[fill ? styles.abbrFill : styles.abbr, { color: brand.color }]}>{brand.abbr}</Text>
     </View>
   );
 }
@@ -74,5 +82,9 @@ export default function ProviderLogo({
 const styles = StyleSheet.create({
   box: { alignItems: 'center', justifyContent: 'center' },
   logoWrap: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: Colors.surfaceContainerHigh, overflow: 'hidden' },
+  fillBox: { width: '100%', height: '100%', padding: Spacing.xs },
+  fillWrap: { backgroundColor: '#FFFFFF' },
+  fillImage: { width: '100%', height: '100%' },
   abbr: { ...Typography.labelMd, fontWeight: '800' },
+  abbrFill: { ...Typography.labelMd, fontWeight: '800', fontSize: 20 },
 });

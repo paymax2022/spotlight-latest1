@@ -256,7 +256,7 @@ export default function ElectricityScreen() {
                 const active = selectedDisco?.id === disco.id;
                 return (
                   <Pressable key={disco.id} onPress={() => { setSelectedDisco(disco); setValidation(null); }} accessibilityLabel={disco.name} style={[styles.providerCard, active && styles.providerCardActive]}>
-                    <ProviderLogo size={112} code={disco.code} name={disco.name} logoUri={resolveProviderImage(providerLogos, disco.code, disco.name)} />
+                    <ProviderLogo fill code={disco.code} name={disco.name} logoUri={resolveProviderImage(providerLogos, disco.code, disco.name)} />
                     {active && (
                       <View style={styles.providerCardCheck}>
                         <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />
