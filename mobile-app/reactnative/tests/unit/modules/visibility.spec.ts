@@ -121,9 +121,31 @@ describe('service-grid mapping', () => {
   test('unmapped tiles are never registry-gated', () => {
     // The safe direction: no mapping ⇒ always render. Returning a key here would
     // gate a tile against a module the registry has never heard of, hiding it
-    // permanently.
-    assert.equal(registryKeyFor('academy'), null);
+    // permanently. 'shopping' is a coming-soon placeholder with no engine and no
+    // registry row; 'academy' USED to belong in this list and became a real module
+    // in 20271409000000.
+    assert.equal(registryKeyFor('shopping'), null);
     assert.equal(registryKeyFor('definitely-not-a-module'), null);
+  });
+
+  test('the seven surfaces registered in 20271409000000 are now gated', () => {
+    // These tiles used to ignore the registry completely — publishing or hiding them
+    // in the admin portal changed nothing, which is how an unfinished module stayed
+    // in the store build.
+    const gates: [string, string][] = [
+      ['marketplace', 'marketplace'],
+      ['crypto', 'crypto'],
+      ['learn', 'academy'],
+      ['academy', 'academy'],
+      ['film-academy', 'filmAcademy'],
+      ['contest', 'competitions'],
+      ['naija-driver', 'arena'],
+      ['connect', 'connect'],
+    ];
+    for (const [id, key] of gates) {
+      assert.equal(registryKeyFor(id), key, `'${id}' must follow the '${key}' module`);
+      assert.ok(REGISTRY_KEYS.has(key), `'${id}' maps to '${key}', which is not a registered module`);
+    }
   });
 
   test('the whole bill-payment family maps to one registry module', () => {
@@ -167,7 +189,7 @@ describe('the gate applied to the grid', () => {
 
   test('unmapped tiles survive an empty published list', () => {
     const survivors = gate(list()).map((m) => m.id);
-    assert.ok(survivors.includes('academy'), 'an unmapped tile must not be hidden by the registry');
+    assert.ok(survivors.includes('shopping'), 'an unmapped tile must not be hidden by the registry');
     assert.ok(!survivors.includes('telemedicine'), 'a mapped tile must be hidden when unpublished');
   });
 });
@@ -190,7 +212,9 @@ describe('property hub gate', () => {
     // 'marketplace' means the lifestyle shopping tile in one space and the
     // property buy/rent marketplace in the other. One shared table would gate the
     // shopping tile on the realtor module — the reason these maps are separate.
-    assert.equal(registryKeyFor('marketplace'), null);
+    // Both now resolve, to DIFFERENT modules: the shopping tile got its own registry
+    // key in 20271409000000, while the property pillar still follows realtor.
+    assert.equal(registryKeyFor('marketplace'), 'marketplace');
     assert.equal(propertyRegistryKeyFor('marketplace'), 'realtor');
   });
 
@@ -218,16 +242,18 @@ describe('property hub gate', () => {
   });
 });
 
-// Mirrors the keys seeded into platform_modules (supabase migration
-// 20261210000000, generated from frontend-web/src/lib/feature-flags.ts). Keep in
+// Mirrors the keys seeded into platform_modules (supabase migrations 20261210000000,
+// generated from frontend-web/src/lib/feature-flags.ts, and 20271409000000, the app
+// surfaces that had no flag). Keep in
 // a module that can never be published, hiding it forever with no error anywhere.
 const REGISTRY_KEYS = new Set([
-  'aiCare', 'association', 'beneficiaries', 'checkoutTopupTier0', 'creators', 'crowdfunding',
-  'disputes', 'estate', 'events', 'fintechAdmin', 'fx', 'groups', 'health', 'healthLab',
-  'healthPharmacy', 'healthVet', 'insurance', 'kyc', 'loyalty', 'ratings', 'realtor',
-  'referrals', 'restaurant', 'savings', 'socialPay', 'stays', 'telemedicine', 'tierLimits',
-  'transport', 'utilityPayments', 'virtualAccounts', 'voteBridge', 'votesBridge', 'wallet',
-  'walletBankTransfers', 'walletTransfers',
+  'academy', 'aiCare', 'arena', 'association', 'beneficiaries', 'checkoutTopupTier0',
+  'competitions', 'connect', 'creators', 'crypto', 'crowdfunding', 'disputes', 'estate',
+  'events', 'filmAcademy', 'fintechAdmin', 'fx', 'groups', 'health', 'healthLab',
+  'healthPharmacy', 'healthVet', 'insurance', 'kyc', 'loyalty', 'marketplace', 'ratings',
+  'realtor', 'referrals', 'restaurant', 'savings', 'socialPay', 'stays', 'telemedicine',
+  'tierLimits', 'transport', 'utilityPayments', 'virtualAccounts', 'voteBridge',
+  'votesBridge', 'wallet', 'walletBankTransfers', 'walletTransfers',
 ]);
 
 describe('mapped values are real registry modules', () => {
@@ -295,7 +321,7 @@ describe('home tab gates', () => {
     // must disappear, not render a label above an empty grid.
     const groups = [
       { label: 'Financial', modules: SERVICE_MODULES.filter((m) => m.category === 'financial') },
-      { label: 'Learn', modules: SERVICE_MODULES.filter((m) => m.id === 'academy') },
+      { label: 'Learn', modules: SERVICE_MODULES.filter((m) => m.id === 'shopping') },
     ];
     const gated = groups
       .map((g) => ({ ...g, modules: g.modules.filter((m) => {
@@ -306,7 +332,7 @@ describe('home tab gates', () => {
 
     // Financial is entirely registry-mapped, so an empty published list clears it.
     assert.ok(!gated.some((g) => g.label === 'Financial'), 'empty Financial group must be dropped');
-    // Learn is 'academy', which has no registry mapping, so it survives.
+    // Learn is 'shopping', a placeholder tile with no registry module, so it survives.
     assert.ok(gated.some((g) => g.label === 'Learn'), 'ungated group must survive');
   });
 });
@@ -340,8 +366,32 @@ describe('route guard', () => {
   test('ambiguous and unregistered routes are left ungated', () => {
     // Conservative on purpose: gating a route wrongly locks users out of a
     // working screen, which is worse than leaving one merely undiscoverable.
-    for (const seg of [['voting'], ['arena'], ['academy'], ['crypto'], ['dues'], ['properties']]) {
+    // 'academy' here is the TOP-LEVEL /academy, which is not a route — StudyHub
+    // lives at /learn/academy and is gated through 'learn' below.
+    for (const seg of [['academy'], ['dues'], ['properties'], ['investment'], ['invest-ai'], ['shopping'], ['parcel']]) {
       assert.equal(moduleKeyForSegments(seg), null, `${seg[0]} should not be gated`);
+    }
+  });
+
+  test('the surfaces registered in 20271409000000 are now gated by route too', () => {
+    // The guard used to be blind to all seven, so a push notification or a saved
+    // link reached screens the admin portal had no power over.
+    const gated: [string[], string][] = [
+      [['marketplace'], 'marketplace'],
+      [['crypto'], 'crypto'],
+      [['learn'], 'academy'],
+      // Prefix matching: StudyHub needs no entry of its own.
+      [['learn', 'academy', 'lesson', '1'], 'academy'],
+      [['film-academy'], 'filmAcademy'],
+      [['voting'], 'competitions'],
+      [['arena'], 'arena'],
+      [['connect'], 'connect'],
+    ];
+    for (const [seg, key] of gated) {
+      assert.equal(moduleKeyForSegments(seg), key, `/${seg.join('/')} must follow '${key}'`);
+      assert.ok(REGISTRY_KEYS.has(key), `'${key}' is not a registered module`);
+      // And an unpublished one must actually be refused by the guard.
+      assert.equal(visibilityFor(list(), key), false, `${key} must be hidden when unpublished`);
     }
   });
 

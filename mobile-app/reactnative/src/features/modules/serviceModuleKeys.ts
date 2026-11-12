@@ -36,6 +36,18 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
   ride: 'transport',
   creators: 'creators',
   events: 'events',
+  marketplace: 'marketplace',
+
+  // Registered in 20271409000000. These seven had no registry key at all, so they
+  // were the tiles the fail-closed rule could not reach — the admin portal's
+  // publish/hide changed nothing for them.
+  crypto: 'crypto',
+  learn: 'academy',
+  academy: 'academy',
+  'film-academy': 'filmAcademy',
+  contest: 'competitions',
+  'naija-driver': 'arena',
+  connect: 'connect',
 
   // Community. NOTE: 'stays', 'estate' and 'rent' are NOT top-level tiles — they
   // are reached from the /property hub, so gating them means gating that hub's own
@@ -91,10 +103,13 @@ export function quickActionRegistryKeyFor(actionId: string): string | null {
 }
 
 // A fourth id-space. 'food-ride' is a featured card only (it has no tile in
+// SERVICE_MODULES), and 'invest' is a card for the stock-investment surface, which
+// has no registry key of its own — so 'invest' is deliberately absent: unmapped cards
 // are ungated and always render.
 export const FEATURED_REGISTRY_KEY: Record<string, string> = {
   bills: 'utilityPayments',
   'food-ride': 'restaurant',
+  'naija-driver': 'arena',
 };
 
 export function featuredRegistryKeyFor(featuredId: string): string | null {

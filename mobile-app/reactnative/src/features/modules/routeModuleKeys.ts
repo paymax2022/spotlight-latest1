@@ -10,9 +10,12 @@
 // than leaving a screen reachable that is merely undiscoverable — so anything
 // ambiguous is omitted rather than guessed:
 //   • 'services' / '(tabs)' — hubs and navigation, not modules
-//   • 'voting', 'arena', 'academy', 'learn', 'invest*', 'crypto', 'stocks',
-//     'marketplace', 'connect' — no registry module, or the correspondence is
-//     not one-to-one
+//   • 'investment', 'invest-ai', 'ai-trading', 'spotlight-wealth', 'stocks' — the
+//     investment family has no single registry module; the tiles in it are separate
+//     products and none of them is unambiguously one key
+//   • 'shopping', 'parcel' — coming-soon tiles with no engine behind them yet
+//   • 'dues', 'property' — reached through the property hub, gated there
+//   • 'admin' — an admin surface, and admin paths are never release-gated
 
 /** Segment path → registry key. Order is irrelevant; matching sorts by depth. */
 const ROUTE_MODULE_KEYS: { segments: string[]; key: string }[] = [
@@ -54,6 +57,18 @@ const ROUTE_MODULE_KEYS: { segments: string[]; key: string }[] = [
   { segments: ['association'], key: 'association' },
   { segments: ['events'], key: 'events' },
   { segments: ['fractionalre'], key: 'realtor' },
+
+  // Registered in 20271409000000. Before that these had no registry key at all, so
+  // neither the grid nor the guard could be told about them.
+  { segments: ['marketplace'], key: 'marketplace' },
+  { segments: ['crypto'], key: 'crypto' },
+  // One entry covers the hub and StudyHub beneath it: matching is by segment
+  // PREFIX, so /learn/academy inherits 'academy' without being listed.
+  { segments: ['learn'], key: 'academy' },
+  { segments: ['film-academy'], key: 'filmAcademy' },
+  { segments: ['voting'], key: 'competitions' },
+  { segments: ['arena'], key: 'arena' },
+  { segments: ['connect'], key: 'connect' },
 ];
 
 /** Longest-first, so a nested match always wins over its parent. */
@@ -122,4 +137,13 @@ export const MODULE_LABELS: Record<string, string> = {
   realtor: 'Property',
   association: 'Associations',
   events: 'Events',
+
+  // Registered in 20271409000000 — every key the guard and the grids can now name.
+  marketplace: 'Marketplace',
+  crypto: 'Crypto',
+  academy: 'Learn',
+  filmAcademy: 'Film Academy',
+  competitions: 'Contest',
+  arena: 'Arena',
+  connect: 'Connect',
 };
