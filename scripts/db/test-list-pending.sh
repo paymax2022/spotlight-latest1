@@ -61,7 +61,7 @@ fi
 morc=0
 mosed="$(bash "$LIST" --remote "$TMP/applied.txt" --migrations "$TMP/no_such_dir" 2>&1)" || morc=$?
 [ "$morc" -ne 0 ] || { echo "FAIL: missing --migrations dir must be refused (got exit 0: $mosed)"; exit 1; }
-printf '%s\n' "$mosed" | grep -q '^\*pending' && { echo "FAIL: unexpanded glob leaked a pending row"; exit 1; }
+printf '%s\n' "$mosed" | grep -qE '^pending ' && { echo "FAIL: unswep tree leaked a pending row"; exit 1; }
 printf '%s\n' "$mosed" | grep -qF '*.sql' && { echo "FAIL: unexpanded glob leaked a literal *.sql"; exit 1; }
 mkdir -p "$TMP/nomigs"
 norc=0; bash "$LIST" --remote "$TMP/applied.txt" --migrations "$TMP/nomigs" >/dev/null 2>&1 || norc=$?
