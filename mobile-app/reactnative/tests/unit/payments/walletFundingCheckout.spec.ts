@@ -6,13 +6,16 @@
 // https://checkout.paystack.com/<access code> (same tab, no way back to the
 // wallet) and the native build left for the browser app. The in-app wiring
 // existed (554bee93e) and was lost to a wip/backup-* merge; #227 had already
-// removed the external hand-off from every other screen, so this was the last
-// one. Verified live on 2026-11-12: tapping the CTA at :8083/wallet/add landed on
+// removed the external hand-off from most screens. Verified live on
+// 2026-11-12: tapping the CTA at :8083/wallet/add landed on
 // checkout.paystack.com with an access code that resumesTransaction() accepts.
 //
 // Static-source assertions, matching this suite's convention (see
 // tests/unit/voting/liveEndpoints.spec.ts): the screen has no DI seam and the app
-// carries no component harness, so the pin is the wiring itself.
+// carries no component harness.
+//
+// The app-wide guard for this defect class lives in the sibling suite
+// tests/unit/payments/registrationCheckout.spec.ts.
 //
 //   npm run test:payments
 
