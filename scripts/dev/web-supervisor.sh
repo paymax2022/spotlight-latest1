@@ -21,8 +21,9 @@
 # rather than in a privacy grant weakened for the whole machine.
 #
 # Coverage therefore ends when `make dev` stops. Starting up is covered by
-# mobile-app/reactnative/scripts/check-web-api.mjs, which launches this same
-# server whenever the Expo app comes up and nothing is serving :3000.
+# mobile-app/reactnative/scripts/check-web-api.mjs, which hands the same guard to
+# this script whenever the Expo app comes up and nothing owns :3000 — so a
+# hand-started `npm run web` gets the same stand-down rules and the same restarts.
 #
 # Usage: scripts/dev/web-supervisor.sh     (called by `make dev`; idempotent)
 
@@ -30,34 +31,39 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# Overridable so the give-up path below can be exercised without breaking a real
-# checkout (WEB_DIR=/tmp/empty scripts/dev/web-supervisor.sh).
+# Overridable so the stand-down and give-up paths below can be exercised without
+# breaking a real checkout (WEB_DIR=/tmp/empty scripts/dev/web-supervisor.sh).
 WEB_DIR="${WEB_DIR:-$REPO/frontend-web}"
-URL='http://localhost:3000/'
-RETRY_DELAY=3
-FAST_FAILURE_SECONDS=10
-MAX_FAST_FAILURES=3
+STATE_CLI="$REPO/scripts/dev/web-server-state.mjs"
+WEB_PORT="${WEB_PORT:-3000}"
+RETRY_DELAY="${RETRY_DELAY:-3}"
+FAST_FAILURE_SECONDS="${FAST_FAILURE_SECONDS:-10}"
+MAX_FAST_FAILURES="${MAX_FAST_FAILURES:-3}"
 
-# True while something listens on :3000. A slow reply counts as claimed: mid-compile
-# Next holds the port and answers late, and reading that as "free" starts a duplicate
-# that slides to the next open port and talks to nothing the app will ever call. Only
-# curl's "connection refused" (exit 7) proves the port is unclaimed.
-port_claimed() {
-  local attempt code status
-  for attempt in 1 2; do
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "$URL" 2>/dev/null)"
-    status=$?
-    if [ "$status" -ne 7 ]; then
-      [ "$status" -eq 0 ] && [ "$code" = "000" ] || return 0
-    elif [ "$attempt" -eq 1 ]; then
-      sleep 1
-    fi
-  done
-  return 1
+# Asks the shared probe (scripts/dev/web-server-state.mjs) instead of checking the
+# port here: Next 16 refuses a second dev server per CHECKOUT via
+# frontend-web/.next/dev/lock, so an orphan on :3002 blocks a start while
+# :${WEB_PORT} sits free. Probing only the port is what turned that orphan into
+# three fast "crashes" and a false "broken checkout" on 2026-11-12.
+#
+# Sets STATE_LINE for the caller. Claimed on any answer except a clean "free":
+# a probe that cannot run is not evidence that starting a duplicate is safe.
+dev_server_state() {
+  local code
+  STATE_LINE="$(node "$STATE_CLI" --web-dir "$WEB_DIR" --port "$WEB_PORT" 2>&1)"
+  code=$?
+  case "$code" in
+    1) return 1 ;;
+    0 | 2) return 0 ;;
+    *) STATE_LINE="web-server-state could not run (exit $code) — treating the checkout as claimed"
+       return 0 ;;
+  esac
 }
 
-if port_claimed; then
-  echo "    frontend-web: :3000 already answers — not starting a second server."
+if dev_server_state; then
+  echo "    frontend-web: $STATE_LINE"
+  echo "    Not starting a second server. If the app cannot reach that one, stop it"
+  echo "    (kill the pid above) and run \`make dev\` again — the mobile app only calls :$WEB_PORT."
   exit 0
 fi
 
@@ -69,14 +75,15 @@ while :; do
 
   # Wait out our own socket teardown before deciding the port is somebody else's:
   # probing immediately can hit a connection reset from the server that just died,
-  # and a slow answer counts as "claimed" above.
+  # and a slow answer counts as "claimed".
   sleep "$RETRY_DELAY"
 
-  # Something else holds the port now (another terminal, a restarted `make dev`).
-  # Stand down instead of stacking a second Next on an auto-picked port the app
-  # will never talk to.
-  if port_claimed; then
-    echo "    frontend-web: :3000 is held by another process now — supervisor stopping."
+  # Something else holds the checkout now (another terminal, a restarted `make dev`,
+  # or a duplicate that slid onto its own port). Stand down instead of stacking a
+  # second Next on a port the app will never talk to.
+  if dev_server_state; then
+    echo "    frontend-web: $STATE_LINE"
+    echo "    frontend-web: another dev server holds the checkout now — supervisor stopping."
     exit 0
   fi
 
@@ -88,10 +95,15 @@ while :; do
 
   if [ "$fails" -ge "$MAX_FAST_FAILURES" ]; then
     echo "    frontend-web: $fails exits in under ${FAST_FAILURE_SECONDS}s — giving up."
-    echo "    That is a broken checkout, not a crash. Check:"
-    echo "      cd $WEB_DIR && npm install"
-    echo "    and in a fresh worktree, copy the gitignored .env.local from a checkout"
-    echo "    that already has one."
+    echo "    Two things do this, and the first is the one that fakes a crash:"
+    echo "      1. another dev server owns this checkout. Next's refusal to share it looks"
+    echo "         exactly like a crash and finishes in seconds. Ask again:"
+    echo "         node scripts/dev/web-server-state.mjs --web-dir $WEB_DIR --port $WEB_PORT"
+    echo "         If that says claimed, kill the pid it names instead of starting another."
+    echo "      2. a genuinely broken checkout. Check:"
+    echo "         cd $WEB_DIR && npm install"
+    echo "      and in a fresh worktree, copy the gitignored .env.local from a checkout"
+    echo "      that already has one."
     exit 1
   fi
 
