@@ -16,9 +16,6 @@ import { TeleHeader } from '@/features/telemedicine/components';
 import type { ConsultType, BookAppointmentResult } from '@/types/telemedicine';
 import PrimaryButton from '@/components/PrimaryButton';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
-import { submitApptIntake } from '@/features/health/api';
-import { CONSENT_VERSION } from '@/features/health/api/preconsult.mock';
-import { getIntakeDraft, clearIntakeDraft } from '@/features/health/intakeDraftStore';
 import { readBookingQuote, slotToISO } from '@/features/telemedicine/pricing';
 
 // NOTE: this screen deliberately holds NO fee rate. The platform booking fee is
@@ -103,19 +100,6 @@ export default function ConfirmBookingScreen() {
       onPaid: async (result) => {
         qc.invalidateQueries({ queryKey: ['wallet'] });
         qc.invalidateQueries({ queryKey: ['tele-appointments'] });
-        // Carry the pre-booking triage (completed from the doctor profile, saved
-        // under `pre-<doctorId>`) into the real appointment + submit it, so the
-        // consult gate is satisfied and the patient isn't re-asked. Best-effort:
-        // if it fails (e.g. live consent-version mismatch), the post-booking
-        // intake remains the backstop.
-        try {
-          const pre = await getIntakeDraft(`pre-${params.doctorId}`);
-          if (pre && Object.keys(pre).length > 0) {
-            await submitApptIntake(result.appointmentId, pre, CONSENT_VERSION);
-            await clearIntakeDraft(`pre-${params.doctorId}`);
-            qc.invalidateQueries({ queryKey: ['health', 'appt-intake', result.appointmentId] });
-          }
-        } catch { /* non-blocking — booking already succeeded */ }
         router.replace({
           pathname: '/services/telemedicine/book/success',
           params: {

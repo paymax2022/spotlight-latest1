@@ -143,6 +143,7 @@ export const PRECONSULT_SCHEMA: PreConsultIntakeSchema = {
           label: 'List your medications and doses',
           help: 'Add each medicine with its dose, then tap “Add another” for more.',
           patientReported: true,
+          critical: true,
         },
       ],
     },
@@ -164,6 +165,7 @@ export const PRECONSULT_SCHEMA: PreConsultIntakeSchema = {
           label: 'Select your allergies',
           help: 'Choose all that apply.',
           patientReported: true,
+          critical: true,
           options: ALLERGEN_OPTIONS,
         },
         {
