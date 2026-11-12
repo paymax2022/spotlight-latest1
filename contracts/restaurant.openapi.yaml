@@ -1655,7 +1655,7 @@ paths:
         '200':
           description: 'Replay of the same Idempotency-Key: the first result, already_processed=true. No second move.'
           content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } }
-        '400': { description: 'No Idempotency-Key / amount not a positive whole number / destination neither one form nor the other / PIN absent / destination bank account not verified' }
+        '400': { description: 'No Idempotency-Key / amount not a positive whole number / destination neither one form nor the other / ad-hoc `account_number` not the 10 digits a bank can resolve / PIN absent / destination bank account not verified' }
         '401': { description: Not authenticated }
         '402': { description: Wallet balance is below the requested amount }
         '403': { description: 'Withdrawals disabled by feature flag / KYB not approved / wallet disabled for this tier / daily or tier limit exceeded / wrong transaction PIN' }
