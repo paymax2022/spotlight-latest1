@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -8,6 +8,7 @@ import * as Icons from 'lucide-react-native';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { initiateFunding } from '@/api/wallet.api';
+import { useGatewayCheckout } from '@/features/payments';
 import {
   resolvePaymaxRecipient,
   initiateWalletTransfer,
@@ -207,37 +208,57 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
 
   const kycStepUp = useKycStepUp(1);
 
-  const fundMutation = useMutation({
-    mutationFn: async () => {
-      if (!amountValue || amountValue < 100) {
-        throw new Error('Enter an amount of at least ₦100.');
-      }
-      return initiateFunding({ amountKobo: Math.round(amountValue * 100) });
-    },
-    onSuccess: async (result) => {
-      if (!result.authorizationUrl) {
-        void alertAsync({ title: 'Funding Started', message: `Reference: ${result.reference}` });
-        return;
-      }
-      const canOpen = await Linking.canOpenURL(result.authorizationUrl);
-      if (canOpen) {
-        await Linking.openURL(result.authorizationUrl);
-      } else {
-        void alertAsync({ title: 'Funding Link Ready', message: result.authorizationUrl });
-      }
-    },
-    onError: (error) => {
-      const { status, message } = normalizeApiError(error);
-      // The server is the authority on the tier gate. If our own tier lookup was
-      // unavailable (so the pre-check let the request through) and the server says
-      // Tier 1 is required, show the same KYC prompt instead of a raw error.
-      if (status === 403 && /kyc tier/i.test(message)) {
-        void promptKycForFunding();
-        return;
-      }
-      void alertAsync({ title: 'Could not start funding', message });
-    },
-  });
+  // Wallet funding is initialized by the server (Idempotency-Key + ledger
+  // authority) and then RESUMED inside the in-app Paystack SDK, which is what
+  // completes the charge and calls back. Handing the authorization_url to the
+  // device browser instead takes the user off the app mid-payment: the webhook
+  // still credits the wallet, but nothing brings them back to the status screen
+  // that polls for it.
+  const fundCheckout = useGatewayCheckout();
+  const fundBusy = fundCheckout.phase === 'initializing' || fundCheckout.phase === 'awaiting';
+
+  // Set when the server answered with its own tier gate, so that 403 reads as the
+  // KYC prompt the pre-check would have shown rather than as a failed payment.
+  const kycGateShown = useRef(false);
+
+  useEffect(() => {
+    if (!fundCheckout.error) return;
+    if (kycGateShown.current) {
+      kycGateShown.current = false;
+      return;
+    }
+    void alertAsync({ title: 'Could not start funding', message: fundCheckout.error });
+  }, [fundCheckout.error]);
+
+  const launchFunding = () => {
+    void fundCheckout.start({
+      domain: 'wallet_topup',
+      initialize: async () => {
+        if (!amountValue || amountValue < 100) {
+          throw new Error('Enter an amount of at least ₦100.');
+        }
+        try {
+          // initiateFunding takes KOBO and posts it through as amount_kobo.
+          return await initiateFunding({ amountKobo: Math.round(amountValue * 100) });
+        } catch (error) {
+          const { status, message } = normalizeApiError(error);
+          // The server is the authority on the tier gate. If our own tier lookup
+          // was unavailable (so the pre-check let the request through) and the
+          // server says Tier 1 is required, show the same KYC prompt.
+          if (status === 403 && /kyc tier/i.test(message)) {
+            kycGateShown.current = true;
+            void promptKycForFunding();
+          }
+          throw error;
+        }
+      },
+      // Top-ups are confirmed asynchronously by the webhook, so the return hand-off
+      // is the screen that polls GET /api/v1/wallet/topup/{reference}.
+      onResolved: (result) => {
+        router.replace(`/wallet/topup/${encodeURIComponent(result.reference)}` as never);
+      },
+    });
+  };
 
   const resolveMutation = useMutation({
     mutationFn: async () => {
@@ -373,7 +394,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     },
   });
 
-  const isPending = fundMutation.isPending || resolveMutation.isPending || transferMutation.isPending ||
+  const isPending = fundBusy || resolveMutation.isPending || transferMutation.isPending ||
     resolveAccountMutation.isPending || bankTransferMutation.isPending;
 
   const resetBankFlow = () => {
@@ -412,7 +433,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
       await promptKycForFunding();
       return;
     }
-    fundMutation.mutate();
+    launchFunding();
   };
 
   const handlePrimary = () => {
@@ -441,7 +462,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   };
 
   const primaryLabel = () => {
-    if (kind === 'fund') return fundMutation.isPending ? 'Please wait…' : config.primaryAction;
+    if (kind === 'fund') return fundBusy ? 'Please wait…' : config.primaryAction;
     if (kind === 'transfer') {
       if (transferStep === 'form')    return resolveMutation.isPending ? 'Looking up recipient…' : 'Preview Transfer';
       if (transferStep === 'confirm') return transferMutation.isPending ? 'Sending…' : 'Confirm & Send';
@@ -654,6 +675,9 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
           </View>
         )}
       </ScrollView>
+
+      {/* Hosts the in-app Paystack checkout WebView on native (nothing on web). */}
+      <fundCheckout.Sheet />
     </SafeAreaView>
   );
 }
