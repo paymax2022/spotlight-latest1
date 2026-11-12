@@ -2,6 +2,7 @@ package doctor_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -173,5 +174,51 @@ func TestRequestPayoutResultShape(t *testing.T) {
 	}
 	if res.Status != "pending" && res.Status != "paid" && res.Status != "processing" {
 		t.Errorf("status %q outside OpenAPI enum [pending,paid,processing]", res.Status)
+	}
+}
+
+// TestUpdateAvailability_BindsContractBody pins PUT /availability to the
+// published schema (contracts/doctor.openapi.yaml UpdateAvailabilityRequest is
+// `required: [schedule]`): the react-native availability screen sends the
+// schedule nested under "schedule". A flat struct decodes that body to
+// every-default with no error, and the repository then writes an empty schedule
+// — so the doctor's real hours silently vanish behind a "Saved" alert.
+func TestUpdateAvailability_BindsContractBody(t *testing.T) {
+	body := `{"schedule":{"doctorId":"d-1","workingDays":[{"day":"mon","enabled":true,"startTime":"09:00","endTime":"17:00"}],"breaks":[],"consultDurationMins":20,"bufferMins":5,"acceptsInstant":true}}`
+	var req doctor.UpdateAvailabilityRequest
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	if req.Schedule == nil {
+		t.Fatal("schedule must bind — OpenAPI marks it required")
+	}
+	var days []struct {
+		Day string `json:"day"`
+	}
+	if err := json.Unmarshal(req.Schedule.WorkingDays, &days); err != nil {
+		t.Fatalf("workingDays: %v", err)
+	}
+	if len(days) != 1 || days[0].Day != "mon" {
+		t.Errorf("workingDays = %d entries, want the single mon day sent", len(days))
+	}
+	if req.Schedule.ConsultDurationMins == nil || *req.Schedule.ConsultDurationMins != 20 {
+		t.Error("consultDurationMins must carry through the wrapper")
+	}
+}
+
+// TestUpdateAvailability_MissingScheduleIs400 covers the other half: an absent
+// schedule must be rejected, not written as an empty one.
+func TestUpdateAvailability_MissingScheduleIs400(t *testing.T) {
+	h := doctor.NewHandler(nil) // the guard returns before the service is touched
+	r := newTestGin()
+	r.PUT("/api/v1/doctor/availability", authAs("doctor-1"), h.UpdateAvailability)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/v1/doctor/availability", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("empty body: got %d, want 400 (accepting it wipes the schedule)", w.Code)
 	}
 }
