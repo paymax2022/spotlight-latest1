@@ -586,14 +586,14 @@ components:
       properties:
         id: { type: string, format: uuid }
         user_id: { type: string, format: uuid, description: Merchant owner whose wallet was debited. }
-        bank_account_id: { type: string, format: uuid, description: The payout account paid — one the owner had saved, or one captured from an ad-hoc destination on this request. }
+        bank_account_id: { type: string, format: uuid, description: 'The payout account paid — one the owner had saved, or one captured from an ad-hoc destination on this request.' }
         amount_kobo: { $ref: '#/components/schemas/Money' }
         currency: { type: string, example: NGN }
         status: { type: string, enum: [pending, processing, paid, failed, reversed] }
         ledger_ref: { type: string, nullable: true }
         provider_reference: { type: string, nullable: true, description: Set by the operator when settling. }
         failure_reason: { type: string, nullable: true, description: Set by the operator when reversing. }
-        idempotency_key: { type: string, description: The Idempotency-Key this request was reserved under — also the ledger leg key, so a replay cannot post twice. }
+        idempotency_key: { type: string, description: 'The Idempotency-Key this request was reserved under — also the ledger leg key, so a replay cannot post twice.' }
         already_processed: { type: boolean, description: 'Present and true only when this row came back from replaying the same Idempotency-Key (HTTP 200 rather than a fresh 201).' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
