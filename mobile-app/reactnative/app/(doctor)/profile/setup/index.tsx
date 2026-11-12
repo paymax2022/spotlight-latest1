@@ -35,7 +35,6 @@ const STEP_ROUTE: Record<ProfileBuilderStep, string> = {
   pricing:         '/(doctor)/profile/setup/pricing',
   free_follow_up:  '/(doctor)/profile/setup/free-follow-up',
   availability:    '/(doctor)/availability',
-  bank_account:    '/(doctor)/profile/setup/bank-account',
 };
 
 export default function ProfileSetupHubScreen() {
