@@ -168,12 +168,11 @@ button {
 }
 
 input:focus {
-  color: var(--white);
   outline: none;
 }
 
 input {
-  color: var(--white);
+  color: inherit;
 }
 
 h1,
@@ -996,31 +995,31 @@ span {
 }
 
 .contact-form-items .form-clt span {
-  color: var(--white);
+  color: var(--header);
   margin-bottom: 20px;
   display: inline-block;
 }
-.contact-form-items .form-clt input, .contact-form-items .form-clt textarea {
+.contact-form-items .form-clt input, .contact-form-items .form-clt textarea, .contact-form-items .form-clt select {
   width: 100%;
   outline: none;
   border: none;
   background-color: transparent;
-  border: 1px solid var(--white);
-  color: var(--white);
+  border: 1px solid var(--border);
+  color: var(--black);
   padding: 18px 20px;
 }
 @media (max-width: 767px) {
-  .contact-form-items .form-clt input, .contact-form-items .form-clt textarea {
+  .contact-form-items .form-clt input, .contact-form-items .form-clt textarea, .contact-form-items .form-clt select {
     padding: 14px 20px;
   }
 }
 @media (max-width: 575px) {
-  .contact-form-items .form-clt input, .contact-form-items .form-clt textarea {
+  .contact-form-items .form-clt input, .contact-form-items .form-clt textarea, .contact-form-items .form-clt select {
     padding: 12px 18px;
   }
 }
-.contact-form-items .form-clt input::placeholder, .contact-form-items .form-clt textarea::placeholder {
-  color: rgba(255, 255, 255, 0.7019607843);
+.contact-form-items .form-clt input::placeholder, .contact-form-items .form-clt textarea::placeholder, .contact-form-items .form-clt select::placeholder {
+  color: var(--text);
 }
 .contact-form-items .form-clt textarea {
   padding-bottom: 70px;
@@ -5505,6 +5504,7 @@ span {
   border: none;
   background-color: transparent;
   border: 1px solid var(--border);
+  color: var(--black);
   padding: 16px 20px;
   font-weight: 500;
 }

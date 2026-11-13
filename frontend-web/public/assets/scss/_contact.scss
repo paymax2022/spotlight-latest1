@@ -2,19 +2,23 @@
 .contact-form-items {
 
     .form-clt {
+
+        // Every page that reuses this markup — the STEM school forms, the
+        // programme application wizards, /index-2, the news comment box —
+        // measures a white surface, so the field text is dark.
         span {
-            color: $white;
+            color: $header-color;
             margin-bottom: 20px;
             display: inline-block;
         }
 
-        input,textarea {
+        input,textarea,select {
             width: 100%;
             outline: none;
             border: none;
             background-color: transparent;
-            border: 1px solid $white;
-            color: $white;
+            border: 1px solid $border-color;
+            color: $black;
             padding: 18px 20px;
 
             @include breakpoint (max-md){
@@ -26,7 +30,7 @@
             }
 
             &::placeholder {
-                color: #ffffffb3;
+                color: $text-color;
             }
         }
 
