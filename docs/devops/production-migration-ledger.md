@@ -1340,7 +1340,15 @@ prod's post-check is compared against. Scope was read-only + throwaway: no
 dispatched, no write to staging or prod. Every migration file came from
 `/tmp/rel`, detached at `RELEASE_SHA`
 `c49b395643473ba6ff7a225d7a7a339a41eddfe6` — `git -C /tmp/rel rev-parse HEAD`
-printed that value before the replay and again after it.
+printed that value before the replay (the implementer's record) and again after it
+(§4.4's addendum, on the re-created tree).
+
+**Heading note (do not "fix" this to §5's template):** plan:451 and plan:497 ask
+for this section by the literal heading `## Stage 1 — fresh replay`, while §5's
+append format prescribes `## Task N — <title> (YYYY-MM-DD)`. The plan's wording
+wins for the prefix, and the task number and date are carried in parentheses, so
+both forms are satisfied by one heading; `4.x` sub-numbers follow the same
+per-task convention Task 2's `2.x` sections use.
 
 ### 4.1 Step 1 — the CI lane's conclusion at the pin
 
@@ -1374,10 +1382,26 @@ printed that value before the replay and again after it.
   `RLS_ALLOWLIST` entry with written justification) was therefore not entered, and
   no migration file was edited.
 - **Verdict:** pass.
-- **What it does not prove:** a lane report says it passed, not *what it applied*.
-  `make migrate-reset` prints no per-file tally and the psql route records no
-  version rows (§4.5), so run 43272402964 cannot be the file-count evidence —
-  which is why §4.2 replays it locally.
+- **What the green conclusion *alone* would not prove:** a lane report says it
+  passed, not *what it applied*. That limit does not apply here, because the job log
+  is retained and was read back (controller, 2026-11-13):
+  `gh api repos/paymax2022/spotlight-latest1/actions/jobs/131372215625/logs --allow-escape-sequences`
+  → 1,222,123 B / 7,758 lines, containing **1502** `applying supabase/migrations/…`
+  lines — 751 × 2, because CI runs `make migrate-up` (step `:94`) *and then*
+  `make migrate-reset` (step `:174`), which drops and re-applies the whole chain —
+  reducing to **751** unique names (`grep -o … | sed … | sort -u`), whose md5
+  `823d8cde1f335320d6a9cd3ab30aae17` is byte-identical to the local log-derived set
+  in §4.2 *and* to the pin's tree listing (`comm` both directions → **0**), plus
+  `rls-check ✓ — every public table has RLS enabled (allowlist: 'spatial_ref_sys')`
+  and 4,174 `NOTICE` lines. So run `43272402964` **is** a second byte-level witness
+  of the in-order 751-file replay, not merely a colour — which is what §4.5's
+  "answered yes at the pin, twice" rests on. One earlier sentence of this section
+  claimed the opposite ("prints no per-file tally … cannot be the file-count
+  evidence") and was wrong: `Makefile:93` echoes `  applying $f` inside `migrate-up`,
+  which `migrate-reset` calls at `Makefile:99`.
+- **Durability caveat:** job logs expire on GitHub's retention schedule, so this
+  corroboration is re-readable *now* and not permanent. `/tmp/replay-logs/replay.log`
+  is the durable artifact; re-fetch this job before quoting it in a later task.
 
 ### 4.2 Step 2 — the local replay, on the image and prelude CI uses
 
@@ -1397,22 +1421,39 @@ export DATABASE_URL="<that connection string>"
 bash scripts/ci/start-postgres-service.sh postgis/postgis:17-3.4 prod-replay
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET max_locks_per_transaction = 512;"
 docker restart prod-replay
-until pg_isready -h localhost -p ${POSTGRES_PORT} -U paymax >/dev/null 2>&1; do …; done
+# readiness wait, as run: a bounded pg_isready loop — at most 90 probes, sleep 1
+# between them (this host has no `timeout`/`gtimeout`); it succeeded on the first.
+# The implementer's exact loop text is unrecoverable (see deviation (i) below).
+pg_isready -h localhost -p ${POSTGRES_PORT} -U paymax
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f scripts/ci/supabase-compat-prelude.sql
 make migrate-reset DATABASE_URL="$DATABASE_URL"   # full output → /tmp/replay-logs/replay.log
 docker rm -f prod-replay
 ```
 
 Two disclosed deviations, neither of which changes what was measured: (i) the
-readiness wait is a bounded `until pg_isready … done` loop (90 iterations,
-`sleep 1`) because this host has no `timeout` binary (`which timeout` → not found,
-nor `gtimeout`); it reported ready on the first probe; (ii) Step 2's `| tail -8`
+readiness wait is a bounded `pg_isready` loop (90 iterations, `sleep 1` between
+probes) because this host has no `timeout` binary (`which timeout` → not found, nor
+`gtimeout`); it reported ready on the first probe. The block above states that
+bound in a comment instead of reproducing shell text — the implementer's exact loop
+is not recoverable, since it left no script and died before reporting, and nothing
+downstream depends on it: the first
+probe already succeeded, and `start.log`/`alter.log`/`restart.log` record the
+container state the wait was protecting; (ii) Step 2's `| tail -8`
 became a full capture, because `tail -8` discards the very per-file tally the same
 step requires recording. The last lines are quoted below either way.
 
-Order was kept as CI keeps it (`integration-verify.yml:62` → `:83` → `:91` →
-`:174`): container → lock raise → restart → prelude → `migrate-reset`. The restart
-is what makes the raise take effect, and it did:
+Order was kept as CI keeps it for the setup half (`integration-verify.yml:62` →
+`:83` → `:91` → `:174`): container → lock raise → restart → prelude →
+`migrate-reset`. **One CI step was not replicated, and it changes what "from zero"
+drops:** CI also runs `make migrate-up` at `:94` (`Migrations apply cleanly`), then
+the live-DB suites, `go build`, `tsc`, and only at `:174` the reset. So CI's
+`DROP SCHEMA public CASCADE` falls on a schema holding 751 migrations *plus test
+fixtures* — its job log reads `NOTICE: drop cascades to 1656 other objects`, while
+this local replay dropped a freshly-preluded schema and its `replay.log:2` reads
+`drop cascades to 6 other objects`. The local run therefore exercised a **strictly
+easier** drop path than CI's; the two "zeros" are not the same size, and the
+4,174-vs-2,089 NOTICE difference between the logs is the same fact (CI applies the
+chain twice). The restart is what makes the raise take effect, and it did:
 `show max_locks_per_transaction` read **512** afterwards, which is what the
 `DROP SCHEMA public CASCADE` inside `migrate-reset` (`Makefile:98`) then ran
 against. Whether the default 64 would actually have failed here was **not** tested
@@ -1443,10 +1484,18 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
   also 751 and no entry is a non-`.sql` file, so the Makefile's `*.sql` sweep
   missed nothing. This agrees with §2.5's `repo files at the release SHA: 751` —
   no drift since Task 2 measured it.
-- **0-pending-equivalent** (applied set vs. tree, both sorted basenames): `diff` →
-  identical; `comm -23 files applied` → **0** (nothing on disk left unapplied);
-  `comm -13` → 0 (nothing applied that is not on disk); 0 duplicate `applying`
-  lines; first applied `20260101000000_enable_extensions.sql`, last
+- **0-pending-equivalent** (applied set vs. tree, both sorted basenames): the
+  implementer ran this over the two basename lists §4.4's addendum later finds left
+  in `/tmp/replay-logs/` and reported `diff` → identical,
+  `comm -23 files applied` → **0**
+  (nothing on disk left unapplied), `comm -13` → 0 (nothing applied that is not on
+  disk). Because those two files' provenance is undecidable (§4.4's addendum), the
+  equalities were re-established against the **commit-determined** set instead —
+  the re-created `/tmp/rel` listing versus the basenames parsed out of
+  `replay.log` — and both `comm` directions are **0** there too. The set statement
+  is what carries; which pair of files a `diff` happened to run over is not.
+  0 duplicate `applying` lines (751 occurrences, 751 unique);
+  first applied `20260101000000_enable_extensions.sql`, last
   `20271408000000_preconsult_intake_schema_ui.sql` — the pin's highest version, so
   the chain ran end to end in timestamp order.
 - **Error scan:** `grep -cE "^psql:.*ERROR:|FATAL:" replay.log` → **0**. The only
@@ -1475,24 +1524,39 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
   inside `migrate-reset` (`Makefile:100`).
 - **Observed:** `rls-check ✓ — every public table has RLS enabled (allowlist: 'spatial_ref_sys')`,
   exit 0 — the same string CI's `Migration fresh replay from zero` step produced.
-- **Coverage, measured against the replay database before it was removed:**
+- **Coverage, measured against the replay database before it was removed.** The
+  connection argument is written as `psql "$DATABASE_URL" -tAc …` below because that
+  is what reaches the throwaway container (and what `Makefile:103` itself does);
+  `psql -tAc …` with no argument would have queried the host's default cluster, not
+  the replay. **The implementer recorded the queries without that argument and died
+  before it could correct them**, so the four figures below are quoted as *what it
+  reported from the container*, and the exact command line that produced them is not
+  recoverable — see the addendum's "Not re-measurable" list in §4.4.
 
   ```bash
-  psql -tAc "select count(*) from pg_tables where schemaname='public';"
+  psql "$DATABASE_URL" -tAc "select count(*) from pg_tables where schemaname='public';"
   # the rls-check predicate with its allowlist clause removed:
-  psql -tAc "select coalesce(string_agg(t.tablename, ', ' order by t.tablename),'(none)')
+  psql "$DATABASE_URL" -tAc "select coalesce(string_agg(t.tablename, ', ' order by t.tablename),'(none)')
     from pg_tables t join pg_class c on c.relname = t.tablename
     join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
     where t.schemaname='public' and c.relrowsecurity = false;"
-  psql -tAc "select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  psql "$DATABASE_URL" -tAc "select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
     and n.nspname = 'public' where c.relrowsecurity = true;"
-  psql -tAc "select count(*) from pg_policies where schemaname='public';"
+  psql "$DATABASE_URL" -tAc "select count(*) from pg_policies where schemaname='public';"
   ```
 
 - **Observed:** **1407** public tables; ungated = **1**, and its name is
   `spatial_ref_sys`; **1406** public `pg_class` rows carry `relrowsecurity = true`;
   **1974** policies in `public`.
 - **Verdict:** pass.
+- **Predicate mismatch to carry into Task 6, not discover there:** these counts walk
+  `pg_tables` (`Makefile:104`), whose domain includes materialized views, foreign
+  tables and partitioned tables, whereas Task 6's prod post-check (plan:665-667)
+  enumerates `pg_class … and c.relkind = 'r'` — ordinary tables only. plan:662 calls
+  these "the same predicate as `make rls-check`", and that is **not accurate**: the
+  allowlist clause matches (`'spatial_ref_sys'` in both) but the population does not,
+  so prod's row count is not comparable to 1407/1406 and a difference between them is
+  **not** drift evidence. Anyone comparing the two must count under one predicate.
 - **For Task 6 (the point of this section):** `RLS_ALLOWLIST` is
   `?= 'spatial_ref_sys'` (`Makefile:28`) and this replay needed **nothing beyond
   that one entry** — the PostGIS reference table owned by the extension, which the
@@ -1530,9 +1594,14 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
   running afterwards. No volume was created, so none was removed.
 - `git -C /Users/paymax/Documents/spotlight/main worktree remove /tmp/rel` → rc 0;
   `ls -d /tmp/rel` → `No such file or directory`. `git worktree list` afterwards
-  prints 13 entries: the main tree `/Users/paymax/Documents/spotlight/main` plus 12
+  printed 13 entries — the main tree `/Users/paymax/Documents/spotlight/main` plus 12
   others, **none** of them `/tmp/rel` (the cutover branch tree
-  `/private/tmp/spot-cutover` remains). The main tree was only ever read: no
+  `/private/tmp/spot-cutover` remains). Treat that 13 as a timestamp, not a fact
+  about the repo: this main tree is shared with concurrent sessions that attach and
+  remove worktrees, so the count moves on its own. Re-read at the controller's
+  addendum (2026-11-13, `/tmp/rel` present again): **18** entries, and the
+  load-bearing half of both readings is the same — `grep /tmp/rel` finds the tree
+  when it exists and nothing when it does not. The main tree was only ever read: no
   rebase/reset/stash/checkout/clean, nothing staged there. `/tmp/rel` is removed
   here because Task 4 was its last consumer — Task 5 onward run the classifier
   from a repo root.
@@ -1562,11 +1631,46 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
   and equally what a copied file looks like: content alone cannot tell them apart,
   and the implementer died before it could say which it did. So §4.2's convergence
   claim does not rest on either file; it is carried by the log-derived set above,
-  computed without opening them. **Not re-measurable:** §4.3's four coverage counts (1407 public tables, 1
-  ungated, 1406 with `relrowsecurity = true`, 1974 policies) were read from a
-  container that `docker rm -f` removed, so they are single-observation figures —
-  what reproduces from the log is the gate's own verdict line,
-  `rls-check ✓ … (allowlist: 'spatial_ref_sys')` and `make`'s exit 0. `/tmp/rel` is
+  computed without opening them.
+  **Corroborated by surviving captures** — `/tmp/replay-logs/` holds six files
+  besides the two lists, and they re-state part of §4.2 independently of any
+  report: `start.log` (253 B: the pull, `Digest: sha256:d0b5a6ec…`, `prod-replay is
+  healthy (postgis/postgis:17-3.4)`), `alter.log` (13 B: the `ALTER SYSTEM` command
+  tag, i.e. the lock raise was accepted), `restart.log` (12 B: `prod-replay`),
+  `prelude.log` (110 B: exactly the one `already exists, skipping` NOTICE quoted in
+  §4.2), and `replay.rc` (`REPLAY_RC=0`, so `make migrate-reset`'s own exit — which
+  is the exit of the `migrations applied` → `rls-check` sequence).
+  **Caution about the capture directory:** `replay.log:1` is `make`'s own echoed
+  command and carries the throwaway connection string **in clear**, including its
+  password and host port, and `replay.log:68` names the generated
+  `admin@spotlight.internal` address. The value is CI's local-service string from
+  `integration-verify.yml`'s job env, not a staging or production credential — but
+  these eight files live in `/tmp`, outside the repo, and must not be copied or
+  committed into it. Quote line numbers from them; do not paste the lines.
+  **Not re-measurable** — everything below was read inside the `prod-replay`
+  container or from the first `/tmp/rel` tree, both gone, so each is a
+  single-observation figure resting on the implementer's record alone, with
+  `replay.log` as the only other witness where it carries the same line:
+  §4.3's four coverage counts (1407 public tables, 1 ungated, 1406 with
+  `relrowsecurity = true`, 1974 policies); the server string
+  `PostgreSQL 17.0 (Debian 17.0-1.pgdg110+1) …` (the digest in `start.log` pins the
+  image, so this is re-derivable from that image — but not the run's own read);
+  the five installed extension versions (`postgis 3.4.3`, `btree_gist 1.7`,
+  `pg_trgm 1.6`, `pgcrypto 1.3`, `uuid-ossp 1.1`); the
+  `show max_locks_per_transaction` → **512** read (the statement that produced it
+  survives in `alter.log`, its result does not); the shim's schema/role inventory
+  (`auth`, `extensions`, `storage`; `anon`, `authenticated`, `service_role`,
+  `postgres`); and `supabase_migrations` → 0 tables.
+  The teardown `git -C /tmp/rel status --porcelain | wc -l` = **0** needs the same
+  caveat, with one addition: it is a genuine witness that nothing in *the tree the
+  replay ran in* was modified or left untracked, but it was taken once, by the
+  process that died, and the re-created tree's clean status today is **not** that
+  probe — a fresh `worktree add --detach` of an untouched commit is clean by
+  construction, so re-running it now would print `0` whether or not the original
+  replay ever edited a file. What the re-creation does restore is the file-set
+  half (§4.2's `ls`, highest prefix, non-`.sql` count) and `rev-parse HEAD` = the
+  pin; what it cannot restore is the working-tree state of the tree that was
+  actually driven. `/tmp/rel` is
   **present again right now**, deliberately, so the task reviewer can verify §4.2 in
   place; Step 3's teardown is not cancelled and the tree must be removed once this
   task's review closes, before any prod write.
@@ -1579,20 +1683,34 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
   Step 1's stop-the-cutover branch did not fire, so no migration is barred from
   prod on ordering grounds.
 - **What that does not certify, and Task 6 must not borrow:** prod is not a fresh
-  database. §2.5's classification of the then-88 pending files put 18 of them
-  **below** prod's max applied version, and those 18 are applied out of timestamp
-  order on prod — a shape no fresh-from-zero replay exercises. If one of them fails
-  there, this section is not counter-evidence; it only proves the chain has no
-  order-from-zero blocker.
+  database. §2.5's classifier against the pin tree prints
+  `87 pending = 0 above-max + 87 below-max + 0 NON-ADDITIVE`, and its third
+  follow-on states the consequence: **every** pending file at the pin sorts **below**
+  prod's max applied version (`20271410000000`), so all of the 83 files Task 6
+  applies will land **out of timestamp order** — each will meet a database that had
+  already recorded newer versions. That is the shape §2.5's superseded 88-file
+  capture showed only for its 18 below-max files, and it is a shape no
+  fresh-from-zero replay exercises: in the replay each file met only its own
+  predecessors' output, whereas on prod each will meet a schema that has already
+  recorded versions newer than itself. If one of them fails on prod, this section is
+  not counter-evidence; it proves only that the chain has no order-from-zero blocker.
+  (Those 83/87/18 figures are §2.5's to quote, re-derived there from a fresh
+  capture — this line is a pointer to the shape, not a current count; §2.5's
+  "re-read, never quote" rule binds anyone reading §4.5 too.)
 - **751 = 751 is a file-set proof, not a history-row proof.** The psql route
   inserts nothing into Supabase's migration history:
   `select count(*) from information_schema.tables where table_schema = 'supabase_migrations'`
   → **0** on the replay database. So "0 pending" above must not be read as
-  prod-shaped evidence: prod's pending figure is `751 − (prod's recorded history
-  rows)`, and history rows come only from `db push` / the scoped lane. Task 6
-  re-reads that with the §2.6 classifier at its own time — §2.5's rule that these
-  counts are re-read, never quoted, still holds; its last capture had prod at 670
-  rows.
+  prod-shaped evidence: that probe counts *tables*, so the replay database has no
+  `supabase_migrations.schema_migrations` to be empty or full — nothing records what
+  it applied, and prod's pending figure comes only from writes made by `db push` /
+  the scoped lane.
+  The legal form of that arithmetic is §2.5's **`751 − 668 = 83`**, where 668 is
+  *recorded-with-a-file-at-the-pin*, not prod's raw row count — §3.4 forbids the
+  naive `751 − (prod history rows)` subtraction outright (it mixes two trees), so
+  do not form one from the 670 here. Task 6 re-reads pending with the §2.6
+  classifier at its own time; §2.5's rule that these counts are re-read, never
+  quoted, still holds, and its last capture had prod at 670 rows.
 - What the replay does **not** cover, so no later task borrows it as if it did: no
   seed/bootstrap data beyond what the migrations themselves insert, no Go test
   suite, no type-check, no `supabase db push`, and no staging or production
