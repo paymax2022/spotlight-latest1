@@ -37,6 +37,11 @@
 -- suspension guard, so a doctor suspended while online keeps presence='online'.
 -- Their row already reads offline, so skipping it costs the rail nothing.
 --
+-- The exclusion carries that guarantee on its own. 20271099000090 is still pending
+-- in production (no doctors_block_when_suspended trigger there as of this writing),
+-- so this function must not rely on being rescued by it — and it does not: a
+-- suspended profile is never in the UPDATE's row set at all.
+--
 -- Additive only: CREATE OR REPLACE FUNCTION + one call. No DROP, no rename, no
 -- type narrowing. Re-running it is a no-op: every row it matches is written to the
 -- value its own profile asks for, and suspended rows are outside the predicate.
