@@ -1706,6 +1706,19 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
   **present again right now**, deliberately, so the task reviewer can verify §4.2 in
   place; Step 3's teardown is not cancelled and the tree must be removed once this
   task's review closes, before any prod write.
+- **Teardown, executed 2026-11-13 after the round-1 re-review returned all findings
+  addressed** (that sentence above is left as the implementer-era state it was, and
+  this line is what closed it). Before removing: `git -C /tmp/rel status --porcelain |
+  wc -l` → **0**, `git -C /tmp/rel rev-parse HEAD` → the pin,
+  `ls /tmp/rel/supabase/migrations/*.sql | wc -l` → **751**. Then
+  `git -C /Users/paymax/Documents/spotlight/main worktree remove /tmp/rel` → rc 0;
+  `ls -d /tmp/rel` → `No such file or directory`;
+  `worktree list | grep -c '/tmp/rel'` → **0**; `docker ps -a | grep -ci replay` →
+  **0**. The entry count read **18** at that moment — down from the re-review's 20
+  minutes earlier, which is the moving-count point made above, not a discrepancy to
+  reconcile. Nothing in §4.2 or §4.4 now depends on that tree existing: every
+  tree-side figure in it is re-derivable from `git ls-tree -r --name-only c49b39564…`
+  against the main repo, and the pin cannot drift.
 
 ### 4.5 What this section is evidence of, and what it is not
 
