@@ -2231,3 +2231,64 @@ Step 5's post-deploy comparison has a real baseline:
   the lane.
 - **Verdict:** pass as baseline. This is a current measurement, so §3.7/§3.8's
   "exactly 4 keys" is confirmed to still describe live production.
+
+---
+
+## Task 9 — the CI guard so parity cannot silently reopen (2026-11-13)
+
+Commits `0a7f499df` → `9067198f4` → `51fb4938a` → `6879e1c53` → `638329796` on
+`feat/prod-cutover`. Delivered: `scripts/ci/check-prod-flag-parity.sh`,
+`scripts/ci/test-prod-flag-parity.sh`, the `prod-flag-parity` job in `ci.yml`
+plus its entry in the three deploy `needs:` lists, and `make flag-parity`.
+
+### 9.1 The figures the guard asserts, re-derived rather than trusted
+
+**Probe:** `grep -oE "envFlag\('[A-Z0-9_]+'\)" frontend-web/src/lib/feature-flags.ts | sed "s/envFlag('//;s/')//" | sort -u | wc -l`, and the same set `comm`-ed against the flag file's keys.
+**Observed:** 45 derived names · 45 declared keys · `comm -23` empty · `comm -13` empty.
+**Expected before running:** the brief's `45 flags declared (36 on, 9 off)`.
+**Verdict:** pass — and the agreement is real, not two failures cancelling: an empty `comm` in both directions is what makes `✓` mean something.
+
+The regex cannot match `envFlagDefaultTrue('X')` (it needs a literal `(` straight after `envFlag`, and there is a `D` there), so `tierLimits` at `feature-flags.ts:110` is outside the guard **by design**: `envFlagDefaultTrue` returns `true` when the var is unset (`feature-flags.ts:31-36`, measured not assumed), so an undeclared name there is served ON — it is not the silent-503 class this job exists to catch. Writing it into the file would change no behaviour and would make the count 46.
+
+### 9.2 TDD evidence
+
+- **Red, before the check script existed:** `FAIL: undeclared flag not named`, exit 1 — exactly the failure the brief predicted, because the test captures the missing script's stderr into `$TMP/out`, so case 1's *naming* assertion fires before its *exit* assertion.
+- **Green:** `PASS` then `prod-flag-parity ✓ — 45 flags declared (36 on, 9 off)`.
+- **Bite, on a copy only** (never the committed file): `UNDECLARED in /tmp/parity…/bitten.env: FEATURE_WALLET_ENABLED (write =true to serve it, =false to refuse it)` + `prod-flag-parity ✗ — 1 drift(s)`, exit 1; `git status` on the committed file stayed empty afterwards, and the copy was deleted.
+- The brief's Step 5 said to run this in `/Users/paymax/Documents/spotlight/main`. It cannot be run there: Task 7's flag file is not on `main` yet (unpushed, R2), and `main` is a dirty tree shared with live sessions. The byte-identical file on this branch is the same artifact under test.
+- Modes set to `755` to match every other `scripts/ci/*.sh` (`git ls-files -s` shows `100755`).
+
+### 9.3 Why this guard is not exposed to the symlink trap (R17)
+
+It derives names by grepping **one real file**, `frontend-web/src/lib/feature-flags.ts`. R17's blind spot only bites a recursive walk that *discovers* `frontend-web/src/app` as a symlink, so `grep -rn … frontend-web/src` reporting 17 lines instead of the 184 gated route files does not apply here — and the guard never needs the route files, because the accessor file is where the gate surface is *defined*. A guard that had instead crawled `frontend-web/src` for gated routes would have shipped a green check over 184 unguarded files.
+
+### 9.4 What the guard does NOT see — read this before believing it
+
+| Not covered | Why | Who covers it |
+| --- | --- | --- |
+| Host ↔ file drift (cPanel `.env.production.local` differing from the committed file) | The guard compares the file to the **code**, never to a running host. | Task 8's inline validator in `deploy-cpanel.yml`, which runs at the moment the file is written to the host. |
+| `envFlagDefaultTrue` names | Absent means ON, so there is no 503 to catch. | None needed; recorded in the script's comment so a later reader does not "fix" it. |
+| `envFlag("DOUBLE_QUOTED")` or `envFlag(variable)` call shapes | Measured: the real file has none — every accessor is a single-quoted uppercase literal, including the two-term `fx` accessor. A future shape change would silently shrink the list. | `test-prod-flag-parity.sh` cannot detect it; the post-pipeline empty-name check catches only the all-or-nothing case. |
+| Whether the deploy actually happened | It is a structural gate, not a probe. | Tasks 8 Step 5, 11, 14. |
+
+### 9.5 Four fix rounds, and what each one proved
+
+The task review returned **Approved, zero Critical, zero Important** (two reviewers, independently). Every round beyond that was driven by Minor findings, and two of them were real holes in my own fix:
+
+1. `9067198f4` — guarded the name interpolations (`[A-Z0-9_]+` or refuse) because `--live` and the flag file are caller-supplied text and a metacharacter inside `^${name}=(…)` **false-passes**; added a `[ -s "$FLAGS" ]` guard; anchored case 2 on the summary line.
+2. `51fb4938a` — the re-review *measured* that round and found three defects: a `--flags` file that exists but matches no `envFlag` still aborted with **zero bytes of output** (grep's exit 1 propagating through `pipefail`); the new `$FLAGS` guard fired on the `--live` path, where the accessor file is never opened, breaking the suite outside the repo root; and **case 6 was a false test** — it asserted `no-such.ts`, which the *pre-fix* script already printed via grep's own error line. Fixed all three and added cases 7-8, plus a CI step that runs the suite, since nothing had ever executed it.
+3. `6879e1c53` — replaced `|| true` with a probe before the pipeline (one `|| true` cannot distinguish grep exit 1 from exit ≥2, which is precisely how a half-read accessor file becomes a short list that passes); made `BAD gate name` name its real source (`$FLAGS` was the truthful label where `$LIVE` is a deleted temp path); added case 9 pinning the `--live` path from a tree with no `frontend-web/`, because the relocated guard is inert in every CI run.
+4. `638329796` — `DEAD wiring:` blamed `feature-flags.ts` even when the caller supplied `--live` and no accessor file had been opened; both legs now report `LIVE_SRC`, leaving the default-path text byte-identical. Restored the post-pipeline empty-list check the probe cannot see (GNU grep on binary input answers `-q` yes while `-o` emits nothing), and corrected the comment that claimed pipefail would catch a read error — the probe catches it one line earlier.
+
+Rounds 1-3 each got a scoped re-review; round 4 is a one-variable message fix verified directly (suite `PASS`, default run `✓ — 45/36/9`, `make` exit 0, mandated strings each present exactly once), so the loop closed rather than buying a fourth review for prose.
+
+### 9.6 Ruling — its own job, not a step inside `secret-hygiene`
+
+`ci.yml:144-146` documents that cheap repo-wide gates share one runner "for no benefit", and this check is sub-second, so the repo convention argues for folding it in. Kept separate, per the brief: `needs:` can only reference **job ids**, and the plan's interface contract produces "the `ci.yml` check name `prod-flag-parity`, added to every `needs:` list that gates a deploy" — a name later tasks and an operator reading a red X both depend on. Cost is one runner start per CI run, against the outage class that produced the 221 503 sites recorded in §7.
+
+### 9.7 Carry into Tasks 10, 13, 16
+
+- Task 10 and Task 13 may reconcile one plane at a time using `--live NAMES`; that path never opens `feature-flags.ts`, so its diagnostics name the caller's list. Do not "simplify" by dropping `--live`.
+- Task 13's write list must stay consistent with the nine `=false` lines: the guard checks the *web* file only, so a backend env name like `FEATURE_CRYPTO_ENABLED` is invisible to it and must be decided in Task 13's own table.
+- Task 16 should record that production's flag wiring now has two independent guards (CI structural, lane runtime) and name what neither covers: a host edited by hand outside the lane.
+
