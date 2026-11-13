@@ -83,9 +83,13 @@ the other.
   publishes at any readiness.
 - Demoting readiness below `ready` withdraws a live production module on its own, without
   touching its tier rows, so marking it Ready again restores exactly the previous state.
-- A store build reads the tier of the backend it is pointed at, not its own build name. So
-  today's production APK, wired to staging, is governed by the **staging** column until it is
-  rewired.
+- A store build reads the tier of the backend it is pointed at, not its own build name. The
+  tracked source of truth for that is `mobile-app/reactnative/eas.json`, and its `production`
+  and `production-apk` profiles point at the production BFF
+  (`EXPO_PUBLIC_API_BASE_URL=https://frontend-web-production-9259.up.railway.app`, prod
+  Supabase) — so those builds are governed by the **production** column. `.env.production` is
+  gitignored and can hold anything, including staging URLs; check the origin actually inlined
+  in the artifact before trusting a build's name.
 - `FEATURE_MODULE_GATE_ENFORCE` (Go) is the server-side half. Unset it is observe-only: the
   gate resolves the module and logs what it would refuse. Turn it on only after the route map
   has met real traffic, and remember it is mounted on the finance group alone.
