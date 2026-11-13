@@ -11,6 +11,10 @@
 #
 # --live overrides the derived name list (one name per line) when reconciling a
 # specific plane instead of the whole codebase.
+#
+# Run it from the repo root: the two defaults below are root-relative, which is
+# how both call sites invoke it (Makefile `flag-parity`, and CI, where
+# actions/checkout puts the workspace root as the step's cwd).
 set -euo pipefail
 FILE="frontend-web/config/production-module-flags.env"
 FLAGS="frontend-web/src/lib/feature-flags.ts"
@@ -24,6 +28,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -s "$FILE" ] || { echo "FAIL: $FILE missing or empty — production would carry zero FEATURE_*"; exit 1; }
+[ -s "$FLAGS" ] || { echo "FAIL: $FLAGS missing or empty — the gate surface cannot be derived, so parity is unprovable"; exit 1; }
 if [ -z "$LIVE" ]; then
   LIVE="$(mktemp)"; trap 'rm -f "$LIVE"' EXIT
   # envFlag() only, on purpose. envFlagDefaultTrue('X') (feature-flags.ts:31-36)
@@ -33,14 +38,24 @@ if [ -z "$LIVE" ]; then
   grep -oE "envFlag\('[A-Z0-9_]+'\)" "$FLAGS" | sed "s/envFlag('//;s/')//" | sort -u > "$LIVE"
 fi
 drift=0
+# Both name interpolations are guarded, not trusted: on the default path the
+# derivation regex already constrains names to [A-Z0-9_], but --live and the
+# flag file are caller-supplied text, and a metacharacter inside `^${name}=(…)`
+# widens the match — which would report a genuinely undeclared gate as fine.
 while read -r name || [ -n "$name" ]; do
   [ -n "$name" ] || continue
+  case "$name" in
+    *[!A-Z0-9_]*) echo "BAD name in $LIVE: '$name' (must be [A-Z0-9_]+ — a metacharacter here would widen the match and false-pass)"; drift=$((drift + 1)); continue ;;
+  esac
   grep -qE "^${name}=(true|false)$" "$FILE" \
     || { echo "UNDECLARED in $FILE: $name (write =true to serve it, =false to refuse it)"; drift=$((drift + 1)); }
 done < "$LIVE"
 while read -r line || [ -n "$line" ]; do
   case "$line" in ''|\#*) continue ;; esac
   k="${line%%=*}"; v="${line#*=}"
+  case "$k" in
+    ''|*[!A-Z0-9_]*) echo "BAD name in $FILE: '$k' (must be [A-Z0-9_]+ — it cannot be matched against the gate surface)"; drift=$((drift + 1)); continue ;;
+  esac
   grep -qx "$k" "$LIVE" || { echo "DEAD wiring: $k is declared but $FLAGS never reads it"; drift=$((drift + 1)); }
   [ "$v" = "true" ] || [ "$v" = "false" ] || { echo "BAD value for $k: '$v' (must be true or false)"; drift=$((drift + 1)); }
 done < "$FILE"

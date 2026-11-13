@@ -15,8 +15,10 @@ grep -q 'FEATURE_C_ENABLED' "$TMP/out" || { echo "FAIL: undeclared flag not name
 # 2 — an explicitly declared OFF name is a decision, not drift.
 printf 'FEATURE_A_ENABLED=false\n' > "$TMP/config/production-module-flags.env"
 printf 'FEATURE_A_ENABLED\n' > "$TMP/live.txt"
-bash "$CHECK" --file "$TMP/config/production-module-flags.env" --live "$TMP/live.txt" >/dev/null \
+bash "$CHECK" --file "$TMP/config/production-module-flags.env" --live "$TMP/live.txt" > "$TMP/out" 2>&1 \
   || { echo "FAIL: declared=false must be accepted"; exit 1; }
+grep -q 'prod-flag-parity ✓ — 1 flags declared (0 on, 1 off)' "$TMP/out" \
+  || { echo "FAIL: declared=false did not produce the on/off summary"; exit 1; }
 
 # 3 — a name the code does not read is dead wiring.
 printf 'FEATURE_A_ENABLED=true\nFEATURE_DEAD_ENABLED=true\n' > "$TMP/config/production-module-flags.env"
@@ -31,4 +33,21 @@ printf 'FEATURE_A_ENABLED\n' > "$TMP/live.txt"
 if bash "$CHECK" --file "$TMP/config/production-module-flags.env" --live "$TMP/live.txt" > "$TMP/out" 2>&1; then
   echo "FAIL: bad value went undetected"; exit 1; fi
 grep -q 'BAD value' "$TMP/out" || { echo "FAIL: bad value not named"; exit 1; }
+
+# 5 — a name carrying a regex metacharacter must be refused, not matched with.
+# `^FEATURE.A=(true|false)$` would happily match FEATURE_XA, so an undeclared
+# gate could false-pass; the guard is by NAME, not by pattern.
+printf 'FEATURE_A_ENABLED=true\nFEATURE_XA_ENABLED=true\n' > "$TMP/config/production-module-flags.env"
+printf 'FEATURE_A_ENABLED\nFEATURE.A_ENABLED\n' > "$TMP/live.txt"
+if bash "$CHECK" --file "$TMP/config/production-module-flags.env" --live "$TMP/live.txt" > "$TMP/out" 2>&1; then
+  echo "FAIL: metacharacter name went undetected"; exit 1; fi
+grep -q 'BAD name' "$TMP/out" || { echo "FAIL: metacharacter name not named"; exit 1; }
+
+# 6 — an unprovable parity is a failure with a reason, not a silent abort.
+# If the accessor source is gone, the derivation grep exits 1 and pipefail would
+# end the run with no line to read; the guard must name the missing file.
+printf 'FEATURE_A_ENABLED=true\n' > "$TMP/config/production-module-flags.env"
+if bash "$CHECK" --file "$TMP/config/production-module-flags.env" --flags "$TMP/no-such.ts" > "$TMP/out" 2>&1; then
+  echo "FAIL: missing accessor source went undetected"; exit 1; fi
+grep -q 'no-such.ts' "$TMP/out" || { echo "FAIL: missing accessor source not named"; exit 1; }
 echo "PASS"
