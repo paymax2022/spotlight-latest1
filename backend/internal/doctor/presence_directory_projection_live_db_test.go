@@ -273,3 +273,118 @@ func TestLiveDB_SetPresenceSuspendedDoctorStaysOfflineInDirectory(t *testing.T) 
 		t.Error("a suspended doctor is online in the patient directory")
 	}
 }
+
+// ── reconcile_doctors_presence() ───────────────────────────────────────────
+// The projection in SetPresence is forward-only: a doctor who was already at
+// presence='online' when it shipped keeps the doctors.is_online=false default
+// their row was born with, so the patient rail stays short until they happen to
+// toggle. reconcile_doctors_presence() repairs those rows. It is not in a
+// hand-written migration body because a bare UPDATE cannot be asserted on: the
+// function is what makes the repair testable, and what an operator can re-run.
+
+// staleOnlineDirectory simulates the shipped state: the profile says online, the
+// directory row says offline, and nothing has projected since.
+func staleOnlineDirectory(t *testing.T, pool *pgxpool.Pool, userID string) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(),
+		`UPDATE doctor_profiles SET presence='online', is_online=true WHERE user_id=$1`, userID)
+	if err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+}
+
+func reconcile(t *testing.T, pool *pgxpool.Pool) int {
+	t.Helper()
+	var repaired int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT public.reconcile_doctors_presence()`).Scan(&repaired); err != nil {
+		t.Fatalf("reconcile_doctors_presence(): %v", err)
+	}
+	return repaired
+}
+
+func TestLiveDB_ReconcilePresenceListsAnOnlineDoctorTheProjectionMissed(t *testing.T) {
+	pool := livePresenceDB(t)
+	userID, _ := seedPublishedDoctor(t, pool)
+	staleOnlineDirectory(t, pool, userID)
+
+	if dir, _ := readDirectoryPresence(t, pool, userID); dir.online {
+		t.Fatal("fixture is not stale — the repair this test proves would be unobservable")
+	}
+
+	reconcile(t, pool)
+
+	dir, ok := readDirectoryPresence(t, pool, userID)
+	if !ok {
+		t.Fatal("the doctor's directory row vanished")
+	}
+	if !dir.online {
+		t.Error("directory is_online=false after the repair, though the profile presence is online")
+	}
+	if !dir.available {
+		t.Error("the repair changed the listing flag — it owns presence only")
+	}
+}
+
+// The repair is bidirectional: a directory row left true by the old
+// ToggleDoctorAvailability path must stop advertising a doctor who is now away.
+func TestLiveDB_ReconcilePresenceUnlistsAStaleOnlineRow(t *testing.T) {
+	pool := livePresenceDB(t)
+	userID, _ := seedPublishedDoctor(t, pool)
+
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE doctors SET is_online=true WHERE user_id=$1`, userID); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE doctor_profiles SET presence='away', is_online=false WHERE user_id=$1`, userID); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+
+	reconcile(t, pool)
+
+	if dir, _ := readDirectoryPresence(t, pool, userID); dir.online {
+		t.Error("directory is_online=true for a doctor whose presence is away")
+	}
+}
+
+// Re-running must settle, not wander. Asserted on state rather than on the
+// function's own count, because that count covers every stale row in the
+// database and a shared dev database holds other authors' fixtures too.
+func TestLiveDB_ReconcilePresenceSecondPassChangesNothing(t *testing.T) {
+	pool := livePresenceDB(t)
+	userID, _ := seedPublishedDoctor(t, pool)
+	staleOnlineDirectory(t, pool, userID)
+
+	reconcile(t, pool)
+	first, _ := readDirectoryPresence(t, pool, userID)
+
+	reconcile(t, pool)
+	second, _ := readDirectoryPresence(t, pool, userID)
+
+	if first != second {
+		t.Errorf("directory row moved from %+v to %+v on a repair that had nothing left to fix", first, second)
+	}
+	if !second.online {
+		t.Error("the second pass dropped an online doctor off the rail")
+	}
+}
+
+// Presence must never be the way around a suspension: the repair derives from
+// the profile, so a suspended row has to stay offline whatever it says.
+func TestLiveDB_ReconcilePresenceNeverOnlinesASuspendedDoctor(t *testing.T) {
+	pool := livePresenceDB(t)
+	userID, _ := seedPublishedDoctor(t, pool)
+	staleOnlineDirectory(t, pool, userID)
+
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE doctor_profiles SET verification='suspended' WHERE user_id=$1`, userID); err != nil {
+		t.Fatalf("suspend fixture: %v", err)
+	}
+
+	reconcile(t, pool)
+
+	if dir, _ := readDirectoryPresence(t, pool, userID); dir.online {
+		t.Error("the repair put a suspended doctor in the patient online rail")
+	}
+}
