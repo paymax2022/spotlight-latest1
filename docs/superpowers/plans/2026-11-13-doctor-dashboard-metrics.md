@@ -43,7 +43,7 @@ The root cause of tiles 1, 2 and 5 is one query (`appointmentStatusCounts`, [bac
 - Test: same file (`TestLiveDB_` prefix, `TEST_DATABASE_URL`-gated)
 
 **Interfaces:**
-- Consumes: `Repository.db *pgxpool.Pool` (existing); `Repository.GetAvailability(ctx, userID) (*Availability, error)` returning `ErrNotFound` when the doctor has never saved availability (existing, [backend/internal/doctor/repository.go:121](../../backend/internal/doctor/repository.go#L121)).
+- Consumes: `Repository.db *pgxpool.Pool` (existing); `Repository.GetProfile(ctx, userID) (*Profile, error)` returning `ErrNotFound` when the doctor has no `doctor_profiles` row (existing, [backend/internal/doctor/repository.go:32](../../backend/internal/doctor/repository.go#L32)). The profile row is also where the doctor's IANA timezone lives — `PUT /schedule/timezone` writes it (`repository_ops.go:409`), so it is the only timezone column any screen sets.
 - Produces:
   - `type DashboardRevenue struct { PendingKobo, LifetimeKobo, ThisMonthKobo int64; ConsultsThisMonth int64 }`
   - `type DashboardMetrics struct { TodaysCount, UpcomingCount int64; SatisfactionPct *float64; RatingCount int64; Revenue DashboardRevenue; Timezone, Today string }` (exact fields below)
@@ -115,8 +115,8 @@ type metricsFixture struct {
 
 // newMetricsFixture seeds the state an approved, published doctor actually leaves
 // behind (same shape as presence_directory_projection_live_db_test.go's helper)
-// plus one patient with a profile. It deliberately does NOT create a
-// doctor_availability row: the no-row default is part of the contract.
+// plus one patient with a profile. The profile row is what the zone read looks at,
+// so the no-row fallback is exercised by its own test, not by this fixture.
 func newMetricsFixture(t *testing.T, pool *pgxpool.Pool) *metricsFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -188,9 +188,14 @@ func TestLiveDB_DashboardCountsAndQueueUseTheDoctorsLocalDay(t *testing.T) {
 	pool := metricsDB(t)
 	f := newMetricsFixture(t, pool)
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx,
-		`INSERT INTO doctor_availability (user_id, timezone) VALUES ($1,'Asia/Karachi')`, f.doctorUser); err != nil {
-		t.Fatalf("availability: %v", err)
+	tag, err := pool.Exec(ctx,
+		`UPDATE doctor_profiles SET timezone = 'Asia/Karachi' WHERE user_id = $1`, f.doctorUser)
+	if err != nil {
+		t.Fatalf("karachi: %v", err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("karachi: the fixture's doctor_profiles row was not updated — the read would fall back to " +
+			"Africa/Lagos and this test would prove nothing")
 	}
 	_, yestLate := f.bookLocal(t, "Asia/Karachi", "confirmed", -1, 23*60+30)
 	_, todayLate := f.bookLocal(t, "Asia/Karachi", "booked", 0, 30)
@@ -238,6 +243,31 @@ func TestLiveDB_DashboardCountsAndQueueUseTheDoctorsLocalDay(t *testing.T) {
 		if strings.Contains(strings.Join(refs, ","), gone) {
 			t.Errorf("queue leaked %s", gone)
 		}
+	}
+}
+
+// The fallback branch of dashboardTimezone. Without this, a doctor_profiles read that
+// turned ErrNotFound into a hard error would still pass every other test here — they all
+// run against a fixture that HAS a profile row.
+func TestLiveDB_DashboardTimezoneFallsBackWithoutAProfileRow(t *testing.T) {
+	pool := metricsDB(t)
+	ctx := context.Background()
+	userID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id) VALUES ($1)`, userID); err != nil {
+		t.Fatalf("auth user: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(context.Background()),
+			`DELETE FROM user_profiles WHERE id = $1`, userID)
+		_, _ = pool.Exec(context.WithoutCancel(context.Background()),
+			`DELETE FROM auth.users WHERE id = $1`, userID)
+	})
+	tz, err := metricsService(pool).dashboardTimezone(ctx, userID)
+	if err != nil {
+		t.Fatalf("dashboardTimezone for a doctor with no profile row: %v", err)
+	}
+	if tz != defaultDoctorTimezone {
+		t.Errorf("timezone = %q, want %q", tz, defaultDoctorTimezone)
 	}
 }
 
@@ -313,9 +343,10 @@ import (
 // 85% in SQL, or multiplying settlement.fee_kobo by 0.85 in the client, is the
 // float-math bug the settlement package warns about in its own comments.
 
-// defaultDoctorTimezone mirrors the NOT NULL DEFAULT of doctor_availability.timezone
-// (20260625000000_doctor_module.sql:164) — the same fallback the write path applies
-// at repository.go:149 with strOrDefault(in.Timezone, "Africa/Lagos").
+// defaultDoctorTimezone mirrors the NOT NULL DEFAULT of both timezone columns —
+// doctor_profiles.timezone (20260625000000_doctor_module.sql:60), which the read uses, and
+// doctor_availability.timezone (same file, :165). It is the same literal the write path
+// applies at repository.go:149 with strOrDefault(in.Timezone, "Africa/Lagos").
 const defaultDoctorTimezone = "Africa/Lagos"
 
 // dashboardQueueLimit caps the rows the dashboard renders. The count tile is
@@ -380,20 +411,24 @@ type dashboardCounters struct {
 }
 
 // dashboardTimezone resolves the zone every date expression uses, once, so all
-// three reads price the same day. A doctor who has never saved availability has no
-// row — that is the column default, not an error.
+// three reads price the same day. The source is doctor_profiles.timezone — the
+// column `PUT /schedule/timezone` writes and GET /schedule reads back — NOT
+// doctor_availability.timezone, which no screen ever sets (a doctor who chose
+// Asia/Karachi on the timezone screen would otherwise have every "today"
+// predicate anchored to Lagos). A doctor with no profile row at all is the
+// default, not an error.
 func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string, error) {
-	av, err := s.repo.GetAvailability(ctx, userID)
+	p, err := s.repo.GetProfile(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
 		return defaultDoctorTimezone, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("doctor: read availability timezone: %w", err)
+		return "", fmt.Errorf("doctor: read profile timezone: %w", err)
 	}
-	if av.Timezone == "" {
+	if p.Timezone == "" {
 		return defaultDoctorTimezone, nil
 	}
-	return av.Timezone, nil
+	return p.Timezone, nil
 }
 
 // dashboardAggregates counts today's and upcoming consults and this month's
@@ -526,6 +561,9 @@ Append to `dashboard_metrics_live_db_test.go`:
 ```go
 var isoDay = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+// The UI vocabulary's clock form, per spec D8: "09:00 AM", never "09:00" and never "9 AM".
+var clock12 = regexp.MustCompile(`^\d{2}:\d{2} (AM|PM)$`)
+
 // The client builds its date from `${slotDate}T00:00:00`, so a full timestamp
 // here renders "Invalid Date" in the row; and status must be a ConsultStatus the
 // badge knows. Asserted off the marshalled JSON because that is the contract —
@@ -563,6 +601,12 @@ func TestLiveDB_DashboardQueueRowWireShape(t *testing.T) {
 	}
 	if !isoDay.MatchString(got.SlotDate) {
 		t.Errorf("slotDate = %q, want YYYY-MM-DD", got.SlotDate)
+	}
+	// Decoded and asserted, not merely unmarshalled: `to_char(..., 'HH12:MI AM')` is the
+	// only thing standing between this column and a 24-hour `HH24:MI`, and the client
+	// renders the string verbatim.
+	if !clock12.MatchString(got.SlotTime) {
+		t.Errorf("slotTime = %q, want HH:MM AM/PM", got.SlotTime)
 	}
 	if got.Status != "upcoming" {
 		t.Errorf("status = %q, want 'upcoming' (booked renamed)", got.Status)
@@ -1314,8 +1358,8 @@ In `contracts/doctor.openapi.yaml`, insert immediately after the `PatientSummary
       type: object
       description: >-
         The landing tiles. Every count is scoped to this doctor and every date is
-        evaluated in the doctor's own timezone (doctor_availability.timezone,
-        defaulting to Africa/Lagos). Counts and the queue both come from
+        evaluated in the doctor's own timezone (doctor_profiles.timezone, the column
+        the app's timezone screen writes, defaulting to Africa/Lagos). Counts and the queue both come from
         public.appointments joined through doctors.user_id — the plane bookings
         actually land in.
       properties:
@@ -2094,7 +2138,7 @@ Expected: the log lists the spec, the plan, and the seven implementation commits
 ```bash
 cd /private/tmp/spot-doctor-metrics && gh pr create --base main --head feat/doctor-dashboard-metrics --title "fix(doctor): make the dashboard's five tiles report real bookings, money and reviews" --body "$(cat <<'EOF'
 ## Summary
-- Today's consults, Upcoming and Today's queue read `public.appointments` (the plane bookings land in) joined through `doctors.user_id`, dated in the doctor's own `doctor_availability.timezone`; the old reads used `doctor_appointments`, which no code path inserts into, so every tile was a healthy-looking zero.
+- Today's consults, Upcoming and Today's queue read `public.appointments` (the plane bookings land in) joined through `doctors.user_id`, dated in the doctor's own `doctor_profiles.timezone` (the column the app's timezone screen writes); the old reads used `doctor_appointments`, which no code path inserts into, so every tile was a healthy-looking zero.
 - `GET /doctor/dashboard` gains `metrics` (todaysCount / upcomingCount / satisfactionPct+ratingCount / revenue / timezone / today) and `todaysAppointments[]`, typed in `contracts/doctor.openapi.yaml` in place of `Generic`.
 - Consult revenue is projected over `settlements`: settled rows sum `provider_kobo`, escrowed rows run through `settlement.ComputeLegs` so the pending figure is the arithmetic `Settle` actually pays by. `Available` stays the ledger wallet — two planes, labelled apart.
 - `satisfactionPct` is nullable end-to-end; the tile renders `—` instead of `0%` for a doctor with no reviews.

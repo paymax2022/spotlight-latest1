@@ -60,13 +60,17 @@ Measured at `origin/main` = `effe1b355` on 2026-11-13.
   reads `AVG(rating), COUNT(*) FROM doctor_reviews WHERE user_id = $1 AND rating IS NOT
   NULL` (`doctor_reviews.user_id` is documented in the DDL as "reviewed doctor"), exposed
   at `GET /doctor/reputation`.
-- Timezone: `doctor_availability.timezone` is `text NOT NULL DEFAULT 'Africa/Lagos'`
-  (`20260625000000_doctor_module.sql:164`) and `Repository.GetAvailability` reads it. Nothing
-  in this module applies it to a booking yet — `AT TIME ZONE` appears nowhere in
-  `internal/doctor/*.go`, which is precisely why "today" has never been the doctor's day
-  here. The write path's fallback idiom is Go-side, `strOrDefault(in.Timezone,
-  "Africa/Lagos")` at `repository.go:149`, and this design resolves the zone the same way
-  before handing it to the reads as a parameter.
+- Timezone: two columns carry one, both `text NOT NULL DEFAULT 'Africa/Lagos'` —
+  `doctor_profiles.timezone` (`20260625000000_doctor_module.sql:60`) and
+  `doctor_availability.timezone` (same file, `:165`). Only the first is a setting: the app's
+  one timezone screen, `app/(doctor)/schedule/timezone.tsx:26`, saves through
+  `PUT /schedule/timezone` → `Service.SetTimezone` (`service_ops.go:360`) →
+  `UPDATE doctor_profiles SET timezone` (`repository_ops.go:409`), and `GET /schedule` reads
+  the same column back. `doctor_availability.timezone` is written only as a side effect of the
+  availability upsert (`repository.go:149`, from whatever `in.Timezone` the client echoed) and
+  no screen sets it. Nothing in this module applies either column to a booking yet —
+  `AT TIME ZONE` appears nowhere in `internal/doctor/*.go`, which is precisely why "today" has
+  never been the doctor's day here.
 - Two render defects in `src/features/doctor/components/AppointmentRow.tsx`:
   `TYPE_ICON[appointment.consultType]` is `undefined` whenever the booking's
   `consultation_type` is `'in_person'` — that value is allowed by the live CHECK
@@ -102,10 +106,13 @@ unbounded list, and the queue is a preview, not the appointments screen.
 
 **D3 — Date logic lives in SQL**, via `AT TIME ZONE $2::text`, where `$2` is the doctor's zone
 resolved once in Go and passed down. No `time.LoadLocation`, no `time/tzdata` import, no new
-dependency — the Go side never has to know what Asia/Karachi means. The zone comes from
-`Repository.GetAvailability`; the fallback to `Africa/Lagos` is applied in Go with the same
-`strOrDefault(in.Timezone, "Africa/Lagos")` the write path uses at `repository.go:149`, so one
-resolved value feeds all three reads and the day cannot drift between them.
+dependency — the Go side never has to know what Asia/Karachi means. The zone comes from the
+existing scoped `Repository.GetProfile` read, because `doctor_profiles.timezone` is the column
+the timezone screen writes and `GET /schedule` reads back; `ErrNotFound` (a doctor with no
+profile row at all) and an empty value both map to `Africa/Lagos` in Go, the same fallback the
+availability write path uses at `repository.go:149`. One resolved value feeds all three reads,
+so the day cannot drift between them. `doctor_availability.timezone` is deliberately not a
+source: no screen sets it, so reading it would add a second zone nobody can predict from the UI.
 
 **D4 — Metric definitions** (all scoped through `doctors d ON d.user_id = $1`, the signed-in
 doctor's auth id, because `appointments.doctor_id` is a `doctors.id`):
@@ -232,20 +239,20 @@ expo (doctor dashboard, live mode)
         ├─ repo.todayQueue           ★new — the same day, capped rows, UI status vocabulary
         ├─ repo.consultRevenue       ★new — settlements ⋈ appointments ⋈ doctors
         │                                + settlement.ComputeLegs for escrowed rows
-        ├─ repo.GetAvailability           (existing → the doctor's timezone)
+        ├─ repo.GetProfile                (existing → the doctor's timezone)
         └─ repo.GetReputation             (existing → satisfaction)
   → adapter maps wire → DoctorDashboardData → StatCards + AppointmentRow list
 ```
 
 ## Error handling
 
-- A doctor with no `doctors` row, no `doctor_availability` row, no bookings, no reviews and
+- A doctor with no `doctors` row, no `doctor_profiles` row, no bookings, no reviews and
   no settlements gets `200` with zeros, an empty `todaysAppointments`, and
   `satisfactionPct: null` — never `404`, never a crash. The timezone comes from
-  `Repository.GetAvailability`, whose `ErrNotFound` maps to `Africa/Lagos` in Go — the same
-  fallback the write path applies at `repository.go:149` (`strOrDefault(in.Timezone, "Africa/Lagos")`)
-  and the value of the column's own `NOT NULL DEFAULT`. The resolved zone is then a query
-  parameter, so all three reads price the same day.
+  `Repository.GetProfile`, whose `ErrNotFound` maps to `Africa/Lagos` in Go — the same
+  fallback the availability write path applies at `repository.go:149` (`strOrDefault(in.Timezone,
+  "Africa/Lagos")`) and the value of both timezone columns' own `NOT NULL DEFAULT`. The resolved
+  zone is then a query parameter, so all three reads price the same day.
 - `GetReputation` already returns a zeroed `ReputationSummary` on no rows; `GetDashboard`
   maps `ReviewCount == 0` to a null `satisfactionPct` rather than trusting the averaged 0.
 - One read failing fails the whole endpoint (unchanged behaviour — `GetDashboard` returns
@@ -261,17 +268,21 @@ expo (doctor dashboard, live mode)
 ## Testing
 
 Go, `backend/internal/doctor/dashboard_metrics_live_db_test.go` (new; `TEST_DATABASE_URL`-gated,
-self-cleaning fixture; owns fresh `auth.users`, `doctors`, `doctor_availability`,
+self-cleaning fixture; owns fresh `auth.users`, `doctors`, `doctor_profiles`,
 `appointments`, `settlements`, `ledger_entries`, `doctor_reviews` rows):
 
 - Today's count is the **doctor's** day: a booking at 23:30 WAT yesterday and one at
-  00:30 WAT today land on different sides of the boundary than a UTC day would put them.
+  00:30 WAT today land on different sides of the boundary than a UTC day would put them. The
+  zone under test is written the way the app writes it — `doctor_profiles.timezone` — so the
+  test fails if the read ever points at a column no screen sets.
 - `cancelled` excluded from today's count but `completed` included.
 - Upcoming excludes a past `booked` row and every cancelled/completed row.
 - `todaysCount == len(todaysAppointments)` (D2) and the rows are ascending by slot; a
   21-row day yields `todaysCount: 21` with 20 rows (D2a).
 - Scoping: an appointment for a second doctor never counts, and the queue never lists it.
-- Brand-new doctor: every count 0, queue empty, `satisfactionPct` nil — `err == nil`.
+- Brand-new doctor: every count 0, queue empty, `satisfactionPct` nil — `err == nil`. The
+  same call resolves the timezone to `Africa/Lagos` rather than failing, so the no-profile-row
+  branch of D3 is executed by an assertion, not only by a comment.
 - Revenue: settled telemedicine settlement → `lifetimeKobo`/`thisMonthKobo` =
   `provider_kobo`; escrowed one → `pendingKobo` equals what `ComputeLegs` yields for the
   same total and split (asserted by calling the function, not by a hand-computed literal);
