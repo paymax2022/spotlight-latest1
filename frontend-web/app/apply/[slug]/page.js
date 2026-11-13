@@ -5,7 +5,6 @@ import ContestRegistrationWizard from '@/components/forms/ContestRegistrationWiz
 import StemContestApplicationWizard from '@/components/forms/StemContestApplicationWizard';
 import RealityShowApply from '@/components/season2/RealityShowApply';
 import SmePitchApply from '@/components/season2/SmePitchApply';
-import AcademyApplyPage from '@/app/film-academy/apply/page';
 import { programPageBySlug, programPages } from '@/src/data/programPages';
 import { createClient } from '@/lib/supabase/server';
 import '@/components/season2/season2.css';
@@ -110,7 +109,7 @@ export default async function ProgramApplicationPage({ params }) {
 
               <div className="col-12 col-lg-8">
                 <div className="service-details-items">
-                  {program.heroImage && program.slug !== 'film-academy' ? (
+                  {program.heroImage ? (
                     <div className="details-image">
                       <img src={program.heroImage} alt={program.title} />
                     </div>
@@ -118,8 +117,6 @@ export default async function ProgramApplicationPage({ params }) {
                   <div className="details-content">
                     {program.slug === 'stem-contest' ? (
                       <StemContestApplicationWizard contestSlug={program.slug} />
-                    ) : program.slug === 'film-academy' ? (
-                      <AcademyApplyPage embedded />
                     ) : (
                       <ContestRegistrationWizard contestSlug={program.slug} />
                     )}
