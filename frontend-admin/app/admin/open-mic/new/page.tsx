@@ -6,15 +6,16 @@
  * as part of the Open Mic Path A console (see
  * docs/adr/ADR-047-admin-console-consolidation-path-a.md).
  *
- * Same fields, same POST /api/admin/open-mic/contests route, reached through
- * the web proxy. One deliberate omission: the original had a beat-file
- * upload control; the web proxy forwards bodies as text, which corrupts a
- * binary multipart upload (see openMicAdminService.createOpenMicContest's
- * header comment). Only the "paste a beat URL" path is kept here.
+ * Same fields, same POST /api/admin/open-mic/contests route, reached through the
+ * web proxy. The beat arrives as an mp3 upload through /api/web-proxy — the
+ * paste-a-URL-only path was removed because the public beat reader serves only
+ * /api/open-mic/beats/… paths, so a pasted third-party URL looked fillable and
+ * played for nobody.
  */
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
-import { createOpenMicContest, type CreateOpenMicContestInput } from '@/services/openMicAdminService';
+import { createOpenMicContest, uploadOpenMicBeat, type CreateOpenMicContestInput } from '@/services/openMicAdminService';
+import { beatUrlProblem } from '@/features/openmic/beat-url';
 import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
 
 const NIGERIA_STATES = [
@@ -40,6 +41,8 @@ export default function NewOpenMicContestPage() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [beatBusy, setBeatBusy] = useState(false);
+  const [beatNote, setBeatNote] = useState('');
   const [form, setForm] = useState({
     title: '', slug: '', description: '',
     month: new Date().getMonth() + 1, year: new Date().getFullYear(),
@@ -72,9 +75,24 @@ export default function NewOpenMicContestPage() {
     if (!form.city.trim()) e.city = 'City is required.';
     if (!form.venueName.trim()) e.venueName = 'Finale venue name is required.';
     if (!form.beatTitle.trim()) e.beatTitle = 'Official beat title is required.';
-    if (!form.beatDownloadUrl.trim()) e.beatDownloadUrl = 'Official beat file URL is required.';
+    if (!form.beatDownloadUrl.trim()) e.beatDownloadUrl = 'Upload the official beat mp3.';
     return e;
   }, [form]);
+
+  async function uploadBeat(file: File) {
+    setBeatBusy(true);
+    setBeatNote('');
+    try {
+      const beat = await uploadOpenMicBeat(file);
+      setField('beatDownloadUrl', beat.downloadUrl);
+      setField('beatPreviewUrl', beat.previewUrl);
+      setBeatNote('Beat uploaded — artists can now play and download it.');
+    } catch (e) {
+      setBeatNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBeatBusy(false);
+    }
+  }
 
   async function submit() {
     setError('');
@@ -207,7 +225,8 @@ export default function NewOpenMicContestPage() {
         <section>
           <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Official Beat</h3>
           <p style={{ fontSize: 12, color: colors.muted, marginTop: -6, marginBottom: 10 }}>
-            Paste a hosted URL — file upload isn&apos;t available from this console (see code comment for why).
+            Upload the beat mp3. The programme page can only play and offer a file this site
+            stores; a URL from another host will not open for an artist.
           </p>
           <div style={fieldWrap}>
             <label style={labelStyle}>Official Beat Title*</label>
@@ -219,13 +238,47 @@ export default function NewOpenMicContestPage() {
             <Input value={form.beatProducerName} onChange={(e) => setField('beatProducerName', e.target.value)} style={{ width: '100%' }} />
           </div>
           <div style={fieldWrap}>
+            <label style={labelStyle}>Upload Beat File (MP3)*</label>
+            <Input
+              type="file"
+              accept=".mp3"
+              aria-label="Upload beat file"
+              disabled={beatBusy}
+              onChange={(e) => {
+                const selected = e.target.files?.[0];
+                if (selected) void uploadBeat(selected);
+              }}
+            />
+            {beatBusy ? <p style={{ fontSize: 12, color: colors.muted, margin: '4px 0 0' }}>Uploading…</p> : null}
+            {beatNote ? (
+              <p style={{ fontSize: 12, color: colors.danger, margin: '4px 0 0' }}>{beatNote}</p>
+            ) : null}
+          </div>
+          <div style={fieldWrap}>
             <label style={labelStyle}>Beat File URL (Download)*</label>
-            <Input value={form.beatDownloadUrl} onChange={(e) => setField('beatDownloadUrl', e.target.value)} placeholder="https://..." style={{ width: '100%' }} />
+            <Input value={form.beatDownloadUrl} aria-label="Beat file URL (Download)" onChange={(e) => setField('beatDownloadUrl', e.target.value)} placeholder="/api/open-mic/beats/…" style={{ width: '100%' }} />
             {fieldErrors.beatDownloadUrl && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.beatDownloadUrl}</p>}
+            {beatUrlProblem(form.beatDownloadUrl) === 'legacy' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                This beat was uploaded before the public-beat fix, so artists get an access error.
+                Upload the mp3 instead of pasting a URL.
+              </p>
+            ) : beatUrlProblem(form.beatDownloadUrl) === 'unplayable' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                The programme page cannot serve that address, so the beat will not play or download.
+                Upload the mp3 instead of pasting a URL.
+              </p>
+            ) : null}
           </div>
           <div style={fieldWrap}>
             <label style={labelStyle}>Beat Preview URL (Optional)</label>
-            <Input value={form.beatPreviewUrl} onChange={(e) => setField('beatPreviewUrl', e.target.value)} placeholder="https://..." style={{ width: '100%' }} />
+            <Input value={form.beatPreviewUrl} aria-label="Beat preview URL" onChange={(e) => setField('beatPreviewUrl', e.target.value)} placeholder="/api/open-mic/beats/…" style={{ width: '100%' }} />
+            {beatUrlProblem(form.beatPreviewUrl) === 'unplayable' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                The player ignores a preview it cannot serve. Upload the mp3, or leave this empty to
+                play the download file.
+              </p>
+            ) : null}
           </div>
           <div style={fieldWrap}>
             <label style={labelStyle}>Beat Usage Rules</label>
