@@ -60,10 +60,13 @@ Measured at `origin/main` = `effe1b355` on 2026-11-13.
   reads `AVG(rating), COUNT(*) FROM doctor_reviews WHERE user_id = $1 AND rating IS NOT
   NULL` (`doctor_reviews.user_id` is documented in the DDL as "reviewed doctor"), exposed
   at `GET /doctor/reputation`.
-- Timezone: `doctor_availability.timezone` (default `Africa/Lagos`) is already applied
-  SQL-side at `repository.go:206` with
-  `to_char(a.scheduled_at AT TIME ZONE COALESCE(av.timezone,'Africa/Lagos'),'YYYY-MM-DD')`.
-  Reusing that expression keeps "today" the doctor's day without a Go `tzdata` dependency.
+- Timezone: `doctor_availability.timezone` is `text NOT NULL DEFAULT 'Africa/Lagos'`
+  (`20260625000000_doctor_module.sql:164`) and `Repository.GetAvailability` reads it. Nothing
+  in this module applies it to a booking yet — `AT TIME ZONE` appears nowhere in
+  `internal/doctor/*.go`, which is precisely why "today" has never been the doctor's day
+  here. The write path's fallback idiom is Go-side, `strOrDefault(in.Timezone,
+  "Africa/Lagos")` at `repository.go:149`, and this design resolves the zone the same way
+  before handing it to the reads as a parameter.
 - Two render defects in `src/features/doctor/components/AppointmentRow.tsx`:
   `TYPE_ICON[appointment.consultType]` is `undefined` whenever the booking's
   `consultation_type` is `'in_person'` — that value is allowed by the live CHECK
@@ -76,7 +79,7 @@ Measured at `origin/main` = `effe1b355` on 2026-11-13.
   serialises to).
 - `EXPO_PUBLIC_DOCTOR_USE_MOCK` is `false` locally and `mockPolicy.ts` forces mockless in
   staging/production, so these tiles are live-mode behaviour, not a dev-only artefact.
-  `docs/QA_DOCTOR_BATCH1_REPORT.md` records D1 as PASS from the mock fixtures — a false
+  `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md` records D1 as PASS from the mock fixtures — a false
   green.
 
 ## Decisions
@@ -97,9 +100,12 @@ doctor-local ascending slot order. A day with more than 20 consults therefore sh
 real number on the tile and 20 rows below it — a summary endpoint should not carry an
 unbounded list, and the queue is a preview, not the appointments screen.
 
-**D3 — Date logic lives in SQL** via `AT TIME ZONE COALESCE(av.timezone,'Africa/Lagos')`,
-matching `repository.go:206`. No `time.LoadLocation`, no `time/tzdata` import, no new
-dependency.
+**D3 — Date logic lives in SQL**, via `AT TIME ZONE $2::text`, where `$2` is the doctor's zone
+resolved once in Go and passed down. No `time.LoadLocation`, no `time/tzdata` import, no new
+dependency — the Go side never has to know what Asia/Karachi means. The zone comes from
+`Repository.GetAvailability`; the fallback to `Africa/Lagos` is applied in Go with the same
+`strOrDefault(in.Timezone, "Africa/Lagos")` the write path uses at `repository.go:149`, so one
+resolved value feeds all three reads and the day cannot drift between them.
 
 **D4 — Metric definitions** (all scoped through `doctors d ON d.user_id = $1`, the signed-in
 doctor's auth id, because `appointments.doctor_id` is a `doctors.id`):
@@ -222,10 +228,11 @@ expo (doctor dashboard, live mode)
         ├─ appointmentStatusCounts        (unchanged, doctor_appointments)
         ├─ unreadNotificationCount        (unchanged)
         ├─ ledger.GetBalance              (unchanged → wallet)
-        ├─ repo.GetDashboardMetrics  ★new — appointments ⋈ doctors ⋈ doctor_availability,
-        │                                doctor-local day/month, + queue rows
-        ├─ repo.GetConsultRevenue    ★new — settlements ⋈ appointments ⋈ doctors
+        ├─ repo.dashboardAggregates  ★new — appointments ⋈ doctors, doctor-local day/month
+        ├─ repo.todayQueue           ★new — the same day, capped rows, UI status vocabulary
+        ├─ repo.consultRevenue       ★new — settlements ⋈ appointments ⋈ doctors
         │                                + settlement.ComputeLegs for escrowed rows
+        ├─ repo.GetAvailability           (existing → the doctor's timezone)
         └─ repo.GetReputation             (existing → satisfaction)
   → adapter maps wire → DoctorDashboardData → StatCards + AppointmentRow list
 ```
@@ -234,8 +241,11 @@ expo (doctor dashboard, live mode)
 
 - A doctor with no `doctors` row, no `doctor_availability` row, no bookings, no reviews and
   no settlements gets `200` with zeros, an empty `todaysAppointments`, and
-  `satisfactionPct: null` — never `404`, never a crash. The timezone falls back to
-  `Africa/Lagos` inside the query's `COALESCE`, exactly as `repository.go:206` does.
+  `satisfactionPct: null` — never `404`, never a crash. The timezone comes from
+  `Repository.GetAvailability`, whose `ErrNotFound` maps to `Africa/Lagos` in Go — the same
+  fallback the write path applies at `repository.go:149` (`strOrDefault(in.Timezone, "Africa/Lagos")`)
+  and the value of the column's own `NOT NULL DEFAULT`. The resolved zone is then a query
+  parameter, so all three reads price the same day.
 - `GetReputation` already returns a zeroed `ReputationSummary` on no rows; `GetDashboard`
   maps `ReviewCount == 0` to a null `satisfactionPct` rather than trusting the averaged 0.
 - One read failing fails the whole endpoint (unchanged behaviour — `GetDashboard` returns
@@ -272,7 +282,9 @@ self-cleaning fixture; owns fresh `auth.users`, `doctors`, `doctor_availability`
 - Queue wire shape: `slotDate` matches `^\d{4}-\d{2}-\d{2}$` and `status` is in the UI
   vocabulary, asserted from the marshalled JSON like the neighbour's plane test does.
 
-Client, `tests/unit/doctor/dashboardMetrics.spec.ts` (new, jest per `package.json`):
+Client, `mobile-app/reactnative/src/features/doctor/__tests__/dashboardWire.test.ts` (new;
+`node --experimental-strip-types --test`, the runner this module already uses for
+`batch6Wire.test.ts` — the react-native package has no jest):
 the adapter maps a representative wire payload onto all five metrics, maps a null
 `satisfactionPct` through as null, tolerates a missing `metrics` object (all zeros, `[]`,
 never `undefined`), derives stable `initials`/`avatarColor`, and no live branch still
@@ -313,7 +325,7 @@ the wire evidence, and the in-browser pass is done only with an explicit go-ahea
 - **F1 — one projection.** Once the `/appointments` repoint is on `main`, fold
   `DashboardQueueAppointment`'s SQL and their `appointmentColumns` into one const, and switch
   the queue to `GET /appointments?scope=today&limit=20` so the tile and the tab share a read.
-- **F2 — stale QA.** `docs/QA_DOCTOR_BATCH1_REPORT.md` records D1/D13 as PASS on mock
+- **F2 — stale QA.** `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md` records D1/D13 as PASS on mock
   fixtures. Rewrite those rows against live mode as part of this change's verification.
 - **F3 — a doctor is also a patient.** `Available` is the whole `user_wallet` balance, so a
   doctor's own spend refunds inflate it relative to "revenue". D7 keeps the label honest;
