@@ -46,7 +46,7 @@ The root cause of tiles 1, 2 and 5 is one query (`appointmentStatusCounts`, [bac
 - Consumes: `Repository.db *pgxpool.Pool` (existing); `Repository.GetAvailability(ctx, userID) (*Availability, error)` returning `ErrNotFound` when the doctor has never saved availability (existing, [backend/internal/doctor/repository.go:121](../../backend/internal/doctor/repository.go#L121)).
 - Produces:
   - `type DashboardRevenue struct { PendingKobo, LifetimeKobo, ThisMonthKobo int64; ConsultsThisMonth int64 }`
-  - `type DashboardMetrics struct { TodaysCount, UpcomingCount int64; SatisfactionPct *float64; RatingCount int64; Revenue DashboardMetricsRevenue…; Timezone, Today string }` (exact fields below)
+  - `type DashboardMetrics struct { TodaysCount, UpcomingCount int64; SatisfactionPct *float64; RatingCount int64; Revenue DashboardRevenue; Timezone, Today string }` (exact fields below)
   - `type DashboardQueuePatient struct { ID, Name string; Age int; Gender string }`
   - `type DashboardQueueAppointment struct { ID, Ref string; Patient DashboardQueuePatient; ConsultType, Status, SlotDate, SlotTime string; FeeKobo int64; Reason string; IsHMO bool; CreatedAt string }`
   - `type dashboardCounters struct { TodaysCount, UpcomingCount, ConsultsThisMonth int64; Today string }`
