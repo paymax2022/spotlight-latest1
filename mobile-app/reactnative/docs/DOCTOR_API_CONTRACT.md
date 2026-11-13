@@ -51,7 +51,7 @@ Re-exported from telemedicine: `ConsultType`, `ConsultStatus`.
 | `getVerification()` | `VerificationSubmission` |
 | `getAvailability(doctorId?)` | `AvailabilitySchedule` |
 | `getAppointments(status?)` | `DoctorAppointment[]` |
-| `getAppointment(id)` | `DoctorAppointment \| undefined` |
+| `getAppointment(id)` | `DoctorAppointment \| null` |
 | `getPatientProfile(patientId)` | `PatientMedicalProfile` |
 | `getChatThreads()` | `ChatThread[]` |
 | `getChatMessages(threadId)` | `ChatMessage[]` |
@@ -102,7 +102,7 @@ isError, error, refetch, … }`). Mutation hooks return a `UseMutationResult`
 | `useVerification()` | — | `VerificationSubmission` |
 | `useAvailability(doctorId?)` | `string?` | `AvailabilitySchedule` |
 | `useAppointments(status?)` | `ConsultStatus?` | `DoctorAppointment[]` |
-| `useAppointment(id)` | `string` | `DoctorAppointment \| undefined` |
+| `useAppointment(id)` | `string` | `DoctorAppointment \| null` |
 | `usePatientProfile(patientId)` | `string` | `PatientMedicalProfile` |
 | `useChatThreads()` | — | `ChatThread[]` |
 | `useChatMessages(threadId)` | `string` | `ChatMessage[]` |
@@ -159,8 +159,10 @@ resolving), Frontend should render states consistently as follows:
   the gate (mirrors `app/services/telemedicine/doctors.tsx`).
 - **Error:** `isError === true` → render an error/retry view; call `refetch()`.
   In Phase A errors never fire (demo data), but wire the branch now.
-- **Empty:** arrays come back as `[]` (never null); object reads of a missing item
-  resolve to `undefined` (`getAppointment`, `getPrescription`, `getSoapNote`).
+- **Empty:** arrays come back as `[]` (never null); a missing item reads as `null`
+  (`getAppointment`) or, in the reads not yet converted, `undefined`
+  (`getPrescription`, `getSoapNote`) — react-query rejects an `undefined` queryFn
+  result, so new reads answer `null`.
   Render an explicit empty state when `data.length === 0` or `data == null`.
 - **Default the array:** destructure with a default, e.g.
   `const { data: appointments = [] } = useAppointments();`

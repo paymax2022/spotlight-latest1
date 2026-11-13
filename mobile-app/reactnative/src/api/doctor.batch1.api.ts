@@ -7,6 +7,8 @@
 // uploads → presigned R2 PUT; mutations pass the Idempotency-Key header below.
 
 import { Colors } from '@/constants/tokens';
+import { mapRequestWire, orNull } from '@/features/doctor/mapping';
+import type { AppointmentRequestWire } from '@/features/doctor/mapping';
 import {
   DEMO_APPOINTMENTS,
   DEMO_EARNINGS,
@@ -75,6 +77,7 @@ import type {
 // Re-export the shared money formatter so Batch 1 screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost, doctorPut, doctorUploadFile } from '@/api/doctor.client';
+import { mapAnnouncementWire, type AnnouncementWire } from '@/features/doctor/mapping';
 import type { VerificationStatus } from '@/types/doctor';
 
 // Simulate network latency so loading states are exercised in the UI.
@@ -375,14 +378,14 @@ export async function getDashboard(): Promise<DoctorDashboardData> {
   };
 }
 
-export async function getAnnouncement(): Promise<PlatformAnnouncement | undefined> {
+export async function getAnnouncement(): Promise<PlatformAnnouncement | null> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_ANNOUNCEMENT);
   // GET /announcements/latest wraps the payload as `{announcement: …|null}`;
   // the shared unwrap only strips a `data` envelope, so read the inner field
   // here — otherwise a null announcement surfaces as a truthy object with an
   // undefined `tone`, crashing the banner's TONE lookup.
-  const wire = await doctorGet<{ announcement?: PlatformAnnouncement | null }>('/announcements/latest');
-  return wire.announcement ?? undefined;
+  const wire = await doctorGet<AnnouncementWire>('/announcements/latest');
+  return mapAnnouncementWire(wire);
 }
 
 export async function setPresence(input: SetPresenceInput): Promise<SetPresenceResult> {
@@ -528,14 +531,20 @@ export async function getConsultationQueue(): Promise<ConsultationQueueItem[]> {
   return doctorGet<ConsultationQueueItem[]>('/queue');
 }
 
+// Live `/appointment-requests` answers appointments rows (repository_ops.go
+// requestForAppointment), whose nested appointment has no avatar fields and
+// whose consultType the card indexes into an icon map — so both go through
+// mapRequestWire, the same finish mapHeaderAvatar gives the profile header.
 export async function getAppointmentRequests(): Promise<AppointmentRequest[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_APPOINTMENT_REQUESTS);
-  return doctorGet<AppointmentRequest[]>('/appointment-requests');
+  const rows = await doctorGet<AppointmentRequestWire[]>('/appointment-requests');
+  return rows.map(mapRequestWire);
 }
 
-export async function getAppointmentRequest(id: string): Promise<AppointmentRequest | undefined> {
-  if (DOCTOR_USE_MOCK) return wait(DEMO_APPOINTMENT_REQUESTS.find((r) => r.id === id));
-  return doctorGet<AppointmentRequest | undefined>(`/appointment-requests/${id}`);
+export async function getAppointmentRequest(id: string): Promise<AppointmentRequest | null> {
+  if (DOCTOR_USE_MOCK) return wait(orNull(DEMO_APPOINTMENT_REQUESTS.find((r) => r.id === id)));
+  const wire = await doctorGet<AppointmentRequestWire | null>(`/appointment-requests/${id}`);
+  return orNull(wire && mapRequestWire(wire));
 }
 
 // Consultation countdown helper. Computes minutes until the slot and derives the

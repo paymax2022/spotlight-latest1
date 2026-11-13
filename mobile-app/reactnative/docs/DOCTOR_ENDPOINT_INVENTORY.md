@@ -16,7 +16,7 @@ deduped. Response envelope: `res.data.data ?? res.data` (see DOCTOR_GO_LIVE.md).
 | `getVerification` | GET | `/verification` | `VerificationSubmission` | no |
 | `getAvailability` | GET | `/availability` | `AvailabilitySchedule` | no |
 | `getAppointments` | GET | `/appointments` | `DoctorAppointment[]` | no |
-| `getAppointment` | GET | `/appointments/:id` | `DoctorAppointment \| undefined` | no |
+| `getAppointment` | GET | `/appointments/:id` | `DoctorAppointment \| null` | no |
 | `getPatientProfile` | GET | `/patients/:patientId` | `PatientMedicalProfile` | no |
 | `getChatThreads` | GET | `/chat/threads` | `ChatThread[]` | no |
 | `getChatMessages` | GET | `/chat/:threadId/messages` | `ChatMessage[]` | no |

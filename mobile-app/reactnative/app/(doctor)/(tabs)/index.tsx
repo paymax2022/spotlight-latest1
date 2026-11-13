@@ -15,9 +15,10 @@ import { Typography } from '@/constants/tokens';
 import { shadow2 } from '@/constants/tokens';
 import SectionHeader from '@/components/SectionHeader';
 import { formatKobo } from '@/api/doctor.api';
-import { useDoctorProfile, useAppointments, useEarnings, useNotifications, useUpdateSettings, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
+import { useDoctorProfile, useAppointments, useEarnings, useNotifications, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
 import { StatCard, AppointmentRow, StateView, AlertCard, AnnouncementBanner, SectionCard } from '@/features/doctor/components';
 import { DoctorAvatar } from '@/features/telemedicine/components';
+import { mapHeaderAvatar } from '@/features/doctor/mapping';
 import { DASHBOARD_ALERT_SEVERITY_RANK, PRESENCE_LABELS } from '@/features/doctor/constants';
 import type { DashboardAlert, DashboardAlertKind, DashboardAlertSeverity } from '@/types/doctor.batch1';
 
@@ -60,7 +61,6 @@ export default function DoctorDashboardScreen() {
   const { data: earnings } = useEarnings();
   const { data: notifications = [] } = useNotifications();
   const { data: settings } = useSettings();
-  const updateSettings = useUpdateSettings();
 
   const { data: dashboard, isError: dashError, refetch: refetchDash } = useDashboard();
   const { data: announcement } = useAnnouncement();
@@ -69,7 +69,16 @@ export default function DoctorDashboardScreen() {
 
   const unread = notifications.filter((n) => !n.read).length;
   const todays = appointments.filter((a) => ACTIVE_STATUSES.includes(a.status));
-  const isOnline = (settings?.showOnlineStatus ?? profile?.isOnline) ?? false;
+  // doctor_profiles.is_online is the real presence store: PUT /presence writes
+  // it and GET /profile reads it back. `showOnlineStatus` is a *privacy* flag
+  // (whether patients see the dot), so reading the switch off it left the
+  // control stuck — and writing it from here fought the settings hub.
+  const isOnline = profile?.isOnline ?? false;
+  // `autoAcceptInstant` is the real persisted flag, now that PUT /settings binds
+  // it; dashboard.acceptsInstant was a fabricated false.
+  const presenceLabel = isOnline
+    ? `${PRESENCE_LABELS.online}${settings?.autoAcceptInstant ? ' · Accepting instant' : ' · Accepting consults'}`
+    : PRESENCE_LABELS.offline;
 
   const counts = dashboard?.counts;
   const alerts: DashboardAlert[] = [...(dashboard?.alerts ?? [])].sort(
@@ -77,8 +86,6 @@ export default function DoctorDashboardScreen() {
   );
 
   const toggleOnline = () => {
-    updateSettings.mutate({ settings: { showOnlineStatus: !settings?.showOnlineStatus } });
-    // Mirror the presence aggregate (no idempotencyKey passed by callers).
     setPresence.mutate({ presence: isOnline ? 'offline' : 'online' });
   };
 
@@ -98,11 +105,19 @@ export default function DoctorDashboardScreen() {
     );
   }
 
+  const avatar = mapHeaderAvatar(profile);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <DoctorAvatar initials={profile.initials} color={profile.avatarColor} size={44} online={isOnline} />
+          <DoctorAvatar
+            uri={avatar.uri}
+            initials={avatar.initials}
+            color={avatar.color}
+            size={44}
+            online={isOnline}
+          />
           <View style={styles.headerText}>
             <Text style={styles.greeting}>Welcome back</Text>
             <Text style={styles.name} numberOfLines={1}>{profile.name}</Text>
@@ -145,15 +160,13 @@ export default function DoctorDashboardScreen() {
             <View style={[styles.statusDot, { backgroundColor: isOnline ? Colors.teal : Colors.outline }]} />
             <View>
               <Text style={styles.statusEyebrow}>YOU ARE</Text>
-              <Text style={styles.statusValue}>
-                {dashboard ? `${PRESENCE_LABELS[dashboard.presence]}${dashboard.acceptsInstant ? ' · Accepting instant' : ''}` : (isOnline ? 'Online · Accepting consults' : 'Offline')}
-              </Text>
+              <Text style={styles.statusValue}>{presenceLabel}</Text>
             </View>
           </View>
           <Pressable
             onPress={toggleOnline}
-            disabled={updateSettings.isPending || setPresence.isPending}
-            style={[styles.statusBtn, (updateSettings.isPending || setPresence.isPending) && styles.statusBtnDisabled]}
+            disabled={setPresence.isPending}
+            style={[styles.statusBtn, setPresence.isPending && styles.statusBtnDisabled]}
             accessibilityRole="button"
             accessibilityLabel={isOnline ? 'Go offline' : 'Go online'}
           >
