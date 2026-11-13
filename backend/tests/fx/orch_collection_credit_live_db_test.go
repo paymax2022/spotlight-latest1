@@ -62,7 +62,7 @@ func seedVirtualAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 		t.Fatalf("seed virtual account: %v", err)
 	}
 	t.Cleanup(func() {
-		c := t.Context()
+		c := context.WithoutCancel(t.Context())
 		_, _ = pool.Exec(c, `DELETE FROM orch_collection_events WHERE virtual_account_id=$1`, va.ID)
 		_, _ = pool.Exec(c, `DELETE FROM orch_collections WHERE id=$1`, va.ID)
 	})

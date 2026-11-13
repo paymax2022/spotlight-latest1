@@ -59,7 +59,7 @@ func seedAdminQueryFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		t.Fatalf("seed order: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := t.Context()
+		bg := context.WithoutCancel(t.Context())
 		_, _ = pool.Exec(bg, `DELETE FROM lab_orders WHERE id=$1`, orderID)
 		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, labID)
 	})

@@ -24,7 +24,7 @@ func attribute(t *testing.T, ctx context.Context, pool *pgxpool.Pool, referrer, 
 		t.Fatalf("seed attribution: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM public.referral_attributions WHERE referred_user_id=$1`, referred)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_attributions WHERE referred_user_id=$1`, referred)
 	})
 }
 
@@ -39,7 +39,7 @@ func reward(t *testing.T, ctx context.Context, pool *pgxpool.Pool, referrer, ref
 		t.Fatalf("seed reward: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM public.referral_rewards WHERE source_transaction_id=$1`, txn)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_rewards WHERE source_transaction_id=$1`, txn)
 	})
 }
 

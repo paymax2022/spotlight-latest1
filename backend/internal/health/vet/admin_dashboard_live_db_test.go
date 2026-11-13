@@ -109,7 +109,7 @@ func newVetAdminFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) v
 	}
 
 	t.Cleanup(func() {
-		bg := t.Context()
+		bg := context.WithoutCancel(t.Context())
 		_, _ = pool.Exec(bg, `DELETE FROM vet_appointment_payments WHERE appointment_id IN ($1,$2,$3)`,
 			f.requestedID, f.completedID, f.cancelledID)
 		_, _ = pool.Exec(bg, `DELETE FROM health_appointments WHERE id IN ($1,$2,$3)`,

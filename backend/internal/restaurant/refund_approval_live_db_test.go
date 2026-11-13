@@ -6,6 +6,7 @@ package restaurant
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -57,8 +58,9 @@ func TestLiveDB_RefundApprovalTiers(t *testing.T) {
 			t.Fatalf("seed dispute: %v", err)
 		}
 		t.Cleanup(func() {
-			_, _ = pool.Exec(t.Context(), `DELETE FROM disputes WHERE id=$1`, disputeID)
-			_, _ = pool.Exec(t.Context(), `DELETE FROM orders WHERE id=$1`, orderID)
+			bg := context.WithoutCancel(t.Context())
+			_, _ = pool.Exec(bg, `DELETE FROM disputes WHERE id=$1`, disputeID)
+			_, _ = pool.Exec(bg, `DELETE FROM orders WHERE id=$1`, orderID)
 		})
 		return disputeID
 	}
