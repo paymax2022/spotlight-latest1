@@ -34,7 +34,7 @@ export default function Footer1() {
           </div>
         </div>
       </div>
-      <div className="footer-bottom"><div className="container"><div className="footer-wrapper d-flex align-items-center justify-content-between"><p className="color-2">© {new Date().getFullYear()} Spotlight</p></div></div></div>
+      <div className="footer-bottom"><div className="container"><div className="footer-wrapper d-flex align-items-center justify-content-between"><p className="color-2">© {new Date().getFullYear()} Spotlight. All rights reserved.</p><p className="color-2">Powered by Spotlight Talent Hunt Creatives Ltd.</p></div></div></div>
     </footer>
   );
 }
