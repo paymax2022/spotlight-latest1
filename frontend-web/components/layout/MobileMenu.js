@@ -39,10 +39,15 @@ export default function MobileMenu() {
             </li>
 
             <li>
-              <Link href="/service">
+              <button
+                type="button"
+                className="menu-group"
+                aria-expanded={activeItem === 2}
+                onClick={() => handleActiveItem(activeItem === 2 ? 0 : 2)}
+              >
                 Programes
                 <i className="fas fa-angle-down" />
-              </Link>
+              </button>
               <ul className="submenu" style={{ display: `${activeItem === 2 ? 'block' : 'none'}` }}>
                 {serviceMenuItems.map((item) => (
                   <li key={item.href}><Link href={item.href}>{item.label}</Link></li>
