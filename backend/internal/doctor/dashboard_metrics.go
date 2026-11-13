@@ -91,20 +91,24 @@ type dashboardCounters struct {
 }
 
 // dashboardTimezone resolves the zone every date expression uses, once, so all
-// three reads price the same day. A doctor who has never saved availability has no
-// row — that is the column default, not an error.
+// three reads price the same day. The source is doctor_profiles.timezone — the
+// column `PUT /schedule/timezone` writes and GET /schedule reads back — NOT
+// doctor_availability.timezone, which no screen ever sets (a doctor who chose
+// Asia/Karachi on the timezone screen would otherwise have every "today"
+// predicate anchored to Lagos). A doctor with no profile row at all is the
+// default, not an error.
 func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string, error) {
-	av, err := s.repo.GetAvailability(ctx, userID)
+	p, err := s.repo.GetProfile(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
 		return defaultDoctorTimezone, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("doctor: read availability timezone: %w", err)
+		return "", fmt.Errorf("doctor: read profile timezone: %w", err)
 	}
-	if av.Timezone == "" {
+	if p.Timezone == "" {
 		return defaultDoctorTimezone, nil
 	}
-	return av.Timezone, nil
+	return p.Timezone, nil
 }
 
 // dashboardAggregates counts today's and upcoming consults and this month's

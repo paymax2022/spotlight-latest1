@@ -53,8 +53,8 @@ type metricsFixture struct {
 
 // newMetricsFixture seeds the state an approved, published doctor actually leaves
 // behind (same shape as presence_directory_projection_live_db_test.go's helper)
-// plus one patient with a profile. It deliberately does NOT create a
-// doctor_availability row: the no-row default is part of the contract.
+// plus one patient with a profile. The profile row is what the zone read looks at,
+// so the no-row fallback is exercised by its own test, not by this fixture.
 func newMetricsFixture(t *testing.T, pool *pgxpool.Pool) *metricsFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -126,9 +126,14 @@ func TestLiveDB_DashboardCountsAndQueueUseTheDoctorsLocalDay(t *testing.T) {
 	pool := metricsDB(t)
 	f := newMetricsFixture(t, pool)
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx,
-		`INSERT INTO doctor_availability (user_id, timezone) VALUES ($1,'Asia/Karachi')`, f.doctorUser); err != nil {
-		t.Fatalf("availability: %v", err)
+	tag, err := pool.Exec(ctx,
+		`UPDATE doctor_profiles SET timezone = 'Asia/Karachi' WHERE user_id = $1`, f.doctorUser)
+	if err != nil {
+		t.Fatalf("karachi: %v", err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("karachi: the fixture's doctor_profiles row was not updated — the read would fall back to " +
+			"Africa/Lagos and this test would prove nothing")
 	}
 	_, yestLate := f.bookLocal(t, "Asia/Karachi", "confirmed", -1, 23*60+30)
 	_, todayLate := f.bookLocal(t, "Asia/Karachi", "booked", 0, 30)
@@ -179,6 +184,31 @@ func TestLiveDB_DashboardCountsAndQueueUseTheDoctorsLocalDay(t *testing.T) {
 	}
 }
 
+// The fallback branch of dashboardTimezone. Without this, a doctor_profiles read that
+// turned ErrNotFound into a hard error would still pass every other test here — they all
+// run against a fixture that HAS a profile row.
+func TestLiveDB_DashboardTimezoneFallsBackWithoutAProfileRow(t *testing.T) {
+	pool := metricsDB(t)
+	ctx := context.Background()
+	userID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id) VALUES ($1)`, userID); err != nil {
+		t.Fatalf("auth user: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(context.Background()),
+			`DELETE FROM user_profiles WHERE id = $1`, userID)
+		_, _ = pool.Exec(context.WithoutCancel(context.Background()),
+			`DELETE FROM auth.users WHERE id = $1`, userID)
+	})
+	tz, err := metricsService(pool).dashboardTimezone(ctx, userID)
+	if err != nil {
+		t.Fatalf("dashboardTimezone for a doctor with no profile row: %v", err)
+	}
+	if tz != defaultDoctorTimezone {
+		t.Errorf("timezone = %q, want %q", tz, defaultDoctorTimezone)
+	}
+}
+
 // The day-boundary test above cannot pin UpcomingCount, because a slot inside
 // today is ahead of or behind NOW depending on when the suite runs. These rows are
 // never ambiguous: yesterday's are always past and tomorrow's always future, in
@@ -212,6 +242,9 @@ func TestLiveDB_DashboardUpcomingSkipsPastAndFinishedRows(t *testing.T) {
 }
 
 var isoDay = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// The UI vocabulary's clock form, per spec D8: "09:00 AM", never "09:00" and never "9 AM".
+var clock12 = regexp.MustCompile(`^\d{2}:\d{2} (AM|PM)$`)
 
 // The client builds its date from `${slotDate}T00:00:00`, so a full timestamp
 // here renders "Invalid Date" in the row; and status must be a ConsultStatus the
@@ -250,6 +283,12 @@ func TestLiveDB_DashboardQueueRowWireShape(t *testing.T) {
 	}
 	if !isoDay.MatchString(got.SlotDate) {
 		t.Errorf("slotDate = %q, want YYYY-MM-DD", got.SlotDate)
+	}
+	// Decoded and asserted, not merely unmarshalled: `to_char(..., 'HH12:MI AM')` is the
+	// only thing standing between this column and a 24-hour `HH24:MI`, and the client
+	// renders the string verbatim.
+	if !clock12.MatchString(got.SlotTime) {
+		t.Errorf("slotTime = %q, want HH:MM AM/PM", got.SlotTime)
 	}
 	if got.Status != "upcoming" {
 		t.Errorf("status = %q, want 'upcoming' (booked renamed)", got.Status)
