@@ -44,10 +44,9 @@ export async function GET(
     if (error) throw error;
     if (!contest) return errorResponse('Contest not found', 404);
 
-    // Full row, not a four-column projection: callers need the whole settings
-    // object (cooldown, paid limits, visibility) and votingSettings is built by
-    // mapSettingsRow, which reads every column. Only an active settings row
-    // counts as configured.
+    // Full row, not a projection: the vote modal on /voting needs the whole
+    // settings object (cooldown, paid limits, visibility) and mapSettingsRow
+    // reads every column. Only an active settings row counts as configured.
     const { data: settings } = await supabase
       .from('voting_settings')
       .select('*')
