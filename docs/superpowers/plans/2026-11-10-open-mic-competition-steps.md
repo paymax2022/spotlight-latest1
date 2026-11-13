@@ -34,7 +34,10 @@
 | `frontend-web/app/open-mic/[slug]/page.tsx` | Edition page: beat player gated by the availability rule. | Task 3 |
 | `frontend-web/src/features/openmic/active-edition.ts` | `getActiveOpenMicEdition()` (one definition of "current edition"), `buildOpenMicEditionStepsData()`, `loadOpenMicEditionSteps()`, `OpenMicEditionStepsData`. | Tasks 4–5 |
 | `frontend-web/app/apply/open-mic-competition/page.tsx` | Uses the shared selector; loses `|| contests[0]`. | Task 4 |
-| `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx`<br>`frontend-web/components/openmic/OpenMicAdminContestEditor.tsx` | Upload to the new route, store reader paths, warn on a legacy beat. | Task 6 |
+| `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx`<br>`frontend-web/components/openmic/OpenMicAdminContestEditor.tsx` | Upload to the new route, store reader paths, warn on a legacy beat. **Unreachable in this repo** — ADR-047 deleted `frontend-web/app/admin`, and nothing else imports them (Task 6 review, I-1). Kept as the wiring for any console that mounts them again. | Task 6 |
+| `frontend-admin/app/admin/open-mic/new/page.tsx`<br>`frontend-admin/app/admin/open-mic/[id]/page.tsx` | The console operators actually use. Gains the beat file picker and the same two warnings, so an edition can be given a beat an artist can open. | Task 6b |
+| `frontend-admin/src/services/openMicAdminService.ts` | `uploadOpenMicBeat()` over the web proxy — the one write the Path-A port deliberately skipped. | Task 6b |
+| `frontend-admin/tests/admin/openmic/beat-upload.test.tsx` | Behavioural guard (jsdom + testing-library): picking a file posts multipart to the beat route through the proxy and fills both fields. | Task 6b |
 | `frontend-web/tests/unit/media/open-mic-beat-storage.test.ts` | Reader allowlist, dispositions, upload validation, availability rule. | Tasks 1–3 |
 | `frontend-web/tests/unit/openmic/open-mic-params.spec.ts` | Hermetic guard: every Open Mic page awaits `params`. | Task 3b |
 | `frontend-web/tests/unit/openmic/active-edition.test.ts` | The edition selector, incl. the compile-time status-classification pin. | Task 4 |
@@ -1519,16 +1522,22 @@ describe('admin beat upload wiring', () => {
     }
   });
 
-  it('stores the reader paths the route returns', () => {
+  it('stores the reader paths the route returns, and refuses to store nothing', () => {
     for (const source of [BUILDER, EDITOR]) {
       expect(source).toMatch(/payload\?\.beat\?\.previewUrl|beat\.previewUrl/);
       expect(source).toMatch(/beat\.downloadUrl|payload\?\.beat\?\.downloadUrl/);
+      // Without this, a 201 whose payload lost the URL writes an empty
+      // beatDownloadUrl, submit() then complains about a field the admin just
+      // filled with a successful upload.
+      expect(source).toMatch(/if \(!downloadUrl\) throw/);
     }
   });
 
   it('warns an admin re-opening a legacy edition instead of leaving it silent', () => {
-    expect(BUILDER).toContain('isLegacyBeatUrl');
-    expect(EDITOR).toContain('isLegacyBeatUrl');
+    // Call sites, not identifiers: an import that is never called would satisfy
+    // toContain('isLegacyBeatUrl') while rendering no warning at all.
+    expect(BUILDER).toContain('isLegacyBeatUrl(form.beatDownloadUrl)');
+    expect(EDITOR).toContain('isLegacyBeatUrl(form.downloadUrl)');
     expect(EDITOR).toMatch(/re-upload/i);
   });
 
@@ -1551,13 +1560,31 @@ describe('admin beat upload wiring', () => {
     // reader allowlists /api/open-mic/beats/, so an absolute third-party URL —
     // exactly what placeholder="https://..." advertises — is unusable while
     // looking perfectly fillable. Both forms must ask publicBeatUrl.
+    //
+    // Each call site names the field it guards, so a preview URL cannot be
+    // swapped into the download field (or vice versa) and still pass.
+    expect(BUILDER).toContain('publicBeatUrl(form.beatDownloadUrl) === null');
+    expect(BUILDER).toContain('publicBeatUrl(form.beatPreviewUrl) === null');
+    expect(EDITOR).toContain('publicBeatUrl(form.downloadUrl) === null');
     for (const source of [BUILDER, EDITOR]) {
-      expect(source).toContain('publicBeatUrl');
       expect(source).not.toContain('placeholder="https://..."');
       expect(source).toMatch(/Upload the mp3\s+instead/i);
     }
     // The help copy that made pasting an off-site URL look like a supported path.
     expect(BUILDER).not.toContain('You can paste a direct URL');
+  });
+
+  it('authorises the upload without declaring a content type', () => {
+    // The two regressions that actually break a beat upload, and neither is a
+    // type error: no header at all is a 401, and adminAuthHeaders(true) adds
+    // Content-Type: application/json, which overrides the FormData's multipart
+    // boundary and makes the route answer 400 "Expected a multipart upload".
+    // The submit calls use (true) — those are JSON — so match the (false) form
+    // of the header line itself, not just the identifier.
+    for (const source of [BUILDER, EDITOR]) {
+      expect(source).toMatch(/headers:\s*await adminAuthHeaders\(false\)/);
+    }
+    expect(EDITOR).toContain('contestId=${encodeURIComponent(contest.id)}');
   });
 });
 ```
@@ -1565,7 +1592,9 @@ describe('admin beat upload wiring', () => {
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic/admin-beat-wiring.spec.ts`
-Expected: FAIL — all 5 cases. Today both forms post to `/api/registration/uploads` and store `payload?.upload?.previewUrl`, neither imports a predicate, both accept `.wav`/`.m4a`, and the builder still carries `placeholder="https://..."`. (The builder's old `fetch` also sends no auth header at all — `adminAuthHeaders(false)` in Step 3 is what makes the upload work for a signed-in admin.)
+Expected: FAIL — all 6 cases. Today both forms post to `/api/registration/uploads` and store `payload?.upload?.previewUrl`, neither imports a predicate, both accept `.wav`/`.m4a`, and the builder still carries `placeholder="https://..."`. (The builder's old `fetch` also sends no auth header at all — `adminAuthHeaders(false)` in Step 3 is what makes the upload work for a signed-in admin.)
+
+**When strengthening this guard on sources that already pass it** (a review round, not a first implementation): a green run proves nothing about the new assertions. After they pass, prove each one bites by introducing the regression it exists for, watching that case fail, then reverting — delete `headers: await adminAuthHeaders(false)` (must fail case 6), change it to `(true)` (must fail case 6), replace `isLegacyBeatUrl(form.beatDownloadUrl)` with `isLegacyBeatUrl(form.beatPreviewUrl)` (must fail case 3), delete `if (!downloadUrl) throw` (must fail case 2). Report each mutation with the case it failed.
 
 - [ ] **Step 3: Rewire the builder**
 
@@ -1742,6 +1771,369 @@ Both admin forms kept storing the uploader-only URL returned by the
 registration documents route, which is why no artist could play a published
 beat. Each now warns on a row that still carries one."
 ```
+
+---
+
+### Task 6b: Give the console operators actually use a beat artists can open
+
+**Why this task exists — a premise in the design doc is false.** The spec's diagnosis
+section says "Both admin surfaces upload the beat through `POST /api/registration/uploads`
+… (`OpenMicAdminContestBuilder.tsx:87-115`, `OpenMicAdminContestEditor.tsx:58-80`)". Only one
+admin surface is reachable: ADR-047 deleted `frontend-web/app/admin` (confirmed — `ls` returns
+"No such file or directory", and a repo-wide grep for `OpenMicAdminContest` finds only the two
+definitions, Task 6's source-reading spec, a committed build artifact under
+`frontend-web/.next-verify2/`, and two *comment* references inside frontend-admin). The live
+Open Mic console is `frontend-admin/app/admin/open-mic/{page,new,[id]}`, and its create page
+never uploads a file at all: `new/page.tsx:209-210` tells the operator "Paste a hosted URL —
+file upload isn't available from this console (see code comment for why)", and both beat fields
+still carry `placeholder="https://..."` (`:223`, `:228`). That reason is now stale: the proxy
+that console sends everything through, `frontend-admin/app/api/web-proxy/[...path]/route.ts`,
+was fixed to forward `await request.arrayBuffer()` verbatim with the caller's Content-Type
+(`:91-99` — its own comment says "An ArrayBuffer forwards JSON and multipart alike, verbatim"),
+so a binary upload through it works today.
+
+The consequence is a product dead end, not a cosmetic one: step #02 promises artists a
+downloadable mp3, spec decision J says prod "keeps zero editions until Spotlight publishes one
+in the admin console" — and the console cannot publish an edition whose beat will play. Task 6
+made the *correct* calls in files nothing loads. This task makes them reachable.
+
+**Files:**
+- Create: `frontend-admin/src/features/openmic/beat-url.ts`
+- Modify: `frontend-admin/src/services/openMicAdminService.ts` (add `uploadOpenMicBeat` after `:350`; correct the "NOT ported" comment at `:331-333`)
+- Modify: `frontend-admin/app/admin/open-mic/new/page.tsx` (header comment `:9-13`, service import `:17`, state `:42`, required-field copy `:75`, handler above `submit()` at `:79`, Official Beat section `:207-231`)
+- Test: `frontend-admin/tests/admin/openmic/beat-upload.test.tsx`
+
+**Interfaces:**
+- Consumes: Task 2's `POST /api/admin/open-mic/beats` — reached as `${webProxyBase()}/api/admin/open-mic/beats`, i.e. `/api/web-proxy/api/admin/open-mic/beats`; its `201 { success, beat: { previewUrl, downloadUrl } }`; frontend-web's session bearer, which the proxy attaches server-side from the HttpOnly `sb-admin-token` cookie (`web-proxy/route.ts:59-66`), so this app sends **no** Authorization header.
+- Produces: `uploadOpenMicBeat(file) => Promise<{ previewUrl: string; downloadUrl: string }>` and `beatUrlWarning(value) => 'legacy' | 'unplayable' | null`. Same stored shapes as Task 6: `download_url = /api/open-mic/beats/<key>?download=1`.
+
+**Deliberately out of scope, and why:** re-attaching a beat to an *existing* edition. The console's Edit Contest tab (`[id]/page.tsx:263`) edits metadata only — `EditFormState` (`:128`) and the PATCH body (`:153-171`) carry no beat at all, and `frontend-web/app/api/admin/open-mic/contests/[id]/route.ts` has no `beat` branch to send one to. That is a second, larger piece of work (a beat-aware PATCH), not a wiring fix; the legacy-repair path spec F describes therefore has no console UI yet. Report it; do not build it here.
+
+- [ ] **Step 1: Write the failing behavioural test**
+
+Create `frontend-admin/tests/admin/openmic/beat-upload.test.tsx`. Unlike frontend-web, this app
+runs vitest in jsdom with `@testing-library/react` (`frontend-admin/vitest.config.ts`, and the
+precedent at `tests/admin/crypto/reconciliation.test.tsx`), so the guard here can *exercise* the
+form instead of reading its source — which is what Task 6's review asked for and this app can
+afford.
+
+```tsx
+// The Open Mic create form used to offer only "paste a hosted URL", and the public
+// beat reader allowlists /api/open-mic/beats/ — so every URL an operator could file
+// here was one artists could not open. This guards the console that admins actually
+// use: picking an mp3 uploads it through the web proxy and files the paths the
+// server returns; a pasted URL that cannot play says so.
+import '@testing-library/jest-dom/vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+
+const uploadOpenMicBeat = vi.fn();
+const createOpenMicContest = vi.fn();
+vi.mock('@/services/openMicAdminService', () => ({
+  uploadOpenMicBeat: (...a: unknown[]) => uploadOpenMicBeat(...a),
+  createOpenMicContest: (...a: unknown[]) => createOpenMicContest(...a),
+}));
+
+import NewOpenMicContestPage from '../../../app/admin/open-mic/new';
+
+const READER = '/api/open-mic/beats/b3Blbm1pYy1iZWF0cy91bmFzc2lnbmVkL2EubXBz';
+
+beforeEach(() => {
+  uploadOpenMicBeat.mockReset();
+  createOpenMicContest.mockReset();
+});
+afterEach(() => cleanup());
+
+function downloadField(): HTMLInputElement {
+  return screen.getByLabelText(/Beat file URL \(Download\)/i) as HTMLInputElement;
+}
+
+describe('Open Mic beat upload in the admin console', () => {
+  it('uploads the picked mp3 and files both reader paths', async () => {
+    uploadOpenMicBeat.mockResolvedValue({ previewUrl: READER, downloadUrl: `${READER}?download=1` });
+    render(<NewOpenMicContestPage />);
+    const file = new File([new Uint8Array([1, 2, 3])], 'beat.mp3', { type: 'audio/mp3' });
+    fireEvent.change(screen.getByLabelText(/Upload beat file/i), { target: { files: [file] } });
+    await waitFor(() => expect(uploadOpenMicBeat).toHaveBeenCalledTimes(1));
+    expect(uploadOpenMicBeat.mock.calls[0][0]).toBe(file);
+    await waitFor(() => expect(downloadField().value).toBe(`${READER}?download=1`));
+    expect(screen.getByLabelText(/Beat preview URL/i)).toHaveValue(READER);
+  });
+
+  it('surfaces the server error instead of leaving the picker looking idle', async () => {
+    uploadOpenMicBeat.mockRejectedValue(new Error('Beat upload failed: 400 — Expected an .mp3 file.'));
+    render(<NewOpenMicContestPage />);
+    fireEvent.change(screen.getByLabelText(/Upload beat file/i), {
+      target: { files: [new File([new Uint8Array([1])], 'beat.mp3', { type: 'audio/mp3' })] },
+    });
+    expect(await screen.findByText(/400 — Expected an \.mp3 file/)).toBeInTheDocument();
+  });
+
+  it('warns about a pasted URL an artist cannot open', async () => {
+    render(<NewOpenMicContestPage />);
+    fireEvent.change(downloadField(), { target: { value: 'https://cdn.example.com/beat.mp3' } });
+    expect(await screen.findByText(/Upload the mp3 instead/i)).toBeInTheDocument();
+  });
+
+  it('names a pre-fix registration URL as legacy, not as a URL', async () => {
+    render(<NewOpenMicContestPage />);
+    fireEvent.change(downloadField(), { target: { value: '/api/registration/uploads/abc' } });
+    expect(await screen.findByText(/before the public-beat fix/i)).toBeInTheDocument();
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `cd /Users/paymax/Documents/spotlight/main/frontend-admin && npx vitest run tests/admin/openmic/beat-upload.test.tsx`
+Expected: FAIL — all 4 cases. Today `uploadOpenMicBeat` does not exist in the service, so the
+module mock cannot resolve it, and the page has no `Upload beat file` control and no label
+associated with either URL field (`getByLabelText` matches a `<label>` with no `htmlFor` only by
+luck — it does not here, so case 3 and 4 fail at the lookup, which is the point: today the field
+is unaddressable and unwarned).
+
+- [ ] **Step 3: Add the beat-URL vocabulary**
+
+Create `frontend-admin/src/features/openmic/beat-url.ts`. The constants are copied verbatim from
+`frontend-web/src/features/openmic/beat-storage.ts:13,20` and `publicBeatUrl` (`:59-63`) /
+`isLegacyBeatUrl` (`:72-74`) — the two apps are separately deployed Next projects with no shared
+package, so a mirror is the only option; the comment must name the source of truth so the next
+reader knows which file to change first:
+
+```ts
+/**
+ * Can an artist open this beat URL? The authoritative vocabulary lives in
+ * frontend-web — src/features/openmic/beat-storage.ts (BEAT_READER_BASE,
+ * LEGACY_UPLOAD_PREFIX, publicBeatUrl, isLegacyBeatUrl) — and the reader that
+ * enforces it is app/api/open-mic/beats/[fileKey]/route.ts.
+ *
+ * Mirrored here, not imported: frontend-admin and frontend-web are separately
+ * deployed Next apps with no shared package between them. If the reader's
+ * prefix ever changes, change it in BOTH files; tests/unit/openmic plus this
+ * app's beat-upload test pin each copy to its literal, so a silent drift shows
+ * up as a failing test rather than a console that warns about a URL that works.
+ */
+export const BEAT_READER_BASE = '/api/open-mic/beats';
+export const LEGACY_UPLOAD_PREFIX = '/api/registration/uploads/';
+
+export type BeatUrlProblem = 'legacy' | 'unplayable';
+
+/** null when the value is empty or a path this site's reader serves. */
+export function beatUrlProblem(stored: string | null | undefined): BeatUrlProblem | null {
+  const value = String(stored || '').trim();
+  if (!value) return null;
+  if (value.startsWith(LEGACY_UPLOAD_PREFIX)) return 'legacy';
+  return value.startsWith(`${BEAT_READER_BASE}/`) ? null : 'unplayable';
+}
+```
+
+- [ ] **Step 4: Add the upload call to the service**
+
+In `frontend-admin/src/services/openMicAdminService.ts`, append after `createOpenMicContest`
+(ends `:350`). No `Content-Type` anywhere: setting one would override the FormData boundary and
+the route would answer 400. No Authorization either — `authHeaders()` (`:167-170`) is empty on
+purpose, the proxy attaches the bearer from the HttpOnly cookie (`env.ts`, `adminAuthHeaders`'
+comment). `contestId` is optional because a new edition does not exist yet, and Task 2's route
+accepts that by filing under `openmic-beats/unassigned/`:
+
+```ts
+/**
+ * Upload the official beat mp3. This is the one write the Path-A port skipped:
+ * the note above createOpenMicContest claimed the web proxy could not carry a
+ * binary body, and app/api/web-proxy/[...path]/route.ts has since been fixed to
+ * forward request.arrayBuffer() verbatim with the caller's Content-Type, so the
+ * multipart boundary survives and the file lands intact.
+ *
+ * Returns the two root-relative reader paths Task 1/2 defined; the caller files
+ * them as the contest's beat URLs. Throws with the server's own wording so the
+ * form can show why an upload was refused.
+ */
+export async function uploadOpenMicBeat(
+  file: File,
+  contestId?: string,
+): Promise<{ previewUrl: string; downloadUrl: string }> {
+  const body = new FormData();
+  body.append('file', file);
+  const qs = contestId ? `?contestId=${encodeURIComponent(contestId)}` : '';
+  const res = await fetch(`${webBase()}/api/admin/open-mic/beats${qs}`, {
+    method: 'POST',
+    body,
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    success?: boolean; error?: string; beat?: { previewUrl?: string; downloadUrl?: string };
+  };
+  if (res.status === 401) throw new Error('Beat upload failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Beat upload failed: 403 — this account cannot edit Open Mic contests.');
+  if (!res.ok || !json.success) throw new Error(`Beat upload failed: ${json.error || res.status}`);
+  const downloadUrl = String(json.beat?.downloadUrl || '');
+  if (!downloadUrl) throw new Error('Beat upload failed: the server returned no beat URL.');
+  return { previewUrl: String(json.beat?.previewUrl || downloadUrl), downloadUrl };
+}
+```
+
+Then correct the comment it contradicts. Replace `:331-333` — "NOT ported: the 'upload a beat
+file' control. This form keeps the 'paste a beat URL' path (already the primary path in the
+original UI) and drops the file-picker; paste a pre-hosted URL instead." — with two sentences
+that say what is now true, and keep the surrounding paragraph intact:
+
+```ts
+ * Ported here in full except the beat file-picker, which `uploadOpenMicBeat`
+ * below now provides: a pasted URL is not a playable value, because the public
+ * beat reader only serves /api/open-mic/beats/… paths.
+```
+
+- [ ] **Step 5: Wire the form**
+
+In `frontend-admin/app/admin/open-mic/new/page.tsx`:
+
+Replace the header comment at `:9-13` (the "One deliberate omission … corrupts a binary
+multipart upload … Only the 'paste a beat URL' path is kept here" paragraph) with:
+
+```ts
+ * Same fields, same POST /api/admin/open-mic/contests route, reached through the
+ * web proxy. The beat arrives as an mp3 upload through /api/web-proxy — the
+ * paste-a-URL-only path was removed because the public beat reader serves only
+ * /api/open-mic/beats/… paths, so a pasted third-party URL looked fillable and
+ * played for nobody.
+```
+
+Add `uploadOpenMicBeat` to the `:17` import, and beside it:
+
+```ts
+import { beatUrlProblem } from '@/features/openmic/beat-url';
+```
+
+Add state after `:42` (`const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});`):
+
+```tsx
+  const [beatBusy, setBeatBusy] = useState(false);
+  const [beatNote, setBeatNote] = useState('');
+```
+
+Add the handler immediately above `submit()` (`:79`):
+
+```tsx
+  async function uploadBeat(file: File) {
+    setBeatBusy(true);
+    setBeatNote('');
+    try {
+      const beat = await uploadOpenMicBeat(file);
+      setField('beatDownloadUrl', beat.downloadUrl);
+      setField('beatPreviewUrl', beat.previewUrl);
+      setBeatNote('Beat uploaded — artists can now play and download it.');
+    } catch (e) {
+      setBeatNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBeatBusy(false);
+    }
+  }
+```
+
+Narrow the required-field copy at `:75` so it names the action rather than a URL:
+
+```tsx
+    if (!form.beatDownloadUrl.trim()) e.beatDownloadUrl = 'Upload the official beat mp3.';
+```
+
+Replace the intro paragraph at `:209-211` — "Paste a hosted URL — file upload isn't available
+from this console (see code comment for why)." — with:
+
+```tsx
+            Upload the beat mp3. The programme page can only play and offer a file this site
+            stores; a URL from another host will not open for an artist.
+```
+
+Insert a picker row directly before the download-URL field's `<div style={fieldWrap}>` (`:221`),
+and rewrite the two URL fields (`:221-225` download, `:226-230` preview). The visible `<label>` elements stay exactly as they
+are; `aria-label` is what makes each input addressable (`getByLabelText` in Step 1, and a screen
+reader), and the warnings must hang off the field the operator is looking at, not the picker:
+
+```tsx
+          <div style={fieldWrap}>
+            <label style={labelStyle}>Upload Beat File (MP3)*</label>
+            <Input
+              type="file"
+              accept=".mp3"
+              aria-label="Upload beat file"
+              disabled={beatBusy}
+              onChange={(e) => {
+                const selected = e.target.files?.[0];
+                if (selected) void uploadBeat(selected);
+              }}
+            />
+            {beatBusy ? <p style={{ fontSize: 12, color: colors.muted, margin: '4px 0 0' }}>Uploading…</p> : null}
+            {beatNote ? (
+              <p style={{ fontSize: 12, color: colors.danger, margin: '4px 0 0' }}>{beatNote}</p>
+            ) : null}
+          </div>
+          <div style={fieldWrap}>
+            <label style={labelStyle}>Beat File URL (Download)*</label>
+            <Input value={form.beatDownloadUrl} aria-label="Beat file URL (Download)" onChange={(e) => setField('beatDownloadUrl', e.target.value)} placeholder="/api/open-mic/beats/…" style={{ width: '100%' }} />
+            {fieldErrors.beatDownloadUrl && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.beatDownloadUrl}</p>}
+            {beatUrlProblem(form.beatDownloadUrl) === 'legacy' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                This beat was uploaded before the public-beat fix, so artists get an access error.
+                Upload the mp3 instead of pasting a URL.
+              </p>
+            ) : beatUrlProblem(form.beatDownloadUrl) === 'unplayable' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                The programme page cannot serve that address, so the beat will not play or download.
+                Upload the mp3 instead of pasting a URL.
+              </p>
+            ) : null}
+          </div>
+          <div style={fieldWrap}>
+            <label style={labelStyle}>Beat Preview URL (Optional)</label>
+            <Input value={form.beatPreviewUrl} aria-label="Beat preview URL" onChange={(e) => setField('beatPreviewUrl', e.target.value)} placeholder="/api/open-mic/beats/…" style={{ width: '100%' }} />
+            {beatUrlProblem(form.beatPreviewUrl) === 'unplayable' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                The player ignores a preview it cannot serve. Upload the mp3, or leave this empty to
+                play the download file.
+              </p>
+            ) : null}
+          </div>
+```
+
+- [ ] **Step 6: Run the test and this app's gates**
+
+Run, in order, each separately so a failure names itself:
+
+```bash
+cd /Users/paymax/Documents/spotlight/main/frontend-admin && npx vitest run tests/admin/openmic/beat-upload.test.tsx
+cd /Users/paymax/Documents/spotlight/main/frontend-admin && npm test
+cd /Users/paymax/Documents/spotlight/main/frontend-admin && npm run type-check
+cd /Users/paymax/Documents/spotlight/main/frontend-admin && npm run lint
+cd /Users/paymax/Documents/spotlight/main/frontend-admin && npm run check:mock-flags
+```
+Expected: 4 passed; the whole suite no worse than before this task (record the count you started
+from); type-check exit 0; lint exit 0; mock-flag check exit 0.
+
+Then prove the browser path, because this task's whole claim is that a real upload survives the
+proxy. With frontend-web on :3000 and frontend-admin on :3001, both signed in as admin, open
+`/admin/open-mic/new`, choose a real mp3 and confirm: both URL fields fill with
+`/api/open-mic/beats/…`, no amber warning shows, and `curl -o /dev/null -w '%{http_code}' <the
+absolute URL>` on the value answers 200. If the upload 400s, the proxy is not carrying the body
+after all — that is the finding, so report it rather than working around it.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git -C /Users/paymax/Documents/spotlight/main add frontend-admin/src/features/openmic/beat-url.ts \
+  frontend-admin/src/services/openMicAdminService.ts \
+  frontend-admin/app/admin/open-mic/new/page.tsx \
+  frontend-admin/tests/admin/openmic/beat-upload.test.tsx \
+  docs/superpowers/plans/2026-11-10-open-mic-competition-steps.md && \
+git -C /Users/paymax/Documents/spotlight/main commit -m "feat(admin): upload the Open Mic beat from the live console
+
+The console admins actually use could only paste a beat URL, and the public
+beat reader serves only /api/open-mic/beats/… — so no edition published from
+here had a beat an artist could play. The web proxy has since learned to
+forward binary bodies verbatim, so the file picker the Path-A port skipped can
+exist now."
+```
+
+Stage exactly those paths, `add` and `commit` in one invocation, and never `git add -A` — other
+sessions commit in this worktree.
 
 ---
 
