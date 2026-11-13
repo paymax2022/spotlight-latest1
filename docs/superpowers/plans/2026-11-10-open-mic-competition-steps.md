@@ -1484,12 +1484,12 @@ re-deriving them in the browser."
 ### Task 6: Point the two admin beat forms at the new route
 
 **Files:**
-- Modify: `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx:87-115` (upload), `:83` (required-field copy), `:314-334` (URL fields + warning), `:319`/`:323` (label + `accept`)
-- Modify: `frontend-web/components/openmic/OpenMicAdminContestEditor.tsx:58-80` (upload), `:199-213` (URL fields + warning), `:204`/`:208` (label + `accept`)
+- Modify: `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx:87-115` (upload), `:83` (required-field copy), `:312-317` (download-URL field: placeholder, help, two warnings), `:319`/`:323` (label + `accept`), `:332-335` (preview-URL field: placeholder + warning)
+- Modify: `frontend-web/components/openmic/OpenMicAdminContestEditor.tsx:58-80` (upload), `:199-202` (download-URL field: placeholder + two warnings), `:204`/`:208` (label + `accept`)
 - Test: `frontend-web/tests/unit/openmic/admin-beat-wiring.spec.ts`
 
 **Interfaces:**
-- Consumes: Task 2's `POST /api/admin/open-mic/beats` response `{ success, beat: { previewUrl, downloadUrl } }`; `adminAuthHeaders(false)` from `@/src/lib/auth/client` (Authorization + role header, no Content-Type, so FormData still works); Task 1's `isLegacyBeatUrl`.
+- Consumes: Task 2's `POST /api/admin/open-mic/beats` response `{ success, beat: { previewUrl, downloadUrl } }`; `adminAuthHeaders(false)` from `@/src/lib/auth/client` (Authorization + role header, no Content-Type, so FormData still works); Task 1's `isLegacyBeatUrl` (the pre-fix case) and `publicBeatUrl` (the general "will this play for an artist?" question).
 - Produces: rows whose `preview_url` / `download_url` are `/api/open-mic/beats/…` paths.
 
 - [ ] **Step 1: Write the failing guard test**
@@ -1544,13 +1544,28 @@ describe('admin beat upload wiring', () => {
       expect(source).not.toContain('(MP3/WAV)');
     }
   });
+
+  it('flags any pasted URL an artist cannot open, not only a legacy one', () => {
+    // isLegacyBeatUrl is an admin diagnostic for the pre-fix upload path; it
+    // deliberately does not answer "will this play for an artist?". The public
+    // reader allowlists /api/open-mic/beats/, so an absolute third-party URL —
+    // exactly what placeholder="https://..." advertises — is unusable while
+    // looking perfectly fillable. Both forms must ask publicBeatUrl.
+    for (const source of [BUILDER, EDITOR]) {
+      expect(source).toContain('publicBeatUrl');
+      expect(source).not.toContain('placeholder="https://..."');
+      expect(source).toMatch(/Upload the mp3\s+instead/i);
+    }
+    // The help copy that made pasting an off-site URL look like a supported path.
+    expect(BUILDER).not.toContain('You can paste a direct URL');
+  });
 });
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic/admin-beat-wiring.spec.ts`
-Expected: FAIL on the first case (both files still contain `/api/registration/uploads`).
+Expected: FAIL — all 5 cases. Today both forms post to `/api/registration/uploads` and store `payload?.upload?.previewUrl`, neither imports a predicate, both accept `.wav`/`.m4a`, and the builder still carries `placeholder="https://..."`. (The builder's old `fetch` also sends no auth header at all — `adminAuthHeaders(false)` in Step 3 is what makes the upload work for a signed-in admin.)
 
 - [ ] **Step 3: Rewire the builder**
 
@@ -1585,10 +1600,10 @@ In `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx`, replace `up
   }
 ```
 
-Add the import beside the existing `@/src/features/openmic` imports (Task 6 needs it for the warning; see Step 4):
+Add the import beside the existing `@/src/features/openmic` imports — both predicates, because they answer two different questions (`beat-storage.ts:65-74` says so in as many words: `isLegacyBeatUrl` is the pre-fix diagnostic, `publicBeatUrl` is "will an artist be able to open this?"):
 
 ```tsx
-import { isLegacyBeatUrl } from '@/src/features/openmic/beat-storage';
+import { isLegacyBeatUrl, publicBeatUrl } from '@/src/features/openmic/beat-storage';
 ```
 
 Narrow the picker to the one format the route accepts — the label at line 319 says `(MP3/WAV)` and line 323 invites `.wav` and `.m4a`, both of which `app/api/admin/open-mic/beats/route.ts` answers with a 400 the form has no copy for. Leave `type="file"` alone (it is a file input; only `accept` narrows it):
@@ -1607,14 +1622,40 @@ Change the required-field copy at line 83 so it names the action, not a URL:
     if (!String(form.beatDownloadUrl || '').trim()) errors.beatDownloadUrl = 'Upload the official beat mp3.';
 ```
 
-Below the download-URL input (line 314-316), render the legacy warning when a pasted value is an owner-only path:
+Rewrite the download-URL field (lines 312-317). Two hazards live here: the `placeholder="https://..."` plus help copy advertise pasting an arbitrary direct URL, which Task 1's allowlist refuses at read time — so the admin fills the field, saves, and the edition page quietly shows no beat. One warning per URL field, the legacy case first:
 
 ```tsx
+          <div className="md:col-span-2">
+            <label className="form-label">Beat File URL (Download)*</label>
+            <input className="form-input h-[44px]" value={form.beatDownloadUrl} onChange={(e) => setField('beatDownloadUrl', e.target.value)} placeholder="/api/open-mic/beats/…" />
+            <p className="form-help">The upload below fills this. Artists can only open a beat this site stores.</p>
+            {validationErrors.beatDownloadUrl ? <p className="form-error">{validationErrors.beatDownloadUrl}</p> : null}
             {isLegacyBeatUrl(form.beatDownloadUrl) ? (
               <p className="text-[12px] text-amber-400">
-                This beat predates the public-beat storage fix and cannot be opened by artists. Re-upload the mp3.
+                This beat predates the public-beat storage fix, so artists get an access error. Re-upload the mp3.
+              </p>
+            ) : form.beatDownloadUrl && publicBeatUrl(form.beatDownloadUrl) === null ? (
+              <p className="text-[12px] text-amber-400">
+                The programme page cannot serve that address, so the beat will not play or download. Upload the mp3
+                instead of pasting a URL.
               </p>
             ) : null}
+          </div>
+```
+
+And the preview-URL field (lines 332-335), which has the same placeholder. It is optional and `submit()` already falls back to the download URL (`:157`), so an empty value is fine and only a pasted unusable one needs saying:
+
+```tsx
+          <div className="md:col-span-2">
+            <label className="form-label">Beat Preview URL (Optional)</label>
+            <input className="form-input h-[44px]" value={form.beatPreviewUrl} onChange={(e) => setField('beatPreviewUrl', e.target.value)} placeholder="/api/open-mic/beats/…" />
+            {form.beatPreviewUrl && publicBeatUrl(form.beatPreviewUrl) === null ? (
+              <p className="text-[12px] text-amber-400">
+                The player ignores a preview it cannot serve. Upload the mp3 instead of pasting a URL, or leave this
+                empty to play the download file.
+              </p>
+            ) : null}
+          </div>
 ```
 
 - [ ] **Step 4: Rewire the editor**
@@ -1651,18 +1692,27 @@ In `frontend-web/components/openmic/OpenMicAdminContestEditor.tsx`, replace `upl
 Add the import:
 
 ```tsx
-import { isLegacyBeatUrl } from '@/src/features/openmic/beat-storage';
+import { isLegacyBeatUrl, publicBeatUrl } from '@/src/features/openmic/beat-storage';
 ```
 
-and below the download-URL input (line 201) the same warning, phrased for an existing edition:
+Then rewrite the download-URL field (lines 199-202). This editor loads an existing edition, so it is the surface most likely to show a legacy row — and it has no `validationErrors` on this field, so the warning is the only feedback an admin gets. `previewUrl` exists in state here (`:50`, `:72`, `:120`) but has no input, so only the download field needs the pair:
 
 ```tsx
+          <div className="md:col-span-2">
+            <label className="form-label">Beat Download URL (used by frontend download button)</label>
+            <input className="form-input h-[44px]" value={form.downloadUrl} onChange={(e) => setField('downloadUrl', e.target.value)} placeholder="/api/open-mic/beats/…" />
             {isLegacyBeatUrl(form.downloadUrl) ? (
               <p className="form-error">
                 This beat was uploaded before the public-beat fix, so artists get an access error. Re-upload the mp3
                 and save.
               </p>
+            ) : form.downloadUrl && publicBeatUrl(form.downloadUrl) === null ? (
+              <p className="form-error">
+                The programme page cannot serve that address, so the beat will not play or download. Upload the mp3
+                instead of pasting a URL, then save.
+              </p>
             ) : null}
+          </div>
 ```
 
 Narrow this picker exactly as in Step 3 — the label at line 204 says `(MP3/WAV)` and line 208 invites `.wav` and `.m4a`, both of which the route 400s:
