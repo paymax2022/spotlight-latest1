@@ -438,73 +438,113 @@ func (r *Repository) ListConsultQueue(ctx context.Context, userID string) ([]Con
 	return out, rows.Err()
 }
 
+// ListAppointmentRequests answers the doctor's decision queue from the booking
+// table itself.
+//
+// There is no request row to read: BookAppointment writes `appointments` and
+// nothing in this repository has ever inserted into
+// doctor_appointment_requests, so a booking waiting on this doctor was invisible
+// here while the patient's screen said "Awaiting doctor confirmation". The
+// booking's own status IS the request's state.
 func (r *Repository) ListAppointmentRequests(ctx context.Context, userID string) ([]AppointmentRequest, error) {
-	const q = `
-		SELECT id, user_id, appointment_id, patient, consult_type, status, requested_slot, detail, created_at, updated_at
-		FROM doctor_appointment_requests WHERE user_id = $1 ORDER BY created_at DESC`
-	rows, err := r.db.Query(ctx, q, userID)
+	appts, err := r.ListAppointments(ctx, userID, "")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []AppointmentRequest{}
-	for rows.Next() {
-		ar := AppointmentRequest{}
-		if err := rows.Scan(&ar.ID, &ar.UserID, &ar.AppointmentID, &ar.Patient, &ar.ConsultType,
-			&ar.Status, &ar.RequestedSlot, &ar.Detail, &ar.CreatedAt, &ar.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, ar)
+	out := make([]AppointmentRequest, 0, len(appts))
+	for i := range appts {
+		out = append(out, requestForAppointment(&appts[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) GetAppointmentRequest(ctx context.Context, userID, id string) (*AppointmentRequest, error) {
-	const q = `
-		SELECT id, user_id, appointment_id, patient, consult_type, status, requested_slot, detail, created_at, updated_at
-		FROM doctor_appointment_requests WHERE id = $1 AND user_id = $2`
-	ar := &AppointmentRequest{}
-	err := r.db.QueryRow(ctx, q, id, userID).Scan(&ar.ID, &ar.UserID, &ar.AppointmentID, &ar.Patient,
-		&ar.ConsultType, &ar.Status, &ar.RequestedSlot, &ar.Detail, &ar.CreatedAt, &ar.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+	// The inbox links here with `r.id`, which is the appointment id, and refetches
+	// after the decision — so a booking that is no longer pending must still
+	// answer, as accepted/rejected rather than 404.
+	a, err := r.GetAppointment(ctx, userID, id)
+	if err != nil {
+		return nil, err
 	}
-	return ar, err
+	ar := requestForAppointment(a)
+	return &ar, nil
 }
 
-// TransitionAppointment moves the underlying appointment to a new status (accept→confirmed,
-// reject→cancelled, reschedule→rescheduled) and mirrors the decision onto its request row
-// when one exists. Scoped + status-set → naturally idempotent. Returns the appointment.
+// requestForAppointment projects a booking onto the request shape the screens
+// parse. `appointment` is nested and complete because that is how
+// requests/index.tsx reads it (`r.appointment.patient.name`,
+// `TYPE_ICON[r.appointment.consultType]`) — the flat columns the old table
+// carried would leave those undefined and throw on the first real row.
+func requestForAppointment(a *Appointment) AppointmentRequest {
+	// appointments has no triage column, so the inbox badge gets the one
+	// priority that is not invented. billing follows the escrow: a ₦0 consult is
+	// the free follow-up the quote produces, anything else was paid.
+	billing := "paid"
+	if a.FeeKobo == 0 {
+		billing = "free_follow_up"
+	}
+	// The patient's note with the request is what they typed as the reason for
+	// booking — the inbox shows it under the patient's name.
+	note := ""
+	if a.Reason != nil {
+		note = *a.Reason
+	}
+	return AppointmentRequest{
+		ID:            a.ID,
+		UserID:        a.UserID,
+		AppointmentID: a.ID,
+		Status:        requestStatusFor(a.Status),
+		Priority:      "normal",
+		Billing:       billing,
+		RequestedAt:   a.CreatedAt,
+		PatientNote:   note,
+		Appointment:   a,
+	}
+}
+
+// requestStatusFor maps the appointment's UI status onto AppointmentRequestStatus.
+func requestStatusFor(status string) string {
+	switch status {
+	case "upcoming":
+		return "pending"
+	case "cancelled":
+		return "rejected"
+	default:
+		return "accepted"
+	}
+}
+
+// TransitionAppointment decides a patient's booking: accept→confirmed,
+// reject→cancelled. Scoped through the owning doctor, so a second doctor cannot
+// decide someone else's appointment. Returns the appointment.
 func (r *Repository) TransitionAppointment(ctx context.Context, userID, appointmentID, status string, requestedSlot *string, detail []byte) (*Appointment, error) {
+	// A proposed slot has nowhere to live: `appointments` carries no
+	// requested_slot column, and the row that used to hold it is the table this
+	// plane no longer reads. Refusing beats writing the status and reporting a
+	// reschedule that was never recorded.
+	if requestedSlot != nil {
+		return nil, ErrStatusUnsupported
+	}
+	dbStatus, err := appointmentStatusForWrite(status)
+	if err != nil {
+		return nil, err
+	}
 	const q = `
-		UPDATE doctor_appointments SET status = $3, updated_at = now()
-		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, appointmentID, userID, status)
+		UPDATE appointments a
+		   SET status = $3
+		  FROM doctors d
+		 WHERE a.id = $1 AND d.id = a.doctor_id AND d.user_id = $2`
+	tag, err := r.db.Exec(ctx, q, appointmentID, userID, dbStatus)
 	if err != nil {
 		return nil, err
 	}
 	if tag.RowsAffected() == 0 {
 		return nil, ErrNotFound
 	}
-	// Mirror onto the linked request row (best-effort, scoped). Appointment status uses
-	// the ConsultStatus vocabulary (confirmed|cancelled|upcoming); the request row uses
-	// the AppointmentRequestStatus vocabulary (accepted|rejected|reschedule_requested).
-	var reqStatus string
-	switch status {
-	case "confirmed":
-		reqStatus = "accepted"
-	case "cancelled":
-		reqStatus = "rejected"
-	case "upcoming":
-		reqStatus = "reschedule_requested"
-	default:
-		reqStatus = status
-	}
-	_, _ = r.db.Exec(ctx,
-		`UPDATE doctor_appointment_requests
-		 SET status = $3, requested_slot = COALESCE($4, requested_slot), detail = detail || $5::jsonb, updated_at = now()
-		 WHERE appointment_id = $1 AND user_id = $2`,
-		appointmentID, userID, reqStatus, requestedSlot, jsonx.RawOrEmptyObject(detail))
+	// The doctor's decline reason and the mutation's audit payload have no column
+	// on `appointments` either; they used to land in the request row's `detail`
+	// JSONB. Nothing here can record them, so the decision is written and the
+	// reason is not (see the flag in the change notes) rather than pretending.
 	return r.GetAppointment(ctx, userID, appointmentID)
 }
 
