@@ -38,15 +38,16 @@ if [ -z "$LIVE" ]; then
   # is not the 503 this guard exists to catch; adding it here would demand a
   # directive that changes no behaviour.
   # Probed before deriving, rather than papering over the pipeline with
-  # `|| true`: grep exits 1 for zero matches and >=2 for a read error, and one
-  # `|| true` cannot tell those apart — it would let a half-read accessor file
-  # become a short gate list that passes. Here a non-match fails loudly, and
-  # any read error kills the pipeline below under pipefail with grep's own
-  # message on stderr.
+  # `|| true`: one `|| true` cannot tell grep's exit 1 (zero matches — the case
+  # worth naming) from exit >=2 (a read error we cannot interpret), and either
+  # left a short gate list that could pass. The probe fails loudly on both.
+  # The check after the pipeline catches the shape the probe cannot see: GNU
+  # grep on binary input answers `-q` yes while `-o` emits nothing.
   grep -qE "envFlag\('[A-Z0-9_]+'\)" "$FLAGS" \
     || { echo "FAIL: no envFlag('NAME') accessor found in $FLAGS — the gate surface is empty, so parity is unprovable"; exit 1; }
   LIVE="$(mktemp)"; trap 'rm -f "$LIVE"' EXIT
   grep -oE "envFlag\('[A-Z0-9_]+'\)" "$FLAGS" | sed "s/envFlag('//;s/')//" | sort -u > "$LIVE"
+  [ -s "$LIVE" ] || { echo "FAIL: $FLAGS answers envFlag('NAME') but yielded no usable name — the gate surface is unreadable, so parity is unprovable"; exit 1; }
 else
   LIVE_SRC="$LIVE"
 fi
@@ -69,7 +70,7 @@ while read -r line || [ -n "$line" ]; do
   case "$k" in
     ''|*[!A-Z0-9_]*) echo "BAD name in $FILE: '$k' (must be [A-Z0-9_]+ — it cannot be matched against the gate surface)"; drift=$((drift + 1)); continue ;;
   esac
-  grep -qx "$k" "$LIVE" || { echo "DEAD wiring: $k is declared but $FLAGS never reads it"; drift=$((drift + 1)); }
+  grep -qx "$k" "$LIVE" || { echo "DEAD wiring: $k is declared but $LIVE_SRC never reads it"; drift=$((drift + 1)); }
   [ "$v" = "true" ] || [ "$v" = "false" ] || { echo "BAD value for $k: '$v' (must be true or false)"; drift=$((drift + 1)); }
 done < "$FILE"
 [ "$drift" -eq 0 ] || { echo "prod-flag-parity ✗ — $drift drift(s)"; exit 1; }
