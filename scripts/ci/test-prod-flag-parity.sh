@@ -41,10 +41,10 @@ printf 'FEATURE_A_ENABLED=true\nFEATURE_XA_ENABLED=true\n' > "$TMP/config/produc
 printf 'FEATURE_A_ENABLED\nFEATURE.A_ENABLED\n' > "$TMP/live.txt"
 if bash "$CHECK" --file "$TMP/config/production-module-flags.env" --live "$TMP/live.txt" > "$TMP/out" 2>&1; then
   echo "FAIL: metacharacter name went undetected"; exit 1; fi
-# Anchored on the gate-surface leg's own wording and the offending literal, so
-# this cannot be satisfied by the flag-file leg or by an unrelated line.
-grep -q "BAD gate name: 'FEATURE.A_ENABLED'" "$TMP/out" \
-  || { echo "FAIL: metacharacter gate name not named"; exit 1; }
+# Anchored on the gate-surface leg's own wording, the file the name came from,
+# and the offending literal — so this cannot be satisfied by the flag-file leg.
+grep -qE "BAD gate name in $TMP/live.txt: 'FEATURE\.A_ENABLED'" "$TMP/out" \
+  || { echo "FAIL: metacharacter gate name not named with its source"; exit 1; }
 
 # 6 — a missing accessor source must fail with the guard's own reason, not with
 # grep's: the pre-fix script printed "grep: …: No such file or directory" and
@@ -73,4 +73,14 @@ rc=0; bash "$CHECK" --file "$TMP/config/production-module-flags.env" --flags "$T
 [ "$rc" -eq 1 ] || { echo "FAIL: zero-gate accessor source exited $rc, expected 1"; exit 1; }
 grep -q 'gate surface is empty' "$TMP/out" \
   || { echo "FAIL: zero-gate accessor source not named"; exit 1; }
+
+# 9 — the --live path must not require the accessor source file to exist. It
+# names a plane, not the whole tree (Task 10 and Task 13 reconcile one plane at
+# a time), so the $FLAGS guard belongs to the deriving branch only. Without
+# this case, moving that guard back to the top level stays green in CI, where
+# the checkout always provides frontend-web/.
+( cd "$TMP" && bash "$CHECK" --file "$TMP/config/production-module-flags.env" --live "$TMP/live.txt" ) > "$TMP/out" 2>&1 \
+  || { echo "FAIL: --live path demanded the accessor source"; sed -n '1,3p' "$TMP/out"; exit 1; }
+grep -q 'prod-flag-parity ✓' "$TMP/out" \
+  || { echo "FAIL: --live path did not report parity"; exit 1; }
 echo "PASS"
