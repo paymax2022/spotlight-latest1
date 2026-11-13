@@ -1343,6 +1343,15 @@ dispatched, no write to staging or prod. Every migration file came from
 printed that value before the replay (the implementer's record) and again after it
 (§4.4's addendum, on the re-created tree).
 
+**Which file every line number in this section belongs to:** `Makefile:…` cites are
+the **pinned tree's** (`/tmp/rel/Makefile`), because that is the tree the replay
+executed. Task 2's `pending-list` target was inserted on `feat/prod-cutover` *after*
+`migrate-up`, so the two files agree up to `migrate-up` and diverge after it:
+`Makefile:28` (`RLS_ALLOWLIST`) and `:93` (`echo "  applying $$f"`) are the same line
+in both, while the pin's `:98/:99/:100/:103/:104` (drop → `$(MAKE) migrate-up` →
+`$(MAKE) rls-check` → the `psql -tAc` probe → `from pg_tables t`) are `:101/:102/:103/:106/:107`
+on this branch. Checked both ways 2026-11-13.
+
 **Heading note (do not "fix" this to §5's template):** plan:451 and plan:497 ask
 for this section by the literal heading `## Stage 1 — fresh replay`, while §5's
 append format prescribes `## Task N — <title> (YYYY-MM-DD)`. The plan's wording
@@ -1401,7 +1410,14 @@ per-task convention Task 2's `2.x` sections use.
   which `migrate-reset` calls at `Makefile:99`.
 - **Durability caveat:** job logs expire on GitHub's retention schedule, so this
   corroboration is re-readable *now* and not permanent. `/tmp/replay-logs/replay.log`
-  is the durable artifact; re-fetch this job before quoting it in a later task.
+  is the *local* counterpart — re-readable today, but it is not durable either: `/tmp`
+  does not survive a reboot, and §4.4 forbids copying these captures into the repo
+  because line 1 carries a connection string. So neither witness is permanent, and the
+  honest reading of §4 is "verified from two independent sources on 2026-11-12/13",
+  not "permanently on the record". Re-fetch the job (`gh api …/jobs/131372215625/logs
+  --allow-escape-sequences`) before quoting §4.1 in a later task; if a later task
+  needs a durable copy of the evidence, that is a decision for the user about where a
+  credential-free extract may live — do not invent one.
 
 ### 4.2 Step 2 — the local replay, on the image and prelude CI uses
 
@@ -1449,14 +1465,19 @@ Order was kept as CI keeps it for the setup half (`integration-verify.yml:62` �
 `:83` → `:91` → `:174`): container → lock raise → restart → prelude →
 `migrate-reset`. **One CI step was not replicated, and it changes what "from zero"
 drops:** CI also runs `make migrate-up` at `:94` (`Migrations apply cleanly`), then
-the live-DB suites, `go build`, `tsc`, and only at `:174` the reset. So CI's
+`make build` (`:96-97`), `make test` (`:101`) and the anti-skip canary (`:113`), then
+`make tsc` (`:170-171`), and only at `:174` the reset. So CI's
 `DROP SCHEMA public CASCADE` falls on a schema holding 751 migrations *plus test
 fixtures* — its job log reads `NOTICE: drop cascades to 1656 other objects`, while
 this local replay dropped a freshly-preluded schema and its `replay.log:2` reads
 `drop cascades to 6 other objects`. The local run therefore exercised a **strictly
-easier** drop path than CI's; the two "zeros" are not the same size, and the
-4,174-vs-2,089 NOTICE difference between the logs is the same fact (CI applies the
-chain twice). The restart is what makes the raise take effect, and it did:
+easier** drop path than CI's; the two "zeros" are not the same size. The NOTICE
+totals line up the same way but only **approximately** — CI's log carries 4,174
+against this replay's 2,089, and splitting the CI log at its own reset drop
+(job-log line 4583) gives 2,092 before / 2,082 after, so neither half equals 2,089
+and the "twice" is a shape, not an identity; the difference is unexplained here and
+must not be quoted as evidence of anything. The restart is what makes the raise take
+effect, and it did:
 `show max_locks_per_transaction` read **512** afterwards, which is what the
 `DROP SCHEMA public CASCADE` inside `migrate-reset` (`Makefile:98`) then ran
 against. Whether the default 64 would actually have failed here was **not** tested
@@ -1481,12 +1502,16 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
   rls-check ✓ — every public table has RLS enabled (allowlist: 'spatial_ref_sys')
   ```
 
-  Wall clock 56 s (log opened `2026-11-12T23:48:16+0100`, last write `23:49:12`).
+  Wall clock 56 s, read off the capture itself rather than off a stopwatch:
+  `stat -f '%SB %Sm' -t '%Y-%m-%dT%H:%M:%S%z' /tmp/replay-logs/replay.log` → birth
+  `2026-11-12T23:48:16+0100`, mtime `23:49:12+0100` (re-checked 2026-11-13, still
+  56 s). `start.log` brackets it from `23:47:31`.
 - **The count equality the brief asks for:** `ls supabase/migrations/*.sql | wc -l`
   → **751**, equal to the 751 applied lines. `ls supabase/migrations | wc -l` is
   also 751 and no entry is a non-`.sql` file, so the Makefile's `*.sql` sweep
   missed nothing. This agrees with §2.5's `repo files at the release SHA: 751` —
-  no drift since Task 2 measured it.
+  and unlike every prod-side figure in this ledger, this one is commit-determined:
+  `c49b39564…` cannot drift, so it needs no re-read before Task 6 uses it.
 - **0-pending-equivalent** (applied set vs. tree, both sorted basenames): the
   implementer ran this over the two basename lists §4.4's addendum later finds left
   in `/tmp/replay-logs/` and reported `diff` → identical,
@@ -1518,7 +1543,9 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
 - **Client caveat:** the driving client is Homebrew psql `16.13` against the
   image's server `17.0`; CI drives the same server with the runner's client. The
   server judges the DDL, so the figure that would differ elsewhere is a version
-  string, not the outcome.
+  string, not the outcome. The client half is a live host read and re-checkable
+  (`psql --version` → `psql (PostgreSQL) 16.13 (Homebrew)`, re-run 2026-11-13); the
+  server half is in §4.4's not-re-measurable list, pinned only by the image digest.
 - **Verdict:** pass — 751/751 applied, from zero, in order, no error.
 
 ### 4.3 The RLS gate, and exactly what the allowlist covered
@@ -1601,10 +1628,12 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
   others, **none** of them `/tmp/rel` (the cutover branch tree
   `/private/tmp/spot-cutover` remains). Treat that 13 as a timestamp, not a fact
   about the repo: this main tree is shared with concurrent sessions that attach and
-  remove worktrees, so the count moves on its own. Re-read at the controller's
-  addendum (2026-11-13, `/tmp/rel` present again): **18** entries, and the
-  load-bearing half of both readings is the same — `grep /tmp/rel` finds the tree
-  when it exists and nothing when it does not. The main tree was only ever read: no
+  remove worktrees, so the count moves on its own. Two later re-reads, minutes apart,
+  printed **18** (controller, `/tmp/rel` present again) and **20** (round-1 re-review)
+  — which is the point of labelling it, not a contradiction of it. The
+  load-bearing half of every reading is the same: `worktree list | grep -c /tmp/rel`
+  is 1 while the tree exists and 0 after `worktree remove`. The main tree was only
+  ever read: no
   rebase/reset/stash/checkout/clean, nothing staged there. `/tmp/rel` is removed
   here because Task 4 was its last consumer — Task 5 onward run the classifier
   from a repo root.
@@ -1697,9 +1726,13 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
   predecessors' output, whereas on prod each will meet a schema that has already
   recorded versions newer than itself. If one of them fails on prod, this section is
   not counter-evidence; it proves only that the chain has no order-from-zero blocker.
-  (Those 83/87/18 figures are §2.5's to quote, re-derived there from a fresh
-  capture — this line is a pointer to the shape, not a current count; §2.5's
-  "re-read, never quote" rule binds anyone reading §4.5 too.)
+  (Those 83/87/18 figures are §2.5's to quote, and §2.5 says plainly that the
+  0/87 print came from re-running the classifier over the pin tree with three
+  versions added from run logs onto a **stale** 2026-11-07 capture — it describes
+  what that capture *can* list, not what is pending now — so the shape above is a
+  pointer, not a current count: Task 6 must re-derive it from a fresh
+  capture-and-classify pair, and §2.5's "re-read, never quote" rule binds anyone
+  reading §4.5 too.)
 - **751 = 751 is a file-set proof, not a history-row proof.** The psql route
   inserts nothing into Supabase's migration history:
   `select count(*) from information_schema.tables where table_schema = 'supabase_migrations'`
