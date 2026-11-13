@@ -43,14 +43,20 @@ function screensUnder(relDir: string): string[] {
  * stays invisible to this, which is why the app-wide test is a tripwire and not
  * a proof.
  */
+const CALL_RE = /\bLinking\.openURL\(\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/g;
+const ASSIGN_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*=\s*[^;\n]*authorizationUrl/gi;
+
 function handsOffToBrowser(src: string): boolean {
-  for (const call of src.matchAll(/Linking\.openURL\(\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/g)) {
+  // Which names were handed an authorization URL, in a first pass over the
+  // fixed assignment pattern — identifiers are then compared as strings, so
+  // nothing read from the file ever becomes a pattern.
+  const assigned = new Set<string>();
+  for (const m of src.matchAll(ASSIGN_RE)) assigned.add(m[1]);
+
+  for (const call of src.matchAll(CALL_RE)) {
     const arg = call[1];
-    // Linking.openURL(result.authorizationUrl)
-    if (/authorizationUrl/i.test(arg)) return true;
-    // const url = result.authorizationUrl; Linking.openURL(url)
-    const assigned = new RegExp(`(?:const|let|var)\\s+${arg.replace(/\./g, '\\.')}\\s*=[^;]*authorizationUrl`, 'i');
-    if (assigned.test(src)) return true;
+    if (/authorizationUrl/i.test(arg)) return true;              // Linking.openURL(r.authorizationUrl)
+    if (assigned.has(arg)) return true;                           // const url = r.authorizationUrl; openURL(url)
   }
   return false;
 }
@@ -113,6 +119,16 @@ test('comments elsewhere in the file do not blind the detector', () => {
     '{/* Fee summary */}',
   ].join('\n');
   assert.equal(handsOffToBrowser(realistic), true);
+});
+
+test('the detector builds no pattern out of file text', () => {
+  // CodeQL flagged the first version of this detector (js/incomplete-sanitization,
+  // alert #231): it interpolated an identifier read from the scanned file into
+  // `new RegExp` and escaped only dots, not backslashes. The identifier charset
+  // made that unreachable in practice, but "regex built from what we read" is the
+  // pattern that gets quietly wrong, so the detector matches with fixed patterns
+  // and compares strings instead. This test is what keeps it that way.
+  assert.doesNotMatch(read('tests/unit/payments/registrationCheckout.spec.ts'), /new RegExp\(/);
 });
 
 test('a completed checkout still lands on the processing screen with both ids', () => {
