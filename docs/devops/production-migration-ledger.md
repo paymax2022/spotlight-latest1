@@ -1973,3 +1973,130 @@ history rows with max applied `20271410000000`. So:
   a superset, and it is what Task 11 (deploy `RELEASE_SHA`) and Task 16 (docs
   correction) each have to reckon with — the pin is a deliberate hold-back, not an
   accident of timing.
+
+---
+
+## Task 7 — production module-flag source of truth (2026-11-13)
+
+Creates `frontend-web/config/production-module-flags.env`, the file Task 8's
+cPanel lane installs and Task 9's CI guard compares against. Three commits on
+`feat/prod-cutover`, none pushed: `d791ca88e` (76 lines, the deliverable),
+`01cc80c20` (the gate-surface figure, 78), `bcd91b3c7` (four comment
+inaccuracies the review found, 90). A push of anything under `frontend-web/**`
+**is** a production release, so this waits for Task 8's consumer.
+
+### 7.1 The declared set, re-derived the day it is quoted
+
+- **Probe:** names only, never values —
+  `railway variables --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --environment staging --service frontend-web --json`
+  piped through a `str(v).lower()=="true"` filter, intersected with the
+  `envFlag('…')` names at `origin/main`.
+- **Observed:** staging's `frontend-web` env holds **97** keys, **52** of them
+  valued `true`; the code reads **45** names; `52 ∩ 45 = 36`, which equals the
+  file's `=true` count exactly. **16** staging-ON names are not web-BFF names
+  and were dropped — the implementer's report says 6 (`task-7-report.md:151`),
+  and 6 is wrong; the arithmetic is `52 − 36 = 16`.
+- **Expected before running:** 36 true / 9 false / 45 declared, per the brief.
+- **Verdict:** pass, and re-derivable today rather than inherited from a note.
+- **File shape:** 90 lines = 44 comment + 1 blank + 45 directives; zero CR,
+  zero duplicate keys, one trailing newline.
+
+### 7.2 Parity holds across a `main` move, and both directions are empty
+
+`origin/main` moved from `1f7de771e` to `be9b7eac5` while this task ran.
+
+- **Probe:** `git rev-parse <sha>:frontend-web/src/lib/feature-flags.ts` for
+  both, and `comm -3` of the file's directive names against HEAD's `envFlag` set.
+- **Observed:** identical blob `91d0038e5` at both SHAs, so the 45-name set did
+  not move. `comm -23` (in file, never read) = empty; `comm -13` (read, not
+  declared) = empty. No dead wiring, no undeclared gate.
+- **Verdict:** pass. Task 9's guard must re-run this extraction on every merge;
+  a name that only ever appears in `feature-flags.ts` proves the file cannot
+  silently lose it.
+
+### 7.3 A probe trap that will bite Task 9: `frontend-web/src/app` is a symlink
+
+`ls -ld frontend-web/src/app` → `lrwxr-xr-x … src/app -> ../app`. The routes
+live in `frontend-web/app/api`; `frontend-web/src/app` is an alias. Recursion
+treats them differently:
+
+| Command | Result |
+| --- | --- |
+| `grep -rn 'featureFlags' frontend-web/src` | **17** lines |
+| `grep -rn 'featureFlags' frontend-web/src/app/api` | **413** lines / 184 files |
+| `find frontend-web/src -name route.ts` | **1** |
+| `find frontend-web/app/api -name route.ts` | **595** |
+
+Both halves are real: `grep -r` does not descend a symlink it *discovers* while
+recursing, but the kernel resolves a symlink named directly in the operand. So
+walking `src` sees almost nothing, while `src/app/api` sees the whole tree. This
+looked like fabricated tool output and was chased down precisely because a
+superset cannot be smaller than its own subset — it is not, the two commands
+walk different trees.
+
+- **Consequence for Task 9:** a parity guard that enumerates gated routes by
+  walking `frontend-web/src` will find ~1 route file and can assert anything it
+  likes. It must either walk `frontend-web/app/api` or resolve the alias first.
+- **Gate surface measured (this replaces the brief's unsourced "~46 gated route
+  groups"):** 46 accessors in `feature-flags.ts` (45 via `envFlag('NAME')`, plus
+  `tierLimits` via `envFlagDefaultTrue`), 595 `route.ts` under `app/api`, 184 of
+  them referencing `featureFlags`, 221 lines pairing `503` with "not available".
+
+### 7.4 7 of the 36 `=true` names gate nothing in the web plane
+
+- **Probe:** per-accessor call-site counts over `app` **and** `src`, plus
+  `requireFeature('…')`, plus a repo-wide `isModuleVisible` caller search.
+- **Observed:** `estate` 0, `healthLab` 0, `healthPharmacy` 0, `healthVet` 0,
+  `otpEmail` 0, `voteBridge` 0, `votesBridge` 0 — and `isModuleVisible`,
+  defined at `src/server/modules/visibility.ts:59`, has no caller outside its
+  own file. Controls from the same sweep: `restaurant` 24 call sites, `wallet` 7
+  plus 2 `requireFeature('wallet')`. Matches ledger §3.11's independent list.
+- **Why this is in the file and not just here:** the header claimed "`=true` is
+  a module production serves". For these 7 that is unfalsifiable by HTTP, so
+  Task 14's flagprobe would read a legitimate "no route" as a failed gate and
+  send an operator hunting a route that was never meant to exist. The header now
+  states the caveat and points at §3.11; §3.11's "inert in the web plane"
+  standing is unchanged.
+- **Verdict:** pass with the caveat committed. These 7 accessors are real dead
+  code, outside this task's scope, parked for the final review.
+
+### 7.5 The academy `=false` decision is now measured, not asserted
+
+The brief asserted `503 / 503 / 200` on both planes from code reading. Read-only
+`GET`s today:
+
+| Path | prod `www.spotlightng.com` | staging `frontend-web-staging-new.up.railway.app` |
+| --- | --- | --- |
+| `/api/academy/exams` | **503** `Assessments are not available yet` | **503** same body |
+| `/api/academy/topics` | **503** `Topic learning is not available yet` | **503** same body |
+| `/api/academy/apply` | **200** `success:true`, Batch A - 2026 | **200** `success:true`, Batch B - 2026 |
+
+- **Verdict:** pass. The academy *application* plane is live everywhere and the
+  *assessment/topics* plane is dark everywhere, so declaring the trio `=false`
+  records today's truth; flipping it is a product decision, not a migration
+  side effect. Note `staging.spotlightng.com` does not resolve (curl `000`) —
+  staging's frontend is the Railway domain above, and a probe that guesses the
+  hostname reports a false outage.
+
+### 7.6 What Task 7 did not re-measure
+
+"`production`'s runtime env held exactly four keys" is quoted from §3.7/§3.8,
+captured 2026-11-12 from deploy run `43037664704`. It was **not** re-read today:
+that needs a prod dispatch, which is R2. The header now says so explicitly
+instead of letting "Before 2026-11-12" read as a closed outage — as of this
+write it is still the live state, and Task 8's lane is what changes it.
+
+### 7.7 Carry into Task 8
+
+- Task 8's validator regex run against this file today: bad-line list empty,
+  `flags: on=36 off=9 declared=45`, and the `on >= 30` floor passes at 36.
+- Step 3 base64-appends the **whole file, comments included**, so **44** prose
+  lines will land in a `chmod 600` host file. `@next/env` ignores `#` lines, so
+  runtime behaviour is unaffected, but §3.8's env-inventory greps will start
+  counting them — expect 44 more lines there and do not read that as drift.
+- Parse by name, not by prefix: a lane that filters `^FEATURE_` silently drops
+  `VOTES_BRIDGE_ENABLED` and `FEATURE_CHECKOUT_TOPUP_TIER0` (no `_ENABLED`
+  suffix). Both are declared here and both must ride.
+- §3.8's warning about that deploy log (`:640-647`) applies to Task 8 Step 4:
+  the raw `gh run view … --log` echoes the publishable Supabase key verbatim, so
+  only the value-stripping `grep -aoE` forms are safe.
