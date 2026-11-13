@@ -33,3 +33,31 @@ export function describeDraftSaveError(error: unknown): DraftSaveOutcome | null 
   if (/already submitted/i.test(message)) return { kind: 'locked', message: LOCKED_MESSAGE };
   return { kind: 'unsaved', message: UNSAVED_MESSAGE };
 }
+
+// The consent step (M2) saves through the same draft route, so it meets the same
+// refusals — but its question is narrower than "should editing stop": the patient
+// pressed "Agree & continue" and wants to know whether the agreement that lets the
+// assigned doctor read their answers was actually recorded. Answering that from the
+// response alone goes wrong both ways (a refusal looked like a dead end, an accepted
+// but unpersisted write looked like progress and bounced), so the decision reads the
+// server's state instead of its prose. See tests/unit/telemedicine/intakeConsentStep.spec.ts.
+
+export type ConsentStepDecision =
+  /** The agreement is on the server, or there is nothing left to agree to. */
+  | { kind: 'toIntake' }
+  /** Still on consent, and the patient is told why. */
+  | { kind: 'stay'; message: string };
+
+const CONSENT_NOT_RECORDED_MESSAGE =
+  'We couldn’t record your agreement, so your health details have not been shared with the doctor yet. Check your connection and try again.';
+
+export function decideConsentStep(input: {
+  consentAccepted?: boolean;
+  intakeSubmitted?: boolean;
+}): ConsentStepDecision {
+  // A submitted intake outranks the missing agreement: the draft route refuses
+  // writes now, so the wizard's read-only view is the only screen that can tell
+  // this patient anything true.
+  if (input.consentAccepted || input.intakeSubmitted) return { kind: 'toIntake' };
+  return { kind: 'stay', message: CONSENT_NOT_RECORDED_MESSAGE };
+}
