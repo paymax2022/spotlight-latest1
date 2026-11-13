@@ -131,6 +131,21 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+# Refuse a staging-wired production release, and refuse it HERE rather than
+# trusting the bundle grep further down: EXPECTED_HOST is derived from
+# EXPECTED_API, which is read out of this same $ENV_FILE — so a .env.production
+# that names the staging API makes that check print its ✅ for the wrong host,
+# and EXPECTED_SUPABASE is only ever echoed above, never compared to anything.
+# Asserting the declaration is the one check in this script that is not
+# self-referential. Regenerate the file from the tracked eas.json profile:
+#   node scripts/export-eas-profile-env.mjs production
+_declared_env="$(grep -E '^EXPO_PUBLIC_APP_ENV=' "$ENV_FILE" | tail -1 | cut -d= -f2- || true)"
+if [[ "$NODE_ENV" == "production" && "${_declared_env:-}" != "production" ]]; then
+  echo "❌ $ENV_FILE declares EXPO_PUBLIC_APP_ENV=${_declared_env:-<unset>}; a production release must declare production." >&2
+  echo "   Regenerate it from the tracked profile: node scripts/export-eas-profile-env.mjs production" >&2
+  exit 1
+fi
+
 # `|| true`: under `set -e`+pipefail a non-matching grep would abort the script
 # before it could print the explanatory error below.
 EXPECTED_API="$(grep -E '^EXPO_PUBLIC_API_BASE_URL=' "$ENV_FILE" | tail -1 | cut -d= -f2- || true)"

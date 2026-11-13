@@ -124,6 +124,16 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+# See build-apk.sh's identical guard for why this belongs before EXPECTED_API:
+# the bundle check below cannot catch an env file that declares the wrong plane,
+# because the host it greps for is read out of that same file.
+_declared_env="$(grep -E '^EXPO_PUBLIC_APP_ENV=' "$ENV_FILE" | tail -1 | cut -d= -f2- || true)"
+if [[ "$NODE_ENV" == "production" && "${_declared_env:-}" != "production" ]]; then
+  echo "❌ $ENV_FILE declares EXPO_PUBLIC_APP_ENV=${_declared_env:-<unset>}; a production release must declare production." >&2
+  echo "   Regenerate it from the tracked profile: node scripts/export-eas-profile-env.mjs production" >&2
+  exit 1
+fi
+
 # `|| true`: under `set -e`+pipefail a non-matching grep would abort the script
 # before it could print the explanatory error below.
 EXPECTED_API="$(grep -E '^EXPO_PUBLIC_API_BASE_URL=' "$ENV_FILE" | tail -1 | cut -d= -f2- || true)"
