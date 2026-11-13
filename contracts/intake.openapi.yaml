@@ -30,7 +30,7 @@ servers:
     description: Intake module routes (Next.js route handlers proxying to Go /api/finance/health/*)
 
 tags:
-  - { name: Intake, description: Member pre-consultation intake (draft, submit, doctor summary, health profile) }
+  - { name: Intake, description: 'Member pre-consultation intake: draft, submit, attachments, doctor summary, health profile.' }
 
 components:
   securitySchemes:
@@ -42,12 +42,9 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      schema: { type: string, minLength: 8, maxLength: 128 }
-      description: Client-generated unique key; identical replays are no-ops.
+    # No Idempotency-Key component: no intake route reads that header. Draft saves are
+    # naturally replay-safe (last write wins); submit is not — a replay hits the
+    # already-SUBMITTED guard and answers 400, which the submit path says out loud.
 
   responses:
     Unauthorized: { description: Missing or invalid bearer token }
@@ -64,13 +61,15 @@ components:
 
     IntakeAttachment:
       type: object
-      required: [key, content_type]
+      description: >
+        One stored upload — the three fields the server persists on the intake row. The
+        doctor summary projects the same row differently (kind + content_type + a
+        short-lived signed url, with the key withheld).
+      required: [kind, storage_key, content_type]
       properties:
-        key: { type: string, description: Storage object key (R2). }
-        content_type: { type: string }
-        filename: { type: string }
-        size_bytes: { type: integer }
-        uploaded_at: { type: string, format: date-time }
+        kind: { type: string, enum: [photo, lab_result, prescription, other] }
+        storage_key: { type: string, description: 'Server-issued R2 key under intake/<patient>/<appointment>/.' }
+        content_type: { type: string, description: 'From the allow-list: image/png, image/jpeg, image/webp, application/pdf.' }
 
     ConsultIntake:
       type: object
@@ -78,26 +77,64 @@ components:
         A patient's pre-consultation health intake bound to one appointment.
         IN_CONSULT is unreachable until status=SUBMITTED. Visible only to the
         assigned doctor (object-level) + patient. Patient-reported, not a diagnosis.
-      required: [appointment_id, consult_id, status]
+
+        One shape serves both appointment planes. appointment_id echoes the id the
+        caller used; appointment_source says which plane it resolved on, and
+        provider_id follows it — health_providers.id on the health plane,
+        doctors.id on the telemedicine plane. Optional keys are omitted (not null)
+        while unset, and consult_id stays absent on the telemedicine plane because
+        those sessions live in consult_sessions, not health_consults.
+      required:
+        - id
+        - appointment_id
+        - appointment_source
+        - patient_id
+        - provider_id
+        - status
+        - red_flag_hits
+        - attachments
+        - created_at
+        - updated_at
       properties:
+        id: { type: string, format: uuid }
         appointment_id: { type: string, format: uuid }
+        appointment_source:
+          type: string
+          enum: [health, telemedicine]
         consult_id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        provider_id: { type: string, format: uuid }
+        response_id: { type: string, format: uuid }
+        schema_id: { type: string, format: uuid }
         status:
           type: string
           enum: [DRAFT, SUBMITTED]
         consent_version: { type: integer, description: Version of the consent text the patient accepted; omitted until they have. }
-        red_flag_level: { type: string, nullable: true }
+        consent_at: { type: string, format: date-time }
+        red_flag_level:
+          type: integer
+          description: Most urgent triage level across the hits (1 = emergency).
         red_flag_severity:
           type: string
-          nullable: true
           enum: [emergency, urgent]
         red_flag_hits:
           type: array
-          items: { type: string }
+          items:
+            type: object
+            required: [rule_code, level, severity, routing]
+            properties:
+              rule_code: { type: string }
+              level:
+                type: integer
+                description: Triage level, 1 = emergency.
+              severity: { type: string, enum: [emergency, urgent] }
+              routing: { type: string, enum: [EMERGENCY, URGENT_CARE, CRISIS] }
         attachments:
           type: array
           items: { $ref: '#/components/schemas/IntakeAttachment' }
-        submitted_at: { type: string, format: date-time, nullable: true }
+        submitted_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     IntakeFormField:
       type: object
@@ -145,6 +182,12 @@ components:
           type: object
           additionalProperties: true
         consent: { $ref: '#/components/schemas/ConsentVersion' }
+        draft:
+          type: object
+          description: >
+            Answers from a previous auto-save so the wizard resumes where the patient
+            stopped. Omitted (not empty) when there is no draft yet.
+          additionalProperties: true
 
     IntakeDraft:
       type: object
@@ -154,13 +197,29 @@ components:
         answers:
           type: object
           additionalProperties: true
-        schema_version: { type: integer }
         consent_version:
           type: integer
           description: >
-            Present only when the patient accepts the consent text; absent leaves
-            the stored agreement untouched, so auto-save cannot wipe it. A version
-            other than the active one is rejected.
+            The consent screen's "I agree", recorded at draft time because the wizard
+            gates the questionnaire on the row already carrying the active version.
+            Absent keeps whatever consent is stored (a keystroke autosave cannot wipe a
+            fresh agreement); present must equal the active version. An integer — the
+            server binds *int, so "1" would not bind.
+        schema_version: { type: integer, description: 'Informational only — the server ignores it and validates answers against the active schema.' }
+
+    IntakeSubmitRequest:
+      type: object
+      description: >
+        The full answer set with the accepted consent version. Unlike the draft save,
+        consent is required here: submit compares it to the active version and refuses
+        a mismatch, so a client that cannot send it can never unlock a consult.
+      required: [answers, consent_version]
+      properties:
+        answers:
+          type: object
+          description: Keys the active schema does not declare are rejected.
+          additionalProperties: true
+        consent_version: { type: integer }
 
     RedFlagResult:
       type: object
@@ -186,26 +245,32 @@ components:
 
     IntakeSubmitResult:
       type: object
-      description: Result of submitting intake. Clean submit → READY_FOR_CONSULT; red flag → guidance/routing.
-      required: [status]
+      description: Result of submitting intake. Clean submit → READY_FOR_CONSULT; red flag → guidance/routing. A failed submit answers 4xx, never this object with status=DRAFT.
+      required: [status, intake, response_id]
       properties:
         status:
           type: string
-          enum: [DRAFT, SUBMITTED]
+          enum: [SUBMITTED]
+        intake: { $ref: '#/components/schemas/ConsultIntake' }
+        response_id: { type: string, description: The health_intake_responses row the validated answers were persisted into. }
         red_flag: { $ref: '#/components/schemas/RedFlagResult' }
 
     PresignResult:
       type: object
-      description: Presigned upload target for an intake attachment (R2 / S3-compatible).
-      required: [upload_url, key]
+      description: >
+        Presigned upload target for an intake attachment (R2 / S3-compatible), as the
+        server marshals it. There is no `key` and no `expires_at`: the field is
+        storage_key and the lifetime is a relative second count.
+      required: [upload_url, storage_key, content_type, bucket, expires_in, method]
       properties:
         upload_url: { type: string, format: uri }
-        key: { type: string }
-        method: { type: string, default: PUT }
-        headers:
-          type: object
-          additionalProperties: { type: string }
-        expires_at: { type: string, format: date-time }
+        storage_key: { type: string, description: The key to echo back to the record call after the PUT. }
+        content_type: { type: string }
+        bucket: { type: string }
+        expires_in: { type: integer, description: 'Seconds until the presigned PUT stops working — a duration, not a timestamp.' }
+        method:
+          type: string
+          enum: [PUT]
 
     DoctorSummary:
       type: object
@@ -239,18 +304,55 @@ components:
 
     HealthProfile:
       type: object
-      description: Patient's longitudinal record used to pre-fill future intakes; never exposed beyond the care relationship.
-      required: [conditions, medications, allergies]
+      description: >
+        Pre-fill source for future intakes, read off the patient's latest SUBMITTED
+        response under the schema's own field names. Nothing is required: each key is
+        marshalled with omitempty, so a patient with no prior response gets {} and a
+        partial one gets only what that response actually answered.
       properties:
-        conditions:
-          type: array
-          items: { type: string }
-        medications:
-          type: array
-          items: { type: string }
+        current_medications:
+          description: >
+            Raw answer text, not a parsed array. The seeded form teaches newline and ';'
+            as the only separators, so one entry may itself contain a comma.
         allergies:
-          type: array
-          items: { type: string }
+          description: Raw answer text, keyed exactly as the schema names the field.
+        chronic_conditions:
+          description: Raw answer text, keyed exactly as the schema names the field.
+        chronic_other:
+          description: Free text captured when chronic_conditions includes "other".
+        last_updated: { type: [string, 'null'], format: date-time, description: 'Never assigned server-side — absence is the norm, not an error.' }
+
+    ComplaintSuggestion:
+      type: object
+      description: >
+        Optional AI pre-fill of the chief-complaint fields, offered before the wizard
+        starts. It restructures the patient's own words — it does not diagnose, assess,
+        or advise. Every value is patient-reported text.
+      required: [patient_reported, reason_for_visit, source]
+      properties:
+        patient_reported:
+          type: boolean
+          description: Always true, including on the AI path.
+        reason_for_visit:
+          type: string
+          description: >
+            The complaint in plain words. On the fallback path this is the patient's own
+            text clipped to 200 characters; the AI path is prompted to the same limit.
+        reason_category:
+          type: string
+          enum: [general, skin, respiratory, digestive, mental_health, sexual_health, pain, injury, chronic_followup, other]
+          description: Omitted when nothing was recognised.
+        symptom_onset:
+          type: string
+          enum: [today, few_days, about_a_week, few_weeks, over_a_month]
+          description: Omitted unless the patient's words gave a timeframe.
+        source:
+          type: string
+          enum: [ai, mock]
+          description: >
+            mock = the deterministic keyword fallback, used whenever the AI model is not
+            configured or its answer was unusable. The call never fails for that reason,
+            so intake is never blocked behind the AI.
 
 security:
   - bearerAuth: []
@@ -263,7 +365,7 @@ paths:
       tags: [Intake]
       parameters: [{ $ref: '#/components/parameters/AppointmentId' }]
       responses:
-        '200': { description: Intake bundle, content: { application/json: { schema: { $ref: '#/components/schemas/IntakeBundle' } } } }
+        '200': { description: Intake bundle, content: { application/json: { schema: { type: object, required: [success, data], properties: { success: { type: boolean }, data: { $ref: '#/components/schemas/IntakeBundle' } } } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
   /health/intake/appointments/{appointmentId}/draft:
@@ -276,7 +378,7 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/IntakeDraft' } } }
       responses:
-        '200': { description: Draft saved, content: { application/json: { schema: { $ref: '#/components/schemas/ConsultIntake' } } } }
+        '200': { description: Draft saved, content: { application/json: { schema: { type: object, required: [success, intake], properties: { success: { type: boolean }, intake: { $ref: '#/components/schemas/ConsultIntake' } } } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
   /health/intake/appointments/{appointmentId}/submit:
@@ -285,18 +387,57 @@ paths:
       summary: Submit intake (runs red-flag triage; unlocks READY_FOR_CONSULT)
       description: IN_CONSULT remains structurally unreachable until this succeeds. Red-flag triage may return urgent-care/crisis guidance + routing.
       tags: [Intake]
-      parameters:
-        - { $ref: '#/components/parameters/AppointmentId' }
-        - { $ref: '#/components/parameters/IdempotencyKey' }
+      parameters: [{ $ref: '#/components/parameters/AppointmentId' }]
+      requestBody:
+        required: true
+        description: >
+          Answers plus the accepted consent version — both required, and consent is what
+          the server refuses on: a version other than the active one fails the submit.
+        content: { application/json: { schema: { $ref: '#/components/schemas/IntakeSubmitRequest' } } }
       responses:
-        '200': { description: Intake submitted (may carry red-flag guidance), content: { application/json: { schema: { $ref: '#/components/schemas/IntakeSubmitResult' } } } }
+        '201': { description: Intake submitted (may carry red-flag guidance), content: { application/json: { schema: { type: object, required: [success, data], properties: { success: { type: boolean }, data: { $ref: '#/components/schemas/IntakeSubmitResult' } } } } } }
+        '400': { description: 'Invalid body, non-uuid id, an answer key the active schema does not declare, a stale consent_version, or an intake already SUBMITTED (submit is not idempotent — no Idempotency-Key is read).' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /health/intake/appointments/{appointmentId}/attachments/presign:
     post:
       operationId: intakePresignAttachment
       summary: Presign an upload URL for an intake attachment (photo / lab result / prescription)
+      description: >
+        Step 1 of an upload. The answer carries a server-issued storage_key — the client
+        never proposes one — and step 2 (record) is what puts the attachment on the intake.
+      tags: [Intake]
+      parameters: [{ $ref: '#/components/parameters/AppointmentId' }]
+      requestBody:
+        required: true
+        description: >
+          camelCase: the server binds {kind, fileName, contentType}. Unknown keys bind to
+          empty rather than being rejected, so filename/content_type fails the kind check
+          first and the call 400s before any URL is issued.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, fileName, contentType]
+              properties:
+                kind: { type: string, enum: [photo, lab_result, prescription, other] }
+                fileName: { type: string, description: 'Only the extension is read: .png .jpg .jpeg .webp .pdf.' }
+                contentType: { type: string, description: 'image/png, image/jpeg, image/webp or application/pdf.' }
+      responses:
+        '200': { description: Presigned upload target, content: { application/json: { schema: { type: object, required: [success, data], properties: { success: { type: boolean }, data: { $ref: '#/components/schemas/PresignResult' } } } } } }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: Uploads unconfigured on this host (no R2 presigner) — intake itself still works. }
+  /health/intake/appointments/{appointmentId}/attachments:
+    post:
+      operationId: intakeRecordAttachment
+      summary: Record a completed R2 upload on the intake (step 2 — the upload is not attached until this succeeds)
+      description: >
+        Called after the PUT to upload_url returns. The storage key must sit under this
+        patient + appointment prefix, so a key from another intake is refused rather than
+        silently listed. The whole updated intake comes back, so the wizard re-renders from
+        the response it already has.
       tags: [Intake]
       parameters: [{ $ref: '#/components/parameters/AppointmentId' }]
       requestBody:
@@ -305,13 +446,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [filename, content_type]
+              required: [kind, storage_key, content_type]
               properties:
-                filename: { type: string }
+                kind: { type: string, enum: [photo, lab_result, prescription, other] }
+                storage_key: { type: string, description: The key presign issued — echoed straight back. }
                 content_type: { type: string }
-                size_bytes: { type: integer }
       responses:
-        '200': { description: Presigned upload target, content: { application/json: { schema: { $ref: '#/components/schemas/PresignResult' } } } }
+        '200': { description: Intake with the attachment appended, content: { application/json: { schema: { type: object, required: [success, intake], properties: { success: { type: boolean }, intake: { $ref: '#/components/schemas/ConsultIntake' } } } } } }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
   /health/intake/appointments/{appointmentId}/doctor-summary:
@@ -322,7 +464,7 @@ paths:
       tags: [Intake]
       parameters: [{ $ref: '#/components/parameters/AppointmentId' }]
       responses:
-        '200': { description: Doctor summary (access audit-logged), content: { application/json: { schema: { $ref: '#/components/schemas/DoctorSummary' } } } }
+        '200': { description: Doctor summary (access audit-logged), content: { application/json: { schema: { type: object, required: [success, summary], properties: { success: { type: boolean }, summary: { $ref: '#/components/schemas/DoctorSummary' } } } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -330,7 +472,41 @@ paths:
     get:
       operationId: intakeGetHealthProfile
       summary: Get the patient's longitudinal health profile (pre-fills future intakes)
+      description: >
+        `{success, profile}` where profile carries the RAW answer text of the patient's
+        latest submitted response under the schema's own field names (allergies,
+        current_medications, chronic_conditions, chronic_other). Newline and ';' are the
+        only separators the seeded schema teaches, so a condition name may itself contain
+        a comma. `last_updated` is never assigned server-side — absence is the norm, not
+        an error.
       tags: [Intake]
       responses:
-        '200': { description: Health profile, content: { application/json: { schema: { $ref: '#/components/schemas/HealthProfile' } } } }
+        '200': { description: Health profile, content: { application/json: { schema: { type: object, required: [success, profile], properties: { success: { type: boolean }, profile: { $ref: '#/components/schemas/HealthProfile' } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /health/intake/symptom-assist:
+    post:
+      operationId: intakeSuggestComplaint
+      summary: 'Optional AI pre-fill of the chief complaint from the patient''s own words'
+      description: >
+        `{success, suggestion}`. A convenience step offered before the wizard: it
+        restructures what the patient typed into the complaint fields — it does not
+        diagnose, and an unusable AI answer falls back to a deterministic keyword parse
+        rather than failing, so intake is never blocked behind the model. Not required
+        to save or submit a draft.
+      tags: [Intake]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: >
+                The server binds a single {text} field and validates nothing on it, so an
+                absent or empty text is accepted rather than rejected — it answers 200 with
+                reason_for_visit "".
+              properties:
+                text: { type: string, description: 'The patient''s words, verbatim. The fallback path clips this to 200 characters into reason_for_visit.' }
+      responses:
+        '200': { description: Suggestion, content: { application/json: { schema: { type: object, required: [success, suggestion], properties: { success: { type: boolean }, suggestion: { $ref: '#/components/schemas/ComplaintSuggestion' } } } } } }
+        '400': { description: Malformed body — the only way this call fails. }
         '401': { $ref: '#/components/responses/Unauthorized' }
