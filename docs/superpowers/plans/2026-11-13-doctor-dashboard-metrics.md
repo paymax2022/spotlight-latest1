@@ -128,8 +128,14 @@ func newMetricsFixture(t *testing.T, pool *pgxpool.Pool) *metricsFixture {
 		}
 	}
 	exec(`INSERT INTO auth.users (id) VALUES ($1),($2)`, f.doctorUser, f.patient)
+	// `handle_new_user()` fires AFTER INSERT ON auth.users and has already created the
+	// profile row (20260401004207_create_user_profiles.sql:57), so this is an overwrite
+	// of the fixture's identity, not an insert — a plain INSERT dies on the primary key.
 	exec(`INSERT INTO user_profiles (id, email, full_name, age, gender)
-	      VALUES ($1,$2,'Tunde Akinwale',34,'Male')`, f.patient, f.patient+"@patient.invalid")
+	      VALUES ($1,$2,'Tunde Akinwale',34,'Male')
+	      ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, full_name = EXCLUDED.full_name,
+	                                     age = EXCLUDED.age, gender = EXCLUDED.gender`,
+		f.patient, f.patient+"@patient.invalid")
 	exec(`INSERT INTO doctor_profiles (user_id, name, specialty_id, fee_kobo, years_experience,
 	                                   mdcn_number, verification, is_published, presence, is_online)
 	      VALUES ($1,'Dr Ada Metrics','cardiology',750000,9,'MDCN/METRICS/1','approved',true,'offline',false)`, f.doctorUser)
