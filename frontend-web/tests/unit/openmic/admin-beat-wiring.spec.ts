@@ -20,16 +20,22 @@ describe('admin beat upload wiring', () => {
     }
   });
 
-  it('stores the reader paths the route returns', () => {
+  it('stores the reader paths the route returns, and refuses to store nothing', () => {
     for (const source of [BUILDER, EDITOR]) {
       expect(source).toMatch(/payload\?\.beat\?\.previewUrl|beat\.previewUrl/);
       expect(source).toMatch(/beat\.downloadUrl|payload\?\.beat\?\.downloadUrl/);
+      // Without this, a 201 whose payload lost the URL writes an empty
+      // beatDownloadUrl, submit() then complains about a field the admin just
+      // filled with a successful upload.
+      expect(source).toMatch(/if \(!downloadUrl\) throw/);
     }
   });
 
   it('warns an admin re-opening a legacy edition instead of leaving it silent', () => {
-    expect(BUILDER).toContain('isLegacyBeatUrl');
-    expect(EDITOR).toContain('isLegacyBeatUrl');
+    // Call sites, not identifiers: an import that is never called would satisfy
+    // toContain('isLegacyBeatUrl') while rendering no warning at all.
+    expect(BUILDER).toContain('isLegacyBeatUrl(form.beatDownloadUrl)');
+    expect(EDITOR).toContain('isLegacyBeatUrl(form.downloadUrl)');
     expect(EDITOR).toMatch(/re-upload/i);
   });
 
@@ -52,12 +58,30 @@ describe('admin beat upload wiring', () => {
     // reader allowlists /api/open-mic/beats/, so an absolute third-party URL —
     // exactly what placeholder="https://..." advertises — is unusable while
     // looking perfectly fillable. Both forms must ask publicBeatUrl.
+    //
+    // Each call site names the field it guards, so a preview URL cannot be
+    // swapped into the download field (or vice versa) and still pass.
+    expect(BUILDER).toContain('publicBeatUrl(form.beatDownloadUrl) === null');
+    expect(BUILDER).toContain('publicBeatUrl(form.beatPreviewUrl) === null');
+    expect(EDITOR).toContain('publicBeatUrl(form.downloadUrl) === null');
     for (const source of [BUILDER, EDITOR]) {
-      expect(source).toContain('publicBeatUrl');
       expect(source).not.toContain('placeholder="https://..."');
       expect(source).toMatch(/Upload the mp3\s+instead/i);
     }
     // The help copy that made pasting an off-site URL look like a supported path.
     expect(BUILDER).not.toContain('You can paste a direct URL');
+  });
+
+  it('authorises the upload without declaring a content type', () => {
+    // The two regressions that actually break a beat upload, and neither is a
+    // type error: no header at all is a 401, and adminAuthHeaders(true) adds
+    // Content-Type: application/json, which overrides the FormData's multipart
+    // boundary and makes the route answer 400 "Expected a multipart upload".
+    // The submit calls use (true) — those are JSON — so match the (false) form
+    // of the header line itself, not just the identifier.
+    for (const source of [BUILDER, EDITOR]) {
+      expect(source).toMatch(/headers:\s*await adminAuthHeaders\(false\)/);
+    }
+    expect(EDITOR).toContain('contestId=${encodeURIComponent(contest.id)}');
   });
 });
