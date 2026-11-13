@@ -65,10 +65,14 @@ Measured at `origin/main` = `effe1b355` on 2026-11-13.
   `to_char(a.scheduled_at AT TIME ZONE COALESCE(av.timezone,'Africa/Lagos'),'YYYY-MM-DD')`.
   Reusing that expression keeps "today" the doctor's day without a Go `tzdata` dependency.
 - Two render defects in `src/features/doctor/components/AppointmentRow.tsx`:
-  `TYPE_ICON[appointment.consultType]` is `undefined` for an absent/unknown type
-  (`appointments.consultation_type` is nullable) and rendering it crashes the screen;
-  `new Date(\`${slotDate}T00:00:00\`)` yields "Invalid Date" whenever `slotDate` arrives
-  as a full timestamp (which is what the current `Appointment.SlotDate *time.Time`
+  `TYPE_ICON[appointment.consultType]` is `undefined` whenever the booking's
+  `consultation_type` is `'in_person'` — that value is allowed by the live CHECK
+  (`appointments_consultation_type_check`: `video|audio|chat|in_person`,
+  `20260618040000_telemedicine_clinical.sql:10`) but is not a key of the map (nor a member
+  of `ConsultType`), and rendering `undefined` as a component crashes the screen. It also
+  misses on a NULL from the orphan-table read.
+  Separately, `new Date(\`${slotDate}T00:00:00\`)` yields "Invalid Date" whenever `slotDate`
+  arrives as a full timestamp (which is what the current `Appointment.SlotDate *time.Time`
   serialises to).
 - `EXPO_PUBLIC_DOCTOR_USE_MOCK` is `false` locally and `mockPolicy.ts` forces mockless in
   staging/production, so these tiles are live-mode behaviour, not a dev-only artefact.
@@ -135,6 +139,12 @@ RN `DoctorAppointment` type already declares, with `slotDate` as a **date-only**
 doctor's local day (what the type documents as "ISO date") and `slotTime` as `"HH:MM AM"`.
 Reusing `doctor.Appointment` is impossible without changing `SlotDate`'s type, which is D1's
 excluded territory.
+`consultType` passes the stored `consultation_type` through **unchanged**, including
+`'in_person'`, rather than being coerced into `ConsultType` — a booking that says in-person
+must not be displayed as a chat. The client cast is local to the adapter, and `AppointmentRow`
+renders a fallback icon for any value outside its map. Widening `ConsultType` to include
+`'in_person'` is the honest fix but is used across the telemedicine vertical, so it is
+follow-up F4, not this PR.
 
 **D9 — `patient.initials` / `avatarColor` are derived client-side.** They are presentation
 tokens (a `Colors` reference in the mock data), not booking facts, so they stay off the wire.
@@ -158,7 +168,6 @@ an absent gender maps to `'other'`.
     "upcomingCount": 5,
     "satisfactionPct": 96,          // null when the doctor has no reviews
     "ratingCount": 24,
-    "currency": "NGN",
     "revenue": {
       "pendingKobo": 170000,        // escrowed, via ComputeLegs
       "lifetimeKobo": 2040000,      // settled provider_kobo, all time
@@ -179,7 +188,8 @@ an absent gender maps to `'other'`.
 }
 ```
 
-Go: `DashboardSummary` gains `Metrics *DashboardMetrics` and
+Go: `DashboardSummary` gains `Metrics DashboardMetrics` (a value, not a pointer — it always
+ships, so the client never has to distinguish "absent" from "zero") and
 `TodaysAppointments []DashboardQueueAppointment` (both `json` tags as above;
 `satisfactionPct` is `*float64`). `Service.GetDashboard` composes the new reads alongside
 the existing three, keeping the method's documented rule — compose existing scoped reads,
@@ -308,3 +318,7 @@ the wire evidence, and the in-browser pass is done only with an explicit go-ahea
 - **F3 — a doctor is also a patient.** `Available` is the whole `user_wallet` balance, so a
   doctor's own spend refunds inflate it relative to "revenue". D7 keeps the label honest;
   renaming the tile to "Wallet" is a one-line product call, not a data fix.
+- **F4 — `ConsultType` has no `'in_person'`.** The booking table's CHECK allows it, so the
+  doctor module passes it through (D8) and `AppointmentRow` draws a fallback icon. Widening
+  the union to the four real values, and giving in-person consults their own icon, touches the
+  telemedicine vertical's shared type and every `ConsultType` consumer — its own change.
