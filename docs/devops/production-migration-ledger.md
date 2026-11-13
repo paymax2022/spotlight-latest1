@@ -1414,16 +1414,19 @@ stopped, restarted, removed or pruned.
 ```bash
 cd /tmp/rel
 export POSTGRES_PORT=55433
-# DATABASE_URL is the CI job's own value (integration-verify.yml's job env) with
-# the host port swapped to ${POSTGRES_PORT}; it is not pasted here, because this
-# ledger carries no credential-bearing URLs.
+# DATABASE_URL is `integration-verify.yml:43`'s job-env value with the host port
+# swapped to ${POSTGRES_PORT} and nothing else changed; it is not pasted here,
+# because this ledger carries no credential-bearing URLs. Verified 2026-11-13 by
+# reading that line: user and database are both `paymax`, host is `localhost`,
+# `sslmode=disable`, and the CI port is the container's 5432.
 export DATABASE_URL="<that connection string>"
 bash scripts/ci/start-postgres-service.sh postgis/postgis:17-3.4 prod-replay
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET max_locks_per_transaction = 512;"
 docker restart prod-replay
-# readiness wait, as run: a bounded pg_isready loop — at most 90 probes, sleep 1
-# between them (this host has no `timeout`/`gtimeout`); it succeeded on the first.
-# The implementer's exact loop text is unrecoverable (see deviation (i) below).
+# readiness wait — CI's own form is `integration-verify.yml:85`,
+#   timeout 90 bash -c 'until pg_isready -h localhost -p 5432 -U paymax >/dev/null 2>&1; do sleep 1; done'
+# this host has no `timeout`, so the bound became 90 counted iterations with
+# `sleep 1`; it reported ready on the first probe.
 pg_isready -h localhost -p ${POSTGRES_PORT} -U paymax
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f scripts/ci/supabase-compat-prelude.sql
 make migrate-reset DATABASE_URL="$DATABASE_URL"   # full output → /tmp/replay-logs/replay.log
@@ -1431,14 +1434,14 @@ docker rm -f prod-replay
 ```
 
 Two disclosed deviations, neither of which changes what was measured: (i) the
-readiness wait is a bounded `pg_isready` loop (90 iterations, `sleep 1` between
-probes) because this host has no `timeout` binary (`which timeout` → not found, nor
-`gtimeout`); it reported ready on the first probe. The block above states that
-bound in a comment instead of reproducing shell text — the implementer's exact loop
-is not recoverable, since it left no script and died before reporting, and nothing
-downstream depends on it: the first
-probe already succeeded, and `start.log`/`alter.log`/`restart.log` record the
-container state the wait was protecting; (ii) Step 2's `| tail -8`
+readiness wait keeps CI's bound (90) but not CI's wrapper: `timeout` is not on this
+host (`which timeout` → not found, nor `gtimeout`), so the 90 became counted
+iterations with `sleep 1` between probes, and it reported ready on the first probe.
+The exact text the implementer typed is not recoverable — it left no script and died
+before reporting — but CI's own line at `:85`, quoted in the block above, is the form
+it deviates from, and nothing downstream depends on the difference: the first probe
+already succeeded, and `start.log`/`alter.log`/`restart.log` record the container
+state the wait was protecting; (ii) Step 2's `| tail -8`
 became a full capture, because `tail -8` discards the very per-file tally the same
 step requires recording. The last lines are quoted below either way.
 
