@@ -141,6 +141,13 @@ export default function FilmAcademyApplyScreen() {
     : 0;
   const applicationFeeDue = feeRequired ? applicationFee : 0;
   const payNow = applicationFeeDue + firstTuitionPayment;
+  // What is still owed once today's payment lands. Only meaningful on a real
+  // instalment plan (more than one charge), and it uses the same rounded unit
+  // the server's tuitionPlanShape bills against, so the figure cannot drift
+  // from the schedule created on submit.
+  const balanceOutstanding = firstTuitionPayment > 0 && instalmentCount > 1
+    ? Math.round((discountedTuition - firstTuitionPayment) * 100) / 100
+    : 0;
 
   // The cap is served by the API, not hardcoded here: it is a commercial rule and
   // the server is what enforces it. This only stops the user reaching a rejection.
@@ -476,6 +483,14 @@ export default function FilmAcademyApplyScreen() {
                   <Text style={styles.totalSubValue}>
                     ₦{Number(batch?.training_fee_ngn ?? 0).toLocaleString('en-NG')}
                   </Text>
+                </View>
+              )}
+              {balanceOutstanding > 0 && (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>
+                    {`Balance after today (${instalmentCount - 1} instalment${instalmentCount === 2 ? '' : 's'})`}
+                  </Text>
+                  <Text style={styles.totalValue}>₦{balanceOutstanding.toLocaleString('en-NG')}</Text>
                 </View>
               )}
               <Text style={styles.totalNote}>
