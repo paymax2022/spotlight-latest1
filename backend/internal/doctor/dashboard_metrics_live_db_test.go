@@ -2,7 +2,9 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -207,4 +209,123 @@ func TestLiveDB_DashboardUpcomingSkipsPastAndFinishedRows(t *testing.T) {
 	if agg.TodaysCount != 0 {
 		t.Errorf("TodaysCount = %d, want 0 — no row sits on the doctor's local today", agg.TodaysCount)
 	}
+}
+
+var isoDay = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// The client builds its date from `${slotDate}T00:00:00`, so a full timestamp
+// here renders "Invalid Date" in the row; and status must be a ConsultStatus the
+// badge knows. Asserted off the marshalled JSON because that is the contract —
+// a Go field that happens to be right but serialises wrong is still broken.
+func TestLiveDB_DashboardQueueRowWireShape(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	tz := defaultDoctorTimezone
+	f.bookLocal(t, tz, "booked", 0, 9*60)
+
+	rows, err := NewRepository(pool).todayQueue(context.Background(), f.doctorUser, tz,
+		mustToday(t, pool, f.doctorUser, tz))
+	if err != nil {
+		t.Fatalf("todayQueue: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("queue rows = %d, want 1", len(rows))
+	}
+	raw, err := json.Marshal(rows[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got struct {
+		SlotDate string `json:"slotDate"`
+		SlotTime string `json:"slotTime"`
+		Status   string `json:"status"`
+		Patient  struct {
+			Name   string `json:"name"`
+			Gender string `json:"gender"`
+			Age    int    `json:"age"`
+		} `json:"patient"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !isoDay.MatchString(got.SlotDate) {
+		t.Errorf("slotDate = %q, want YYYY-MM-DD", got.SlotDate)
+	}
+	if got.Status != "upcoming" {
+		t.Errorf("status = %q, want 'upcoming' (booked renamed)", got.Status)
+	}
+	if got.Patient.Name != "Tunde Akinwale" || got.Patient.Age != 34 {
+		t.Errorf("patient = %+v, want Tunde Akinwale / 34", got.Patient)
+	}
+	// Seeded as 'Male': the column is free text, the client type is a closed union.
+	if got.Patient.Gender != "male" {
+		t.Errorf("gender = %q, want 'male'", got.Patient.Gender)
+	}
+}
+
+// 21 rows today: the tile counts them all, the list stays capped (spec D2a).
+func TestLiveDB_DashboardCountsAreUncappedWhileTheQueueIsCapped(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	tz := defaultDoctorTimezone
+	for i := 0; i < dashboardQueueLimit+1; i++ {
+		f.bookLocal(t, tz, "completed", 0, 8*60+i)
+	}
+	agg, err := NewRepository(pool).dashboardAggregates(context.Background(), f.doctorUser, tz)
+	if err != nil {
+		t.Fatalf("aggregates: %v", err)
+	}
+	if agg.TodaysCount != dashboardQueueLimit+1 {
+		t.Errorf("TodaysCount = %d, want %d", agg.TodaysCount, dashboardQueueLimit+1)
+	}
+	rows, err := NewRepository(pool).todayQueue(context.Background(), f.doctorUser, tz, agg.Today)
+	if err != nil {
+		t.Fatalf("todayQueue: %v", err)
+	}
+	if len(rows) != dashboardQueueLimit {
+		t.Errorf("queue rows = %d, want %d", len(rows), dashboardQueueLimit)
+	}
+}
+
+// The join runs appointments → doctors → user_id. Getting that wrong is not a wrong
+// number, it is another doctor's patient names appearing in your queue, so it gets
+// its own case rather than hiding inside a count assertion.
+func TestLiveDB_DashboardScopedToThisDoctor(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	other := newMetricsFixture(t, pool)
+	ctx := context.Background()
+	tz := defaultDoctorTimezone
+
+	mine, _ := f.bookLocal(t, tz, "booked", 0, 9*60)
+	theirs, _ := other.bookLocal(t, tz, "completed", 0, 9*60)
+
+	agg, err := NewRepository(pool).dashboardAggregates(ctx, f.doctorUser, tz)
+	if err != nil {
+		t.Fatalf("aggregates: %v", err)
+	}
+	if agg.TodaysCount != 1 {
+		t.Errorf("TodaysCount = %d, want 1 — the second doctor's row must not count here", agg.TodaysCount)
+	}
+	rows, err := NewRepository(pool).todayQueue(ctx, f.doctorUser, tz, agg.Today)
+	if err != nil {
+		t.Fatalf("todayQueue: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != mine {
+		t.Errorf("queue = %+v, want exactly the one row %s", rows, mine)
+	}
+	for _, r := range rows {
+		if r.ID == theirs {
+			t.Errorf("queue leaked another doctor's appointment %s", theirs)
+		}
+	}
+}
+
+func mustToday(t *testing.T, pool *pgxpool.Pool, userID, tz string) string {
+	t.Helper()
+	agg, err := NewRepository(pool).dashboardAggregates(context.Background(), userID, tz)
+	if err != nil {
+		t.Fatalf("aggregates: %v", err)
+	}
+	return agg.Today
 }
