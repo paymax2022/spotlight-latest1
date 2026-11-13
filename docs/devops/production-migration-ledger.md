@@ -1764,3 +1764,212 @@ than re-measuring it, so do not quote §4.2 as evidence that the raise is requir
   seed/bootstrap data beyond what the migrations themselves insert, no Go test
   suite, no type-check, no `supabase db push`, and no staging or production
   connection of any kind.
+
+---
+
+## Stage 2 — staging (Task 5, 2026-11-13)
+
+Owns the runbook gate `cloud-migration-reconciliation-runbook.md:115`, whose full
+text is two clauses: *"Only proceed to prod once staging reconciles to **0 pending**
+with an empty diff."* Task 5's steps exercise only the first, and §5.7 names the
+second as open. One mutating dispatch was made, against **staging** only (R2 puts
+staging's `db push` in-plan and prod's outside it). No prod write, no `gh run
+approve`, and no new prod read: the parked `43299959109` was still `waiting` at the
+09:48:42Z listing taken before the dispatch.
+
+### 5.1 Step 1 — staging's pending set, from Task 2's captured table
+
+```bash
+cd /tmp/spot-cutover
+bash scripts/db/list-pending.sh --remote-table /tmp/staging_table.txt \
+  > /tmp/pending_staging.txt; echo "classifier exit=$?"
+grep -c '^pending' /tmp/pending_staging.txt
+```
+
+- **Observed:** exit **0**; **6** pending;
+  `-- remote max applied: 20271402000000 | recorded: 745`. All six classify
+  `above-max additive`: `20271403000000` `_crypto_watchlist_alerts_rls`,
+  `20271404000000` `_group_pool_goal_details`, `20271405000000` `_consult_sessions`,
+  `20271406000000` `_consult_slice2`, `20271407000000` `_reality_show_season_two`,
+  `20271408000000` `_preconsult_intake_schema_ui`.
+- **Expected before running:** no figure is predicted (the brief's point is a fresh
+  read); §2.5 had already printed 6 against `/tmp/rel`. `745 recorded + 6 pending =
+  751`, the pin's file count — that sums exactly only when every recorded version
+  has a file in the tree, so it reads as a coherence check on this capture, not as an
+  identity the classifier guarantees (§2.5's prod pair prints `663 + 88 = 751` for
+  the same reason).
+- **Verdict:** pass. Nothing destructive in the batch, and every one of the six sorts
+  above *staging's* own max applied, so the push that follows runs in clean timestamp
+  order.
+
+### 5.2 Step 2 — prod's pending set, plus the proof the tree did not move
+
+The brief's own failure mode here is a tree that moved between Task 2 Step 6 and
+this step, so the comparison is made on the tree, not only on the count:
+
+```bash
+bash scripts/db/list-pending.sh --remote-table /tmp/prod_table.txt > /tmp/pending.txt
+tail -1 /tmp/pending.txt; grep -c '^pending' /tmp/pending.txt
+git diff --name-only c49b39564..HEAD -- supabase/migrations | wc -l
+git ls-tree -r --name-only HEAD -- supabase/migrations | grep -cE '\.sql$'
+```
+
+- **Observed:** **88** pending, exit 0,
+  `-- remote max applied: 20271073000000 | recorded: 663` — digit-for-digit §2.5's
+  Step 6 result. `git diff --name-only c49b39564..HEAD -- supabase/migrations` →
+  **0** files, and this tree holds **751** `.sql` migration files.
+- **Consequence for R7:** the branch tree is file-identical to the pin under
+  `supabase/migrations/`, so running the classifier from `/tmp/spot-cutover`
+  reproduces §2.5's `/tmp/rel` form without re-creating a worktree §4.4 removed. R7
+  is satisfied by that equality, not by re-checking out the pin.
+- **Staging ≤ prod**, as the brief requires (6 ≤ 88): staging was ahead of prod by
+  construction and Stage 2 needed no re-plan.
+- **Verdict:** pass. **Drift vs §2.5:** none — which is the *tree* agreeing. The
+  count is stale against **prod**, and §5.6 says what that costs Task 6.
+
+### 5.3 Step 3 — the one write dispatch, and why it applied nothing
+
+```bash
+gh workflow run ops-db-push.yml --repo paymax2022/spotlight-latest1 \
+  -f environment=staging -f mode=push -f confirm=PUSH
+gh run watch 43404389720 --repo paymax2022/spotlight-latest1 --exit-status
+gh run view 43404389720 --repo paymax2022/spotlight-latest1 --log \
+  | awk -F'\t' '$2=="Apply migrations (db push)"'
+```
+
+- **Observed:** run **`43404389720`** (`supabase push (staging)`) dispatched
+  2026-11-13T09:48:49Z at headSha `1f7de771e`, `completed/success`, attempt 1,
+  `gh run watch --exit-status` rc 0. Its push step ran
+  `supabase db push --linked --include-all`, printed `Connecting to remote
+  database...` and then **`Remote database is up to date.`** — zero files applied.
+  `grep -ci 'rerun with --include-all\|to be inserted before'` over the log → **0**,
+  so this is *not* the brief's `--include-all` no-op mode; the CLI genuinely found
+  nothing pending.
+- **Root cause, measured rather than assumed:** staging had already been reconciled
+  eleven and a half hours earlier by a concurrent session. `db-migrate.yml` run
+  **`43319774515`** (event `push`, branch `staging`, headSha `623c7c128` — *"chore:
+  promote main to staging — pre-consult intake telemedicine plan…"*, **not** an
+  ancestor of `origin/main`, 754 migration files) ran the same
+  `supabase db push (staging)` job at 22:25:35Z. Its `Apply migrations (db push)`
+  step listed nine files at the `Do you want to push…` prompt and then applied all
+  nine between 22:26:52Z and 22:27:09Z before `Finished supabase db push.`: §5.1's
+  six, plus `20271408000100_module_readiness.sql`,
+  `20271409000000_preconsult_intake_telemedicine_plane.sql` and
+  `20271410000000_module_registry_add_ungated_surfaces.sql`.
+- **Probe-shape trap to carry into Task 6:** the pattern that counts applies in the
+  CI replay lane and in `Makefile`'s `migrate` echo — `applying supabase/migrations/…`
+  — returns **0 hits** on a `db push` log, because the Supabase CLI prints
+  `Applying migration <basename>.sql`. Reading a `db push` log with the wrong
+  pattern yields a false "nothing applied"; both shapes were run against
+  `43319774515`'s log to show the difference (0 vs 9).
+- **Ruling R14 — `--ref` left unset, exactly as the plan writes it, so this push's
+  checkout was the default branch `1f7de771e`, not the pin.** The plan's Step 3 command carries
+  no `--ref`, and `workflow_dispatch` therefore runs the default branch. Cost of
+  keeping it: staging applied nine files where the pin had six — a **superset**, so
+  every file Task 6 will put on prod has now executed under `db push` against a live
+  non-customer database, which is exactly what Task 5's *Produces* claims. The
+  alternative (dispatching `--ref c49b39564…`) would have left staging **behind**
+  prod's already-recorded `20271409000000`/`20271410000000`, breaking the
+  staging-ahead-of-prod invariant the gate depends on.
+- **Verdict:** pass **as a confirmation, not as the reconciliation** — see §5.7 for
+  what that distinction does and does not license.
+
+### 5.4 Step 4 — 0 pending, read from the remote this run addressed
+
+Re-read from the two capture steps of the push run itself, never from
+`/tmp/staging_table.txt` (a 2026-11-12 20:24Z capture, now known to be stale):
+
+```bash
+gh run view 43404389720 --repo paymax2022/spotlight-latest1 --log \
+  | awk -F'\t' -v want='Migration list (before)' '$2==want' | sed 's/\x1b\[[0-9;]*m//g' \
+  > /tmp/staging_before.txt        # and the same for '(after)' → /tmp/staging_after.txt
+rm -rf /tmp/mainhead && mkdir -p /tmp/mainhead \
+  && git archive origin/main supabase/migrations | tar -x -C /tmp/mainhead
+bash scripts/db/list-pending.sh --remote-table /tmp/staging_before.txt \
+  | grep -c '^pending' || true     # repeat for /tmp/staging_after.txt, and with
+                                   # --migrations /tmp/mainhead/supabase/migrations
+```
+
+- **Observed:** both captures are **758** pipe-lines and classify identically —
+  **0 pending**, exit 0, `-- remote max applied: 20271410000000 | recorded: 754`.
+  Against the pin tree (751 files) **and** against `origin/main`'s tree (754 files,
+  exported with `git archive` rather than a worktree, so nothing was added to
+  `git worktree list`): **0 pending** either way. `754 recorded` with 0 pending over
+  a 754-file tree means staging's applied set and `origin/main`'s file set are the
+  same set.
+- **Expected before running:** `0`, and `recorded:` equal to the repo's file count.
+  Both halves hold, on the head tree exactly (`754 = 754`) and on the pin tree in
+  the direction that matters (`0` pending of 751).
+- **Verdict:** **pass on the clause Task 5 defines** — staging is at 0 pending on a
+  fresh remote read. The runbook sentence pairs that with "an empty diff", which no
+  step in this task (or this plan) measures; §5.7 carries it as open rather than
+  letting this verdict absorb it.
+- **Drift vs §2.5:** staging `recorded 745 / max 20271402000000 / 6 pending` →
+  `recorded 754 / max 20271410000000 / 0 pending`.
+
+### 5.5 What staging's new shape means for prod
+
+- Staging's max applied is now `20271410000000`, **the same version prod already
+  holds** (§1.4's `667 → 669 → 670` chain ended there), while staging records 754
+  rows against prod's last read of 670 — that read is twelve hours older than this
+  write and concurrent sessions keep moving it, so it is a reading, not a constant.
+  Staging is still ahead by volume, which is the invariant Task 6's batches are
+  sequenced against.
+- The three post-pin versions now have **both** a history row and a file on staging,
+  because its checkout came from `623c7c128`/`1f7de771e` (754 files). That is the
+  mirror image of §1.4's identifiability gap on prod, where two of those three
+  (`20271409000000`, `20271410000000`) hold rows but have no file at the pin and the
+  third, `20271408000100`, holds neither. Nothing here repairs prod's gap; Task 6's
+  arithmetic stays §4.5's `751 − 668 = 83`.
+- Task 4's Stage 1 proved the chain applies **in order from zero** on a psql route
+  with **no** history table (§4.5). This is the first evidence in the plan of those
+  same files landing under `db push`, i.e. with `supabase_migrations` rows written.
+  The two are complementary, and neither substitutes for the other.
+
+### 5.6 `/tmp/pending.txt` is Task 6's declared input and it is stale
+
+Step 2 re-derived `/tmp/pending.txt` and it holds **88** rows classified against a
+capture of prod taken **2026-11-07** (`recorded: 663`). Prod has since moved to 670
+history rows with max applied `20271410000000`. So:
+
+- The file is a valid classifier output over a valid pin tree; it is **not** the
+  batch list. `list-pending.sh` cannot know that, and neither can a task that
+  quotes its count.
+- Task 6 Step 1 must re-dispatch a prod `mode=list` (or `mode=plan`) capture and
+  re-classify before composing any batch; §2.5's "re-read, never quote" and §4.5's
+  pointer-not-count warning both bind here. §3.4's ban on subtracting across two
+  captures is unchanged.
+
+### 5.7 What this task did not do, and the gaps it leaves
+
+- **No staging dump preceded the write.** The brief's line 3 asks for the
+  dump-before-reconcile habit on this database because it is the shared local-dev
+  target. The dispatch applied zero files, so there was nothing to restore into and
+  no `pg_dump` was taken. **The habit is still owed:** any *later* staging push in
+  this plan that is not a no-op must be dumped first, and a task that skips that
+  because "Task 5 did" is reading the wrong lesson. (Taking a dump also needs a
+  credential route this session has not established — the staging DB password lives
+  in Actions secrets, masked as `***` in every log above and never printed here.)
+- **The reconciliation was executed by another session's lane, not by this plan.**
+  `43319774515` closed staging's gap at 22:26Z on 2026-11-12; this task's dispatch
+  confirmed the resulting state. That is disclosed rather than claimed, and it is
+  why §5.4's proof reads the remote rather than trusting either run's conclusion.
+  The corroboration rides on GitHub log retention for `43319774515`.
+- **The runbook's second clause — "an empty diff" — was not measured.** Task 5's
+  four steps prove the history table agrees (0 pending, both captures). They do not
+  prove the *schema shape* agrees: no `supabase db diff` was run, and neither push
+  lane asserts one — `grep -n -i 'drift\|db diff'` over `ops-db-push.yml` hits only
+  the header comments (`:4`, `:5`, `:15`, which warn that a drifted remote makes
+  `push` fail) and over `db-migrate.yml` only comments at `:4` and `:9`. A local diff
+  would also need a credential route this session has not established. So the gate
+  Task 6 reads is **half-proven by this plan**, and the honest reading of §5.4's
+  verdict is "0 pending, confirmed; empty diff, unmeasured". If a prod write later
+  fails with an already-applied collision, this is the clause that went un-checked.
+- **Nothing was written to prod**, nothing was approved, and the parked
+  `43299959109` is untouched. `origin/main` had moved on its own before this
+  dispatch: main is now `1f7de771e` (committed 08:56:44Z today), **13 commits** ahead
+  of the pin with 0 merge commits on the first-parent path, 11 of them newer than the
+  `3654f6b3f` checkout Task 2's captures ran against. That is why §5.3's push applied
+  a superset, and it is what Task 11 (deploy `RELEASE_SHA`) and Task 16 (docs
+  correction) each have to reckon with — the pin is a deliberate hold-back, not an
+  accident of timing.
