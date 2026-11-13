@@ -18,12 +18,13 @@ import (
 // rail is telemedicine ListDoctors, which selects d.is_online FROM doctors and
 // adds `d.is_online = TRUE` under available_now
 // (backend/internal/telemedicine/service.go:180,215). Nothing has ever set that
-// column true — the approval projection (repository_mdcn_review.go:246) lists a
-// doctor with is_available but never carries presence, doctors.is_online
-// defaults to false, and the one statement that does write it
-// (PATCH /telemedicine/doctor/availability) has no client caller at all. So a
-// doctor could sit at "Online · Accepting instant" while every patient saw
-// "0 online", forever and silently.
+// column true — SetProfileVerification (repository_mdcn_review.go:179) writes only
+// doctor_profiles, so the directory row's is_available comes from RegisterDoctor
+// (service.go:133) while doctors.is_online keeps the FALSE default its row was
+// born with, and the one statement that does write it (ToggleDoctorAvailability,
+// service.go:269) has no client caller at all. So a doctor could sit at
+// "Online · Accepting instant" while every patient saw "0 online", forever and
+// silently.
 //
 // The fixture below is the state approval actually leaves behind, so these tests
 // fail on the real wire, not on a hand-made one. Runs only with
@@ -303,16 +304,48 @@ func reconcile(t *testing.T, pool *pgxpool.Pool) int {
 	return repaired
 }
 
+// repairWouldChange evaluates the repair's own predicate for ONE doctor, which is
+// what the returned count is supposed to measure. Asserted per row because the
+// count is global and a shared dev database holds other authors' fixtures: state
+// can look settled while the predicate still matches, and that gap is precisely
+// the suspended-doctors-online row below.
+//
+// A suspended profile is excluded on purpose. Its directory flags are forced false
+// by doctors_block_when_suspended, not derived from presence, so "disagrees with
+// presence" is the correct steady state for it — the repair must leave it alone.
+func repairWouldChange(t *testing.T, pool *pgxpool.Pool, userID string) bool {
+	t.Helper()
+	var matches bool
+	err := pool.QueryRow(context.Background(), `
+		SELECT EXISTS (
+		    SELECT 1
+		    FROM doctors d
+		    JOIN doctor_profiles p ON p.user_id = d.user_id
+		    WHERE d.user_id = $1
+		      AND p.verification <> 'suspended'
+		      AND d.is_online IS DISTINCT FROM (p.presence = 'online')
+		)`, userID).Scan(&matches)
+	if err != nil {
+		t.Fatalf("repair predicate: %v", err)
+	}
+	return matches
+}
+
 func TestLiveDB_ReconcilePresenceListsAnOnlineDoctorTheProjectionMissed(t *testing.T) {
 	pool := livePresenceDB(t)
 	userID, _ := seedPublishedDoctor(t, pool)
 	staleOnlineDirectory(t, pool, userID)
 
-	if dir, _ := readDirectoryPresence(t, pool, userID); dir.online {
-		t.Fatal("fixture is not stale — the repair this test proves would be unobservable")
+	if !repairWouldChange(t, pool, userID) {
+		t.Fatal("fixture is not stale by the repair's own predicate — the repair this test proves would be unobservable")
 	}
 
-	reconcile(t, pool)
+	// Lower-bounded, not exact: the count covers every stale row in the database,
+	// and this fixture must appear in it. A function whose body silently stopped
+	// matching anything would otherwise pass on state alone.
+	if n := reconcile(t, pool); n < 1 {
+		t.Errorf("reconcile_doctors_presence() reported %d rows repaired with at least one stale row present", n)
+	}
 
 	dir, ok := readDirectoryPresence(t, pool, userID)
 	if !ok {
@@ -323,6 +356,9 @@ func TestLiveDB_ReconcilePresenceListsAnOnlineDoctorTheProjectionMissed(t *testi
 	}
 	if !dir.available {
 		t.Error("the repair changed the listing flag — it owns presence only")
+	}
+	if repairWouldChange(t, pool, userID) {
+		t.Error("the row still matches the repair's predicate after being repaired")
 	}
 }
 
@@ -341,16 +377,24 @@ func TestLiveDB_ReconcilePresenceUnlistsAStaleOnlineRow(t *testing.T) {
 		t.Fatalf("fixture: %v", err)
 	}
 
-	reconcile(t, pool)
+	if n := reconcile(t, pool); n < 1 {
+		t.Errorf("reconcile_doctors_presence() reported %d rows repaired with at least one stale row present", n)
+	}
 
 	if dir, _ := readDirectoryPresence(t, pool, userID); dir.online {
 		t.Error("directory is_online=true for a doctor whose presence is away")
 	}
+	if dir, _ := readDirectoryPresence(t, pool, userID); !dir.available {
+		t.Error("taking a stale-online doctor off the rail delisted them")
+	}
+	if repairWouldChange(t, pool, userID) {
+		t.Error("the row still matches the repair's predicate after being repaired")
+	}
 }
 
-// Re-running must settle, not wander. Asserted on state rather than on the
-// function's own count, because that count covers every stale row in the
-// database and a shared dev database holds other authors' fixtures too.
+// Re-running must settle, not wander. The row is asserted against the repair's own
+// predicate as well as its flags: state alone can look settled while the predicate
+// still matches, which leaves the function counting the same row on every pass.
 func TestLiveDB_ReconcilePresenceSecondPassChangesNothing(t *testing.T) {
 	pool := livePresenceDB(t)
 	userID, _ := seedPublishedDoctor(t, pool)
@@ -358,6 +402,9 @@ func TestLiveDB_ReconcilePresenceSecondPassChangesNothing(t *testing.T) {
 
 	reconcile(t, pool)
 	first, _ := readDirectoryPresence(t, pool, userID)
+	if repairWouldChange(t, pool, userID) {
+		t.Fatalf("the first pass left the row matching the repair's predicate: %+v", first)
+	}
 
 	reconcile(t, pool)
 	second, _ := readDirectoryPresence(t, pool, userID)
@@ -370,8 +417,34 @@ func TestLiveDB_ReconcilePresenceSecondPassChangesNothing(t *testing.T) {
 	}
 }
 
-// Presence must never be the way around a suspension: the repair derives from
-// the profile, so a suspended row has to stay offline whatever it says.
+// A profile with no directory row must stay that way: inserting one here would list
+// a doctor nobody approved. The repair joins on user_id, so it matches nothing.
+func TestLiveDB_ReconcilePresenceNeverCreatesDirectoryRow(t *testing.T) {
+	pool := livePresenceDB(t)
+	userID := seedUnlistedDoctor(t, pool)
+	staleOnlineDirectory(t, pool, userID)
+
+	reconcile(t, pool)
+
+	if _, ok := readDirectoryPresence(t, pool, userID); ok {
+		t.Error("the repair created a patient-directory row for an unlisted doctor")
+	}
+	if presence, online := readProfilePresence(t, pool, userID); presence != "online" || !online {
+		t.Errorf("the repair changed the profile itself (%q, online=%v) — it owns doctors rows only", presence, online)
+	}
+}
+
+// Presence must never be the way around a suspension, and the repair must not
+// become one either. A suspended profile CAN hold presence='online': the licence
+// auto-suspend sweep (repository_mdcn_review.go:238) writes verification +
+// is_published only, and PUT /presence (handler_account_tail.go:325) has no
+// suspension guard, so a doctor suspended while online keeps saying online.
+//
+// The directory row must stay offline AND keep its listing flag. Writing it would
+// fire doctors_block_when_suspended, which forces is_available false as a
+// side effect of any is_online write — so a repair that "just" sets presence here
+// silently delists the doctor, the one thing this migration disclaims. The row is
+// therefore skipped outright, not written to false.
 func TestLiveDB_ReconcilePresenceNeverOnlinesASuspendedDoctor(t *testing.T) {
 	pool := livePresenceDB(t)
 	userID, _ := seedPublishedDoctor(t, pool)
@@ -381,10 +454,21 @@ func TestLiveDB_ReconcilePresenceNeverOnlinesASuspendedDoctor(t *testing.T) {
 		`UPDATE doctor_profiles SET verification='suspended' WHERE user_id=$1`, userID); err != nil {
 		t.Fatalf("suspend fixture: %v", err)
 	}
+	before, ok := readDirectoryPresence(t, pool, userID)
+	if !ok {
+		t.Fatal("no directory row to protect")
+	}
+	if before.online || !before.available {
+		t.Fatalf("fixture is not a suspended-but-listed doctor: %+v", before)
+	}
 
 	reconcile(t, pool)
 
-	if dir, _ := readDirectoryPresence(t, pool, userID); dir.online {
+	dir, _ := readDirectoryPresence(t, pool, userID)
+	if dir.online {
 		t.Error("the repair put a suspended doctor in the patient online rail")
+	}
+	if !dir.available {
+		t.Errorf("the repair delisted a suspended doctor (%+v → %+v): it wrote the row, so doctors_block_when_suspended forced is_available false", before, dir)
 	}
 }

@@ -26,13 +26,20 @@
 -- user_id, so a profile with no directory row still gets none: creating rows here
 -- would list doctors nobody approved.
 --
--- doctors_block_when_suspended (20271099000090) is a BEFORE UPDATE OF is_online
--- trigger on this very statement, so a clinician whose profile is suspended cannot
--- be put online by this repair.
+-- Suspended profiles are excluded from the UPDATE, not merely written as false.
+-- doctors_block_when_suspended (20271099000090) fires on this statement and
+-- forces BOTH is_available and is_online false whenever the NEW row carries a true
+-- in either, so touching a suspended doctor's row would silently delist them —
+-- exactly the is_available write this header disclaims. That state is reachable
+-- rather than hypothetical: SuspendExpiredDoctorLicences
+-- (backend/internal/doctor/repository_mdcn_review.go:238) suspends on licence
+-- expiry without resetting presence or the directory row, and PUT /presence has no
+-- suspension guard, so a doctor suspended while online keeps presence='online'.
+-- Their row already reads offline, so skipping it costs the rail nothing.
 --
 -- Additive only: CREATE OR REPLACE FUNCTION + one call. No DROP, no rename, no
--- type narrowing. Re-running it is a no-op — it writes only rows that disagree
--- with their own profile.
+-- type narrowing. Re-running it is a no-op: every row it matches is written to the
+-- value its own profile asks for, and suspended rows are outside the predicate.
 --
 -- Precedent for a forward-only fix needing a paired backfill:
 -- 20261224000000_user_profiles_phone_backfill.sql.
@@ -49,6 +56,7 @@ AS $$
     SET    is_online = (p.presence = 'online')
     FROM   doctor_profiles p
     WHERE  p.user_id = d.user_id
+      AND  p.verification <> 'suspended'
       AND  d.is_online IS DISTINCT FROM (p.presence = 'online')
     RETURNING 1
   )
