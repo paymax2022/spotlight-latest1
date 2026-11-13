@@ -3,6 +3,8 @@ package doctor
 import (
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -87,9 +89,40 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "insufficient available balance"})
 	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidAmount), errors.Is(err, ErrScheduleRequired):
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+	// A decision the booking table cannot record is the caller's to know about,
+	// not an outage: without this it falls through to 500 and the doctor's
+	// screen says "something went wrong" for a request that will never succeed.
+	case errors.Is(err, ErrStatusUnsupported):
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
+}
+
+// avatarViewTTL is how long a signed photo GET stays live. Comfortably longer
+// than the client's profile refetch interval, short enough that swapping the
+// photo does not leave the old bytes reachable for hours.
+const avatarViewTTL = 10 * time.Minute
+
+// resolveMedia turns a stored media value into something a client can render,
+// the way connect/profile does for a member's own photos: an R2 object key
+// becomes a short-lived signed GET, an already-absolute URL is returned as it
+// is, and anything that cannot be signed (no creds, unconfigured bucket,
+// signing error) is returned unchanged rather than failing the read. The bucket
+// is private here — R2_PUBLIC_BASE_URL is unset — so an unsigned key is exactly
+// what left the provider header without a photo.
+func (h *Handler) resolveMedia(stored string) string {
+	if stored == "" || strings.Contains(stored, "://") {
+		return stored
+	}
+	if h.presigner == nil || !h.presigner.Configured() {
+		return stored
+	}
+	signed, err := h.presigner.PresignGet(stored, avatarViewTTL)
+	if err != nil {
+		return stored
+	}
+	return signed
 }
 
 func (h *Handler) GetProfile(c *gin.Context) {
@@ -101,6 +134,12 @@ func (h *Handler) GetProfile(c *gin.Context) {
 	if err != nil {
 		h.fail(c, err)
 		return
+	}
+	if res.AvatarURL != nil {
+		// doctor_profiles.avatar_url is an object key, not a link; the header
+		// photo needs the signed form of it.
+		viewable := h.resolveMedia(*res.AvatarURL)
+		res.AvatarURL = &viewable
 	}
 	c.JSON(http.StatusOK, res)
 }

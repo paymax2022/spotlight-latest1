@@ -108,7 +108,10 @@ type Appointment struct {
 	Patient     json.RawMessage `json:"patient,omitempty"`
 	ConsultType *string         `json:"consultType,omitempty"`
 	Status      string          `json:"status"`
-	SlotDate    *time.Time      `json:"slotDate,omitempty"`
+	// SlotDate is the doctor's LOCAL calendar day, date-only. The screens build
+	// their clock with `new Date(`${slotDate}T00:00:00`)`, so a full timestamp
+	// here parses as Invalid Date and the card loses its date.
+	SlotDate    *string         `json:"slotDate,omitempty"`
 	SlotTime    *string         `json:"slotTime,omitempty"`
 	FeeKobo     int64           `json:"feeKobo"`
 	Reason      *string         `json:"reason,omitempty"`
