@@ -28,14 +28,20 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -s "$FILE" ] || { echo "FAIL: $FILE missing or empty — production would carry zero FEATURE_*"; exit 1; }
-[ -s "$FLAGS" ] || { echo "FAIL: $FLAGS missing or empty — the gate surface cannot be derived, so parity is unprovable"; exit 1; }
 if [ -z "$LIVE" ]; then
+  # Guarded only on the deriving path: with --live the operator supplied the
+  # names, so $FLAGS is message text and a missing tree must not refuse the run.
+  [ -s "$FLAGS" ] || { echo "FAIL: $FLAGS missing or empty — the gate surface cannot be derived, so parity is unprovable"; exit 1; }
   LIVE="$(mktemp)"; trap 'rm -f "$LIVE"' EXIT
   # envFlag() only, on purpose. envFlagDefaultTrue('X') (feature-flags.ts:31-36)
   # returns true when X is unset, so an undeclared name there is served ON and
   # is not the 503 this guard exists to catch; adding it here would demand a
   # directive that changes no behaviour.
-  grep -oE "envFlag\('[A-Z0-9_]+'\)" "$FLAGS" | sed "s/envFlag('//;s/')//" | sort -u > "$LIVE"
+  # `|| true` for the same reason as the two counts below: grep exits 1 when it
+  # matches nothing, and under pipefail that would abort the run before the
+  # empty-surface line below could be printed.
+  grep -oE "envFlag\('[A-Z0-9_]+'\)" "$FLAGS" | sed "s/envFlag('//;s/')//" | sort -u > "$LIVE" || true
+  [ -s "$LIVE" ] || { echo "FAIL: no envFlag('NAME') accessor found in $FLAGS — the gate surface is empty, so parity is unprovable"; exit 1; }
 fi
 drift=0
 # Both name interpolations are guarded, not trusted: on the default path the
@@ -45,7 +51,7 @@ drift=0
 while read -r name || [ -n "$name" ]; do
   [ -n "$name" ] || continue
   case "$name" in
-    *[!A-Z0-9_]*) echo "BAD name in $LIVE: '$name' (must be [A-Z0-9_]+ — a metacharacter here would widen the match and false-pass)"; drift=$((drift + 1)); continue ;;
+    *[!A-Z0-9_]*) echo "BAD gate name: '$name' (must be [A-Z0-9_]+ — a metacharacter here would widen the match and false-pass)"; drift=$((drift + 1)); continue ;;
   esac
   grep -qE "^${name}=(true|false)$" "$FILE" \
     || { echo "UNDECLARED in $FILE: $name (write =true to serve it, =false to refuse it)"; drift=$((drift + 1)); }

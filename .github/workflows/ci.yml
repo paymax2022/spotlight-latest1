@@ -138,6 +138,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The guard's own reproduction runs first: a parity check that silently
+      # stopped being able to detect drift would otherwise stay green, and this
+      # job is the only thing standing between a renamed gate and a 503.
+      - name: Prove the parity guard still detects each drift shape
+        run: bash scripts/ci/test-prod-flag-parity.sh
       - name: Check production module flags cover every BFF gate
         run: bash scripts/ci/check-prod-flag-parity.sh
 

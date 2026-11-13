@@ -41,13 +41,36 @@ printf 'FEATURE_A_ENABLED=true\nFEATURE_XA_ENABLED=true\n' > "$TMP/config/produc
 printf 'FEATURE_A_ENABLED\nFEATURE.A_ENABLED\n' > "$TMP/live.txt"
 if bash "$CHECK" --file "$TMP/config/production-module-flags.env" --live "$TMP/live.txt" > "$TMP/out" 2>&1; then
   echo "FAIL: metacharacter name went undetected"; exit 1; fi
-grep -q 'BAD name' "$TMP/out" || { echo "FAIL: metacharacter name not named"; exit 1; }
+# Anchored on the gate-surface leg's own wording and the offending literal, so
+# this cannot be satisfied by the flag-file leg or by an unrelated line.
+grep -q "BAD gate name: 'FEATURE.A_ENABLED'" "$TMP/out" \
+  || { echo "FAIL: metacharacter gate name not named"; exit 1; }
 
-# 6 — an unprovable parity is a failure with a reason, not a silent abort.
-# If the accessor source is gone, the derivation grep exits 1 and pipefail would
-# end the run with no line to read; the guard must name the missing file.
+# 6 — a missing accessor source must fail with the guard's own reason, not with
+# grep's: the pre-fix script printed "grep: …: No such file or directory" and
+# exited 2, which mentions the filename but proves nothing about parity.
 printf 'FEATURE_A_ENABLED=true\n' > "$TMP/config/production-module-flags.env"
-if bash "$CHECK" --file "$TMP/config/production-module-flags.env" --flags "$TMP/no-such.ts" > "$TMP/out" 2>&1; then
-  echo "FAIL: missing accessor source went undetected"; exit 1; fi
-grep -q 'no-such.ts' "$TMP/out" || { echo "FAIL: missing accessor source not named"; exit 1; }
+rc=0; bash "$CHECK" --file "$TMP/config/production-module-flags.env" --flags "$TMP/no-such.ts" > "$TMP/out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ] || { echo "FAIL: missing accessor source exited $rc, expected 1"; exit 1; }
+grep -q 'cannot be derived' "$TMP/out" \
+  || { echo "FAIL: missing accessor source not named by the guard"; exit 1; }
+
+# 7 — the same refusal on the flag-file leg: a key that is not [A-Z0-9_]+
+# cannot be tested for membership in the gate surface, so it is drift, not a
+# silent grep.
+printf 'FEATURE_A_ENABLED=true\nFEATURE.A_ENABLED=true\n' > "$TMP/config/production-module-flags.env"
+printf 'FEATURE_A_ENABLED\n' > "$TMP/live.txt"
+rc=0; bash "$CHECK" --file "$TMP/config/production-module-flags.env" --live "$TMP/live.txt" > "$TMP/out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ] || { echo "FAIL: bad flag-file key exited $rc, expected 1"; exit 1; }
+grep -q 'cannot be matched against the gate surface' "$TMP/out" \
+  || { echo "FAIL: bad flag-file key not named"; exit 1; }
+
+# 8 — an accessor source that exists but declares no gate: the derivation
+# grep exits 1, and under pipefail that would end the run with no line at all.
+printf 'export const nothingToRead = 1\n' > "$TMP/no-gates.ts"
+printf 'FEATURE_A_ENABLED=true\n' > "$TMP/config/production-module-flags.env"
+rc=0; bash "$CHECK" --file "$TMP/config/production-module-flags.env" --flags "$TMP/no-gates.ts" > "$TMP/out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ] || { echo "FAIL: zero-gate accessor source exited $rc, expected 1"; exit 1; }
+grep -q 'gate surface is empty' "$TMP/out" \
+  || { echo "FAIL: zero-gate accessor source not named"; exit 1; }
 echo "PASS"
