@@ -127,6 +127,20 @@ jobs:
     name: migrations (additive-only guard)
     uses: ./.github/workflows/_reusable-migration-guard.yml
 
+  # Its own job, not a step inside the hygiene runner below, on purpose: the
+  # hygiene comment weighs a runner start against sub-second work, and that
+  # trade is right for the hygiene checks. This one gates a production outage
+  # class, so it needs a check name the deploy jobs can require by name and an
+  # operator can read red without opening a log — `needs:` can only reference
+  # job ids, never step names.
+  prod-flag-parity:
+    name: prod-flag-parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check production module flags cover every BFF gate
+        run: bash scripts/ci/check-prod-flag-parity.sh
+
   # Cheap repo-wide gates share one runner: each is sub-second, and a separate
   # job per gate would cost a full runner start for no benefit (see the
   # paths-ignore note above on conserving private-repo Actions minutes).
@@ -471,6 +485,7 @@ jobs:
       - openapi
       - migration-guard
       - secret-hygiene
+      - prod-flag-parity
       - workflow-lint
       - changes
       - association
@@ -556,6 +571,7 @@ jobs:
       - openapi
       - migration-guard
       - secret-hygiene
+      - prod-flag-parity
       - workflow-lint
       - changes
       - association
@@ -696,6 +712,7 @@ jobs:
       - openapi
       - migration-guard
       - secret-hygiene
+      - prod-flag-parity
       - workflow-lint
       - changes
       - association

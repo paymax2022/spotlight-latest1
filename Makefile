@@ -10,7 +10,7 @@ SHA ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
 .PHONY: bootstrap build vet test tsc tsc-web tsc-admin migrate-up pending-list migrate-reset \
         fakes security-scan contract-check ci verify docker-build dev dev-down \
-        rls-check db-push help \
+        rls-check flag-parity db-push help \
         marketplace-build marketplace-indexer-run marketplace-cron-run \
         marketplace-test marketplace-loadtest marketplace-up marketplace-down \
         transport-scheduler-run transport-scheduling-test transport-scheduling-loadtest \
@@ -116,6 +116,9 @@ rls-check: # fail if any public table lacks RLS (fintech go-live gate; allowlist
 	  exit 1; \
 	fi; \
 	echo "rls-check ✓ — every public table has RLS enabled (allowlist: $(RLS_ALLOWLIST))"
+
+flag-parity: # fail if a BFF feature gate is not declared in the prod flag file
+	@bash scripts/ci/check-prod-flag-parity.sh
 
 db-push: # apply tracked migrations to the LINKED remote Supabase project (prod promotion)
 	@command -v supabase >/dev/null 2>&1 || { echo "supabase CLI not found"; exit 1; }
