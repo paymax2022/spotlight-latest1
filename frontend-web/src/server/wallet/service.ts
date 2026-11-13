@@ -426,8 +426,15 @@ export interface TopupIntentResult {
  * back to the profile email before giving up. Paystack rejects anything that
  * is not a routable address, so the result is shape-checked here — otherwise
  * the failure surfaces as an opaque 502 from the provider.
+ *
+ * `message` lets a caller outside the top-up lane word the refusal for its own
+ * flow; the address rule itself is shared and does not change.
  */
-export async function resolveBillingEmail(userId: string, sessionEmail: string): Promise<string> {
+export async function resolveBillingEmail(
+  userId: string,
+  sessionEmail: string,
+  message = 'A valid email address is required to fund your wallet. Add one to your profile and try again.',
+): Promise<string> {
   let email = sessionEmail.trim();
 
   if (!isBillableEmail(email)) {
@@ -443,10 +450,7 @@ export async function resolveBillingEmail(userId: string, sessionEmail: string):
   }
 
   if (!isBillableEmail(email)) {
-    throw new ApiError(
-      'A valid email address is required to fund your wallet. Add one to your profile and try again.',
-      400,
-    );
+    throw new ApiError(message, 400);
   }
 
   return email;

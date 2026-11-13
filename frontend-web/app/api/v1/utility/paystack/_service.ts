@@ -4,7 +4,7 @@ import { ApiError } from '@/src/lib/api/responses';
 import { initializePaystackPayment, verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
 import { payUtility, quoteUtilityPayment } from '@/src/server/utility/service';
 import { enforceUtilityPaymentGate } from '@/src/server/utility/payment-gate';
-import { creditWallet } from '@/src/server/wallet/service';
+import { creditWallet, resolveBillingEmail } from '@/src/server/wallet/service';
 import type { UtilityCategory } from '@/src/server/utility/types';
 import { isReturnableOrigin, resolveReturnOrigin } from '@/src/server/registration/return-origin';
 
@@ -106,6 +106,17 @@ export async function initiateUtilityPaystackPayment(input: {
   // checkout URL, so there is nothing to refund and nothing to reconcile.
   await enforceUtilityPaymentGate(input.userId, 'paystack', quote.pricing.retailAmountKobo);
 
+  // Paystack rejects a session email it cannot route — a phone-only signup has
+  // none, and a placeholder address (…@spotlight.internal) answers with
+  // `"email" must be a valid email`. Resolving here, before the intent exists,
+  // keeps that refusal an actionable 400 instead of a 502 from the gateway plus
+  // a pending row that burned its idempotency key and never got a checkout URL.
+  const billingEmail = await resolveBillingEmail(
+    input.userId,
+    input.email,
+    'A valid email address is required to pay a bill by card. Add one to your profile and try again.',
+  );
+
   const paymentReference = reference();
   const intentId = crypto.randomUUID();
   // Capture WHERE this payment was started from, same as the registration
@@ -166,7 +177,7 @@ export async function initiateUtilityPaystackPayment(input: {
 
   const authorizationUrl = await initializePaystackPayment({
     reference: paymentReference,
-    email: input.email,
+    email: billingEmail,
     amount: quote.pricing.retailAmountKobo,
     currency: 'NGN',
     callbackUrl,
