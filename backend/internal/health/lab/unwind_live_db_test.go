@@ -115,6 +115,11 @@ func TestLiveDB_CreateOrder_PostHoldFailureRefundsUnboundHold(t *testing.T) {
 		END $$ LANGUAGE plpgsql`); err != nil {
 		t.Fatalf("create inject function: %v", err)
 	}
+	// Drop before create: a run killed mid-test never reaches the cleanup below,
+	// and the leftover then makes CREATE TRIGGER fail 42710 for every run after it.
+	if _, err := pool.Exec(ctx, `DROP TRIGGER IF EXISTS trg_lab_fail_order_insert ON lab_orders`); err != nil {
+		t.Fatalf("clear inject trigger: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		CREATE TRIGGER trg_lab_fail_order_insert BEFORE INSERT ON lab_orders
 		FOR EACH ROW EXECUTE FUNCTION lab_fail_order_insert()`); err != nil {

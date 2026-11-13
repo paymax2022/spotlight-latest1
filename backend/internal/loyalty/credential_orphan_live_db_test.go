@@ -42,14 +42,28 @@ func seedCredentialPerk(t *testing.T, pool *pgxpool.Pool) string {
 // installPerkTrigger creates a BEFORE INSERT trigger on perk_redemptions that
 // fires only for the given user, plus its backing function. Returns a cleanup
 // that drops both.
+//
+// The names are fixed and dropped before create, not randomised: a run killed
+// mid-test never reaches its cleanup, and a randomly-named leftover then
+// neither fails loudly nor gets replaced — it just sits on perk_redemptions
+// forever and the catalog grows by a pair per kill. One fixed pair is cleared
+// by the next install, and the WHEN clause pins this run's user, so a leftover
+// can never touch another run's rows.
 func installPerkTrigger(t *testing.T, pool *pgxpool.Pool, userID, funcBody string) {
 	t.Helper()
-	suffix := uuid.NewString()[:8]
-	fn := "test_perk_trg_" + suffix
-	trg := "trg_test_perk_" + suffix
+	const fn = "test_perk_trg"
+	const trg = "trg_test_perk"
 	ctx := context.Background()
+	for _, q := range []string{
+		`DROP TRIGGER IF EXISTS trg_test_perk ON perk_redemptions`,
+		`DROP FUNCTION IF EXISTS test_perk_trg()`,
+	} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatalf("clear previous perk trigger: %v", err)
+		}
+	}
 	if _, err := pool.Exec(ctx, fmt.Sprintf(
-		`CREATE OR REPLACE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $fn$ %s $fn$`, fn, funcBody)); err != nil {
+		`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $fn$ %s $fn$`, fn, funcBody)); err != nil {
 		t.Fatalf("create trigger function: %v", err)
 	}
 	if _, err := pool.Exec(ctx, fmt.Sprintf(

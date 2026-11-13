@@ -829,6 +829,11 @@ BEGIN
 END $$ LANGUAGE plpgsql;`); err != nil {
 		t.Fatalf("install stamp fault function: %v", err)
 	}
+	// Drop before create: a run killed mid-test never reaches the cleanup below,
+	// and the leftover then makes CREATE TRIGGER fail 42710 for every run after it.
+	if _, err := f.pool.Exec(ctx, `DROP TRIGGER IF EXISTS consult_test_fail_stamp_trg ON consult_extension_requests`); err != nil {
+		t.Fatalf("clear stamp fault trigger: %v", err)
+	}
 	if _, err := f.pool.Exec(ctx, `CREATE TRIGGER consult_test_fail_stamp_trg BEFORE UPDATE ON consult_extension_requests
     FOR EACH ROW EXECUTE FUNCTION consult_test_fail_stamp();`); err != nil {
 		t.Fatalf("install stamp fault trigger: %v", err)

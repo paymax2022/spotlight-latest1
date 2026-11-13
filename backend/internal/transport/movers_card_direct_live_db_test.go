@@ -371,12 +371,23 @@ func TestLiveDB_MoverAcceptCardDirect_FailureAfterEscrow_ReversesEscrowWhenNoJob
 	jobID, bids, _ := seedMoverJob(t, ctx, svc, pool, customer, 4_500_000)
 	amt, pricing, _ := svc.QuoteMoverAcceptance(ctx, customer, moverReq(jobID, bids[0]))
 
-	fn := "mvfail_" + uuid.NewString()[:8]
-	fn = "fn_" + fn[len(fn)-8:]
+	// Fixed names, cleared before create: a run killed mid-test never reaches its
+	// cleanup, and a randomly-named leftover neither fails loudly nor gets
+	// replaced — it just stays in the catalog. The WHEN clause pins this run's
+	// job id, so a stale copy of the fixed pair cannot fire for another run.
+	const fn = "fn_mvfail"
+	const trg = "trg_fn_mvfail"
+	for _, q := range []string{
+		`DROP TRIGGER IF EXISTS trg_fn_mvfail ON mover_jobs`,
+		`DROP FUNCTION IF EXISTS fn_mvfail()`,
+	} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := pool.Exec(ctx, `CREATE FUNCTION `+fn+`() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected mover update failure'; END $$`); err != nil {
 		t.Fatal(err)
 	}
-	trg := "trg_" + fn
 	if _, err := pool.Exec(ctx, `CREATE TRIGGER `+trg+` BEFORE UPDATE ON mover_jobs FOR EACH ROW WHEN (NEW.id = '`+jobID+`' AND NEW.status = 'bid_accepted') EXECUTE FUNCTION `+fn+`()`); err != nil {
 		t.Fatal(err)
 	}
