@@ -34,6 +34,27 @@ function screensUnder(relDir: string): string[] {
   return out;
 }
 
+/**
+ * True when this source hands a Paystack authorization URL to the external
+ * browser — the defect, in any screen or shared component.
+ *
+ * Call sites are matched by shape and comments are left alone (see the test
+ * below for what "helpfully" stripping them did). `Linking.openURL(someFn())`
+ * stays invisible to this, which is why the app-wide test is a tripwire and not
+ * a proof.
+ */
+function handsOffToBrowser(src: string): boolean {
+  for (const call of src.matchAll(/Linking\.openURL\(\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/g)) {
+    const arg = call[1];
+    // Linking.openURL(result.authorizationUrl)
+    if (/authorizationUrl/i.test(arg)) return true;
+    // const url = result.authorizationUrl; Linking.openURL(url)
+    const assigned = new RegExp(`(?:const|let|var)\\s+${arg.replace(/\./g, '\\.')}\\s*=[^;]*authorizationUrl`, 'i');
+    if (assigned.test(src)) return true;
+  }
+  return false;
+}
+
 test('the registration card rail runs the in-app gateway plane', () => {
   assert.match(screen, /import \{[^}]*useGatewayCheckout[^}]*\} from '@\/features\/payments'/);
   assert.match(screen, /checkout\.start\(\{/);
@@ -52,8 +73,46 @@ test('no paid flow in the app hands an authorization URL to the browser', () => 
   // wallet and registration screens had both kept.
   const offenders = ['app', 'src']
     .flatMap(screensUnder)
-    .filter((file) => /Linking\.openURL\(\s*[\w$.[\]]*authorizationUrl/i.test(read(file)));
+    .filter((file) => handsOffToBrowser(read(file)));
   assert.deepEqual(offenders, [], `these files still leave the app for hosted checkout: ${offenders.join(', ')}`);
+});
+
+test('the detector does not flag the in-app plane itself', () => {
+  // These three name authorizationUrl and Linking.openURL in the same file — in
+  // comments explaining why they DO NOT hand it over. A detector that matched
+  // comments would flag the fix, and the first person to hit that deletes the
+  // guard instead of the defect.
+  assert.equal(handsOffToBrowser(read('src/features/payments/useGatewayCheckout.ts')), false);
+  assert.equal(handsOffToBrowser(read('src/features/payments/usePurchasePayment.ts')), false);
+  assert.equal(handsOffToBrowser(read('src/features/registration/api/registration.api.ts')), false);
+});
+
+test('the detector catches the hand-off written directly', () => {
+  assert.equal(handsOffToBrowser('await Linking.openURL(result.authorizationUrl);'), true);
+});
+
+test('the detector catches the hand-off behind a local variable', () => {
+  // The bypass this guard used to have: assigning the URL first hides the call
+  // from a pattern that only reads what is inside the parentheses.
+  assert.equal(handsOffToBrowser('const url = result.authorizationUrl;\nawait Linking.openURL(url);'), true);
+});
+
+test('comments elsewhere in the file do not blind the detector', () => {
+  // Measured, not assumed. An earlier version of this detector stripped `/* … */`
+  // with a regex before looking for the call. This screen has a line comment
+  // that ends in a route glob (`…/payment/*.`), and that `/*` opened a fake
+  // block comment which ran on to the next `*/` — a JSX comment eight lines
+  // later — so the stripper ate the real hand-off in between and the app-wide
+  // test went green with the defect still in the file.
+  const realistic = [
+    '// routes: /api/registration/applications/[id]/payment/*.',
+    'const feeKobo = feeNgn * 100;',
+    'if (result.authorizationUrl) {',
+    '  await Linking.openURL(result.authorizationUrl);',
+    '}',
+    '{/* Fee summary */}',
+  ].join('\n');
+  assert.equal(handsOffToBrowser(realistic), true);
 });
 
 test('a completed checkout still lands on the processing screen with both ids', () => {
