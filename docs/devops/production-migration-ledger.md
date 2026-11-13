@@ -1328,3 +1328,272 @@ echo "classifier exit=$?"; grep -c '^pending' /tmp/pending.txt; tail -1 /tmp/pen
   same 2026-11-07 applied set yields a diff-identical 88-row pending list and the same
   summary line — the guards fire only on inputs that previously produced garbage.
 - **Verdict:** pass (fix round 1).
+
+---
+
+## Stage 1 — fresh replay (Task 4, 2026-11-12)
+
+Owns the plan's Stage 1: prove the whole chain applies **in order from zero** and
+passes the RLS gate, and hand Task 6 the `make rls-check` allowlist result that
+prod's post-check is compared against. Scope was read-only + throwaway: no
+`supabase db push` against any project, no `gh run approve`, no workflow
+dispatched, no write to staging or prod. Every migration file came from
+`/tmp/rel`, detached at `RELEASE_SHA`
+`c49b395643473ba6ff7a225d7a7a339a41eddfe6` — `git -C /tmp/rel rev-parse HEAD`
+printed that value before the replay and again after it.
+
+### 4.1 Step 1 — the CI lane's conclusion at the pin
+
+- **Probe:**
+
+  ```bash
+  export RELEASE_SHA=$(cat /tmp/RELEASE_SHA)   # c49b395643473ba6ff7a225d7a7a339a41eddfe6
+  gh run list --repo paymax2022/spotlight-latest1 --commit "$RELEASE_SHA" \
+    --workflow integration-verify.yml --json databaseId,status,conclusion --jq '.[0]'
+  ```
+
+- **Observed (verbatim):** `{"conclusion":"success","databaseId":43272402964,"status":"completed"}`
+- **Attribution** — `gh run view 43272402964 --repo paymax2022/spotlight-latest1
+  --json databaseId,conclusion,status,createdAt,updatedAt,url,headSha,workflowName,displayTitle`:
+  `headSha` = `c49b395643473ba6ff7a225d7a7a339a41eddfe6`, byte-equal to the pin, so
+  this is the run §1's table row for `c49b39564` colours (there §1 recorded the
+  conclusion; here it is the id). `workflowName` `integration-verify`,
+  `displayTitle` `fix(health): run the telemedicine intake after payment (#992)`,
+  created `2026-11-12T17:43:18Z`, last updated `2026-11-12T18:15:35Z`,
+  [run 43272402964](https://github.com/paymax2022/spotlight-latest1/actions/runs/43272402964).
+- **Step-level**, `gh api repos/paymax2022/spotlight-latest1/actions/runs/43272402964/jobs`,
+  job `verify` (id `131372215625`, `success`, started `17:43:53Z`, finished
+  `18:15:35Z`): each of the five replay-adjacent steps concluded `success` —
+  `Start PostGIS service container (pull retried — Docker Hub rate limits)`,
+  `Raise Postgres lock table (full-schema drop in migrate-reset)`,
+  `Supabase-compat prelude (plain-Postgres shim)`,
+  `Migrations apply cleanly (real Postgres)`,
+  `Migration fresh replay from zero (clean-apply + RLS check)`.
+- **Expected before running:** the brief's `"conclusion":"success"`; the
+  stop-the-cutover branch (and its two remedies — a new additive migration, or an
+  `RLS_ALLOWLIST` entry with written justification) was therefore not entered, and
+  no migration file was edited.
+- **Verdict:** pass.
+- **What it does not prove:** a lane report says it passed, not *what it applied*.
+  `make migrate-reset` prints no per-file tally and the psql route records no
+  version rows (§4.5), so run 43272402964 cannot be the file-count evidence —
+  which is why §4.2 replays it locally.
+
+### 4.2 Step 2 — the local replay, on the image and prelude CI uses
+
+Name and port were checked free first, because this machine already runs this
+repo's backend and a local Supabase: `docker ps --format '{{.Names}}'` held no
+`prod-replay`, and `lsof -nP -iTCP:55433 -sTCP:LISTEN` returned nothing.
+`new-api-1`, `supabase_db_spotlight` (:54322) and kong (:54321) were never
+stopped, restarted, removed or pruned.
+
+```bash
+cd /tmp/rel
+export POSTGRES_PORT=55433
+# DATABASE_URL is the CI job's own value (integration-verify.yml's job env) with
+# the host port swapped to ${POSTGRES_PORT}; it is not pasted here, because this
+# ledger carries no credential-bearing URLs.
+export DATABASE_URL="<that connection string>"
+bash scripts/ci/start-postgres-service.sh postgis/postgis:17-3.4 prod-replay
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET max_locks_per_transaction = 512;"
+docker restart prod-replay
+until pg_isready -h localhost -p ${POSTGRES_PORT} -U paymax >/dev/null 2>&1; do …; done
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f scripts/ci/supabase-compat-prelude.sql
+make migrate-reset DATABASE_URL="$DATABASE_URL"   # full output → /tmp/replay-logs/replay.log
+docker rm -f prod-replay
+```
+
+Two disclosed deviations, neither of which changes what was measured: (i) the
+readiness wait is a bounded `until pg_isready … done` loop (90 iterations,
+`sleep 1`) because this host has no `timeout` binary (`which timeout` → not found,
+nor `gtimeout`); it reported ready on the first probe; (ii) Step 2's `| tail -8`
+became a full capture, because `tail -8` discards the very per-file tally the same
+step requires recording. The last lines are quoted below either way.
+
+Order was kept as CI keeps it (`integration-verify.yml:62` → `:83` → `:91` →
+`:174`): container → lock raise → restart → prelude → `migrate-reset`. The restart
+is what makes the raise take effect, and it did:
+`show max_locks_per_transaction` read **512** afterwards, which is what the
+`DROP SCHEMA public CASCADE` inside `migrate-reset` (`Makefile:98`) then ran
+against. Whether the default 64 would actually have failed here was **not** tested
+— that figure is CI's own claim (`integration-verify.yml:78-80`, "the
+~400-migration schema blows the default 64"), and this replay inherited it rather
+than re-measuring it, so do not quote §4.2 as evidence that the raise is required.
+
+- **Observed, container:** `prod-replay is healthy (postgis/postgis:17-3.4)`; the
+  script's pull printed `Digest: sha256:d0b5a6ecab18997637f55a83cb4a9467391de5645916cfa1b6f2a8d19eee7be5`,
+  `Status: Image is up to date for postgis/postgis:17-3.4`; server
+  `PostgreSQL 17.0 (Debian 17.0-1.pgdg110+1) on x86_64-pc-linux-gnu`.
+- **Observed, prelude:** exit 0, 110 bytes on stderr — the single line
+  `psql:/tmp/rel/scripts/ci/supabase-compat-prelude.sql:9: NOTICE:  extension "postgis" already exists, skipping`.
+  The shim's surface was then present: schemas `auth`, `extensions`, `storage`;
+  roles `anon`, `authenticated`, `service_role`, `postgres`.
+- **Observed, replay:** `make migrate-reset` exit **0**; **751**
+  `applying supabase/migrations/…` lines; then, verbatim from the log's tail:
+
+  ```
+  migrations applied
+  /Library/Developer/CommandLineTools/usr/bin/make rls-check
+  rls-check ✓ — every public table has RLS enabled (allowlist: 'spatial_ref_sys')
+  ```
+
+  Wall clock 56 s (log opened `2026-11-12T23:48:16+0100`, last write `23:49:12`).
+- **The count equality the brief asks for:** `ls supabase/migrations/*.sql | wc -l`
+  → **751**, equal to the 751 applied lines. `ls supabase/migrations | wc -l` is
+  also 751 and no entry is a non-`.sql` file, so the Makefile's `*.sql` sweep
+  missed nothing. This agrees with §2.5's `repo files at the release SHA: 751` —
+  no drift since Task 2 measured it.
+- **0-pending-equivalent** (applied set vs. tree, both sorted basenames): `diff` →
+  identical; `comm -23 files applied` → **0** (nothing on disk left unapplied);
+  `comm -13` → 0 (nothing applied that is not on disk); 0 duplicate `applying`
+  lines; first applied `20260101000000_enable_extensions.sql`, last
+  `20271408000000_preconsult_intake_schema_ui.sql` — the pin's highest version, so
+  the chain ran end to end in timestamp order.
+- **Error scan:** `grep -cE "^psql:.*ERROR:|FATAL:" replay.log` → **0**. The only
+  `ERROR` substring in the whole log is `ON_ERROR_STOP` on line 1, where make
+  echoes its own `DROP SCHEMA` command — not a server error. The scan is
+  corroborating, not load-bearing: each file is applied with
+  `-v ON_ERROR_STOP=1` inside a `set -e` loop (`Makefile:92-95`), so the first SQL
+  error aborts before `migrations applied` prints, and the sentinel printed.
+- **Chatter, recorded rather than fixed:** 2089 `NOTICE` lines — the top five kinds
+  being 1491 `policy`, 277 `trigger`, 93 `column`, 69 `extension`, 63 `relation` —
+  i.e. the idempotency preambles (`DROP POLICY IF EXISTS`,
+  `ADD COLUMN IF NOT EXISTS`), and exactly 1 `WARNING`, from
+  `20260405200000_admin_role_setup.sql:119`:
+  `created admin@spotlight.internal with a RANDOM password (app.super_admin_password was not set) - it cannot log in until a credential is set out of band`.
+  A plain-Postgres-replay property (no GoTrue owns the credential); the random
+  value is not recorded here and died with the container.
+- **Client caveat:** the driving client is Homebrew psql `16.13` against the
+  image's server `17.0`; CI drives the same server with the runner's client. The
+  server judges the DDL, so the figure that would differ elsewhere is a version
+  string, not the outcome.
+- **Verdict:** pass — 751/751 applied, from zero, in order, no error.
+
+### 4.3 The RLS gate, and exactly what the allowlist covered
+
+- **Probe (the gate's own output):** `make rls-check`, run as the third command
+  inside `migrate-reset` (`Makefile:100`).
+- **Observed:** `rls-check ✓ — every public table has RLS enabled (allowlist: 'spatial_ref_sys')`,
+  exit 0 — the same string CI's `Migration fresh replay from zero` step produced.
+- **Coverage, measured against the replay database before it was removed:**
+
+  ```bash
+  psql -tAc "select count(*) from pg_tables where schemaname='public';"
+  # the rls-check predicate with its allowlist clause removed:
+  psql -tAc "select coalesce(string_agg(t.tablename, ', ' order by t.tablename),'(none)')
+    from pg_tables t join pg_class c on c.relname = t.tablename
+    join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+    where t.schemaname='public' and c.relrowsecurity = false;"
+  psql -tAc "select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    and n.nspname = 'public' where c.relrowsecurity = true;"
+  psql -tAc "select count(*) from pg_policies where schemaname='public';"
+  ```
+
+- **Observed:** **1407** public tables; ungated = **1**, and its name is
+  `spatial_ref_sys`; **1406** public `pg_class` rows carry `relrowsecurity = true`;
+  **1974** policies in `public`.
+- **Verdict:** pass.
+- **For Task 6 (the point of this section):** `RLS_ALLOWLIST` is
+  `?= 'spatial_ref_sys'` (`Makefile:28`) and this replay needed **nothing beyond
+  that one entry** — the PostGIS reference table owned by the extension, which the
+  Makefile's own comment (`Makefile:25-27`) explains cannot take RLS. Prod's
+  post-check is therefore compared against a list of exactly one table, and an
+  ungated public table in prod with any other name is *not* explained by this
+  replay.
+- **Image and prelude, so nobody quotes the wrong failure:** this replay used
+  `postgis/postgis:17-3.4` plus `scripts/ci/supabase-compat-prelude.sql`,
+  mirroring `integration-verify.yml:62` and `:91`. **No vanilla `postgres:15` (or
+  plain `postgres:17`) replay was ever run here, and one must not be quoted as a
+  failure of this chain:** `20260101000000_enable_extensions.sql` runs
+  `CREATE EXTENSION postgis`, which a vanilla image cannot satisfy — it dies on the
+  first migration and proves nothing about the 750 behind it. One honest
+  narrowing: `postgis/postgis`'s own entrypoint pre-creates `postgis` in
+  `POSTGRES_DB`, which is what the prelude's `already exists, skipping` NOTICE
+  measured — so "from zero" here means *fresh container plus
+  `DROP SCHEMA public CASCADE`*, not an extension-free cluster. That drop cascaded
+  to 6 objects (`postgis`, `postgis_topology`, `fuzzystrmatch`,
+  `postgis_tiger_geocoder`, `pgcrypto`, `uuid-ossp`) and the chain re-created them:
+  `postgis 3.4.3`, `btree_gist 1.7`, `pg_trgm 1.6`, `pgcrypto 1.3`, `uuid-ossp 1.1`
+  were installed at the end. CI runs the same script against the same image and the
+  same `POSTGRES_DB` default (`start-postgres-service.sh`'s `paymax`), so the same
+  narrowing applies there too — read from the config, not observed on a runner, but
+  it is parity rather than a divergence.
+
+### 4.4 Teardown (Step 3)
+
+- **Probe:** `git -C /tmp/rel status --porcelain | wc -l`, taken **before** the
+  worktree went away.
+- **Observed:** `0` — nothing in the pinned tree was modified or left untracked by
+  the replay, i.e. no migration file was edited to buy the green.
+- `docker rm -f prod-replay` → rc 0; `docker ps -a --format '{{.Names}}' | grep -i
+  replay` → nothing, and `new-api-1` / `supabase_db_spotlight` were still listed as
+  running afterwards. No volume was created, so none was removed.
+- `git -C /Users/paymax/Documents/spotlight/main worktree remove /tmp/rel` → rc 0;
+  `ls -d /tmp/rel` → `No such file or directory`. `git worktree list` afterwards
+  prints 13 entries: the main tree `/Users/paymax/Documents/spotlight/main` plus 12
+  others, **none** of them `/tmp/rel` (the cutover branch tree
+  `/private/tmp/spot-cutover` remains). The main tree was only ever read: no
+  rebase/reset/stash/checkout/clean, nothing staged there. `/tmp/rel` is removed
+  here because Task 4 was its last consumer — Task 5 onward run the classifier
+  from a repo root.
+- **Controller addendum, same day, after the implementer's process died before it
+  could report or commit.** On the teardown: my dispatch guardrail ("remove only
+  what you created in this task") conflicted with the plan, and the implementer was
+  right to follow the plan — plan:489 mandates it ("Task 5 onward run the classifier
+  from the repo root, so this replay is the last thing that needs `/tmp/rel`"),
+  plan:493 is the command, plan:510 expects `git worktree list` to show no
+  `/tmp/rel`. Consequence: §4.2's tree-side claims were no longer checkable in
+  place, so the tree was re-created at the pin
+  (`git -C /Users/paymax/Documents/spotlight/main worktree add --detach /tmp/rel c49b395643473ba6ff7a225d7a7a339a41eddfe6`,
+  rc 0, 11,192 files) and re-measured: `git -C /tmp/rel rev-parse HEAD` = the pin;
+  `ls supabase/migrations/*.sql | wc -l` = **751**; highest version prefix =
+  **`20271408000000`**; non-`.sql` entries = **0**. All three agree with §4.2, so the
+  file-count evidence survives its own teardown. The applied set was then re-derived
+  independently from `/tmp/replay-logs/replay.log`, which does survive:
+  `grep -c "applying supabase/migrations/"` = **751**; the 751 basenames are **all
+  unique**, 0 duplicates; first `20260101000000_enable_extensions.sql`, last
+  `20271408000000_preconsult_intake_schema_ui.sql`; `comm -23` and `comm -13` of the
+  log-derived set against the re-created tree's listing are both **0**;
+  `grep -cE "^psql:.*ERROR:|FATAL:"` = **0**; `grep -c "NOTICE:"` = **2089**. Note
+  the shape of the two 33,083-byte lists left in `/tmp/replay-logs/`
+  (`applied.txt`, `files.txt`): they are byte-identical to each other **and** to a
+  set re-parsed from the log's `applying` lines by a third, independent path — all
+  three hash to `823d8cde…`. That equality is what a convergence proof looks like,
+  and equally what a copied file looks like: content alone cannot tell them apart,
+  and the implementer died before it could say which it did. So §4.2's convergence
+  claim does not rest on either file; it is carried by the log-derived set above,
+  computed without opening them. **Not re-measurable:** §4.3's four coverage counts (1407 public tables, 1
+  ungated, 1406 with `relrowsecurity = true`, 1974 policies) were read from a
+  container that `docker rm -f` removed, so they are single-observation figures —
+  what reproduces from the log is the gate's own verdict line,
+  `rls-check ✓ … (allowlist: 'spatial_ref_sys')` and `make`'s exit 0. `/tmp/rel` is
+  **present again right now**, deliberately, so the task reviewer can verify §4.2 in
+  place; Step 3's teardown is not cancelled and the tree must be removed once this
+  task's review closes, before any prod write.
+
+### 4.5 What this section is evidence of, and what it is not
+
+- Stage 1's question — does the entire chain apply **in order from zero** and pass
+  the RLS gate — is answered yes at the pin, twice: once by the lane (§4.1), once
+  by a local replay whose applied-file set is provably equal to the tree (§4.2).
+  Step 1's stop-the-cutover branch did not fire, so no migration is barred from
+  prod on ordering grounds.
+- **What that does not certify, and Task 6 must not borrow:** prod is not a fresh
+  database. §2.5's classification of the then-88 pending files put 18 of them
+  **below** prod's max applied version, and those 18 are applied out of timestamp
+  order on prod — a shape no fresh-from-zero replay exercises. If one of them fails
+  there, this section is not counter-evidence; it only proves the chain has no
+  order-from-zero blocker.
+- **751 = 751 is a file-set proof, not a history-row proof.** The psql route
+  inserts nothing into Supabase's migration history:
+  `select count(*) from information_schema.tables where table_schema = 'supabase_migrations'`
+  → **0** on the replay database. So "0 pending" above must not be read as
+  prod-shaped evidence: prod's pending figure is `751 − (prod's recorded history
+  rows)`, and history rows come only from `db push` / the scoped lane. Task 6
+  re-reads that with the §2.6 classifier at its own time — §2.5's rule that these
+  counts are re-read, never quoted, still holds; its last capture had prod at 670
+  rows.
+- What the replay does **not** cover, so no later task borrows it as if it did: no
+  seed/bootstrap data beyond what the migrations themselves insert, no Go test
+  suite, no type-check, no `supabase db push`, and no staging or production
+  connection of any kind.
