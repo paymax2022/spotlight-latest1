@@ -22,6 +22,7 @@ import {
 } from '@/features/health/hooks';
 import { presignAttachment, recordAttachment } from '@/features/health/api';
 import { schemaAnswerNames } from '@/features/health/intakeMapping';
+import { describeDraftSaveError } from '@/features/health/intakeDraftLock';
 import { resolveObsoletePrebookingRoute } from '@/features/telemedicine/intakeRoute';
 import {
   visibleSteps, validateStep, validatePreConsult, firstUnansweredStepIndex, formatMedList,
@@ -69,6 +70,14 @@ export default function PreConsultIntakeWizard() {
   // every keystroke and land the patient on "Could not submit".
   const alreadySubmitted = intake?.status === 'SUBMITTED';
 
+  // A refused save is the only way this screen learns the server froze the intake
+  // while it was open, because the bundle it mounted with still said DRAFT. Before
+  // this, nothing read saveDraft.error at all: the autosave and "Save & continue"
+  // both advanced on their own schedule, so a patient filled all nine steps of an
+  // intake the server had already sealed and then hit "Could not submit".
+  const draftIssue = describeDraftSaveError(saveDraft.error);
+  const serverLocked = alreadySubmitted || draftIssue?.kind === 'locked';
+
   const [values, setValues] = useState<IntakeResponseValues>({});
   const [errors, setErrors] = useState<IntakeErrors>({});
   const [stepIndex, setStepIndex] = useState(0);
@@ -88,13 +97,13 @@ export default function PreConsultIntakeWizard() {
     // Re-consent cannot be recorded on an intake the server has frozen (the
     // consent screen saves through the same draft route), so a new consent
     // version must not bounce a submitted patient into a dead end.
-    if (!alreadySubmitted && acceptedVersion !== consentVersion) {
+    if (!serverLocked && acceptedVersion !== consentVersion) {
       router.replace({
         pathname: '/services/telemedicine/appointment/[id]/intake/consent',
         params: { id: appointmentId },
       });
     }
-  }, [bundleQ.data, alreadySubmitted, acceptedVersion, consentVersion, appointmentId]);
+  }, [bundleQ.data, serverLocked, acceptedVersion, consentVersion, appointmentId]);
 
   useEffect(() => {
     if (hydrated.current || !intake) return;
@@ -254,14 +263,15 @@ export default function PreConsultIntakeWizard() {
     );
   }
 
-  if (phase === 'review' || alreadySubmitted) {
+  if (phase === 'review' || serverLocked) {
     return (
       <ReviewScreen
         schema={schema}
         values={values}
         attachments={attachments}
         submitting={submit.isPending}
-        readOnly={alreadySubmitted}
+        readOnly={serverLocked}
+        lockedMessage={draftIssue?.kind === 'locked' ? draftIssue.message : undefined}
         onBack={() => setPhase('wizard')}
         onExit={() => router.replace(`/services/telemedicine/appointment/${appointmentId}` as never)}
         onSubmit={onSubmit}
@@ -344,6 +354,12 @@ export default function PreConsultIntakeWizard() {
 
           {step.prdScreen === 'M5' ? <EmergencyBanner /> : null}
 
+          {draftIssue?.kind === 'unsaved' ? (
+            <View style={styles.banner}>
+              <Text style={styles.bannerText}>{draftIssue.message}</Text>
+            </View>
+          ) : null}
+
           {Object.keys(errors).length > 0 ? (
             <View style={styles.banner}>
               <Text style={styles.bannerText}>Please complete the highlighted fields.</Text>
@@ -384,7 +400,7 @@ export default function PreConsultIntakeWizard() {
 }
 
 function ReviewScreen({
-  schema, values, attachments, submitting, readOnly, onBack, onExit, onSubmit,
+  schema, values, attachments, submitting, readOnly, lockedMessage, onBack, onExit, onSubmit,
 }: {
   schema: PreConsultIntakeSchema;
   values: IntakeResponseValues;
@@ -392,6 +408,9 @@ function ReviewScreen({
   submitting: boolean;
   /** An already-submitted intake is frozen server-side: show it, don't edit it. */
   readOnly?: boolean;
+  /** Set when a refused save is what discovered the freeze: the answers on screen
+   *  are then partly the ones the server never got, and the copy has to say so. */
+  lockedMessage?: string;
   onBack: () => void;
   onExit: () => void;
   onSubmit: () => void;
@@ -427,7 +446,7 @@ function ReviewScreen({
         {readOnly ? (
           <View style={styles.banner}>
             <Text style={styles.bannerText}>
-              Submitted — your answers are locked and can no longer be changed here.
+              {lockedMessage ?? 'Submitted — your answers are locked and can no longer be changed here.'}
             </Text>
           </View>
         ) : null}
