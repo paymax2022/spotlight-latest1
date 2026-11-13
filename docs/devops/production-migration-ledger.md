@@ -2100,3 +2100,134 @@ write it is still the live state, and Task 8's lane is what changes it.
 - §3.8's warning about that deploy log (`:640-647`) applies to Task 8 Step 4:
   the raw `gh run view … --log` echoes the publishable Supabase key verbatim, so
   only the value-stripping `grep -aoE` forms are safe.
+
+---
+
+## Task 8 — the cPanel lane installs those flags (2026-11-13)
+
+**Status: the lane change is written, locally proven and committed but NOT
+pushed.** Steps 4 and 5 need a deploy, and a push to `spotlight-latest` `main`
+triggers one — R2. Edit lives on branch `ops/prod-module-flags`, commit
+`5355d93`, worktree `/tmp/t8-lane` (added from `/tmp/sl-lane` off
+`origin/main` = `54db5b0`, 2026-11-13T08:32:52Z). Base file `.github/workflows/
+deploy-cpanel.yml`: one job `deploy`, 11 steps → 13, +29 lines, one file.
+
+### 8.1 Step 1 is a real failing test, and all four branches fire
+
+The brief calls the validator "the failing test — run it before the lane
+change". Run locally against a checkout that matches `spotlight-latest`
+`main` today, then against Task 7's committed blob, then against two poisoned
+files:
+
+| Case | Input | Observed | exit |
+| --- | --- | --- | --- |
+| A | file absent (current `spotlight-latest`) | `::error::config/production-module-flags.env is missing — the prod runtime would carry zero FEATURE_* and every gated BFF route would 503.` | **1** |
+| B | `bcd91b3c7`'s blob, 45 directives | `flags: on=36 off=9 declared=45` | **0** |
+| C | 3 directives (`2 true`, `1 false`) | `flags: on=2 off=1 declared=3` then `::error::only 2 flags declared ON — production would 503 most modules.` | **1** |
+| D | `FOO=1` and `BAR="true"` present | lists `2:FOO=1`, `3:BAR="true"` and refuses | **1** |
+
+- **Expected before running:** A exits 1 with that message; B prints exactly
+  `flags: on=36 off=9 declared=45`. Both hold. C and D prove the two guards
+  are not decorative — the `on >= 30` floor is what converts "the flag file
+  shipped empty or stale" from a silent outage into a red deploy.
+- Case B's input was taken from `git show bcd91b3c7:…` and confirmed
+  byte-identical to the worktree copy, so the proof runs against the committed
+  artifact rather than a draft.
+- **Verdict:** pass.
+
+### 8.2 The transport claim, read from the source instead of paraphrased
+
+The plan justifies the single-line base64 with "the shapes the vendor's
+line-splitting exit-code guard breaks". `appleboy/ssh-action@v1.2.0` turned out
+to be a thin wrapper (`entrypoint.sh:70` runs `drone-ssh` v1.8.0), so the real
+mechanism is in that project, `plugin.go:240-265`:
+
+- `strings.Split(cmd, "\n")` when `ScriptStop` — every newline is a boundary.
+- each line is `strings.TrimSpace`'d and empties dropped, so indentation
+  inside a literal vanishes.
+- after every line **not** ending in a backslash, it injects
+  `DRONE_SSH_PREV_COMMAND_EXIT_CODE=$? ; if [ $… -ne 0 ]; then exit $…; fi;`.
+- the elements are then re-joined with `\n` and streamed as **one** payload
+  (`plugin.go:134`) — so the claim is not "each line is a separate SSH command".
+  It is the injected guards and the trimming that destroy a multi-line literal,
+  and the backslash continuation is what lets the existing 5-line `printf` block
+  at `:412-417` survive.
+
+That distinction matters for Task 11/13, which also write host files: a
+multi-line heredoc fails here for the reason above, not for the reason the plan
+gives.
+
+Replayed the transform over the edited step and checked the result:
+
+- **Probe:** substitute `${{ … }}` with fake values plus the real base64
+  payload, apply the split/trim/guard algorithm, then `bash -n`.
+- **Observed:** 80 raw script lines → **133** elements; the `base64 -d` append
+  stays **one** element (`6104` chars, no embedded newline) with exactly one
+  guard injected after it; `bash -n` on the host payload **exit 0, clean**.
+- `6104` chars is one argument against Linux's `MAX_ARG_STRLEN` of 131072 —
+  about **21×** margin. The 44 comment lines Task 7's header now carries ride
+  inside that payload; they are inert to `@next/env` but they do inflate it.
+- **Verdict:** pass. This is the strongest pre-deploy proof available without
+  touching the host; Step 4 remains the real test.
+
+### 8.3 Does the flag file even reach `spotlight-latest`?
+
+It is absent there now (`git cat-file -e origin/main:frontend-web/config/
+production-module-flags.env` → fatal, path does not exist; `frontend-web/config/`
+does not exist at all in that repo, whose `frontend-web/` has `app`, `lib`,
+`components` as top-level dirs). It arrives via `sync-frontend-web.yml`, which
+was read rather than assumed:
+
+- `rsync -av --exclude=".git" source/frontend-web/ destination/frontend-web/`
+  with **no `--delete`** — an overlay that does create new directories, so
+  `config/` will be made.
+- `git -C destination add -A -- frontend-web` stages it, and the route-shadow
+  step only inspects paths matching `frontend-web/app/*`, so a `config/` path
+  is skipped, not deleted.
+- Tested the ignore question directly in the destination worktree (copied the
+  file in, then removed it): `git check-ignore -v` → **exit 1** (not ignored)
+  and `git add -An` → `add 'frontend-web/config/production-module-flags.env'`.
+  `frontend-web/.gitignore` mentions only `/tsconfig.tsbuildinfo` for config-ish
+  names.
+
+- **Verdict:** pass — the sync path can deliver the file, so the validator will
+  not be permanently unsatisfiable.
+
+### 8.4 Landing order, because `deploy-cpanel.yml` fires on every push
+
+`on: push: branches: [main]` (`:27-29`) plus `concurrency:
+group: deploy-cpanel-main / cancel-in-progress: true` (`:37-39`). So *any* push
+to `spotlight-latest` main is a production deploy, including the sync lane's
+merge commit, and a second push cancels a deploy already in flight.
+
+| Order | What runs | Result |
+| --- | --- | --- |
+| flag file first, lane edit second | deploy A = old lane (no validator) writes 4 keys, prod unchanged; deploy B = new lane, file present | **two green deploys, no red run**, prod updated by B |
+| lane edit first | deploy A = new lane, file absent → validator exits 1 | **red deploy A**, but it fails at step 6 of 13, before the upload at step 9, so nothing reaches the host and the previous build keeps serving; deploy B then passes |
+
+- Recommendation: the first order. It is safe either way because the validator
+  sits after the build and before the upload — that placement is what makes a
+  missing file a no-op rather than a half-deploy — but it avoids a red run and
+  a misleading failure in the deploy history.
+- Whichever order is chosen, **do not push while a `deploy-cpanel` run is in
+  flight**: `cancel-in-progress: true` can abort a deploy between the upload and
+  finalize, which is exactly the partial state the lane's own route-cache purge exists to clean.
+- **Verdict:** deferred-to-user — the pushes themselves are R2.
+
+### 8.5 The outage this task fixes is live as of today
+
+Read-only `GET`s against production on 2026-11-13, taken before any deploy so
+Step 5's post-deploy comparison has a real baseline:
+
+| Path | Code | Body |
+| --- | --- | --- |
+| `/api/v1/restaurant/00000000-0000-0000-0000-000000000000` | **503** | `Restaurant delivery is not available.` |
+| `/api/v1/wallet/balance` | **503** | `Wallet feature is not available.` |
+| `/api/v1/events` | **503** | `Events are not available.` |
+
+- Step 5 expects the first of these to become **401** `Unauthorized` after the
+  deploy — gate passed, auth refused. Still 503 ⇒ the flag block never reached
+  the runtime env, and Step 4's probe re-read is the next thing to look at, not
+  the lane.
+- **Verdict:** pass as baseline. This is a current measurement, so §3.7/§3.8's
+  "exactly 4 keys" is confirmed to still describe live production.
