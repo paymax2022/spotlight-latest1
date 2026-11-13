@@ -78,26 +78,64 @@ components:
         A patient's pre-consultation health intake bound to one appointment.
         IN_CONSULT is unreachable until status=SUBMITTED. Visible only to the
         assigned doctor (object-level) + patient. Patient-reported, not a diagnosis.
-      required: [appointment_id, consult_id, status, consent_version]
+
+        One shape serves both appointment planes. appointment_id echoes the id the
+        caller used; appointment_source says which plane it resolved on, and
+        provider_id follows it — health_providers.id on the health plane,
+        doctors.id on the telemedicine plane. Optional keys are omitted (not null)
+        while unset, and consult_id stays absent on the telemedicine plane because
+        those sessions live in consult_sessions, not health_consults.
+      required:
+        - id
+        - appointment_id
+        - appointment_source
+        - patient_id
+        - provider_id
+        - status
+        - red_flag_hits
+        - attachments
+        - created_at
+        - updated_at
       properties:
+        id: { type: string, format: uuid }
         appointment_id: { type: string, format: uuid }
+        appointment_source:
+          type: string
+          enum: [health, telemedicine]
         consult_id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        provider_id: { type: string, format: uuid }
+        response_id: { type: string, format: uuid }
+        schema_id: { type: string, format: uuid }
         status:
           type: string
           enum: [DRAFT, SUBMITTED]
-        consent_version: { type: string }
-        red_flag_level: { type: string, nullable: true }
+        consent_version: { type: integer }
+        consent_at: { type: string, format: date-time }
+        red_flag_level:
+          type: integer
+          description: Most urgent triage level across the hits (1 = emergency).
         red_flag_severity:
           type: string
-          nullable: true
           enum: [emergency, urgent]
         red_flag_hits:
           type: array
-          items: { type: string }
+          items:
+            type: object
+            required: [rule_code, level, severity, routing]
+            properties:
+              rule_code: { type: string }
+              level:
+                type: integer
+                description: Triage level, 1 = emergency.
+              severity: { type: string, enum: [emergency, urgent] }
+              routing: { type: string, enum: [EMERGENCY, URGENT_CARE, CRISIS] }
         attachments:
           type: array
           items: { $ref: '#/components/schemas/IntakeAttachment' }
-        submitted_at: { type: string, format: date-time, nullable: true }
+        submitted_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     IntakeFormField:
       type: object
