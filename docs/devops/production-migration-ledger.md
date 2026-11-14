@@ -2424,16 +2424,22 @@ corrected figures in §15.5 belong to the copy, not to the file.
   `production` — backtick quotes (`bq`, `bq-plus-comment`), an `export ` prefix (`export`, `export-sp`,
   `export-tab`), leading whitespace before the key (`lead-sp-key`, `tab-lead-key`), and the whole
   `KEY: value` colon form (`colon-sp`, `colon-tab`, `colon-quoted`, `colon-two-space`, `colon-export`) —
-  and the other 3 are the bare-CR fixtures in the known-limit bullet below. Of the 4 passes, 3 are
-  spellings the loader does not accept: `prod\ruction` and `"prod\ruction"`, because `tr -d`
-  *deletes* the CR instead of treating it as a line terminator, and `"'production'"`, because two
-  sequential `sed` quote-strips remove two layers where dotenv removes one. (The old chain's fourth
-  false pass, `swallow-case`, is one of the four divergences the new pipeline keeps on purpose — see the
-  known-limit bullet below, not a fix it claims. Round 2 cited this run as "12 and 3": the same probe, before
-  the three CR fixtures were added.) The pipeline now reproduces dotenv's
-  rules: `^[[:space:]]*(export[[:space:]]+)?KEY` then either `[[:space:]]*=[[:space:]]*` or
-  `:[[:space:]]+` (colon needs the space, and nothing before the colon — `KEY : value` parses nowhere),
-  last assignment wins, CR cut **from** the value rather than deleted out of it, an unquoted `#` starts a
+  and the other 3 are the bare-CR fixtures in the known-limit bullet below. All 4 passes are spellings the loader
+  does not read as production — that is what makes them false passes — and they split 3 to 1 by *mechanism*:
+  `interior-cr` and `cr-in-dq` because `tr -d` *deletes* the CR instead of treating it as a line terminator, so the
+  old chain rejoins `prod` and `uction` into `production` where the loader's own column reads `"prod"` and
+  `"prod\nuction"`; and `nested-quotes` because two sequential `sed` quote-strips remove two layers where dotenv
+  removes one, leaving the loader with `"'production'"`. The fourth, `swallow-case`, misses in the other direction:
+  dotenv's `/m` quoted-value swallow hides the declaration from the loader, which reads `<unset>`, while the
+  `grep`-anchored old chain extracts it. (That fourth is also one of the four divergences the new pipeline keeps on
+  purpose — see the known-limit bullet below, not a fix it claims. Round 2 cited this run as "12 and 3"; re-running
+  it with the three `cr-sep-*` rows (`cr-sep-last-wins`, `cr-sep-lead`, `cr-sep-mixed`) deleted from the harness
+  table gives **12 refused / 4 passed** over the remaining 57, so the CR fixtures account for the refused side, 12
+  → 15, and not for the passed side — round 2's "3" is its own list, which named `interior-cr`, `cr-in-dq` and
+  `nested-quotes` and filed `swallow-case` separately as a documented divergence.) The pipeline now reproduces
+  dotenv's rules: `^[[:space:]]*(export[[:space:]]+)?KEY` then either `[[:space:]]*=[[:space:]]*` or
+  `:[[:space:]]+` (colon needs the space, and nothing before the colon — `KEY : value` parses nowhere), last
+  assignment wins, CR cut **from** the value rather than deleted out of it, an unquoted `#` starts a
   comment (so `production#live` is `production`, and a `#` *inside* quotes is kept, so `"production #
   live"` is refused), trim, then exactly one surrounding quote layer of `"` `'` or `` ` `` — with no
   re-trim after unquoting, because dotenv does not re-trim either, which is what keeps `" production "`
@@ -2836,7 +2842,7 @@ caveat in §15.3. The code half of that round is `1be3e158f`; the dispositions a
 `.superpowers/sdd/2026-11-12-staging-to-production-migration/task-15-report.md`.
 
 *A second round followed the re-review of that commit: the guard's normalisation was rebuilt from dotenv's
-own `LINE` regex and measured against 60 spellings, the shadow gate's `APP_ENV` term was scoped to
+own `LINE` regex and measured against 57 spellings, the shadow gate's `APP_ENV` term was scoped to
 production builds, and this section's stale line citations, scanner-exemption citations and reference counts
 were re-measured tree by tree. Code `65ee29ec0`, docs `b0ed83db2`. Everything in §15.1 and §15.6 above is
 that round's text, updated by round 3.*
