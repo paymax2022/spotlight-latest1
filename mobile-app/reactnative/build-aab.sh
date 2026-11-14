@@ -126,11 +126,25 @@ fi
 
 # See build-apk.sh's identical guard for why this belongs before EXPECTED_API:
 # the bundle check below cannot catch an env file that declares the wrong plane,
-# because the host it greps for is read out of that same file. The normalisation
-# matches dotenv, which is what @expo/env loads through — see build-apk.sh.
-_declared_env="$(grep -E '^EXPO_PUBLIC_APP_ENV=' "$ENV_FILE" | tail -1 | cut -d= -f2- \
-  | tr -d '\r' \
-  | sed -E -e 's/[[:space:]]*(#.*)?$//' -e 's/^[[:space:]]+//' -e 's/^"(.*)"$/\1/' -e "s/^'(.*)'\$/\1/" || true)"
+# because the host it greps for is read out of that same file. The extraction
+# below is byte-identical to that script's, and reproduces what dotenv 16.4.7
+# (which @expo/env loads through) reads — see build-apk.sh for the rules, and
+# docs/devops/production-migration-ledger.md §15 for the fixture table they came
+# from.
+_declared_env="$(sed -nE \
+  's/^[[:space:]]*(export[[:space:]]+)?EXPO_PUBLIC_APP_ENV([[:space:]]*=[[:space:]]*|:[[:space:]]+)(.*)$/\3/p' \
+  "$ENV_FILE" \
+  | tail -1 \
+  | awk '{
+      sub(/\r.*$/, "")
+      sub(/[[:space:]]*#.*$/, "")
+      sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "")
+      q = substr($0, 1, 1)
+      if (length($0) > 1 && substr($0, length($0), 1) == q &&
+          (q == sprintf("%c", 34) || q == sprintf("%c", 39) || q == sprintf("%c", 96)))
+        $0 = substr($0, 2, length($0) - 2)
+      print
+    }')"
 if [[ "$NODE_ENV" == "production" && "${_declared_env:-}" != "production" ]]; then
   echo "❌ $ENV_FILE declares EXPO_PUBLIC_APP_ENV=${_declared_env:-<unset>}; a production release must declare production." >&2
   echo "   Regenerate it from the tracked profile: node scripts/export-eas-profile-env.mjs production" >&2
@@ -148,11 +162,15 @@ if [[ -z "$EXPECTED_API" ]]; then
 fi
 
 # A higher-priority file would silently override $ENV_FILE. Refuse to build blind.
-# APP_ENV is in this list because it is what the guard above reads: a
-# .env.production.local that re-declares the plane would otherwise ship the
-# runtime Remote/Local switch into a production build past both checks.
+# APP_ENV joins that list only for a production build, exactly as in build-apk.sh:
+# there it would abort the dev build the printed remedy recommends, because
+# declaring the plane in .env.<mode>.local is how a dev override is written.
+_shadow_keys='API_BASE_URL|SUPABASE_URL'
+if [[ "$NODE_ENV" == "production" ]]; then
+  _shadow_keys='API_BASE_URL|SUPABASE_URL|APP_ENV'
+fi
 for shadow in ".env.${NODE_ENV}.local" ".env.local"; do
-  if [[ -f "$shadow" ]] && grep -qE '^EXPO_PUBLIC_(API_BASE_URL|SUPABASE_URL|APP_ENV)=' "$shadow"; then
+  if [[ -f "$shadow" ]] && grep -qE "^EXPO_PUBLIC_(${_shadow_keys})=" "$shadow"; then
     echo "❌ $shadow sets an API/Supabase URL or the plane declaration and OUTRANKS $ENV_FILE." >&2
     echo "   Expo precedence: .env.<mode>.local > .env.local > .env.<mode> > .env" >&2
     echo "   Rename it to .env.development.local so it applies to dev only." >&2

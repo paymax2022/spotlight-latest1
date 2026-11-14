@@ -139,13 +139,32 @@ fi
 # Asserting the declaration is the one check in this script that is not
 # self-referential. Regenerate the file from the tracked eas.json profile:
 #   node scripts/export-eas-profile-env.mjs production
-# Read the declaration the way the loader reads it: dotenv 16.4.7 (through
-# @expo/env) normalises CRLF, strips one layer of surrounding quotes and drops a
-# trailing `# comment`, so all of those spellings mean production. A guard that
-# is stricter than the thing it guards refuses good builds.
-_declared_env="$(grep -E '^EXPO_PUBLIC_APP_ENV=' "$ENV_FILE" | tail -1 | cut -d= -f2- \
-  | tr -d '\r' \
-  | sed -E -e 's/[[:space:]]*(#.*)?$//' -e 's/^[[:space:]]+//' -e 's/^"(.*)"$/\1/' -e "s/^'(.*)'\$/\1/" || true)"
+# Read the declaration the way the loader reads it. @expo/env hands this file to
+# dotenv 16.4.7, whose LINE regex accepts an `export ` prefix and whitespace
+# around the separator, a `: value` form, one layer of quote characters, a `#`
+# comment (even with no space before it) and CR as a line terminator, and lets
+# the last assignment of a key win. Extracting less than that refuses builds
+# whose bundle would have carried production fine. One sed expression, not two
+# `-e`s: the second runs against what the first already substituted, so a value
+# that itself looks like a declaration gets read twice and passes on the second
+# read — a PASS dotenv would not give. The comparison stays against the exact
+# lowercase token: `Production` falls outside serverProfile.ts's allowlist and is
+# therefore safe at runtime, but it is a typo against the tracked profile, so
+# this script still refuses it.
+_declared_env="$(sed -nE \
+  's/^[[:space:]]*(export[[:space:]]+)?EXPO_PUBLIC_APP_ENV([[:space:]]*=[[:space:]]*|:[[:space:]]+)(.*)$/\3/p' \
+  "$ENV_FILE" \
+  | tail -1 \
+  | awk '{
+      sub(/\r.*$/, "")
+      sub(/[[:space:]]*#.*$/, "")
+      sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "")
+      q = substr($0, 1, 1)
+      if (length($0) > 1 && substr($0, length($0), 1) == q &&
+          (q == sprintf("%c", 34) || q == sprintf("%c", 39) || q == sprintf("%c", 96)))
+        $0 = substr($0, 2, length($0) - 2)
+      print
+    }')"
 if [[ "$NODE_ENV" == "production" && "${_declared_env:-}" != "production" ]]; then
   echo "❌ $ENV_FILE declares EXPO_PUBLIC_APP_ENV=${_declared_env:-<unset>}; a production release must declare production." >&2
   echo "   Regenerate it from the tracked profile: node scripts/export-eas-profile-env.mjs production" >&2
@@ -163,11 +182,19 @@ if [[ -z "$EXPECTED_API" ]]; then
 fi
 
 # A higher-priority file would silently override $ENV_FILE. Refuse to build blind.
-# APP_ENV is in this list because it is what the guard above reads: a
-# .env.production.local that re-declares the plane would otherwise ship the
-# runtime Remote/Local switch into a production build past both checks.
+# APP_ENV joins that list only for a production build, and the asymmetry is
+# deliberate: it is what the guard above reads, so a .env.production.local that
+# re-declares the plane would ship the runtime Remote/Local switch past both
+# checks. In every other mode declaring the plane is the documented override, and
+# including it there would abort the very build the remedy printed below suggests
+# ("rename it to .env.development.local"). The URL keys stay mode-blind either
+# way: a shadow that changes which API a bundle talks to is never intended.
+_shadow_keys='API_BASE_URL|SUPABASE_URL'
+if [[ "$NODE_ENV" == "production" ]]; then
+  _shadow_keys='API_BASE_URL|SUPABASE_URL|APP_ENV'
+fi
 for shadow in ".env.${NODE_ENV}.local" ".env.local"; do
-  if [[ -f "$shadow" ]] && grep -qE '^EXPO_PUBLIC_(API_BASE_URL|SUPABASE_URL|APP_ENV)=' "$shadow"; then
+  if [[ -f "$shadow" ]] && grep -qE "^EXPO_PUBLIC_(${_shadow_keys})=" "$shadow"; then
     echo "❌ $shadow sets an API/Supabase URL or the plane declaration and OUTRANKS $ENV_FILE." >&2
     echo "   Expo precedence: .env.<mode>.local > .env.local > .env.<mode> > .env" >&2
     echo "   Rename it to .env.development.local so it applies to dev only." >&2
