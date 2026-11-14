@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -142,30 +143,43 @@ func (r *Repository) GetAvailability(ctx context.Context, userID string) (*Avail
 }
 
 // UpsertAvailability writes the single per-doctor availability row (UNIQUE user_id).
+//
+// `emergency_enabled` and `rules` are kept when the schedule omits them: the
+// availability screen's body has no emergencyEnabled and no rules at all, while
+// PUT /schedule/emergency owns both — the flag and the emergency windows it
+// stores in rules->'emergency'. Dereferencing an absent flag to false and an
+// absent object to {} deleted that endpoint's data on every hours save.
 func (r *Repository) UpsertAvailability(ctx context.Context, userID string, in AvailabilityScheduleInput) (*Availability, error) {
 	workingDays := jsonx.RawOrEmptyArray(in.WorkingDays)
 	breaks := jsonx.RawOrEmptyArray(in.Breaks)
-	rules := jsonx.RawOrEmptyObject(in.Rules)
 	reminders := jsonx.RawOrEmptyObject(in.ReminderSettings)
 	dur := ptr.Deref(in.ConsultDurationMins, 30)
 	buf := ptr.Deref(in.BufferMins, 0)
 	instant := ptr.Deref(in.AcceptsInstant, false)
-	emergency := ptr.Deref(in.EmergencyEnabled, false)
 	tz := strOrDefault(in.Timezone, "Africa/Lagos")
+
+	var emergency any
+	if in.EmergencyEnabled != nil {
+		emergency = *in.EmergencyEnabled
+	}
+	var rules any
+	if len(bytes.TrimSpace(in.Rules)) > 0 {
+		rules = jsonx.RawOrEmptyObject(in.Rules)
+	}
 
 	const q = `
 		INSERT INTO doctor_availability
 			(user_id, working_days, breaks, rules, consult_duration_mins, buffer_mins,
 			 accepts_instant, emergency_enabled, timezone, reminder_settings, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
+		VALUES ($1,$2,$3,COALESCE($4::jsonb,'{}'::jsonb),$5,$6,$7,COALESCE($8,false),$9,$10, now())
 		ON CONFLICT (user_id) DO UPDATE SET
 			working_days = EXCLUDED.working_days,
 			breaks = EXCLUDED.breaks,
-			rules = EXCLUDED.rules,
+			rules = COALESCE($4::jsonb, doctor_availability.rules),
 			consult_duration_mins = EXCLUDED.consult_duration_mins,
 			buffer_mins = EXCLUDED.buffer_mins,
 			accepts_instant = EXCLUDED.accepts_instant,
-			emergency_enabled = EXCLUDED.emergency_enabled,
+			emergency_enabled = COALESCE($8, doctor_availability.emergency_enabled),
 			timezone = EXCLUDED.timezone,
 			reminder_settings = EXCLUDED.reminder_settings,
 			updated_at = now()`
