@@ -151,6 +151,10 @@ func tierGateFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name
 		`INSERT INTO restaurants (id, owner_id, name, address, is_open, packaging_fee_kobo) VALUES ($1,$2,$3,'1 St',TRUE,0)`, restID, owner, name); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
+	// The outlet is also a party to the tier gate: every order is checked against its
+	// OWNER's receipt ceiling. These tests are about what the CUSTOMER may pay, so the
+	// owner is unlimited and cannot be the reason a cart is refused.
+	seedKYCTier(t, ctx, pool, owner, 3)
 	cat, err := svc.CreateCategory(ctx, restID, owner, "Mains")
 	if err != nil {
 		t.Fatalf("category: %v", err)
@@ -386,6 +390,15 @@ type recordingLimiter struct {
 	// gate and a merchant withdrawal must NOT (cash out is never relaxed —
 	// ADR-043), so the method name is part of what these tests protect.
 	gotMethod string
+
+	// The merchant receipt ceiling is a SEPARATE gate on a SEPARATE account (the
+	// outlet's owner, not the paying customer), so it is recorded apart from
+	// `calls`/`txCalls`/`gotKobo` — those mean "the customer's debit gate" to the
+	// tests above, and folding the merchant check in would let one gate's count
+	// hide the other's absence.
+	merchantCalls   int64
+	gotMerchantKobo int64
+	gotMerchantUser string
 }
 
 func (r *recordingLimiter) EnforceWalletDebitLimit(_ context.Context, _ string, amountKobo int64) error {
@@ -418,6 +431,16 @@ func (r *recordingLimiter) EnforceCheckoutDebitLimitTx(_ context.Context, _ pgx.
 	if amountKobo != r.gotKobo {
 		r.gotKobo = amountKobo
 	}
+	return nil
+}
+
+// EnforceMerchantReceiptLimit is the owner-side ceiling (see
+// merchant_receipt_live_db_test.go). Allow-all here so the recording tests see WHAT
+// it gated; the real numbers are gated by the live-DB tests in that file.
+func (r *recordingLimiter) EnforceMerchantReceiptLimit(_ context.Context, userID string, amountKobo int64) error {
+	r.merchantCalls++
+	r.gotMerchantKobo = amountKobo
+	r.gotMerchantUser = userID
 	return nil
 }
 

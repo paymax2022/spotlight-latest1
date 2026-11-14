@@ -43,6 +43,7 @@ import (
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/platform/billingemail"
 	"spotlight/backend/internal/provider"
@@ -639,6 +640,16 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "order_rejected", keyMessage: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
 	case errors.Is(err, restaurant.ErrOrderInvalid), errors.Is(err, restaurant.ErrScheduledSlotInvalid):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_order", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
+	case errors.Is(err, tiers.ErrMerchantOrderLimitExceeded):
+		// The OUTLET's verification level does not admit an order this large. It is
+		// refused while QUOTING — before InitializePayment — so Paystack is never
+		// asked to charge the customer for an order this seller could not take.
+		c.JSON(http.StatusForbidden, gin.H{"error": "merchant_order_limit", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
+	case errors.Is(err, restaurant.ErrTierGateUnwired):
+		// Same code the restaurant handler gives this sentinel: a server
+		// misconfiguration, retryable once the gate is wired — never a 500 the
+		// customer reads as "payment broken".
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "tier_gate_unwired", keyMessage: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
