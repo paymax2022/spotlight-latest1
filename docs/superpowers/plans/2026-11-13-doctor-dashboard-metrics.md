@@ -29,6 +29,7 @@ The worktree has **no `node_modules`** under `mobile-app/reactnative` (untracked
 - Copy rules for the wire (spec D8): `slotDate` is `YYYY-MM-DD`, `slotTime` is `"HH:MM AM/PM"`, `status` uses the UI vocabulary (`booked` → `upcoming`), `consultType` passes through verbatim including `in_person`.
 - Tests that need Postgres gate on `TEST_DATABASE_URL` and skip without it. Local DSN is documented at [docs/maps/CI-ON-COWORK.md:16](../../maps/CI-ON-COWORK.md#L16); never paste a DSN or token into a commit, a PR body, or the conversation.
 - Stage and commit in one command, by explicit path, one commit per logical change. Never `git add -A`. Never stage `next-env.d.ts` or the `node_modules` symlink.
+- Every commit message here is multi-line, so pass it through a quoted heredoc (`git commit -m "$(cat <<'MSG' … MSG")`), never a bare double-quoted `-m`: zsh runs command substitutions inside double quotes, so one stray backtick executes instead of quoting and silently deletes the phrase from history.
 - Publish means: push `feat/doctor-dashboard-metrics` with `git -c credential.helper='!gh auth git-credential' push -u origin feat/doctor-dashboard-metrics`, then open a PR. Never push `main`.
 
 ---
@@ -416,8 +417,11 @@ type dashboardCounters struct {
 // repository_ops.go:409) and GET /doctor/profile reads back through this very
 // GetProfile — NOT doctor_availability.timezone, which no screen ever sets (a
 // doctor who chose Asia/Karachi would otherwise have every "today" predicate
-// anchored to Lagos). `GET /schedule` is NOT a read-back: ScheduleSettings has
-// no timezone field (handler_tail2.go:493-498); see spec F5. A doctor with no
+// anchored to Lagos). `GET /schedule` is not a read-back of this column: its
+// ScheduleSettings carries no timezone at the top level
+// (handler_tail2.go:493-498), and the only zone that response could ever reach
+// transitively is `doctor_availability.timezone`, a different column — see spec
+// F5 for what that costs the screen that offers the picker. A doctor with no
 // profile row at all is the default, not an error.
 func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string, error) {
 	p, err := s.repo.GetProfile(ctx, userID)
@@ -699,7 +703,7 @@ cd /private/tmp/spot-doctor-metrics/backend && go test ./internal/doctor/ -run T
 cd /private/tmp/spot-doctor-metrics && git add backend/internal/doctor/dashboard_metrics_live_db_test.go && git commit -m "test(doctor): pin the queue row's wire shape and the count-vs-list cap"
 ```
 
-Expected: five `--- PASS` lines (or all `SKIP` with no DB, which must be recorded, not reported as green).
+Expected: six `--- PASS` lines — every `TestLiveDB_Dashboard*` defined so far (local-day, timezone fallback, upcoming, queue wire shape, count-vs-cap, scoping). (Or all `SKIP` with no DB, which must be recorded, not reported as green.)
 
 ---
 
@@ -792,6 +796,11 @@ func TestDashboardSatisfactionPct(t *testing.T) {
 		{"4,5,5 rounds to 93", ReputationSummary{AverageRating: 4.6666666666666665, ReviewCount: 3}, ptr.Of(93.0)},
 		{"perfect", ReputationSummary{AverageRating: 5, ReviewCount: 1}, ptr.Of(100.0)},
 		{"one star is not nil", ReputationSummary{AverageRating: 1, ReviewCount: 2}, ptr.Of(20.0)},
+		// The other half of the nil-vs-zero rule: reviews exist and every one is
+		// zero stars. GetReputation's COALESCE(AVG,0) returns 0 for THIS too, so
+		// only ReviewCount separates a hated practice from an unreviewed one — and
+		// 0 must survive as 0, not collapse into the nil above it.
+		{"zero stars with reviews is 0, not nil", ReputationSummary{AverageRating: 0, ReviewCount: 7}, ptr.Of(0.0)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -827,18 +836,75 @@ Expected: compile failure — `undefined: consultProviderPct`, `undefined: pendi
 
 - [ ] **Step 3: Implement the split, satisfaction and the revenue read**
 
-First, correct the two timezone comments Task 1 left behind the plan. They are stale in the
-committed file only because the fix dispatch said "the rest of the file stays as committed", so
-this step lifts that constraint rather than waiving the finding. Replace the
-`defaultDoctorTimezone` comment (`dashboard_metrics.go:27-29`) with the plan's Task 1 text —
-it cites `doctor_profiles.timezone` at `20260625000000_doctor_module.sql:60` as the column the
-read uses and `:165` for the availability one (the file currently says `:164`, which is
-`emergency_enabled`), and it must not call `repository.go:149` "the write path" for a doctor's
-choice. Then align `dashboardTimezone`'s comment (`:93-99`) with the Task 1 block above, which now
-names `GET /doctor/profile` as the read-back and says plainly that `GET /schedule` is not one.
-Neither edit may change a line of executable code.
+Three things happen in this step, in this order.
 
-Append to `backend/internal/doctor/dashboard_metrics.go`:
+**1. Align the two stale timezone comments.** They are stale in the committed file only because the
+fix dispatch said "the rest of the file stays as committed", so this lifts that constraint rather
+than waiving the finding. Replace the `defaultDoctorTimezone` comment (`dashboard_metrics.go:27-29`)
+with the plan's Task 1 text — it cites `doctor_profiles.timezone` at
+`20260625000000_doctor_module.sql:60` as the column the read uses and `:165` for the availability one
+(the file currently says `:164`, which is `emergency_enabled`), and it must not call
+`repository.go:149` "the write path" for a doctor's choice. Then align `dashboardTimezone`'s comment
+with the Task 1 block above, which now names `GET /doctor/profile` as the read-back, says plainly
+that `GET /schedule` is not a read-back *of this column*, and qualifies that with "at the top level"
+because the availability row that response may one day embed carries the other zone column. Neither
+edit may change a line of executable code.
+
+**2. Harden the zone this file resolves.** A read that interpolates a client-supplied string into
+`AT TIME ZONE` fails the whole dashboard when that string is not a zone Postgres knows — see
+`usableTimezone` below for why this is this PR's exposure and not a pre-existing one. In
+`dashboard_metrics.go`, replace the last line of `dashboardTimezone` — currently
+
+```go
+	return p.Timezone, nil
+```
+
+with
+
+```go
+	return s.repo.usableTimezone(ctx, p.Timezone)
+```
+
+and add this function immediately after it, unchanged:
+
+```go
+// usableTimezone answers tz only if Postgres will accept it as a zone name, and
+// the default otherwise. `AT TIME ZONE` raises SQLSTATE 22023 ("time zone … not
+// recognized") for a name the server does not know, and every date expression in
+// this file interpolates that parameter — so without this check one bad value in
+// doctor_profiles.timezone turns the whole dashboard into a 500. The write path
+// offers no protection: Service.SetTimezone (service_ops.go:365) stores whatever
+// the client sends, with only an empty-string default. Before this PR the column
+// was only ever selected or written, never handed to a date expression, so a bad
+// value was inert; interpolating it into `AT TIME ZONE` is what makes it fatal.
+//
+// The probe has to be Postgres's own test rather than a catalog lookup, because
+// `pg_timezone_names` is not what `AT TIME ZONE` accepts: the fixed offsets
+// "-05" and "+05:30" are absent from that view yet valid as zones, so an EXISTS
+// check would silently downgrade a doctor's real setting to Lagos.
+func (r *Repository) usableTimezone(ctx context.Context, tz string) (string, error) {
+	const probe = `SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE $1::text, 'YYYY-MM-DD')`
+	var day string
+	if err := r.db.QueryRow(ctx, probe, tz).Scan(&day); err != nil {
+		// 22023 = invalid_parameter_value, which is what an unrecognised zone
+		// raises. Anything else — a dead pool, a lost connection — is a real
+		// failure and must surface rather than hide behind the default.
+		if dbutil.SQLState(err) == "22023" {
+			return defaultDoctorTimezone, nil
+		}
+		return "", fmt.Errorf("doctor: probe timezone %q: %w", tz, err)
+	}
+	return tz, nil
+}
+```
+
+`dbutil.SQLState` is the repo's existing SQLSTATE extractor
+(`go-common/dbutil/dbutil.go:26`, which unwraps the pgx error chain), so add
+`"spotlight/backend/go-common/dbutil"` to this file's imports — it is first-party
+code in this module, not a new dependency, and `internal/doctor` does not import it
+yet. Do not import `pgconn` directly; the point of the helper is that callers do not.
+
+**3. Append the revenue projection.** To `backend/internal/doctor/dashboard_metrics.go`:
 
 ```go
 // consultProviderPct / consultPlatformPct mirror the split
@@ -936,7 +1002,7 @@ func (r *Repository) consultRevenue(ctx context.Context, userID, tz string) (Das
 }
 ```
 
-Two import changes: add `"math"` (for `dashboardSatisfactionPct`) and `"spotlight/backend/internal/finance/settlement"` (for `settlement.Split` / `ComputeLegs`). `pgx` itself is not named anywhere in this code — `rows.Next/Scan/Err` are method calls on the value `r.db.Query` returns — so do not add it. The `escrowedQ` query takes one parameter, so pass only `userID` — passing `tz` too would make pgx complain about an unbound parameter.
+Three import changes for this file: add `"math"` (for `dashboardSatisfactionPct`), `"spotlight/backend/internal/finance/settlement"` (for `settlement.Split` / `ComputeLegs`) and `"spotlight/backend/go-common/dbutil"` (for `SQLState`, part 2 above). `pgx` itself is not named anywhere in this code — `rows.Next/Scan/Err` are method calls on the value `r.db.Query` returns — so do not add it. The `escrowedQ` query takes one parameter, so pass only `userID` — passing `tz` too would make pgx complain about an unbound parameter.
 
 - [ ] **Step 4: Run the no-DB tests**
 
@@ -957,6 +1023,12 @@ Append to `dashboard_metrics_live_db_test.go`:
 // just created — a second uuid.NewString() there would match nothing and silently
 // leave settlement_id NULL, which reads back as "no consult money" rather than an
 // error. One reference per fixture (cleanup deletes by reference), many keys.
+// Production writes reference = "appointment:"+apptID (telemedicine/service.go:509);
+// this fixture deliberately does not copy that shape, because a per-appointment
+// reference would break the single cleanup DELETE that keys on the shared one.
+// Nothing in the projection reads `reference`, so the difference is inert — if a
+// future read ever does key on it, this helper stops being a safe substitute for
+// the real escrow path and says so here.
 func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, providerKobo, platformFeeKobo int64, settled bool, moduleType string) {
 	t.Helper()
 	ctx := context.Background()
@@ -999,16 +1071,30 @@ func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
 	settledID, _ := f.bookLocal(t, tz, "completed", -3, 10*60)
 	f.escrow(t, settledID, "settled", 200000, 170000, 0, true, "telemedicine")
 	escrowedID, _ := f.bookLocal(t, tz, "booked", 1, 10*60)
-	f.escrow(t, escrowedID, "escrowed", 200000, 0, 2000, false, "telemedicine")
+	// provider_kobo here is deliberately NOT the 0 a real escrowed row carries
+	// (Settle writes it in the same tx that flips status to 'settled', so no live
+	// row is ever both unsettled and paid). It is what makes `st.status =
+	// 'settled'` in settledQ load-bearing: leave it 0 and that predicate can be
+	// deleted with all three assertions below still green. The escrowed read never
+	// looks at provider_kobo — only total_kobo and the fee — so PendingKobo is
+	// unaffected by the value chosen here.
+	f.escrow(t, escrowedID, "escrowed", 200000, 168300, 2000, false, "telemedicine")
 	refundedID, _ := f.bookLocal(t, tz, "cancelled", -5, 10*60)
 	f.escrow(t, refundedID, "refunded", 300000, 0, 0, false, "telemedicine")
-	// The row that makes st.module_type = 'telemedicine' load-bearing. Without it the
-	// filter can be deleted and this whole test stays green, and a restaurant or
-	// mobility payout to the same human starts appearing in their earnings tile.
-	// It is settled and provider_kobo > 0 on purpose, so it would also land in
-	// ThisMonthKobo — both the 170000 assertions below are what prove it excluded.
+	// The rows that make BOTH module predicates load-bearing. One label is not
+	// enough, because the two reads filter on different statuses: a settled
+	// non-telemedicine row can only ever be excluded by settledQ's predicate, and
+	// an escrowed one only by escrowedQ's. Each therefore needs its own row, both
+	// with money in the column that read sums — otherwise deleting either filter
+	// stays green, and a restaurant or mobility payout to the same human starts
+	// appearing in their consult earnings. `settlements.module_type` is plain text
+	// with no CHECK and no FK (verified against the live catalog), so 'restaurant'
+	// inserts; locally only 'telemedicine' exists today, so ambient data could
+	// never have proven either filter on its own.
 	otherID, _ := f.bookLocal(t, tz, "completed", -2, 10*60)
 	f.escrow(t, otherID, "settled", 400000, 320000, 0, true, "restaurant")
+	otherEscrowID, _ := f.bookLocal(t, tz, "booked", 3, 10*60)
+	f.escrow(t, otherEscrowID, "escrowed", 400000, 0, 0, false, "restaurant")
 
 	rev, err := NewRepository(pool).consultRevenue(ctx, f.doctorUser, tz)
 	if err != nil {
@@ -1032,16 +1118,87 @@ func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
 		t.Errorf("ConsultsThisMonth = %d, want 0 — the service fills it from the aggregates", rev.ConsultsThisMonth)
 	}
 
-	// A second doctor's settlement for the same patient must not land here.
+	// A second doctor's own settlement must not land in this doctor's figures.
+	// `other` is a whole second fixture — its own doctor, its own patient uuid —
+	// so this probes the `d.user_id = $1` scoping, not any patient sharing.
 	other := newMetricsFixture(t, pool)
 	otherAppt, _ := other.bookLocal(t, tz, "completed", -1, 9*60)
-	other.escrow(t, otherAppt, "settled", 900000, 765000, 0, true)
+	other.escrow(t, otherAppt, "settled", 900000, 765000, 0, true, "telemedicine")
+	// Booked, not completed: the escrowed read is the one this row must not reach.
+	otherPending, _ := other.bookLocal(t, tz, "booked", 2, 9*60)
+	other.escrow(t, otherPending, "escrowed", 500000, 0, 0, false, "telemedicine")
 	rev2, err := NewRepository(pool).consultRevenue(ctx, f.doctorUser, tz)
 	if err != nil {
 		t.Fatalf("consultRevenue after second doctor: %v", err)
 	}
 	if rev2.LifetimeKobo != rev.LifetimeKobo {
-		t.Errorf("LifetimeKobo moved to %d — the read is not scoped to the doctor", rev2.LifetimeKobo)
+		t.Errorf("LifetimeKobo moved to %d — the settled read is not scoped to the doctor", rev2.LifetimeKobo)
+	}
+	// The settled probe above cannot protect escrowedQ: an unscoped escrowed read
+	// would add 425000 to PendingKobo, so PendingKobo needs its own assertion.
+	if rev2.PendingKobo != rev.PendingKobo {
+		t.Errorf("PendingKobo moved to %d, want %d — the escrowed read is not scoped to the doctor",
+			rev2.PendingKobo, rev.PendingKobo)
+	}
+}
+
+// A value Postgres will not accept as a zone name must degrade to the default, not
+// 500 the dashboard. This is reachable through the live API: PUT /schedule/timezone
+// stores its body verbatim (service_ops.go:365 validates nothing but the empty
+// string), and every date expression in this plan hands that column to
+// `AT TIME ZONE`. 'Mars/Olympus_Mons' is the name Postgres itself rejects with
+// SQLSTATE 22023, so the assertion below is the same server decision the read
+// makes — which is why usableTimezone probes the expression instead of consulting
+// pg_timezone_names (where valid fixed offsets like "-05" are simply absent).
+func TestLiveDB_DashboardTimezonePoisonedZoneDegrades(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	ctx := context.Background()
+
+	// One consult on today's local date, so the aggregate read has something to
+	// count once the zone resolves.
+	if _, err := f.bookLocal(t, defaultDoctorTimezone, "completed", 0, 10*60); err != nil {
+		t.Fatalf("bookLocal: %v", err)
+	}
+	res, err := pool.Exec(ctx,
+		`UPDATE doctor_profiles SET timezone = 'Mars/Olympus_Mons' WHERE user_id = $1`, f.doctorUser)
+	if err != nil {
+		t.Fatalf("poison timezone: %v", err)
+	}
+	if res.RowsAffected() != 1 {
+		t.Fatalf("poison timezone matched %d rows, want 1 — the fixture created no profile row", res.RowsAffected())
+	}
+
+	tz, err := metricsService(pool).dashboardTimezone(ctx, f.doctorUser)
+	if err != nil {
+		t.Fatalf("dashboardTimezone with a poisoned zone: %v — a bad zone must degrade, not fail the read", err)
+	}
+	if tz != defaultDoctorTimezone {
+		t.Errorf("dashboardTimezone = %q, want %q", tz, defaultDoctorTimezone)
+	}
+
+	// The point of the fallback: the aggregate that uses it still answers, instead
+	// of raising 22023 through every date predicate in the query.
+	agg, err := NewRepository(pool).dashboardAggregates(ctx, f.doctorUser, tz)
+	if err != nil {
+		t.Fatalf("dashboardAggregates with a poisoned zone: %v", err)
+	}
+	if agg.TodaysCount != 1 {
+		t.Errorf("TodaysCount = %d, want 1", agg.TodaysCount)
+	}
+
+	// A zone Postgres accepts but pg_timezone_names does not list must survive —
+	// otherwise the guard silently overwrites a doctor's real fixed-offset setting.
+	if _, err := pool.Exec(ctx,
+		`UPDATE doctor_profiles SET timezone = '-05' WHERE user_id = $1`, f.doctorUser); err != nil {
+		t.Fatalf("set fixed offset: %v", err)
+	}
+	tzOffset, err := metricsService(pool).dashboardTimezone(ctx, f.doctorUser)
+	if err != nil {
+		t.Fatalf("dashboardTimezone for a fixed offset: %v", err)
+	}
+	if tzOffset != "-05" {
+		t.Errorf("dashboardTimezone = %q, want the doctor's own '-05' — a catalog lookup would have downgraded this", tzOffset)
 	}
 }
 ```
@@ -1049,10 +1206,10 @@ func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
 - [ ] **Step 6: Run it**
 
 ```bash
-cd /private/tmp/spot-doctor-metrics/backend && go test ./internal/doctor/ -run 'TestLiveDB_DashboardConsultRevenue' -count=1 -v 2>&1 | tail -20
+cd /private/tmp/spot-doctor-metrics/backend && go test ./internal/doctor/ -run 'TestLiveDB_DashboardConsultRevenue|TestLiveDB_DashboardTimezonePoisonedZoneDegrades' -count=1 -v 2>&1 | tail -24
 ```
 
-Expected: PASS with the DSN set (SKIP and a recorded "not actually run" without it).
+Expected: PASS for both with the DSN set (SKIP and a recorded "not actually run" without it). Before writing the guard, run this same command against the code as committed and record the red: `dashboardTimezone` returns the poisoned string and `dashboardAggregates` fails with `time zone "Mars/Olympus_Mons" not recognized` — that is the failure this test exists to prevent, and a test that was never seen red is not evidence.
 
 - [ ] **Step 7: Commit**
 
@@ -2136,7 +2293,7 @@ cd /private/tmp/spot-doctor-metrics/backend
 TEST_DATABASE_URL="<local dev DSN>" go test ./internal/doctor/ -run 'TestLiveDB_Dashboard' -count=1 -v 2>&1 | tail -30
 ```
 
-Expected: `go ok`, no `gofmt` output, `ok spotlight/backend/internal/doctor`, `openapi parses`, `redocly exit: 0`, `tsc exit: 0`, `# fail 0`, and nine `--- PASS` lines for `TestLiveDB_Dashboard*`. Any live-DB test that SKIPped is *not* a pass — record which ones and say so.
+Expected: `go ok`, no `gofmt` output, `ok spotlight/backend/internal/doctor`, `openapi parses`, `redocly exit: 0`, `tsc exit: 0`, `# fail 0`, and **eleven** `--- PASS` lines for `TestLiveDB_Dashboard*` — the count the plan's own test blocks add up to (six from Task 1, two from Task 2, three from Task 3). Any live-DB test that SKIPped is *not* a pass — record which ones and say so. If the run prints fewer than eleven, that is a missing test, not a smaller expectation: count the `func TestLiveDB_Dashboard` definitions before concluding.
 
 - [ ] **Step 4: Prove the wire end to end without bouncing the shared container**
 
@@ -2171,7 +2328,7 @@ cd /private/tmp/spot-doctor-metrics && gh pr create --base main --head feat/doct
 
 ## Verification
 - `go build ./...`, `go vet ./internal/doctor/... ./internal/integrations/...`, `go test ./internal/doctor/...`
-- Live-DB (TEST_DATABASE_URL): 9 new `TestLiveDB_Dashboard*` cases — doctor-local day boundary (Karachi, asserted by row identity not just count), upcoming excluding past and finished rows, count-vs-capped-list, queue wire shape, appointments scoped to one doctor, revenue across settled/escrowed/refunded/other-module rows, satisfaction scoped to one doctor, the brand-new doctor, and the composed payload. Every clock-sensitive expectation is placed on a row that is past or future at ANY run time.
+- Live-DB (TEST_DATABASE_URL): **11** new `TestLiveDB_Dashboard*` cases — doctor-local day boundary (Karachi, asserted by row identity not just count), the timezone fallback for a doctor with no profile row, upcoming excluding past and finished rows, queue wire shape, count-vs-capped-list, appointments scoped to one doctor, revenue across settled/escrowed/refunded and both other-module status shapes, a poisoned timezone degrading to the default instead of failing the read, satisfaction scoped to one doctor, the brand-new doctor, and the composed payload. Every clock-sensitive expectation is placed on a row that is past or future at ANY run time.
 - `redocly lint contracts/doctor.openapi.yaml` (exit 0), `tsc --noEmit -p tsconfig.doctorcheck.json`, `npm run test:doctor-dashboard` (10 cases).
 - Not done: the in-browser tile pass, which needs the shared API container rebuilt and Metro restarted — say so here if it was not run.
 

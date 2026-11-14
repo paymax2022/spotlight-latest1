@@ -118,6 +118,18 @@ availability write path uses at `repository.go:149`. One resolved value feeds al
 so the day cannot drift between them. `doctor_availability.timezone` is deliberately not a
 source: no screen sets it, so reading it would add a second zone nobody can predict from the UI.
 
+**D3a — a zone Postgres will not accept also maps to `Africa/Lagos`** (added during Task 2's
+review, which asked what happens to the read when the column holds junk). `PUT /schedule/timezone`
+stores its body verbatim — `service_ops.go:365` defaults only the empty string and validates no
+IANA name — so `doctor_profiles.timezone` can already hold a value the server rejects. Before this
+PR that was inert, because the column was only ever selected or written; once a date expression
+interpolates it, `AT TIME ZONE` raises SQLSTATE 22023 and takes the whole dashboard down. Rather
+than trust the write path, the read asks Postgres the same question it will later answer
+(`to_char(CURRENT_TIMESTAMP AT TIME ZONE $1::text, …)`), falls back on 22023 alone, and lets every
+other error surface — a dead pool must not look like an unset timezone. A catalog lookup is not
+equivalent: `'-05'` and `'+05:30'` are absent from `pg_timezone_names` yet valid zones, so an
+`EXISTS` check would silently overwrite a doctor's real setting.
+
 **D4 — Metric definitions** (all scoped through `doctors d ON d.user_id = $1`, the signed-in
 doctor's auth id, because `appointments.doctor_id` is a `doctors.id`):
 
