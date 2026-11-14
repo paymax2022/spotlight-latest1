@@ -2810,10 +2810,13 @@ function WindowLine({ label, start, end, state }: { label: string; start: string
   );
 }
 
-/** Step 04 is the only one the server cannot answer: whose entry it is depends
- *  on who is signed in. */
+/** The shape `/api/open-mic/submissions` answers with, as far as step 04 needs
+ *  it. Every field optional: this is a network payload, and a server that stops
+ *  naming one must not print `undefined` into an artist's own entry line. */
 type OwnEntryRow = { status?: string; stageName?: string; songTitle?: string; voteCount?: number };
 
+/** Step 04 is the only one the server cannot answer: whose entry it is depends
+ *  on who is signed in. */
 function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: string }) {
   const [entry, setEntry] = useState<{ stageName: string; songTitle: string; voteCount: number } | null>(null);
   const [checked, setChecked] = useState(false);
@@ -2830,8 +2833,6 @@ function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: 
         const res = await fetch(`/api/open-mic/submissions?contestId=${encodeURIComponent(contestId)}`, {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
-        // A typed row, not `any[]`: an unnamed field must not print `undefined`
-        // into an artist's own entry line.
         const payload = (await res.json().catch(() => null)) as { submissions?: OwnEntryRow[] } | null;
         const live = (payload?.submissions ?? []).find((row) =>
           ['published_for_voting', 'live_for_voting', 'finalist', 'winner'].includes(String(row.status))
