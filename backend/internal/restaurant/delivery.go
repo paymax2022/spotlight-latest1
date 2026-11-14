@@ -546,7 +546,7 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 // stores), newest first. Used by the merchant app to load the store to manage.
 func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Restaurant, error) {
 	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
-	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng,
+	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng, COALESCE(plus_code,''),
 	                  (SELECT count(*) FROM restaurant_likes rl WHERE rl.restaurant_id = restaurants.id) AS like_count
 	           FROM restaurants WHERE owner_id=$1 ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q, ownerID)
@@ -558,7 +558,7 @@ func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Rest
 	for rows.Next() {
 		var r Restaurant
 		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
-			&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.LikeCount); err != nil {
+			&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.PlusCode, &r.LikeCount); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -580,12 +580,12 @@ func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Rest
 func (s *Service) getRestaurantCore(ctx context.Context, restaurantID string) (*Restaurant, error) {
 	var r Restaurant
 	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
-	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng,
+	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng, COALESCE(plus_code,''),
 	                  (SELECT count(*) FROM restaurant_likes rl WHERE rl.restaurant_id = restaurants.id) AS like_count
 	           FROM restaurants WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description,
 		&r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
-		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.LikeCount); err != nil {
+		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.PlusCode, &r.LikeCount); err != nil {
 		return nil, ErrRestaurantNotFound
 	}
 	s.finishStoreImages(ctx, &r)

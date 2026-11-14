@@ -33,6 +33,11 @@ type Restaurant struct {
 	// Store coordinates, for map rendering and the distance-based delivery quote.
 	GeoLat *float64 `json:"geo_lat,omitempty"`
 	GeoLng *float64 `json:"geo_lng,omitempty"`
+	// PlusCode is what the owner saw when they confirmed the pin (and what the
+	// server auto-geocode stored when they only typed an address). Read back with
+	// the coordinates: without it a saved pin's confirmation text vanishes on the
+	// next load of the manage screen, which reads as "the address did not save".
+	PlusCode string `json:"plus_code,omitempty"`
 
 	// HasPromo reports a promo that is live RIGHT NOW (see livePromoExists in
 	// discovery_page.go). Populated by the discovery reads only; the code and
