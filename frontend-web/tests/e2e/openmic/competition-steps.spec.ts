@@ -56,8 +56,22 @@ test('step 04 is honest when nobody is signed in', async ({ page }) => {
 
 test('step 05 shows the top five with counts and a way to vote', async ({ page }) => {
   const panel = await openStep(page, 5);
-  await expect(panel.locator('li[data-rank]')).toHaveCount(5);
-  await expect(panel.locator('li[data-rank="1"]')).toContainText('Adaeze Okonkwo');
+  const rows = panel.locator('li[data-rank]');
+  await expect(rows).toHaveCount(5);
+  await expect(rows.nth(0)).toContainText('Adaeze Okonkwo');
+  // The requirement is the number, not just the name — a board that lists who is
+  // winning without their votes has not answered step #05. Both ends of the slice
+  // are pinned so a missing `public_vote_count` cannot hide behind row 1.
+  await expect(rows.nth(0)).toContainText('412');
+  await expect(rows.nth(4)).toContainText('96');
+  // Design table row 05: a Vote CTA per contestant, each into the edition board.
+  await expect(rows.getByRole('link', { name: /^vote$/i })).toHaveCount(5);
+  for (const rank of [1, 2, 3, 4, 5]) {
+    await expect(rows.nth(rank - 1).getByRole('link', { name: /^vote$/i })).toHaveAttribute(
+      'href',
+      `/open-mic/${SLUG}/entries`,
+    );
+  }
   await expect(panel.getByRole('link', { name: /vote now/i })).toHaveAttribute('href', `/open-mic/${SLUG}/entries`);
 });
 
