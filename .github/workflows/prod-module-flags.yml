@@ -140,7 +140,7 @@ jobs:
           curl -sS --max-time 30 "$PROD_VISIBILITY_URL" > before.json
           node -e '
             const d = JSON.parse(require("fs").readFileSync("before.json","utf8"));
-            const keys = (d.data.modules||[]).map((m)=>m.key).sort();
+            const keys = (d.data.modules||[]).map((m)=>typeof m==="string"?m:(m&&m.key)).filter(Boolean).sort();
             require("fs").writeFileSync("before-keys.txt", keys.join("\n")+"\n");
             console.log(`tier=${d.data.environment} serving ${keys.length} modules before this run`);
             if (d.data.environment !== "production") {
@@ -397,7 +397,7 @@ jobs:
           node -e '
             const fs = require("fs");
             const after = JSON.parse(fs.readFileSync("after.json","utf8"));
-            const a = (after.data.modules||[]).map((m)=>m.key).sort();
+            const a = (after.data.modules||[]).map((m)=>typeof m==="string"?m:(m&&m.key)).filter(Boolean).sort();
             if (!fs.existsSync("before-keys.txt")) {
               console.log(`tier=${after.data.environment} serving ${a.length} modules: ${a.join(", ")}`);
               console.log("no before-snapshot was restored, so this is a state report rather than a diff");
