@@ -2363,6 +2363,15 @@ sidebar, the dashboard, `adminSimulatedWrites` and `analyticsService`, none of w
 **Compare failing test names, not counts** — the counts move with other sessions' uncommitted work in
 this shared worktree. A new openmic failure is a regression; anything else is not yours.
 
+Expect `Test timed out in 5000ms` on any case in `beat-upload.test.tsx` if the `}, 20_000)` budgets are
+missing: every case renders the whole contest form (~0.4 s per render, 2 s per case alone) and the
+parallel suite pushes that past the 5 s default — in a measured run **10 of the 13** app-wide failures
+were exactly this, across the sidebar, dashboard, crypto and restaurant specs. Keep the budget, and
+keep case 1 to a single `waitFor`: the download field can only hold the reader path after
+`uploadOpenMicBeat` resolves, and its `setField`/`setBeatNote` commits land together, so the rest of
+the case is synchronous. `src/components/layouts/AdminSidebar.test.tsx:58` is the in-app precedent for
+the timeout, not something to invent.
+
 `npm run lint` is `next lint`, which the installed Next 16.4.3 removed, and `npm run check:mock-flags`
 exits 1 for 42 flags this task did not add. Neither is a gate you can pass or should chase; say so in
 the report rather than reporting them green. `npm run type-check` excludes `**/*.test.tsx`
