@@ -42,12 +42,19 @@ function WindowLine({ label, start, end, state }: { label: string; start: string
     <p className={styles.stepState}>
       <b>{label}</b>
       <span>{shortDate(start)} → {shortDate(end)}</span>
-      <span className={state === 'open' ? styles.windowOpen : styles.windowClosed}>
+      {/* `unknown` is unset dates, not a closed window — the rust colour would
+          contradict the words next to it. */}
+      <span className={state === 'open' ? styles.windowOpen : state === 'unknown' ? styles.windowUnknown : styles.windowClosed}>
         {state === 'open' ? '· open now' : state === 'not-started' ? '· opens later' : state === 'closed' ? '· closed' : '· dates to be confirmed'}
       </span>
     </p>
   );
 }
+
+/** The shape `/api/open-mic/submissions` answers with, as far as step 04 needs
+ *  it. Every field optional: this is a network payload, and a server that stops
+ *  naming one must not print `undefined` into an artist's own entry line. */
+type OwnEntryRow = { status?: string; stageName?: string; songTitle?: string; voteCount?: number };
 
 /** Step 04 is the only one the server cannot answer: whose entry it is depends
  *  on who is signed in. */
@@ -58,21 +65,22 @@ function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: 
   useEffect(() => {
     let active = true;
     void (async () => {
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        if (active) setChecked(true);
-        return;
-      }
       try {
+        // Inside the try: a throw here used to strand this step on "Checking
+        // your entries…" forever, because `finally` was never reached.
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
         const res = await fetch(`/api/open-mic/submissions?contestId=${encodeURIComponent(contestId)}`, {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
-        const payload = (await res.json().catch(() => null)) as { submissions?: any[] } | null;
+        const payload = (await res.json().catch(() => null)) as { submissions?: OwnEntryRow[] } | null;
         const live = (payload?.submissions ?? []).find((row) =>
           ['published_for_voting', 'live_for_voting', 'finalist', 'winner'].includes(String(row.status))
         );
-        if (active && live) setEntry({ stageName: live.stageName, songTitle: live.songTitle, voteCount: Number(live.voteCount || 0) });
+        if (active && live?.stageName) {
+          setEntry({ stageName: live.stageName, songTitle: live.songTitle ?? '', voteCount: Number(live.voteCount || 0) });
+        }
       } finally {
         if (active) setChecked(true);
       }
@@ -95,7 +103,7 @@ function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: 
   const url = typeof window === 'undefined' ? path : `${window.location.origin}${path}`;
   return (
     <>
-      <p className={styles.tally}>Your entry: <strong>{entry.stageName}</strong> — “{entry.songTitle}” · {entry.voteCount.toLocaleString()} votes so far</p>
+      <p className={styles.tally}>Your entry: <strong>{entry.stageName}</strong>{entry.songTitle ? ` — “${entry.songTitle}”` : ''} · {entry.voteCount.toLocaleString()} votes so far</p>
       <code className={styles.entryLink}>{url}</code>
       <div className="openMic-actions">
         <Link className="openMic-button openMic-buttonOutline" href={path}>Open your entry page <span aria-hidden="true">→</span></Link>
@@ -196,7 +204,16 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                         {beat.usageRules ? ` — ${beat.usageRules}` : ''}
                       </p>
                       {beat.requiresPaidEntry ? (
-                        <p className={styles.note}>The file unlocks once your entry fee is paid — register first, then download.</p>
+                        /* Design's error-handling bullet: in this arm step 02's
+                           CTA is the apply page, never a download. */
+                        <>
+                          <p className={styles.note}>The file unlocks once your entry fee is paid — register first, then download.</p>
+                          {data ? (
+                            <div className="openMic-actions">
+                              <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/apply`}>Register to unlock the beat <span aria-hidden="true">→</span></Link>
+                            </div>
+                          ) : null}
+                        </>
                       ) : beat.downloadable && beat.downloadUrl ? (
                         <div className="openMic-actions">
                           <a className="openMic-button openMic-buttonOutline" href={beat.downloadUrl} download={`${slugifyArtist(beat.title) || 'spotlight-beat'}.mp3`}>Download beat <span aria-hidden="true">↓</span></a>
@@ -247,9 +264,12 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                             {board.entryCount} {board.entryCount === 1 ? 'entry' : 'entries'} on the board
                             {data.showVoteCounts ? ` · ${board.totalVotes.toLocaleString()} votes counted` : ''}
                           </p>
+                          {/* Keyed on rank, not artistSlug alone: the slug is a
+                              slug of a non-unique stage name (design: `K1ng$hoota`
+                              → `k1nghoota`) and this projection carries no row id. */}
                           <ol className={styles.board}>
                             {board.rows.map((row) => (
-                              <li key={row.artistSlug} data-rank={row.rank}>
+                              <li key={`${row.rank}-${row.artistSlug}`} data-rank={row.rank}>
                                 <span className={styles.rank}>{row.rank}</span>
                                 <span className={styles.who}>
                                   <strong>{row.stageName}</strong>

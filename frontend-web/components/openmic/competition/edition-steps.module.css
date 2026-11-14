@@ -3,6 +3,7 @@
 .stepState b { font-weight: 700; }
 .windowOpen { color: #1f7a3d; }
 .windowClosed { color: #8a3b12; }
+.windowUnknown { color: #4d4a45; }
 
 .beatPlayer { margin: 16px 0 12px; }
 .beatPlayer audio { width: 100%; }
