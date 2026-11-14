@@ -2595,6 +2595,13 @@ Run: `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/open-mic/op
  * The point is that a step is either live or says it is not: no control here may
  * point at a route that 401s, and nothing may print a number the admin switched
  * off. Run with --workers=1 (one `next dev` cannot serve parallel projects).
+ *
+ * Two limits of this file, so a red run is read correctly. It is a local gate
+ * only — no CI workflow runs Playwright — and it runs against the fixture with
+ * both admin switches ON, so the switch-off branches of design H2 are gated by
+ * Task 5's unit tests (`showLeaderboard` / `showVoteCounts`), not here. And
+ * Task 7's fixture submission window closes 2026-11-24: after that this spec
+ * goes red on the calendar, not the code, so re-seed the fixture first.
  */
 import { expect, test } from '@playwright/test';
 
@@ -2648,24 +2655,30 @@ test('step 05 shows the top five with counts and a way to vote', async ({ page }
   const panel = await openStep(page, 5);
   const rows = panel.locator('li[data-rank]');
   await expect(rows).toHaveCount(5);
-  await expect(rows.nth(0)).toContainText('Adaeze Okonkwo');
-  // The requirement is the number, not just the name — a board that lists who is
-  // winning without their votes has not answered step #05. Both ends of the slice
-  // are pinned so a missing `public_vote_count` cannot hide behind row 1, and the
-  // boundaries mean a padded 4120 or 960 cannot pass for the real counts.
-  await expect(rows.nth(0)).toContainText(/\b412\b/);
-  await expect(rows.nth(4)).toContainText(/\b96\b/);
-  // Design table row 05: a Vote CTA per contestant, each into that contestant's
-  // own voting page — the artist card is where the vote modal actually lives, so
-  // five links to one board would not be a CTA "per each contestant". The slugs
-  // are `slugifyArtist(stageName)` on Task 7's fixture names, and each of the
-  // five resolves 200 for an anonymous reader.
-  const artistSlugs = ['adaeze-okonkwo', 'bello-miracle', 'tunde-signals', 'k1nghoota', 'zabbymoney'];
+  // Task 7's fixture board in rank order, pinned row by row. The vote count is
+  // the requirement, not decoration — a board that names who is winning without
+  // their votes has not answered step #05 — and pinning every row rather than
+  // the two ends is what catches a board that repeats or shifts a middle value.
+  // The word boundaries stop a padded 4120 from passing for 412. Each slug is
+  // `slugifyArtist(stageName)`; every artist page answers 200 to an anonymous
+  // reader and hosts the vote modal, so the row CTA lands where that one
+  // artist's vote can actually be cast. Five links to one board would not be a
+  // CTA "per each contestant" — design row #05, ruling 8-B.
+  const standings = [
+    { name: 'Adaeze Okonkwo', votes: /\b412\b/, slug: 'adaeze-okonkwo' },
+    { name: 'Bello Miracle', votes: /\b388\b/, slug: 'bello-miracle' },
+    { name: 'Tunde Signals', votes: /\b251\b/, slug: 'tunde-signals' },
+    { name: 'K1ng$hoota', votes: /\b190\b/, slug: 'k1nghoota' },
+    { name: 'Zabbymoney', votes: /\b96\b/, slug: 'zabbymoney' },
+  ];
   await expect(rows.getByRole('link', { name: /^vote$/i })).toHaveCount(5);
-  for (const rank of [1, 2, 3, 4, 5]) {
-    await expect(rows.nth(rank - 1).getByRole('link', { name: /^vote$/i })).toHaveAttribute(
+  for (const [index, row] of standings.entries()) {
+    const line = rows.nth(index);
+    await expect(line).toContainText(row.name);
+    await expect(line).toContainText(row.votes);
+    await expect(line.getByRole('link', { name: /^vote$/i })).toHaveAttribute(
       'href',
-      `/open-mic/${SLUG}/entry/${artistSlugs[rank - 1]}`,
+      `/open-mic/${SLUG}/entry/${row.slug}`,
     );
   }
   await expect(panel.getByRole('link', { name: /vote now/i })).toHaveAttribute('href', `/open-mic/${SLUG}/entries`);
