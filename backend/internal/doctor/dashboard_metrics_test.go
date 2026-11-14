@@ -66,6 +66,11 @@ func TestDashboardSatisfactionPct(t *testing.T) {
 		{"4,5,5 rounds to 93", ReputationSummary{AverageRating: 4.6666666666666665, ReviewCount: 3}, ptr.Of(93.0)},
 		{"perfect", ReputationSummary{AverageRating: 5, ReviewCount: 1}, ptr.Of(100.0)},
 		{"one star is not nil", ReputationSummary{AverageRating: 1, ReviewCount: 2}, ptr.Of(20.0)},
+		// The other half of the nil-vs-zero rule: reviews exist and every one is
+		// zero stars. GetReputation's COALESCE(AVG,0) returns 0 for THIS too, so
+		// only ReviewCount separates a hated practice from an unreviewed one — and
+		// 0 must survive as 0, not collapse into the nil above it.
+		{"zero stars with reviews is 0, not nil", ReputationSummary{AverageRating: 0, ReviewCount: 7}, ptr.Of(0.0)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

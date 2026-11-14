@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/internal/finance/settlement"
 	"time"
 )
@@ -99,9 +100,12 @@ type dashboardCounters struct {
 // repository_ops.go:409) and GET /doctor/profile reads back through this very
 // GetProfile — NOT doctor_availability.timezone, which no screen ever sets (a
 // doctor who chose Asia/Karachi would otherwise have every "today" predicate
-// anchored to Lagos). `GET /schedule` is NOT a read-back: ScheduleSettings has
-// no timezone field (handler_tail2.go:493-498); see spec F5. A doctor with no
-// profile row at all is the default, not an error.
+// anchored to Lagos). `GET /schedule` is not a read-back of this column: its
+// ScheduleSettings carries no timezone at the top level (handler_tail2.go:493-498),
+// and the only zone that response could ever reach transitively is
+// `doctor_availability.timezone`, a different column — see spec F5 for what that
+// costs the screen that offers the picker. A doctor with no profile row at all is
+// the default, not an error.
 func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string, error) {
 	p, err := s.repo.GetProfile(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
@@ -113,7 +117,36 @@ func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string,
 	if p.Timezone == "" {
 		return defaultDoctorTimezone, nil
 	}
-	return p.Timezone, nil
+	return s.repo.usableTimezone(ctx, p.Timezone)
+}
+
+// usableTimezone answers tz only if Postgres will accept it as a zone name, and
+// the default otherwise. `AT TIME ZONE` raises SQLSTATE 22023 ("time zone … not
+// recognized") for a name the server does not know, and every date expression in
+// this file interpolates that parameter — so without this check one bad value in
+// doctor_profiles.timezone turns the whole dashboard into a 500. The write path
+// offers no protection: Service.SetTimezone (service_ops.go:365) stores whatever
+// the client sends, with only an empty-string default. Before this PR the column
+// was only ever selected or written, never handed to a date expression, so a bad
+// value was inert; interpolating it into `AT TIME ZONE` is what makes it fatal.
+//
+// The probe has to be Postgres's own test rather than a catalog lookup, because
+// `pg_timezone_names` is not what `AT TIME ZONE` accepts: the fixed offsets
+// "-05" and "+05:30" are absent from that view yet valid as zones, so an EXISTS
+// check would silently downgrade a doctor's real setting to Lagos.
+func (r *Repository) usableTimezone(ctx context.Context, tz string) (string, error) {
+	const probe = `SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE $1::text, 'YYYY-MM-DD')`
+	var day string
+	if err := r.db.QueryRow(ctx, probe, tz).Scan(&day); err != nil {
+		// 22023 = invalid_parameter_value, which is what an unrecognised zone
+		// raises. Anything else — a dead pool, a lost connection — is a real
+		// failure and must surface rather than hide behind the default.
+		if dbutil.SQLState(err) == "22023" {
+			return defaultDoctorTimezone, nil
+		}
+		return "", fmt.Errorf("doctor: probe timezone %q: %w", tz, err)
+	}
+	return tz, nil
 }
 
 // dashboardAggregates counts today's and upcoming consults and this month's

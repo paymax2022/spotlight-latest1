@@ -376,7 +376,13 @@ func mustToday(t *testing.T, pool *pgxpool.Pool, userID, tz string) string {
 // just created — a second uuid.NewString() there would match nothing and silently
 // leave settlement_id NULL, which reads back as "no consult money" rather than an
 // error. One reference per fixture (cleanup deletes by reference), many keys.
-func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, providerKobo, platformFeeKobo int64, settled bool) {
+// Production writes reference = "appointment:"+apptID (telemedicine/service.go:509);
+// this fixture deliberately does not copy that shape, because a per-appointment
+// reference would break the single cleanup DELETE that keys on the shared one.
+// Nothing in the projection reads `reference`, so the difference is inert — if a
+// future read ever does key on it, this helper stops being a safe substitute for
+// the real escrow path and says so here.
+func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, providerKobo, platformFeeKobo int64, settled bool, moduleType string) {
 	t.Helper()
 	ctx := context.Background()
 	key := "metrics-" + uuid.NewString()
@@ -387,11 +393,14 @@ func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, 
 	if settled {
 		settledAt = time.Now().UTC()
 	}
+	// moduleType is a parameter, not the literal 'telemedicine', so one call site can
+	// prove the read's module filter bites. settlements.module_type is plain text with
+	// no CHECK and no FK (verified against the live catalog), so any label inserts.
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO settlements (reference, module_type, payer_id, total_kobo, fee_kobo, provider_kobo,
 		                         status, settled_at, idempotency_key)
-		VALUES ($1,'telemedicine',$2,$3,0,$4,$5,$6,$7)`,
-		"metrics-"+f.doctorUser, f.patient, totalKobo, providerKobo, status, settledAt, key); err != nil {
+		VALUES ($1,$8,$2,$3,0,$4,$5,$6,$7)`,
+		"metrics-"+f.doctorUser, f.patient, totalKobo, providerKobo, status, settledAt, key, moduleType); err != nil {
 		t.Fatalf("insert settlement (%s): %v", status, err)
 	}
 	if _, err := f.pool.Exec(ctx, `
@@ -413,11 +422,32 @@ func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
 	tz := defaultDoctorTimezone
 
 	settledID, _ := f.bookLocal(t, tz, "completed", -3, 10*60)
-	f.escrow(t, settledID, "settled", 200000, 170000, 0, true)
+	f.escrow(t, settledID, "settled", 200000, 170000, 0, true, "telemedicine")
 	escrowedID, _ := f.bookLocal(t, tz, "booked", 1, 10*60)
-	f.escrow(t, escrowedID, "escrowed", 200000, 0, 2000, false)
+	// provider_kobo here is deliberately NOT the 0 a real escrowed row carries
+	// (Settle writes it in the same tx that flips status to 'settled', so no live
+	// row is ever both unsettled and paid). It is what makes `st.status =
+	// 'settled'` in settledQ load-bearing: leave it 0 and that predicate can be
+	// deleted with all three assertions below still green. The escrowed read never
+	// looks at provider_kobo — only total_kobo and the fee — so PendingKobo is
+	// unaffected by the value chosen here.
+	f.escrow(t, escrowedID, "escrowed", 200000, 168300, 2000, false, "telemedicine")
 	refundedID, _ := f.bookLocal(t, tz, "cancelled", -5, 10*60)
-	f.escrow(t, refundedID, "refunded", 300000, 0, 0, false)
+	f.escrow(t, refundedID, "refunded", 300000, 0, 0, false, "telemedicine")
+	// The rows that make BOTH module predicates load-bearing. One label is not
+	// enough, because the two reads filter on different statuses: a settled
+	// non-telemedicine row can only ever be excluded by settledQ's predicate, and
+	// an escrowed one only by escrowedQ's. Each therefore needs its own row, both
+	// with money in the column that read sums — otherwise deleting either filter
+	// stays green, and a restaurant or mobility payout to the same human starts
+	// appearing in their consult earnings. `settlements.module_type` is plain text
+	// with no CHECK and no FK (verified against the live catalog), so 'restaurant'
+	// inserts; locally only 'telemedicine' exists today, so ambient data could
+	// never have proven either filter on its own.
+	otherID, _ := f.bookLocal(t, tz, "completed", -2, 10*60)
+	f.escrow(t, otherID, "settled", 400000, 320000, 0, true, "restaurant")
+	otherEscrowID, _ := f.bookLocal(t, tz, "booked", 3, 10*60)
+	f.escrow(t, otherEscrowID, "escrowed", 400000, 0, 0, false, "restaurant")
 
 	rev, err := NewRepository(pool).consultRevenue(ctx, f.doctorUser, tz)
 	if err != nil {
@@ -441,15 +471,86 @@ func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
 		t.Errorf("ConsultsThisMonth = %d, want 0 — the service fills it from the aggregates", rev.ConsultsThisMonth)
 	}
 
-	// A second doctor's settlement for the same patient must not land here.
+	// A second doctor's own settlement must not land in this doctor's figures.
+	// `other` is a whole second fixture — its own doctor, its own patient uuid —
+	// so this probes the `d.user_id = $1` scoping, not any patient sharing.
 	other := newMetricsFixture(t, pool)
 	otherAppt, _ := other.bookLocal(t, tz, "completed", -1, 9*60)
-	other.escrow(t, otherAppt, "settled", 900000, 765000, 0, true)
+	other.escrow(t, otherAppt, "settled", 900000, 765000, 0, true, "telemedicine")
+	// Booked, not completed: the escrowed read is the one this row must not reach.
+	otherPending, _ := other.bookLocal(t, tz, "booked", 2, 9*60)
+	other.escrow(t, otherPending, "escrowed", 500000, 0, 0, false, "telemedicine")
 	rev2, err := NewRepository(pool).consultRevenue(ctx, f.doctorUser, tz)
 	if err != nil {
 		t.Fatalf("consultRevenue after second doctor: %v", err)
 	}
 	if rev2.LifetimeKobo != rev.LifetimeKobo {
-		t.Errorf("LifetimeKobo moved to %d — the read is not scoped to the doctor", rev2.LifetimeKobo)
+		t.Errorf("LifetimeKobo moved to %d — the settled read is not scoped to the doctor", rev2.LifetimeKobo)
+	}
+	// The settled probe above cannot protect escrowedQ: an unscoped escrowed read
+	// would add 425000 to PendingKobo, so PendingKobo needs its own assertion.
+	if rev2.PendingKobo != rev.PendingKobo {
+		t.Errorf("PendingKobo moved to %d, want %d — the escrowed read is not scoped to the doctor",
+			rev2.PendingKobo, rev.PendingKobo)
+	}
+}
+
+// A value Postgres will not accept as a zone name must degrade to the default, not
+// 500 the dashboard. This is reachable through the live API: PUT /schedule/timezone
+// stores its body verbatim (service_ops.go:365 validates nothing but the empty
+// string), and every date expression in this plan hands that column to
+// `AT TIME ZONE`. 'Mars/Olympus_Mons' is the name Postgres itself rejects with
+// SQLSTATE 22023, so the assertion below is the same server decision the read
+// makes — which is why usableTimezone probes the expression instead of consulting
+// pg_timezone_names (where valid fixed offsets like "-05" are simply absent).
+func TestLiveDB_DashboardTimezonePoisonedZoneDegrades(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	ctx := context.Background()
+
+	// One consult on today's local date, so the aggregate read has something to
+	// count once the zone resolves. bookLocal returns (id, ref) and already
+	// t.Fatalf's on a failed insert, so there is no error here to check — the
+	// brief's `if _, err := f.bookLocal(...)` does not compile against it.
+	f.bookLocal(t, defaultDoctorTimezone, "completed", 0, 10*60)
+	res, err := pool.Exec(ctx,
+		`UPDATE doctor_profiles SET timezone = 'Mars/Olympus_Mons' WHERE user_id = $1`, f.doctorUser)
+	if err != nil {
+		t.Fatalf("poison timezone: %v", err)
+	}
+	if res.RowsAffected() != 1 {
+		t.Fatalf("poison timezone matched %d rows, want 1 — the fixture created no profile row", res.RowsAffected())
+	}
+
+	tz, err := metricsService(pool).dashboardTimezone(ctx, f.doctorUser)
+	if err != nil {
+		t.Fatalf("dashboardTimezone with a poisoned zone: %v — a bad zone must degrade, not fail the read", err)
+	}
+	if tz != defaultDoctorTimezone {
+		t.Errorf("dashboardTimezone = %q, want %q", tz, defaultDoctorTimezone)
+	}
+
+	// The point of the fallback: the aggregate that uses it still answers, instead
+	// of raising 22023 through every date predicate in the query.
+	agg, err := NewRepository(pool).dashboardAggregates(ctx, f.doctorUser, tz)
+	if err != nil {
+		t.Fatalf("dashboardAggregates with a poisoned zone: %v", err)
+	}
+	if agg.TodaysCount != 1 {
+		t.Errorf("TodaysCount = %d, want 1", agg.TodaysCount)
+	}
+
+	// A zone Postgres accepts but pg_timezone_names does not list must survive —
+	// otherwise the guard silently overwrites a doctor's real fixed-offset setting.
+	if _, err := pool.Exec(ctx,
+		`UPDATE doctor_profiles SET timezone = '-05' WHERE user_id = $1`, f.doctorUser); err != nil {
+		t.Fatalf("set fixed offset: %v", err)
+	}
+	tzOffset, err := metricsService(pool).dashboardTimezone(ctx, f.doctorUser)
+	if err != nil {
+		t.Fatalf("dashboardTimezone for a fixed offset: %v", err)
+	}
+	if tzOffset != "-05" {
+		t.Errorf("dashboardTimezone = %q, want the doctor's own '-05' — a catalog lookup would have downgraded this", tzOffset)
 	}
 }
