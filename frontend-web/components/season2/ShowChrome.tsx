@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import HeaderDrawer from '@/components/marketing/HeaderDrawer';
+import { isDrawerOpen } from '@/components/marketing/DrawerEnhancement';
 import { ArrowIcon } from './Icons';
 import { LOGO } from './content';
 
@@ -31,7 +32,7 @@ export function ApplicationHeader({
   programmeLabel = 'The show',
   ctaLabel = 'Season 2',
 }: ApplicationChrome = {}) {
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(() => isDrawerOpen('drawer'));
   const toggleMenu = () => setMenuOpen((current) => !current);
   const closeMenu = () => setMenuOpen(false);
   const nav = [
@@ -65,6 +66,7 @@ export function ApplicationHeader({
               aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
               aria-controls="application-menu"
               aria-expanded={menuOpen}
+              data-drawer-toggle="drawer"
               onClick={toggleMenu}
             >
               <span />

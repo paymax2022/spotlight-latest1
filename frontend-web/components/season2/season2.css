@@ -56,9 +56,6 @@
 .sp-season2 .skip { position: fixed; top: -60px; left: 12px; z-index: 10; background: var(--paper); color: var(--ink); padding: 10px 16px; }
 .sp-season2 .skip:focus { top: 12px; }
 .sp-season2 .site-header { position: sticky; top: 0; z-index: 5; background: #150e1cf4; border-bottom: 1px solid var(--line); backdrop-filter: blur(12px); }
-.sp-season2 .season-subheader { position: sticky; top: var(--season-rail-top, 0px); z-index: 4; background: #150e1cf4; border-bottom: 1px solid var(--line); backdrop-filter: blur(12px); }
-.sp-season2 .season-subheader .wrap { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 24px; min-height: 56px; padding-block: 9px; }
-.sp-season2 .season-subheader .button { min-height: 42px; gap: 14px; padding: 9px 15px; }
 .sp-season2 .header-inner { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 25px; }
 .sp-season2 .brand { display: flex; align-items: center; gap: 10px; font: 800 22px/1 var(--head); font-family: var(--head) !important; letter-spacing: -.045em; }
 .sp-season2 .brand svg { width: 34px; height: 40px; }
@@ -625,11 +622,11 @@ html:has(.sp-season2) {
 /* Fills the gap left by #header-sticky while it is position:fixed. Rendered by
    SeasonSiteChrome only while the sticky class is on, so the document never
    shifts and anchor jumps stay where scroll-padding-top put them. */
-.site-header-spacer { height: var(--season-rail-top, 92px); }
+.site-header-spacer { height: 92px; }
 
-/* /apply/sme-pitch-contest carries the template header but no season rail, so
-   --season-chrome-top is never published and the 153px fallback above would
-   leave the skip link landing ~50px short. Two classes outrank
+/* /apply/sme-pitch-contest carries the template header and no season header of
+   its own, so --season-chrome-top is never published and the 153px fallback
+   above would leave the skip link landing ~50px short. Two classes outrank
    html:has(.sp-season2) at every width, including the 700px override below. */
 html:has(.sp-season2.sp-sme) {
   scroll-padding-top: 104px;
