@@ -6,15 +6,16 @@
  * as part of the Open Mic Path A console (see
  * docs/adr/ADR-047-admin-console-consolidation-path-a.md).
  *
- * Same fields, same POST /api/admin/open-mic/contests route, reached through
- * the web proxy. One deliberate omission: the original had a beat-file
- * upload control; the web proxy forwards bodies as text, which corrupts a
- * binary multipart upload (see openMicAdminService.createOpenMicContest's
- * header comment). Only the "paste a beat URL" path is kept here.
+ * Same fields, same POST /api/admin/open-mic/contests route, reached through the
+ * web proxy. The beat arrives as an mp3 upload through /api/web-proxy — the
+ * paste-a-URL-only path was removed because the public beat reader serves only
+ * /api/open-mic/beats/… paths, so a pasted third-party URL looked fillable and
+ * played for nobody.
  */
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
-import { createOpenMicContest, type CreateOpenMicContestInput } from '@/services/openMicAdminService';
+import { createOpenMicContest, uploadOpenMicBeat, type CreateOpenMicContestInput } from '@/services/openMicAdminService';
+import { beatUrlProblem } from '@/features/openmic/beat-url';
 import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
 
 const NIGERIA_STATES = [
@@ -40,6 +41,11 @@ export default function NewOpenMicContestPage() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [beatBusy, setBeatBusy] = useState(false);
+  // This one line says both "uploaded" and "refused", so it carries its own tone:
+  // `tone` drives colour *and* ARIA role, which keeps the distinction true for a
+  // screen reader without putting a hex value in the test.
+  const [beatNote, setBeatNote] = useState<{ text: string; tone: 'ok' | 'bad' } | null>(null);
   const [form, setForm] = useState({
     title: '', slug: '', description: '',
     month: new Date().getMonth() + 1, year: new Date().getFullYear(),
@@ -72,9 +78,27 @@ export default function NewOpenMicContestPage() {
     if (!form.city.trim()) e.city = 'City is required.';
     if (!form.venueName.trim()) e.venueName = 'Finale venue name is required.';
     if (!form.beatTitle.trim()) e.beatTitle = 'Official beat title is required.';
-    if (!form.beatDownloadUrl.trim()) e.beatDownloadUrl = 'Official beat file URL is required.';
+    if (!form.beatDownloadUrl.trim()) e.beatDownloadUrl = 'Upload the official beat mp3.';
+    else if (beatUrlProblem(form.beatDownloadUrl) !== null) {
+      e.beatDownloadUrl = 'Upload the beat mp3 — the programme page cannot play that address.';
+    }
     return e;
   }, [form]);
+
+  async function uploadBeat(file: File) {
+    setBeatBusy(true);
+    setBeatNote(null);
+    try {
+      const beat = await uploadOpenMicBeat(file);
+      setField('beatDownloadUrl', beat.downloadUrl);
+      setField('beatPreviewUrl', beat.previewUrl);
+      setBeatNote({ text: 'Beat uploaded — artists can now play and download it.', tone: 'ok' });
+    } catch (e) {
+      setBeatNote({ text: e instanceof Error ? e.message : String(e), tone: 'bad' });
+    } finally {
+      setBeatBusy(false);
+    }
+  }
 
   async function submit() {
     setError('');
@@ -131,18 +155,18 @@ export default function NewOpenMicContestPage() {
         <section>
           <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Contest Identity</h3>
           <div style={fieldWrap}>
-            <label style={labelStyle}>Contest Title*</label>
-            <Input value={form.title} onChange={(e) => setField('title', e.target.value)} style={{ width: '100%' }} />
+            <label style={labelStyle} htmlFor="open-mic-title">Contest Title*</label>
+            <Input id="open-mic-title" value={form.title} onChange={(e) => setField('title', e.target.value)} style={{ width: '100%' }} />
             {fieldErrors.title && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.title}</p>}
           </div>
           <div style={fieldWrap}>
-            <label style={labelStyle}>Contest Slug*</label>
-            <Input value={form.slug} onChange={(e) => { setSlugTouched(true); setField('slug', slugify(e.target.value)); }} style={{ width: '100%' }} />
+            <label style={labelStyle} htmlFor="open-mic-slug">Contest Slug*</label>
+            <Input id="open-mic-slug" value={form.slug} onChange={(e) => { setSlugTouched(true); setField('slug', slugify(e.target.value)); }} style={{ width: '100%' }} />
             {fieldErrors.slug && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.slug}</p>}
           </div>
           <div style={fieldWrap}>
-            <label style={labelStyle}>Description*</label>
-            <textarea value={form.description} onChange={(e) => setField('description', e.target.value)} rows={3}
+            <label style={labelStyle} htmlFor="open-mic-description">Description*</label>
+            <textarea id="open-mic-description" value={form.description} onChange={(e) => setField('description', e.target.value)} rows={3}
               style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${colors.inputBorder}`, fontSize: 13 }} />
             {fieldErrors.description && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.description}</p>}
           </div>
@@ -152,13 +176,13 @@ export default function NewOpenMicContestPage() {
           <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Edition and Status</h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div style={fieldWrap}>
-              <label style={labelStyle}>Month*</label>
-              <Input type="number" value={form.month} onChange={(e) => setField('month', Number(e.target.value))} style={{ width: '100%' }} />
+              <label style={labelStyle} htmlFor="open-mic-month">Month*</label>
+              <Input id="open-mic-month" type="number" value={form.month} onChange={(e) => setField('month', Number(e.target.value))} style={{ width: '100%' }} />
               {fieldErrors.month && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.month}</p>}
             </div>
             <div style={fieldWrap}>
-              <label style={labelStyle}>Year*</label>
-              <Input type="number" value={form.year} onChange={(e) => setField('year', Number(e.target.value))} style={{ width: '100%' }} />
+              <label style={labelStyle} htmlFor="open-mic-year">Year*</label>
+              <Input id="open-mic-year" type="number" value={form.year} onChange={(e) => setField('year', Number(e.target.value))} style={{ width: '100%' }} />
               {fieldErrors.year && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.year}</p>}
             </div>
             <div style={fieldWrap}>
@@ -207,11 +231,12 @@ export default function NewOpenMicContestPage() {
         <section>
           <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Official Beat</h3>
           <p style={{ fontSize: 12, color: colors.muted, marginTop: -6, marginBottom: 10 }}>
-            Paste a hosted URL — file upload isn&apos;t available from this console (see code comment for why).
+            Upload the beat mp3. The programme page can only play and offer a file this site
+            stores; a URL from another host will not open for an artist.
           </p>
           <div style={fieldWrap}>
-            <label style={labelStyle}>Official Beat Title*</label>
-            <Input value={form.beatTitle} onChange={(e) => setField('beatTitle', e.target.value)} style={{ width: '100%' }} />
+            <label style={labelStyle} htmlFor="open-mic-beat-title">Official Beat Title*</label>
+            <Input id="open-mic-beat-title" value={form.beatTitle} onChange={(e) => setField('beatTitle', e.target.value)} style={{ width: '100%' }} />
             {fieldErrors.beatTitle && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.beatTitle}</p>}
           </div>
           <div style={fieldWrap}>
@@ -219,13 +244,52 @@ export default function NewOpenMicContestPage() {
             <Input value={form.beatProducerName} onChange={(e) => setField('beatProducerName', e.target.value)} style={{ width: '100%' }} />
           </div>
           <div style={fieldWrap}>
-            <label style={labelStyle}>Beat File URL (Download)*</label>
-            <Input value={form.beatDownloadUrl} onChange={(e) => setField('beatDownloadUrl', e.target.value)} placeholder="https://..." style={{ width: '100%' }} />
-            {fieldErrors.beatDownloadUrl && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.beatDownloadUrl}</p>}
+            <label style={labelStyle} htmlFor="open-mic-beat-file">Upload Beat File (MP3)*</label>
+            <Input
+              id="open-mic-beat-file"
+              type="file"
+              accept=".mp3"
+              disabled={beatBusy}
+              onChange={(e) => {
+                const selected = e.target.files?.[0];
+                if (selected) void uploadBeat(selected);
+              }}
+            />
+            {beatBusy ? <p style={{ fontSize: 12, color: colors.muted, margin: '4px 0 0' }}>Uploading…</p> : null}
+            {beatNote ? (
+              <p
+                role={beatNote.tone === 'ok' ? 'status' : 'alert'}
+                style={{ fontSize: 12, color: beatNote.tone === 'ok' ? colors.success : colors.danger, margin: '4px 0 0' }}
+              >
+                {beatNote.text}
+              </p>
+            ) : null}
           </div>
           <div style={fieldWrap}>
-            <label style={labelStyle}>Beat Preview URL (Optional)</label>
-            <Input value={form.beatPreviewUrl} onChange={(e) => setField('beatPreviewUrl', e.target.value)} placeholder="https://..." style={{ width: '100%' }} />
+            <label style={labelStyle} htmlFor="open-mic-beat-download-url">Beat File URL (Download)*</label>
+            <Input id="open-mic-beat-download-url" value={form.beatDownloadUrl} onChange={(e) => { setField('beatDownloadUrl', e.target.value); setBeatNote(null); }} placeholder="/api/open-mic/beats/…" style={{ width: '100%' }} />
+            {fieldErrors.beatDownloadUrl && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.beatDownloadUrl}</p>}
+            {beatUrlProblem(form.beatDownloadUrl) === 'legacy' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                This beat was uploaded before the public-beat fix, so artists get an access error.
+                Upload the mp3 instead of pasting a URL.
+              </p>
+            ) : beatUrlProblem(form.beatDownloadUrl) === 'unplayable' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                The programme page cannot serve that address, so the beat will not play or download.
+                Upload the mp3 instead of pasting a URL.
+              </p>
+            ) : null}
+          </div>
+          <div style={fieldWrap}>
+            <label style={labelStyle} htmlFor="open-mic-beat-preview-url">Beat Preview URL (Optional)</label>
+            <Input id="open-mic-beat-preview-url" value={form.beatPreviewUrl} onChange={(e) => { setField('beatPreviewUrl', e.target.value); setBeatNote(null); }} placeholder="/api/open-mic/beats/…" style={{ width: '100%' }} />
+            {beatUrlProblem(form.beatPreviewUrl) === 'unplayable' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                The player ignores a preview it cannot serve. Upload the mp3, or leave this empty to
+                play the download file.
+              </p>
+            ) : null}
           </div>
           <div style={fieldWrap}>
             <label style={labelStyle}>Beat Usage Rules</label>
@@ -237,8 +301,8 @@ export default function NewOpenMicContestPage() {
         <section>
           <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Finale Venue</h3>
           <div style={fieldWrap}>
-            <label style={labelStyle}>Finale Venue Name</label>
-            <Input value={form.venueName} onChange={(e) => setField('venueName', e.target.value)} style={{ width: '100%' }} />
+            <label style={labelStyle} htmlFor="open-mic-venue-name">Finale Venue Name</label>
+            <Input id="open-mic-venue-name" value={form.venueName} onChange={(e) => setField('venueName', e.target.value)} style={{ width: '100%' }} />
             {fieldErrors.venueName && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.venueName}</p>}
           </div>
           <div style={fieldWrap}>
@@ -257,16 +321,16 @@ export default function NewOpenMicContestPage() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div style={fieldWrap}>
-              <label style={labelStyle}>State</label>
-              <select value={form.state} onChange={(e) => setField('state', e.target.value)} style={selectStyle}>
+              <label style={labelStyle} htmlFor="open-mic-state">State</label>
+              <select id="open-mic-state" value={form.state} onChange={(e) => setField('state', e.target.value)} style={selectStyle}>
                 <option value="">Select state</option>
                 {NIGERIA_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
               {fieldErrors.state && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.state}</p>}
             </div>
             <div style={fieldWrap}>
-              <label style={labelStyle}>City</label>
-              <Input value={form.city} onChange={(e) => setField('city', e.target.value)} style={{ width: '100%' }} />
+              <label style={labelStyle} htmlFor="open-mic-city">City</label>
+              <Input id="open-mic-city" value={form.city} onChange={(e) => setField('city', e.target.value)} style={{ width: '100%' }} />
               {fieldErrors.city && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.city}</p>}
             </div>
           </div>
