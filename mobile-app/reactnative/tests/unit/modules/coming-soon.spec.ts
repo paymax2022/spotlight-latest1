@@ -21,9 +21,15 @@ describe('moduleStateFor', () => {
     assert.equal(moduleStateFor(l, 'unlisted'), 'hidden');
   });
 
-  test('an unreachable registry renders everything rather than blanking the tab', () => {
-    assert.equal(moduleStateFor(null, 'anything'), 'visible');
-    assert.equal(moduleStateFor(undefined, 'anything'), 'visible');
+  test('an unreachable registry renders the money rails and hides the rest', () => {
+    // Fail-closed by default, with a short allowlist (see STABLE_MODULE_KEYS).
+    // The old behaviour rendered EVERY tile on a failed registry read, which is
+    // how a module still under development reached store users: the registry
+    // route simply did not exist on the web host, so every launch took this
+    // branch and the admin's publication decision never applied.
+    assert.equal(moduleStateFor(null, 'wallet'), 'visible');
+    assert.equal(moduleStateFor(null, 'telemedicine'), 'hidden');
+    assert.equal(moduleStateFor(undefined, 'anything'), 'hidden');
   });
 
   test('a response with no comingSoon field (older backend) yields no teasers', () => {
@@ -55,7 +61,8 @@ describe('visibilityFor stays backward compatible', () => {
     assert.equal(visibilityFor(l, 'unlisted'), false);
   });
 
-  test('unreachable registry still fails open', () => {
-    assert.equal(visibilityFor(null, 'anything'), true);
+  test('unreachable registry fails closed for anything not on the allowlist', () => {
+    assert.equal(visibilityFor(null, 'anything'), false);
+    assert.equal(visibilityFor(null, 'wallet'), true);
   });
 });
