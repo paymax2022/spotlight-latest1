@@ -5,10 +5,13 @@
  * enforces it is app/api/open-mic/beats/[fileKey]/route.ts.
  *
  * Mirrored here, not imported: frontend-admin and frontend-web are separately
- * deployed Next apps with no shared package between them. If the reader's
- * prefix ever changes, change it in BOTH files; tests/unit/openmic plus this
- * app's beat-upload test pin each copy to its literal, so a silent drift shows
- * up as a failing test rather than a console that warns about a URL that works.
+ * deployed Next apps — frontend-web's `@/*` maps inside itself and there is no
+ * `shared/` directory at the repo root, so neither app can reach the other's
+ * module. If the reader's prefix ever changes, change it in BOTH files. Each
+ * copy is pinned by a failing test: frontend-web's by the reader tests in
+ * tests/unit/openmic and tests/unit/media, this copy by beat-upload.test.tsx
+ * case 1, which asserts that a real reader path warns nothing — drift here
+ * makes that path look unplayable and the case dies.
  */
 export const BEAT_READER_BASE = '/api/open-mic/beats';
 export const LEGACY_UPLOAD_PREFIX = '/api/registration/uploads/';
