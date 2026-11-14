@@ -3358,7 +3358,7 @@ cd /Users/paymax/Documents/spotlight/main && git status --porcelain -- frontend-
 
 If `page.tsx` is still listed as modified — it carries another session's uncommitted lounge-application feature (~231 insertions plus the untracked `app/api/open-mic/lounge-applications/`): **STOP this task and report it.** Relocating their uncommitted code into a new file and committing it under this plan's message would rewrite someone else's in-flight work. Task 9 is already merged and the rest of the plan still stands; only the mount waits.
 
-Proceed only when that path is clean (their work landed), and re-read the file first — the line numbers below are from the working tree at the time of writing (835 lines) and will have moved.
+Proceed only when that path is clean (their work landed), and re-read the file first — the line numbers below are from the tree after the lounge-application feature landed (`b15194215`, `a5c31b2b1`; the page is 830 lines) and will move again if that page changes under this plan.
 
 - [ ] **Step 2: Move the markup to the client shell**
 
@@ -3366,7 +3366,7 @@ Copy the current `page.tsx` to `frontend-web/components/openmic/competition/Open
 
 1. Drop `import './open-mic.css';` (the route folder's CSS is imported by the server page now, so the shell has no relative path to it).
 2. Delete the `stages` const (the five prose objects, currently lines 12-43) — `OpenMicEditionSteps` owns that copy now.
-3. Change the default export to take the data and forward it, and replace the whole `<section … id="route">…</section>` block (currently lines 676-715) with the new component:
+3. Change the default export to take the data and forward it, and replace the whole `<section … id="route">…</section>` block (`:673-712`) with the new component:
 
 ```tsx
 import OpenMicEditionSteps from './OpenMicEditionSteps';
@@ -3381,7 +3381,7 @@ export default function OpenMicCompetitionView({ data }: Props) {
         <OpenMicEditionSteps data={data} />
    ```
 
-4. Repoint the closing "Go to voting" CTA (currently line 818, `href="/voting"` — `/voting` is the STEM plane and has nothing to do with Open Mic):
+4. Repoint the closing "Go to voting" CTA (`:813`, `href="/voting"` — `/voting` is the STEM plane and has nothing to do with Open Mic):
 
 ```tsx
               <a className="openMic-button openMic-buttonOutline" href={data ? `/open-mic/${data.slug}/entries` : '/open-mic'}>
@@ -3389,7 +3389,7 @@ export default function OpenMicCompetitionView({ data }: Props) {
               </a>
 ```
 
-The `useState`/`useEffect` hash-open logic and `activeStage` now live in `OpenMicEditionSteps`; remove the now-unused copies from the shell (currently lines 587-600) so lint does not flag them, and drop `useEffect` from the shell's React import if nothing else uses it.
+The `useState`/`useEffect` hash-open logic and `activeStage` now live in `OpenMicEditionSteps`; remove the now-unused copies from the shell (`:587` is `activeStage`, the `useEffect` spans `:589-600`) so lint does not flag them, and drop `useEffect` from the shell's React import — `:5` is its only occurrence in the file, so it must go.
 
 - [ ] **Step 3: Rewrite the page as the server read**
 
