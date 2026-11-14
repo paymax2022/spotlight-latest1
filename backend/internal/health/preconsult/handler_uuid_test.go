@@ -7,6 +7,7 @@ package preconsult
 // nil-pointer panic, not merely fail.
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -71,17 +72,25 @@ func TestAppointmentID_Malformed_Are400(t *testing.T) {
 
 // preconsultFail folds ErrAppointmentNotFound / ErrIntakeNotFound (missing OR
 // foreign — uniform) to 404; the default status applies to anything else.
+//
+// `code` is the part the patient-facing app can actually branch on. Every other
+// refusal here shares one status (400) with the ordinary validation failure, and
+// the wizard's reactions are opposite — a frozen intake means stop editing, a
+// rejected answer means keep going — so reading the prose sentence was the only
+// option until now. See mobile-app/reactnative/src/features/health/intakeDraftLock.ts.
 func TestPreconsultFail_Mapping(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cases := []struct {
-		err     error
-		defCode int
-		want    int
+		err      error
+		defCode  int
+		want     int
+		wantCode string
 	}{
-		{ErrAppointmentNotFound, http.StatusForbidden, http.StatusNotFound},
-		{ErrIntakeNotFound, http.StatusBadRequest, http.StatusNotFound},
-		{ErrUploadsNotConfigured, http.StatusBadRequest, http.StatusServiceUnavailable},
-		{errors.New("preconsult: invalid"), http.StatusBadRequest, http.StatusBadRequest},
+		{ErrAppointmentNotFound, http.StatusForbidden, http.StatusNotFound, ""},
+		{ErrIntakeNotFound, http.StatusBadRequest, http.StatusNotFound, ""},
+		{ErrUploadsNotConfigured, http.StatusBadRequest, http.StatusServiceUnavailable, ""},
+		{ErrIntakeAlreadySubmitted, http.StatusBadRequest, http.StatusBadRequest, "intake_already_submitted"},
+		{errors.New("preconsult: invalid"), http.StatusBadRequest, http.StatusBadRequest, ""},
 	}
 	for _, tc := range cases {
 		w := httptest.NewRecorder()
@@ -89,6 +98,17 @@ func TestPreconsultFail_Mapping(t *testing.T) {
 		preconsultFail(c, tc.err, tc.defCode)
 		if w.Code != tc.want {
 			t.Fatalf("%v: status = %d, want %d", tc.err, w.Code, tc.want)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%v: body is not JSON: %v (%s)", tc.err, err, w.Body.String())
+		}
+		if body["success"] != false {
+			t.Fatalf("%v: success = %v, want false (body %s)", tc.err, body["success"], w.Body.String())
+		}
+		gotCode, _ := body["code"].(string)
+		if gotCode != tc.wantCode {
+			t.Fatalf("%v: code = %q, want %q (body %s)", tc.err, gotCode, tc.wantCode, w.Body.String())
 		}
 	}
 }
