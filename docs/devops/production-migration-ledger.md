@@ -2375,7 +2375,9 @@ What `585bd2ca7` is, measured rather than assumed: PR #996 "feat(modules): readi
 ## Task 15 — the mobile production plane (2026-11-14)
 
 **Verdict: split — the tracked half shipped, the untracked half is escalated.** `f6e49a31c` puts the
-refusal into both release scripts; `1be3e158f` is this section's own review round, which widened it. The
+refusal into both release scripts; `1be3e158f` is this section's first review round, which widened it;
+`65ee29ec0` rebuilt the normalisation on dotenv's own rules and scoped the shadow gate; `e16da72be` made the
+read locale-proof. The
 brief's Step 2 (re-point the local `.env.production`) and Step 3 (re-build, re-grep the artifact) were
 **not executed**, and that is a ruling, not an omission. Three reasons, each independently checkable: the
 file is gitignored — `git check-ignore -v mobile-app/reactnative/.env.production` →
@@ -2394,32 +2396,41 @@ the user decides with the recipe's measured result in front of them rather than 
 mobile lane on this machine is **blocked by design**. `make build-aab-prod`,
 `npm run build:aab:production` and the VS Code production task all exit 1 at the guard, because the live
 `.env.production` still declares `staging` — re-measured for this correction round: `EXPO_PUBLIC_APP_ENV`
-declares `staging`, `wnic` ×4, `nmseef` ×0, 8 key lines carrying a staging ref. The corrected figures in
-§15.5 belong to the copy, not to the file.
+declares `staging`, `wnic` ×4, `nmseef` ×0, 8 key lines carrying a staging ref. Re-measured again in round 3,
+this time by running the shipped 14-line pipeline against main's real file without copying it (`ENV_FILE`
+pointed at the absolute path, read-only): it prints `declares EXPO_PUBLIC_APP_ENV=staging` and exits 1. The
+corrected figures in §15.5 belong to the copy, not to the file.
 
 ### 15.1 What landed
 
-- `build-aab.sh:134-152` and `build-apk.sh:154-172` (`1be3e158f`, then hardened in this task's round 2;
-  the first commit had them at `:131-138` / `:146-153`, and at `f6e49a31c` they were `:130-135` and
-  `:142-147`). Immediately after the `ENV_FILE` existence check (`:119-125` / `:126-132`) and before
-  `EXPECTED_API` is read (`:156` / `:176`), both scripts extract `EXPO_PUBLIC_APP_ENV` from `$ENV_FILE`,
-  normalise it, and `exit 1` when `NODE_ENV=production` and the result is not `production` — absent
-  declaration included — pointing at `node scripts/export-eas-profile-env.mjs production`. The
-  **14-line extraction pipeline** (`:134-147` / `:154-167`) is byte-identical across the two scripts, and
+- `build-aab.sh:134-158` and `build-apk.sh:154-178` (`1be3e158f`, rewritten in this task's round 2, then
+  made locale-proof in round 3 as `e16da72be`; the first commit had them at `:131-138` / `:146-153`, and at
+  `f6e49a31c` they were `:130-135` and `:142-147`). Immediately after the `ENV_FILE` existence check
+  (`:119-125` / `:126-132`) and before `EXPECTED_API` is read (`:162` / `:182`), both scripts extract
+  `EXPO_PUBLIC_APP_ENV` from `$ENV_FILE`, normalise it, and `exit 1` when `NODE_ENV=production` and the
+  result is not `production` — absent declaration included — pointing at
+  `node scripts/export-eas-profile-env.mjs production`. The
+  **14-line extraction pipeline** (`:140-153` / `:160-173`) is byte-identical across the two scripts, and
   `guard-test.sh` now diffs it on every run, so there is one semantics here rather than two that can drift.
 - **What round 2 changed, and the rule it is now pinned to.** The `1be3e158f` pipeline was a `grep` +
   `cut` + `tr -d '\r'` + a `sed -E` chain. Measured against dotenv 16.4.7 — what `@expo/env` 2.0.12 loads
   through, and the package whose `LINE` regex at `mobile-app/reactnative/node_modules/dotenv/lib/main.js:9`
-  defines the rules — it was wrong in both directions. Re-running the `1be3e158f` pipeline over all 57
-  fixtures (`/tmp/old-vs-dotenv.sh`, kept as scratch): it **refused 12 spellings the loader reads as
-  `production`** — backtick quotes (`bq`, `bq-plus-comment`), an `export ` prefix (`export`, `export-sp`,
+  defines the rules — it was wrong in both directions. `old-vs-dotenv.sh` in this workspace replays that
+  `1be3e158f` pipeline over the **same table** `guard-test.sh` drives the shipped guard with — it reads the
+  rows out of the harness, so a fixture added there is measured here too — and over all **60** fixtures it
+  prints **15 refused / 4 passed** (`./old-vs-dotenv.sh /tmp/rn1`, `/tmp/rn1` being a scratch directory
+  holding `git show 1be3e158f:mobile-app/reactnative/build-apk.sh`; it refuses a tree that already has an
+  `.env.production`, same hazard as the harness). 12 of the 15 refusals are spellings the loader reads as
+  `production` — backtick quotes (`bq`, `bq-plus-comment`), an `export ` prefix (`export`, `export-sp`,
   `export-tab`), leading whitespace before the key (`lead-sp-key`, `tab-lead-key`), and the whole
   `KEY: value` colon form (`colon-sp`, `colon-tab`, `colon-quoted`, `colon-two-space`, `colon-export`) —
-  and it **passed 3 spellings the loader does not**: `prod\ruction` and `"prod\ruction"`, because `tr -d`
+  and the other 3 are the bare-CR fixtures in the known-limit bullet below. Of the 4 passes, 3 are
+  spellings the loader does not accept: `prod\ruction` and `"prod\ruction"`, because `tr -d`
   *deletes* the CR instead of treating it as a line terminator, and `"'production'"`, because two
   sequential `sed` quote-strips remove two layers where dotenv removes one. (The old chain's fourth
-  false pass, `swallow-case`, is the divergence the new pipeline deliberately keeps — see the known-limit
-  bullet below, not a fix it claims.) The pipeline now mirrors dotenv's actual
+  false pass, `swallow-case`, is one of the four divergences the new pipeline keeps on purpose — see the
+  known-limit bullet below, not a fix it claims. Round 2 cited this run as "12 and 3": the same probe, before
+  the three CR fixtures were added.) The pipeline now reproduces dotenv's
   rules: `^[[:space:]]*(export[[:space:]]+)?KEY` then either `[[:space:]]*=[[:space:]]*` or
   `:[[:space:]]+` (colon needs the space, and nothing before the colon — `KEY : value` parses nowhere),
   last assignment wins, CR cut **from** the value rather than deleted out of it, an unquoted `#` starts a
@@ -2430,68 +2441,129 @@ declares `staging`, `wnic` ×4, `nmseef` ×0, 8 key lines carrying a staging ref
   preserved rather than gained). All of it is one `sed` expression: two
   `-e`s would run the second against what the first already substituted, and a value that itself looks
   like a declaration (`EXPO_PUBLIC_APP_ENV=EXPO_PUBLIC_APP_ENV: production`) would then be read twice and
-  **pass on the second read** — which dotenv does not do.
+  **pass on the second read** — which dotenv does not do. The four rows where the two still disagree are
+  the known-limit bullet below, which also says which way each of them falls. Three of the four make the
+  guard refuse a build the loader would have wired correctly — that is the only direction a divergence in a
+  safety gate should ever go — and the fourth is safe for a different reason, stated there rather than
+  glossed as "fails closed".
+- **Why the normalisation is shell and not the loader itself** (asked by round 2's review, ruling R2-3).
+  Asking `dotenv` would agree with the parser by construction, and a future host will reach for it:
+  `node -e 'require("dotenv").parse(...)'` inside the release script. It cannot work here. The guard runs
+  at `:155` / `:175`, ahead of the first `node` call in either script (`:191` / `:218`,
+  `scripts/check-env-mocks.mjs`), and a checkout is allowed to have no `node_modules` at all — this plan's
+  own worktree does not — so a guard that needs the installed loader is a guard that cannot run on the
+  machine that needs it. The 14 lines of `sed`/`awk` are therefore pinned to the loader by a measured
+  60-row differential table, not by a shared implementation, and `env-parse-diff.mjs` regenerates that
+  table's loader column against the real `dotenv` — it `createRequire`s `main`'s installed copy by absolute
+  path, so it produces the oracle from a worktree that has no `node_modules` of its own.
+- **Round 3: the read must not be able to kill the script (review N-2).** Round 2 replaced a chain whose
+  `sed` only ever saw an already-extracted line with one that runs over the whole file. BSD `sed -E` with
+  `[[:space:]]` aborts on a byte sequence that is illegal in the host locale: on
+  `LC_ALL=en_US.UTF-8` a file holding `EXPO_PUBLIC_APP_ENV=production` plus one stray `\xff\xfe` makes the
+  `sed` print `RE error: illegal byte sequence` and exit **1** — after printing the match, but the status
+  is what `set -euo pipefail` sees, and inside `$(...)` that abort ends the script at the assignment, so
+  the refusal's remedy never prints. Round 1's chain is immune on the same file (measured: `production`,
+  rc 0), so the abort was a regression the rewrite introduced — and a harmless-outcome one: nothing ships
+  wrong, the build just dies with a `sed` error instead of an instruction. The guard now pins its own read:
+  `LC_ALL=C` on the `sed` (same file → `production`, rc 0) with `|| true` kept for any other pipeline
+  failure. They are not duplicates — with only `|| true` the message would print `declares <unset>` for a
+  file that does declare production, which is a wrong diagnosis of a real failure. A broken read therefore
+  always lands on the empty value, and the empty value is refused. Evidence:
+  `.superpowers/sdd/…/task-15-locale-probe.txt` (the four-way measurement, and the shipped script running
+  clean end to end on the poisoned file with zero `illegal byte sequence` lines).
 - **Deliberate divergence, recorded so a future host does not "fix" it.** Capital `Production` is refused
-  although `src/lib/serverProfile.ts:53,60` — `isSwitchAvailable` ends in `SWITCH_ENVIRONMENTS.has(appEnv
+  although `src/lib/serverProfile.ts:53,59-61` — `isSwitchAvailable` ends in `SWITCH_ENVIRONMENTS.has(appEnv
   .trim())` — treats anything not exactly in its allowlist as not-switchable, so `Production` would in fact
   build a safe production-behaving bundle. The same reasoning covers a quoted-and-padded `" production "`
-  (`dq-padded-inside`): dotenv hands the padding through, the runtime trims it away, and the guard still
+  (`dq-padded-inside`): dotenv hands the padding through, the runtime trims it away — the source comment at
+  `:57` gives `' staging '` as its own example of a value that counts — and the guard still
   refuses. Both are exact-token comparisons against what
   `scripts/export-eas-profile-env.mjs production` writes, so a mis-cased or padded declaration stops a
-  release instead of quietly becoming the file's own dialect. **Known limit,
-  same class and it fails closed:** dotenv matches with `/mg` over the whole file, so a *closed* multi-line
-  quoted value earlier in the file swallows the declaration line and dotenv then never sees the key
-  (`swallow-case` in the harness). The line-based pipeline reads it and stays silent. That is safe — an
-  unset or unparseable `EXPO_PUBLIC_APP_ENV` is outside the `serverProfile.ts` allowlist, so the switch is
-  hidden and the app behaves as production — and the real file cannot hit it today: its line 241
+  release instead of quietly becoming the file's own dialect. **Known limits — four fixtures pin them, and
+  they fall in opposite directions.** (a) *A closed quote earlier in the file:* dotenv matches with `/mg`
+  over the whole file, so a *closed* multi-line quoted value earlier in the file swallows the declaration
+  line and dotenv then never sees the key (`swallow-case` in the harness, where the loader column reads
+  `<unset>`). The line-based pipeline reads the declaration and **stays silent** — this one does not fail
+  closed, and the harness row says so rather than being written to look like it does. It is still not a
+  hazard, for a runtime reason and not a guard reason: what ships is whatever the loader produced, the
+  loader produced nothing for the key, and `src/lib/serverProfile.ts:50-52` says out loud what happens then —
+  "an unset, empty or unrecognised `EXPO_PUBLIC_APP_ENV` … is treated as production, so a typo can only hide
+  the switch, never expose it in a shipped build". The cost of
+  the divergence is a lost reminder, not a wrong build. (b) *A bare `CR` used as the line terminator:*
+  dotenv's `/m` ends a line at a lone `\r`, so
+  `EXPO_PUBLIC_APP_ENV=staging<CR>EXPO_PUBLIC_APP_ENV=production<CR>` means `production` to the loader,
+  while `sed` sees one physical line and cuts at the first CR — the guard reads `staging` and refuses. The
+  same class covers `A=1<CR>EXPO_PUBLIC_APP_ENV=production<CR>` (the pattern anchors at the physical line
+  start, so the guard reads `<unset>`) and the mixed `<CR>`-terminated-then-`LF` form (`staging` again); all
+  three are harness rows `cr-sep-last-wins`, `cr-sep-lead`, `cr-sep-mixed`, and the three guard-side values
+  above are the shipped pipeline measured against those exact bodies. These fail closed in the literal sense:
+  a build that would have been wired correctly is blocked, which is the direction a safety gate is allowed
+  to err. (c) What neither class can do is ship a switch-on production build — (a) because the loader leaves
+  the key absent, (b) because the guard stops the build — which is the property the gate exists to protect.
+  (a) additionally cannot be hit by the real file today: its line 241
   (`FEATURE_ADMIN_USER_MODULES_ENABLED`) opens a `"` that no later line closes, so nothing is swallowed,
   which is why dotenv reads `staging` from line 24 at all.
-- **Shadow-file coverage closed (review Finding 5).** The refusal at `build-aab.sh:168-179` /
-  `build-apk.sh:192-203` greps the two files that outrank `$ENV_FILE`
-  (`.env.<mode>.local`, `.env.local`) and its pattern is now
-  `^EXPO_PUBLIC_(API_BASE_URL|SUPABASE_URL|APP_ENV)=`. Before, a `.env.production.local` carrying
+- **Shadow-file coverage closed (review Finding 5).** The refusal at `build-aab.sh:174-185` /
+  `build-apk.sh:198-209` greps the two files that outrank `$ENV_FILE`
+  (`.env.<mode>.local`, `.env.local`) and its pattern is now the interpolated
+  `^EXPO_PUBLIC_(${_shadow_keys})=` — `API_BASE_URL|SUPABASE_URL`, plus `|APP_ENV` only for a production
+  build (`:175-177` / `:199-201`), so grep-the-literal comparisons against an older draft should search
+  for `_shadow_keys`, not for a fixed key list. Before, a `.env.production.local` carrying
   `EXPO_PUBLIC_APP_ENV=staging` passed the guard (which reads only `$ENV_FILE`) *and* the old shadow grep
   (which matched only the two URLs) and shipped exactly the switch-on build this task exists to prevent.
-  No such file exists today; the hole was structural. Round 2 narrowed `APP_ENV` to the production leg
-  only — `_shadow_keys` gains it inside `if [[ "$NODE_ENV" == "production" ]]` (`:169-171` / `:193-195`),
-  while the two URL keys stay mode-blind. A dev or staging build that declares its plane in
+  No such file exists today; the hole was structural. Round 2 narrowed `APP_ENV` to that production leg
+  while the two URL keys stayed mode-blind. A dev or staging build that declares its plane in
   `.env.development.local` was then refused by a gate whose own printed remedy is "rename it to
   `.env.development.local`" — the advice and the check contradicted each other, and the file it objected
   to is the documented way to write a dev override.
 - Why a declaration check and not a bundle check: `EXPECTED_HOST` is derived from `EXPECTED_API`
-  (`build-aab.sh:156` → `:303`) and `EXPECTED_API` is read out of the same `$ENV_FILE` the bundle is
+  (`build-aab.sh:162` → `:309`) and `EXPECTED_API` is read out of the same `$ENV_FILE` the bundle is
   grepped against, so a staging-wired prod file makes the existing gate print
   `✅ API host present: frontend-web-staging-new.up.railway.app` — green for the wrong host.
-  `EXPECTED_SUPABASE` (`:157`) is only ever echoed (`:227`), never compared to anything. Asserting the
+  `EXPECTED_SUPABASE` (`:163`) is only ever echoed (`:233`), never compared to anything. Asserting the
   declaration is the one check in either script that is not self-referential.
 - **Tree caution, again.** The brief cites `build-aab.sh:122-128` / `:133` / `:134` / `:278` / `:129`. Those
   are **main's uncommitted working copy** — `git status` shows ` M mobile-app/reactnative/build-aab.sh`
   (12 insertions / 3 deletions) with another session's SDK-dir capture at `:38-44` and
   `npx expo prebuild --platform android --no-install --clean` at **`:222`** (an earlier draft of this
-  section wrote `:213`, which is that session's `Android SDK not found` refusal, not the prebuild). In this
-  plan's base, post-`1be3e158f`, the same landmarks are `:119-125` (existence + exit 1), `:142`, `:143`,
-  `:285`, and the prebuild is `:229` **without** `--clean`. Round 2's longer comment and 14-line pipeline
-  move them again in this branch's HEAD: `:119-125` is unchanged, and the four others are now `:156`,
-  `:157`, `:303` and `:247`. Same files, different numbers; Task 15's hunks
+  section wrote `:213`, which is the `fi` of that session's `Android SDK not found` refusal — message
+  `:211`, `exit 1` `:212` — not the prebuild). In this plan's base, post-`1be3e158f`, the same landmarks are
+  `:119-125` (existence + exit 1), `:142`, `:143`,
+  `:285`, and the prebuild is `:229` **without** `--clean`. Both later commits moved them again, and each
+  number below was read off that commit rather than derived: `65ee29ec0` (round 2's longer comment and
+  14-line pipeline) → `:156`, `:157`, `:303`, prebuild `:247`; `e16da72be` (round 3's six comment lines and
+  `LC_ALL=C`) → `:162`, `:163`, `:309`, prebuild `:253`. `:119-125` is unchanged across all three. Same
+  files, different numbers; Task 15's hunks
   sit nowhere near the other session's two, so both commits should merge clean — but they must be diffed
   against whatever `main` becomes, not against this base.
-- **Probe (harness):** `.superpowers/sdd/…/guard-test.sh` — **76 assertions over the two real scripts**:
+- **Probe (harness):** `.superpowers/sdd/…/guard-test.sh` — **79 assertions over the two real scripts**:
   **18 structural** (9 per script: 2 guard-fire — `staging` and declaration-absent; 1 shadow-file-fire —
   `.env.production.local` declaring `staging`; 5 guard-silent — `production`, `"production"`,
   `production # live`, CRLF, and the legitimate `staging` build declaring `staging`; 1 dev-build case that
   must *not* be refused), **1 pipeline byte-identity** (`awk` from `_declared_env=` to its own closing
   `)"`, so a drift between the two scripts fails the run rather than silently forking the semantics), and
-  a **57-spelling loader-parity table**. Every structural case asserts the guard's exit **and** placement —
+  a **60-spelling loader-parity table**. Every structural case asserts the guard's exit **and** placement —
   a refusal must not print the `EXPO_PUBLIC_API_BASE_URL is not set` message of the check below it, a silent
   case must; a shadow case must get *past* both — and that the run never reaches `expo prebuild`/gradlew.
-  The parity table is an **oracle, not a mirror**: each row carries the value dotenv 16.4.7 was measured
-  producing, and the expected verdict is derived from that column, so the test would still fail if the
-  scripts and the author agreed on something wrong. Parity runs through `build-apk.sh` only; the
-  byte-identity assertion is what makes that cover `build-aab.sh`.
+  The parity table is an **oracle, not a mirror**: each row carries the verdict real dotenv 16.4.7 returns
+  for those bytes, and the expected outcome is derived from that column, so the test would still fail if
+  the scripts and the author agreed on something wrong. That claim is worth nothing unless the column
+  itself is checked, so it is machine-checked: `env-parse-diff.mjs` writes each row's exact
+  bytes, parses them with the `dotenv` installed in `main` and prints `name<TAB>JSON.stringify(value)<TAB>verdict`,
+  and `table-vs-dotenv.mjs` diffs that against the harness table. **Observed: 60 rows, 0 verdict and 0
+  rendered-value differences** — before round 3 normalised four cells, that second number was 4
+  (`dq-junk`, `dq-split`, `dq-unterm`, `inner-quote` displayed the value under a loose escaping convention;
+  no assertion read them, every assertion reads PASS/REFUSE, so this was presentation drift only). Four of
+  the 60 rows are marked `divergent=` and pin the *guard's* verdict instead of the loader's, because those
+  are the known limits, not parity: one `swallow-case` plus the three `cr-sep-*`. Parity runs through
+  `build-apk.sh` only; the byte-identity assertion is what makes that cover `build-aab.sh`.
   **Observed:** RED against the round-1 scripts (`542609281`, whose `mobile-app/reactnative/` is
   byte-identical to `1be3e158f`'s) — **19 assertions wrong**: 15 parity rows (the 12 over-refusals and the
-  3 `tr -d`/double-strip over-passes above) and 4 from the dev-build case (2 scripts × 2 asserts). GREEN
-  (**0 wrong**) against these scripts; `/bin/bash -n` clean on both; worktree clean.
+  3 `tr -d`/double-strip over-passes above; the 4 divergent rows go green there, because the old chain
+  guessed the same wrong way) and 4 from the dev-build case (2 scripts × 2 asserts). GREEN
+  (**0 wrong**) against `65ee29ec0` and again against `e16da72be` — round 3 re-ran both and kept the output
+  as `task-15-guard-red.txt` / `task-15-guard-green.txt`; `/bin/bash -n` clean on both scripts; worktree
+  clean.
 - **Two dead tests this harness had, both found by breaking the thing on purpose.** The first draft
   asserted only the exit code and printed `ALL CASES AS EXPECTED` against a deliberately broken guard. The
   round-2 dev-build case passed at round-1 HEAD while proving nothing either: its `.env.development`
@@ -2743,11 +2815,20 @@ is the same build as the newest AAB (identical 43,447,249 B; the script copies i
   `launch/CREDENTIALS.md`, `launch/apply-env.sh`, `launch/master.env.template`,
   `mobile-app/reactnative/docs/association/GO_LIVE.md`.
 - Re-measurement entry points, left in this plan's SDD workspace for whoever takes Step 2: `guard-test.sh`
-  (18 structural cases + 1 pipeline byte-identity + a 57-spelling loader-parity table; refuses to run
-  against a tree with real env files), `env-parse-diff.mjs` (regenerates those 57 fixtures *and* dotenv's own
-  verdict for each, which is where the parity table's expected column comes from), `extract-probe.sh` (the
-  14-line pipeline alone, no build script needed), `recipe-rehearsal.sh` (Step 2 on a copy),
-  `bundle-scan.py` (the artifact numbers). All are read-only against main and print no secret values.
+  (18 structural cases + 1 pipeline byte-identity + a 60-spelling loader-parity table; refuses to run
+  against a tree with real env files), `env-parse-diff.mjs` (writes those 60 fixtures *and* prints dotenv's
+  own `JSON.stringify(value)` + verdict for each — it `createRequire`s main's installed 16.4.7, so it needs
+  no `node_modules` in the tree it sits in), `table-vs-dotenv.mjs` (diffs that output against the harness
+  table: **60 rows, 0 verdict and 0 rendered differences**), `extract-probe.sh` (the shipped 13 inner
+  pipeline lines on their own, no build script needed: **56 of 60 agree with dotenv, and the 4 that do not
+  are exactly the 4 `divergent=` rows**), `old-vs-dotenv.sh` (the round-1 `1be3e158f` chain over the *same*
+  table read out of `guard-test.sh`, which is where §15.1's 15-refused / 4-passed figures come from; give it
+  a scratch directory holding that commit's `build-apk.sh`), `recipe-rehearsal.sh` (Step 2 on a copy),
+  `bundle-scan.py` (the artifact numbers), `task-15-guard-red.txt` / `task-15-guard-green.txt` (the two
+  harness runs quoted in §15.1), `task-15-locale-probe.txt` (the round-3 `LC_ALL=C` measurement). All are
+  read-only against main and print no secret values; the two that write env fixtures into the tree they are
+  pointed at — `guard-test.sh` and `old-vs-dotenv.sh` — must be given a scratch directory, never `main` or
+  this worktree (`env-parse-diff.mjs` writes only to `/tmp/spot-env-fixtures`).
 
 *This section was corrected on 2026-11-14 after its own review round: nine findings accepted, one (a
 "254-character token nobody had traced") refuted by byte-offset measurement and replaced with the regex
@@ -2755,6 +2836,15 @@ caveat in §15.3. The code half of that round is `1be3e158f`; the dispositions a
 `.superpowers/sdd/2026-11-12-staging-to-production-migration/task-15-report.md`.
 
 *A second round followed the re-review of that commit: the guard's normalisation was rebuilt from dotenv's
-own `LINE` regex and measured against 57 spellings, the shadow gate's `APP_ENV` term was scoped to
+own `LINE` regex and measured against 60 spellings, the shadow gate's `APP_ENV` term was scoped to
 production builds, and this section's stale line citations, scanner-exemption citations and reference counts
-were re-measured tree by tree. Everything in §15.1 and §15.6 above is that round's text.*
+were re-measured tree by tree. Code `65ee29ec0`, docs `b0ed83db2`. Everything in §15.1 and §15.6 above is
+that round's text, updated by round 3.*
+
+*A third round closed that re-review's five Minor findings, all of them about this section's accuracy rather
+than the guard's behaviour: the bare-`CR` line-terminator class was measured, documented and pinned with
+three fixtures (N-1); the whole-file `sed` was made locale-proof and the failure mode written down (N-2,
+code `e16da72be`); the shadow pattern and main's SDK-refusal line were re-quoted from the files (N-3); the
+round-1 comparison moved out of `/tmp` into the workspace and was re-sourced from the harness table (N-4);
+and the parity table's displayed value column was normalised to `JSON.stringify` so the whole column diffs
+against real dotenv, 0 of 60 rows apart (N-5). R2-3's shell-not-loader ruling gained its own bullet.*
