@@ -67,10 +67,12 @@ frontend-admin (:3001): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_K
 Template: `frontend-admin/.env.production.example`.
 
 mobile (Expo): `EXPO_PUBLIC_API_BASE_URL` = prod frontend-web origin; the 51
-`EXPO_PUBLIC_*_USE_MOCK=false`. Source of truth: `mobile-app/reactnative/.env.production`
-(+ `docs/GO-LIVE-CONFIG.md`). A module goes live only when: backend flag ON → `/api/v1/*`
-proxy exists → `USE_MOCK=false` → smoke test → published for that environment in
-`/admin/modules`.
+`EXPO_PUBLIC_*_USE_MOCK=false`. Source of truth: `mobile-app/reactnative/eas.json` — the tracked
+file whose `production` and `production-apk` profiles inline those values (see §4b;
+`.env.production` is gitignored and proves nothing) — plus `docs/GO-LIVE-CONFIG.md`.
+A module goes live only when: backend flag ON → `/api/v1/*` proxy exists → `USE_MOCK=false` →
+smoke test → published for that environment in `/admin/modules` → and its `env_flag` variable
+is ON (§4b, "Published is not the same as served").
 
 ## 4b. Publication and readiness (`platform_modules`)
 
@@ -83,9 +85,22 @@ the other.
   publishes at any readiness.
 - Demoting readiness below `ready` withdraws a live production module on its own, without
   touching its tier rows, so marking it Ready again restores exactly the previous state.
-- A store build reads the tier of the backend it is pointed at, not its own build name. So
-  today's production APK, wired to staging, is governed by the **staging** column until it is
-  rewired.
+- A store build reads the tier of the backend it is pointed at, not its own build name. The
+  tracked source of truth for that is `mobile-app/reactnative/eas.json`, and its `production`
+  and `production-apk` profiles point at the production BFF
+  (`EXPO_PUBLIC_API_BASE_URL=https://frontend-web-production-9259.up.railway.app`, prod
+  Supabase) — so those builds are governed by the **production** column. `.env.production` is
+  gitignored and can hold anything, including staging URLs; check the origin actually inlined
+  in the artifact before trusting a build's name.
+- **Published is not the same as served.** `VisibleIn` answers from the registry, and then the
+  `FEATURE_*` variable named by the module's `env_flag` is applied on top of it
+  (`EnvFlagEnabled: envFlag == "" || s.flag(envFlag)` in `internal/modules/service.go`). A
+  module that is `active`, `ready` and `visible` in production still vanishes from
+  `/api/v1/modules/visibility` while that variable is unset or false — and no console action
+  brings it back, because the console does not own this lever. When someone reports "I
+  published it and it still doesn't show", check the flag before the registry. The two sets
+  are only equal by coincidence: when this was written production held 36 rows at
+  ready+visible and served 31.
 - `FEATURE_MODULE_GATE_ENFORCE` (Go) is the server-side half. Unset it is observe-only: the
   gate resolves the module and logs what it would refuse. Turn it on only after the route map
   has met real traffic, and remember it is mounted on the finance group alone.

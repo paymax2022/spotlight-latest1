@@ -47,10 +47,14 @@ Four things stood between that sentence and the running system:
    `COALESCE(readiness,'in_development')`. Without the backfill, applying the migration
    would have pulled every live production module off the app on the next read.
 5. **The tier is the server's, not the build's.** `/api/v1/modules/visibility` answers for
-   the backend's own `APP_ENV`; the client renders what it is told. So the store build that
-   is wired to staging today is governed by staging's publication, and the same build moves
-   to the production tier the moment it is pointed at the production backend. No client
-   change is required to switch planes, which is deliberate.
+   the backend's own `APP_ENV`; the client renders what it is told. So a build is governed by
+   whichever backend `EXPO_PUBLIC_API_BASE_URL` was inlined into it at build time — which
+   `mobile-app/reactnative/eas.json` tracks per profile, since the word "production" in a
+   profile name is not the wiring — and the same client moves to the production tier the
+   moment it is rebuilt against the production backend. No client change is required to
+   switch planes, which is deliberate. The consequence to operate by: readiness raised in
+   production keeps nothing away from a build still pointed at staging, so this gate only
+   governs the users the tier it runs on actually serves.
 6. **The client fails closed with a memory.** A successful read is persisted to
    AsyncStorage and replayed when the network cannot answer (`bestAnswer`), so an offline
    user keeps the grid they had instead of losing everything nobody unpublished. Only the
@@ -84,10 +88,35 @@ Four things stood between that sentence and the running system:
   Academy's tuition rails, paid on today by production users under builds that predate the
   registry. Enforcing it before an operator has been asked to publish would refuse real
   payments.
-- **There is no production counterpart to `staging-module-flags.yml`.** When the production
-  plane is taken off hold it needs a lane that sets `APP_ENV=production` and the ops flags;
-  until then nobody can switch the production tier on from CI. Out of scope here, and
-  deliberately not built for a plane that does not run.
+- **There is no production counterpart to `staging-module-flags.yml`, and it is still not
+  buildable.** The original reason — "deliberately not built for a plane that does not run" — has
+  gone: production runs. What blocks it now is a credential, not a design. Writing Railway
+  variables from CI authenticates with `RAILWAY_TOKEN_*`, and every recent attempt returns
+  `Unauthorized. Please check that your RAILWAY_TOKEN is valid and has access to the resource
+  you're trying to use.` (the last `ops-railway-vars.yml` run exited 1 on exactly that line, on
+  2026-11-13; `staging-module-flags.yml` failed the same way on 2026-11-11, having both passed in
+  October). A workflow that cannot authenticate is not a capability, so production's `FEATURE_*`
+  ops flags are changed by hand in the dashboard until a working token is minted there and stored
+  as the Actions secret. The consequence is measurable: five modules sit `active` + `ready` +
+  production-`visible` and are still absent from `/api/v1/modules/visibility` because their
+  `env_flag` variable is unset or false, and no pipeline can show or change that.
 - The registry is now the authority on *discoverability*. It is not authorisation: each
   module's own auth/RBAC/tier checks still decide what a caller may do, and the API gate is
   the layer that makes hiding an icon more than decoration.
+
+## Amendment — 2026-11-14
+
+Decision 5's text was corrected: it said "the store build that is wired to staging today is
+governed by staging's publication". The decision itself is unchanged — the tier is still the
+server's, and no client change switches planes — but the aside stated a snapshot as if it were
+permanent, and it went false: `eas.json`'s `production`/`production-apk` profiles are wired to
+the production BFF (that landed in `e8eae3ad6`). The corrected wording names the mechanism
+instead of the current value, so the paragraph cannot go stale the same way again. Recorded here
+rather than left as an invisible edit because an ADR is read as the record of what was decided,
+and a silent rewrite of a decided paragraph reads as misremembering to anyone who saw the
+original.
+
+The Consequences bullet "there is no production counterpart to `staging-module-flags.yml`" was
+also corrected: it justified itself by a plane that no longer waits to run, and now names the
+real blocker (a dead CI `RAILWAY_TOKEN`, read from the failed runs' own output rather than
+inferred).
