@@ -1548,10 +1548,13 @@ Expected: `ok spotlight/backend/internal/doctor`. With the DSN set, every `TestL
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /private/tmp/spot-doctor-metrics && git add backend/internal/doctor/service_tail2.go backend/internal/doctor/handler_tail2.go backend/internal/doctor/dashboard_metrics_live_db_test.go && git commit -m "feat(doctor): ship metrics and today's queue on GET /dashboard
+cd /private/tmp/spot-doctor-metrics && git add backend/internal/doctor/service_tail2.go backend/internal/doctor/handler_tail2.go backend/internal/doctor/dashboard_metrics_live_db_test.go && git commit -m "$(cat <<'MSG'
+feat(doctor): ship metrics and today's queue on GET /dashboard
 
 The five tiles now have one payload source. satisfactionPct is *float64 so 'no
-reviews yet' survives the wire instead of arriving as 0%."
+reviews yet' survives the wire instead of arriving as 0%.
+MSG
+)"
 ```
 
 ---
@@ -1670,10 +1673,13 @@ Expected: `redocly exit: 0`. Warnings are acceptable (the file already carries t
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /private/tmp/spot-doctor-metrics && git add contracts/doctor.openapi.yaml && git commit -m "docs(contract): type GET /doctor/dashboard instead of answering Generic
+cd /private/tmp/spot-doctor-metrics && git add contracts/doctor.openapi.yaml && git commit -m "$(cat <<'MSG'
+docs(contract): type GET /doctor/dashboard instead of answering Generic
 
 The untyped response is what let the mobile adapter cast a flat projection into
-its rich view model and invent the fields it was missing."
+its rich view model and invent the fields it was missing.
+MSG
+)"
 ```
 
 ---
@@ -2129,13 +2135,16 @@ Expected: no output, `tsc exit: 0`. `DEMO_DASHBOARD`'s `satisfactionPct: 96` sti
 - [ ] **Step 10: Commit**
 
 ```bash
-cd /private/tmp/spot-doctor-metrics && git add mobile-app/reactnative/src/features/doctor/dashboardWire.ts mobile-app/reactnative/src/features/doctor/__tests__/dashboardWire.test.ts mobile-app/reactnative/src/types/doctor.batch1.ts mobile-app/reactnative/src/api/doctor.batch1.api.ts mobile-app/reactnative/package.json && git commit -m "fix(doctor): map the dashboard wire onto all five tiles instead of literals
+cd /private/tmp/spot-doctor-metrics && git add mobile-app/reactnative/src/features/doctor/dashboardWire.ts mobile-app/reactnative/src/features/doctor/__tests__/dashboardWire.test.ts mobile-app/reactnative/src/types/doctor.batch1.ts mobile-app/reactnative/src/api/doctor.batch1.api.ts mobile-app/reactnative/package.json && git commit -m "$(cat <<'MSG'
+fix(doctor): map the dashboard wire onto all five tiles instead of literals
 
 getDashboard's live branch returned 0s and reused the wallet balance as lifetime
 earnings. It now reads metrics/todaysAppointments through a pure module with a
 node:test spec, and satisfactionPct is nullable so 'no reviews' stops rendering
 as 0%. The spec gets an npm script: batch6Wire.test.ts had none, which is how a
-mapped wire stayed broken."
+mapped wire stayed broken.
+MSG
+)"
 ```
 
 ---
@@ -2266,11 +2275,14 @@ Expected: no matches printed, `refs exit: 1`. (A no-match exit code is the pass 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /private/tmp/spot-doctor-metrics && git add "mobile-app/reactnative/app/(doctor)/(tabs)/index.tsx" && git commit -m "fix(doctor): read today's tiles and queue from the dashboard aggregate
+cd /private/tmp/spot-doctor-metrics && git add "mobile-app/reactnative/app/(doctor)/(tabs)/index.tsx" && git commit -m "$(cat <<'MSG'
+fix(doctor): read today's tiles and queue from the dashboard aggregate
 
-Replaces the useAppointments client-side filter, which counted 'upcoming,
-confirmed, in_progress' as today's consults — a status filter with no date
-filter, that dropped completed consults from the day it was naming."
+Replaces the useAppointments client-side filter, which counted `upcoming,
+confirmed, in_progress` as today's consults — a status filter with no date
+filter, that dropped completed consults from the day it was naming.
+MSG
+)"
 ```
 
 ---
