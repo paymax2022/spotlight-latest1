@@ -2629,6 +2629,17 @@ async function openStep(page: import('@playwright/test').Page, step: 1 | 2 | 3 |
       message: `#step-${step} must open from its own hash`,
     })
     .toBe(true);
+  if (step !== 1) {
+    // The other side of the same contract: SSR ships #step-1 open, so only the
+    // hash handler opening this panel can close it. Asserting it pins the
+    // exclusive accordion itself — a page that lost the `name` grouping would
+    // still pass the check above.
+    await expect
+      .poll(() => page.locator('#step-1').evaluate((el) => (el as HTMLDetailsElement).open), {
+        message: '#step-1 must close when the hash opens a later step',
+      })
+      .toBe(false);
+  }
   return panel;
 }
 
@@ -3027,7 +3038,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                         <>
                           <p className={styles.tally}>
                             {board.entryCount} {board.entryCount === 1 ? 'entry' : 'entries'} on the board
-                            {data.showVoteCounts ? ` · ${board.totalVotes.toLocaleString(LOCALE)} votes counted` : ''}
+                            {board.totalVotes !== null ? ` · ${board.totalVotes.toLocaleString(LOCALE)} votes counted` : ''}
                           </p>
                           {/* Keyed on rank, not artistSlug alone: the slug is a
                               slug of a non-unique stage name (design: `K1ng$hoota`
@@ -3045,7 +3056,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                                   <strong>{row.stageName}</strong>{' '}
                                   <span>{row.songTitle}</span>
                                 </span>{' '}
-                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
+                                <span className={styles.votes}>{row.voteCount !== null ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
                                 <span className={styles.link}>
                                   <Link href={`/open-mic/${data.slug}/entry/${row.artistSlug}`}>Vote</Link>
                                 </span>
@@ -3057,9 +3068,14 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                           </div>
                         </>
                       )}
-                      <div className="openMic-actions">
-                        <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
-                      </div>
+                      {/* Gated on the same switch as the board itself: a hand-off
+                          to the full standings would refute the "standings private"
+                          note two lines above it. */}
+                      {data.showLeaderboard && (
+                        <div className="openMic-actions">
+                          <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <p className={styles.note}>Standings appear here while an edition is running.</p>
@@ -3483,7 +3499,7 @@ DIST_DIR=.next-verify-task11 NODE_OPTIONS=--max-old-space-size=8192 npm run buil
 ```
 Expected: `build exit: 0`, and the running dev server's `.next` untouched. If the build dies with a heap exit (code 134) that is the memory ceiling, not a type error: raise `--max-old-space-size` and re-run — and report which run produced the green.
 
-`$(mktemp -d)` cannot work here: Next rejects a distDir outside the project (`InvalidDistDirError`), so the scratch dir has to live inside the app. `frontend-web/.next-verify*/` is already gitignored (`.gitignore:162` was added after 742MB of one was mistaken for source), so it stays out of `git status` and out of every commit.
+`$(mktemp -d)` cannot work here: Next rejects a distDir outside the project (`InvalidDistDirError`), so the scratch dir has to live inside the app. It is **not** ignored at this commit — `git show HEAD:.gitignore` has no `.next-verify*` or `.next-e2e*` rule (one exists only as another session's uncommitted edit, and does not cover the `.next-e2e*` name), so a scratch dir left behind is ~170–780MB of untracked noise for every other session in this shared worktree. Keep the name under `.next-verify*` and delete the directory when the build has reported.
 
 - [ ] **Step 3: Run the acceptance gate serially, both projects, and repeat it**
 
@@ -3513,10 +3529,256 @@ State: what went green and how it was proven; the dev-only rows and beat file le
 
 ---
 
+### Task 12: Make step 05 mean what it says (final whole-branch review fixes)
+
+**Why this task exists.** The final review found two places where step 05 claims a property it does not deliver:
+
+1. `OpenMicEditionSteps.tsx` prints "This edition keeps its standings private until the results are announced."
+   and then, **outside every branch** of the same ternary chain, renders a "Full leaderboard" link to the page
+   that shows all of them. One click refutes the sentence above it.
+2. `active-edition.ts` put every row's `voteCount` and the board's `totalVotes` into the RSC payload whatever
+   `voteCountPublic` said; the client only declined to *display* them. A value in the payload is delivered, not
+   shown, so the admin's switch was cosmetic.
+
+Spec H2 and the step 05 row of the spec's coverage table are amended in the commit before this brief, and that
+amended text is the authority for everything below.
+
+**Files:**
+- Modify: `frontend-web/src/features/openmic/active-edition.ts` (type at `:96` and `:98`; builder at `:146-148`, `:170`, `:174`)
+- Modify: `frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx` (`:259`, `:277`, `:288-291`)
+- Modify: `frontend-web/tests/unit/openmic/edition-steps-data.spec.ts` (one new case)
+- Modify: `frontend-web/tests/e2e/openmic/competition-steps.spec.ts` (`openStep()` only)
+
+**Do not touch** `components/openmic/OpenMicAdminContestBuilder.tsx`, `OpenMicAdminContestEditor.tsx` or
+`tests/unit/openmic/admin-beat-wiring.spec.ts`. The review recommended deleting them as dead code, and that
+recommendation is **rejected**: this repo has no `frontend-web/app/admin` tree, but `paymax2022/spotlight-latest@main`
+(the deployed console) mounts both — `app/admin/(dashboard)/open-mic/contests/new/page.tsx` renders the builder and
+`[contestId]/edit/page.tsx` the editor. Unreachable in this repo is not the same fact as dead.
+
+**Interfaces:** `OpenMicEditionStepsData.board` changes shape: `rows[].voteCount: number | null` and
+`totalVotes: number | null`. `showLeaderboard` / `showVoteCounts` stay in the payload (`showLeaderboard` is read by
+the component; `showVoteCounts` keeps the derivation pinned by the existing unit case at `:153`) — no consumer
+branches on `showVoteCounts` any more, and that is deliberate: the switch is resolved where the payload is built.
+
+- [ ] **Step 1: Hide the counts in the data, not in the markup**
+
+In `frontend-web/src/features/openmic/active-edition.ts`, replace the two board type lines
+
+```ts
+    rows: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
+    entryCount: number;
+    totalVotes: number;
+```
+
+with
+
+```ts
+    rows: {
+      rank: number; artistSlug: string; stageName: string; songTitle: string;
+      /** `null` when the admin hid the counts. The number stays out of the
+       *  payload rather than being shipped for the client to hide. */
+      voteCount: number | null;
+    }[];
+    entryCount: number;
+    totalVotes: number | null;
+```
+
+Hoist the two switch reads out of the return object — insert above `  return {`:
+
+```ts
+  const showLeaderboard = contest.votingConfig?.leaderboardVisible !== false;
+  const showVoteCounts = contest.votingConfig?.voteCountPublic !== false;
+```
+
+and replace the two inline fields
+
+```ts
+    showLeaderboard: contest.votingConfig?.leaderboardVisible !== false,
+    showVoteCounts: contest.votingConfig?.voteCountPublic !== false,
+```
+
+with the shorthand
+
+```ts
+    showLeaderboard,
+    showVoteCounts,
+```
+
+Then, inside the `board` projection, resolve the counts:
+
+```ts
+            voteCount: showVoteCounts ? row.voteCount : null,
+```
+
+```ts
+          totalVotes: showVoteCounts ? board.reduce((sum, row) => sum + row.voteCount, 0) : null,
+```
+
+`entryCount` is not a vote count and stays a number.
+
+- [ ] **Step 2: Render from the payload, and stop handing out what was hidden**
+
+In `frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx`, the tally line
+
+```tsx
+                            {data.showVoteCounts ? ` · ${board.totalVotes.toLocaleString(LOCALE)} votes counted` : ''}
+```
+
+becomes
+
+```tsx
+                            {board.totalVotes !== null ? ` · ${board.totalVotes.toLocaleString(LOCALE)} votes counted` : ''}
+```
+
+the row count
+
+```tsx
+                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
+```
+
+becomes
+
+```tsx
+                                <span className={styles.votes}>{row.voteCount !== null ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
+```
+
+and the unconditionally-rendered hand-off
+
+```tsx
+                      <div className="openMic-actions">
+                        <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
+                      </div>
+```
+
+becomes
+
+```tsx
+                      {/* Gated on the same switch as the board itself: a hand-off
+                          to the full standings would refute the "standings private"
+                          note two lines above it. */}
+                      {data.showLeaderboard && (
+                        <div className="openMic-actions">
+                          <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
+                        </div>
+                      )}
+```
+
+The per-row `Vote` link and the "Vote now" CTA already live inside the `showLeaderboard`-true arm, so they need
+no change. `data.showVoteCounts` should now appear nowhere in this file.
+
+- [ ] **Step 3: Pin the hidden arm in the unit data tests**
+
+Append to the board describe block in `frontend-web/tests/unit/openmic/edition-steps-data.spec.ts`. The existing
+cases only ever flip both switches together (`:153`), and none of them looks at the numbers, so a payload that
+keeps shipping them would pass the file as it stands:
+
+```ts
+  it('leaves hidden counts out of the payload, not just out of the markup', () => {
+    const hidden = buildOpenMicEditionStepsData(
+      contest({ votingConfig: { ...contest().votingConfig, voteCountPublic: false } }),
+      [entry(1), entry(2), entry(3)],
+    );
+    expect(hidden.showVoteCounts).toBe(false);
+    expect(hidden.board?.rows.map((row) => row.voteCount)).toEqual([null, null, null]);
+    expect(hidden.board?.totalVotes).toBeNull();
+    // An entry count is not a vote count, so the switch does not remove it.
+    expect(hidden.board?.entryCount).toBe(3);
+  });
+
+  it('still delivers the counts when the switch is left on', () => {
+    const shown = buildOpenMicEditionStepsData(contest(), [entry(1), entry(2), entry(3)]);
+    expect(shown.board?.rows.map((row) => row.voteCount)).toEqual([10, 20, 30]);
+    expect(shown.board?.totalVotes).toBe(60);
+  });
+```
+
+Use the `contest()` / `entry(n)` helpers already at the top of that file (`entry(n)` sets `voteCount: n * 10`),
+and the existing `toStrictEqual` round-trip case stays as it is — `null` serialises, so the payload remains
+RSC-safe.
+
+- [ ] **Step 4: Make the acceptance helper prove the accordion**
+
+In `frontend-web/tests/e2e/openmic/competition-steps.spec.ts`, `openStep()` currently waits only for the named
+panel. After its existing `expect.poll(...).toBe(true)` and before `return panel;`, add the other half of the
+contract:
+
+```ts
+  if (step !== 1) {
+    // The other side of the same contract: SSR ships #step-1 open, so only the
+    // hash handler opening this panel can close it. Asserting it pins the
+    // exclusive accordion itself — a page that lost the `name` grouping would
+    // still pass the check above.
+    await expect
+      .poll(() => page.locator('#step-1').evaluate((el) => (el as HTMLDetailsElement).open), {
+        message: '#step-1 must close when the hash opens a later step',
+      })
+      .toBe(false);
+  }
+```
+
+No other test in that file changes: it asserts `Vote now` and the closing CTA while both switches are on, which
+is still true after Step 2.
+
+- [ ] **Step 5: Run the gates that cover these files**
+
+```bash
+cd /Users/paymax/Documents/spotlight/main/frontend-web && \
+npx vitest run tests/unit/openmic tests/unit/media/open-mic-beat-storage.test.ts; echo "vitest exit: $?"
+npx tsc --noEmit; echo "tsc exit: $?"
+npx eslint components/openmic/competition/OpenMicEditionSteps.tsx src/features/openmic/active-edition.ts \
+  tests/unit/openmic/edition-steps-data.spec.ts tests/e2e/openmic/competition-steps.spec.ts; echo "eslint exit: $?"
+```
+
+Expected: all four exit 0. `tsc` is the check that matters here — `number | null` reaching two `.toLocaleString()`
+call sites is exactly the kind of change that compiles only after the render side is fixed too.
+
+- [ ] **Step 6: Re-verify the two byte-identity invariants**
+
+The plan's Task 9 fence is the whole component file and the Task 8 fence is the whole e2e file. Both fences were
+amended in the commit before this brief; after this task's edits they must match again, exactly:
+
+```bash
+cd /Users/paymax/Documents/spotlight/main && python3 - <<'PY'
+import re
+plan = open('docs/superpowers/plans/2026-11-10-open-mic-competition-steps.md').read()
+def fences(marker_a, marker_b):
+    region = plan.split(marker_a)[1].split(marker_b)[0]
+    return re.findall(r'```tsx\n(.*?)```', region, re.S) + re.findall(r'```ts\n(.*?)```', region, re.S)
+big = max(fences('### Task 9:', '### Task 9b:'), key=len)
+spec = max(fences('### Task 8:', '### Task 9:'), key=len)
+for text, path in ((big, 'frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx'),
+                   (spec, 'frontend-web/tests/e2e/openmic/competition-steps.spec.ts')):
+    live = open(path).read()
+    print(('IDENTICAL' if text == live else 'DRIFT'), path, len(text.splitlines()), len(live.splitlines()))
+PY
+```
+
+Expected: `IDENTICAL` on both lines. If it says `DRIFT`, the plan and the shipped file disagree, and the plan is
+the document the next reviewer will trust — fix whichever is wrong, do not record the mismatch.
+
+- [ ] **Step 7: Commit**
+
+```bash
+cd /Users/paymax/Documents/spotlight/main && \
+git add frontend-web/src/features/openmic/active-edition.ts \
+        frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx \
+        frontend-web/tests/unit/openmic/edition-steps-data.spec.ts \
+        frontend-web/tests/e2e/openmic/competition-steps.spec.ts && \
+git commit -m "fix(open-mic): honour the display switches in what step 05 ships, not only in what it draws"
+```
+
+Stage by these exact paths — the shared worktree carries other sessions' in-flight files, and `git add -A` would
+sweep them into this commit.
+
+The switch-OFF arms in the browser (the plan's gate runs with both switches on) are measured by the controller
+with a reversible flip-and-restore of the dev fixture row, because that touches shared dev DB state and is not
+subagent work. Nothing in this task may write to the database.
+
+---
+
 ## Self-review notes
 
-- **Spec coverage:** B/C → Task 1–2; D → Task 2 + Task 6; E → Task 1 (`publicBeatUrl`), Task 3 (edition page), Task 5 (data), Task 6 (admin warnings); F → Task 10; G → Task 4; H/H2 → Tasks 5 + 9; I → Task 5 (`slugifyArtist` in the builder, so the client never re-slugs) and Task 9's own entry link; J → Task 7; Testing → Tasks 1–8, 11. Out-of-scope items are untouched.
-- **Four deltas folded in from research, overriding the spec's wording:** the real contest type is `one_beat_one_verse` (not `open_mic`); `previewOnly` is hardcoded `false` on the DB path, so `is_active → allowDownload` is the only download switch that exists; the status allowlist widened from 4 to 9 because the narrow list blanks the page during `beat_available`/`submission_closed`/`under_review`; the upload route's `contestId` is optional and token-validated because the builder uploads before the contest row exists, and the accepted MIME set is `audio/mp3|audio/mpeg` because that is what browsers actually report.
+- **Spec coverage:** B/C → Task 1–2; D → Task 2 + Task 6; E → Task 1 (`publicBeatUrl`), Task 3 (edition page), Task 5 (data), Task 6 (admin warnings); F → Task 10; G → Task 4; H/H2 → Tasks 5 + 9, closed honestly by Task 12; I → Task 5 (`slugifyArtist` in the builder, so the client never re-slugs) and Task 9's own entry link; J → Task 7; Testing → Tasks 1–8, 11. Out-of-scope items are untouched.
 - **No placeholders:** every code block is the code. The only run-time values are Task 7's `<contestId>` / `<previewUrl>` / `<downloadUrl>` substitutions, and each names the command immediately above that prints it.
-- **Five deltas folded in from research, overriding the spec's wording:** the real contest type is `one_beat_one_verse` (not `open_mic`); `previewOnly` is hardcoded `false` on the DB path, so `is_active → allowDownload` is the only download switch that exists; the status allowlist widened from 4 to 9 because the narrow list blanks the page during `beat_available`/`submission_closed`/`under_review`; the upload route's `contestId` is optional and token-validated because the builder uploads before the contest row exists, and the accepted MIME set is `audio/mp3|audio/mpeg` because that is what browsers actually report; and the download filename comes from the anchor's `download` attribute (which the browser honours) rather than the reader route, because the reader only ever sees the uuid object key — the spec's "derived from the beat title" cannot be done there.
+- **Six deltas folded in from research, overriding the spec's wording:** the real contest type is `one_beat_one_verse` (not `open_mic`); `previewOnly` is hardcoded `false` on the DB path, so `is_active → allowDownload` is the only download switch that exists; the status allowlist is the 11-entry `CURRENT_OPEN_MIC_STATUSES` (`active-edition.ts:20-32`), widened past the spec's short list because the narrow list blanks the page during `beat_available`/`submission_closed`/`under_review`; the upload route's `contestId` is optional and token-validated because the builder uploads before the contest row exists, and the accepted MIME set is `audio/mp3|audio/mpeg` because that is what browsers actually report; the download filename is named by the reader route's `Content-Disposition` (built from the uuid object key), and the anchor's `download` attribute is only best effort — Chromium lets the response header win, so a readable stem would have to go into the key itself (final review, Minor 1; no task changes the key); and the two admin display switches are honoured by the panel not rendering hidden affordances and by the server omitting hidden numbers, not by a client branch that still receives them (Task 12).
 - **Spec line references are stale by design:** they were taken from the committed page (701 lines) while the working tree now has 835 after another session's lounge-application work. This plan quotes the working-tree numbers and re-checks them at Task 10 Step 1.
