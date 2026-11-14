@@ -2370,3 +2370,184 @@ What `585bd2ca7` is, measured rather than assumed: PR #996 "feat(modules): readi
 - Two claims in this section survived the first review round and were corrected in the second. Both were mine, not the reviewer's inventions, and they came from different rounds: the crypto flip-probe naming `/api/finance/crypto` — a prefix registered in no tree, which would have made Task 14's assertion a tautology — was in the original section commit (`69746c5ce`) and the first review missed it; the transfers sentence describing a `/transfers` list-and-history read path was introduced *by* the round-1 fix (`ce5f610e8`), which replaced "four gates" with the correct seven and, in rewriting the consequence, invented read routes to contrast them against. The rest of round 2's findings — the conditional restaurant control in §10.1, the flag-only scope of "nothing is prod-only" in §10.2, all 11 names carrying `_ENABLED`, three web hosts rather than two at 405, the 29-of-36 ceiling in §10.5, the runbook pointer — are precision fixes to sentences that were directionally right.
 - **A number in §9.5 is mislabelled and stays mislabelled:** it calls §7.3's count "the 221 503 sites", but §7.3 measured 221 *source lines* pairing a 503 with the string "not available" — a code-surface figure, not observed production traffic. It is left in place because §5 forbids editing another task's section; §10.4 states the correct characterisation, and Task 16 should carry the correction when it revisits §9.
 
+---
+
+## Task 15 — the mobile production plane (2026-11-14)
+
+**Verdict: split — the tracked half shipped, the untracked half is escalated.** `f6e49a31c` puts the
+refusal into both release scripts. The brief's Step 2 (re-point the local `.env.production`) and Step 3
+(re-build, re-grep the artifact) were **not executed**, and that is a ruling, not an omission. Three
+reasons, each independently checkable: the file is gitignored — `git check-ignore -v
+mobile-app/reactnative/.env.production` → `.gitignore:12:.env.*` — so that edit would be the only change
+in this plan invisible to the diff that gates it; it reverses a decision the project memory records as
+deliberate on 2026-11-10 ("do not 'correct' `.env.production` to prod values unprompted"); and what it
+changes is what a store build talks to, which is a production side effect belonging to the user. So Step 2
+was run **in full on a scratch copy instead** (§15.5), which means the user decides with the recipe's
+measured result in front of them rather than its promise.
+
+### 15.1 What landed
+
+- `build-aab.sh:127-135` and `build-apk.sh:134-147`. Immediately after the `ENV_FILE` existence check and
+  before `EXPECTED_API` is read, both scripts grep `EXPO_PUBLIC_APP_ENV` out of `$ENV_FILE` and `exit 1`
+  when `NODE_ENV=production` and the declaration is not `production`, pointing at
+  `node scripts/export-eas-profile-env.mjs production`.
+- Why a declaration check and not a bundle check: `EXPECTED_HOST` is derived from `EXPECTED_API`
+  (`build-aab.sh:139` → `:279`) and `EXPECTED_API` is read out of the same `$ENV_FILE` the bundle is
+  grepped against, so a staging-wired prod file makes the existing gate print
+  `✅ API host present: frontend-web-staging-new.up.railway.app` — green for the wrong host.
+  `EXPECTED_SUPABASE` (`:140`) is only ever echoed, never compared to anything. Asserting the declaration
+  is the one check in either script that is not self-referential.
+- **Tree caution, again.** The brief cites `build-aab.sh:122-128` / `:133` / `:134` / `:278` / `:129`. Those
+  are **main's uncommitted working copy** — `git status` shows ` M mobile-app/reactnative/build-aab.sh` with
+  another session's SDK-dir capture at `:39-44` and `prebuild --clean` at `:213`. In this plan's base the
+  same landmarks are `:118-125` (existence + exit 1), `:139`, `:140`, `:279`. Same files, different numbers;
+  nothing in Task 15 overlaps the other session's two hunks, so `f6e49a31c` should merge clean — but it must
+  be diffed against whatever `main` becomes, not against this base.
+- **Probe (harness):** `.superpowers/sdd/…/guard-test.sh`, 8 cases over the two real scripts —
+  `production`+declares `staging` → refuse; `production`+no declaration at all → refuse;
+  `production`+declares `production` → pass; `staging`+declares `staging` → pass (legitimate there). Each
+  case asserts two things: the guard's exit, **and** placement — a refusal must not print the
+  `EXPO_PUBLIC_API_BASE_URL is not set` message of the check below it, a pass must.
+  **Observed:** 8/8 against the committed scripts; `/bin/bash -n` clean on both; worktree clean.
+  The first draft asserted only the exit code, printed `ALL CASES AS EXPECTED` against a deliberately
+  broken guard, and had to be fixed before it could mislead anyone — a test that cannot fail is worse than
+  no test, because it reads like evidence.
+- Fixtures are minimal on purpose (`EXPO_PUBLIC_APP_ENV` only, no API URL) so the run stops at the guard or
+  one line past it and never reaches `expo prebuild`/gradle. `ALLOW_DEBUG_SIGNING=1` skips the signing
+  refusal that sits *before* the guard on a machine without the release keystore.
+
+### 15.2 The file, measured — and the brief's "three backend keys" is 134
+
+- **Observed:** `.env.production` sha256 `890a00b7b5e9bcb6…`, 11,725 B, mtime **2026-11-03 22:25** —
+  older than every artifact in §15.3, which is what makes the artifact grep a measurement *of this file*
+  rather than of some later edit. 253 lines total, 247 non-empty, 252 by `wc -l` (the file ends without a
+  trailing newline), 32 comment lines, **215 keys = 81 `EXPO_PUBLIC_*` + 134 non-`EXPO_PUBLIC_`**. One key
+  has an empty value: `EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY`. `EXPO_PUBLIC_APP_ENV=staging`.
+- 12 lines match the staging-ref pattern, and the split matters: **8 key lines**
+  (`EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SITE_URL`, `EXPO_PUBLIC_APP_ENV`, `EXPO_PUBLIC_SUPABASE_URL`,
+  `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL`, `SUPABASE_URL`, `DATABASE_URL`, `SUPABASE_JWKS_URL`) and **4
+  comment lines** that are the file's own "copy this to `.env.staging`" header. The 4 comments survive any
+  correct re-point, so **the brief's own verification command (`grep -cE 'wnic|ptcz|frontend-web-staging|
+  staging'`) can never print 0 for this file** — a future session running it literally will conclude the
+  fix failed when it succeeded. Filter to key lines.
+- The brief describes the non-`EXPO_PUBLIC_` set as "three backend keys (`SUPABASE_URL`, `DATABASE_URL`,
+  `SUPABASE_JWKS_URL`) that drifted into a mobile env file". The file has **134**, all non-empty, including
+  `SUPABASE_SERVICE_ROLE_KEY`, `PAYSTACK_SECRET_KEY`, `MONNIFY_*`, `DOJAH_*`, `QUIDAX_*`, `LIVEKIT_*`,
+  `OTP_PEPPER`, `DATABASE_URL` and ~90 `FEATURE_*`. None of them can reach a user: Metro inlines only
+  `EXPO_PUBLIC_*`, and a per-key sweep for readers across `src/`, `app/`, `scripts/`, `eas.json` and both
+  build scripts finds nothing for that whole set. So it is hygiene debt with a real rotation cost (§15.6),
+  **not** a live leak — but the plan must stop describing 134 keys as three, because a reader who takes
+  "three" literally will delete three lines and call the exposure closed.
+- **Recipe hazard the brief does not mention:** the last line is `R2_ENDPOINT=…` **with no trailing
+  newline**, so Step 2's `printf '%s=%s\n' "$k" "$v" >> .env.production` append branch would concatenate
+  the new key onto it and produce one malformed `R2_ENDPOINT=https://…KEY=value` line. The branch is dead
+  today — all six profile keys already exist, so the recipe applies 6 and appends 0 — but on a host whose
+  file is missing a key, Step 2 silently corrupts it. Either emit a bare newline first, or regenerate the
+  file rather than patch it.
+- `.env` vs `.env.production`: 215 keys each, and exactly **one** differing pair —
+  `EXPO_PUBLIC_SENTRY_ENVIRONMENT` (staging vs production). The prod file is a copy of `.env` with one
+  label changed, which is the mechanism behind the whole finding: it was never derived from the profile.
+
+### 15.3 The shipped artifacts, grepped (read-only — nothing was built)
+
+`release-artifacts/` holds **three** artifacts, not the one the brief names: `app-release-production.aab`
+(43,447,249 B, 2026-11-11 01:21), `app-release-production-vc20.aab` (58,823,398 B, 2026-11-10 15:35) and
+`app-release-production.apk` (65,024,079 B, 2026-11-10 21:58). `android/app/build/outputs/bundle/release/app-release.aab`
+is the same build as the newest AAB (identical 43,447,249 B; the script copies it).
+
+- **Probe:** unzip `*assets/index.android.bundle` from each, `grep -ac` for each plane's forms.
+- **Observed — all three identical,** bundle 19,054,516 B (18.2 MiB; the brief's "18 MB" and "41 MB" are
+  MiB for its 43,447,249 B): staging host ×1, `wnic…` ×1, `www.spotlightng.com` ×1, `nmseef…` ×0,
+  `frontend-web-production…` ×0. So every artifact on this machine that is named "production" is
+  staging-wired end to end, and `www.spotlightng.com` in it comes from a source constant, not the API base.
+  This is not a forecast about a future build.
+- **Credential test (the one that actually settles it):** for each of the 134 non-`EXPO_PUBLIC_` keys, does
+  its **value** appear as a substring of the bundle? 58 values ≥12 chars were testable; 76 were skipped for
+  being too short to count as evidence (most are `true`/`false` flags). **Observed: 1 hit.**
+- That single hit is explained without any leak: in this file `SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_URL`
+  hold the **same** 40-character value, so the string in the bundle is the legitimately-inlined public
+  project URL — not the non-`EXPO_PUBLIC_` line. Nothing else matched, and a `service_role` scan returns 0.
+- Three literal hits that a naive secret-grep *does* find in the bundle, each traced to its source so nobody
+  re-raises them: `sk_live`/`sk_test` come from fake fixtures at
+  `src/features/fx/api/fxAccount.api.ts:55-56`; `sb_secret` is a string inside
+  `node_modules/@supabase/functions-js`; `DOJAH` appears as a provider name, not a key. **Verdict: no
+  secret value ships** — which is the answer to the question the 134 keys raise, and the reason §15.6 can
+  treat rotation as a deadline rather than an incident.
+
+### 15.4 The two user-visible consequences (Step 5's requirement — changes, not cleanups)
+
+1. **Today's "production" store build shows end users the Remote/Local server switch; the re-point removes
+   it.** `EXPO_PUBLIC_APP_ENV` is read by `isServerSwitchAvailable()` → `isSwitchAvailable()` against a
+   fail-closed allowlist `['development','dev','staging','test','local']` (`src/lib/serverProfile.ts:53`,
+   `:59-61`; `src/lib/serverProfileStore.ts:47-48`). `src/components/dev/ServerSwitch.tsx:25` returns
+   `null` when it is false, and `resolveActiveProfile` bails to `{mode:'remote'}` at
+   `src/lib/serverProfile.ts:216` ("Production ignores any stored value"). So shipping the corrected file
+   withdraws a way for a Play-installed build to be pointed at `http://localhost:8091`,
+   `http://localhost:54321` or `10.0.2.2` — behaviour change and blast-radius reduction, to be announced as
+   such. The tracked profile agrees: `scripts/export-eas-profile-env.mjs:49` **refuses to project** a
+   production profile that sets `EXPO_PUBLIC_LOCAL_*` ("the Local server switch is non-production only").
+2. **Share links and certificate links move from staging to prod.**
+   `src/features/voting/api/voting.api.ts:206-210` resolves
+   `EXPO_PUBLIC_SHARE_BASE_URL || EXPO_PUBLIC_WEB_BASE_URL || EXPO_PUBLIC_SITE_URL || 'https://www.spotlightng.com'`;
+   neither of the first two is set in this file (the only other reader is
+   `src/features/registration/components/ContestVotingCard.tsx:28`), so today the **staging**
+   `EXPO_PUBLIC_SITE_URL` wins and vote-invite links leave the app naming
+   `frontend-web-staging-new…`. `src/features/filmAcademy/api.ts:334-337` (`resolvePublicSiteUrl`) uses
+   `EXPO_PUBLIC_SITE_URL` whenever it is non-empty and falls back to the prod constant only when blank, so
+   printed certificate verification URLs (`/verify/certificate/<code>`) do the same. Both are fixed by the
+   re-point, and both are strings that escape the app into other people's browsers.
+
+### 15.5 The recipe, run on a scratch copy (main's file untouched)
+
+- `node scripts/export-eas-profile-env.mjs production` → rc 0, exactly **6 keys**: `EXPO_PUBLIC_APP_ENV`,
+  `EXPO_PUBLIC_SENTRY_ENVIRONMENT`, `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`,
+  `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME`.
+- Step 2 applied to a copy: 247 → **244 non-empty lines**, 215 → **212 keys** (the three dropped backend
+  keys are the only removals), `EXPO_PUBLIC_APP_ENV=production`, **0 key lines carrying a staging ref**.
+  The guard from §15.1, extracted verbatim from the committed `build-aab.sh:130-136` and run against the
+  copy, **passes**; run against main's real file it **refuses** — which is the demonstration Step 4 wanted,
+  obtained without touching the file.
+- `node scripts/check-env-mocks.mjs` exits 0 on the patched copy (69/70 derived flags live, 1 allow-listed
+  on mock: `EXPO_PUBLIC_SCHEDULED_USE_MOCK`) **and also exits 0 on today's staging-wired file**. That gate
+  detects placeholders and mocks, not planes — the concrete reason Step 4's guard was necessary rather than
+  decorative: nothing in the existing lane would have refused this build.
+- `node scripts/check-env-mocks.mjs .env.production.example` exits **1** with 3 issues
+  (`EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` still `CHANGE_ME`).
+  The tracked example is a shape reference, not a drop-in — and the shipped file is 215 keys vs the
+  example's 80, so it cannot be regenerated by copying the example.
+- **A brief claim is false.** Step 2 justifies `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL=https://www.spotlightng.com/login`
+  by saying `.env.production.example:26` "states the prod value". Line 26 of the example is
+  `PASSWORD_RESET_REDIRECT_URL=https://CHANGE_ME.example.com/login` — a placeholder, and a non-`EXPO_PUBLIC_`
+  name at that. The mobile lane reads `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL` **nowhere** (swept across
+  `src/ app/ scripts/ eas.json build-aab.sh build-apk.sh`), so the brief's value is harmless but baseless: it
+  is a user decision, or the line is left as-is. Do not let a future session cite `:26` as provenance.
+- Recommendation carried to the user: regenerate and **rebuild**, then re-grep the artifact (§15.3's probe is
+  the only proof that survives); do not sed-patch three keys and call the plane fixed, because the installed
+  bundle is where the truth lives and it is 19 MB of stale bytes until a build runs.
+
+### 15.6 What this task does not prove, and what is the user's to decide
+
+- No build ran. Nothing was compiled, installed, uploaded, or submitted; **Play's current production bundle
+  was not inspected**, so this section states what the three artifacts on this machine contain and claims
+  nothing about what users have installed.
+- `.env.production` is gitignored, so when the re-point is approved it will exist **only on this machine**.
+  Every new build host starts staging-wired or empty, and `build-aab.sh:118-125` exits 1 when the file is
+  absent — a new host must run the recipe, never `mv` the file aside. `.env.production.pre-cutover.2026-11-12`
+  is the staging-wired original: keep it, do not restore it.
+- **Rotate the `wnic…` pooler credential.** `DATABASE_URL` in that file is a staging pooler DSN whose
+  password surfaced in tool output earlier in this planning session. Treat it as exposed and rotate it, by
+  whoever owns the `wnic…` project, before this plan is called closed. The 134 backend keys sitting in a
+  mobile env file are the same class of exposure waiting to happen — the fix is to move them to the backend
+  plane's own env, not to re-point the mobile file.
+- Task 16's inputs from this section: **18 tracked files** reference `mobile-app/reactnative/.env` by path
+  (`git grep -lE 'mobile-app/reactnative/\.env'`, ledger excluded) — `MOBILE_SUPABASE_LOCAL_CONFIG.md`,
+  `REGISTRATION_E2E_TEST_RESULTS.md`, `docs/CROWDFUNDING_GO_LIVE.md`, `docs/ENV.md`,
+  `docs/audit/E2E_TEST_MATRIX.md`, `docs/devops/DEPLOY-RUNBOOK.md`, `docs/devops/GO-LIVE-FINAL.md`,
+  `docs/e2e/results/mobile.md`, `docs/prd/golive/GO_LIVE_CHECKLIST.md`,
+  `docs/prd/transportation/INTEGRATION-RUNBOOK.md`, `docs/qa/food-uat-332/cluster-c-discovery-cart.md`,
+  `docs/qa/test-release-runbook.md`, `docs/runbooks/fx-e2e-test.md`, `docs/supabase-go-live.md`,
+  `launch/CREDENTIALS.md`, `launch/apply-env.sh`, `launch/master.env.template`,
+  `mobile-app/reactnative/docs/association/GO_LIVE.md`. A narrower pattern (`\.env.production` within the
+  mobile lane + release docs) hits 11, including `mobile-app/reactnative/docs/GO-LIVE-CONFIG.md`,
+  `.vscode/tasks.json`, both build scripts and both mock-check scripts. Report both figures rather than
+  one: which list a doc fix needs depends on whether the sentence names the file or the plane.
