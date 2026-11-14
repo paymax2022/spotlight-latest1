@@ -45,19 +45,38 @@ OPTIONS_CLEAN = (
     "const LABEL = { veterinarian: 'Veterinary' };\n")
 LANDING_OK = "export default function Onboard() {\n  return route('/health/vet/provider/onboarding');\n}\n"
 LANDING_MISSING = "export default function Onboard() {\n  return route('/health/vet/home');\n}\n"
+UNION_CLEAN = (
+    "export type RecordCategory =\n"
+    "  | 'consultations'\n"
+    "  | 'dependents';\n")
+UNION_WITH_PETS = (
+    "export type RecordCategory =\n"
+    "  | 'consultations'\n"
+    "  | 'pets';\n")
+UNION_PETS_IN_COMMENT = (
+    "export type RecordCategory =\n"
+    "  | 'consultations'\n"
+    "  // No 'pets' member: pets belong to the Vet module.\n"
+    "  | 'dependents';\n")
+UNION_RENAMED = (
+    "export type RecordsCategory =\n"
+    "  | 'consultations';\n")
 
 
 def build(tmp, *, screen=CLEAN_SCREEN, options=OPTIONS_CLEAN, landing=LANDING_OK,
-          legacy_body=VET_LINK_SCREEN):
+          legacy_body=VET_LINK_SCREEN, union=UNION_CLEAN):
     """Lay out a fixture doctor plane and point the guard at it."""
     doctor = os.path.join(tmp, 'app', '(doctor)', '(tabs)')
     os.makedirs(doctor)
     os.makedirs(os.path.join(tmp, 'app', 'health'))
     os.makedirs(os.path.join(tmp, 'src', 'features', 'doctor', 'constants'))
+    os.makedirs(os.path.join(tmp, 'src', 'types'))
     with open(os.path.join(doctor, 'index.tsx'), 'w') as fh:
         fh.write(screen)
     with open(os.path.join(tmp, 'app', 'health', 'provider-onboarding.tsx'), 'w') as fh:
         fh.write(landing)
+    with open(os.path.join(tmp, 'src', 'types', 'doctor.batch6.ts'), 'w') as fh:
+        fh.write(union)
     with open(os.path.join(tmp, 'src', 'features', 'doctor', 'constants', 'onboarding.ts'), 'w') as fh:
         fh.write(options)
     legacy = os.path.join(tmp, 'app', '(doctor)', 'vet')
@@ -71,6 +90,7 @@ def build(tmp, *, screen=CLEAN_SCREEN, options=OPTIONS_CLEAN, landing=LANDING_OK
     cvb.LEGACY_VET = os.path.join(cvb.DOCTOR_APP, 'vet') + os.sep
     cvb.OPTIONS = os.path.join(tmp, 'src', 'features', 'doctor', 'constants', 'onboarding.ts')
     cvb.LANDING = os.path.join(tmp, 'app', 'health', 'provider-onboarding.tsx')
+    cvb.RECORDS_TYPES = os.path.join(tmp, 'src', 'types', 'doctor.batch6.ts')
 
 
 def run():
@@ -116,6 +136,32 @@ with tempfile.TemporaryDirectory() as tmp:
     code, out = run()
     check('missing landing vet route fires', code, 1)
     check('missing landing route says so', 'did not disappear' in out, True)
+
+# --- a pets member in the records union fires -------------------------------
+# The Records hub renders its category grid from `categoryCounts`, so the union
+# member is what lets a demo fixture put "Pet records" in front of a doctor.
+with tempfile.TemporaryDirectory() as tmp:
+    build(tmp, union=UNION_WITH_PETS)
+    code, out = run()
+    check('pets union member fires', code, 1)
+    check('pets union member names the file', 'doctor.batch6.ts' in out, True)
+
+# --- prose about the absence is not the presence ----------------------------
+# The shipped source carries a comment naming 'pets' to explain why the member is
+# gone. A check that matched the word anywhere would fail its own rationale.
+with tempfile.TemporaryDirectory() as tmp:
+    build(tmp, union=UNION_PETS_IN_COMMENT)
+    code, out = run()
+    check('pets in a comment stays quiet', code, 0)
+
+# --- a renamed union fails loudly rather than passing -----------------------
+# Check 4 anchors on `export type RecordCategory =`; if the type moves, the scan
+# matches nothing and the rule it protects dies quietly.
+with tempfile.TemporaryDirectory() as tmp:
+    build(tmp, union=UNION_RENAMED)
+    code, out = run()
+    check('renamed union fails the guard', code, 1)
+    check('renamed union says why', 'not found' in out, True)
 
 # --- a moved tree fails loudly rather than passing --------------------------
 code, out = '', ''

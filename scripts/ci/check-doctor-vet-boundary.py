@@ -17,12 +17,23 @@ The `app/(doctor)/vet/**` subtree itself is legacy and stays registered — this
 guards the ENTRY POINTS, not the screens, because removing screens a live
 account may still be inside is a separate, data-aware change.
 
-THREE CHECKS
+A third way in was found that no route string reveals: the Records hub renders
+its "By category" grid from data, and `RecordCategory` carried a `pets` member
+whose label is "Pet records". `DOCTOR_USE_MOCK` defaults to true, so the demo
+dashboard's `{category:'pets'}` row renders that chip to a human doctor — a vet
+affordance inside the doctor plane, invisible to checks 1 and 2 and only visible
+on screen.
+
+FOUR CHECKS
   1. No screen under `app/(doctor)/` outside that legacy subtree routes to it.
   2. `PROVIDER_TYPE_OPTIONS` offers no `veterinarian` choice.
   3. The landing-page vet onboarding route still exists. Without this the guard
      could be satisfied by deleting the vet plane wholesale, which is the
      opposite of the rule.
+  4. `RecordCategory` carries no `pets` member, so the records plane cannot offer
+     a pet category — as data or as a type. While the member is absent, a pets
+     fixture row is a tsc error (the mobile lane compiles the whole app), so this
+     check guards the type that guards the data.
 """
 import os
 import re
@@ -34,10 +45,15 @@ DOCTOR_APP = os.path.join(RN, 'app', '(doctor)')
 LEGACY_VET = os.path.join(DOCTOR_APP, 'vet') + os.sep
 OPTIONS = os.path.join(RN, 'src', 'features', 'doctor', 'constants', 'onboarding.ts')
 LANDING = os.path.join(RN, 'app', 'health', 'provider-onboarding.tsx')
+RECORDS_TYPES = os.path.join(RN, 'src', 'types', 'doctor.batch6.ts')
 CANONICAL_VET_ROUTE = '/health/vet/provider/onboarding'
 
 VET_ROUTE_RE = re.compile(r"['\"`]/\(doctor\)/vet")
 VET_OPTION_RE = re.compile(r"type:\s*'veterinarian'")
+# A union MEMBER line, not any mention of the word: the comment that explains why
+# there is no pets member must not trip the check it documents.
+PET_CATEGORY_RE = re.compile(r"^\s*\|\s*'pets'", re.MULTILINE)
+RECORD_CATEGORY_ANCHOR = 'export type RecordCategory ='
 
 
 def doctor_screens():
@@ -50,8 +66,20 @@ def doctor_screens():
                 yield os.path.join(dirpath, name)
 
 
+def records_categories():
+    """(union_found, pets_offered) for the `RecordCategory` union."""
+    if not os.path.exists(RECORDS_TYPES):
+        return False, False
+    src = open(RECORDS_TYPES, encoding='utf-8').read()
+    start = src.find(RECORD_CATEGORY_ANCHOR)
+    if start == -1:
+        return False, False
+    union = src[start:src.find(';', start)]
+    return True, bool(PET_CATEGORY_RE.search(union))
+
+
 def scan():
-    """(routes, vet_option_offered, landing_route_present) — the three raw facts."""
+    """The four raw facts this guard reports on."""
     routes = []
     for path in doctor_screens():
         with open(path, encoding='utf-8') as fh:
@@ -66,7 +94,8 @@ def scan():
         option_offered = bool(VET_OPTION_RE.search(array))
     landing_present = os.path.exists(LANDING) and CANONICAL_VET_ROUTE in open(
         LANDING, encoding='utf-8').read()
-    return routes, option_offered, landing_present
+    union_found, pets_offered = records_categories()
+    return routes, option_offered, landing_present, union_found, pets_offered
 
 
 def main():
@@ -75,7 +104,7 @@ def main():
               'silently passing would be meaningless')
         return 1
 
-    routes, option_offered, landing_present = scan()
+    routes, option_offered, landing_present, union_found, pets_offered = scan()
     failed = False
 
     if routes:
@@ -100,9 +129,25 @@ def main():
         print('  The vet entry point moved OUT of the Doctor app, it did not disappear.')
         print('  Restore the landing-page Vet module before removing doctor-side links.')
 
+    if not union_found:
+        failed = True
+        print(f"::error::{RECORD_CATEGORY_ANCHOR!r} was not found in "
+              f"{os.path.relpath(RECORDS_TYPES, ROOT)}")
+        print('  Check 4 scans that union, so a rename or a move turns it green')
+        print('  without protecting anything. Update this guard with the type.')
+
+    if pets_offered:
+        failed = True
+        print(f"::error::RecordCategory still carries 'pets' — "
+              f"{os.path.relpath(RECORDS_TYPES, ROOT)}")
+        print('  The Records hub renders its category grid from data, so that member')
+        print('  puts a "Pet records" affordance in front of a human doctor. Pets are')
+        print('  the Vet module\'s records, reached from the landing page Vet icon.')
+
     if not failed:
         print('doctor/vet boundary OK: no vet entry point in the Doctor app, '
-              'vet onboarding reachable from the landing page')
+              'vet onboarding reachable from the landing page, '
+              'no pet category in the records plane')
     return 1 if failed else 0
 
 

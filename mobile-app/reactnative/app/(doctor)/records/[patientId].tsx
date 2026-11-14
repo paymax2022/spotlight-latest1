@@ -43,7 +43,6 @@ const CATEGORY_ICON: Record<RecordCategory, LucideIcon> = {
   referrals:     Icons.Share2,
   hmo:           Icons.ShieldCheck,
   dependents:    Icons.Users,
-  pets:          Icons.PawPrint,
 };
 
 const EXPORT_LABELS = RECORD_EXPORT_FORMAT_OPTIONS.map((o) => o.label);
