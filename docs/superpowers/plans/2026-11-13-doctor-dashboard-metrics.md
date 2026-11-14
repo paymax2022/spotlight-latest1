@@ -1306,10 +1306,10 @@ cd /private/tmp/spot-doctor-metrics && git status --porcelain | head -20; echo "
 Expected: a dirty count of `0`. If anything is modified, it is unfinished work — commit it or stop and report it; never `git stash` here and never `git checkout --` a file another round may still own.
 
 ```bash
-cd /private/tmp/spot-doctor-metrics && git fetch origin main && git rebase origin/main && git log --oneline -1 && git rev-list --count origin/main..HEAD
+cd /private/tmp/spot-doctor-metrics && echo "own commits before: $(git rev-list --count $(git merge-base origin/main HEAD)..HEAD)" && git fetch origin main && git rebase origin/main && git log --oneline -1 && echo "own commits after: $(git rev-list --count origin/main..HEAD)"
 ```
 
-Expected: rebase exits 0 with no conflict output. `git rev-list --count origin/main..HEAD` should print the branch's own commits and none of main's — 25 at the time of writing, one more per fix round. If a conflict does appear, resolve it by reading both sides; never `--skip` and never drop a commit to get past it. If `origin/main` moved again since, re-run Step 0's check and re-measure the post-#1008 line numbers before continuing.
+Expected: rebase exits 0 with no conflict output, and **the two counts are the same number** — that equality is the proof, so do not write an expected value from memory. A count that grows means the rebase duplicated commits; a count that shrinks means it dropped one. Either way stop and report rather than pushing. If a conflict does appear, resolve it by reading both sides; never `--skip` and never drop a commit to get past it. If `origin/main` moved again since, re-run Step 0's check and re-measure the post-#1008 line numbers before continuing.
 
 Then prove the branch still builds and its own tests still pass against main's code, before any new line is written:
 
