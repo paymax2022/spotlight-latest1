@@ -2153,6 +2153,8 @@ MSG
 
 `AppointmentRow` crashes on an `in_person` booking (`TYPE_ICON[...]` is `undefined` → rendering it throws) and prints "Invalid Date" for a timestamp-shaped `slotDate` ([mobile-app/reactnative/src/features/doctor/components/AppointmentRow.tsx:18-25](../../mobile-app/reactnative/src/features/doctor/components/AppointmentRow.tsx#L18)).
 
+Why the type checker never saw this: `TYPE_ICON` is `Record<ConsultType, LucideIcon>` and `ConsultType` is `'video' | 'audio' | 'chat'` (`src/types/telemedicine.ts:3`), so the three-key map is *provably total* against a union that is smaller than reality — `appointments.consultation_type` is CHECK-constrained to `('video','audio','chat','in_person')` (`supabase/migrations/20260618040000_telemedicine_clinical.sql:10-12`), the table this dashboard now reads, and the queue passes `consultType` through verbatim (spec D8). `VetAppointmentRow.tsx:24` already carries the fourth key (`in_person: User`), which is the in-repo precedent for the fix shape. Task 5's mapping test therefore asserts the wire value survives; this task makes rendering it not throw.
+
 **Files:**
 - Modify: `mobile-app/reactnative/src/features/doctor/components/AppointmentRow.tsx:3-4,18,24-25`
 
