@@ -2304,7 +2304,13 @@ MSG
 
 - [ ] **Step 1: Correct the QA rows that were PASS on mock data**
 
-In `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md`, replace the three rows:
+In `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md`, replace the three rows. The `index.tsx` line numbers below are what the plan predicts *after* Task 7 and after #1020's −7 shift — measure them, do not copy them:
+
+```bash
+cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && grep -n "label=\"Today's consults\"\|label=\"Upcoming\"\|label=\"Satisfaction\"\|\.map((a) =>" "app/(doctor)/(tabs)/index.tsx"
+```
+
+Use the line numbers that command prints — the three `StatCard` lines, and for D1's queue reference the `todays.map((a) =>` line that renders the rows, not the `alerts.map` above it and not the `SectionHeader` above that. A docs commit that cites a line which no longer holds that code is worse than one that cites nothing: it reads as verified.
 
 ```markdown
 | D1 | Today's appointments | StatCard `counts.todaysAppointments` + "Today's queue" list (index.tsx:166,308) | PASS — live mode: `GET /dashboard` `metrics.todaysCount` / `todaysAppointments`, both dated in the doctor's timezone |
