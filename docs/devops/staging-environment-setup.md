@@ -201,10 +201,10 @@ Add repo **variables**:
 direction:** step 3 is done and step 1 is unverified. The switches were enabled
 without proof that `SUPABASE_PROJECT_ID` left the staging ref behind, so
 `db-migrate.yml`'s push lane on `main` is armed today and its only protection is
-the equality backstop above plus whatever gate the `Production` environment
-imposes (the two parked runs prove a gate exists; the rule behind it is
-unconfirmed — see the Postgres row in
-[`deployment-matrix.md`](deployment-matrix.md)). That
+the equality backstop above plus the `Production` environment's **required
+reviewers** — measured 2026-11-14: both parked runs return
+`pending_deployments[].reviewers` = two `User` entries with `wait_timer: 0`, and
+`current_user_can_approve: false` for a non-reviewer. That
 is why ledger §16 counts two production writes parked on approval right now
 (`43299354226`, `43299959109`, both head `3654f6b3f`) and a third pending
 (`43534854471`, head `8ed8123de`). This plan approved, declined and dispatched
@@ -223,9 +223,11 @@ It held 754 when the figures below were written; the 754→755 step is `8ed8123d
 (2026-11-14), which added
 `supabase/migrations/20271411000000_reconcile_doctors_presence_backfill.sql`.
 **Every other 754 in this plan stays correct as written** — the `recorded: 754`
-at the end of this paragraph, and the `754 − 670 = 84` closures in the ledger's
-§5.4 and §10 — because those are pinned to `3654f6b3f` / `623c7c128`, both of
-which count 754. Do not sweep-replace.
+at the end of this paragraph (ledger §5.4) and the `754 − 670 = 84` closures
+(ledger §1.4 and §2.5) — because those are pinned to `3654f6b3f` / `623c7c128`,
+both of which count 754. Do not sweep-replace; but do not read §5.4's
+"`origin/main`'s tree (754 files)" as a standing property either — it is a
+2026-11-13 capture and now carries its own annotation.
 Staging's current state comes from Task 5, not
 from this section: **0 pending**, `recorded: 754`, `remote max applied:
 20271410000000`, read from the write run's own before/after captures
@@ -255,19 +257,38 @@ later `db push` sees the chain as applied and skips it.
 Production (`spotlight-prod`) is still **11 migrations behind** and was NOT
 touched. Apply it through the normal gated job once its secrets are correct.
 
+> **THIS SENTENCE IS FALSE — left in place only as the 2026-08-21 record, and it
+> is the exact claim §5.2 and §16.2 item 2 exist to retire.** Both halves are
+> wrong now: "11 behind" was superseded by §5.2's fresh classification of
+> **88 pending** (a 2026-11-07 capture, so re-read rather than quote — §5.6),
+> and "was NOT touched" stopped being true on 2026-11-12 evening, when §1.4
+> recorded prod gaining `20271408000000` and `20271409000000` (apply run
+> `43301433055`, 20:33:13Z) and then `20271410000000` (apply run `43309595782`,
+> 21:22:19Z) — all three through `ops-db-push-scoped.yml`, **the lane that needs
+> no reviewer**, and none of them dispatched by this plan. Its post-apply reads
+> left prod at **84** pending against the `3654f6b3f` tree, so production's
+> pending count is *not* a figure to quote and is Task 6's first command.
+
 For future applies, prefer the workflow: Actions → *DB Migrate* → Run workflow →
 choose `target`, dry run **checked** first, then re-run unchecked.
 
 ### 5. Promote the branch
 
 **STILL OPEN, and the sentence below is stale in both directions.** Re-measured
-2026-11-14 against the fetched refs (`git rev-list --count`):
+2026-11-14 against the fetched refs (`git rev-list --count`). **Pin the refs when
+you re-run this — the numbers move every time `main` takes a merge.** Read at
+`origin/main` = `31505cb92`, `origin/staging` = `623c7c128`,
+`origin/develop` = `da665dcd0`:
 
 | Pair | Commits |
 |---|---|
-| `origin/staging` behind `origin/main` | **18** |
+| `origin/staging` behind `origin/main` | **19** |
 | `origin/staging` ahead of `origin/main` | **4** |
-| `origin/main` ahead of `origin/develop` | **1626** |
+| `origin/main` ahead of `origin/develop` | **1627** |
+
+An earlier capture of the same command, hours before, read **18 / 4 / 1626** at
+`origin/main` = `fc705d58d`; both are correct at their own ref and neither is
+portable.
 
 So `staging` is neither "53 commits behind `develop`" nor meaningfully behind
 `main`: it is 4 commits **ahead** of `main` (its tip is `623c7c128`, which is

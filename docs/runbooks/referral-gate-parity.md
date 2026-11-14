@@ -37,6 +37,22 @@
 | `GET /api/v1/wallet/balance` — **not** a referral route | `503 Wallet feature is not available.` *(re-confirmed 2026-11-14)* | not probed | not probed |
 | `GET /api/v1/events` — **not** a referral route | `503 Events are not available.` *(re-confirmed 2026-11-14)* | not probed | not probed |
 
+**Which host each column is, stated because the two staging hosts disagree and the table used to say just
+"Staging".** Production = `https://www.spotlightng.com`, Staging = `https://frontend-web-staging-new.up.railway.app`
+— the same layer in both columns, the **web** plane. The paths above are the BFF's own prefix. They do not
+exist on the Go API hosts, and measuring them there is a trap: `https://backend-staging-new.up.railway.app`
+answers **404 on both** `/api/v1/referrals/me/dashboard` and `/api/v1/referral/my-rewards` (measured
+2026-11-14, unauthenticated), which looks like an unmounted rail and is nothing of the kind. A 404 is not
+evidence about a gate. The API's real paths — taken from the route table, not guessed — are
+`GET /v1/referrals/me/dashboard` (engine group `r.Group("/v1/referrals")`, `backend/internal/app/referral_routes.go:204`
+with the leaf at `:212`) and `GET /api/finance/referral/my-rewards` (§7A, same file `:133`, `mg := member` at `:129`),
+and those answer **401** on staging's API host, i.e. mounted and authenticated-gated, which agrees with the
+web column. So: never cite the raw API host with a `/api/v1/...` path.
+*Prod's API host on the two real paths reads 404 where staging reads 401 — recorded, and deliberately not
+called a gate finding: prod serves `585bd2ca7…`, which is not the release SHA and not an ancestor of
+`origin/main` (ledger §16.2 items 5 and 14), so the pair is only comparable after Task 11 moves the host.
+Re-take these two probes then.*
+
 The two non-referral rows are here for one reason: they are the evidence that the
 503 class is a *web-runtime-env* problem, not a referrals problem. Stated at the
 level each source actually supports — `frontend-web/config/production-module-flags.env`
