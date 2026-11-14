@@ -200,10 +200,19 @@ func (r *Repository) GetCommissionConfig(ctx context.Context, userID string) (*C
 
 // appointmentStatusCounts returns the doctor's appointment counts grouped by
 // status, used to compose the dashboard projection. Pure read.
+//
+// Keyed for the dashboard, not for the appointment tab: the only key the screen
+// reads is `counts.pending` (doctor.batch1.api.ts getDashboard →
+// pendingRequests), and a booking the doctor has not decided is exactly
+// status='booked'. The tab calls the same row `upcoming`, so the two reads use
+// the vocabulary of their own consumer rather than one shared label.
 func (r *Repository) appointmentStatusCounts(ctx context.Context, userID string) (map[string]int64, error) {
 	const q = `
-		SELECT status, COUNT(*)::bigint
-		FROM doctor_appointments WHERE user_id = $1 GROUP BY status`
+		SELECT CASE a.status WHEN 'booked' THEN 'pending' ELSE a.status END, COUNT(*)::bigint
+		FROM appointments a
+		JOIN doctors d ON d.id = a.doctor_id
+		WHERE d.user_id = $1
+		GROUP BY 1`
 	rows, err := r.db.Query(ctx, q, userID)
 	if err != nil {
 		return nil, err

@@ -597,18 +597,27 @@ type ConsultQueueEntry struct {
 	UpdatedAt     time.Time       `json:"updatedAt"`
 }
 
-// AppointmentRequest mirrors public.doctor_appointment_requests (mobile AppointmentRequest).
+// AppointmentRequest is the doctor's decision view of ONE booking. It mirrors
+// the mobile AppointmentRequest (types/doctor.batch1.ts), which nests the
+// appointment rather than flattening it — and reads `r.appointment.patient.*`
+// and `TYPE_ICON[r.appointment.consultType]` off that nesting.
+//
+// It is projected from public.appointments (repository_ops.go
+// requestForAppointment); it does NOT mirror doctor_appointment_requests, a
+// table nothing in this repository writes.
 type AppointmentRequest struct {
-	ID            string          `json:"id"`
-	UserID        string          `json:"userId"`
-	AppointmentID *string         `json:"appointmentId,omitempty"`
-	Patient       json.RawMessage `json:"patient,omitempty"`
-	ConsultType   *string         `json:"consultType,omitempty"`
-	Status        string          `json:"status"`
-	RequestedSlot *string         `json:"requestedSlot,omitempty"`
-	Detail        json.RawMessage `json:"detail,omitempty"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
+	ID             string      `json:"id"`
+	UserID         string      `json:"userId"`
+	AppointmentID  string      `json:"appointmentId"`
+	Status         string      `json:"status"` // pending|accepted|rejected|reschedule_requested
+	Priority       string      `json:"priority"`
+	Billing        string      `json:"billing"`
+	RequestedAt    time.Time   `json:"requestedAt"`
+	PatientNote    string      `json:"patientNote"`
+	RejectionReason  *string   `json:"rejectionReason,omitempty"`
+	ProposedSlotDate *string   `json:"proposedSlotDate,omitempty"`
+	ProposedSlotTime *string   `json:"proposedSlotTime,omitempty"`
+	Appointment    *Appointment `json:"appointment"`
 }
 
 // ClinicPortfolio mirrors mobile ClinicPortfolio. There is no dedicated clinics

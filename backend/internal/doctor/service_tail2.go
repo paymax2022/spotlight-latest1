@@ -164,10 +164,14 @@ func (s *Service) GetDashboard(ctx context.Context, userID string) (*DashboardSu
 	}, nil
 }
 
-// GetScheduleSettings composes the doctor's schedule sub-resources (blocked dates,
-// recurring rules, reminders, current vacation) into one read. A missing vacation
-// row is not an error — it surfaces as nil.
+// GetScheduleSettings composes the doctor's schedule sub-resources (the
+// availability row, blocked dates, recurring rules, reminders, current vacation)
+// into one read. A missing vacation row is not an error — it surfaces as nil.
 func (s *Service) GetScheduleSettings(ctx context.Context, userID string) (*ScheduleSettings, error) {
+	avail, err := s.GetAvailability(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	blocked, err := s.repo.ListBlockedDates(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -189,7 +193,17 @@ func (s *Service) GetScheduleSettings(ctx context.Context, userID string) (*Sche
 	default:
 		return nil, vErr
 	}
-	return &ScheduleSettings{BlockedDates: blocked, RecurringRules: rules, Reminders: reminders, Vacation: vac}, nil
+	return &ScheduleSettings{
+		Schedule: *avail,
+		// The screen's two switches, named as it names them: the row stores
+		// accepts_instant, the label is appointment-only.
+		AppointmentOnly:    !avail.AcceptsInstant,
+		EmergencyAvailable: avail.EmergencyEnabled,
+		BlockedDates:       blocked,
+		RecurringRules:     rules,
+		Reminders:          reminders,
+		Vacation:           vac,
+	}, nil
 }
 
 // GetQualityAnalytics returns the latest quality-score projection (reuses the

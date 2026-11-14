@@ -79,7 +79,7 @@ Ownership Map for which spec entries are full screens vs states vs reuse-existin
 | `getBlockedDates()` | `BlockedDate[]` |
 | `getConsultationQueue()` | `ConsultationQueueItem[]` |
 | `getAppointmentRequests()` | `AppointmentRequest[]` |
-| `getAppointmentRequest(id)` | `AppointmentRequest \| undefined` |
+| `getAppointmentRequest(id)` | `AppointmentRequest \| null` |
 
 ### Pure helpers (no latency — UI may call inline)
 | Function | Returns |
@@ -136,7 +136,7 @@ Ownership Map for which spec entries are full screens vs states vs reuse-existin
 | Hook | Kind | Signature |
 |------|------|-----------|
 | `useDashboard()` | query | → `DoctorDashboardData` |
-| `useAnnouncement()` | query | → `PlatformAnnouncement \| undefined` |
+| `useAnnouncement()` | query | → `PlatformAnnouncement \| null` |
 | `useSetPresence()` | mutation | `Omit<SetPresenceInput,'idempotencyKey'>` |
 | `useDismissAnnouncement()` | mutation | `Omit<DismissAnnouncementInput,'idempotencyKey'>` |
 
@@ -160,7 +160,7 @@ Ownership Map for which spec entries are full screens vs states vs reuse-existin
 |------|------|-----------|
 | `useConsultationQueue()` | query | → `ConsultationQueueItem[]` |
 | `useAppointmentRequests()` | query | → `AppointmentRequest[]` |
-| `useAppointmentRequest(id)` | query | → `AppointmentRequest \| undefined` |
+| `useAppointmentRequest(id)` | query | → `AppointmentRequest \| null` |
 | `useAcceptAppointment()` | mutation | `Omit<AcceptAppointmentInput,'idempotencyKey'>` |
 | `useRejectAppointment()` | mutation | `Omit<RejectAppointmentInput,'idempotencyKey'>` |
 | `useRequestReschedule()` | mutation | `Omit<RequestRescheduleInput,'idempotencyKey'>` |
@@ -213,8 +213,9 @@ Identical to earlier phases:
   wanted).
 - **Error:** `isError` + `error`; render a retry affordance.
 - **Empty:** arrays may be `[]` (no requests, empty queue, no alerts, no blocked
-  dates) — render an empty state. `getAppointmentRequest` / `getAnnouncement` and
-  the optional `vacation` may resolve `undefined` — render not-found / "none set".
+  dates) — render an empty state. `getAppointmentRequest` / `getAnnouncement`
+  resolve `null`, and the optional `vacation` may be absent — render not-found /
+  "none set".
 - **State variants (consolidated):** accept/reject → `AppointmentRequestStatus`;
   HMO/paid/free → `AppointmentBilling`; countdown / late / overbooking → the pure
   helpers (`computeConsultCountdown`, `checkOverbooking`); "saved confirmation" →

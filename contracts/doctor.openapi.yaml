@@ -580,6 +580,9 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/UpdateAppointmentStatusRequest' } } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateAppointmentStatusResult' } } } }
+        # appointments.status is CHECKed to booked|confirmed|completed|cancelled, so a
+        # status the booking table cannot hold (in_progress, no_show) is refused, not 500.
+        '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
   /doctor/appointments/{appointmentId}/notes:
@@ -1335,14 +1338,14 @@ paths:
       summary: Request a reschedule
       parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+      responses: { '400': { $ref: '#/components/responses/BadRequest' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
   /doctor/appointments/{appointmentId}/reschedule:
     post:
       tags: [doctor-batch1]
       summary: Reschedule an appointment
       parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+      responses: { '400': { $ref: '#/components/responses/BadRequest' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
   /doctor/appointments/{appointmentId}/cancel:
     post:
       tags: [doctor-batch1]
@@ -1356,7 +1359,7 @@ paths:
       summary: Start the consultation
       parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+      responses: { '400': { $ref: '#/components/responses/BadRequest' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
   /doctor/appointments/{appointmentId}/end:
     post:
       tags: [doctor-batch1]
@@ -1370,7 +1373,7 @@ paths:
       summary: Mark a no-show
       parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+      responses: { '400': { $ref: '#/components/responses/BadRequest' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
 
   # ════════════════════════════════════════════════════════════════════════════
   # Batch 2 — Patient profile / Chat / Calls / Notes (doctor.batch2.api.ts)

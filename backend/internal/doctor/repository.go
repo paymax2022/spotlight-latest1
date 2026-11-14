@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,6 +29,11 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 
 // ErrNotFound is returned when a scoped row does not exist for the doctor.
 var ErrNotFound = errors.New("doctor: not found")
+
+// ErrStatusUnsupported is returned when a decision cannot be recorded on the
+// booking table at all — the caller asked for a state appointments has no
+// column for, not for a row that is missing.
+var ErrStatusUnsupported = errors.New("doctor: status not supported by the booking table")
 
 func (r *Repository) GetProfile(ctx context.Context, userID string) (*Profile, error) {
 	const q = `
@@ -137,30 +143,43 @@ func (r *Repository) GetAvailability(ctx context.Context, userID string) (*Avail
 }
 
 // UpsertAvailability writes the single per-doctor availability row (UNIQUE user_id).
+//
+// `emergency_enabled` and `rules` are kept when the schedule omits them: the
+// availability screen's body has no emergencyEnabled and no rules at all, while
+// PUT /schedule/emergency owns both — the flag and the emergency windows it
+// stores in rules->'emergency'. Dereferencing an absent flag to false and an
+// absent object to {} deleted that endpoint's data on every hours save.
 func (r *Repository) UpsertAvailability(ctx context.Context, userID string, in AvailabilityScheduleInput) (*Availability, error) {
 	workingDays := jsonx.RawOrEmptyArray(in.WorkingDays)
 	breaks := jsonx.RawOrEmptyArray(in.Breaks)
-	rules := jsonx.RawOrEmptyObject(in.Rules)
 	reminders := jsonx.RawOrEmptyObject(in.ReminderSettings)
 	dur := ptr.Deref(in.ConsultDurationMins, 30)
 	buf := ptr.Deref(in.BufferMins, 0)
 	instant := ptr.Deref(in.AcceptsInstant, false)
-	emergency := ptr.Deref(in.EmergencyEnabled, false)
 	tz := strOrDefault(in.Timezone, "Africa/Lagos")
+
+	var emergency any
+	if in.EmergencyEnabled != nil {
+		emergency = *in.EmergencyEnabled
+	}
+	var rules any
+	if len(bytes.TrimSpace(in.Rules)) > 0 {
+		rules = jsonx.RawOrEmptyObject(in.Rules)
+	}
 
 	const q = `
 		INSERT INTO doctor_availability
 			(user_id, working_days, breaks, rules, consult_duration_mins, buffer_mins,
 			 accepts_instant, emergency_enabled, timezone, reminder_settings, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
+		VALUES ($1,$2,$3,COALESCE($4::jsonb,'{}'::jsonb),$5,$6,$7,COALESCE($8,false),$9,$10, now())
 		ON CONFLICT (user_id) DO UPDATE SET
 			working_days = EXCLUDED.working_days,
 			breaks = EXCLUDED.breaks,
-			rules = EXCLUDED.rules,
+			rules = COALESCE($4::jsonb, doctor_availability.rules),
 			consult_duration_mins = EXCLUDED.consult_duration_mins,
 			buffer_mins = EXCLUDED.buffer_mins,
 			accepts_instant = EXCLUDED.accepts_instant,
-			emergency_enabled = EXCLUDED.emergency_enabled,
+			emergency_enabled = COALESCE($8, doctor_availability.emergency_enabled),
 			timezone = EXCLUDED.timezone,
 			reminder_settings = EXCLUDED.reminder_settings,
 			updated_at = now()`
@@ -171,18 +190,66 @@ func (r *Repository) UpsertAvailability(ctx context.Context, userID string, in A
 	return r.GetAvailability(ctx, userID)
 }
 
+// appointmentColumns is the doctor's view of ONE booking row.
+//
+// A patient's BookAppointment (internal/telemedicine/service.go) writes exactly
+// one row, into public.appointments, keyed by `doctors.id` — not by the doctor's
+// auth id. These screens used to read doctor_appointments, a table this
+// repository never inserts into, so the portal answered an empty list while a
+// real booking sat on "Awaiting doctor confirmation". The JOIN through `doctors`
+// is what makes `$1 = the signed-in doctor` a real scope.
+//
+// The slot is formatted here rather than left a timestamptz because both halves
+// are the DOCTOR'S local wall time (doctor_availability.timezone) while the
+// screens do `new Date(`${slotDate}T00:00:00`)` in the device's own zone: a full
+// timestamp would shift the day for a doctor travelling outside WAT, and a
+// client-side split of the UTC instant would too.
+const appointmentColumns = `
+		SELECT a.id,
+		       d.user_id,
+		       COALESCE(a.ref, 'TM-' || upper(substr(replace(a.id::text, '-', ''), 1, 6))),
+		       a.patient_id,
+		       jsonb_build_object(
+		           'id',     a.patient_id::text,
+		           'name',   COALESCE(pu.full_name, ''),
+		           'age',    COALESCE(pu.age, 0),
+		           'gender', COALESCE(lower(pu.gender), 'other')
+		       ),
+		       a.consultation_type,
+		       CASE a.status WHEN 'booked' THEN 'upcoming' ELSE a.status END,
+		       to_char(a.scheduled_at AT TIME ZONE COALESCE(av.timezone, 'Africa/Lagos'), 'YYYY-MM-DD'),
+		       to_char(a.scheduled_at AT TIME ZONE COALESCE(av.timezone, 'Africa/Lagos'), 'HH12:MI AM'),
+		       a.fee_kobo,
+		       a.notes,
+		       false,
+		       NULL::text,
+		       a.starts_at,
+		       NULL::timestamptz,
+		       a.created_at,
+		       a.created_at
+		FROM appointments a
+		JOIN doctors d            ON d.id = a.doctor_id
+		 LEFT JOIN user_profiles pu ON pu.id = a.patient_id
+		 LEFT JOIN doctor_availability av ON av.user_id = d.user_id
+		WHERE d.user_id = $1`
+
+// `is_hmo`/`hmo_provider` are answered constant because `appointments` records
+// no coverage: the booking escrowed a cash payment, and the HMO tables
+// (doctor_hmo_plan_coverage …) belong to the never-written family, so claiming
+// coverage here would be inventing it. `updated_at` mirrors created_at — the
+// booking table has no updated_at column and the field is part of the shape the
+// screens already parse.
+
 func (r *Repository) ListAppointments(ctx context.Context, userID, status string) ([]Appointment, error) {
-	q := `
-		SELECT id, user_id, ref, patient_id, patient, consult_type, status, slot_date,
-		       slot_time, fee_kobo, reason, is_hmo, hmo_provider, started_at, ended_at,
-		       created_at, updated_at
-		FROM doctor_appointments WHERE user_id = $1`
+	q := appointmentColumns
 	args := []any{userID}
 	if status != "" {
-		q += ` AND status = $2`
-		args = append(args, status)
+		// The tab filters in the UI's vocabulary (ConsultStatus), while the CASE
+		// above only rewrites it on the way out — so the predicate has to go back.
+		q += ` AND a.status = $2`
+		args = append(args, appointmentStatusForFilter(status))
 	}
-	q += ` ORDER BY slot_date DESC NULLS LAST, created_at DESC`
+	q += ` ORDER BY a.scheduled_at DESC NULLS LAST, a.created_at DESC`
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -199,13 +266,39 @@ func (r *Repository) ListAppointments(ctx context.Context, userID, status string
 	return out, rows.Err()
 }
 
+// appointmentStatusForFilter maps a ConsultStatus filter back onto the
+// appointments.status CHECK vocabulary (booked|confirmed|completed|cancelled).
+// Anything else — `in_progress` has no booking state — is passed through and
+// simply matches no row.
+func appointmentStatusForFilter(status string) string {
+	if status == "upcoming" {
+		return "booked"
+	}
+	return status
+}
+
+// appointmentStatusForWrite maps a UI status onto the booking table's CHECK set.
+//
+// `in_progress` and `no_show` have no state in appointments.status
+// (booked|confirmed|completed|cancelled) and no column to carry them
+// (`starts_at` alone would claim a consult that never happened), so they are
+// refused here rather than passed to Postgres, where the CHECK would fail the
+// request with an opaque 500. Those two belong to the consult-session plane,
+// which is where the live engine actually records them.
+func appointmentStatusForWrite(status string) (string, error) {
+	switch status {
+	case "upcoming":
+		return "booked", nil
+	case "confirmed", "completed", "cancelled":
+		return status, nil
+	default:
+		return "", ErrStatusUnsupported
+	}
+}
+
 func (r *Repository) GetAppointment(ctx context.Context, userID, id string) (*Appointment, error) {
-	const q = `
-		SELECT id, user_id, ref, patient_id, patient, consult_type, status, slot_date,
-		       slot_time, fee_kobo, reason, is_hmo, hmo_provider, started_at, ended_at,
-		       created_at, updated_at
-		FROM doctor_appointments WHERE id = $1 AND user_id = $2`
-	a, err := scanAppointment(r.db.QueryRow(ctx, q, id, userID))
+	const q = appointmentColumns + ` AND a.id = $2`
+	a, err := scanAppointment(r.db.QueryRow(ctx, q, userID, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -229,17 +322,12 @@ func scanAppointment(row rowScanner) (*Appointment, error) {
 	return a, nil
 }
 
-// UpdateAppointmentStatus updates status scoped to owner; returns ErrNotFound if no row.
+// UpdateAppointmentStatus is the generic form of the same decision the
+// accept/reject endpoints make: map the UI status onto the booking table and
+// write it, scoped through the owning doctor rather than a column on the
+// booking row. One path, so the two cannot drift apart.
 func (r *Repository) UpdateAppointmentStatus(ctx context.Context, userID, id, status string) (*Appointment, error) {
-	const q = `UPDATE doctor_appointments SET status = $3, updated_at = now() WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, id, userID, status)
-	if err != nil {
-		return nil, err
-	}
-	if tag.RowsAffected() == 0 {
-		return nil, ErrNotFound
-	}
-	return r.GetAppointment(ctx, userID, id)
+	return r.TransitionAppointment(ctx, userID, id, status, nil, nil)
 }
 
 func (r *Repository) ListNotes(ctx context.Context, userID, appointmentID string) ([]ClinicalNote, error) {
@@ -654,8 +742,12 @@ func (r *Repository) GetPatientRecord(ctx context.Context, userID, patientID str
 }
 
 func (r *Repository) listAppointmentsForPatient(ctx context.Context, userID, patientID string) ([]Appointment, error) {
+	// Records-tab read, still against doctor_appointments (out of the
+	// appointment-plane scope of this change). slot_date is a `date` and
+	// Appointment.SlotDate is now the date-only string the wire carries, so cast
+	// it in SQL rather than letting pgx reject a date into *string.
 	const q = `
-		SELECT id, user_id, ref, patient_id, patient, consult_type, status, slot_date,
+		SELECT id, user_id, ref, patient_id, patient, consult_type, status, slot_date::text,
 		       slot_time, fee_kobo, reason, is_hmo, hmo_provider, started_at, ended_at,
 		       created_at, updated_at
 		FROM doctor_appointments WHERE user_id = $1 AND patient_id = $2 ORDER BY created_at DESC`

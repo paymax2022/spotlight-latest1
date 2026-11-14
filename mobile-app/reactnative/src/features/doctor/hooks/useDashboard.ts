@@ -42,7 +42,10 @@ export function useSetPresence() {
     mutationFn: (input: Omit<SetPresenceInput, 'idempotencyKey'>) =>
       setPresence({ ...input, idempotencyKey: generateIdempotencyKey() }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['doctor', 'dashboard'] });
+      // PUT /presence writes doctor_profiles.is_online, which GET /profile
+      // returns — that is the query the presence card reads, so it is the one
+      // to refresh. GET /dashboard carries no presence at all.
+      qc.invalidateQueries({ queryKey: ['doctor', 'profile'] });
     },
   });
 }

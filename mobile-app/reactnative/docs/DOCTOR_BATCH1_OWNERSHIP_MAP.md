@@ -111,7 +111,7 @@ aggregate. Hooks from `useDashboard.ts`.
 | D11 | HMO approval alerts | alert | `(tabs)/index` | `alerts[kind='hmo_approval']` | `DashboardAlert` |
 | D12 | Earnings summary | card on dashboard | `(tabs)/index` | `data.earnings` | `EarningsSummary` |
 | D13 | Patient satisfaction rating | card/stat | `(tabs)/index` | `data.satisfactionPct` | `number` |
-| D14 | Online/offline + availability status | header control + SHEET | `(tabs)/index` | `data.presence`, `data.acceptsInstant` | `DoctorPresence`, `useSetPresence` |
+| D14 | Online/offline + availability status | header control + SHEET | `(tabs)/index` | `profile.isOnline` (PUT /presence store), `settings.autoAcceptInstant` | `DoctorPresence`, `useSetPresence` |
 | D15 | Urgent case alert | alert (severity `critical`) | `(tabs)/index` | `alerts[kind='urgent_case']` | `DashboardAlert` |
 | D16 | Compliance alert | alert | `(tabs)/index` | `alerts[kind='compliance']` | `DashboardAlert` |
 | D17 | Profile-completion reminder | alert | `(tabs)/index` | `alerts[kind='profile_completion']` | `DashboardAlert` |
@@ -191,8 +191,9 @@ Hooks from `useQueue.ts`.
   spinner is wanted).
 - **Error:** `isError` + `error`; render a retry affordance.
 - **Empty:** arrays may be `[]` (no requests / empty queue / no alerts) — render
-  an empty state. Detail reads (`getAppointmentRequest`, `getAnnouncement`,
-  vacation) may resolve `undefined` — render not-found / "none configured".
+  an empty state. Detail reads (`getAppointmentRequest`, `getAnnouncement`)
+  resolve `null`, and the optional `vacation` may be absent — render not-found /
+  "none configured".
 - **Confirmation / state variants:** consolidated — read from `status` / mutation
   `isSuccess` / the countdown helper, not from separate entities.
 - **Money:** integers in kobo; format with `formatKobo`. Never do float math.

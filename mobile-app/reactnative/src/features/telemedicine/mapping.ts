@@ -110,7 +110,7 @@ function availabilityLabel(online: boolean, available: boolean): string {
 }
 
 /** Server `booked` is the UI's `upcoming`; the other lifecycle names match. */
-function mapStatus(raw: unknown): ConsultStatus {
+export function mapStatus(raw: unknown): ConsultStatus {
   switch (str(raw)) {
     case 'booked':        return 'upcoming';
     case 'confirmed':     return 'confirmed';
@@ -121,7 +121,7 @@ function mapStatus(raw: unknown): ConsultStatus {
   }
 }
 
-function mapConsultType(raw: unknown): ConsultType {
+export function mapConsultType(raw: unknown): ConsultType {
   const t = str(raw);
   if (t === 'audio' || t === 'chat') return t;
   return 'video';
