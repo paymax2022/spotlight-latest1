@@ -35,6 +35,17 @@ async function openStep(page: import('@playwright/test').Page, step: 1 | 2 | 3 |
       message: `#step-${step} must open from its own hash`,
     })
     .toBe(true);
+  if (step !== 1) {
+    // The other side of the same contract: SSR ships #step-1 open, so only the
+    // hash handler opening this panel can close it. Asserting it pins the
+    // exclusive accordion itself — a page that lost the `name` grouping would
+    // still pass the check above.
+    await expect
+      .poll(() => page.locator('#step-1').evaluate((el) => (el as HTMLDetailsElement).open), {
+        message: '#step-1 must close when the hash opens a later step',
+      })
+      .toBe(false);
+  }
   return panel;
 }
 

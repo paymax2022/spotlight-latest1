@@ -93,9 +93,14 @@ export type OpenMicEditionStepsData = {
   /** `null` means the board could not be read — which is not the same fact as
    *  "0 entries", and the page must never render a number for it. */
   board: {
-    rows: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
+    rows: {
+      rank: number; artistSlug: string; stageName: string; songTitle: string;
+      /** `null` when the admin hid the counts. The number stays out of the
+       *  payload rather than being shipped for the client to hide. */
+      voteCount: number | null;
+    }[];
     entryCount: number;
-    totalVotes: number;
+    totalVotes: number | null;
   } | null;
 };
 
@@ -128,6 +133,9 @@ export function buildOpenMicEditionStepsData(
   // boundary and report the same window twice.
   const now = Date.now();
 
+  const showLeaderboard = contest.votingConfig?.leaderboardVisible !== false;
+  const showVoteCounts = contest.votingConfig?.voteCountPublic !== false;
+
   return {
     id: contest.id,
     slug: contest.slug,
@@ -144,8 +152,8 @@ export function buildOpenMicEditionStepsData(
     votingState: windowState(votingStartAt, votingEndAt, now),
     registrationFeeNgn: contest.registrationFeeNgn,
     entryFeeRequired: contest.entryFeeRequired,
-    showLeaderboard: contest.votingConfig?.leaderboardVisible !== false,
-    showVoteCounts: contest.votingConfig?.voteCountPublic !== false,
+    showLeaderboard,
+    showVoteCounts,
     beat: beat
       ? {
           title: beat.beatTitle,
@@ -167,11 +175,11 @@ export function buildOpenMicEditionStepsData(
             artistSlug: slugifyArtist(row.stageName),
             stageName: row.stageName,
             songTitle: row.songTitle,
-            voteCount: row.voteCount,
+            voteCount: showVoteCounts ? row.voteCount : null,
           })),
           // Totals are of the whole board, not the five rows shown.
           entryCount: board.length,
-          totalVotes: board.reduce((sum, row) => sum + row.voteCount, 0),
+          totalVotes: showVoteCounts ? board.reduce((sum, row) => sum + row.voteCount, 0) : null,
         },
   };
 }

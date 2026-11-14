@@ -156,6 +156,24 @@ describe('buildOpenMicEditionStepsData', () => {
     expect(hidden.showLeaderboard).toBe(false);
     expect(hidden.showVoteCounts).toBe(false);
   });
+
+  it('leaves hidden counts out of the payload, not just out of the markup', () => {
+    const hidden = buildOpenMicEditionStepsData(
+      contest({ votingConfig: { ...contest().votingConfig, voteCountPublic: false } }),
+      [entry(1), entry(2), entry(3)],
+    );
+    expect(hidden.showVoteCounts).toBe(false);
+    expect(hidden.board?.rows.map((row) => row.voteCount)).toEqual([null, null, null]);
+    expect(hidden.board?.totalVotes).toBeNull();
+    // An entry count is not a vote count, so the switch does not remove it.
+    expect(hidden.board?.entryCount).toBe(3);
+  });
+
+  it('still delivers the counts when the switch is left on', () => {
+    const shown = buildOpenMicEditionStepsData(contest(), [entry(1), entry(2), entry(3)]);
+    expect(shown.board?.rows.map((row) => row.voteCount)).toEqual([10, 20, 30]);
+    expect(shown.board?.totalVotes).toBe(60);
+  });
 });
 
 describe('loadOpenMicEditionSteps', () => {

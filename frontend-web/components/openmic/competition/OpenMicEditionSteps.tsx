@@ -256,7 +256,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                         <>
                           <p className={styles.tally}>
                             {board.entryCount} {board.entryCount === 1 ? 'entry' : 'entries'} on the board
-                            {data.showVoteCounts ? ` · ${board.totalVotes.toLocaleString(LOCALE)} votes counted` : ''}
+                            {board.totalVotes !== null ? ` · ${board.totalVotes.toLocaleString(LOCALE)} votes counted` : ''}
                           </p>
                           {/* Keyed on rank, not artistSlug alone: the slug is a
                               slug of a non-unique stage name (design: `K1ng$hoota`
@@ -274,7 +274,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                                   <strong>{row.stageName}</strong>{' '}
                                   <span>{row.songTitle}</span>
                                 </span>{' '}
-                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
+                                <span className={styles.votes}>{row.voteCount !== null ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
                                 <span className={styles.link}>
                                   <Link href={`/open-mic/${data.slug}/entry/${row.artistSlug}`}>Vote</Link>
                                 </span>
@@ -286,9 +286,14 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                           </div>
                         </>
                       )}
-                      <div className="openMic-actions">
-                        <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
-                      </div>
+                      {/* Gated on the same switch as the board itself: a hand-off
+                          to the full standings would refute the "standings private"
+                          note two lines above it. */}
+                      {data.showLeaderboard && (
+                        <div className="openMic-actions">
+                          <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <p className={styles.note}>Standings appear here while an edition is running.</p>
