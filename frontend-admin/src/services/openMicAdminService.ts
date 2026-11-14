@@ -356,9 +356,9 @@ export async function createOpenMicContest(
  * forward request.arrayBuffer() verbatim with the caller's Content-Type, so the
  * multipart boundary survives and the file lands intact.
  *
- * Returns the two root-relative reader paths Task 1/2 defined; the caller files
- * them as the contest's beat URLs. Throws with the server's own wording so the
- * form can show why an upload was refused.
+ * Returns the two root-relative reader paths served by GET /api/open-mic/beats/[fileKey];
+ * the caller files them as the contest's beat URLs. Throws with the server's own wording
+ * so the form can show why an upload was refused.
  */
 export async function uploadOpenMicBeat(
   file: File,

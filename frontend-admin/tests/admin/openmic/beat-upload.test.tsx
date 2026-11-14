@@ -51,11 +51,11 @@ function set(container: HTMLElement, id: string, value: string) {
 }
 
 /**
- * `errors` (page.tsx:66-79) gates title, slug, description, month, year, the two
+ * `errors` (page.tsx:69-86) gates title, slug, description, month, year, the two
  * weights, state, city, venue name and beat title. A submit-path case must satisfy
  * all of them except the beat, or it proves nothing: `createOpenMicContest` would go
  * uncalled for an unrelated empty field and the blocked case would pass for the wrong
- * reason. The weights default to 30/70 (`:52`) and already sum to 100. Fields are
+ * reason. The weights default to 30/70 (`:55`) and already sum to 100. Fields are
  * addressed by `id`, not by label, because /Month/i matches both "Month*" and
  * "Repeat Months" once the labels gain `htmlFor`.
  */
@@ -110,6 +110,10 @@ describe('Open Mic beat upload in the admin console', () => {
     });
     expect(await screen.findByRole('alert')).toHaveTextContent(/415 — Expected multipart\/form-data/);
     expect(screen.queryByRole('status')).toBeNull();
+    // The operator's next move is to correct the field by hand, and a red note left
+    // hanging over a fixed value reads as "still failing".
+    fireEvent.change(downloadField(), { target: { value: '/api/open-mic/beats/k' } });
+    expect(screen.queryByRole('alert')).toBeNull();
   }, 20_000);
 
   it('warns about a pasted URL an artist cannot open', async () => {
