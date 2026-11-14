@@ -2409,6 +2409,19 @@ cd /private/tmp/spot-doctor-metrics && gh pr create --base main --head feat/doct
 - [ ] Pending consultation requests tile unchanged.
 
 Spec: `docs/superpowers/specs/2026-11-13-doctor-dashboard-metrics-design.md`. Plan: `docs/superpowers/plans/2026-11-13-doctor-dashboard-metrics.md`.
+
+## Five things this PR deliberately leaves open — accept or decline each
+
+1. **Reject unknown zones at `PUT /schedule/timezone`.** `Service.SetTimezone` (`backend/internal/doctor/service_ops.go:360-366`) validates only the empty string, so any text lands in `doctor_profiles.timezone`. Before this PR that column was inert; now five date expressions interpolate it, and an unrecognised value is a Postgres 22023. This PR degrades on the *read* (`Repository.usableTimezone`), which protects the dashboard and nothing else. The honest fix is on the write path, and validating IANA names honestly needs a zone database this PR is not allowed to add.
+2. **`GET /schedule` and the zone store — coordination with #1008.** #1008's message says "PUT /schedule/timezone writes `doctor_profiles.timezone` while slot rendering reads `doctor_availability.timezone`". Its *conclusion* (two columns, no canonical store) is real and this PR takes that decision for dashboard date math only, choosing `doctor_profiles.timezone` because it is the only column any screen sets. Its *evidence* does not hold: slot rendering is `telemedicine.GetAvailability` (`backend/internal/telemedicine/service_block13.go:36-64`), which reads `doctor_availability_slots` (a different table) and applies no timezone at all; the only Go reader of `doctor_availability.timezone` is `backend/internal/doctor/repository.go:126`, a plain column scan. If #1008 lands first, `ScheduleSettings` also exposes the availability row, so this PR's "not a read-back" comment is qualified to the top level on purpose.
+3. **The slot calendar and the dashboard now use different clocks.** Slot rendering is dated in the database server's timezone; this PR dates the tiles in the doctor's own. For a doctor outside Africa/Lagos those two can disagree about which day a slot is on. Out of the fence (spec D1 is the dashboard reads) and it is #1008's surface, but it is a user-visible consequence of merging this.
+4. **`QueueItemRow.tsx:24,44` has the same three-key `TYPE_ICON` and the same unguarded lookup as the row this PR fixes.** It was left alone because its prop is `ConsultationQueueItem` (the live waiting-room plane), not `appointments`, so an `in_person` value is not proven reachable there. Widening `ConsultType` to the four real `consultation_type` values (spec F4) is the fix that covers both.
+5. **Nothing in CI runs the doctor wire tests.** `Doctor CI`'s only mobile gate is `tsc --noEmit -p tsconfig.doctorcheck.json`, the root tsconfig excludes `**/__tests__/**`, and no RN feature's `test:*` script is CI-invoked. This PR adds `npm run test:doctor-dashboard` (that is how batch 6's broken wire stayed broken), but wiring it into the lane is a CI-behaviour change the repo has not chosen, so it is not taken here.
+
+## Two notes for anyone reading the money tests later
+
+- The escrowed fixture row deliberately carries `provider_kobo = 168300`, which production never writes (`Settle` fills that column in the same transaction that flips the status). It is there so that deleting `st.status = 'settled'` turns a test red; three money filters in this file were proven that way, by mutation, and the transcript is in the PR discussion.
+- The doctor app now has two fields labelled "pending": consult money escrowed but unsettled (this tile) and the wallet's pending payout (batch 6). Different payloads, different screens, nothing adds them. If that reads as confusing in the product, the fix is the tile's label, not the data.
 EOF
 )"
 ```
