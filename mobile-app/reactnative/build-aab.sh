@@ -126,8 +126,11 @@ fi
 
 # See build-apk.sh's identical guard for why this belongs before EXPECTED_API:
 # the bundle check below cannot catch an env file that declares the wrong plane,
-# because the host it greps for is read out of that same file.
-_declared_env="$(grep -E '^EXPO_PUBLIC_APP_ENV=' "$ENV_FILE" | tail -1 | cut -d= -f2- || true)"
+# because the host it greps for is read out of that same file. The normalisation
+# matches dotenv, which is what @expo/env loads through — see build-apk.sh.
+_declared_env="$(grep -E '^EXPO_PUBLIC_APP_ENV=' "$ENV_FILE" | tail -1 | cut -d= -f2- \
+  | tr -d '\r' \
+  | sed -E -e 's/[[:space:]]*(#.*)?$//' -e 's/^[[:space:]]+//' -e 's/^"(.*)"$/\1/' -e "s/^'(.*)'\$/\1/" || true)"
 if [[ "$NODE_ENV" == "production" && "${_declared_env:-}" != "production" ]]; then
   echo "❌ $ENV_FILE declares EXPO_PUBLIC_APP_ENV=${_declared_env:-<unset>}; a production release must declare production." >&2
   echo "   Regenerate it from the tracked profile: node scripts/export-eas-profile-env.mjs production" >&2
@@ -145,9 +148,12 @@ if [[ -z "$EXPECTED_API" ]]; then
 fi
 
 # A higher-priority file would silently override $ENV_FILE. Refuse to build blind.
+# APP_ENV is in this list because it is what the guard above reads: a
+# .env.production.local that re-declares the plane would otherwise ship the
+# runtime Remote/Local switch into a production build past both checks.
 for shadow in ".env.${NODE_ENV}.local" ".env.local"; do
-  if [[ -f "$shadow" ]] && grep -qE '^EXPO_PUBLIC_(API_BASE_URL|SUPABASE_URL)=' "$shadow"; then
-    echo "❌ $shadow sets API/Supabase URLs and OUTRANKS $ENV_FILE." >&2
+  if [[ -f "$shadow" ]] && grep -qE '^EXPO_PUBLIC_(API_BASE_URL|SUPABASE_URL|APP_ENV)=' "$shadow"; then
+    echo "❌ $shadow sets an API/Supabase URL or the plane declaration and OUTRANKS $ENV_FILE." >&2
     echo "   Expo precedence: .env.<mode>.local > .env.local > .env.<mode> > .env" >&2
     echo "   Rename it to .env.development.local so it applies to dev only." >&2
     exit 1
