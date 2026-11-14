@@ -14,7 +14,11 @@
 
 Everything is in the isolated worktree **`/private/tmp/spot-doctor-metrics`** on branch `feat/doctor-dashboard-metrics` (created from `origin/main` = `effe1b355`). Use absolute paths — the shell's cwd resets between commands.
 
-This repo is driven by several sessions at once. `/Users/paymax/Documents/spotlight/main` is a **different, dirty working tree** holding other sessions' in-flight work: never `cd` there to edit, never `git stash`, never move `main`'s ref, and never read its dirty files as evidence of what `origin/main` contains. The neighbour's untracked files (`appointments_plane_live_db_test.go`, `handler_avatar_test.go`, `mdcn_discoverability_live_db_test.go`) are why this plan's helper names are all `metrics*`-prefixed and why the client module is `dashboardWire.ts`, not `mapping.ts`.
+**`origin/main` moved 21 commits during execution and the branch has not caught up yet.** The merge-base is `effe1b355` (2026-11-12, PR #998); main head is `531df7af9` (PR #1008, squash-merged 2026-11-14T22:16:36Z — which is why ancestry must be tested on `mergeCommit`, not `headRefOid`; `638de0d4c` is not an ancestor of main). Twenty PRs landed between them, and two of them change what this plan says: #1008 fixed the same defect class one plane over (`GET /appointments` now reads `public.appointments`) and built the client-side mapping plane Task 5 now builds on, while #1020 moved veterinary onboarding out of the Doctor app. **Task 3 Step 0 rebases this branch onto `origin/main` before any new work**, because Tasks 4/5/7 edit files those commits touched, and every line number below marked post-#1008 is measured against `531df7af9`, not `effe1b355`. Rebasing here rather than at Task 8 keeps the drift in one commit instead of leaking into five executors who each have to rediscover it.
+
+The rebase is provably conflict-free before it runs: the branch's only non-doc changes are `backend/internal/doctor/dashboard_metrics.go`, `dashboard_metrics_test.go` and `dashboard_metrics_live_db_test.go` (all created here, all `metrics*`-prefixed), and none of the three appears in the 142 files main changed. Step 0 re-runs that check rather than trusting it.
+
+This repo is driven by several sessions at once. `/Users/paymax/Documents/spotlight/main` is a **different, dirty working tree** holding other sessions' in-flight work: never `cd` there to edit, never `git stash`, never move `main`'s ref, and never read its dirty files as evidence of what `origin/main` contains. The three files that used to be that neighbour's untracked work — `appointments_plane_live_db_test.go`, `handler_avatar_test.go`, `mdcn_discoverability_live_db_test.go` — are now committed on main via #1008, so the `metrics*`-prefixed helper names in this plan are no longer a collision dodge; they stay because they describe what the helpers do. The client module is still `dashboardWire.ts`, not `mapping.ts`: `src/features/doctor/mapping.ts` exists now and belongs to #1008 (223 lines plus three test files), and this plan's payload is dashboard-only — see Task 5, which reuses that module's mapper rather than extending it.
 
 The worktree has **no `node_modules`** under `mobile-app/reactnative` (untracked, so not copied). Task 5 symlinks the main checkout's install for typechecking only.
 
@@ -25,7 +29,7 @@ The worktree has **no `node_modules`** under `mobile-app/reactnative` (untracked
 - `satisfactionPct` is nullable end-to-end (spec D6): `*float64` in Go, `number | null` in TS, `—` in the tile. `null` means "no reviews", `0` means "reviewed and hated".
 - Date logic lives in SQL as `AT TIME ZONE $tz::text` (spec D3). No `time/tzdata` import, no `time.LoadLocation` anywhere — the container has no zone database and Go-side tz would be a silent 500.
 - The doctor module reads money; it never posts to the ledger and never moves money. `settlement.ComputeLegs` is used as a pure function only.
-- Scope fence (spec D1): do not touch `ListAppointments`, `GET /appointments`, appointment-requests, accept/reject, or `doctor.Appointment.SlotDate`'s type. The in-flight neighbour branch owns those.
+- Scope fence (spec D1): do not touch `ListAppointments`, `GET /appointments`, appointment-requests, accept/reject, or `doctor.Appointment.SlotDate`'s type. #1008 owns that plane and already fixed it — `repository.go:220-221` now renders appointment slots with `AT TIME ZONE COALESCE(av.timezone, 'Africa/Lagos')`, which is exactly why Task 5's mapper delegates to #1008's `mapAppointmentWire` instead of re-deriving the row.
 - Copy rules for the wire (spec D8): `slotDate` is `YYYY-MM-DD`, `slotTime` is `"HH:MM AM/PM"`, `status` uses the UI vocabulary (`booked` → `upcoming`), `consultType` passes through verbatim including `in_person`.
 - Tests that need Postgres gate on `TEST_DATABASE_URL` and skip without it. Local DSN is documented at [docs/maps/CI-ON-COWORK.md:16](../../maps/CI-ON-COWORK.md#L16); never paste a DSN or token into a commit, a PR body, or the conversation.
 - Stage and commit in one command, by explicit path, one commit per logical change. Never `git add -A`. Never stage `next-env.d.ts` or the `node_modules` symlink.
@@ -417,12 +421,16 @@ type dashboardCounters struct {
 // repository_ops.go:409) and GET /doctor/profile reads back through this very
 // GetProfile — NOT doctor_availability.timezone, which no screen ever sets (a
 // doctor who chose Asia/Karachi would otherwise have every "today" predicate
-// anchored to Lagos). `GET /schedule` is not a read-back of this column: its
-// ScheduleSettings carries no timezone at the top level
-// (handler_tail2.go:493-498), and the only zone that response could ever reach
-// transitively is `doctor_availability.timezone`, a different column — see spec
-// F5 for what that costs the screen that offers the picker. A doctor with no
-// profile row at all is the default, not an error.
+// anchored to Lagos). `GET /schedule` is not a read-back of this column: none of
+// ScheduleSettings' top-level fields carries a zone, and the one zone that
+// response does expose is the nested `schedule.timezone` — `doctor_availability`'s
+// column, not this one. Since #1008 that is not hypothetical: `Schedule`
+// (handler_tail2.go:499, model.go:76) is typed `Availability`, and the
+// appointments plane renders slots with `AT TIME ZONE COALESCE(av.timezone, …)`
+// (repository.go:220). So the same doctor's dashboard and appointment list can
+// price "today" against two different columns — spec F5 documents the screen
+// that fails to write this one. A doctor with no profile row at all is the default,
+// not an error.
 func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string, error) {
 	p, err := s.repo.GetProfile(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
@@ -1287,6 +1295,62 @@ Expected: the last command prints **nothing** — that is the tree-as-committed 
   `{appointmentCounts, unreadNotifications, walletBalanceKobo, currency, metrics:{todaysCount,upcomingCount,satisfactionPct,ratingCount,revenue:{pendingKobo,lifetimeKobo,thisMonthKobo,consultsThisMonth},timezone,today},todaysAppointments:[…]}`.
   Task 4 documents this and Task 5 consumes it.
 
+- [ ] **Step 0: Rebase onto `origin/main` before touching anything**
+
+Do this first, and only once Task 2's fix round has committed — rebasing under a running implementer moves the files out from under it.
+
+```bash
+cd /private/tmp/spot-doctor-metrics && git status --porcelain | head -20; echo "dirty count: $(git status --porcelain | wc -l)"
+```
+
+Expected: a dirty count of `0`. If anything is modified, it is unfinished work — commit it or stop and report it; never `git stash` here and never `git checkout --` a file another round may still own.
+
+```bash
+cd /private/tmp/spot-doctor-metrics && git fetch origin main && git rebase origin/main && git log --oneline -1 && git rev-list --count origin/main..HEAD
+```
+
+Expected: rebase exits 0 with no conflict output. `git rev-list --count origin/main..HEAD` should print the branch's own commits and none of main's — 25 at the time of writing, one more per fix round. If a conflict does appear, resolve it by reading both sides; never `--skip` and never drop a commit to get past it. If `origin/main` moved again since, re-run Step 0's check and re-measure the post-#1008 line numbers before continuing.
+
+Then prove the branch still builds and its own tests still pass against main's code, before any new line is written:
+
+```bash
+cd /private/tmp/spot-doctor-metrics/backend && go build ./... && go vet ./internal/doctor/ && go test ./internal/doctor/ -run 'TestConsultSplit|TestDashboardSatisfactionPct' -count 1 2>&1 | tail -5
+```
+
+Expected: build and vet silent, `ok spotlight/backend/internal/doctor`. A failure here is main's drift meeting our reads, not a Task 3 bug — report it rather than coding around it.
+
+- [ ] **Step 0b: Bring `dashboardTimezone`'s comment in line with #1008**
+
+Task 2 wrote, in `dashboard_metrics.go`, that `GET /schedule` is not a read-back of `doctor_profiles.timezone` because `ScheduleSettings` carries no zone. Post-#1008 that sentence is half true and misleading: the struct gained `Schedule Availability` ([backend/internal/doctor/handler_tail2.go:499](../../backend/internal/doctor/handler_tail2.go#L499)), whose `Timezone` is `model.go:76` — so the response does expose a zone, just the other column's. Replace the sentence with the Step-4 text below, which is what the rebase makes true. Nothing in the read changes; this is a comment-only commit, staged alone.
+
+```go
+// doctor who chose Asia/Karachi would otherwise have every "today" predicate
+// anchored to Lagos). `GET /schedule` is not a read-back of this column: none of
+// ScheduleSettings' top-level fields carries a zone, and the one zone that
+// response does expose is the nested `schedule.timezone` — `doctor_availability`'s
+// column, not this one. Since #1008 that is not hypothetical: `Schedule`
+// (handler_tail2.go:499, model.go:76) is typed `Availability`, and the
+// appointments plane renders slots with `AT TIME ZONE COALESCE(av.timezone, …)`
+// (repository.go:220). So the same doctor's dashboard and appointment list can
+// price "today" against two different columns — spec F5 documents the screen
+// that fails to write this one. A doctor with no profile row at all is the default,
+// not an error.
+```
+
+```bash
+cd /private/tmp/spot-doctor-metrics/backend && go build ./... && cd /private/tmp/spot-doctor-metrics && git add backend/internal/doctor/dashboard_metrics.go && git commit -m "$(cat <<'MSG'
+docs(doctor): say which zone GET /schedule really exposes now #1008 is in
+
+The timezone comment claimed ScheduleSettings carried no zone at all. It still
+carries none at the top level, but #1008 nested the availability row inside it,
+so the response does reach doctor_availability.timezone — which is the second
+column, and the reason the dashboard and the appointment list can disagree about
+today. The comment now says that, and points at spec F5 for the screen that never
+writes either column on demand.
+MSG
+)"
+```
+
 - [ ] **Step 1: Write the failing composition test**
 
 Append to `dashboard_metrics_live_db_test.go`:
@@ -1566,7 +1630,7 @@ MSG
 
 ### Task 4: Type the dashboard response in the contract
 
-`/doctor/dashboard` is `{ $ref: Generic }` today ([contracts/doctor.openapi.yaml:1245](../../contracts/doctor.openapi.yaml#L1245)) — which is *why* the client could cast the flat wire straight into its rich view model and invent fields. Typing it is the guard against a repeat.
+`/doctor/dashboard` is `{ $ref: Generic }` today ([contracts/doctor.openapi.yaml:1248](../../contracts/doctor.openapi.yaml#L1248)) — which is *why* the client could cast the flat wire straight into its rich view model and invent fields. Typing it is the guard against a repeat.
 
 **Files:**
 - Modify: `contracts/doctor.openapi.yaml` (four new component schemas; the `/doctor/dashboard` response `$ref`)
@@ -1577,7 +1641,7 @@ MSG
 
 - [ ] **Step 1: Add the component schemas**
 
-In `contracts/doctor.openapi.yaml`, insert immediately after the `PatientSummary` schema block (which ends at the `gender:` line, [contracts/doctor.openapi.yaml:89](../../contracts/doctor.openapi.yaml#L89)) — `DashboardQueueAppointment` embeds it, so it must already exist above:
+In `contracts/doctor.openapi.yaml`, insert immediately after the `PatientSummary` schema block (which ends at the `gender:` line, [contracts/doctor.openapi.yaml:90](../../contracts/doctor.openapi.yaml#L90)) — `DashboardQueueAppointment` embeds it, so it must already exist above:
 
 ```yaml
     # ── dashboard tiles ──────────────────────────────────────────────────────────
@@ -1656,7 +1720,7 @@ In `contracts/doctor.openapi.yaml`, insert immediately after the `PatientSummary
 
 - [ ] **Step 2: Point the path at the new schema**
 
-Line 1245 is the `/doctor/dashboard:` key; replace the `get:` line under it (line 1246, currently `$ref`s `Generic`) with:
+On `origin/main` the `/doctor/dashboard:` key is line 1248 and the `get:` line under it is 1249 ([contracts/doctor.openapi.yaml:1248-1249](../../contracts/doctor.openapi.yaml#L1248)), but Step 1 has already inserted lines above it, so locate it by text rather than number: `grep -n "^  /doctor/dashboard:" contracts/doctor.openapi.yaml`. Replace that key and its single-line `get:` (currently `$ref`s `Generic`) with:
 
 ```yaml
   /doctor/dashboard:
@@ -1691,23 +1755,26 @@ MSG
 
 ### Task 5: The client mapping — one pure module, all five tiles
 
-Today `getDashboard`'s live branch returns literal `0`s for the tiles and `earnings.lifetimeKobo = walletBalanceKobo` ([mobile-app/reactnative/src/api/doctor.batch1.api.ts:340-375](../../mobile-app/reactnative/src/api/doctor.batch1.api.ts#L340)). This moves the wire→domain translation into a pure module the same way `batch6Wire.ts` does, so it is testable without a device.
+Today `getDashboard`'s live branch returns literal `0`s for the tiles and `earnings.lifetimeKobo = walletBalanceKobo` ([mobile-app/reactnative/src/api/doctor.batch1.api.ts:343-379](../../mobile-app/reactnative/src/api/doctor.batch1.api.ts#L343), post-#1008 line numbers). This moves the wire→domain translation into a pure module the same way `batch6Wire.ts` does, so it is testable without a device.
+
+The queue rows are **not re-derived here**. #1008 landed `mapAppointmentWire` ([mobile-app/reactnative/src/features/doctor/mapping.ts:158](../../mobile-app/reactnative/src/features/doctor/mapping.ts#L158)), which already turns that same `patient` jsonb into this same `DoctorAppointment` — avatar rule, `booked` → `upcoming`, gender normalise, id-derived `ref` — with three spec files pinning all of it. Re-implementing any of that on the dashboard would give one patient different initials and a different circle colour depending on which screen they were opened from, and would have quietly kept a bug this task's first draft carried: its own gender lookup never lowercased, so `'Female'` mapped to `'other'`. So `mapQueueAppointment` delegates and overrides exactly one field, for the reason written into Step 4.
 
 **Files:**
 - Create: `mobile-app/reactnative/src/features/doctor/dashboardWire.ts`
 - Create: `mobile-app/reactnative/src/features/doctor/__tests__/dashboardWire.test.ts`
 - Modify: `mobile-app/reactnative/src/types/doctor.batch1.ts:256` (`satisfactionPct`)
 - Modify: `mobile-app/reactnative/src/api/doctor.batch1.api.ts` (delete the local `DashboardWire`, delegate to the mapper)
-- Modify: `mobile-app/reactnative/package.json` (add a `test:doctor-dashboard` script — `batch6Wire.test.ts` has no runner wired, which is how its bug survived)
+
+`package.json` is **not** in this list any more. #1008 added `test:doctor-mapping` (package.json:30), which globs `src/features/doctor/__tests__/*.test.ts` — the directory this task writes into — so the new spec is inside a runner the moment it exists, and `batch6Wire.test.ts` (the un-run file whose bug motivated a new script) is already in that same glob. Step 7 proves it instead of adding a second runner over one directory.
 
 **Interfaces:**
-- Consumes: `DashboardResponse` from Task 4, as `DashboardWire`.
+- Consumes: `DashboardResponse` from Task 4, as `DashboardWire`; `mapAppointmentWire` and `AppointmentWire` from `@/features/doctor/mapping` (#1008).
 - Produces:
   - `mapDashboardWire(wire: DashboardWire): DoctorDashboardData`
-  - `mapQueueAppointment(wire: DashboardQueueAppointmentWire): DoctorAppointment`
-  - `initialsFromName(name: string): string`, `avatarColorForPatient(id: string): string`, `PATIENT_AVATAR_COLORS: string[]`
+  - `mapQueueAppointment(wire: DashboardQueueAppointmentWire): DoctorAppointment` — delegates to `mapAppointmentWire`, overrides `consultType`
   - `formatSlotDateLabel(slotDate: string): string` (used by `AppointmentRow` in Task 6)
   - exported types `DashboardWire`, `DashboardMetricsWire`, `DashboardRevenueWire`, `DashboardQueueAppointmentWire`, `DashboardQueuePatientWire`
+- Dropped for #1008, so no executor should reach for them: `initialsFromName`, `avatarColorForPatient`, `PATIENT_AVATAR_COLORS`. The platform rules live on `@/features/telemedicine/mapping` as `initialsFromName`/`avatarColorFor` (an 8-entry `Colors.primary`-led palette, not this plan's 5-entry one) and arrive here through `mapAppointmentWire`.
 
 - [ ] **Step 1: Give the worktree a node_modules**
 
@@ -1734,20 +1801,20 @@ Create `mobile-app/reactnative/src/features/doctor/__tests__/dashboardWire.test.
 // showed a doctor with no patients. GET /dashboard was typed `Generic` in the
 // contract, so nothing caught the mismatch.
 //
-// Runner: npm run test:doctor-dashboard  (node --experimental-strip-types --test;
-// this package has no jest, and src/features/doctor/__tests__/batch6Wire.test.ts
-// set the precedent).
+// Runner: npm run test:doctor-mapping  (the glob #1008 added already covers this
+// directory; this package has no jest, and
+// src/features/doctor/__tests__/batch6Wire.test.ts set the precedent).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { avatarColorFor } from '@/features/telemedicine/mapping';
+import { mapAppointmentWire } from '@/features/doctor/mapping';
+
 import {
   mapDashboardWire,
   mapQueueAppointment,
-  initialsFromName,
-  avatarColorForPatient,
   formatSlotDateLabel,
-  PATIENT_AVATAR_COLORS,
   type DashboardWire,
 } from '../dashboardWire.ts';
 
@@ -1836,12 +1903,41 @@ test('a queue row becomes the DoctorAppointment the row component expects', () =
   assert.equal(a.isHmo, false);
   assert.equal(a.patient.name, 'Tunde Akinwale');
   assert.equal(a.patient.gender, 'male');
+  // Presentation tokens come off the platform rule, not a dashboard-local guess.
+  assert.equal(a.patient.initials, 'TA');
+  assert.equal(a.patient.avatarColor, avatarColorFor('p1'));
 });
 
-test('in_person passes through rather than becoming a chat', () => {
+test('in_person passes through rather than becoming a video consult', () => {
   // appointments.consultation_type allows in_person; ConsultType does not (F4
-  // tracks widening it). Coercing it would display a lie about the visit.
-  assert.equal(mapQueueAppointment({ ...QUEUE_ROW, consultType: 'in_person' }).consultType, 'in_person');
+  // tracks widening it). mapAppointmentWire routes this field through
+  // mapConsultType, which collapses anything unrecognised to 'video' and has that
+  // collapse under test of its own (__tests__/mapping.appointments.test.ts:62) —
+  // so delegating the rest of the row still has to stop here, or an in-person
+  // visit displays as a video call (spec D8). AppointmentRow draws a fallback
+  // icon for it (Task 6).
+  const wire = { ...QUEUE_ROW, consultType: 'in_person' };
+  assert.equal(mapQueueAppointment(wire).consultType, 'in_person');
+  assert.equal(mapAppointmentWire(wire).consultType, 'video');
+});
+
+test('the queue row and the appointments list are the same row', () => {
+  // The delegation contract: one patient, one avatar, one status vocabulary, no
+  // matter which screen asks. If mapQueueAppointment ever grows its own rules,
+  // this is the test that says so.
+  const dash = mapQueueAppointment(QUEUE_ROW);
+  const list = mapAppointmentWire(QUEUE_ROW);
+  assert.equal(dash.patient.initials, list.patient.initials);
+  assert.equal(dash.patient.avatarColor, list.patient.avatarColor);
+  assert.equal(dash.patient.gender, list.patient.gender);
+  assert.equal(dash.status, list.status);
+  assert.equal(dash.ref, list.ref);
+  assert.equal(dash.slotDate, list.slotDate);
+  assert.equal(dash.slotTime, list.slotTime);
+  assert.equal(dash.feeKobo, list.feeKobo);
+  assert.equal(dash.isHmo, list.isHmo);
+  // consultType matches too, because 'video' is a type both planes recognise.
+  assert.equal(dash.consultType, list.consultType);
 });
 
 test('an unrecognised status cannot invent a completed badge', () => {
@@ -1851,21 +1947,8 @@ test('an unrecognised status cannot invent a completed badge', () => {
 test('an unknown gender maps to the union member that is not a claim', () => {
   assert.equal(mapQueueAppointment({ ...QUEUE_ROW, patient: { ...QUEUE_ROW.patient, gender: 'non-binary' } }).patient.gender, 'other');
   assert.equal(mapQueueAppointment({ ...QUEUE_ROW, patient: {} }).patient.gender, 'other');
-});
-
-test('initials take the first word and the last word', () => {
-  assert.equal(initialsFromName('Tunde Akinwale'), 'TA');
-  assert.equal(initialsFromName('Ngozi Adeyemi Okafor'), 'NO');
-  assert.equal(initialsFromName('Chidinma'), 'C');
-  assert.equal(initialsFromName('   '), 'P');
-  assert.equal(initialsFromName('Dr. Ada'), 'DA');
-});
-
-test('one patient always gets one colour', () => {
-  const c = avatarColorForPatient('p1');
-  assert.ok(PATIENT_AVATAR_COLORS.includes(c));
-  assert.equal(avatarColorForPatient('p1'), c);
-  assert.equal(PATIENT_AVATAR_COLORS.length, 5);
+  // Case-folded by the shared rule: 'Female' is a female patient, not 'other'.
+  assert.equal(mapQueueAppointment({ ...QUEUE_ROW, patient: { ...QUEUE_ROW.patient, gender: 'Female' } }).patient.gender, 'female');
 });
 
 test('the slot date label survives a full timestamp', () => {
@@ -1889,9 +1972,12 @@ Expected: a load error, `Cannot find module '.../src/features/doctor/dashboardWi
 Create `mobile-app/reactnative/src/features/doctor/dashboardWire.ts`:
 
 ```ts
-// Pure wire→domain mapping for GET /doctor/dashboard. Deliberately free of React
-// Native imports (no `@/constants/tokens`) so node:test can load it, like
-// features/doctor/batch6Wire.ts.
+// Pure wire→domain mapping for GET /doctor/dashboard. It imports no React Native
+// of its own; the shared plane it delegates to does pull `constants/tokens` in
+// transitively, which is already answered for by the runner's react-native stub
+// (tests/unit/stubs/react-native.mjs — `Platform.select` and all), the same reason
+// npm run test:doctor-mapping can load features/doctor/mapping.ts at all. Like
+// features/doctor/batch6Wire.ts, this file stays render-free so node:test covers it.
 //
 // The endpoint answers the flat DashboardSummary the Go service composes — NOT the
 // rich DoctorDashboardData the screens render — so the translation happens here
@@ -1899,7 +1985,8 @@ Create `mobile-app/reactnative/src/features/doctor/dashboardWire.ts`:
 // sit in the api module. That cast is how the tiles ended up hard-coded: the wire
 // genuinely had no `counts.todaysAppointments` to read.
 
-import type { DoctorAppointment, PatientSummary } from '@/types/doctor';
+import { mapAppointmentWire } from '@/features/doctor/mapping';
+import type { DoctorAppointment } from '@/types/doctor';
 import type { DoctorDashboardData } from '@/types/doctor.batch1';
 
 /** The body GET /doctor/dashboard writes (DashboardResponse in contracts/doctor.openapi.yaml). */
@@ -1951,27 +2038,6 @@ export interface DashboardQueuePatientWire {
 }
 
 /**
- * Avatar palette for the queue rows. Local on purpose: `Colors` comes from
- * `@/constants/tokens`, which pulls in React Native and makes this module
- * un-loadable under node:test.
- */
-export const PATIENT_AVATAR_COLORS = ['#F59E0B', '#EC4899', '#14B8A6', '#8B5CF6', '#3B82F6'];
-
-export function initialsFromName(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return 'P';
-  const first = words[0].charAt(0);
-  const last = words.length > 1 ? words[words.length - 1].charAt(0) : '';
-  return (first + last).toUpperCase();
-}
-
-export function avatarColorForPatient(id: string): string {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return PATIENT_AVATAR_COLORS[h % PATIENT_AVATAR_COLORS.length];
-}
-
-/**
  * 'Nov 13' from a slot date. The contract says YYYY-MM-DD; a full timestamp is
  * tolerated (slice to the day) because `new Date('<iso-timestamp>T00:00:00')` is
  * Invalid Date, which is what the queue used to render.
@@ -1980,51 +2046,24 @@ export function formatSlotDateLabel(slotDate: string): string {
   return new Date(`${slotDate.slice(0, 10)}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function patientGender(gender: string | undefined): PatientSummary['gender'] {
-  return gender === 'male' || gender === 'female' ? gender : 'other';
-}
-
-function queueStatus(status: string | undefined): DoctorAppointment['status'] {
-  switch (status) {
-    case 'confirmed':
-    case 'in_progress':
-    case 'completed':
-    case 'cancelled':
-      return status;
-    default:
-      // 'booked' is already renamed to 'upcoming' in SQL; anything unrecognised
-      // lands here rather than inventing a completed/cancelled badge.
-      return 'upcoming';
-  }
-}
-
+/**
+ * A queue row IS an appointment row, so it is mapped by the function the
+ * appointments list already uses: #1008's `mapAppointmentWire` owns the avatar
+ * rule, the `booked` → `upcoming` map, the gender normalise and the id-derived
+ * `ref`, and three of its own spec files pin them. Duplicating any of that here
+ * would let one patient wear different initials on two screens.
+ *
+ * `consultType` is the single field the delegation has to hand back.
+ * `mapConsultType` collapses anything outside video/audio/chat to 'video' — under
+ * test as intended, over there — while spec D8 wants the wire value verbatim,
+ * `in_person` included, so an in-person booking is never displayed as a video
+ * call. ConsultType has no in_person member yet: the cast is local to this
+ * boundary, AppointmentRow draws a fallback icon (Task 6), and follow-up F4
+ * widens the union for good.
+ */
 export function mapQueueAppointment(wire: DashboardQueueAppointmentWire): DoctorAppointment {
-  const name = wire.patient?.name ?? 'Patient';
-  const id = wire.id ?? '';
-  return {
-    id,
-    ref: wire.ref ?? '',
-    patient: {
-      id: wire.patient?.id ?? '',
-      name,
-      // Presentation tokens, derived here (spec D9) — they are not booking facts.
-      initials: initialsFromName(name),
-      avatarColor: avatarColorForPatient(wire.patient?.id ?? id),
-      age: wire.patient?.age ?? 0,
-      gender: patientGender(wire.patient?.gender),
-    },
-    // Passed through verbatim, in_person included (spec D8). ConsultType has no
-    // in_person member — the cast is local to this boundary and AppointmentRow
-    // draws a fallback icon; follow-up F4 widens the union for good.
-    consultType: wire.consultType as DoctorAppointment['consultType'],
-    status: queueStatus(wire.status),
-    slotDate: wire.slotDate ?? '',
-    slotTime: wire.slotTime ?? '',
-    feeKobo: wire.feeKobo ?? 0,
-    createdAt: wire.createdAt ?? '',
-    reason: wire.reason,
-    isHmo: wire.isHmo ?? false,
-  };
+  const row = mapAppointmentWire({ ...wire, id: wire.id ?? '' });
+  return { ...row, consultType: wire.consultType as DoctorAppointment['consultType'] };
 }
 
 export function mapDashboardWire(wire: DashboardWire): DoctorDashboardData {
@@ -2083,27 +2122,22 @@ cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
 node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "src/features/doctor/__tests__/dashboardWire.test.ts" 2>&1 | tail -20
 ```
 
-Expected: `# pass 10`, `# fail 0`.
+Expected: `# pass 9`, `# fail 0`.
 
-- [ ] **Step 7: Wire the runner into package.json so it cannot go un-run again**
+- [ ] **Step 7: Prove the existing runner already covers the new file**
 
-In `mobile-app/reactnative/package.json`, add after the `"test:crypto": …` line (line 72) — remember the comma:
-
-```json
-    "test:doctor-dashboard": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/doctor/__tests__/dashboardWire.test.ts\"",
-```
-
-Then:
+`test:doctor-mapping` (added by #1008, package.json:30) globs `src/features/doctor/__tests__/*.test.ts` — the directory this task writes into — so `dashboardWire.test.ts` is inside it the moment it exists, and so is `batch6Wire.test.ts`, whose missing runner was this step's original reason to invent one. Do not add a `test:doctor-dashboard` script: two runners over one directory is how one of them rots.
 
 ```bash
-cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && python3 -c "import json;json.load(open('package.json'));print('package.json valid')" && npm run test:doctor-dashboard 2>&1 | tail -8
+cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
+npm run test:doctor-mapping 2>&1 | grep -E "dashboardWire|batch6Wire|^# (pass|fail|skipped)"
 ```
 
-Expected: `package.json valid`, then `# fail 0`.
+Expected: both `dashboardWire.test.ts` and `batch6Wire.test.ts` named as suites, `# fail 0`, `# skipped 0`. If `# skipped` is nonzero, say so — a skipped suite is not a passing one.
 
 - [ ] **Step 8: Delegate the api module's live branch**
 
-In `mobile-app/reactnative/src/api/doctor.batch1.api.ts`, delete the local `interface DashboardWire { … }` block and its comment (lines 328-339), and replace the whole `getDashboard` function (lines 340-376, signature included) with:
+In `mobile-app/reactnative/src/api/doctor.batch1.api.ts`, delete the local `interface DashboardWire { … }` block and its comment (post-#1008 lines 331-341), and replace the whole `getDashboard` function (lines 343-379, signature included) with:
 
 ```ts
 export async function getDashboard(): Promise<DoctorDashboardData> {
@@ -2112,7 +2146,7 @@ export async function getDashboard(): Promise<DoctorDashboardData> {
 }
 ```
 
-Add to the import block near the top (after `import { Colors } from '@/constants/tokens';`):
+Add after #1008's mapping imports at the top of the file (after the `import type { AppointmentRequestWire } from '@/features/doctor/mapping';` line, post-#1008 line 11):
 
 ```ts
 import {
@@ -2140,14 +2174,16 @@ Expected: no output, `tsc exit: 0`. `DEMO_DASHBOARD`'s `satisfactionPct: 96` sti
 - [ ] **Step 10: Commit**
 
 ```bash
-cd /private/tmp/spot-doctor-metrics && git add mobile-app/reactnative/src/features/doctor/dashboardWire.ts mobile-app/reactnative/src/features/doctor/__tests__/dashboardWire.test.ts mobile-app/reactnative/src/types/doctor.batch1.ts mobile-app/reactnative/src/api/doctor.batch1.api.ts mobile-app/reactnative/package.json && git commit -m "$(cat <<'MSG'
+cd /private/tmp/spot-doctor-metrics && git add mobile-app/reactnative/src/features/doctor/dashboardWire.ts mobile-app/reactnative/src/features/doctor/__tests__/dashboardWire.test.ts mobile-app/reactnative/src/types/doctor.batch1.ts mobile-app/reactnative/src/api/doctor.batch1.api.ts && git commit -m "$(cat <<'MSG'
 fix(doctor): map the dashboard wire onto all five tiles instead of literals
 
 getDashboard's live branch returned 0s and reused the wallet balance as lifetime
 earnings. It now reads metrics/todaysAppointments through a pure module with a
 node:test spec, and satisfactionPct is nullable so 'no reviews' stops rendering
-as 0%. The spec gets an npm script: batch6Wire.test.ts had none, which is how a
-mapped wire stayed broken.
+as 0%. Queue rows delegate to the appointments list's own mapper rather than
+re-deriving the avatar and status rules, with consultType handed back so
+in_person is not drawn as a video call. The spec needs no new npm script:
+#1008's test:doctor-mapping already globs this directory.
 MSG
 )"
 ```
@@ -2201,7 +2237,7 @@ const FALLBACK_ICON = CalendarDays;
 ```bash
 cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
 npx --max-old-space-size=4096 tsc --noEmit -p tsconfig.doctorcheck.json 2>&1 | tail -10; echo "tsc exit: $?"
-npm run test:doctor-dashboard 2>&1 | tail -6
+npm run test:doctor-mapping 2>&1 | tail -6
 ```
 
 Expected: `tsc exit: 0` and `# fail 0`. The date-parsing branch is covered by `formatSlotDateLabel`'s spec; the icon fallback is a map lookup whose visible behaviour is confirmed in the browser pass (Task 8) — say so rather than claiming it is tested.
@@ -2217,7 +2253,9 @@ cd /private/tmp/spot-doctor-metrics && git add mobile-app/reactnative/src/featur
 ### Task 7: The dashboard screen reads the aggregate
 
 **Files:**
-- Modify: `mobile-app/reactnative/app/(doctor)/(tabs)/index.tsx:18,24,59,71,74,166,171,308,311`
+- Modify: `mobile-app/reactnative/app/(doctor)/(tabs)/index.tsx:18,25,60,71,83,179,184,314,317` (post-#1008 line numbers)
+
+#1008 rewrote this screen while this plan was being written — it added `mapHeaderAvatar(profile)` for the header, replaced the `settings?.showOnlineStatus ?? profile?.isOnline` presence read with `profile?.isOnline` plus a new `presenceLabel`, dropped `useUpdateSettings`/`updateSettings`/`PawPrint`, and deleted the `toggleOnline` settings mutation. Every line number below is measured on `531df7af9`. Read the file as it stands after Task 3's rebase before editing, and do not re-add anything #1008 removed: `useUpdateSettings` still exists as a hook (`hooks/useAccount.ts:58`), so a stale import would typecheck clean while quietly reverting someone's cleanup.
 
 **Interfaces:**
 - Consumes: `dashboard.todaysAppointments` (Task 5's `DoctorDashboardData`), `dashboard.counts.todaysAppointments`, `dashboard.satisfactionPct: number | null`.
@@ -2227,22 +2265,24 @@ cd /private/tmp/spot-doctor-metrics && git add mobile-app/reactnative/src/featur
 
 Five edits in `app/(doctor)/(tabs)/index.tsx`:
 
-1. Line 18 — drop `useAppointments` from the hooks import:
+1. Line 18 — drop `useAppointments` from the hooks import. Take main's line as written and remove that one name; the result is:
 
 ```tsx
-import { useDoctorProfile, useEarnings, useNotifications, useUpdateSettings, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
+import { useDoctorProfile, useEarnings, useNotifications, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
 ```
 
-2. Delete line 24 (`const ACTIVE_STATUSES = …`) and line 59 (`const { data: appointments = [] } = useAppointments();`) and line 71 (`const todays = appointments.filter(…)`). The queue now comes from the dashboard aggregate, which already scopes it to today in the doctor's timezone; `ACTIVE_STATUSES` (`upcoming`/`confirmed`/`in_progress`) also silently dropped `completed` consults, so "today's consults" counted the day before it was ever asked to.
+   There is no `useUpdateSettings` in it. #1008 removed that hook from this screen when it moved presence onto `PUT /presence`; re-adding it is a silent revert, and `tsc` will not catch it.
 
-3. Line 74 — add the queue local under `counts`:
+2. Delete line 25 (`const ACTIVE_STATUSES = …`) and line 60 (`const { data: appointments = [] } = useAppointments();`) and line 71 (`const todays = appointments.filter(…)`). The queue now comes from the dashboard aggregate, which already scopes it to today in the doctor's timezone; `ACTIVE_STATUSES` (`upcoming`/`confirmed`/`in_progress`) also silently dropped `completed` consults, so "today's consults" counted the day before it was ever asked to.
+
+3. Line 83 — add the queue local under `counts`:
 
 ```tsx
   const counts = dashboard?.counts;
   const queue = dashboard?.todaysAppointments ?? [];
 ```
 
-4. Lines 166 and 171 — the tiles:
+4. Lines 179 and 184 — the tiles:
 
 ```tsx
           <StatCard icon={CalendarDays} label="Today's consults" value={String(counts?.todaysAppointments ?? 0)} iconColor={Colors.secondary} bgColor={Colors.iconBgBlue} />
@@ -2252,9 +2292,9 @@ import { useDoctorProfile, useEarnings, useNotifications, useUpdateSettings, use
           <StatCard icon={Smile} label="Satisfaction" value={dashboard?.satisfactionPct == null ? '—' : `${dashboard.satisfactionPct}%`} iconColor={Colors.secondary} bgColor={Colors.iconBgBlue} />
 ```
 
-   Line 167 (`Upcoming`) already reads `counts?.upcomingAppointments` and needs no change — its zero came from the server, and `counts` is now populated. Line 170 (`Available`) already reads `dashboard?.earnings.availableKobo`; leave its `?? earnings?.availableKobo ?? 0` fallback so the tile still works against a stale bundle.
+   Line 180 (`Upcoming`) already reads `counts?.upcomingAppointments` and needs no change — its zero came from the server, and `counts` is now populated. Line 183 (`Available`) already reads `dashboard?.earnings.availableKobo`; leave its `?? earnings?.availableKobo ?? 0` fallback so the tile still works against a stale bundle.
 
-5. Lines 308 and 311 — the queue block:
+5. Lines 314 and 317 — the queue block:
 
 ```tsx
           {queue.length === 0 ? (
@@ -2313,9 +2353,9 @@ cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && grep -n "label=\"T
 Use the line numbers that command prints — the three `StatCard` lines, and for D1's queue reference the `todays.map((a) =>` line that renders the rows, not the `alerts.map` above it and not the `SectionHeader` above that. A docs commit that cites a line which no longer holds that code is worse than one that cites nothing: it reads as verified.
 
 ```markdown
-| D1 | Today's appointments | StatCard `counts.todaysAppointments` + "Today's queue" list (index.tsx:166,308) | PASS — live mode: `GET /dashboard` `metrics.todaysCount` / `todaysAppointments`, both dated in the doctor's timezone |
-| D2 | Upcoming appointments | StatCard `counts.upcomingAppointments` (index.tsx:167) | PASS — live mode: `metrics.upcomingCount` |
-| D13 | Patient satisfaction rating | StatCard `dashboard.satisfactionPct` (index.tsx:171) | PASS — live mode: `metrics.satisfactionPct`, `null` (rendered `—`) when the doctor has no reviews |
+| D1 | Today's appointments | StatCard `counts.todaysAppointments` + "Today's queue" list (index.tsx:179,314) | PASS — live mode: `GET /dashboard` `metrics.todaysCount` / `todaysAppointments`, both dated in the doctor's timezone |
+| D2 | Upcoming appointments | StatCard `counts.upcomingAppointments` (index.tsx:180) | PASS — live mode: `metrics.upcomingCount` |
+| D13 | Patient satisfaction rating | StatCard `dashboard.satisfactionPct` (index.tsx:184) | PASS — live mode: `metrics.satisfactionPct`, `null` (rendered `—`) when the doctor has no reviews |
 ```
 
 Then, immediately below the table's intro paragraph ("All entries are cards/alerts/banners/states of the single `DoctorDashboardData` aggregate on `(tabs)/index.tsx`, per the consolidation plan."), add:
@@ -2358,7 +2398,7 @@ cd /private/tmp/spot-doctor-metrics/backend && go test ./internal/doctor/... -co
 cd /private/tmp/spot-doctor-metrics && python3 -c "import yaml; yaml.safe_load(open('contracts/doctor.openapi.yaml')); print('openapi parses')"
 cd /private/tmp/spot-doctor-metrics && npx --yes @redocly/cli@1 lint contracts/doctor.openapi.yaml --config redocly.yaml --format=stylish; echo "redocly exit: $?"
 cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && npx --max-old-space-size=4096 tsc --noEmit -p tsconfig.doctorcheck.json; echo "tsc exit: $?"
-cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && npm run test:doctor-dashboard 2>&1 | tail -6
+cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && npm run test:doctor-mapping 2>&1 | tail -6
 ```
 
 Then the live-DB run against the dev database, with the DSN taken from `docs/maps/CI-ON-COWORK.md` (never printed):
@@ -2368,7 +2408,7 @@ cd /private/tmp/spot-doctor-metrics/backend
 TEST_DATABASE_URL="<local dev DSN>" go test ./internal/doctor/ -run 'TestLiveDB_Dashboard' -count=1 -v 2>&1 | tail -30
 ```
 
-Expected: `go ok`, no `gofmt` output, `ok spotlight/backend/internal/doctor`, `openapi parses`, `redocly exit: 0`, `tsc exit: 0`, `# fail 0`, and **eleven** `--- PASS` lines for `TestLiveDB_Dashboard*` — the count the plan's own test blocks add up to (six from Task 1, two from Task 2, three from Task 3). Any live-DB test that SKIPped is *not* a pass — record which ones and say so. If the run prints fewer than eleven, that is a missing test, not a smaller expectation: count the `func TestLiveDB_Dashboard` definitions before concluding.
+Expected: `go ok`, no `gofmt` output, `ok spotlight/backend/internal/doctor`, `openapi parses`, `redocly exit: 0`, `tsc exit: 0`, `# fail 0`, and **twelve** `--- PASS` lines for `TestLiveDB_Dashboard*` — the count the plan's own test blocks add up to (six from Task 1, three from Task 2 including the probe-error case its fix round added, three from Task 3). Any live-DB test that SKIPped is *not* a pass — record which ones and say so. If the run prints fewer than twelve, that is a missing test, not a smaller expectation: count the `func TestLiveDB_Dashboard` definitions before concluding (`grep -c '^func TestLiveDB_Dashboard' backend/internal/doctor/dashboard_metrics_live_db_test.go`).
 
 - [ ] **Step 4: Prove the wire end to end without bouncing the shared container**
 
@@ -2388,7 +2428,7 @@ cd /private/tmp/spot-doctor-metrics && git log --oneline origin/main..HEAD
 cd /private/tmp/spot-doctor-metrics && git -c credential.helper='!gh auth git-credential' push -u origin feat/doctor-dashboard-metrics
 ```
 
-Expected: the log lists the spec, the plan, and the seven implementation commits; the push prints the new branch's remote ref (this is a feature branch — it deploys nothing).
+Expected: because Task 3 Step 0 rebased this branch onto `origin/main`, the log is exactly the branch's own work and nothing else — the spec commit, the plan commits, one implementation commit per task, and the fix-round commits. It was 26 commits when Task 3's rebase step was written and grows by roughly one per task plus one per fix round, so do not assert an exact number; assert the shape. A subject that also appears on `origin/main` means the rebase duplicated history — stop and re-check before pushing rather than pushing it. The push prints the new branch's remote ref (this is a feature branch — it deploys nothing).
 
 - [ ] **Step 6: Open the PR**
 
@@ -2403,8 +2443,8 @@ cd /private/tmp/spot-doctor-metrics && gh pr create --base main --head feat/doct
 
 ## Verification
 - `go build ./...`, `go vet ./internal/doctor/... ./internal/integrations/...`, `go test ./internal/doctor/...`
-- Live-DB (TEST_DATABASE_URL): **11** new `TestLiveDB_Dashboard*` cases — doctor-local day boundary (Karachi, asserted by row identity not just count), the timezone fallback for a doctor with no profile row, upcoming excluding past and finished rows, queue wire shape, count-vs-capped-list, appointments scoped to one doctor, revenue across settled/escrowed/refunded and both other-module status shapes, a poisoned timezone degrading to the default instead of failing the read, satisfaction scoped to one doctor, the brand-new doctor, and the composed payload. Every clock-sensitive expectation is placed on a row that is past or future at ANY run time.
-- `redocly lint contracts/doctor.openapi.yaml` (exit 0), `tsc --noEmit -p tsconfig.doctorcheck.json`, `npm run test:doctor-dashboard` (10 cases).
+- Live-DB (TEST_DATABASE_URL): **12** `TestLiveDB_Dashboard*` cases — doctor-local day boundary (Karachi, asserted by row identity not just count), the timezone fallback for a doctor with no profile row, upcoming excluding past and finished rows, queue wire shape, count-vs-capped-list, appointments scoped to one doctor, revenue across settled/escrowed/refunded and both other-module status shapes (with this-month money separated from lifetime by a row settled in the previous month, and the escrowed and settled sums proven by different fixtures), a poisoned timezone degrading to the default instead of failing the read, a zone the probe itself cannot read propagating its error rather than silently degrading, satisfaction scoped to one doctor, the brand-new doctor, and the composed payload. Every clock-sensitive expectation is placed on a row that is past or future at ANY run time.
+- `redocly lint contracts/doctor.openapi.yaml` (exit 0), `tsc --noEmit -p tsconfig.doctorcheck.json`, `npm run test:doctor-mapping` (9 `dashboardWire.test.ts` cases, riding the same glob as #1008's three mapping suites and `batch6Wire.test.ts`).
 - Not done: the in-browser tile pass, which needs the shared API container rebuilt and Metro restarted — say so here if it was not run.
 
 ## Test plan
@@ -2416,13 +2456,14 @@ cd /private/tmp/spot-doctor-metrics && gh pr create --base main --head feat/doct
 
 Spec: `docs/superpowers/specs/2026-11-13-doctor-dashboard-metrics-design.md`. Plan: `docs/superpowers/plans/2026-11-13-doctor-dashboard-metrics.md`.
 
-## Five things this PR deliberately leaves open — accept or decline each
+## Six things this PR deliberately leaves open — accept or decline each
 
 1. **Reject unknown zones at `PUT /schedule/timezone`.** `Service.SetTimezone` (`backend/internal/doctor/service_ops.go:360-366`) validates only the empty string, so any text lands in `doctor_profiles.timezone`. Before this PR that column was inert; now five date expressions interpolate it, and an unrecognised value is a Postgres 22023. This PR degrades on the *read* (`Repository.usableTimezone`), which protects the dashboard and nothing else. The honest fix is on the write path, and validating IANA names honestly needs a zone database this PR is not allowed to add.
-2. **`GET /schedule` and the zone store — coordination with #1008.** #1008's message says "PUT /schedule/timezone writes `doctor_profiles.timezone` while slot rendering reads `doctor_availability.timezone`". Its *conclusion* (two columns, no canonical store) is real and this PR takes that decision for dashboard date math only, choosing `doctor_profiles.timezone` because it is the only column any screen sets. Its *evidence* does not hold: slot rendering is `telemedicine.GetAvailability` (`backend/internal/telemedicine/service_block13.go:36-64`), which reads `doctor_availability_slots` (a different table) and applies no timezone at all; the only Go reader of `doctor_availability.timezone` is `backend/internal/doctor/repository.go:126`, a plain column scan. If #1008 lands first, `ScheduleSettings` also exposes the availability row, so this PR's "not a read-back" comment is qualified to the top level on purpose.
-3. **The slot calendar and the dashboard now use different clocks.** Slot rendering is dated in the database server's timezone; this PR dates the tiles in the doctor's own. For a doctor outside Africa/Lagos those two can disagree about which day a slot is on. Out of the fence (spec D1 is the dashboard reads) and it is #1008's surface, but it is a user-visible consequence of merging this.
+2. **Two zone columns, and #1008 landed the second one as a live read.** #1008's message claimed "PUT /schedule/timezone writes `doctor_profiles.timezone` while slot rendering reads `doctor_availability.timezone`". Its conclusion (two columns, no canonical store) is the one this PR takes for dashboard date math only, choosing `doctor_profiles.timezone` because it is the only column any screen is wired to set. Its evidence did not hold at the time — slot rendering was `telemedicine.GetAvailability` (`backend/internal/telemedicine/service_block13.go:36-64`), reading `doctor_availability_slots` and applying no timezone at all. #1008 then made the claim true on its own plane: `repository.go:220-221` now renders appointment slots with `AT TIME ZONE COALESCE(av.timezone, 'Africa/Lagos')`, and `GET /schedule` now returns the availability row itself (`ScheduleSettings.Schedule`, `handler_tail2.go:499`, carrying `Availability.Timezone` at `model.go:76`). So the same doctor can be dated today on the dashboard and yesterday in `GET /appointments`, and no screen writes the column the list reads. One thing did NOT change: `timezone.tsx:21` still seeds from the top-level `settings.timezone`, which the Go payload has never sent — #1008's zone arrives nested under `schedule`, and the client's `AvailabilitySchedule` (`src/types/doctor.ts:262-269`) does not declare it — so spec F5's live-mode no-op stands, and repairing that screen against the nested field would display a zone that `PUT /schedule/timezone` does not write. The fix is a canonical zone, not a third read.
+3. **The booking surface and the dashboard now use different clocks.** The slot calendar (`telemedicine.GetAvailability`, `backend/internal/telemedicine/service_block13.go:36-64`) reads `doctor_availability_slots` with `slot_date >= CURRENT_DATE` — no `AT TIME ZONE` at all, so it is dated in the database server's zone — while #1008's appointments read (`repository.go:220-221`) is dated in `doctor_availability.timezone` and this PR's tiles in `doctor_profiles.timezone`. Three date expressions over one doctor's calendar, in three different sources of truth. For a doctor outside Africa/Lagos they can disagree about which day a slot is on. Out of the fence (spec D1 is the dashboard reads) but it is a user-visible consequence of merging this.
 4. **`QueueItemRow.tsx:24,44` has the same three-key `TYPE_ICON` and the same unguarded lookup as the row this PR fixes.** It was left alone because its prop is `ConsultationQueueItem` (the live waiting-room plane), not `appointments`, so an `in_person` value is not proven reachable there. Widening `ConsultType` to the four real `consultation_type` values (spec F4) is the fix that covers both.
-5. **Nothing in CI runs the doctor wire tests.** `Doctor CI`'s only mobile gate is `tsc --noEmit -p tsconfig.doctorcheck.json`, the root tsconfig excludes `**/__tests__/**`, and no RN feature's `test:*` script is CI-invoked. This PR adds `npm run test:doctor-dashboard` (that is how batch 6's broken wire stayed broken), but wiring it into the lane is a CI-behaviour change the repo has not chosen, so it is not taken here.
+5. **Nothing in CI runs the doctor wire tests.** `Doctor CI`'s only mobile gate is `tsc --noEmit -p tsconfig.doctorcheck.json`, the root tsconfig excludes `**/__tests__/**`, and no RN feature's `test:*` script is CI-invoked. This PR adds no runner of its own: #1008 shipped `npm run test:doctor-mapping`, whose glob (`src/features/doctor/__tests__/*.test.ts`) already picks up this PR's `dashboardWire.test.ts` alongside batch 6's — that is how batch 6's broken wire stayed broken, and it is still how nobody notices a new one breaking. Wiring the script into the lane is a CI-behaviour change the repo has not chosen, so it is not taken here.
+6. **The revenue JOIN trusts a 1:1 nothing enforces.** `consultRevenue` joins `settlements` to `appointments` on `a.settlement_id = st.id`, so two appointment rows sharing one settlement would count that money twice. `appointments.settlement_id` has no UNIQUE constraint (`supabase/migrations/20260616280000_telemedicine.sql:32-34` — the only UNIQUE on the table is `idempotency_key`). It is unreachable today because the sole Go writer is the booking `INSERT` (`backend/internal/telemedicine/service.go:573`), which creates its own settlement, and no `UPDATE` in the repo moves the column — but the read is one backfill or admin repair away from a wrong money number. The in-repo precedent for the guard is `supabase/migrations/20260919000400_restaurant_payouts.sql:66-72`, which hit this same hazard and added partial UNIQUE indexes on `settlement_id`. A migration is out of this PR's fence — spec "Out of scope" line: "Any migration: everything reads existing tables and columns" — so the guard is named here rather than shipped.
 
 ## Two notes for anyone reading the money tests later
 

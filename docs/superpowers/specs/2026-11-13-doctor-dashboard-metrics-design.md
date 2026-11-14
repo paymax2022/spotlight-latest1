@@ -374,3 +374,12 @@ the wire evidence, and the in-browser pass is done only with an explicit go-ahea
   Repairing the screen (seed `tz` from the profile read, or add `timezone` to `ScheduleSettings`
   and populate it) is one small change in either plane and belongs to no task here; it is out of
   scope because it edits neither the dashboard nor the aggregate.
+  **Correction (2026-11-15, after #1008 landed):** the parenthetical above is now stale — `GET /schedule`
+  does send a zone since #1008, because `ScheduleSettings` nests the availability row
+  (`backend/internal/doctor/handler_tail2.go:499`, whose `Availability.Timezone` is
+  `backend/internal/doctor/model.go:76`). The F5 outcome is unchanged: that zone arrives under
+  `schedule`, the screen still reads the top-level `settings.timezone` (`app/(doctor)/schedule/timezone.tsx:21`),
+  and the client's `AvailabilitySchedule` (`src/types/doctor.ts:262-269`) does not declare the nested field,
+  so the live-mode no-op stands. What did change is the meaning of a repair: seeding `tz` from
+  `settings.schedule.timezone` would make the button work while displaying `doctor_availability.timezone`
+  — the column `PUT /schedule/timezone` does not write and `repository.go:220-221` now reads.
