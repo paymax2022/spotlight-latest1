@@ -2728,6 +2728,7 @@ Create `frontend-web/components/openmic/competition/edition-steps.module.css`. T
 .stepState b { font-weight: 700; }
 .windowOpen { color: #1f7a3d; }
 .windowClosed { color: #8a3b12; }
+.windowUnknown { color: #4d4a45; }
 
 .beatPlayer { margin: 16px 0 12px; }
 .beatPlayer audio { width: 100%; }
@@ -2800,7 +2801,9 @@ function WindowLine({ label, start, end, state }: { label: string; start: string
     <p className={styles.stepState}>
       <b>{label}</b>
       <span>{shortDate(start)} → {shortDate(end)}</span>
-      <span className={state === 'open' ? styles.windowOpen : styles.windowClosed}>
+      {/* `unknown` is unset dates, not a closed window — the rust colour would
+          contradict the words next to it. */}
+      <span className={state === 'open' ? styles.windowOpen : state === 'unknown' ? styles.windowUnknown : styles.windowClosed}>
         {state === 'open' ? '· open now' : state === 'not-started' ? '· opens later' : state === 'closed' ? '· closed' : '· dates to be confirmed'}
       </span>
     </p>
@@ -2809,6 +2812,8 @@ function WindowLine({ label, start, end, state }: { label: string; start: string
 
 /** Step 04 is the only one the server cannot answer: whose entry it is depends
  *  on who is signed in. */
+type OwnEntryRow = { status?: string; stageName?: string; songTitle?: string; voteCount?: number };
+
 function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: string }) {
   const [entry, setEntry] = useState<{ stageName: string; songTitle: string; voteCount: number } | null>(null);
   const [checked, setChecked] = useState(false);
@@ -2816,21 +2821,24 @@ function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: 
   useEffect(() => {
     let active = true;
     void (async () => {
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        if (active) setChecked(true);
-        return;
-      }
       try {
+        // Inside the try: a throw here used to strand this step on "Checking
+        // your entries…" forever, because `finally` was never reached.
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
         const res = await fetch(`/api/open-mic/submissions?contestId=${encodeURIComponent(contestId)}`, {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
-        const payload = (await res.json().catch(() => null)) as { submissions?: any[] } | null;
+        // A typed row, not `any[]`: an unnamed field must not print `undefined`
+        // into an artist's own entry line.
+        const payload = (await res.json().catch(() => null)) as { submissions?: OwnEntryRow[] } | null;
         const live = (payload?.submissions ?? []).find((row) =>
           ['published_for_voting', 'live_for_voting', 'finalist', 'winner'].includes(String(row.status))
         );
-        if (active && live) setEntry({ stageName: live.stageName, songTitle: live.songTitle, voteCount: Number(live.voteCount || 0) });
+        if (active && live?.stageName) {
+          setEntry({ stageName: live.stageName, songTitle: live.songTitle ?? '', voteCount: Number(live.voteCount || 0) });
+        }
       } finally {
         if (active) setChecked(true);
       }
@@ -2853,7 +2861,7 @@ function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: 
   const url = typeof window === 'undefined' ? path : `${window.location.origin}${path}`;
   return (
     <>
-      <p className={styles.tally}>Your entry: <strong>{entry.stageName}</strong> — “{entry.songTitle}” · {entry.voteCount.toLocaleString()} votes so far</p>
+      <p className={styles.tally}>Your entry: <strong>{entry.stageName}</strong>{entry.songTitle ? ` — “${entry.songTitle}”` : ''} · {entry.voteCount.toLocaleString()} votes so far</p>
       <code className={styles.entryLink}>{url}</code>
       <div className="openMic-actions">
         <Link className="openMic-button openMic-buttonOutline" href={path}>Open your entry page <span aria-hidden="true">→</span></Link>
@@ -2954,7 +2962,16 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                         {beat.usageRules ? ` — ${beat.usageRules}` : ''}
                       </p>
                       {beat.requiresPaidEntry ? (
-                        <p className={styles.note}>The file unlocks once your entry fee is paid — register first, then download.</p>
+                        /* Design's error-handling bullet: in this arm step 02's
+                           CTA is the apply page, never a download. */
+                        <>
+                          <p className={styles.note}>The file unlocks once your entry fee is paid — register first, then download.</p>
+                          {data ? (
+                            <div className="openMic-actions">
+                              <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/apply`}>Register to unlock the beat <span aria-hidden="true">→</span></Link>
+                            </div>
+                          ) : null}
+                        </>
                       ) : beat.downloadable && beat.downloadUrl ? (
                         <div className="openMic-actions">
                           <a className="openMic-button openMic-buttonOutline" href={beat.downloadUrl} download={`${slugifyArtist(beat.title) || 'spotlight-beat'}.mp3`}>Download beat <span aria-hidden="true">↓</span></a>
@@ -3005,9 +3022,12 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                             {board.entryCount} {board.entryCount === 1 ? 'entry' : 'entries'} on the board
                             {data.showVoteCounts ? ` · ${board.totalVotes.toLocaleString()} votes counted` : ''}
                           </p>
+                          {/* Keyed on rank, not artistSlug alone: the slug is a
+                              slug of a non-unique stage name (design: `K1ng$hoota`
+                              → `k1nghoota`) and this projection carries no row id. */}
                           <ol className={styles.board}>
                             {board.rows.map((row) => (
-                              <li key={row.artistSlug} data-rank={row.rank}>
+                              <li key={`${row.rank}-${row.artistSlug}`} data-rank={row.rank}>
                                 <span className={styles.rank}>{row.rank}</span>
                                 <span className={styles.who}>
                                   <strong>{row.stageName}</strong>
@@ -3060,6 +3080,185 @@ git -C /Users/paymax/Documents/spotlight/main commit -m "feat(open-mic): live fi
 Beat player and download, submission window, the signed-in visitor's own entry
 link and a top-five board — each step degrades to the reason it is not live
 rather than a control that would fail."
+```
+
+---
+
+### Task 9b: Resolve the window states on the server
+
+Task 9 review finding M-1, ruled out of Task 9's two-file boundary and into its
+own change. The component computed `registration`/`submission`/`voting` from
+`const now = Date.now()` **during render**, which is the one thing a server
+pre-rendered page may not do: the HTML the server writes is produced at request
+time and the first client render at hydration time, and any clock crossing
+between those two — a submission window that closes mid-request, or a page
+rendered just before midnight — makes React's tree disagree with the DOM.
+React 19 patches the text, so today the symptom is a console warning rather
+than a broken page; the state of step #03's CTA (`/enter` versus `/entries`) is
+the part that would actually be wrong, and `persistence.ts:1251-1258` refuses a
+submission outside the window, so an artist clicking the stale-open link is
+honestly turned away. Fixed anyway, and fixed here: the same class of bug is
+what Task 10's browser pass would surface as a hydration error, and the repair
+belongs to the read, not the render.
+
+**Files:**
+- Modify: `frontend-web/src/features/openmic/active-edition.ts` (type + builder)
+- Modify: `frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx` (consume, do not compute)
+- Test: `frontend-web/tests/unit/openmic/edition-steps-data.spec.ts`
+
+**Interfaces:**
+- Consumes: Task 5's `at()` normalisation and `buildOpenMicEditionStepsData(contest, board)` signature — unchanged.
+- Produces: `WindowState` and `windowState(start, end, now)` exported from `active-edition.ts`, and three new `WindowState` fields on `OpenMicEditionStepsData`: `registrationState`, `submissionState`, `votingState`. Task 9's `WindowLine` keeps its `state` prop but takes the type from the features module; Task 10's mount is untouched.
+
+- [ ] **Step 1: Write the failing builder tests**
+
+Append to `frontend-web/tests/unit/openmic/edition-steps-data.spec.ts`, and add
+`afterEach` to the existing `vitest` import at the top of the file:
+
+```ts
+describe('the three window states, resolved by the read', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // START/END span November 2026. The clock is pinned rather than trusted: a
+  // test that read the real one would go red on 1 December and teach nobody
+  // anything about this code.
+  it('is open while now sits inside the window', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T12:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest(), []);
+    expect(data.registrationState).toBe('open');
+    expect(data.submissionState).toBe('open');
+    expect(data.votingState).toBe('open');
+  });
+
+  it('is not-started before the window opens and closed after it ends', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-20T00:00:00.000Z'));
+    expect(buildOpenMicEditionStepsData(contest(), []).registrationState).toBe('not-started');
+    vi.setSystemTime(new Date('2026-12-05T00:00:00.000Z'));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('closed');
+  });
+
+  it('is unknown when neither end of the window is set', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(
+      contest({ registrationStartAt: undefined, registrationEndAt: undefined }),
+      [],
+    );
+    // `unknown` must not collapse into `closed`: the copy for unset dates says
+    // "to be confirmed", and the closed styling would contradict it.
+    expect(data.registrationState).toBe('unknown');
+    expect(data.registrationEndAt).toBeNull();
+  });
+
+  it('still reports open when only one end of the window is set', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest({ registrationEndAt: undefined }), []);
+    expect(data.registrationStartAt).toBe(START);
+    expect(data.registrationState).toBe('open');
+  });
+
+  it('is serialisable, because the client must not recompute any of it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest(), []);
+    expect(JSON.parse(JSON.stringify(data))).toStrictEqual(data);
+  });
+});
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic/edition-steps-data.spec.ts`
+Expected: FAIL with `data.registrationState` being `undefined` (`received: undefined`) — the fields do not exist yet. The five pre-existing `describe` blocks must still pass.
+
+- [ ] **Step 3: Move the arithmetic into the read**
+
+In `frontend-web/src/features/openmic/active-edition.ts`, add above `OpenMicEditionStepsData`:
+
+```ts
+/** Which side of a window the clock is on. A plain string union because this
+ *  crosses the server/client boundary: the alternative was a client working it
+ *  out during render, which pre-renders one answer and hydrates another. */
+export type WindowState = 'open' | 'not-started' | 'closed' | 'unknown';
+
+export function windowState(start: string | null, end: string | null, now: number): WindowState {
+  const from = start ? Date.parse(start) : Number.NaN;
+  const to = end ? Date.parse(end) : Number.NaN;
+  if (!Number.isFinite(from) && !Number.isFinite(to)) return 'unknown';
+  if (Number.isFinite(from) && now < from) return 'not-started';
+  if (Number.isFinite(to) && now > to) return 'closed';
+  return 'open';
+}
+```
+
+In `OpenMicEditionStepsData`, add `registrationState: WindowState;` directly after `registrationEndAt`, `submissionState: WindowState;` after `submissionEndAt`, and `votingState: WindowState;` after `votingEndAt`.
+
+In `buildOpenMicEditionStepsData`, hoist the six `at(...)` calls into locals and
+resolve once against the server clock, so the returned object and the state
+fields can never disagree:
+
+```ts
+  const registrationStartAt = at(contest.registrationStartAt);
+  const registrationEndAt = at(contest.registrationEndAt);
+  const submissionStartAt = at(contest.submissionStartAt);
+  const submissionEndAt = at(contest.submissionEndAt);
+  const votingStartAt = at(contest.votingConfig?.votingStartAt);
+  const votingEndAt = at(contest.votingConfig?.votingEndAt);
+  // One instant for all three windows: two `Date.now()` calls could straddle a
+  // boundary and report the same window twice.
+  const now = Date.now();
+```
+
+and in the returned object replace the six inline `at(...)` entries with those
+locals plus:
+
+```ts
+    registrationState: windowState(registrationStartAt, registrationEndAt, now),
+    submissionState: windowState(submissionStartAt, submissionEndAt, now),
+    votingState: windowState(votingStartAt, votingEndAt, now),
+```
+
+- [ ] **Step 4: Run the unit tests to verify they pass**
+
+Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic/edition-steps-data.spec.ts`
+Expected: all PASS, including the pre-existing blocks.
+
+- [ ] **Step 5: Make the component read the answer instead of doing the maths**
+
+In `frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx`:
+
+- Delete the local `type WindowState = …` line and the whole local `function windowState(…)`.
+- Import the type instead: `import type { OpenMicEditionStepsData, WindowState } from '@/src/features/openmic/active-edition';` (a type-only import — the module pulls in server persistence and must never enter the client graph as a value).
+- Delete `const now = Date.now();` and the three `const registration/submission/voting = windowState(…)` lines.
+- Pass the resolved fields straight through at each `WindowLine`: `state={data.registrationState}`, `state={data.submissionState}`, `state={data.votingState}` (each is already inside a `data ? …` arm, so no new guard appears).
+- Step #03's CTA decides on the field: `href={data.submissionState === 'open' ? \`/open-mic/${data.slug}/enter\` : \`/open-mic/${data.slug}/entries\`}` and the same field in the label ternary (`{data.submissionState === 'open' ? 'Submit your song' : 'See the live entries'}`).
+
+- [ ] **Step 6: Compile, lint, and confirm nothing else moved**
+
+```bash
+cd /Users/paymax/Documents/spotlight/main/frontend-web && npx tsc --noEmit > /tmp/tsc-9b.txt 2>&1; echo "tsc exit=$?"
+npx eslint components/openmic/competition src/features/openmic/active-edition.ts > /tmp/lint-9b.txt 2>&1; echo "lint exit=$?"
+npx vitest run tests/unit/openmic > /tmp/vitest-9b.txt 2>&1; echo "vitest exit=$?"
+```
+Expected: all three exit 0. `grep -c "Date.now()" components/openmic/competition/OpenMicEditionSteps.tsx` must be **0** — that is the whole point of the task. The acceptance e2e stays red (5 failed / 0 passed) until Task 10 mounts the component; do not touch `tests/e2e/openmic/competition-steps.spec.ts`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git -C /Users/paymax/Documents/spotlight/main add frontend-web/src/features/openmic/active-edition.ts \
+  frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx \
+  frontend-web/tests/unit/openmic/edition-steps-data.spec.ts
+git -C /Users/paymax/Documents/spotlight/main commit -m "fix(open-mic): resolve the competition windows on the server, not during render
+
+The steps block called Date.now() in the component body, so a page whose window
+crossed a boundary between the request and hydration rendered one answer into
+the server HTML and another on the client — React 19 patches the text, but the
+step 03 CTA it decides (/enter or /entries) is the part that would be wrong."
 ```
 
 ---
