@@ -51,13 +51,30 @@ components:
     Forbidden: { description: Not the assigned doctor / not permitted (object-level access denied) }
     NotFound: { description: Resource not found }
     UnprocessableEntity: { description: Required-field validation failed }
+    IntakeAlreadySubmitted:
+      description: >
+        The intake is SUBMITTED, so the draft save is refused and no further write
+        can reach the doctor. Branch on `code`, not on `error`: the sentence is
+        display copy and may be reworded, and 400 is shared with ordinary
+        validation refusals that leave the patient free to keep editing.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
     Error:
       type: object
       properties:
+        success: { type: boolean, enum: [false] }
         error: { type: string }
         status: { type: integer }
+        code:
+          type: string
+          enum: [intake_already_submitted]
+          description: >
+            Stable machine-readable identifier. Present only on refusals a client
+            has to act on differently from an ordinary validation failure; today
+            that is the submitted-intake freeze on PUT …/draft (and POST …/submit).
 
     IntakeAttachment:
       type: object
@@ -379,6 +396,7 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/IntakeDraft' } } }
       responses:
         '200': { description: Draft saved, content: { application/json: { schema: { type: object, required: [success, intake], properties: { success: { type: boolean }, intake: { $ref: '#/components/schemas/ConsultIntake' } } } } } }
+        '400': { $ref: '#/components/responses/IntakeAlreadySubmitted' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
   /health/intake/appointments/{appointmentId}/submit:

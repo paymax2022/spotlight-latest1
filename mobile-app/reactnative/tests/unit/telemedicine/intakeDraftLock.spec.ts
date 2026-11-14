@@ -83,3 +83,35 @@ test('no error means nothing to show', () => {
   assert.equal(describeDraftSaveError(undefined), null);
   assert.equal(describeDraftSaveError(null), null);
 });
+
+/** The same refusal with the stable code the draft route now sends beside the
+ *  sentence (preconsultFail → {"error":…,"code":"intake_already_submitted"}). */
+const codedError = (status: number, message: string, code: unknown) =>
+  Object.assign(new Error(message), { response: { status, data: { error: message, code } } });
+
+test('the code recognises the freeze when the sentence no longer says so', () => {
+  // What the code is FOR: recognition stops depending on wording, so the server can
+  // rephrase, localise or sanitize the sentence without the wizard going on editing
+  // answers that can never reach the doctor.
+  const outcome = describeDraftSaveError(
+    codedError(400, 'This consultation has been closed.', 'intake_already_submitted'),
+  );
+  assert.equal(outcome?.kind, 'locked');
+});
+
+test('an unrelated code on a 400 does not fabricate a freeze', () => {
+  const outcome = describeDraftSaveError(
+    codedError(400, 'intake: unknown field "photo_url"', 'validation_failed'),
+  );
+  assert.equal(outcome?.kind, 'unsaved');
+});
+
+test('prose still recognises the freeze from a backend that sends no code', () => {
+  // This app ships as JS that can be ahead of the API, and every backend build
+  // predating the code answers with the sentence alone. Dropping the match would
+  // turn every freeze into "keep editing" the day this change ships.
+  const outcome = describeDraftSaveError(
+    serverError(400, 'preconsult: intake already submitted'),
+  );
+  assert.equal(outcome?.kind, 'locked');
+});

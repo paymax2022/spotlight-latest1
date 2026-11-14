@@ -1010,6 +1010,25 @@ components:
         error:
           type: string
 
+    IntakeError:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+        code:
+          type: string
+          enum: [intake_already_submitted]
+          description: >
+            Stable machine-readable identifier for a refusal the client has to
+            classify. The submitted-intake freeze shares status 400 with ordinary
+            validation refusals while the correct reactions are opposite — stop
+            editing vs keep editing — so the wizard branches on this rather than on
+            `error`, which is display copy the server may reword.
+
     KycTier:
       type: integer
       enum: [0, 1, 2, 3]
@@ -4838,6 +4857,13 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    IntakeAlreadySubmitted:
+      description: >
+        The pre-consult intake is SUBMITTED, so the draft save is refused and no
+        later write can reach the doctor. Branch on `code`, not on the sentence.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/IntakeError' }
     Forbidden:
       description: Authenticated but not authorized (KYC tier or RBAC)
       content:
@@ -14133,6 +14159,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   intake: { $ref: '#/components/schemas/ConsultIntake' }
+        '400': { $ref: '#/components/responses/IntakeAlreadySubmitted' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/finance/health/intake/appointments/{appointmentId}/submit:
