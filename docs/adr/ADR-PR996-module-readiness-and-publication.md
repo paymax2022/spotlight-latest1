@@ -95,3 +95,15 @@ Four things stood between that sentence and the running system:
 - The registry is now the authority on *discoverability*. It is not authorisation: each
   module's own auth/RBAC/tier checks still decide what a caller may do, and the API gate is
   the layer that makes hiding an icon more than decoration.
+
+## Amendment — 2026-11-14
+
+Decision 5's text was corrected: it said "the store build that is wired to staging today is
+governed by staging's publication". The decision itself is unchanged — the tier is still the
+server's, and no client change switches planes — but the aside stated a snapshot as if it were
+permanent, and it went false: `eas.json`'s `production`/`production-apk` profiles are wired to
+the production BFF (that landed in `e8eae3ad6`). The corrected wording names the mechanism
+instead of the current value, so the paragraph cannot go stale the same way again. Recorded here
+rather than left as an invisible edit because an ADR is read as the record of what was decided,
+and a silent rewrite of a decided paragraph reads as misremembering to anyone who saw the
+original.
