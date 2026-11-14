@@ -132,9 +132,15 @@ gate shipped without the workflow update described below.
 
 2. **Frontend-web (cPanel/Passenger). Use the committed file, not the console.**
    The supported route is `frontend-web/config/production-module-flags.env`,
-   which already carries both names (`:58`, `:59`); the lane deploy writes it into
-   the host's runtime env, so the fix is to land that deploy (Task 8 / Task 12),
-   not to type into cPanel. Both guards then keep it honest: `make flag-parity`
+   which already carries both names (`:58`, `:59`); the lane deploy **would** write it
+   into the host's runtime env, so the fix is to land that deploy (Task 8 / Task 12),
+   not to type into cPanel. **Read that as a plan, not a present state:** the file is
+   committed on `feat/prod-cutover` and the install lane is un-pushed, so nothing here
+   has been shown to put those 45 keys on the prod host today — re-probed 2026-11-14,
+   prod www still answers 503 for `events`, `restaurant`, `wallet` and both referral
+   routes even though the file declares them `=true` (ledger §16.2 items 6 and 13).
+   Until that deploy is proven on the host, a hand-edit is the only route that changes
+   what a visitor sees. Both guards then keep it honest: `make flag-parity`
    structurally (the file vs. every `envFlag` name in the code), and the lane's
    own validator at deploy time. Hand-editing the Node app's environment (cPanel
    "Node.js App" env vars, or the app's server-side `.env`) still works, but it is

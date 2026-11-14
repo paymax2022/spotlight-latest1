@@ -205,9 +205,10 @@ the equality backstop above plus the `Production` environment's **required
 reviewers** — measured 2026-11-14: both parked runs return
 `pending_deployments[].reviewers` = two `User` entries with `wait_timer: 0`, and
 `current_user_can_approve: false` for a non-reviewer. That
-is why ledger §16 counts two production writes parked on approval right now
-(`43299354226`, `43299959109`, both head `3654f6b3f`) and a third pending
-(`43534854471`, head `8ed8123de`). This plan approved, declined and dispatched
+is why ledger §16 counts two production writes parked on approval right now —
+`deployment-matrix.md` and this file no longer restate their run ids, heads or
+timestamps: ledger §16.2 item 1 owns them, because a third copy of a live run
+state is a third way to be stale. This plan approved, declined and dispatched
 none of them.
 
 ### 4. Dry-run, then apply — ALREADY DONE for staging (2026-08-21)
@@ -254,31 +255,43 @@ Each file was sent WHOLE rather than split on semicolons —
 corrupt it. Each request also inserted its own `schema_migrations` row, so a
 later `db push` sees the chain as applied and skips it.
 
-Production (`spotlight-prod`) is still **11 migrations behind** and was NOT
-touched. Apply it through the normal gated job once its secrets are correct.
+Production (`spotlight-prod`) **as of this 2026-08-21 capture** was **11 migrations
+behind** and NOT touched — that sentence is no longer a live state; read the block
+immediately below before acting on it.
 
 > **THIS SENTENCE IS FALSE — left in place only as the 2026-08-21 record, and it
 > is the exact claim §5.2 and §16.2 item 2 exist to retire.** Both halves are
 > wrong now: "11 behind" was superseded by §5.2's fresh classification of
 > **88 pending** (a 2026-11-07 capture, so re-read rather than quote — §5.6),
 > and "was NOT touched" stopped being true on 2026-11-12 evening, when §1.4
-> recorded prod gaining `20271408000000` and `20271409000000` (apply run
-> `43301433055`, 20:33:13Z) and then `20271410000000` (apply run `43309595782`,
-> 21:22:19Z) — all three through `ops-db-push-scoped.yml`, **the lane that needs
-> no reviewer**, and none of them dispatched by this plan. Its post-apply reads
+> recorded prod gaining `20271408000000` and `20271409000000` and then
+> `20271410000000` — all three through `ops-db-push-scoped.yml`, **the lane that
+> needs no reviewer**, in two `mode=apply` runs whose ids and timestamps §1.4 and
+> §16.2 item 1 hold; this file no longer repeats them, because a live run id
+> copied into a fourth document is a fourth way to be stale. None of the three
+> was dispatched by this plan. Those runs' post-apply reads
 > left prod at **84** pending against the `3654f6b3f` tree, so production's
 > pending count is *not* a figure to quote and is Task 6's first command.
 
 For future applies, prefer the workflow: Actions → *DB Migrate* → Run workflow →
-choose `target`, dry run **checked** first, then re-run unchecked.
+choose `target`, dry run **checked** first, then re-run unchecked. Two
+preconditions this 2026-08 text predates: the run parks on the `Production`
+environment's required reviewers until a named human approves (ledger §16.2 item
+1), and a pre-cutover prod dump must exist first (item 3) — neither is true yet.
 
 ### 5. Promote the branch
 
 **STILL OPEN, and the sentence below is stale in both directions.** Re-measured
 2026-11-14 against the fetched refs (`git rev-list --count`). **Pin the refs when
-you re-run this — the numbers move every time `main` takes a merge.** Read at
+you re-run this — the numbers move every time `main` takes a merge, and this one
+moved while the sentence was being written.** Read at
 `origin/main` = `31505cb92`, `origin/staging` = `623c7c128`,
-`origin/develop` = `da665dcd0`:
+`origin/develop` = `da665dcd0`; a re-fetch ~3h later, at `origin/main` =
+`7a97609d0` (22:13 +0100), read **22 / 5 / 1630** for the same three pairs — the
+table below is the pinned first capture, not a live state, and the shape (main
+pulling away from both) is the actual finding. The migration-file count did **not**
+move with it: `git ls-tree -r --name-only origin/main -- supabase/migrations`
+counts **755** at both tips.
 
 | Pair | Commits |
 |---|---|
