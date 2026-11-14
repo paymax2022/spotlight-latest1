@@ -125,14 +125,22 @@ func TestLiveDB_BookTowing_Wallet_RefusesUnbookableRequestBeforeAnyDebit(t *test
 
 // failTowingInsertTrigger makes the INSERT of a towing job whose pickup address
 // equals marker fail (a real SQL-level insert failure after the escrow posted).
+//
+// The trigger and function names are fixed and cleared before create: a run
+// killed mid-test never reaches its cleanup, and with a randomised name the
+// leftover neither fails loudly nor gets replaced — it just stays. A per-run
+// marker keeps the fault aimed at this run's row, so a stale copy of the fixed
+// pair can never fire for anybody else.
 func failTowingInsertTrigger(t *testing.T, ctx context.Context, pool *pgxpool.Pool, marker string) {
 	t.Helper()
-	fn := "t_fail_towing_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	const fn = "t_fail_towing"
 	mustExec := func(sql string) {
 		if _, err := pool.Exec(ctx, sql); err != nil {
 			t.Fatalf("%s: %v", sql, err)
 		}
 	}
+	mustExec(`DROP TRIGGER IF EXISTS ` + fn + ` ON towing_jobs`)
+	mustExec(`DROP FUNCTION IF EXISTS ` + fn + `()`)
 	mustExec(fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN
 		IF NEW.pickup_address = '%s' THEN RAISE EXCEPTION 'forced towing insert failure'; END IF; RETURN NEW; END $f$`, fn, marker))
 	mustExec(fmt.Sprintf(`CREATE TRIGGER %s BEFORE INSERT ON towing_jobs FOR EACH ROW EXECUTE FUNCTION %s()`, fn, fn))

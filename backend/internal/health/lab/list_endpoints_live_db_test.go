@@ -87,7 +87,9 @@ func TestLiveDB_ListPackages_ReturnsActiveBundles(t *testing.T) {
 			t.Fatalf("seed package %s: %v", row.name, err)
 		}
 		t.Cleanup(func(id string) func() {
-			return func() { _, _ = pool.Exec(t.Context(), `DELETE FROM lab_packages WHERE id=$1`, id) }
+			return func() {
+				_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM lab_packages WHERE id=$1`, id)
+			}
 		}(row.id))
 	}
 
@@ -133,7 +135,9 @@ func TestLiveDB_ListOrdersForPatient_ScopedToCaller(t *testing.T) {
 			t.Fatalf("seed order: %v", err)
 		}
 		t.Cleanup(func(id string) func() {
-			return func() { _, _ = pool.Exec(t.Context(), `DELETE FROM lab_orders WHERE id=$1`, id) }
+			return func() {
+				_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM lab_orders WHERE id=$1`, id)
+			}
 		}(row.id))
 	}
 

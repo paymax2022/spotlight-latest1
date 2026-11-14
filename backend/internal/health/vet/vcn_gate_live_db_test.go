@@ -92,7 +92,7 @@ func seedVCNGateFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (
 		t.Fatalf("seed payment row: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := t.Context()
+		bg := context.WithoutCancel(t.Context())
 		_, _ = pool.Exec(bg, `DELETE FROM vet_appointment_payments WHERE appointment_id=$1`, apptID)
 		_, _ = pool.Exec(bg, `DELETE FROM health_appointments WHERE id=$1`, apptID)
 		_, _ = pool.Exec(bg, `DELETE FROM pets WHERE id=$1`, petID)

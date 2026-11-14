@@ -100,6 +100,11 @@ func TestLiveDB_Book_PostHoldFailureUnwindsSlotAndHold(t *testing.T) {
 		END $$ LANGUAGE plpgsql`); err != nil {
 		t.Fatalf("create inject function: %v", err)
 	}
+	// Drop before create: a run killed mid-test never reaches the cleanup below,
+	// and the leftover then makes CREATE TRIGGER fail 42710 for every run after it.
+	if _, err := pool.Exec(ctx, `DROP TRIGGER IF EXISTS trg_vet_fail_pay ON vet_appointment_payments`); err != nil {
+		t.Fatalf("clear inject trigger: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		CREATE TRIGGER trg_vet_fail_pay BEFORE INSERT ON vet_appointment_payments
 		FOR EACH ROW EXECUTE FUNCTION vet_fail_pay_insert()`); err != nil {

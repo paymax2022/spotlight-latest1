@@ -95,7 +95,7 @@ func seedHandoverFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 		t.Fatalf("seed sample: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := t.Context()
+		bg := context.WithoutCancel(t.Context())
 		_, _ = pool.Exec(bg, `DELETE FROM lab_custody_events WHERE sample_id=$1`, sampleID)
 		_, _ = pool.Exec(bg, `DELETE FROM lab_samples WHERE id=$1`, sampleID)
 		_, _ = pool.Exec(bg, `DELETE FROM lab_orders WHERE id=$1`, orderID)
