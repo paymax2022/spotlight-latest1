@@ -87,14 +87,19 @@ The bottom "Go to voting" CTA (`page.tsx:684`) repoints from `/voting` to the ed
 | `components/openmic/OpenMicAdminContestEditor.tsx:58-80` | same |
 | `app/open-mic/[slug]/page.tsx:95-99` | player uses the same availability rule as decision E |
 
-`OpenMicEditionStepsData` (serialisable, no `Date` objects). `OpenMicContest` declares its window fields as optional (`types.ts:153-156`) and puts the voting window on `votingConfig` (`:100-101`), so the server normalises every `undefined` to `null` and the client only ever has to test for `null`:
+`OpenMicEditionStepsData` (serialisable, no `Date` objects). `OpenMicContest` declares its window fields as optional (`types.ts:153-156`) and puts the voting window on `votingConfig` (`:100-101`), so the server normalises every `undefined` to `null` and the client only ever has to test for `null`. Which side of each window the clock is on is resolved by the same read, against one instant — the browser computes nothing during render, because the HTML is written at request time and the first client render happens later:
 
 ```ts
+type WindowState = 'open' | 'not-started' | 'closed' | 'unknown';
+
 type OpenMicEditionStepsData = {
   id: string; slug: string; title: string; status: string;
   registrationStartAt: string | null; registrationEndAt: string | null;
+  registrationState: WindowState;
   submissionStartAt: string | null; submissionEndAt: string | null;
+  submissionState: WindowState;
   votingStartAt: string | null; votingEndAt: string | null;
+  votingState: WindowState;
   registrationFeeNgn: number; entryFeeRequired: boolean;
   showLeaderboard: boolean; showVoteCounts: boolean;
   beat: null | {
@@ -102,8 +107,12 @@ type OpenMicEditionStepsData = {
     previewUrl: string | null; downloadUrl: string | null;
     downloadable: boolean; requiresPaidEntry: boolean;
   };
-  leaderboard: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
-  entryCount: number; totalVotes: number;
+  // `null` is "the board could not be read", not "0 entries" — a different
+  // fact, and no branch may print a number for it.
+  board: null | {
+    rows: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
+    entryCount: number; totalVotes: number;
+  };
 };
 ```
 
