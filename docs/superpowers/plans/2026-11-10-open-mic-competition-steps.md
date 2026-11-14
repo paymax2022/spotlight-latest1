@@ -2544,12 +2544,17 @@ const get=(k)=>(env.match(new RegExp('^'+k+'=(.*)\$','m'))||[])[1];
 (async()=>{
 const {createClient}=await import('@supabase/supabase-js');
 const sb=createClient(get('NEXT_PUBLIC_SUPABASE_URL'),get('SUPABASE_SERVICE_ROLE_KEY'),{auth:{persistSession:false}});
-const {error}=await sb.from('competition_beats').upsert({
+// `insert`, not `upsert({onConflict:'competition_id'})`: the foundation migration
+// gives competition_beats only plain indexes on competition_id
+// (20260410190000_one_beat_one_verse_foundation.sql:111-115), no unique constraint,
+// so an id-conflict upsert is rejected outright. The shipped writer keys its upsert
+// on the PK instead (persistence.ts:848-859) — follow it if a row already exists.
+const {error}=await sb.from('competition_beats').insert({
   competition_id:'<contestId>',title:'Street Light (dev beat)',genre:'Hip Hop',
   producer_credit:'DJ Wole (dev)',preview_url:'<previewUrl from step 3>',
   download_url:'<downloadUrl from step 3>',rules_text:'Original bars only. No clear-text sample packs.',
   requires_enrollment:false,is_active:true,
-},{onConflict:'competition_id'});
+});
 console.log(error?error.message:'beat row written');
 })();"
 ```
