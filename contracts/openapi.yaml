@@ -8511,6 +8511,13 @@ paths:
         walletDisabled) are OMITTED together when the server cannot compute usage. A
         client MUST treat their absence as "unknown" and defer to the server, never as
         "no allowance".
+
+
+        merchantOrderLimitKobo answers a different question and so does not travel with
+        that group: it is the ceiling on what ONE order may take IN at an outlet owned by
+        this account (ADR-062), not what this account may pay OUT, and it needs no usage
+        read — it is present on every 200. A merchant screen states this number rather
+        than re-deriving its own copy of the rule.
       tags: [KYC]
       responses:
         '200':
@@ -8542,6 +8549,10 @@ paths:
                       walletDisabled:
                         type: boolean
                         description: True for Tier 0 — the wallet cannot be debited at all until KYC completes.
+                      merchantOrderLimitKobo:
+                        type: integer
+                        format: int64
+                        description: Per-order ceiling on what ONE order may be received INTO an outlet owned by this account, in kobo (ADR-062). Derived from the same finance/tiers code the restaurant gate refuses on, so a merchant screen can state the number the server applies. 0 means unlimited (Tier 3). This is the PAYEE limit and is independent of dailyLimitKobo, which caps what this account may PAY OUT.
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /kyc/initiate:

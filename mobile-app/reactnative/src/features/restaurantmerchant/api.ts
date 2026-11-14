@@ -59,6 +59,10 @@ function mapStore(r: any): MerchantStore {
     createdAt: r.created_at,
     geoLat: typeof r.geo_lat === 'number' ? r.geo_lat : null,
     geoLng: typeof r.geo_lng === 'number' ? r.geo_lng : null,
+    // Read back with the pin, so reopening an outlet still shows the confirmation the
+    // owner saw when they set it. Absent on an older payload reads as "no code", which
+    // is what it is — the pin itself is the coordinates, not this string.
+    plusCode: typeof r.plus_code === 'string' && r.plus_code ? r.plus_code : null,
     // Left undefined when the server omits it, so the UI can tell "not loaded"
     // from a genuine ₦0 and never shows a price the owner did not set.
     packagingFeeKobo: typeof r.packaging_fee_kobo === 'number' ? r.packaging_fee_kobo : undefined,

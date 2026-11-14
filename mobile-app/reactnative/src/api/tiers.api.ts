@@ -38,3 +38,22 @@ export async function getSpendLimit(): Promise<SpendLimit | null> {
     return null;
   }
 }
+
+/**
+ * What an outlet owned by the caller may TAKE IN per order, from the same endpoint —
+ * the receipt side of the tier ladder. The restaurant gate refuses a bigger order
+ * server-side, so this number only ever tells the owner where they stand.
+ *
+ * 0 means unlimited (Tier 3). null means unknown — an older server that does not send
+ * the field, or a failed read. Callers must render nothing rather than guess: a wrong
+ * ceiling on a verification screen is worse than no ceiling.
+ */
+export async function getMerchantOrderLimitKobo(): Promise<number | null> {
+  try {
+    const res = await api.get('/api/v1/me/tier', { skipAuthRedirect: true });
+    const data = (res.data?.data ?? res.data) as Record<string, unknown>;
+    return typeof data?.merchantOrderLimitKobo === 'number' ? data.merchantOrderLimitKobo : null;
+  } catch {
+    return null;
+  }
+}

@@ -17,7 +17,9 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import {
   useMyStores, useKYB, useSaveKYB, useAddKYBDocument, useUploadKYBDocument, useSubmitKYB,
+  useMerchantOrderLimit,
 } from '@/features/restaurantmerchant/hooks';
+import { formatNaira } from '@/features/restaurantmerchant/money';
 import { KYBUploadsUnavailableError } from '@/features/restaurantmerchant/api';
 import { KYBUploadError } from '@/features/restaurantmerchant/kybUpload';
 import { pickKYBDocument } from '@/features/restaurantmerchant/kybPicker';
@@ -66,6 +68,7 @@ export default function KYBScreen() {
   const storeId = active?.id ?? '';
 
   const kyb = useKYB(storeId);
+  const orderLimit = useMerchantOrderLimit();
   const save = useSaveKYB(storeId);
   const addDoc = useAddKYBDocument(storeId);
   const uploadDoc = useUploadKYBDocument(storeId);
@@ -259,6 +262,17 @@ export default function KYBScreen() {
             Earnings are paid into your Paymax wallet — choose a bank account when you withdraw, not here.
           </Text>
         </View>
+
+        {/* The ceiling is set by the OWNER'S personal verification level, not by these
+            business documents, so it needs saying here — it is the other half of what
+            "account validation" gates. Hidden when unknown (older server, failed read)
+            and when unlimited. */}
+        {typeof orderLimit.data === 'number' && orderLimit.data > 0 && (
+          <Text style={styles.muted}>
+            Your account can accept orders up to {formatNaira(orderLimit.data)} each right now.
+            Larger ones are declined at checkout until your personal verification is raised.
+          </Text>
+        )}
 
         {readOnlyCopy && (
           <View style={styles.statusCard}>

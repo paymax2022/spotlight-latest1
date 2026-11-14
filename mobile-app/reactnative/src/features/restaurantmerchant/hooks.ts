@@ -2,6 +2,7 @@
 // so the screen re-renders with server truth after each change.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { getMerchantOrderLimitKobo } from '@/api/tiers.api';
 import * as merchant from './api';
 import { uploadKYBDocument, type KYBPickedFile } from './kybUpload';
 import { uploadStoreImage, type PickedStoreImage } from './storeImageUpload';
@@ -97,6 +98,14 @@ export function useSetBusinessHours(id: string) {
 /** Per-outlet payout readiness for the signed-in owner. */
 export function usePayoutReadiness() {
   return useQuery({ queryKey: [KEY, 'payout-readiness'], queryFn: merchant.getPayoutReadiness, staleTime: 60_000 });
+}
+
+/**
+ * The per-order ceiling the owner's personal verification level allows them to TAKE IN.
+ * Data is `number | null`: null = unknown (render nothing), 0 = unlimited.
+ */
+export function useMerchantOrderLimit() {
+  return useQuery({ queryKey: [KEY, 'order-limit'], queryFn: getMerchantOrderLimitKobo, staleTime: 60_000 });
 }
 
 export function useStaff(restaurantId: string) {

@@ -1155,6 +1155,14 @@ paths:
         no settlement and no order row.
 
 
+        A second, independent gate prices the SELLER (ADR-062): an outlet may not receive
+        an order above its own owner's tier ceiling, since settlement credits the owner's
+        wallet and the customer-side gate looks at the wrong party. It runs inside the
+        same pricing step, so the amount judged is exactly the amount that would settle,
+        and it is per order rather than per day. An owner reads their ceiling from
+        GET /api/v1/me/tier (merchantOrderLimitKobo) instead of re-deriving it.
+
+
         Idempotency: a repeat of an Idempotency-Key this caller already used returns that
         original order and moves no money — the request body is NOT re-read, so replaying
         a key with a different body returns the original order rather than placing the new
@@ -1241,7 +1249,7 @@ paths:
         '400': { description: "Malformed cart — missing item_id/quantity, or an invalid modifier selection" }
         '401': { description: Not authenticated }
         '402': { description: Insufficient wallet balance }
-        '403': { description: KYC tier forbids this debit — wallet disabled (Tier 0) or daily debit limit exceeded }
+        '403': { description: "KYC tier forbids the order. Two independent gates answer with this code: the CALLER's debit (wallet disabled at Tier 0, or today's wallet-debit cap exceeded) and the SELLER's receipt ceiling (ADR-062) — an outlet may not receive an order worth more than its owner's own tier permits. When it is the ceiling, the message names the seller, because completing KYC is their action and not the payer's. Either way the refusal happens before any money moves." }
         '422': { description: Item unavailable (86'd) / promo code cannot be applied / validation error }
         '503': { description: Tier gate not wired on this deployment — ordering is disabled fail-closed }
   /orders/{orderId}:

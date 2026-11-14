@@ -456,6 +456,11 @@ func (h *KYCConnectHandler) GetTierStatus(c *gin.Context) {
 	// must not read a missing allowance as "you have none". Absence means "unknown";
 	// the server-side gate remains the authority.
 	payload := kycProfilePayload(profile)
+	// What an outlet OWNED by this account may take in per order (ADR-062). Reported
+	// rather than re-derived client-side: the restaurant screens state the same number
+	// the gate refuses on, so a merchant is never told "verify to accept big orders"
+	// while the server quietly applies a different ceiling. 0 = unlimited.
+	payload["merchantOrderLimitKobo"] = tiers.MerchantReceiptLimitKobo(tiers.Tier(int(profile.Tier)))
 	if usage, err := h.tiersSvc.GetUsage(c.Request.Context(), userID); err == nil {
 		payload["dailyLimitKobo"] = usage.DailyLimitKobo // 0 = unlimited (T3) or disabled (T0)
 		payload["remainingKobo"] = usage.RemainingKobo
