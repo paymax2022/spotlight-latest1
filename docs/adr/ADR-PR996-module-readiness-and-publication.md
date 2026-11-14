@@ -120,3 +120,14 @@ The Consequences bullet "there is no production counterpart to `staging-module-f
 also corrected: it justified itself by a plane that no longer waits to run, and now names the
 real blocker (a dead CI `RAILWAY_TOKEN`, read from the failed runs' own output rather than
 inferred).
+
+## Amendment 2 — 2026-11-14
+
+The blocker named above cleared the same day: the owner minted working project tokens, stored as
+`RAILWAY_TOKEN_STAGING` / `_DEVELOPMENT` / `_PRODUCTION`, and staging plus development were proven
+by green read-only CI lanes rather than by assumption. `prod-module-flags.yml` now exists, so the
+bullet beginning "There is no production counterpart to `staging-module-flags.yml`, and it is still
+not buildable" reads as history, not as current state. Its design decisions — the pinned-release
+build-identity guard, `--skip-deploys` writes, the `true`-only validator, and the separate
+confirmation that arming the route gate requires — are recorded in ADR-PR1019, which supersedes
+that bullet and leaves every other decision here intact.

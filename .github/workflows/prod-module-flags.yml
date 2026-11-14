@@ -1,0 +1,413 @@
+name: Prod module flags and admin key
+
+# The production counterpart of staging-module-flags.yml. It was written in the
+# past tense for two weeks because it could not exist: every RAILWAY_TOKEN_*
+# secret GitHub Actions holds was rejected on read, so no lane could authenticate
+# against the production environment (ADR-PR996, Amendment 2026-11-14). The
+# owner minted working project tokens on 2026-11-14, which is what made this file
+# buildable at all.
+#
+# ── WHAT THIS IS FOR ─────────────────────────────────────────────────────────
+# Two levers decide whether a module reaches a live user, and only one of them
+# has an admin UI. The console publishes a row in `platform_module_environments`;
+# `modules.NewService` then applies the ops kill switch on top of it:
+#
+#     func(envFlag string) bool { return os.Getenv(envFlag) == "true" }
+#
+# That is a RAW read, not `getEnvBool`: the literal string "true" is the only
+# value that enables a module, so "1", "yes" and "True" all leave it disabled
+# while looking enabled in the dashboard. Writing flags from here is the only
+# repeatable way to keep that exact string, and the only way to prove it landed.
+#
+# ── WHAT MAKES THIS DIFFERENT FROM THE STAGING LANE ──────────────────────────
+# 1. Every job runs under the GitHub `production` environment, which carries
+#    required reviewers. Nothing here executes until a human approves that run.
+# 2. Production's backend is NOT main head — it is a pinned narrow release
+#    (585bd2ca7, the Oct-17 prod base plus the #996 cherry-pick) because main
+#    carries migrations production has never applied. So this lane NEVER uses
+#    `railway redeploy --from-source`: that would pull the connected branch and
+#    pair a new binary with a schema it does not match. A restart re-runs the
+#    existing deployment, and the build-identity guard below proves the running
+#    commit did not change.
+# 3. Writes go in with --skip-deploys, then exactly one guarded restart applies
+#    them. Railway redeploys on every variable write otherwise, so N flags would
+#    queue N rolling restarts of a live API.
+#
+# ── NEVER PRINT A VALUE ──────────────────────────────────────────────────────
+# `railway variable list` accepts --kv and --json, and they do not combine: --kv
+# wins and prints every value in the clear. That is how ADMIN_API_KEY leaked on
+# run 32545670584 and had to be rotated. Only --json, only into a file, and only
+# NAME plus a true/false verdict ever reaches the log. A flag's own value is the
+# one exception, because the operator typed it into the dispatch form.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type PRODUCTION-SET (or PRODUCTION-ENFORCE if you are arming FEATURE_MODULE_GATE_ENFORCE)'
+        required: true
+        type: string
+      flags:
+        description: 'Comma-separated NAME=true|false writes, e.g. FEATURE_INSURANCE_ENABLED=true,FEATURE_BANK_TRANSFERS_ENABLED=true'
+        required: false
+        type: string
+        default: ''
+      mirror_to_frontend_web:
+        description: 'Also write the same names to the frontend-web service (its Next routes check their own copy before proxying)'
+        type: boolean
+        default: true
+      rotate_admin_key:
+        description: 'Generate a new ADMIN_API_KEY and write it to backend + frontend-admin'
+        type: boolean
+        default: false
+      redeploy:
+        description: 'Restart the pinned deployments so the new values take effect (the running process only sees env at boot)'
+        type: boolean
+        default: false
+      expected_build_commit:
+        description: 'Production backend must still report this commit after the restart'
+        type: string
+        default: 585bd2ca7fab5c0a5adf9e67ab40b04068e9cee0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-module-flags
+  cancel-in-progress: false
+
+env:
+  PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+  PROD_BUILD_URL: https://backend-production-1b33d.up.railway.app/api/v1/public/build
+  PROD_VISIBILITY_URL: https://frontend-web-production-9259.up.railway.app/api/v1/modules/visibility
+
+jobs:
+  set-flags:
+    name: write FEATURE_* flags (production)
+    if: ${{ inputs.confirm == 'PRODUCTION-SET' || inputs.confirm == 'PRODUCTION-ENFORCE' }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+      REQUESTED: ${{ inputs.flags }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_PRODUCTION}"'
+
+      - name: Validate the requested writes
+        id: plan
+        run: |
+          set -euo pipefail
+          : > /tmp/plan.txt
+          if [ -z "${REQUESTED// /}" ]; then
+            echo 'No flags requested — this job will only verify what is already set.'
+            echo 'count=0' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          IFS=',' read -r -a pairs <<< "$REQUESTED"
+          for pair in "${pairs[@]}"; do
+            pair="$(printf '%s' "$pair" | tr -d '[:space:]')"
+            [ -n "$pair" ] || continue
+            name="${pair%%=*}"
+            value="${pair#*=}"
+            if [ "$name" = "$pair" ] || [ -z "$name" ]; then
+              echo "::error::$pair is not NAME=value"; exit 1
+            fi
+            if ! printf '%s' "$name" | grep -Eq '^FEATURE_[A-Z0-9_]+$'; then
+              echo "::error::$name is not a FEATURE_* variable — this lane writes module flags only, not credentials"; exit 1
+            fi
+            case "$value" in
+              true|false) ;;
+              *) echo "::error::$name=$value — the registry compares == \"true\", so this lane accepts only the literal true or false"; exit 1 ;;
+            esac
+            if [ "$name" = 'FEATURE_MODULE_GATE_ENFORCE' ] && [ "$value" = 'true' ] && [ "$CONFIRM" != 'PRODUCTION-ENFORCE' ]; then
+              echo "::error::arming the route-level gate needs confirm=PRODUCTION-ENFORCE. With any module flag unset it answers 503 on live traffic."
+              exit 1
+            fi
+            printf '%s=%s\n' "$name" "$value" >> /tmp/plan.txt
+          done
+          echo "count=$(grep -c . /tmp/plan.txt || true)" >> "$GITHUB_OUTPUT"
+          echo 'Planned writes (names and the values the operator typed, nothing else):'
+          cat /tmp/plan.txt
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Record the served module set before touching anything
+        run: |
+          set -euo pipefail
+          curl -sS --max-time 30 "$PROD_VISIBILITY_URL" > before.json
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync("before.json","utf8"));
+            const keys = (d.data.modules||[]).map((m)=>m.key).sort();
+            require("fs").writeFileSync("before-keys.txt", keys.join("\n")+"\n");
+            console.log(`tier=${d.data.environment} serving ${keys.length} modules before this run`);
+            if (d.data.environment !== "production") {
+              console.error("production backend is answering for the wrong tier — APP_ENV is misconfigured");
+              process.exit(1);
+            }
+          '
+
+      - name: Write the flags
+        run: |
+          set -euo pipefail
+          mapfile -t args < /tmp/plan.txt
+          if [ "${#args[@]}" -eq 0 ]; then
+            echo 'nothing to write'
+            exit 0
+          fi
+          railway variable set "${args[@]}" \
+            --service backend --environment production --project "$PROJECT" \
+            --skip-deploys
+          if [ '${{ inputs.mirror_to_frontend_web }}' = 'true' ]; then
+            # frontend-web's own routes re-check a module's flag (src/lib/feature-flags.ts)
+            # before proxying, so a backend-only write still answers 503 at the BFF.
+            railway variable set "${args[@]}" \
+              --service frontend-web --environment production --project "$PROJECT" \
+              --skip-deploys
+          fi
+
+      - name: Verify every write read back exactly as requested
+        run: |
+          set -euo pipefail
+          railway variable list --service backend --environment production \
+            --project "$PROJECT" --json > backend-vars.json
+          node -e '
+            const fs = require("fs");
+            let vars;
+            try { vars = JSON.parse(fs.readFileSync("backend-vars.json","utf8")); }
+            catch { console.error("Could not parse the variable list. Refusing to print it — it holds every production value in the clear."); process.exit(1); }
+            const want = fs.readFileSync("/tmp/plan.txt","utf8").split("\n").filter(Boolean).map((l)=>{
+              const i = l.indexOf("="); return [l.slice(0,i), l.slice(i+1)];
+            });
+            if (vars.APP_ENV !== "production") {
+              console.error("APP_ENV on the production backend is not production — the registry reads rows for the wrong tier");
+              process.exit(1);
+            }
+            let bad = [];
+            for (const [k,v] of want) {
+              const got = vars[k];
+              const ok = got === v;
+              console.log(`  ${ok ? "OK " : "BAD"} ${k} = ${v} (requested), ${ok ? "match" : "mismatch"}`);
+              if (!ok) bad.push(k);
+            }
+            if (bad.length) {
+              console.error(`\n${bad.length} write(s) did not land on the production backend: ${bad.join(", ")}`);
+              process.exit(1);
+            }
+            console.log(`enforcement: ${vars.FEATURE_MODULE_GATE_ENFORCE === "true" ? "ON — mapped routes refuse" : "OFF (observe-only)"}`);
+            if (!want.length) console.log("no writes requested; verification of the existing set is informational");
+          '
+
+      - name: Keep the before-snapshot for the restart job
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-served-keys-before
+          path: before-keys.txt
+          if-no-files-found: warn
+
+      - name: Report that the values are not live yet
+        if: always()
+        run: |
+          if [ '${{ inputs.redeploy }}' != 'true' ]; then
+            echo '::notice::Config written. The running processes still hold their boot environment, so nothing has changed for live users yet. Re-run with redeploy=true, or let the next release pick it up.'
+          fi
+
+  rotate-admin-key:
+    name: rotate ADMIN_API_KEY (production)
+    if: ${{ inputs.confirm == 'PRODUCTION-SET' && inputs.rotate_admin_key }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_PRODUCTION}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Generate and write the new key to both services
+        run: |
+          set -euo pipefail
+          # BOTH sides take the same value in the same step. frontend-admin used to
+          # read NEXT_PUBLIC_ADMIN_API_KEY, which Next inlines into the client bundle
+          # — a server-to-server secret published to every browser. It is deleted below.
+          #
+          # The value lives in a shell variable and is piped with --stdin, never a
+          # file: /tmp on a shared runner outlives the step, and this job also calls
+          # upload-artifact. Piping also keeps it off every command line and process
+          # list. This is the form the staging lane has used since the leak.
+          #
+          # Order matters: RequireAdmin FAILS OPEN on an empty key, so the value is
+          # always written, never cleared first.
+          KEY="$(openssl rand -hex 32)"
+          printf '%s' "$KEY" | railway variable set ADMIN_API_KEY --stdin \
+            --service backend --environment production --project "$PROJECT" --skip-deploys
+          printf '%s' "$KEY" | railway variable set ADMIN_API_KEY --stdin \
+            --service frontend-admin --environment production --project "$PROJECT" --skip-deploys
+          unset KEY
+          # Idempotent, and proven to hold this exact value on prod frontend-admin as
+          # of 2026-11-14. Writing it here means a rotation can never leave the console
+          # pointing at no upstream. Backend ROOT, no /api/v1 suffix: admin-proxy
+          # forwards the caller's full path, so a /api/v1 base 404s everything else.
+          railway variable set ADMIN_API_BASE_URL=http://backend.railway.internal:8080 \
+            --service frontend-admin --environment production --project "$PROJECT" --skip-deploys
+          echo 'ADMIN_API_KEY written to backend + frontend-admin (value never printed).'
+
+      - name: Prove both services hold the same value without printing it
+        run: |
+          set -euo pipefail
+          railway variable list --service backend --environment production \
+            --project "$PROJECT" --json > be.json
+          railway variable list --service frontend-admin --environment production \
+            --project "$PROJECT" --json > fa.json
+          node -e '
+            const fs = require("fs");
+            const sha = (s) => require("crypto").createHash("sha256").update(s).digest("hex").slice(0,12);
+            const read = (f) => { try { return JSON.parse(fs.readFileSync(f,"utf8")); } catch { console.error("unreadable variable list from "+f+" — refusing to print it"); process.exit(1); } };
+            const be = read("be.json"), fa = read("fa.json");
+            const a = be.ADMIN_API_KEY, b = fa.ADMIN_API_KEY;
+            if (!a || !b) { console.error("one side is missing ADMIN_API_KEY — the console would break"); process.exit(1); }
+            if (a === b) console.log(`  OK  both services agree (${sha(a)})`);
+            else { console.error(`  MISMATCH backend=${sha(a)} frontend-admin=${sha(b)}`); process.exit(1); }
+          '
+
+      - name: Remove the browser-visible copy of the old key
+        run: |
+          set -euo pipefail
+          railway variable list --service frontend-admin --environment production \
+            --project "$PROJECT" --json > fa2.json
+          if node -e 'process.exit(JSON.parse(require("fs").readFileSync("fa2.json","utf8")).NEXT_PUBLIC_ADMIN_API_KEY===undefined?1:0)'; then
+            # --skip-deploys belongs to the parent `variable` command, NOT to the
+            # `delete` subcommand: `variable delete KEY --skip-deploys` fails with
+            # "unexpected argument", and without the flag every write queues a
+            # restart of a live service. `--yes` is likewise not accepted by delete.
+            railway variable --skip-deploys delete NEXT_PUBLIC_ADMIN_API_KEY \
+              --service frontend-admin --environment production --project "$PROJECT"
+            echo 'NEXT_PUBLIC_ADMIN_API_KEY deleted.'
+          else
+            echo 'already absent'
+          fi
+
+      # This check runs AFTER the delete, never before it. The first draft asserted
+      # absence inside the agree-check two steps up, which hard-failed the job on the
+      # exact condition the delete step existed to repair — the fix could never run.
+      # Prod frontend-admin was already clean when verified on 2026-11-14, so on this
+      # environment the step above is a guard, not a repair.
+      - name: Prove no browser-bundled copy of the key survives
+        run: |
+          set -euo pipefail
+          railway variable list --service frontend-admin --environment production \
+            --project "$PROJECT" --json > fa3.json
+          node -e '
+            const v = JSON.parse(require("fs").readFileSync("fa3.json","utf8"));
+            if (v.NEXT_PUBLIC_ADMIN_API_KEY !== undefined) {
+              console.error("STILL PRESENT: NEXT_PUBLIC_ADMIN_API_KEY is inlined into the client bundle — the admin key is public, rotation changes nothing.");
+              process.exit(1);
+            }
+            console.log("  OK  frontend-admin holds ADMIN_API_KEY server-side only; no NEXT_PUBLIC_ copy.");
+          '
+
+  redeploy:
+    name: apply and prove (production)
+    needs: [set-flags, rotate-admin-key]
+    if: ${{ always() && inputs.redeploy == true && needs.set-flags.result == 'success' && (needs.rotate-admin-key.result == 'success' || needs.rotate-admin-key.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+      FLAGS: ${{ inputs.flags }}
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_PRODUCTION}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Restore the before-snapshot
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: prod-served-keys-before
+
+      - name: Read the production build identity BEFORE restarting
+        run: |
+          set -euo pipefail
+          curl -sS --max-time 30 "$PROD_BUILD_URL" > pre-build.json
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync("pre-build.json","utf8"));
+            console.log(`production backend pre-restart: ${d.commit} (source=${d.source})`);
+            if (d.commit !== process.env.EXPECTED) {
+              console.error(`refusing to restart: prod is running ${d.commit}, expected ${process.env.EXPECTED}`);
+              process.exit(1);
+            }
+            require("fs").writeFileSync("pre-commit", d.commit);
+          '
+        env:
+          EXPECTED: ${{ inputs.expected_build_commit }}
+
+      - name: Restart the pinned deployment
+        run: |
+          set -euo pipefail
+          # No --from-source, ever, on production: it would build the connected
+          # branch instead of the pinned release this service deliberately runs.
+          railway redeploy --service backend --environment production \
+            --project "$PROJECT" --yes
+          if [ '${{ inputs.rotate_admin_key }}' = 'true' ]; then
+            railway redeploy --service frontend-admin --environment production \
+              --project "$PROJECT" --yes
+          fi
+          if [ '${{ inputs.mirror_to_frontend_web }}' = 'true' ] && [ -n "${FLAGS// /}" ]; then
+            railway redeploy --service frontend-web --environment production \
+              --project "$PROJECT" --yes
+          fi
+
+      - name: Prove the same build came back and report what changed
+        run: |
+          set -euo pipefail
+          # The cold start is slow enough that one read fails; poll, and never
+          # treat a failed curl as "the service is fine, just busy".
+          ok=0
+          for i in $(seq 1 20); do
+            if curl -sSf --max-time 20 "$PROD_BUILD_URL" > post-build.json; then ok=1; break; fi
+            sleep 15
+          done
+          [ "$ok" = '1' ] || { echo "::error::the production backend did not answer within 5 minutes — redeploy the pinned image (585bd2ca7) NOW"; exit 1; }
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync("post-build.json","utf8"));
+            const was = require("fs").readFileSync("pre-commit","utf8").trim();
+            console.log(`production backend post-restart: ${d.commit} (source=${d.source}, started ${d.started_at})`);
+            if (d.commit !== was) {
+              console.error(`\nBUILD IDENTITY CHANGED: ${was} -> ${d.commit}`);
+              console.error("Redeploy the pinned release immediately; this lane never meant to ship a new build.");
+              process.exit(1);
+            }
+            if (d.commit !== process.env.EXPECTED) { console.error("commit does not match the expected_build_commit input"); process.exit(1); }
+          '
+        env:
+          EXPECTED: ${{ inputs.expected_build_commit }}
+
+      - name: Diff the served module set
+        run: |
+          set -euo pipefail
+          curl -sS --max-time 30 "$PROD_VISIBILITY_URL" > after.json
+          node -e '
+            const fs = require("fs");
+            const after = JSON.parse(fs.readFileSync("after.json","utf8"));
+            const a = (after.data.modules||[]).map((m)=>m.key).sort();
+            if (!fs.existsSync("before-keys.txt")) {
+              console.log(`tier=${after.data.environment} serving ${a.length} modules: ${a.join(", ")}`);
+              console.log("no before-snapshot was restored, so this is a state report rather than a diff");
+              process.exit(0);
+            }
+            const b = fs.readFileSync("before-keys.txt","utf8").split("\n").filter(Boolean).sort();
+            console.log(`serving ${a.length} modules after the restart (was ${b.length})`);
+            const gained = a.filter((k)=>!b.includes(k));
+            const lost = b.filter((k)=>!a.includes(k));
+            if (gained.length) console.log(`  now visible: ${gained.join(", ")}`);
+            if (lost.length) console.log(`  now hidden:  ${lost.join(", ")}`);
+            if (!gained.length && !lost.length) console.log("  no change in the served set");
+          '
