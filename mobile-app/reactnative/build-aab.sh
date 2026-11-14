@@ -131,7 +131,13 @@ fi
 # (which @expo/env loads through) reads — see build-apk.sh for the rules, and
 # docs/devops/production-migration-ledger.md §15 for the fixture table they came
 # from.
-_declared_env="$(sed -nE \
+# `LC_ALL=C` stops a byte sequence that is illegal in the host locale from
+# killing sed inside `$(...)`: under `set -euo pipefail` that abort would end
+# the script HERE, before the remedy below can print. `|| true` is the same
+# defence for any other pipeline failure. Both leave an empty extraction, which
+# the comparison reads as "not production" — so a broken read refuses the build,
+# it never passes one.
+_declared_env="$(LC_ALL=C sed -nE \
   's/^[[:space:]]*(export[[:space:]]+)?EXPO_PUBLIC_APP_ENV([[:space:]]*=[[:space:]]*|:[[:space:]]+)(.*)$/\3/p' \
   "$ENV_FILE" \
   | tail -1 \
@@ -144,7 +150,7 @@ _declared_env="$(sed -nE \
           (q == sprintf("%c", 34) || q == sprintf("%c", 39) || q == sprintf("%c", 96)))
         $0 = substr($0, 2, length($0) - 2)
       print
-    }')"
+    }' || true)"
 if [[ "$NODE_ENV" == "production" && "${_declared_env:-}" != "production" ]]; then
   echo "❌ $ENV_FILE declares EXPO_PUBLIC_APP_ENV=${_declared_env:-<unset>}; a production release must declare production." >&2
   echo "   Regenerate it from the tracked profile: node scripts/export-eas-profile-env.mjs production" >&2
