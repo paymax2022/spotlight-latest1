@@ -1442,13 +1442,17 @@ Expected: compile failure — `res.Metrics undefined (type *DashboardSummary has
 In `backend/internal/doctor/handler_tail2.go`, replace the struct at :483-488 with:
 
 ```go
-// DashboardSummary is the composite landing projection for GET /dashboard. It is
-// composed entirely from existing scoped reads + the ledger balance — no new
-// table. Money is int64 kobo.
+// DashboardSummary is the composite landing projection for GET /dashboard. Money
+// is int64 kobo and every field is scoped to the signed-in doctor.
 //
 // AppointmentCounts is the doctor_appointments status map, kept for
 // pendingRequests; the two appointment TILES read Metrics instead, because
 // doctor_appointments has no insert path (see dashboard_metrics.go).
+//
+// Metrics is the projection this endpoint used to fake: the five tiles read the
+// booking plane (appointments), the money plane (settlements, ledger) and
+// doctor_reviews. Those are new tables for this response, which is why the reads
+// live in dashboard_metrics.go rather than in here.
 type DashboardSummary struct {
 	AppointmentCounts   map[string]int64              `json:"appointmentCounts"`
 	UnreadNotifications int64                         `json:"unreadNotifications"`
@@ -1470,8 +1474,9 @@ Replace `backend/internal/doctor/service_tail2.go:143-165` with:
 // appointment status counts, the unread-notification count, and the ledger wallet
 // balance (projected, never stored) — plus the tile metrics and today's queue,
 // which read the booking plane (public.appointments) rather than
-// doctor_appointments, and the consult-revenue projection over settlements. No new
-// table, and no write: every one of these is a read.
+// doctor_appointments, and the consult-revenue projection over settlements.
+// This endpoint therefore reads tables it did not read before; what it does not
+// do is write to any of them, or post to the ledger.
 //
 // One failing read fails the call. That is deliberate — a zero that came from a
 // broken query is indistinguishable from a real zero, which is precisely how the
