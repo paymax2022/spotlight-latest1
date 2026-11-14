@@ -1278,7 +1278,7 @@ Expected: the last command prints **nothing** — that is the tree-as-committed 
 
 **Files:**
 - Modify: `backend/internal/doctor/service_tail2.go:143-165` (`GetDashboard`)
-- Modify: `backend/internal/doctor/handler_tail2.go:483-488` (`DashboardSummary`)
+- Modify: `backend/internal/doctor/handler_tail2.go:480-488` (`DashboardSummary` — doc comment **and** struct; the comment is inside the range because it asserts "no new table", which this task makes false)
 - Modify: `backend/internal/doctor/dashboard_metrics_live_db_test.go` (append)
 
 **Interfaces:**
@@ -1444,7 +1444,7 @@ Expected: compile failure — `res.Metrics undefined (type *DashboardSummary has
 
 - [ ] **Step 3: Extend `DashboardSummary`**
 
-In `backend/internal/doctor/handler_tail2.go`, replace the struct at :483-488 with:
+In `backend/internal/doctor/handler_tail2.go`, replace **lines :480-488 — the existing doc comment together with the struct** — with the block below. The comment lines :480-482 are part of the range on purpose: they tell the next reader that this projection is "composed entirely from existing scoped reads + the ledger balance — no new table", and the field list this task adds makes that sentence false. Replacing only :483-488 would leave the old comment stacked on top of the new one, and `go doc` renders both, so the PR would ship the claim it exists to retire.
 
 ```go
 // DashboardSummary is the composite landing projection for GET /dashboard. Money
