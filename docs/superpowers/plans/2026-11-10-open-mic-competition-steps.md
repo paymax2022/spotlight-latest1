@@ -2786,10 +2786,9 @@ const STEPS = [
 
 const MAX_MP3_MB = 50;
 
-// Every number here is server-rendered HTML, so the formatting locale cannot be
-// the host's: a German visitor's browser hydrates `1500` as "1.500" against the
-// server's "1,500" and React reports a text mismatch. One spelling, same reason
-// `shortDate` already names its locale.
+// Every number and date here is server-rendered HTML, so the formatting locale
+// cannot be the visitor's: a German browser renders `1500` as `1.500` against
+// the server's `1,500` and React reports a text mismatch at hydration.
 const LOCALE = 'en-GB';
 
 const shortDate = (iso: string | null) =>

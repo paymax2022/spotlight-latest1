@@ -31,6 +31,10 @@ const LOCALE = 'en-GB';
 const shortDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short', year: 'numeric' }) : 'TBC';
 
+/** Which side of a window the clock is on is decided by the server read
+ *  (Task 9b) — this component displays the answer and never computes it,
+ *  because `Date.now()` in the body pre-renders one answer and hydrates
+ *  another. */
 function WindowLine({ label, start, end, state }: { label: string; start: string | null; end: string | null; state: WindowState }) {
   return (
     <p className={styles.stepState}>
