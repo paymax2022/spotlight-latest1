@@ -913,8 +913,8 @@ yet. Do not import `pgconn` directly; the point of the helper is that callers do
 // CreatorPayoutPct (internal/crowdfunding/service.go:232), because the doctor
 // module only READS consult money — telemedicine still owns paying it.
 // TestConsultSplitMirrorsTelemedicine is what keeps the two copies honest, and
-// TestLiveDB_ConsultRevenueMatchesWhatSettleWillPay re-checks it against a row
-// settled by the real money path.
+// TestLiveDB_DashboardConsultRevenue re-checks it against a settled and an escrowed
+// row written the way the money path leaves them.
 const (
 	consultProviderPct = 0.85
 	consultPlatformPct = 0.15
@@ -1156,10 +1156,9 @@ func TestLiveDB_DashboardTimezonePoisonedZoneDegrades(t *testing.T) {
 	ctx := context.Background()
 
 	// One consult on today's local date, so the aggregate read has something to
-	// count once the zone resolves.
-	if _, err := f.bookLocal(t, defaultDoctorTimezone, "completed", 0, 10*60); err != nil {
-		t.Fatalf("bookLocal: %v", err)
-	}
+	// count once the zone resolves. bookLocal returns (id, ref) and t.Fatalf's on a
+	// failed insert itself, so there is no error to check here.
+	f.bookLocal(t, defaultDoctorTimezone, "completed", 0, 10*60)
 	res, err := pool.Exec(ctx,
 		`UPDATE doctor_profiles SET timezone = 'Mars/Olympus_Mons' WHERE user_id = $1`, f.doctorUser)
 	if err != nil {
@@ -1240,14 +1239,17 @@ sed -i '' "s/AND st.module_type = 'telemedicine' AND st.status = 'escrowed'/AND 
 P; T
 restore
 
-# Restored: identical to HEAD, and green.
+# Restored byte-for-byte, and green. The sha is the stronger proof: diff says the
+# two files agree, sha256 says so with a number that belongs in the transcript.
+shasum -a 256 "$M" /tmp/task2-dashboard_metrics.orig.go
 diff /tmp/task2-dashboard_metrics.orig.go "$M" && echo "restored byte-for-byte"
 rm -f /tmp/task2-dashboard_metrics.orig.go
-git status --short -- "$M"
 T
 ```
 
-Expected: **three reds and one green.** The `P` line in each block is part of the evidence, not decoration — a `sed` pattern that no longer matches leaves the file untouched and the test green, which would read as "this predicate is unprotected" when the real cause is a mutation that never happened; `P` prints both settlement WHERE clauses, so a red is only creditable when the line it names has visibly changed. Numbers to expect: (a) `LifetimeKobo = 490000`, (b) `LifetimeKobo = 338300`, (c) `PendingKobo = 508300` (168300 + 85% of 400000). Any mutation that stays green despite `P` showing the deletion is a real finding — the fixture does not protect that predicate — and the fix is a fixture row that does, not a waiver. The final `git status --short` must print nothing: it is what proves the tree is as committed, so a red seen there means the restore failed.
+Expected: **three reds and one green.** The `P` line in each block is part of the evidence, not decoration — a `sed` pattern that no longer matches leaves the file untouched and the test green, which would read as "this predicate is unprotected" when the real cause is a mutation that never happened; `P` prints both settlement WHERE clauses, so a red is only creditable when the line it names has visibly changed. Numbers to expect: (a) `LifetimeKobo = 490000`, (b) `LifetimeKobo = 338300`, (c) `PendingKobo = 508300` (168300 + 85% of 400000). Any mutation that stays green despite `P` showing the deletion is a real finding — the fixture does not protect that predicate — and the fix is a fixture row that does, not a waiver.
+
+Do **not** reach for `git status` as this step's cleanliness proof: Step 7 runs while the guard is still uncommitted work-in-progress, so the file legitimately differs from `HEAD` and a report that claims a clean status here is claiming something that cannot be true. Byte-identity against the backup is what this step can prove; the tree-as-committed proof belongs to Step 8, after the commit exists.
 
 - [ ] **Step 8: Commit**
 
@@ -1265,7 +1267,10 @@ makes a poisoned value fatal where it used to be inert, so the read probes the
 zone once and degrades to the default on SQLSTATE 22023 rather than 500ing.
 EOF
 )"
+cd /private/tmp/spot-doctor-metrics && git status --short -- backend/internal/doctor/
 ```
+
+Expected: the last command prints **nothing** — that is the tree-as-committed proof Step 7 could not honestly claim, and it is only meaningful now that the guard is in `HEAD`. Record it in the report.
 
 ---
 
