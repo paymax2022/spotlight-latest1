@@ -5,17 +5,19 @@ import Header1 from '@/components/layout/header/Header1';
 import Offcanvas from '@/components/layout/Offcanvas';
 import Search from '@/components/layout/Search';
 import BackToTop from '@/components/elements/BackToTop';
+import { isDrawerOpen } from '@/components/marketing/DrawerEnhancement';
 
 /**
  * The site-wide template header (/service-details/sports uses the same
  * Header1 + Offcanvas + Search + BackToTop), rendered outside the .sp-season2
  * wrapper so season2.css's scoped element rules do not restyle it — mirroring
- * how <Layout> puts the header beside the .sports div, not inside it. The
- * season-specific nav lives in SeasonSubHeader, which stays scoped.
+ * how <Layout> puts the header beside the .sports div, not inside it. Pages that
+ * carry their own themed header and drawer (the season page) render their own
+ * chrome instead of this one.
  */
 export default function SeasonSiteChrome() {
   const [scroll, setScroll] = useState(false);
-  const [isOffCanvas, setOffCanvas] = useState(false);
+  const [isOffCanvas, setOffCanvas] = useState(() => isDrawerOpen('offcanvas'));
   const [isSearch, setSearch] = useState(false);
 
   useEffect(() => {

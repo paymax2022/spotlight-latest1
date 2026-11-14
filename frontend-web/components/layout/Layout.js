@@ -5,6 +5,7 @@ import BackToTop from '../elements/BackToTop'
 import Breadcrumb from './Breadcrumb'
 import MouseCursor from "./MouseCursor"
 import Offcanvas from "./Offcanvas"
+import { isDrawerOpen } from "@/components/marketing/DrawerEnhancement"
 import Search from "./Search"
 import Footer1 from './footer/Footer1'
 import Footer2 from './footer/Footer2'
@@ -19,6 +20,10 @@ export default function Layout({
     headerStyle,
     footerStyle,
     onePageNav,
+    // A page that brings its own themed header and drawer (the marketing mock
+    // pages) opts out of the template chrome, rather than stacking a second
+    // hamburger and an unreachable offcanvas on top of its own.
+    templateHeader = true,
     breadcrumbTitle,
     breadcrumbClassName,
     breadcrumbPadding,
@@ -26,7 +31,9 @@ export default function Layout({
 }) {
     const [scroll, setScroll] = useState(0)
 
-    const [isOffCanvas, setOffCanvas] = useState(false)
+    // Seeded from the DOM so a click that landed before this component
+    // hydrated keeps the panel open when hydration arrives.
+    const [isOffCanvas, setOffCanvas] = useState(() => isDrawerOpen('offcanvas'))
     const handleOffCanvas = () => setOffCanvas(!isOffCanvas)
 
     const [isSearch, setSearch] = useState(false)
@@ -59,14 +66,16 @@ export default function Layout({
     return (
         <>
             <MouseCursor />
-            <Offcanvas isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} />
+            {templateHeader && <>
+                <Offcanvas isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} />
 
-            {!headerStyle && <Header2 scroll={scroll} onePageNav={onePageNav} isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} isSearch={isSearch} handleSearch={handleSearch} />}
-            {headerStyle == 1 ? <Header1 scroll={scroll} onePageNav={onePageNav} isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} isSearch={isSearch} handleSearch={handleSearch} /> : null}
-            {headerStyle == 2 ? <Header2 scroll={scroll} onePageNav={onePageNav} isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} isSearch={isSearch} handleSearch={handleSearch} /> : null}
-            {headerStyle == 3 ? <Header3 scroll={scroll} onePageNav={onePageNav} isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} isSearch={isSearch} handleSearch={handleSearch} /> : null}
-            {headerStyle == 4 ? <Header4 scroll={scroll} onePageNav={onePageNav} isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} isSearch={isSearch} handleSearch={handleSearch} /> : null}
-            <Search isSearch={isSearch} handleSearch={handleSearch} />
+                {!headerStyle && <Header2 scroll={scroll} onePageNav={onePageNav} isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} isSearch={isSearch} handleSearch={handleSearch} />}
+                {headerStyle == 1 ? <Header1 scroll={scroll} onePageNav={onePageNav} isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} isSearch={isSearch} handleSearch={handleSearch} /> : null}
+                {headerStyle == 2 ? <Header2 scroll={scroll} onePageNav={onePageNav} isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} isSearch={isSearch} handleSearch={handleSearch} /> : null}
+                {headerStyle == 3 ? <Header3 scroll={scroll} onePageNav={onePageNav} isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} isSearch={isSearch} handleSearch={handleSearch} /> : null}
+                {headerStyle == 4 ? <Header4 scroll={scroll} onePageNav={onePageNav} isOffCanvas={isOffCanvas} handleOffCanvas={handleOffCanvas} isSearch={isSearch} handleSearch={handleSearch} /> : null}
+                <Search isSearch={isSearch} handleSearch={handleSearch} />
+            </>}
 
 
             {breadcrumbTitle && (

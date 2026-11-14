@@ -4,6 +4,8 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { ArrowIcon } from './Icons';
 import { LOGO, siteNav } from './content';
+import { SITE_LINKS } from '@/components/marketing/site-links';
+import { isDrawerOpen } from '@/components/marketing/DrawerEnhancement';
 import { useJoinDialog } from './JoinDialog';
 import HeaderDrawer from '@/components/marketing/HeaderDrawer';
 
@@ -15,7 +17,7 @@ import HeaderDrawer from '@/components/marketing/HeaderDrawer';
  */
 export default function LandingHeader() {
   const { open } = useJoinDialog();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(() => isDrawerOpen('drawer'));
 
   const toggleMenu = () => setMenuOpen((current) => !current);
   const closeMenu = () => setMenuOpen(false);
@@ -57,6 +59,7 @@ export default function LandingHeader() {
               aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
               aria-controls="home-menu"
               aria-expanded={menuOpen}
+              data-drawer-toggle="drawer"
               onClick={toggleMenu}
             >
               <span />
@@ -69,7 +72,7 @@ export default function LandingHeader() {
         id="home-menu"
         open={menuOpen}
         onClose={closeMenu}
-        groups={[{ label: 'Explore', links: siteNav }]}
+        groups={[{ label: 'Explore', links: siteNav }, { label: 'Spotlight', links: SITE_LINKS }]}
         action={joinTrigger('text-link', <>Find your Spotlight <ArrowIcon /></>)}
       />
     </>

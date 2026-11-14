@@ -5,9 +5,8 @@ import { ChaptersProvider } from '@/components/season2/MansionChapters';
 import RecapBand from '@/components/season2/RecapBand';
 import { RegistrationPanelProvider, type SeasonFacts } from '@/components/season2/RegistrationPanel';
 import SeasonFooter from '@/components/season2/SeasonFooter';
+import SeasonHeader from '@/components/season2/SeasonHeader';
 import SeasonHero from '@/components/season2/SeasonHero';
-import SeasonSiteChrome from '@/components/season2/SeasonSiteChrome';
-import SeasonSubHeader from '@/components/season2/SeasonSubHeader';
 import SeasonTwoCta from '@/components/season2/SeasonTwoCta';
 import { SEASON2_IMG, recapBands } from '@/components/season2/content';
 import { getRegistrationContestBySlug, listRegistrationContests } from '@/src/server/registration/store';
@@ -138,27 +137,24 @@ export default async function Season2Page() {
   const facts = await readSeasonFacts();
 
   return (
-    <>
-      <SeasonSiteChrome />
-      <div id="top" className={`sp-season2 ${display.variable} ${ui.variable} ${body.variable}`}>
-        <a className="skip" href="#main">
-          Skip to content
-        </a>
-        <RegistrationPanelProvider facts={facts}>
-          <ChaptersProvider>
-            <SeasonSubHeader />
-            <main id="main">
-              <SeasonHero />
-              <MansionExperience />
-              {recapBands.map((band) => (
-                <RecapBand key={band.id} {...band} />
-              ))}
-              <SeasonTwoCta windowLabel={facts.windowLabel} seasonName={facts.seasonName} />
-            </main>
-            <SeasonFooter />
-          </ChaptersProvider>
-        </RegistrationPanelProvider>
-      </div>
-    </>
+    <div id="top" className={`sp-season2 ${display.variable} ${ui.variable} ${body.variable}`}>
+      <a className="skip" href="#main">
+        Skip to content
+      </a>
+      <RegistrationPanelProvider facts={facts}>
+        <ChaptersProvider>
+          <SeasonHeader />
+          <main id="main">
+            <SeasonHero />
+            <MansionExperience />
+            {recapBands.map((band) => (
+              <RecapBand key={band.id} {...band} />
+            ))}
+            <SeasonTwoCta windowLabel={facts.windowLabel} seasonName={facts.seasonName} />
+          </main>
+          <SeasonFooter />
+        </ChaptersProvider>
+      </RegistrationPanelProvider>
+    </div>
   );
 }
