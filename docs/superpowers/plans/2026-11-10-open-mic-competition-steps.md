@@ -2616,11 +2616,19 @@ async function openStep(page: import('@playwright/test').Page, step: 1 | 2 | 3 |
   await page.goto(`${PAGE}#step-${step}`);
   const panel = page.locator(`#step-${step}`);
   await expect(panel).toBeVisible();
-  // The page's own hash handler opens the linked accordion once hydrated; click
-  // only if it has not, otherwise this would close what the feature just opened.
-  if (!(await panel.evaluate((el) => (el as HTMLDetailsElement).open))) {
-    await panel.locator('summary').click();
-  }
+  // Design F keeps the hash-to-accordion behaviour, so the page opens this step
+  // itself once hydrated — wait for that rather than clicking. The earlier
+  // "click only if it is not already open" helper is what failed: it read the
+  // flag and then clicked, and hydration landing in the gap between those two
+  // round trips made the click close what the feature had just opened, which is
+  // why #step-1 collapsed alongside #step-3 and #step-5. Polling also gates the
+  // behaviour itself — a hash handler that never opens anything now fails here
+  // instead of being quietly clicked open by the test.
+  await expect
+    .poll(() => panel.evaluate((el) => (el as HTMLDetailsElement).open), {
+      message: `#step-${step} must open from its own hash`,
+    })
+    .toBe(true);
   return panel;
 }
 
@@ -3467,22 +3475,39 @@ test files outside every CI lane's lint step.
 
 - [ ] **Step 2: Production build into a scratch dir (never clobber the shared dev `.next`)**
 
-`next.config.js:39` already reads `distDir: process.env.DIST_DIR || '.next'`, so this is the exact switch — no config edit:
+`next.config.mjs:39` already reads `distDir: process.env.DIST_DIR || '.next'`, so this is the exact switch — no config edit:
 
 ```bash
 cd /Users/paymax/Documents/spotlight/main/frontend-web && \
-DIST_DIR=$(mktemp -d) NODE_OPTIONS=--max-old-space-size=8192 npm run build; echo "build exit: $?"
+DIST_DIR=.next-verify-task11 NODE_OPTIONS=--max-old-space-size=8192 npm run build; echo "build exit: $?"
 ```
 Expected: `build exit: 0`, and the running dev server's `.next` untouched. If the build dies with a heap exit (code 134) that is the memory ceiling, not a type error: raise `--max-old-space-size` and re-run — and report which run produced the green.
 
-- [ ] **Step 3: Confirm the committed tree is exactly this session's work**
+`$(mktemp -d)` cannot work here: Next rejects a distDir outside the project (`InvalidDistDirError`), so the scratch dir has to live inside the app. `frontend-web/.next-verify*/` is already gitignored (`.gitignore:162` was added after 742MB of one was mistaken for source), so it stays out of `git status` and out of every commit.
+
+- [ ] **Step 3: Run the acceptance gate serially, both projects, and repeat it**
+
+```bash
+cd /Users/paymax/Documents/spotlight/main/frontend-web && \
+E2E_BASE_URL=http://localhost:3111 npx playwright test tests/e2e/openmic/competition-steps.spec.ts \
+  --workers=1 --project=chromium-desktop --repeat-each=3; echo "desktop exit: $?"
+E2E_BASE_URL=http://localhost:3111 npx playwright test tests/e2e/openmic/competition-steps.spec.ts \
+  --workers=1 --project=mobile-chrome --repeat-each=3; echo "mobile exit: $?"
+```
+Expected: `15 passed` each, exit 0.
+
+Why the repeat: `openStep()` used to read `details.open` and click `summary` when it read false. Those are two CDP round trips, and the page's own hash handler (`OpenMicEditionSteps.tsx:116-126`) can land in the gap — then the click *closes* what the feature just opened. The exclusive accordion proves which order happened: in the red runs `#step-1` was collapsed too, and only the hash handler closes it. Three repeats per project is what distinguishes "fixed" from "lost the coin flip this time".
+
+A red here is not automatically a product bug. The shared dev server on `:3000` can wedge while still holding the port (`lsof` shows a listener, `curl` returns `000` past 60s on every route, including `/`); that is an environment failure, not a gate failure. Never restart someone else's `:3000` — bring up a private server on another port with its own `DIST_DIR` and point the run at it with `E2E_BASE_URL` (which also disables Playwright's `webServer`, `playwright.config.mjs:28-30`).
+
+- [ ] **Step 4: Confirm the committed tree is exactly this session's work**
 
 ```bash
 cd /Users/paymax/Documents/spotlight/main && git status --porcelain | grep -v "^??" | head -20 && git log --oneline -8
 ```
 Expected: the other sessions' files (`app/apply/[slug]/page.js`, `app/service-details/film-academy/*`, `components/layout/Menu.js`, `src/styles/tailwind.css`, `tests/unit/utility/*`, and either `page.js`'s deletion or the lounge files) still show as they did before this plan started, and the eight-or-so commits above are only this plan's paths.
 
-- [ ] **Step 4: Report, then ask before pushing**
+- [ ] **Step 5: Report, then ask before pushing**
 
 State: what went green and how it was proven; the dev-only rows and beat file left behind in Task 7 (and that nothing was written to production); that `tests/unit/openmic` + `tests/unit/media` are not in a CI lane and offer that as a follow-up; and the four pre-existing bugs the spec names (drawer `.mean-nav` off-panel at 390px, `src/components/Header.tsx:33` → `/contestant-leaderboard` with no route, Footer2 dark-on-dark links, `components/sections/Service3.js:16` → the `/service` page pending deletion under task #127). Do not push without the user's go-ahead.
 

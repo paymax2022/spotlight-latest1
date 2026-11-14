@@ -22,11 +22,19 @@ async function openStep(page: import('@playwright/test').Page, step: 1 | 2 | 3 |
   await page.goto(`${PAGE}#step-${step}`);
   const panel = page.locator(`#step-${step}`);
   await expect(panel).toBeVisible();
-  // The page's own hash handler opens the linked accordion once hydrated; click
-  // only if it has not, otherwise this would close what the feature just opened.
-  if (!(await panel.evaluate((el) => (el as HTMLDetailsElement).open))) {
-    await panel.locator('summary').click();
-  }
+  // Design F keeps the hash-to-accordion behaviour, so the page opens this step
+  // itself once hydrated — wait for that rather than clicking. The earlier
+  // "click only if it is not already open" helper is what failed: it read the
+  // flag and then clicked, and hydration landing in the gap between those two
+  // round trips made the click close what the feature had just opened, which is
+  // why #step-1 collapsed alongside #step-3 and #step-5. Polling also gates the
+  // behaviour itself — a hash handler that never opens anything now fails here
+  // instead of being quietly clicked open by the test.
+  await expect
+    .poll(() => panel.evaluate((el) => (el as HTMLDetailsElement).open), {
+      message: `#step-${step} must open from its own hash`,
+    })
+    .toBe(true);
   return panel;
 }
 
