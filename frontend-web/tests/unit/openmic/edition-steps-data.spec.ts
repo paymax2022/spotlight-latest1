@@ -1,7 +1,7 @@
 // The steps block gets one serialisable object from the server so no client
 // branch re-derives availability, re-filters the board, or has to know that
 // `voteCountPublic` can be turned off by an admin.
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const listContests = vi.hoisted(() => vi.fn());
 const getLeaderboard = vi.hoisted(() => vi.fn());
@@ -178,5 +178,59 @@ describe('loadOpenMicEditionSteps', () => {
     getLeaderboard.mockResolvedValue([]);
     const data: OpenMicEditionStepsData | null = await loadOpenMicEditionSteps();
     expect(data?.board).toStrictEqual({ rows: [], entryCount: 0, totalVotes: 0 });
+  });
+});
+
+describe('the three window states, resolved by the read', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // START/END span November 2026. The clock is pinned rather than trusted: a
+  // test that read the real one would go red on 1 December and teach nobody
+  // anything about this code.
+  it('is open while now sits inside the window', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T12:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest(), []);
+    expect(data.registrationState).toBe('open');
+    expect(data.submissionState).toBe('open');
+    expect(data.votingState).toBe('open');
+  });
+
+  it('is not-started before the window opens and closed after it ends', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-20T00:00:00.000Z'));
+    expect(buildOpenMicEditionStepsData(contest(), []).registrationState).toBe('not-started');
+    vi.setSystemTime(new Date('2026-12-05T00:00:00.000Z'));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('closed');
+  });
+
+  it('is unknown when neither end of the window is set', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(
+      contest({ registrationStartAt: undefined, registrationEndAt: undefined }),
+      [],
+    );
+    // `unknown` must not collapse into `closed`: the copy for unset dates says
+    // "to be confirmed", and the closed styling would contradict it.
+    expect(data.registrationState).toBe('unknown');
+    expect(data.registrationEndAt).toBeNull();
+  });
+
+  it('still reports open when only one end of the window is set', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest({ registrationEndAt: undefined }), []);
+    expect(data.registrationStartAt).toBe(START);
+    expect(data.registrationState).toBe('open');
+  });
+
+  it('is serialisable, because the client must not recompute any of it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest(), []);
+    expect(JSON.parse(JSON.stringify(data))).toStrictEqual(data);
   });
 });

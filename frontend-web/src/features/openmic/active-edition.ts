@@ -45,10 +45,24 @@ export async function getActiveOpenMicEdition(): Promise<OpenMicContest | null> 
   return contests.find((row) => live.has(row.status)) ?? null;
 }
 
-/** Everything the steps block renders. Availability, the display switches and
- *  the board's numbers are decided server-side; the only thing the browser
- *  recomputes is which side of a window `Date.now()` falls on, from the ISO
- *  strings below. No Date objects: this crosses the server/client boundary. */
+/** Which side of a window the clock is on. A plain string union because this
+ *  crosses the server/client boundary: the alternative was a client working it
+ *  out during render, which pre-renders one answer and hydrates another. */
+export type WindowState = 'open' | 'not-started' | 'closed' | 'unknown';
+
+export function windowState(start: string | null, end: string | null, now: number): WindowState {
+  const from = start ? Date.parse(start) : Number.NaN;
+  const to = end ? Date.parse(end) : Number.NaN;
+  if (!Number.isFinite(from) && !Number.isFinite(to)) return 'unknown';
+  if (Number.isFinite(from) && now < from) return 'not-started';
+  if (Number.isFinite(to) && now > to) return 'closed';
+  return 'open';
+}
+
+/** Everything the steps block renders. Availability, the display switches,
+ *  the board's numbers and which side of each window the clock is on are all
+ *  decided here, against the server clock, so the browser recomputes nothing
+ *  during render. No Date objects: this crosses the server/client boundary. */
 export type OpenMicEditionStepsData = {
   id: string;
   slug: string;
@@ -56,10 +70,13 @@ export type OpenMicEditionStepsData = {
   status: OpenMicContest['status'];
   registrationStartAt: string | null;
   registrationEndAt: string | null;
+  registrationState: WindowState;
   submissionStartAt: string | null;
   submissionEndAt: string | null;
+  submissionState: WindowState;
   votingStartAt: string | null;
   votingEndAt: string | null;
+  votingState: WindowState;
   registrationFeeNgn: number;
   entryFeeRequired: boolean;
   showLeaderboard: boolean;
@@ -101,17 +118,30 @@ export function buildOpenMicEditionStepsData(
   // will actually serve.
   const downloadable = beat ? beat.allowDownload === true && downloadUrl !== null : false;
 
+  const registrationStartAt = at(contest.registrationStartAt);
+  const registrationEndAt = at(contest.registrationEndAt);
+  const submissionStartAt = at(contest.submissionStartAt);
+  const submissionEndAt = at(contest.submissionEndAt);
+  const votingStartAt = at(contest.votingConfig?.votingStartAt);
+  const votingEndAt = at(contest.votingConfig?.votingEndAt);
+  // One instant for all three windows: two `Date.now()` calls could straddle a
+  // boundary and report the same window twice.
+  const now = Date.now();
+
   return {
     id: contest.id,
     slug: contest.slug,
     title: contest.title,
     status: contest.status,
-    registrationStartAt: at(contest.registrationStartAt),
-    registrationEndAt: at(contest.registrationEndAt),
-    submissionStartAt: at(contest.submissionStartAt),
-    submissionEndAt: at(contest.submissionEndAt),
-    votingStartAt: at(contest.votingConfig?.votingStartAt),
-    votingEndAt: at(contest.votingConfig?.votingEndAt),
+    registrationStartAt,
+    registrationEndAt,
+    registrationState: windowState(registrationStartAt, registrationEndAt, now),
+    submissionStartAt,
+    submissionEndAt,
+    submissionState: windowState(submissionStartAt, submissionEndAt, now),
+    votingStartAt,
+    votingEndAt,
+    votingState: windowState(votingStartAt, votingEndAt, now),
     registrationFeeNgn: contest.registrationFeeNgn,
     entryFeeRequired: contest.entryFeeRequired,
     showLeaderboard: contest.votingConfig?.leaderboardVisible !== false,

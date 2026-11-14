@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import type { OpenMicEditionStepsData } from '@/src/features/openmic/active-edition';
+import type { OpenMicEditionStepsData, WindowState } from '@/src/features/openmic/active-edition';
 import { slugifyArtist } from '@/src/features/openmic/workflow';
 import styles from './edition-steps.module.css';
 
@@ -22,17 +22,6 @@ const STEPS = [
 ] as const;
 
 const MAX_MP3_MB = 50;
-
-type WindowState = 'open' | 'not-started' | 'closed' | 'unknown';
-
-function windowState(start: string | null, end: string | null, now: number): WindowState {
-  const from = start ? Date.parse(start) : Number.NaN;
-  const to = end ? Date.parse(end) : Number.NaN;
-  if (!Number.isFinite(from) && !Number.isFinite(to)) return 'unknown';
-  if (Number.isFinite(from) && now < from) return 'not-started';
-  if (Number.isFinite(to) && now > to) return 'closed';
-  return 'open';
-}
 
 const shortDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'TBC';
@@ -114,7 +103,6 @@ function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: 
 
 export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStepsData | null }) {
   const [activeStage, setActiveStage] = useState<string | null>('step-1');
-  const now = Date.now();
 
   useEffect(() => {
     function openLinkedStage() {
@@ -128,9 +116,6 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
     return () => window.removeEventListener('hashchange', openLinkedStage);
   }, []);
 
-  const registration = windowState(data?.registrationStartAt ?? null, data?.registrationEndAt ?? null, now);
-  const submission = windowState(data?.submissionStartAt ?? null, data?.submissionEndAt ?? null, now);
-  const voting = windowState(data?.votingStartAt ?? null, data?.votingEndAt ?? null, now);
   const beat = data?.beat ?? null;
   const board = data?.board ?? null;
 
@@ -172,7 +157,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                 {index === 0 && (
                   data ? (
                     <>
-                      <WindowLine label="Registration" start={data.registrationStartAt} end={data.registrationEndAt} state={registration} />
+                      <WindowLine label="Registration" start={data.registrationStartAt} end={data.registrationEndAt} state={data.registrationState} />
                       <p className={styles.tally}>
                         {data.entryFeeRequired
                           ? `Registration fee: ₦${data.registrationFeeNgn.toLocaleString()}.`
@@ -230,14 +215,14 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                 {index === 2 && (
                   data ? (
                     <>
-                      <WindowLine label="Submission window" start={data.submissionStartAt} end={data.submissionEndAt} state={submission} />
+                      <WindowLine label="Submission window" start={data.submissionStartAt} end={data.submissionEndAt} state={data.submissionState} />
                       <p className={styles.tally}>Format: MP3 up to {MAX_MP3_MB}MB, recorded over this edition’s beat.</p>
                       <div className="openMic-actions">
                         <Link
                           className="openMic-button openMic-buttonPrimary"
-                          href={submission === 'open' ? `/open-mic/${data.slug}/enter` : `/open-mic/${data.slug}/entries`}
+                          href={data.submissionState === 'open' ? `/open-mic/${data.slug}/enter` : `/open-mic/${data.slug}/entries`}
                         >
-                          {submission === 'open' ? 'Submit your song' : 'See the live entries'} <span aria-hidden="true">→</span>
+                          {data.submissionState === 'open' ? 'Submit your song' : 'See the live entries'} <span aria-hidden="true">→</span>
                         </Link>
                       </div>
                     </>
@@ -251,7 +236,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                 {index === 4 && (
                   data ? (
                     <>
-                      <WindowLine label="Voting window" start={data.votingStartAt} end={data.votingEndAt} state={voting} />
+                      <WindowLine label="Voting window" start={data.votingStartAt} end={data.votingEndAt} state={data.votingState} />
                       {!data.showLeaderboard ? (
                         <p className={styles.note}>This edition keeps its standings private until the results are announced.</p>
                       ) : !board ? (
