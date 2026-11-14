@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-  Bell, CalendarDays, Wallet, Stethoscope, ClipboardList, FlaskConical, Settings, ChevronRight, PawPrint, BarChart3,
+  Bell, CalendarDays, Wallet, Stethoscope, ClipboardList, FlaskConical, Settings, ChevronRight, BarChart3,
   Inbox, Users, MessageSquare, Smile, Video, AlertTriangle, ShieldAlert, UserCog, CalendarClock, Pill, RefreshCw, BadgeCheck, Clock,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -286,13 +286,6 @@ export default function DoctorDashboardScreen() {
 
         {/* Phase 3 entry points */}
         <View style={styles.phase3Row}>
-          <Pressable style={styles.phase3Link} onPress={() => router.push('/(doctor)/vet')} accessibilityRole="button" accessibilityLabel="Veterinary mode">
-            <View style={[styles.phase3Icon, { backgroundColor: Colors.iconBgPurple }]}>
-              <PawPrint size={18} color={Colors.primary} strokeWidth={2} />
-            </View>
-            <Text style={styles.phase3Label} numberOfLines={1}>Vet mode</Text>
-            <ChevronRight size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
-          </Pressable>
           <Pressable style={styles.phase3Link} onPress={() => router.push('/(doctor)/analytics')} accessibilityRole="button" accessibilityLabel="Quality analytics">
             <View style={[styles.phase3Icon, { backgroundColor: Colors.iconBgBlue }]}>
               <BarChart3 size={18} color={Colors.secondary} strokeWidth={2} />

@@ -193,7 +193,6 @@ export default function PatientRecordIndexScreen() {
           <View style={styles.list}>
             <RecordCategoryRow icon={ScrollText} label="Access log" count={0} onPress={() => router.push(`/(doctor)/records/${pid}/access-log`)} />
             <RecordCategoryRow icon={Icons.Users} label="Dependent records" count={index.entries.find((e) => e.category === 'dependents')?.count ?? 0} onPress={() => router.push(`/(doctor)/records/${pid}/category/dependents`)} />
-            <RecordCategoryRow icon={Icons.PawPrint} label="Pet health records" count={0} onPress={() => router.push('/(doctor)/vet')} />
           </View>
         </ScrollView>
       )}

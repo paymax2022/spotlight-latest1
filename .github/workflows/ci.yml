@@ -167,6 +167,18 @@ jobs:
       - name: Test the module router
         run: python3 scripts/ci/test-changed-modules.py
 
+      # Product rule, not a style preference: a veterinarian onboards through the
+      # landing page Vet module, so the Doctor app must not offer a route into the
+      # legacy (doctor)/vet subtree or a `veterinarian` provider-type card. Nothing
+      # else enforces it, and the screens it guards render identically either way.
+      - name: Check the Doctor app has no vet entry point
+        run: python3 scripts/ci/check-doctor-vet-boundary.py
+      # The guard is a text scan, so it can go green by matching nothing once the
+      # tree moves. This pins that it fires, stays quiet when clean, and fails
+      # loudly when the directory it scans is gone.
+      - name: Test the doctor/vet boundary guard
+        run: python3 scripts/ci/test-doctor-vet-boundary.py
+
   # Which module lanes does this change need? One shared filter file
   # (.github/module-filters.json) drives the gating below, so a module's paths
   # are written once instead of once per trigger per workflow.
