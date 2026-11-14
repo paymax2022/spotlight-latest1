@@ -34,7 +34,10 @@
 | `frontend-web/app/open-mic/[slug]/page.tsx` | Edition page: beat player gated by the availability rule. | Task 3 |
 | `frontend-web/src/features/openmic/active-edition.ts` | `getActiveOpenMicEdition()` (one definition of "current edition"), `buildOpenMicEditionStepsData()`, `loadOpenMicEditionSteps()`, `OpenMicEditionStepsData`. | Tasks 4–5 |
 | `frontend-web/app/apply/open-mic-competition/page.tsx` | Uses the shared selector; loses `|| contests[0]`. | Task 4 |
-| `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx`<br>`frontend-web/components/openmic/OpenMicAdminContestEditor.tsx` | Upload to the new route, store reader paths, warn on a legacy beat. | Task 6 |
+| `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx`<br>`frontend-web/components/openmic/OpenMicAdminContestEditor.tsx` | Upload to the new route, store reader paths, warn on a legacy beat. **Unreachable in this repo** — ADR-047 deleted `frontend-web/app/admin`, and nothing else imports them (Task 6 review, I-1). Kept as the wiring for any console that mounts them again. | Task 6 |
+| `frontend-admin/app/admin/open-mic/new/page.tsx`<br>`frontend-admin/app/admin/open-mic/[id]/page.tsx` | The console operators actually use. Gains the beat file picker and the same two warnings, so an edition can be given a beat an artist can open. | Task 6b |
+| `frontend-admin/src/services/openMicAdminService.ts` | `uploadOpenMicBeat()` over the web proxy — the one write the Path-A port deliberately skipped. | Task 6b |
+| `frontend-admin/tests/admin/openmic/beat-upload.test.tsx` | Behavioural guard (jsdom + testing-library): picking a file posts multipart to the beat route through the proxy and fills both fields. | Task 6b |
 | `frontend-web/tests/unit/media/open-mic-beat-storage.test.ts` | Reader allowlist, dispositions, upload validation, availability rule. | Tasks 1–3 |
 | `frontend-web/tests/unit/openmic/open-mic-params.spec.ts` | Hermetic guard: every Open Mic page awaits `params`. | Task 3b |
 | `frontend-web/tests/unit/openmic/active-edition.test.ts` | The edition selector, incl. the compile-time status-classification pin. | Task 4 |
@@ -1339,9 +1342,10 @@ import { slugifyArtist } from '@/src/features/openmic/workflow';                
 import { publicBeatUrl } from '@/src/features/openmic/beat-storage';                  // new
 
 /** Everything the steps block renders. Availability, the display switches and
- *  the board's numbers are decided server-side; the only thing the browser
- *  recomputes is which side of a window `Date.now()` falls on, from the ISO
- *  strings below. No Date objects: this crosses the server/client boundary. */
+ *  the board's numbers are decided server-side, and so is which side of each
+ *  window the clock is on — Task 9b moved that arithmetic here, because a
+ *  client computing it during render pre-renders one answer and hydrates
+ *  another. No Date objects: this crosses the server/client boundary. */
 export type OpenMicEditionStepsData = {
   id: string;
   slug: string;
@@ -1349,10 +1353,13 @@ export type OpenMicEditionStepsData = {
   status: OpenMicContest['status'];
   registrationStartAt: string | null;
   registrationEndAt: string | null;
+  registrationState: WindowState;
   submissionStartAt: string | null;
   submissionEndAt: string | null;
+  submissionState: WindowState;
   votingStartAt: string | null;
   votingEndAt: string | null;
+  votingState: WindowState;
   registrationFeeNgn: number;
   entryFeeRequired: boolean;
   showLeaderboard: boolean;
@@ -1484,12 +1491,12 @@ re-deriving them in the browser."
 ### Task 6: Point the two admin beat forms at the new route
 
 **Files:**
-- Modify: `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx:87-115` (upload), `:83` (required-field copy), `:314-334` (URL fields + warning), `:319`/`:323` (label + `accept`)
-- Modify: `frontend-web/components/openmic/OpenMicAdminContestEditor.tsx:58-80` (upload), `:199-213` (URL fields + warning), `:204`/`:208` (label + `accept`)
+- Modify: `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx:87-115` (upload), `:83` (required-field copy), `:312-317` (download-URL field: placeholder, help, two warnings), `:319`/`:323` (label + `accept`), `:332-335` (preview-URL field: placeholder + warning)
+- Modify: `frontend-web/components/openmic/OpenMicAdminContestEditor.tsx:58-80` (upload), `:199-202` (download-URL field: placeholder + two warnings), `:204`/`:208` (label + `accept`)
 - Test: `frontend-web/tests/unit/openmic/admin-beat-wiring.spec.ts`
 
 **Interfaces:**
-- Consumes: Task 2's `POST /api/admin/open-mic/beats` response `{ success, beat: { previewUrl, downloadUrl } }`; `adminAuthHeaders(false)` from `@/src/lib/auth/client` (Authorization + role header, no Content-Type, so FormData still works); Task 1's `isLegacyBeatUrl`.
+- Consumes: Task 2's `POST /api/admin/open-mic/beats` response `{ success, beat: { previewUrl, downloadUrl } }`; `adminAuthHeaders(false)` from `@/src/lib/auth/client` (Authorization + role header, no Content-Type, so FormData still works); Task 1's `isLegacyBeatUrl` (the pre-fix case) and `publicBeatUrl` (the general "will this play for an artist?" question).
 - Produces: rows whose `preview_url` / `download_url` are `/api/open-mic/beats/…` paths.
 
 - [ ] **Step 1: Write the failing guard test**
@@ -1519,16 +1526,22 @@ describe('admin beat upload wiring', () => {
     }
   });
 
-  it('stores the reader paths the route returns', () => {
+  it('stores the reader paths the route returns, and refuses to store nothing', () => {
     for (const source of [BUILDER, EDITOR]) {
       expect(source).toMatch(/payload\?\.beat\?\.previewUrl|beat\.previewUrl/);
       expect(source).toMatch(/beat\.downloadUrl|payload\?\.beat\?\.downloadUrl/);
+      // Without this, a 201 whose payload lost the URL writes an empty
+      // beatDownloadUrl, submit() then complains about a field the admin just
+      // filled with a successful upload.
+      expect(source).toMatch(/if \(!downloadUrl\) throw/);
     }
   });
 
   it('warns an admin re-opening a legacy edition instead of leaving it silent', () => {
-    expect(BUILDER).toContain('isLegacyBeatUrl');
-    expect(EDITOR).toContain('isLegacyBeatUrl');
+    // Call sites, not identifiers: an import that is never called would satisfy
+    // toContain('isLegacyBeatUrl') while rendering no warning at all.
+    expect(BUILDER).toContain('isLegacyBeatUrl(form.beatDownloadUrl)');
+    expect(EDITOR).toContain('isLegacyBeatUrl(form.downloadUrl)');
     expect(EDITOR).toMatch(/re-upload/i);
   });
 
@@ -1544,13 +1557,48 @@ describe('admin beat upload wiring', () => {
       expect(source).not.toContain('(MP3/WAV)');
     }
   });
+
+  it('flags any pasted URL an artist cannot open, not only a legacy one', () => {
+    // isLegacyBeatUrl is an admin diagnostic for the pre-fix upload path; it
+    // deliberately does not answer "will this play for an artist?". The public
+    // reader allowlists /api/open-mic/beats/, so an absolute third-party URL —
+    // exactly what placeholder="https://..." advertises — is unusable while
+    // looking perfectly fillable. Both forms must ask publicBeatUrl.
+    //
+    // Each call site names the field it guards, so a preview URL cannot be
+    // swapped into the download field (or vice versa) and still pass.
+    expect(BUILDER).toContain('publicBeatUrl(form.beatDownloadUrl) === null');
+    expect(BUILDER).toContain('publicBeatUrl(form.beatPreviewUrl) === null');
+    expect(EDITOR).toContain('publicBeatUrl(form.downloadUrl) === null');
+    for (const source of [BUILDER, EDITOR]) {
+      expect(source).not.toContain('placeholder="https://..."');
+      expect(source).toMatch(/Upload the mp3\s+instead/i);
+    }
+    // The help copy that made pasting an off-site URL look like a supported path.
+    expect(BUILDER).not.toContain('You can paste a direct URL');
+  });
+
+  it('authorises the upload without declaring a content type', () => {
+    // The two regressions that actually break a beat upload, and neither is a
+    // type error: no header at all is a 401, and adminAuthHeaders(true) adds
+    // Content-Type: application/json, which overrides the FormData's multipart
+    // boundary and makes the route answer 400 "Expected a multipart upload".
+    // The submit calls use (true) — those are JSON — so match the (false) form
+    // of the header line itself, not just the identifier.
+    for (const source of [BUILDER, EDITOR]) {
+      expect(source).toMatch(/headers:\s*await adminAuthHeaders\(false\)/);
+    }
+    expect(EDITOR).toContain('contestId=${encodeURIComponent(contest.id)}');
+  });
 });
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic/admin-beat-wiring.spec.ts`
-Expected: FAIL on the first case (both files still contain `/api/registration/uploads`).
+Expected: FAIL — all 6 cases. Today both forms post to `/api/registration/uploads` and store `payload?.upload?.previewUrl`, neither imports a predicate, both accept `.wav`/`.m4a`, and the builder still carries `placeholder="https://..."`. (The builder's old `fetch` also sends no auth header at all — `adminAuthHeaders(false)` in Step 3 is what makes the upload work for a signed-in admin.)
+
+**When strengthening this guard on sources that already pass it** (a review round, not a first implementation): a green run proves nothing about the new assertions. After they pass, prove each one bites by introducing the regression it exists for, watching that case fail, then reverting — delete `headers: await adminAuthHeaders(false)` (must fail case 6), change it to `(true)` (must fail case 6), replace `isLegacyBeatUrl(form.beatDownloadUrl)` with `isLegacyBeatUrl(form.beatPreviewUrl)` (must fail case 3), delete `if (!downloadUrl) throw` (must fail case 2). Report each mutation with the case it failed.
 
 - [ ] **Step 3: Rewire the builder**
 
@@ -1585,10 +1633,10 @@ In `frontend-web/components/openmic/OpenMicAdminContestBuilder.tsx`, replace `up
   }
 ```
 
-Add the import beside the existing `@/src/features/openmic` imports (Task 6 needs it for the warning; see Step 4):
+Add the import beside the existing `@/src/features/openmic` imports — both predicates, because they answer two different questions (`beat-storage.ts:65-74` says so in as many words: `isLegacyBeatUrl` is the pre-fix diagnostic, `publicBeatUrl` is "will an artist be able to open this?"):
 
 ```tsx
-import { isLegacyBeatUrl } from '@/src/features/openmic/beat-storage';
+import { isLegacyBeatUrl, publicBeatUrl } from '@/src/features/openmic/beat-storage';
 ```
 
 Narrow the picker to the one format the route accepts — the label at line 319 says `(MP3/WAV)` and line 323 invites `.wav` and `.m4a`, both of which `app/api/admin/open-mic/beats/route.ts` answers with a 400 the form has no copy for. Leave `type="file"` alone (it is a file input; only `accept` narrows it):
@@ -1607,14 +1655,40 @@ Change the required-field copy at line 83 so it names the action, not a URL:
     if (!String(form.beatDownloadUrl || '').trim()) errors.beatDownloadUrl = 'Upload the official beat mp3.';
 ```
 
-Below the download-URL input (line 314-316), render the legacy warning when a pasted value is an owner-only path:
+Rewrite the download-URL field (lines 312-317). Two hazards live here: the `placeholder="https://..."` plus help copy advertise pasting an arbitrary direct URL, which Task 1's allowlist refuses at read time — so the admin fills the field, saves, and the edition page quietly shows no beat. One warning per URL field, the legacy case first:
 
 ```tsx
+          <div className="md:col-span-2">
+            <label className="form-label">Beat File URL (Download)*</label>
+            <input className="form-input h-[44px]" value={form.beatDownloadUrl} onChange={(e) => setField('beatDownloadUrl', e.target.value)} placeholder="/api/open-mic/beats/…" />
+            <p className="form-help">The upload below fills this. Artists can only open a beat this site stores.</p>
+            {validationErrors.beatDownloadUrl ? <p className="form-error">{validationErrors.beatDownloadUrl}</p> : null}
             {isLegacyBeatUrl(form.beatDownloadUrl) ? (
               <p className="text-[12px] text-amber-400">
-                This beat predates the public-beat storage fix and cannot be opened by artists. Re-upload the mp3.
+                This beat predates the public-beat storage fix, so artists get an access error. Re-upload the mp3.
+              </p>
+            ) : form.beatDownloadUrl && publicBeatUrl(form.beatDownloadUrl) === null ? (
+              <p className="text-[12px] text-amber-400">
+                The programme page cannot serve that address, so the beat will not play or download. Upload the mp3
+                instead of pasting a URL.
               </p>
             ) : null}
+          </div>
+```
+
+And the preview-URL field (lines 332-335), which has the same placeholder. It is optional and `submit()` already falls back to the download URL (`:157`), so an empty value is fine and only a pasted unusable one needs saying:
+
+```tsx
+          <div className="md:col-span-2">
+            <label className="form-label">Beat Preview URL (Optional)</label>
+            <input className="form-input h-[44px]" value={form.beatPreviewUrl} onChange={(e) => setField('beatPreviewUrl', e.target.value)} placeholder="/api/open-mic/beats/…" />
+            {form.beatPreviewUrl && publicBeatUrl(form.beatPreviewUrl) === null ? (
+              <p className="text-[12px] text-amber-400">
+                The player ignores a preview it cannot serve. Upload the mp3 instead of pasting a URL, or leave this
+                empty to play the download file.
+              </p>
+            ) : null}
+          </div>
 ```
 
 - [ ] **Step 4: Rewire the editor**
@@ -1651,18 +1725,27 @@ In `frontend-web/components/openmic/OpenMicAdminContestEditor.tsx`, replace `upl
 Add the import:
 
 ```tsx
-import { isLegacyBeatUrl } from '@/src/features/openmic/beat-storage';
+import { isLegacyBeatUrl, publicBeatUrl } from '@/src/features/openmic/beat-storage';
 ```
 
-and below the download-URL input (line 201) the same warning, phrased for an existing edition:
+Then rewrite the download-URL field (lines 199-202). This editor loads an existing edition, so it is the surface most likely to show a legacy row — and it has no `validationErrors` on this field, so the warning is the only feedback an admin gets. `previewUrl` exists in state here (`:50`, `:72`, `:120`) but has no input, so only the download field needs the pair:
 
 ```tsx
+          <div className="md:col-span-2">
+            <label className="form-label">Beat Download URL (used by frontend download button)</label>
+            <input className="form-input h-[44px]" value={form.downloadUrl} onChange={(e) => setField('downloadUrl', e.target.value)} placeholder="/api/open-mic/beats/…" />
             {isLegacyBeatUrl(form.downloadUrl) ? (
               <p className="form-error">
                 This beat was uploaded before the public-beat fix, so artists get an access error. Re-upload the mp3
                 and save.
               </p>
+            ) : form.downloadUrl && publicBeatUrl(form.downloadUrl) === null ? (
+              <p className="form-error">
+                The programme page cannot serve that address, so the beat will not play or download. Upload the mp3
+                instead of pasting a URL, then save.
+              </p>
             ) : null}
+          </div>
 ```
 
 Narrow this picker exactly as in Step 3 — the label at line 204 says `(MP3/WAV)` and line 208 invites `.wav` and `.m4a`, both of which the route 400s:
@@ -1692,6 +1775,645 @@ Both admin forms kept storing the uploader-only URL returned by the
 registration documents route, which is why no artist could play a published
 beat. Each now warns on a row that still carries one."
 ```
+
+---
+
+### Task 6b: Give the console operators actually use a beat artists can open
+
+**Why this task exists — a premise in the design doc is false.** The spec's diagnosis
+section says "Both admin surfaces upload the beat through `POST /api/registration/uploads`
+… (`OpenMicAdminContestBuilder.tsx:87-115`, `OpenMicAdminContestEditor.tsx:58-80`)". Only one
+admin surface is reachable: ADR-047 deleted `frontend-web/app/admin` (confirmed — `ls` returns
+"No such file or directory", and a repo-wide grep for `OpenMicAdminContest` finds only the two
+definitions, Task 6's source-reading spec, a committed build artifact under
+`frontend-web/.next-verify2/`, and two *comment* references inside frontend-admin). The live
+Open Mic console is `frontend-admin/app/admin/open-mic/{page,new,[id]}`, and its create page
+never uploads a file at all: `new/page.tsx:209-210` tells the operator "Paste a hosted URL —
+file upload isn't available from this console (see code comment for why)", and both beat fields
+still carry `placeholder="https://..."` (`:223`, `:228`). That reason is now stale: the proxy
+that console sends everything through, `frontend-admin/app/api/web-proxy/[...path]/route.ts`,
+was fixed to forward `await request.arrayBuffer()` verbatim with the caller's Content-Type
+(`:91-99` — its own comment says "An ArrayBuffer forwards JSON and multipart alike, verbatim"),
+so a binary upload through it works today.
+
+The consequence is a product dead end, not a cosmetic one: step #02 promises artists a
+downloadable mp3, spec decision J says prod "keeps zero editions until Spotlight publishes one
+in the admin console" — and the console cannot publish an edition whose beat will play. Task 6
+made the *correct* calls in files nothing loads. This task makes them reachable.
+
+**Files:**
+- Create: `frontend-admin/tests/admin/openmic/beat-upload-request.test.ts` (Step 1b — the only new file)
+- Modify: `frontend-admin/tests/admin/openmic/beat-upload.test.tsx` (Steps 1 + 2 of this round: six cases)
+- Modify: `frontend-admin/app/admin/open-mic/new/page.tsx` (`errors` beat gate, tone-aware `beatNote`,
+  header comment `:9-13`, service import `:17`, state `:42`, required-field copy `:75`, handler above
+  `submit()` at `:79`, Official Beat section `:207-231`, and the nine `id`/`htmlFor` pairs)
+- Modify: `frontend-admin/src/features/openmic/beat-url.ts` (header comment only)
+- Untouched this round: `frontend-admin/src/services/openMicAdminService.ts` — Step 4's function is
+  already correct; it gains a test rather than a change.
+
+**Interfaces:**
+- Consumes: Task 2's `POST /api/admin/open-mic/beats` — reached as `${webProxyBase()}/api/admin/open-mic/beats`, i.e. `/api/web-proxy/api/admin/open-mic/beats`; its `201 { success, beat: { previewUrl, downloadUrl } }`; frontend-web's session bearer, which the proxy attaches server-side from the HttpOnly `sb-admin-token` cookie (`web-proxy/route.ts:59-66`), so this app sends **no** Authorization header.
+- Produces: `uploadOpenMicBeat(file, contestId?) => Promise<{ previewUrl: string; downloadUrl: string }>` and `beatUrlProblem(value) => 'legacy' | 'unplayable' | null`. Same stored shapes as Task 6: `download_url = /api/open-mic/beats/<key>?download=1`.
+
+**Deliberately out of scope, and why:** re-attaching a beat to an *existing* edition. The console's Edit Contest tab (`[id]/page.tsx:263`) edits metadata only — `EditFormState` (`:128`) and the PATCH body (`:153-171`) carry no beat at all, and `frontend-web/app/api/admin/open-mic/contests/[id]/route.ts` has no `beat` branch to send one to. That is a second, larger piece of work (a beat-aware PATCH), not a wiring fix; the legacy-repair path spec F describes therefore has no console UI yet. Report it; do not build it here.
+
+**State at the start of this round.** Steps 1-5 landed once already (`e839ff50b`): the vocabulary file,
+`uploadOpenMicBeat`, the picker and the two warnings all exist and behave as described. This round is
+the review's four findings on top of that commit — the submit path still files an unplayable URL
+(I-1), nothing guards the request shape (I-2), the mirror comment over-claims what pins it (I-3), and
+the success note renders in the error tone (I-4). Where a step below says "create", the file is new in
+this round; where it says "edit", it is already on disk.
+
+- [ ] **Step 1: Write the failing behavioural test**
+
+`frontend-admin/tests/admin/openmic/beat-upload.test.tsx` exists from the first pass with four cases;
+this round takes it to six and rewrites two of the originals. Unlike frontend-web, this app
+runs vitest in jsdom with `@testing-library/react` (`frontend-admin/vitest.config.ts`, and the
+precedent at `tests/admin/crypto/reconciliation.test.tsx`), so the guard here can *exercise* the
+form instead of reading its source — which is what Task 6's review asked for and this app can
+afford. Replace its contents with:
+
+```tsx
+// The Open Mic create form used to offer only "paste a hosted URL", and the public
+// beat reader allowlists /api/open-mic/beats/ — so every URL an operator could file
+// here was one artists could not open. This guards the console that admins actually
+// use: picking an mp3 uploads it through the web proxy and files the paths the
+// server returns; a pasted URL that cannot play says so.
+import '@testing-library/jest-dom/vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+
+const uploadOpenMicBeat = vi.fn();
+const createOpenMicContest = vi.fn();
+vi.mock('@/services/openMicAdminService', () => ({
+  uploadOpenMicBeat: (...a: unknown[]) => uploadOpenMicBeat(...a),
+  createOpenMicContest: (...a: unknown[]) => createOpenMicContest(...a),
+}));
+
+// Vite does not resolve a Next route *directory*, so the page must be imported by
+// file: `/page` is the module Next itself loads for `/admin/open-mic/new`. (The
+// sibling precedent at tests/admin/crypto/reconciliation.test.tsx gets away with
+// a bare directory only because a same-named file exists there.)
+import NewOpenMicContestPage from '../../../app/admin/open-mic/new/page';
+
+// The page calls useRouter() on render and vitest has no mounted Next app router,
+// so every case dies on "invariant expected app router to be mounted" before it
+// reaches the beat fields without this shim. Same mock this app already uses at
+// src/components/guards/AdminRouteGuard.test.tsx:16; `push` is recorded so a later
+// case can assert the post-create redirect.
+const push = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+
+// A real reader path: base64url of `openmic-beats/unassigned/a.mp3`, exactly what
+// beatObjectKey() + encodeBeatFileKey() produce. An invented key would let this
+// guard pass against a URL the server can never return.
+const READER = '/api/open-mic/beats/b3Blbm1pYy1iZWF0cy91bmFzc2lnbmVkL2EubXAz';
+
+beforeEach(() => {
+  uploadOpenMicBeat.mockReset();
+  createOpenMicContest.mockReset();
+});
+afterEach(() => cleanup());
+
+function downloadField(): HTMLInputElement {
+  return screen.getByLabelText(/Beat file URL \(Download\)/i) as HTMLInputElement;
+}
+
+function set(container: HTMLElement, id: string, value: string) {
+  const el = container.querySelector(`#${id}`) as
+    | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
+  if (!el) throw new Error(`no field with id "${id}" — Step 5 gives every required input one`);
+  fireEvent.change(el, { target: { value } });
+}
+
+/**
+ * `errors` (page.tsx:66-79) gates title, slug, description, month, year, the two
+ * weights, state, city, venue name and beat title. A submit-path case must satisfy
+ * all of them except the beat, or it proves nothing: `createOpenMicContest` would go
+ * uncalled for an unrelated empty field and the blocked case would pass for the wrong
+ * reason. The weights default to 30/70 (`:52`) and already sum to 100. Fields are
+ * addressed by `id`, not by label, because /Month/i matches both "Month*" and
+ * "Repeat Months" once the labels gain `htmlFor`.
+ */
+function fillRequiredExceptBeat(container: HTMLElement) {
+  set(container, 'open-mic-title', 'November Open Mic');
+  set(container, 'open-mic-slug', 'november-open-mic');
+  set(container, 'open-mic-description', 'Monthly Open Mic edition.');
+  set(container, 'open-mic-month', '11');
+  set(container, 'open-mic-year', '2026');
+  set(container, 'open-mic-beat-title', 'Spotlight Beat');
+  set(container, 'open-mic-venue-name', 'The Bridge');
+  set(container, 'open-mic-state', 'Lagos');
+  set(container, 'open-mic-city', 'Ikeja');
+}
+
+describe('Open Mic beat upload in the admin console', () => {
+  it('uploads the picked mp3, files both reader paths and warns about neither', async () => {
+    uploadOpenMicBeat.mockResolvedValue({ previewUrl: READER, downloadUrl: `${READER}?download=1` });
+    const { container } = render(<NewOpenMicContestPage />);
+    const file = new File([new Uint8Array([1, 2, 3])], 'beat.mp3', { type: 'audio/mp3' });
+    fireEvent.change(screen.getByLabelText(/Upload beat file/i), { target: { files: [file] } });
+    await waitFor(() => expect(uploadOpenMicBeat).toHaveBeenCalledTimes(1));
+    expect(uploadOpenMicBeat.mock.calls[0][0]).toBe(file);
+    await waitFor(() => expect(downloadField().value).toBe(`${READER}?download=1`));
+    expect(screen.getByLabelText(/Beat preview URL/i)).toHaveValue(READER);
+    // An uploaded beat must read as *good*: nothing amber, and the confirmation must
+    // not arrive in the error tone (review I-4 — the task's one user-visible success
+    // rendered in #ea5455). These two absences are also the only assertions that pin
+    // BEAT_READER_BASE in the console's mirror (review I-3): if that literal drifts
+    // from the reader's, a real path stops matching the allowlist and they fail.
+    expect(screen.queryByText(/Upload the mp3 instead/i)).toBeNull();
+    expect(screen.queryByText(/before the public-beat fix/i)).toBeNull();
+    expect(await screen.findByRole('status')).toHaveTextContent(/artists can now play and download/i);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('surfaces the server error in the alert tone, not as silence', async () => {
+    // Wording copied from the real route: a hand-declared Content-Type is what
+    // breaks the boundary, and this is the answer it earns (415, not 400).
+    uploadOpenMicBeat.mockRejectedValue(new Error('Beat upload failed: 415 — Expected multipart/form-data'));
+    render(<NewOpenMicContestPage />);
+    fireEvent.change(screen.getByLabelText(/Upload beat file/i), {
+      target: { files: [new File([new Uint8Array([1])], 'beat.mp3', { type: 'audio/mp3' })] },
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/415 — Expected multipart\/form-data/);
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('warns about a pasted URL an artist cannot open', async () => {
+    render(<NewOpenMicContestPage />);
+    fireEvent.change(downloadField(), { target: { value: 'https://cdn.example.com/beat.mp3' } });
+    expect(await screen.findByText(/Upload the mp3 instead/i)).toBeInTheDocument();
+  });
+
+  it('names a pre-fix registration URL as legacy, not as a URL', async () => {
+    render(<NewOpenMicContestPage />);
+    fireEvent.change(downloadField(), { target: { value: '/api/registration/uploads/abc' } });
+    expect(await screen.findByText(/before the public-beat fix/i)).toBeInTheDocument();
+  });
+
+  it('refuses to publish a beat URL the reader cannot serve', async () => {
+    // Review I-1 / spec decision J: an edition published from this console must carry
+    // a beat an artist can open. An amber line the operator can read past is not that
+    // guarantee, so the pasted off-site URL has to stop the POST — and say why in the
+    // field error, which is the copy only a blocked submit produces.
+    const { container } = render(<NewOpenMicContestPage />);
+    fireEvent.change(downloadField(), { target: { value: 'https://cdn.example.com/beat.mp3' } });
+    fillRequiredExceptBeat(container);
+    fireEvent.click(screen.getByRole('button', { name: /Create Monthly Contest/i }));
+    expect(await screen.findByText(/cannot play that address/i)).toBeInTheDocument();
+    expect(createOpenMicContest).not.toHaveBeenCalled();
+  });
+
+  it('publishes the reader path when the beat came from the picker', async () => {
+    // The positive half of the pair: with every required field valid and the beat
+    // uploaded, blocking would be a dead affordance instead of a guard.
+    uploadOpenMicBeat.mockResolvedValue({ previewUrl: READER, downloadUrl: `${READER}?download=1` });
+    createOpenMicContest.mockResolvedValue({ success: true });
+    const { container } = render(<NewOpenMicContestPage />);
+    fireEvent.change(screen.getByLabelText(/Upload beat file/i), {
+      target: { files: [new File([new Uint8Array([1])], 'beat.mp3', { type: 'audio/mp3' })] },
+    });
+    await waitFor(() => expect(downloadField().value).toBe(`${READER}?download=1`));
+    fillRequiredExceptBeat(container);
+    fireEvent.click(screen.getByRole('button', { name: /Create Monthly Contest/i }));
+    await waitFor(() => expect(createOpenMicContest).toHaveBeenCalledTimes(1));
+    const sent = createOpenMicContest.mock.calls[0][0] as { beat: { downloadUrl: string; previewUrl: string } };
+    expect(sent.beat.downloadUrl).toBe(`${READER}?download=1`);
+    expect(sent.beat.previewUrl).toBe(READER);
+  });
+});
+```
+
+`createOpenMicContest` resolving `{ success: true }` schedules `window.setTimeout(() => router.push(…), 700)`
+(`page.tsx:134`). Keep real timers — the assertions finish first, so the timer lands after the test. If it
+surfaces a stray `act()` warning, that is the finding to report, not to silence.
+
+- [ ] **Step 1b: Pin the multipart request shape on its own**
+
+Step 1 mocks the service away, so **nothing in that file can see how the request is built** — and the
+one thing that makes the upload work at all is that nothing is added to it. The route answers
+`415 Expected multipart/form-data` (`frontend-web/app/api/admin/open-mic/beats/route.ts:33`) the moment a
+caller declares its own `Content-Type`, and CI would not notice: the frontend-admin lane in
+`.github/workflows/ci-optimized.yml:52` is `npm run type-check || true`, so it swallows even a type error.
+Create `frontend-admin/tests/admin/openmic/beat-upload-request.test.ts` — a service-level test, real
+`uploadOpenMicBeat`, `fetch` stubbed:
+
+```ts
+// The upload works because of what the request does NOT carry: no Content-Type (the browser has to
+// add the multipart boundary itself) and no Authorization (the web-proxy attaches the bearer from
+// the HttpOnly cookie). Both are one-token refactors away from being "tidied up", and neither would
+// fail Step 1's test, type-check, or CI. This file is the only guard, so it must not mock the module
+// under test.
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { uploadOpenMicBeat } from '@/services/openMicAdminService';
+
+type Call = { url: string; init: RequestInit | undefined };
+
+function stubFetch(body: unknown, ok = true, status = 200) {
+  const calls: Call[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return { ok, status, json: async () => body } as unknown as Response;
+  }));
+  return calls;
+}
+
+const mp3 = () => new File([new Uint8Array([1, 2, 3])], 'beat.mp3', { type: 'audio/mp3' });
+const OK = { success: true, beat: { previewUrl: '/api/open-mic/beats/k', downloadUrl: '/api/open-mic/beats/k?download=1' } };
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('uploadOpenMicBeat request shape', () => {
+  it('posts the mp3 as multipart to the beat route through the web proxy', async () => {
+    const calls = stubFetch(OK);
+    await uploadOpenMicBeat(mp3());
+    expect(calls).toHaveLength(1);
+    // Origin-agnostic: jsdom's location is not the deployment origin.
+    expect(calls[0].url).toMatch(/\/api\/web-proxy\/api\/admin\/open-mic\/beats$/);
+    expect(calls[0].init?.method).toBe('POST');
+    expect(calls[0].init?.body).toBeInstanceOf(FormData);
+    expect((calls[0].init?.body as FormData).get('file')).toBeInstanceOf(File);
+  });
+
+  it('declares no headers, so the boundary and the proxy bearer both survive', async () => {
+    const calls = stubFetch(OK);
+    await uploadOpenMicBeat(mp3());
+    const headers = (calls[0].init?.headers ?? {}) as Record<string, string>;
+    for (const name of ['Content-Type', 'content-type', 'Authorization', 'authorization']) {
+      expect(headers, name).not.toHaveProperty(name);
+    }
+  });
+
+  it('scopes the object key to a contest only when one is given', async () => {
+    const bare = stubFetch(OK);
+    await uploadOpenMicBeat(mp3());
+    expect(bare[0].url).not.toContain('contestId');
+    const scoped = stubFetch(OK);
+    await uploadOpenMicBeat(mp3(), 'c/1');
+    expect(scoped[0].url).toContain('contestId=c%2F1');
+  });
+
+  it('returns the two reader paths and refuses to hand back an empty beat', async () => {
+    stubFetch(OK);
+    await expect(uploadOpenMicBeat(mp3())).resolves.toEqual({
+      previewUrl: '/api/open-mic/beats/k',
+      downloadUrl: '/api/open-mic/beats/k?download=1',
+    });
+
+    stubFetch({ success: false, error: 'Beat must be an MP3 file' }, false, 400);
+    await expect(uploadOpenMicBeat(mp3())).rejects.toThrow(/Beat must be an MP3 file/);
+
+    // A success envelope with no URL is the shape that used to file an empty beat.
+    stubFetch({ success: true, beat: { previewUrl: '/api/open-mic/beats/k' } });
+    await expect(uploadOpenMicBeat(mp3())).rejects.toThrow(/no beat URL/);
+  });
+});
+```
+
+The last case is the reason the service keeps `if (!downloadUrl) throw`: without it a 200 carrying
+`{ success: true }` and no URL would file an empty beat and the form would say "Beat uploaded".
+
+- [ ] **Step 2: Run both files and read which half is red**
+
+Run: `cd /Users/paymax/Documents/spotlight/main/frontend-admin && npx vitest run tests/admin/openmic`
+
+This is a **strengthening round on code that already landed** (`e839ff50b`), so the two files fail
+differently and both outcomes are expected:
+
+- `beat-upload.test.tsx` — cases 5 and 6 and the new assertions inside cases 1 and 2 must **FAIL** (no
+  submit-time block, no `role`/`status`, no `id`s yet). Cases 3 and 4 stay green — they were proven when
+  the picker shipped. A green run for 5/6 here would mean the assertion is not biting.
+- `beat-upload-request.test.ts` — all four cases **PASS immediately**, because they describe the service
+  as shipped. That is a regression guard, not TDD red, and it is worth nothing until each case is
+  mutation-proved. Per the standing rule for strengthening rounds: after they pass, introduce the
+  regression each exists for, watch that one case fail, revert, and report each mutation with the case
+  it killed. For this file: add `headers: { 'Content-Type': 'application/json' }` to the `fetch` init
+  (`openMicAdminService.ts:370-373`) → case 2 must fail; build `qs` unconditionally → case 3 must fail;
+  delete `if (!downloadUrl) throw` (`:381`) → case 4 must fail.
+
+Also prove the page-side additions bite, since the same rule applies: make `uploadBeat` pass a
+`'danger'` tone to the success note → case 1 must fail; drop the `beatUrlProblem` entry from `errors`
+(Step 5) → case 5 must fail; change `BEAT_READER_BASE` in `beat-url.ts:13` to any other literal →
+case 1 must fail (that is the assertion that makes the mirror comment true).
+
+- [ ] **Step 3: Add the beat-URL vocabulary**
+
+`frontend-admin/src/features/openmic/beat-url.ts` — created by the first pass, so **edit** it, do not
+recreate it. Only its header comment changes in this round; the constants are copied verbatim from
+`frontend-web/src/features/openmic/beat-storage.ts:13,20` and `publicBeatUrl` (`:59-63`) /
+`isLegacyBeatUrl` (`:72-74`) — the two apps are separately deployed Next projects with no shared
+package, so a mirror is the only option. The comment must name the source of truth and the test that
+pins each copy, so the next reader knows which file to change first and what breaks if they diverge:
+
+```ts
+/**
+ * Can an artist open this beat URL? The authoritative vocabulary lives in
+ * frontend-web — src/features/openmic/beat-storage.ts (BEAT_READER_BASE,
+ * LEGACY_UPLOAD_PREFIX, publicBeatUrl, isLegacyBeatUrl) — and the reader that
+ * enforces it is app/api/open-mic/beats/[fileKey]/route.ts.
+ *
+ * Mirrored here, not imported: frontend-admin and frontend-web are separately
+ * deployed Next apps — frontend-web's `@/*` maps inside itself and there is no
+ * `shared/` directory at the repo root, so neither app can reach the other's
+ * module. If the reader's prefix ever changes, change it in BOTH files. Each
+ * copy is pinned by a failing test: frontend-web's by the reader tests in
+ * tests/unit/openmic and tests/unit/media, this copy by beat-upload.test.tsx
+ * case 1, which asserts that a real reader path warns nothing — drift here
+ * makes that path look unplayable and the case dies.
+ */
+export const BEAT_READER_BASE = '/api/open-mic/beats';
+export const LEGACY_UPLOAD_PREFIX = '/api/registration/uploads/';
+
+export type BeatUrlProblem = 'legacy' | 'unplayable';
+
+/** null when the value is empty or a path this site's reader serves. */
+export function beatUrlProblem(stored: string | null | undefined): BeatUrlProblem | null {
+  const value = String(stored || '').trim();
+  if (!value) return null;
+  if (value.startsWith(LEGACY_UPLOAD_PREFIX)) return 'legacy';
+  return value.startsWith(`${BEAT_READER_BASE}/`) ? null : 'unplayable';
+}
+```
+
+- [ ] **Step 4: Add the upload call to the service**
+
+In `frontend-admin/src/services/openMicAdminService.ts`, append after `createOpenMicContest`
+(ends `:350`) — the first pass already did this, so **Step 4 needs no code change in this round**; it
+is here because Step 1b is the test that was missing from it. No `Content-Type` anywhere: setting one
+would override the FormData boundary and the route answers `415 Expected multipart/form-data`
+(`frontend-web/app/api/admin/open-mic/beats/route.ts:33` — not the 400 this plan first claimed).
+No Authorization either — `authHeaders()` (`:167-170`) is empty on
+purpose, the proxy attaches the bearer from the HttpOnly cookie (`env.ts`, `adminAuthHeaders`'
+comment). `contestId` is optional because a new edition does not exist yet, and Task 2's route
+accepts that by filing under `openmic-beats/unassigned/`:
+
+```ts
+/**
+ * Upload the official beat mp3. This is the one write the Path-A port skipped:
+ * the note above createOpenMicContest claimed the web proxy could not carry a
+ * binary body, and app/api/web-proxy/[...path]/route.ts has since been fixed to
+ * forward request.arrayBuffer() verbatim with the caller's Content-Type, so the
+ * multipart boundary survives and the file lands intact.
+ *
+ * Returns the two root-relative reader paths Task 1/2 defined; the caller files
+ * them as the contest's beat URLs. Throws with the server's own wording so the
+ * form can show why an upload was refused.
+ */
+export async function uploadOpenMicBeat(
+  file: File,
+  contestId?: string,
+): Promise<{ previewUrl: string; downloadUrl: string }> {
+  const body = new FormData();
+  body.append('file', file);
+  const qs = contestId ? `?contestId=${encodeURIComponent(contestId)}` : '';
+  const res = await fetch(`${webBase()}/api/admin/open-mic/beats${qs}`, {
+    method: 'POST',
+    body,
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    success?: boolean; error?: string; beat?: { previewUrl?: string; downloadUrl?: string };
+  };
+  if (res.status === 401) throw new Error('Beat upload failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Beat upload failed: 403 — this account cannot edit Open Mic contests.');
+  if (!res.ok || !json.success) throw new Error(`Beat upload failed: ${json.error || res.status}`);
+  const downloadUrl = String(json.beat?.downloadUrl || '');
+  if (!downloadUrl) throw new Error('Beat upload failed: the server returned no beat URL.');
+  return { previewUrl: String(json.beat?.previewUrl || downloadUrl), downloadUrl };
+}
+```
+
+Then correct the comment it contradicts. Replace `:331-333` — "NOT ported: the 'upload a beat
+file' control. This form keeps the 'paste a beat URL' path (already the primary path in the
+original UI) and drops the file-picker; paste a pre-hosted URL instead." — with two sentences
+that say what is now true, and keep the surrounding paragraph intact:
+
+```ts
+ * Ported here in full except the beat file-picker, which `uploadOpenMicBeat`
+ * below now provides: a pasted URL is not a playable value, because the public
+ * beat reader only serves /api/open-mic/beats/… paths.
+```
+
+- [ ] **Step 5: Wire the form**
+
+In `frontend-admin/app/admin/open-mic/new/page.tsx`:
+
+Replace the header comment at `:9-13` (the "One deliberate omission … corrupts a binary
+multipart upload … Only the 'paste a beat URL' path is kept here" paragraph) with:
+
+```ts
+ * Same fields, same POST /api/admin/open-mic/contests route, reached through the
+ * web proxy. The beat arrives as an mp3 upload through /api/web-proxy — the
+ * paste-a-URL-only path was removed because the public beat reader serves only
+ * /api/open-mic/beats/… paths, so a pasted third-party URL looked fillable and
+ * played for nobody.
+```
+
+Add `uploadOpenMicBeat` to the `:17` import, and beside it:
+
+```ts
+import { beatUrlProblem } from '@/features/openmic/beat-url';
+```
+
+Add state after `:42` (`const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});`):
+
+```tsx
+  const [beatBusy, setBeatBusy] = useState(false);
+  // The note carries its own tone: this line says both "uploaded" and "refused", and
+  // rendering one of them in the other's colour made the task's only success look
+  // like a failure (review I-4). `tone` drives colour *and* ARIA role, so the
+  // distinction survives without a hex value in the test.
+  const [beatNote, setBeatNote] = useState<{ text: string; tone: 'ok' | 'bad' } | null>(null);
+```
+
+Add the handler immediately above `submit()` (`:79`):
+
+```tsx
+  async function uploadBeat(file: File) {
+    setBeatBusy(true);
+    setBeatNote(null);
+    try {
+      const beat = await uploadOpenMicBeat(file);
+      setField('beatDownloadUrl', beat.downloadUrl);
+      setField('beatPreviewUrl', beat.previewUrl);
+      setBeatNote({ text: 'Beat uploaded — artists can now play and download it.', tone: 'ok' });
+    } catch (e) {
+      setBeatNote({ text: e instanceof Error ? e.message : String(e), tone: 'bad' });
+    } finally {
+      setBeatBusy(false);
+    }
+  }
+```
+
+Narrow the required-field copy at `:75` so it names the action rather than a URL, and **block the
+submit on playability** — an amber line is advisory, and spec decision J is a guarantee (review I-1):
+
+```tsx
+    if (!form.beatDownloadUrl.trim()) e.beatDownloadUrl = 'Upload the official beat mp3.';
+    else if (beatUrlProblem(form.beatDownloadUrl) !== null) {
+      e.beatDownloadUrl = 'Upload the beat mp3 — the programme page cannot play that address.';
+    }
+```
+
+The two messages must stay distinguishable, because Step 1's case 5 asserts on the second one: the
+live warning says "cannot **serve** that address", the blocking field error says "cannot **play** that
+address". `beatUrlProblem` returns `null` for an empty value, so this adds no constraint the required
+rule does not already impose — it only refuses the two values that are known to be broken.
+
+Replace the intro paragraph at `:209-211` — "Paste a hosted URL — file upload isn't available
+from this console (see code comment for why)." — with:
+
+```tsx
+            Upload the beat mp3. The programme page can only play and offer a file this site
+            stores; a URL from another host will not open for an artist.
+```
+
+Insert a picker row directly before the download-URL field's `<div style={fieldWrap}>` (`:221`),
+and rewrite the two URL fields (`:221-225` download, `:226-230` preview). Each of the three controls
+gets an `id`, its `<label>` gets the matching `htmlFor`, and the `aria-label`s the first pass added are
+**removed** — with both present, `getByLabelText` matches twice and the field's own text is the better
+label anyway. A manual edit clears the note: a line explaining an upload must not stay on screen as the
+explanation for a value the operator typed:
+
+```tsx
+          <div style={fieldWrap}>
+            <label style={labelStyle} htmlFor="open-mic-beat-file">Upload Beat File (MP3)*</label>
+            <Input
+              id="open-mic-beat-file"
+              type="file"
+              accept=".mp3"
+              disabled={beatBusy}
+              onChange={(e) => {
+                const selected = e.target.files?.[0];
+                if (selected) void uploadBeat(selected);
+              }}
+            />
+            {beatBusy ? <p style={{ fontSize: 12, color: colors.muted, margin: '4px 0 0' }}>Uploading…</p> : null}
+            {beatNote ? (
+              <p
+                role={beatNote.tone === 'ok' ? 'status' : 'alert'}
+                style={{ fontSize: 12, color: beatNote.tone === 'ok' ? colors.success : colors.danger, margin: '4px 0 0' }}
+              >
+                {beatNote.text}
+              </p>
+            ) : null}
+          </div>
+          <div style={fieldWrap}>
+            <label style={labelStyle} htmlFor="open-mic-beat-download-url">Beat File URL (Download)*</label>
+            <Input id="open-mic-beat-download-url" value={form.beatDownloadUrl} onChange={(e) => { setField('beatDownloadUrl', e.target.value); setBeatNote(null); }} placeholder="/api/open-mic/beats/…" style={{ width: '100%' }} />
+            {fieldErrors.beatDownloadUrl && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.beatDownloadUrl}</p>}
+            {beatUrlProblem(form.beatDownloadUrl) === 'legacy' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                This beat was uploaded before the public-beat fix, so artists get an access error.
+                Upload the mp3 instead of pasting a URL.
+              </p>
+            ) : beatUrlProblem(form.beatDownloadUrl) === 'unplayable' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                The programme page cannot serve that address, so the beat will not play or download.
+                Upload the mp3 instead of pasting a URL.
+              </p>
+            ) : null}
+          </div>
+          <div style={fieldWrap}>
+            <label style={labelStyle} htmlFor="open-mic-beat-preview-url">Beat Preview URL (Optional)</label>
+            <Input id="open-mic-beat-preview-url" value={form.beatPreviewUrl} onChange={(e) => { setField('beatPreviewUrl', e.target.value); setBeatNote(null); }} placeholder="/api/open-mic/beats/…" style={{ width: '100%' }} />
+            {beatUrlProblem(form.beatPreviewUrl) === 'unplayable' ? (
+              <p style={{ color: colors.warning, fontSize: 12, margin: '4px 0 0' }}>
+                The player ignores a preview it cannot serve. Upload the mp3, or leave this empty to
+                play the download file.
+              </p>
+            ) : null}
+          </div>
+```
+
+Then give the nine fields below the same `id`/`htmlFor` pair. None of them is decorative:
+Step 1's cases 5 and 6 cannot reach the submit path without filling every one — `errors` (`:66-80`)
+blocks the POST on all nine (`:68-77`; State, City and Finale Venue Name are validated at `:74-76`
+even though only the first six labels carry a `*`) — and today a `<label>` sits next to its input with
+no association at all, so a screen reader announces an unlabelled control.
+The `id` on each control matches the label text below — add `htmlFor="<id>"` to that `<label>` and
+`id="<id>"` to the control beside it (`Input`, `textarea` at `:163`, or `select` at `:314`):
+
+| Line | Label | id |
+|---|---|---|
+| `:152` | Contest Title* | `open-mic-title` |
+| `:157` | Contest Slug* | `open-mic-slug` |
+| `:162` | Description* | `open-mic-description` |
+| `:173` | Month* | `open-mic-month` |
+| `:178` | Year* | `open-mic-year` |
+| `:232` | Official Beat Title* | `open-mic-beat-title` |
+| `:293` | Finale Venue Name | `open-mic-venue-name` |
+| `:313` | State | `open-mic-state` |
+| `:321` | City | `open-mic-city` |
+
+Leave every other control (Season, Status, fees, weights, Venue Type, Address, the checkboxes) alone —
+they are not in `errors` and adding ids they do not need is churn.
+
+- [ ] **Step 6: Run the tests and this app's gates**
+
+Run, in order, each separately so a failure names itself, and redirect to a file before checking the
+exit code (`cmd | tail; echo $?` reports `tail`'s status, not the command's):
+
+```bash
+cd /Users/paymax/Documents/spotlight/main/frontend-admin && npx vitest run tests/admin/openmic
+cd /Users/paymax/Documents/spotlight/main/frontend-admin && npm test
+cd /Users/paymax/Documents/spotlight/main/frontend-admin && npm run type-check
+```
+Expected: the two files give **6 passed** (`beat-upload.test.tsx`) and **4 passed**
+(`beat-upload-request.test.ts`). The whole suite is **already red before this task** — the controller's
+own run on `ef2b8b453` measured `Test Files 8 failed | 55 passed (63)` / `Tests 9 failed | 530 passed
+(539)`, and those nine failures are in analytics, restaurant onboarding, merchant onboarding, the
+sidebar, the dashboard, `adminSimulatedWrites` and `analyticsService`, none of which this task touches.
+**Compare failing test names, not counts** — the counts move with other sessions' uncommitted work in
+this shared worktree. A new openmic failure is a regression; anything else is not yours.
+
+Expect `Test timed out in 5000ms` on any case in `beat-upload.test.tsx` if the `}, 20_000)` budgets are
+missing: every case renders the whole contest form (~0.4 s per render, 2 s per case alone) and the
+parallel suite pushes that past the 5 s default — in a measured run **10 of the 13** app-wide failures
+were exactly this, across the sidebar, dashboard, crypto and restaurant specs. Keep the budget, and
+keep case 1 to a single `waitFor`: the download field can only hold the reader path after
+`uploadOpenMicBeat` resolves, and its `setField`/`setBeatNote` commits land together, so the rest of
+the case is synchronous. `src/components/layouts/AdminSidebar.test.tsx:58` is the in-app precedent for
+the timeout, not something to invent.
+
+`npm run lint` is `next lint`, which the installed Next 16.4.3 removed, and `npm run check:mock-flags`
+exits 1 for 42 flags this task did not add. Neither is a gate you can pass or should chase; say so in
+the report rather than reporting them green. `npm run type-check` excludes `**/*.test.tsx`
+(`tsconfig.json:41-45`), so it never sees either test file — do not claim it typed them; vitest's own
+transform is what compiles them.
+
+Then prove the browser path, because this task's whole claim is that a real upload survives the
+proxy. With frontend-web on :3000 and frontend-admin on :3001, both signed in as admin, open
+`/admin/open-mic/new`, choose a real mp3 and confirm: both URL fields fill with
+`/api/open-mic/beats/…`, no amber warning shows, the confirmation line is **green**, and
+`curl -o /dev/null -w '%{http_code}' <the absolute URL>` on the value answers 200. If you cannot sign
+in — the admin password is the operator's own and must not be guessed or reset — **stop and say so**;
+report the unauthenticated probe result instead of implying the upload ran. If the upload 415s, the
+proxy is not carrying the body after all — that is the finding, so report it rather than working
+around it.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git -C /Users/paymax/Documents/spotlight/main add frontend-admin/src/features/openmic/beat-url.ts \
+  frontend-admin/app/admin/open-mic/new/page.tsx \
+  frontend-admin/tests/admin/openmic/beat-upload.test.tsx \
+  frontend-admin/tests/admin/openmic/beat-upload-request.test.ts \
+  docs/superpowers/plans/2026-11-10-open-mic-competition-steps.md && \
+git -C /Users/paymax/Documents/spotlight/main commit -m "fix(admin): make the Open Mic beat guard stop an unplayable publish
+
+The console gained a picker but kept a Publish button that filed whatever was typed
+into the URL field, so an operator who read past one amber line still published an
+edition whose beat no artist could open. The submit now refuses it, the confirmation
+says so in its own colour, and the multipart request shape the upload depends on is
+pinned by a test that does not mock the service."
+```
+
+Stage exactly those paths, `add` and `commit` in one invocation with an explicit pathspec on the
+commit too, and never `git add -A` — other sessions commit in this worktree. Do not stage
+`frontend-admin/app/api/web-proxy/[...path]/route.ts`, its two untracked test files,
+`frontend-admin/.env.example` or `app/admin/academy/film/page.tsx`: another session owns those right
+now.
 
 ---
 
@@ -1826,12 +2548,17 @@ const get=(k)=>(env.match(new RegExp('^'+k+'=(.*)\$','m'))||[])[1];
 (async()=>{
 const {createClient}=await import('@supabase/supabase-js');
 const sb=createClient(get('NEXT_PUBLIC_SUPABASE_URL'),get('SUPABASE_SERVICE_ROLE_KEY'),{auth:{persistSession:false}});
-const {error}=await sb.from('competition_beats').upsert({
+// `insert`, not `upsert({onConflict:'competition_id'})`: the foundation migration
+// gives competition_beats only plain indexes on competition_id
+// (20260410190000_one_beat_one_verse_foundation.sql:111-115), no unique constraint,
+// so an id-conflict upsert is rejected outright. The shipped writer keys its upsert
+// on the PK instead (persistence.ts:848-859) — follow it if a row already exists.
+const {error}=await sb.from('competition_beats').insert({
   competition_id:'<contestId>',title:'Street Light (dev beat)',genre:'Hip Hop',
   producer_credit:'DJ Wole (dev)',preview_url:'<previewUrl from step 3>',
   download_url:'<downloadUrl from step 3>',rules_text:'Original bars only. No clear-text sample packs.',
   requires_enrollment:false,is_active:true,
-},{onConflict:'competition_id'});
+});
 console.log(error?error.message:'beat row written');
 })();"
 ```
@@ -1872,6 +2599,13 @@ Run: `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/open-mic/op
  * The point is that a step is either live or says it is not: no control here may
  * point at a route that 401s, and nothing may print a number the admin switched
  * off. Run with --workers=1 (one `next dev` cannot serve parallel projects).
+ *
+ * Two limits of this file, so a red run is read correctly. It is a local gate
+ * only — no CI workflow runs Playwright — and it runs against the fixture with
+ * both admin switches ON, so the switch-off branches of design H2 are gated by
+ * Task 5's unit tests (`showLeaderboard` / `showVoteCounts`), not here. And
+ * Task 7's fixture submission window closes 2026-11-24: after that this spec
+ * goes red on the calendar, not the code, so re-seed the fixture first.
  */
 import { expect, test } from '@playwright/test';
 
@@ -1882,10 +2616,29 @@ async function openStep(page: import('@playwright/test').Page, step: 1 | 2 | 3 |
   await page.goto(`${PAGE}#step-${step}`);
   const panel = page.locator(`#step-${step}`);
   await expect(panel).toBeVisible();
-  // The page's own hash handler opens the linked accordion once hydrated; click
-  // only if it has not, otherwise this would close what the feature just opened.
-  if (!(await panel.evaluate((el) => (el as HTMLDetailsElement).open))) {
-    await panel.locator('summary').click();
+  // Design F keeps the hash-to-accordion behaviour, so the page opens this step
+  // itself once hydrated — wait for that rather than clicking. The earlier
+  // "click only if it is not already open" helper is what failed: it read the
+  // flag and then clicked, and hydration landing in the gap between those two
+  // round trips made the click close what the feature had just opened, which is
+  // why #step-1 collapsed alongside #step-3 and #step-5. Polling also gates the
+  // behaviour itself — a hash handler that never opens anything now fails here
+  // instead of being quietly clicked open by the test.
+  await expect
+    .poll(() => panel.evaluate((el) => (el as HTMLDetailsElement).open), {
+      message: `#step-${step} must open from its own hash`,
+    })
+    .toBe(true);
+  if (step !== 1) {
+    // The other side of the same contract: SSR ships #step-1 open, so only the
+    // hash handler opening this panel can close it. Asserting it pins the
+    // exclusive accordion itself — a page that lost the `name` grouping would
+    // still pass the check above.
+    await expect
+      .poll(() => page.locator('#step-1').evaluate((el) => (el as HTMLDetailsElement).open), {
+        message: '#step-1 must close when the hash opens a later step',
+      })
+      .toBe(false);
   }
   return panel;
 }
@@ -1923,8 +2676,34 @@ test('step 04 is honest when nobody is signed in', async ({ page }) => {
 
 test('step 05 shows the top five with counts and a way to vote', async ({ page }) => {
   const panel = await openStep(page, 5);
-  await expect(panel.locator('li[data-rank]')).toHaveCount(5);
-  await expect(panel.locator('li[data-rank="1"]')).toContainText('Adaeze Okonkwo');
+  const rows = panel.locator('li[data-rank]');
+  await expect(rows).toHaveCount(5);
+  // Task 7's fixture board in rank order, pinned row by row. The vote count is
+  // the requirement, not decoration — a board that names who is winning without
+  // their votes has not answered step #05 — and pinning every row rather than
+  // the two ends is what catches a board that repeats or shifts a middle value.
+  // The word boundaries stop a padded 4120 from passing for 412. Each slug is
+  // `slugifyArtist(stageName)`; every artist page answers 200 to an anonymous
+  // reader and hosts the vote modal, so the row CTA lands where that one
+  // artist's vote can actually be cast. Five links to one board would not be a
+  // CTA "per each contestant" — design row #05, ruling 8-B.
+  const standings = [
+    { name: 'Adaeze Okonkwo', votes: /\b412\b/, slug: 'adaeze-okonkwo' },
+    { name: 'Bello Miracle', votes: /\b388\b/, slug: 'bello-miracle' },
+    { name: 'Tunde Signals', votes: /\b251\b/, slug: 'tunde-signals' },
+    { name: 'K1ng$hoota', votes: /\b190\b/, slug: 'k1nghoota' },
+    { name: 'Zabbymoney', votes: /\b96\b/, slug: 'zabbymoney' },
+  ];
+  await expect(rows.getByRole('link', { name: /^vote$/i })).toHaveCount(5);
+  for (const [index, row] of standings.entries()) {
+    const line = rows.nth(index);
+    await expect(line).toContainText(row.name);
+    await expect(line).toContainText(row.votes);
+    await expect(line.getByRole('link', { name: /^vote$/i })).toHaveAttribute(
+      'href',
+      `/open-mic/${SLUG}/entry/${row.slug}`,
+    );
+  }
   await expect(panel.getByRole('link', { name: /vote now/i })).toHaveAttribute('href', `/open-mic/${SLUG}/entries`);
 });
 
@@ -1959,7 +2738,7 @@ disposition, no ranked board."
 - Create: `frontend-web/components/openmic/competition/edition-steps.module.css`
 
 **Interfaces:**
-- Consumes: Task 5's `OpenMicEditionStepsData`, including that `data.board` is `null` when the board could not be read, `{rows: [], …}` when the edition has no entries yet, and otherwise already cut to five in the store's standing order — the four render branches at step #05 map those three facts plus "standings hidden" one-to-one, and no branch may print a number for a `null` board. `rank` is the store's composite standing (judges + votes), so nothing here may call it "most voted". Task 1's `publicBeatUrl` (already applied server-side — this component never re-derives availability); `createClient` from `@/lib/supabase/client` for the signed-in entry lookup; `slugifyArtist` from `@/src/features/openmic/workflow`; `GET /api/open-mic/submissions?contestId=<id>` (bearer, already filtered to `user.id`).
+- Consumes: Task 5's `OpenMicEditionStepsData`, including that `data.board` is `null` when the board could not be read, `{rows: [], …}` when the edition has no entries yet, and otherwise already cut to five in the store's standing order — the four render branches at step #05 map those three facts plus "standings hidden" one-to-one, and no branch may print a number for a `null` board. `rank` is the store's composite standing (judges + votes), so nothing here may call it "most voted". Since Task 9b it also carries `registrationState`/`submissionState`/`votingState`, resolved by the server read against one instant: this component displays those and must never compute a window from the clock itself. Task 1's `publicBeatUrl` (already applied server-side — this component never re-derives availability); `createClient` from `@/lib/supabase/client` for the signed-in entry lookup; `slugifyArtist` from `@/src/features/openmic/workflow`; `GET /api/open-mic/submissions?contestId=<id>` (bearer, already filtered to `user.id`).
 - Produces: `OpenMicEditionSteps({ data })`, a client component rendering `<section id="route">` with `#step-1…#step-5`. Task 10 renders it from the view.
 
 - [ ] **Step 1: Write the styles for what today's CSS has no rule for**
@@ -1972,6 +2751,7 @@ Create `frontend-web/components/openmic/competition/edition-steps.module.css`. T
 .stepState b { font-weight: 700; }
 .windowOpen { color: #1f7a3d; }
 .windowClosed { color: #8a3b12; }
+.windowUnknown { color: #4d4a45; }
 
 .beatPlayer { margin: 16px 0 12px; }
 .beatPlayer audio { width: 100%; }
@@ -2005,7 +2785,7 @@ Create `frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx`:
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import type { OpenMicEditionStepsData } from '@/src/features/openmic/active-edition';
+import type { OpenMicEditionStepsData, WindowState } from '@/src/features/openmic/active-edition';
 import { slugifyArtist } from '@/src/features/openmic/workflow';
 import styles from './edition-steps.module.css';
 
@@ -2025,31 +2805,36 @@ const STEPS = [
 
 const MAX_MP3_MB = 50;
 
-type WindowState = 'open' | 'not-started' | 'closed' | 'unknown';
-
-function windowState(start: string | null, end: string | null, now: number): WindowState {
-  const from = start ? Date.parse(start) : Number.NaN;
-  const to = end ? Date.parse(end) : Number.NaN;
-  if (!Number.isFinite(from) && !Number.isFinite(to)) return 'unknown';
-  if (Number.isFinite(from) && now < from) return 'not-started';
-  if (Number.isFinite(to) && now > to) return 'closed';
-  return 'open';
-}
+// Every number and date here is server-rendered HTML, so the formatting locale
+// cannot be the visitor's: a German browser renders `1500` as `1.500` against
+// the server's `1,500` and React reports a text mismatch at hydration.
+const LOCALE = 'en-GB';
 
 const shortDate = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'TBC';
+  iso ? new Date(iso).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short', year: 'numeric' }) : 'TBC';
 
+/** Which side of a window the clock is on is decided by the server read
+ *  (Task 9b) — this component displays the answer and never computes it,
+ *  because reading the clock in the body pre-renders one answer and hydrates
+ *  another. */
 function WindowLine({ label, start, end, state }: { label: string; start: string | null; end: string | null; state: WindowState }) {
   return (
     <p className={styles.stepState}>
       <b>{label}</b>
       <span>{shortDate(start)} → {shortDate(end)}</span>
-      <span className={state === 'open' ? styles.windowOpen : styles.windowClosed}>
+      {/* `unknown` is unset dates, not a closed window — the rust colour would
+          contradict the words next to it. */}
+      <span className={state === 'open' ? styles.windowOpen : state === 'unknown' ? styles.windowUnknown : styles.windowClosed}>
         {state === 'open' ? '· open now' : state === 'not-started' ? '· opens later' : state === 'closed' ? '· closed' : '· dates to be confirmed'}
       </span>
     </p>
   );
 }
+
+/** The shape `/api/open-mic/submissions` answers with, as far as step 04 needs
+ *  it. Every field optional: this is a network payload, and a server that stops
+ *  naming one must not print `undefined` into an artist's own entry line. */
+type OwnEntryRow = { status?: string; stageName?: string; songTitle?: string; voteCount?: number };
 
 /** Step 04 is the only one the server cannot answer: whose entry it is depends
  *  on who is signed in. */
@@ -2060,21 +2845,22 @@ function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: 
   useEffect(() => {
     let active = true;
     void (async () => {
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        if (active) setChecked(true);
-        return;
-      }
       try {
+        // Inside the try: a throw here used to strand this step on "Checking
+        // your entries…" forever, because `finally` was never reached.
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
         const res = await fetch(`/api/open-mic/submissions?contestId=${encodeURIComponent(contestId)}`, {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
-        const payload = (await res.json().catch(() => null)) as { submissions?: any[] } | null;
+        const payload = (await res.json().catch(() => null)) as { submissions?: OwnEntryRow[] } | null;
         const live = (payload?.submissions ?? []).find((row) =>
           ['published_for_voting', 'live_for_voting', 'finalist', 'winner'].includes(String(row.status))
         );
-        if (active && live) setEntry({ stageName: live.stageName, songTitle: live.songTitle, voteCount: Number(live.voteCount || 0) });
+        if (active && live?.stageName) {
+          setEntry({ stageName: live.stageName, songTitle: live.songTitle ?? '', voteCount: Number(live.voteCount || 0) });
+        }
       } finally {
         if (active) setChecked(true);
       }
@@ -2097,7 +2883,7 @@ function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: 
   const url = typeof window === 'undefined' ? path : `${window.location.origin}${path}`;
   return (
     <>
-      <p className={styles.tally}>Your entry: <strong>{entry.stageName}</strong> — “{entry.songTitle}” · {entry.voteCount.toLocaleString()} votes so far</p>
+      <p className={styles.tally}>Your entry: <strong>{entry.stageName}</strong>{entry.songTitle ? ` — “${entry.songTitle}”` : ''} · {entry.voteCount.toLocaleString(LOCALE)} votes so far</p>
       <code className={styles.entryLink}>{url}</code>
       <div className="openMic-actions">
         <Link className="openMic-button openMic-buttonOutline" href={path}>Open your entry page <span aria-hidden="true">→</span></Link>
@@ -2108,7 +2894,6 @@ function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: 
 
 export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStepsData | null }) {
   const [activeStage, setActiveStage] = useState<string | null>('step-1');
-  const now = Date.now();
 
   useEffect(() => {
     function openLinkedStage() {
@@ -2122,9 +2907,6 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
     return () => window.removeEventListener('hashchange', openLinkedStage);
   }, []);
 
-  const registration = windowState(data?.registrationStartAt ?? null, data?.registrationEndAt ?? null, now);
-  const submission = windowState(data?.submissionStartAt ?? null, data?.submissionEndAt ?? null, now);
-  const voting = windowState(data?.votingStartAt ?? null, data?.votingEndAt ?? null, now);
   const beat = data?.beat ?? null;
   const board = data?.board ?? null;
 
@@ -2166,10 +2948,10 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                 {index === 0 && (
                   data ? (
                     <>
-                      <WindowLine label="Registration" start={data.registrationStartAt} end={data.registrationEndAt} state={registration} />
+                      <WindowLine label="Registration" start={data.registrationStartAt} end={data.registrationEndAt} state={data.registrationState} />
                       <p className={styles.tally}>
                         {data.entryFeeRequired
-                          ? `Registration fee: ₦${data.registrationFeeNgn.toLocaleString()}.`
+                          ? `Registration fee: ₦${data.registrationFeeNgn.toLocaleString(LOCALE)}.`
                           : 'Registration for this edition is free.'}
                       </p>
                       <div className="openMic-actions">
@@ -2198,7 +2980,16 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                         {beat.usageRules ? ` — ${beat.usageRules}` : ''}
                       </p>
                       {beat.requiresPaidEntry ? (
-                        <p className={styles.note}>The file unlocks once your entry fee is paid — register first, then download.</p>
+                        /* Design's error-handling bullet: in this arm step 02's
+                           CTA is the apply page, never a download. */
+                        <>
+                          <p className={styles.note}>The file unlocks once your entry fee is paid — register first, then download.</p>
+                          {data ? (
+                            <div className="openMic-actions">
+                              <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/apply`}>Register to unlock the beat <span aria-hidden="true">→</span></Link>
+                            </div>
+                          ) : null}
+                        </>
                       ) : beat.downloadable && beat.downloadUrl ? (
                         <div className="openMic-actions">
                           <a className="openMic-button openMic-buttonOutline" href={beat.downloadUrl} download={`${slugifyArtist(beat.title) || 'spotlight-beat'}.mp3`}>Download beat <span aria-hidden="true">↓</span></a>
@@ -2215,14 +3006,14 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                 {index === 2 && (
                   data ? (
                     <>
-                      <WindowLine label="Submission window" start={data.submissionStartAt} end={data.submissionEndAt} state={submission} />
+                      <WindowLine label="Submission window" start={data.submissionStartAt} end={data.submissionEndAt} state={data.submissionState} />
                       <p className={styles.tally}>Format: MP3 up to {MAX_MP3_MB}MB, recorded over this edition’s beat.</p>
                       <div className="openMic-actions">
                         <Link
                           className="openMic-button openMic-buttonPrimary"
-                          href={submission === 'open' ? `/open-mic/${data.slug}/enter` : `/open-mic/${data.slug}/entries`}
+                          href={data.submissionState === 'open' ? `/open-mic/${data.slug}/enter` : `/open-mic/${data.slug}/entries`}
                         >
-                          {submission === 'open' ? 'Submit your song' : 'See the live entries'} <span aria-hidden="true">→</span>
+                          {data.submissionState === 'open' ? 'Submit your song' : 'See the live entries'} <span aria-hidden="true">→</span>
                         </Link>
                       </div>
                     </>
@@ -2236,7 +3027,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                 {index === 4 && (
                   data ? (
                     <>
-                      <WindowLine label="Voting window" start={data.votingStartAt} end={data.votingEndAt} state={voting} />
+                      <WindowLine label="Voting window" start={data.votingStartAt} end={data.votingEndAt} state={data.votingState} />
                       {!data.showLeaderboard ? (
                         <p className={styles.note}>This edition keeps its standings private until the results are announced.</p>
                       ) : !board ? (
@@ -2247,19 +3038,27 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                         <>
                           <p className={styles.tally}>
                             {board.entryCount} {board.entryCount === 1 ? 'entry' : 'entries'} on the board
-                            {data.showVoteCounts ? ` · ${board.totalVotes.toLocaleString()} votes counted` : ''}
+                            {board.totalVotes !== null ? ` · ${board.totalVotes.toLocaleString(LOCALE)} votes counted` : ''}
                           </p>
+                          {/* Keyed on rank, not artistSlug alone: the slug is a
+                              slug of a non-unique stage name (design: `K1ng$hoota`
+                              → `k1nghoota`) and this projection carries no row id. */}
                           <ol className={styles.board}>
                             {board.rows.map((row) => (
-                              <li key={row.artistSlug} data-rank={row.rank}>
-                                <span className={styles.rank}>{row.rank}</span>
+                              /* Cells are separated with a space, not only by the grid:
+                                 JSX drops the whitespace between adjacent elements, so
+                                 without it the row's text reads "…Street Light412 votes"
+                                 and no word boundary exists around the count — a copy of
+                                 the board that only the stylesheet can parse. */
+                              <li key={`${row.rank}-${row.artistSlug}`} data-rank={row.rank}>
+                                <span className={styles.rank}>{row.rank}</span>{' '}
                                 <span className={styles.who}>
-                                  <strong>{row.stageName}</strong>
+                                  <strong>{row.stageName}</strong>{' '}
                                   <span>{row.songTitle}</span>
-                                </span>
-                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString()} votes` : '—'}</span>
+                                </span>{' '}
+                                <span className={styles.votes}>{row.voteCount !== null ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
                                 <span className={styles.link}>
-                                  <Link href={`/open-mic/${data.slug}/entry/${row.artistSlug}`}>Hear it and vote</Link>
+                                  <Link href={`/open-mic/${data.slug}/entry/${row.artistSlug}`}>Vote</Link>
                                 </span>
                               </li>
                             ))}
@@ -2269,9 +3068,14 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                           </div>
                         </>
                       )}
-                      <div className="openMic-actions">
-                        <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
-                      </div>
+                      {/* Gated on the same switch as the board itself: a hand-off
+                          to the full standings would refute the "standings private"
+                          note two lines above it. */}
+                      {data.showLeaderboard && (
+                        <div className="openMic-actions">
+                          <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <p className={styles.note}>Standings appear here while an edition is running.</p>
@@ -2308,6 +3112,263 @@ rather than a control that would fail."
 
 ---
 
+### Task 9b: Resolve the window states on the server
+
+Task 9 review finding M-1, ruled out of Task 9's two-file boundary and into its
+own change. The component computed `registration`/`submission`/`voting` from
+`const now = Date.now()` **during render**, which is the one thing a server
+pre-rendered page may not do: the HTML the server writes is produced at request
+time and the first client render at hydration time, and any clock crossing
+between those two — a submission window that closes mid-request, or a page
+rendered just before midnight — makes React's tree disagree with the DOM.
+React 19 patches the text, so today the symptom is a console warning rather
+than a broken page; the state of step #03's CTA (`/enter` versus `/entries`) is
+the part that would actually be wrong, and `persistence.ts:1251-1258` refuses a
+submission outside the window, so an artist clicking the stale-open link is
+honestly turned away. Fixed anyway, and fixed here: the same class of bug is
+what Task 10's browser pass would surface as a hydration error, and the repair
+belongs to the read, not the render.
+
+**Files:**
+- Modify: `frontend-web/src/features/openmic/active-edition.ts` (type + builder)
+- Modify: `frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx` (consume, do not compute)
+- Test: `frontend-web/tests/unit/openmic/edition-steps-data.spec.ts`
+
+**Interfaces:**
+- Consumes: Task 5's `at()` normalisation and `buildOpenMicEditionStepsData(contest, board)` signature — unchanged.
+- Produces: `WindowState` and `windowState(start, end, now)` exported from `active-edition.ts`, and three new `WindowState` fields on `OpenMicEditionStepsData`: `registrationState`, `submissionState`, `votingState`. Task 9's `WindowLine` keeps its `state` prop but takes the type from the features module; Task 10's mount is untouched.
+
+- [ ] **Step 1: Write the failing builder tests**
+
+Append to `frontend-web/tests/unit/openmic/edition-steps-data.spec.ts`, and add
+`afterEach` to the existing `vitest` import at the top of the file:
+
+```ts
+describe('the three window states, resolved by the read', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // START/END span November 2026. The clock is pinned rather than trusted: a
+  // test that read the real one would go red on 1 December and teach nobody
+  // anything about this code.
+  it('is open while now sits inside the window', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T12:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest(), []);
+    expect(data.registrationState).toBe('open');
+    expect(data.submissionState).toBe('open');
+    expect(data.votingState).toBe('open');
+  });
+
+  it('is not-started before the window opens and closed after it ends', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-20T00:00:00.000Z'));
+    expect(buildOpenMicEditionStepsData(contest(), []).registrationState).toBe('not-started');
+    vi.setSystemTime(new Date('2026-12-05T00:00:00.000Z'));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('closed');
+  });
+
+  it('is unknown when neither end of the window is set', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(
+      contest({ registrationStartAt: undefined, registrationEndAt: undefined }),
+      [],
+    );
+    // `unknown` must not collapse into `closed`: the copy for unset dates says
+    // "to be confirmed", and the closed styling would contradict it.
+    expect(data.registrationState).toBe('unknown');
+    expect(data.registrationEndAt).toBeNull();
+  });
+
+  it('still reports open when only one end of the window is set', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest({ registrationEndAt: undefined }), []);
+    expect(data.registrationStartAt).toBe(START);
+    expect(data.registrationState).toBe('open');
+  });
+
+  it('is serialisable, because the client must not recompute any of it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest(), []);
+    expect(JSON.parse(JSON.stringify(data))).toStrictEqual(data);
+  });
+
+  // The three state fields are the same type computed from the same three
+  // arguments, so a builder that wires submission's result into
+  // `registrationState` still passes every single-window test above. Only one
+  // test with three *different* answers can tell the difference — and it has to
+  // pin one instant, so the three windows are read against the same clock.
+  it('labels each window from its own dates, never a neighbour', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(
+      contest({
+        registrationStartAt: '2026-09-01T00:00:00.000Z',
+        registrationEndAt: '2026-09-30T23:59:59.000Z',
+        // Submission stays on START/END (November) — open at this instant.
+        votingConfig: {
+          ...contest().votingConfig,
+          votingStartAt: '2026-12-01T00:00:00.000Z',
+          votingEndAt: '2026-12-31T23:59:59.000Z',
+        },
+      }),
+      [],
+    );
+    expect(data.registrationState).toBe('closed');
+    expect(data.submissionState).toBe('open');
+    expect(data.votingState).toBe('not-started');
+  });
+
+  // Inclusive at both ends, because that is what the store does when it decides
+  // whether to accept a submission (`persistence.ts:76-77` compares with
+  // `>=`/`<=`). A page that says "closed" an hour before the deadline would
+  // point artists away from a form that still takes them.
+  it('is inclusive at both ends of the window, which is what the store does', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(START));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('open');
+    vi.setSystemTime(new Date(END));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('open');
+    vi.setSystemTime(new Date(Date.parse(END) + 1));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('closed');
+    vi.setSystemTime(new Date(Date.parse(START) - 1));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('not-started');
+  });
+});
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic/edition-steps-data.spec.ts`
+Expected: FAIL — **6 failed / 16 passed (22 total)**. Six, because the seventh new test (`is serialisable`) asserts nothing about the new fields and passes before and after; the 15 pre-existing tests in the other `describe` blocks must still pass. `data.registrationState` reads as `undefined` (`received: undefined`) — the fields do not exist yet.
+
+- [ ] **Step 3: Move the arithmetic into the read**
+
+In `frontend-web/src/features/openmic/active-edition.ts`, add above `OpenMicEditionStepsData`:
+
+```ts
+/** Which side of a window the clock is on. A plain string union because this
+ *  crosses the server/client boundary: the alternative was a client working it
+ *  out during render, which pre-renders one answer and hydrates another. */
+export type WindowState = 'open' | 'not-started' | 'closed' | 'unknown';
+
+export function windowState(start: string | null, end: string | null, now: number): WindowState {
+  const from = start ? Date.parse(start) : Number.NaN;
+  const to = end ? Date.parse(end) : Number.NaN;
+  if (!Number.isFinite(from) && !Number.isFinite(to)) return 'unknown';
+  if (Number.isFinite(from) && now < from) return 'not-started';
+  if (Number.isFinite(to) && now > to) return 'closed';
+  return 'open';
+}
+```
+
+In `OpenMicEditionStepsData`, add `registrationState: WindowState;` directly after `registrationEndAt`, `submissionState: WindowState;` after `submissionEndAt`, and `votingState: WindowState;` after `votingEndAt`.
+
+In `buildOpenMicEditionStepsData`, hoist the six `at(...)` calls into locals and
+resolve once against the server clock, so the returned object and the state
+fields can never disagree:
+
+```ts
+  const registrationStartAt = at(contest.registrationStartAt);
+  const registrationEndAt = at(contest.registrationEndAt);
+  const submissionStartAt = at(contest.submissionStartAt);
+  const submissionEndAt = at(contest.submissionEndAt);
+  const votingStartAt = at(contest.votingConfig?.votingStartAt);
+  const votingEndAt = at(contest.votingConfig?.votingEndAt);
+  // One instant for all three windows: two `Date.now()` calls could straddle a
+  // boundary and report the same window twice.
+  const now = Date.now();
+```
+
+and in the returned object replace the six inline `at(...)` entries with those
+locals plus:
+
+```ts
+    registrationState: windowState(registrationStartAt, registrationEndAt, now),
+    submissionState: windowState(submissionStartAt, submissionEndAt, now),
+    votingState: windowState(votingStartAt, votingEndAt, now),
+```
+
+- [ ] **Step 4: Run the unit tests to verify they pass**
+
+Run: `cd /Users/paymax/Documents/spotlight/main/frontend-web && npx vitest run tests/unit/openmic/edition-steps-data.spec.ts`
+Expected: all PASS — **22 in this file, 7 in the window-state `describe`** — including the pre-existing blocks.
+
+- [ ] **Step 5: Make the component read the answer instead of doing the maths**
+
+In `frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx`:
+
+- Delete the local `type WindowState = …` line and the whole local `function windowState(…)`.
+- Import the type instead: `import type { OpenMicEditionStepsData, WindowState } from '@/src/features/openmic/active-edition';` (a type-only import — the module pulls in server persistence and must never enter the client graph as a value).
+- Delete `const now = Date.now();` and the three `const registration/submission/voting = windowState(…)` lines.
+- Pass the resolved fields straight through at each `WindowLine`: `state={data.registrationState}`, `state={data.submissionState}`, `state={data.votingState}` (each is already inside a `data ? …` arm, so no new guard appears).
+- Step #03's CTA decides on the field: `href={data.submissionState === 'open' ? \`/open-mic/${data.slug}/enter\` : \`/open-mic/${data.slug}/entries\`}` and the same field in the label ternary (`{data.submissionState === 'open' ? 'Submit your song' : 'See the live entries'}`).
+- Every number the block prints is server-rendered HTML, so its formatting locale cannot be the host's either: a German visitor's browser renders `1500` as `1.500` against the server's `1,500` and React reports a text mismatch — the same hydration class as the window bug this task exists to kill. Declare `const LOCALE = 'en-GB';` beside `MAX_MP3_MB`, use it in `shortDate`, and pass it at all four numeric sites (`entry.voteCount.toLocaleString(LOCALE)`, `data.registrationFeeNgn.toLocaleString(LOCALE)`, `board.totalVotes.toLocaleString(LOCALE)`, `row.voteCount.toLocaleString(LOCALE)`).
+
+- [ ] **Step 6: Compile, lint, and confirm nothing else moved**
+
+```bash
+cd /Users/paymax/Documents/spotlight/main/frontend-web && npx tsc --noEmit > /tmp/tsc-9b.txt 2>&1; echo "tsc exit=$?"
+npx eslint components/openmic/competition src/features/openmic/active-edition.ts > /tmp/lint-9b.txt 2>&1; echo "lint exit=$?"
+npx vitest run tests/unit/openmic > /tmp/vitest-9b.txt 2>&1; echo "vitest exit=$?"
+```
+Expected: all three exit 0. `grep -c "Date.now()" components/openmic/competition/OpenMicEditionSteps.tsx` must be **0** — that is the whole point of the task, and it counts the whole file, comments included: the phrase may not appear even in prose explaining the bug, so the gate stays a plain grep rather than a judgement about which matches are code. `grep -c "toLocaleString()" components/openmic/competition/OpenMicEditionSteps.tsx` must also be **0** (every numeric render pins `LOCALE`). `npx vitest run tests/unit/openmic` is **36 passed**. The acceptance e2e stays red (5 failed / 0 passed) until Task 10 mounts the component; do not touch `tests/e2e/openmic/competition-steps.spec.ts`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git -C /Users/paymax/Documents/spotlight/main add frontend-web/src/features/openmic/active-edition.ts \
+  frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx \
+  frontend-web/tests/unit/openmic/edition-steps-data.spec.ts
+git -C /Users/paymax/Documents/spotlight/main commit -m "fix(open-mic): resolve the competition windows on the server, not during render
+
+The steps block called Date.now() in the body, so a page whose window crossed a
+boundary between the request and hydration rendered one answer into the server
+HTML and another on the client — React 19 patches the text, but the step 03 CTA
+it decides (/enter or /entries) is the part that would be wrong."
+```
+
+- [ ] **Step 8: Fix round, ruled after the task review**
+
+The review returned PASS/APPROVED with nothing load-bearing, and three surviving
+mutants worth closing here. The tree at `dfe925ad6` already has Steps 3-7; apply
+exactly these two deltas, no others:
+
+1. **The two tests Step 1 lists but the tree does not have** — `labels each
+   window from its own dates, never a neighbour` and `is inclusive at both ends
+   of the window, which is what the store does`. Append them inside the existing
+   `describe('the three window states, resolved by the read', …)` and nothing
+   else. They pass against the shipped builder; if either goes red, the builder
+   is wrong, not the test.
+2. **The `LOCALE` pinning Step 5 lists but the tree does not have** — one
+   constant, four numeric sites, `shortDate` included.
+
+Deliberately **not** asked for: a test that all three fields resolve from a
+single `Date.now()`. With a frozen fake clock every call returns the same
+instant, so per-field `Date.now()` cannot be observed to differ — a test that
+cannot fail is a defect, and the invariant stays comment-guarded in
+`active-edition.ts:127-129`.
+
+Redo the Step 6 gate, then commit once:
+
+```bash
+git -C /Users/paymax/Documents/spotlight/main add frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx \
+  frontend-web/tests/unit/openmic/edition-steps-data.spec.ts
+git -C /Users/paymax/Documents/spotlight/main commit -m "test(open-mic): pin the window-state fields to their own dates and each number to one locale
+
+Field cross-wiring was invisible: three fields of one type from three argument
+pairs, all November in the fixture, so any permutation passed. Only three
+different windows at one instant can tell them apart. The numeric renders join
+shortDate in pinning en-GB for the same reason the window state moved
+server-side — the browser must not get to disagree with the HTML."
+```
+
+---
+
 ### Task 10: Mount the steps — server read, client shell
 
 **Files:**
@@ -2326,7 +3387,7 @@ cd /Users/paymax/Documents/spotlight/main && git status --porcelain -- frontend-
 
 If `page.tsx` is still listed as modified — it carries another session's uncommitted lounge-application feature (~231 insertions plus the untracked `app/api/open-mic/lounge-applications/`): **STOP this task and report it.** Relocating their uncommitted code into a new file and committing it under this plan's message would rewrite someone else's in-flight work. Task 9 is already merged and the rest of the plan still stands; only the mount waits.
 
-Proceed only when that path is clean (their work landed), and re-read the file first — the line numbers below are from the working tree at the time of writing (835 lines) and will have moved.
+Proceed only when that path is clean (their work landed), and re-read the file first — the line numbers below are from the tree after the lounge-application feature landed (`b15194215`, `a5c31b2b1`; the page is 830 lines) and will move again if that page changes under this plan.
 
 - [ ] **Step 2: Move the markup to the client shell**
 
@@ -2334,7 +3395,7 @@ Copy the current `page.tsx` to `frontend-web/components/openmic/competition/Open
 
 1. Drop `import './open-mic.css';` (the route folder's CSS is imported by the server page now, so the shell has no relative path to it).
 2. Delete the `stages` const (the five prose objects, currently lines 12-43) — `OpenMicEditionSteps` owns that copy now.
-3. Change the default export to take the data and forward it, and replace the whole `<section … id="route">…</section>` block (currently lines 676-715) with the new component:
+3. Change the default export to take the data and forward it, and replace the whole `<section … id="route">…</section>` block (`:673-712`) with the new component:
 
 ```tsx
 import OpenMicEditionSteps from './OpenMicEditionSteps';
@@ -2349,7 +3410,7 @@ export default function OpenMicCompetitionView({ data }: Props) {
         <OpenMicEditionSteps data={data} />
    ```
 
-4. Repoint the closing "Go to voting" CTA (currently line 818, `href="/voting"` — `/voting` is the STEM plane and has nothing to do with Open Mic):
+4. Repoint the closing "Go to voting" CTA (`:813`, `href="/voting"` — `/voting` is the STEM plane and has nothing to do with Open Mic):
 
 ```tsx
               <a className="openMic-button openMic-buttonOutline" href={data ? `/open-mic/${data.slug}/entries` : '/open-mic'}>
@@ -2357,7 +3418,9 @@ export default function OpenMicCompetitionView({ data }: Props) {
               </a>
 ```
 
-The `useState`/`useEffect` hash-open logic and `activeStage` now live in `OpenMicEditionSteps`; remove the now-unused copies from the shell (currently lines 587-600) so lint does not flag them, and drop `useEffect` from the shell's React import if nothing else uses it.
+The `useState`/`useEffect` hash-open logic and `activeStage` now live in `OpenMicEditionSteps`; remove the now-unused copies from the shell (`:587` is `activeStage`, the `useEffect` spans `:589-600`) so lint does not flag them, and drop `useEffect` from the shell's React import — `:5` is its only occurrence in the file, so it must go.
+
+The shell is not the only file Task 10 ends up touching. `OpenMicEditionSteps` laid its board cells side by side with nothing between them, and JSX drops the whitespace between adjacent elements, so a row's text read `…Street Light412 votesVote`: the acceptance spec's `\b412\b` could never match, and only the stylesheet could parse the copy. Put `{' '}` between the row's cells, with the comment that says why — the frozen spec is not the thing that is wrong here. The separators are layout-neutral: a whitespace-only run inside a grid container is a non-rendered anonymous grid item (`edition-steps.module.css:13` makes the `<li>` a grid), and the cells inside `.who` are block boxes, whose inter-element whitespace was never rendered either.
 
 - [ ] **Step 3: Rewrite the page as the server read**
 
@@ -2428,31 +3491,294 @@ test files outside every CI lane's lint step.
 
 - [ ] **Step 2: Production build into a scratch dir (never clobber the shared dev `.next`)**
 
-`next.config.js:39` already reads `distDir: process.env.DIST_DIR || '.next'`, so this is the exact switch — no config edit:
+`next.config.mjs:39` already reads `distDir: process.env.DIST_DIR || '.next'`, so this is the exact switch — no config edit:
 
 ```bash
 cd /Users/paymax/Documents/spotlight/main/frontend-web && \
-DIST_DIR=$(mktemp -d) NODE_OPTIONS=--max-old-space-size=8192 npm run build; echo "build exit: $?"
+DIST_DIR=.next-verify-task11 NODE_OPTIONS=--max-old-space-size=8192 npm run build; echo "build exit: $?"
 ```
 Expected: `build exit: 0`, and the running dev server's `.next` untouched. If the build dies with a heap exit (code 134) that is the memory ceiling, not a type error: raise `--max-old-space-size` and re-run — and report which run produced the green.
 
-- [ ] **Step 3: Confirm the committed tree is exactly this session's work**
+`$(mktemp -d)` cannot work here: Next rejects a distDir outside the project (`InvalidDistDirError`), so the scratch dir has to live inside the app. It is **not** ignored at this commit — `git show HEAD:.gitignore` has no `.next-verify*` or `.next-e2e*` rule (one exists only as another session's uncommitted edit, and does not cover the `.next-e2e*` name), so a scratch dir left behind is ~170–780MB of untracked noise for every other session in this shared worktree. Keep the name under `.next-verify*` and delete the directory when the build has reported.
+
+- [ ] **Step 3: Run the acceptance gate serially, both projects, and repeat it**
+
+```bash
+cd /Users/paymax/Documents/spotlight/main/frontend-web && \
+E2E_BASE_URL=http://localhost:3111 npx playwright test tests/e2e/openmic/competition-steps.spec.ts \
+  --workers=1 --project=chromium-desktop --repeat-each=3; echo "desktop exit: $?"
+E2E_BASE_URL=http://localhost:3111 npx playwright test tests/e2e/openmic/competition-steps.spec.ts \
+  --workers=1 --project=mobile-chrome --repeat-each=3; echo "mobile exit: $?"
+```
+Expected: `15 passed` each, exit 0.
+
+Why the repeat: `openStep()` used to read `details.open` and click `summary` when it read false. Those are two CDP round trips, and the page's own hash handler (`OpenMicEditionSteps.tsx:116-126`) can land in the gap — then the click *closes* what the feature just opened. The exclusive accordion proves which order happened: in the red runs `#step-1` was collapsed too, and only the hash handler closes it. Three repeats per project is what distinguishes "fixed" from "lost the coin flip this time".
+
+A red here is not automatically a product bug. The shared dev server on `:3000` can wedge while still holding the port (`lsof` shows a listener, `curl` returns `000` past 60s on every route, including `/`); that is an environment failure, not a gate failure. Never restart someone else's `:3000` — bring up a private server on another port with its own `DIST_DIR` and point the run at it with `E2E_BASE_URL` (which also disables Playwright's `webServer`, `playwright.config.mjs:28-30`).
+
+- [ ] **Step 4: Confirm the committed tree is exactly this session's work**
 
 ```bash
 cd /Users/paymax/Documents/spotlight/main && git status --porcelain | grep -v "^??" | head -20 && git log --oneline -8
 ```
 Expected: the other sessions' files (`app/apply/[slug]/page.js`, `app/service-details/film-academy/*`, `components/layout/Menu.js`, `src/styles/tailwind.css`, `tests/unit/utility/*`, and either `page.js`'s deletion or the lounge files) still show as they did before this plan started, and the eight-or-so commits above are only this plan's paths.
 
-- [ ] **Step 4: Report, then ask before pushing**
+- [ ] **Step 5: Report, then ask before pushing**
 
 State: what went green and how it was proven; the dev-only rows and beat file left behind in Task 7 (and that nothing was written to production); that `tests/unit/openmic` + `tests/unit/media` are not in a CI lane and offer that as a follow-up; and the four pre-existing bugs the spec names (drawer `.mean-nav` off-panel at 390px, `src/components/Header.tsx:33` → `/contestant-leaderboard` with no route, Footer2 dark-on-dark links, `components/sections/Service3.js:16` → the `/service` page pending deletion under task #127). Do not push without the user's go-ahead.
 
 ---
 
+### Task 12: Make step 05 mean what it says (final whole-branch review fixes)
+
+**Why this task exists.** The final review found two places where step 05 claims a property it does not deliver:
+
+1. `OpenMicEditionSteps.tsx` prints "This edition keeps its standings private until the results are announced."
+   and then, **outside every branch** of the same ternary chain, renders a "Full leaderboard" link to the page
+   that shows all of them. One click refutes the sentence above it.
+2. `active-edition.ts` put every row's `voteCount` and the board's `totalVotes` into the RSC payload whatever
+   `voteCountPublic` said; the client only declined to *display* them. A value in the payload is delivered, not
+   shown, so the admin's switch was cosmetic.
+
+Spec H2 and the step 05 row of the spec's coverage table are amended in the commit before this brief, and that
+amended text is the authority for everything below.
+
+**Files:**
+- Modify: `frontend-web/src/features/openmic/active-edition.ts` (type at `:96` and `:98`; builder at `:146-148`, `:170`, `:174`)
+- Modify: `frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx` (`:259`, `:277`, `:288-291`)
+- Modify: `frontend-web/tests/unit/openmic/edition-steps-data.spec.ts` (one new case)
+- Modify: `frontend-web/tests/e2e/openmic/competition-steps.spec.ts` (`openStep()` only)
+
+**Do not touch** `components/openmic/OpenMicAdminContestBuilder.tsx`, `OpenMicAdminContestEditor.tsx` or
+`tests/unit/openmic/admin-beat-wiring.spec.ts`. The review recommended deleting them as dead code, and that
+recommendation is **rejected**: this repo has no `frontend-web/app/admin` tree, but `paymax2022/spotlight-latest@main`
+(the deployed console) mounts both — `app/admin/(dashboard)/open-mic/contests/new/page.tsx` renders the builder and
+`[contestId]/edit/page.tsx` the editor. Unreachable in this repo is not the same fact as dead.
+
+**Interfaces:** `OpenMicEditionStepsData.board` changes shape: `rows[].voteCount: number | null` and
+`totalVotes: number | null`. `showLeaderboard` / `showVoteCounts` stay in the payload (`showLeaderboard` is read by
+the component; `showVoteCounts` keeps the derivation pinned by the existing unit case at `:153`) — no consumer
+branches on `showVoteCounts` any more, and that is deliberate: the switch is resolved where the payload is built.
+
+- [ ] **Step 1: Hide the counts in the data, not in the markup**
+
+In `frontend-web/src/features/openmic/active-edition.ts`, replace the two board type lines
+
+```ts
+    rows: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
+    entryCount: number;
+    totalVotes: number;
+```
+
+with
+
+```ts
+    rows: {
+      rank: number; artistSlug: string; stageName: string; songTitle: string;
+      /** `null` when the admin hid the counts. The number stays out of the
+       *  payload rather than being shipped for the client to hide. */
+      voteCount: number | null;
+    }[];
+    entryCount: number;
+    totalVotes: number | null;
+```
+
+Hoist the two switch reads out of the return object — insert above `  return {`:
+
+```ts
+  const showLeaderboard = contest.votingConfig?.leaderboardVisible !== false;
+  const showVoteCounts = contest.votingConfig?.voteCountPublic !== false;
+```
+
+and replace the two inline fields
+
+```ts
+    showLeaderboard: contest.votingConfig?.leaderboardVisible !== false,
+    showVoteCounts: contest.votingConfig?.voteCountPublic !== false,
+```
+
+with the shorthand
+
+```ts
+    showLeaderboard,
+    showVoteCounts,
+```
+
+Then, inside the `board` projection, resolve the counts:
+
+```ts
+            voteCount: showVoteCounts ? row.voteCount : null,
+```
+
+```ts
+          totalVotes: showVoteCounts ? board.reduce((sum, row) => sum + row.voteCount, 0) : null,
+```
+
+`entryCount` is not a vote count and stays a number.
+
+- [ ] **Step 2: Render from the payload, and stop handing out what was hidden**
+
+In `frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx`, the tally line
+
+```tsx
+                            {data.showVoteCounts ? ` · ${board.totalVotes.toLocaleString(LOCALE)} votes counted` : ''}
+```
+
+becomes
+
+```tsx
+                            {board.totalVotes !== null ? ` · ${board.totalVotes.toLocaleString(LOCALE)} votes counted` : ''}
+```
+
+the row count
+
+```tsx
+                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
+```
+
+becomes
+
+```tsx
+                                <span className={styles.votes}>{row.voteCount !== null ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
+```
+
+and the unconditionally-rendered hand-off
+
+```tsx
+                      <div className="openMic-actions">
+                        <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
+                      </div>
+```
+
+becomes
+
+```tsx
+                      {/* Gated on the same switch as the board itself: a hand-off
+                          to the full standings would refute the "standings private"
+                          note two lines above it. */}
+                      {data.showLeaderboard && (
+                        <div className="openMic-actions">
+                          <Link className="openMic-button openMic-buttonOutline" href={`/open-mic/${data.slug}/entries`}>Full leaderboard <span aria-hidden="true">→</span></Link>
+                        </div>
+                      )}
+```
+
+The per-row `Vote` link and the "Vote now" CTA already live inside the `showLeaderboard`-true arm, so they need
+no change. `data.showVoteCounts` should now appear nowhere in this file.
+
+- [ ] **Step 3: Pin the hidden arm in the unit data tests**
+
+Append to the board describe block in `frontend-web/tests/unit/openmic/edition-steps-data.spec.ts`. The existing
+cases only ever flip both switches together (`:153`), and none of them looks at the numbers, so a payload that
+keeps shipping them would pass the file as it stands:
+
+```ts
+  it('leaves hidden counts out of the payload, not just out of the markup', () => {
+    const hidden = buildOpenMicEditionStepsData(
+      contest({ votingConfig: { ...contest().votingConfig, voteCountPublic: false } }),
+      [entry(1), entry(2), entry(3)],
+    );
+    expect(hidden.showVoteCounts).toBe(false);
+    expect(hidden.board?.rows.map((row) => row.voteCount)).toEqual([null, null, null]);
+    expect(hidden.board?.totalVotes).toBeNull();
+    // An entry count is not a vote count, so the switch does not remove it.
+    expect(hidden.board?.entryCount).toBe(3);
+  });
+
+  it('still delivers the counts when the switch is left on', () => {
+    const shown = buildOpenMicEditionStepsData(contest(), [entry(1), entry(2), entry(3)]);
+    expect(shown.board?.rows.map((row) => row.voteCount)).toEqual([10, 20, 30]);
+    expect(shown.board?.totalVotes).toBe(60);
+  });
+```
+
+Use the `contest()` / `entry(n)` helpers already at the top of that file (`entry(n)` sets `voteCount: n * 10`),
+and the existing `toStrictEqual` round-trip case stays as it is — `null` serialises, so the payload remains
+RSC-safe.
+
+- [ ] **Step 4: Make the acceptance helper prove the accordion**
+
+In `frontend-web/tests/e2e/openmic/competition-steps.spec.ts`, `openStep()` currently waits only for the named
+panel. After its existing `expect.poll(...).toBe(true)` and before `return panel;`, add the other half of the
+contract:
+
+```ts
+  if (step !== 1) {
+    // The other side of the same contract: SSR ships #step-1 open, so only the
+    // hash handler opening this panel can close it. Asserting it pins the
+    // exclusive accordion itself — a page that lost the `name` grouping would
+    // still pass the check above.
+    await expect
+      .poll(() => page.locator('#step-1').evaluate((el) => (el as HTMLDetailsElement).open), {
+        message: '#step-1 must close when the hash opens a later step',
+      })
+      .toBe(false);
+  }
+```
+
+No other test in that file changes: it asserts `Vote now` and the closing CTA while both switches are on, which
+is still true after Step 2.
+
+- [ ] **Step 5: Run the gates that cover these files**
+
+```bash
+cd /Users/paymax/Documents/spotlight/main/frontend-web && \
+npx vitest run tests/unit/openmic tests/unit/media/open-mic-beat-storage.test.ts; echo "vitest exit: $?"
+npx tsc --noEmit; echo "tsc exit: $?"
+npx eslint components/openmic/competition/OpenMicEditionSteps.tsx src/features/openmic/active-edition.ts \
+  tests/unit/openmic/edition-steps-data.spec.ts tests/e2e/openmic/competition-steps.spec.ts; echo "eslint exit: $?"
+```
+
+Expected: all four exit 0. `tsc` is the check that matters here — `number | null` reaching two `.toLocaleString()`
+call sites is exactly the kind of change that compiles only after the render side is fixed too.
+
+- [ ] **Step 6: Re-verify the two byte-identity invariants**
+
+The plan's Task 9 fence is the whole component file and the Task 8 fence is the whole e2e file. Both fences were
+amended in the commit before this brief; after this task's edits they must match again, exactly:
+
+```bash
+cd /Users/paymax/Documents/spotlight/main && python3 - <<'PY'
+import re
+plan = open('docs/superpowers/plans/2026-11-10-open-mic-competition-steps.md').read()
+def fences(marker_a, marker_b):
+    region = plan.split(marker_a)[1].split(marker_b)[0]
+    return re.findall(r'```tsx\n(.*?)```', region, re.S) + re.findall(r'```ts\n(.*?)```', region, re.S)
+big = max(fences('### Task 9:', '### Task 9b:'), key=len)
+spec = max(fences('### Task 8:', '### Task 9:'), key=len)
+for text, path in ((big, 'frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx'),
+                   (spec, 'frontend-web/tests/e2e/openmic/competition-steps.spec.ts')):
+    live = open(path).read()
+    print(('IDENTICAL' if text == live else 'DRIFT'), path, len(text.splitlines()), len(live.splitlines()))
+PY
+```
+
+Expected: `IDENTICAL` on both lines. If it says `DRIFT`, the plan and the shipped file disagree, and the plan is
+the document the next reviewer will trust — fix whichever is wrong, do not record the mismatch.
+
+- [ ] **Step 7: Commit**
+
+```bash
+cd /Users/paymax/Documents/spotlight/main && \
+git add frontend-web/src/features/openmic/active-edition.ts \
+        frontend-web/components/openmic/competition/OpenMicEditionSteps.tsx \
+        frontend-web/tests/unit/openmic/edition-steps-data.spec.ts \
+        frontend-web/tests/e2e/openmic/competition-steps.spec.ts && \
+git commit -m "fix(open-mic): honour the display switches in what step 05 ships, not only in what it draws"
+```
+
+Stage by these exact paths — the shared worktree carries other sessions' in-flight files, and `git add -A` would
+sweep them into this commit.
+
+The switch-OFF arms in the browser (the plan's gate runs with both switches on) are measured by the controller
+with a reversible flip-and-restore of the dev fixture row, because that touches shared dev DB state and is not
+subagent work. Nothing in this task may write to the database.
+
+---
+
 ## Self-review notes
 
-- **Spec coverage:** B/C → Task 1–2; D → Task 2 + Task 6; E → Task 1 (`publicBeatUrl`), Task 3 (edition page), Task 5 (data), Task 6 (admin warnings); F → Task 10; G → Task 4; H/H2 → Tasks 5 + 9; I → Task 5 (`slugifyArtist` in the builder, so the client never re-slugs) and Task 9's own entry link; J → Task 7; Testing → Tasks 1–8, 11. Out-of-scope items are untouched.
-- **Four deltas folded in from research, overriding the spec's wording:** the real contest type is `one_beat_one_verse` (not `open_mic`); `previewOnly` is hardcoded `false` on the DB path, so `is_active → allowDownload` is the only download switch that exists; the status allowlist widened from 4 to 9 because the narrow list blanks the page during `beat_available`/`submission_closed`/`under_review`; the upload route's `contestId` is optional and token-validated because the builder uploads before the contest row exists, and the accepted MIME set is `audio/mp3|audio/mpeg` because that is what browsers actually report.
+- **Spec coverage:** B/C → Task 1–2; D → Task 2 + Task 6; E → Task 1 (`publicBeatUrl`), Task 3 (edition page), Task 5 (data), Task 6 (admin warnings); F → Task 10; G → Task 4; H/H2 → Tasks 5 + 9, closed honestly by Task 12; I → Task 5 (`slugifyArtist` in the builder, so the client never re-slugs) and Task 9's own entry link; J → Task 7; Testing → Tasks 1–8, 11. Out-of-scope items are untouched.
 - **No placeholders:** every code block is the code. The only run-time values are Task 7's `<contestId>` / `<previewUrl>` / `<downloadUrl>` substitutions, and each names the command immediately above that prints it.
-- **Five deltas folded in from research, overriding the spec's wording:** the real contest type is `one_beat_one_verse` (not `open_mic`); `previewOnly` is hardcoded `false` on the DB path, so `is_active → allowDownload` is the only download switch that exists; the status allowlist widened from 4 to 9 because the narrow list blanks the page during `beat_available`/`submission_closed`/`under_review`; the upload route's `contestId` is optional and token-validated because the builder uploads before the contest row exists, and the accepted MIME set is `audio/mp3|audio/mpeg` because that is what browsers actually report; and the download filename comes from the anchor's `download` attribute (which the browser honours) rather than the reader route, because the reader only ever sees the uuid object key — the spec's "derived from the beat title" cannot be done there.
+- **Six deltas folded in from research, overriding the spec's wording:** the real contest type is `one_beat_one_verse` (not `open_mic`); `previewOnly` is hardcoded `false` on the DB path, so `is_active → allowDownload` is the only download switch that exists; the status allowlist is the 11-entry `CURRENT_OPEN_MIC_STATUSES` (`active-edition.ts:20-32`), widened past the spec's short list because the narrow list blanks the page during `beat_available`/`submission_closed`/`under_review`; the upload route's `contestId` is optional and token-validated because the builder uploads before the contest row exists, and the accepted MIME set is `audio/mp3|audio/mpeg` because that is what browsers actually report; the download filename is named by the reader route's `Content-Disposition` (built from the uuid object key), and the anchor's `download` attribute is only best effort — Chromium lets the response header win, so a readable stem would have to go into the key itself (final review, Minor 1; no task changes the key); and the two admin display switches are honoured by the panel not rendering hidden affordances and by the server omitting hidden numbers, not by a client branch that still receives them (Task 12).
 - **Spec line references are stale by design:** they were taken from the committed page (701 lines) while the working tree now has 835 after another session's lounge-application work. This plan quotes the working-tree numbers and re-checks them at Task 10 Step 1.
