@@ -2399,66 +2399,117 @@ declares `staging`, `wnic` ×4, `nmseef` ×0, 8 key lines carrying a staging ref
 
 ### 15.1 What landed
 
-- `build-aab.sh:131-138` and `build-apk.sh:146-153` (`1be3e158f`; at `f6e49a31c` they were `:130-135` and
+- `build-aab.sh:134-152` and `build-apk.sh:154-172` (`1be3e158f`, then hardened in this task's round 2;
+  the first commit had them at `:131-138` / `:146-153`, and at `f6e49a31c` they were `:130-135` and
   `:142-147`). Immediately after the `ENV_FILE` existence check (`:119-125` / `:126-132`) and before
-  `EXPECTED_API` is read (`:142` / `:157`), both scripts grep `EXPO_PUBLIC_APP_ENV` out of `$ENV_FILE`,
+  `EXPECTED_API` is read (`:156` / `:176`), both scripts extract `EXPO_PUBLIC_APP_ENV` from `$ENV_FILE`,
   normalise it, and `exit 1` when `NODE_ENV=production` and the result is not `production` — absent
-  declaration included — pointing at `node scripts/export-eas-profile-env.mjs production`. The seven
-  functional lines are **byte-identical** across the two scripts (diffed), so there is one semantics here,
-  not two that can drift.
-- **What `1be3e158f` changed, and why.** The first draft compared the raw `cut -d= -f2-` field to
-  `production`. That is stricter than the loader it guards: `dotenv` 16.4.7 — what `@expo/env` loads
-  through (`mobile-app/reactnative/node_modules/dotenv/lib/main.js:9,19`) — normalises CRLF, strips one
-  layer of surrounding quotes and drops a trailing `# comment`, so `production # live`, `"production"` and
-  a CRLF file all *mean* production and were being refused; the CRLF case even printed
-  `declares EXPO_PUBLIC_APP_ENV=production` while refusing, because the `\r` is invisible. The guard now
-  pipes through `tr -d '\r'` and a `sed -E` that strips trailing comments, leading space and one quote
-  layer. **Deliberate divergence, recorded so a future host does not "fix" it:** capital `Production` and a
-  padded ` production` inside quotes are still refused — `src/lib/serverProfile.ts:53,60` treats anything
-  not exactly in its allowlist as not-switchable, so a mis-spelled declaration should stop a release rather
-  than silently change runtime behaviour.
-- **Shadow-file coverage closed (review Finding 5).** The refusal at `build-aab.sh:154-161` /
-  `build-apk.sh:169-176` greps the two files that outrank `$ENV_FILE`
+  declaration included — pointing at `node scripts/export-eas-profile-env.mjs production`. The
+  **14-line extraction pipeline** (`:134-147` / `:154-167`) is byte-identical across the two scripts, and
+  `guard-test.sh` now diffs it on every run, so there is one semantics here rather than two that can drift.
+- **What round 2 changed, and the rule it is now pinned to.** The `1be3e158f` pipeline was a `grep` +
+  `cut` + `tr -d '\r'` + a `sed -E` chain. Measured against dotenv 16.4.7 — what `@expo/env` 2.0.12 loads
+  through, and the package whose `LINE` regex at `mobile-app/reactnative/node_modules/dotenv/lib/main.js:9`
+  defines the rules — it was wrong in both directions. Re-running the `1be3e158f` pipeline over all 57
+  fixtures (`/tmp/old-vs-dotenv.sh`, kept as scratch): it **refused 12 spellings the loader reads as
+  `production`** — backtick quotes (`bq`, `bq-plus-comment`), an `export ` prefix (`export`, `export-sp`,
+  `export-tab`), leading whitespace before the key (`lead-sp-key`, `tab-lead-key`), and the whole
+  `KEY: value` colon form (`colon-sp`, `colon-tab`, `colon-quoted`, `colon-two-space`, `colon-export`) —
+  and it **passed 3 spellings the loader does not**: `prod\ruction` and `"prod\ruction"`, because `tr -d`
+  *deletes* the CR instead of treating it as a line terminator, and `"'production'"`, because two
+  sequential `sed` quote-strips remove two layers where dotenv removes one. (The old chain's fourth
+  false pass, `swallow-case`, is the divergence the new pipeline deliberately keeps — see the known-limit
+  bullet below, not a fix it claims.) The pipeline now mirrors dotenv's actual
+  rules: `^[[:space:]]*(export[[:space:]]+)?KEY` then either `[[:space:]]*=[[:space:]]*` or
+  `:[[:space:]]+` (colon needs the space, and nothing before the colon — `KEY : value` parses nowhere),
+  last assignment wins, CR cut **from** the value rather than deleted out of it, an unquoted `#` starts a
+  comment (so `production#live` is `production`, and a `#` *inside* quotes is kept, so `"production #
+  live"` is refused), trim, then exactly one surrounding quote layer of `"` `'` or `` ` `` — with no
+  re-trim after unquoting, because dotenv does not re-trim either, which is what keeps `" production "`
+  refused (`dq-padded-inside`; the old chain refused it too, on a different accident, so parity there is
+  preserved rather than gained). All of it is one `sed` expression: two
+  `-e`s would run the second against what the first already substituted, and a value that itself looks
+  like a declaration (`EXPO_PUBLIC_APP_ENV=EXPO_PUBLIC_APP_ENV: production`) would then be read twice and
+  **pass on the second read** — which dotenv does not do.
+- **Deliberate divergence, recorded so a future host does not "fix" it.** Capital `Production` is refused
+  although `src/lib/serverProfile.ts:53,60` — `isSwitchAvailable` ends in `SWITCH_ENVIRONMENTS.has(appEnv
+  .trim())` — treats anything not exactly in its allowlist as not-switchable, so `Production` would in fact
+  build a safe production-behaving bundle. The same reasoning covers a quoted-and-padded `" production "`
+  (`dq-padded-inside`): dotenv hands the padding through, the runtime trims it away, and the guard still
+  refuses. Both are exact-token comparisons against what
+  `scripts/export-eas-profile-env.mjs production` writes, so a mis-cased or padded declaration stops a
+  release instead of quietly becoming the file's own dialect. **Known limit,
+  same class and it fails closed:** dotenv matches with `/mg` over the whole file, so a *closed* multi-line
+  quoted value earlier in the file swallows the declaration line and dotenv then never sees the key
+  (`swallow-case` in the harness). The line-based pipeline reads it and stays silent. That is safe — an
+  unset or unparseable `EXPO_PUBLIC_APP_ENV` is outside the `serverProfile.ts` allowlist, so the switch is
+  hidden and the app behaves as production — and the real file cannot hit it today: its line 241
+  (`FEATURE_ADMIN_USER_MODULES_ENABLED`) opens a `"` that no later line closes, so nothing is swallowed,
+  which is why dotenv reads `staging` from line 24 at all.
+- **Shadow-file coverage closed (review Finding 5).** The refusal at `build-aab.sh:168-179` /
+  `build-apk.sh:192-203` greps the two files that outrank `$ENV_FILE`
   (`.env.<mode>.local`, `.env.local`) and its pattern is now
   `^EXPO_PUBLIC_(API_BASE_URL|SUPABASE_URL|APP_ENV)=`. Before, a `.env.production.local` carrying
   `EXPO_PUBLIC_APP_ENV=staging` passed the guard (which reads only `$ENV_FILE`) *and* the old shadow grep
   (which matched only the two URLs) and shipped exactly the switch-on build this task exists to prevent.
-  No such file exists today; the hole was structural.
+  No such file exists today; the hole was structural. Round 2 narrowed `APP_ENV` to the production leg
+  only — `_shadow_keys` gains it inside `if [[ "$NODE_ENV" == "production" ]]` (`:169-171` / `:193-195`),
+  while the two URL keys stay mode-blind. A dev or staging build that declares its plane in
+  `.env.development.local` was then refused by a gate whose own printed remedy is "rename it to
+  `.env.development.local`" — the advice and the check contradicted each other, and the file it objected
+  to is the documented way to write a dev override.
 - Why a declaration check and not a bundle check: `EXPECTED_HOST` is derived from `EXPECTED_API`
-  (`build-aab.sh:142` → `:285`) and `EXPECTED_API` is read out of the same `$ENV_FILE` the bundle is
+  (`build-aab.sh:156` → `:303`) and `EXPECTED_API` is read out of the same `$ENV_FILE` the bundle is
   grepped against, so a staging-wired prod file makes the existing gate print
   `✅ API host present: frontend-web-staging-new.up.railway.app` — green for the wrong host.
-  `EXPECTED_SUPABASE` (`:143`) is only ever echoed (`:209`), never compared to anything. Asserting the
+  `EXPECTED_SUPABASE` (`:157`) is only ever echoed (`:227`), never compared to anything. Asserting the
   declaration is the one check in either script that is not self-referential.
 - **Tree caution, again.** The brief cites `build-aab.sh:122-128` / `:133` / `:134` / `:278` / `:129`. Those
   are **main's uncommitted working copy** — `git status` shows ` M mobile-app/reactnative/build-aab.sh`
   (12 insertions / 3 deletions) with another session's SDK-dir capture at `:38-44` and
   `npx expo prebuild --platform android --no-install --clean` at **`:222`** (an earlier draft of this
   section wrote `:213`, which is that session's `Android SDK not found` refusal, not the prebuild). In this
-  plan's base, post-`1be3e158f`, the same landmarks are `:118-125` (existence + exit 1), `:142`, `:143`,
-  `:285`, and the prebuild is `:229` **without** `--clean`. Same files, different numbers; Task 15's hunks
+  plan's base, post-`1be3e158f`, the same landmarks are `:119-125` (existence + exit 1), `:142`, `:143`,
+  `:285`, and the prebuild is `:229` **without** `--clean`. Round 2's longer comment and 14-line pipeline
+  move them again in this branch's HEAD: `:119-125` is unchanged, and the four others are now `:156`,
+  `:157`, `:303` and `:247`. Same files, different numbers; Task 15's hunks
   sit nowhere near the other session's two, so both commits should merge clean — but they must be diffed
   against whatever `main` becomes, not against this base.
-- **Probe (harness):** `.superpowers/sdd/…/guard-test.sh`, **16 cases** over the two real scripts (8 per
-  script) — 2 guard-fire (`staging`, declaration absent), 1 shadow-file-fire
-  (`.env.production.local` declaring `staging`), 5 guard-silent (`production`, `"production"`,
-  `production # live`, CRLF, and the legitimate `staging` build declaring `staging`). Each case asserts the
-  guard's exit **and** placement — a refusal must not print the `EXPO_PUBLIC_API_BASE_URL is not set`
-  message of the check below it, a silent case must; a shadow case must get *past* both — and that the run
-  never reaches `expo prebuild`/gradlew. **Observed:** RED on the pre-`1be3e158f` scripts (8 of 16 wrong),
-  GREEN (16/16) against the committed ones; `/bin/bash -n` clean on both; worktree clean. The first draft
-  asserted only the exit code, printed `ALL CASES AS EXPECTED` against a deliberately broken guard, and had
-  to be fixed before it could mislead anyone — a test that cannot fail is worse than no test, because it
-  reads like evidence.
+- **Probe (harness):** `.superpowers/sdd/…/guard-test.sh` — **76 assertions over the two real scripts**:
+  **18 structural** (9 per script: 2 guard-fire — `staging` and declaration-absent; 1 shadow-file-fire —
+  `.env.production.local` declaring `staging`; 5 guard-silent — `production`, `"production"`,
+  `production # live`, CRLF, and the legitimate `staging` build declaring `staging`; 1 dev-build case that
+  must *not* be refused), **1 pipeline byte-identity** (`awk` from `_declared_env=` to its own closing
+  `)"`, so a drift between the two scripts fails the run rather than silently forking the semantics), and
+  a **57-spelling loader-parity table**. Every structural case asserts the guard's exit **and** placement —
+  a refusal must not print the `EXPO_PUBLIC_API_BASE_URL is not set` message of the check below it, a silent
+  case must; a shadow case must get *past* both — and that the run never reaches `expo prebuild`/gradlew.
+  The parity table is an **oracle, not a mirror**: each row carries the value dotenv 16.4.7 was measured
+  producing, and the expected verdict is derived from that column, so the test would still fail if the
+  scripts and the author agreed on something wrong. Parity runs through `build-apk.sh` only; the
+  byte-identity assertion is what makes that cover `build-aab.sh`.
+  **Observed:** RED against the round-1 scripts (`542609281`, whose `mobile-app/reactnative/` is
+  byte-identical to `1be3e158f`'s) — **19 assertions wrong**: 15 parity rows (the 12 over-refusals and the
+  3 `tr -d`/double-strip over-passes above) and 4 from the dev-build case (2 scripts × 2 asserts). GREEN
+  (**0 wrong**) against these scripts; `/bin/bash -n` clean on both; worktree clean.
+- **Two dead tests this harness had, both found by breaking the thing on purpose.** The first draft
+  asserted only the exit code and printed `ALL CASES AS EXPECTED` against a deliberately broken guard. The
+  round-2 dev-build case passed at round-1 HEAD while proving nothing either: its `.env.development`
+  fixture had no API URL, so the run stopped at `EXPECTED_API` and never reached the shadow loop the case
+  existed to exercise — it only became a test once the fixture carried a URL and the case was allowed to
+  fail (`saw=shadow` at RED). A test that cannot fail is worse than no test, because it reads like evidence.
 - **Harness hazard (review Finding 9 — read before pointing it at a tree).** The probe writes fixtures and
   then `rm -f`s `.env.production`, `.env.staging` **and** `.env.production.local` in whatever tree it is
   given. Those files are gitignored: pointed at a live checkout the probe would delete an untracked,
   unrecoverable file — the very file §15.6 says must be re-created on any new build host. It now **refuses
-  to run** (exit 2) if any of them already exists, and `cleanup` is on an `EXIT` trap; it was developed and
+  to run** (exit 2) if any of them already exists — the round-2 dev case added `.env.development` and
+  `.env.development.local` to both the refusal list and the `EXIT` trap — and it was developed and
   re-run only against scratch copies under `/tmp`. A future session should still pass it a copy, not a
   working tree.
-- Fixtures are minimal on purpose (`EXPO_PUBLIC_APP_ENV` only, no API URL) so the run stops at the guard or
-  one line past it and never reaches `expo prebuild`/gradle. `ALLOW_DEBUG_SIGNING=1` skips the signing
+- Most fixtures are minimal on purpose (`EXPO_PUBLIC_APP_ENV` only, no API URL) so the run stops at the
+  guard or one line past it and never reaches `expo prebuild`/gradle; the shadow and dev fixtures are the
+  two that must carry an API URL, because their whole point is to get *past* `EXPECTED_API`. The parity
+  fixtures each carry exactly one declaration in one spelling. `ALLOW_DEBUG_SIGNING=1` skips the signing
   refusal that sits *before* the guard on a machine without the release keystore.
 
 ### 15.2 The file, measured — and the brief's "three backend keys" is 134
@@ -2545,7 +2596,8 @@ is the same build as the newest AAB (identical 43,447,249 B; the script copies i
   key; and **one JWT-shaped string**, which is the file's own `EXPO_PUBLIC_SUPABASE_ANON_KEY`: 208 chars,
   present once at @2,484,679, byte-identical to the `staging` profile's value, decodes to
   `iss=supabase role=anon ref=wnic… exp=2090573596`. It is a **public-by-design** client key and both
-  scanners already allow-list it deliberately (`.gitleaks.toml:85,91-95`, `trivy-secret.yaml:9-25`). **No
+  scanners already allow-list it deliberately (`.gitleaks.toml:90`, explained at `:91-96`;
+  `trivy-secret.yaml:23-29` — the whole file is one allow-rule). **No
   secret value ships.**
 - **Read regex output before believing it — two measured over-reads.** The JWT pattern most scanners ship
   (`eyJ[A-Za-z0-9_.-]+`, dot inside the class) matches **four** strings in this bundle, of 254, 73, 37 and 6
@@ -2629,7 +2681,7 @@ is the same build as the newest AAB (identical 43,447,249 B; the script copies i
   was not inspected**, so this section states what the three artifacts on this machine contain and claims
   nothing about what users have installed.
 - `.env.production` is gitignored, so when the re-point is approved it will exist **only on this machine**.
-  Every new build host starts staging-wired or empty, and `build-aab.sh:118-125` / `build-apk.sh:126-132`
+  Every new build host starts staging-wired or empty, and `build-aab.sh:119-125` / `build-apk.sh:126-132`
   exit 1 when the file is absent — a new host must run the recipe, never `mv` the file aside.
   **No backup of the current file exists anywhere** (corrected after review: an earlier draft of this bullet
   told a future session to keep `.env.production.pre-cutover.2026-11-12` "and do not restore it", but that
@@ -2650,19 +2702,39 @@ is the same build as the newest AAB (identical 43,447,249 B; the script copies i
   check. Measured today: no such export, and `eas.json`'s `production` profile declares `production`, so this
   is a documented boundary rather than a live hole. The remaining true statement is §15.1's: the file's
   declaration is what the guard can prove.
+- **Round 2 pinned that caveat's mechanism to the loader actually installed here.** `@expo/env@2.0.12` is the
+  only copy a repo-wide `find` turns up (under `expo@54.0.37` / `@expo/cli@54.0.27`), and both of its
+  mutation APIs skip a key already present in the environment — `loadEnvFiles` at `build/index.js:197` and
+  the legacy `load` at `:317`, each printing `"…" is already defined and IS NOT overwritten` — while the
+  *file list* is chosen from `process.env.NODE_ENV` (`getEnvFiles`, `:86-109`), which is what the two build
+  scripts export. Nothing in the toolchain supplies `EXPO_PUBLIC_APP_ENV` on its own:
+  `grep -ro 'EXPO_PUBLIC_APP_ENV' node_modules/@expo/cli/build` → **0 matches**. So the key has exactly two
+  possible sources — the `.env*` files, which the guard now reads with loader parity, and an explicit export,
+  which it cannot see — and that is the whole boundary. Worth knowing, because some `@expo/env` releases
+  behave differently: 2.0.12's `build/` is a single `index.js` with no `getExpoEnv.js`, no
+  `injectNativeFallbacks`, no `process.env` prefix filter (the file's only `EXPO_ENV` strings are the
+  `__EXPO_ENV_LOADED` marker at `:78` and stale doc comments), and no `@dotenvx` installed. An SDK bump
+  should re-run this check, not assume it.
 - Task 16's inputs from this section, with the commands so the counts can be re-run (review Finding 8: an
   earlier draft gave a "11" that three reconstructions could not reproduce, so it is replaced by figures
   each tied to its own command, all run in this repo with the ledger itself excluded —
   `git grep -lE 'mobile-app/reactnative/\.env' -- ':!docs/devops/production-migration-ledger.md'` → **18**
-  tracked files, listed below; `git grep -l '\.env\.production' -- ':!docs/devops/production-migration-ledger.md'`
-  → **31**, of which **5** belong to the *web* apps and are red herrings for a mobile doc fix
-  (`frontend-admin/.env.production.example`, `frontend-admin/middleware.ts`,
+  tracked files, listed below, and **the same on both trees** (this branch's HEAD and RELEASE_SHA
+  `c49b395…`), so it needs no label; `git grep -l '\.env\.production' -- ':!docs/devops/production-migration-ledger.md'`
+  → **32** at this branch's HEAD, of which **6** belong to the *web* apps and are red herrings for a mobile
+  doc fix (`frontend-admin/.env.production.example`, `frontend-admin/middleware.ts`,
   `frontend-admin/src/services/sprayAdminService.ts`, `frontend-web/.env.production.example`,
-  `frontend-web/src/lib/config/index.ts`); and the same command restricted to `-- mobile-app` → **9**
+  `frontend-web/src/lib/config/index.ts`, and `frontend-web/config/production-module-flags.env`, which is
+  **new in this branch** — Task 7 committed it, so the same command at RELEASE_SHA gives **31 of which 5**.
+  Quote the tree with the number or the pair looks like a disagreement; and the same command restricted to
+  `-- mobile-app` → **9**
   (`build-aab.sh`, `build-apk.sh`, `scripts/check-env-mocks.mjs`, `scripts/check-estate-mocks.mjs`,
   `docs/GO-LIVE-CONFIG.md`, `.vscode/tasks.json`, `.env.example`, `.env.production.example`,
   `src/features/marketplace/api/marketplace.api.ts`). Which list a doc fix needs depends on whether the
-  sentence names the file or the plane, so report the list you used, not a count. The 18:
+  sentence names the file or the plane, so report the list you used, not a count. Re-running these through
+  a shell: pipe the count (`| wc -l`); one redirect-to-file invocation here returned zero matches with
+  `rc=1` for a pattern that pipes 32, and an empty result from this command would read as "no references".
+  The 18:
   `MOBILE_SUPABASE_LOCAL_CONFIG.md`, `REGISTRATION_E2E_TEST_RESULTS.md`, `docs/CROWDFUNDING_GO_LIVE.md`,
   `docs/ENV.md`, `docs/audit/E2E_TEST_MATRIX.md`, `docs/devops/DEPLOY-RUNBOOK.md`,
   `docs/devops/GO-LIVE-FINAL.md`, `docs/e2e/results/mobile.md`, `docs/prd/golive/GO_LIVE_CHECKLIST.md`,
@@ -2671,10 +2743,18 @@ is the same build as the newest AAB (identical 43,447,249 B; the script copies i
   `launch/CREDENTIALS.md`, `launch/apply-env.sh`, `launch/master.env.template`,
   `mobile-app/reactnative/docs/association/GO_LIVE.md`.
 - Re-measurement entry points, left in this plan's SDD workspace for whoever takes Step 2: `guard-test.sh`
-  (16 cases, refuses to run against a tree with real env files), `recipe-rehearsal.sh` (Step 2 on a copy),
-  `bundle-scan.py` (the artifact numbers). All three are read-only against main and print no secret values.
+  (18 structural cases + 1 pipeline byte-identity + a 57-spelling loader-parity table; refuses to run
+  against a tree with real env files), `env-parse-diff.mjs` (regenerates those 57 fixtures *and* dotenv's own
+  verdict for each, which is where the parity table's expected column comes from), `extract-probe.sh` (the
+  14-line pipeline alone, no build script needed), `recipe-rehearsal.sh` (Step 2 on a copy),
+  `bundle-scan.py` (the artifact numbers). All are read-only against main and print no secret values.
 
 *This section was corrected on 2026-11-14 after its own review round: nine findings accepted, one (a
 "254-character token nobody had traced") refuted by byte-offset measurement and replaced with the regex
 caveat in §15.3. The code half of that round is `1be3e158f`; the dispositions are in*
 `.superpowers/sdd/2026-11-12-staging-to-production-migration/task-15-report.md`.
+
+*A second round followed the re-review of that commit: the guard's normalisation was rebuilt from dotenv's
+own `LINE` regex and measured against 57 spellings, the shadow gate's `APP_ENV` term was scoped to
+production builds, and this section's stale line citations, scanner-exemption citations and reference counts
+were re-measured tree by tree. Everything in §15.1 and §15.6 above is that round's text.*
