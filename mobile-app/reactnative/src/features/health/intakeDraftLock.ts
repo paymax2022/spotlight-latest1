@@ -8,12 +8,14 @@
 // while a dropped connection or a validation rejection leaves the local draft
 // intact and the patient still able to work.
 //
-// The freeze is read off the server's copy rather than a status code because that
-// route has no machine-readable error code: preconsultFail sends
-// {"error":"preconsult: intake already submitted"} at 400, and 4xx messages pass
-// through httperr.Sanitize verbatim, so src/api/client.ts surfaces it on
-// error.message. Nothing here echoes that string — patients get the sentences
-// below, and a 400 we cannot recognise stays the recoverable kind.
+// The freeze is read off the response's machine-readable code — the draft route
+// answers it with {"error":"preconsult: intake already submitted",
+// "code":"intake_already_submitted"} at 400 (preconsultFail in
+// backend/internal/health/preconsult/handler.go). The sentence is still matched as a
+// fallback: this app ships as JS that can be ahead of the API, and every backend
+// build predating the code answers with prose alone. Nothing here echoes either
+// string — patients get the sentences below, and a 400 we cannot recognise stays the
+// recoverable kind.
 
 export type DraftSaveOutcome =
   /** The intake is frozen server-side: editing further cannot reach the doctor. */
@@ -27,8 +29,20 @@ const LOCKED_MESSAGE =
 const UNSAVED_MESSAGE =
   'We couldn’t save your latest answers to the server, but they are kept on this device.';
 
+/** The stable code the draft route sends beside its sentence. axios keeps the
+ *  response on the rejected error, so it survives to here even though
+ *  src/api/client.ts only copies `error` onto error.message. */
+function draftSaveErrorCode(error: unknown): string | undefined {
+  const code = (error as { response?: { data?: { code?: unknown } } } | undefined)
+    ?.response?.data?.code;
+  return typeof code === 'string' ? code : undefined;
+}
+
 export function describeDraftSaveError(error: unknown): DraftSaveOutcome | null {
   if (!error) return null;
+  if (draftSaveErrorCode(error) === 'intake_already_submitted') {
+    return { kind: 'locked', message: LOCKED_MESSAGE };
+  }
   const message = error instanceof Error ? error.message : String(error);
   if (/already submitted/i.test(message)) return { kind: 'locked', message: LOCKED_MESSAGE };
   return { kind: 'unsaved', message: UNSAVED_MESSAGE };
