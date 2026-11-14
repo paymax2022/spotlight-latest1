@@ -263,13 +263,18 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                               → `k1nghoota`) and this projection carries no row id. */}
                           <ol className={styles.board}>
                             {board.rows.map((row) => (
+                              /* Cells are separated with a space, not only by the grid:
+                                 JSX drops the whitespace between adjacent elements, so
+                                 without it the row's text reads "…Street Light412 votes"
+                                 and no word boundary exists around the count — a copy of
+                                 the board that only the stylesheet can parse. */
                               <li key={`${row.rank}-${row.artistSlug}`} data-rank={row.rank}>
-                                <span className={styles.rank}>{row.rank}</span>
+                                <span className={styles.rank}>{row.rank}</span>{' '}
                                 <span className={styles.who}>
-                                  <strong>{row.stageName}</strong>
+                                  <strong>{row.stageName}</strong>{' '}
                                   <span>{row.songTitle}</span>
-                                </span>
-                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>
+                                </span>{' '}
+                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
                                 <span className={styles.link}>
                                   <Link href={`/open-mic/${data.slug}/entry/${row.artistSlug}`}>Vote</Link>
                                 </span>
