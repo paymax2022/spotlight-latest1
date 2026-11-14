@@ -47,10 +47,14 @@ Four things stood between that sentence and the running system:
    `COALESCE(readiness,'in_development')`. Without the backfill, applying the migration
    would have pulled every live production module off the app on the next read.
 5. **The tier is the server's, not the build's.** `/api/v1/modules/visibility` answers for
-   the backend's own `APP_ENV`; the client renders what it is told. So the store build that
-   is wired to staging today is governed by staging's publication, and the same build moves
-   to the production tier the moment it is pointed at the production backend. No client
-   change is required to switch planes, which is deliberate.
+   the backend's own `APP_ENV`; the client renders what it is told. So a build is governed by
+   whichever backend `EXPO_PUBLIC_API_BASE_URL` was inlined into it at build time — which
+   `mobile-app/reactnative/eas.json` tracks per profile, since the word "production" in a
+   profile name is not the wiring — and the same client moves to the production tier the
+   moment it is rebuilt against the production backend. No client change is required to
+   switch planes, which is deliberate. The consequence to operate by: readiness raised in
+   production keeps nothing away from a build still pointed at staging, so this gate only
+   governs the users the tier it runs on actually serves.
 6. **The client fails closed with a memory.** A successful read is persisted to
    AsyncStorage and replayed when the network cannot answer (`bestAnswer`), so an offline
    user keeps the grid they had instead of losing everything nobody unpublished. Only the
