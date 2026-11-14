@@ -135,13 +135,21 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	if res.AvatarURL != nil {
-		// doctor_profiles.avatar_url is an object key, not a link; the header
-		// photo needs the signed form of it.
-		viewable := h.resolveMedia(*res.AvatarURL)
-		res.AvatarURL = &viewable
-	}
+	h.signAvatar(res)
 	c.JSON(http.StatusOK, res)
+}
+
+// signAvatar rewrites a profile row's stored avatar key into the short-lived
+// GET a client can render. doctor_profiles.avatar_url is an object key, not a
+// link, and every read that hands back the row — GET /profile and the
+// GET /profile/draft the builder reads avatarUrl off — owes the client the
+// signed form of it.
+func (h *Handler) signAvatar(res *Profile) {
+	if res.AvatarURL == nil {
+		return
+	}
+	viewable := h.resolveMedia(*res.AvatarURL)
+	res.AvatarURL = &viewable
 }
 
 func (h *Handler) GetVerification(c *gin.Context) {

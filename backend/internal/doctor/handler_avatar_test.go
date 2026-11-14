@@ -73,3 +73,42 @@ func TestResolveMedia_NoPhotoStaysEmpty(t *testing.T) {
 		t.Errorf("empty key signed to %q — an absent photo must not become a URL", got)
 	}
 }
+
+// GET /profile/draft answers with the same doctor_profiles row, and the builder
+// reads avatarUrl off it as the photo (doctor.profile.api.ts falls back to it
+// when the draft blob has no `photo` entry). Signing was wired onto GET /profile
+// only, so the draft read kept handing back the raw key.
+
+func TestSignAvatar_SignsTheStoredKeyOnTheRow(t *testing.T) {
+	h := (&Handler{}).WithPresigner(avatarPresigner(), "spotlight-dev")
+	key := "doctor/ed2c401b-44b4-4074-9a1a-756b3e256225/photo/7a57bc8e250a41e59f12b196aa0151"
+	stored := key
+	row := &Profile{AvatarURL: &stored}
+
+	h.signAvatar(row)
+
+	if row.AvatarURL == nil {
+		t.Fatal("signing dropped the avatar field")
+	}
+	if *row.AvatarURL == key {
+		t.Fatalf("stored key left unsigned — the builder renders %q and shows no picture", *row.AvatarURL)
+	}
+	if !strings.HasPrefix(*row.AvatarURL, "https://acct123.r2.cloudflarestorage.com/spotlight-dev/") {
+		t.Errorf("signed URL %q is not on the configured bucket endpoint", *row.AvatarURL)
+	}
+	if !strings.Contains(*row.AvatarURL, key) {
+		t.Errorf("signed URL %q dropped the object key it signs", *row.AvatarURL)
+	}
+	if !strings.Contains(*row.AvatarURL, "X-Amz-Signature") {
+		t.Errorf("signed URL %q carries no signature parameter", *row.AvatarURL)
+	}
+}
+
+func TestSignAvatar_LeavesAProfileWithoutAPhotoAlone(t *testing.T) {
+	h := (&Handler{}).WithPresigner(avatarPresigner(), "spotlight-dev")
+	row := &Profile{}
+	h.signAvatar(row)
+	if row.AvatarURL != nil {
+		t.Errorf("absent photo became %q — an empty profile must stay empty, not an empty URL", *row.AvatarURL)
+	}
+}
