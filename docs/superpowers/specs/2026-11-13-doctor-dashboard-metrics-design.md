@@ -65,8 +65,12 @@ Measured at `origin/main` = `effe1b355` on 2026-11-13.
   `doctor_availability.timezone` (same file, `:165`). Only the first is a setting: the app's
   one timezone screen, `app/(doctor)/schedule/timezone.tsx:26`, saves through
   `PUT /schedule/timezone` → `Service.SetTimezone` (`service_ops.go:360`) →
-  `UPDATE doctor_profiles SET timezone` (`repository_ops.go:409`), and `GET /schedule` reads
-  the same column back. `doctor_availability.timezone` is written only as a side effect of the
+  `UPDATE doctor_profiles SET timezone` (`repository_ops.go:409`). The read-back is the profile
+  read itself — `GET /doctor/profile` (`finance_routes.go:3102` → `Repository.GetProfile`,
+  which scans `timezone` into `Profile.Timezone` at `model.go:33`). `GET /schedule` is **not** a
+  read-back: its `ScheduleSettings` response (`handler_tail2.go:493-498`) carries
+  `blockedDates / recurringRules / reminders / vacation` and no timezone field — see
+  Follow-ups F5. `doctor_availability.timezone` is written only as a side effect of the
   availability upsert (`repository.go:149`, from whatever `in.Timezone` the client echoed) and
   no screen sets it. Nothing in this module applies either column to a booking yet —
   `AT TIME ZONE` appears nowhere in `internal/doctor/*.go`, which is precisely why "today" has
@@ -108,7 +112,7 @@ unbounded list, and the queue is a preview, not the appointments screen.
 resolved once in Go and passed down. No `time.LoadLocation`, no `time/tzdata` import, no new
 dependency — the Go side never has to know what Asia/Karachi means. The zone comes from the
 existing scoped `Repository.GetProfile` read, because `doctor_profiles.timezone` is the column
-the timezone screen writes and `GET /schedule` reads back; `ErrNotFound` (a doctor with no
+the timezone screen writes and the profile read returns (see above); `ErrNotFound` (a doctor with no
 profile row at all) and an empty value both map to `Africa/Lagos` in Go, the same fallback the
 availability write path uses at `repository.go:149`. One resolved value feeds all three reads,
 so the day cannot drift between them. `doctor_availability.timezone` is deliberately not a
@@ -345,3 +349,16 @@ the wire evidence, and the in-browser pass is done only with an explicit go-ahea
   doctor module passes it through (D8) and `AppointmentRow` draws a fallback icon. Widening
   the union to the four real values, and giving in-person consults their own icon, touches the
   telemedicine vertical's shared type and every `ConsultType` consumer — its own change.
+- **F5 — the timezone screen cannot save in live mode, so the zone this PR reads is almost
+  always the default.** Discovered while correcting D3. `app/(doctor)/schedule/timezone.tsx:20-22`
+  seeds `tz` from `useScheduleSettings()`'s `settings.timezone`, but `GET /schedule` sends no
+  timezone field at all (its `ScheduleSettings` has four keys and none of them is a zone), so in
+  live mode `tz` becomes `undefined` and `handleSave`'s `if (!tz) return;` makes the save button a
+  no-op — `PUT /schedule/timezone` is never called and `doctor_profiles.timezone` stays
+  `'Africa/Lagos'`. The QA row F2 refers to (`QA_DOCTOR_BATCH1_REPORT.md` E13, "PASS") was earned
+  on mock fixtures, which do return a timezone. **Consequence for this PR:** D3's column choice is
+  correct and its Karachi test proves the mechanism, but on real data the corrected read rarely
+  diverges from the old default — the fix unlocks the behaviour, it does not yet exercise it.
+  Repairing the screen (seed `tz` from the profile read, or add `timezone` to `ScheduleSettings`
+  and populate it) is one small change in either plane and belongs to no task here; it is out of
+  scope because it edits neither the dashboard nor the aggregate.

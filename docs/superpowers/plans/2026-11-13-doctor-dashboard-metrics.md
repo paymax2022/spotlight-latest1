@@ -412,11 +412,13 @@ type dashboardCounters struct {
 
 // dashboardTimezone resolves the zone every date expression uses, once, so all
 // three reads price the same day. The source is doctor_profiles.timezone — the
-// column `PUT /schedule/timezone` writes and GET /schedule reads back — NOT
-// doctor_availability.timezone, which no screen ever sets (a doctor who chose
-// Asia/Karachi on the timezone screen would otherwise have every "today"
-// predicate anchored to Lagos). A doctor with no profile row at all is the
-// default, not an error.
+// column `PUT /schedule/timezone` writes (service_ops.go:360 →
+// repository_ops.go:409) and GET /doctor/profile reads back through this very
+// GetProfile — NOT doctor_availability.timezone, which no screen ever sets (a
+// doctor who chose Asia/Karachi would otherwise have every "today" predicate
+// anchored to Lagos). `GET /schedule` is NOT a read-back: ScheduleSettings has
+// no timezone field (handler_tail2.go:493-498); see spec F5. A doctor with no
+// profile row at all is the default, not an error.
 func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string, error) {
 	p, err := s.repo.GetProfile(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
@@ -822,6 +824,17 @@ cd /private/tmp/spot-doctor-metrics/backend && go test ./internal/doctor/ -run '
 Expected: compile failure — `undefined: consultProviderPct`, `undefined: pendingConsultKobo`, `undefined: dashboardSatisfactionPct`.
 
 - [ ] **Step 3: Implement the split, satisfaction and the revenue read**
+
+First, correct the two timezone comments Task 1 left behind the plan. They are stale in the
+committed file only because the fix dispatch said "the rest of the file stays as committed", so
+this step lifts that constraint rather than waiving the finding. Replace the
+`defaultDoctorTimezone` comment (`dashboard_metrics.go:27-29`) with the plan's Task 1 text —
+it cites `doctor_profiles.timezone` at `20260625000000_doctor_module.sql:60` as the column the
+read uses and `:165` for the availability one (the file currently says `:164`, which is
+`emergency_enabled`), and it must not call `repository.go:149` "the write path" for a doctor's
+choice. Then align `dashboardTimezone`'s comment (`:93-99`) with the Task 1 block above, which now
+names `GET /doctor/profile` as the read-back and says plainly that `GET /schedule` is not one.
+Neither edit may change a line of executable code.
 
 Append to `backend/internal/doctor/dashboard_metrics.go`:
 
