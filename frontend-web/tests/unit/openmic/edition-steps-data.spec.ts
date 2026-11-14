@@ -233,4 +233,46 @@ describe('the three window states, resolved by the read', () => {
     const data = buildOpenMicEditionStepsData(contest(), []);
     expect(JSON.parse(JSON.stringify(data))).toStrictEqual(data);
   });
+
+  // The three state fields are the same type computed from the same three
+  // arguments, so a builder that wires submission's result into
+  // `registrationState` still passes every single-window test above. Only one
+  // test with three *different* answers can tell the difference — and it has to
+  // pin one instant, so the three windows are read against the same clock.
+  it('labels each window from its own dates, never a neighbour', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(
+      contest({
+        registrationStartAt: '2026-09-01T00:00:00.000Z',
+        registrationEndAt: '2026-09-30T23:59:59.000Z',
+        // Submission stays on START/END (November) — open at this instant.
+        votingConfig: {
+          ...contest().votingConfig,
+          votingStartAt: '2026-12-01T00:00:00.000Z',
+          votingEndAt: '2026-12-31T23:59:59.000Z',
+        },
+      }),
+      [],
+    );
+    expect(data.registrationState).toBe('closed');
+    expect(data.submissionState).toBe('open');
+    expect(data.votingState).toBe('not-started');
+  });
+
+  // Inclusive at both ends, because that is what the store does when it decides
+  // whether to accept a submission (`persistence.ts:76-77` compares with
+  // `>=`/`<=`). A page that says "closed" an hour before the deadline would
+  // point artists away from a form that still takes them.
+  it('is inclusive at both ends of the window, which is what the store does', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(START));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('open');
+    vi.setSystemTime(new Date(END));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('open');
+    vi.setSystemTime(new Date(Date.parse(END) + 1));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('closed');
+    vi.setSystemTime(new Date(Date.parse(START) - 1));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('not-started');
+  });
 });

@@ -23,8 +23,13 @@ const STEPS = [
 
 const MAX_MP3_MB = 50;
 
+// Every number and date here is server-rendered HTML, so the formatting locale
+// cannot be the visitor's: a German browser renders `1500` as `1.500` against
+// the server's `1,500` and React reports a text mismatch at hydration.
+const LOCALE = 'en-GB';
+
 const shortDate = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'TBC';
+  iso ? new Date(iso).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short', year: 'numeric' }) : 'TBC';
 
 function WindowLine({ label, start, end, state }: { label: string; start: string | null; end: string | null; state: WindowState }) {
   return (
@@ -92,7 +97,7 @@ function OwnEntry({ contestId, contestSlug }: { contestId: string; contestSlug: 
   const url = typeof window === 'undefined' ? path : `${window.location.origin}${path}`;
   return (
     <>
-      <p className={styles.tally}>Your entry: <strong>{entry.stageName}</strong>{entry.songTitle ? ` — “${entry.songTitle}”` : ''} · {entry.voteCount.toLocaleString()} votes so far</p>
+      <p className={styles.tally}>Your entry: <strong>{entry.stageName}</strong>{entry.songTitle ? ` — “${entry.songTitle}”` : ''} · {entry.voteCount.toLocaleString(LOCALE)} votes so far</p>
       <code className={styles.entryLink}>{url}</code>
       <div className="openMic-actions">
         <Link className="openMic-button openMic-buttonOutline" href={path}>Open your entry page <span aria-hidden="true">→</span></Link>
@@ -160,7 +165,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                       <WindowLine label="Registration" start={data.registrationStartAt} end={data.registrationEndAt} state={data.registrationState} />
                       <p className={styles.tally}>
                         {data.entryFeeRequired
-                          ? `Registration fee: ₦${data.registrationFeeNgn.toLocaleString()}.`
+                          ? `Registration fee: ₦${data.registrationFeeNgn.toLocaleString(LOCALE)}.`
                           : 'Registration for this edition is free.'}
                       </p>
                       <div className="openMic-actions">
@@ -247,7 +252,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                         <>
                           <p className={styles.tally}>
                             {board.entryCount} {board.entryCount === 1 ? 'entry' : 'entries'} on the board
-                            {data.showVoteCounts ? ` · ${board.totalVotes.toLocaleString()} votes counted` : ''}
+                            {data.showVoteCounts ? ` · ${board.totalVotes.toLocaleString(LOCALE)} votes counted` : ''}
                           </p>
                           {/* Keyed on rank, not artistSlug alone: the slug is a
                               slug of a non-unique stage name (design: `K1ng$hoota`
@@ -260,7 +265,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                                   <strong>{row.stageName}</strong>
                                   <span>{row.songTitle}</span>
                                 </span>
-                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString()} votes` : '—'}</span>
+                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>
                                 <span className={styles.link}>
                                   <Link href={`/open-mic/${data.slug}/entry/${row.artistSlug}`}>Vote</Link>
                                 </span>
