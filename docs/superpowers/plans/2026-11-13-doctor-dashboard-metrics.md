@@ -1211,15 +1211,60 @@ cd /private/tmp/spot-doctor-metrics/backend && go test ./internal/doctor/ -run '
 
 Expected: PASS for both with the DSN set (SKIP and a recorded "not actually run" without it). Before writing the guard, run this same command against the code as committed and record the red: `dashboardTimezone` returns the poisoned string and `dashboardAggregates` fails with `time zone "Mars/Olympus_Mons" not recognized` — that is the failure this test exists to prevent, and a test that was never seen red is not evidence.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Prove the three money filters bite — by mutation, not by reading**
+
+The assertions above can all be green while a predicate is dead weight. Delete each of the three in turn, run the focused test, and record what goes red; then restore and re-run. Write the transcript to `/private/tmp/spot-doctor-metrics/.superpowers/sdd/2026-11-13-doctor-dashboard-metrics/task-2-mutation.md` — one entry per mutation with the grep line proving the edit landed, the first failing assertion, and its number. This step ends with the file restored byte-for-byte and the test green again; a mutation left in the tree is a bug, not evidence.
+
+```bash
+cd /private/tmp/spot-doctor-metrics/backend
+M=internal/doctor/dashboard_metrics.go
+cp "$M" /tmp/task2-dashboard_metrics.orig.go
+restore() { cp /tmp/task2-dashboard_metrics.orig.go "$M"; }
+T() { TEST_DATABASE_URL="$DSN" RAILS_MODE=fake go test ./internal/doctor/ -run 'TestLiveDB_DashboardConsultRevenue' -count=1 2>&1 | tail -15; }
+# One grep serves as the mutation log for all three blocks: it prints exactly the two settlement WHERE
+# clauses, so the line that changed is visible in the transcript rather than assumed.
+P() { grep -n 'WHERE d.user_id = \$1 AND st\.' "$M"; }
+
+# (a) settledQ loses its module filter: the restaurant settled row's 320000 must leak into LifetimeKobo.
+sed -i '' "s/AND st.module_type = 'telemedicine' AND st.status = 'settled'/AND st.status = 'settled'/" "$M"
+P; T
+restore
+
+# (b) settledQ loses its status filter: the escrowed row's adversarial provider_kobo 168300 must leak in.
+sed -i '' "s/AND st.module_type = 'telemedicine' AND st.status = 'settled'/AND st.module_type = 'telemedicine'/" "$M"
+P; T
+restore
+
+# (c) escrowedQ loses its module filter: the restaurant escrowed row's 400000 total must change PendingKobo.
+sed -i '' "s/AND st.module_type = 'telemedicine' AND st.status = 'escrowed'/AND st.status = 'escrowed'/" "$M"
+P; T
+restore
+
+# Restored: identical to HEAD, and green.
+diff /tmp/task2-dashboard_metrics.orig.go "$M" && echo "restored byte-for-byte"
+rm -f /tmp/task2-dashboard_metrics.orig.go
+git status --short -- "$M"
+T
+```
+
+Expected: **three reds and one green.** The `P` line in each block is part of the evidence, not decoration — a `sed` pattern that no longer matches leaves the file untouched and the test green, which would read as "this predicate is unprotected" when the real cause is a mutation that never happened; `P` prints both settlement WHERE clauses, so a red is only creditable when the line it names has visibly changed. Numbers to expect: (a) `LifetimeKobo = 490000`, (b) `LifetimeKobo = 338300`, (c) `PendingKobo = 508300` (168300 + 85% of 400000). Any mutation that stays green despite `P` showing the deletion is a real finding — the fixture does not protect that predicate — and the fix is a fixture row that does, not a waiver. The final `git status --short` must print nothing: it is what proves the tree is as committed, so a red seen there means the restore failed.
+
+- [ ] **Step 8: Commit**
 
 ```bash
 cd /private/tmp/spot-doctor-metrics/backend && go build ./... && go vet ./internal/doctor/... && gofmt -l internal/doctor/
-cd /private/tmp/spot-doctor-metrics && git add backend/internal/doctor/dashboard_metrics.go backend/internal/doctor/dashboard_metrics_test.go backend/internal/doctor/dashboard_metrics_live_db_test.go && git commit -m "feat(doctor): project consult revenue over settlements for the earnings tile
+cd /private/tmp/spot-doctor-metrics && git add backend/internal/doctor/dashboard_metrics.go backend/internal/doctor/dashboard_metrics_test.go backend/internal/doctor/dashboard_metrics_live_db_test.go && git commit -m "$(cat <<'EOF'
+feat(doctor): project consult revenue over settlements for the earnings tile
 
 Pending money is derived with settlement.ComputeLegs rather than a re-typed 0.85
 so the dashboard figure is the arithmetic Settle itself pays by. Settled money
-sums provider_kobo, which Settle writes in the same tx that moves the balance."
+sums provider_kobo, which Settle writes in the same tx that moves the balance.
+
+The dashboard now interpolates doctor_profiles.timezone into AT TIME ZONE, which
+makes a poisoned value fatal where it used to be inert, so the read probes the
+zone once and degrades to the default on SQLSTATE 22023 rather than 500ing.
+EOF
+)"
 ```
 
 ---
