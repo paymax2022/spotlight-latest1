@@ -1,5 +1,13 @@
 # GO-LIVE Checklist (tracker)
 
+> **HISTORICAL — do not use this as the go-live path.** It pre-dates the current
+> architecture (`VIDEOSDK_*` at line 47; "fill `deploy.yml` TODOs for your cloud"
+> at lines 33 and 58 — `deploy.yml`'s jobs are all skipped while
+> `vars.GCP_PROJECT_ID` is unset). For what is actually authoritative, read
+> [`deployment-matrix.md`](deployment-matrix.md), and for what this plan measured
+> and left open, read [`production-migration-ledger.md`](production-migration-ledger.md) §16.
+> Kept as a record, not deleted.
+
 Status legend: ✅ done in repo · 🟡 scaffolded, needs in-container build/test · ⬜ ops/infra (env-dependent).
 
 ## Rails with no backing service (now scaffolded behind RAILS_MODE)

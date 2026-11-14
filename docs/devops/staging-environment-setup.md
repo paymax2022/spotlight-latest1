@@ -76,7 +76,59 @@ dry run, so credentials can be verified before anything is applied.
 
 ## Remaining manual steps
 
+**Status re-read 2026-11-14 against the live repo, not against memory.** A step
+below is checked only where a command returned the proof; every unchecked step
+carries the reason it is still open. The full evidence trail is
+[`production-migration-ledger.md`](production-migration-ledger.md) §16.
+
+- [ ] **Step 1 — not verified, and not verifiable from a review session.**
+- [x] **Step 2 — the `staging` environment exists** (proof below); its three
+      secrets exist **at repo level**, not environment-scoped.
+- [x] **Step 3 — both variables are on** (proof below). Note this makes step 1's
+      unresolved ref an *active* risk, not a dormant one.
+- [x] **Step 4 — staging is at 0 pending**, re-measured by Task 5 (ledger §5.4),
+      superseding the 2026-08-21 figures in that section's own text.
+- [ ] **Step 5 — still open, and now mis-framed:** the `staging` *branch* matters
+      less than the note below assumes, because frontend-web is no longer
+      deployed from it at all (see the policy note).
+
+### Policy correction: "deploy only to main, never staging"
+
+Verified from `.github/workflows/` on 2026-11-14, so this section's branch
+advice has to be read against it:
+
+- `b5bc4480f` — "ci(frontend-web): retire the staging-branch deploy lane" —
+  deleted `.github/workflows/staging-frontend-web-deploy.yml`. That file is not
+  in `.github/workflows/` today (only `staging-admin-signup-code.yml`,
+  `staging-bills-e2e.yml`, `staging-inspect.yml`, `staging-module-flags.yml`
+  remain), and the commit is an ancestor of this branch's `HEAD`.
+- `sync-frontend-web.yml:5-11` triggers on `main` and `development` only — the
+  `staging` branch is in neither the branch list nor the path list.
+- Consequence: **frontend-web has no staging-branch deploy path.** Pushing the
+  `staging` branch releases nothing on that rail; Railway's staging services
+  track `main` (see `deployment-matrix.md`, "Promotion model").
+- What the `staging` branch *does* still drive: `db-migrate.yml:40` includes
+  `staging` in its push branches, and its `apply-staging` job (`:183-187`) fires
+  on a push to `refs/heads/staging` while
+  `vars.DB_MIGRATE_STAGING_ENABLED == 'true'`. That switch is on today (step 3),
+  so **a push to the `staging` branch is a live database write lane**, which is a
+  stronger reason to keep that branch honest than the UI-parity argument this
+  section originally gave.
+
 ### 1. Re-point the PRODUCTION secret first — before anything else
+
+**STILL OPEN — unverified, and not closable from a read-only session.** The
+value of `SUPABASE_PROJECT_ID` cannot be read: `gh api
+repos/paymax2022/spotlight-latest1/environments/Production/secrets` returns only
+the *name* `SUPABASE_DB_PASSWORD` (no environment-scoped `SUPABASE_PROJECT_ID`,
+so the ref comes from the repo-level secret of that name), and Actions secrets
+are write-only by design. What is settled: `ops-db-push-scoped.yml:101-104`
+refuses `wnicsubiznmishkmunsv` under `environment: production-db-scoped`, and
+that lane's completed runs prove only **that** environment's ref, not
+`Production`'s. The only thing that answers the question is a dispatched
+`ops-db-push.yml` **link-step log** (`ops-db-push.yml:128-129` runs
+`supabase link --project-ref "$SUPABASE_PROJECT_ID"`), i.e. an operator action
+this plan was not authorised to take — recorded as operator-owned in ledger §16.
 
 `SUPABASE_PROJECT_ID` was set when `wnicsubiznmishkmunsv` was the only project,
 so it most likely still points at it — and that project **is now staging**. Left
@@ -90,12 +142,33 @@ Check and correct it before enabling either job:
 - `SUPABASE_DB_PASSWORD` must be the **`spotlight-prod`** password, not the old
   one — these two must be changed together or the link will simply fail.
 
-The `apply-staging` job refuses to run when its ref equals `SUPABASE_PROJECT_ID`,
+The `apply-staging` job refuses to run when its ref equals `SUPABASE_PROJECT_ID`
+(the comparison is `db-migrate.yml:263-266`, staging secret vs production secret),
 so if the production secret is still the old value, staging fails loudly rather
 than pushing to the wrong database. That guard is a backstop, not a substitute
 for fixing the secret.
 
 ### 2. Create the `staging` GitHub environment
+
+**DONE — verified again 2026-11-14.**
+`gh api repos/paymax2022/spotlight-latest1/environments --jq '.environments[].name'`
+lists `staging`. Read the whole list before you script against it — there are
+**10** environments and several names carry a Railway deployment prefix, so a
+lookup on the bare string misses: `staging`, `development`, `Production`,
+`production-db-scoped`, `Preview`, `spotlight-platform / staging`,
+`spotlight-platform / staging-new`, `spotlight-platform / staging-Old`,
+`enchanting-flexibility / production`, `jubilant-emotion / production`. There is
+no bare `staging-new` or `staging-Old`.
+
+The three secrets below exist **as repository-level secrets**, not
+environment-scoped ones: `gh api …/environments/staging/secrets` returns
+**nothing**, while `gh api …/actions/secrets` lists
+`SUPABASE_STAGING_PROJECT_ID`, `SUPABASE_STAGING_DB_PASSWORD` and
+`SUPABASE_ACCESS_TOKEN` by name. That is a working configuration, but it means
+the staging jobs read repo-wide values, so a per-environment rotation would not
+be honoured — worth knowing before anyone "fixes" it by adding a second copy.
+Values were never printed and cannot be, so **none of the three mappings is
+verified** — only their existence.
 
 Settings → Environments → New environment → `staging`, then add:
 
@@ -108,15 +181,62 @@ Note: the `spotlight-staging` database password is known to be **stale** — the
 CLI and Management API work against it, but direct `psql`/pgx connections fail
 with `28P01`. Reset it in Dashboard → Settings → Database before adding the
 secret, or `db push` will fail at the link step.
+**This note was not re-tested in this plan**, and it is the reason no
+`pg_dump`-or-restore step could be rehearsed from a review session — see
+[`backup-restore-runbook.md`](backup-restore-runbook.md) §2 and ledger §5.7.
 
 ### 3. Enable the jobs
+
+**DONE — verified 2026-11-14.**
+`gh api repos/paymax2022/spotlight-latest1/actions/variables` returns exactly
+`DB_MIGRATE_ENABLED=true` and `DB_MIGRATE_STAGING_ENABLED=true` (plus
+`RAILWAY_DEPLOY_ENABLED=true`, `SPOTLIGHT_FRONTEND_SYNC_ENABLED=True`).
 
 Add repo **variables**:
 
 - `DB_MIGRATE_STAGING_ENABLED = true`
 - `DB_MIGRATE_ENABLED = true` (only once step 1 is confirmed correct)
 
+**Read the two facts together, because they contradict in an alarming
+direction:** step 3 is done and step 1 is unverified. The switches were enabled
+without proof that `SUPABASE_PROJECT_ID` left the staging ref behind, so
+`db-migrate.yml`'s push lane on `main` is armed today and its only protection is
+the equality backstop above plus whatever gate the `Production` environment
+imposes (the two parked runs prove a gate exists; the rule behind it is
+unconfirmed — see the Postgres row in
+[`deployment-matrix.md`](deployment-matrix.md)). That
+is why ledger §16 counts two production writes parked on approval right now
+(`43299354226`, `43299959109`, both head `3654f6b3f`) and a third pending
+(`43534854471`, head `8ed8123de`). This plan approved, declined and dispatched
+none of them.
+
 ### 4. Dry-run, then apply — ALREADY DONE for staging (2026-08-21)
+
+**STILL DONE — but the figures in this section's body are superseded, not
+confirmed by it.** The 420 / 418 / 429 numbers in the *Decided topology* table at
+the top of this file, and the
+"429 applied / 429 local / 0 pending / 0 remote-only drift" line below are
+2026-08-21 readings against a 429-file tree. The tree today holds **751**
+`supabase/migrations/*.sql` files (`ls supabase/migrations/*.sql | wc -l`), and
+`origin/main`'s tree holds **755** — re-read 2026-11-14 at its tip `31505cb92`.
+It held 754 when the figures below were written; the 754→755 step is `8ed8123de`
+(2026-11-14), which added
+`supabase/migrations/20271411000000_reconcile_doctors_presence_backfill.sql`.
+**Every other 754 in this plan stays correct as written** — the `recorded: 754`
+at the end of this paragraph, and the `754 − 670 = 84` closures in the ledger's
+§5.4 and §10 — because those are pinned to `3654f6b3f` / `623c7c128`, both of
+which count 754. Do not sweep-replace.
+Staging's current state comes from Task 5, not
+from this section: **0 pending**, `recorded: 754`, `remote max applied:
+20271410000000`, read from the write run's own before/after captures
+(ledger §5.4) — with the *empty schema diff* half of the runbook's gate still
+**unmeasured** (ledger §5.7). Production is **not** "11 migrations behind", and
+the "was NOT touched" sentence below is now false as a live claim: §5.2's fresh
+classification gave **88 pending** (a count that rides on a 2026-11-07 capture,
+so re-read it rather than quoting it — §5.6), while prod's history table had
+already gained `20271408000000` and `20271409000000` through
+`ops-db-push-scoped.yml` — a production write that needed no reviewer, executed
+by another session outside this plan's ordering (ledger §1.4, §5.5).
 
 Staging's 9 pending migrations were applied out-of-band via the Supabase
 **Management API** (`POST /v1/projects/{ref}/database/query`), not `db push`,
@@ -140,8 +260,27 @@ choose `target`, dry run **checked** first, then re-run unchecked.
 
 ### 5. Promote the branch
 
-`staging` is **53 commits and 9 migrations** behind `develop`, so it cannot
-exercise anything current until it is brought forward.
+**STILL OPEN, and the sentence below is stale in both directions.** Re-measured
+2026-11-14 against the fetched refs (`git rev-list --count`):
+
+| Pair | Commits |
+|---|---|
+| `origin/staging` behind `origin/main` | **18** |
+| `origin/staging` ahead of `origin/main` | **4** |
+| `origin/main` ahead of `origin/develop` | **1626** |
+
+So `staging` is neither "53 commits behind `develop`" nor meaningfully behind
+`main`: it is 4 commits **ahead** of `main` (its tip is `623c7c128`, which is
+also the commit the live staging Go binary reports —
+`https://backend-staging-new.up.railway.app/api/v1/public/build` →
+`{"commit":"623c7c128…","started_at":"2026-11-13T00:55:09Z"}`), and `develop` is
+the branch that has fallen out of use. "Bring `staging` forward from `develop`"
+would move it backwards.
+
+What is actually owed here is a decision, not a merge: those 4 staging-only
+commits need to land on `main` (or be dropped), and because `db-migrate.yml:40`
+still triggers `apply-staging` on a push to `staging`, the branch is a live DB
+writer even though its deploy lane is retired. This plan changed no branch.
 
 ## Mobile: no mock data on staging
 

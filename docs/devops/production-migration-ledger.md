@@ -2284,7 +2284,7 @@ Rounds 1-3 each got a scoped re-review; round 4 is a one-variable message fix ve
 
 ### 9.6 Ruling — its own job, not a step inside `secret-hygiene`
 
-`ci.yml:144-146` documents that cheap repo-wide gates share one runner "for no benefit", and this check is sub-second, so the repo convention argues for folding it in. Kept separate, per the brief: `needs:` can only reference **job ids**, and the plan's interface contract produces "the `ci.yml` check name `prod-flag-parity`, added to every `needs:` list that gates a deploy" — a name later tasks and an operator reading a red X both depend on. Cost is one runner start per CI run, against the outage class that produced the 221 503 sites recorded in §7.
+`ci.yml:144-146` documents that cheap repo-wide gates share one runner "for no benefit", and this check is sub-second, so the repo convention argues for folding it in. Kept separate, per the brief: `needs:` can only reference **job ids**, and the plan's interface contract produces "the `ci.yml` check name `prod-flag-parity`, added to every `needs:` list that gates a deploy" — a name later tasks and an operator reading a red X both depend on. Cost is one runner start per CI run, against the outage class §7.3 measured as **221 source lines pairing a `503` with the string "not available"** recorded in §7 — a code-surface count, not observed production traffic and not an incident tally. *(Wording corrected 2026-11-14 by Task 16; this line previously read "the 221 503 sites", which §10.7 flagged and §16.1 records as authorised.)*
 
 ### 9.7 Carry into Tasks 10, 13, 16
 
@@ -2854,3 +2854,99 @@ code `e16da72be`); the shadow pattern and main's SDK-refusal line were re-quoted
 round-1 comparison moved out of `/tmp` into the workspace and was re-sourced from the harness table (N-4);
 and the parity table's displayed value column was normalised to `JSON.stringify` so the whole column diffs
 against real dotenv, 0 of 60 rows apart (N-5). R2-3's shell-not-loader ruling gained its own bullet.*
+
+---
+
+## Task 16 — the docs the cutover outdated, and what still open (2026-11-14)
+
+**Verdict: five documents corrected; the migration is not done, and §16.3 is what makes that
+unreadable-two-ways.** Every figure below was re-taken on 2026-11-14 with the command printed beside it.
+Where a Task 16 brief stated a number that measurement did not reproduce, this section carries the
+measured number and says the brief's was never taken — three of the plan's own docs argued wrongly about
+production during this session's evidence-gathering, so "the plan said so" is not a source here.
+
+### 16.1 What changed in each document
+
+| File | Was | Now | Proof read |
+|---|---|---|---|
+| `docs/devops/deployment-matrix.md` §Authoritative paths, `backend` row | "last prod dispatch 2026-10-17", implying this plan moved it | split into **measured** (prod serves `585bd2ca7fab5c0a5adf9e67ab40b04068e9cee0`, read from `/public/build`) and **PENDING, NOT DONE** (nothing in this plan deployed, dispatched or pushed this service; §10.6 requires re-reading `/public/build` at execution time) | `curl https://www.spotlightng.com/api/v1/health` / that SHA is the tip of `origin/chore/promote-prod-module-readiness` (PR #996), **not an ancestor of `origin/main`**, 7 ahead / 713 behind the pin |
+| same file, Postgres row | "`db-migrate.yml` is dormant by design (AUD-INFRA-005)" | **not dormant**: triggers on push to `[main, staging]` with `supabase/migrations/**` + its own file (`:40-43`); `apply` runs on `(dispatch && target==production) \|\| (push && ref==refs/heads/main && vars.DB_MIGRATE_ENABLED=='true')` (`:79-81`) under `environment: production` (`:83`); both switches read `true`; three DB-writing lanes named, plus the runbook's bare `supabase db push` | `gh api …/actions/variables`; the two parked runs in §16.2 item 1 |
+| same cell (added by this round) | first draft asserted the gate was the `Production` environment's **required reviewers** | downgraded to "a gate exists; the rule behind it is unconfirmed" | `…/actions/runs/43299354226/pending_deployments` → parked on environment `Production`, `wait_timer: 0`; `…/environments/Production/deployment_protection_rules` → `[]`; the scoped lane `43311344252` completed in 36 s un-parked, which is why the scoped cell says "not parked", not "no reviewers" |
+| `docs/devops/backup-restore-runbook.md:37` | "not yet scheduled" (nobody's task) | unscheduled **on purpose**, with the owner named (whoever holds `nmseefdlliejmdbxytej` + the `Production` environment), the cadence (nightly; 30 daily + 12 monthly), and the note that `scripts/db/` is a reconciliation route, not a backup route | `git grep -ln pg_dump -- ':!docs'` → **no matches**, so no in-repo dump path exists to schedule |
+| `docs/runbooks/referral-gate-parity.md` | a referral-specific incident | generalised to the 503 class, with `wallet` / `events` added as non-referral evidence rows; `frontend-web/config/production-module-flags.env` + `make flag-parity` named as the fix; a "Verify before claiming" section; the docker-compose note split into "still wrong" vs "out of date"; step 2 now reads the file rather than the cPanel console | all four prod probes re-run 2026-11-14 (503 ×4, strings verbatim); visibility re-probed: `200`, `data.environment=production`, **31** modules, `referrals` present — which is the two-levers point stated exactly: prod *visibility* lists `wallet`/`events`/`restaurant` while prod *www* still 503s them |
+| same file, the lane commit citation | read as a commit in this repo | "**branch `ops/prod-module-flags` at `5355d932581e…` is in the destination repo `paymax2022/spotlight-latest`, *not* `spotlight-latest1**"; never pushed; the only copy is the `/private/tmp/t8-lane` worktree | `git log 5355d932581e` in this repo → unknown revision |
+| `docs/devops/staging-environment-setup.md` §"Remaining manual steps" | an unchecked 2026-08 checklist | per-step DONE / STILL-OPEN verdicts each with its command; a "deploy only to main, never staging" policy correction (`b5bc4480f` deleted `staging-frontend-web-deploy.yml`; `sync-frontend-web.yml:5-11` is main+development only; `db-migrate.yml:40` still makes a *staging* push a live DB-write lane); the 2026-08-21 figures marked superseded; a re-measured branch-drift table; the real **10** environment names with the `spotlight-platform / staging-new` vs bare-`staging` lookup trap | `git show b5bc4480f --stat`; `gh api …/actions/runs?status=waiting`; `gh api …/actions/variables` (4 repo-scope, 0 env-scope) |
+| same file, the migration-file counts | "`origin/main`'s tree holds 754" | **755** as re-read at `origin/main` = `31505cb92`; the 754→755 step is `8ed8123de`, which added `20271411000000_reconcile_doctors_presence_backfill.sql`; plus an explicit **do not sweep-replace** note, because the `recorded: 754` and the `754 − 670 = 84` closures are pinned to `3654f6b3f` / `623c7c128`, both of which count 754 | `git ls-tree -r --name-only <ref> -- supabase/migrations \| grep -c '\.sql$'` → 754 / 754 / 755 / 755 for `3654f6b3f` / `623c7c128` / `8ed8123de` / `31505cb92`; this worktree holds 751 |
+| `docs/devops/GO-LIVE-CHECKLIST.md` | a live checklist citing `VIDEOSDK_*` and "fill deploy.yml TODOs with your cloud" | HISTORICAL banner pointing at the matrix and this section | `vars.GCP_PROJECT_ID` unset ⇒ every `deploy.yml` job skips (recorded in *Deferred by design*) |
+| `docs/devops/production-migration-ledger.md` §9.6 (this file) | "the 221 503 sites" | "**221 source lines** pairing a `503` with the string 'not available'… a code-surface count, not observed production traffic and not an incident tally" | `grep` over `frontend-web/src` at the pin — **authorised here**, as §10.7 flagged and §9.6's parenthetical now points at this row |
+
+Two brief-level claims were **refuted rather than edited**, and are recorded so nobody re-imports them:
+
+- The brief's Step 1 says "**9 of the 13** publicIds return 404". The route has **13 entries / 12 unique**
+  publicIds (`ChatGPT_Image_Sep_25_2026_09_27_19_AM_ywlasa` appears at `route.ts:52` and again at `:117`),
+  and 2026-11-14 probing of `https://res.cloudinary.com/paymax/image/upload/…` — bare and with
+  `f_auto,q_auto`, which agree — returns **4 × 200 and 8 × 404**. So the honest statement is *8 of 12
+  unique publicIds (8 of 13 entries)*. The 9 was never measured.
+- Nothing in the shipped docs contained a "24-key Railway scope" or "18 gate names / 337 files" figure.
+  Those numbers came from controller narration, not from the diff; `grep -n '33 rows' docs/devops/` and
+  its siblings returned no match, so nothing was "corrected" out and nothing needed correcting.
+
+### 16.2 Still open, with the owner and the command that settles it
+
+| # | Open item | Who can close it | What closes it |
+|---|---|---|---|
+| 1 | **Two production writes are parked right now** and a third is queued: `43299354226` (DB Migrate, head `3654f6b3f`, created 2026-11-12T20:20:40Z), `43299959109` (Ops DB Push manual, head `3654f6b3f`, 20:24:15Z), `43534854471` (DB Migrate, head `8ed8123de`, 2026-11-14T00:32:20Z, still `pending`). | the account that reviews the `Production` environment — **not this agent** | a human decision to approve or decline each. `gh run approve` was never run here and is on this plan's forbidden list: approving a `Production` deployment on someone else's behalf is exactly the side effect the gate exists to prevent. |
+| 2 | **Prod `db push` has not happened** (Task 6). Prod's pending count is a 2026-11-07 capture (§5.6) and must be re-read, not quoted. | operator + the choice of which of the four gated routes ships first | a fresh `mode=list` table from `scripts/db/list-pending.sh` against prod at **0 pending**, in scoped batches, with a dump taken first (item 3). |
+| 3 | **No production dump exists** (Task 3). No in-repo route to make one either. | the `nmseefdlliejmdbxytej` key-holder | the runbook's restore rehearsal, with `supabase_migrations` rows equal to the baseline. Unscheduled on purpose until someone owns the cadence (§16.1). |
+| 4 | **`Production` env's `SUPABASE_PROJECT_ID` may still hold the staging ref** `wnicsubiznmishkmunsv`. The env-scoped variables list is empty and the repo-scope variable exists, so this is unverifiable from a review session. | operator who can dispatch `ops-db-push.yml` | that lane's **link-step** log (`ops-db-push.yml:128-129` runs `supabase link --project-ref "$SUPABASE_PROJECT_ID"`). `ops-db-push-scoped.yml` refuses `wnicsubiznmishkmunsv` (`:101-104`), so its completed runs prove only the scoped env's ref. |
+| 5 | **Prod Go is not at `RELEASE_SHA`** (Tasks 11/12). It serves `585bd2ca7…` from a branch that is not an ancestor of `origin/main`. | operator who dispatches the backend deploy | `/public/build` reading `c49b395643473ba6ff7a225d7a7a339a41eddfe6`, plus login-page chunk hrefs matching the build (verification is by served bytes, never run colour). |
+| 6 | **The cPanel runtime env has not been reconciled** (Task 8 Steps 4-5). The flag file and the CI gate exist; the host has not been shown to carry the 45 keys with no `FEATURE_*` in the process env. | operator who can run the lane | a probe re-read after the lane dispatch. The commit that would install it, `5355d932581e…`, is un-pushed and lives only in `/private/tmp/t8-lane`. |
+| 7 | **The mobile prod plane is still wired to staging** (Task 15 Step 2, deliberately escalated). main's gitignored `mobile-app/reactnative/.env.production` (11,725 B, mtime Nov 3 22:25) declares `EXPO_PUBLIC_APP_ENV=staging` at `:24`, carries `wnic` ×4 and `nmseef` ×0, and **8 key lines** hold a staging ref: `EXPO_PUBLIC_API_BASE_URL` (:21), `EXPO_PUBLIC_SITE_URL` (:23), `EXPO_PUBLIC_APP_ENV` (:24), `EXPO_PUBLIC_SUPABASE_URL` (:25), `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL` (:29), `SUPABASE_URL` (:126), `DATABASE_URL` (:145), `SUPABASE_JWKS_URL` (:231). Its own header (`:2`–`:5`) calls it a "STAGING env TEMPLATE / Copy to `.env.staging`", which is the root cause of the fork. | the user — it changes what a store build talks to, and the standing rule forbids correcting it unprompted | the re-point **plus** a real `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL` **plus** a rebuild **plus** the artifact re-grep. **Acceptance grep must be `grep -ic wnic` → 0 and `EXPO_PUBLIC_APP_ENV` reading `production`, NOT `grep -icE 'wnic\|staging'`: nine comment lines (`:2`, `:4`, `:5`, `:6`, `:8`, `:10`, `:16`, `:17`, `:112`) use the word "staging" descriptively and the combined pattern can therefore never reach 0 without rewriting prose.** |
+| 8 | **`wnic…` pooler password was printed in project history.** | the key-holder | rotation. It is not repeated here and never will be. |
+| 9 | **`scripts/flagprobe.sh` and the acceptance matrix do not exist** (Task 14). | whoever runs Task 14 | `git ls-files \| grep -i flagprobe` currently returns nothing; the row cannot be closed on intent. |
+| 10 | **`SPOTLIGHT/Banners/*` art was never uploaded** — 8 of 12 unique publicIds 404 (§16.1). | whoever holds Cloudinary `paymax` upload credentials | an **upload**, not a code change. `SpotlightBanner` already collapses the misses, so no prod error depends on it. |
+| 11 | **`integration-verify.yml` module lanes are red by choice**, and the merchant-receipt tiers gate six restaurant live-DB tests that are green in CI only because that code is not on `main`. | the lanes' owner | recorded in project memory (`ci-lanes-left-red-on-purpose.md`, `restaurant-merchant-receipt-ceiling-wip`), not addressed by this plan. |
+| 12 | **19 tracked files reference `mobile-app/reactnative/.env`** and will be stale the moment item 7 lands: `MOBILE_SUPABASE_LOCAL_CONFIG.md`, `REGISTRATION_E2E_TEST_RESULTS.md`, `docs/CROWDFUNDING_GO_LIVE.md`, `docs/ENV.md`, `docs/audit/E2E_TEST_MATRIX.md`, `docs/devops/DEPLOY-RUNBOOK.md`, `docs/devops/GO-LIVE-FINAL.md`, `docs/devops/production-migration-ledger.md`, `docs/e2e/results/mobile.md`, `docs/prd/golive/GO_LIVE_CHECKLIST.md`, `docs/prd/transportation/INTEGRATION-RUNBOOK.md`, `docs/qa/food-uat-332/cluster-c-discovery-cart.md`, `docs/qa/test-release-runbook.md`, `docs/runbooks/fx-e2e-test.md`, `docs/supabase-go-live.md`, `launch/CREDENTIALS.md`, `launch/apply-env.sh`, `launch/master.env.template`, `mobile-app/reactnative/docs/association/GO_LIVE.md`. Two are operational (`launch/apply-env.sh`, `launch/master.env.template`), the rest documentation. | whoever lands item 7 | `git grep -ln 'mobile-app/reactnative/\.env'` → 19 today. (An earlier draft said 18; it was a count of the same grep minus one file added since.) |
+| 13 | **Bank-transfers visibility decision** — `walletTransfers` is in prod's 31-module visibility list while `wallet` 503s on www. | product owner | a recorded yes/no, which then needs no code: the flag file plus the lane are the mechanism (§16.1, referral-gate row). |
+| 14 | **`#996`-vs-main drift**: prod's serving SHA is 7 ahead / 713 behind the pin and is not an ancestor of `origin/main`. | the operator in item 5 | a promotion decision — deploying the pin silently *removes* whatever `585bd2ca7…` carries that `main` does not. This is the single largest un-addressed risk in this section and no earlier task named it. |
+
+### 16.3 Step 3's checklist — verified vs not, per row
+
+The brief's rule: "Every row is a command someone ran, with the value it returned written in the ledger
+beside it. No row may be closed on recollection, and the migration is not done while any row is
+unverified." Applying it literally gives **6 of 15 verified, 1 half-verified, 8 not verified.**
+
+| # | "Done" means | Status 2026-11-14 | The value |
+|---|---|---|---|
+| 1 | `RELEASE_SHA` pinned, read back at 40 hex | **VERIFIED** | `c49b395643473ba6ff7a225d7a7a339a41eddfe6`, 40 chars, `git cat-file -t` → `commit`, subject "fix(health): run the telemedicine intake after payment (#992)" |
+| 2 | `list-pending.sh` + its test committed, test prints `PASS` | **VERIFIED** | §2 |
+| 3 | A prod dump exists **and** restores, `supabase_migrations` = baseline | **NOT DONE** | §16.2 item 3; no dump, no in-repo `pg_dump` caller |
+| 4 | Release SHA's migrations replay from zero on `postgis/postgis:17-3.4`, `rls-check` clean | **VERIFIED** | §Stage 1 |
+| 5 | Staging reconciled to 0 pending before any prod write | **VERIFIED** | §5.4: `0 pending`, `recorded: 754`, `remote max applied: 20271410000000` |
+| 6 | Prod at 0 pending on a fresh `mode=list` table | **NOT DONE** | §16.2 item 2; §5.6's 88 is a 2026-11-07 capture |
+| 7 | `production-module-flags.env` committed: 45 lines, 36 `=true`, 9 `=false` | **VERIFIED** | `make flag-parity` → exit 0, `prod-flag-parity ✓ — 45 flags declared (36 on, 9 off)`; file is 90 physical lines, 45 of them assignments |
+| 8 | The cPanel runtime env carries those 45 keys, no `FEATURE_*` in the process env | **NOT DONE** | §16.2 item 6 — needs the lane dispatch and a probe re-read |
+| 9 | `make flag-parity` green **locally and in CI**, and proven to bite | **HALF** | local: exit 0 + `test-prod-flag-parity.sh` → `PASS`; the bite is pinned by the red capture. **CI has never executed it**: the job exists at `ci.yml:136-147` and is `needs:`-referenced at `:493`/`:579`, but `feat/prod-cutover` was never pushed (`git ls-remote --heads origin` finds no such ref; `gh api …/commits/814f5d3e4/check-runs` → 422 *No commit found*). A gate no runner has read guards nothing yet. |
+| 10 | Money-path rulings recorded per name (both web planes + the Go route group) | **VERIFIED** | §10.2 |
+| 11 | Nine missing backend flags set; five provider keys copied without printing a value | **NOT DONE** | Task 13; the copy step is operator-only by design (never print secret values) |
+| 12 | Prod Go reports `/public/build` == `RELEASE_SHA`; login chunk hrefs match | **NOT DONE** | §16.2 items 5 and 14 — measured *against*: prod reports `585bd2ca7…` |
+| 13 | Acceptance matrix committed with `scripts/flagprobe.sh`, no `=true` flag answering 503 on a real gated route | **NOT DONE** | §16.2 item 9. The second half is currently **false**, and the reason is the flag-file install, not the flags: `production-module-flags.env` declares `FEATURE_EVENTS_ENABLED` `:44`, `FEATURE_RESTAURANT_ENABLED` `:60`, `FEATURE_WALLET_ENABLED` `:70` and both referral names `:58-59` all `=true`, yet www still 503s all four routes on a 2026-11-14 re-probe — because the cPanel host has not been shown to carry the file (§16.2 item 6). See also the evidence-split paragraph in `docs/runbooks/referral-gate-parity.md`: `FEATURE_EVENTS_ENABLED` on the prod **backend** env was never read anywhere in this plan, so the backend half of that row cannot be closed from here. |
+| 14 | Shipped AAB has zero `wnic…` / `frontend-web-staging…` strings; `build-aab.sh` refuses a prod build whose env declares staging | **HALF** | refusal: **done** (`f6e49a31c` → `e16da72be`, §15). AAB zero-strings: **not done** — no rebuild happened, because the env file it would read is still staging (§16.2 item 7) |
+| 15 | Four outdated docs corrected, still-open list named with owners | **DONE by this section** | five files, not four — `GO-LIVE-CHECKLIST.md` was added to the brief's list by Task 16's own survey |
+
+### 16.4 What this plan does **not** claim
+
+It does not claim the staging→production migration is complete, or close. Six of fifteen acceptance rows
+verified, one half-verified, eight not. What it did achieve: production's flag surface now has a committed
+source of truth and a CI guard, the reconciliation tooling exists and is tested, staging is at 0 pending,
+and the docs no longer describe production wrongly — which is a prerequisite for the eight remaining rows,
+not a substitute for them. The plan's four operator-owned gates (parked approvals, prod `db push`, the
+cPanel lane, the mobile re-point) each require a decision this agent was not authorised to make on anyone's
+behalf, and item 14 — the `#996` drift — should be settled before item 5, because promoting the pin is not
+a no-op on a production that is already ahead of it in seven commits.
+
+*No push, no merge, no approval, no dispatch, and no secret value appears anywhere in this section. This
+worktree's branch has never been pushed: `git ls-remote --heads origin 'refs/heads/*cutover*'` → empty, and
+`gh api …/commits/814f5d3e4/check-runs` → 422 "No commit found for SHA", which is the same evidence §16.3
+row 9 rests on.*
+
