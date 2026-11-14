@@ -96,7 +96,6 @@ export default function DoctorRecordsScreen() {
             <HubLink icon={Share2} label="Specialist referrals" sub="Refer patients to specialists" color={Colors.teal} bg={Colors.iconBgTeal} onPress={() => router.push('/(doctor)/referrals')} />
             <HubLink icon={ShieldCheck} label="HMO claims" sub="Track and dispute claims" color={Colors.secondary} bg={Colors.iconBgBlue} onPress={() => router.push('/(doctor)/claims')} />
             <HubLink icon={HeartPulse} label="Care plans" sub="Long-term & chronic care monitoring" color={Colors.teal} bg={Colors.iconBgTeal} onPress={() => router.push('/(doctor)/care-plans')} />
-            <HubLink icon={Icons.PawPrint} label="Pet health records" sub="Veterinary mode records" color={Colors.primary} bg={Colors.iconBgPurple} onPress={() => router.push('/(doctor)/vet')} />
             <HubLink icon={Siren} label="Emergency (demo)" sub="Red-flag alerts & escalation" color={Colors.error} bg={Colors.iconBgRed} onPress={() => router.push('/(doctor)/emergency')} />
           </View>
         </ScrollView>
