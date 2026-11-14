@@ -11,8 +11,9 @@ import { useEffect } from 'react';
  *
  * This script answers those clicks from the server HTML alone. Controls name
  * their family with `data-drawer-toggle` / `data-drawer-dismiss`, and the script
- * writes exactly the classes React writes from its own `open` state, so one DOM
- * element is the single source of truth for both. `isDrawerOpen` lets a header
+ * writes exactly the classes and disclosure attributes React writes from its own
+ * `open` state, so one DOM element is the single source of truth for both.
+ * `isDrawerOpen` lets a header
  * adopt that state as its initial value at hydration: without it React's first
  * render disagrees with the live DOM, and the drawer the visitor already opened
  * slams shut the moment the bundle lands.
@@ -69,6 +70,18 @@ const SCRIPT = `(function () {
 
   var kinds = ${JSON.stringify(KINDS)};
 
+  function mark(kind, open) {
+    var toggles = document.querySelectorAll('[data-drawer-toggle="' + kind + '"]');
+    for (var i = 0; i < toggles.length; i++) {
+      var toggle = toggles[i];
+      // Only the toggles whose markup already declares a disclosure state, so a
+      // family that renders none keeps rendering none.
+      if (!toggle.hasAttribute('aria-expanded')) continue;
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+    }
+  }
+
   function apply(kind, open) {
     var cfg = kinds[kind];
     if (!cfg) return;
@@ -81,6 +94,7 @@ const SCRIPT = `(function () {
     }
     var scrim = document.querySelector(cfg.scrim);
     if (scrim) scrim.classList.toggle(cfg.scrimOpen, open);
+    mark(kind, open);
   }
 
   document.addEventListener('click', function (event) {
