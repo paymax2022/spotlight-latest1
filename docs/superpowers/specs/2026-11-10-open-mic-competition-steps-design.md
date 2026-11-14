@@ -54,7 +54,7 @@ An artist arriving on the Open Mic programme page can, in order: hear and downlo
 | 02 Get the Spotlight beat | inline player on the reader URL, Download mp3 button, producer credit, usage rules | same URL, `?download=1` |
 | 03 Make and submit a song | submission window with open/closed state, format and size limits stated from the real cap | `/open-mic/<slug>/enter` |
 | 04 Share and rally votes | the signed-in visitor's own live entry link and its vote count; otherwise the honest "appears when your entry is live" | `/api/open-mic/submissions` client-side, already scoped to `userId` |
-| 05 Leaderboard | top 5: rank, artist, song, vote count; edition entry count and total votes — subject to the two `votingConfig` switches below | per-row Vote CTA → `/open-mic/<slug>/entries`; "View all" → the same |
+| 05 Leaderboard | top 5: rank, artist, song, vote count; edition entry count and total votes — subject to the two `votingConfig` switches below | per-row Vote CTA → `/open-mic/<slug>/entry/<artistSlug>`, that contestant's own voting page (the existing plane's artist card hosts the vote modal, so the CTA lands where a vote for *that* artist can actually be cast); the panel-level "Vote now" and "View all" → `/open-mic/<slug>/entries` |
 
 The bottom "Go to voting" CTA (`page.tsx:684`) repoints from `/voting` to the edition's board, falling back to `/open-mic` when there is no edition.
 

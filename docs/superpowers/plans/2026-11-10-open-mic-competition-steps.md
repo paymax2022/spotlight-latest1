@@ -2655,12 +2655,17 @@ test('step 05 shows the top five with counts and a way to vote', async ({ page }
   // boundaries mean a padded 4120 or 960 cannot pass for the real counts.
   await expect(rows.nth(0)).toContainText(/\b412\b/);
   await expect(rows.nth(4)).toContainText(/\b96\b/);
-  // Design table row 05: a Vote CTA per contestant, each into the edition board.
+  // Design table row 05: a Vote CTA per contestant, each into that contestant's
+  // own voting page — the artist card is where the vote modal actually lives, so
+  // five links to one board would not be a CTA "per each contestant". The slugs
+  // are `slugifyArtist(stageName)` on Task 7's fixture names, and each of the
+  // five resolves 200 for an anonymous reader.
+  const artistSlugs = ['adaeze-okonkwo', 'bello-miracle', 'tunde-signals', 'k1nghoota', 'zabbymoney'];
   await expect(rows.getByRole('link', { name: /^vote$/i })).toHaveCount(5);
   for (const rank of [1, 2, 3, 4, 5]) {
     await expect(rows.nth(rank - 1).getByRole('link', { name: /^vote$/i })).toHaveAttribute(
       'href',
-      `/open-mic/${SLUG}/entries`,
+      `/open-mic/${SLUG}/entry/${artistSlugs[rank - 1]}`,
     );
   }
   await expect(panel.getByRole('link', { name: /vote now/i })).toHaveAttribute('href', `/open-mic/${SLUG}/entries`);
@@ -2997,7 +3002,7 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                                 </span>
                                 <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString()} votes` : '—'}</span>
                                 <span className={styles.link}>
-                                  <Link href={`/open-mic/${data.slug}/entry/${row.artistSlug}`}>Hear it and vote</Link>
+                                  <Link href={`/open-mic/${data.slug}/entry/${row.artistSlug}`}>Vote</Link>
                                 </span>
                               </li>
                             ))}
