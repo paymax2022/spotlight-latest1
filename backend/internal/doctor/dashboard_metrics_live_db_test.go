@@ -382,16 +382,20 @@ func mustToday(t *testing.T, pool *pgxpool.Pool, userID, tz string) string {
 // Nothing in the projection reads `reference`, so the difference is inert — if a
 // future read ever does key on it, this helper stops being a safe substitute for
 // the real escrow path and says so here.
-func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, providerKobo, platformFeeKobo int64, settled bool, moduleType string) {
+// settledAt is the row's settlements.settled_at, and the ZERO time.Time means
+// "not settled". Passing a date rather than a bool is what lets one fixture row
+// sit in a previous calendar month, and that row is the only thing the month
+// FILTER on ThisMonthKobo can be falsified by.
+func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, providerKobo, platformFeeKobo int64, settledAt time.Time, moduleType string) {
 	t.Helper()
 	ctx := context.Background()
 	key := "metrics-" + uuid.NewString()
-	// An `any` holding an untyped nil reaches pgx as SQL NULL, which is exactly the
-	// shape an unsettled row has. A time.Time when settled — not the string "now()",
-	// which CAST would reject as invalid datetime input.
-	var settledAt any
-	if settled {
-		settledAt = time.Now().UTC()
+	// The zero time.Time must reach Postgres as SQL NULL, not as 0001-01-01, so the
+	// column stays an `any` holding either a time.Time or an untyped nil. It is not
+	// the string "now()" either — CAST rejects that as invalid datetime input.
+	var settledCol any
+	if !settledAt.IsZero() {
+		settledCol = settledAt
 	}
 	// moduleType is a parameter, not the literal 'telemedicine', so one call site can
 	// prove the read's module filter bites. settlements.module_type is plain text with
@@ -400,7 +404,7 @@ func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, 
 		INSERT INTO settlements (reference, module_type, payer_id, total_kobo, fee_kobo, provider_kobo,
 		                         status, settled_at, idempotency_key)
 		VALUES ($1,$8,$2,$3,0,$4,$5,$6,$7)`,
-		"metrics-"+f.doctorUser, f.patient, totalKobo, providerKobo, status, settledAt, key, moduleType); err != nil {
+		"metrics-"+f.doctorUser, f.patient, totalKobo, providerKobo, status, settledCol, key, moduleType); err != nil {
 		t.Fatalf("insert settlement (%s): %v", status, err)
 	}
 	if _, err := f.pool.Exec(ctx, `
@@ -422,43 +426,83 @@ func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
 	tz := defaultDoctorTimezone
 
 	settledID, _ := f.bookLocal(t, tz, "completed", -3, 10*60)
-	f.escrow(t, settledID, "settled", 200000, 170000, 0, true, "telemedicine")
+	f.escrow(t, settledID, "settled", 200000, 170001, 0, time.Now().UTC(), "telemedicine")
 	escrowedID, _ := f.bookLocal(t, tz, "booked", 1, 10*60)
 	// provider_kobo here is deliberately NOT the 0 a real escrowed row carries
 	// (Settle writes it in the same tx that flips status to 'settled', so no live
-	// row is ever both unsettled and paid). It is what makes `st.status =
-	// 'settled'` in settledQ load-bearing: leave it 0 and that predicate can be
-	// deleted with all three assertions below still green. The escrowed read never
-	// looks at provider_kobo — only total_kobo and the fee — so PendingKobo is
-	// unaffected by the value chosen here.
-	f.escrow(t, escrowedID, "escrowed", 200000, 168300, 2000, false, "telemedicine")
+	// row is ever both unsettled and paid): leave it 0 and deleting `st.status =
+	// 'settled'` from settledQ is green. It is equally deliberately NOT the number
+	// escrowedQ projects for this row — ComputeLegs(200000, fee 2000) is 168300,
+	// so this sits one kobo above it — because that one kobo is what makes
+	// "make the two reads symmetric: sum provider_kobo and drop the projection"
+	// change the reported figure instead of matching the test's own `want`. The
+	// settled row is guarded from the other side: 170001 is NOT 0.85 × (200000 − 0)
+	// = 170000, so settledQ cannot be replaced by a re-derivation either. Paid and
+	// projected are different numbers on both rows, so neither read can collapse
+	// into the other.
+	f.escrow(t, escrowedID, "escrowed", 200000, 168301, 2000, time.Time{}, "telemedicine")
 	refundedID, _ := f.bookLocal(t, tz, "cancelled", -5, 10*60)
-	f.escrow(t, refundedID, "refunded", 300000, 0, 0, false, "telemedicine")
+	f.escrow(t, refundedID, "refunded", 300000, 0, 0, time.Time{}, "telemedicine")
 	// The rows that make BOTH module predicates load-bearing. One label is not
 	// enough, because the two reads filter on different statuses: a settled
 	// non-telemedicine row can only ever be excluded by settledQ's predicate, and
 	// an escrowed one only by escrowedQ's. Each therefore needs its own row, both
 	// with money in the column that read sums — otherwise deleting either filter
-	// stays green, and a restaurant or mobility payout to the same human starts
-	// appearing in their consult earnings. `settlements.module_type` is plain text
-	// with no CHECK and no FK (verified against the live catalog), so 'restaurant'
-	// inserts; locally only 'telemedicine' exists today, so ambient data could
-	// never have proven either filter on its own.
+	// stays green. What the two filters buy is defence, not a live leak: the reads
+	// are gated by `JOIN appointments a ON a.settlement_id = st.id`, and only
+	// telemedicine ever writes appointments.settlement_id, so a restaurant payout
+	// cannot reach a consult sum whatever its label. The way this filter can
+	// actually hurt runs the other way and is quieter — a genuine consult
+	// settlement stored with a different module_type (a mislabel, or a new health
+	// vertical reusing appointments) contributes 0 to all three money columns
+	// forever. These rows pin that trade-off so it stays a decision rather than an
+	// accident. `settlements.module_type` is plain text with no CHECK and no FK
+	// (verified against the live catalog), so 'restaurant' inserts; locally only
+	// 'telemedicine' exists today, so ambient data could never have proven either
+	// filter on its own.
 	otherID, _ := f.bookLocal(t, tz, "completed", -2, 10*60)
-	f.escrow(t, otherID, "settled", 400000, 320000, 0, true, "restaurant")
+	f.escrow(t, otherID, "settled", 400000, 320000, 0, time.Now().UTC(), "restaurant")
 	otherEscrowID, _ := f.bookLocal(t, tz, "booked", 3, 10*60)
-	f.escrow(t, otherEscrowID, "escrowed", 400000, 0, 0, false, "restaurant")
+	f.escrow(t, otherEscrowID, "escrowed", 400000, 0, 0, time.Time{}, "restaurant")
+	// The row that makes the month FILTER on ThisMonthKobo falsifiable. Every
+	// other settled telemedicine row above settles at now(), so without this one
+	// ThisMonthKobo is arithmetically the same figure as LifetimeKobo and the
+	// whole FILTER — including the `$2` timezone parameter, which appears nowhere
+	// else in settledQ — can be deleted or pointed at another date column and
+	// nothing notices. Settled one calendar month back, and with a provider_kobo
+	// of 90000 where the projection for its own total would be 76500, it is
+	// counted by LifetimeKobo and excluded by ThisMonthKobo. Its escrowed_at is
+	// the column default now() (NOT NULL DEFAULT now(), verified live), which is
+	// what turns a `settled_at` → `escrowed_at` swap in the FILTER into a wrong
+	// number rather than a different way of saying the same thing.
+	prevMonthID, _ := f.bookLocal(t, tz, "completed", -40, 10*60)
+	f.escrow(t, prevMonthID, "settled", 90000, 90000, 0,
+		time.Now().UTC().AddDate(0, -1, 0), "telemedicine")
 
 	rev, err := NewRepository(pool).consultRevenue(ctx, f.doctorUser, tz)
 	if err != nil {
 		t.Fatalf("consultRevenue: %v", err)
 	}
-	if rev.LifetimeKobo != 170000 {
-		t.Errorf("LifetimeKobo = %d, want 170000 (settled provider_kobo only)", rev.LifetimeKobo)
+	if rev.LifetimeKobo != 260001 {
+		t.Errorf("LifetimeKobo = %d, want 260001 (both settled telemedicine rows' provider_kobo, 170001 + 90000)", rev.LifetimeKobo)
 	}
-	// Settle moves the money this month, so the settled row is also this month's.
-	if rev.ThisMonthKobo != 170000 {
-		t.Errorf("ThisMonthKobo = %d, want 170000", rev.ThisMonthKobo)
+	// Only the row settled now is this month's; the 90000 one settled last month.
+	if rev.ThisMonthKobo != 170001 {
+		t.Errorf("ThisMonthKobo = %d, want 170001", rev.ThisMonthKobo)
+	}
+	// The month tile must not be the lifetime tile wearing a different label. This
+	// inequality is the assertion the fixture used to make unfalsifiable, and it
+	// names the two mutations it now catches: deleting the month FILTER wholesale
+	// (ThisMonthKobo becomes SUM(provider_kobo) = LifetimeKobo = 260001), and
+	// swapping st.settled_at for st.escrowed_at inside it (escrowed_at is
+	// NOT NULL DEFAULT now() on every row this helper writes, including the one
+	// settled last month, so the swap sums it into "this month" — the same
+	// 260001). Both also break the line above; this one says which of the two
+	// mistakes it is, and it is the only assertion that proves the doctor's
+	// timezone reaches the money read at all, since `$2` appears nowhere else in
+	// settledQ.
+	if rev.ThisMonthKobo == rev.LifetimeKobo {
+		t.Errorf("ThisMonthKobo == LifetimeKobo == %d — the month FILTER is not excluding the row settled last month", rev.ThisMonthKobo)
 	}
 	want, err := pendingConsultKobo(200000, 2000)
 	if err != nil {
@@ -467,19 +511,16 @@ func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
 	if rev.PendingKobo != want {
 		t.Errorf("PendingKobo = %d, want %d (ComputeLegs for the same row)", rev.PendingKobo, want)
 	}
-	if rev.ConsultsThisMonth != 0 {
-		t.Errorf("ConsultsThisMonth = %d, want 0 — the service fills it from the aggregates", rev.ConsultsThisMonth)
-	}
 
 	// A second doctor's own settlement must not land in this doctor's figures.
 	// `other` is a whole second fixture — its own doctor, its own patient uuid —
 	// so this probes the `d.user_id = $1` scoping, not any patient sharing.
 	other := newMetricsFixture(t, pool)
 	otherAppt, _ := other.bookLocal(t, tz, "completed", -1, 9*60)
-	other.escrow(t, otherAppt, "settled", 900000, 765000, 0, true, "telemedicine")
+	other.escrow(t, otherAppt, "settled", 900000, 765000, 0, time.Now().UTC(), "telemedicine")
 	// Booked, not completed: the escrowed read is the one this row must not reach.
 	otherPending, _ := other.bookLocal(t, tz, "booked", 2, 9*60)
-	other.escrow(t, otherPending, "escrowed", 500000, 0, 0, false, "telemedicine")
+	other.escrow(t, otherPending, "escrowed", 500000, 0, 0, time.Time{}, "telemedicine")
 	rev2, err := NewRepository(pool).consultRevenue(ctx, f.doctorUser, tz)
 	if err != nil {
 		t.Fatalf("consultRevenue after second doctor: %v", err)
@@ -492,6 +533,16 @@ func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
 	if rev2.PendingKobo != rev.PendingKobo {
 		t.Errorf("PendingKobo moved to %d, want %d — the escrowed read is not scoped to the doctor",
 			rev2.PendingKobo, rev.PendingKobo)
+	}
+
+	// A contract, not a money guard: consultRevenue reads settlements and writes
+	// only the three kobo columns of DashboardRevenue — ConsultsThisMonth is the
+	// service's, filled from dashboardAggregates by GetDashboard, because counting
+	// consults belongs to the count read and not to a money projection. It is
+	// asserted so that a future merge of the two reads into one query shows up
+	// here rather than as a tile nobody questions.
+	if rev.ConsultsThisMonth != 0 {
+		t.Errorf("ConsultsThisMonth = %d, want 0 — the service fills it from the aggregates", rev.ConsultsThisMonth)
 	}
 }
 
@@ -509,9 +560,8 @@ func TestLiveDB_DashboardTimezonePoisonedZoneDegrades(t *testing.T) {
 	ctx := context.Background()
 
 	// One consult on today's local date, so the aggregate read has something to
-	// count once the zone resolves. bookLocal returns (id, ref) and already
-	// t.Fatalf's on a failed insert, so there is no error here to check — the
-	// brief's `if _, err := f.bookLocal(...)` does not compile against it.
+	// count once the zone resolves. There is no error to check at this call site:
+	// bookLocal returns (id, ref) and t.Fatalf's on a failed insert itself.
 	f.bookLocal(t, defaultDoctorTimezone, "completed", 0, 10*60)
 	res, err := pool.Exec(ctx,
 		`UPDATE doctor_profiles SET timezone = 'Mars/Olympus_Mons' WHERE user_id = $1`, f.doctorUser)
@@ -552,5 +602,47 @@ func TestLiveDB_DashboardTimezonePoisonedZoneDegrades(t *testing.T) {
 	}
 	if tzOffset != "-05" {
 		t.Errorf("dashboardTimezone = %q, want the doctor's own '-05' — a catalog lookup would have downgraded this", tzOffset)
+	}
+
+	// The likeliest accidental value is not a bogus zone but a real one with the
+	// whitespace a paste or a picker leaves behind, and this server rejects the
+	// padded name exactly as hard as 'Mars/Olympus_Mons' (verified live: `AT TIME
+	// ZONE 'Africa/Lagos '` raises 22023). usableTimezone trims before probing and
+	// returns the trimmed value, so the doctor keeps Asia/Karachi instead of
+	// silently degrading to Lagos — and the value the reads interpolate is one
+	// Postgres accepts.
+	if _, err := pool.Exec(ctx,
+		`UPDATE doctor_profiles SET timezone = 'Asia/Karachi ' WHERE user_id = $1`, f.doctorUser); err != nil {
+		t.Fatalf("set padded zone: %v", err)
+	}
+	tzPadded, err := metricsService(pool).dashboardTimezone(ctx, f.doctorUser)
+	if err != nil {
+		t.Fatalf("dashboardTimezone for a padded zone: %v", err)
+	}
+	if tzPadded != "Asia/Karachi" {
+		t.Errorf("dashboardTimezone = %q, want %q — a trailing space must not cost the doctor their zone",
+			tzPadded, "Asia/Karachi")
+	}
+}
+
+// The other half of the 22023 branch: an unrecognised zone degrades, everything
+// else propagates. Written `if err != nil { return defaultDoctorTimezone, nil }`
+// instead, this suite is entirely green — no fixture row and no stored value ever
+// produces a non-22023 probe error — while a dead pool, a cancelled request
+// context or a lost connection would silently project every doctor's tiles on
+// Africa/Lagos, which spec D3a forbids ("a dead pool must not look like an unset
+// timezone"). That promise is the comment at dashboard_metrics.go's probe; this is
+// the assertion. A cancelled context is the cheapest real non-22023 error, and it
+// needs no rows and no writes.
+func TestLiveDB_DashboardTimezoneProbeErrorPropagates(t *testing.T) {
+	repo := NewRepository(metricsDB(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tz, err := repo.usableTimezone(ctx, "Asia/Karachi")
+	if err == nil {
+		t.Fatalf("usableTimezone swallowed a non-22023 error: tz=%q", tz)
+	}
+	if tz != "" {
+		t.Errorf("usableTimezone returned %q alongside an error, want the empty string", tz)
 	}
 }

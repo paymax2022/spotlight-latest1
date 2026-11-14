@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/internal/finance/settlement"
+	"strings"
 	"time"
 )
 
@@ -101,8 +103,10 @@ type dashboardCounters struct {
 // GetProfile — NOT doctor_availability.timezone, which no screen ever sets (a
 // doctor who chose Asia/Karachi would otherwise have every "today" predicate
 // anchored to Lagos). `GET /schedule` is not a read-back of this column: its
-// ScheduleSettings carries no timezone at the top level (handler_tail2.go:493-498),
-// and the only zone that response could ever reach transitively is
+// ScheduleSettings carries no timezone at the top level, and none of that
+// struct's typed fields carries a zone either — two of the values it nests
+// (RecurringRule.Rule, Reminder.Settings) are opaque json.RawMessage blobs this
+// package does not shape — so the only zone the response could echo is
 // `doctor_availability.timezone`, a different column — see spec F5 for what that
 // costs the screen that offers the picker. A doctor with no profile row at all is
 // the default, not an error.
@@ -134,7 +138,16 @@ func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string,
 // `pg_timezone_names` is not what `AT TIME ZONE` accepts: the fixed offsets
 // "-05" and "+05:30" are absent from that view yet valid as zones, so an EXISTS
 // check would silently downgrade a doctor's real setting to Lagos.
+//
+// The argument is trimmed before it is probed and before it is returned, because
+// this server rejects a padded name — `AT TIME ZONE 'Africa/Lagos '` raises the
+// same 22023 as a bogus zone — and the write path stores the request body
+// verbatim, so the likeliest accidental value is the trailing space a paste or a
+// picker leaves behind. Trimming keeps that doctor's real zone; a value that is
+// only whitespace trims to "", which the probe rejects and therefore degrades to
+// the default, which is already what a blank zone costs them.
 func (r *Repository) usableTimezone(ctx context.Context, tz string) (string, error) {
+	tz = strings.TrimSpace(tz)
 	const probe = `SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE $1::text, 'YYYY-MM-DD')`
 	var day string
 	if err := r.db.QueryRow(ctx, probe, tz).Scan(&day); err != nil {
@@ -142,6 +155,7 @@ func (r *Repository) usableTimezone(ctx context.Context, tz string) (string, err
 		// raises. Anything else — a dead pool, a lost connection — is a real
 		// failure and must surface rather than hide behind the default.
 		if dbutil.SQLState(err) == "22023" {
+			log.Printf("[doctor] dashboard timezone %q rejected by postgres, projecting %s instead", tz, defaultDoctorTimezone)
 			return defaultDoctorTimezone, nil
 		}
 		return "", fmt.Errorf("doctor: probe timezone %q: %w", tz, err)
