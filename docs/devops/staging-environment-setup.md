@@ -286,11 +286,16 @@ environment's required reviewers until a named human approves (ledger §16.2 ite
 you re-run this — the numbers move every time `main` takes a merge, and this one
 moved while the sentence was being written.** Read at
 `origin/main` = `31505cb92`, `origin/staging` = `623c7c128`,
-`origin/develop` = `da665dcd0`; a re-fetch ~3h later, at `origin/main` =
-`7a97609d0` (22:13 +0100), read **22 / 5 / 1630** for the same three pairs — the
-table below is the pinned first capture, not a live state, and the shape (main
-pulling away from both) is the actual finding. The migration-file count did **not**
-move with it: `git ls-tree -r --name-only origin/main -- supabase/migrations`
+`origin/develop` = `da665dcd0`; a re-fetch ~3h later, with `origin/main` at
+`7a97609d0` (22:13 +0100) and `origin/staging` **still** at `623c7c128`, read
+**22 / 4 / 1630** for the same three pairs. A third reading, later the same day,
+with `origin/staging` since moved to `2a82a62ef`, gives **22 / 5 / 1630**, and
+the middle number moved only because of that staging commit (one past
+`623c7c128`) — main's tip alone does not change it (`7a97609d0..623c7c128` = 4,
+`7a97609d0..2a82a62ef` = 5). The table below is the pinned first capture, not a
+live state, and the shape (main pulling away from both) is the actual finding.
+The migration-file count did **not** move with those tips:
+`git ls-tree -r --name-only origin/main -- supabase/migrations`
 counts **755** at both tips.
 
 | Pair | Commits |
@@ -304,17 +309,22 @@ An earlier capture of the same command, hours before, read **18 / 4 / 1626** at
 portable.
 
 So `staging` is neither "53 commits behind `develop`" nor meaningfully behind
-`main`: it is 4 commits **ahead** of `main` (its tip is `623c7c128`, which is
-also the commit the live staging Go binary reports —
+`main`: it is **ahead** of `main` — 4 commits at the pinned capture above, 5 as
+of `origin/staging` = `2a82a62ef` — and the live staging Go binary reports that
+same tip. Re-read 2026-11-14:
 `https://backend-staging-new.up.railway.app/api/v1/public/build` →
-`{"commit":"623c7c128…","started_at":"2026-11-13T00:55:09Z"}`), and `develop` is
-the branch that has fallen out of use. "Bring `staging` forward from `develop`"
-would move it backwards.
+`{"commit":"2a82a62ef…","started_at":"2026-11-14T20:54:20Z"}`. An earlier
+reading in this plan, on 2026-11-13, answered
+`{"commit":"623c7c128…","started_at":"2026-11-13T00:55:09Z"}`; each was true at
+its own moment, which is why ledger §10.6 re-reads this endpoint instead of
+quoting a doc. `develop` is the branch that has fallen out of use. "Bring
+`staging` forward from `develop`" would move it backwards.
 
-What is actually owed here is a decision, not a merge: those 4 staging-only
-commits need to land on `main` (or be dropped), and because `db-migrate.yml:40`
-still triggers `apply-staging` on a push to `staging`, the branch is a live DB
-writer even though its deploy lane is retired. This plan changed no branch.
+What is actually owed here is a decision, not a merge: those staging-only
+commits — 5 at the `2a82a62ef` tip — need to land on `main` (or be dropped),
+and because `db-migrate.yml:40` still triggers `apply-staging` on a push to
+`staging`, the branch is a live DB writer even though its deploy lane is
+retired. This plan changed no branch.
 
 ## Mobile: no mock data on staging
 
