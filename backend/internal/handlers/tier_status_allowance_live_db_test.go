@@ -35,12 +35,12 @@ import (
 
 type tierStatusBody struct {
 	Data struct {
-		Tier                    int    `json:"tier"`
-		DailyLimitKobo          *int64 `json:"dailyLimitKobo"`
-		DailyUsedKobo           *int64 `json:"dailyUsedKobo"`
-		RemainingKobo           *int64 `json:"remainingKobo"`
-		WalletDisabled          *bool  `json:"walletDisabled"`
-		MerchantOrderLimitKobo  *int64 `json:"merchantOrderLimitKobo"`
+		Tier                   int    `json:"tier"`
+		DailyLimitKobo         *int64 `json:"dailyLimitKobo"`
+		DailyUsedKobo          *int64 `json:"dailyUsedKobo"`
+		RemainingKobo          *int64 `json:"remainingKobo"`
+		WalletDisabled         *bool  `json:"walletDisabled"`
+		MerchantOrderLimitKobo *int64 `json:"merchantOrderLimitKobo"`
 	} `json:"data"`
 }
 
