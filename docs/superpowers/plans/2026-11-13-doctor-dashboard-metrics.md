@@ -2420,11 +2420,25 @@ Spec: `docs/superpowers/specs/2026-11-13-doctor-dashboard-metrics-design.md`. Pl
 
 ## Two notes for anyone reading the money tests later
 
-- The escrowed fixture row deliberately carries `provider_kobo = 168300`, which production never writes (`Settle` fills that column in the same transaction that flips the status). It is there so that deleting `st.status = 'settled'` turns a test red; three money filters in this file were proven that way, by mutation, and the transcript is in the PR discussion.
+- The escrowed fixture row deliberately carries `provider_kobo = 168300`, which production never writes (`Settle` fills that column in the same transaction that flips the status). It is there so that deleting `st.status = 'settled'` turns a test red; three money filters in this file were proven that way, by mutation, and the transcript is a comment on this PR.
 - The doctor app now has two fields labelled "pending": consult money escrowed but unsettled (this tile) and the wallet's pending payout (batch 6). Different payloads, different screens, nothing adds them. If that reads as confusing in the product, the fix is the tile's label, not the data.
 EOF
 )"
 ```
+
+- [ ] **Step 6b: Post the mutation transcript, so the money proof travels with the PR**
+
+The transcript is the only artifact that shows the three SQL predicates in `consultRevenue` were tested by deleting them, and it lives in a git-ignored workspace. Check it carries no DSN before posting, and post the transcript rather than the fix reports — the reports speak in the plan's internal vocabulary ("the brief") a PR reader does not have:
+
+```bash
+cd /private/tmp/spot-doctor-metrics
+grep -c 'postgresql://' .superpowers/sdd/2026-11-13-doctor-dashboard-metrics/task-2-mutation.md
+{ printf '> Each SQL predicate in `consultRevenue` was checked by deleting it and re-running the live test. "the brief" below means the per-task instruction sheet derived from the plan.\n\n'; cat .superpowers/sdd/2026-11-13-doctor-dashboard-metrics/task-2-mutation.md; } > /tmp/pr-mutation-comment.md
+gh pr comment --body-file /tmp/pr-mutation-comment.md
+rm -f /tmp/pr-mutation-comment.md
+```
+
+Expected: the `grep -c` prints `0` — if it prints anything else, stop and do not post. `gh pr comment` prints the new comment's URL; report it, since it is the citation for the money filters.
 
 - [ ] **Step 7: Watch the lane this module owns**
 
