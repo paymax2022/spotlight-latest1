@@ -3026,13 +3026,18 @@ export default function OpenMicEditionSteps({ data }: { data: OpenMicEditionStep
                               → `k1nghoota`) and this projection carries no row id. */}
                           <ol className={styles.board}>
                             {board.rows.map((row) => (
+                              /* Cells are separated with a space, not only by the grid:
+                                 JSX drops the whitespace between adjacent elements, so
+                                 without it the row's text reads "…Street Light412 votes"
+                                 and no word boundary exists around the count — a copy of
+                                 the board that only the stylesheet can parse. */
                               <li key={`${row.rank}-${row.artistSlug}`} data-rank={row.rank}>
-                                <span className={styles.rank}>{row.rank}</span>
+                                <span className={styles.rank}>{row.rank}</span>{' '}
                                 <span className={styles.who}>
-                                  <strong>{row.stageName}</strong>
+                                  <strong>{row.stageName}</strong>{' '}
                                   <span>{row.songTitle}</span>
-                                </span>
-                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>
+                                </span>{' '}
+                                <span className={styles.votes}>{data.showVoteCounts ? `${row.voteCount.toLocaleString(LOCALE)} votes` : '—'}</span>{' '}
                                 <span className={styles.link}>
                                   <Link href={`/open-mic/${data.slug}/entry/${row.artistSlug}`}>Vote</Link>
                                 </span>
@@ -3390,6 +3395,8 @@ export default function OpenMicCompetitionView({ data }: Props) {
 ```
 
 The `useState`/`useEffect` hash-open logic and `activeStage` now live in `OpenMicEditionSteps`; remove the now-unused copies from the shell (`:587` is `activeStage`, the `useEffect` spans `:589-600`) so lint does not flag them, and drop `useEffect` from the shell's React import — `:5` is its only occurrence in the file, so it must go.
+
+The shell is not the only file Task 10 ends up touching. `OpenMicEditionSteps` laid its board cells side by side with nothing between them, and JSX drops the whitespace between adjacent elements, so a row's text read `…Street Light412 votesVote`: the acceptance spec's `\b412\b` could never match, and only the stylesheet could parse the copy. Put `{' '}` between the row's cells, with the comment that says why — the frozen spec is not the thing that is wrong here. The separators are layout-neutral: a whitespace-only run inside a grid container is a non-rendered anonymous grid item (`edition-steps.module.css:13` makes the `<li>` a grid), and the cells inside `.who` are block boxes, whose inter-element whitespace was never rendered either.
 
 - [ ] **Step 3: Rewrite the page as the server read**
 
