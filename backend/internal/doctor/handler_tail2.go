@@ -491,6 +491,15 @@ type DashboardSummary struct {
 // the doctor's schedule sub-resources (blocked dates / recurring rules /
 // reminders / current vacation) which each already have their own list endpoints.
 type ScheduleSettings struct {
+	// The availability row behind the schedule screen's controls. settings.tsx
+	// renders appointmentOnly (instant vs appointment-only) and emergencyAvailable
+	// (the toggle PUT /schedule/emergency writes), and recurring.tsx adds
+	// schedule.consultDurationMins to schedule.bufferMins — all off this payload.
+	// Their source is doctor_availability, never the writable input shape.
+	Schedule           Availability `json:"schedule"`
+	AppointmentOnly    bool         `json:"appointmentOnly"`
+	EmergencyAvailable bool         `json:"emergencyAvailable"`
+
 	BlockedDates   []BlockedDate   `json:"blockedDates"`
 	RecurringRules []RecurringRule `json:"recurringRules"`
 	Reminders      []Reminder      `json:"reminders"`

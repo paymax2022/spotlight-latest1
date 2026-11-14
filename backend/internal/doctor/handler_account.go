@@ -149,6 +149,7 @@ func (h *Handler) GetProfileDraft(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
+	h.signAvatar(res)
 	c.JSON(http.StatusOK, res)
 }
 
