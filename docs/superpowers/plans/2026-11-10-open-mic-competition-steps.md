@@ -2796,7 +2796,7 @@ const shortDate = (iso: string | null) =>
 
 /** Which side of a window the clock is on is decided by the server read
  *  (Task 9b) — this component displays the answer and never computes it,
- *  because `Date.now()` in the body pre-renders one answer and hydrates
+ *  because reading the clock in the body pre-renders one answer and hydrates
  *  another. */
 function WindowLine({ label, start, end, state }: { label: string; start: string | null; end: string | null; state: WindowState }) {
   return (
@@ -3287,7 +3287,7 @@ cd /Users/paymax/Documents/spotlight/main/frontend-web && npx tsc --noEmit > /tm
 npx eslint components/openmic/competition src/features/openmic/active-edition.ts > /tmp/lint-9b.txt 2>&1; echo "lint exit=$?"
 npx vitest run tests/unit/openmic > /tmp/vitest-9b.txt 2>&1; echo "vitest exit=$?"
 ```
-Expected: all three exit 0. `grep -c "Date.now()" components/openmic/competition/OpenMicEditionSteps.tsx` must be **0** — that is the whole point of the task. `grep -c "toLocaleString()" components/openmic/competition/OpenMicEditionSteps.tsx` must also be **0** (every numeric render pins `LOCALE`). `npx vitest run tests/unit/openmic` is **36 passed**. The acceptance e2e stays red (5 failed / 0 passed) until Task 10 mounts the component; do not touch `tests/e2e/openmic/competition-steps.spec.ts`.
+Expected: all three exit 0. `grep -c "Date.now()" components/openmic/competition/OpenMicEditionSteps.tsx` must be **0** — that is the whole point of the task, and it counts the whole file, comments included: the phrase may not appear even in prose explaining the bug, so the gate stays a plain grep rather than a judgement about which matches are code. `grep -c "toLocaleString()" components/openmic/competition/OpenMicEditionSteps.tsx` must also be **0** (every numeric render pins `LOCALE`). `npx vitest run tests/unit/openmic` is **36 passed**. The acceptance e2e stays red (5 failed / 0 passed) until Task 10 mounts the component; do not touch `tests/e2e/openmic/competition-steps.spec.ts`.
 
 - [ ] **Step 7: Commit**
 
