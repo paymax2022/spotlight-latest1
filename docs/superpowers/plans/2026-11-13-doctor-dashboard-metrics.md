@@ -1333,7 +1333,7 @@ func TestLiveDB_DashboardReportsSeededNumbers(t *testing.T) {
 	f.bookLocal(t, tz, "completed", 0, 14*60)
 	f.bookLocal(t, tz, "booked", 2, 9*60)
 	settledID, _ := f.bookLocal(t, tz, "completed", -1, 9*60)
-	f.escrow(t, settledID, "settled", 200000, 170000, 0, true)
+	f.escrow(t, settledID, "settled", 200000, 170000, 0, true, "telemedicine")
 	for _, rating := range []int{4, 5, 5} {
 		if _, err := pool.Exec(ctx,
 			`INSERT INTO doctor_reviews (user_id, rating) VALUES ($1,$2)`, f.doctorUser, rating); err != nil {
