@@ -282,8 +282,9 @@ environment's required reviewers until a named human approves (ledger §16.2 ite
 ### 5. Promote the branch
 
 **STILL OPEN, and the sentence below is stale in both directions.** Re-measured
-2026-11-14 against the fetched refs (`git rev-list --count`). **Pin the refs when
-you re-run this — the numbers move every time `main` takes a merge, and this one
+2026-11-14 against the remote-tracking refs (`git rev-list --count`). **Pin the refs when
+you re-run this — the numbers move every time either branch takes a commit: `main`'s
+merge moves the outer pair, a `staging`-only commit moves the middle one, and this one
 moved while the sentence was being written.** Read at
 `origin/main` = `31505cb92`, `origin/staging` = `623c7c128`,
 `origin/develop` = `da665dcd0`; a re-fetch ~3h later, with `origin/main` at

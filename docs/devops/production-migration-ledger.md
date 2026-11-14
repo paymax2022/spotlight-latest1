@@ -2804,10 +2804,15 @@ is the same build as the newest AAB (identical 43,447,249 B; the script copies i
 - Task 16's inputs from this section, with the commands so the counts can be re-run (review Finding 8: an
   earlier draft gave a "11" that three reconstructions could not reproduce, so it is replaced by figures
   each tied to its own command, all run in this repo with the ledger itself excluded —
-  `git grep -lE 'mobile-app/reactnative/\.env' -- ':!docs/devops/production-migration-ledger.md'` → **18**
-  tracked files, listed below, and **the same on both trees** (this branch's HEAD and RELEASE_SHA
-  `c49b395…`), so it needs no label; `git grep -l '\.env\.production' -- ':!docs/devops/production-migration-ledger.md'`
-  → **32** at this branch's HEAD, of which **6** belong to the *web* apps and are red herrings for a mobile
+  `git grep -lE 'mobile-app/reactnative/\.env' -- ':!docs/devops/production-migration-ledger.md'` → **19**
+  tracked files at this branch's HEAD and **18** at RELEASE_SHA `c49b395…` (18 also at `42759cfde`, the
+  commit before the plan file was committed). The single differing file is
+  `docs/superpowers/plans/2026-11-12-staging-to-production-migration.md`, whose own text names that path.
+  This bullet formerly asserted "the same on both trees … so it needs no label"; Task 16 fix round 3
+  invalidated that by committing the plan file, and fix round 4 re-ran the command and put the tree label
+  back. The 18-file list below is the RELEASE_SHA/parent list; the 19th is that plan file.
+  `git grep -l '\.env\.production' -- ':!docs/devops/production-migration-ledger.md'`
+  → **33** at this branch's HEAD (**32** before the plan file landed, **31** at RELEASE_SHA), of which **6** belong to the *web* apps and are red herrings for a mobile
   doc fix (`frontend-admin/.env.production.example`, `frontend-admin/middleware.ts`,
   `frontend-admin/src/services/sprayAdminService.ts`, `frontend-web/.env.production.example`,
   `frontend-web/src/lib/config/index.ts`, and `frontend-web/config/production-module-flags.env`, which is
@@ -2819,8 +2824,8 @@ is the same build as the newest AAB (identical 43,447,249 B; the script copies i
   `src/features/marketplace/api/marketplace.api.ts`). Which list a doc fix needs depends on whether the
   sentence names the file or the plane, so report the list you used, not a count. Re-running these through
   a shell: pipe the count (`| wc -l`); one redirect-to-file invocation here returned zero matches with
-  `rc=1` for a pattern that pipes 32, and an empty result from this command would read as "no references".
-  The 18:
+  `rc=1` for a pattern that pipes 33, and an empty result from this command would read as "no references".
+  The 18 (the RELEASE_SHA / pre-plan-file set; `HEAD` adds the plan file as the 19th):
   `MOBILE_SUPABASE_LOCAL_CONFIG.md`, `REGISTRATION_E2E_TEST_RESULTS.md`, `docs/CROWDFUNDING_GO_LIVE.md`,
   `docs/ENV.md`, `docs/audit/E2E_TEST_MATRIX.md`, `docs/devops/DEPLOY-RUNBOOK.md`,
   `docs/devops/GO-LIVE-FINAL.md`, `docs/e2e/results/mobile.md`, `docs/prd/golive/GO_LIVE_CHECKLIST.md`,
@@ -2867,8 +2872,8 @@ against real dotenv, 0 of 60 rows apart (N-5). R2-3's shell-not-loader ruling ga
 
 ## Task 16 — the docs the cutover outdated, and what still open (2026-11-14)
 
-**Verdict: six** documents corrected and the plan file itself landed — **seven paths** (`git diff --name-only 814f5d3e4..cfe0152a2`); the migration is not done,
-and §16.3 is what makes that
+**Verdict: six** documents corrected and the plan file itself landed — **seven paths**
+(`git diff --name-only 814f5d3e4..cfe0152a2`); the migration is not done, **and §16.3 is what makes that
 unreadable-two-ways.** Every figure below was re-taken on 2026-11-14 with the command printed beside it.
 Where a Task 16 brief stated a number that measurement did not reproduce, this section carries the
 measured number and says the brief's was never taken — three of the plan's own docs argued wrongly about
@@ -2888,7 +2893,7 @@ production during this session's evidence-gathering, so "the plan said so" is no
 | same file, the migration-file counts | "`origin/main`'s tree holds 754" | **755** as re-read at `origin/main` = `31505cb92`; the 754→755 step is `8ed8123de`, which added `20271411000000_reconcile_doctors_presence_backfill.sql`; plus an explicit **do not sweep-replace** note, because the `recorded: 754` and the `754 − 670 = 84` closures are pinned to `3654f6b3f` / `623c7c128`, both of which count 754 | `git ls-tree -r --name-only <ref> -- supabase/migrations \| grep -c '\.sql$'` → 754 / 754 / 755 / 755 for `3654f6b3f` / `623c7c128` / `8ed8123de` / `31505cb92`, and **755 again at the later tip `7a97609d0`** re-fetched ~3h after this row was written; this worktree holds 751 |
 | `docs/devops/GO-LIVE-CHECKLIST.md` | a live checklist citing `VIDEOSDK_*` and "fill deploy.yml TODOs with your cloud" | HISTORICAL banner pointing at the matrix and this section — and it cites the stale rows **by searchable text, not line numbers** | `vars.GCP_PROJECT_ID` unset ⇒ every `deploy.yml` job skips (recorded in *Deferred by design*). Three drafts of that banner got its own citations wrong in a row: `47/33/58`, then `55/41/66` (read off the pre-banner file), then `56/42/67` — which the very next edit to the banner invalidated by adding a line. A file cannot cite its own post-edit line numbers, so the numbers are gone rather than re-guessed a fourth time. |
 | `docs/devops/production-migration-ledger.md` §9.6 (this file) | "the 221 503 sites" | "**221 source lines** pairing a `503` with the string 'not available'… a code-surface count, not observed production traffic and not an incident tally" | `grep` over `frontend-web/src` at the pin — **authorised here**, as §10.7 flagged and §9.6's parenthetical now points at this row |
-| `docs/superpowers/plans/2026-11-12-staging-to-production-migration.md` **added to the tree** | existed only as an untracked file in the live working copy, so every citation this ledger and the five docs make to "the plan" pointed at a path no commit contained | committed, so the plan travels with its evidence record. §1's parenthetical is rewritten to say where it can now be read (`feat/prod-cutover`, not `main`) | secret scan before staging it: no `eyJ…`/`sk_live_`/`AKIA`/`ghp_`/`sbp_`/`-----BEGIN` match, and the only credential-shaped fields are two 6-char **local-dev** DSN passwords plus one field that is not a credential at all — the literal text `<pw>`, a placeholder, which the plan's prod `pg_dump` line uses in place of the real pooler secret (so this commit ships no production secret). Counts re-taken for fix round 2 with the exact command the row prints: `git grep -l -F <value> <ref> -- . \| wc -l` → **253 and 453** tracked files at the parent `42759cfde`, **254 and 454** at this HEAD `cfe0152a2` — the +1 each is the plan file itself repeating them, values never printed. The `<pw>` placeholder is in 0 files at the parent and 2 at HEAD (the plan, and one prose use in this ledger), which is what a short literal string matches incidentally and is not a leak. Fix round 1 wrote "253 and 453 at this HEAD", which was the parent's count, and a reviewer read 254/**455** here; round 2's re-measure says 454, so the disagreement is settled in favour of the printed command rather than either recollection. The conclusion is unchanged — this commit adds no value the tree did not already hold hundreds of times over — but under R31 a scan figure the printed command cannot reproduce may not stand. **The scan's own limit: it looks for shapes, not meanings; an operator who doubts it should read the file before shipping it.** |
+| `docs/superpowers/plans/2026-11-12-staging-to-production-migration.md` **added to the tree** | existed only as an untracked file in the live working copy, so every citation this ledger and the five docs make to "the plan" pointed at a path no commit contained | committed, so the plan travels with its evidence record. §1's parenthetical is rewritten to say where it can now be read (`feat/prod-cutover`, not `main`) | secret scan before staging it: no `eyJ…`/`sk_live_`/`AKIA`/`ghp_`/`sbp_`/`-----BEGIN` match, and the only credential-shaped fields are two 6-char **local-dev** DSN passwords plus one field that is not a credential at all — the literal text `<pw>`, a placeholder, which the plan's prod `pg_dump` line uses in place of the real pooler secret (so this commit ships no production secret). Counts re-taken for fix round 2 with the exact command the row prints: `git grep -l -F <value> <ref> -- . \| wc -l` → **253 and 453** tracked files at the parent `42759cfde`, **254 and 454** at this HEAD `cfe0152a2` — the +1 each is the plan file itself repeating them, values never printed. **This is the one §16 row whose command cannot be re-run by a reader who does not hold the two 6-char local-dev DSN passwords the plan writes into its `pg_dump` lines:** `<value>` is deliberately a placeholder, so the figures are measurer-only. That is a real limit of the row, not of its conclusion — the conclusion (no production secret ships here) rests on the `<pw>` sub-claim below, which anyone can re-run. The `<pw>` placeholder is in 0 files at the parent and 2 at HEAD (the plan, and one prose use in this ledger), which is what a short literal string matches incidentally and is not a leak. Fix round 1 wrote "253 and 453 at this HEAD", which was the parent's count, and a reviewer read 254/**455** here; round 2's re-measure says 454, so the disagreement is settled in favour of the printed command rather than either recollection. The conclusion is unchanged — this commit adds no value the tree did not already hold hundreds of times over — but under R31 a scan figure the printed command cannot reproduce may not stand. **The scan's own limit: it looks for shapes, not meanings; an operator who doubts it should read the file before shipping it.** |
 
 Two brief-level claims were **refuted rather than edited**, and are recorded so nobody re-imports them:
 
