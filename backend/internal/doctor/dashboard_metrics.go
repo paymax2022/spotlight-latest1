@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"spotlight/backend/internal/finance/settlement"
 	"time"
 )
 
@@ -24,9 +26,10 @@ import (
 // 85% in SQL, or multiplying settlement.fee_kobo by 0.85 in the client, is the
 // float-math bug the settlement package warns about in its own comments.
 
-// defaultDoctorTimezone mirrors the NOT NULL DEFAULT of doctor_availability.timezone
-// (20260625000000_doctor_module.sql:164) — the same fallback the write path applies
-// at repository.go:149 with strOrDefault(in.Timezone, "Africa/Lagos").
+// defaultDoctorTimezone mirrors the NOT NULL DEFAULT of both timezone columns —
+// doctor_profiles.timezone (20260625000000_doctor_module.sql:60), which the read uses, and
+// doctor_availability.timezone (same file, :165). It is the same literal the availability
+// write path applies at repository.go:149 with strOrDefault(in.Timezone, "Africa/Lagos").
 const defaultDoctorTimezone = "Africa/Lagos"
 
 // dashboardQueueLimit caps the rows the dashboard renders. The count tile is
@@ -92,11 +95,13 @@ type dashboardCounters struct {
 
 // dashboardTimezone resolves the zone every date expression uses, once, so all
 // three reads price the same day. The source is doctor_profiles.timezone — the
-// column `PUT /schedule/timezone` writes and GET /schedule reads back — NOT
-// doctor_availability.timezone, which no screen ever sets (a doctor who chose
-// Asia/Karachi on the timezone screen would otherwise have every "today"
-// predicate anchored to Lagos). A doctor with no profile row at all is the
-// default, not an error.
+// column `PUT /schedule/timezone` writes (service_ops.go:360 →
+// repository_ops.go:409) and GET /doctor/profile reads back through this very
+// GetProfile — NOT doctor_availability.timezone, which no screen ever sets (a
+// doctor who chose Asia/Karachi would otherwise have every "today" predicate
+// anchored to Lagos). `GET /schedule` is NOT a read-back: ScheduleSettings has
+// no timezone field (handler_tail2.go:493-498); see spec F5. A doctor with no
+// profile row at all is the default, not an error.
 func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string, error) {
 	p, err := s.repo.GetProfile(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
@@ -196,4 +201,98 @@ func (r *Repository) todayQueue(ctx context.Context, userID, tz, day string) ([]
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// consultProviderPct / consultPlatformPct mirror the split
+// telemedicine.CompleteAppointment pays (internal/telemedicine/service.go:700-704)
+// plus the ADR-044 booking fee. They are module-local, like crowdfunding's
+// CreatorPayoutPct (internal/crowdfunding/service.go:232), because the doctor
+// module only READS consult money — telemedicine still owns paying it.
+// TestConsultSplitMirrorsTelemedicine is what keeps the two copies honest, and
+// TestLiveDB_DashboardConsultRevenue re-checks it against a settled and an escrowed
+// row written the way the money path leaves them.
+const (
+	consultProviderPct = 0.85
+	consultPlatformPct = 0.15
+)
+
+// pendingConsultKobo is the escrowed leg of the consult split. It lives here rather
+// than inline in consultRevenue because the live-DB test asserts against it
+// directly — the test then proves the projection matches what settlement.ComputeLegs
+// pays, instead of trusting a hand-computed literal.
+func pendingConsultKobo(totalKobo, platformFeeKobo int64) (int64, error) {
+	legs, err := settlement.ComputeLegs(totalKobo, settlement.Split{
+		ProviderPct:    consultProviderPct,
+		PlatformPct:    consultPlatformPct,
+		ServiceFeeKobo: platformFeeKobo,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("doctor: project pending consult revenue: %w", err)
+	}
+	return legs.ProviderKobo, nil
+}
+
+// dashboardSatisfactionPct turns an average rating into the 0-100 the tile shows.
+// ReviewCount 0 answers nil on purpose: GetReputation's COALESCE(AVG,0) cannot tell
+// "nobody has reviewed you" apart from "everyone gave you zero", and the dashboard
+// must not pretend to know.
+func dashboardSatisfactionPct(rep ReputationSummary) *float64 {
+	if rep.ReviewCount == 0 {
+		return nil
+	}
+	pct := math.Round(rep.AverageRating / 5 * 100)
+	return &pct
+}
+
+// consultRevenue projects the doctor's consult money out of settlements. Nothing is
+// stored here — see the money rule at the top of this file.
+//
+// Settled rows already carry what the doctor was paid (Settle writes
+// settlements.provider_kobo in the same tx that moves the money), so they sum
+// directly. Escrowed rows carry 0 there, because nothing has moved yet: their
+// projection runs the stored total through settlement.ComputeLegs, which is the
+// expression Settle itself pays by — so the pending figure is the exact money the
+// doctor will receive, not an estimate of it.
+func (r *Repository) consultRevenue(ctx context.Context, userID, tz string) (DashboardRevenue, error) {
+	const settledQ = `
+		SELECT COALESCE(SUM(st.provider_kobo), 0)::bigint,
+		       COALESCE(SUM(st.provider_kobo) FILTER (
+		           WHERE st.settled_at IS NOT NULL
+		                     AND to_char(st.settled_at AT TIME ZONE $2::text, 'YYYY-MM')
+		                         = to_char(CURRENT_TIMESTAMP AT TIME ZONE $2::text, 'YYYY-MM')), 0)::bigint
+		FROM settlements st
+		JOIN appointments a ON a.settlement_id = st.id
+		JOIN doctors d ON d.id = a.doctor_id
+		WHERE d.user_id = $1 AND st.module_type = 'telemedicine' AND st.status = 'settled'`
+	var out DashboardRevenue
+	if err := r.db.QueryRow(ctx, settledQ, userID, tz).Scan(&out.LifetimeKobo, &out.ThisMonthKobo); err != nil {
+		return DashboardRevenue{}, fmt.Errorf("doctor: project settled consult revenue: %w", err)
+	}
+
+	const escrowedQ = `
+		SELECT st.total_kobo, COALESCE(a.platform_fee_kobo, 0)
+		FROM settlements st
+		JOIN appointments a ON a.settlement_id = st.id
+		JOIN doctors d ON d.id = a.doctor_id
+		WHERE d.user_id = $1 AND st.module_type = 'telemedicine' AND st.status = 'escrowed'`
+	rows, err := r.db.Query(ctx, escrowedQ, userID)
+	if err != nil {
+		return DashboardRevenue{}, fmt.Errorf("doctor: read escrowed consult rows: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var total, platformFee int64
+		if err := rows.Scan(&total, &platformFee); err != nil {
+			return DashboardRevenue{}, err
+		}
+		kobo, err := pendingConsultKobo(total, platformFee)
+		if err != nil {
+			return DashboardRevenue{}, err
+		}
+		out.PendingKobo += kobo
+	}
+	if err := rows.Err(); err != nil {
+		return DashboardRevenue{}, err
+	}
+	return out, nil
 }

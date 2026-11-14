@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -367,4 +368,88 @@ func mustToday(t *testing.T, pool *pgxpool.Pool, userID, tz string) string {
 		t.Fatalf("aggregates: %v", err)
 	}
 	return agg.Today
+}
+
+// escrow writes a settlement row and links it to the appointment the way
+// telemedicine.BookAppointment + settlement.Escrow leave them. The idempotency key
+// is held in a variable because the UPDATE below has to select the row the INSERT
+// just created — a second uuid.NewString() there would match nothing and silently
+// leave settlement_id NULL, which reads back as "no consult money" rather than an
+// error. One reference per fixture (cleanup deletes by reference), many keys.
+func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, providerKobo, platformFeeKobo int64, settled bool) {
+	t.Helper()
+	ctx := context.Background()
+	key := "metrics-" + uuid.NewString()
+	// An `any` holding an untyped nil reaches pgx as SQL NULL, which is exactly the
+	// shape an unsettled row has. A time.Time when settled — not the string "now()",
+	// which CAST would reject as invalid datetime input.
+	var settledAt any
+	if settled {
+		settledAt = time.Now().UTC()
+	}
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO settlements (reference, module_type, payer_id, total_kobo, fee_kobo, provider_kobo,
+		                         status, settled_at, idempotency_key)
+		VALUES ($1,'telemedicine',$2,$3,0,$4,$5,$6,$7)`,
+		"metrics-"+f.doctorUser, f.patient, totalKobo, providerKobo, status, settledAt, key); err != nil {
+		t.Fatalf("insert settlement (%s): %v", status, err)
+	}
+	if _, err := f.pool.Exec(ctx, `
+		UPDATE appointments
+		   SET settlement_id = (SELECT id FROM settlements WHERE idempotency_key = $2),
+		       platform_fee_kobo = $3
+		 WHERE id = $1`, apptID, key, platformFeeKobo); err != nil {
+		t.Fatalf("link settlement (%s): %v", status, err)
+	}
+}
+
+// A refund is not revenue and not pending; another module's settlement is not
+// consult money even for the same doctor; an appointment whose settlement was never
+// written contributes nothing.
+func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	ctx := context.Background()
+	tz := defaultDoctorTimezone
+
+	settledID, _ := f.bookLocal(t, tz, "completed", -3, 10*60)
+	f.escrow(t, settledID, "settled", 200000, 170000, 0, true)
+	escrowedID, _ := f.bookLocal(t, tz, "booked", 1, 10*60)
+	f.escrow(t, escrowedID, "escrowed", 200000, 0, 2000, false)
+	refundedID, _ := f.bookLocal(t, tz, "cancelled", -5, 10*60)
+	f.escrow(t, refundedID, "refunded", 300000, 0, 0, false)
+
+	rev, err := NewRepository(pool).consultRevenue(ctx, f.doctorUser, tz)
+	if err != nil {
+		t.Fatalf("consultRevenue: %v", err)
+	}
+	if rev.LifetimeKobo != 170000 {
+		t.Errorf("LifetimeKobo = %d, want 170000 (settled provider_kobo only)", rev.LifetimeKobo)
+	}
+	// Settle moves the money this month, so the settled row is also this month's.
+	if rev.ThisMonthKobo != 170000 {
+		t.Errorf("ThisMonthKobo = %d, want 170000", rev.ThisMonthKobo)
+	}
+	want, err := pendingConsultKobo(200000, 2000)
+	if err != nil {
+		t.Fatalf("expected pending: %v", err)
+	}
+	if rev.PendingKobo != want {
+		t.Errorf("PendingKobo = %d, want %d (ComputeLegs for the same row)", rev.PendingKobo, want)
+	}
+	if rev.ConsultsThisMonth != 0 {
+		t.Errorf("ConsultsThisMonth = %d, want 0 — the service fills it from the aggregates", rev.ConsultsThisMonth)
+	}
+
+	// A second doctor's settlement for the same patient must not land here.
+	other := newMetricsFixture(t, pool)
+	otherAppt, _ := other.bookLocal(t, tz, "completed", -1, 9*60)
+	other.escrow(t, otherAppt, "settled", 900000, 765000, 0, true)
+	rev2, err := NewRepository(pool).consultRevenue(ctx, f.doctorUser, tz)
+	if err != nil {
+		t.Fatalf("consultRevenue after second doctor: %v", err)
+	}
+	if rev2.LifetimeKobo != rev.LifetimeKobo {
+		t.Errorf("LifetimeKobo moved to %d — the read is not scoped to the doctor", rev2.LifetimeKobo)
+	}
 }
