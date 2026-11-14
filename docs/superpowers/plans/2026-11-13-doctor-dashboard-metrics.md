@@ -788,10 +788,10 @@ func TestDashboardSatisfactionPct(t *testing.T) {
 		// No reviews is NOT zero percent. The tile shows '—'; a 0 here would tell a
 		// doctor their brand-new practice scores nothing.
 		{"no reviews is nil", ReputationSummary{AverageRating: 0, ReviewCount: 0}, nil},
-		{"4.8 of 5 is 96", ReputationSummary{AverageRating: 4.8, ReviewCount: 24}, ptr(96.0)},
-		{"4,5,5 rounds to 93", ReputationSummary{AverageRating: 4.6666666666666665, ReviewCount: 3}, ptr(93.0)},
-		{"perfect", ReputationSummary{AverageRating: 5, ReviewCount: 1}, ptr(100.0)},
-		{"one star is not nil", ReputationSummary{AverageRating: 1, ReviewCount: 2}, ptr(20.0)},
+		{"4.8 of 5 is 96", ReputationSummary{AverageRating: 4.8, ReviewCount: 24}, ptr.Of(96.0)},
+		{"4,5,5 rounds to 93", ReputationSummary{AverageRating: 4.6666666666666665, ReviewCount: 3}, ptr.Of(93.0)},
+		{"perfect", ReputationSummary{AverageRating: 5, ReviewCount: 1}, ptr.Of(100.0)},
+		{"one star is not nil", ReputationSummary{AverageRating: 1, ReviewCount: 2}, ptr.Of(20.0)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -812,7 +812,9 @@ func TestDashboardSatisfactionPct(t *testing.T) {
 	}
 }
 
-func ptr(f float64) *float64 { return &f }
+// No local ptr helper: package doctor already imports
+// spotlight/backend/go-common/ptr (repository.go:14 and six more), so declaring
+// `func ptr` in this package is a redeclaration error. Import it and use ptr.Of.
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -955,7 +957,7 @@ Append to `dashboard_metrics_live_db_test.go`:
 // just created — a second uuid.NewString() there would match nothing and silently
 // leave settlement_id NULL, which reads back as "no consult money" rather than an
 // error. One reference per fixture (cleanup deletes by reference), many keys.
-func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, providerKobo, platformFeeKobo int64, settled bool) {
+func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, providerKobo, platformFeeKobo int64, settled bool, moduleType string) {
 	t.Helper()
 	ctx := context.Background()
 	key := "metrics-" + uuid.NewString()
@@ -966,11 +968,14 @@ func (f *metricsFixture) escrow(t *testing.T, apptID, status string, totalKobo, 
 	if settled {
 		settledAt = time.Now().UTC()
 	}
+	// moduleType is a parameter, not the literal 'telemedicine', so one call site can
+	// prove the read's module filter bites. settlements.module_type is plain text with
+	// no CHECK and no FK (verified against the live catalog), so any label inserts.
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO settlements (reference, module_type, payer_id, total_kobo, fee_kobo, provider_kobo,
 		                         status, settled_at, idempotency_key)
-		VALUES ($1,'telemedicine',$2,$3,0,$4,$5,$6,$7)`,
-		"metrics-"+f.doctorUser, f.patient, totalKobo, providerKobo, status, settledAt, key); err != nil {
+		VALUES ($1,$8,$2,$3,0,$4,$5,$6,$7)`,
+		"metrics-"+f.doctorUser, f.patient, totalKobo, providerKobo, status, settledAt, key, moduleType); err != nil {
 		t.Fatalf("insert settlement (%s): %v", status, err)
 	}
 	if _, err := f.pool.Exec(ctx, `
@@ -992,11 +997,18 @@ func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
 	tz := defaultDoctorTimezone
 
 	settledID, _ := f.bookLocal(t, tz, "completed", -3, 10*60)
-	f.escrow(t, settledID, "settled", 200000, 170000, 0, true)
+	f.escrow(t, settledID, "settled", 200000, 170000, 0, true, "telemedicine")
 	escrowedID, _ := f.bookLocal(t, tz, "booked", 1, 10*60)
-	f.escrow(t, escrowedID, "escrowed", 200000, 0, 2000, false)
+	f.escrow(t, escrowedID, "escrowed", 200000, 0, 2000, false, "telemedicine")
 	refundedID, _ := f.bookLocal(t, tz, "cancelled", -5, 10*60)
-	f.escrow(t, refundedID, "refunded", 300000, 0, 0, false)
+	f.escrow(t, refundedID, "refunded", 300000, 0, 0, false, "telemedicine")
+	// The row that makes st.module_type = 'telemedicine' load-bearing. Without it the
+	// filter can be deleted and this whole test stays green, and a restaurant or
+	// mobility payout to the same human starts appearing in their earnings tile.
+	// It is settled and provider_kobo > 0 on purpose, so it would also land in
+	// ThisMonthKobo — both the 170000 assertions below are what prove it excluded.
+	otherID, _ := f.bookLocal(t, tz, "completed", -2, 10*60)
+	f.escrow(t, otherID, "settled", 400000, 320000, 0, true, "restaurant")
 
 	rev, err := NewRepository(pool).consultRevenue(ctx, f.doctorUser, tz)
 	if err != nil {
