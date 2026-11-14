@@ -5,13 +5,13 @@
  *
  *   node scripts/dev/measure-prod-timing.mjs [url]     # defaults to /
  *
- * Playwright only exists in the frontend-web install, and ESM ignores NODE_PATH, so the
- * resolve below is pinned to it rather than to the caller's cwd.
+ * Playwright lives in the frontend-web install and ESM ignores NODE_PATH, so the resolve
+ * below tries this checkout's install, then a normal lookup, before giving up.
  *
- * Read the numbers against the 2026-11-14 baseline: HTML lands in 1-6 s, then ~216 KB of
- * JS keeps arriving for another 30-50 s because the LiteSpeed origin streams about 5 KB/s
- * per stream. The drawer answers clicks from an inline script in the SSR'd HTML, so the
- * "hydrated" line is when React takes over, NOT when the menu starts working.
+ * The arrival time is not a constant of this host: the same 216 KB measured 30-50 s in the
+ * morning and 6-7 s the same evening, so quote a number only from a fresh run. The drawer
+ * answers clicks from an inline script in the SSR'd HTML, which means the "hydrated" line
+ * is when React takes over, NOT the moment the menu starts working.
  */
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -19,9 +19,22 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { chromium } = require(require.resolve('playwright', {
-  paths: [path.join(here, '../../frontend-web/node_modules'), path.join(here, '../../node_modules')],
-}));
+
+let playwright;
+for (const attempt of [
+  () => require.resolve('playwright', {
+    paths: [path.join(here, '../../frontend-web/node_modules'), path.join(here, '../../node_modules')],
+  }),
+  () => require.resolve('playwright'),
+  () => require.resolve('playwright-core'),
+].map((f) => { try { return f(); } catch { return null; } })) {
+  if (attempt) { playwright = require(attempt); break; }
+}
+if (!playwright) {
+  console.error('Playwright not found. Run `npm ci` in frontend-web, or `npm i -g playwright`.');
+  process.exit(1);
+}
+const { chromium } = playwright;
 
 const url = process.argv[2] || 'https://www.spotlightng.com/';
 const browser = await chromium.launch();
