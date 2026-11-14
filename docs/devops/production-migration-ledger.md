@@ -2375,43 +2375,88 @@ What `585bd2ca7` is, measured rather than assumed: PR #996 "feat(modules): readi
 ## Task 15 — the mobile production plane (2026-11-14)
 
 **Verdict: split — the tracked half shipped, the untracked half is escalated.** `f6e49a31c` puts the
-refusal into both release scripts. The brief's Step 2 (re-point the local `.env.production`) and Step 3
-(re-build, re-grep the artifact) were **not executed**, and that is a ruling, not an omission. Three
-reasons, each independently checkable: the file is gitignored — `git check-ignore -v
-mobile-app/reactnative/.env.production` → `.gitignore:12:.env.*` — so that edit would be the only change
-in this plan invisible to the diff that gates it; it reverses a decision the project memory records as
-deliberate on 2026-11-10 ("do not 'correct' `.env.production` to prod values unprompted"); and what it
-changes is what a store build talks to, which is a production side effect belonging to the user. So Step 2
-was run **in full on a scratch copy instead** (§15.5), which means the user decides with the recipe's
-measured result in front of them rather than its promise.
+refusal into both release scripts; `1be3e158f` is this section's own review round, which widened it. The
+brief's Step 2 (re-point the local `.env.production`) and Step 3 (re-build, re-grep the artifact) were
+**not executed**, and that is a ruling, not an omission. Three reasons, each independently checkable: the
+file is gitignored — `git check-ignore -v mobile-app/reactnative/.env.production` →
+`.gitignore:12:.env.*` — so that edit would be the only change in this plan invisible to the diff that
+gates it; what it changes is what a store build talks to, which is a production side effect belonging to
+the user; and the standing project rule "do not 'correct' `.env.production` to prod values unprompted"
+still binds — but **not** because the fork is deliberate. The first draft of this section called it "a
+decision the project memory records as deliberate on 2026-11-10"; the cited note
+(`rn-prod-release-staging-plane.md`) carries an **"Update 2026-11-13"** stating that the reason for that
+decision has expired, that the profiles are now "a genuine fork, not a deliberate hold", and that
+reconciling them is the open task. The instruction survives its rationale, which is why this is an
+escalation and not a defence. So Step 2 was run **in full on a scratch copy instead** (§15.5), which means
+the user decides with the recipe's measured result in front of them rather than its promise.
+
+**State of the world right now (the sentence a build host needs before the analysis):** the production
+mobile lane on this machine is **blocked by design**. `make build-aab-prod`,
+`npm run build:aab:production` and the VS Code production task all exit 1 at the guard, because the live
+`.env.production` still declares `staging` — re-measured for this correction round: `EXPO_PUBLIC_APP_ENV`
+declares `staging`, `wnic` ×4, `nmseef` ×0, 8 key lines carrying a staging ref. The corrected figures in
+§15.5 belong to the copy, not to the file.
 
 ### 15.1 What landed
 
-- `build-aab.sh:127-135` and `build-apk.sh:134-147`. Immediately after the `ENV_FILE` existence check and
-  before `EXPECTED_API` is read, both scripts grep `EXPO_PUBLIC_APP_ENV` out of `$ENV_FILE` and `exit 1`
-  when `NODE_ENV=production` and the declaration is not `production`, pointing at
-  `node scripts/export-eas-profile-env.mjs production`.
+- `build-aab.sh:131-138` and `build-apk.sh:146-153` (`1be3e158f`; at `f6e49a31c` they were `:130-135` and
+  `:142-147`). Immediately after the `ENV_FILE` existence check (`:119-125` / `:126-132`) and before
+  `EXPECTED_API` is read (`:142` / `:157`), both scripts grep `EXPO_PUBLIC_APP_ENV` out of `$ENV_FILE`,
+  normalise it, and `exit 1` when `NODE_ENV=production` and the result is not `production` — absent
+  declaration included — pointing at `node scripts/export-eas-profile-env.mjs production`. The seven
+  functional lines are **byte-identical** across the two scripts (diffed), so there is one semantics here,
+  not two that can drift.
+- **What `1be3e158f` changed, and why.** The first draft compared the raw `cut -d= -f2-` field to
+  `production`. That is stricter than the loader it guards: `dotenv` 16.4.7 — what `@expo/env` loads
+  through (`mobile-app/reactnative/node_modules/dotenv/lib/main.js:9,19`) — normalises CRLF, strips one
+  layer of surrounding quotes and drops a trailing `# comment`, so `production # live`, `"production"` and
+  a CRLF file all *mean* production and were being refused; the CRLF case even printed
+  `declares EXPO_PUBLIC_APP_ENV=production` while refusing, because the `\r` is invisible. The guard now
+  pipes through `tr -d '\r'` and a `sed -E` that strips trailing comments, leading space and one quote
+  layer. **Deliberate divergence, recorded so a future host does not "fix" it:** capital `Production` and a
+  padded ` production` inside quotes are still refused — `src/lib/serverProfile.ts:53,60` treats anything
+  not exactly in its allowlist as not-switchable, so a mis-spelled declaration should stop a release rather
+  than silently change runtime behaviour.
+- **Shadow-file coverage closed (review Finding 5).** The refusal at `build-aab.sh:154-161` /
+  `build-apk.sh:169-176` greps the two files that outrank `$ENV_FILE`
+  (`.env.<mode>.local`, `.env.local`) and its pattern is now
+  `^EXPO_PUBLIC_(API_BASE_URL|SUPABASE_URL|APP_ENV)=`. Before, a `.env.production.local` carrying
+  `EXPO_PUBLIC_APP_ENV=staging` passed the guard (which reads only `$ENV_FILE`) *and* the old shadow grep
+  (which matched only the two URLs) and shipped exactly the switch-on build this task exists to prevent.
+  No such file exists today; the hole was structural.
 - Why a declaration check and not a bundle check: `EXPECTED_HOST` is derived from `EXPECTED_API`
-  (`build-aab.sh:139` → `:279`) and `EXPECTED_API` is read out of the same `$ENV_FILE` the bundle is
+  (`build-aab.sh:142` → `:285`) and `EXPECTED_API` is read out of the same `$ENV_FILE` the bundle is
   grepped against, so a staging-wired prod file makes the existing gate print
   `✅ API host present: frontend-web-staging-new.up.railway.app` — green for the wrong host.
-  `EXPECTED_SUPABASE` (`:140`) is only ever echoed, never compared to anything. Asserting the declaration
-  is the one check in either script that is not self-referential.
+  `EXPECTED_SUPABASE` (`:143`) is only ever echoed (`:209`), never compared to anything. Asserting the
+  declaration is the one check in either script that is not self-referential.
 - **Tree caution, again.** The brief cites `build-aab.sh:122-128` / `:133` / `:134` / `:278` / `:129`. Those
-  are **main's uncommitted working copy** — `git status` shows ` M mobile-app/reactnative/build-aab.sh` with
-  another session's SDK-dir capture at `:39-44` and `prebuild --clean` at `:213`. In this plan's base the
-  same landmarks are `:118-125` (existence + exit 1), `:139`, `:140`, `:279`. Same files, different numbers;
-  nothing in Task 15 overlaps the other session's two hunks, so `f6e49a31c` should merge clean — but it must
-  be diffed against whatever `main` becomes, not against this base.
-- **Probe (harness):** `.superpowers/sdd/…/guard-test.sh`, 8 cases over the two real scripts —
-  `production`+declares `staging` → refuse; `production`+no declaration at all → refuse;
-  `production`+declares `production` → pass; `staging`+declares `staging` → pass (legitimate there). Each
-  case asserts two things: the guard's exit, **and** placement — a refusal must not print the
-  `EXPO_PUBLIC_API_BASE_URL is not set` message of the check below it, a pass must.
-  **Observed:** 8/8 against the committed scripts; `/bin/bash -n` clean on both; worktree clean.
-  The first draft asserted only the exit code, printed `ALL CASES AS EXPECTED` against a deliberately
-  broken guard, and had to be fixed before it could mislead anyone — a test that cannot fail is worse than
-  no test, because it reads like evidence.
+  are **main's uncommitted working copy** — `git status` shows ` M mobile-app/reactnative/build-aab.sh`
+  (12 insertions / 3 deletions) with another session's SDK-dir capture at `:38-44` and
+  `npx expo prebuild --platform android --no-install --clean` at **`:222`** (an earlier draft of this
+  section wrote `:213`, which is that session's `Android SDK not found` refusal, not the prebuild). In this
+  plan's base, post-`1be3e158f`, the same landmarks are `:118-125` (existence + exit 1), `:142`, `:143`,
+  `:285`, and the prebuild is `:229` **without** `--clean`. Same files, different numbers; Task 15's hunks
+  sit nowhere near the other session's two, so both commits should merge clean — but they must be diffed
+  against whatever `main` becomes, not against this base.
+- **Probe (harness):** `.superpowers/sdd/…/guard-test.sh`, **16 cases** over the two real scripts (8 per
+  script) — 2 guard-fire (`staging`, declaration absent), 1 shadow-file-fire
+  (`.env.production.local` declaring `staging`), 5 guard-silent (`production`, `"production"`,
+  `production # live`, CRLF, and the legitimate `staging` build declaring `staging`). Each case asserts the
+  guard's exit **and** placement — a refusal must not print the `EXPO_PUBLIC_API_BASE_URL is not set`
+  message of the check below it, a silent case must; a shadow case must get *past* both — and that the run
+  never reaches `expo prebuild`/gradlew. **Observed:** RED on the pre-`1be3e158f` scripts (8 of 16 wrong),
+  GREEN (16/16) against the committed ones; `/bin/bash -n` clean on both; worktree clean. The first draft
+  asserted only the exit code, printed `ALL CASES AS EXPECTED` against a deliberately broken guard, and had
+  to be fixed before it could mislead anyone — a test that cannot fail is worse than no test, because it
+  reads like evidence.
+- **Harness hazard (review Finding 9 — read before pointing it at a tree).** The probe writes fixtures and
+  then `rm -f`s `.env.production`, `.env.staging` **and** `.env.production.local` in whatever tree it is
+  given. Those files are gitignored: pointed at a live checkout the probe would delete an untracked,
+  unrecoverable file — the very file §15.6 says must be re-created on any new build host. It now **refuses
+  to run** (exit 2) if any of them already exists, and `cleanup` is on an `EXIT` trap; it was developed and
+  re-run only against scratch copies under `/tmp`. A future session should still pass it a copy, not a
+  working tree.
 - Fixtures are minimal on purpose (`EXPO_PUBLIC_APP_ENV` only, no API URL) so the run stops at the guard or
   one line past it and never reaches `expo prebuild`/gradle. `ALLOW_DEBUG_SIGNING=1` skips the signing
   refusal that sits *before* the guard on a machine without the release keystore.
@@ -2423,27 +2468,36 @@ measured result in front of them rather than its promise.
   rather than of some later edit. 253 lines total, 247 non-empty, 252 by `wc -l` (the file ends without a
   trailing newline), 32 comment lines, **215 keys = 81 `EXPO_PUBLIC_*` + 134 non-`EXPO_PUBLIC_`**. One key
   has an empty value: `EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY`. `EXPO_PUBLIC_APP_ENV=staging`.
-- 12 lines match the staging-ref pattern, and the split matters: **8 key lines**
+- 12 lines match the staging-ref pattern, and the split matters. Re-measured for this correction round,
+  with the commands so nobody has to take the figure on faith (all run in
+  `mobile-app/reactnative`):
+  `grep -cE 'wnic|ptcz|frontend-web-staging|staging' .env.production` → **12**; of those,
+  `grep -E 'wnic|ptcz|frontend-web-staging|staging' .env.production | grep -cE '^[A-Z_]'` → **8 key lines**
   (`EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SITE_URL`, `EXPO_PUBLIC_APP_ENV`, `EXPO_PUBLIC_SUPABASE_URL`,
-  `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL`, `SUPABASE_URL`, `DATABASE_URL`, `SUPABASE_JWKS_URL`) and **4
-  comment lines** that are the file's own "copy this to `.env.staging`" header. The 4 comments survive any
-  correct re-point, so **the brief's own verification command (`grep -cE 'wnic|ptcz|frontend-web-staging|
-  staging'`) can never print 0 for this file** — a future session running it literally will conclude the
-  fix failed when it succeeded. Filter to key lines.
+  `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL`, `SUPABASE_URL`, `DATABASE_URL`, `SUPABASE_JWKS_URL`) and
+  `… | grep -c '^#'` → **4 comment lines**, the file's own "copy this to `.env.staging`" header. Per
+  pattern: `wnic` 4, `frontend-web-staging` 3, `staging` 8, `ptcz` 0, `nmseef` **0**. The 4 comments survive
+  any correct re-point, so **the brief's own verification command can never print 0 for this file** — a
+  future session running it literally will conclude the fix failed when it succeeded. Filter to key lines;
+  after a correct re-point the key-line count is 0 (§15.5).
 - The brief describes the non-`EXPO_PUBLIC_` set as "three backend keys (`SUPABASE_URL`, `DATABASE_URL`,
   `SUPABASE_JWKS_URL`) that drifted into a mobile env file". The file has **134**, all non-empty, including
   `SUPABASE_SERVICE_ROLE_KEY`, `PAYSTACK_SECRET_KEY`, `MONNIFY_*`, `DOJAH_*`, `QUIDAX_*`, `LIVEKIT_*`,
-  `OTP_PEPPER`, `DATABASE_URL` and ~90 `FEATURE_*`. None of them can reach a user: Metro inlines only
-  `EXPO_PUBLIC_*`, and a per-key sweep for readers across `src/`, `app/`, `scripts/`, `eas.json` and both
-  build scripts finds nothing for that whole set. So it is hygiene debt with a real rotation cost (§15.6),
-  **not** a live leak — but the plan must stop describing 134 keys as three, because a reader who takes
-  "three" literally will delete three lines and call the exposure closed.
-- **Recipe hazard the brief does not mention:** the last line is `R2_ENDPOINT=…` **with no trailing
-  newline**, so Step 2's `printf '%s=%s\n' "$k" "$v" >> .env.production` append branch would concatenate
-  the new key onto it and produce one malformed `R2_ENDPOINT=https://…KEY=value` line. The branch is dead
-  today — all six profile keys already exist, so the recipe applies 6 and appends 0 — but on a host whose
-  file is missing a key, Step 2 silently corrupts it. Either emit a bare newline first, or regenerate the
-  file rather than patch it.
+  `OTP_PEPPER`, `DATABASE_URL` and **63** `FEATURE_*` (`grep -cE '^FEATURE_' .env.production` → 63; the
+  remaining 71 are the secrets named above and other backend config — an earlier draft of this section
+  wrote "~90", which is the sort of round number the rest of the ledger objects to). None of the 134 can
+  reach a user: Metro inlines only `EXPO_PUBLIC_*`, and a per-key sweep for readers across `src/`, `app/`,
+  `scripts/`, `eas.json` and both build scripts finds nothing for that whole set. So it is hygiene debt
+  with a real rotation cost (§15.6), **not** a live leak — but the plan must stop describing 134 keys as
+  three, because a reader who takes "three" literally will delete three lines and call the exposure closed.
+- **Recipe hazard the brief does not mention — reproduced.** The last line is `R2_ENDPOINT=…` **with no
+  trailing newline** (last byte measured `m`; `wc -l` 252 against 253 awk lines), so Step 2's
+  `printf '%s=%s\n' "$k" "$v" >> .env.production` append branch would concatenate the new key onto it.
+  Demonstrated on a throwaway copy of the patched file: appending one key produced a single malformed
+  `R2_ENDPOINT=<endpoint-url>NEW_KEY=value` line. The branch is dead today — all six profile keys already
+  exist, so the recipe applies 6 and appends 0, and note it does **not** add the missing newline either, so
+  the hazard stays latent after a successful run. Either emit a bare newline first, or regenerate the file
+  rather than patch it.
 - `.env` vs `.env.production`: 215 keys each, and exactly **one** differing pair —
   `EXPO_PUBLIC_SENTRY_ENVIRONMENT` (staging vs production). The prod file is a copy of `.env` with one
   label changed, which is the mechanism behind the whole finding: it was never derived from the profile.
@@ -2455,24 +2509,54 @@ measured result in front of them rather than its promise.
 `app-release-production.apk` (65,024,079 B, 2026-11-10 21:58). `android/app/build/outputs/bundle/release/app-release.aab`
 is the same build as the newest AAB (identical 43,447,249 B; the script copies it).
 
-- **Probe:** unzip `*assets/index.android.bundle` from each, `grep -ac` for each plane's forms.
-- **Observed — all three identical,** bundle 19,054,516 B (18.2 MiB; the brief's "18 MB" and "41 MB" are
-  MiB for its 43,447,249 B): staging host ×1, `wnic…` ×1, `www.spotlightng.com` ×1, `nmseef…` ×0,
-  `frontend-web-production…` ×0. So every artifact on this machine that is named "production" is
-  staging-wired end to end, and `www.spotlightng.com` in it comes from a source constant, not the API base.
-  This is not a forecast about a future build.
+- **Probe:** `.superpowers/sdd/…/bundle-scan.py <aab> <reactnative-dir>` — read-only, extracts
+  `base/assets/index.android.bundle` into `/tmp` and reports only counts, offsets, lengths and key
+  *formats*. Counts are fixed-string occurrences (`bytes.find` looped), not greedy regexes, for the reason
+  in the last bullet below. Re-run for this correction round against both AABs: identical output, byte for
+  byte.
+- **Observed — the bundle is 19,054,516 B (18.2 MiB; the brief's "18 MB" and "41 MB" are MiB for its
+  43,447,249 B) and all three artifacts carry the same one** — hash-confirmed this round, not inferred from
+  size: the bundle extracted from `app-release-production.apk` and the one from `app-release-production.aab`
+  are both sha256 `12b9b09918b02460…`, and the two AABs' probes report identical counts and offsets. Plane
+  strings: staging API host ×1 (@3,290,266),
+  `wnicsubiz…` ×1 (@2,938,586), `www.spotlightng.com` ×1 (@3,370,365), production API host ×**0**,
+  `nmseef…` ×**0**, retired `ptcz` ×**0**. So every artifact on this machine that is named "production" is
+  staging-wired end to end, and the single `www.spotlightng.com` is a source fallback constant, not a baked
+  API base. This is not a forecast about a future build.
+- **What the re-point has to change, pinned from the tracked profile** (`eas.json` `build.production.env`):
+  `EXPO_PUBLIC_APP_ENV=production`,
+  `EXPO_PUBLIC_API_BASE_URL=https://frontend-web-production-9259.up.railway.app`,
+  `EXPO_PUBLIC_SUPABASE_URL=https://nmseefdlliejmdbxytej.supabase.co`, `EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME=paymax`,
+  and `EXPO_PUBLIC_SUPABASE_ANON_KEY` in the 46-character `sb_publishable_…` form. Neither the production
+  host, nor the production project ref, nor that key **appears anywhere in the shipped bundle** (0, 0, 0
+  measured above), which is the cleanest statement of the gap: the artifact and the profile currently share
+  no plane-identifying byte.
 - **Credential test (the one that actually settles it):** for each of the 134 non-`EXPO_PUBLIC_` keys, does
   its **value** appear as a substring of the bundle? 58 values ≥12 chars were testable; 76 were skipped for
   being too short to count as evidence (most are `true`/`false` flags). **Observed: 1 hit.**
 - That single hit is explained without any leak: in this file `SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_URL`
   hold the **same** 40-character value, so the string in the bundle is the legitimately-inlined public
   project URL — not the non-`EXPO_PUBLIC_` line. Nothing else matched, and a `service_role` scan returns 0.
-- Three literal hits that a naive secret-grep *does* find in the bundle, each traced to its source so nobody
-  re-raises them: `sk_live`/`sk_test` come from fake fixtures at
-  `src/features/fx/api/fxAccount.api.ts:55-56`; `sb_secret` is a string inside
-  `node_modules/@supabase/functions-js`; `DOJAH` appears as a provider name, not a key. **Verdict: no
-  secret value ships** — which is the answer to the question the 134 keys raise, and the reason §15.6 can
-  treat rotation as a deadline rather than an incident.
+- **Complete naive-scan enumeration** (an earlier draft of this section listed three hits and thereby missed
+  the pattern most secret scanners flag, which invites exactly the re-raise this list exists to prevent):
+  `sk_live` ×1 and `sk_test` ×1 — fake fixtures in `src/features/fx/api/fxAccount.api.ts:55-56`, with the
+  same prefixes regenerated by the template at `:99`; `sb_secret` ×1 — a string inside
+  `node_modules/@supabase/functions-js/dist/module/FunctionsClient.js`; `DOJAH` ×1 — a provider name, not a
+  key; and **one JWT-shaped string**, which is the file's own `EXPO_PUBLIC_SUPABASE_ANON_KEY`: 208 chars,
+  present once at @2,484,679, byte-identical to the `staging` profile's value, decodes to
+  `iss=supabase role=anon ref=wnic… exp=2090573596`. It is a **public-by-design** client key and both
+  scanners already allow-list it deliberately (`.gitleaks.toml:85,91-95`, `trivy-secret.yaml:9-25`). **No
+  secret value ships.**
+- **Read regex output before believing it — two measured over-reads.** The JWT pattern most scanners ship
+  (`eyJ[A-Za-z0-9_.-]+`, dot inside the class) matches **four** strings in this bundle, of 254, 73, 37 and 6
+  characters; only the 254 one relates to the anon key, and even it over-reads by 46 characters because the
+  bundle is a Hermes string pool and the greedy class runs on into the neighbouring bytes (a strict
+  three-segment pattern still reports 254). The real value is 208. Likewise the 14-byte run
+  `sb_publishable` is present once, but **not** as a key: at @2,434,077 it sits inside unrelated
+  font-metric table data (`…kiometer` + `sb_publishable` + `_INTERNAL_flushLogs…`), while the production
+  publishable key itself has 0 occurrences. And `wnic` as a literal occurs once, but the anon key's
+  base64url payload *encodes* the same ref, so an audit that decodes tokens finds two staging references
+  where this section's grep counts one. Cite the method with the number.
 
 ### 15.4 The two user-visible consequences (Step 5's requirement — changes, not cleanups)
 
@@ -2502,11 +2586,18 @@ is the same build as the newest AAB (identical 43,447,249 B; the script copies i
 - `node scripts/export-eas-profile-env.mjs production` → rc 0, exactly **6 keys**: `EXPO_PUBLIC_APP_ENV`,
   `EXPO_PUBLIC_SENTRY_ENVIRONMENT`, `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`,
   `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME`.
-- Step 2 applied to a copy: 247 → **244 non-empty lines**, 215 → **212 keys** (the three dropped backend
-  keys are the only removals), `EXPO_PUBLIC_APP_ENV=production`, **0 key lines carrying a staging ref**.
-  The guard from §15.1, extracted verbatim from the committed `build-aab.sh:130-136` and run against the
-  copy, **passes**; run against main's real file it **refuses** — which is the demonstration Step 4 wanted,
-  obtained without touching the file.
+- **Step 2 rehearsed end to end on a copy, twice** — once when the task ran and again for this correction
+  round, through `.superpowers/sdd/…/recipe-rehearsal.sh`, which copies main's file to `/tmp`, applies the
+  brief's recipe verbatim, and prints only counts, key names and value *formats*. Measured on the copy:
+  247 → **244** non-empty lines, 215 → **212** keys (the three dropped backend keys are the only removals),
+  staging-carrying **key** lines 8 → **0**, `EXPO_PUBLIC_APP_ENV` → `production`, and JWT-valued keys
+  1 → **0**: the recipe swaps the 208-char legacy `wnic…` anon key for the profile's 46-char
+  `sb_publishable_…` one, which §15.3 measured as absent from every shipped bundle. Two things the recipe
+  does **not** do: it does not restore the missing trailing newline (§15.2's append hazard survives a
+  successful run), and it leaves the other **131** non-`EXPO_PUBLIC_` keys in place (134 − the 3 dropped;
+  the 81 `EXPO_PUBLIC_*` keys are untouched in count). The guard from
+  §15.1, run verbatim against the copy, **passes**; run against main's real file it **refuses** — which is
+  the demonstration Step 4 wanted, obtained without touching the file.
 - `node scripts/check-env-mocks.mjs` exits 0 on the patched copy (69/70 derived flags live, 1 allow-listed
   on mock: `EXPO_PUBLIC_SCHEDULED_USE_MOCK`) **and also exits 0 on today's staging-wired file**. That gate
   detects placeholders and mocks, not planes — the concrete reason Step 4's guard was necessary rather than
@@ -2515,12 +2606,19 @@ is the same build as the newest AAB (identical 43,447,249 B; the script copies i
   (`EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` still `CHANGE_ME`).
   The tracked example is a shape reference, not a drop-in — and the shipped file is 215 keys vs the
   example's 80, so it cannot be regenerated by copying the example.
-- **A brief claim is false.** Step 2 justifies `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL=https://www.spotlightng.com/login`
-  by saying `.env.production.example:26` "states the prod value". Line 26 of the example is
-  `PASSWORD_RESET_REDIRECT_URL=https://CHANGE_ME.example.com/login` — a placeholder, and a non-`EXPO_PUBLIC_`
-  name at that. The mobile lane reads `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL` **nowhere** (swept across
-  `src/ app/ scripts/ eas.json build-aab.sh build-apk.sh`), so the brief's value is harmless but baseless: it
-  is a user decision, or the line is left as-is. Do not let a future session cite `:26` as provenance.
+- **A brief claim is false — and this section's first draft mis-stated the correction.** Step 2 justifies
+  `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL=https://www.spotlightng.com/login` by saying
+  `.env.production.example:26` "states the prod value". Measured in both trees (the file is tracked and
+  byte-identical): line 26 is
+  `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL=https://CHANGE_ME.example.com/login` — a **placeholder**, and it
+  *is* an `EXPO_PUBLIC_` name (my first draft wrote "a non-`EXPO_PUBLIC_` name at that", which is wrong; the
+  review caught it). The same sentence's other half is fine: `.env.production.example:19` genuinely is
+  `EXPO_PUBLIC_SITE_URL=https://www.spotlightng.com`, and `:26` is the file's **only** `PASSWORD_RESET` line,
+  so there is no other provenance to appeal to. The value the brief proposes is harmless but baseless — the
+  name has **no reader anywhere** in the mobile lane (swept across `src/ app/ scripts/ eas.json
+  build-aab.sh build-apk.sh`), and neither its 53-character value (0 occurrences) nor even its key **name**
+  appears in the shipped bundle, which is what an un-inlined `EXPO_PUBLIC_*` looks like in practice. So: a
+  user decision, or leave the line as-is. Do not let a future session cite `:26` as provenance.
 - Recommendation carried to the user: regenerate and **rebuild**, then re-grep the artifact (§15.3's probe is
   the only proof that survives); do not sed-patch three keys and call the plane fixed, because the installed
   bundle is where the truth lives and it is 19 MB of stale bytes until a build runs.
@@ -2531,23 +2629,52 @@ is the same build as the newest AAB (identical 43,447,249 B; the script copies i
   was not inspected**, so this section states what the three artifacts on this machine contain and claims
   nothing about what users have installed.
 - `.env.production` is gitignored, so when the re-point is approved it will exist **only on this machine**.
-  Every new build host starts staging-wired or empty, and `build-aab.sh:118-125` exits 1 when the file is
-  absent — a new host must run the recipe, never `mv` the file aside. `.env.production.pre-cutover.2026-11-12`
-  is the staging-wired original: keep it, do not restore it.
+  Every new build host starts staging-wired or empty, and `build-aab.sh:118-125` / `build-apk.sh:126-132`
+  exit 1 when the file is absent — a new host must run the recipe, never `mv` the file aside.
+  **No backup of the current file exists anywhere** (corrected after review: an earlier draft of this bullet
+  told a future session to keep `.env.production.pre-cutover.2026-11-12` "and do not restore it", but that
+  file is created *by* Step 2's `cp`, and Step 2 has never run — `find` over main, this worktree and `/tmp`
+  returns nothing). Two consequences: today there is no safety net, so §15.2's sha256, byte size, line count
+  and the `.env` comparison above are the only record of the current content — and `.env` differs from it in
+  exactly one key pair, so the staging-wired original is in practice recoverable from `.env` if it is ever
+  lost. Once Step 2 does run, the copy it makes *is* the staging-wired original: keep it, do not restore it.
 - **Rotate the `wnic…` pooler credential.** `DATABASE_URL` in that file is a staging pooler DSN whose
   password surfaced in tool output earlier in this planning session. Treat it as exposed and rotate it, by
   whoever owns the `wnic…` project, before this plan is called closed. The 134 backend keys sitting in a
   mobile env file are the same class of exposure waiting to happen — the fix is to move them to the backend
   plane's own env, not to re-point the mobile file.
-- Task 16's inputs from this section: **18 tracked files** reference `mobile-app/reactnative/.env` by path
-  (`git grep -lE 'mobile-app/reactnative/\.env'`, ledger excluded) — `MOBILE_SUPABASE_LOCAL_CONFIG.md`,
-  `REGISTRATION_E2E_TEST_RESULTS.md`, `docs/CROWDFUNDING_GO_LIVE.md`, `docs/ENV.md`,
-  `docs/audit/E2E_TEST_MATRIX.md`, `docs/devops/DEPLOY-RUNBOOK.md`, `docs/devops/GO-LIVE-FINAL.md`,
-  `docs/e2e/results/mobile.md`, `docs/prd/golive/GO_LIVE_CHECKLIST.md`,
+- **Known limit of the guard, as shipped.** It asserts that *the file it reads* declares `production`, plus
+  the shadow refusal on `.env.<mode>.local` / `.env.local`. It does not assert anything about the process
+  environment, and `@expo/env` lets an already-set variable win over the file — so a host that exports
+  `EXPO_PUBLIC_APP_ENV=staging` in its shell, or an EAS run whose profile carries it, still outranks the
+  check. Measured today: no such export, and `eas.json`'s `production` profile declares `production`, so this
+  is a documented boundary rather than a live hole. The remaining true statement is §15.1's: the file's
+  declaration is what the guard can prove.
+- Task 16's inputs from this section, with the commands so the counts can be re-run (review Finding 8: an
+  earlier draft gave a "11" that three reconstructions could not reproduce, so it is replaced by figures
+  each tied to its own command, all run in this repo with the ledger itself excluded —
+  `git grep -lE 'mobile-app/reactnative/\.env' -- ':!docs/devops/production-migration-ledger.md'` → **18**
+  tracked files, listed below; `git grep -l '\.env\.production' -- ':!docs/devops/production-migration-ledger.md'`
+  → **31**, of which **5** belong to the *web* apps and are red herrings for a mobile doc fix
+  (`frontend-admin/.env.production.example`, `frontend-admin/middleware.ts`,
+  `frontend-admin/src/services/sprayAdminService.ts`, `frontend-web/.env.production.example`,
+  `frontend-web/src/lib/config/index.ts`); and the same command restricted to `-- mobile-app` → **9**
+  (`build-aab.sh`, `build-apk.sh`, `scripts/check-env-mocks.mjs`, `scripts/check-estate-mocks.mjs`,
+  `docs/GO-LIVE-CONFIG.md`, `.vscode/tasks.json`, `.env.example`, `.env.production.example`,
+  `src/features/marketplace/api/marketplace.api.ts`). Which list a doc fix needs depends on whether the
+  sentence names the file or the plane, so report the list you used, not a count. The 18:
+  `MOBILE_SUPABASE_LOCAL_CONFIG.md`, `REGISTRATION_E2E_TEST_RESULTS.md`, `docs/CROWDFUNDING_GO_LIVE.md`,
+  `docs/ENV.md`, `docs/audit/E2E_TEST_MATRIX.md`, `docs/devops/DEPLOY-RUNBOOK.md`,
+  `docs/devops/GO-LIVE-FINAL.md`, `docs/e2e/results/mobile.md`, `docs/prd/golive/GO_LIVE_CHECKLIST.md`,
   `docs/prd/transportation/INTEGRATION-RUNBOOK.md`, `docs/qa/food-uat-332/cluster-c-discovery-cart.md`,
   `docs/qa/test-release-runbook.md`, `docs/runbooks/fx-e2e-test.md`, `docs/supabase-go-live.md`,
   `launch/CREDENTIALS.md`, `launch/apply-env.sh`, `launch/master.env.template`,
-  `mobile-app/reactnative/docs/association/GO_LIVE.md`. A narrower pattern (`\.env.production` within the
-  mobile lane + release docs) hits 11, including `mobile-app/reactnative/docs/GO-LIVE-CONFIG.md`,
-  `.vscode/tasks.json`, both build scripts and both mock-check scripts. Report both figures rather than
-  one: which list a doc fix needs depends on whether the sentence names the file or the plane.
+  `mobile-app/reactnative/docs/association/GO_LIVE.md`.
+- Re-measurement entry points, left in this plan's SDD workspace for whoever takes Step 2: `guard-test.sh`
+  (16 cases, refuses to run against a tree with real env files), `recipe-rehearsal.sh` (Step 2 on a copy),
+  `bundle-scan.py` (the artifact numbers). All three are read-only against main and print no secret values.
+
+*This section was corrected on 2026-11-14 after its own review round: nine findings accepted, one (a
+"254-character token nobody had traced") refuted by byte-offset measurement and replaced with the regex
+caveat in §15.3. The code half of that round is `1be3e158f`; the dispositions are in*
+`.superpowers/sdd/2026-11-12-staging-to-production-migration/task-15-report.md`.
