@@ -123,6 +123,10 @@ export function mapDashboardWire(wire: DashboardWire): DoctorDashboardData {
       // different planes; the tile labels them accordingly.
       availableKobo: wire.walletBalanceKobo ?? 0,
       pendingKobo: revenue.pendingKobo ?? 0,
+      // This lifetimeKobo is Σ settled consult legs. The earnings screen's
+      // lifetimeKobo (batch6Wire.ts:88) is the ledger balance, which also carries
+      // non-consult money — so two screens labelled "lifetime" count different
+      // planes. No screen shows both; follow-up F15.
       lifetimeKobo: revenue.lifetimeKobo ?? 0,
       thisMonthKobo: revenue.thisMonthKobo ?? 0,
       consultsThisMonth: revenue.consultsThisMonth ?? 0,
