@@ -72,6 +72,15 @@ type DashboardQueuePatient struct {
 // rather than a reuse of Appointment because Appointment.SlotDate is a *time.Time
 // (model.go:100-ish) and the client contract wants a date plus a wall-clock time
 // string; changing Appointment is the neighbour's in-flight territory (spec D1/D8).
+//
+// Which fields ride: AppointmentRow renders name, initials, avatarColor, slotDate,
+// slotTime, status and the HMO badge — nothing else. Ref, feeKobo, createdAt and
+// patient.{age,gender} are still required, because the row is mapped by
+// mapAppointmentWire into the shared DoctorAppointment, whose type demands them;
+// dropping them from this payload would leave the mapper to invent them. Reason is
+// the exception: it is optional in that type, it is the patient's own words
+// (appointments.notes), and no dashboard surface shows it — F14 tracks dropping it
+// along with its entry in the contract's `required`.
 type DashboardQueueAppointment struct {
 	ID          string                `json:"id"`
 	Ref         string                `json:"ref"`
@@ -204,12 +213,16 @@ func (r *Repository) dashboardAggregates(ctx context.Context, userID, tz string)
 // passed through verbatim — a booking that says in_person must not be displayed as
 // a chat (spec D8; the client draws a fallback icon, and F4 tracks widening the
 // union properly).
+//
+// The patient columns default exactly as appointmentColumns does
+// (repository.go:214-216), because both planes feed the same client mapper and one
+// patient must not wear a different name or initials on two screens.
 func (r *Repository) todayQueue(ctx context.Context, userID, tz, day string) ([]DashboardQueueAppointment, error) {
 	const q = `
 		SELECT a.id::text,
 		       COALESCE(a.ref, 'TM-' || upper(substr(replace(a.id::text, '-', ''), 1, 6))),
 		       a.patient_id::text,
-		       COALESCE(NULLIF(pu.full_name, ''), 'Patient'),
+		       COALESCE(pu.full_name, ''),
 		       COALESCE(pu.age, 0),
 		       CASE WHEN lower(COALESCE(pu.gender, '')) IN ('male','female')
 		            THEN lower(pu.gender) ELSE 'other' END,
