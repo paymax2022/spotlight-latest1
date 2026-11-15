@@ -42,7 +42,7 @@ Every task's requirements implicitly include this section. These values are all 
 | Create | `scripts/ci/railway-smoke.sh` | Read back what the environment is actually serving. |
 | Create | `.github/workflows/_reusable-db-apply.yml` | One `supabase db push` path, parameterised by target environment. |
 | Create | `.github/workflows/release.yml` | The whole chain: gates → development (non-blocking) and gates → staging → production. |
-| Modify | `.github/workflows/ci.yml` | Delete `:486-805` (the three deploy jobs), strip the deploy inputs, narrow the branch triggers, fix two stale comments, add one test step. |
+| Modify | `.github/workflows/ci.yml` | Delete `:486-805` (the three deploy jobs — pristine `6199a6b57` numbering; Task 7 derives the span from content anchors at run time, because Task 3 shifts it +6), strip the deploy inputs, narrow the branch triggers, fix two stale comments, add one test step. |
 | Modify | `.github/workflows/db-migrate.yml` | Become dispatch-only; call the reusable apply; reverse its own stale header advice. |
 | Delete | `.github/workflows/development-deploy.yml` | Superseded by `release.yml`'s development leg. |
 | Modify | `docs/devops/deployment-matrix.md` | Canonical. Rows FIRST, then prose. |
@@ -2194,13 +2194,20 @@ Task 6 appends the remaining legs, so `release.yml` is incomplete at this point 
 
 ```bash
 cd /private/tmp/spot-release
-bash -n scripts/ci/railway-urls.sh scripts/ci/frontend-fingerprint.sh \
-        scripts/ci/railway-deploy.sh scripts/ci/railway-smoke.sh && echo "scripts parse"
+for f in scripts/ci/railway-urls.sh scripts/ci/frontend-fingerprint.sh \
+         scripts/ci/railway-deploy.sh scripts/ci/railway-smoke.sh; do
+  bash -n "$f" && echo "ok  $f"
+done
 python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/release.yml')); print('yaml parses')"
 /Users/paymax/go/bin/actionlint -no-color -oneline -shellcheck= -pyflakes= .github/workflows/release.yml
 ```
 
-Expected: `scripts parse`, `yaml parses`, and no actionlint output.
+Expected: four `ok  scripts/…` lines, `yaml parses`, and no actionlint output.
+
+The loop is not stylistic. `bash -n f1 f2 f3 f4` checks **only `f1`** — bash takes
+the first non-option argument as the script and the rest become positional
+parameters — so the multi-file form prints success even when three of the four are
+broken. Steps 6 and Task 9 use the same loop for the same reason.
 
 If `yaml` is not installed locally, skip that one line — actionlint parses the YAML itself and will report a syntax error.
 
@@ -2630,7 +2637,7 @@ EOF
 ### Task 7: Strip the deploy jobs out of `ci.yml` and retire `development-deploy.yml`
 
 **Files:**
-- Modify: `.github/workflows/ci.yml` (805 lines today → about 500)
+- Modify: `.github/workflows/ci.yml` (805 lines on `6199a6b57`, **811** by the time this task runs because Task 3 added 6 → **491** after the delete)
 - Delete: `.github/workflows/development-deploy.yml` (137 lines)
 
 **Interfaces:**
@@ -2639,7 +2646,11 @@ EOF
 
 **Order matters.** Tasks 5 and 6 must be committed before this one. Deleting the deploy jobs first would leave a window where nothing deploys at all — harmless on a feature branch, but if the two were split across PRs it would be a real outage of the release path.
 
-- [ ] **Step 1: Confirm the exact span to delete**
+**EVERY `ci.yml` LINE NUMBER IN THIS TASK IS A `6199a6b57` NUMBER, AND THE FILE HAS ALREADY MOVED.** Task 3 inserted **6 lines** into the `secret-hygiene` job (4 comment lines + `- name: Test the release gate` + `run:`) immediately after `test-changed-modules.py` at `:187`. So by the time this task runs, the file is **811 lines, not 805**, and every citation below `:187` is **+6**: the deploy comment starts at `:492`, `deploy-development:` is at `:495`, `deploy-staging:` at `:586`, `deploy-production:` at `:727`. Citations *above* `:187` are unchanged (`:23-24`, `:27-29`, `:43-49`, `:57-70`, `:152-153`).
+
+Do not run any `sed` in this task from a number in this document. Steps 1-3 below compute the span from content anchors and assert on it; Steps 4-7 say "read the block, then edit" and are anchored on text, so their stale numbers are signposts only. If a grep returns a different number than the one printed here, the grep wins.
+
+- [ ] **Step 1: Compute the delete span from content, not from a line number**
 
 ```bash
 cd /private/tmp/spot-release
@@ -2647,33 +2658,46 @@ grep -n "^  deploy-development:\|^  deploy-staging:\|^  deploy-production:\|^  w
 wc -l .github/workflows/ci.yml
 ```
 
-Expected on `origin/main` = `6199a6b57`: `workflow-lint:` `:467`, `deploy-development:` `:489`, `deploy-staging:` `:580`, `deploy-production:` `:721`, file length **805**. The deploy block runs from the comment line above `deploy-development:` at `:486` to EOF at `:805`.
+Expected: `workflow-lint:` `:467`, `deploy-development:` **`:495`**, `deploy-staging:` **`:586`**, `deploy-production:` **`:727`**, file length **811**. On a pristine `6199a6b57` checkout the same greps return `:489` / `:580` / `:721` and 805 — if you see *those*, Task 3's step never landed, so stop and check `git log` before deleting anything.
 
-- [ ] **Step 2: Read the three lines immediately before `:489` — they are part of the block**
+Then derive the first line of the block mechanically. The block starts at the **comment** above `deploy-development:`, not at the job keyword:
 
 ```bash
-cd /private/tmp/spot-release && sed -n '483,492p' .github/workflows/ci.yml
+cd /private/tmp/spot-release
+DD=$(grep -n "^  deploy-development:" .github/workflows/ci.yml | cut -d: -f1)
+START=$(awk -v dd="$DD" 'NR<dd && /^[[:space:]]*#/ {last=NR} NR<dd && /^[[:space:]]*$/ {last_blank=NR} END{print (last>last_blank ? last : dd)}' .github/workflows/ci.yml)
+echo "deploy-development at $DD; delete from $START to EOF ($(wc -l < .github/workflows/ci.yml))"
+sed -n "$((START-3)),$((DD+1))p" .github/workflows/ci.yml
 ```
 
-Expected: the tail of the `workflow-lint` job (`run: actionlint …`) at `:484`, a blank line, then a **comment** explaining that Railway deployment is deliberately manual (`:486-488`), then `deploy-development:` at `:489`. The comment belongs to the deploy block and must be deleted with it — leaving it behind would be a stale claim that deployment is manual, sitting in a file that no longer deploys.
+Expected: `START` is 3 lines above `DD` (`:492` given `:495`), and the printed window shows the tail of the `workflow-lint` job (`run: actionlint …`), a blank line, then a **comment** explaining that Railway deployment is deliberately manual, then `deploy-development:`. The comment belongs to the deploy block and must be deleted with it — leaving it behind would be a stale claim that deployment is manual, sitting in a file that no longer deploys.
 
-- [ ] **Step 3: Delete `:486` to EOF**
+- [ ] **Step 2: Confirm the line above the block must SURVIVE**
+
+```bash
+cd /private/tmp/spot-release
+sed -n "$((START-2)),$((START))p" .github/workflows/ci.yml
+```
+
+Expected: the `workflow-lint` job's `run: actionlint -no-color -oneline -shellcheck= -pyflakes=` line, then a blank line, then the first comment line of the block. If the `run:` line is *inside* the span you are about to delete, `START` is wrong — do not proceed.
+
+- [ ] **Step 3: Delete from `START` to EOF**
 
 ```bash
 cd /private/tmp/spot-release
 cp .github/workflows/ci.yml /tmp/ci.yml.bak
-sed -i '' '486,$d' .github/workflows/ci.yml
+sed -i '' "${START},\$d" .github/workflows/ci.yml
 wc -l .github/workflows/ci.yml
 tail -5 .github/workflows/ci.yml
 ```
 
-Expected: **485 lines**, and the tail is the `workflow-lint` job's `run: actionlint -no-color -oneline -shellcheck= -pyflakes=` line. If the tail shows anything else, the span was wrong — restore and re-derive:
+Expected: **491 lines** (811 − 320; the pristine-file equivalent is 485 = 805 − 320), and the tail is the `workflow-lint` job's `run: actionlint -no-color -oneline -shellcheck= -pyflakes=` line. If the tail shows anything else, the span was wrong — restore and re-derive:
 
 ```bash
 cd /private/tmp/spot-release && cp /tmp/ci.yml.bak .github/workflows/ci.yml
 ```
 
-`sed -i ''` is the BSD/macOS form. On a Linux runner or worktree it is `sed -i`. Confirm which applies before running.
+`sed -i ''` is the BSD/macOS form. On a Linux runner or worktree it is `sed -i`. Confirm which applies before running. `START` must be exported or re-derived in the same shell invocation as the `sed` — a fresh Bash tool call starts a new shell and `$START` will be empty, which turns `${START},$d` into `,$d` and deletes the whole file. If you are in a new shell, re-run Step 1's `awk` first and check `echo "$START"` is non-empty before the `sed`.
 
 - [ ] **Step 4: Verify nothing else in the file referenced the deleted jobs**
 
@@ -2804,7 +2828,8 @@ git status --short
 git commit -m "$(cat <<'EOF'
 ci: return ci.yml to CI only and retire development-deploy.yml
 
-The three deploy jobs (ci.yml:489, :580, :721) move to release.yml, which fires on
+The three deploy jobs (deploy-development, deploy-staging, deploy-production) move to
+release.yml, which fires on
 every push to main instead of requiring a dispatch, a typed DEPLOY and a promotion
 branch that is not main. Keeping both would be two live writers for one
 service-environment pair, which the deployment matrix's own checklist forbids.
@@ -3291,4 +3316,8 @@ No spec requirement is left without a task.
 - `_reusable-db-apply.yml` inputs — `target`, `dry_run`, `include_all`, `skip_apply`, `skip_reason`; identical in the `workflow_call` block, the two `db-migrate.yml` callers and the two `release.yml` callers.
 - The job names `migrate-staging`, `deploy-staging`, `smoke-staging`, `migrate-production`, `deploy-production`, `smoke-production` are consistent between Task 6's YAML, its Step 4 graph assertion, and Step 5's grep.
 
-**4. One deliberate correction made during review.** Task 5's `smoke-development` matrix originally gave the `backend` entry a populated `fingerprint` that the backend branch of `railway-smoke.sh` never reads, and its `touched` step used `git diff A~1 A` unguarded, which aborts on a root commit. Both were fixed in the literal YAML rather than noted beside it, because an executor copies the block, not the prose.
+**4. Deliberate corrections made during review.** Each was fixed in the literal step text rather than noted beside it, because an executor copies the block, not the prose.
+
+1. Task 5's `smoke-development` matrix originally gave the `backend` entry a populated `fingerprint` that the backend branch of `railway-smoke.sh` never reads, and its `touched` step used `git diff A~1 A` unguarded, which aborts on a root commit.
+2. Task 5 Step 8 originally ran `bash -n f1 f2 f3 f4`, which syntax-checks **only `f1`** — bash takes the first non-option argument as the script and the rest become positional parameters — so its "scripts parse" was not evidence. Rewritten to the `for f in …; do bash -n "$f"; done` loop that Steps 6 and Task 9 already used.
+3. Tasks 3 and 7 both edit `.github/workflows/ci.yml` in the same branch, and Task 7's steps cited pristine `6199a6b57` line numbers. Task 3 inserts 6 lines at `:188`, so Task 7's literal `sed -i '' '486,$d'` would have started at old-`:480` — inside the `workflow-lint` job — and truncated a required check. Task 7 Steps 1-3 now derive the span from content anchors (`grep` for `^  deploy-development:`, then `awk` back to the comment above it), assert the expected post-Task-3 numbers (811 lines, `:495`/`:586`/`:727`, 491 after the delete), and warn that `$START` must be live in the same shell as the `sed`.
