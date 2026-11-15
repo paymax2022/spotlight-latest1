@@ -3095,32 +3095,54 @@ Each is its own change:
   honest options are a server field per section or copy that says the section is unavailable — either way
   it is a contract change, which is why it is not in this PR (spec "Out of scope": every read here uses
   columns and tables that already exist).
-- **F12** — the batch-1 QA report's Section D table cites `(tabs)/index.tsx` against three different
-  revisions at once, and only the three rows this PR rewrote are current. Task 8's implementer noticed
-  the neighbours looked wrong and reported them; the cause is **older than this branch**, which matters
-  because it decides whether they are ours to fix. Measured on `origin/main`'s own copy of the file
-  (398 lines): D12 says the Available card is at `:171`, where main actually has
-  `accessibilityLabel={isOnline ? 'Go offline' : 'Go online'}` — the card is `:183`, twelve lines off
-  before this PR existed at all; D4 says the active-consultation card opens at `176-193`, main opens it
-  at `:188` (`:176` is blank); D3 says the requests deep-link is `:198`, main has `styles.activeBody`
-  there and the real `Pressable` at `:210`; D5 says `:203`, main has a `ChevronRight` there and the
-  waiting-room `Pressable` at `:215`; the alert-sort note says `:76-78`, main is `:85`. This branch then
-  shifted everything below line ~57 **down by 3** (two lines out of the import block, one each out of
-  `useAppointments()` and `todays`, one back in for `queue` — the five-hunk diff sums to `15453c7b8` →
-  `15f08f428`), so it did move those rows, but by three lines against a pre-existing error of twelve.
-  Leaving them is a real hazard now that D1/D2/D13 are pinned to HEAD: a reader can no longer tell which
-  baseline a cite is written against, so the note added to the report's correction blockquote says which
-  rows are HEAD-relative. Fixing the rest means re-verifying each row's *verdict*, not just its line
-  number — twelve rows of other people's features, out of scope for a five-metrics PR.
-- **F13** — no test drives `doctor.Handler.GetDashboard` as HTTP. The route is registered and guarded —
-  `docGroup := r.Group("/api/v1/doctor")` with `docGroup.Use(middleware.RequireAuthContext(supabase, rbac))`
-  (`backend/internal/app/finance_routes.go:3098-3099`) and `docGroup.GET("/dashboard", doctorHandler.GetDashboard)`
-  (`:3535`) — and the live-DB suite proves the service and the JSON keys it marshals
-  (`dashboard_metrics_live_db_test.go:775-790` asserts `"todaysCount":2,` and `"satisfactionPct":null,`
-  inside `json.Marshal(res)`), but `GetDashboard` appears in no `gin.New()` + `ServeHTTP` test, although
-  that pattern exists in this very package (`handler_test.go:30,52-53`). So three links stay unexercised
-  for this route specifically: the middleware chain, the `c.Get` identity read the handler performs, and
-  the status code plus envelope it writes. Whoever closes it copies `handler_test.go`'s engine helper; the
-  same gap is measured for `/vet/dashboard` and `/records/dashboard`, so a helper worth writing once.
-  Task 8 reported this caveat and it stands, narrower than the wording suggested — registration and auth
-  were never in doubt, only the handler function body.
+- **F12** — the batch-1 QA report's Section D table cites `(tabs)/index.tsx` against three revisions at
+  once, and only the three rows this PR rewrote are current. Task 8's implementer noticed the neighbours
+  looked wrong; the Task 8 reviewer then found *why*, and the answer changes the character of the defect:
+  these are not bad cites as written, they are **drift**. The table was authored against the 378-line
+  file at `5526a8bc1`/`6db1dd494`, where D12's `:171` genuinely is `label="Available"` and D3's `:198`
+  genuinely is the requests `Pressable`. Measured then, still true then, stale twice over since.
+  The three baselines, all counted: **378** lines at authoring, **398** on `origin/main`, **395** at this
+  branch's HEAD. At HEAD the stale rows land where the report's own "Cite baseline." note now says:
+  Available `:180` (D12 quotes `:171`, which is a closing `</Pressable>`), the active-consultation card
+  opens at `:185` (D4 quotes `176-193`), the two deep-links are `:207` and `:212` (D3 quotes `:198`, an
+  inner `activeConsultation.ref` `Text`, and D5 quotes `:203`, a blank line), and the alert-sort
+  comparator sits at `:81-83` — cite it as a range, because `origin/main`'s equivalent of D12's
+  three-line note is `:84-86` and naming only its middle line (`:85`) sends a reader to one line where
+  there are three.
+  Direction matters, so do not trust the earlier wording in this plan, which said the branch shifted
+  things "down by 3" and was wrong: `git diff --numstat` gives **6 insertions / 9 deletions** across
+  **6** hunks (`-15,15 +15,13`, `-57,7 +55,6`, `-68,7 +65,6`, `-81,6 +77,7`, `-176,12 +173,12`,
+  `-311,10 +308,10`; four change the line count, two are net zero), so the file is three lines *shorter*
+  and everything below the deletions moved **up** in numbering. That shrank D12's error from twelve lines
+  on main to nine at HEAD — this branch helped, by accident, and "correct by adding 3" is the trap the
+  wrong word would have set.
+  Scope, measured rather than estimated: Section D has 21 rows and **14** lines in it cite `index.tsx`;
+  10 of those are rows, so **7 rows plus the non-row notes** carry the stale numbering — not "twelve
+  rows", which is what this plan previously guessed. Repairing them means re-verifying each row's
+  *verdict* against live mode (that is F2's job, and it is bigger than a line-number sweep), so they
+  stay tracked. What this PR could do cheaply was tell the reader which numbering they are looking at,
+  and the note added to the report's correction blockquote now does that — in HEAD's numbers, because a
+  reader of this file is on HEAD.
+- **F13** — the auth guard on `GET /dashboard` is now covered; what remains unexercised is narrower than
+  this entry first claimed. The Task 8 reviewer caught the original wording over-claiming in both
+  directions: it said "registration and auth were never in doubt" while its own body listed the
+  middleware chain as untested, and it implied the handler had never been driven as HTTP when the
+  package already had a table doing exactly that for four sibling reads. Both were fair hits. The gap is
+  now closed at the boundary that was actually missing: `TestReads_NoAuth` in
+  `backend/internal/doctor/handler_test.go:61-85` gained a `{"GetDashboard", http.MethodGet, "/dashboard", …}`
+  case, and `go test ./internal/doctor/ -run TestReads_NoAuth -count=1 -v` reports
+  `--- PASS: TestReads_NoAuth/GetDashboard (0.00s)` with `ok spotlight/backend/internal/doctor 2.909s`.
+  That assertion is not vacuous: a route the test failed to register would give 404, and an unguarded
+  handler built on `doctor.NewHandler(nil)` would reach the nil service and panic rather than answer 401,
+  so a 401 can only come from `h.userID(c)` at `handler_tail2.go:187-190` aborting first.
+  Still unproven, and deliberately left so: the *wiring* of `RequireAuthContext` on the real `docGroup`
+  (`backend/internal/app/finance_routes.go:3098-3099`, registered at `:3535`) is a static fact no test
+  executes end to end — this test injects the same `middleware.AuthUserContextKey` the real middleware
+  sets, which is the file's documented substitute (`handler_test.go:18-24`) — and the success path's
+  status code and envelope with a real database have no gin-level test either. `TestLiveDB_Dashboard*`
+  asserts on `json.Marshal(res)` (`dashboard_metrics_live_db_test.go:775,779,788`), which proves the keys
+  the mapper consumes but not what `c.JSON` puts on the wire. The CI `live-db` job re-runs the service
+  suite on a clean migrated schema (`ci.yml`'s `dbscope` keys it on `^backend/`, and five of this branch's
+  files are under `backend/`), so the service half is gated in public; the gin-envelope half would need a
+  helper this package does not have, and the same absence applies to `/vet/dashboard` and
+  `/records/dashboard`, so writing it is a follow-up worth doing once across all three.

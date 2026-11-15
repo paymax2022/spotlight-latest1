@@ -80,13 +80,20 @@ on `(tabs)/index.tsx`, per the consolidation plan.
 > `src/features/doctor/dashboardWire.ts`. See
 > `docs/superpowers/specs/2026-11-13-doctor-dashboard-metrics-design.md`.
 >
-> **Cite baseline.** D1, D2 and D13 were re-cited against this branch's `index.tsx`, so their line
-> numbers are current. The other Section D rows still carry the numbering of an older revision and are
-> known to be off — D12's `:171` is a `Go offline`/`Go online` label while the Available card sits at
-> `:183`, D4's `176-193` really opens at `:188`, and D3's `:198` and D5's `:203` point at a style view
-> and a chevron rather than the two deep-links. They were already wrong before this change; correcting
-> them means re-verifying each row's verdict, so they are tracked as follow-up F12 in
-> `docs/superpowers/plans/2026-11-13-doctor-dashboard-metrics.md` instead of being silently rewritten.
+> **Cite baseline.** D1, D2 and D13 carry line numbers re-measured against this branch's `index.tsx`
+> (395 lines here, 398 on `origin/main`); every other Section D cite still points at the revision the
+> table was authored against — the 378-line file at `5526a8bc1`/`6db1dd494` — and the file has grown
+> since. What those rows actually point at, at HEAD: the Available tile is `:180`, not D12's `:171`,
+> which *was* correct where it was written and is now a closing `</Pressable>`; D3's `:198` falls inside
+> the active-consultation card and D5's `:203` is a blank line, where the two deep-links they mean are
+> `:207` and `:212`; D4's `176-193` opens at `:185`. So these are drift, not errors of authorship, and
+> this branch's own three-line shift moved them *toward* correctness rather than breaking them. The
+> unread rows' verdicts were not re-checked, so treat their cites as approximate; tracked as follow-up
+> F12 in `docs/superpowers/plans/2026-11-13-doctor-dashboard-metrics.md` rather than silently rewritten.
+> **Evidence level for D1/D2/D13:** the live-mode `PASS` is proven at the wire by the
+> `TestLiveDB_Dashboard*` suite and through the pure mapper in
+> `src/features/doctor/__tests__/dashboardWire.test.ts`. No in-browser pass has been run, so no row here
+> claims a screenshot.
 
 | # | Entry | How covered | Status |
 |---|-------|-------------|--------|
