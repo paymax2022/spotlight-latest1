@@ -253,7 +253,7 @@ export interface DoctorDashboardData {
   alerts:             DashboardAlert[];     // urgent / compliance / licence / etc.
   announcement?:      PlatformAnnouncement; // platform announcement banner
   earnings:           EarningsSummary;      // earnings summary (reuse Phase 1)
-  satisfactionPct:    number;               // patient satisfaction rating, 0–100
+  satisfactionPct:    number | null;        // 0–100, or null when the doctor has no reviews yet
 }
 
 // SECTION E — AVAILABILITY & SCHEDULE MANAGEMENT (17)
