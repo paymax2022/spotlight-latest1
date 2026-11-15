@@ -1,7 +1,7 @@
 # Auto-deploy release pipeline — design
 
 **Date:** 2026-11-15
-**Status:** Approved direction (reconcile-then-flip, new `release.yml` chain). Not started.
+**Status:** Approved direction (reconcile-then-flip, new `release.yml` chain). Not started. **Revised after screening 2026-11-15:** the divergence that made Phase 0 a blocker turned out to carry no content `main` lacks, so Phase 0 shrank from two merge PRs to tags plus a written do-not-merge list. The revision is marked inline wherever it overturns an earlier conclusion. **Revised again after the flagged-item review, same day:** both items I had marked "the user must decide" turned out to rest on false premises. Production `frontend-web` on Railway is not an orphan — `eas.json:65` makes it the shipped mobile build's production API base — so Decision E is reversed and the service is in the matrix. `notification-worker` is not development-only — production runs it on Render — so it gets a new Decision H and a Phase 0 record step instead of an open question.
 **Scope:** every push to GitHub `main` releases itself — development, staging and production — with no human approval step in the way. One new workflow owns the whole chain; `ci.yml` goes back to being CI-only. No application code changes, no schema changes.
 
 ## Goal
@@ -13,7 +13,7 @@ A commit merged to `main` reaches development, staging and production without an
 **What already auto-deploys, and needs no change.**
 
 - Production database migrations: `db-migrate.yml` applies on push to `main` when `vars.DB_MIGRATE_ENABLED == 'true'`, under `environment: production`. It already has a stale-ref guard ("Refuse a stale or unapproved ref") and `concurrency: db-migrate-${{ github.ref }}` with `cancel-in-progress: false`.
-- Production `frontend-web`: `sync-frontend-web.yml` pushes to `paymax2022/spotlight-latest` `main`, and *that* repo's cPanel lane is ungated. `deploy-cpanel.yml` in this repo is inert — 0 successes in 843 runs, `vars.CPANEL_DEPLOY_ENABLED` unset, five secrets absent.
+- Production `frontend-web` **for the customer domain**: `sync-frontend-web.yml` pushes to `paymax2022/spotlight-latest` `main`, and *that* repo's cPanel lane is ungated. `deploy-cpanel.yml` in this repo is inert — 0 successes in 843 runs, `vars.CPANEL_DEPLOY_ENABLED` unset, five secrets absent. This covers `www.spotlightng.com` only; the Railway production `frontend-web` that the mobile app reads is a different service and is **not** auto-deployed today (Decision E).
 - `vars.RAILWAY_DEPLOY_ENABLED` is already `true`.
 
 **What is manually gated today.**
@@ -34,7 +34,7 @@ So a release needs a dispatch, a typed confirmation, and a promotion branch (`de
 
 **A parked deployment does not auto-approve when its reviewers are removed — it fails.** Run `43723411971` (`Ops DB Push`, production `supabase db push`) was parked at that gate. Removing the reviewers moved it `waiting → error` at 16:34:43Z. The jobs API shows **zero steps**, started 14:21:42Z (park time), completed 16:34:43Z (the PUT), and `gh api .../jobs/132841639588/logs` returns `BlobNotFound`. The job never reached a runner, so **no production database write occurred**. This is recorded rather than assumed because the user's chosen outcome ("let it run, then remove the gate") did not happen.
 
-**`main` is not a superset of what production and staging serve — this is the blocking finding.** Measured live 2026-11-15 by reading each backend's own `/api/v1/public/build` (the binary is stamped via `BUILD_COMMIT` + `-ldflags`, `source: "ldflags"`), then testing each served SHA with `git merge-base --is-ancestor <sha> origin/main`:
+**What each environment actually serves.** Measured live 2026-11-15 by reading each backend's own `/api/v1/public/build` (the binary is stamped via `BUILD_COMMIT` + `-ldflags`, `source: "ldflags"`), then testing each served SHA with `git merge-base --is-ancestor <sha> origin/main`:
 
 | Environment | Served commit | Ancestor of `origin/main` (`6199a6b57`)? | Process started |
 |---|---|---|---|
@@ -44,12 +44,26 @@ So a release needs a dispatch, a typed confirmation, and a promotion branch (`de
 
 `/healthz` answers 200 on all three. `/readyz` answers 200 on production and staging but **503 on development** — its DB pool is not reachable, so a smoke step that requires `readyz == 200` in development fails today, before any of this work. That is a pre-existing condition, and it is a second reason the development leg must not gate production (Decision F).
 
-Re-measured 2026-11-15 against `origin/main` = `6199a6b57`. `git rev-list --left-right --count origin/main...origin/prod` → `745	10`: 745 commits exist only on `main`, and **10 exist only on `origin/prod`**. For `origin/staging` → `30	5`: **5 commits exist only on `origin/staging`**. Of those, `git cherry` (which compares patch content, not SHAs) marks **6 prod-only** and **4 staging-only** commits with `+`, meaning they are genuinely absent from `main` rather than already landed in another form. Auto-deploying `main` as it stands would **roll production back** over work that only ever existed on the promotion branches.
+**The served commits are not ancestors of `main`, but nothing on them is missing from `main` — screened, not assumed.** `git rev-list --left-right --count origin/main...origin/prod` → `745	10`, and `...origin/staging` → `30	5`. `git cherry` marks **6 prod-only** and **4 staging-only** commits with `+`. A `+` means the *patch-id* was not found upstream — it does **not** mean the content is missing, and reading it that way was this design's first wrong conclusion. Every one of the 10 candidates was screened file by file: for each file the commit touches, compare its blob against `origin/main`, and where they differ, test whether the commit's own patch reverse-applies cleanly onto `main` (which proves `main` already contains it).
 
-Among the candidates, two need individual judgement rather than a blanket merge:
+| Candidate | Date | Verdict | Evidence |
+|---|---|---|---|
+| `548d07c4b` pin `react-native-screens` | 2026-10-11 | already on `main` | 3/3 files reverse-apply clean |
+| `dae77e90b` activate launch rails | 2026-10-15 | already on `main` | 3/4 identical; `backend/.env.example` — `main` is 99 lines ahead |
+| `41c19ea2b` promote main→prod | 2026-10-17 | **must not land** | 18 of its files were **deleted on `main`** by `2e22dfa7f` (#808, KYC admin-escalation removal). Merging resurrects that whole plane |
+| `5ab7c9cc0` telemedicine intake port (#1025) | 2026-11-15 | already on `main` | **9/9 files byte-identical** — this is the commit production serves |
+| `616900caf` academy console (#1030) | 2026-11-15 | **must not land** | `main` carries the composite tuition model (`AcademyPricingKey`, `max_students`, `training_schedule`); the candidate still has the older `capacity`. Merging reverts it |
+| `973b010cc` academy BFF plane (#1031) | 2026-11-15 | **must not land** | 43/46 identical; the 3 that differ are `main` being ahead — `referralRewards`, `estateDualControl`, `filmAcademyAssessment` flags, and `next ^16.4.0` → `^16.4.3` |
+| `75482a43a` privacy policy page | 2026-11-04 | already on `main` | 3/4 identical + `Footer1.js` reverse-applies clean |
+| `6948a6c49` gated staging deploy lane | 2026-11-04 | **must not land** | `staging-frontend-web-deploy.yml` is **absent on `main`**, deleted by `b5bc4480f` (policy: "deploy only to `main`, never staging"). Landing it re-creates two live writers for one service-environment pair |
+| `95beea87f` login policy links | 2026-11-08 | already on `main` | 1/1 identical |
+| `2a82a62ef` promote #1014 to staging | 2026-11-14 | **must not land** | backend files identical; `contracts/intake.openapi.yaml` + `contracts/openapi.yaml` — `main` is 601 lines ahead |
 
-- `6948a6c49 ci: add gated frontend-only staging deploy` — would resurrect a lane that was deliberately deleted in `b5bc4480f` (the repo's standing policy is "deploy only to `main`, never staging"). Landing it re-creates two live writers for one service-environment pair, which `docs/devops/deployment-matrix.md` forbids.
-- `41c19ea2b` — carries feature-flag defaults (VertoFX off, estate/mobile live defaults) that may contradict `main`'s current values.
+**So the rollback risk this design was built around does not exist.** Four candidates are already on `main` in full, five are cases where `main` has moved *ahead* and merging would revert it, and one resurrects a deliberately deleted workflow. Deploying `main` today does not roll production back over missing work — production's own served commit (`5ab7c9cc0`) has a touched-file set that is byte-identical to `main`.
+
+**The residual risk is semantic, not genealogical.** Git screening proves no *commit* is missing; it cannot prove that where `main` reimplemented something differently, it covers every edge case the promotion-branch version did. That risk is retired by the probe contract in the Verification section — staging smoke before production — not by more archaeology.
+
+**What Phase 0 is therefore for** is not porting content. It is stopping the divergence from misleading anyone again: `origin/prod` and `origin/staging` still point at commits whose file trees are *older* than `main`'s, so the next person who merges one of them "to catch up" resurrects #808's deleted KYC plane or reverts the academy tuition model.
 
 **The matrix document is canonical.** `docs/devops/deployment-matrix.md` states: "When this matrix and a config file disagree, this file wins." Its reconciliation checklist requires declaring the row FIRST, one path per service per environment (never two live writers), a canary/probe contract (`/healthz` + `/readyz`), and migrations BEFORE traffic. This design follows that order.
 
@@ -70,16 +84,21 @@ Among the candidates, two need individual judgement rather than a blanket merge:
 | production | `frontend-admin` | SUCCESS 2026-11-15 | `frontend-admin-production-5b0c.up.railway.app` |
 | production | `frontend-web` | SUCCESS 2026-11-15 13:32Z | `frontend-web-production-9259.up.railway.app` |
 
-Two facts here change the design:
+Three facts here change the design:
 
 - **Development `frontend-web` is red today.** Its latest deployment failed on 2026-11-13. If the chain treats a failed development deploy as fatal, every release halts on a pre-existing failure that has nothing to do with the commit being released.
-- **Production has a live `frontend-web` on Railway, and it is not what the customer domain serves.** `https://frontend-web-production-9259.up.railway.app/` returns 200 (85,258 bytes) and `https://www.spotlightng.com/` returns 200 (85,895 bytes), but their `/_next/static/chunks/` hashes differ — two different builds, deployed independently. So this is not a vestigial service; it is a *second production frontend-web writer* whose output nothing on the customer domain reads.
+- **Production `frontend-web` on Railway is not an orphan — it is the shipped mobile app's production API base.** `https://frontend-web-production-9259.up.railway.app/` returns 200 (85,258 bytes) and `https://www.spotlightng.com/` returns 200 (85,895 bytes), and their `/_next/static/chunks/` hashes differ, so they are two different builds. The customer domain does not read the Railway instance. **Two other production consumers do:** `mobile-app/reactnative/eas.json:65` sets the `production` profile's `EXPO_PUBLIC_API_BASE_URL` to exactly that host (`production-apk` at `:72` `extends: production`, so the APK inherits it), and `frontend-admin`'s production environment sets `WEB_API_BASE_URL` to the same host. That `eas.json` line is not an accident — commit `e8eae3ad6` ("fix(mobile): point eas production profile at prod Supabase + Railway BFF", 2026-10-06, an ancestor of `origin/main`) moved it there deliberately, describing the previous state as "split-brained". So the Railway instance is a *live production BFF that nothing in the release chain updates*.
+- **Nothing automatic writes it today.** Its 2026-11-15 13:32Z deployment is not attributable to any workflow run: `ci.yml` has had **no `production` `workflow_dispatch` since 2026-10-17** (191 dispatch runs total; the most recent are `staging` 2026-11-14 and `prod` 2026-10-17), and `ci.yml`'s 2026-11-15 runs are all `push`/`pull_request` events, none of which can deploy. It was a hand-run `railway up`.
 
-**`notification-worker` exists only in development** and is deployed by no workflow lane. It is a service the release chain does not know about; flagging it is in scope, adopting it is not.
+**`notification-worker` is a production service — on Render, not Railway.** The Railway service by that name exists only in development (SUCCESS 2026-11-01), and no file under `.github/` mentions it at all. Production runs it from `render.yaml:76-84` (`type: worker`, `name: spotlight-notification-worker`, `startCommand: /app/notification-worker`, `autoDeploy: true`), built by `Dockerfile:18`, and `docs/devops/deployment-matrix.md:16` lists "Backend workers (asynq) — Production: Render `spotlight-notification-worker`" as an **authoritative** row. It is load-bearing, not vestigial: the production Railway `backend` service does **not** set `RUN_WORKERS_INPROCESS` (measured from its production variable list, 2026-11-15) and `backend/internal/config/config.go:1234` defaults it to `false`, so the web service does not drain the queue in-process — `render.yaml:73-74` states the consequence: "Without this service every queued push/email/SMS sits in Redis forever."
+
+Worker and web service share one compiled contract: `backend/cmd/notification-worker/main.go:28` registers its handlers through `notifications.Workers(mux, …)`, the same `backend/internal/notifications` package the web service enqueues from, and both binaries come from the same `Dockerfile`. So a release that ships a new web service to Railway while the worker binary stays at an older commit can enqueue payloads the old worker decodes incorrectly. Whether that skew exists today depends on whether Render's blueprint is still connected to this repo — **which cannot be verified from the repo**, and is a pre-flight check (Phase 0), not something the chain can own.
+
+**Render's production *backend* web service is dead, and only that.** `render.yaml:5-21` still declares `spotlight-backend` with `autoDeploy: true` and `ENVIRONMENT: production`, but `https://spotlight-backend.onrender.com/` answers 200 with the body `Hello, world!` and `/healthz`, `/readyz`, `/api/v1/public/build`, `/api/v1/public/health` all answer 404 with an **Express** error page (`Cannot GET /healthz`) — not Go, not gin. So that hostname is a placeholder, not the production API; production `backend` is Railway `backend-production-1b33d` (verified serving `5ab7c9cc0`). `docs/devops/deployment-matrix.md:30` agrees: "Render was the backend host pre-Cloud-Run; the **worker + Redis services in the same file are still live**." The chain therefore does not need to consider Render's web service — but it must not assume Render is retired as a platform, because the worker and Redis rows are authoritative.
 
 **Two Railway CLI facts that must survive the move.**
 
-- A frontend service with a Railway `rootDirectory` must be uploaded with **no positional path and no `--path-as-root`** (`railway up .` dies "prefix not found"). Only `ci.yml`'s staging matrix does this correctly (`path: ''`, `root_flag: ''`, invoked at `ci.yml:659`). The same defect is hardcoded in **three** places: `ci.yml:563` (development), `ci.yml:790` (production), and `development-deploy.yml:98`. All three pass a positional path with `--path-as-root` regardless of the service.
+- A frontend service with a Railway `rootDirectory` must be uploaded with **no positional path and no `--path-as-root`** (`railway up .` dies "prefix not found"). Only `ci.yml`'s staging matrix does this correctly — `path: ''` / `root_flag: ''` for both frontends (`ci.yml:591-596`), `root_flag: --path-as-root` for backend only (`:581-583`), consumed by a templated `railway up ${{ matrix.path }} ${{ matrix.root_flag }}` at `ci.yml:618`. The same defect is hardcoded in **three** places: `ci.yml:523` (development), `ci.yml:748` (production), and `development-deploy.yml:98`. All three pass a positional path with `--path-as-root` regardless of the service.
 - The CLI's default HTTP timeout is 90s, which truncates the 93 MB `frontend-web` upload. `RAILWAY_HTTP_TIMEOUT` must be set on every `railway up`.
 
 **`ci.yml` concurrency can kill a deploy mid-upload.** `concurrency: group: ci-${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: true`. Any deploy that lives inside `ci.yml` on `main` is cancellable by the next push. The new chain must not be. `integration-verify.yml` uses the same shape (`integ-${{ github.ref }}`, cancel in progress).
@@ -90,7 +109,7 @@ Two facts here change the design:
 
 ## Decisions
 
-**A. Reconcile before flipping anything on.** No auto-deploy switch is turned on until `origin/prod` and `origin/staging` are reconciled into `main` as reviewed PRs — by merge, or by screened cherry-pick where a commit must not land (Phase 0 decides which). This is blocking, not parallel work.
+**A. Retire the divergence, don't port it.** Screening found no content on `origin/prod` or `origin/staging` that `main` lacks, so Phase 0 is not a pair of merge PRs — it is resetting the two promotion branches onto `main` and recording the five commits that must never be merged back, with their reasons. It still happens *before* the auto-deploy switch is turned on, because until the branches are reset, a stale promotion commit sitting on `origin/prod` is a loaded gun pointed at `main`.
 
 **B. One new workflow owns the chain.** `.github/workflows/release.yml`, triggered by `on: push: branches: [main]`. `ci.yml` loses its three deploy jobs and becomes CI-only. The alternative (keeping deploys in `ci.yml` and dropping the conditions) was rejected: it inherits a `cancel-in-progress: true` group, and it leaves the required-check names entangled with deploy job names that `scripts/ci/test-changed-modules.py` asserts on.
 
@@ -98,35 +117,35 @@ Two facts here change the design:
 
 **D. One apply path per database, owned by the chain.** The apply logic is extracted into a reusable workflow called by `release.yml`; `db-migrate.yml` loses its `push` triggers. This is not only tidiness — today the staging apply fires only on a push to the `staging` branch, so a `main`-only release model would stop migrating staging altogether (Migration ownership).
 
-**E. Production `frontend-web` stays out of the deploy matrix.** The customer domain is released through `sync-frontend-web.yml` → cPanel, and it is ungated already. The Railway `frontend-web-production-9259` instance is a separate, differently-built second writer; pointing the chain at it would make the release write a third copy of production web, or silently change what that URL serves. Neither is part of "remove the manual approval". Whether that service should keep being deployed at all is a decision for the user, recorded under Out of scope.
+**E. Production `frontend-web` joins the deploy matrix.** *(Reversed during review — the original wording excluded it as an orphan, and the evidence says otherwise.)* The customer domain keeps its own writer: `sync-frontend-web.yml` → `spotlight-latest` → cPanel, already ungated, untouched by this change. But the Railway `frontend-web-production-9259` instance is the production API base for the shipped mobile build (`eas.json:65`) and for `frontend-admin`'s production `WEB_API_BASE_URL`, and today **only a hand-run `railway up` writes it**. Excluding it would leave the change half-done: the mobile app's BFF would still have no automatic release path after "remove all manual approval" shipped. Including it does not create a third writer — there are already two builds in production, and this *replaces* the manual writer with the chain rather than adding to it. Nor is it new scope: `ci.yml`'s existing `deploy-production` matrix (`:719-726`) already carries `- service: frontend-web / path: frontend-web` alongside `backend` and `frontend-admin`, so the production deploy job this design replaces deploys that service today. **Excluding it would silently drop a service from the production release** while the stated change was only "remove the manual approval". The cost is stated plainly: from this change on, a push to `main` changes what that live production URL serves, without anyone typing `DEPLOY`. That is the same exposure the customer domain already has, and it is what was asked for.
 
 **F. A development failure does not block the staging→production leg.** Development is a sibling branch off `gates`, not a predecessor. Two measured facts make a green-development requirement unshippable today: its `frontend-web` deployment FAILED on 2026-11-13, and its backend `/readyz` answers 503 because the DB pool is unreachable. A chain that required development to be green would halt every release on pre-existing failures unrelated to the commit being released. Development failures are reported loudly in the run and the job summary, and they fail the workflow's overall conclusion — but they do not gate production.
 
 **G. A docs-only commit is a no-op release; a superseded commit never deploys.** `ci.yml` and `integration-verify.yml` both skip `**.md` and `docs/**` on a `main` push, and both cancel in progress per ref. `gates` reads those two behaviours rather than duplicating the filter: no CI run for the SHA ⇒ nothing to build, exit green as a no-op; a required check reported `cancelled` ⇒ a newer `main` commit owns this release, exit without deploying. Both inferences apply to `push` events only — on a `workflow_dispatch` rollback, a SHA with no CI run fails loudly instead of no-op'ing, because the operator asked for that specific commit. Details under Phase 1.
 
-## Phase 0 — reconcile (blocking)
+**H. The chain does not deploy to Render, and must not create a Railway production worker.** Production's asynq consumer is Render's `spotlight-notification-worker` (`render.yaml:76-84`, authoritative per `docs/devops/deployment-matrix.md:16`), a platform the Railway-based chain does not own. Two consequences. First, the chain ships a new `backend` web service to Railway production while the worker binary is shipped by Render from the same `Dockerfile:18` — so worker/web version skew is possible, and because both sides share the `backend/internal/notifications` task contract (`backend/cmd/notification-worker/main.go:28`), skew is a correctness risk rather than a cosmetic one. Second, the obvious "fix" is wrong: adding a `notification-worker` service to the Railway production environment would put **two** consumers on the same queue with the same `REDIS_URL`, double-delivering push/email/SMS. The chain therefore leaves the worker alone, and Phase 0 gains a pre-flight check that records which commit Render's worker is running. If that check finds it stale, the repair is a Render deploy (or retiring `render.yaml`'s worker and re-homing it), which is a separate piece of work and is not part of removing approvals.
 
-Bring the 6 prod-only and 4 staging-only patches onto `main`. Screen every candidate commit individually — not the branch as a unit — and record the verdict for each in the PR description.
+## Phase 0 — retire the divergence (small, non-destructive)
 
-**Default shape is a merge PR**: `origin/prod` → `main`, then `origin/staging` → `main`, each reviewed on its own. A plain merge lands everything on the branch, so it is only the right shape when screening finds nothing that must be excluded.
+Screening is done and its verdict is in the table above: **no content needs porting to `main`**. What Phase 0 does is make that verdict durable, so the five "must not land" commits cannot be merged back by someone reading `origin/prod` as "ahead of main".
 
-**When screening says a candidate must not land** (`6948a6c49` and `41c19ea2b` above are the two known judgement calls), the shape changes to a cherry-pick onto a fresh branch off `origin/main`, taking only the cleared commits, and the excluded one is written down with its reason. Decide per branch after screening; do not pick the shape before reading the commits.
+1. **Tag the current heads** — `archive/prod-2026-11-15` on `origin/prod` (`973b010cc`) and `archive/staging-2026-11-15` on `origin/staging` (`2a82a62ef`). No `archive/*` tag exists yet. Cheap, additive, and it keeps every commit reachable and auditable whatever happens to the branches next.
+2. **Record the five must-not-land commits with their reasons** in `docs/devops/deployment-matrix.md`, next to the row that says releases come from `main`: `41c19ea2b` (resurrects #808's deleted KYC escalation plane), `616900caf` (reverts the academy composite tuition model), `973b010cc` (reverts three feature flags and downgrades `next`), `2a82a62ef` (reverts 601 lines of OpenAPI contract), `6948a6c49` (recreates the deleted staging deploy lane).
+3. **Leave the branch refs alone for now.** Resetting `origin/prod` and `origin/staging` onto `main` would make the divergence disappear, but it is a force-push to shared branches and it is not needed for safety once steps 1 and 2 exist — after Phase 1 nothing deploys from those branches, so their drift is inert. Retiring `develop` / `staging` / `prod` entirely is the follow-up decision already noted under Removed vs kept.
+4. **Record which commit Render's production worker is running** (Decision H). Render dashboard → `spotlight-notification-worker` → latest deploy, note the commit and whether the blueprint is still connected with `autoDeploy: true`. This cannot be read from the repo and it is the one production component the chain will never touch, so its version has to be written down before `main` starts deploying itself. If it is connected, a `main` push already auto-deploys the worker and no skew is possible. If it is not, the worker is frozen at an older commit and that is a pre-existing gap to fix separately — recorded, not silently inherited.
 
-**Done when:**
+**If the user wants the branches reset anyway**, that is an explicit, separately authorized force-push: `git push --force origin archive/prod-2026-11-15` first (so nothing is lost), then reset. It is not part of this design's default path.
 
-- `git cherry origin/main origin/prod` and `git cherry origin/main origin/staging` print no `+` lines, *or* every remaining `+` has a recorded reason for being deliberately excluded.
-- All required checks are green on the merge/cherry-pick commits.
-- `origin/prod` and `origin/staging` are fast-forwarded to `main` (or reset to it, if commits were excluded), so they cannot drift again while the promotion-branch model still exists.
+**Done when:** both archive tags exist on the remote, and the must-not-land list is committed in the matrix document.
 
 ## PR sequencing
 
-Each of these is its own PR, in this order, and each is mergeable and revertible independently:
+1. **Phase 0** — archive tags, the must-not-land list, the Render worker version record, and the new `release.yml` row in `docs/devops/deployment-matrix.md`. Docs and refs only; no workflow behaviour changes, so it is safe to land first and cheap to revert.
+2. **Phase 1** — `release.yml` + `_reusable-db-apply.yml`, the `ci.yml` and `db-migrate.yml` trigger removals, the retirement of `development-deploy.yml`, and the two stale header-comment corrections.
 
-1. **Phase 0a** — `origin/prod` reconciliation.
-2. **Phase 0b** — `origin/staging` reconciliation.
-3. **Phase 1** — `release.yml` + `_reusable-db-apply.yml`, the `ci.yml` and `db-migrate.yml` trigger removals, the retirement of `development-deploy.yml`, and the `docs/devops/deployment-matrix.md` row update in the same PR (the matrix is canonical, so a workflow change that contradicts it must not land without it).
+Phase 0 is no longer a hard blocker on Phase 1's *content* — screening removed the rollback risk that made it one. It stays first anyway, because Phase 1 is the change that makes `main` authoritative, and the record of what must not be merged back into `main` should exist before `main` starts deploying itself.
 
-Phase 1 must not merge before Phase 0a and 0b are in. Turning on auto-deploy while `main` is missing production commits is the failure this sequencing exists to prevent.
+**The first automatic release is the riskiest one, and Decision E is why.** Today production `frontend-web` serves a build put there by a hand-run `railway up`; the first chain run replaces it with a build of whatever `main` is at that moment, with nobody typing `DEPLOY`. That is the intended behaviour, but it is also the one production consumer that cannot be re-pointed quickly if the new build is wrong — a mobile store build carries its `EXPO_PUBLIC_API_BASE_URL` baked in at submission time. So the first run after merge is watched, not assumed: confirm the served chunk hashes actually changed, confirm the mobile app's login path still works against it, and keep the `ref=` rollback dispatch ready. Phase 0's step 4 record is what makes the Render worker's state interpretable during that watch.
 
 ## Phase 1 — `release.yml`
 
@@ -201,11 +220,11 @@ The reusable workflow inherits the Supabase CLI pin `2.114.0` (from `supabase/se
 |---|---|---|
 | development | `backend`, `frontend-web`, `frontend-admin` | absorbs `development-deploy.yml`; `frontend-web` is red today, so this leg reports and continues (Decision F) |
 | staging | `backend`, `frontend-web`, `frontend-admin` | frontend services: no positional path, no `--path-as-root` |
-| production | `backend`, `frontend-admin` | **`frontend-web` excluded** — the customer domain is released via `sync-frontend-web.yml` → cPanel (Decision E) |
+| production | `backend`, `frontend-web`, `frontend-admin` | `frontend-web` included per Decision E — it is the mobile build's production BFF (`eas.json:65`) and `frontend-admin`'s `WEB_API_BASE_URL`, and `ci.yml`'s production matrix already deploys it. The customer domain keeps its own ungated cPanel lane via `sync-frontend-web.yml`. |
 
-`notification-worker` is deliberately absent: it exists only in development and no lane deploys it today. Adopting it into the chain is a separate decision (Out of scope).
+`notification-worker` is absent from every row on purpose, not by oversight. Production's worker runs on **Render** (`render.yaml:76-84`), a platform this chain does not deploy to, and the Railway service of that name exists only in development. Adding a Railway production worker would put two consumers on one asynq queue and double-deliver push/email/SMS (Decision H).
 
-Every `railway up` sets `RAILWAY_HTTP_TIMEOUT`. The `--path-as-root` defect is fixed in the move at all three sites — `ci.yml:563` (development), `ci.yml:790` (production), `development-deploy.yml:98` — by carrying staging's per-matrix `path` / `root_flag` shape instead of hardcoding the flag.
+Every `railway up` sets `RAILWAY_HTTP_TIMEOUT`. The `--path-as-root` defect is fixed in the move at all three sites — `ci.yml:523` (development), `ci.yml:748` (production), `development-deploy.yml:98` — by carrying staging's per-matrix `path` / `root_flag` shape instead of hardcoding the flag.
 
 The upload form is templated per matrix entry, never hardcoded:
 
@@ -231,7 +250,9 @@ Each stage proves the environment is serving the new commit; a green job is not 
 |---|---|---|---|
 | development | `backend-development-502c.up.railway.app` | `frontend-admin-development-5a67.up.railway.app` | `frontend-web-development.up.railway.app` |
 | staging | `backend-staging-new.up.railway.app` | `frontend-admin-staging-new.up.railway.app` | `frontend-web-staging-new.up.railway.app` |
-| production | `backend-production-1b33d.up.railway.app` | `frontend-admin-production-5b0c.up.railway.app` | *not probed* — Decision E |
+| production | `backend-production-1b33d.up.railway.app` | `frontend-admin-production-5b0c.up.railway.app` | `frontend-web-production-9259.up.railway.app` |
+
+Production `frontend-web` is probed like the others now that Decision E puts it in the matrix. Its smoke check additionally matters more than the others: it is the mobile app's API base, so a deploy that reports SUCCESS while still serving stale bytes breaks a store build that cannot be re-pointed without a new submission. The chunk-hash warning above is the only available signal, since a frontend build echoes no commit.
 
 ## Failure handling and rollback
 
@@ -248,7 +269,7 @@ Each stage proves the environment is serving the new commit; a green job is not 
 - The `Production` required reviewers — *already done, 2026-11-15*.
 - The dispatch / `confirm_deploy == 'DEPLOY'` / promotion-branch conditions on `ci.yml`'s three deploy jobs. Those jobs move out of `ci.yml` entirely, leaving it CI-only.
 - `ci.yml`'s `deploy_environment` and `confirm_deploy` dispatch inputs go with them. `ci.yml` keeps `workflow_dispatch` (re-running CI against any branch is still useful) but with no deploy inputs, so a CI dispatch cannot express a release at all.
-- The promotion-branch requirement (`github.ref == 'refs/heads/develop|staging|prod'`) as a *release* precondition. The branches themselves stay until Phase 0 fast-forwards them; retiring `develop`/`staging`/`prod` entirely is a later, separate decision and is not part of this change.
+- The promotion-branch requirement (`github.ref == 'refs/heads/develop|staging|prod'`) as a *release* precondition. The branches themselves stay — Phase 0 step 3 deliberately leaves the refs alone rather than force-pushing shared branches, and after Phase 1 nothing deploys from them so their drift is inert. Retiring `develop`/`staging`/`prod` entirely is a later, separate decision and is not part of this change.
 
 **Kept**
 
@@ -262,7 +283,12 @@ Each stage proves the environment is serving the new commit; a green job is not 
 
 Order matters — the matrix document is canonical and its own checklist says declare the row first.
 
-1. Update `docs/devops/deployment-matrix.md` **first**, in the same PR as the workflow change.
+1. Update `docs/devops/deployment-matrix.md` **first**, in the same PR as the workflow change. It is canonical ("When this matrix and a config file disagree, this file wins"), and four of its statements become false the moment `release.yml` merges:
+   - The **Promotion model** section: "A Railway env is written to only by `ci.yml`'s three dispatch jobs (`deploy-development` `:458`, `deploy-staging` `:543`, `deploy-production` `:683`)… No push to any branch deploys a Railway env on its own." Both halves invert. Those three line citations were already drifting (the jobs now start at `:450`, `:540`, `:680`) and disappear entirely once the jobs move out.
+   - The **`frontend-web` row** (`:14`): production is recorded as cPanel only, and the Railway `frontend-web-production-9259` instance appears nowhere in the authoritative table despite being the mobile build's production API base. It must be declared as its own row, because the matrix's own checklist item 1 says "Declare the service's row here FIRST, marking the old path's status" (`:84`).
+     This is the one place where the design has to make a judgement call against a canonical rule, so it is stated rather than slid past: checklist item 2 is "One path per service per environment — never two live writers" (`:85`), and read by the letter, `frontend-web` in production would then have two. Read by the doc's own gloss it does not — when the matrix applies that rule it is always about **the same host**: `deploy-cpanel.yml` is rejected because "it would add a second writer *to the same host*" (`:68`), and `deploy-railway-action.yml` is kept dark because it would write *the same Railway services* `ci.yml` writes (`:79`). Here the two paths write different hosts to different consumers: cPanel serves browsers at `www.spotlightng.com`, Railway serves the mobile BFF and `frontend-admin`'s API base. Both rows must say so explicitly, name their own writer, and name the consumer — a reader who cannot tell them apart is exactly the failure the matrix exists to prevent. If the user reads item 2 as forbidding this outright, the alternative is Decision E's rejected branch: retire the Railway instance and re-point `eas.json`, which is a mobile store submission, not a CI change.
+   - The **`backend` row** (`:15`): mechanism changes from `ci.yml` dispatch to `release.yml` on push to `main`.
+   - The **workers row** (`:16`): add that the release chain does not deploy Render, and record the verified worker commit from Phase 0 step 4, so the next reader knows whether worker/web skew is possible.
 2. Then `docs/launch/BRANCH-PROTECTION.md`, `docs/devops/DEPLOY-RUNBOOK.md`, and `docs/devops/production-migration-ledger.md`.
 3. Correct the two stale header comments that now describe the opposite of the truth: `ci.yml`'s claim that "Railway performs native GitHub deployments from these branches", and `db-migrate.yml`'s recommendation to add `production` required reviewers (see Verified current state and Migration ownership).
 4. Locally: `actionlint` on every changed workflow, and `scripts/ci/test-changed-modules.py` (it asserts every required-check name still exists in `ci.yml` — moving the deploy jobs out must not break that).
@@ -272,17 +298,20 @@ Order matters — the matrix document is canonical and its own checklist says de
 
 - **No development Supabase project exists** (only production and staging secrets are configured), so development stays on local/docker Postgres. The chain does not migrate a development database.
 - `deploy.yml` (GCP) stays inert.
-- `deploy-railway-action.yml` stays dark.
-- **`frontend-web-production-9259` is not adopted and not deleted.** It is live and separately deployed (SUCCESS 2026-11-15 13:32Z), and it serves a *different build* from `www.spotlightng.com` (measured: both HTTP 200, differing `/_next/static/chunks/` hashes). Retiring it, or bringing it into the chain, changes what a live production URL serves and needs the user's decision — it is flagged here rather than folded in unasked.
-- **`notification-worker` is not adopted.** It exists only in development (SUCCESS 2026-11-01), is deployed by no workflow, and has no staging or production counterpart. Whether it should be part of a release is a separate question.
+- `deploy-railway-action.yml` stays dark. Verified it has **no callers** — the only two matches for its own name in `.github/` are its `name:` line and its `concurrency` group, so nothing invokes it. `docs/devops/deployment-matrix.md:34` records it as installed dark behind `vars.RAILWAY_ACTION_DEPLOY_ENABLED` (unset) and warns that enabling it "creates a second Railway writer". Leave it off; the new chain must remain the single writer.
+- **`frontend-web-production-9259` is adopted, not retired** (Decision E, reversed during review). It is in the production matrix. What stays out of scope is the *other* direction — retiring it and re-pointing `eas.json`'s `production` profile at `www.spotlightng.com`. That is a mobile-release decision, not a CI one, and it would undo `e8eae3ad6`, which moved the profile off the cPanel host on purpose.
+- **`notification-worker` is not adopted, and the Render plane is not touched** (Decision H). The chain deploys to Railway only. Out of scope: creating a Railway production worker (it would double-consume the queue), and re-homing the worker off Render. In scope and required: the Phase 0 step 4 record of which commit Render's worker is running, because the chain will never update it and the two binaries share the `notifications.Workers` task contract.
+- **`render.yaml`'s dead `spotlight-backend` web service is not deleted here.** It answers with an Express `Hello, world!` placeholder, so it is already inert, and `docs/devops/deployment-matrix.md:30` says to retire it "only after confirming nothing points at it" — that confirmation is a separate cleanup, and deleting it in the same PR as the release chain would mix an infra change into a CI change.
 
 ## Recorded live state (as of writing)
 
 - `origin/main` head: `6199a6b57`. The local `main` ref in the shared worktree is stale (`1835ad4de`) and must not be moved — other sessions work there. Publish via a feature branch off `origin/main` plus a PR; never push `main`.
 - `Production` environment reviewers: removed.
 - Parked `Ops DB Push` run `43723411971`: failed without executing. No production DB write occurred. Whether to re-dispatch it (`mode=push`, `confirm=PUSH`) is the user's call — it is a production database write and needs explicit authorization.
-- Divergence: production serves `5ab7c9cc0`, staging serves `2a82a62ef`, neither an ancestor of `main`. Phase 0 exists because of this.
+- Divergence: production serves `5ab7c9cc0` and staging serves `2a82a62ef`; neither is an ancestor of `main`, but the file-level screen found **no content on either branch that `main` lacks**. `origin/prod` head is `973b010cc`, `origin/staging` head is `2a82a62ef`, `origin/develop` head is `da665dcd0`. Phase 0 exists to make that verdict durable, not to port anything.
 - Development backend serves `15975f64f` — an ancestor of `main`, but the process has been up since 2026-10-16, so development is 30 days stale rather than diverged. Its `/readyz` answers 503.
 - Development `frontend-web`: latest Railway deployment FAILED (2026-11-13); the URL still serves 200 from the previous deployment.
-- Production `frontend-web` on Railway (`frontend-web-production-9259`, deployed 2026-11-15 13:32Z) serves a different build from `www.spotlightng.com`. Two live production web writers, only one of which the customer domain reads.
+- Production `frontend-web` on Railway (`frontend-web-production-9259`, deployed 2026-11-15 13:32Z) serves a different build from `www.spotlightng.com` — but it is **not** unread: `eas.json:65` makes it the mobile `production` profile's `EXPO_PUBLIC_API_BASE_URL`, and `frontend-admin`'s production env sets `WEB_API_BASE_URL` to it. That 13:32Z deploy came from a hand-run `railway up`, not a workflow: `ci.yml` has had no `production` dispatch since 2026-10-17, and all its 2026-11-15 runs are `push`/`pull_request`.
+- Production asynq worker: **Render** `spotlight-notification-worker` (`render.yaml:76-84`, `autoDeploy: true`). The production Railway `backend` does not set `RUN_WORKERS_INPROCESS` and `config.go:1234` defaults it `false`, so the web service does not drain the queue. Whether Render's blueprint is still connected to this repo is **unverified** — not readable from the repo; Phase 0 step 4 records it.
+- Render's `spotlight-backend` web host is a placeholder: `https://spotlight-backend.onrender.com/` → 200 `Hello, world!`, and `/healthz`, `/readyz`, `/api/v1/public/build` all → 404 with an Express `Cannot GET` page. Not the production API.
 - Everything above was measured on 2026-11-15 and is restated here so a reader in a later session can tell what was observed from what was assumed. Re-measure before acting on it.
