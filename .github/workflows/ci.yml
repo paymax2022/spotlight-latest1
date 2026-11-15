@@ -185,6 +185,12 @@ jobs:
       # rejection of brace patterns. Sub-second, so it shares this runner.
       - name: Test the module router
         run: python3 scripts/ci/test-changed-modules.py
+      # The release gate is the only thing between a push to main and a
+      # production deploy, and it decides by polling an API — so its verdict
+      # logic is extracted where fixtures can drive it. Sub-second, no network,
+      # so it shares this runner rather than getting a lane of its own.
+      - name: Test the release gate
+        run: python3 scripts/ci/test-release-gates.py
       # RN-PLANE-001: a store build bakes mobile-app/reactnative/.env.production,
       # which is gitignored and which eas.json cannot correct — the build scripts run
       # local Gradle, so the profile's env never applies. Found with that file naming
