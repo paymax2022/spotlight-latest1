@@ -71,9 +71,10 @@ so there is exactly one way each database gets written.
 "Verified current state") found **no content on either branch that `main`
 lacks**. `git cherry` marks eleven commits `+` (re-run 2026-11-15 after Task 1:
 seven on `prod`, four on `staging`), but a `+` means the *patch-id* was
-not found upstream — it does not mean the content is missing. Five are already on
-`main` in full; five are cases where `main` has moved ahead and merging would
-revert it; one resurrects a deliberately deleted workflow.
+not found upstream — it does not mean the content is missing. Six are already on
+`main` in content; three are cases where `main` has moved ahead and merging would
+revert it; two resurrect deliberately deleted code. That is 6 + 5, matching the
+five-row table below and the six-item already-on-main list after it.
 
 The tips are preserved as tags `archive/prod-2026-11-15` (`76f1a6103`) and
 `archive/staging-2026-11-15` (`2a82a62ef`) so the branches can be reset without
