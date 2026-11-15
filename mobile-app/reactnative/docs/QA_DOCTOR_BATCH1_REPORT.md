@@ -79,6 +79,14 @@ on `(tabs)/index.tsx`, per the consolidation plan.
 > `metrics` + `todaysAppointments` from `public.appointments`, mapped in
 > `src/features/doctor/dashboardWire.ts`. See
 > `docs/superpowers/specs/2026-11-13-doctor-dashboard-metrics-design.md`.
+>
+> **Cite baseline.** D1, D2 and D13 were re-cited against this branch's `index.tsx`, so their line
+> numbers are current. The other Section D rows still carry the numbering of an older revision and are
+> known to be off — D12's `:171` is a `Go offline`/`Go online` label while the Available card sits at
+> `:183`, D4's `176-193` really opens at `:188`, and D3's `:198` and D5's `:203` point at a style view
+> and a chevron rather than the two deep-links. They were already wrong before this change; correcting
+> them means re-verifying each row's verdict, so they are tracked as follow-up F12 in
+> `docs/superpowers/plans/2026-11-13-doctor-dashboard-metrics.md` instead of being silently rewritten.
 
 | # | Entry | How covered | Status |
 |---|-------|-------------|--------|

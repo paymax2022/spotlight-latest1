@@ -2927,10 +2927,28 @@ Expected: `go ok`, `xargs gofmt -l` printing nothing, `ok spotlight/backend/inte
 The branch-scoped gofmt line needs `--relative`: `git diff --name-only` prints **repo-root**-relative
 paths whatever the cwd is, so without it `xargs gofmt -l` runs inside `backend/` against
 `backend/internal/…` and dies on every file with `lstat backend/internal/doctor/dashboard_metrics.go:
-no such file or directory` — rc 0 on an empty gofmt list, so the command reports a clean pass having
-formatted-checked nothing. Measured both ways: without `--relative` it prints five `lstat` errors,
-with it, nothing. `xargs -r` is also load-bearing — plain `xargs gofmt -l` with empty input runs
-`gofmt -l` with no arguments, which is not the check anyone intends.
+no such file or directory`. **It fails loudly — rc 1** (re-measured on this branch's head with go1.27.4
+on darwin: five `lstat` lines, `rc=1`). An earlier revision of this plan recorded that broken form as
+`rc 0`, "a clean pass having formatted-checked nothing", and the Task 8 implementer came back with rc 1
+and was right; the wrong number was mine.
+
+What *is* silent is the sibling failure, and it is the easier one to commit by accident: when the file
+**list** itself is empty, `xargs -r` never runs gofmt at all and the pipeline exits 0 having checked
+nothing. That happens whenever the pathspec resolves somewhere other than where you think it does —
+re-measured while verifying the above, running the diff with `git -C <repo-root>` from inside `backend/`
+made `-- internal/doctor` resolve at the repo root, where that directory does not exist, so the gate
+printed `count: 0` and `rc(good)=0` and looked green for the wrong reason. Both forms therefore need
+the list itself as evidence, not just an exit code:
+
+```bash
+git diff --relative --name-only origin/main...HEAD -- internal/doctor | grep '\.go$' | tee /tmp/files.txt
+wc -l /tmp/files.txt          # must be 5 — the five dashboard-metrics files
+```
+
+`xargs -r` is still load-bearing for a branch that touches no Go file: plain `xargs gofmt -l` with empty
+input runs `gofmt -l` with no arguments, which is not the check anyone intends. One more trap in the same
+shape, hit in this very verification: `grep … | cat; echo "rc=$?"` reports **`cat`'s** status, never
+grep's, so an empty match prints `rc=0`. Pipe to a file and check `$?` on the real command.
 Do not gate on repo-wide `gofmt -l internal/doctor/`: four files are unformatted on `origin/main` itself (`model.go`, `service_ops.go`, `repository_mdcn_review.go`, `mdcn_discoverability_live_db_test.go`), no CI lane runs gofmt as a command, and reformatting someone else's file is out of scope for this PR — the branch-scoped form above is the gate.
 
 - [ ] **Step 4: Prove the wire end to end without bouncing the shared container**
@@ -3077,3 +3095,32 @@ Each is its own change:
   honest options are a server field per section or copy that says the section is unavailable — either way
   it is a contract change, which is why it is not in this PR (spec "Out of scope": every read here uses
   columns and tables that already exist).
+- **F12** — the batch-1 QA report's Section D table cites `(tabs)/index.tsx` against three different
+  revisions at once, and only the three rows this PR rewrote are current. Task 8's implementer noticed
+  the neighbours looked wrong and reported them; the cause is **older than this branch**, which matters
+  because it decides whether they are ours to fix. Measured on `origin/main`'s own copy of the file
+  (398 lines): D12 says the Available card is at `:171`, where main actually has
+  `accessibilityLabel={isOnline ? 'Go offline' : 'Go online'}` — the card is `:183`, twelve lines off
+  before this PR existed at all; D4 says the active-consultation card opens at `176-193`, main opens it
+  at `:188` (`:176` is blank); D3 says the requests deep-link is `:198`, main has `styles.activeBody`
+  there and the real `Pressable` at `:210`; D5 says `:203`, main has a `ChevronRight` there and the
+  waiting-room `Pressable` at `:215`; the alert-sort note says `:76-78`, main is `:85`. This branch then
+  shifted everything below line ~57 **down by 3** (two lines out of the import block, one each out of
+  `useAppointments()` and `todays`, one back in for `queue` — the five-hunk diff sums to `15453c7b8` →
+  `15f08f428`), so it did move those rows, but by three lines against a pre-existing error of twelve.
+  Leaving them is a real hazard now that D1/D2/D13 are pinned to HEAD: a reader can no longer tell which
+  baseline a cite is written against, so the note added to the report's correction blockquote says which
+  rows are HEAD-relative. Fixing the rest means re-verifying each row's *verdict*, not just its line
+  number — twelve rows of other people's features, out of scope for a five-metrics PR.
+- **F13** — no test drives `doctor.Handler.GetDashboard` as HTTP. The route is registered and guarded —
+  `docGroup := r.Group("/api/v1/doctor")` with `docGroup.Use(middleware.RequireAuthContext(supabase, rbac))`
+  (`backend/internal/app/finance_routes.go:3098-3099`) and `docGroup.GET("/dashboard", doctorHandler.GetDashboard)`
+  (`:3535`) — and the live-DB suite proves the service and the JSON keys it marshals
+  (`dashboard_metrics_live_db_test.go:775-790` asserts `"todaysCount":2,` and `"satisfactionPct":null,`
+  inside `json.Marshal(res)`), but `GetDashboard` appears in no `gin.New()` + `ServeHTTP` test, although
+  that pattern exists in this very package (`handler_test.go:30,52-53`). So three links stay unexercised
+  for this route specifically: the middleware chain, the `c.Get` identity read the handler performs, and
+  the status code plus envelope it writes. Whoever closes it copies `handler_test.go`'s engine helper; the
+  same gap is measured for `/vet/dashboard` and `/records/dashboard`, so a helper worth writing once.
+  Task 8 reported this caveat and it stands, narrower than the wording suggested — registration and auth
+  were never in doubt, only the handler function body.
