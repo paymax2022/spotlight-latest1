@@ -102,14 +102,16 @@ type dashboardCounters struct {
 // repository_ops.go:409) and GET /doctor/profile reads back through this very
 // GetProfile — NOT doctor_availability.timezone, which no screen ever sets (a
 // doctor who chose Asia/Karachi would otherwise have every "today" predicate
-// anchored to Lagos). `GET /schedule` is not a read-back of this column: its
-// ScheduleSettings carries no timezone at the top level, and none of that
-// struct's typed fields carries a zone either — two of the values it nests
-// (RecurringRule.Rule, Reminder.Settings) are opaque json.RawMessage blobs this
-// package does not shape — so the only zone the response could echo is
-// `doctor_availability.timezone`, a different column — see spec F5 for what that
-// costs the screen that offers the picker. A doctor with no profile row at all is
-// the default, not an error.
+// anchored to Lagos). `GET /schedule` is not a read-back of this column: none of
+// ScheduleSettings' top-level fields carries a zone, and the one zone that
+// response does expose is the nested `schedule.timezone` — `doctor_availability`'s
+// column, not this one. Since #1008 that is not hypothetical: `Schedule`
+// (handler_tail2.go:499, model.go:76) is typed `Availability`, and the
+// appointments plane renders slots with `AT TIME ZONE COALESCE(av.timezone, …)`
+// (repository.go:220). So the same doctor's dashboard and appointment list can
+// price "today" against two different columns — spec F5 documents the screen
+// that fails to write this one. A doctor with no profile row at all is the default,
+// not an error.
 func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string, error) {
 	p, err := s.repo.GetProfile(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
