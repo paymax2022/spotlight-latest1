@@ -142,7 +142,15 @@ func (s *Service) GetTaxVatReport(ctx context.Context, userID string) (*TaxVatRe
 
 // GetDashboard composes the landing dashboard from existing scoped reads: the
 // appointment status counts, the unread-notification count, and the ledger wallet
-// balance (projected, never stored). No new table.
+// balance (projected, never stored) — plus the tile metrics and today's queue,
+// which read the booking plane (public.appointments) rather than
+// doctor_appointments, and the consult-revenue projection over settlements.
+// This endpoint therefore reads tables it did not read before; what it does not
+// do is write to any of them, or post to the ledger.
+//
+// One failing read fails the call. That is deliberate — a zero that came from a
+// broken query is indistinguishable from a real zero, which is precisely how the
+// original bug stayed hidden.
 func (s *Service) GetDashboard(ctx context.Context, userID string) (*DashboardSummary, error) {
 	counts, err := s.repo.appointmentStatusCounts(ctx, userID)
 	if err != nil {
@@ -156,11 +164,43 @@ func (s *Service) GetDashboard(ctx context.Context, userID string) (*DashboardSu
 	if err != nil {
 		return nil, fmt.Errorf("doctor: project dashboard wallet balance from ledger: %w", err)
 	}
+	tz, err := s.dashboardTimezone(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	agg, err := s.repo.dashboardAggregates(ctx, userID, tz)
+	if err != nil {
+		return nil, fmt.Errorf("doctor: project dashboard appointment metrics: %w", err)
+	}
+	queue, err := s.repo.todayQueue(ctx, userID, tz, agg.Today)
+	if err != nil {
+		return nil, fmt.Errorf("doctor: project today's consult queue: %w", err)
+	}
+	revenue, err := s.repo.consultRevenue(ctx, userID, tz)
+	if err != nil {
+		return nil, err
+	}
+	// One count, two tiles: the queue list is capped, the number is not (spec D2a).
+	revenue.ConsultsThisMonth = agg.ConsultsThisMonth
+	rep, err := s.repo.GetReputation(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("doctor: project dashboard satisfaction: %w", err)
+	}
 	return &DashboardSummary{
 		AppointmentCounts:   counts,
 		UnreadNotifications: unread,
 		WalletBalanceKobo:   balance,
 		Currency:            "NGN",
+		Metrics: DashboardMetrics{
+			TodaysCount:     agg.TodaysCount,
+			UpcomingCount:   agg.UpcomingCount,
+			SatisfactionPct: dashboardSatisfactionPct(*rep),
+			RatingCount:     rep.ReviewCount,
+			Revenue:         revenue,
+			Timezone:        tz,
+			Today:           agg.Today,
+		},
+		TodaysAppointments: queue,
 	}, nil
 }
 

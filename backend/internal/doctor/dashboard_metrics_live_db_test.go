@@ -652,3 +652,142 @@ func TestLiveDB_DashboardTimezoneProbeErrorPropagates(t *testing.T) {
 		t.Errorf("usableTimezone returned %q alongside an error, want the empty string", tz)
 	}
 }
+
+func TestLiveDB_DashboardForABrandNewDoctor(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	res, err := metricsService(pool).GetDashboard(context.Background(), f.doctorUser)
+	if err != nil {
+		t.Fatalf("GetDashboard: %v", err)
+	}
+	if res.Metrics.TodaysCount != 0 || res.Metrics.UpcomingCount != 0 {
+		t.Errorf("counts = %d/%d, want 0/0", res.Metrics.TodaysCount, res.Metrics.UpcomingCount)
+	}
+	if res.Metrics.SatisfactionPct != nil {
+		t.Errorf("SatisfactionPct = %v, want null for a doctor with no reviews", *res.Metrics.SatisfactionPct)
+	}
+	if res.Metrics.Timezone != defaultDoctorTimezone {
+		t.Errorf("Timezone = %q, want the default %q", res.Metrics.Timezone, defaultDoctorTimezone)
+	}
+	if res.TodaysAppointments == nil || len(res.TodaysAppointments) != 0 {
+		t.Errorf("TodaysAppointments = %v, want an empty non-nil slice", res.TodaysAppointments)
+	}
+	if res.WalletBalanceKobo != 0 {
+		t.Errorf("WalletBalanceKobo = %d, want 0", res.WalletBalanceKobo)
+	}
+	// The old flat map still ships: pendingRequests reads it and is untouched here.
+	if res.AppointmentCounts == nil {
+		t.Error("AppointmentCounts must still be present")
+	}
+}
+
+func TestLiveDB_DashboardReportsSeededNumbers(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	ctx := context.Background()
+	tz := defaultDoctorTimezone
+
+	// Today's rows are both 'completed': a row inside today may sit before or after
+	// CURRENT_TIMESTAMP depending on when the suite runs, so nothing today can be
+	// allowed to feed UpcomingCount. The +2-day booked row is always future.
+	f.bookLocal(t, tz, "completed", 0, 9*60)
+	f.bookLocal(t, tz, "completed", 0, 14*60)
+	f.bookLocal(t, tz, "booked", 2, 9*60)
+	settledID, _ := f.bookLocal(t, tz, "completed", -1, 9*60)
+	f.escrow(t, settledID, "settled", 200000, 170000, 0, time.Now().UTC(), "telemedicine")
+	for _, rating := range []int{4, 5, 5} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO doctor_reviews (user_id, rating) VALUES ($1,$2)`, f.doctorUser, rating); err != nil {
+			t.Fatalf("review: %v", err)
+		}
+	}
+
+	res, err := metricsService(pool).GetDashboard(ctx, f.doctorUser)
+	if err != nil {
+		t.Fatalf("GetDashboard: %v", err)
+	}
+	if res.Metrics.TodaysCount != 2 {
+		t.Errorf("TodaysCount = %d, want 2", res.Metrics.TodaysCount)
+	}
+	if res.Metrics.UpcomingCount != 1 {
+		t.Errorf("UpcomingCount = %d, want 1", res.Metrics.UpcomingCount)
+	}
+	if len(res.TodaysAppointments) != 2 {
+		t.Errorf("queue rows = %d, want 2", len(res.TodaysAppointments))
+	}
+	if res.Metrics.Revenue.LifetimeKobo != 170000 {
+		t.Errorf("Revenue.LifetimeKobo = %d, want 170000", res.Metrics.Revenue.LifetimeKobo)
+	}
+	if res.Metrics.Revenue.ConsultsThisMonth == 0 {
+		t.Error("Revenue.ConsultsThisMonth = 0, want the completed-this-month count")
+	}
+	// 4,5,5 → avg 4.666 → 93.33 → 93. The scoping of the read is proven by the next
+	// test, which adds a review for a DIFFERENT doctor and expects nothing to move.
+	if res.Metrics.SatisfactionPct == nil || *res.Metrics.SatisfactionPct != 93 {
+		t.Errorf("SatisfactionPct = %v, want 93", res.Metrics.SatisfactionPct)
+	}
+	if res.Metrics.RatingCount != 3 {
+		t.Errorf("RatingCount = %d, want 3", res.Metrics.RatingCount)
+	}
+	// Two planes, two numbers: consult revenue is projected, the wallet is the
+	// ledger's. A settled settlement does not move the wallet by itself here,
+	// because this fixture wrote the settlement row directly and never posted the
+	// journal pair.
+	if res.WalletBalanceKobo != 0 {
+		t.Errorf("WalletBalanceKobo = %d, want 0 — the dashboard must not blend the two", res.WalletBalanceKobo)
+	}
+
+	raw, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"todaysCount":2`) {
+		t.Errorf("payload missing todaysCount: %s", raw)
+	}
+	// The no-reviews case ships JSON null, not 0 — the client renders '—' from it.
+	bare := newMetricsFixture(t, pool)
+	braw, err := json.Marshal(mustDashboard(t, ctx, pool, bare.doctorUser))
+	if err != nil {
+		t.Fatalf("marshal bare: %v", err)
+	}
+	if !strings.Contains(string(braw), `"satisfactionPct":null`) {
+		t.Errorf("bare dashboard payload missing a null satisfactionPct: %s", braw)
+	}
+}
+
+// doctor_reviews.user_id is the REVIEWED doctor, so a one-star aimed at someone
+// else must not touch this score. Same join discipline as the appointment reads.
+func TestLiveDB_DashboardSatisfactionIgnoresOtherDoctors(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	other := newMetricsFixture(t, pool)
+	ctx := context.Background()
+
+	review := func(userID string, rating int) {
+		t.Helper()
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO doctor_reviews (user_id, rating) VALUES ($1,$2)`, userID, rating); err != nil {
+			t.Fatalf("review: %v", err)
+		}
+	}
+	review(f.doctorUser, 5)
+	review(f.doctorUser, 5)
+	review(other.doctorUser, 1)
+
+	res := mustDashboard(t, ctx, pool, f.doctorUser)
+	if res.Metrics.RatingCount != 2 {
+		t.Errorf("RatingCount = %d, want 2 — only this doctor's reviews", res.Metrics.RatingCount)
+	}
+	if res.Metrics.SatisfactionPct == nil || *res.Metrics.SatisfactionPct != 100 {
+		t.Errorf("SatisfactionPct = %v, want 100 (two 5-star reviews, no stranger's 1)", res.Metrics.SatisfactionPct)
+	}
+}
+
+func mustDashboard(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) *DashboardSummary {
+	t.Helper()
+	res, err := metricsService(pool).GetDashboard(ctx, userID)
+	if err != nil {
+		t.Fatalf("GetDashboard: %v", err)
+	}
+	return res
+}

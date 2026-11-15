@@ -477,14 +477,24 @@ type TaxVatReport struct {
 	InvoiceCount int64  `json:"invoiceCount"`
 }
 
-// DashboardSummary is the composite landing projection for GET /dashboard. It is
-// composed entirely from existing scoped reads + the ledger balance — no new
-// table. Money is int64 kobo.
+// DashboardSummary is the composite landing projection for GET /dashboard. Money
+// is int64 kobo and every field is scoped to the signed-in doctor.
+//
+// AppointmentCounts is the doctor_appointments status map, kept for
+// pendingRequests; the two appointment TILES read Metrics instead, because
+// doctor_appointments has no insert path (see dashboard_metrics.go).
+//
+// Metrics is the projection this endpoint used to fake: the five tiles read the
+// booking plane (appointments), the money plane (settlements, ledger) and
+// doctor_reviews. Those are new tables for this response, which is why the reads
+// live in dashboard_metrics.go rather than in here.
 type DashboardSummary struct {
-	AppointmentCounts   map[string]int64 `json:"appointmentCounts"`
-	UnreadNotifications int64            `json:"unreadNotifications"`
-	WalletBalanceKobo   int64            `json:"walletBalanceKobo"`
-	Currency            string           `json:"currency"`
+	AppointmentCounts   map[string]int64            `json:"appointmentCounts"`
+	UnreadNotifications int64                       `json:"unreadNotifications"`
+	WalletBalanceKobo   int64                       `json:"walletBalanceKobo"`
+	Currency            string                      `json:"currency"`
+	Metrics             DashboardMetrics            `json:"metrics"`
+	TodaysAppointments  []DashboardQueueAppointment `json:"todaysAppointments"`
 }
 
 // ScheduleSettings is the composite projection for GET /schedule — it summarises
