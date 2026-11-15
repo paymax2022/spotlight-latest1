@@ -1376,9 +1376,13 @@ Replace the header's trigger explanation and the reviewer recommendation with:
 # declares `environment:` inherits that environment's protection rules.
 ```
 
-- [ ] **Step 6: Keep `guard:`, and simplify its stale-ref branch**
+- [ ] **Step 6: Keep `guard:` — it is a `uses:` caller, not a step container**
 
-The `guard:` job (`:70`) stays. Since the workflow is now dispatch-only, its "push → skip quietly" branch is dead code: there is no push event any more. Read the job and reduce that branch to a hard failure. Do not delete the job — the additive-only guard is a required check (`migrations (additive-only guard) / guard` in `.github/required-checks.txt:27`) and its caller name must keep resolving.
+The `guard:` job (`:70`) stays byte-identical. It is a two-line caller of `_reusable-migration-guard.yml`, so it holds no steps and has no stale-ref branch to simplify — the "push → skip quietly" branch Step 7 replaces lives inside the two `apply` jobs' "Refuse a stale or unapproved ref" **step**. Do not go looking for it in `guard:`.
+
+Get the required-check attribution right before touching either file. `.github/required-checks.txt:27` lists `migrations (additive-only guard) / guard`, and that name is emitted by **ci.yml's `migration-guard` job** (`ci.yml:126-128`: `name: migrations (additive-only guard)` calling `_reusable-migration-guard.yml`, whose inner job id is `guard`). db-migrate.yml's own `guard:` is `name: additive-only guard`, so it emits `additive-only guard / guard` — a *different*, unrequired check. Keeping it is still correct: with the push trigger gone, this dispatch path is the file's only path, and the additive-only gate should not be the thing that gets dropped from it.
+
+Also verified live, and worth carrying into Task 7: `main`'s branch protection requires five contexts — `backend`, `frontend-admin`, `frontend-web`, `migrations`, `secrets-scan` — and all five are emitted by **ci-optimized.yml**'s inline jobs, not by ci.yml and not by db-migrate.yml. Neither task touches ci-optimized.yml, so neither can orphan a required check. `required-checks.txt` is the longer set `release-gates.py` waits on; the protection set is shorter and differently named. Both resolve against real check-runs on a main push.
 
 - [ ] **Step 7: Extract the stale-ref check into a `fresh:` job with an output**
 
@@ -1396,19 +1400,42 @@ The `guard:` job (`:70`) stays. Since the workflow is now dispatch-only, its "pu
           fetch-depth: 0
       - name: Is this dispatch still the newest?
         id: check
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          RUN_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          TIP=$(git ls-remote origin refs/heads/main | cut -f1)
-          if [ "${{ github.sha }}" = "$TIP" ]; then
-            echo "stale=false" >> "$GITHUB_OUTPUT"
-            echo "dispatching from main's tip ($TIP)"
+          echo "stale=false" >> "$GITHUB_OUTPUT"
+          if [ "$REF_TYPE" != "branch" ]; then
+            echo "::error::Run ref '$REF_NAME' is a $REF_TYPE, not a branch - dispatch from a branch tip."
+            exit 1
+          fi
+          if [ "$DRY_RUN" != "true" ]; then
+            case "$REF_NAME" in
+              main|prod) ;;
+              *) echo "::error::Applying migrations is only allowed from main or prod (got '$REF_NAME'). Use dry_run for other refs."; exit 1 ;;
+            esac
+          fi
+          TIP=$(git ls-remote origin "refs/heads/$REF_NAME" | cut -f1)
+          if [ -z "$TIP" ]; then
+            echo "::error::Could not read the tip of origin/$REF_NAME."
+            exit 1
+          fi
+          if [ "$RUN_SHA" = "$TIP" ]; then
+            echo "Ref is current: $REF_NAME @ $RUN_SHA"
           else
             echo "stale=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::this dispatch is not main's tip ($TIP) — a newer push superseded it. Nothing will be applied."
+            echo "::notice::this dispatch is not $REF_NAME's tip ($TIP) — a newer push superseded it. Nothing will be applied."
           fi
 ```
 
-Preserve whatever additional checks the live `guard:`/stale-ref step performs (the current implementation may also assert the ref was approved). Read it before replacing anything, and carry its assertions across rather than dropping them.
+Two things this literal gets right that a simpler version gets wrong. **Compare against the dispatching ref, never a hardcoded `refs/heads/main`.** The step immediately below allows an apply to be dispatched from `main` *or* `prod`; a hardcoded `main` comparison marks every `prod` dispatch stale, and because staleness now feeds `skip_apply`, that failure is a green no-op — the operator sees a passing run and no migration was applied. **Read `github.*` through `env:`, not by interpolating `${{ }}` into the script body.** `github.sha` is a hex constant so it is not exploitable here, but the habit is what actionlint's expression-injection check exists to catch, and the next person to copy this step may interpolate something that is not a SHA.
+
+`echo "stale=false"` is written FIRST, unconditionally, because an early `exit 1` leaves the output unset and `${{ needs.fresh.outputs.stale == 'true' }}` then reads `'' == 'true'` → false → `skip_apply: false`. That is the safe direction (the hard failure already stopped the job), but writing the default first keeps the value defined on every path.
+
+Preserve whatever additional checks the live stale-ref step performs — read it before replacing anything, and carry its assertions across rather than dropping them. The live step asserts three things beyond staleness: the ref is a branch, an apply comes only from `main`/`prod`, and the tip is readable. All three are in the literal above as hard failures; only staleness became an output.
 
 - [ ] **Step 8: Replace `apply:` and `apply-staging:` with `uses:` callers**
 
